@@ -1277,7 +1277,12 @@ component Grid inherits Flickable {
             clicked => { root.ordered(i); }
         }
     }
-    for slot in root.visible-count: CardView {
+    // The cards drawn. A repeater over a count makes its cards anew whenever the count is worked out
+    // again, a card under a press with them; held here, they are made anew only when the count changes.
+    property <int> slots;
+    init => { root.slots = root.visible-count; }
+    changed visible-count => { root.slots = root.visible-count; }
+    for slot in root.slots: CardView {
         property <int> i: root.first + slot;
         property <Card> c: root.cards[self.i];
         x: root.pad + mod(self.i, root.columns) * (root.side + root.gap);
@@ -1382,6 +1387,14 @@ component ShelfView inherits VerticalLayout {
     out property <length> step: root.side + root.gap;
     out property <int> first: max(0, floor(-flick.content-x / root.step) - 1);
     out property <int> visible-count: max(0, min(root.count - root.first, ceil(root.seen / root.step) + 2));
+    // Off screen, a shelf draws no cards.
+    in property <bool> live: true;
+    // The cards drawn, held at the count as Grid's are.
+    out property <int> slots;
+    function hold() { root.slots = root.live ? root.visible-count : 0; }
+    init => { root.hold(); }
+    changed visible-count => { root.hold(); }
+    changed live => { root.hold(); }
     property <int> shown: root.loading ? root.columns : root.count;
     // The row is seen from a gap before the left margin to a gap past the right one, so the cards beside
     // the whole ones are not glimpsed; it scrolls until its last card stands at the right margin.
@@ -5410,7 +5423,7 @@ export component AppWindow inherits Window {
                                 loading: !root.picks-loaded;
                                 least: 200px;
                                 below: self.side * 56 / 150;
-                                for slot in picks-shelf.visible-count: PickCard {
+                                for slot in picks-shelf.slots: PickCard {
                                     property <int> i: picks-shelf.first + slot;
                                     property <Pick> m: root.picks[self.i];
                                     x: floor((picks-shelf.gap + self.i * picks-shelf.step) / 1phx) * 1phx;
@@ -5431,9 +5444,10 @@ export component AppWindow inherits Window {
                                     show-all => { root.shown-shelf = index; root.go(10); }
                                     count: shelf.cards.length;
                                     loading: !shelf.loaded;
+                                    live: home-row.on-screen;
                                     // A source's feed mixes songs, albums, playlists and artists in a shelf: each opens or plays
                                     // as what it is, a song with the shelf's songs after it.
-                                    for slot in home-row.on-screen ? albums-shelf.visible-count : 0: CardView {
+                                    for slot in albums-shelf.slots: CardView {
                                         property <int> i: albums-shelf.first + slot;
                                         property <Card> c: shelf.cards[self.i];
                                         x: albums-shelf.gap + self.i * albums-shelf.step;
@@ -5668,6 +5682,9 @@ export component AppWindow inherits Window {
                         property <length> head: Chrome.top-room + 116px;
                         property <int> first: max(0, floor((-self.content-y - self.head) / self.row-step) - 1);
                         property <int> visible-count: max(0, min(root.album-rows.length - self.first, ceil(self.height / self.row-step) + 2));
+                        property <int> slots;
+                        init => { self.slots = self.visible-count; }
+                        changed visible-count => { self.slots = self.visible-count; }
                         content-height: self.head + root.album-rows.length * self.row-step + 100px;
                         Text {
                             x: 32px;
@@ -5690,14 +5707,14 @@ export component AppWindow inherits Window {
                                 clicked => { root.album-sort-chosen(i); }
                             }
                         }
-                        for slot in self.visible-count: artist-row := ShelfView {
+                        for slot in self.slots: artist-row := ShelfView {
                             property <int> index: rows-scroll.first + slot;
                             property <Shelf> shelf: root.album-rows[self.index];
                             y: rows-scroll.head + self.index * rows-scroll.row-step;
                             width: rows-scroll.width;
                             title: self.shelf.title;
                             count: self.shelf.cards.length;
-                            for card-slot in artist-row.visible-count: CardView {
+                            for card-slot in artist-row.slots: CardView {
                                 property <int> i: artist-row.first + card-slot;
                                 property <Card> c: artist-row.shelf.cards[self.i];
                                 x: artist-row.gap + self.i * artist-row.step;
@@ -5759,6 +5776,9 @@ export component AppWindow inherits Window {
                         content-height: Chrome.top-room + 64px + ceil(root.picks.length / self.columns) * (self.side * 206 / 150 + 22px) + 100px;
                         property <int> first: max(0, floor((-self.content-y - Chrome.top-room - 64px) / (self.side * 206 / 150 + 22px)) - 1) * self.columns;
                         property <int> visible-count: max(0, min(root.picks.length - self.first, (ceil(self.height / (self.side * 206 / 150 + 22px)) + 2) * self.columns));
+                        property <int> slots;
+                        init => { self.slots = self.visible-count; }
+                        changed visible-count => { self.slots = self.visible-count; }
                         Text {
                             x: 32px;
                             y: Chrome.top-room + 8px;
@@ -5769,7 +5789,7 @@ export component AppWindow inherits Window {
                             font-weight: 700;
                             letter-spacing: -0.5px;
                         }
-                        for slot in self.visible-count: PickCard {
+                        for slot in self.slots: PickCard {
                             property <int> i: picks-grid.first + slot;
                             property <Pick> item: root.picks[self.i];
                             x: 32px + mod(self.i, parent.columns) * (parent.side + 22px);

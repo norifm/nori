@@ -4278,6 +4278,36 @@ mod tests {
     }
 
     #[test]
+    fn a_card_opens_when_its_shelf_is_read_again_under_the_press() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.set_view(HOME);
+        ui.set_picks_loaded(true);
+        let shelf = || Shelf { loaded: true, cards: cards((0..12).map(|i| Card { id: i.to_string().into(), ..Default::default() })), ..Default::default() };
+        let shelves = Rc::new(VecModel::from(vec![shelf()]));
+        ui.set_shelves(ModelRc::from(shelves.clone()));
+        let opened = Rc::new(RefCell::new(Vec::new()));
+        let seen = opened.clone();
+        ui.on_open_album(move |id| seen.borrow_mut().push(id.to_string()));
+        ui.show().unwrap();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+        slint::platform::update_timers_and_animations();
+        // The first card's cover, under Home's title and the shelf's.
+        let at = slint::LogicalPosition::new(100.0, 250.0);
+        let button = slint::platform::PointerEventButton::Left;
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
+        // The scrolling shelf hands the press on after a moment.
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(200));
+        slint::platform::update_timers_and_animations();
+        shelves.set_row_data(0, shelf());
+        slint::platform::update_timers_and_animations();
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button });
+        assert_eq!(*opened.borrow(), ["0"]);
+    }
+
+    #[test]
     fn shelves_drag_with_a_mouse() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
