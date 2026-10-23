@@ -3692,8 +3692,8 @@ mod tests {
         // The menu opens where the row is pressed: the song at its head, then Play, the song's own lines and
         // More, which unfolds the rest in place.
         let row = (400.0, 470.0);
-        // Placed for its tallest (all its lines and More, 306 px), it rises 52 px to clear the player pill.
-        let entry = |n: f32| row.1 - 52.0 + 8.0 + 60.0 + 8.0 + n * 44.0 + 22.0;
+        // Its 6 px inset, the song's head (53 px with its hairline), then 32 px rows.
+        let entry = |n: f32| row.1 + 6.0 + 53.0 + n * 32.0 + 16.0;
         press(row.0, row.1, Right);
         press(row.0 + 40.0, entry(2.0), Left);
         press(row.0, row.1, Right);
@@ -3730,8 +3730,8 @@ mod tests {
         settle();
         ui.invoke_show_player_menu();
         settle();
-        // One line under the song's head, the last thing in the sheet: its foot on the pill's room, its right edge the pill's.
-        let at = slint::LogicalPosition::new(1140.0 - 200.0, 820.0 - 96.0 - 8.0 - 22.0);
+        // One row under the song's head: the popover's foot on the pill's room, its right edge the ⋯ button's.
+        let at = slint::LogicalPosition::new(1128.0 - 100.0, 820.0 - 96.0 - 6.0 - 16.0);
         use slint::platform::PointerEventButton::Left;
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button: Left });

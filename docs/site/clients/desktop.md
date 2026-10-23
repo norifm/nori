@@ -38,8 +38,8 @@ A favorite is a seal: an outline until you like a song, then filled and slightly
 your devices open in a sheet that floats on the right between the two outlines, over the page, which stays
 where it is; tabs at its top switch between them. In the full player the same tabs head the panel beside the
 cover. The queue shows the songs already played, dimmed above the one playing, then what plays next. A song's
-menu (a right click on its row, or the player's ⋯) shows the song at its head and its lines grouped on one
-card, the ones used less under More. With nothing typed, the search page lists your recent searches.
+menu opens at the pointer on a right click, or beside the player's ⋯, and shows the song at its head, then its
+lines, the ones used less under More. With nothing typed, the search page lists your recent searches.
 
 ## Look
 
