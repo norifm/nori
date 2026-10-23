@@ -1042,7 +1042,9 @@ private fun PanelFlight(
         // is in the header above it), so the layer stops there rather than at the screen's foot.
         SoftSleeve(
             Modifier.fillMaxWidth().height(with(density) { sleeveBottom.toDp() }),
-            sleeve = { sleeveBottom to sleeveHeight }, blur = dressed,
+            // The band ends on the layer's own last row: the sleeve's bottom is fractional and the layer a whole
+            // number of rows, and a band ending mid-row left part of that row as a line under the time labels.
+            sleeve = { size.height to sleeveHeight }, blur = dressed,
         ) {
             Box(
                 Modifier.requiredSize(side).align(Alignment.TopStart)
