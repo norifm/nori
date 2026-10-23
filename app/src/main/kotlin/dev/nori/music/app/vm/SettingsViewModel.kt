@@ -96,7 +96,12 @@ data class StorageUi(
     val streamBytes: Long = 0L,
     val coverBytes: Long = 0L,
     val lyricsBytes: Long = 0L,
+    /** Every profile's downloads: they share the phone's download cache. */
     val downloadBytes: Long = 0L,
+    val allDownloadSongs: Int = 0,
+    /** Each profile with downloads (the id its rows are kept under) and what they hold. */
+    val profileDownloads: List<Pair<String, Long>> = emptyList(),
+    /** This profile's finished downloads, which its actions work on. */
     val downloadSongs: Int = 0,
     val indexBytes: Long = 0L,
     val busy: Boolean = false,
@@ -268,11 +273,14 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         val files = app.filesDir.listFiles().orEmpty()
         val index = storageIndexFiles(files.map { it.name })
         val unsent = runCatching { nori.client.unsent() }.getOrNull()
+        val profiles = runCatching { nori.core.downloadsByProfile() }.getOrDefault(emptyList())
         _storage.value = StorageUi(
             streamBytes = nori.sources.streamBytes(),
             coverBytes = dirBytes(java.io.File(app.cacheDir, dev.nori.music.data.CoverLoader.DIR)),
             lyricsBytes = runCatching { nori.core.lyricsCacheBytes() }.getOrDefault(0L),
             downloadBytes = nori.sources.downloadBytes(),
+            allDownloadSongs = profiles.sumOf { it.ids.size },
+            profileDownloads = profiles.map { it.profile to nori.sources.downloadBytes(it.ids) },
             downloadSongs = nori.downloads.state.value.done.size,
             indexBytes = index.sumOf { dirBytes(files[it.toInt()]) },
             unsentWaiting = unsent?.waiting?.toInt() ?: 0,

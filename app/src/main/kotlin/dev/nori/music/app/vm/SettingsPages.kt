@@ -66,7 +66,8 @@ sealed interface SettingRow {
     data class Action(val key: String, val title: String, val detail: String, val button: String, val enabled: Boolean, val error: Boolean, val action: String) : SettingRow
     data class Info(val key: String, val title: String, val detail: String) : SettingRow
     /** What is stored, by kind, as one bar: [total] in words over it, each part's share and its line under it. */
-    data class Usage(val key: String, val title: String, val total: String, val parts: List<UsagePart>) : SettingRow
+    /** [byProfile]: the downloads part split by profile, when more than one has any. [accents]: the first parts' colors. */
+    data class Usage(val key: String, val title: String, val total: String, val parts: List<UsagePart>, val byProfile: List<UsagePart>, val accents: List<Int>) : SettingRow
     /** [level]: dragged through the core's in-place level edit instead of by [name]. */
     data class Slider(val name: String, val label: String, val value: Float, val min: Float, val max: Float, val centred: Boolean, val level: EqLevel?) : SettingRow
     /**
@@ -551,12 +552,20 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
             val t = str(R.string.settings_stored)
             val parts = listOf(
                 UsagePart(str(R.string.settings_streamed), bytes(st.streamBytes), st.streamBytes),
-                UsagePart(res.getQuantityString(R.plurals.settings_stored_downloads, st.downloadSongs, st.downloadSongs), bytes(st.downloadBytes), st.downloadBytes),
+                UsagePart(res.getQuantityString(R.plurals.settings_stored_downloads, st.allDownloadSongs, st.allDownloadSongs), bytes(st.downloadBytes), st.downloadBytes),
                 UsagePart(str(R.string.settings_covers), bytes(st.coverBytes), st.coverBytes),
                 UsagePart(str(R.string.settings_lyrics_cache), bytes(st.lyricsBytes), st.lyricsBytes),
                 UsagePart(str(R.string.settings_stored_library), bytes(st.indexBytes), st.indexBytes),
             )
-            SettingRow.Usage(settingKey(t), t, bytes(parts.sumOf { it.bytes }), parts)
+            val byProfile = st.profileDownloads.takeIf { it.size > 1 }.orEmpty().map { (profile, b) ->
+                val name = p.servers.firstOrNull { dev.nori.music.ffi.settings.serverDb(it.id) == profile }?.let(::serverLabel)
+                UsagePart(name ?: str(R.string.settings_removed_profile), bytes(b), b)
+            }
+            val today = java.time.LocalDate.now()
+            val season = dev.nori.music.ffi.settings.seasonOf(p.season)
+            val southern = dev.nori.music.ffi.look.southern(java.util.TimeZone.getDefault().id)
+            val accents = dev.nori.music.ffi.look.usageAccents(season, today.monthValue.toUInt(), today.dayOfMonth.toUInt(), southern, isDark()).map { it.toInt() }
+            SettingRow.Usage(settingKey(t), t, bytes(parts.sumOf { it.bytes }), parts, byProfile, accents)
         }
         is RowItem.Server -> p.servers.getOrNull(item.index.toInt())?.let { sv ->
             val active = sv.id == p.activeServerId
@@ -577,10 +586,15 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         is RowItem.MusicFolder -> null
     }
 
+    /** Whether the app is dark: its setting, or the system's. */
+    private fun isDark(): Boolean {
+        val system = res.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        return dev.nori.music.ffi.settings.themeIsDark(p.theme, system)
+    }
+
     /** The season row: [options] are the core's, Follow first and then the seasons in their order. */
     fun seasons(key: String, title: String, options: List<SettingOption>, value: String): SettingRow {
-        val system = res.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
-        val dark = dev.nori.music.ffi.settings.themeIsDark(p.theme, system)
+        val dark = isDark()
         val today = java.time.LocalDate.now()
         val southern = dev.nori.music.ffi.look.southern(java.util.TimeZone.getDefault().id)
         val tiles = options.mapNotNull { o ->

@@ -224,6 +224,11 @@ impl Session {
         nori_host::spawn("nori-facts", move || {
             let index = core.index_size().unwrap_or_default();
             let downloads = core.downloads(true).unwrap_or_default();
+            // Every profile's: they share this computer's download folder.
+            let listed = core.downloads_by_profile().unwrap_or_default();
+            let all_download_songs = listed.iter().map(|p| p.ids.len() as u32).sum();
+            let profiles: Vec<(String, u64)> =
+                listed.into_iter().map(|p| { let b = store.as_ref().map_or(0, |s| s.download_bytes_of(&p.ids)); (p.profile, b) }).collect();
             let folders = match block_on(client.read_now(Read::MusicFolders)) {
                 Ok(Page::Folders { v }) => v.into_iter().map(|f| (f.name, f.id)).collect(),
                 _ => Vec::new(),
@@ -234,7 +239,9 @@ impl Session {
                 stream_bytes: store.as_ref().map_or(0, |s| s.cache_bytes()),
                 cover_bytes,
                 lyrics_bytes: core.lyrics_cache_bytes().max(0) as u64,
-                download_bytes: downloads.iter().map(|s| s.size).sum(),
+                download_bytes: profiles.iter().map(|p| p.1).sum(),
+                all_download_songs,
+                download_profiles: profiles,
                 download_songs: downloads.len() as u32,
                 database_bytes: std::fs::metadata(&db).map(|m| m.len()).unwrap_or(0),
                 folders,
