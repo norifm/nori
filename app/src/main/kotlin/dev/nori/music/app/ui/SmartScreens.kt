@@ -8,7 +8,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
-import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -22,14 +23,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -44,6 +37,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.vm.ActionsViewModel
@@ -51,8 +46,6 @@ import dev.nori.music.app.vm.HistoryViewModel
 import dev.nori.music.app.vm.MixesViewModel
 import dev.nori.music.app.vm.MixViewModel
 import dev.nori.music.app.vm.MixCard
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.layout.fillMaxSize
 
 import dev.nori.music.ffi.library.SmartEditRule
@@ -62,85 +55,126 @@ import dev.nori.music.app.vm.SmartViewModel
 @Composable
 private fun <T> Pick(value: T, options: List<T>, modifier: Modifier = Modifier, label: (T) -> String = { it.toString() }, onPick: (T) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Text(label(value), modifier.clickable { open = true }.padding(8.dp), color = MaterialTheme.colorScheme.primary)
-    DropdownMenu(open, { open = false }) { options.forEach { o -> DropdownMenuItem({ Text(label(o)) }, { onPick(o); open = false }) } }
+    Text(label(value), modifier.clickable { open = true }.padding(8.dp), color = MaterialTheme.colorScheme.onSurface)
+    NoriPopover(open, { open = false }) { options.forEach { o -> PopoverItem(label(o), chosen = o == value) { onPick(o); open = false } } }
 }
 
-/**
- * A mix's artwork: four covers of what is in it, the mix's colour rising from the bottom under its
- * name. Before there is anything in it, the colour alone. The covers cross-fade in and out, so a tile
- * never changes in one frame. Nothing here moves on its own: it is drawn once and then only redrawn
- * when its covers change.
- */
 /** Mix tiles' colours by mix id, kept across scrolling so a tile scrolled back into view does not ask the core again. */
 private val tileColours = android.util.LruCache<String, List<androidx.compose.ui.graphics.Color>>(64)
 
+/** Mix cards' dyed paper by mix and season, kept for the same reason. */
+private val cardColours = android.util.LruCache<Pair<String, Papers>, dev.nori.music.ffi.look.Palette>(64)
+
+private fun tileColours(id: String) =
+    tileColours[id] ?: dev.nori.music.ffi.library.mixTileColours(id).map { androidx.compose.ui.graphics.Color(it.toInt()) }.also { tileColours.put(id, it) }
+
+/**
+ * The covers of what is in a mix as a square: four in a mosaic, one alone, or nothing. They cross-fade
+ * in and out, so a tile never changes in one frame.
+ */
 @Composable
-private fun MixArt(card: MixCard, size: androidx.compose.ui.unit.Dp, onClick: (() -> Unit)? = null, large: Boolean = false) {
-    // The tile's colour, the deeper one it runs to and the band under its name (nori-core's
-    // `mix_tile_colours`), once per mix.
-    val c = remember(card.id) {
-        tileColours[card.id] ?: dev.nori.music.ffi.library.mixTileColours(card.id).map { androidx.compose.ui.graphics.Color(it.toInt()) }.also { tileColours.put(card.id, it) }
-    }
-    val seed = c[0]
-    val deep = c[1]
-    val white = androidx.compose.ui.graphics.Color.White
-    Box(
-        Modifier.size(size).clip(if (large) TileShape else CardShape)
-            .background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(seed, deep)))
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-    ) {
-        androidx.compose.animation.Crossfade(
-            card.covers, Modifier.matchParentSize(),
-            animationSpec = androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 320), label = "mix art",
-        ) { urls ->
-            val half = size / 2
-            when {
-                urls.size >= 4 -> Column {
-                    Row { Cover(urls[0], half, radius = 0.dp, plate = false); Cover(urls[1], half, radius = 0.dp, plate = false) }
-                    Row { Cover(urls[2], half, radius = 0.dp, plate = false); Cover(urls[3], half, radius = 0.dp, plate = false) }
-                }
-                urls.isNotEmpty() -> Cover(urls[0], size, radius = 0.dp, plate = false)
-                else -> Box(Modifier.fillMaxSize())
+private fun MixCovers(urls: List<String>, size: androidx.compose.ui.unit.Dp) {
+    androidx.compose.animation.Crossfade(
+        urls, Modifier.size(size),
+        animationSpec = androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 320), label = "mix art",
+    ) { covers ->
+        // Cells share the square by weight: halves rounded one by one left a pixel gap that showed at the seam.
+        val cell = Modifier.fillMaxSize()
+        when {
+            covers.size >= 4 -> Column {
+                Row(Modifier.weight(1f)) { Cover(covers[0], 0.dp, cell.weight(1f), radius = 0.dp, plate = false); Cover(covers[1], 0.dp, cell.weight(1f), radius = 0.dp, plate = false) }
+                Row(Modifier.weight(1f)) { Cover(covers[2], 0.dp, cell.weight(1f), radius = 0.dp, plate = false); Cover(covers[3], 0.dp, cell.weight(1f), radius = 0.dp, plate = false) }
             }
+            covers.isNotEmpty() -> Cover(covers[0], 0.dp, cell, radius = 0.dp, plate = false)
+            else -> Box(Modifier.fillMaxSize())
         }
-        // The mix's colour rising under its name, so the name reads on any artwork. Always drawn: on the
-        // bare colour it only deepens the bottom a little, and nothing appears when the covers do.
-        Box(
-            Modifier.matchParentSize().background(
-                androidx.compose.ui.graphics.Brush.verticalGradient(
-                    0.38f to c[2], 0.72f to c[3], 1f to c[4],
-                ),
-            ),
-        )
-        Column(Modifier.align(Alignment.BottomStart).padding(if (large) 18.dp else 12.dp)) {
-            Icon(
-                if (card.favourites) Kanji.Sealed else Icons.Filled.AutoAwesome, null,
-                Modifier.size(if (large) 22.dp else 16.dp), tint = white.copy(alpha = 0.9f),
-            )
+    }
+}
+
+/**
+ * A mix's artwork on its page: its covers, the mix's colour rising from the bottom under its name.
+ * Before there is anything in it, the colour alone.
+ */
+@Composable
+private fun MixArt(card: MixCard, size: androidx.compose.ui.unit.Dp) {
+    val c = remember(card.id) { tileColours(card.id) }
+    val white = androidx.compose.ui.graphics.Color.White
+    Box(Modifier.size(size).clip(TileShape).background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(c[0], c[1])))) {
+        MixCovers(card.covers, size)
+        Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(0.38f to c[2], 0.72f to c[3], 1f to c[4])))
+        Column(Modifier.align(Alignment.BottomStart).padding(18.dp)) {
+            Icon(if (card.favourites) Kanji.Sealed else Iconoir.Sparks, null, Modifier.size(22.dp), tint = white.copy(alpha = 0.9f))
             Text(
-                card.title, Modifier.padding(top = 4.dp),
-                style = if (large) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium, color = white,
+                card.title, Modifier.padding(top = 4.dp), style = MaterialTheme.typography.headlineSmall, color = white,
                 maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
         }
     }
 }
 
-/** "For you": favourites first, then the mixes. Each tile opens a page that shows what is in it. */
+private val MIX_CARD_WIDTH = 150.dp
+private val ART_FADE = androidx.compose.ui.graphics.Brush.verticalGradient(0.45f to androidx.compose.ui.graphics.Color.Black, 1f to androidx.compose.ui.graphics.Color.Transparent)
+private val MIX_CARD_HEIGHT = 206.dp
+
+/**
+ * A mix on Home: a portrait card on the season's paper dyed with the mix's colour, its art a square on
+ * top running into that paper, the name and a line under it in the card's own ink. [fill]: as wide as
+ * the cell it is in, the same proportions.
+ */
+@Composable
+internal fun MixCardView(card: MixCard, papers: Papers, modifier: Modifier = Modifier, fill: Boolean = false, onClick: () -> Unit) {
+    if (fill) androidx.compose.foundation.layout.BoxWithConstraints(modifier) { MixCardBody(card, papers, maxWidth, Modifier, onClick) }
+    else MixCardBody(card, papers, MIX_CARD_WIDTH, modifier, onClick)
+}
+
+@Composable
+private fun MixCardBody(card: MixCard, papers: Papers, width: androidx.compose.ui.unit.Dp, modifier: Modifier, onClick: () -> Unit) {
+    val dyed = remember(card.id, papers) {
+        cardColours[card.id to papers] ?: dev.nori.music.ffi.library.mixCardColours(card.id, papers.light, papers.dark, papers.darkTheme).also { cardColours.put(card.id to papers, it) }
+    }
+    // The page of the mix opened from this card wears its first cover's colours (HeroPage), so the card
+    // fades into the same ones when they are known; until then, the mix's own dyed paper.
+    val tint = rememberCoverPalette(card.covers.firstOrNull())
+    val page = tint?.background ?: androidx.compose.ui.graphics.Color(dyed.page.toInt())
+    val ink = tint?.let { androidx.compose.ui.graphics.Color(it.look[dev.nori.music.look.CoverLook.ON]) } ?: androidx.compose.ui.graphics.Color(dyed.ink.toInt())
+    val seed = remember(card.id) { tileColours(card.id)[0] }
+    Column(modifier.size(width, width * (MIX_CARD_HEIGHT / MIX_CARD_WIDTH)).clip(TileShape).background(page).clickable(onClick = onClick)) {
+        // The art is rubbed out into the card's paper rather than painted over with it: a painted edge
+        // let the covers show through as a light line wherever it fell between pixels (an overscroll stretch).
+        Box(
+            Modifier.size(width)
+                .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                .drawWithContent { drawContent(); drawRect(ART_FADE, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn) }
+                .background(seed),
+        ) { MixCovers(card.covers, width) }
+        Column(Modifier.fillMaxSize().padding(horizontal = 12.dp), Arrangement.Center) {
+            Text(
+                card.title, style = titled(MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp, fontWeight = FontWeight.SemiBold)),
+                color = ink, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+            Text(
+                if (card.favourites) say.mixLineFavourites else say.mixLineMade, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                color = ink.copy(alpha = 0.7f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** "For you": favourites first, then the mixes. Each card opens a page that shows what is in it. */
 @Composable
 fun MixTiles(vm: MixesViewModel = viewModel()) {
     val cards by vm.cards.collectAsStateWithLifecycle()
     val nav = LocalNav.current
+    val papers = LocalPapers.current
     LazyRow(Modifier.bleedsToEdges(), rememberShelfState(cards.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(cards, key = { it.id }) { c -> MixArt(c, 150.dp, onClick = { nav.mix(c.id) }) }
+        items(cards, key = { it.id }) { c -> MixCardView(c, papers) { nav.mix(c.id) } }
     }
 }
 
 /**
  * A mix as a page, laid out like a playlist: the mix's artwork, its name, Play and Shuffle, then the
  * songs. What is listed is exactly what plays - a tap on a row starts the mix at that row - and it
- * stays put while the page is open; the circular arrow asks for a new draw.
+ * stays put while the page is open; Refresh in the list head asks for a new draw.
  */
 @Composable
 fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewModel()) {
@@ -151,16 +185,22 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
         HeroPage(
             coverUrl = null,
             title = m.title,
-            caption = m.caption,
             onPlay = { if (m.songs.isNotEmpty()) actions.play(m.songs, from = m.origin) },
             onShuffle = { if (m.songs.isNotEmpty()) actions.shuffle(m.songs, m.origin) },
             queue = m.queue,
             // Its covers as the page's picture, as a cover heads an album's; a mix with none yet keeps its tile.
             mosaic = m.covers,
-            art = { MixArt(MixCard(m.id, m.title, m.covers, m.favourites), 236.dp, large = true) },
+            art = { MixArt(MixCard(m.id, m.title, m.covers, m.favourites), 236.dp) },
+            headLabel = if (m.songs.isEmpty()) "" else say.listCaption(m.songs.size, m.songs.sumOf { it.duration.toLong() }, true),
+            // After Play, as a record's seal stands there: keep the mix on the account as a playlist.
             actions = {
-                if (m.refreshable) CircleButton(Icons.Filled.Refresh, say.newMix) { vm.refresh() }
-                MoreCircle(songsMore(m.songs, list.downloaded, actions))
+                if (LocalRules.current.account && m.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveMixAsPlaylist(m.title, m.songs) }
+            },
+            headActions = {
+                PageActionGlyphs(
+                    dev.nori.music.ffi.library.PageKind.Mix(m.refreshable), m.songs, list.downloaded, actions,
+                    own = { if (it == dev.nori.music.ffi.library.PageAction.Refresh) ({ vm.refresh() }) else null },
+                )
             },
         ) {
             if (m.songs.isEmpty()) item(key = "empty") {
@@ -176,13 +216,13 @@ fun SmartList(vm: SmartViewModel = viewModel()) {
     val saved by vm.saved.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-        item { ActionRow(say.newSmartPlaylist, Icons.Filled.Add, { nav.smartEdit("") }) }
+        item { ActionRow(say.newSmartPlaylist, Iconoir.Plus, { nav.smartEdit("") }) }
         items(saved, key = { it.id }) { p ->
             NavRow(
                 remember(p) { say.smartName(p) }, { nav.smart(p.id) },
                 action = {
                     TextAction(say.edit, { nav.smartEdit(p.id) })
-                    IconButton({ vm.delete(p.id) }, Modifier.size(40.dp)) { Icon(Icons.Filled.Close, say.delete, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    IconButton({ vm.delete(p.id) }, Modifier.size(40.dp)) { Icon(Iconoir.Xmark, say.delete, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                 },
             )
         }
@@ -204,11 +244,20 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
     val list = rememberSongListState(actions)
     val from = remember(id) { dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SMART, id) }
     LoadBox(load) { page ->
-        SongListPage(
-            remember(playlist) { playlist?.let(say::smartName) ?: say.smartPlaylist },
-            remember(page) { say.listCaption(page.songs.size, page.seconds.toLong(), true) },
-            page.songs, list.downloaded, from, actions,
-            pageActions = { CircleButton(Icons.Filled.Edit, say.edit) { nav.smartEdit(id) } },
+        val any = page.songs.isNotEmpty()
+        HeroPage(
+            coverUrl = null,
+            title = remember(playlist) { playlist?.let(say::smartName) ?: say.smartPlaylist },
+            onPlay = if (any) { { actions.play(page.songs, from = from) } } else null,
+            onShuffle = if (any) { { actions.shuffle(page.songs, from) } } else null,
+            queue = remember(from) { dev.nori.music.ffi.library.PageQueue(from) },
+            headLabel = if (any) remember(page) { say.listCaption(page.songs.size, page.seconds.toLong(), true) } else "",
+            headActions = {
+                PageActionGlyphs(
+                    dev.nori.music.ffi.library.PageKind.Smart, page.songs, list.downloaded, actions,
+                    own = { if (it == dev.nori.music.ffi.library.PageAction.Edit) ({ nav.smartEdit(id) }) else null },
+                )
+            },
         ) {
             songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
         }
@@ -226,7 +275,7 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = 24.dp + LocalChromeInset.current)) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
+            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
             Text(say.smartPlaylist, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
             TextAction(say.save, { error = vm.save(draft) { nav.back() } })
         }
@@ -250,7 +299,7 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
                         Pick(r.op, remember(r.field) { dev.nori.music.ffi.library.smartEditOps(r.field) }) { o -> set(r.copy(op = o)) }
                         Spacer(Modifier.weight(1f))
                         IconButton({ draft = dev.nori.music.ffi.library.smartEditRemove(draft, i.toUInt()) }, Modifier.size(38.dp)) {
-                            Icon(Icons.Filled.Close, say.removeRule, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Icon(Iconoir.Xmark, say.removeRule, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     val hint = remember(r.op) { dev.nori.music.ffi.library.smartValueHint(r.op) }
@@ -261,7 +310,7 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
                 }
             }
         }
-        ActionRow(say.addRule, Icons.Filled.Add, { draft = dev.nori.music.ffi.library.smartEditAdd(draft) }, divider = false)
+        ActionRow(say.addRule, Iconoir.Plus, { draft = dev.nori.music.ffi.library.smartEditAdd(draft) }, divider = false)
         Row(Modifier.padding(start = Space.gutter, end = Space.gutter, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(say.sortBy, style = MaterialTheme.typography.bodyLarge)
             Pick(draft.sortField, sorts) { draft = draft.copy(sortField = it) }
@@ -308,7 +357,7 @@ fun StatsScreen(vm: HistoryViewModel = viewModel()) {
     val nav = LocalNav.current
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = 24.dp + LocalChromeInset.current)) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
+            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
             Text(say.listening, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
         }
         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -326,7 +375,7 @@ fun StatsScreen(vm: HistoryViewModel = viewModel()) {
 
         // The headline: two numbers worth reading from across the room, the rest as a grid of tiles.
         Column(Modifier.padding(horizontal = Space.gutter, vertical = 14.dp)) {
-            Text("${st.plays}", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
+            Text("${st.plays}", style = MaterialTheme.typography.displaySmall)
             Text(headline, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (fromServer) Text(
                 say.statsServerNote(server), Modifier.padding(top = 6.dp),
@@ -381,7 +430,7 @@ private val HOUR_TICKS = listOf("00", "06", "12", "18", "23")
 /** Twenty-four bars, drawn: the shape of a listening day says more than "most around 20:00" alone. */
 @Composable
 private fun HourChart(perHour: List<Float>) {
-    val bar = MaterialTheme.colorScheme.primary
+    val bar = MaterialTheme.colorScheme.onSurface
     val dim = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
     Column(Modifier.padding(horizontal = Space.gutter)) {
         androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(96.dp)) {
@@ -406,4 +455,4 @@ private fun HourChart(perHour: List<Float>) {
 /** A place in a chart: rank, what it is, and how often. */
 @Composable
 private fun RankRow(rank: Int, title: String, subtitle: String, count: String) =
-    NavRow(title, subtitle = subtitle, trailing = count, leadingText = "$rank", trailingAccent = true)
+    NavRow(title, subtitle = subtitle, trailing = count, leadingText = "$rank")

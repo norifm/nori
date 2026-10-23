@@ -34,42 +34,40 @@ object CoverLook {
     const val PILL_INK = 14
     const val PILL_PLATE = 15
     const val TINT_INK = 16
-    const val CIRCLE_SELECTED = 17
-    const val CIRCLE_PLATE = 18
-    const val FIELD = 19
-    const val FORM = 20
-    const val SWITCH_OFF = 21
-    const val VEIL_13 = 22
-    const val VEIL_6 = 23
-    const val VEIL_10 = 24
-    const val ON_60 = 25
-    const val ON_45 = 26
-    const val ON_55 = 27
-    const val ON_22 = 28
-    const val ON_85 = 29
-    const val ON_35 = 30
-    const val ON_80 = 31
-    const val ON_VARIANT_70 = 32
-    const val CHROME_SLAB = 33
-    const val CHROME_CONTENT = 34
-    const val CHROME_PAGE = 35
-    const val CHROME_EDGE = 36
-    const val CHROME_CONTENT_65 = 37
-    const val CHROME_CONTENT_75 = 38
-    const val CHROME_FILL = 39
-    const val STATUS_LIGHT = 40
-    const val BAND_TINT = 41
-    const val BAND_KR = 42
-    const val BAND_KG = 43
-    const val BAND_KB = 44
-    const val HERO_EDGE = 45
-    const val HERO_MID = 46
-    const val FLOOR_0 = 47
-    const val FLOOR_22 = 48
-    const val FLOOR_75 = 49
+    const val FIELD = 17
+    const val FORM = 18
+    const val SWITCH_OFF = 19
+    const val VEIL_13 = 20
+    const val VEIL_6 = 21
+    const val VEIL_10 = 22
+    const val ON_60 = 23
+    const val ON_45 = 24
+    const val ON_55 = 25
+    const val ON_22 = 26
+    const val ON_85 = 27
+    const val ON_35 = 28
+    const val ON_80 = 29
+    const val ON_VARIANT_70 = 30
+    const val CHROME_SLAB = 31
+    const val CHROME_CONTENT = 32
+    const val CHROME_PAGE = 33
+    const val CHROME_EDGE = 34
+    const val CHROME_CONTENT_65 = 35
+    const val CHROME_CONTENT_75 = 36
+    const val CHROME_FILL = 37
+    const val STATUS_LIGHT = 38
+    const val BAND_TINT = 39
+    const val BAND_KR = 40
+    const val BAND_KG = 41
+    const val BAND_KB = 42
+    const val HERO_EDGE = 43
+    const val HERO_MID = 44
+    const val FLOOR_0 = 45
+    const val FLOOR_22 = 46
+    const val FLOOR_75 = 47
     /** The see-through chrome's outline. */
-    const val CHROME_OUTLINE = 50
-    const val LEN = 51
+    const val CHROME_OUTLINE = 48
+    const val LEN = 49
 
     /**
      * Looks [from] and [to] mixed at [t] into [out], all [LEN] entries (`nori_look::dress::mix`): one frame
@@ -95,6 +93,19 @@ object CoverLook {
      * one, moved until it reads there (`nori_look::dress::accented`).
      */
     fun accented(look: IntArray, light: Int, dark: Int): IntArray = IntArray(LEN).also { accented(look, light, dark, it) }
+
+    /**
+     * [look] (a cover's page) on the season's paper dyed with its edge (`nori_look::dress::dyed`). [palettes]
+     * is the light then the dark palette the app wears, each page, surface, ink, accent, on; [dark] the theme.
+     */
+    fun dyed(look: IntArray, palettes: IntArray, dark: Boolean): IntArray = IntArray(LEN).also { dyed(look, palettes, dark, it, null) }
+
+    /** [dyed] with the cover's [wash], if any, dyed too: a copy, the original is left as it is. */
+    fun dyed(look: IntArray, palettes: IntArray, dark: Boolean, wash: android.graphics.Bitmap?): Colours {
+        val out = IntArray(LEN)
+        val copy = wash?.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+        return Colours(out, copy.takeIf { dyed(look, palettes, dark, out, copy) == 2 })
+    }
 
     /**
      * One step of the seek bar towards where the song is (`nori_look::motion::seek_step`): the new place,
@@ -129,4 +140,6 @@ object CoverLook {
 
     @JvmStatic @FastNative private external fun plain(roles: IntArray, out: IntArray)
     @JvmStatic @FastNative private external fun accented(look: IntArray, light: Int, dark: Int, out: IntArray)
+    /** Returns 0 nothing written, 1 the look, 2 the look and [wash], a mutable ARGB_8888 copy dyed in place. */
+    @JvmStatic @FastNative private external fun dyed(look: IntArray, palettes: IntArray, dark: Boolean, out: IntArray, wash: android.graphics.Bitmap?): Int
 }

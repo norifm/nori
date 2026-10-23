@@ -144,8 +144,6 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
 
     fun excludeFromMixes(song: Song) = attempt(say.excludedFromMixes) { nori.library.excludeFromMixes(song.id, true) }
 
-    fun exportM3u(name: String, songs: List<Song>): String = nori.library.m3uExport(name, songs)
-
     /** Creates a server playlist from an M3U file; tracks that are not in the index are reported, not guessed. */
     fun importM3u(name: String, text: String) = attempt(null) {
         val imported = withContext(Dispatchers.IO) { nori.core.m3uImport(text) }
@@ -268,6 +266,14 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
 
     suspend fun playlists(): List<Playlist> = runCatching { nori.library.playlists().first() }.getOrDefault(emptyList())
     fun addToPlaylist(p: Playlist, songs: List<Song>) = attempt(say.addedToPlaylist(p.name)) { nori.library.addToPlaylist(p.id, songs.map { it.id }) }
+    /** Keeps a mix as a playlist on the account, named by the core (`saved_mix_name`) so a second save does not repeat a name. */
+    fun saveMixAsPlaylist(title: String, songs: List<Song>) = viewModelScope.launch {
+        try {
+            val name = dev.nori.music.ffi.library.savedMixName(title, playlists().map { it.name })
+            nori.library.createPlaylist(name, songs.map { it.id })
+            _messages.send(say.playlistCreated(name))
+        } catch (e: Exception) { _messages.send(e.said ?: say.saidFailed) }
+    }
     fun addToNewPlaylist(name: String, songs: List<Song>) = attempt(say.playlistCreated(name)) { nori.library.createPlaylist(name, songs.map { it.id }) }
 }
 

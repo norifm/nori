@@ -156,7 +156,6 @@ class Say(private val r: Resources) {
     val filterArtists: String = r.getString(R.string.filter_artists)
     val newPlaylist: String = r.getString(R.string.new_playlist)
     val importPlaylistFile: String = r.getString(R.string.import_playlist_file)
-    val exportPlaylistFile: String = r.getString(R.string.export_playlist_file)
     val favouriteSongs: String = r.getString(R.string.favourite_songs)
     val starredFavourites: String = r.getString(R.string.starred_favourites)
     val newStation: String = r.getString(R.string.new_station)
@@ -180,6 +179,7 @@ class Say(private val r: Resources) {
     val sooner: String = r.getString(R.string.sooner)
     val mixing: String = r.getString(R.string.mixing)
     val newMix: String = r.getString(R.string.new_mix)
+    val saveAsPlaylist: String = r.getString(R.string.save_as_playlist)
     val newSmartPlaylist: String = r.getString(R.string.new_smart_playlist)
     val readyMade: String = r.getString(R.string.ready_made)
     val smartPlaylist: String = r.getString(R.string.smart_playlist)
@@ -359,8 +359,12 @@ class Say(private val r: Resources) {
     /** The count alone, where "12 selected" does not fit. */
     fun selectedShort(n: Int): String = r.getString(R.string.selected_count_short, n)
 
-    /** A folder's caption: "2 folders · 14 songs". */
-    fun folderCaption(folders: Int, songs: Int): String = r.getQuantityString(R.plurals.folders, folders, folders) + " · " + songs(songs)
+    /** A folder's list head: "2 folders · 14 songs · 48:10", the songs and length only if it has songs. */
+    fun folderCaption(folders: Int, songs: Int, seconds: Long): String = listOfNotNull(
+        r.getQuantityString(R.plurals.folders, folders, folders).takeIf { folders > 0 },
+        songs(songs).takeIf { songs > 0 },
+        Fmt.duration(seconds).takeIf { songs > 0 },
+    ).joinToString(" · ")
     /** A folder's title: its name, or "Folder" for one the server did not name. */
     fun folderTitle(name: String): String = name.ifEmpty { r.getString(R.string.folder_untitled) }
     /** A folder's row in a folder: a folder mark, then its name. */
@@ -610,13 +614,13 @@ class Say(private val r: Resources) {
 
     /** One of the album grid's orders. */
     fun albumSort(s: AlbumSort): String = when (s) {
-        AlbumSort.BY_NAME -> r.getString(R.string.sort_az)
+        AlbumSort.BY_NAME -> r.getString(R.string.sort_title)
         AlbumSort.BY_ARTIST -> r.getString(R.string.sort_artist)
-        AlbumSort.ARTIST_ROWS -> r.getString(R.string.sort_artist_rows)
+        AlbumSort.ARTIST_ROWS -> r.getString(R.string.sort_artist)
         AlbumSort.NEWEST -> r.getString(R.string.sort_added)
         AlbumSort.RECENT -> r.getString(R.string.sort_played)
         AlbumSort.FREQUENT -> r.getString(R.string.sort_most_played)
-        AlbumSort.STARRED -> favourites
+        AlbumSort.STARRED -> starredFavourites
         AlbumSort.BY_YEAR -> r.getString(R.string.sort_year)
         AlbumSort.RANDOM -> r.getString(R.string.sort_random)
         AlbumSort.BY_GENRE -> genres
@@ -895,6 +899,13 @@ class Say(private val r: Resources) {
         return AboutFacts(title, build, playback, library, automix, ui, r.getString(R.string.about_report, title, build, playback, library, automix, ui))
     }
 
+
+    // Home: the Continue card and the mix cards.
+    val continueLabel: String = r.getString(R.string.continue_label)
+    val resume: String = r.getString(R.string.resume)
+    fun offerPlace(artist: String, at: Int, of: Int): String = r.getString(R.string.offer_place, artist, at, of)
+    val mixLineMade: String = r.getString(R.string.mix_line_made)
+    val mixLineFavourites: String = r.getString(R.string.mix_line_favourites)
 
     companion object {
         /** Counts up to this are made once and kept. */

@@ -61,7 +61,7 @@ sealed interface SettingRow {
     /** A line of explanation among the rows. */
     data class Note(val text: String) : SettingRow
     /** A row that opens something ([action]), with a status at its end; [dimmed]: it is not reaching the sound now. */
-    data class Link(val key: String, val title: String, val status: String, val dimmed: Boolean, val action: String, val divider: Boolean, val enabled: Boolean = true) : SettingRow
+    data class Link(val key: String, val title: String, val status: String, val dimmed: Boolean, val action: String, val enabled: Boolean = true) : SettingRow
     /** A line of text and a button at its end; [error]: the line is a failure. */
     data class Action(val key: String, val title: String, val detail: String, val button: String, val enabled: Boolean, val error: Boolean, val action: String) : SettingRow
     data class Info(val key: String, val title: String, val detail: String) : SettingRow
@@ -70,9 +70,9 @@ sealed interface SettingRow {
     /** [level]: dragged through the core's in-place level edit instead of by [name]. */
     data class Slider(val name: String, val label: String, val value: Float, val min: Float, val max: Float, val centred: Boolean, val level: EqLevel?) : SettingRow
     /**
-     * The four seasons' themes as tiles, each in its own colors, and following the calendar as a switch
-     * under them: [chosen] is the core's value, [following] the value that follows, [now] the season the
-     * calendar is in (as [tiles] index), and [follow] what following says.
+     * The four seasons' themes as tiles, each with its paper, accent and on dots, and following the calendar
+     * as a switch under them: [chosen] is the core's value, [following] the value that follows, [now] the
+     * season the calendar is in (as [tiles] index), and [follow] the next change while following.
      */
     data class Seasons(
         val key: String, val name: String, val title: String, val tiles: List<SeasonTile>, val chosen: String,
@@ -97,7 +97,7 @@ sealed interface SettingRow {
 }
 
 /** One season's tile: its value, its name, and the colors of its theme in the mode the app is in (ARGB). */
-data class SeasonTile(val season: dev.nori.music.ffi.look.Season, val value: String, val label: String, val page: Int, val accent: Int)
+data class SeasonTile(val season: dev.nori.music.ffi.look.Season, val value: String, val label: String, val page: Int, val accent: Int, val on: Int)
 
 data class SettingsSection(val title: String, val rows: List<SettingRow>)
 
@@ -209,9 +209,7 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "bitPerfect" to (R.string.settings_bit_perfect to R.string.settings_hint_bit_perfect),
     "offload" to (R.string.settings_offload to R.string.settings_hint_offload),
     "season" to (R.string.settings_season to R.string.settings_hint_season),
-    "theme" to (R.string.settings_mode to R.string.settings_hint_theme),
-    "amoled" to (R.string.settings_amoled to R.string.settings_hint_amoled),
-    "coverColors" to (R.string.settings_cover_colours to R.string.settings_hint_cover_colours),
+    "theme" to (R.string.settings_mode to 0),
     "movingCovers" to (R.string.settings_moving_covers to R.string.settings_hint_moving_covers),
     "hideStatusBar" to (R.string.settings_hide_status_bar to R.string.settings_hint_hide_status_bar),
     "keepAwake" to (R.string.settings_keep_awake to R.string.settings_hint_keep_awake),
@@ -257,8 +255,7 @@ private val NAMED: Map<String, IntArray> = mapOf(
     "loudnessLevel" to intArrayOf(R.string.settings_level_quiet, R.string.settings_level_normal, R.string.settings_level_loud),
     "maxRate" to intArrayOf(R.string.settings_max_rate_auto, R.string.settings_max_rate_48, R.string.settings_max_rate_96, R.string.settings_max_rate_192),
     "season" to intArrayOf(R.string.settings_season_follow, R.string.settings_season_spring, R.string.settings_season_summer, R.string.settings_season_autumn, R.string.settings_season_winter),
-    "theme" to intArrayOf(R.string.settings_theme_system, R.string.settings_theme_light, R.string.settings_theme_dark),
-    "coverColors" to intArrayOf(R.string.settings_cover_colours_pages, R.string.settings_cover_colours_player),
+    "theme" to intArrayOf(R.string.settings_theme_system, R.string.settings_theme_light, R.string.settings_theme_dark, R.string.settings_theme_midnight),
     "motion" to intArrayOf(R.string.settings_motion_full, R.string.settings_motion_reduced, R.string.settings_motion_eink),
     "hideStatusBar" to HIDE_BAR,
     "keepAwake" to intArrayOf(R.string.settings_hide_bar_sideways, R.string.settings_hide_bar_upright, R.string.settings_when_charging),
@@ -589,15 +586,14 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
             val season = dev.nori.music.ffi.settings.seasonOf(dev.nori.music.ffi.settings.ThemeSeason.valueOf(o.value)) ?: return@mapNotNull null
             // Its dark palette rather than black: on black every tile would be the same.
             val c = dev.nori.music.ffi.look.palette(season, 1u, 1u, false, dark, false)
-            SeasonTile(season, o.value, o.label, c.page.toInt(), c.accent.toInt())
+            SeasonTile(season, o.value, o.label, c.page.toInt(), c.accent.toInt(), c.on.toInt())
         }
         val now = dev.nori.music.ffi.look.seasonNow(today.monthValue.toUInt(), today.dayOfMonth.toUInt(), southern)
         val following = value == options.first().value
-        val follow = if (!following) str(R.string.settings_season_fixed) else {
+        val follow = if (!following) "" else {
             val next = java.time.MonthDay.of(now.nextMonth.toInt(), now.nextDay.toInt())
             val date = java.time.format.DateTimeFormatter.ofPattern(android.text.format.DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), "dMMMM"))
-            val label = { s: dev.nori.music.ffi.look.Season -> tiles.first { it.season == s }.label }
-            str(R.string.settings_season_now, label(now.season), label(now.next), next.atYear(today.year).format(date))
+            str(R.string.settings_season_next, tiles.first { it.season == now.next }.label, next.atYear(today.year).format(date))
         }
         return SettingRow.Seasons(key, "season", title, tiles, value, options.first().value, tiles.indexOfFirst { it.season == now.season }, options.first().label, follow)
     }
@@ -633,15 +629,15 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
                 EqStatus.ON -> R.string.settings_on
                 EqStatus.OFF -> R.string.settings_off
             })
-            linkRow(R.string.settings_equalizer, status, s.untouched, "equalizer", divider = true)
+            linkRow(R.string.settings_equalizer, status, s.untouched, "equalizer")
         }
-        SettingsLink.SYSTEM_EFFECTS -> linkRow(R.string.settings_system_effects, "", false, "system-effects", divider = false)
-        SettingsLink.HOME_ROWS -> linkRow(R.string.settings_home_rows, "", false, "home-rows", divider = true)
-        SettingsLink.LIBRARY_SECTIONS -> linkRow(R.string.settings_library_sections, "", false, "library-sections", divider = false)
+        SettingsLink.SYSTEM_EFFECTS -> linkRow(R.string.settings_system_effects, "", false, "system-effects")
+        SettingsLink.HOME_ROWS -> linkRow(R.string.settings_home_rows, "", false, "home-rows")
+        SettingsLink.LIBRARY_SECTIONS -> linkRow(R.string.settings_library_sections, "", false, "library-sections")
         SettingsLink.LYRICS_SOURCES -> {
             val n = s.lyricsSources.count { it.on }
             val status = if (n == 0) str(R.string.settings_lyrics_sources_none) else res.getQuantityString(R.plurals.settings_lyrics_sources_on, n, n)
-            linkRow(R.string.settings_lyrics_sources, status, n == 0, "page:lyrics-sources", divider = false)
+            linkRow(R.string.settings_lyrics_sources, status, n == 0, "page:lyrics-sources")
         }
         SettingsLink.DOWNLOADS -> actionRow(R.string.settings_downloads, str(R.string.settings_downloads_detail), str(R.string.settings_show), true, "downloads")
     }
@@ -693,9 +689,9 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         return SettingRow.Action(settingKey(t), t, detail, button, enabled, false, act)
     }
 
-    fun linkRow(title: Int, status: String, dimmed: Boolean, act: String, divider: Boolean): SettingRow.Link {
+    fun linkRow(title: Int, status: String, dimmed: Boolean, act: String): SettingRow.Link {
         val t = str(title)
-        return SettingRow.Link(settingKey(t), t, status, dimmed, act, divider)
+        return SettingRow.Link(settingKey(t), t, status, dimmed, act)
     }
 
     /** The bit-perfect switch's second line: what the DAC is doing, why it cannot, or what the switch is for. */

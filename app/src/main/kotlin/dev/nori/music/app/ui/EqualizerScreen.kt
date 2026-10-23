@@ -1,6 +1,7 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,17 +16,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -77,8 +72,8 @@ fun EqualizerScreen(vm: SettingsViewModel) {
 
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = LocalChromeInset.current)) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
-            Text(say.equalizer, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
+            Text(say.equalizer, Modifier.weight(1f), style = titled(MaterialTheme.typography.headlineSmall))
             NoriSwitch(p.eqEnabled, { on -> vm.update { it.copy(eqEnabled = on) } })
         }
         val graphic = p.eqMode == EqMode.GRAPHIC
@@ -108,7 +103,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
             Row(Modifier.padding(horizontal = Space.gutter), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 // Once per band shape, not on every frame of a gain drag.
                 val label = remember(b.freq, b.channel, b.kind) { bandLabel(b) }
-                Text(label, Modifier.width(56.dp).clickable { editing = i }, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text(label, Modifier.width(56.dp).clickable { editing = i }, style = MaterialTheme.typography.labelLarge)
                 if (b.kind.usesGain) {
                     NoriSlider(b.gainDb, ranges.gain.min..ranges.gain.max, { v -> vm.setBand(i, b.copy(gainDb = v)) }, Modifier.weight(1f), enabled = p.eqEnabled, centred = true)
                     Text(
@@ -128,7 +123,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
             item { Chip(say.headphonePresets, false, onClick = nav::autoEq) }
             item { Chip(say.reset, false, onClick = vm::resetBands) }
         }
-        SectionTitle(say.presets)
+        GroupLabel(say.presets)
         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(vm.presets) { preset -> Chip(say.preset(preset.kind), false) { vm.applyPreset(preset) } }
         }
@@ -142,14 +137,16 @@ fun EqualizerScreen(vm: SettingsViewModel) {
         }
         p.eqPreampDb?.let { v -> NoriSlider(v, ranges.preamp.min..ranges.preamp.max, { x -> vm.setLevel(EqLevel.PREAMP, x) }, Modifier.padding(horizontal = Space.gutter), enabled = p.eqEnabled) }
 
-        SectionTitle(say.output)
+        GroupLabel(say.output)
         Row(Modifier.padding(horizontal = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
             Text(say.balance, Modifier.width(80.dp))
             NoriSlider(p.balance, ranges.balance.min..ranges.balance.max, { v -> vm.setLevel(EqLevel.BALANCE, v) }, Modifier.weight(1f), centred = true)
             Text(remember(p.balance) { say.balance(p.balance) }, Modifier.width(72.dp), style = MaterialTheme.typography.labelMedium)
         }
-        Toggle(say.mono, say.monoDetail, p.mono) { on -> vm.update { it.copy(mono = on) } }
-        Toggle(say.limiter, say.limiterDetail, p.limiter) { on -> vm.update { it.copy(limiter = on) } }
+        GroupCard {
+            Toggle(say.mono, say.monoDetail, p.mono) { on -> vm.update { it.copy(mono = on) } }
+            Toggle(say.limiter, say.limiterDetail, p.limiter, divider = false) { on -> vm.update { it.copy(limiter = on) } }
+        }
         if (p.limiter) {
             Row(Modifier.padding(horizontal = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
                 Text(remember(p.limiterThresholdDb) { say.ceiling(p.limiterThresholdDb) }, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
@@ -160,7 +157,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
 
         DevicesSection(vm)
 
-        SectionTitle(say.profiles)
+        GroupLabel(say.profiles)
         val profiles by vm.profiles.collectAsStateWithLifecycle()
         var naming by remember { mutableStateOf(false) }
         var newName by remember { mutableStateOf("") }
@@ -173,15 +170,16 @@ fun EqualizerScreen(vm: SettingsViewModel) {
             )
         }
         val rows by vm.deviceRows.collectAsStateWithLifecycle()
-        AnimatedRows(profiles, { it.name }) { profile ->
-            val used = remember(rows, profile) { say.profileUse(rows.filter { it.output in profile.outputs }.map { it.name }) }
-            NavRow(
-                profile.name, { vm.applyProfile(profile) },
-                subtitle = used,
-                action = { IconButton({ vm.deleteProfile(profile.name) }) { Icon(Icons.Outlined.Delete, remember(profile.name) { say.deleteNamed(profile.name) }, tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
-            )
+        GroupCard {
+            AnimatedRows(profiles, { it.name }) { profile ->
+                val used = remember(rows, profile) { say.profileUse(rows.filter { it.output in profile.outputs }.map { it.name }) }
+                GroupRow(
+                    profile.name, { vm.applyProfile(profile) }, subtitle = used,
+                    trailing = { IconButton({ vm.deleteProfile(profile.name) }) { Icon(Iconoir.Trash, remember(profile.name) { say.deleteNamed(profile.name) }, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                )
+            }
+            GroupRow(say.saveAsProfile, { newName = ""; naming = true }, icon = Iconoir.Plus, divider = false)
         }
-        ActionRow(say.saveAsProfile, Icons.Filled.Add, { newName = ""; naming = true }, divider = false)
     }
 }
 
@@ -236,7 +234,7 @@ private fun ResponseCurve(sliders: List<Float>, target: List<Float>, enabled: Bo
     val aim = remember(target, response) {
         if (target.isEmpty()) emptyList() else { val shift = response.average().toFloat() - target.average().toFloat(); target.map { it + shift } }
     }
-    val line = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    val line = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
     val faint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
     val grid = MaterialTheme.colorScheme.outlineVariant
     androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 8.dp).height(96.dp)) {
@@ -269,7 +267,7 @@ private fun LimiterReduction() {
     Text(
         remember(kotlin.math.round(reduction * 10f)) { say.reduction(reduction) },
         style = MaterialTheme.typography.labelMedium,
-        color = if (reduction > 0.05f) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        color = if (reduction > 0.05f) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
@@ -301,14 +299,10 @@ private fun BandDialog(band: SoundBand, onChange: (SoundBand) -> Unit, onRemove:
         text = {
             Column {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    items(EqKind.entries) { k ->
-                        TextButton({ onChange(band.copy(kind = k)) }) { Text(say.bandKind(k), color = if (band.kind == k) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
+                    items(EqKind.entries) { k -> Chip(say.bandKind(k), band.kind == k) { onChange(band.copy(kind = k)) } }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    BandChannel.entries.forEach { c ->
-                        TextButton({ onChange(band.copy(channel = c)) }) { Text(say.bandChannel(c), color = if (band.channel == c) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
+                Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    BandChannel.entries.forEach { c -> Chip(say.bandChannel(c), band.channel == c) { onChange(band.copy(channel = c)) } }
                 }
                 Text(say.frequency, style = MaterialTheme.typography.labelMedium)
                 // Logarithmic: the slider position is the exponent, 20 Hz to 20 kHz.
@@ -318,6 +312,6 @@ private fun BandDialog(band: SoundBand, onChange: (SoundBand) -> Unit, onRemove:
             }
         },
         confirmButton = { TextAction(say.done, onDone) },
-        dismissButton = { TextButton(onRemove) { Icon(Icons.Filled.Close, null); Text(say.removeBand) } },
+        dismissButton = { TextAction(say.removeBand, onRemove, destructive = true) },
     )
 }

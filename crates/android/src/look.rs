@@ -8,6 +8,7 @@ use nori_look::cover::derive;
 #[cfg(target_os = "android")]
 use nori_look::cover::WASH_OUT;
 use nori_look::dress;
+use nori_look::theme::{Dye, Palette};
 use nori_look::lyrics::LyricClock;
 use nori_look::motion::SeekPace;
 
@@ -28,6 +29,7 @@ pub(crate) static COVER: Class = Class {
         native!(c"heroButtons", c"(ZZZZZZ)I", hero_buttons),
         native!(c"plain", c"([I[I)V", plain),
         native!(c"accented", c"([III[I)V", accented),
+        native!(c"dyed", c"([I[IZ[ILandroid/graphics/Bitmap;)I", dyed),
     ],
 };
 
@@ -221,6 +223,40 @@ extern "system" fn accented(env: JNIEnv, _: JClass, table: JIntArray, light: jin
         return;
     }
     let _ = env.set_int_array_region(&out, 0, &dress::accented(&t.map(|v| v as u32), light as u32, dark as u32).map(|v| v as i32));
+}
+
+/// `dress::dyed`: `table`'s cover page on the season's paper dyed with its edge, into `out`. `palettes`
+/// holds the light then the dark `theme::Palette` the app wears, each page, surface, ink, accent, on.
+/// `wash`, when not null, is a mutable ARGB_8888 copy of the cover's wash, dyed in place. Returns 0
+/// nothing written, 1 the look, 2 the look and the wash.
+extern "system" fn dyed(env: JNIEnv, _: JClass, table: JIntArray, palettes: JIntArray, dark: jboolean, out: JIntArray, wash: JObject) -> jint {
+    let (mut t, mut p) = ([0i32; dress::LEN], [0i32; 10]);
+    if env.get_int_array_region(&table, 0, &mut t).is_err() || env.get_int_array_region(&palettes, 0, &mut p).is_err() {
+        return 0;
+    }
+    let (t, p) = (t.map(|v| v as u32), p.map(|v| v as u32));
+    let palette = |c: &[u32]| Palette { page: c[0], surface: c[1], ink: c[2], accent: c[3], on: c[4] };
+    let dye = Dye::new(t[dress::EDGE], palette(&p[..5]), palette(&p[5..]), dark != 0);
+    if env.set_int_array_region(&out, 0, &dress::dyed(&t, &dye).map(|v| v as i32)).is_err() {
+        return 0;
+    }
+    #[cfg(target_os = "android")]
+    {
+        let Some(mut w) = bitmap::Locked::new(&env, &wash) else { return 1 };
+        for y in 0..w.height {
+            for px in w.row_mut(y).chunks_exact_mut(4) {
+                // The wash is opaque, so its premultiplied channels are its colour.
+                let argb = u32::from(px[3]) << 24 | u32::from(px[0]) << 16 | u32::from(px[1]) << 8 | u32::from(px[2]);
+                premultiplied(dye.wash(argb), px);
+            }
+        }
+        2
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = wash;
+        1
+    }
 }
 
 /// [`nori_core::stage::seek_times`] per scrub frame, packed `at_s << 32 | left_s`.

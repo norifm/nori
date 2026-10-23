@@ -937,7 +937,7 @@ impl App {
         self.look = Theme::season(&self.prefs, day, dark, self.paint, self.colors);
         let accents = nori_look::theme::accents(nori_core::settings::season_of(self.prefs.season), day.month, day.day, day.southern);
         self.theme = match &self.colours {
-            Some(c) if self.prefs.cover_colors.contains(&nori_core::settings::CoverPlace::Player) && self.images => Theme::from_cover(c, accents, &self.look),
+            Some(c) if self.prefs.theme.covers_tint_pages() && self.images => Theme::from_cover(c, accents, &self.look),
             _ => self.look,
         };
     }

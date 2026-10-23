@@ -10,11 +10,6 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.LibraryMusic
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Surface
@@ -138,6 +133,8 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
         if (hint != null) artists[id] = hint
         go("artist/${Uri.encode(id)}")
     }
+    /** One shelf of an artist's page in full: [group] is its place among the page's shelves. */
+    fun artistReleases(id: String, group: Int) = go("artist/${Uri.encode(id)}/releases/$group")
     fun playlist(id: String, hint: dev.nori.music.ffi.model.Playlist? = null) {
         if (hint != null) playlists[id] = hint
         go("playlist/${Uri.encode(id)}")
@@ -147,6 +144,8 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
     fun decade(year: Int) = go("decade/$year")
     fun smart(id: String) = go("smart/${Uri.encode(id)}")
     fun mix(id: String) = go("mix/${Uri.encode(id)}")
+    /** The bigger view of a home row: a [HomeRow] name, `feed-<place>-<kind>` or the mixes. */
+    fun homeRow(key: String) = go("home/${Uri.encode(key)}")
     fun smartEdit(id: String) = go("smartEdit/${Uri.encode(id.ifEmpty { "new" })}")
     fun stats() = go("stats")
     /** The download queue. Asked for again while it is showing (the notification tapped), it only puts the player away. */
@@ -228,10 +227,10 @@ val LocalAsked = staticCompositionLocalOf<androidx.compose.runtime.State<Set<Str
 val LocalLyricsKeepOn = staticCompositionLocalOf<androidx.compose.runtime.MutableState<Boolean>> { androidx.compose.runtime.mutableStateOf(false) }
 
 private val tabs = listOf(
-    Tab("home", say.home, Icons.Filled.Home),
-    Tab("library", say.library, Icons.Filled.LibraryMusic),
-    Tab("settings", say.settings, Icons.Filled.Settings),
-    Tab("search", say.search, Icons.Filled.Search),
+    Tab("home", say.home, Iconoir.HomeSimple),
+    Tab("library", say.library, Iconoir.AlbumList),
+    Tab("settings", say.settings, Iconoir.Settings),
+    Tab("search", say.search, Iconoir.Search),
 )
 
 /**
@@ -543,6 +542,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                     predictivePopExitTransition = { edge -> PageMotion.held(this, plain, edge) },
                 ) {
                     page("home") { HomeScreen(actions) }
+                    page("home/{row}") { HomeRowScreen(it.arguments!!.getString("row")!!, actions) }
                     page("search") { SearchScreen(actions) }
                     page("library") { LibraryScreen(actions) }
                     page("settings") { SettingsScreen(settings) }
@@ -552,13 +552,18 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                     page("equalizer") { EqualizerScreen(settings) }
                     page("home-rows") { HomeRows(settings) }
                     page("library-sections") { LibrarySections(settings) }
-                    page("library/{section}") { LibrarySectionScreen(dev.nori.music.ffi.settings.LibrarySection.valueOf(it.arguments!!.getString("section")!!), actions) }
+                    page("library/{section}") {
+                        // A section with a chip is shown on the Library page; the places and smart playlists have a page.
+                        val section = dev.nori.music.ffi.settings.LibrarySection.valueOf(it.arguments!!.getString("section")!!)
+                        if (section.onLibraryPage()) LibraryScreen(actions, initial = section) else LibrarySectionScreen(section, actions)
+                    }
                     page("autoeq") { AutoEqScreen(settings) }
                     page("album/{id}", inset = false) { AlbumScreen(it.arguments!!.getString("id")!!, actions) }
                     page("downloaded/{id}", inset = false) {
                         AlbumScreen(it.arguments!!.getString("id")!!, actions, viewModel<dev.nori.music.app.vm.DownloadedAlbumViewModel>())
                     }
                     page("artist/{id}", inset = false) { ArtistScreen(it.arguments!!.getString("id")!!, actions) }
+                    page("artist/{id}/releases/{group}") { ArtistReleasesScreen(it.arguments!!.getString("id")!!, it.arguments!!.getString("group")!!.toInt()) }
                     page("playlist/{id}", inset = false) { PlaylistScreen(it.arguments!!.getString("id")!!, actions) }
                     page("mix/{id}", inset = false) { MixScreen(it.arguments!!.getString("id")!!, actions) }
                     page("genre/{id}", inset = false) { GenreScreen(it.arguments!!.getString("id")!!, actions) }
@@ -978,7 +983,7 @@ private fun PlayerLayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
             alpha = if (parked) 0f else (sheet.progress.value / 0.1f).coerceIn(0f, 1f)
             // Its leading corners: the top ones, or on its side the two facing the page.
             val r = (radius * (1f - sheet.progress.value).coerceIn(0f, 1f) * 4f).coerceAtMost(radius)
-            shape = if (sheet.sinking) androidx.compose.foundation.shape.RoundedCornerShape(topStart = r, topEnd = r) else when (sheet.edge) {
+            shape = when (sheet.edge) {
                 SheetEdge.BOTTOM -> androidx.compose.foundation.shape.RoundedCornerShape(topStart = r, topEnd = r)
                 SheetEdge.RIGHT -> androidx.compose.foundation.shape.RoundedCornerShape(topStart = r, bottomStart = r)
                 SheetEdge.LEFT -> androidx.compose.foundation.shape.RoundedCornerShape(topEnd = r, bottomEnd = r)

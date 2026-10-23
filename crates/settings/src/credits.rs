@@ -71,10 +71,9 @@ const CORE_CREDITS: [(&str, &str, &str, &str, Option<&str>); 19] = [
 ];
 
 /// The Android app's libraries; add a line (and to NOTICE) with each new dependency.
-const ANDROID_CREDITS: [(&str, &str, &str, &str, Option<&str>); 6] = [
+const ANDROID_CREDITS: [(&str, &str, &str, &str, Option<&str>); 5] = [
     ("AndroidX Media3", "Playback, the media session and the notification", "Copyright The Android Open Source Project", "Apache-2.0", Some("Apache-2.0")),
     ("Jetpack Compose and Material 3", "The user interface toolkit", "Copyright The Android Open Source Project", "Apache-2.0", Some("Apache-2.0")),
-    ("Material Icons", "The icons", "Copyright Google LLC", "Apache-2.0", Some("Apache-2.0")),
     ("AndroidX Navigation, Lifecycle, Activity, Core", "The app's plumbing", "Copyright The Android Open Source Project", "Apache-2.0", Some("Apache-2.0")),
     ("OkHttp", "Every network request", "Copyright Square, Inc.", "Apache-2.0", Some("Apache-2.0")),
     (
@@ -87,10 +86,11 @@ const ANDROID_CREDITS: [(&str, &str, &str, &str, Option<&str>); 6] = [
 ];
 
 /// The typeface and the third-party data services.
-const DATA_CREDITS: [(&str, &str, &str, &str, Option<&str>); 16] = [
+const DATA_CREDITS: [(&str, &str, &str, &str, Option<&str>); 17] = [
     ("Inter", "The typeface", "Copyright (c) 2016 The Inter Project Authors (Rasmus Andersson)", "OFL-1.1", Some("OFL-1.1")),
     ("Literata", "The typeface of page titles", "Copyright 2017 The Literata Project Authors (https://github.com/googlefonts/literata)", "OFL-1.1", Some("OFL-1.1")),
     ("Shippori Mincho", "The seal and the seasons' kanji, drawn from its outlines", "Copyright 2020 The Shippori Mincho Project Authors (https://github.com/fontdasu/ShipporiMincho)", "OFL-1.1", Some("OFL-1.1")),
+    ("Iconoir", "The icons", "Copyright (c) 2021 Luca Burgio", "MIT", Some("MIT")),
     ("AutoEQ", "Headphone correction curves: the list kept on Wi-Fi, a curve fetched when it is chosen", "Copyright (c) 2018 Jaakko Pasanen", "MIT", Some("MIT")),
     ("LRCLIB", "Timed lyrics for songs your server has none for, asked only when switched on", "lrclib.net; lyrics belong to their authors and contributors", "Service", None),
     (

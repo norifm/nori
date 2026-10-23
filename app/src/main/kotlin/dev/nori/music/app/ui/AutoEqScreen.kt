@@ -8,8 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -35,13 +33,10 @@ fun AutoEqScreen(vm: SettingsViewModel) {
     LifecycleStartEffect(vm) { vm.soundPageShown(true); onStopOrDispose { vm.soundPageShown(false) } }
     val nav = LocalNav.current
     Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
-            Text(say.headphonePresets, style = MaterialTheme.typography.headlineSmall)
-        }
-        if (ui.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        BackTitle(say.headphonePresets)
+        if (ui.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.onSurface, trackColor = MaterialTheme.colorScheme.outlineVariant)
         ui.error?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
-        ui.applied?.let { Text(androidx.compose.runtime.remember(it) { say.autoeqApplied(it) }, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.primary) }
+        ui.applied?.let { Text(androidx.compose.runtime.remember(it) { say.autoeqApplied(it) }, Modifier.padding(16.dp)) }
 
         if (ui.count == 0) {
             Text(
@@ -58,10 +53,9 @@ fun AutoEqScreen(vm: SettingsViewModel) {
         }
         SearchField(ui.query, vm::searchAutoEq, ui.searchWords, Modifier.padding(horizontal = Space.gutter, vertical = 8.dp))
         LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-            items(ui.hits, key = { it.entry.path }) { e ->
-                Column(Modifier.fillMaxWidth().clickable { vm.applyAutoEq(e.entry) }.padding(horizontal = Space.gutter, vertical = 11.dp)) {
-                    Text(e.entry.name)
-                    Text(e.caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (ui.hits.isNotEmpty()) item {
+                GroupCard {
+                    ui.hits.forEachIndexed { i, e -> GroupRow(e.entry.name, { vm.applyAutoEq(e.entry) }, subtitle = e.caption, divider = i < ui.hits.lastIndex) }
                 }
             }
             if (!ui.tooShort && ui.hits.isEmpty()) item { Text(say.nothingMatches, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }

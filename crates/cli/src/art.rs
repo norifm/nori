@@ -169,12 +169,7 @@ impl Theme {
     /// The season's palette for the appearance settings on `day`.
     pub fn season(p: &nori_core::settings::StoredPrefs, day: Day, terminal_dark: bool, painted: bool, colors: Colors) -> Theme {
         use nori_core::settings::ThemeMode;
-        let dark = match p.theme {
-            ThemeMode::Dark => true,
-            ThemeMode::Light => false,
-            ThemeMode::System => terminal_dark,
-        };
-        let pal = nori_look::theme::palette(nori_core::settings::season_of(p.season), day.month, day.day, day.southern, dark, p.amoled);
+        let pal = nori_look::theme::palette(nori_core::settings::season_of(p.season), day.month, day.day, day.southern, p.theme.is_dark(terminal_dark), p.theme == ThemeMode::Midnight);
         Theme::of(pal, painted, colors)
     }
 
@@ -417,18 +412,18 @@ mod tests {
     fn appearance_picks_the_palette() {
         use nori_core::settings::{StoredPrefs, ThemeMode, ThemeSeason};
         let day = Day { month: 1, day: 15, southern: false };
-        let prefs = |season, theme, amoled| StoredPrefs { season, theme, amoled, ..StoredPrefs::default() };
+        let prefs = |season, theme| StoredPrefs { season, theme, ..StoredPrefs::default() };
         let pick = |p: &StoredPrefs, term_dark| Theme::season(p, day, term_dark, true, Colors::True);
-        let light = pick(&prefs(ThemeSeason::Spring, ThemeMode::Light, false), true);
-        let dark = pick(&prefs(ThemeSeason::Spring, ThemeMode::Dark, false), false);
-        let black = pick(&prefs(ThemeSeason::Spring, ThemeMode::Dark, true), false);
+        let light = pick(&prefs(ThemeSeason::Spring, ThemeMode::Light), true);
+        let dark = pick(&prefs(ThemeSeason::Spring, ThemeMode::Dark), false);
+        let black = pick(&prefs(ThemeSeason::Spring, ThemeMode::Midnight), false);
         assert_eq!(light.page, argb(nori_look::theme::Season::Spring.palette(false).page));
         assert_eq!(dark.page, argb(nori_look::theme::Season::Spring.palette(true).page));
         assert_eq!(black.page, Color::Rgb(0, 0, 0));
-        assert_eq!(pick(&prefs(ThemeSeason::Spring, ThemeMode::System, false), false).page, light.page, "system follows the terminal");
-        assert_eq!(pick(&prefs(ThemeSeason::Spring, ThemeMode::System, false), true).page, dark.page);
+        assert_eq!(pick(&prefs(ThemeSeason::Spring, ThemeMode::System), false).page, light.page, "system follows the terminal");
+        assert_eq!(pick(&prefs(ThemeSeason::Spring, ThemeMode::System), true).page, dark.page);
         // Following the calendar in mid January is winter, in the south summer.
-        let follow = prefs(ThemeSeason::Follow, ThemeMode::Dark, false);
+        let follow = prefs(ThemeSeason::Follow, ThemeMode::Dark);
         assert_eq!(pick(&follow, true).page, argb(nori_look::theme::Season::Winter.palette(true).page));
         let south = Theme::season(&follow, Day { southern: true, ..day }, true, true, Colors::True);
         assert_eq!(south.page, argb(nori_look::theme::Season::Summer.palette(true).page));

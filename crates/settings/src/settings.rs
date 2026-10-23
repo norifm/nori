@@ -138,25 +138,6 @@ impl Level {
     }
 }
 
-/// A place that wears covers' colors. With none, nothing takes them; with one, the other is black in
-/// the dark theme, with only the cover's accents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum CoverPlace {
-    /// Album, artist and playlist pages.
-    Pages,
-    Player,
-}
-
-/// Whether the player (or, not `player`, a page) is black ([`nori_look::sleeve::page_black`]) where
-/// `colors` wear covers' colors: with AMOLED black where it does not wear them, and in the dark theme
-/// where only the other does.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn cover_black(colors: Vec<CoverPlace>, player: bool, dark: bool, amoled: bool) -> bool {
-    let wears = colors.contains(if player { &CoverPlace::Player } else { &CoverPlace::Pages });
-    nori_look::sleeve::page_black(dark, amoled || !colors.is_empty() && !wears, wears)
-}
-
 /// How much the interface moves. nori's choice holds whatever Android's animation setting says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -169,12 +150,31 @@ pub enum Motion {
     Eink,
 }
 
+/// How the interface is lit. Midnight is a dark theme on true black and turns cover colors off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum ThemeMode {
+    /// Follows the system's scheme.
     System,
     Light,
     Dark,
+    Midnight,
+}
+
+impl ThemeMode {
+    /// Whether the interface is dark, `system_dark` being the system's scheme.
+    pub fn is_dark(self, system_dark: bool) -> bool {
+        match self {
+            ThemeMode::System => system_dark,
+            ThemeMode::Light => false,
+            ThemeMode::Dark | ThemeMode::Midnight => true,
+        }
+    }
+
+    /// Whether album, artist, playlist and mix pages and the player take their colors from the cover.
+    pub fn covers_tint_pages(self) -> bool {
+        self != ThemeMode::Midnight
+    }
 }
 
 /// Which season's theme the app wears ([`nori_look::theme::palette`]); `Follow` turns with the calendar.
@@ -219,12 +219,8 @@ pub fn season_follow_value(follow: bool, month: u32, day: u32, southern: bool) -
 /// The palette these settings wear on a date, and whether it is a dark one: `system_dark` is the
 /// system's scheme, followed while the theme is System.
 pub fn theme_palette(p: &StoredPrefs, system_dark: bool, month: u32, day: u32, southern: bool) -> (nori_look::theme::Palette, bool) {
-    let dark = match p.theme {
-        ThemeMode::System => system_dark,
-        ThemeMode::Light => false,
-        ThemeMode::Dark => true,
-    };
-    (nori_look::theme::palette(season_of(p.season), month, day, southern, dark, p.amoled), dark)
+    let dark = p.theme.is_dark(system_dark);
+    (nori_look::theme::palette(season_of(p.season), month, day, southern, dark, p.theme == ThemeMode::Midnight), dark)
 }
 
 /// A condition that hides a system bar (status or gesture); the bar is hidden while any chosen one holds.
@@ -576,11 +572,6 @@ pub struct StoredPrefs {
     pub dim_level: DimLevel,
     #[setting("controlsSide", PICK, default = ControlsSide::Driver, show = K::Choice(ControlsSide::NAMES))]
     pub controls_side: ControlsSide,
-    #[setting("amoled", FLAG, default = false, show = K::Switch)]
-    pub amoled: bool,
-    /// Where covers' colors are worn ([`CoverPlace`]).
-    #[setting("coverColorsOn", Flags, default = vec![CoverPlace::Pages, CoverPlace::Player], name = "coverColors", show = K::Flags(CoverPlace::NAMES))]
-    pub cover_colors: Vec<CoverPlace>,
     /// Apple Music motion artwork in the player; offered with the next as one choice, `movingCovers`.
     #[setting("motionArtwork", FLAG, default = false)]
     pub motion_artwork: bool,
@@ -1098,15 +1089,6 @@ fn migrate(raw: &HashMap<String, PrefValue>, p: &mut StoredPrefs) {
         p.crossfade_sec = part(side("crossfadeInSec")).max(part(side("crossfadeOutSec")));
     }
     let on = |k: &str, d: bool| raw.flag(k).unwrap_or(d);
-    // The page switches only counted with AMOLED black; without it every page kept its colors.
-    let (player, pages) = (on("playerColours", true), on("albumColours", false) || on("artistColours", false));
-    p.cover_colors = match (on("coverColors", true), p.amoled, player, pages) {
-        (false, ..) => Vec::new(),
-        (true, false, ..) | (true, true, true, true) => vec![CoverPlace::Pages, CoverPlace::Player],
-        (true, true, true, false) => vec![CoverPlace::Player],
-        (true, true, false, true) => vec![CoverPlace::Pages],
-        (true, true, false, false) => Vec::new(),
-    };
     p.motion = if on("einkScreen", false) {
         Motion::Eink
     } else if on("reduceMotion", false) {
@@ -1233,6 +1215,7 @@ pub fn load(raw: &HashMap<String, PrefValue>) -> StoredPrefs {
         migrate(raw, &mut p);
     }
     migrate_picks(raw, &mut p);
+    migrate_pure_black(raw, &mut p);
     // Old builds saved the automatic screen defaults without recording a listener's choice.
     if !raw.contains_key("dimIdle") {
         if let Some(PrefValue::Number { v }) = raw.get("dimWhenIdle") {
@@ -1251,7 +1234,7 @@ pub(crate) fn old_screen_defaults(raw: &HashMap<String, PrefValue>) -> bool {
 }
 
 /// Keys of the settings that were one pick of combined conditions before each became a set of them.
-pub(crate) const PICK_KEYS: &[&str] = &["keepAwake", "hideStatusBar", "hideGestureBar", "coverColorsWhere"];
+pub(crate) const PICK_KEYS: &[&str] = &["keepAwake", "hideStatusBar", "hideGestureBar"];
 
 /// Whether stored settings hold any of [`PICK_KEYS`]: read once as sets ([`migrate_picks`]), then stored
 /// without them.
@@ -1288,13 +1271,21 @@ fn migrate_picks(raw: &HashMap<String, PrefValue>, p: &mut StoredPrefs) {
     if let Some(v) = old("hideStatusBar") {
         p.hide_status_bar = bar(v, p.hide_status_bar.clone());
     }
-    if let Some(v) = old("coverColorsWhere") {
-        p.cover_colors = match v {
-            1 => vec![CoverPlace::Pages],
-            2 => vec![CoverPlace::Player],
-            3 => Vec::new(),
-            _ => vec![CoverPlace::Pages, CoverPlace::Player],
-        };
+}
+
+/// Keys of the settings dropped when Midnight became a theme: pure black (`amoled`) and where covers' colors
+/// are worn (`coverColorsOn`, `coverColorsWhere`).
+pub(crate) const PURE_BLACK_KEYS: &[&str] = &["amoled", "coverColorsOn", "coverColorsWhere"];
+
+/// Whether stored settings hold any of [`PURE_BLACK_KEYS`]; they are stored without them.
+pub(crate) fn pure_black(raw: &HashMap<String, PrefValue>) -> bool {
+    PURE_BLACK_KEYS.iter().any(|k| raw.contains_key(*k))
+}
+
+/// Pure black with the dark theme is Midnight; with the system's, it stays the system's.
+fn migrate_pure_black(raw: &HashMap<String, PrefValue>, p: &mut StoredPrefs) {
+    if raw.flag("amoled") == Some(true) && p.theme == ThemeMode::Dark {
+        p.theme = ThemeMode::Midnight;
     }
 }
 
@@ -2143,7 +2134,6 @@ mod tests {
         assert_eq!(set("loudnessLevel", "loud").level, Level::Loud);
         assert_eq!(set("motion", "EINK").motion, Motion::Eink);
         // A set by its names, each once, in their order; unknown ones dropped, none for "".
-        assert_eq!(set("coverColors", "player,pages,PLAYER,glow").cover_colors, vec![CoverPlace::Pages, CoverPlace::Player]);
         assert_eq!(set("keepAwake", "").keep_awake, vec![]);
         assert_eq!(crate::settings_model::value_of(&set("hideStatusBar", "protected,sideways"), "hideStatusBar").as_deref(), Some("SIDEWAYS,PROTECTED"));
 
@@ -2521,8 +2511,10 @@ mod tests {
         let wear = |p: &StoredPrefs, system_dark| theme_palette(p, system_dark, 7, 10, false);
         assert_eq!(wear(&p, false), (palette(None, 7, 10, false, false, false), false), "Follow and System: the calendar's, the system's scheme");
         assert!(wear(&p, true).1);
-        let fixed = StoredPrefs { season: ThemeSeason::Winter, theme: ThemeMode::Dark, amoled: true, ..p.clone() };
-        assert_eq!(wear(&fixed, false), (palette(Some(Season::Winter), 7, 10, false, true, true), true), "a fixed season and theme ignore the system");
+        let fixed = StoredPrefs { season: ThemeSeason::Winter, theme: ThemeMode::Dark, ..p.clone() };
+        assert_eq!(wear(&fixed, false), (palette(Some(Season::Winter), 7, 10, false, true, false), true), "a fixed season and theme ignore the system");
+        let midnight = StoredPrefs { theme: ThemeMode::Midnight, ..fixed };
+        assert_eq!(wear(&midnight, false), (palette(Some(Season::Winter), 7, 10, false, true, true), true), "Midnight is dark on black");
         assert!(!wear(&StoredPrefs { theme: ThemeMode::Light, ..p }, true).1);
     }
 
@@ -2536,14 +2528,12 @@ mod tests {
     }
 
     #[test]
-    fn cover_colors_places() {
-        use CoverPlace::*;
-        // (player black, page black) in the dark theme, without and with AMOLED.
-        let black = |c: &[CoverPlace], amoled| (cover_black(c.to_vec(), true, true, amoled), cover_black(c.to_vec(), false, true, amoled));
-        let places: [&[CoverPlace]; 4] = [&[Pages, Player], &[Pages], &[Player], &[]];
-        assert_eq!(places.map(|c| black(c, false)), [(false, false), (true, false), (false, true), (false, false)]);
-        assert_eq!(places.map(|c| black(c, true)), [(false, false), (true, false), (false, true), (true, true)]);
-        assert!(!cover_black(vec![Pages], true, false, false), "black is a dark theme's");
+    fn midnight_is_dark_and_wears_no_cover_colors() {
+        use ThemeMode::*;
+        let modes = [System, Light, Dark, Midnight];
+        assert_eq!(modes.map(|m| m.is_dark(false)), [false, false, true, true]);
+        assert_eq!(modes.map(|m| m.is_dark(true)), [true, false, true, true]);
+        assert_eq!(modes.map(ThemeMode::covers_tint_pages), [true, true, true, false]);
     }
 
     #[test]

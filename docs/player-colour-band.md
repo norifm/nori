@@ -10,13 +10,16 @@ certainly to stop giving it colours of its own.
 ## Where it ended
 
 That is what was done. The band no longer has colours of its own: nothing is painted over the last
-rows any more. The records are drawn into one layer and the sleeve's last 19 % is *rubbed out of that
-layer* (`rubOutBottom` in `PlayerScreen`, a `DstOut` vertical ramp; `drawSleeveMelt` and `SoftCover`
-are gone), so what shows through is the page's own blur (`sleeveWash`), drawn at the sleeve's size
+rows any more. The records are drawn into one layer and the sleeve's last 38 % (`cover::FADE_SHARE`)
+is *rubbed out of that layer* (`rubOutBottom` in `PlayerScreen`, a `DstOut` vertical ramp;
+`drawSleeveMelt` and `SoftCover` are gone), so what shows through is the page's own blur (`sleeveWash`), drawn at the sleeve's size
 and already wearing whatever colours the page is cross-fading to. The band is the same rows of the
 screen whether a record is flat, lifted, sliding or flying in, so it neither travels nor turns with a
 record, needs no fade with the lift, and two records side by side share one band with no seam. Layers
 5 and 6 below no longer exist; the rest of this file is the history of how that was found out.
+
+A cover's page is the season's paper dyed with the cover (`theme::Dye`, through `dress::dyed`), and
+its wash is dyed the same way, so the blur the band shows is the dyed page's own.
 
 ## What was drawn there
 

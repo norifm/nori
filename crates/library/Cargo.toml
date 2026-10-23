@@ -12,7 +12,7 @@ name = "nori_library"
 [features]
 # The uniffi exports the Android app's Kotlin bindings are generated from. A Rust client links the
 # crate without them.
-ffi = ["dep:uniffi", "nori-model/ffi", "nori-db/ffi", "nori-net/ffi", "nori-settings/ffi"]
+ffi = ["dep:uniffi", "nori-model/ffi", "nori-db/ffi", "nori-net/ffi", "nori-settings/ffi", "nori-look/ffi"]
 
 [dependencies]
 # Time, read the same way natively and in a browser.

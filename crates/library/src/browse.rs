@@ -15,6 +15,10 @@ pub const SONG_PAGE: u32 = 200;
 pub const HISTORY_PAGE: u32 = 100;
 /// Albums on an album shelf of the home page, and how many playlists its playlist shelf shows.
 const SHELF: u32 = 20;
+/// Entries per page of a home row's full view; its whole-list rows take [`WHOLE`] at once.
+const FULL_VIEW_PAGE: u32 = 60;
+/// More playlists than any account holds, as `take` of a whole list (it crosses to Kotlin as an `Int`).
+const WHOLE: u32 = i32::MAX as u32;
 /// How many entries each top list of the listening stats holds.
 pub const STATS_TOP: u32 = 10;
 
@@ -53,6 +57,23 @@ fn shelf(row: HomeRow) -> HomeShelf {
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn home_shelves(rows: Vec<HomeRow>) -> Vec<HomeShelf> {
     rows.into_iter().map(shelf).collect()
+}
+
+/// What page `offset` entries into a home row's full view ("see all") reads, in the same shapes as the
+/// shelf: `size` and `limit` are the page, and a page shorter than that is the last. A favourites page past
+/// the first is read from the starred list at `offset` (the first, from the shelf's read, carries this
+/// session's marks). None once the row has nothing past `offset`: whole lists (playlists, pinned) and a
+/// random draw are one page.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn home_row_page(row: HomeRow, offset: u32) -> Option<HomeShelf> {
+    let first = offset == 0;
+    match shelf(row) {
+        HomeShelf::Albums { sort: AlbumSort::Random, .. } if !first => None,
+        HomeShelf::Albums { sort, follows_stars, .. } => Some(HomeShelf::Albums { sort, size: FULL_VIEW_PAGE, follows_stars }),
+        HomeShelf::Songs { sort, descending, .. } => Some(HomeShelf::Songs { sort, descending, limit: FULL_VIEW_PAGE }),
+        HomeShelf::Playlists { .. } => first.then_some(HomeShelf::Playlists { take: WHOLE }),
+        HomeShelf::Pinned => first.then_some(HomeShelf::Pinned),
+    }
 }
 
 /// The home rows a profile shows of the ones kept: without the `account`'s things (a jam guest's,
@@ -216,18 +237,18 @@ impl AlbumSort {
     }
 }
 
-/// The album grid's sort menu, in its order; the client names each.
+/// The album grid's orders offered, in their order; the client names each. Those that mean the same on the
+/// songs list (favorites, title, artist, year, added, most played) come in its order. Artist is
+/// [`AlbumSort::ArtistRows`]: a plain A–Z by artist is no longer offered.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn album_sorts() -> Vec<AlbumSort> {
     vec![
-        AlbumSort::ByName,
-        AlbumSort::ByArtist,
-        AlbumSort::ArtistRows,
-        AlbumSort::Newest,
-        AlbumSort::Recent,
-        AlbumSort::Frequent,
         AlbumSort::Starred,
+        AlbumSort::ByName,
+        AlbumSort::ArtistRows,
         AlbumSort::ByYear,
+        AlbumSort::Newest,
+        AlbumSort::Frequent,
         AlbumSort::Random,
     ]
 }
@@ -577,6 +598,31 @@ mod tests {
         // Nothing played: no chart and nothing to say about it, and no dividing by nothing.
         let none = StatsPage::new(StatsSource::Device, ListeningStats { plays_per_hour: vec![0; 24], plays_per_weekday: vec![0; 7], ..Default::default() });
         assert_eq!((none.busiest_hour, none.busiest_weekday, none.hours[3]), (None, None, 0.0));
+    }
+
+    #[test]
+    fn row_pages() {
+        let albums = |sort, follows_stars| Some(HomeShelf::Albums { sort, size: 60, follows_stars });
+        let songs = Some(HomeShelf::Songs { sort: "playCount".into(), descending: true, limit: 60 });
+        let whole = Some(HomeShelf::Playlists { take: i32::MAX as u32 });
+        // Row, offset, page.
+        let cases = [
+            (HomeRow::Recent, 0, albums(AlbumSort::Recent, false)),
+            (HomeRow::Recent, 120, albums(AlbumSort::Recent, false)),
+            (HomeRow::Starred, 0, albums(AlbumSort::Starred, true)),
+            (HomeRow::Starred, 60, albums(AlbumSort::Starred, true)),
+            (HomeRow::Random, 0, albums(AlbumSort::Random, false)),
+            (HomeRow::Random, 60, None),
+            (HomeRow::TopSongs, 0, songs.clone()),
+            (HomeRow::TopSongs, 60, songs),
+            (HomeRow::Playlists, 0, whole),
+            (HomeRow::Playlists, 60, None),
+            (HomeRow::Pinned, 0, Some(HomeShelf::Pinned)),
+            (HomeRow::Pinned, 1, None),
+        ];
+        for (row, offset, want) in cases {
+            assert_eq!(home_row_page(row, offset), want, "{row:?} at {offset}");
+        }
     }
 
     #[test]

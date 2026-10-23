@@ -384,12 +384,11 @@ impl Page<'_> {
         let p = self.p;
         let mut theme = vec![self.chips("season")];
         if self.phone() || self.web() || self.client == SettingsClient::Terminal {
-            theme.extend([self.chips("theme"), self.setting("amoled").under().enabled(p.theme != crate::settings::ThemeMode::Light)]);
+            theme.push(self.chips("theme"));
         }
         if self.web() {
             return vec![(SectionId::Theme, theme)];
         }
-        theme.push(self.setting("coverColors"));
         if self.phone() {
             theme.push(self.setting("movingCovers"));
         }
@@ -612,8 +611,6 @@ mod tests {
         assert!(live(&d, "loudnessLevel") && !live(&StoredPrefs { replay_gain: GainMode::Off, ..d.clone() }, "loudnessLevel"));
         assert!(!live(&StoredPrefs { auto_fill: false, ..d.clone() }, "autoFillKind"));
         assert!(!live(&d, "dimLevel") && live(&StoredPrefs { burn_in_protection: true, dim_when_idle: crate::settings::DimIdle::Minute, ..d.clone() }, "dimLevel"));
-        // Black is a dark theme's.
-        assert!(live(&d, "amoled") && !live(&StoredPrefs { theme: crate::settings::ThemeMode::Light, ..d.clone() }, "amoled"));
         assert!(!live(&StoredPrefs { lyrics_online: false, ..d.clone() }, "lyricsPreferWords"));
     }
 
@@ -646,8 +643,7 @@ mod tests {
         let terminal = names(&every_row(SettingsClient::Terminal, &d, &facts()), false);
         assert!(!terminal.iter().any(|n| n == "soundBypass" || n == "autoEqAuto"));
         // The terminal paints its page in the season's colors, light, dark or black.
-        assert!(["season", "theme", "amoled"].iter().all(|n| terminal.iter().any(|t| t == n)));
-        assert!(!names(&every_row(SettingsClient::Desktop, &d, &facts()), false).iter().any(|n| n == "amoled"));
+        assert!(["season", "theme"].iter().all(|n| terminal.iter().any(|t| t == n)));
         assert!(names(&every_row(SettingsClient::Desktop, &d, &facts()), false).iter().any(|n| n == "soundBypass"));
         // Not on a car's screen: no side for the controls.
         let parked = PageFacts { car: false, ..facts() };
@@ -660,10 +656,10 @@ mod tests {
         assert_eq!(pages(SettingsClient::Web, &ALL_PARTS), [SettingsPage::Playing, SettingsPage::Sound, SettingsPage::Look, SettingsPage::Lyrics, SettingsPage::Library]);
         let rows = every_row(SettingsClient::Web, &d, &facts());
         let has = names(&rows, false);
-        for kept in ["autoMix", "crossfadeSec", "speed", "pitch", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season", "theme", "amoled"] {
+        for kept in ["autoMix", "crossfadeSec", "speed", "pitch", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season", "theme"] {
             assert!(has.iter().any(|n| n == kept), "{kept} is on the web's pages");
         }
-        for left in ["bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize", "coverColors", "movingCovers"] {
+        for left in ["bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize", "movingCovers"] {
             assert!(!has.iter().any(|n| n == left), "{left} is not offered in a browser");
         }
         assert!(!rows.iter().any(|r| matches!(r.item, RowItem::Action { .. } | RowItem::Link { .. } | RowItem::LyricsSource { .. })), "nothing the web has no screen or work for");

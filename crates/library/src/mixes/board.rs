@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 
+use nori_look::theme::{Dye, Palette};
 use nori_model::Song;
 use rusqlite::Connection;
 
@@ -75,10 +76,24 @@ const OTHER_COLOUR: u32 = 0xFF5C_6BC0;
 /// A mix tile's colours: its own, a deeper one (45 % to black), and the deeper at 0, 72 and 94 % alpha.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn mix_tile_colours(id: String) -> Vec<u32> {
-    use nori_look::compose::{blend, with_alpha};
-    let seed = if id == FAVOURITES_MIX { FAVOURITES_COLOUR } else { spec_of(&id).map_or(OTHER_COLOUR, |s| s.colour) };
-    let deep = blend(seed, 0xFF00_0000, 0.45);
+    use nori_look::compose::with_alpha;
+    let (seed, deep) = (seed_of(&id), deep_of(&id));
     vec![seed, deep, with_alpha(deep, 0.0), with_alpha(deep, 0.72), with_alpha(deep, 0.94)]
+}
+
+/// A mix card's colours on Home: the season's paper dyed with the tile's deeper colour as a cover's page
+/// is ([`nori_look::theme::Dye`], which takes `light`, `dark` and `dark_theme`).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn mix_card_colours(id: String, light: Palette, dark: Palette, dark_theme: bool) -> Palette {
+    Dye::new(deep_of(&id), light, dark, dark_theme).palette()
+}
+
+fn seed_of(id: &str) -> u32 {
+    if id == FAVOURITES_MIX { FAVOURITES_COLOUR } else { spec_of(id).map_or(OTHER_COLOUR, |s| s.colour) }
+}
+
+fn deep_of(id: &str) -> u32 {
+    nori_look::compose::blend(seed_of(id), 0xFF00_0000, 0.45)
 }
 
 /// Four different covers, for a tile's collage.
@@ -216,6 +231,33 @@ mod tests {
         let every: Vec<String> = std::iter::once(FAVOURITES_MIX.to_string()).chain(MIXES.iter().map(|m| m.id.to_string())).collect();
         assert_eq!(ids(mix_tiles(true)), every);
         assert_eq!(ids(mix_tiles(false)), [FAVOURITES_MIX], "no taste yet: only favourites");
+    }
+
+    #[test]
+    fn a_mix_card_is_paper_dyed_its_own_colour() {
+        use nori_look::color::{color_to_hsl, luminance};
+        use nori_look::theme::{palette, Season};
+        let contrast = |a: u32, b: u32| {
+            let (x, y) = (luminance(a) + 0.05, luminance(b) + 0.05);
+            x.max(y) / x.min(y)
+        };
+        let ids = MIXES.iter().map(|m| m.id).chain([FAVOURITES_MIX]);
+        for season in [Season::Spring, Season::Autumn] {
+            let (light, dark) = (palette(Some(season), 1, 1, false, false, false), palette(Some(season), 1, 1, false, true, false));
+            for dark_theme in [false, true] {
+                let mut pages = Vec::new();
+                for id in ids.clone() {
+                    let card = mix_card_colours(id.into(), light, dark, dark_theme);
+                    assert!(contrast(card.ink, card.page) >= 7.0, "{id} {season:?} dark {dark_theme}: ink on {:08x}", card.page);
+                    let off = (color_to_hsl(card.page)[0] - color_to_hsl(seed_of(id))[0]).abs();
+                    assert!(off.min(360.0 - off) < 20.0, "{id} {season:?} dark {dark_theme}: {:08x} is not its colour", card.page);
+                    pages.push(card.page);
+                }
+                pages.sort();
+                pages.dedup();
+                assert_eq!(pages.len(), MIXES.len() + 1, "each mix its own card");
+            }
+        }
     }
 
 }

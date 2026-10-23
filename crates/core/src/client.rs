@@ -40,10 +40,6 @@ pub struct Client {
     pub(crate) autoeq_failed_ms: parking_lot::Mutex<Option<i64>>,
     /// Told the profile's second address, so covers are keyed alike through both.
     covers: Arc<crate::covers::CoverNet>,
-    /// Where the queue this device last handed the server stood, and the server's queue last offered
-    /// here: neither is offered (`queue_offer`).
-    pub(crate) queue_pushed: parking_lot::Mutex<Option<crate::library::QueuePlace>>,
-    pub(crate) queue_seen: parking_lot::Mutex<Option<crate::library::QueuePlace>>,
 }
 
 /// Changes made here the server has not taken.
@@ -107,7 +103,7 @@ impl Client {
 impl Client {
     #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn new(core: Arc<Core>, transport: Arc<dyn Transport>, covers: Arc<crate::covers::CoverNet>) -> Arc<Self> {
-        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), motion: Default::default(), replaying: Default::default(), dropped: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), autoeq_failed_ms: Default::default(), queue_pushed: Default::default(), queue_seen: Default::default() })
+        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), motion: Default::default(), replaying: Default::default(), dropped: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), autoeq_failed_ms: Default::default() })
     }
 
     /// Sets the profile's addresses, folder and bitrate cap.

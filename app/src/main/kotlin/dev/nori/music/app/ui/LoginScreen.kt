@@ -17,7 +17,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,7 +56,7 @@ private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, signed: (Stri
     var pasting by remember { mutableStateOf(!page) }
     LaunchedEffect(Unit) { vm.lookAtAccount() }
     LaunchedEffect(name) { signed(name) }
-    SectionTitle(say.account)
+    Caption(say.account)
     when (ui.account) {
         AccountState.SIGNED_IN -> {
             Text(say.signedInAs(name), Modifier.testTag("signed-in"))
@@ -70,7 +69,7 @@ private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, signed: (Stri
     Text(say.word(words.signInHint), color = MaterialTheme.colorScheme.onSurfaceVariant)
     if (page) PillButton(say.word(words.pageButton), null, vm::openSignInPage, Modifier.fillMaxWidth().testTag("sign-in-page"), prominent = true, enabled = !ui.busy)
     if (pastes && !pasting) {
-        TextButton({ pasting = true }, Modifier.testTag("paste-instead")) { Text(say.word(words.pasteInstead)) }
+        TextAction(say.word(words.pasteInstead), { pasting = true }, Modifier.testTag("paste-instead"))
     } else if (pastes) {
         Text(say.word(words.pasteHint), color = MaterialTheme.colorScheme.onSurfaceVariant)
         FormField(answer, { answer = it }, label = { Text(say.word(words.pasteLabel)) }, minLines = 3, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth().testTag("pasted"))
@@ -141,8 +140,8 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
             Field.CLIENT_CERT -> {
                 FormField(certPassword, { certPassword = it }, label = { Text(say.clientCertPassword) }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton({ pickCert.launch(arrayOf("application/x-pkcs12", "application/octet-stream", "*/*")) }) { Text(if (p.clientCert.isEmpty()) say.importClientCert else say.replaceClientCert) }
-                    if (p.clientCert.isNotEmpty()) TextButton({ p = p.copy(clientCert = "", clientCertPassword = "") }) { Text(say.remove) }
+                    TextAction(if (p.clientCert.isEmpty()) say.importClientCert else say.replaceClientCert, { pickCert.launch(arrayOf("application/x-pkcs12", "application/octet-stream", "*/*")) })
+                    if (p.clientCert.isNotEmpty()) TextAction(say.remove, { p = p.copy(clientCert = "", clientCertPassword = "") }, destructive = true)
                 }
             }
         }
@@ -152,7 +151,7 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
         Column(Modifier.systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), Arrangement.spacedBy(12.dp)) {
             Text(
                 if (initial == null) "nori" else say.server,
-                style = MaterialTheme.typography.displaySmall, modifier = Modifier.padding(top = 16.dp, bottom = 2.dp),
+                style = titled(MaterialTheme.typography.displaySmall), modifier = Modifier.padding(top = 16.dp, bottom = 2.dp),
             )
             if (adding && vm.providers.size > 1) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 vm.providers.forEach { k -> Chip(say.word(providerStrings(k.kind).name), p.kind == k.kind, Modifier.testTag("kind-${k.kind.name.lowercase()}")) { p = p.copy(kind = k.kind) } }
@@ -170,8 +169,8 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
             if (info != null && info.signIn.isNotEmpty() && !adding && p.id == vm.prefs.value.activeServerId) AccountPart(vm, info) { name -> p = p.copy(user = name) }
             val folded = info?.fields?.filter { it.advanced }.orEmpty()
             Row {
-                if (folded.isNotEmpty()) TextButton({ advanced = !advanced }) { Text(if (advanced) say.hideAdvanced else say.advanced) }
-                onClose?.let { TextButton(it) { Text(say.cancel) } }
+                if (folded.isNotEmpty()) TextAction(if (advanced) say.hideAdvanced else say.advanced, { advanced = !advanced })
+                onClose?.let { TextAction(say.cancel, it) }
             }
             if (advanced) folded.forEach { Ask(it.what) }
         }

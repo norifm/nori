@@ -1268,8 +1268,8 @@ pub unsafe extern "C" fn nori_ios_sort(kind: i32, name: *const c_char) {
 }
 
 /// The credits page's lists as JSON to free: `{core, data, app}`, each `[{name, what, copyright,
-/// licence, file}]` (`file` names `licences/<file>.txt` in the bundle, null for none). `app` is what the
-/// iOS app ships of Android's own credits: the Material icons it draws.
+/// licence, file}]` (`file` names `licences/<file>.txt` in the bundle, null for none). `app` is the iOS
+/// app's own: the Material icons `ios/Sources/Glyphs.swift` draws.
 #[no_mangle]
 pub extern "C" fn nori_ios_credits() -> *mut c_char {
     let list = |c: Vec<nori_core::credits::Credit>| -> Vec<Value> {
@@ -1277,19 +1277,19 @@ pub extern "C" fn nori_ios_credits() -> *mut c_char {
             .map(|c| json!({ "name": c.name, "what": c.what, "copyright": c.copyright, "licence": c.licence, "file": c.file }))
             .collect()
     };
-    let app = nori_core::credits::android_credits()
-        .into_iter()
-        .filter(|c| c.name == IOS_SHARES)
-        .collect();
+    let app = vec![nori_core::credits::Credit {
+        name: "Material Icons".into(),
+        what: "The icons".into(),
+        copyright: "Copyright Google LLC".into(),
+        licence: "Apache-2.0".into(),
+        file: Some("Apache-2.0".into()),
+    }];
     owned(&json!({
         "core": list(nori_core::credits::core_credits()),
         "data": list(nori_core::credits::data_credits()),
         "app": list(app),
     }))
 }
-
-/// The one Android credit the iOS app also ships (`ios/Sources/Glyphs.swift` draws those icons).
-const IOS_SHARES: &str = "Material Icons";
 
 /// The settings this client shows, with their kinds, options and values, as JSON to free.
 #[no_mangle]
@@ -1474,14 +1474,6 @@ mod tests {
         assert!(pausing(hero(Some(&downloaded), &downloaded, false, true, false)));
         assert!(!pausing(hero(Some(&album), &downloaded, false, true, false)));
         assert_eq!(page_origin(PAGE_GENRE, "g"), None);
-    }
-
-    #[test]
-    fn the_app_credits_the_icons_it_draws() {
-        let raw = nori_ios_credits();
-        let v: Value = serde_json::from_str(unsafe { std::ffi::CStr::from_ptr(raw) }.to_str().unwrap()).unwrap();
-        unsafe { crate::nori_ios_free(raw) };
-        assert_eq!(v["app"][0]["name"], IOS_SHARES, "{v}");
     }
 
     #[test]

@@ -28,9 +28,11 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.distinctUntilChanged
 import dev.nori.music.ffi.settings.HomeRow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -151,7 +153,7 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
             else refreshes.flatMapLatest { nori.library.albums(sort, size = size) }
                 .catch { failed(it); emit(emptyList()) }.onStart { emit(emptyList()) }.map { Shelf.Albums(r, it) }
         }
-        is HomeShelf.Playlists -> refreshes.flatMapLatest { nori.library.playlists() }.map { Shelf.Playlists(r, it.take(shelf.take.toInt())) }
+        is HomeShelf.Playlists -> combine(refreshes, nori.library.playlistsVersion) { _, v -> v }.flatMapLatest { nori.library.playlists() }.map { Shelf.Playlists(r, it.take(shelf.take.toInt())) }
             .catch { emit(Shelf.Playlists(r, emptyList())) }.onStart { emit(Shelf.Playlists(r, emptyList())) }
         // Worth reading again after a refresh, which is the one thing that changes what the index holds.
         is HomeShelf.Songs -> refreshes.flatMapLatest {
@@ -167,7 +169,7 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
             .catch { failed(it); emit(emptyList()) }.map { HomeUi(feed = it) }
         val shown = homeRowsShown(rows, rules.account)
         val shelves = homeShelves(shown)
-        val pinned = if (HomeShelf.Pinned in shelves && pins.isNotEmpty()) refreshes.flatMapLatest { nori.library.playlists() }
+        val pinned = if (HomeShelf.Pinned in shelves && pins.isNotEmpty()) combine(refreshes, nori.library.playlistsVersion) { _, v -> v }.flatMapLatest { nori.library.playlists() }
             .map { all -> withContext(Dispatchers.Default) { homePinned(all, pins) } }.catch { emit(emptyList()) }.onStart { emit(emptyList()) } else flowOf(emptyList())
         combine(combine(shown.zip(shelves, ::source)) { it.toList() }.onStart { emit(emptyList()) }, pinned) { s, p -> HomeUi(s, p) }
     }.asLoad()
@@ -193,6 +195,98 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
     }
 }
 
+/** What a home row's full view holds: entries of one kind, as many as are read so far. */
+sealed interface RowEntries {
+    data class Albums(val albums: List<Album>) : RowEntries
+    data class Playlists(val playlists: List<Playlist>) : RowEntries
+    data class Songs(val songs: List<Song>, val origin: dev.nori.music.ffi.model.PageOrigin) : RowEntries
+}
+
+/**
+ * The bigger view of one home row. A library row is read a page at a time as the core's `home_row_page`
+ * lays it out; a source's feed shelf (`feed-<place>-<kind>`) shows the items it already has. This only
+ * makes the requests.
+ */
+class HomeRowViewModel(app: Application) : NoriViewModel(app) {
+    private val _entries = MutableStateFlow<RowEntries?>(null)
+    val entries: StateFlow<RowEntries?> = _entries
+
+    private val _title = MutableStateFlow<String?>(null)
+    /** A feed shelf's own title; a library row is worded by the page. */
+    val title: StateFlow<String?> = _title
+
+    private var key: String? = null
+    private var row: HomeRow? = null
+    private var albums = Grown.empty<Album>()
+    private var songs = Grown.empty<Song>()
+    private var loading = false
+    private var exhausted = false
+
+    fun open(key: String) {
+        if (key == this.key) return
+        this.key = key
+        val feed = key.split('-').takeIf { it.size == 3 && it[0] == "feed" }
+        if (feed != null) readFeed(feed[1].toInt(), feed[2]) else { row = HomeRow.valueOf(key); loadMore() }
+    }
+
+    private fun readFeed(place: Int, kind: String) {
+        viewModelScope.launch {
+            val shelf = runCatching { nori.library.homeFeed().first().getOrNull(place) }.getOrNull() ?: return@launch
+            _title.value = shelf.title
+            _entries.value = when (kind) {
+                "songs" -> RowEntries.Songs(shelf.songs, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, shelf.title))
+                "albums" -> RowEntries.Albums(shelf.albums)
+                else -> RowEntries.Playlists(shelf.playlists)
+            }
+        }
+    }
+
+    fun loadMore() {
+        val row = row ?: return
+        if (loading || exhausted) return
+        loading = true
+        val offset = when (val e = _entries.value) {
+            is RowEntries.Albums -> e.albums.size
+            is RowEntries.Songs -> e.songs.size
+            is RowEntries.Playlists -> e.playlists.size
+            null -> 0
+        }
+        viewModelScope.launch {
+            try {
+                val shelf = dev.nori.music.ffi.library.homeRowPage(row, offset.toUInt())
+                if (shelf == null) { exhausted = true; return@launch }
+                when (shelf) {
+                    is HomeShelf.Albums -> {
+                        val size = shelf.size.toInt()
+                        val read = if (shelf.followsStars && offset == 0) nori.library.favouriteAlbums(size) else nori.library.albums(shelf.sort, size, offset)
+                        val got = runCatching { read.first() }.getOrDefault(emptyList())
+                        albums = albums.from(offset, got)
+                        _entries.value = RowEntries.Albums(albums)
+                        exhausted = got.size < size
+                    }
+                    is HomeShelf.Songs -> {
+                        val limit = shelf.limit.toInt()
+                        val got = runCatching { nori.library.browseSongs(shelf.sort, shelf.descending, false, null, offset, limit) }.getOrDefault(emptyList())
+                        songs = songs.from(offset, got)
+                        _entries.value = RowEntries.Songs(songs, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, row.name))
+                        exhausted = got.size < limit
+                    }
+                    is HomeShelf.Playlists -> {
+                        val all = runCatching { nori.library.playlists().first() }.getOrDefault(emptyList())
+                        _entries.value = RowEntries.Playlists(all.take(shelf.take.toInt()))
+                    }
+                    HomeShelf.Pinned -> {
+                        val all = runCatching { nori.library.playlists().first() }.getOrDefault(emptyList())
+                        _entries.value = RowEntries.Playlists(homePinned(all, nori.settings.value.pinnedPlaylists))
+                    }
+                }
+            } finally {
+                loading = false
+            }
+        }
+    }
+}
+
 /**
  * The album grid: one sort order at a time, pages appended as the list nears its end. In artist rows,
  * also those albums a row per artist ([rows]).
@@ -201,7 +295,8 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
 class AlbumsViewModel(app: Application) : NoriViewModel(app) {
     private val pageSize by lazy { browsePaging().albums.toInt() }
     // The order it was left in, and how that is kept, are the core's (`album_sort_saved`, `album_sort_kept`).
-    private val _sort = MutableStateFlow(albumSortSaved(nori.settings.value.listPrefs))
+    // A plain A-Z by artist is no longer offered: whoever kept it gets Artist.
+    private val _sort = MutableStateFlow(albumSortSaved(nori.settings.value.listPrefs).let { if (it == AlbumSort.BY_ARTIST) AlbumSort.ARTIST_ROWS else it })
     val sort: StateFlow<AlbumSort> = _sort
     private val _albums = MutableStateFlow(Grown.empty<Album>())
     val albums: StateFlow<List<Album>> = _albums
@@ -262,12 +357,11 @@ class ArtistsViewModel(app: Application) : NoriViewModel(app) {
 }
 
 class PlaylistsViewModel(app: Application) : NoriViewModel(app) {
-    private val refresh = MutableStateFlow(0)
     @OptIn(ExperimentalCoroutinesApi::class)
-    val playlists: StateFlow<Load<List<Playlist>>> = refresh.flatMapLatest { nori.library.playlists() }.asLoad()
+    val playlists: StateFlow<Load<List<Playlist>>> = nori.library.playlistsVersion.flatMapLatest { nori.library.playlists() }.asLoad()
 
-    fun create(name: String) = viewModelScope.launch { runCatching { nori.library.createPlaylist(name, emptyList()) }; refresh.value++ }
-    fun delete(id: String) = viewModelScope.launch { runCatching { nori.library.deletePlaylist(id) }; refresh.value++ }
+    fun create(name: String) = viewModelScope.launch { runCatching { nori.library.createPlaylist(name, emptyList()) } }
+    fun delete(id: String) = viewModelScope.launch { runCatching { nori.library.deletePlaylist(id) } }
 }
 
 class StarredViewModel(app: Application) : NoriViewModel(app) {
@@ -283,21 +377,13 @@ class GenresViewModel(app: Application) : NoriViewModel(app) {
     val genres: StateFlow<Load<List<Genre>>> = nori.library.genres().asLoad()
 }
 
-/** The Library page's own: the albums added last, under its list of sections. */
+/** The Library page's own: what the downloads weigh, for its row of places. */
 class LibraryHomeViewModel(app: Application) : NoriViewModel(app) {
-    val recent: StateFlow<List<Album>> = nori.library.albums(AlbumSort.NEWEST, RECENT)
-        .catch { emit(emptyList()) }
-        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    /** The account's playlists, for a profile whose library is not indexed (see LibraryScreen). */
-    val playlists: StateFlow<List<Playlist>> = (if (nori.rules.indexed) kotlinx.coroutines.flow.flowOf(emptyList()) else nori.library.playlists())
-        .catch { emit(emptyList()) }
-        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    private companion object {
-        /** Three rows of two. */
-        const val RECENT = 6
-    }
+    /** The downloaded songs' size, worded; null until weighed. */
+    val downloadsSize: StateFlow<String?> = nori.downloads.state
+        .map { dev.nori.music.text.Fmt.bytes(nori.sources.downloadBytes()) }
+        .flowOn(Dispatchers.IO)
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), null)
 }
 
 class RadioViewModel(app: Application) : NoriViewModel(app) {

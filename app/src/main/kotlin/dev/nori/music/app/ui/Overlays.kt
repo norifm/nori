@@ -17,7 +17,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material3.AlertDialogDefaults
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -195,9 +207,9 @@ fun <T : Any> NoriDialog(
 }
 
 /**
- * The card of a Material alert dialog, drawn in place inside a [NoriDialog] rather than in a window of
- * its own (Material 1.4 keeps its own card behind its window). Same measures as Material's: 280 to 560
- * dp wide, 24 dp in, the title over the text over the buttons at the end.
+ * The card of an alert dialog, drawn in place inside a [NoriDialog] rather than in a window of its own:
+ * raised on the surface with a hairline edge and the sheet's corners, no shadow. Material's measures: 280
+ * to 560 dp wide, 24 dp in, the title over the text over the buttons ([TextAction]s) at the end.
  */
 @Composable
 fun AlertCard(
@@ -207,30 +219,26 @@ fun AlertCard(
     title: (@Composable () -> Unit)? = null,
     text: (@Composable () -> Unit)? = null,
 ) {
+    val scheme = MaterialTheme.colorScheme
     Surface(
         modifier.sizeIn(minWidth = 280.dp, maxWidth = 560.dp),
-        shape = AlertDialogDefaults.shape,
-        color = AlertDialogDefaults.containerColor,
-        tonalElevation = AlertDialogDefaults.TonalElevation,
+        shape = RoundedCornerShape(Radius.sheet), color = scheme.surfaceContainer, contentColor = scheme.onSurface,
+        border = hairlineBorder(),
     ) {
         Column(Modifier.padding(24.dp)) {
             title?.let {
-                CompositionLocalProvider(LocalContentColor provides AlertDialogDefaults.titleContentColor) {
-                    ProvideTextStyle(MaterialTheme.typography.headlineSmall) { Box(Modifier.padding(bottom = 16.dp)) { it() } }
+                ProvideTextStyle(MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, fontWeight = FontWeight.SemiBold)) {
+                    Box(Modifier.padding(bottom = 16.dp)) { it() }
                 }
             }
             text?.let {
-                CompositionLocalProvider(LocalContentColor provides AlertDialogDefaults.textContentColor) {
+                CompositionLocalProvider(LocalContentColor provides scheme.onSurfaceVariant) {
                     ProvideTextStyle(MaterialTheme.typography.bodyMedium) { Box(Modifier.weight(1f, fill = false).padding(bottom = 24.dp)) { it() } }
                 }
             }
-            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.primary) {
-                ProvideTextStyle(MaterialTheme.typography.labelLarge) {
-                    Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        dismissButton?.invoke()
-                        confirmButton()
-                    }
-                }
+            Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                dismissButton?.invoke()
+                confirmButton()
             }
         }
     }
@@ -240,6 +248,9 @@ fun AlertCard(
  * A bottom sheet showing [value] while it is not null. Material's sheet slides itself in, and out when
  * it is swiped or its scrim tapped; a sheet whose caller simply stops composing it (a menu item that
  * closes the menu) vanished instead. Here the value going null slides the sheet down first.
+ *
+ * Every sheet is the same paper: the surface, opaque, over a light scrim, with a
+ * hairline along its top edge and a quiet bar for a handle; no shadow.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -269,11 +280,54 @@ fun <T : Any> NoriSheet(
     val look = remember(scheme) { FixedLook(plainLook(scheme)) }
     MaterialTheme(colorScheme = scheme) {
         CompositionLocalProvider(LocalLook provides look) {
-            ModalBottomSheet(onDismissRequest = { if (live) dismiss() }, sheetState = state) {
+            ModalBottomSheet(
+                onDismissRequest = { if (live) dismiss() }, sheetState = state,
+                shape = SheetShape, containerColor = scheme.surfaceContainer, contentColor = scheme.onSurface,
+                tonalElevation = 0.dp, scrimColor = Color.Black.copy(alpha = SHEET_SCRIM),
+                dragHandle = { SheetHandle(state, scheme.outlineVariant) },
+            ) {
                 AppStatusBar()
                 content(shown)
             }
         }
+    }
+}
+
+private val SheetShape = RoundedCornerShape(topStart = Radius.sheet, topEnd = Radius.sheet)
+/** How much the scrim under a sheet darkens the page. */
+private const val SHEET_SCRIM = 0.32f
+
+/**
+ * A sheet's handle, a quiet bar, and the hairline along the sheet's top edge, drawn from here because the
+ * handle is the sheet's first row. When the sheet reaches under the status bar Material pads its content
+ * down by the part it covers, so the edge is that far above the handle.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SheetHandle(state: androidx.compose.material3.SheetState, hair: Color) {
+    val insets = WindowInsets.safeDrawing
+    Box(
+        Modifier.fillMaxWidth().drawWithCache {
+            val stroke = HAIRLINE.toPx()
+            val r = Radius.sheet.toPx()
+            // The stroke's middle runs half its width in from the sheet's edge.
+            val half = stroke / 2f
+            val d = 2f * (r - half)
+            val edge = Path().apply {
+                moveTo(half, r)
+                arcTo(Rect(half, half, half + d, half + d), 180f, 90f, false)
+                lineTo(size.width - r, half)
+                arcTo(Rect(size.width - half - d, half, size.width - half, half + d), 270f, 90f, false)
+            }
+            val style = Stroke(stroke)
+            onDrawBehind {
+                val under = (insets.getTop(this) - state.requireOffset()).coerceAtLeast(0f)
+                translate(top = -under) { drawPath(edge, hair, style = style) }
+            }
+        }.padding(vertical = 10.dp),
+        Alignment.Center,
+    ) {
+        Box(Modifier.size(width = 36.dp, height = 4.dp).background(hair, PillShape))
     }
 }
 

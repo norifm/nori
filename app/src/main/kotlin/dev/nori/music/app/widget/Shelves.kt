@@ -188,7 +188,7 @@ class AlbumsWidget : NoriWidget() {
                 val look = theme.look
                 val (wDp, hDp) = Widgets.sizeDp(context, id)
                 val v = shelf(context, R.layout.widget_albums, look, hDp)
-                v.tint(R.id.widget_shuffle_glyph, look[CoverLook.ACCENT])
+                v.tint(R.id.widget_shuffle_glyph, look[CoverLook.ON_VARIANT])
                 v.setOnClickPendingIntent(R.id.widget_shuffle, Widgets.self(context, AlbumsWidget::class.java, SHUFFLE))
                 val cols = ((wDp - 2 * SIDE + GAP).toFloat() / (AIM + GAP)).roundToInt().coerceIn(1, ALBUMS[0].size)
                 val side = (wDp - 2 * SIDE - GAP * (cols - 1)) / cols

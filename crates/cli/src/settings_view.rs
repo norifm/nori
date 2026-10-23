@@ -500,8 +500,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "maxRate" => ("Highest sample rate", ""),
         "season" => ("Season", ""),
         "theme" => ("Appearance", ""),
-        "amoled" => ("Black page", ""),
-        "coverColors" => ("Colors from the cover", ""),
         "lyricsSweep" => ("Word fill", ""),
         "lyricsTranslation" => ("Translations", ""),
         "lyricsOnline" => ("Online lookups", ""),
@@ -541,8 +539,9 @@ fn option_words(name: &str, v: &str) -> String {
         ("season", "AUTUMN") => "Autumn 秋".into(),
         ("season", "WINTER") => "Winter 冬".into(),
         ("theme", "SYSTEM") => "as the terminal".into(),
-        ("theme", "LIGHT") => "light".into(),
-        ("theme", "DARK") => "dark".into(),
+        ("theme", "LIGHT") => "day".into(),
+        ("theme", "DARK") => "night".into(),
+        ("theme", "MIDNIGHT") => "midnight".into(),
         ("autoFillKind", "SONGS") => "songs".into(),
         ("autoFillKind", "ALBUMS") => "albums".into(),
         ("autoFillBasis", "SIMILAR") => "similarity".into(),
@@ -565,8 +564,6 @@ fn option_words(name: &str, v: &str) -> String {
         ("maxRate", "KHZ48") => "48 kHz".into(),
         ("maxRate", "KHZ96") => "96 kHz".into(),
         ("maxRate", "KHZ192") => "192 kHz".into(),
-        ("coverColors", "PAGES") => "pages".into(),
-        ("coverColors", "PLAYER") => "player".into(),
         ("wifi" | "download", v) => quality(v),
         ("songsAheadWifi", "1") => "next song".into(),
         ("songsAheadWifi", v) => format!("{v} songs"),
@@ -1025,7 +1022,7 @@ mod tests {
         };
         let account = titles(nori_core::browse::profile_rules(false));
         let guest = titles(nori_core::browse::profile_rules(true));
-        for kept in ["Accounts", "Streaming quality", "Stream cache", "Colors from the cover"] {
+        for kept in ["Accounts", "Streaming quality", "Stream cache", "Appearance"] {
             assert!(account.iter().any(|t| t == kept) && guest.iter().any(|t| t == kept), "{kept}");
         }
         for gone in ["Music folders", "Download quality", "Downloads"] {

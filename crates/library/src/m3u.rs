@@ -1,23 +1,9 @@
-//! M3U in and out. Export writes extended M3U8 with paths in the layout most libraries use
-//! (`artist/album/NN - title.suffix`), so the file is useful to another player pointed at a copy
-//! of the music. Import reads whatever is out there (BOM, CRLF, no `#EXTINF` at all, Windows
-//! paths) and resolves entries against the local index, since a Subsonic server has no paths to match.
+//! M3U import: reads whatever is out there (BOM, CRLF, no `#EXTINF` at all, Windows paths) and
+//! resolves entries against the local index, since a Subsonic server has no paths to match.
 
 use nori_db as db;
 use nori_model::model::*;
 use rusqlite::{params, Connection};
-
-/// One path component: nothing a file system refuses, never empty.
-fn component(s: &str) -> String {
-    let clean: String = s.chars().map(|c| if c.is_control() || r#"/\:*?"<>|"#.contains(c) { '_' } else { c }).collect();
-    let clean = clean.trim().trim_end_matches('.').trim();
-    if clean.is_empty() { "Unknown".into() } else { clean.into() }
-}
-
-/// EXTINF is one line.
-fn line(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
-}
 
 /// The name an imported file's playlist gets: the file's own name without its folders or extension,
 /// "Imported" when the picker said nothing about it.
@@ -26,28 +12,6 @@ pub fn m3u_playlist_name(file: Option<String>) -> String {
     let Some(f) = file else { return "Imported".into() };
     let base = f.rsplit('/').next().unwrap_or(&f);
     base.rsplit_once('.').map_or(base, |(stem, _)| stem).to_string()
-}
-
-/// The file an exported playlist is offered as.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn m3u_file_name(playlist: String) -> String {
-    format!("{playlist}.m3u8")
-}
-
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn m3u_export(name: String, songs: Vec<Song>) -> String {
-    let mut out = String::from("#EXTM3U\n");
-    if !line(&name).is_empty() {
-        out.push_str(&format!("#PLAYLIST:{}\n", line(&name)));
-    }
-    for s in &songs {
-        let label = if s.artist.is_empty() { line(&s.title) } else { format!("{} - {}", line(&s.artist), line(&s.title)) };
-        let number = if s.track > 0 { format!("{:02} - ", s.track) } else { String::new() };
-        let suffix = if s.suffix.is_empty() { String::new() } else { format!(".{}", component(&s.suffix)) };
-        out.push_str(&format!("#EXTINF:{},{label}\n", if s.duration > 0 { s.duration as i64 } else { -1 }));
-        out.push_str(&format!("{}/{}/{number}{}{suffix}\n", component(&s.artist), component(&s.album), component(&s.title)));
-    }
-    out
 }
 
 /// "Artist - Title" when there is a separator, else a title only.
@@ -150,36 +114,6 @@ pub fn resolve(c: &Connection, e: &M3uEntry) -> rusqlite::Result<Option<Song>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::history::tests::song;
-
-    #[test]
-    fn exports_m3u() {
-        let mut dogs = song("1", "Dogs", "Pink Floyd", "Animals", "", 1977);
-        dogs.track = 2;
-        dogs.duration = 1024;
-        let mut odd = song("2", "What?\n/Why: \"Now\"", "AC/DC", "...", "", 0);
-        odd.suffix = String::new();
-        odd.duration = 0;
-        let bare = Song { id: "3".into(), title: "Jóga".into(), suffix: "mp3".into(), track: 11, ..Default::default() };
-        let text = m3u_export("Road\ntrip".into(), vec![dogs, odd, bare]);
-        assert_eq!(
-            text,
-            "#EXTM3U\n#PLAYLIST:Road trip\n\
-             #EXTINF:1024,Pink Floyd - Dogs\nPink Floyd/Animals/02 - Dogs.flac\n\
-             #EXTINF:-1,AC/DC - What? /Why: \"Now\"\nAC_DC/Unknown/What___Why_ _Now_\n\
-             #EXTINF:-1,Jóga\nUnknown/Unknown/11 - Jóga.mp3\n"
-        );
-        assert_eq!(m3u_export(String::new(), vec![]), "#EXTM3U\n");
-
-        // Export round trips through parse.
-        let songs = vec![song("1", "Dogs", "Pink Floyd", "Animals", "", 1977), song("2", "Jóga", "Björk", "Homogenic", "", 1997)];
-        let parsed = m3u_parse(m3u_export("x".into(), songs.clone()));
-        assert_eq!(parsed.len(), 2);
-        for (p, s) in parsed.iter().zip(&songs) {
-            assert_eq!((p.artist.as_str(), p.title.as_str(), p.duration_s), (s.artist.as_str(), s.title.as_str(), Some(200)));
-        }
-        assert_eq!(parsed[1].path, "Björk/Homogenic/Jóga.flac");
-    }
 
     #[test]
     fn parses_m3u() {
@@ -207,7 +141,5 @@ mod tests {
         assert_eq!(m3u_playlist_name(Some("a.b.m3u".into())), "a.b");
         assert_eq!(m3u_playlist_name(Some("plain".into())), "plain");
         assert_eq!(m3u_playlist_name(None), "Imported");
-        assert_eq!(m3u_file_name("Road".into()), "Road.m3u8");
     }
-
 }

@@ -17,7 +17,7 @@ import dev.nori.music.ffi.look.Palette
 import dev.nori.music.ffi.settings.StoredPrefs
 
 /**
- * The season's theme (nori_look::theme): its palette in light, dark or AMOLED black, the calendar's on the
+ * The season's theme (nori_look::theme): its palette in light, dark or Midnight black, the calendar's on the
  * day when it follows the seasons. The date is read again each time the app comes back to the front, so a
  * season comes in on its own day without anything waiting for midnight.
  */
@@ -31,8 +31,10 @@ fun NoriTheme(prefs: StoredPrefs, content: @Composable () -> Unit) {
         Today.now().let { if (it != today) today = it }
         onPauseOrDispose {}
     }
-    val scheme = remember(dark, prefs.season, prefs.amoled, today) { schemeOf(prefs, dark, today) }
-    val accents = remember(prefs.season, today) { accentsOf(prefs, today) }
+    val scheme = remember(dark, prefs.season, prefs.theme, today) { schemeOf(prefs, dark, today) }
+    val papers = remember(prefs.season, prefs.theme, dark, today) {
+        Papers(paletteOf(prefs, false, today), paletteOf(prefs, true, today), dark, dev.nori.music.ffi.settings.coversTintPages(prefs.theme))
+    }
     // Everything dressed in the theme's own colors - the plates behind the buttons, the chrome, the
     // status bar - worked out once per scheme in Rust (nori_look::dress) and only looked up after.
     val look = remember(scheme) { FixedLook(plainLook(scheme)) }
@@ -46,7 +48,7 @@ fun NoriTheme(prefs: StoredPrefs, content: @Composable () -> Unit) {
         if (scale == 1f) systemDensity else androidx.compose.ui.unit.Density(systemDensity.density * scale, systemDensity.fontScale)
     }
     androidx.compose.runtime.CompositionLocalProvider(
-        androidx.compose.ui.platform.LocalDensity provides density, LocalLook provides look, LocalAccents provides accents,
+        androidx.compose.ui.platform.LocalDensity provides density, LocalLook provides look, LocalPapers provides papers,
     ) {
         // The status bar's icons follow the theme, not the system's dark mode the window was started in.
         SystemBarIcons(look)
@@ -65,17 +67,24 @@ data class Today(val month: Int, val day: Int, val southern: Boolean) {
 }
 
 /** The season's palette on [today], the calendar's when following (nori_look::theme::palette). */
-private fun paletteOf(prefs: StoredPrefs, dark: Boolean, today: Today): Palette =
-    dev.nori.music.ffi.look.palette(dev.nori.music.ffi.settings.seasonOf(prefs.season), today.month.toUInt(), today.day.toUInt(), today.southern, dark, prefs.amoled)
+internal fun paletteOf(prefs: StoredPrefs, dark: Boolean, today: Today): Palette =
+    dev.nori.music.ffi.look.palette(dev.nori.music.ffi.settings.seasonOf(prefs.season), today.month.toUInt(), today.day.toUInt(), today.southern, dark, prefs.theme == dev.nori.music.ffi.settings.ThemeMode.MIDNIGHT)
 
-/**
- * The theme's accent for a light page and for a dark one, which a page dressed in a cover's colors wears
- * in place of the cover's own, whichever its page is (nori_look::dress::accented).
- */
+/** The theme's accent for a light page and for a dark one, for the widgets' covers (nori_look::dress::accented). */
 @androidx.compose.runtime.Immutable
 data class Accents(val light: Int, val dark: Int)
 
-val LocalAccents = staticCompositionLocalOf { Accents(0, 0) }
+/** The season's light and dark papers and whether the theme is dark: what a cover's page is dyed on (`Dye`). */
+@androidx.compose.runtime.Immutable
+data class Papers(val light: Palette, val dark: Palette, val darkTheme: Boolean, val coversTint: Boolean) {
+    /** Light then dark, each page, surface, ink, accent, on: how `CoverLook.dyed` takes them. */
+    val table = intArrayOf(
+        light.page.toInt(), light.surface.toInt(), light.ink.toInt(), light.accent.toInt(), light.on.toInt(),
+        dark.page.toInt(), dark.surface.toInt(), dark.ink.toInt(), dark.accent.toInt(), dark.on.toInt(),
+    )
+}
+
+val LocalPapers = staticCompositionLocalOf<Papers> { error("no NoriTheme") }
 
 fun accentsOf(prefs: StoredPrefs, today: Today = Today.now()): Accents =
     Accents(paletteOf(prefs, false, today).accent.toInt(), paletteOf(prefs, true, today).accent.toInt())
