@@ -1066,14 +1066,13 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
     let (title, detail) = settings_view::row_words(row);
     let live = settings_view::row_enabled(row);
     let text_style = if live { Style::default().fg(t.ink) } else { t.dim() };
-    // A season: its kanji and name, the one worn in ink, and its page, accent and on as dots.
-    if let settings_view::Row::Season { colors, worn, .. } = row {
-        let name = if *worn { bold().fg(t.ink) } else { t.dim() };
-        let mut spans = vec![Span::styled(format!("    {}", pad(&title, 14)), name)];
-        for c in colors {
-            spans.push(Span::styled(" ●", Style::default().fg(crate::art::argb(*c))));
-        }
-        return Line::from(spans);
+    // A season: its kanji in its accent, then its name; the one worn ticked, its name in ink.
+    if let settings_view::Row::Season { kanji, name, accent, worn, .. } = row {
+        return Line::from(vec![
+            Span::styled(if *worn { "  ✓ " } else { "    " }, t.current()),
+            Span::styled(*kanji, bold().fg(crate::art::argb(*accent))),
+            Span::styled(format!("  {name}"), if *worn { bold().fg(t.ink) } else { t.dim() }),
+        ]);
     }
     // A few options, all on view: the chosen one in ink, underlined.
     if let settings_view::Row::Choice { options, shown, chips: true, .. } = row {
