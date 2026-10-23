@@ -4,7 +4,6 @@ import android.content.Intent
 import android.media.audiofx.AudioEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
@@ -144,9 +143,8 @@ private fun Flags(row: SettingRow.Flags, divider: Boolean, onChange: (String) ->
 }
 
 /**
- * The four seasons as tiles on the page: each its kanji over three dots (its paper, accent and "on"), the one
- * worn raised on the surface. Picking a tile stops following; following again lets the calendar choose.
- * The names are for TalkBack and search, not drawn.
+ * The four seasons as tiles, each its season's paper with its kanji in its accent and its name under it, the
+ * one worn ringed in that accent. Picking a tile stops following; following again lets the calendar choose.
  */
 @Composable
 private fun SeasonPicker(row: SettingRow.Seasons, onChange: (String) -> Unit) {
@@ -158,20 +156,21 @@ private fun SeasonPicker(row: SettingRow.Seasons, onChange: (String) -> Unit) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), Arrangement.spacedBy(10.dp)) {
             row.tiles.forEachIndexed { i, t ->
                 val chosen = i == worn
-                Surface(
-                    onClick = { if (t.value != row.chosen) onChange(t.value) }, shape = TileShape,
-                    color = if (chosen) scheme.surfaceContainer else Color.Transparent,
-                    border = if (chosen) hairlineBorder() else null,
-                    modifier = Modifier.weight(1f).height(88.dp).semantics { contentDescription = t.label; selected = chosen },
-                ) {
-                    Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
-                        Icon(Kanji.seasons[t.season.ordinal], null, Modifier.size(30.dp), tint = if (chosen) scheme.onSurface else scheme.onSurfaceVariant)
-                        Row(Modifier.padding(top = 8.dp), Arrangement.spacedBy(5.dp)) {
-                            SeasonDot(t.page, hairline = true)
-                            SeasonDot(t.accent)
-                            SeasonDot(t.on)
-                        }
+                val accent = Color(t.accent)
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        Modifier.fillMaxWidth().height(72.dp).clip(TileShape).background(Color(t.page))
+                            .border(if (chosen) 2.dp else androidx.compose.ui.unit.Dp.Hairline, if (chosen) accent else scheme.outlineVariant, TileShape)
+                            .clickable { if (t.value != row.chosen) onChange(t.value) }
+                            .semantics { contentDescription = t.label; selected = chosen },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Kanji.seasons[t.season.ordinal], null, Modifier.size(32.dp), tint = accent)
                     }
+                    Text(
+                        t.label, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium, maxLines = 1,
+                        color = if (chosen) scheme.onSurface else scheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -179,14 +178,6 @@ private fun SeasonPicker(row: SettingRow.Seasons, onChange: (String) -> Unit) {
             Toggle(row.followTitle, row.follow, following, divider = false) { on -> onChange(if (on) row.following else row.tiles[row.now].value) }
         }
     }
-}
-
-@Composable
-private fun SeasonDot(argb: Int, hairline: Boolean = false) {
-    Box(
-        Modifier.size(8.dp).clip(CircleShape).background(Color(argb))
-            .then(if (hairline) Modifier.border(hairlineBorder(), CircleShape) else Modifier),
-    )
 }
 
 /** What a setting the app is going to ignore looks like: still there, still readable, plainly not live. */
