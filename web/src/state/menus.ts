@@ -7,17 +7,23 @@ import { library } from "./library.svelte";
 import { player } from "./player.svelte";
 import { remote } from "./remote.svelte";
 import { go } from "./route.svelte";
-import { ui, type Item } from "./ui.svelte";
+import { ui, type Anchor, type Item } from "./ui.svelte";
 import type { MenuAction, Song } from "./types";
 
-/** Picks a playlist for `songs`, or makes a new one with them. */
-export async function addToPlaylist(songs: Song[]) {
+/** Picks a playlist for `songs`, or makes a new one with them; the menu opens `at` (where the last one
+ * did when not said). */
+export async function addToPlaylist(songs: Song[], at?: Anchor) {
   const { playlists } = await read<{ playlists: { id: string; name: string }[] }>({ kind: "playlists" });
   const songIds = songs.map((s) => s.id);
-  ui.menu({ title: W.addToPlaylist }, [
-    { label: W.newPlaylist, icon: "plus", run: () => newPlaylist(songIds) },
-    ...(playlists ?? []).map((p) => ({ label: p.name, icon: "playlist", run: () => library.change({ kind: "addToPlaylist", id: p.id, songIds }) })),
-  ]);
+  ui.menu(
+    { title: W.addToPlaylist },
+    [
+      { label: W.newPlaylist, icon: "plus", run: () => newPlaylist(songIds) },
+      ...(playlists ?? []).map((p) => ({ label: p.name, icon: "playlist", run: () => library.change({ kind: "addToPlaylist", id: p.id, songIds }) })),
+    ],
+    [],
+    at,
+  );
 }
 
 /** Asks for a name and makes a playlist of `songIds` called that. */
@@ -64,9 +70,9 @@ function item(a: MenuAction, s: Song): Item | null {
   }
 }
 
-/** Song `s`'s menu: what one opens it for, then the rest under More; `extra` the page's own entries;
- * `inPlayer` when opened from the player. */
-export async function songMenu(s: Song, extra: Item[] = [], inPlayer = false) {
+/** Song `s`'s menu, opening `at`: what one opens it for, then the rest under More; `extra` the page's own
+ * entries; `inPlayer` when opened from the player. */
+export async function songMenu(s: Song, at: Anchor, extra: Item[] = [], inPlayer = false) {
   const lyrics = inPlayer && !!player.shown && player.shown.song === s.id;
   const actions = JSON.parse(await ask<string>("menu", JSON.stringify(s), inPlayer, lyrics)) as MenuAction[];
   const of = (more: boolean) =>
@@ -74,5 +80,5 @@ export async function songMenu(s: Song, extra: Item[] = [], inPlayer = false) {
       const i = !!a.more === more ? item(a, s) : null;
       return i ? [{ ...i, disabled: !a.enabled }] : [];
     });
-  ui.menu({ title: s.title, line: s.line || s.artist, cover: s.cover ?? "" }, [...of(false), ...extra], of(true));
+  ui.menu({ title: s.title, line: s.line || s.artist, cover: s.cover ?? "" }, [...of(false), ...extra], of(true), at);
 }

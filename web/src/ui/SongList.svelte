@@ -6,7 +6,7 @@
   // alone (a search's results).
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
-  import type { Item } from "../state/ui.svelte";
+  import { beside, pointer, type Item } from "../state/ui.svelte";
   import type { Song } from "../state/types";
   import { W } from "../words";
   import Cover from "./Cover.svelte";
@@ -33,7 +33,8 @@
 <ol class="songs" class:numbered use:sortable={{ moved: (from, to) => moved?.(from, to) }}>
   {#each drawn as i (`${i}:${songs[i].id}`)}
     {@const s = songs[i]}
-    <li class:now={s.id === playingId} data-row={moved ? "" : undefined} data-at={i}>
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <li oncontextmenu={(e) => (e.preventDefault(), void songMenu(s, pointer(e), extra(s, i)))} class:now={s.id === playingId} data-row={moved ? "" : undefined} data-at={i}>
       <button class="play" onclick={() => void (one ? player.play([s], 0, false, kind, id) : player.play(songs, i, false, kind, id))}>
         {#if numbered}
           <span class="n">{#if s.id === playingId}<span class="bars" class:still={!player.playing}><i></i><i></i><i></i></span>{:else}{s.track || i + 1}{/if}</span>
@@ -46,7 +47,7 @@
       </button>
       {#if s.starred}<span class="starred" aria-label={W.favorite}><Icon name="sealed" /></span>{/if}
       <span class="len">{W.time(s.duration * 1000)}</span>
-      <button class="more" aria-label={W.more} title={W.more} onclick={() => void songMenu(s, extra(s, i))}><Icon name="more-horiz" /></button>
+      <button class="more" aria-label={W.more} title={W.more} onclick={(e) => void songMenu(s, beside(e), extra(s, i))}><Icon name="more-horiz" /></button>
       {#if moved}<span class="handle" data-handle aria-label={W.reorder} title={W.reorder}><Icon name="menu" /></span>{/if}
     </li>
   {/each}

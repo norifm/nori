@@ -7,7 +7,7 @@
   import { songMenu } from "../state/menus";
   import { href } from "../state/route.svelte";
   import { looks } from "../state/theme.svelte";
-  import { ui, type Pane } from "../state/ui.svelte";
+  import { beside, ui, type Pane } from "../state/ui.svelte";
   import { remote } from "../state/remote.svelte";
   import { W } from "../words";
   import Controls from "./Controls.svelte";
@@ -75,7 +75,7 @@
         {#if s.artistId}<a class="artist clip" href={href("artist", s.artistId)} onclick={close}>{s.artist}</a>{:else}<span class="artist clip">{s.artist}</span>{/if}
       </div>
       {#if !n?.asks}<Seal what="song" id={s.id} on={!!s.starred} size={26} />{/if}
-      <button class="glyph" aria-label={W.more} title={W.more} onclick={() => void songMenu(s, [], true)}><Icon name="more-horiz" /></button>
+      <button class="glyph" aria-label={W.more} title={W.more} onclick={(e) => void songMenu(s, beside(e), [], true)}><Icon name="more-horiz" /></button>
     </div>
     <Seek />
     <div class="badges">

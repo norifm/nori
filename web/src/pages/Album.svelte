@@ -7,6 +7,7 @@
   import { player } from "../state/player.svelte";
   import { remote } from "../state/remote.svelte";
   import { href } from "../state/route.svelte";
+  import { beside } from "../state/ui.svelte";
   import type { Album, Song } from "../state/types";
   import { W } from "../words";
   import Hero from "../ui/Hero.svelte";
@@ -34,7 +35,7 @@
       {#snippet actions()}
         {#if !remote.jam?.guest}<Seal what="album" id={a.id} on={!!a.starred} />{/if}
         <PageTools tools={page.data?.tools ?? []} {songs} />
-        <button class="glyph" aria-label={W.more} title={W.more} onclick={() => void addToPlaylist(songs)}><Icon name="more-horiz" /></button>
+        <button class="glyph" aria-label={W.more} title={W.more} onclick={(e) => void addToPlaylist(songs, beside(e))}><Icon name="more-horiz" /></button>
       {/snippet}
     </Hero>
     {#each page.data?.discs ?? [] as disc (disc.disc)}

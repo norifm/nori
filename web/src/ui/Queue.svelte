@@ -3,6 +3,7 @@
   // song; its menu and its handle's drag move or remove it (dragging only while play order is list order).
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
+  import { beside, pointer } from "../state/ui.svelte";
   import { W } from "../words";
   import type { QueueSong, Song } from "../state/types";
   import Cover from "./Cover.svelte";
@@ -35,7 +36,8 @@
   {#each rows as q, at (`${q.index}:${q.id}`)}
     {#if at === 0 && current > 0}<li class="head">{W.history}</li>{/if}
     {#if at === current + 1}<li class="head">{W.playingNext}</li>{/if}
-    <li class="row" class:current={at === current} class:past={at < current} data-row={n?.reorderable && at !== current ? "" : undefined} data-at={at}>
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <li class="row" oncontextmenu={(e) => q.id && (e.preventDefault(), void songMenu(q as Song, pointer(e), extra(q, at)))} class:current={at === current} class:past={at < current} data-row={n?.reorderable && at !== current ? "" : undefined} data-at={at}>
       <button class="play" onclick={() => void player.control("jump", q.index)}>
         <span class="art"><Cover src={q.cover} /></span>
         <span class="text">
@@ -48,7 +50,7 @@
         <span class="handle" data-handle aria-label={W.reorder} title={W.reorder}><Icon name="menu" /></span>
       {/if}
       {#if q.id}
-        <button class="more" aria-label={W.more} title={W.more} onclick={() => void songMenu(q as Song, extra(q, at))}><Icon name="more-horiz" /></button>
+        <button class="more" aria-label={W.more} title={W.more} onclick={(e) => void songMenu(q as Song, beside(e), extra(q, at))}><Icon name="more-horiz" /></button>
       {/if}
     </li>
   {:else}

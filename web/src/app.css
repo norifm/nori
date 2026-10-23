@@ -605,38 +605,59 @@ button.group-row:hover:enabled {
   }
 }
 
-/* A menu dropped from what opened it, and a sheet or dialog: opaque paper on the surface, a hairline
-   edge, no shadow. */
+/* Every menu: one surface on the paper with a hairline edge, no shadow, the tile's corners and a small inset.
+   What sits in it is round by the corner less the inset (`--inner`), so the corners are concentric. Its rows
+   are compact, a hairline between each. */
 .popover {
+  --inset: 6px;
+  --inner: calc(var(--r-tile) - var(--inset));
   background: var(--surface);
   border: var(--hairline) solid var(--hair);
   border-radius: var(--r-tile);
   color: var(--ink);
-  padding: 4px 0;
-  min-width: 160px;
-  max-width: 280px;
+  padding: var(--inset);
 }
 
 .popover-item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  min-height: 44px;
-  padding: 0 16px;
-  font-size: 16px;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: var(--inner);
+  font-size: 15px;
+  line-height: 20px;
   text-align: left;
+}
+
+.popover-item + .popover-item::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 0;
+  height: 1px;
+  background: var(--line);
 }
 
 .popover-item:hover:enabled {
   background: var(--hover);
 }
 
+.popover-item:disabled {
+  opacity: 0.38;
+}
+
 .popover-item .icon {
   width: 18px;
   height: 18px;
   color: var(--ink2);
-  margin-left: auto;
+}
+
+.popover-item .clip {
+  flex: 1;
 }
 
 /* nori's Motion setting asks for less (theme.ts sets the class). */

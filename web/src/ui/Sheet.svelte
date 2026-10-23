@@ -1,18 +1,18 @@
 <script lang="ts">
-  // A sheet of what can be done with something (a song): its head as the row it came from looked, then
-  // its actions as grouped rows, each with its glyph, and those wanted less often folded under More. Opaque
-  // paper on the surface with a hairline edge, no shadow: from the bottom on a phone, in the middle on a
-  // wide screen. A click outside or Escape closes it.
+  // A phone's menu about one thing (a song), as Android's sheet: its head as the row it came from looked,
+  // then its actions as grouped rows, each with its glyph, and those wanted less often folded under More.
+  // Opaque paper on the surface with a hairline edge, no shadow, from the bottom. A click outside or Escape
+  // closes it.
   import { ui, type Item } from "../state/ui.svelte";
   import { W } from "../words";
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
 
   let dialog = $state<HTMLDialogElement>();
-  const sheet = $derived(ui.sheet!);
+  const sheet = $derived(ui.open!);
   let more = $state(false);
   $effect(() => dialog?.showModal());
-  const close = () => (ui.sheet = null);
+  const close = () => (ui.open = null);
   /** A click on the backdrop, not on the sheet's own padding (both target the dialog). */
   function backdrop(e: MouseEvent) {
     const r = dialog!.getBoundingClientRect();
@@ -32,13 +32,13 @@
 {/snippet}
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-<dialog class="menu sheet" class:wide={ui.wide} bind:this={dialog} onclose={close} onclick={backdrop} aria-label={sheet.head.title}>
-  {#if !ui.wide}<span class="handle"></span>{/if}
+<dialog class="menu sheet" bind:this={dialog} onclose={close} onclick={backdrop} aria-label={sheet.head?.title}>
+  <span class="handle"></span>
   <header class="head">
-    {#if sheet.head.cover !== undefined}<span class="art"><Cover src={sheet.head.cover || undefined} /></span>{/if}
+    {#if sheet.head?.cover !== undefined}<span class="art"><Cover src={sheet.head?.cover || undefined} /></span>{/if}
     <span class="words">
-      <span class="title clip">{sheet.head.title}</span>
-      {#if sheet.head.line}<span class="sub clip">{sheet.head.line}</span>{/if}
+      <span class="title clip">{sheet.head?.title}</span>
+      {#if sheet.head?.line}<span class="sub clip">{sheet.head?.line}</span>{/if}
     </span>
   </header>
   <div class="group">
@@ -63,14 +63,6 @@
     background: var(--surface);
     color: var(--ink);
     animation: rise 240ms cubic-bezier(0.05, 0.7, 0.1, 1);
-  }
-  .sheet.wide {
-    margin: auto;
-    width: min(420px, calc(100vw - 32px));
-    padding: 16px;
-    border: var(--hairline) solid var(--hair);
-    border-radius: var(--r-sheet);
-    animation: none;
   }
   .sheet::backdrop {
     background: var(--scrim);

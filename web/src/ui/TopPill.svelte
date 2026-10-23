@@ -70,11 +70,11 @@
         <button class="pill small quiet" onclick={() => void signOut()}>{W.signOut}</button>
       </div>
       <Look />
-      <a class="popover-item" href={href("genres")}><span>{W.librarySections.Genres}</span><Icon name="view-grid" /></a>
+      <a class="popover-item" href={href("genres")}><Icon name="view-grid" /><span class="clip">{W.librarySections.Genres}</span></a>
       {#if remote.devices.on}
-        <button class="popover-item" onclick={() => (ui.show("devices"), (pop = null))}><span>{W.playOn}</span><Icon name="computer" /></button>
+        <button class="popover-item" onclick={() => (ui.show("devices"), (pop = null))}><Icon name="computer" /><span class="clip">{W.playOn}</span></button>
       {/if}
-      <button class="popover-item" onclick={() => (go("settings"), (pop = null))}><span>{W.settings}</span><Icon name="settings" /></button>
+      <button class="popover-item" onclick={() => (go("settings"), (pop = null))}><Icon name="settings" /><span class="clip">{W.settings}</span></button>
     </div>
   {/if}
 </header>
@@ -160,15 +160,13 @@
     top: 58px;
     right: 0;
     width: 360px;
-    max-width: none;
-    padding: 14px 0 6px;
   }
   .acct {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    padding: 0 16px 12px;
+    padding: 6px 4px 12px 10px;
     border-bottom: var(--hairline) solid var(--hair);
     margin-bottom: 6px;
   }
@@ -179,7 +177,7 @@
     font-weight: 600;
   }
   .pop :global(.look) {
-    padding: 4px 16px 10px;
+    padding: 0 4px 10px;
     border-bottom: var(--hairline) solid var(--hair);
     margin-bottom: 4px;
   }

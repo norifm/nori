@@ -77,8 +77,7 @@
 </div>
 {#if ui.full && playing}{#await nowPlaying() then m}<m.default />{/await}{/if}
 {#if ui.lyricsInfo}{#await lyricsInfo() then m}<m.default />{/await}{/if}
-{#if ui.sheet}<Sheet />{/if}
-{#if ui.popover}<Popover />{/if}
+{#if ui.open}{#if ui.open.head && !ui.wide}<Sheet />{:else}<Popover />{/if}{/if}
 {#if ui.prompt}<Prompt />{/if}
 {#if ui.toast}<div class="toast" role="status">{ui.toast}</div>{/if}
 

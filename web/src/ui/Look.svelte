@@ -110,9 +110,14 @@
     flex-wrap: wrap;
     gap: 8px;
   }
-  /* In the top bar's menu the tiles stand on the menu's own paper: the worn one is raised on the page. */
+  /* In the top bar's menu the tiles stand on the menu's own paper: the worn one is raised on the page, and
+     what is round inside the menu is round by its inner corner. */
   :global(.popover) .tile.on {
     background: var(--page);
+  }
+  :global(.popover) .tile,
+  :global(.popover) .group {
+    border-radius: var(--inner);
   }
   :global(.popover) .group-label:first-child {
     margin-top: 6px;
