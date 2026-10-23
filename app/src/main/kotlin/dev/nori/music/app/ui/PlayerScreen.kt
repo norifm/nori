@@ -2361,7 +2361,10 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     /** The bar's length on screen, in pixels, for how often it needs drawing. */
     val barWidth = remember { mutableFloatStateOf(1000f) }
     val free = !dragging.value && held.value == null
-    var resumed by remember { mutableStateOf(false) }
+    // As the screen is now, not false until the effect below runs: a bar made while the player is up (a
+    // panel changing builds the controls again) is live on its first frame, not drawn once at 0:00.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    var resumed by remember { mutableStateOf(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) }
     LifecycleResumeEffect(Unit) { resumed = true; onPauseOrDispose { resumed = false } }
     val live = resumed && LocalPlayerShown.current
     // Coming on screen: straight to the song, in the frame being made - a side effect runs after this
