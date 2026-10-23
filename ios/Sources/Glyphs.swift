@@ -55,7 +55,7 @@ enum Glyph {
     /// Where the sound goes, by `nori_ios_output_look`'s glyph: this iPod's speaker, headphones,
     /// Bluetooth, anything else. Drawn to the seal's height (tools/glyphs.py).
     static func output(_ glyph: Int, _ side: CGFloat) -> UIImage {
-        draw([Iconoir.smartphoneDevice, Iconoir.headset, Iconoir.bluetoothTag, Iconoir.airplay][safe: glyph] ?? Iconoir.airplay, side)
+        draw([Iconoir.smartphoneDevice, Iconoir.headset, Iconoir.bluetooth, Iconoir.airplay][safe: glyph] ?? Iconoir.airplay, side)
     }
 
     /// Another nori device, by its kind (`DeviceKind`): a phone, a computer, a terminal, a guest.
