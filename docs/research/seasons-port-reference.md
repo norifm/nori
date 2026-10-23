@@ -77,7 +77,7 @@ playlists), `antenna-signal` (radio). Devices: `smartphone-device`, `computer`, 
 guest.
 
 The output button shows what's actually playing. The core's `output_look` gives a glyph: phone speaker
-is `smartphone-device`, wired and USB are `headset`, Bluetooth is `bluetooth-tag`, anything else is
+is `smartphone-device`, wired and USB are `headset`, Bluetooth is `bluetooth`, anything else is
 `airplay`. When another nori device is playing, show that device's icon instead, lit.
 
 Device icons are redrawn by `tools/glyphs.py` to the seal's height (the seal's frame runs from 3 to 21 in

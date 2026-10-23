@@ -79,7 +79,7 @@ GLYPHS = {
     "MediaImage": ("media-image", "regular", False),
     "SmartphoneDevice": ("smartphone-device", "regular", False),
     "Headset": ("headset", "regular", False),
-    "BluetoothTag": ("bluetooth-tag", "regular", False),
+    "Bluetooth": ("bluetooth", "regular", False),
     "Airplay": ("airplay", "regular", False),
     "Computer": ("computer", "regular", False),
     "Terminal": ("terminal", "regular", False),
@@ -122,7 +122,7 @@ NS = "{http://www.w3.org/2000/svg}"
 # Drawn to the seal's height (core/src/main/res/drawable/seal_outline.xml, a square frame, 3 to 21) and
 # centred on it, line width unchanged, so a device glyph beside the seal is as tall and as heavy. A glyph too
 # wide for that stops at [WIDEST], its line still inside the box.
-FITTED = {"SmartphoneDevice", "Headset", "BluetoothTag", "Airplay", "Computer", "Terminal"}
+FITTED = {"SmartphoneDevice", "Headset", "Bluetooth", "Airplay", "Computer", "Terminal"}
 FRAME = (3.0, 3.0, 21.0, 21.0)
 WIDEST = 22.5
 
