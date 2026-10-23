@@ -943,7 +943,7 @@ fn buttons() {
     assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Album, "al-3".into(), true)));
     draw(&mut a, 170, 40);
     assert!(seal_filled(&a, crate::app::Button::Star), "shown at once");
-    let down = hit_rect(&a, Hit::Button(crate::app::Button::Download));
+    let down = hit_rect(&a, Hit::Button(crate::app::Button::Page(nori_core::menus::PageAction::Download { act: nori_core::menus::DownloadAct::All })));
     click(&mut a, down.x + 1, down.y);
     assert!(matches!(a.cmds.last(), Some(Cmd::DownloadFetch(crate::backend::Fetch::Album(id))) if id == "al-3"));
     // The seal by the song in the player.
@@ -1810,4 +1810,65 @@ fn home_offers_the_queue_left_and_the_mixes() {
     assert_eq!(a.cmds, [Cmd::Load(Req::Row { row, offset: 60 })]);
     a.handle(Msg::Data(Req::Row { row, offset: 60 }, Ok(Data::Row(vec![Item::Album(album("n60", "New 60"))], true))));
     assert!(matches!(a.page(), Some(crate::app::Page::Row { items, more: false, .. }) if items.len() == 61));
+}
+
+/// A page's head, as the phone's: its title with the seal, who made it with Play and Shuffle, then the
+/// list's head with what it holds and what the core offers (`page_actions`), its download entry by what is
+/// downloaded; a mix also Save as playlist and New mix; an artist's albums under their shelves.
+#[test]
+fn page_heads_offer_what_the_core_says() {
+    use nori_core::menus::{DownloadAct, PageAction, SongDownload};
+    let mut a = app();
+    a.rules = nori_core::browse::profile_rules(false);
+    a.open_album("al-1".into());
+    let songs = vec![song("1", "One", 200), song("2", "Two", 200), song("3", "Three", 200)];
+    a.handle(Msg::Data(Req::Album("al-1".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-1", "Record"), songs.clone(), vec![]))))));
+    assert_eq!(a.cmds.last(), Some(&Cmd::ReadDownloads(vec!["1".into(), "2".into(), "3".into()])), "what is downloaded, read");
+    let s = draw(&mut a, 120, 30);
+    dump("album-head", &s);
+    let lines: Vec<&str> = s.lines().map(str::trim).collect();
+    let at = lines.iter().position(|l| l.starts_with("Record")).unwrap_or_else(|| panic!("{s}"));
+    assert!(lines[at + 1].starts_with("Someone") && lines[at + 1].ends_with("Play   Shuffle"), "{s}");
+    assert!(lines[at + 2].starts_with("2001 · 3 songs") && lines[at + 2].ends_with("Download   Add to queue"), "{s}");
+    assert!(!s.contains("ALBUM"), "no caption over the title:\n{s}");
+    // One of three downloaded: the others; all three: their removal.
+    a.knows_downloads(vec!["1".into()], vec![SongDownload::Done]);
+    assert!(draw(&mut a, 120, 30).contains("Download the other 2   Add to queue"));
+    a.knows_downloads(vec!["2".into(), "3".into()], vec![SongDownload::Done, SongDownload::Done]);
+    assert!(draw(&mut a, 120, 30).contains("Remove downloads   Add to queue"));
+    let remove = hit_rect(&a, Hit::Button(Button::Page(PageAction::Download { act: DownloadAct::Remove })));
+    a.cmds.clear();
+    click(&mut a, remove.x, remove.y);
+    assert_eq!(a.cmds, songs.iter().map(|s| Cmd::DownloadRemove(s.id.clone())).collect::<Vec<_>>());
+    let add = hit_rect(&a, Hit::Button(Button::Page(PageAction::AddToQueue)));
+    click(&mut a, add.x, add.y);
+    assert!(matches!(a.cmds.last(), Some(Cmd::EnqueueFetch(crate::backend::Fetch::Album(id), false)) if id == "al-1"));
+
+    // A mix: Save as playlist after Play and Shuffle, New mix in its list's head.
+    let sheet = nori_core::mixes::board::MixSheet { id: "discover".into(), name: nori_core::mixes::board::MixName::Discover, songs: songs.clone(), covers: vec![], refreshable: true, favourites: false, seconds: 600 };
+    a.open_page(crate::app::Page::Mix { id: "discover".into(), detail: crate::app::Load::Loading, sel: Default::default() });
+    a.handle(Msg::Data(Req::Mix("discover".into()), Ok(Data::Mix(Box::new(sheet)))));
+    let s = draw(&mut a, 120, 30);
+    assert!(s.contains("Discover") && s.contains("Play   Shuffle   Save as playlist") && s.contains("New mix   Remove downloads   Add to queue"), "{s}");
+    let save = hit_rect(&a, Hit::Button(Button::SaveMix));
+    click(&mut a, save.x, save.y);
+    assert_eq!(a.cmds.last(), Some(&Cmd::SaveMix { title: "Discover".into(), songs: songs.clone() }));
+    let redraw = hit_rect(&a, Hit::Button(Button::Page(PageAction::Refresh)));
+    click(&mut a, redraw.x, redraw.y);
+    assert_eq!(a.cmds.last(), Some(&Cmd::RedrawMix("discover".into())));
+    a.handle(Msg::Reload(Req::Mix("discover".into())));
+    assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Mix("discover".into()))), "drawn again, read again");
+
+    // An artist: the albums under their shelves, the first selected.
+    let albums = vec![Album { year: 2001, ..album("a1", "Long Player") }, Album { year: 2003, release_types: vec!["Single".into()], ..album("a2", "Short One") }];
+    a.open_artist("ar-1".into());
+    let d = nori_core::ArtistDetail::new(nori_core::Artist { id: "ar-1".into(), name: "Band".into(), ..Default::default() }, albums, vec![]);
+    a.handle(Msg::Data(Req::Artist("ar-1".into()), Ok(Data::Artist(Box::new(d)))));
+    let s = draw(&mut a, 120, 30);
+    dump("artist", &s);
+    let lines: Vec<&str> = s.lines().map(str::trim).collect();
+    let at = lines.iter().position(|l| l.starts_with("Albums")).unwrap_or_else(|| panic!("{s}"));
+    assert!(lines[at + 1].starts_with("Long Player") && lines[at + 2].starts_with("Singles") && lines[at + 3].starts_with("Short One"), "{s}");
+    assert!(s.contains("2 releases") && s.contains("Download everything   Add to queue"), "{s}");
+    assert!(matches!(a.selected(), Some(Item::Album(al)) if al.id == "a1"));
 }

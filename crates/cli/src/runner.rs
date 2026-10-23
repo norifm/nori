@@ -685,6 +685,40 @@ impl Runner {
                 app.say(crate::text::repeat(s.now().repeat), false);
             }
             Cmd::Download(songs) => s.download(songs),
+            Cmd::ReadDownloads(ids) => {
+                let states = s.download_states(&ids.iter().map(String::as_str).collect::<Vec<_>>());
+                app.knows_downloads(ids, states);
+            }
+            Cmd::RedrawMix(mix) => {
+                let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
+                nori_host::spawn("nori-mix", move || {
+                    block_on(client.mix_ensure(mix.clone(), true));
+                    let _ = tx.send(Msg::From(id, Box::new(Msg::Reload(crate::backend::Req::Mix(mix)))));
+                });
+            }
+            Cmd::SaveMix { title, songs } => {
+                let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
+                nori_host::spawn("nori-save-mix", move || {
+                    use nori_core::cache_policy::{Page, Read};
+                    let send = |m: Msg| {
+                        let _ = tx.send(Msg::From(id, Box::new(m)));
+                    };
+                    // Named after the mix, counted on where the account has that name (`saved_mix_name`).
+                    let names = match block_on(client.read_now(Read::PlaylistList)) {
+                        Ok(Page::Playlists { v }) => v.into_iter().map(|p| p.name).collect(),
+                        _ => Vec::new(),
+                    };
+                    let name = nori_core::menus::saved_mix_name(title, names);
+                    let ids = songs.iter().map(|s| s.id.clone()).collect();
+                    match block_on(client.write(nori_core::client::Write::CreatePlaylist { name: name.clone(), song_ids: ids })) {
+                        Ok(()) => {
+                            send(Msg::Note { text: crate::text::created(&name), error: false });
+                            send(Msg::Reload(crate::backend::Req::Playlists));
+                        }
+                        Err(e) => send(Msg::Note { text: crate::text::net_error(&e), error: true }),
+                    }
+                });
+            }
             Cmd::LookForOffer { playing, shown } => {
                 let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
                 nori_host::spawn("nori-offer", move || {

@@ -128,6 +128,22 @@ pub fn album_caption(d: &AlbumDetail) -> String {
     parts.join(" · ")
 }
 
+/// An artist page's caption: "14 releases · 162 songs", or its songs where it lists no albums.
+pub fn artist_caption(d: &nori_core::ArtistDetail) -> String {
+    let songs: u32 = d.albums.iter().map(|a| a.song_count).sum();
+    let mut parts = Vec::with_capacity(2);
+    if !d.albums.is_empty() {
+        parts.push(count(d.albums.len() as u64, "release", "releases"));
+    }
+    if songs > 0 {
+        parts.push(count(songs as u64, "song", "songs"));
+    }
+    if parts.is_empty() && !d.songs.is_empty() {
+        parts.push(count(d.songs.len() as u64, "song", "songs"));
+    }
+    parts.join(" · ")
+}
+
 /// A playlist page's caption: "12 songs · 48:10".
 pub fn playlist_caption(d: &PlaylistDetail) -> String {
     songs_caption(d.songs.len() as u32, d.seconds)
@@ -298,7 +314,6 @@ pub const LISTEN_NOW: &str = "Listen now";
 pub const SHOW_ALL: &str = "Show all";
 pub const PLAY: &str = "Play";
 pub const SHUFFLE: &str = "Shuffle";
-pub const DOWNLOAD: &str = "Download";
 pub const UP_NEXT: &str = "Playing next";
 pub const BACK: &str = "Back";
 pub const VOLUME: &str = "Volume";
@@ -310,6 +325,43 @@ pub const UNREACHABLE: &str = "unreachable";
 
 pub const SORT_BY: &str = "Sort by";
 pub const FOR_YOU: &str = "For you";
+pub const SAVE_AS_PLAYLIST: &str = "Save as playlist";
+
+/// A playlist made: "Created nori discover".
+pub fn created(name: &str) -> String {
+    format!("Created {name}")
+}
+
+/// One of a page's head's actions, as the phone words it.
+pub fn page_action(a: nori_core::menus::PageAction, missing: usize) -> String {
+    use nori_core::menus::{DownloadAct, PageAction};
+    match a {
+        PageAction::Download { act: DownloadAct::All } => "Download".into(),
+        PageAction::Download { act: DownloadAct::Missing } => format!("Download the other {missing}"),
+        PageAction::Download { act: DownloadAct::Remove } => "Remove downloads".into(),
+        PageAction::DownloadEverything => "Download everything".into(),
+        PageAction::AddToQueue => "Add to queue".into(),
+        PageAction::Refresh => "New mix".into(),
+        PageAction::Edit => "Edit".into(),
+    }
+}
+
+/// An artist's shelf of releases by kind.
+pub fn release_shelf(g: &nori_core::pages::ReleaseGroup) -> String {
+    use nori_core::pages::ReleaseKind;
+    match g.kind {
+        ReleaseKind::Album => "Albums".into(),
+        ReleaseKind::Ep => "EPs".into(),
+        ReleaseKind::Single => "Singles".into(),
+        ReleaseKind::Live => "Live".into(),
+        ReleaseKind::Compilation => "Compilations".into(),
+        ReleaseKind::Soundtrack => "Soundtracks".into(),
+        ReleaseKind::Remix => "Remixes".into(),
+        ReleaseKind::Other => "Others".into(),
+        ReleaseKind::Tagged if g.tag.ends_with('s') => g.tag.clone(),
+        ReleaseKind::Tagged => format!("{}s", g.tag),
+    }
+}
 pub const CONTINUE: &str = "Continue";
 pub const RESUME: &str = "Resume";
 pub const CLOSE: &str = "Close";

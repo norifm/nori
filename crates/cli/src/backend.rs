@@ -45,6 +45,8 @@ pub enum Msg {
     Search(SearchView),
     /// A status bar message.
     Note { text: String, error: bool },
+    /// Read again what `Req` reads, where it is on screen.
+    Reload(Req),
     /// The queue another device left on the server, to offer here.
     Offer(Option<nori_core::library::QueueOffer>),
     /// The login form's result: the profile to keep, or the error.
@@ -85,6 +87,7 @@ impl Msg {
             Msg::Search(v) => format!("search results for {:?}", v.query),
             Msg::Note { text, error } => format!("note {text:?} error={error}"),
             Msg::Offer(o) => format!("queue offered: {}", o.is_some()),
+            Msg::Reload(r) => format!("read {r:?} again"),
             Msg::LoggedIn(r) => format!("logged in: {}", r.is_ok()),
             Msg::Reachable(r) => format!("reachable: {}", r.is_ok()),
             Msg::Volume(v) => format!("volume {v}"),

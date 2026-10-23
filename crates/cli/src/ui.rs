@@ -766,13 +766,15 @@ fn buttons(f: &mut Frame, hits: &mut Vec<(Rect, Hit)>, r: Rect, words: &[(Span<'
     }
 }
 
-/// An album's, artist's or playlist's page: its name with the seal, who made it, a line of what it holds
-/// and what plays it, then its songs or albums.
+/// An album's, artist's, playlist's or mix's page: its name with the seal; who made it, with Play and
+/// Shuffle (and a mix's Save as playlist); the list's head, what it holds and what the core offers to do with
+/// it (`menus::page_actions`); then its songs, or an artist's albums under their shelves.
 fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let playing = app.song.as_ref().map(|s| s.id.clone());
     let account = app.rules.account;
-    let downloads = app.rules.downloads;
     let stars = app.rules.stars;
+    let actions = app.page_actions();
+    let missing = app.page().and_then(|p| p.songs()).map_or(0, |v| v.iter().filter(|s| app.downloaded.get(&s.id) != Some(&nori_core::menus::SongDownload::Done)).count());
     let App { pages, hits, marks, rules, devices, .. } = app;
     let seals = &*marks;
     let marks = Marks::of(marks, rules, devices);
@@ -780,7 +782,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     // star: None when the page cannot be starred.
     let (title, by, caption, star): (String, String, String, Option<bool>) = match p {
         Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. } => (d.album.name.clone(), d.album.artist.clone(), crate::text::album_caption(d), Some(marks.stars.starred(Starrable::Album, &d.album.id, d.album.starred))),
-        Page::Artist { detail: Load::Ready(d), .. } => (d.artist.name.clone(), String::new(), if d.albums.is_empty() && !d.songs.is_empty() { crate::text::count(d.songs.len() as u64, "song", "songs") } else { d.artist.album_count.map(crate::text::albums).unwrap_or_default() }, Some(marks.stars.starred(Starrable::Artist, &d.artist.id, d.artist.starred))),
+        Page::Artist { detail: Load::Ready(d), .. } => (d.artist.name.clone(), String::new(), crate::text::artist_caption(d), Some(marks.stars.starred(Starrable::Artist, &d.artist.id, d.artist.starred))),
         Page::Playlist { detail: Load::Ready(d), .. } => (d.playlist.name.clone(), d.playlist.owner.clone().unwrap_or_default(), crate::text::playlist_caption(d), None),
         Page::Row { title, items, .. } => (title.clone(), String::new(), crate::text::count(items.len() as u64, "entry", "entries"), None),
         Page::Mix { detail: Load::Ready(m), .. } => (crate::text::mix_name(m.name).to_string(), String::new(), crate::text::songs_caption(m.songs.len() as u32, m.seconds), None),
@@ -802,24 +804,24 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         put(f, Paragraph::new(seal(on, false, t)), r);
         hits.push((r, Hit::Button(Button::Star)));
     }
-    let mut y = 1;
-    if !by.is_empty() {
-        text(f, row_of(area, y), &by, t.dim());
-        y += 1;
-    }
-    let head = row_of(area, y);
-    let mut words: Vec<(Span<'static>, Button)> = Vec::new();
+    // Words that act, right-aligned on `r` beside `left`.
+    let mut line = |r: Rect, left: &str, words: Vec<(Span<'static>, Button)>| {
+        let w: u16 = words.iter().map(|(w, _)| w.width() as u16 + 3).sum::<u16>().saturating_sub(3);
+        text(f, Rect { width: r.width.saturating_sub(w + 2), ..r }, left, t.dim());
+        buttons(f, hits, Rect { x: r.x + r.width.saturating_sub(w + 1), width: w, ..r }, &words);
+    };
+    let mut plays: Vec<(Span<'static>, Button)> = Vec::new();
     if !matches!(p, Page::Row { .. }) {
-        words.push((Span::styled(crate::text::PLAY, bold().fg(t.ink)), Button::PlayAll));
-        words.push((Span::styled(crate::text::SHUFFLE, Style::default().fg(t.ink)), Button::ShuffleAll));
-        if downloads && !matches!(p, Page::DownloadedAlbum { .. }) {
-            words.push((Span::styled(crate::text::DOWNLOAD, Style::default().fg(t.ink)), Button::Download));
-        }
+        plays.push((Span::styled(crate::text::PLAY, bold().fg(t.ink)), Button::PlayAll));
+        plays.push((Span::styled(crate::text::SHUFFLE, Style::default().fg(t.ink)), Button::ShuffleAll));
     }
-    let words_w: u16 = words.iter().map(|(w, _)| w.width() as u16 + 3).sum();
-    text(f, Rect { width: head.width.saturating_sub(words_w + 2), ..head }, &caption, t.dim());
-    buttons(f, hits, Rect { x: head.x + head.width.saturating_sub(words_w.saturating_sub(3)), width: words_w, ..head }, &words);
-    let body = below(area, y + 2);
+    if matches!(p, Page::Mix { detail: Load::Ready(m), .. } if account && !m.songs.is_empty()) {
+        plays.push((Span::styled(crate::text::SAVE_AS_PLAYLIST, Style::default().fg(t.ink)), Button::SaveMix));
+    }
+    line(row_of(area, 1), &by, plays);
+    let head: Vec<(Span<'static>, Button)> = actions.iter().map(|a| (Span::styled(crate::text::page_action(*a, missing), t.dim()), Button::Page(*a))).collect();
+    line(row_of(area, 2), &caption, head);
+    let body = below(area, 4);
     match p {
         Page::Album { detail: Load::Ready(d), sel, .. } | Page::DownloadedAlbum { detail: Load::Ready(d), sel, .. } => {
             let multi = d.discs.len() > 1;
@@ -838,10 +840,14 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
             list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_deref() == Some(songs[i].id.as_str()), true));
         }
         Page::Artist { detail: Load::Ready(d), sel, .. } => {
-            let albums = &d.albums;
-            list(f, body, sel, albums.len(), ListRef::Page, hits, t, focused, &|i, w| {
-                let item = Item::Album(albums[i].clone());
-                item_line(&item, w, t, starred(&item, seals, stars), false)
+            let lines = crate::app::artist_lines(d);
+            list(f, body, sel, lines.len(), ListRef::Page, hits, t, focused, &|i, w| match lines[i] {
+                crate::app::ArtistLine::Shelf(k) => spread(vec![Span::styled(crate::text::release_shelf(&d.groups[k]), bold().fg(t.ink))], Span::styled(format!("{} ", d.groups[k].albums.len()), t.dim()), w),
+                crate::app::ArtistLine::Album(k) => {
+                    let a = &d.albums[k];
+                    let seal = if starred(&Item::Album(a.clone()), seals, stars) { format!(" {SEAL}") } else { String::new() };
+                    spread(vec![Span::raw("  "), Span::styled(format!("{}{seal}", a.name), Style::default().fg(t.ink))], Span::styled(if a.year > 0 { format!("{} ", a.year) } else { String::new() }, t.dim()), w)
+                }
             });
         }
         Page::Mix { detail: Load::Ready(m), sel, .. } => {

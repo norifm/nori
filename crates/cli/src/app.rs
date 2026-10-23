@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use nori_core::browse::{AlbumSort, HistoryAfter, LibrarySection, ProfileRules};
 use nori_core::library::QueueOffer;
+use nori_core::menus::{DownloadAct, PageAction, PageKind, SongDownload};
 use nori_core::mixes::board::{MixSheet, MixTile};
 use nori_core::model::HistoryEntry;
 use nori_core::settings::HomeRow;
@@ -117,6 +118,12 @@ pub enum Cmd {
     /// The next repeat mode after the one shown.
     CycleRepeat,
     Download(Vec<Song>),
+    /// Reads which of these songs are downloaded.
+    ReadDownloads(Vec<String>),
+    /// Draws the mix again.
+    RedrawMix(String),
+    /// Keeps a mix as a playlist, its name made from `title` by the core.
+    SaveMix { title: String, songs: Vec<Song> },
     /// Asks for the queue another device left, for a player `playing` or not and showing the song `shown`.
     LookForOffer { playing: bool, shown: Option<String> },
     /// Plays the queue offered where it was left, and does not offer it again.
@@ -336,7 +343,7 @@ impl Page {
     fn len(&self) -> usize {
         match self {
             Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
-            Page::Artist { detail, .. } => detail.ready().map_or(0, |d| if d.albums.is_empty() { d.songs.len() } else { d.albums.len() }),
+            Page::Artist { detail, .. } => detail.ready().map_or(0, |d| if d.albums.is_empty() { d.songs.len() } else { artist_lines(d).len() }),
             Page::Playlist { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
             Page::Mix { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
             Page::Row { items, .. } => items.len(),
@@ -354,6 +361,22 @@ impl Page {
             Page::Row { .. } => None,
         }
     }
+}
+
+/// A line of an artist's page that lists albums: a shelf's name (index into its release groups), or an
+/// album under it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtistLine {
+    Shelf(usize),
+    Album(usize),
+}
+
+/// An artist's albums under their shelves (`pages::release_groups`); none for an artist listing songs.
+pub fn artist_lines(d: &ArtistDetail) -> Vec<ArtistLine> {
+    if d.albums.is_empty() {
+        return Vec::new();
+    }
+    d.groups.iter().enumerate().flat_map(|(k, g)| std::iter::once(ArtistLine::Shelf(k)).chain(g.albums.iter().map(|i| ArtistLine::Album(*i as usize)))).collect()
 }
 
 /// The selected thing that item actions (open, enqueue, star...) apply to.
@@ -906,8 +929,10 @@ pub enum Button {
     ShuffleAll,
     /// Star the page's album or artist.
     Star,
-    /// Download the page's album, artist or playlist.
-    Download,
+    /// One of the page's actions (`menus::page_actions`).
+    Page(PageAction),
+    /// The mix shown, kept as a playlist.
+    SaveMix,
     /// Star the playing song.
     StarSong,
     Help,
@@ -977,6 +1002,8 @@ pub struct App {
     pub now: Now,
     /// The audible song (during a mix, the louder one).
     pub song: Option<Song>,
+    /// Songs' download states as last read, by id.
+    pub downloaded: HashMap<String, SongDownload>,
     /// This session's star marks, drawn over the records' flags.
     pub marks: StarMarks,
     pub devices: Devices,
@@ -1291,7 +1318,7 @@ impl App {
         }
     }
 
-    fn open_page(&mut self, page: Page) {
+    pub(crate) fn open_page(&mut self, page: Page) {
         self.cmds.extend(page.req().map(Cmd::Load));
         self.pages.push(page);
         self.focus = Focus::Main;
@@ -1439,6 +1466,21 @@ impl App {
                 }
             }
             Msg::Note { text, error } => self.say(text, error),
+            // A page or list on screen, read again.
+            Msg::Reload(req) => {
+                let playlists = req == Req::Playlists;
+                if playlists && self.library.playlists.ready().is_some() {
+                    self.cmds.push(Cmd::Load(Req::Playlists));
+                }
+                // Home's playlist rows are read with Home.
+                let rows = |s: &Option<Shelf>| s.as_ref().is_some_and(|s| matches!(s.row, Some(HomeRow::Playlists | HomeRow::Pinned)));
+                if playlists && self.home.rows.iter().any(rows) {
+                    self.cmds.push(Cmd::Load(Req::Home));
+                }
+                if self.pages.iter().any(|p| p.req().as_ref() == Some(&req)) {
+                    self.cmds.push(Cmd::Load(req));
+                }
+            }
             Msg::Offer(offer) => {
                 self.home.offer = offer;
                 let (here, playing) = (self.song.as_ref().map(|s| s.id.clone()), self.now.state == State::Playing);
@@ -1653,9 +1695,25 @@ impl App {
                     if page.req().as_ref() != Some(&req) {
                         continue;
                     }
+                    // What of its songs is downloaded, for its head's download entry.
+                    if let Ok(Data::Album(d)) = &r {
+                        self.cmds.push(Cmd::ReadDownloads(d.songs.iter().map(|s| s.id.clone()).collect()));
+                    }
+                    if let Ok(Data::Playlist(d)) = &r {
+                        self.cmds.push(Cmd::ReadDownloads(d.songs.iter().map(|s| s.id.clone()).collect()));
+                    }
+                    if let Ok(Data::Mix(d)) = &r {
+                        self.cmds.push(Cmd::ReadDownloads(d.songs.iter().map(|s| s.id.clone()).collect()));
+                    }
                     match (page, r) {
                         (Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. }, Ok(Data::Album(d))) => *detail = Load::Ready(d),
-                        (Page::Artist { detail, .. }, Ok(Data::Artist(d))) => *detail = Load::Ready(d),
+                        (Page::Artist { detail, sel, .. }, Ok(Data::Artist(d))) => {
+                            // The first album, under its shelf's name.
+                            if sel.at == 0 && !d.albums.is_empty() {
+                                sel.at = 1;
+                            }
+                            *detail = Load::Ready(d);
+                        }
                         (Page::Playlist { detail, .. }, Ok(Data::Playlist(d))) => *detail = Load::Ready(d),
                         (Page::Mix { detail, .. }, Ok(Data::Mix(d))) => *detail = Load::Ready(d),
                         (Page::Mix { detail, .. }, Err(e)) => *detail = Load::Failed(e),
@@ -2389,7 +2447,10 @@ impl App {
             return match p {
                 Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Playlist { sel, .. } | Page::Mix { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
                 Page::Artist { sel, .. } if p.songs().is_some() => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
-                Page::Artist { detail, sel, .. } => detail.ready().and_then(|d| d.albums.get(sel.at).cloned()).map(Item::Album),
+                Page::Artist { detail, sel, .. } => match artist_lines(detail.ready()?).get(sel.at)? {
+                    ArtistLine::Album(i) => detail.ready()?.albums.get(*i).cloned().map(Item::Album),
+                    ArtistLine::Shelf(_) => None,
+                },
                 Page::Row { items, sel, .. } => items.get(sel.at).cloned(),
             };
         }
@@ -2678,6 +2739,70 @@ impl App {
             Some(on) => *on,
             None => self.marks.starred(kind, id, listed),
         }
+    }
+
+    /// What the page's head offers, in the core's order (`menus::page_actions`); none for a page of a Home
+    /// row, and none but downloads' removal for a downloaded album.
+    pub fn page_actions(&self) -> Vec<PageAction> {
+        let Some(page) = self.page() else { return Vec::new() };
+        let kind = match page {
+            Page::Album { .. } | Page::DownloadedAlbum { .. } => PageKind::Album,
+            Page::Artist { .. } => PageKind::Artist,
+            Page::Playlist { .. } => PageKind::Playlist,
+            Page::Mix { detail, .. } => PageKind::Mix { refreshable: detail.ready().is_some_and(|m| m.refreshable) },
+            Page::Row { .. } => return Vec::new(),
+        };
+        if matches!(page, Page::Artist { detail: Load::Loading | Load::Idle | Load::Failed(_), .. }) {
+            return Vec::new();
+        }
+        let songs = page.songs().unwrap_or_default();
+        let missing = songs.iter().filter(|s| self.downloaded.get(&s.id) != Some(&SongDownload::Done)).count();
+        nori_core::menus::page_actions(kind, songs.len() as u32, missing as u32, self.rules.downloads)
+    }
+
+    /// Does one of the page's actions.
+    fn page_act(&mut self, a: PageAction) {
+        let Some(page) = self.page() else { return };
+        let songs = page.songs().map(<[Song]>::to_vec).unwrap_or_default();
+        let fetch = match page {
+            Page::Album { id, .. } => Some(Fetch::Album(id.clone())),
+            Page::DownloadedAlbum { id, .. } => Some(Fetch::DownloadedAlbum(id.clone())),
+            Page::Artist { id, .. } => Some(Fetch::Artist(id.clone())),
+            Page::Playlist { id, .. } => Some(Fetch::Playlist(id.clone())),
+            Page::Mix { id, .. } => Some(Fetch::Mix(id.clone())),
+            Page::Row { .. } => None,
+        };
+        match a {
+            PageAction::Download { act: DownloadAct::Remove } => {
+                self.cmds.extend(songs.iter().map(|s| Cmd::DownloadRemove(s.id.clone())));
+            }
+            PageAction::Download { act: DownloadAct::Missing } => {
+                let missing: Vec<Song> = songs.into_iter().filter(|s| self.downloaded.get(&s.id) != Some(&SongDownload::Done)).collect();
+                self.cmds.push(Cmd::Download(missing));
+            }
+            PageAction::Download { act: DownloadAct::All } | PageAction::DownloadEverything => self.cmds.extend(fetch.map(Cmd::DownloadFetch)),
+            PageAction::AddToQueue => self.cmds.extend(fetch.map(|f| Cmd::EnqueueFetch(f, false))),
+            PageAction::Refresh => {
+                if let Some(Page::Mix { id, .. }) = self.page() {
+                    self.cmds.push(Cmd::RedrawMix(id.clone()));
+                }
+            }
+            // The terminal has no smart playlists to edit.
+            PageAction::Edit => self.dirty = false,
+        }
+    }
+
+    /// Keeps the mix shown as a playlist on the account, named by the core (`saved_mix_name`).
+    fn save_mix(&mut self) {
+        if let Some(Page::Mix { detail: Load::Ready(m), .. }) = self.page() {
+            let (title, songs) = (crate::text::mix_name(m.name).to_string(), m.songs.clone());
+            self.cmds.push(Cmd::SaveMix { title, songs });
+        }
+    }
+
+    /// Takes the download state of songs, as their page and menu show it.
+    pub fn knows_downloads(&mut self, ids: Vec<String>, states: Vec<SongDownload>) {
+        self.downloaded.extend(ids.into_iter().zip(states));
     }
 
     /// Flips the star on the page's album or artist.
@@ -3097,19 +3222,8 @@ impl App {
             Button::PlayAll => self.play_all(false),
             Button::ShuffleAll => self.play_all(true),
             Button::Star => self.star_page(),
-            Button::Download => {
-                let what = match self.page() {
-                    Some(Page::DownloadedAlbum { .. }) => return,
-                    Some(Page::Album { id, .. }) => Fetch::Album(id.clone()),
-                    Some(Page::Artist { id, .. }) => Fetch::Artist(id.clone()),
-                    Some(Page::Playlist { id, .. }) => Fetch::Playlist(id.clone()),
-                    Some(Page::Mix { id, .. }) => Fetch::Mix(id.clone()),
-                    Some(Page::Row { .. }) => return,
-                    None => return,
-                };
-                self.cmds.push(Cmd::DownloadFetch(what));
-                self.say("Downloading…", false);
-            }
+            Button::Page(a) => self.page_act(a),
+            Button::SaveMix => self.save_mix(),
             Button::StarSong => {
                 if let Some(s) = self.song.as_ref().filter(|_| self.rules.stars) {
                     let (id, listed) = (s.id.clone(), s.starred);
