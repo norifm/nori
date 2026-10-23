@@ -455,6 +455,11 @@ pub fn jam_home_only(address: &str) -> String {
 }
 
 /// The undo pill after a song is taken out of the queue.
+/// Where the offered song stands in its queue, on Home's Continue card: "Artist · 3 of 12".
+pub fn offer_place(artist: &str, at: usize, of: usize) -> String {
+    format!("{artist} · {at} of {of}")
+}
+
 pub fn removed(title: &str) -> String {
     format!("Removed “{title}”")
 }

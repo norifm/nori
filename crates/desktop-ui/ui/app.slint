@@ -4700,6 +4700,13 @@ export component AppWindow inherits Window {
     in property <string> show-all-text;
     in-out property <int> shown-shelf;
     in property <[Pick]> picks;
+    // Home's Continue card: offered, the song, where it stands ("Artist · 3 of 12") and its cover.
+    in property <bool> offer-shown;
+    in property <string> offer-title;
+    in property <string> offer-line;
+    in property <string> offer-art;
+    callback take-offer();
+    callback dismiss-offer();
     // The page is one of the mixes, laid out as a playlist.
     in property <bool> page-mix;
     in property <bool> picks-loaded;
@@ -5207,6 +5214,105 @@ export component AppWindow inherits Window {
                             padding-bottom: 100px;
                             Heading {
                                 title: root.greeting;
+                            }
+                            // The queue another device left, offered as Spotify offers to carry on here: a card on
+                            // raised paper, the song, where it stands, Resume and a close.
+                            if root.offer-shown: HorizontalLayout {
+                                padding-left: 32px;
+                                padding-right: 32px;
+                                padding-bottom: 26px;
+                                alignment: start;
+                                Rectangle {
+                                    width: min(560px, parent.width - 64px);
+                                    height: 178px;
+                                    border-radius: 18px;
+                                    clip: true;
+                                    background: Theme.raised;
+                                    Image {
+                                        x: 0;
+                                        width: parent.height;
+                                        height: parent.height;
+                                        source: root.art(root.offer-art, 0, root.covers-rev);
+                                        image-fit: cover;
+                                    }
+                                    Rectangle {
+                                        x: 0;
+                                        width: parent.height;
+                                        background: @linear-gradient(90deg, Theme.raised.with-alpha(0) 55%, Theme.raised 100%);
+                                    }
+                                    VerticalLayout {
+                                        x: parent.height + 6px;
+                                        width: parent.width - self.x - 16px;
+                                        padding-top: 16px;
+                                        padding-bottom: 14px;
+                                        Text {
+                                            text: "CONTINUE";
+                                            color: Theme.text.with-alpha(0.65);
+                                            font-size: 11.5px;
+                                            font-weight: 600;
+                                            letter-spacing: 0.7px;
+                                        }
+                                        Text {
+                                            text: root.offer-title;
+                                            color: Theme.text;
+                                            font-family: Type.title;
+                                            font-size: 21px;
+                                            font-weight: 600;
+                                            wrap: word-wrap;
+                                            overflow: elide;
+                                            max-height: 52px;
+                                        }
+                                        Text {
+                                            text: root.offer-line;
+                                            color: Theme.text.with-alpha(0.7);
+                                            font-size: 13px;
+                                            overflow: elide;
+                                        }
+                                        Rectangle {
+                                            vertical-stretch: 1;
+                                        }
+                                        HorizontalLayout {
+                                            alignment: start;
+                                            Rectangle {
+                                                height: 38px;
+                                                width: resume.preferred-width + 28px;
+                                                border-radius: 19px;
+                                                background: Theme.text;
+                                                resume := HorizontalLayout {
+                                                    alignment: center;
+                                                    spacing: 6px;
+                                                    Icon {
+                                                        y: (parent.height - self.height) / 2;
+                                                        glyph: Icons.play-solid;
+                                                        colour: Theme.raised;
+                                                        width: 18px;
+                                                        height: 18px;
+                                                    }
+                                                    Text {
+                                                        text: "Resume";
+                                                        color: Theme.raised;
+                                                        font-size: 14px;
+                                                        font-weight: 600;
+                                                        vertical-alignment: center;
+                                                    }
+                                                }
+                                                TouchArea {
+                                                    mouse-cursor: pointer;
+                                                    clicked => { root.take-offer(); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    IconButton {
+                                        x: parent.width - self.width - 2px;
+                                        y: 2px;
+                                        glyph: Icons.xmark;
+                                        size: 40px;
+                                        icon: 18px;
+                                        ink: Theme.text.with-alpha(0.6);
+                                        clicked => { root.dismiss-offer(); }
+                                    }
+                                }
                             }
                             if !root.picks-loaded || root.picks.length > 0: picks-shelf := ShelfView {
                                 title: "For you";

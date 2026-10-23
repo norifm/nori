@@ -77,6 +77,8 @@ pub enum Msg {
     Starred,
     /// A link to a song from the server, to copy; None when it made none.
     Shared(Option<String>),
+    /// A queue another device or app left on the server, worth offering here, or none.
+    Offer(Option<nori_core::library::QueueOffer>),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }

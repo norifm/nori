@@ -362,6 +362,8 @@ pub struct App {
     page_fetch: Option<Fetch>,
     /// The mix shown, its id and its name: it can be drawn again and kept as a playlist.
     page_mix: Option<(String, String)>,
+    /// The queue another device or app left on the server, offered at the top of Home (the core's `queue_offer`).
+    offer: Option<nori_core::library::QueueOffer>,
     songs: Vec<Song>,
     search_songs: Vec<Song>,
     /// Search's Show all pressed, for the query in `search_query`.
@@ -582,6 +584,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             page_songs_all: false,
             page_fetch: None,
             page_mix: None,
+            offer: None,
             songs: Vec::new(),
             search_songs: Vec::new(),
             search_songs_all: false,
@@ -798,6 +801,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_page_star, h, |a| a.star_page());
     on!(ui.on_page_act, h, |a, act| a.page_act(act));
     on!(ui.on_page_save, h, |a| a.save_mix());
+    on!(ui.on_take_offer, h, |a| a.close_offer(true));
+    on!(ui.on_dismiss_offer, h, |a| a.close_offer(false));
     on!(ui.on_more, h, |a| a.more_songs());
     on!(ui.on_search_edited, h, |a, t| a.search_edited(&t));
     on!(ui.on_search_again, h, |a, t| a.search_again(&t));
@@ -1141,7 +1146,10 @@ impl App {
             self.search_edited("");
         }
         let req = match view {
-            HOME => self.home_req(),
+            HOME => {
+                self.look_for_offer();
+                self.home_req()
+            }
             ALBUMS => {
                 self.albums_asked = 0;
                 self.album_sort = nori_core::browse::album_sort_saved(crate::session::app().settings.current().unwrap_or_default().list_prefs);
@@ -1567,6 +1575,40 @@ impl App {
                 _ => PageKind::Playlist,
             });
         }
+    }
+
+    /// Asks whether another device or app left a queue worth carrying on here, as Home comes into sight.
+    fn look_for_offer(&self) {
+        let Some(s) = self.session.as_ref().filter(|s| s.rules().account) else { return };
+        let (client, tx, playing, here) = (s.client.clone(), self.tx.clone(), self.ui().get_playing(), self.heard.clone());
+        nori_host::spawn("nori-queue-offer", move || {
+            let offer = nori_core::transport::block_on(client.queue_offer(playing, here)).ok().flatten();
+            tx.send(Msg::Offer(offer));
+        });
+    }
+
+    /// Home's Continue card: the offered song, where it stands in its queue, and its cover.
+    fn offer_shown(&self) {
+        let ui = self.ui();
+        let song = self.offer.as_ref().and_then(|o| o.songs.get(o.index as usize).map(|s| (o, s)));
+        ui.set_offer_shown(song.is_some());
+        if let Some((o, s)) = song {
+            ui.set_offer_title(s.title.as_str().into());
+            ui.set_offer_line(words::offer_place(&s.artist, o.index as usize + 1, o.songs.len()).into());
+            ui.set_offer_art(s.cover_art.clone().unwrap_or_default().into());
+        }
+    }
+
+    /// The offered queue taken up (played from its song and place) or turned down: either way it is not
+    /// offered again.
+    fn close_offer(&mut self, take: bool) {
+        let (Some(o), Some(s)) = (self.offer.take(), &self.session) else { return };
+        s.client.queue_offer_done(o.clone());
+        if take {
+            s.play(o.songs, o.index as usize, false, None);
+            s.seek(o.position_ms as i64);
+        }
+        self.offer_shown();
     }
 
     /// The mix shown drawn again, then shown anew.
@@ -2333,6 +2375,11 @@ impl App {
             }
             Msg::Note { text, error } => self.say(&text, error),
             Msg::Shared(Some(link)) => self.copy(link),
+            Msg::Offer(offer) => {
+                let (playing, here) = (self.ui().get_playing(), self.heard.clone());
+                self.offer = offer.filter(|o| o.songs.get(o.index as usize).is_some_and(|s| nori_core::library::offer_stands(&s.id, here, playing)));
+                self.offer_shown();
+            }
             Msg::Shared(None) => self.say(words::SHARE_FAILED, true),
             Msg::Ask { text, action } => self.ask(&text, &action),
             Msg::Reachable(Err(e)) => self.say(&e, true),
