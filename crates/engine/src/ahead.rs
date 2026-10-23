@@ -77,8 +77,9 @@ struct Plan {
     keeping: Option<Arc<dyn Keeping>>,
     bytes: Option<Arc<dyn ByteSource>>,
     takers: Option<Takers>,
-    /// Keys given up on for this list.
-    failed: HashSet<String>,
+    /// Keys fetched or given up on for this list: each is fetched once, so songs that do not fit the
+    /// cache together never go round pushing each other out.
+    tried: HashSet<String>,
     /// Keys the player took over.
     taken: HashSet<String>,
     /// The key being fetched and its request, cancelled as soon as it is unwanted (a hung server never
@@ -86,15 +87,6 @@ struct Plan {
     current: Option<String>,
     request: Cancel,
     running: bool,
-}
-
-/// How a fetch ended.
-#[derive(Debug, PartialEq, Eq)]
-enum Fetched {
-    Kept,
-    Failed,
-    /// No longer wanted, or taken over by the player.
-    Left,
 }
 
 type Job = (AheadSong, Arc<dyn Keeping>, Arc<dyn ByteSource>, Option<Takers>, Cancel);
@@ -112,7 +104,7 @@ impl Ahead {
             return;
         }
         plan.songs = songs;
-        plan.failed.clear();
+        plan.tried.clear();
         // Taken keys survive list changes (the player may take one as the list moves on).
         if plan.taken.len() > TAKEN_KEPT {
             plan.taken.clear();
@@ -169,11 +161,11 @@ impl Ahead {
         }
     }
 
-    /// The first song asked for that is not kept, busy, taken or failed. None ends the thread.
+    /// The first song asked for that is not kept, busy, taken or tried. None ends the thread.
     fn next(&self) -> Option<Job> {
         let (candidates, keeping, bytes, takers, asked) = {
             let plan = self.plan.lock();
-            let c: Vec<AheadSong> = plan.songs.iter().filter(|s| !plan.failed.contains(&s.key) && !plan.taken.contains(&s.key)).cloned().collect();
+            let c: Vec<AheadSong> = plan.songs.iter().filter(|s| !plan.tried.contains(&s.key) && !plan.taken.contains(&s.key)).cloned().collect();
             (c, plan.keeping.clone(), plan.bytes.clone(), plan.takers.clone(), self.asked.load(Ordering::Acquire))
         };
         // Without the lock: on Android the keeping calls into the platform.
@@ -214,20 +206,18 @@ impl Ahead {
 
     fn run(&self) {
         while let Some((song, keeping, bytes, takers, request)) = self.next() {
-            let fetched = self.fetch(&*keeping, &*bytes, &song, takers.as_ref(), &request);
+            self.fetch(&*keeping, &*bytes, &song, takers.as_ref(), &request);
             let mut plan = self.plan.lock();
             plan.current = None;
-            if fetched != Fetched::Kept {
-                plan.failed.insert(song.key);
-            }
+            plan.tried.insert(song.key);
             self.cv.notify_all();
         }
     }
 
     /// Fetches `song` whole into `keeping`. A broken body is asked again once from where it broke: a
     /// transcode breaks where its real end is, which the next answer confirms ([`OpenError::PastEnd`]).
-    fn fetch(&self, keeping: &dyn Keeping, bytes: &dyn ByteSource, song: &AheadSong, takers: Option<&Takers>, request: &Cancel) -> Fetched {
-        let Some(mut entry) = keeping.entry(&song.key) else { return Fetched::Failed };
+    fn fetch(&self, keeping: &dyn Keeping, bytes: &dyn ByteSource, song: &AheadSong, takers: Option<&Takers>, request: &Cancel) {
+        let Some(mut entry) = keeping.entry(&song.key) else { return };
         let start = entry.written();
         // A taker needs every byte from the first.
         let mut taker = if start == 0 { takers.and_then(|t| t(song)) } else { None };
@@ -246,9 +236,9 @@ impl Ahead {
                 // Cancelled: unwanted, or taken by the player.
                 Err(_) if request.cancelled() && !request.timed_out() => {
                     entry.leave();
-                    return Fetched::Left;
+                    return;
                 }
-                _ => return Fetched::Failed,
+                _ => return,
             };
             promised = body.len;
             let mut reader = body.reader;
@@ -258,7 +248,7 @@ impl Ahead {
                     if !self.wanted(&song.key) {
                         // Kept for the player or a later list to resume.
                         entry.leave();
-                        return Fetched::Left;
+                        return;
                     }
                     asked = now;
                 }
@@ -266,7 +256,7 @@ impl Ahead {
                     Ok(0) => break false,
                     Ok(n) => {
                         if !entry.write(entry.written(), &chunk[..n]) {
-                            return Fetched::Failed;
+                            return;
                         }
                         if let Some(t) = taker.as_mut() {
                             t.take(&chunk[..n]);
@@ -275,7 +265,7 @@ impl Ahead {
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(_) if request.cancelled() && !request.timed_out() => {
                         entry.leave();
-                        return Fetched::Left;
+                        return;
                     }
                     Err(_) => break true,
                 }
@@ -284,22 +274,17 @@ impl Ahead {
                 break;
             }
             if again {
-                return Fetched::Failed;
+                return;
             }
         }
         // A clean end is the real end, even short of the promised length (a transcode's estimate).
         let len = entry.written();
         if promised.is_some_and(|l| l < len) {
-            return Fetched::Failed;
+            return;
         }
         let kept = entry.finish(len);
         if let Some(t) = taker {
             t.end(kept);
-        }
-        if kept {
-            Fetched::Kept
-        } else {
-            Fetched::Failed
         }
     }
 }
@@ -415,6 +400,23 @@ mod tests {
         s.fetch_ahead(net.clone(), songs(&["b", "c", "d"]), None);
         s.wait_ahead();
         assert_eq!(net.asked.lock()[2..], ["http://m/c", "http://m/d"]);
+    }
+
+    #[test]
+    fn songs_that_do_not_fit_together_are_fetched_once() {
+        let d = nori_testdir::TempDir::new("ahead-overfull");
+        // Two songs fit; each fetched pushes the oldest out.
+        let s = Store::open(d.path(), 2 * LEN as u64 + LEN as u64 / 2).unwrap();
+        let net = Arc::new(Net::default());
+        let (done, finished) = channel();
+        let (ahead, asked) = (s.clone(), net.clone());
+        std::thread::spawn(move || {
+            ahead.fetch_ahead(asked, songs(&["a", "b", "c"]), None);
+            ahead.wait_ahead();
+            let _ = done.send(());
+        });
+        assert!(finished.recv_timeout(std::time::Duration::from_secs(10)).is_ok(), "{} requests", net.asked.lock().len());
+        assert_eq!(*net.asked.lock(), ["http://m/a", "http://m/b", "http://m/c"]);
     }
 
     #[test]
