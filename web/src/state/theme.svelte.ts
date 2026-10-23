@@ -5,8 +5,8 @@ import { ask } from "../rpc";
 
 /** What the core hands over (`Nori::theme`): `#rrggbb` colors. */
 type Colors = { season: string; next: string; nextMonth: number; nextDay: number; dark: boolean; page: string; surface: string; ink: string; ink2: string; hair: string; outline: string; accent: string; on: string; onAccent: string; still?: boolean; tiles?: Tile[] };
-/** A season's tile: its paper, accent and "on" color in the appearance worn. */
-export type Tile = { season: string; page: string; accent: string; on: string };
+/** A season's tile: its paper and accent in the appearance worn. */
+export type Tile = { season: string; page: string; accent: string };
 
 const KEY = "nori-theme";
 const VARS: [keyof Colors, string][] = [
