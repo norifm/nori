@@ -4,14 +4,16 @@
 </script>
 
 <script lang="ts">
-  // Home: the rows kept in their order (the core's, from the Home rows setting), each a shelf of prints
-  // whose title opens the whole row. A row with nothing in it is not drawn.
+  // Home: the queue another device left, offered to carry on here; then the rows kept in their order (the
+  // core's, from the Home rows setting), each a shelf of prints whose title opens the whole row. A row with
+  // nothing in it is not drawn.
   import { ask, facts, read } from "../rpc";
   import { reading } from "../state/library.svelte";
-  import { href } from "../state/route.svelte";
+  import { href, route } from "../state/route.svelte";
   import type { Album, Playlist } from "../state/types";
   import { W } from "../words";
   import Cards from "../ui/Cards.svelte";
+  import Continue from "../ui/Continue.svelte";
   import Page from "../ui/Page.svelte";
   import SectionTitle from "../ui/SectionTitle.svelte";
 
@@ -34,6 +36,7 @@
 </script>
 
 <Page title={W.listenNow} ready={!!page.data} error={page.error}>
+  {#key route.visit}<Continue />{/key}
   {#each page.data ?? [] as s (s.row)}
     {#if s.albums.length || s.playlists.length}
       <section class="shelf" data-row={s.row}>

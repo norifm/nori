@@ -26,6 +26,10 @@ export const W = {
   search: "Search",
   settings: "Settings",
   listenNow: "Listen now",
+  continueLabel: "Continue",
+  resume: "Resume",
+  /** Where an offered queue stands: "Nori Sessions · 3 of 16". */
+  offerPlace: (artist: string, at: number, of: number) => `${artist} · ${at} of ${of}`,
   artists: "Artists",
   albums: "Albums",
   songs: "Songs",

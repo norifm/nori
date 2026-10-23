@@ -134,6 +134,25 @@ impl Nori {
         pages::read(&client, &ask).await.map_err(error)
     }
 
+    /// The queue another device or app left on the server, offered while nothing plays here
+    /// (`Client::queue_offer`; `playing` and `shown`, the song the player shows, are the player's):
+    /// `{ songs, index, positionMs }` (the songs as a page reads them), or null.
+    pub async fn queue_offer(&self, playing: bool, shown: Option<String>) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let Some(o) = client.queue_offer(playing, shown).await.map_err(error)? else { return Ok("null".into()) };
+        let songs: Vec<Value> = o.songs.iter().map(|s| pages::song(client.core(), s)).collect();
+        Ok(json!({ "songs": songs, "index": o.index, "positionMs": o.position_ms }).to_string())
+    }
+
+    /// The offer of `songs` (JSON) from `index`, `position_ms` in, was taken or turned down: that queue is
+    /// not offered again (`Client::queue_offer_done`, which keeps where it stands, not who left it).
+    pub fn queue_offer_done(&self, songs: String, index: u32, position_ms: f64) -> Result<(), JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let songs: Vec<nori_core::Song> = serde_json::from_str(&songs).map_err(error)?;
+        client.queue_offer_done(nori_core::library::QueueOffer { by: nori_core::library::QueueBy::Nori, songs, index, position_ms: position_ms as u64 });
+        Ok(())
+    }
+
     /// Cover `id`'s address for `px` square.
     pub fn cover(&self, id: String, px: u32) -> String {
         self.client().map_or_else(String::new, |c| pages::cover(c.core(), &id, px))
