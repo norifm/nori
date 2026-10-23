@@ -66,6 +66,9 @@ pub use wgpu_renderer::SkiaWGPURenderer;
 pub use wgpu_renderer::SkiaWGPURendererGeneric;
 
 use itemrenderer::to_skia_rect;
+
+/// NORI: How far past an item's box a repaint reaches, logical pixels: what its text may ink outside it.
+const INK_MARGIN: f32 = 2.;
 pub use skia_safe;
 
 /// Returns the color space for Slint colors, decoded image pixels and raster buffers.
@@ -831,6 +834,13 @@ impl SkiaRenderer {
                     logical_window_size,
                     buffer_dirty_region,
                 );
+                // NORI: An item's repaint region is its box, but text inks a little past it (descenders, a
+                // glyph placed a fraction of a pixel lower): widened, a repaint clears and draws that ink too.
+                let mut widened = DirtyRegion::default();
+                for rect in partial_renderer.dirty_region.iter() {
+                    widened.add_box(rect.inflate(INK_MARGIN, INK_MARGIN));
+                }
+                partial_renderer.dirty_region = widened;
 
                 if matches!(self.dirty_region_debug_mode, DirtyRegionDebugMode::Log) {
                     let area_to_repaint: f32 =

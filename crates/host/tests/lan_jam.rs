@@ -129,45 +129,84 @@ fn paired_youtube_devices_control_each_other_and_can_be_forgotten() {
     a.stop();
 }
 
-/// A network of one door: browsing finds it as it starts, as NSD and mdns-sd report what is already there.
-/// Counts the times browsing started.
-struct Network(Mutex<Option<std::sync::Weak<Remote>>>, remote::Announcement, std::sync::atomic::AtomicUsize);
-impl remote::Discovery for Network {
-    fn announce(&self, _: Option<remote::Announcement>) {}
+/// One device's place on a [`Lan`].
+#[derive(Default)]
+struct Seat {
+    remote: std::sync::Weak<Remote>,
+    door: Option<remote::Announcement>,
+    browsing: bool,
+}
+
+/// A network as mDNS makes it: a door announced reaches every device browsing, and a device that starts
+/// browsing finds every door already there.
+#[derive(Default)]
+struct Lan(Mutex<Vec<Seat>>);
+
+/// Device `1`'s discovery on the network `0`.
+struct Port(Arc<Lan>, usize);
+
+impl remote::Discovery for Port {
+    fn announce(&self, door: Option<remote::Announcement>) {
+        let browsing: Vec<_> = {
+            let mut seats = self.0 .0.lock().unwrap();
+            seats[self.1].door = door.clone();
+            seats.iter().enumerate().filter(|(i, s)| *i != self.1 && s.browsing).filter_map(|(_, s)| s.remote.upgrade()).collect()
+        };
+        if let Some(door) = door {
+            for remote in browsing {
+                remote.lan_found(door.name.clone(), "127.0.0.1".into(), door.port, door.txt.clone());
+            }
+        }
+    }
+
     fn browse(&self, on: bool) {
-        let Some(remote) = self.0.lock().unwrap().as_ref().and_then(std::sync::Weak::upgrade).filter(|_| on) else { return };
-        self.2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let door = self.1.clone();
-        remote.lan_found(door.name, "127.0.0.1".into(), door.port, door.txt);
+        let (me, doors): (_, Vec<_>) = {
+            let mut seats = self.0 .0.lock().unwrap();
+            seats[self.1].browsing = on;
+            let doors = seats.iter().enumerate().filter(|(i, _)| *i != self.1).filter_map(|(_, s)| s.door.clone()).collect();
+            (seats[self.1].remote.upgrade(), doors)
+        };
+        if let (Some(me), true) = (me, on) {
+            for door in doors {
+                me.clone().lan_found(door.name, "127.0.0.1".into(), door.port, door.txt);
+            }
+        }
     }
 }
 
 #[test]
-fn a_device_paired_by_scanning_sees_the_one_that_showed_the_code() {
-    let a_dir = nori_testdir::TempDir::new("lan-scan-a");
-    let b_dir = nori_testdir::TempDir::new("lan-scan-b");
-    let make = |dir: &nori_testdir::TempDir, id: &str| {
-        let settings = Settings::new();
-        let path = nori_host::db_path(dir.path());
-        settings.open(&path).unwrap();
-        client(path, SavedServer { id: id.into(), kind: ServerKind::YouTubeMusic, ..Default::default() }, settings)
-    };
-    let (a_ops, _) = mpsc::channel();
-    let (a_changed, _) = mpsc::channel();
-    let a_discovery = Arc::new(Discovery::default());
-    let a = Remote::new(make(&a_dir, "a"), RemoteMe { name: "Desk".into(), kind: DeviceKind::Desktop }, Arc::new(Player(a_ops)), Arc::new(Shown(a_changed, Mutex::new(false))), Some(a_discovery.clone()));
-    a.clone().serve(true);
-    let door = a_discovery.0.lock().unwrap().clone().unwrap();
-    let network = Arc::new(Network(Mutex::new(None), door, Default::default()));
-    let (b_ops, _) = mpsc::channel();
-    let (b_changes, b_changed) = mpsc::channel();
-    let b = Remote::new(make(&b_dir, "b"), RemoteMe { name: "Phone".into(), kind: DeviceKind::Phone }, Arc::new(Player(b_ops)), Arc::new(Shown(b_changes, Mutex::new(false))), Some(network.clone()));
-    *network.0.lock().unwrap() = Some(Arc::downgrade(&b));
-    b.clone().watch(true);
-    assert_eq!(network.2.load(std::sync::atomic::Ordering::Relaxed), 1);
-    assert!(b.devices().is_empty(), "found before pairing, under another secret: not listed");
-    assert!(b.clone().pair(a.pairing_link().unwrap()));
-    wait(&b_changed, || b.devices().iter().any(|d| d.id == a.id()));
-    b.stop();
-    a.stop();
+fn scanning_a_code_pairs_both_devices() {
+    // Either device may show its code to the other.
+    for scanner in [1, 0] {
+        let dirs = [nori_testdir::TempDir::new("lan-scan-a"), nori_testdir::TempDir::new("lan-scan-b")];
+        let lan = Arc::new(Lan::default());
+        let mut devices: Vec<_> = [("Desk", DeviceKind::Desktop), ("Phone", DeviceKind::Phone)]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (name, kind))| {
+                let settings = Settings::new();
+                let path = nori_host::db_path(dirs[i].path());
+                settings.open(&path).unwrap();
+                let client = client(path, SavedServer { id: name.into(), kind: ServerKind::YouTubeMusic, ..Default::default() }, settings);
+                lan.0.lock().unwrap().push(Seat::default());
+                let (ops, _) = mpsc::channel();
+                let (changes, changed) = mpsc::channel();
+                let remote = Remote::new(client, RemoteMe { name: name.into(), kind }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), Some(Arc::new(Port(lan.clone(), i))));
+                lan.0.lock().unwrap()[i].remote = Arc::downgrade(&remote);
+                (remote, changed)
+            })
+            .collect();
+        for (device, _) in &devices {
+            device.clone().serve(true);
+            device.clone().watch(true);
+        }
+        assert!(devices.iter().all(|(d, _)| d.devices().is_empty()), "not paired: neither lists the other");
+        let (shower, scanning) = (devices.remove(1 - scanner), devices.remove(0));
+        assert!(scanning.0.clone().pair(shower.0.pairing_link().unwrap()));
+        for ((me, changed), other) in [(&scanning, &shower.0), (&shower, &scanning.0)] {
+            wait(changed, || me.devices().iter().any(|d| d.id == other.id()));
+        }
+        scanning.0.stop();
+        shower.0.stop();
+    }
 }
