@@ -279,6 +279,8 @@ pub mod hints {
     type Hints = &'static [(&'static str, &'static str)];
     pub const HOME: Hints = &[("enter", "open"), ("a", "add"), ("x", "play"), ("/", "search"), ("1-9", "go"), ("F", "player"), ("?", "keys")];
     pub const LIBRARY: Hints = &[("enter", "open"), ("a", "add"), ("x", "play"), ("[ ]", "section"), ("/", "search"), ("F", "player"), ("?", "keys")];
+    pub const SORTED: Hints = &[("enter", "open"), ("a", "add"), ("S", "sort"), ("[ ]", "section"), ("/", "search"), ("F", "player"), ("?", "keys")];
+    pub const HISTORY: Hints = &[("enter", "play"), ("a", "add"), ("esc", "back"), ("?", "keys")];
     pub const PAGE: Hints = &[("enter", "play"), ("x", "play all"), ("X", "shuffle"), ("a", "add"), ("f", "favorite"), ("esc", "back"), ("?", "keys")];
     pub const RESULTS: Hints = &[("enter", "open"), ("a", "add"), ("/", "type"), ("esc", "back"), ("?", "keys")];
     pub const TYPING: Hints = &[("enter", "results"), ("esc", "stop typing"), ("ctrl u", "clear")];
@@ -304,6 +306,51 @@ pub const NOTHING_PLAYING: &str = "Nothing playing";
 pub const REMOTE: &str = "remote";
 pub const OFFLINE: &str = "offline";
 pub const UNREACHABLE: &str = "unreachable";
+
+pub const SORT_BY: &str = "Sort by";
+
+/// One of the albums' orders (`browse::album_sorts`).
+pub fn album_sort(sort: nori_core::browse::AlbumSort) -> &'static str {
+    use nori_core::browse::AlbumSort;
+    match sort {
+        AlbumSort::Starred => "Favorites",
+        AlbumSort::ByName => "Title",
+        AlbumSort::ByArtist | AlbumSort::ArtistRows => "Artist",
+        AlbumSort::ByYear => "Year",
+        AlbumSort::Newest => "Added",
+        AlbumSort::Recent => "Played",
+        AlbumSort::Frequent => "Most played",
+        AlbumSort::Random => "Random",
+        AlbumSort::ByGenre => "Genres",
+    }
+}
+
+/// One of the songs' orders: the favorites, or one of `browse::song_sorts` by its name.
+pub fn song_order(order: &crate::app::SongOrder) -> &'static str {
+    match order {
+        crate::app::SongOrder::Favorites => "Favorites",
+        crate::app::SongOrder::Sorted(name) => match name.as_str() {
+            "ARTIST" => "Artist",
+            "ALBUM" => "Album",
+            "YEAR" => "Year",
+            "ADDED" => "Added",
+            "PLAYS" => "Most played",
+            "LONGEST" => "Longest",
+            _ => "Title",
+        },
+    }
+}
+
+/// A place at the top of the library's sections.
+pub fn place(p: crate::app::Place) -> &'static str {
+    use crate::app::Place;
+    match p {
+        Place::Favorites => "Favorites",
+        Place::Downloads => "Downloads",
+        Place::History => "History",
+        Place::Shuffle => "Shuffle",
+    }
+}
 
 /// A switch's state.
 pub fn on_off(on: bool) -> &'static str {

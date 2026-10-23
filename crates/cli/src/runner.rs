@@ -16,7 +16,7 @@ use ratatui_image::picker::Picker;
 
 use crate::app::{App, Cmd, Now, Panel, View};
 use crate::art::{protocol_name, Art, Colors, COVER_PX};
-use crate::backend::{own, Msg, Open, Session};
+use crate::backend::{block_on, own, Msg, Open, Session};
 use crate::Options;
 
 /// Forwards terminal input from a dedicated thread.
@@ -634,6 +634,13 @@ impl Runner {
                 self.remote_read(app);
                 return;
             }
+            Cmd::Keep(pref) => {
+                let settings = &crate::backend::app().settings;
+                let mut prefs = settings.current().unwrap_or_default();
+                prefs.list_prefs.insert(pref.key, pref.value);
+                settings.put(prefs);
+                return prefs_changed(app);
+            }
             Cmd::SwitchServer(id) => {
                 let mut prefs = crate::backend::app().settings.current().unwrap_or_default();
                 let Some(p) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
@@ -678,6 +685,19 @@ impl Runner {
                 app.say(crate::text::repeat(s.now().repeat), false);
             }
             Cmd::Download(songs) => s.download(songs),
+            Cmd::ShuffleLibrary { albums } => {
+                let (h, tx, id) = ((**s).clone(), self.tx.clone(), s.id);
+                nori_host::spawn("nori-shuffle", move || {
+                    use nori_core::{OriginKind, PageOrigin};
+                    let (songs, kind) = if albums { (block_on(h.client.shuffle_albums()), OriginKind::ShuffleAlbums) } else { (block_on(h.client.shuffle_all()), OriginKind::ShuffleSongs) };
+                    match songs {
+                        Ok(songs) => h.play(songs, 0, false, Some(PageOrigin::new(kind, ""))),
+                        Err(e) => {
+                            let _ = tx.send(Msg::From(id, Box::new(Msg::Note { text: crate::text::net_error(&e), error: true })));
+                        }
+                    }
+                });
+            }
             Cmd::DownloadFetch(what) => s.download_later(what),
             Cmd::DownloadRemove(id) => {
                 s.download_remove(&id);
@@ -754,7 +774,7 @@ impl Runner {
                     }
                 }
             }
-            Cmd::Quit | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignOut | Cmd::StopReminding => {}
+            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignOut | Cmd::StopReminding => {}
         }
     }
 

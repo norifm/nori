@@ -52,6 +52,8 @@ pub enum Action {
     Star,
     PlayAll,
     ShuffleAll,
+    /// The next order of the list.
+    Sort,
     /// Starts a jam around the selected item.
     Jam,
     /// Joins someone's jam with its invite link.
@@ -178,6 +180,7 @@ pub const BINDINGS: &[Binding] = &[
     b!(List, "D", Action::Download, "Download", [(Char('D'), S), (Char('D'), N)]),
     b!(List, "f", Action::Star, "Favorite or not", [(Char('f'), N)]),
     b!(List, "i", Action::Jam, "Start a jam with it: it plays, and friends with the link ask for songs", [(Char('i'), N)]),
+    b!(List, "S", Action::Sort, "The albums' or the songs' next order", [(Char('S'), S), (Char('S'), N)]),
     b!(List, "[ ]", Action::GroupBack, "The library's section, or the settings' group, before or after", [(Char('['), N)]),
     b!(List, "", Action::GroupOn, "", [(Char(']'), N)]),
     b!(Edit, "d / delete", Action::Remove, "Take it out (of the queue, or off this computer); refuse a jam request (enter accepts)", [(Char('d'), N), (Delete, N)]),

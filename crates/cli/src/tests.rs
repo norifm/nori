@@ -241,7 +241,7 @@ fn keys_and_focus() {
     let mut a = app();
     key(&mut a, KeyCode::Char('2'));
     assert_eq!(a.view, View::Albums);
-    assert!(a.cmds.contains(&Cmd::Load(Req::Albums { offset: 0 })));
+    assert!(a.cmds.contains(&Cmd::Load(albums_req())));
     key(&mut a, KeyCode::Char('3'));
     assert_eq!(a.view, View::Artists);
     assert!(a.cmds.contains(&Cmd::Load(Req::Artists)));
@@ -337,18 +337,23 @@ fn album_list_keys_and_clicks() {
     a.heard(Some(song("1", "One", 200)));
     a.go(View::Albums);
     let albums: Vec<Album> = (0..100).map(|i| album(&format!("al-{i}"), &format!("Album {i}"))).collect();
-    a.handle(Msg::Data(Req::Albums { offset: 0 }, Ok(Data::Albums(albums))));
+    a.handle(Msg::Data(albums_req(), Ok(Data::Albums(albums))));
     let s = draw(&mut a, 160, 40);
     let row = s.lines().find(|l| l.contains("Album 0")).unwrap_or_else(|| panic!("{s}"));
     assert!(row.contains("Someone") && row.contains("2001"), "one row: the name, who made it, the year:\n{s}");
+    let id = |a: &App| match a.selected() {
+        Some(Item::Album(al)) => al.id,
+        other => format!("{other:?}"),
+    };
+    assert_eq!(id(&a), "al-0", "the first album, past the places");
     // ↓ a row down, and ← → seek here as everywhere.
     key(&mut a, KeyCode::Down);
-    assert_eq!(a.library.albums_sel.at, 1);
+    assert_eq!(id(&a), "al-1");
     key(&mut a, KeyCode::Right);
-    assert_eq!(a.library.albums_sel.at, 1);
+    assert_eq!(id(&a), "al-1");
     assert!(a.cmds.iter().any(|c| matches!(c, Cmd::Seek(_))));
     // One click on an album opens it; esc comes back.
-    let r = hit_rect(&a, Hit::Row(ListRef::Albums, 2));
+    let r = hit_rect(&a, Hit::Row(ListRef::Albums, a.library.albums_sel.at + 1));
     a.cmds.clear();
     click(&mut a, r.x + 2, r.y);
     assert!(a.cmds.contains(&Cmd::Load(Req::Album("al-2".into()))), "{:?}", a.cmds);
@@ -375,6 +380,70 @@ fn album_list_keys_and_clicks() {
     let r = hit_rect(&a, Hit::Tab(View::Playlists));
     click(&mut a, r.x + 1, r.y);
     assert_eq!(a.view, View::Playlists);
+}
+
+/// The library's places head each section, as the phone's card does: Favorites, Downloads with what
+/// they weigh, History, and Shuffle on the albums and the songs. The albums and the songs have the phone's
+/// orders, S the next, kept for the next time; Artist puts each artist's albums under them.
+#[test]
+fn the_library_has_its_places_and_orders() {
+    let mut a = app();
+    a.go(View::Albums);
+    assert!(a.cmds.contains(&Cmd::Load(Req::DownloadsSize)));
+    a.handle(Msg::Data(Req::DownloadsSize, Ok(Data::DownloadsSize(511 * 1024 * 1024))));
+    let albums = vec![Album { artist_id: Some("ar-a".into()), artist: "Ann".into(), ..album("al-1", "First") }, Album { artist_id: Some("ar-a".into()), artist: "Ann".into(), ..album("al-2", "Second") }, Album { artist_id: Some("ar-b".into()), artist: "Bo".into(), ..album("al-3", "Third") }];
+    a.handle(Msg::Data(albums_req(), Ok(Data::Albums(albums.clone()))));
+    let s = draw(&mut a, 120, 30);
+    dump("library", &s);
+    let lines: Vec<&str> = s.lines().map(str::trim).collect();
+    let at = lines.iter().position(|l| l.starts_with("Favorites")).unwrap_or_else(|| panic!("{s}"));
+    assert!(lines[at + 1].starts_with("Downloads") && lines[at + 1].ends_with("511 MB") && lines[at + 2] == "History" && lines[at + 3] == "Shuffle", "{s}");
+    assert!(s.contains("3 albums") && s.contains("Sort by  Title"), "{s}");
+    // The places open, shuffling plays the library.
+    key(&mut a, KeyCode::Char('g'));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.view, View::Favorites);
+    a.go(View::Albums);
+    for _ in 0..3 {
+        key(&mut a, KeyCode::Down);
+    }
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::ShuffleLibrary { albums: true }));
+    // S: the next of the core's orders, kept, read again; Artist is a shelf per artist.
+    let orders: Vec<nori_core::browse::AlbumSort> = nori_core::browse::album_sorts();
+    assert_eq!(a.library.album_sort, orders[1], "Title, after Favorites");
+    a.cmds.clear();
+    key(&mut a, KeyCode::Char('S'));
+    let artist = nori_core::browse::AlbumSort::ArtistRows;
+    assert_eq!(a.library.album_sort, artist);
+    assert_eq!(a.cmds, [Cmd::Keep(nori_core::browse::album_sort_kept(artist)), Cmd::Load(Req::Albums { sort: artist, offset: 0 })]);
+    a.handle(Msg::Data(albums_req(), Ok(Data::Albums(albums[..1].to_vec()))));
+    assert!(a.library.albums.ready().is_none(), "an order left since is not shown");
+    a.handle(Msg::Data(Req::Albums { sort: artist, offset: 0 }, Ok(Data::Albums(albums.clone()))));
+    let s = draw(&mut a, 120, 30);
+    let lines: Vec<&str> = s.lines().map(str::trim_end).collect();
+    let ann = lines.iter().position(|l| l.trim_start().starts_with("Ann")).unwrap_or_else(|| panic!("{s}"));
+    assert!(lines[ann].ends_with("2 albums") && lines[ann + 1].contains("  First") && lines[ann + 2].contains("  Second") && lines[ann + 3].trim_start().starts_with("Bo"), "{s}");
+    assert!(s.contains("Sort by  Artist"), "{s}");
+    // An artist's line opens the artist.
+    a.library.albums_sel.at = a.library_lines().iter().position(|l| *l == crate::app::LibLine::Shelf(2)).unwrap();
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert!(a.cmds.contains(&Cmd::Load(Req::Artist("ar-b".into()))), "{:?}", a.cmds);
+
+    // The songs: the favorites first, then the core's sorts.
+    let mut a = app();
+    a.go(View::Songs);
+    assert!(a.cmds.contains(&Cmd::Load(songs_req())));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Char('S'));
+    assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Songs { sort: "ARTIST".into(), starred: false, offset: 0 })));
+    for _ in 0..6 {
+        key(&mut a, KeyCode::Char('S'));
+    }
+    assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Songs { sort: "TITLE".into(), starred: true, offset: 0 })), "round to the favorites");
+    a.handle(Msg::Data(Req::Songs { sort: "TITLE".into(), starred: true, offset: 0 }, Ok(Data::Songs(vec![song("1", "Kept", 100)], true))));
+    assert!(draw(&mut a, 120, 30).contains("Sort by  Favorites"));
 }
 
 #[test]
@@ -483,14 +552,14 @@ fn mouse() {
     let mut a = app();
     a.go(View::Songs);
     let songs: Vec<Song> = (0..30).map(|i| Song { starred: i == 2, ..song(&format!("s{i}"), &format!("Song {i}"), 200) }).collect();
-    a.handle(Msg::Data(Req::Songs { offset: 0 }, Ok(Data::Songs(songs, true))));
+    a.handle(Msg::Data(songs_req(), Ok(Data::Songs(songs, true))));
     a.heard(Some(song("s1", "Song 1", 200)));
     let s = draw(&mut a, 160, 40);
-    assert!(s.contains("Title") && s.contains("Artist") && s.contains("Album") && s.contains("Time"), "{s}");
     let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
     assert!(line("Song 1").contains('▶') && line("Song 2").contains('好') && !line("Song 3").contains('好'), "the song heard and the favorite are marked:\n{s}");
     dump("songs", &s);
-    let row = hit_rect(&a, Hit::Row(ListRef::Songs, 4));
+    // Under the four places and their gap.
+    let row = hit_rect(&a, Hit::Row(ListRef::Songs, 4 + 5));
     a.cmds.clear();
     click(&mut a, row.x + 5, row.y);
     assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Play { .. })), "one click selects");
@@ -569,13 +638,13 @@ fn settings_page() {
 fn load_error_shown() {
     let mut a = app();
     a.go(View::Albums);
-    a.handle(Msg::Data(Req::Albums { offset: 0 }, Err("The server did not answer: HTTP 522".into())));
+    a.handle(Msg::Data(albums_req(), Err("The server did not answer: HTTP 522".into())));
     let s = draw(&mut a, 120, 24);
     assert!(s.contains("Could not load this page") && s.contains("HTTP 522") && s.contains("R tries again"), "{s}");
     dump("error", &s);
     a.cmds.clear();
     key(&mut a, KeyCode::Char('R'));
-    assert!(a.cmds.contains(&Cmd::Load(Req::Albums { offset: 0 })));
+    assert!(a.cmds.contains(&Cmd::Load(albums_req())));
     a.unreachable = Some("The server did not answer: HTTP 522".into());
     let s = draw(&mut a, 120, 24);
     assert!(s.contains("unreachable"), "{s}");
@@ -792,7 +861,7 @@ fn a_signed_out_like_says_where_to_sign_in() {
     let mut a = app();
     a.rules = nori_core::providers::rules_of(nori_core::settings::SavedServer { kind: nori_core::settings::ServerKind::YouTubeMusic, ..Default::default() }, false);
     a.go(View::Songs);
-    a.handle(Msg::Data(Req::Songs { offset: 0 }, Ok(Data::Songs(vec![song("yt-1", "One", 200)], false))));
+    a.handle(Msg::Data(songs_req(), Ok(Data::Songs(vec![song("yt-1", "One", 200)], false))));
     key(&mut a, KeyCode::Char('f'));
     assert!(matches!(a.cmds.last(), Some(Cmd::OfferSignIn)));
     assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Star(..))));
@@ -842,7 +911,7 @@ fn the_account_sheet_signs_in_and_out() {
 fn star_marks_from_the_core_redraw_the_seals() {
     let mut a = app();
     a.go(View::Songs);
-    a.handle(Msg::Data(Req::Songs { offset: 0 }, Ok(Data::Songs(vec![song("1", "One", 200), Song { starred: true, ..song("2", "Two", 200) }], false))));
+    a.handle(Msg::Data(songs_req(), Ok(Data::Songs(vec![song("1", "One", 200), Song { starred: true, ..song("2", "Two", 200) }], false))));
     a.heard(Some(song("1", "One", 200)));
     let s = draw(&mut a, 170, 40);
     let line = |s: &str, name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
@@ -1340,7 +1409,7 @@ fn a_jam_starts_around_the_song_picked() {
     let mut a = app();
     a.go(View::Songs);
     let songs = vec![song("1", "One", 200), song("2", "Two", 200)];
-    a.handle(Msg::Data(Req::Songs { offset: 0 }, Ok(Data::Songs(songs.clone(), false))));
+    a.handle(Msg::Data(songs_req(), Ok(Data::Songs(songs.clone(), false))));
     key(&mut a, KeyCode::Down);
     a.cmds.clear();
     key(&mut a, KeyCode::Char('i'));
@@ -1486,7 +1555,7 @@ fn a_guest_browses_the_hosts_library_and_asks_for_songs() {
     assert!(!a.cmds.contains(&Cmd::Load(Req::Playlists)), "the host's playlists are not the guest's");
     let songs = vec![song("1", "One", 200), song("2", "Two", 200), song("3", "Three", 200)];
     a.marks.mark(nori_core::client::Starrable::Song, "3".into(), true);
-    a.handle(Msg::Data(Req::Songs { offset: 0 }, Ok(Data::Songs(songs.clone(), true))));
+    a.handle(Msg::Data(songs_req(), Ok(Data::Songs(songs.clone(), true))));
     let s = draw(&mut a, 160, 30);
     dump("guest-songs", &s);
     let row = |text: &str| s.lines().find(|l| l.contains(text)).unwrap_or_else(|| panic!("{text} missing:\n{s}")).to_string();
@@ -1629,7 +1698,7 @@ fn the_main_screens() {
         a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(1, "Recently added".into(), albums[6..].iter().cloned().map(Item::Album).collect()))));
         out.push(shot(a, "home"));
         a.go(View::Albums);
-        a.handle(Msg::Data(Req::Albums { offset: 0 }, Ok(Data::Albums(albums.clone()))));
+        a.handle(Msg::Data(albums_req(), Ok(Data::Albums(albums.clone()))));
         out.push(shot(a, "library"));
         a.open_album("al-0".into());
         a.handle(Msg::Data(Req::Album("al-0".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(albums[0].clone(), tracks.clone(), vec![]))))));
@@ -1670,4 +1739,14 @@ fn the_main_screens() {
             assert!(s.contains("Moment's Notice"), "{name} at {w}x{h} shows the song playing:\n{s}");
         }
     }
+}
+
+/// The albums' first page in the first order.
+fn albums_req() -> Req {
+    Req::Albums { sort: nori_core::browse::AlbumSort::ByName, offset: 0 }
+}
+
+/// The songs' first page by title.
+fn songs_req() -> Req {
+    Req::Songs { sort: "TITLE".into(), starred: false, offset: 0 }
 }

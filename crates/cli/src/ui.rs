@@ -19,7 +19,9 @@ use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, Button, DeviceRow, Focus, HomeLine, Hit, Item, ListRef, Load, Overlay, Page, Panel, QueueRow, SearchRow, Sel, View, LOGIN_FIELDS, PANELS};
+use nori_core::browse::AlbumSort;
+
+use crate::app::{App, Button, DeviceRow, Focus, HomeLine, Hit, Item, LibLine, ListRef, Load, Overlay, Page, Panel, Place, QueueRow, SearchRow, Sel, View, LOGIN_FIELDS, PANELS};
 use crate::art::{Art, Theme};
 use crate::keys::{Scope, BINDINGS};
 use crate::settings_view::{self, EqRow, Line as SLine, SettingsView};
@@ -386,6 +388,8 @@ fn hints(app: &App) -> &'static [(&'static str, &'static str)] {
         View::Equalizer => h::EQUALIZER,
         View::Downloads => h::DOWNLOADS,
         View::Search => h::RESULTS,
+        View::Albums | View::Songs => h::SORTED,
+        View::History => h::HISTORY,
         _ => h::LIBRARY,
     }
 }
@@ -411,13 +415,9 @@ fn page_view(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         View::Search => search(f, inner, app, t, focused),
         View::Albums | View::Artists | View::Songs | View::Playlists => {
             let body = sections(f, inner, app, t);
-            match app.view {
-                View::Albums => albums(f, body, app, t, focused),
-                View::Artists => artists(f, body, app, t, focused),
-                View::Songs => songs(f, body, app, t, focused),
-                _ => playlists(f, body, app, t, focused),
-            }
+            library_section(f, body, app, t, focused);
         }
+        View::History => history(f, inner, app, t, focused),
         View::Favorites => favorites(f, inner, app, t, focused),
         View::Downloads => downloads(f, inner, app, t, focused),
         View::Equalizer => equalizer(f, inner, app, t, focused),
@@ -510,73 +510,109 @@ fn is_playing(item: &Item, playing: Option<&str>) -> bool {
     matches!(item, Item::Song(songs, at) if Some(songs[*at].id.as_str()) == playing)
 }
 
-fn albums(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
-    let App { library: l, hits, marks, rules, .. } = app;
-    let caption = l.albums.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "album", "albums") + if l.albums_more { "+" } else { "" });
-    text(f, area, &caption, t.dim());
-    let body = below(area, 1);
-    match &l.albums {
-        Load::Ready(v) if v.is_empty() => empty(f, body, t, "Nothing here yet"),
-        Load::Ready(v) => {
-            let row = |i: usize, w: usize| {
-                let item = Item::Album(v[i].clone());
-                item_line(&item, w, t, starred(&item, marks, rules.stars), false)
-            };
-            list(f, body, &mut l.albums_sel, v.len(), ListRef::Albums, hits, t, focused, &row);
-        }
-        Load::Failed(e) => failed(f, body, t, e),
-        _ => loading(f, body, t),
+/// How far a list has loaded: its length once read, or why it was not.
+fn state<T>(load: &Load<Vec<T>>) -> Result<Option<usize>, String> {
+    match load {
+        Load::Ready(v) => Ok(Some(v.len())),
+        Load::Failed(e) => Err(e.clone()),
+        _ => Ok(None),
     }
 }
 
-fn artists(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
-    let App { library: l, marks, hits, rules, .. } = app;
-    let caption = l.artists.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "artist", "artists"));
-    text(f, area, &caption, t.dim());
+/// A library section: how many it holds and its order on one line, then its places, then its entries;
+/// in Artist order the albums under a line for each artist.
+fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
+    let view = app.view;
+    let lines = app.library_lines();
+    let playing = app.song.as_ref().map(|s| s.id.clone());
+    let App { library: l, hits, marks, rules, devices, .. } = app;
+    let stars = rules.stars;
+    let seals = &*marks;
+    let marks = Marks::of(marks, rules, devices);
+    let (loaded, more, one, many) = match view {
+        View::Albums => (state(&l.albums), l.albums_more, "album", "albums"),
+        View::Artists => (state(&l.artists), false, "artist", "artists"),
+        View::Songs => (state(&l.songs), l.songs_more, "song", "songs"),
+        _ => (state(&l.playlists), false, "playlist", "playlists"),
+    };
+    let order = match view {
+        View::Albums => Some(crate::text::album_sort(l.album_sort)),
+        View::Songs => Some(crate::text::song_order(&l.song_sort)),
+        _ => None,
+    };
+    let caption = match &loaded {
+        Ok(Some(n)) => crate::text::count(*n as u64, one, many) + if more { "+" } else { "" },
+        _ => String::new(),
+    };
+    let sort = order.map_or_else(String::new, |o| format!("{}  {o} ", crate::text::SORT_BY));
+    put(f, Paragraph::new(spread(vec![Span::styled(caption, t.dim())], Span::styled(sort, t.dim()), area.width as usize)), row_of(area, 0));
     let body = below(area, 1);
-    match &l.artists {
-        Load::Ready(v) if v.is_empty() => empty(f, body, t, "Nothing here yet"),
-        Load::Ready(v) => {
-            let row = |i: usize, w: usize| {
-                let item = Item::Artist(v[i].clone());
-                item_line(&item, w, t, starred(&item, marks, rules.stars), false)
-            };
-            list(f, body, &mut l.artists_sel, v.len(), ListRef::Artists, hits, t, focused, &row);
-        }
-        Load::Failed(e) => failed(f, body, t, e),
-        _ => loading(f, body, t),
+    match loaded {
+        Err(e) => return failed(f, body, t, &e),
+        Ok(None) => return loading(f, body, t),
+        Ok(Some(_)) if lines.is_empty() => return empty(f, body, t, "Nothing here yet"),
+        Ok(Some(_)) => {}
     }
+    let size = l.downloads_bytes.map(|b| nori_core::numbers::bytes(b, nori_core::numbers::POINT));
+    let albums = l.albums.ready().map_or(&[][..], Vec::as_slice);
+    let row = |i: usize, w: usize| match lines[i] {
+        LibLine::Place(p) => {
+            let end = if p == Place::Downloads { size.clone().unwrap_or_default() } else { String::new() };
+            spread(vec![Span::styled(crate::text::place(p), Style::default().fg(t.ink))], Span::styled(format!("{end} "), t.dim()), w)
+        }
+        LibLine::Gap => Line::from(""),
+        LibLine::Shelf(start) => {
+            let a = &albums[start];
+            let n = albums[start..].iter().take_while(|x| x.artist_id == a.artist_id && x.artist == a.artist).count();
+            spread(vec![Span::styled(a.artist.clone(), bold().fg(t.ink))], Span::styled(format!("{} ", crate::text::albums(n as u32)), t.dim()), w)
+        }
+        LibLine::Entry(k) => match view {
+            View::Songs => {
+                let v = l.songs.ready().map_or(&[][..], Vec::as_slice);
+                song_line(&v[k], &marks, k + 1, w, t, playing.as_deref() == Some(v[k].id.as_str()), true)
+            }
+            View::Albums if l.album_sort == AlbumSort::ArtistRows => {
+                // Under its artist: the album and its year.
+                let a = &albums[k];
+                let seal = if starred(&Item::Album(a.clone()), seals, stars) { format!(" {SEAL}") } else { String::new() };
+                spread(vec![Span::raw("  "), Span::styled(format!("{}{seal}", a.name), Style::default().fg(t.ink))], Span::styled(if a.year > 0 { format!("{} ", a.year) } else { String::new() }, t.dim()), w)
+            }
+            _ => {
+                let item = match view {
+                    View::Albums => Item::Album(albums[k].clone()),
+                    View::Artists => Item::Artist(l.artists.ready().map(|v| v[k].clone()).unwrap_or_default()),
+                    _ => Item::Playlist(l.playlists.ready().map(|v| v[k].clone()).unwrap_or_default()),
+                };
+                item_line(&item, w, t, starred(&item, seals, stars), false)
+            }
+        },
+    };
+    let (mut sel, lref) = match view {
+        View::Albums => (l.albums_sel, ListRef::Albums),
+        View::Artists => (l.artists_sel, ListRef::Artists),
+        View::Songs => (l.songs_sel, ListRef::Songs),
+        _ => (l.playlists_sel, ListRef::Playlists),
+    };
+    list(f, body, &mut sel, lines.len(), lref, hits, t, focused, &row);
+    *match view {
+        View::Albums => &mut l.albums_sel,
+        View::Artists => &mut l.artists_sel,
+        View::Songs => &mut l.songs_sel,
+        _ => &mut l.playlists_sel,
+    } = sel;
 }
 
-fn songs(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
+/// What this device played, newest first.
+fn history(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let playing = app.song.as_ref().map(|s| s.id.clone());
     let App { library: l, hits, marks, rules, devices, .. } = app;
     let marks = Marks::of(marks, rules, devices);
-    let caption = l.songs.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "song", "songs") + if l.songs_more { "+" } else { "" });
-    text(f, area, &caption, t.dim());
-    let body = below(area, 1);
-    match &l.songs {
-        Load::Ready(v) if v.is_empty() => empty(f, body, t, "Nothing here yet"),
+    let body = heading(f, area, View::History.name(), "", t);
+    match &l.history {
+        Load::Ready(v) if v.is_empty() => empty(f, body, t, "Nothing played yet"),
         Load::Ready(v) => {
-            let body = table_head(f, body, t, true);
-            let row = |i: usize, w: usize| song_line(&v[i], &marks, i + 1, w, t, playing.as_deref() == Some(v[i].id.as_str()), true);
-            list(f, body, &mut l.songs_sel, v.len(), ListRef::Songs, hits, t, focused, &row);
-        }
-        Load::Failed(e) => failed(f, body, t, e),
-        _ => loading(f, body, t),
-    }
-}
-
-fn playlists(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
-    let App { library: l, hits, .. } = app;
-    let caption = l.playlists.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "playlist", "playlists"));
-    text(f, area, &caption, t.dim());
-    let body = below(area, 1);
-    match &l.playlists {
-        Load::Ready(v) if v.is_empty() => empty(f, body, t, "No playlists yet"),
-        Load::Ready(v) => {
-            let row = |i: usize, w: usize| item_line(&Item::Playlist(v[i].clone()), w, t, false, false);
-            list(f, body, &mut l.playlists_sel, v.len(), ListRef::Playlists, hits, t, focused, &row);
+            let row = |i: usize, w: usize| song_line(&v[i].song, &marks, 0, w, t, playing.as_deref() == Some(v[i].song.id.as_str()), true);
+            list(f, body, &mut l.history_sel, v.len(), ListRef::History, hits, t, focused, &row);
         }
         Load::Failed(e) => failed(f, body, t, e),
         _ => loading(f, body, t),

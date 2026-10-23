@@ -97,13 +97,18 @@ impl Msg {
 }
 
 /// A screen's data request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Req {
     Home,
-    Albums { offset: u32 },
+    Albums { sort: nori_core::browse::AlbumSort, offset: u32 },
     Artists,
     Playlists,
-    Songs { offset: u32 },
+    /// The songs in a `browse::song_sorts` order, `starred` only the favorites.
+    Songs { sort: String, starred: bool, offset: u32 },
+    /// This device's listening history from where a page left off.
+    History(Option<nori_core::browse::HistoryAfter>),
+    /// What the downloads weigh.
+    DownloadsSize,
     Album(String),
     DownloadedAlbum(String),
     Artist(String),
@@ -122,6 +127,8 @@ pub enum Data {
     Artists(Vec<nori_core::Artist>),
     Playlists(Vec<nori_core::Playlist>),
     Songs(Vec<Song>, bool),
+    History(nori_core::browse::HistoryPage),
+    DownloadsSize(i64),
     /// The starred songs.
     Favorites(Vec<Song>),
     Album(Box<AlbumDetail>),
@@ -221,16 +228,15 @@ impl Session {
             let _ = tx.send(Msg::From(id, Box::new(Msg::Data(asked.clone(), r))));
         };
         let ask = match req.clone() {
-            Req::Albums { offset } => Some(PageAsk::Albums { sort: nori_core::browse::AlbumSort::ByName, offset }),
+            Req::Albums { sort, offset } => Some(PageAsk::Albums { sort, offset }),
             Req::Artists => Some(PageAsk::Artists),
             Req::Playlists => Some(PageAsk::Playlists),
-            Req::Songs { offset } => Some(PageAsk::Songs { offset }),
             Req::Album(id) => Some(PageAsk::Album(id)),
             Req::DownloadedAlbum(id) => Some(PageAsk::DownloadedAlbum(id)),
             Req::Artist(id) => Some(PageAsk::Artist(id)),
             Req::Playlist(id) => Some(PageAsk::Playlist(id)),
             Req::Favorites => Some(PageAsk::Favorites),
-            Req::Home | Req::Downloads | Req::DownloadProgress | Req::Facts => None,
+            Req::Home | Req::Songs { .. } | Req::History(_) | Req::DownloadsSize | Req::Downloads | Req::DownloadProgress | Req::Facts => None,
         };
         if let Some(ask) = ask {
             return self.host.read_page(ask, move |r| send(r.map(data_of).map_err(|e| page_failed(&e))));
@@ -263,6 +269,19 @@ impl Session {
                     let stored = core.downloaded_library();
                     send(stored.and_then(|stored| core.download_sections().map(|s| Data::Downloads(Box::new(Downloads { finished: s.finished.len(), active: s.active, queued: s.queued, failed: s.failed, stored })))).map_err(|e| e.to_string()));
                 });
+            }
+            // The index's songs in the order asked for (the server's own for a profile that keeps none).
+            Req::Songs { sort, starred, offset } => {
+                let client = self.client.clone();
+                nori_host::spawn("nori-read", move || send(block_on(client.songs_listed(sort, starred, 0, 0, offset)).map(|p| Data::Songs(p.songs, p.exhausted)).map_err(|e| unreachable(&e))));
+            }
+            Req::History(after) => {
+                let core = self.core.clone();
+                nori_host::spawn("nori-read", move || send(core.history_page(after).map(Data::History).map_err(|e| e.to_string())));
+            }
+            Req::DownloadsSize => {
+                let core = self.core.clone();
+                nori_host::spawn("nori-read", move || send(core.downloads(true).map(|v| Data::DownloadsSize(v.iter().map(|s| s.size as i64).sum())).map_err(|e| e.to_string())));
             }
             Req::DownloadProgress => {
                 let core = self.core.clone();
