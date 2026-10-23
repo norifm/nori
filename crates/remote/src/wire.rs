@@ -316,7 +316,8 @@ pub struct DeviceState {
     pub repeat: u8,
     /// The jam this device hosts.
     pub jam: Option<JamState>,
-    /// The device this one last handed its playback to, until it plays again: its controllers follow it there.
+    /// The device this one last handed its playback to, until it plays again or a queue is sent to it: its
+    /// controllers follow it there.
     pub handed_to: Option<String>,
     /// The last command this device carried out from each controller: a controller's foresight of it
     /// holds until a state says it was carried out.

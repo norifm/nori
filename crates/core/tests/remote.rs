@@ -1768,6 +1768,73 @@ fn controllers_follow_playback_to_where_it_was_handed() {
     relay.close();
 }
 
+/// Playback handed back to a device that has not played since: it no longer says it handed it on, so
+/// a controller picking it stays there.
+#[test]
+fn a_device_handed_back_its_playback_is_followed_there() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let laptop = Device::account(&relay, DeviceKind::Desktop, "Laptop");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["s1", "s2"], 0);
+    for d in [&phone, &laptop] {
+        d.remote.clone().serve(true);
+    }
+    let (phone_id, laptop_id) = (phone.remote.id(), laptop.remote.id());
+    desk.remote.clone().watch(true);
+    for (d, other) in [(&phone, &laptop_id), (&laptop, &phone_id)] {
+        d.until("the other", |r| r.devices().into_iter().find(|d| d.id == *other && d.state.is_some()));
+    }
+
+    phone.remote.clone().hand_over(laptop_id.clone());
+    assert_eq!(phone.told(), Op::Pause);
+    assert!(matches!(laptop.told(), Op::Replace { .. }));
+    laptop.queued(&["s1", "s2"]);
+    laptop.remote.clone().hand_over(phone_id.clone());
+    assert!(matches!(phone.told(), Op::Replace { play: false, .. }));
+    phone.queued(&["s1", "s2"]);
+    let state = |id: &str| desk.remote.devices().into_iter().find(|d| d.id == id).and_then(|d| d.state);
+    desk.until("each said where it stands", |_| {
+        (state(&laptop_id)?.handed_to.as_ref() == Some(&phone_id) && state(&phone_id)?.handed_to.is_none()).then_some(())
+    });
+
+    desk.remote.clone().pick(Some(phone_id.clone()));
+    assert_eq!(desk.remote.active().map(|m| m.id), Some(phone_id));
+    relay.close();
+}
+
+/// Two devices each last said they handed their playback to the other (one of them heard before it
+/// was handed back): a controller follows the hand-off once and stays.
+#[test]
+fn hand_offs_in_a_circle_are_followed_once() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let laptop = Device::account(&relay, DeviceKind::Desktop, "Laptop");
+    phone.playing(&["s1", "s2"], 0);
+    laptop.playing(&["s1", "s2"], 0);
+    for d in [&phone, &laptop] {
+        d.remote.clone().serve(true);
+    }
+    let (phone_id, laptop_id) = (phone.remote.id(), laptop.remote.id());
+    let published = |id: &str| relay.hub.lock().rooms.values().flat_map(|r| &r.members).find(|m| m.id == id && m.state.is_some()).cloned();
+    let mut members = phone.until("both published", |_| Some([published(&phone_id)?, published(&laptop_id)?]));
+    phone.remote.clone().stop();
+    laptop.remote.clone().stop();
+    for (m, to) in members.iter_mut().zip([&laptop_id, &phone_id]) {
+        let state = m.state.as_mut().unwrap();
+        state.playing = false;
+        state.handed_to = Some(to.clone());
+    }
+    relay.hub.lock().rooms.entry("u:ann".into()).or_default().members.extend(members);
+
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    desk.remote.clone().watch(true);
+    desk.until("both", |r| (r.devices().iter().filter(|d| d.state.is_some()).count() == 2).then_some(()));
+    desk.remote.clone().pick(Some(phone_id));
+    assert_eq!(desk.remote.active().map(|m| m.id), Some(laptop_id));
+    relay.close();
+}
+
 /// A state the device published before it carried out a command, arriving after the command was sent,
 /// does not undo what the controller shows; the device's own word does, or time when it says nothing.
 #[test]
