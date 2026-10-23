@@ -119,6 +119,80 @@ DRAWABLES = {
 
 NS = "{http://www.w3.org/2000/svg}"
 
+# Drawn to the seal's height (core/src/main/res/drawable/seal_outline.xml, Iconoir's tag frame, 3 to 21) and
+# centred on it, line width unchanged, so a device glyph beside the seal is as tall and as heavy. A glyph too
+# wide for that stops at [WIDEST], its line still inside the box.
+FITTED = {"SmartphoneDevice", "Headset", "BluetoothTag", "Airplay", "Computer", "Terminal"}
+FRAME = (2.0, 3.0, 22.0, 21.0)
+WIDEST = 22.5
+
+ARGS = {"M": 2, "L": 2, "T": 2, "H": 1, "V": 1, "C": 6, "S": 4, "Q": 4, "A": 7, "Z": 0}
+
+
+def commands(d):
+    tokens = re.findall(r"[MLHVCSQTAZmlhvcsqtaz]|-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?", d)
+    out, i = [], 0
+    while i < len(tokens):
+        c = tokens[i]; i += 1
+        n = ARGS[c.upper()]
+        if n == 0:
+            out.append((c, [])); continue
+        first = True
+        while i < len(tokens) and not tokens[i].isalpha():
+            out.append((c if first or c.upper() != "M" else ("L" if c == "M" else "l"), [float(x) for x in tokens[i:i + n]]))
+            i += n; first = False
+    return out
+
+
+def points(cmds):
+    """Every point a path passes through or pulls toward, absolute."""
+    x = y = sx = sy = 0.0
+    for c, a in cmds:
+        rel = c.islower(); C = c.upper()
+        if C == "Z":
+            x, y = sx, sy; continue
+        if C == "H":
+            x = x + a[0] if rel else a[0]; yield x, y; continue
+        if C == "V":
+            y = y + a[0] if rel else a[0]; yield x, y; continue
+        pairs = [(a[5], a[6])] if C == "A" else list(zip(a[0::2], a[1::2]))
+        for px, py in pairs:
+            yield (x + px, y + py) if rel else (px, py)
+        x, y = (x + pairs[-1][0], y + pairs[-1][1]) if rel else pairs[-1]
+        if C == "M":
+            sx, sy = x, y
+
+
+def fitted(ds):
+    """[ds] scaled about their middle to [FRAME]'s height, or to [WIDEST] if that comes first, and centred on it."""
+    every = [pt for d in ds for pt in points(commands(d))]
+    x0, y0 = min(p[0] for p in every), min(p[1] for p in every)
+    x1, y1 = max(p[0] for p in every), max(p[1] for p in every)
+    k = min(WIDEST / max(x1 - x0, 1e-6), (FRAME[3] - FRAME[1]) / max(y1 - y0, 1e-6))
+    mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+    cx, cy = (FRAME[0] + FRAME[2]) / 2, (FRAME[1] + FRAME[3]) / 2
+    X = lambda v: f"{cx + (v - mx) * k:.4g}"
+    Y = lambda v: f"{cy + (v - my) * k:.4g}"
+    R = lambda v: f"{v * k:.4g}"
+    out = []
+    for d in ds:
+        parts_ = []
+        for c, a in commands(d):
+            rel = c.islower(); C = c.upper()
+            if C == "Z":
+                parts_.append(c); continue
+            if C == "H":
+                parts_.append(c + (R(a[0]) if rel else X(a[0]))); continue
+            if C == "V":
+                parts_.append(c + (R(a[0]) if rel else Y(a[0]))); continue
+            if C == "A":
+                end = (R(a[5]), R(a[6])) if rel else (X(a[5]), Y(a[6]))
+                parts_.append(c + " ".join([R(a[0]), R(a[1]), f"{a[2]:g}", f"{a[3]:g}", f"{a[4]:g}", *end])); continue
+            xy = [(R(px), R(py)) if rel else (X(px), Y(py)) for px, py in zip(a[0::2], a[1::2])]
+            parts_.append(c + " ".join(v for pair in xy for v in pair))
+        out.append("".join(parts_))
+    return out
+
 
 def parts(svg: Path):
     root = ET.parse(svg).getroot()
@@ -190,6 +264,9 @@ def xml_part(p, colour):
 
 def main(icons: Path):
     shapes = {name: parts(icons / style / f"{icon}.svg") for name, (icon, style, _) in GLYPHS.items()}
+    for name in FITTED:
+        for p, d in zip(shapes[name], fitted([p["d"] for p in shapes[name]])):
+            p["d"] = d
     lines = []
     for name, (icon, style, flip) in GLYPHS.items():
         ps = [kotlin_part(p) for p in shapes[name]]
