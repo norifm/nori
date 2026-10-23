@@ -1659,8 +1659,9 @@ impl Loaded {
         let mut body: Option<Icy> = None;
         let mut chunk = vec![0u8; LIVE_CHUNK];
         let mut failures = 0;
-        // Whether the open connection has given bytes.
-        let mut fed = false;
+        // Bytes the open connection has given: one that gave [`LIVE_AHEAD`] plays on, and its close is
+        // not a failure.
+        let mut fed = 0;
         loop {
             {
                 let mut s = self.state.lock();
@@ -1696,25 +1697,27 @@ impl Loaded {
                         continue;
                     }
                 }
-                fed = false;
+                fed = 0;
             }
             let icy = body.as_mut().expect("a body is open");
             let got = icy.read(&mut chunk);
             let title = icy.title.take();
             let mut s = self.state.lock();
-            let mut empty = None;
+            let mut short = None;
             match got {
                 Ok(n) if n > 0 => {
-                    failures = 0;
-                    fed = true;
+                    fed += n as u64;
+                    if fed >= LIVE_AHEAD {
+                        failures = 0;
+                    }
                     s.data.extend(&chunk[..n]);
                 }
-                // Closed or broken: reconnect; one that gave nothing counts as a failure to open.
+                // Closed or broken: reconnect; one that gave too little to play on counts as a failure.
                 got => {
                     body = None;
-                    failures += 1;
-                    if !fed {
-                        empty = Some(got.err().map_or_else(|| "the station closed the connection".to_string(), |e| e.to_string()));
+                    if fed < LIVE_AHEAD {
+                        failures += 1;
+                        short = Some(got.err().map_or_else(|| "the station closed the connection".to_string(), |e| e.to_string()));
                     }
                 }
             }
@@ -1724,7 +1727,7 @@ impl Loaded {
             }
             self.wake(&mut s);
             drop(s);
-            if let Some(why) = empty {
+            if let Some(why) = short {
                 if !self.retry_or_end(failures, why) {
                     return;
                 }
@@ -2599,15 +2602,22 @@ mod tests {
         assert_eq!(*s.0.lock(), RETRIES + 1, "asked once and again {RETRIES} times");
     }
 
-    /// A station that answers and closes or breaks every connection before a byte fails after a few
+    /// A station that answers and closes or breaks every connection before it gives enough to play fails after a few
     /// tries, resting between them, rather than being asked again and again at once.
     #[test]
     fn live_body_closing_at_once_fails_after_retries() {
-        struct Closes(Mutex<u32>, bool);
-        struct Empty(bool);
-        impl Read for Empty {
-            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-                if self.0 { Err(io::Error::new(io::ErrorKind::ConnectionReset, "reset")) } else { Ok(0) }
+        struct Closes(Mutex<u32>, usize, bool);
+        /// Gives its bytes, then closes or is reset.
+        struct Short(usize, bool);
+        impl Read for Short {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if self.0 > 0 {
+                    let n = self.0.min(buf.len());
+                    buf[..n].fill(0);
+                    self.0 -= n;
+                    return Ok(n);
+                }
+                if self.1 { Err(io::Error::new(io::ErrorKind::ConnectionReset, "reset")) } else { Ok(0) }
             }
         }
         impl ByteSource for Closes {
@@ -2617,15 +2627,16 @@ mod tests {
 
             fn open_live(&self, _: &str) -> Result<(Body, Option<usize>), String> {
                 *self.0.lock() += 1;
-                Ok((Body { start: 0, len: None, reader: Box::new(Empty(self.1)) }, None))
+                Ok((Body { start: 0, len: None, reader: Box::new(Short(self.1, self.2)) }, None))
             }
         }
-        for breaks in [false, true] {
-            let s = Arc::new(Closes(Mutex::new(0), breaks));
+        // Closed, reset, or closed after a byte: none of them a connection to play on.
+        for (bytes, breaks) in [(0, false), (0, true), (1, false)] {
+            let s = Arc::new(Closes(Mutex::new(0), bytes, breaks));
             let l = Loader::live(&Arc::default(), s.clone(), "radio".into(), Waits { stall_ms: 20_000, retry_ms: 1 });
             until(&l, "the station fails", |s| s.done);
-            assert!(l.error().is_some(), "failed (breaks {breaks})");
-            assert_eq!(*s.0.lock(), RETRIES + 1, "asked once and again {RETRIES} times (breaks {breaks})");
+            assert!(l.error().is_some(), "failed ({bytes} bytes, breaks {breaks})");
+            assert_eq!(*s.0.lock(), RETRIES + 1, "asked once and again {RETRIES} times ({bytes} bytes, breaks {breaks})");
         }
     }
 
