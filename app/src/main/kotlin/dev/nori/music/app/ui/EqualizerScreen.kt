@@ -1,6 +1,7 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -69,7 +70,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
 
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = LocalChromeInset.current)) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back) }
+            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
             Text(say.equalizer, Modifier.weight(1f), style = titled(MaterialTheme.typography.headlineSmall))
             NoriSwitch(p.eqEnabled, { on -> vm.update { it.copy(eqEnabled = on) } })
         }
@@ -172,7 +173,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
                 val used = remember(rows, profile) { say.profileUse(rows.filter { it.output in profile.outputs }.map { it.name }) }
                 GroupRow(
                     profile.name, { vm.applyProfile(profile) }, subtitle = used,
-                    trailing = { IconButton({ vm.deleteProfile(profile.name) }) { Icon(Iconoir.Trash, remember(profile.name) { say.deleteNamed(profile.name) }, tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    trailing = { IconButton({ vm.deleteProfile(profile.name) }) { Icon(Iconoir.Trash, remember(profile.name) { say.deleteNamed(profile.name) }, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 )
             }
             GroupRow(say.saveAsProfile, { newName = ""; naming = true }, icon = Iconoir.Plus, divider = false)

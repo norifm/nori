@@ -372,7 +372,7 @@ internal fun JamControls(j: JamView, onInvite: () -> Unit = {}, onSettings: () -
         if (j.hosting) {
             Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 PillButton(words(R.string.jam_invite_button), Iconoir.UserPlus, onInvite, Modifier.weight(1f), prominent = true)
-                IconButton(onSettings) { Icon(Iconoir.Settings, words(R.string.settings)) }
+                IconButton(onSettings) { Icon(Iconoir.Settings, words(R.string.settings), Modifier.size(22.dp)) }
             }
         }
         SectionTitle(words(R.string.jam_people))

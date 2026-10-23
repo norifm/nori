@@ -2316,7 +2316,7 @@ private fun PanelButton(icon: ImageVector, label: String, on: Boolean, enabled: 
     val look = LocalLook.current
     IconButton(onClick, enabled = enabled) {
         // [lower]: a glyph whose weight sits high in its box (Lyrics) is set down to read level with its neighbor.
-        LookIcon(icon, label, Modifier.offset(y = lower).size(26.dp)) { look.color(if (!enabled) CoverLook.ON_22 else if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
+        LookIcon(icon, label, Modifier.offset(y = lower).size(24.dp)) { look.color(if (!enabled) CoverLook.ON_22 else if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
     }
 }
 

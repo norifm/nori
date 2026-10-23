@@ -354,7 +354,7 @@ private fun TabButton(tab: Tab, selected: Boolean, chrome: ChromeColours, modifi
             .semantics { contentDescription = tab.label },
         Alignment.Center,
     ) {
-        Icon(tab.icon, null, Modifier.size(23.dp).graphicsLayer { rotationZ = turn() }, tint = colour)
+        Icon(tab.icon, null, Modifier.size(21.dp).graphicsLayer { rotationZ = turn() }, tint = colour)
     }
 }
 

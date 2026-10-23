@@ -608,7 +608,7 @@ fun LargeTitle(text: String, modifier: Modifier = Modifier, trailing: @Composabl
 fun BackTitle(text: String) {
     val nav = LocalNav.current
     Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-        androidx.compose.material3.IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back) }
+        androidx.compose.material3.IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
         Text(text, Modifier.weight(1f), style = titled(MaterialTheme.typography.headlineSmall), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

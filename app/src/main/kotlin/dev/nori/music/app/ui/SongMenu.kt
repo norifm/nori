@@ -293,7 +293,7 @@ fun SelectionBar(actions: ActionsViewModel) {
                 BarAction(say.queue) { actions.enqueue(songs); actions.clearSelection() }
                 if (LocalRules.current.account) BarAction(say.playlist) { picking = true }
                 if (LocalRules.current.downloads) BarAction(say.get) { actions.download(songs); actions.clearSelection() }
-                IconButton(actions::clearSelection) { Icon(Iconoir.Xmark, say.clearSelection) }
+                IconButton(actions::clearSelection) { Icon(Iconoir.Xmark, say.clearSelection, Modifier.size(20.dp)) }
             }
         }
     }

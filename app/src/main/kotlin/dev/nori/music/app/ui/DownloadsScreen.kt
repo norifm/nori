@@ -268,7 +268,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
     }
     Column {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = Space.gutter - 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back) }
+            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
             Spacer(Modifier.weight(1f))
             AnimatedVisibility(unfinished > 0, enter = fadeIn(tween(if (plain) 0 else 200)), exit = fadeOut(tween(if (plain) 0 else 200))) {
                 Text(

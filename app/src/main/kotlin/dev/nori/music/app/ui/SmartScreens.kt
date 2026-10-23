@@ -275,7 +275,7 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = 24.dp + LocalChromeInset.current)) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back) }
+            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
             Text(say.smartPlaylist, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
             TextAction(say.save, { error = vm.save(draft) { nav.back() } })
         }
@@ -357,7 +357,7 @@ fun StatsScreen(vm: HistoryViewModel = viewModel()) {
     val nav = LocalNav.current
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = 24.dp + LocalChromeInset.current)) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back) }
+            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
             Text(say.listening, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
         }
         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
