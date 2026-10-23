@@ -3,7 +3,8 @@
 //! where the format times them; a line timed as a whole stays whole. JSON is json.rs's, HTML html.rs's.
 
 use nori_model::{LyricLine, LyricWord, Lyrics};
-use yaml_rust2::{Yaml, YamlLoader};
+use yaml_rust2::parser::Parser;
+use yaml_rust2::{Event, Yaml, YamlLoader};
 
 use crate::lyrics::{offset_ms, time_ms, utf16_at, LONGEST_MS};
 
@@ -120,11 +121,35 @@ pub(crate) fn plain(text: &str) -> Lyrics {
 
 // ---- LRCLIB's lyricsfile ---------------------------------------------------------------------------
 
+/// Nesting a lyricsfile needs (a word's fields in a line's words in the document's lines), with room
+/// to spare.
+const LYRICSFILE_DEPTH: usize = 16;
+
+/// Whether YAML `text` parses and nests no deeper than `limit`, read from the parser's flat events.
+fn nests_within(text: &str, limit: usize) -> bool {
+    let mut parser = Parser::new_from_str(text);
+    let mut depth = 0;
+    loop {
+        match parser.next_token() {
+            Ok((Event::SequenceStart(..) | Event::MappingStart(..), _)) => {
+                depth += 1;
+                if depth > limit {
+                    return false;
+                }
+            }
+            Ok((Event::SequenceEnd | Event::MappingEnd, _)) => depth -= 1,
+            Ok((Event::StreamEnd, _)) => return true,
+            Ok(_) => {}
+            Err(_) => return false,
+        }
+    }
+}
+
 /// A lyricsfile (LRCLIB's and LRCGET's YAML, version 1.0). A file with only `plain` text is untimed; an
 /// unknown version, an instrumental or anything that does not parse is empty.
 pub(crate) fn from_lyricsfile(text: &str) -> Lyrics {
-    // Lyrics are kilobytes; the cap stops a hostile file nesting the parser deep.
-    if text.len() > 256 * 1024 {
+    // Lyrics are kilobytes. The loader recurses once per level, so a hostile file must not nest deep.
+    if text.len() > 256 * 1024 || !nests_within(text, LYRICSFILE_DEPTH) {
         return Lyrics::default();
     }
     let Ok(docs) = YamlLoader::load_from_str(text) else { return Lyrics::default() };
@@ -591,6 +616,18 @@ mod tests {
     use super::*;
 
     const LYRICSFILE: &str = include_str!("../testdata/lrclib.lyricsfile.yaml");
+
+    #[test]
+    fn a_deeply_nested_lyricsfile_is_empty() {
+        // Under the size cap, each "- " or "[" is one level deeper.
+        let lyrics = std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(|| ["- ".repeat(100_000), "[".repeat(100_000)].map(|text| from_lyricsfile(&text)))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert!(lyrics.iter().all(|l| l.lines.is_empty()));
+    }
 
     #[test]
     fn lyricsfile() {
