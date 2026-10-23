@@ -18,7 +18,7 @@ with nori, signed in to the same server account, see each other. One plays at a 
 - **Controlling it.** While another device plays, the player, the notification, the lock screen, the car
   and the volume keys show it and control it. The seek bar and **Mixing** indicator follow the playing
   device. The device you hold stops its own playback.
-- **The terminal** lists your devices in the full player's devices panel (`C`, or the ⇄ button in the player).
+- **The terminal** lists your devices in the full player's devices panel (`C`, or a click on where the music plays).
 - **Several clients on one computer.** On 0.7.0 and later, the desktop app and the terminal client
   running on one computer are separate devices, as is a second copy of either. Devices that share a name
   are listed with their kind, as "MacBook (computer)" and "MacBook (terminal)". The first client to start

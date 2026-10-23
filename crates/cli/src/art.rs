@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use image::{DynamicImage, RgbaImage};
 use nori_covers::memory::Image;
-use nori_look::cover::CoverColours;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::StatefulProtocol;
@@ -23,14 +22,8 @@ pub fn protocol_name(p: ProtocolType) -> &'static str {
 /// Decode size of large covers: sharp at a quarter of a big terminal, cheap to derive colours from.
 pub const COVER_PX: u32 = 600;
 
-/// Decode size of album card covers.
-pub const THUMB_PX: u32 = 160;
-
-/// Large covers kept: the playing one and the album page's.
+/// Covers kept: the playing one and the last few, for a skip back.
 const COVERS: usize = 3;
-
-/// Card covers kept: a few screens of cards.
-const THUMBS: usize = 120;
 
 /// Encoded covers by key, each with its decoded image for [`Art::resend`]. Oldest first.
 type Kept = Vec<(String, StatefulProtocol, Arc<Image>)>;
@@ -39,24 +32,21 @@ type Kept = Vec<(String, StatefulProtocol, Arc<Image>)>;
 pub struct Art {
     picker: Picker,
     covers: Kept,
-    /// Keys prefixed with [`crate::backend::THUMB`].
-    thumbs: Kept,
 }
 
 impl Art {
     pub fn new(picker: Picker) -> Art {
-        Art { picker, covers: Vec::new(), thumbs: Vec::new() }
+        Art { picker, covers: Vec::new() }
     }
 
     /// Adds a decoded cover under `key`, evicting the oldest past the cap.
     pub fn put(&mut self, key: String, image: &Arc<Image>) {
         let Some(protocol) = encode(&self.picker, image) else { return };
-        let (list, cap) = if key.starts_with(crate::backend::THUMB) { (&mut self.thumbs, THUMBS) } else { (&mut self.covers, COVERS) };
-        list.retain(|(k, _, _)| *k != key);
-        if list.len() >= cap {
-            list.remove(0);
+        self.covers.retain(|(k, _, _)| *k != key);
+        if self.covers.len() >= COVERS {
+            self.covers.remove(0);
         }
-        list.push((key, protocol, image.clone()));
+        self.covers.push((key, protocol, image.clone()));
     }
 
     /// Re-encodes every cover so the next draw transmits it in full. A protocol state sends its picture
@@ -65,7 +55,7 @@ impl Art {
         if self.picker.protocol_type() == ProtocolType::Halfblocks {
             return;
         }
-        for (_, protocol, image) in self.covers.iter_mut().chain(self.thumbs.iter_mut()) {
+        for (_, protocol, image) in &mut self.covers {
             if let Some(p) = encode(&self.picker, image) {
                 *protocol = p;
             }
@@ -73,11 +63,7 @@ impl Art {
     }
 
     pub fn get(&mut self, key: &str) -> Option<&mut StatefulProtocol> {
-        self.covers.iter_mut().chain(self.thumbs.iter_mut()).find(|(k, _, _)| k == key).map(|(_, p, _)| p)
-    }
-
-    pub fn has(&self, key: &str) -> bool {
-        self.covers.iter().chain(self.thumbs.iter()).any(|(k, _, _)| k == key)
+        self.covers.iter_mut().find(|(k, _, _)| k == key).map(|(_, p, _)| p)
     }
 }
 
@@ -204,30 +190,12 @@ impl Theme {
         Theme { page: Color::Reset, surface: Color::Reset, ink: Color::Reset, quiet: grey, line: grey, hair: grey, accent: Color::Reset, on: Color::Reset, lift: Color::Reset, painted: false, mono }
     }
 
-    /// Colors derived from a cover, wearing the theme's `accents` (for a pale page and a dark one) as they
-    /// read on the cover's page.
-    pub fn from_cover(c: &CoverColours, (light, dark): (u32, u32), base: &Theme) -> Theme {
-        if !base.painted {
-            return *base;
-        }
-        let (page, ink) = (argb(c.background), argb(c.on));
-        let accent = argb(nori_look::theme::accent_on(c.background, c.on, light, dark));
-        let at = |t: f32| blend(page, ink, t);
-        let dress = nori_look::dress::page(c.edge, c.background, c.on, c.accent, c.wash_edge);
-        let role = |i: usize| argb(dress[i]);
-        Theme {
-            page,
-            surface: role(nori_look::dress::SURFACE_CONTAINER),
-            ink,
-            quiet: at(nori_look::theme::QUIET),
-            line: at(0.22),
-            hair: role(nori_look::dress::OUTLINE_VARIANT),
-            accent,
-            on: base.on,
-            lift: role(nori_look::dress::SECONDARY_CONTAINER),
-            painted: true,
-            mono: false,
-        }
+    /// The season's paper dyed with a cover whose sleeve ends in `edge` (`theme::Dye`), as the phone's
+    /// player and pages wear it: between the season's light and dark palettes for these settings on `day`,
+    /// the dark one for a dark cover or a `dark` interface.
+    pub fn dyed(edge: u32, p: &nori_core::settings::StoredPrefs, day: Day, dark: bool, painted: bool, colors: Colors) -> Theme {
+        let paper = |dark| nori_core::settings::season_palette(p.season, p.theme, dark, day.month, day.day, day.southern);
+        Theme::of(nori_look::theme::Dye::new(edge, paper(false), paper(true), dark).palette(), painted, colors)
     }
 
     /// Text color at `strength` (1 = full) between the page and the ink; unpainted, only full or quiet.
@@ -239,11 +207,6 @@ impl Theme {
         } else {
             self.quiet
         }
-    }
-
-    /// `c` blended toward the page by `strength`.
-    pub fn fade(&self, c: Color, strength: f32) -> Color {
-        blend(c, self.page, strength)
     }
 
     /// A liked seal: the page's color on the accent (reversed where there are no colors).
@@ -334,17 +297,16 @@ mod tests {
         }
         let image = Image { width: 32, height: 32, pixels: px.into_boxed_slice() };
         let c = nori_host::derive(&image);
-        let base = Theme::of(nori_look::theme::Season::Autumn.palette(true), true, Colors::True);
-        let t = Theme::from_cover(&c, (0xFFB6_4D1D, 0xFFE8_743B), &base);
+        // The season's paper dyed the record's red, its dark one for a dark sleeve in the day.
+        let prefs = nori_core::settings::StoredPrefs { season: nori_core::settings::ThemeSeason::Autumn, theme: nori_core::settings::ThemeMode::Light, ..Default::default() };
+        let day = Day { month: 10, day: 19, southern: false };
+        let t = Theme::dyed(c.edge, &prefs, day, false, true, Colors::True);
         let Color::Rgb(r, g, b) = t.page else { panic!("a page color") };
-        assert!(r > g && r > b, "the page is the record's red: {r} {g} {b}");
-        // The theme's persimmon, not the cover's own accent, lifted to read on the red.
-        let Color::Rgb(ar, ag, ab) = t.accent else { panic!("an accent") };
-        assert!(ar > ab && ag > ab && (ar, ag, ab) != (0xE8, 0x74, 0x3B), "accent {ar} {ag} {ab}");
-        // The same surfaces as every other client's cover page.
-        let dress = nori_look::dress::page(c.edge, c.background, c.on, c.accent, c.wash_edge);
-        let roles = [nori_look::dress::SURFACE_CONTAINER, nori_look::dress::OUTLINE_VARIANT, nori_look::dress::SECONDARY_CONTAINER].map(|i| argb(dress[i]));
-        assert_eq!([t.surface, t.hair, t.lift], roles);
+        assert!(r > g && r > b && r < 128, "the page is the dark paper dyed red: {r} {g} {b}");
+        // The palette every other client's cover page wears.
+        let paper = |dark| nori_core::settings::season_palette(prefs.season, prefs.theme, dark, 10, 19, false);
+        let dyed = nori_look::theme::Dye::new(c.edge, paper(false), paper(true), false).palette();
+        assert_eq!(t, Theme::of(dyed, true, Colors::True));
 
         // Cover renders in every protocol.
         let image = Arc::new(Image { width: 8, height: 8, pixels: vec![200u8; 8 * 8 * 4].into_boxed_slice() });
@@ -353,9 +315,9 @@ mod tests {
             picker.set_protocol_type(p);
             let mut art = Art::new(picker);
             art.put("u".into(), &image);
-            assert!(art.has("u"));
+            assert!(art.get("u").is_some());
             art.resend();
-            assert!(art.has("u"));
+            assert!(art.get("u").is_some());
             let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 10, 5));
             let widget = ratatui_image::StatefulImage::<StatefulProtocol>::default();
             ratatui::widgets::StatefulWidget::render(widget, buf.area, &mut buf, art.get("u").unwrap());
