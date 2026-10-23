@@ -5,11 +5,9 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.layout.Row
@@ -51,7 +49,7 @@ import dev.nori.music.ffi.model.Song
 @Composable
 private fun Item(text: String, icon: ImageVector? = null, enabled: Boolean = true, divider: Boolean = true, onClick: () -> Unit) {
     // Not offered now (the core's `SongMenuItem::enabled`): there, greyed, and a tap does nothing.
-    GroupRow(text, if (enabled) onClick else null, Modifier.alpha(if (enabled) 1f else 0.38f), icon = icon, divider = divider)
+    GroupRow(text, if (enabled) onClick else null, Modifier.alpha(if (enabled) 1f else 0.38f), icon = icon, divider = divider, minHeight = SHEET_ROW)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,15 +84,11 @@ fun SongMenu(
     NoriSheet(song?.takeIf { !picking && !details && !sleeping && !timing }, onDismiss) { song ->
         val downloads by actions.downloads.collectAsState()
         var more by remember { mutableStateOf(false) }
-        Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
+        // No stretch past the ends and no lift, here or in the other sheets: a menu that fits moved under every swipe.
+        Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
             // The track leads the sheet, the way the row it came from looked.
-            Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Cover(actions.cover(song.coverArt, CoverSize.ROW), 52.dp, radius = 8.dp)
-                Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text(song.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                    Text(remember(song) { say.songLine(song.artist, song.album) }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                    if (song.suffix.isNotEmpty()) Caption(remember(song) { say.songFormat(song) })
-                }
+            SheetHead(actions.cover(song.coverArt, CoverSize.ROW), song.title, remember(song) { say.songLine(song.artist, song.album) }) {
+                if (song.suffix.isNotEmpty()) Caption(remember(song) { say.songFormat(song) })
             }
             // What someone opened this menu to do: queue it, keep it, or leave for where it came
             // from. Everything one reaches for perhaps once a month waits under "More" below.
@@ -160,16 +154,14 @@ fun SongMenu(
                     val ms = if (reduceMotion()) 0 else 220
                     val turn by animateFloatAsState(if (more) 180f else 0f, animationSpec = tween(ms), label = "more")
                     GroupRow(
-                        say.more, { more = !more }, icon = Iconoir.MoreHoriz, divider = more,
+                        say.more, { more = !more }, icon = Iconoir.MoreHoriz, divider = more, minHeight = SHEET_ROW,
                         // The chevron turns over rather than swapping for its opposite, so the row says which
                         // way it is about to move before it moves.
                         trailing = { Icon(Iconoir.NavArrowDown, null, Modifier.size(22.dp).graphicsLayer { rotationZ = turn }, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                     )
-                    AnimatedVisibility(
-                        more,
-                        enter = if (ms == 0) EnterTransition.None else fadeIn(tween(ms)) + expandVertically(tween(ms)),
-                        exit = if (ms == 0) ExitTransition.None else fadeOut(tween(ms)) + shrinkVertically(tween(ms)),
-                    ) {
+                    // The lines take their room at once and fade in: growing them while the sheet grows around
+                    // them moved both at once.
+                    AnimatedVisibility(more, enter = if (ms == 0) EnterTransition.None else fadeIn(tween(ms)), exit = ExitTransition.None) {
                         Column { folded.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < folded.lastIndex) } }
                     }
                 }
@@ -186,14 +178,8 @@ fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) 
             is CardItem.OfAlbum -> Triple(card.album.name, card.album.subtitle, card.album.coverArt)
             is CardItem.OfPlaylist -> Triple(card.playlist.name, card.playlist.owner.orEmpty(), card.playlist.coverArt)
         }
-        Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Cover(actions.cover(art, CoverSize.ROW), 52.dp, radius = 8.dp)
-                Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                    if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                }
-            }
+        Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
+            SheetHead(actions.cover(art, CoverSize.ROW), title, line)
             SheetRows(head = true) {
                 if (!LocalRules.current.asks) Item(say.play, Iconoir.Play) { actions.play(card); onDismiss() }
                 Item(say.menuPlayNext, Iconoir.PlaylistPlay) { actions.queue(card, next = true); onDismiss() }
@@ -204,12 +190,36 @@ fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) 
 }
 
 /**
+ * Upward drags and flings the sheet's lines had no use for, kept from the sheet: an open sheet otherwise
+ * lifts under them and springs back. Downward ones still reach it, so a swipe down closes it.
+ */
+private val KeepUpwardDrags = object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+    override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource) =
+        androidx.compose.ui.geometry.Offset(0f, available.y.coerceAtMost(0f))
+    override suspend fun onPostFling(consumed: androidx.compose.ui.unit.Velocity, available: androidx.compose.ui.unit.Velocity) =
+        androidx.compose.ui.unit.Velocity(0f, available.y.coerceAtMost(0f))
+}
+
+/** The song or record a menu is about, right under the sheet's handle: its cover, its name, a line, and [more]. */
+@Composable
+private fun SheetHead(cover: String?, title: String, line: String, more: @Composable () -> Unit = {}) {
+    Row(Modifier.fillMaxWidth().padding(start = SHEET_EDGE, end = SHEET_EDGE, bottom = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Cover(cover, 52.dp, radius = 8.dp)
+        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            more()
+        }
+    }
+}
+
+/**
  * A sheet's lines, on the sheet itself rather than on a card inside it: one surface, the lines parted by
- * hairlines, their glyphs level with the page's gutter. Under a [head] (the song or record), a hairline first.
+ * hairlines, their glyphs [SHEET_EDGE] from the sheet's sides. Under a [head] (the song or record), a hairline first.
  */
 @Composable
 private fun SheetRows(head: Boolean = false, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
-    Column(Modifier.padding(horizontal = Space.gutter - GROUP_INSET)) {
+    Column(Modifier.padding(horizontal = SHEET_EDGE - GROUP_INSET)) {
         if (head) Hairline(startIndent = GROUP_INSET)
         content()
     }
@@ -228,7 +238,7 @@ private fun LyricsSheet(player: dev.nori.music.app.vm.PlayerViewModel, id: Strin
     val l by player.lyrics.collectAsState()
     val found = (l.of(id, dev.nori.music.app.vm.Load.Loading) as? dev.nori.music.app.vm.Load.Ready)?.data ?: return
     val lyrics = found.lyrics
-    Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
+    Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
         SectionTitle(say.lyrics)
         Text(
             remember(found.source, lyrics.synced, lyrics.wordTimed) { say.lyricsSource(found.source, lyrics.synced, lyrics.wordTimed) },
@@ -265,7 +275,7 @@ private fun LyricsSheet(player: dev.nori.music.app.vm.PlayerViewModel, id: Strin
 @Composable
 private fun SleepChoices(player: dev.nori.music.app.vm.PlayerViewModel, onDone: () -> Unit) {
     val state by player.state.collectAsState()
-    Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
+    Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
         SectionTitle(say.sleepTimer)
         val running = state.sleepAt > 0 || state.sleepAtEndOfTrack
         // The choices are the core's (`menus::sleep_choices`); "Off" is all zeros.
@@ -367,3 +377,8 @@ private fun SelectedCount(n: Int, modifier: Modifier) {
         Text(if (fits) full else short, maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
     }
 }
+
+/** How far a menu sheet's head and lines stand in from its sides. */
+private val SHEET_EDGE = 16.dp
+/** A menu sheet's line: Android's 48 dp touch target, so a long menu fits the screen. */
+private val SHEET_ROW = 48.dp
