@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalContext
@@ -132,16 +133,20 @@ fun rememberCover(url: String?, width: Int, height: Int = width, standIns: List<
     return cover
 }
 
-/** [image] filling this area the way ContentScale.Crop draws it: the middle of the picture in the area's shape. */
+/**
+ * [image] filling this area the way ContentScale.Crop draws it: the middle of the picture in the area's shape.
+ * The whole picture is placed in screen pixels and clipped, so a small stand-in and the full picture of one
+ * cover land on the same pixels.
+ */
 internal fun DrawScope.drawCover(image: ImageBitmap, alpha: Float) {
-    val w = size.width
-    val h = size.height
-    if (w <= 0f || h <= 0f) return
-    val scale = maxOf(w / image.width, h / image.height)
-    val sw = (w / scale).roundToInt().coerceIn(1, image.width)
-    val sh = (h / scale).roundToInt().coerceIn(1, image.height)
-    drawImage(
-        image, IntOffset((image.width - sw) / 2, (image.height - sh) / 2), IntSize(sw, sh),
-        dstSize = IntSize(w.roundToInt(), h.roundToInt()), alpha = alpha, filterQuality = FilterQuality.Low,
-    )
+    val (at, drawn) = coverPlacement(image.width, image.height, size.width, size.height) ?: return
+    clipRect { drawImage(image, dstOffset = at, dstSize = drawn, alpha = alpha, filterQuality = FilterQuality.Low) }
+}
+
+/** Where a picture of [imageWidth] x [imageHeight] lands filling [width] x [height] as ContentScale.Crop: its offset and size on screen. */
+internal fun coverPlacement(imageWidth: Int, imageHeight: Int, width: Float, height: Float): Pair<IntOffset, IntSize>? {
+    if (width <= 0f || height <= 0f || imageWidth <= 0 || imageHeight <= 0) return null
+    val scale = maxOf(width / imageWidth, height / imageHeight)
+    val drawn = IntSize((imageWidth * scale).roundToInt(), (imageHeight * scale).roundToInt())
+    return IntOffset(((width - drawn.width) / 2).roundToInt(), ((height - drawn.height) / 2).roundToInt()) to drawn
 }
