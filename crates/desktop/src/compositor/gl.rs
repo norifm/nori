@@ -962,11 +962,43 @@ mod tests {
         }
     }
 
-    struct TestPlatform(Rc<TestLayer>);
+    /// A layer for each window made, in `layers`, on a clock the test moves.
+    struct TestPlatform {
+        gpu: Rc<Gpu>,
+        layers: Rc<RefCell<Vec<Rc<TestLayer>>>>,
+        clock: Rc<Cell<Duration>>,
+    }
     impl slint::platform::Platform for TestPlatform {
         fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
-            Ok(self.0.clone())
+            let layer = Rc::new_cyclic(|me: &Weak<TestLayer>| TestLayer {
+                window: slint::Window::new(me.clone() as Weak<dyn WindowAdapter>),
+                renderer: self.gpu.renderer(),
+                size: Cell::new(PhysicalSize::new(64, 64)),
+            });
+            self.layers.borrow_mut().push(layer.clone());
+            Ok(layer)
         }
+        fn duration_since_start(&self) -> Duration {
+            self.clock.get()
+        }
+    }
+
+    /// The layer's pixels as RGBA, `size` large.
+    fn read(texture: &mut Texture, size: PhysicalSize) -> Vec<u8> {
+        let info = skia_safe::ImageInfo::new(
+            (size.width as i32, size.height as i32),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Unpremul,
+            None,
+        );
+        let mut pixels = vec![0; size.width as usize * size.height as usize * 4];
+        assert!(texture.surface.as_mut().unwrap().read_pixels(
+            &info,
+            &mut pixels,
+            size.width as usize * 4,
+            (0, 0)
+        ));
+        pixels
     }
 
     #[test]
@@ -995,14 +1027,16 @@ mod tests {
                 )
                 .unwrap(),
         );
-        let gpu = Gpu::new();
+        let gpu = Rc::new(Gpu::new());
         let mut draw = Draw::new(&gpu, window.clone()).unwrap();
-        let layer = Rc::new_cyclic(|me: &Weak<TestLayer>| TestLayer {
-            window: slint::Window::new(me.clone() as Weak<dyn WindowAdapter>),
-            renderer: gpu.renderer(),
-            size: Cell::new(PhysicalSize::new(64, 64)),
-        });
-        slint::platform::set_platform(Box::new(TestPlatform(layer.clone()))).unwrap();
+        let layers = Rc::new(RefCell::new(Vec::new()));
+        let clock = Rc::new(Cell::new(Duration::ZERO));
+        slint::platform::set_platform(Box::new(TestPlatform {
+            gpu: gpu.clone(),
+            layers: layers.clone(),
+            clock: clock.clone(),
+        }))
+        .unwrap();
         slint::slint! {
             export component TestWindow inherits Window {
                 in property <color> colour;
@@ -1013,6 +1047,7 @@ mod tests {
             }
         }
         let ui = TestWindow::new().unwrap();
+        let layer = layers.borrow()[0].clone();
         ui.show().unwrap();
         let native = draw.native.clone();
         let (connection, _) = x11rb::connect(None).unwrap();
@@ -1386,5 +1421,246 @@ mod tests {
                 })
                 .unwrap();
         }
+
+        // The player bar through the changes it sees in use, each drawn as the layers draw it (only what
+        // changed, into the texture they keep) and drawn whole: the two must match after every one.
+        let look = crate::look::plain(
+            &nori_core::settings::StoredPrefs::default(),
+            true,
+            crate::look::Today { month: 10, day: 19, southern: false },
+        );
+        let bar = crate::PlayerBar::new().unwrap();
+        look.paint(&bar.global::<crate::Theme>());
+        let bar_layer = layers.borrow().last().unwrap().clone();
+        let cover = gpu.picture(&[200, 120, 40, 255].repeat(8 * 8), 8, 8);
+        let art = cover.clone();
+        bar.on_art(move |id, _, _| if id.is_empty() { slint::Image::default() } else { art.clone() });
+        bar.set_room(900.0);
+        bar.show().unwrap();
+        let titles = ["Lonely Day", "Spiritbox - Circle With Me (MAPHRA Vocal Cover)", "", "Go Slowly"];
+        let artists = ["System Of A Down", "Linkin Park", "Radiohead", ""];
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        partial_matches_whole(&native, &bar_layer, &clock, PhysicalSize::new(900, 64), &mut next, &mut |next| {
+            match next(20) {
+                0 | 1 => {
+                    let t = titles[next(4) as usize];
+                    bar.set_now_title(t.into());
+                    format!("title {t:?}")
+                }
+                2 => {
+                    let a = artists[next(4) as usize];
+                    bar.set_now_artist(a.into());
+                    bar.set_now_album(a.chars().rev().collect::<String>().into());
+                    format!("artist {a:?}")
+                }
+                3 => {
+                    bar.set_has_song(!bar.get_has_song());
+                    format!("has song {}", bar.get_has_song())
+                }
+                4 => {
+                    bar.set_playing(!bar.get_playing());
+                    format!("playing {}", bar.get_playing())
+                }
+                5 => {
+                    bar.set_buffering(!bar.get_buffering());
+                    format!("buffering {}", bar.get_buffering())
+                }
+                6 | 7 => {
+                    let ms = next(240_000) as i32;
+                    bar.set_position_ms(ms);
+                    bar.set_duration_ms(240_000);
+                    format!("position {ms}")
+                }
+                8 => {
+                    bar.set_shuffle(!bar.get_shuffle());
+                    bar.set_repeat(next(3) as i32);
+                    "shuffle and repeat".into()
+                }
+                9 => {
+                    bar.set_volume(next(101) as f32 / 100.0);
+                    "volume".into()
+                }
+                10 => {
+                    let on = if next(2) == 0 { "" } else { "Pixel 9" };
+                    bar.set_playing_on(on.into());
+                    format!("playing on {on:?}")
+                }
+                11 => {
+                    let jam = if next(3) == 0 { "Jam with Ann" } else { "" };
+                    bar.set_jam(jam.into());
+                    format!("jam {jam:?}")
+                }
+                12 => {
+                    let art = if next(2) == 0 { "" } else { "cover" };
+                    bar.set_now_art(art.into());
+                    format!("art {art:?}")
+                }
+                15 => {
+                    // The window's width, and a side panel opening or closing, change the room.
+                    let room = [900.0, 860.0, 700.0, 640.0][next(4) as usize];
+                    bar.set_room(room);
+                    format!("room {room}")
+                }
+                16 => {
+                    let names: &[&str] = [&[][..], &["Linkin Park"], &["Jay-Z", "Linkin Park"]][next(3) as usize];
+                    let pieces: Vec<crate::ArtistLink> = names
+                        .iter()
+                        .map(|n| crate::ArtistLink { text: (*n).into(), ..Default::default() })
+                        .collect();
+                    bar.set_now_credits(crate::Credits {
+                        pieces: slint::ModelRc::new(slint::VecModel::from(pieces)),
+                        choices: Default::default(),
+                    });
+                    format!("credits {names:?}")
+                }
+                17 => {
+                    bar.set_live(!bar.get_live());
+                    bar.set_now_starred(!bar.get_now_starred());
+                    "live and starred".into()
+                }
+                18 => {
+                    bar.set_inspector(next(4) as i32);
+                    bar.set_devices_on(next(2) == 0);
+                    bar.set_covers_rev(bar.get_covers_rev() + 1);
+                    "inspector, devices, covers".into()
+                }
+                19 => {
+                    bar.set_guest(next(4) == 0);
+                    bar.set_can_play(next(4) != 0);
+                    bar.set_can_skip(next(4) != 0);
+                    bar.set_can_seek(next(4) != 0);
+                    "jam rights".into()
+                }
+                _ => {
+                    let x = next(900) as f32;
+                    bar_layer.window.dispatch_event(WindowEvent::PointerMoved {
+                        position: slint::LogicalPosition::new(x, 32.0),
+                    });
+                    format!("pointer at {x}")
+                }
+            }
+        });
+
+        // An artist's page scrolled by the wheel under the pointer, its rows lit as the pointer passes.
+        let page = crate::AppWindow::new().unwrap();
+        look.paint(&page.global::<crate::Theme>());
+        let page_layer = layers.borrow().last().unwrap().clone();
+        let art = cover.clone();
+        page.on_art(move |id, _, _| if id.is_empty() { slint::Image::default() } else { art.clone() });
+        page.set_view(6);
+        page.set_page_kind(1);
+        page.set_page_title("Linkin Park".into());
+        page.set_page_caption("74 releases".into());
+        let rows: Vec<crate::SongRow> = (0..30)
+            .map(|i| crate::SongRow {
+                title: format!("Song {i}").into(),
+                artist: "Linkin Park".into(),
+                album: "Meteora".into(),
+                art: "cover".into(),
+                time: "3:21".into(),
+                index: i,
+                ..Default::default()
+            })
+            .collect();
+        page.set_page_songs(slint::ModelRc::new(slint::VecModel::from(rows)));
+        page.show().unwrap();
+        partial_matches_whole(&native, &page_layer, &clock, PhysicalSize::new(1280, 820), &mut next, &mut |next| {
+            let position = slint::LogicalPosition::new(100.0 + next(1000) as f32, 100.0 + next(600) as f32);
+            match next(4) {
+                0 => {
+                    page_layer.window.dispatch_event(WindowEvent::PointerMoved { position });
+                    format!("pointer at {position:?}")
+                }
+                1 => {
+                    let delta_y = -(next(240) as f32) - 1.0;
+                    page_layer.window.dispatch_event(WindowEvent::PointerScrolled { position, delta_x: 0.0, delta_y });
+                    format!("scrolled {delta_y} at {position:?}")
+                }
+                2 => {
+                    let delta_y = next(120) as f32 + 1.0;
+                    page_layer.window.dispatch_event(WindowEvent::PointerScrolled { position, delta_x: 0.0, delta_y });
+                    format!("scrolled {delta_y} at {position:?}")
+                }
+                _ => "time passes".into(),
+            }
+        });
+    }
+
+    /// The test's random numbers: each below the bound it is given.
+    type Random<'a> = dyn FnMut(u64) -> u64 + 'a;
+
+    /// Makes `change` (given the test's random numbers) 600 times on `layer`, drawing each as the layers
+    /// draw it, only what changed into the texture they keep, and drawn whole: the two must match after
+    /// every change. A quarter of the changes are not drawn, as while the layer is hidden.
+    fn partial_matches_whole(
+        native: &Rc<Native>,
+        layer: &TestLayer,
+        clock: &Cell<Duration>,
+        size: PhysicalSize,
+        next: &mut Random,
+        change: &mut dyn FnMut(&mut Random) -> String,
+    ) {
+        layer.size.set(size);
+        layer.window.dispatch_event(WindowEvent::Resized {
+            size: LogicalSize::new(size.width as f32, size.height as f32),
+        });
+        native
+            .surface
+            .with_context(&mut |context| {
+                let mut kept = Texture::new(native.clone(), context, size).unwrap();
+                context.reset(None);
+                layer
+                    .renderer
+                    .render_to_surface(kept.surface.as_mut().unwrap(), context, false)
+                    .unwrap();
+                let mut done = Vec::new();
+                for step in 0..600 {
+                    done.push(change(next));
+                    clock.set(clock.get() + Duration::from_millis([16, 100, 400][next(3) as usize]));
+                    slint::platform::update_timers_and_animations();
+                    if next(4) == 0 {
+                        done.push("not drawn".into());
+                        continue;
+                    }
+                    context.reset(None);
+                    layer
+                        .renderer
+                        .render_to_surface(kept.surface.as_mut().unwrap(), context, true)
+                        .unwrap();
+                    let partial = read(&mut kept, size);
+                    let mut whole_texture = Texture::new(native.clone(), context, size).unwrap();
+                    context.reset(None);
+                    layer
+                        .renderer
+                        .render_to_surface(whole_texture.surface.as_mut().unwrap(), context, false)
+                        .unwrap();
+                    let whole = read(&mut whole_texture, size);
+                    // Gradients dither a unit or two differently when drawn in part; nothing seen.
+                    let wrong: Vec<(usize, usize)> = (0..size.width as usize * size.height as usize)
+                        .filter(|i| (0..4).any(|c| partial[i * 4 + c].abs_diff(whole[i * 4 + c]) > 8))
+                        .map(|i| (i % size.width as usize, i / size.width as usize))
+                        .collect();
+                    if let (Some(first), Some(last)) = (wrong.first(), wrong.last()) {
+                        let xs = wrong.iter().map(|p| p.0);
+                        panic!(
+                            "after step {step} ({}), {} pixels drawn only in part, x {}..{}, y {}..{}; the steps before: {:?}",
+                            done.last().unwrap(),
+                            wrong.len(),
+                            xs.clone().min().unwrap(),
+                            xs.max().unwrap(),
+                            first.1,
+                            last.1,
+                            &done[done.len().saturating_sub(6)..done.len() - 1]
+                        );
+                    }
+                }
+            })
+            .unwrap();
     }
 }
