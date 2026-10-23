@@ -4,7 +4,7 @@ import "./app.css";
 import { mount } from "svelte";
 import App from "./ui/App.svelte";
 import { ask } from "./rpc";
-import { startTheme } from "./state/theme";
+import { startTheme } from "./state/theme.svelte";
 
 startTheme();
 mount(App, { target: document.getElementById("app")! });

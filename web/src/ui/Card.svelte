@@ -1,12 +1,13 @@
 <script lang="ts">
-  // An album's, artist's or playlist's card in a grid or shelf: its cover, title and a line under it.
+  // An album's, artist's or playlist's card: its cover with the card's corners (an artist's round, its
+  // name under it in the middle), its name and a quiet line under it.
   import Cover from "./Cover.svelte";
 
-  let { href, cover, title, sub = "", round = false, fallback = "album" }: { href: string; cover?: string; title: string; sub?: string; round?: boolean; fallback?: string } = $props();
+  let { href, cover, title, sub = "", round = false, fallback = "music-note" }: { href: string; cover?: string; title: string; sub?: string; round?: boolean; fallback?: string } = $props();
 </script>
 
-<a class="card" class:circle={round} {href}>
-  <Cover src={cover} {round} {fallback} />
+<a class="card" class:round {href}>
+  <Cover src={cover} {round} radius="var(--r-card)" {fallback} />
   <span class="title clip">{title}</span>
   {#if sub}<span class="sub clip">{sub}</span>{/if}
 </a>
@@ -16,23 +17,22 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
-    gap: 1px;
-  }
-  .card :global(.cover) {
-    margin-bottom: 7px;
-    transition: transform 0.15s;
-  }
-  .card:hover :global(.cover) {
-    transform: scale(1.02);
   }
   .title {
-    font-size: 13.5px;
-    font-weight: 600;
+    margin-top: 8px;
+    font-size: 14px;
+    line-height: 19px;
+    font-weight: 500;
   }
   .sub {
     font-size: 12.5px;
+    line-height: 16px;
   }
-  .circle {
+  .round {
     text-align: center;
+  }
+  .round .title {
+    margin-top: 7px;
+    font-weight: 400;
   }
 </style>

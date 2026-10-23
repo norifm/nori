@@ -1,32 +1,32 @@
 <script lang="ts">
   // The player bar on a wide screen: one outline along the bottom. The song on the left (its cover opens
   // the full player); shuffle, previous, play, next and repeat with the seek bar under them in the middle;
-  // the seal, the speaker (Play On), lyrics, the queue and the volume on the right.
+  // the seal, where it plays (the device's glyph, lit while another one plays), lyrics, the queue and the
+  // volume on the right.
   import { player } from "../state/player.svelte";
-  import { remote } from "../state/remote.svelte";
   import { href } from "../state/route.svelte";
   import { ui, type Pane } from "../state/ui.svelte";
   import { W } from "../words";
   import Controls from "./Controls.svelte";
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
+  import OutputButton from "./OutputButton.svelte";
   import Seal from "./Seal.svelte";
   import Seek from "./Seek.svelte";
   import Volume from "./Volume.svelte";
 
   const s = $derived(player.song);
   const n = $derived(player.now);
-  const panes = $derived<[Pane, string, string][]>([
-    ["devices", n?.device ? "devices" : "speaker", W.playOn],
-    ["lyrics", "lyrics", W.lyrics],
-    ["queue", "queue", W.queue],
-  ]);
+  const panes: [Pane, string, string][] = [
+    ["lyrics", "emoji-sing-right-note", W.lyrics],
+    ["queue", "playlist", W.queue],
+  ];
 </script>
 
-<footer class="bar chrome" id="bar" aria-label={W.nothingPlaying}>
+<footer class="bar chrome" id="bar" aria-label={W.nowPlayingBar}>
   <div class="song">
     {#if s}
-      <button class="art" aria-label={s.title} onclick={() => (ui.full = true)}><Cover src={s.cover} /></button>
+      <button class="art" aria-label={s.title} onclick={() => (ui.full = true)}><Cover src={s.cover} radius="16px" /></button>
       <div class="text">
         <span class="title clip">{s.title}</span>
         <span class="sub clip">
@@ -39,7 +39,7 @@
         {#if player.held}<button class="held" onclick={() => player.unhold()}>{W.tapToPlay}</button>{/if}
       </div>
     {:else}
-      <div class="art"><Cover /></div>
+      <div class="art"><Cover radius="16px" /></div>
       <span class="sub">{W.nothingPlaying}</span>
     {/if}
   </div>
@@ -48,11 +48,10 @@
     {#if s}<Seek inline times={!ui.full} />{/if}
   </div>
   <div class="right">
-    {#if s && !n?.jam}<Seal what="song" id={s.id} on={!!s.starred} />{/if}
+    {#if s && !n?.asks}<Seal what="song" id={s.id} on={!!s.starred} />{/if}
+    {#if !n?.asks}<OutputButton />{/if}
     {#each panes as [pane, icon, label] (pane)}
-      {#if pane !== "devices" || remote.devices.on}
-        <button class="round" class:on={ui.full && ui.pane === pane} title={label} aria-label={label} data-pane={pane} onclick={() => ui.show(pane)}><Icon name={icon} /></button>
-      {/if}
+      <button class="glyph quiet" class:on={ui.full && ui.pane === pane} title={label} aria-label={label} data-pane={pane} onclick={() => ui.show(pane)}><Icon name={icon} /></button>
     {/each}
     <Volume />
   </div>
@@ -86,27 +85,24 @@
     width: 64px;
     flex: none;
   }
-  .art :global(.cover) {
-    border-radius: 16px;
-  }
   .text {
     display: flex;
     flex-direction: column;
     min-width: 0;
   }
   .title {
-    font-size: 13.5px;
-    font-weight: 600;
+    font-size: 15px;
+    line-height: 20px;
   }
   .sub {
-    color: var(--ink2);
-    font-size: 12px;
+    color: color-mix(in srgb, var(--ink) 65%, transparent);
+    font-size: 13px;
   }
   .sub a:hover {
-    text-decoration: underline;
+    color: var(--ink);
   }
   .held {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     text-align: left;
     color: var(--accent);
@@ -115,20 +111,25 @@
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: 2px;
+    gap: 0;
   }
   .right {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 2px;
     min-width: 0;
   }
-  .right .round {
-    color: var(--ink2);
+  .right :global(.glyph),
+  .right :global(.output) {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
   }
-  .right .round.on {
-    color: var(--accent);
+  /* Every line glyph here one size (the seal's too), so their lines match. */
+  .right :global(.icon),
+  .right :global(.output .icon) {
+    width: 21px;
+    height: 21px;
   }
   .right :global(.vol) {
     margin-left: 8px;

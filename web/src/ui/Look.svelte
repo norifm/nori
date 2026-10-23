@@ -1,9 +1,11 @@
 <script lang="ts">
-  // The look: the season (the four tiles marked 春 夏 秋 冬; following the calendar, its season's is
-  // marked), System, Day, Night or Midnight. The core keeps the settings and hands out the colors (state/theme.ts).
+  // The look, as Android's Appearance has it: the four season tiles (each its kanji over its paper, accent
+  // and "on" colors, the one worn raised; picking one stops following the calendar), Follow the calendar,
+  // then System, Day, Night or Midnight. The core keeps the settings and hands out the colors.
   import { ask } from "../rpc";
-  import { refreshTheme, worn } from "../state/theme";
+  import { refreshTheme, worn } from "../state/theme.svelte";
   import { W } from "../words";
+  import Icon from "./Icon.svelte";
 
   type Look = { season: string; theme: string };
   let look = $state<Look>({ season: "FOLLOW", theme: "SYSTEM" });
@@ -13,10 +15,12 @@
   };
   void read();
 
+  const kanji: Record<string, string> = { SPRING: "kanji-spring", SUMMER: "kanji-summer", AUTUMN: "kanji-autumn", WINTER: "kanji-winter" };
+  const themes = ["SYSTEM", "LIGHT", "DARK", "MIDNIGHT"];
   const following = $derived(look.season === "FOLLOW");
   /** The tile worn: the calendar's while following. */
   const shown = $derived(following ? worn.season : look.season);
-  const named = (id: string) => W.seasons.find((s) => s[0] === id)?.[2] ?? id;
+  const named = (season: string) => W.seasons[season] ?? season;
 
   async function set(name: keyof Look, value: string) {
     look[name] = value;
@@ -26,25 +30,31 @@
 </script>
 
 <div class="look">
+  <div class="group-label">{W.season}</div>
   <div class="tiles" role="radiogroup" aria-label={W.season}>
-    {#each W.seasons as [id, kanji, name] (id)}
-      <button class="tile" role="radio" aria-checked={shown === id} class:on={shown === id} data-season={id} onclick={() => void set("season", id)}>
-        <i>{kanji}</i><small>{name}</small>
+    {#each worn.tiles as t (t.season)}
+      {@const on = shown === t.season}
+      <button class="tile" class:on role="radio" aria-checked={on} aria-label={named(t.season)} data-season={t.season} onclick={() => (!on || following) && void set("season", t.season)}>
+        <Icon name={kanji[t.season]} />
+        <span class="dots"><i class="paper" style:background={t.page}></i><i style:background={t.accent}></i><i style:background={t.on}></i></span>
       </button>
     {/each}
   </div>
-  <label class="row">
-    <span class="words"
-      ><span>{W.seasonFollow}</span><span class="sub">{following ? W.seasonNow(named(worn.season), named(worn.next), worn.nextMonth, worn.nextDay) : W.seasonFollowLead}</span></span
-    >
-    <input type="checkbox" class="switch" checked={following} onchange={(e) => void set("season", e.currentTarget.checked ? "FOLLOW" : worn.season)} />
-  </label>
-  <div class="row stack">
-    <span>{W.appearance}</span>
-    <div class="chips" role="radiogroup" aria-label={W.appearance}>
-      {#each W.appearances as [id, name] (id)}
-        <button role="radio" aria-checked={look.theme === id} class:on={look.theme === id} data-theme={id} onclick={() => void set("theme", id)}>{name}</button>
-      {/each}
+  <div class="group">
+    <label class="group-row" data-setting="season">
+      <span class="words"><span>{W.seasonFollow}</span>{#if following}<span class="sub">{W.seasonNext(named(worn.next), worn.nextMonth, worn.nextDay)}</span>{/if}</span>
+      <input type="checkbox" class="switch" checked={following} onchange={(e) => void set("season", e.currentTarget.checked ? "FOLLOW" : worn.season)} />
+    </label>
+  </div>
+  <div class="group-label">{W.sections.Theme}</div>
+  <div class="group">
+    <div class="group-row chips-row" data-setting="theme">
+      <span class="words">{W.settingNames.theme}</span>
+      <div class="choices" role="radiogroup" aria-label={W.settingNames.theme}>
+        {#each themes as id (id)}
+          <button class="chip" class:on={look.theme === id} role="radio" aria-checked={look.theme === id} data-theme={id} onclick={() => look.theme !== id && void set("theme", id)}>{W.choice("theme", id)}</button>
+        {/each}
+      </div>
     </div>
   </div>
 </div>
@@ -52,62 +62,64 @@
 <style>
   .tiles {
     display: flex;
-    gap: 8px;
-    margin: 4px 0 10px;
+    gap: 10px;
+    margin-bottom: 10px;
   }
   .tile {
     flex: 1;
+    height: 88px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    border: 1px solid var(--outline);
-    border-radius: 14px;
-    padding: 10px 4px;
+    justify-content: center;
+    gap: 8px;
+    border-radius: var(--r-tile);
+    border: var(--hairline) solid transparent;
     color: var(--ink2);
-  }
-  .tile i {
-    font: 600 28px/1.2 "Shippori Mincho", "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif CJK JP", serif;
-    font-style: normal;
-  }
-  .tile small {
-    font-size: 11px;
   }
   .tile.on {
-    border-color: var(--accent);
+    background: var(--surface);
+    border-color: var(--hair);
     color: var(--ink);
   }
-  .row {
+  .tile :global(.icon) {
+    width: 30px;
+    height: 30px;
+  }
+  .dots {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 9px 2px;
-    border-top: 1px solid var(--hair);
-    cursor: default;
+    gap: 5px;
   }
-  .stack {
+  .dots i {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .dots .paper {
+    box-shadow: inset 0 0 0 var(--hairline) var(--hair);
+  }
+  .chips-row {
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
+    gap: 10px;
+    padding-top: 12px;
+    padding-bottom: 12px;
   }
-  .words {
-    display: flex;
-    flex-direction: column;
-  }
-  .chips {
+  .choices {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
   }
-  .chips button {
-    border: 1px solid var(--outline);
-    border-radius: 999px;
-    padding: 4px 11px;
-    font-size: 13px;
-    color: var(--ink2);
+  /* In the top bar's menu the tiles stand on the menu's own paper: the worn one is raised on the page, and
+     what is round inside the menu is round by its inner corner. */
+  :global(.popover) .tile.on {
+    background: var(--page);
   }
-  .chips button.on {
-    background: var(--ink);
-    border-color: var(--ink);
-    color: var(--page);
+  :global(.popover) .tile,
+  :global(.popover) .group {
+    border-radius: var(--inner);
+  }
+  :global(.popover) .group-label:first-child {
+    margin-top: 6px;
   }
 </style>
