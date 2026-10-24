@@ -60,7 +60,7 @@ data class Playing(
  * What every home-screen widget shares: the song last announced, the app's theme and a cover's own look
  * (the colours its page wears in the app, from nori-look), the pictures, and the intents a tap sends.
  * Nothing here polls: widgets are drawn when placed or resized, when the service announces a change, and
- * when a widget asks (the random albums' shuffle, the lyrics' next line).
+ * when a widget asks (the random albums' refresh, the lyrics' next line).
  */
 object Widgets {
     /** The last announcement. Main thread. */

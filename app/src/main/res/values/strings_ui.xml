@@ -184,6 +184,7 @@
     <string name="autoeq_about">AutoEQ measures headphones and publishes a correction curve for each. The list is one 850 kB request to github.com, made by itself on Wi-Fi while Keep the AutoEQ list is on; after that, searching happens on this device.</string>
     <string name="download_the_list">Download the list</string>
     <string name="refresh_list">Refresh list</string>
+    <string name="widget_other_albums">Other albums</string>
     <string name="autoeq_no_curve">AutoEQ has no curve for that one, so it\'s left out of the list from now on.</string>
     <string name="autoeq_credit">Curves by the AutoEQ project (jaakkopasanen/AutoEq). Tapping one replaces the equalizer\'s bands.</string>
     <string name="autoeq_credit_graphic">Curves by the AutoEQ project (jaakkopasanen/AutoEq). Tapping one sets the graphic equalizer\'s sliders to follow it.</string>
