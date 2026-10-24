@@ -1416,7 +1416,6 @@ pub fn settings(s: &StoredPrefs) -> Settings {
     } };
     Settings {
         sound,
-        skip_silence: s.skip_silence,
         fade_ms: s.fade_ms,
         hi_res: s.hi_res,
         // Bit-perfect plays each song at its own rate.

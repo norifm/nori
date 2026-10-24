@@ -184,7 +184,6 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "autoMixBetterBeats" to (R.string.settings_better_beats to R.string.settings_hint_better_beats),
     "crossfadeKeepAlbums" to (R.string.settings_keep_albums to R.string.settings_hint_keep_albums),
     "fadeMs" to (R.string.settings_fade to R.string.settings_hint_fade),
-    "skipSilence" to (R.string.settings_skip_silence to R.string.settings_hint_skip_silence),
     "skipExplicit" to (R.string.settings_skip_explicit to R.string.settings_hint_skip_explicit),
     "autoFill" to (R.string.settings_auto_fill to R.string.settings_hint_auto_fill),
     "autoFillKind" to (R.string.settings_auto_fill_kind to R.string.settings_hint_auto_fill_kind),
@@ -515,7 +514,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
                 else -> str(R.string.settings_better_beats_off, mb)
             }
         }
-        "skipSilence" -> if (s.untouched) str(R.string.settings_skip_silence_held) else ""
         "bitPerfect" -> bitPerfectWords(f.dac)
         "offload" -> if (f.dac.device != null) str(R.string.settings_offload_usb) else if (s.offloadPaused) str(R.string.settings_offload_paused) else ""
         "movingCovers" -> if (s.values["movingCovers"] != "off" && p.motion != dev.nori.music.ffi.settings.Motion.FULL) str(R.string.settings_moving_covers_still) else ""

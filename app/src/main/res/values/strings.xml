@@ -68,8 +68,6 @@
     <string name="settings_measure_again">Measure again</string>
     <string name="settings_fade">Fade on play and pause</string>
     <string name="settings_keep_albums">Keep albums gapless</string>
-    <string name="settings_skip_silence">Skip silence</string>
-    <string name="settings_skip_silence_held">Off in bit-perfect mode.</string>
     <string name="settings_skip_explicit">Skip explicit songs</string>
     <string name="settings_auto_fill">Keep playing when the queue ends</string>
     <string name="settings_auto_fill_kind">Carry on with</string>
@@ -358,7 +356,6 @@
     <string name="settings_hint_better_beats">A neural beat tracker for AutoMix, downloaded once (Beat This!)</string>
     <string name="settings_hint_measured">Tempo and beats, measured on this device</string>
     <string name="settings_hint_fade">A short fade when you play, pause, seek or skip</string>
-    <string name="settings_hint_skip_silence">Cuts quiet gaps in and between songs</string>
     <string name="settings_hint_skip_explicit">Songs your server marks explicit</string>
     <string name="settings_hint_auto_fill">Adds more music automatically</string>
     <string name="settings_hint_auto_fill_kind">Songs, or a whole album at a time</string>

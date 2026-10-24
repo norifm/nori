@@ -296,7 +296,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         }
         "crossfadeKeepAlbums" => ("Keep albums gapless", ""),
         "fadeMs" => ("Fade on play and pause", ""),
-        "skipSilence" => ("Skip silence", if s.untouched { "Off in bit-perfect mode." } else { "" }),
         "skipExplicit" => ("Skip explicit songs", ""),
         "autoFill" => ("Keep playing when the queue ends", ""),
         "autoFillKind" => ("Carry on with", ""),

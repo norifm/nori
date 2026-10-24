@@ -507,7 +507,6 @@ fn setting_words(name: &str, p: &StoredPrefs, s: &SettingsState) -> (String, Str
         }
         "crossfadeKeepAlbums" => "Keep albums gapless",
         "fadeMs" => "Fade on play and pause",
-        "skipSilence" => return ("Skip silence".into(), if s.untouched { "Off in bit-perfect mode.".into() } else { String::new() }),
         "skipExplicit" => "Skip explicit songs",
         "autoFill" => "Keep playing when the queue ends",
         "autoFillKind" => "Carry on with",

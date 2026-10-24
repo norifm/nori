@@ -1317,7 +1317,7 @@ pub(crate) fn offload_reason() -> Option<&'static str> {
     let s = app()?.current()?;
     let prefs = nori_model::AudioPrefs {
         dsp: s.sound_chain_on(),
-        skip_silence: s.skip_silence,
+        skip_silence: false,
         offload: s.offload,
         crossfade_s: s.crossfade_sec,
         auto_mix: s.auto_mix,

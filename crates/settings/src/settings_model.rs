@@ -123,7 +123,7 @@ pub enum BeatModel {
 pub struct SettingsState {
     /// Every setting's value ([`value_of`]), by name.
     pub values: HashMap<String, String>,
-    /// Bit-perfect DAC output: transitions, silence skipping and the sound chain are out of the path.
+    /// Bit-perfect DAC output: transitions and the sound chain are out of the path.
     pub untouched: bool,
     pub sound_chain_on: bool,
     pub eq_status: EqStatus,
@@ -186,7 +186,7 @@ pub fn state(p: &StoredPrefs, out: Output, model: &beat_model::ModelFile) -> Set
     let dsp = p.sound_chain_on();
     let prefs = nori_model::AudioPrefs {
         dsp,
-        skip_silence: p.skip_silence,
+        skip_silence: false,
         offload: p.offload,
         crossfade_s: p.crossfade_sec,
         auto_mix: p.auto_mix,

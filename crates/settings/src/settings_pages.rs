@@ -130,7 +130,7 @@ pub enum SettingsAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum SettingsNote {
-    /// Bit-perfect output takes transitions, silence skipping and effects out of the path.
+    /// Bit-perfect output takes transitions and effects out of the path.
     HeldByDac,
     /// What the USB DAC offers and plays (the phone's words).
     Dac,
@@ -334,7 +334,7 @@ impl Page<'_> {
         // AutoMix plans its own transitions, so the plain crossfade gives way to it.
         between.push(self.setting("crossfadeSec").enabled(live && !p.auto_mix));
         between.push(self.setting("crossfadeKeepAlbums").enabled(live && (p.auto_mix || p.crossfade_sec > 0)));
-        let controls = vec![self.setting("skipSilence").enabled(live), self.setting("fadeMs")];
+        let controls = vec![self.setting("fadeMs")];
         let mut queue = vec![
             self.setting("skipExplicit"),
             self.setting("autoFill"),
