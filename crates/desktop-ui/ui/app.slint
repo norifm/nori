@@ -22,6 +22,15 @@ export struct Card {
 // A piece of the line being sung (sung.rs): a word, a syllable or what lies between, where it was laid
 // (x, y, its width w), its fill (the white's alpha at its start a0, at a aa, at b ab and at its end a1, a and
 // b being fractions of its width), how far it has risen (0..1) and how much a held note has swelled it.
+// A lyric line as drawn: what is sung, the backing vocals sung over it (smaller, under it), whether the second
+// voice of a duet sings it (from the right), and whether it is backing vocals alone (lighter).
+export struct SungLine {
+    text: string,
+    backing: string,
+    right: bool,
+    background: bool,
+}
+
 export struct LyricPiece {
     text: string,
     x: float,
@@ -367,9 +376,21 @@ export global Go {
 }
 
 // An artist's or album's name that opens its page: a pointer and an underline under it while hovered.
+// A right press over what it covers, and where in the window it was.
+component RightPress inherits TouchArea {
+    callback menu(length, length);
+    pointer-event(e) => {
+        if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
+            root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+        }
+    }
+}
+
 component Link inherits Text {
     in property <string> artist;
     in property <string> album;
+    // A right press, where in the window it was.
+    callback menu(length, length);
     property <length> size: root.font-size > 0 ? root.font-size : 13px;
     lt := TouchArea {
         enabled: root.artist != "" || root.album != "";
@@ -379,6 +400,11 @@ component Link inherits Text {
                 Go.artist(root.artist);
             } else {
                 Go.album(root.album);
+            }
+        }
+        pointer-event(e) => {
+            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
+                root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
             }
         }
     }
@@ -1231,7 +1257,43 @@ component Chip inherits Rectangle {
 }
 
 // Cards in rows filling the page width; only nearby rows keep components and images.
-component Grid inherits Flickable {
+// Where the page shown is scrolled: `at` as it scrolls, `want` where the next page shown starts, and `asked`
+// counts the pages shown, so a page view that stays (an album opened from an artist) starts again too.
+export global Scroll {
+    in-out property <length> at;
+    in property <length> want;
+    in property <int> asked;
+}
+
+// A page's scroll that Back returns to: it starts at `Scroll.want` once its content reaches that far (pages
+// fill in after they open) or the user scrolls it, and keeps `Scroll.at`. Off (`remember`), it is a plain one.
+component Remembered inherits Flickable {
+    in property <bool> remember: true;
+    property <bool> placed;
+    property <int> asked: Scroll.asked;
+    function place() {
+        if root.remember && !root.placed && root.content-height - root.height >= Scroll.want {
+            root.content-y = -Scroll.want;
+            root.placed = true;
+        }
+    }
+    init => { root.place(); }
+    changed asked => {
+        root.placed = false;
+        root.place();
+    }
+    changed content-height => { root.place(); }
+    changed content-y => {
+        if root.remember && root.placed {
+            Scroll.at = -root.content-y;
+        }
+    }
+    flicked => {
+        root.placed = true;
+    }
+}
+
+component Grid inherits Remembered {
     in property <[Card]> cards;
     in property <int> rev;
     in property <bool> round;
@@ -1277,7 +1339,12 @@ component Grid inherits Flickable {
             clicked => { root.ordered(i); }
         }
     }
-    for slot in root.visible-count: CardView {
+    // The cards drawn. A repeater over a count makes its cards anew whenever the count is worked out
+    // again, a card under a press with them; held here, they are made anew only when the count changes.
+    property <int> slots;
+    init => { root.slots = root.visible-count; }
+    changed visible-count => { root.slots = root.visible-count; }
+    for slot in root.slots: CardView {
         property <int> i: root.first + slot;
         property <Card> c: root.cards[self.i];
         x: root.pad + mod(self.i, root.columns) * (root.side + root.gap);
@@ -1349,6 +1416,7 @@ component ReleaseShelves inherits VerticalLayout {
             pad: 0;
             bottom: 0;
             interactive: false;
+            remember: false;
             cards: shelf.cards;
             rev: root.rev;
             art(a, s, r) => { return root.art(a, s, r); }
@@ -1382,6 +1450,14 @@ component ShelfView inherits VerticalLayout {
     out property <length> step: root.side + root.gap;
     out property <int> first: max(0, floor(-flick.content-x / root.step) - 1);
     out property <int> visible-count: max(0, min(root.count - root.first, ceil(root.seen / root.step) + 2));
+    // Off screen, a shelf draws no cards.
+    in property <bool> live: true;
+    // The cards drawn, held at the count as Grid's are.
+    out property <int> slots;
+    function hold() { root.slots = root.live ? root.visible-count : 0; }
+    init => { root.hold(); }
+    changed visible-count => { root.hold(); }
+    changed live => { root.hold(); }
     property <int> shown: root.loading ? root.columns : root.count;
     // The row is seen from a gap before the left margin to a gap past the right one, so the cards beside
     // the whole ones are not glimpsed; it scrolls until its last card stands at the right margin.
@@ -1496,15 +1572,36 @@ component PickCard inherits Rectangle {
     border-radius: 18px;
     clip: true;
     background: root.pick.page;
+    animate background { duration: Motion.reduced ? 0ms : 240ms; easing: ease-out; }
+    // A new mosaic fades in over the one it replaces: `faded` runs from the last change's count to this one's.
+    property <image> under;
+    property <image> over;
+    property <int> changes;
+    init => { root.over = root.picture; }
+    property <float> faded: root.changes;
+    animate faded { duration: Motion.reduced ? 0ms : 240ms; easing: ease-out; }
+    changed picture => {
+        root.under = root.over;
+        root.over = root.picture;
+        root.changes += 1;
+    }
     Rectangle {
         y: 0;
         height: root.width;
         background: root.pick.seed;
+        animate background { duration: Motion.reduced ? 0ms : 240ms; easing: ease-out; }
         Image {
             width: root.width;
             height: root.width;
-            source: root.picture;
+            source: root.under;
             image-fit: cover;
+        }
+        Image {
+            width: root.width;
+            height: root.width;
+            source: root.over;
+            image-fit: cover;
+            opacity: clamp(root.faded - root.changes + 1, 0, 1);
         }
         // The covers rubbed out into the card's paper from under halfway down.
         Rectangle {
@@ -4925,7 +5022,9 @@ export component AppWindow inherits Window {
     changed full-panel => { root.player-changed(); }
     changed view => { root.player-changed(); }
     // The lyrics of the song playing: the lines, the one sung (-1 for none), and a line about them.
-    in property <[string]> lyrics-lines;
+    in property <[SungLine]> lyrics-lines;
+    // A duet's lane: each voice leaves this clear on the far side.
+    in property <length> lyrics-lane;
     // The lines broken into the rows the sung line's pieces take, per view (app.rs `rows`): drawn so, no line
     // moves its words as it is sung or let go. Empty until laid out.
     in property <[string]> lyrics-side-rows;
@@ -5030,7 +5129,26 @@ export component AppWindow inherits Window {
     property <[SongGo]> player-lines;
     public function show-player-menu() {
         root.player-lines = root.player-menu();
+        root.pop-at = false;
         player-pop.show();
+    }
+    // The song playing's menu, and its album's, opened by a right press at `x`, `y` in the window.
+    property <bool> pop-at;
+    property <length> pop-x;
+    property <length> pop-y;
+    function song-menu-at(x: length, y: length) {
+        if root.has-song {
+            root.player-lines = root.player-menu();
+            root.pop-at = true;
+            root.pop-x = x + Chrome.menu-flip(x, MenuShape.width);
+            root.pop-y = y;
+            player-pop.show();
+        }
+    }
+    function album-menu-at(x: length, y: length) {
+        root.pop-x = x + Chrome.menu-flip(x, MenuShape.width);
+        root.pop-y = y;
+        album-pop.show();
     }
     // The sleep timer's choices, "Off" first while one runs, and one chosen.
     in property <[string]> sleep-choices;
@@ -5294,7 +5412,7 @@ export component AppWindow inherits Window {
 
 
                 if root.view == 0: Fade {
-                    home-scroll := Flickable {
+                    home-scroll := Remembered {
                         content-height: home.preferred-height;
                         home := VerticalLayout {
                             y: floor(home-scroll.content-y / 1phx + 0.5) * 1phx - home-scroll.content-y;
@@ -5410,7 +5528,7 @@ export component AppWindow inherits Window {
                                 loading: !root.picks-loaded;
                                 least: 200px;
                                 below: self.side * 56 / 150;
-                                for slot in picks-shelf.visible-count: PickCard {
+                                for slot in picks-shelf.slots: PickCard {
                                     property <int> i: picks-shelf.first + slot;
                                     property <Pick> m: root.picks[self.i];
                                     x: floor((picks-shelf.gap + self.i * picks-shelf.step) / 1phx) * 1phx;
@@ -5431,9 +5549,10 @@ export component AppWindow inherits Window {
                                     show-all => { root.shown-shelf = index; root.go(10); }
                                     count: shelf.cards.length;
                                     loading: !shelf.loaded;
+                                    live: home-row.on-screen;
                                     // A source's feed mixes songs, albums, playlists and artists in a shelf: each opens or plays
                                     // as what it is, a song with the shelf's songs after it.
-                                    for slot in home-row.on-screen ? albums-shelf.visible-count : 0: CardView {
+                                    for slot in albums-shelf.slots: CardView {
                                         property <int> i: albums-shelf.first + slot;
                                         property <Card> c: shelf.cards[self.i];
                                         x: albums-shelf.gap + self.i * albums-shelf.step;
@@ -5521,7 +5640,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     VerticalLayout {
-                        Flickable {
+                        Remembered {
                             vertical-stretch: 1;
                             content-height: found.preferred-height;
                             found := VerticalLayout {
@@ -5660,7 +5779,7 @@ export component AppWindow inherits Window {
                 }
 
                 if root.view == 2 && root.albums-in-rows: Fade {
-                    rows-scroll := Flickable {
+                    rows-scroll := Remembered {
                         property <int> columns: max(2, floor((self.width - 64px + 22px) / 198px));
                         property <length> side: (self.width - 64px - (self.columns - 1) * 22px) / self.columns;
                         // A shelf's title, its gap, its cards with their words, and the space under it (ShelfView).
@@ -5668,6 +5787,9 @@ export component AppWindow inherits Window {
                         property <length> head: Chrome.top-room + 116px;
                         property <int> first: max(0, floor((-self.content-y - self.head) / self.row-step) - 1);
                         property <int> visible-count: max(0, min(root.album-rows.length - self.first, ceil(self.height / self.row-step) + 2));
+                        property <int> slots;
+                        init => { self.slots = self.visible-count; }
+                        changed visible-count => { self.slots = self.visible-count; }
                         content-height: self.head + root.album-rows.length * self.row-step + 100px;
                         Text {
                             x: 32px;
@@ -5690,14 +5812,14 @@ export component AppWindow inherits Window {
                                 clicked => { root.album-sort-chosen(i); }
                             }
                         }
-                        for slot in self.visible-count: artist-row := ShelfView {
+                        for slot in self.slots: artist-row := ShelfView {
                             property <int> index: rows-scroll.first + slot;
                             property <Shelf> shelf: root.album-rows[self.index];
                             y: rows-scroll.head + self.index * rows-scroll.row-step;
                             width: rows-scroll.width;
                             title: self.shelf.title;
                             count: self.shelf.cards.length;
-                            for card-slot in artist-row.visible-count: CardView {
+                            for card-slot in artist-row.slots: CardView {
                                 property <int> i: artist-row.first + card-slot;
                                 property <Card> c: artist-row.shelf.cards[self.i];
                                 x: artist-row.gap + self.i * artist-row.step;
@@ -5753,12 +5875,15 @@ export component AppWindow inherits Window {
 
                 if root.view == 11: Fade {
                     push: true;
-                    picks-grid := Flickable {
+                    picks-grid := Remembered {
                         property <int> columns: max(2, floor((self.width - 64px + 22px) / 222px));
                         property <length> side: (self.width - 64px - (self.columns - 1) * 22px) / self.columns;
                         content-height: Chrome.top-room + 64px + ceil(root.picks.length / self.columns) * (self.side * 206 / 150 + 22px) + 100px;
                         property <int> first: max(0, floor((-self.content-y - Chrome.top-room - 64px) / (self.side * 206 / 150 + 22px)) - 1) * self.columns;
                         property <int> visible-count: max(0, min(root.picks.length - self.first, (ceil(self.height / (self.side * 206 / 150 + 22px)) + 2) * self.columns));
+                        property <int> slots;
+                        init => { self.slots = self.visible-count; }
+                        changed visible-count => { self.slots = self.visible-count; }
                         Text {
                             x: 32px;
                             y: Chrome.top-room + 8px;
@@ -5769,7 +5894,7 @@ export component AppWindow inherits Window {
                             font-weight: 700;
                             letter-spacing: -0.5px;
                         }
-                        for slot in self.visible-count: PickCard {
+                        for slot in self.slots: PickCard {
                             property <int> i: picks-grid.first + slot;
                             property <Pick> item: root.picks[self.i];
                             x: 32px + mod(self.i, parent.columns) * (parent.side + 22px);
@@ -5992,7 +6117,7 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        page-flick := Flickable {
+                        page-flick := Remembered {
                             // Up and down only: a long title or row is cut to the page, never scrolled sideways.
                             content-width: self.width;
                             content-height: detail.preferred-height;
@@ -6440,7 +6565,10 @@ export component AppWindow inherits Window {
                         padding-top: lyric-flick.height / 3;
                         padding-bottom: lyric-flick.height * 2 / 3;
                         spacing: 22px;
-                        for line[i] in root.lyrics-lines: Text {
+                        for line[i] in root.lyrics-lines: side-line := VerticalLayout {
+                            padding-left: line.right ? root.lyrics-lane : 0;
+                            padding-right: line.right ? 0 : root.lyrics-lane;
+                            spacing: 2px;
                             property <bool> lit: i == root.lyrics-active;
                             property <length> bottom: i == root.lyrics-lines.length - 1 ? self.y + self.height : 0;
                             changed bottom => {
@@ -6476,45 +6604,58 @@ export component AppWindow inherits Window {
                                     lyric-flick.content-y = -max(0, self.y - lyric-flick.height / 3);
                                 }
                             }
-                            // With word times the lit line is drawn by its pieces over this text, which keeps its place;
-                            // a line sung fades from white as the others do.
-                            text: root.lyrics-side-rows.length > i ? root.lyrics-side-rows[i] : line;
-                            wrap: word-wrap;
-                            font-size: 22px;
-                            font-weight: 700;
                             // As Now Playing's: gone over the last 48 px before either edge, unsung lines the ink at 36 %.
                             property <length> shown-at: self.y + lyric-flick.content-y;
-                            opacity: clamp(self.shown-at / 48px, 0, 1) * clamp((lyric-flick.height - self.shown-at - self.height) / 48px, 0, 1);
-                            color: !root.lyric-sweeping ? (!root.lyrics-synced || self.lit ? Theme.text : Theme.text.with-alpha(0.36))
-                                : self.lit ? transparent : Theme.text.with-alpha(0.36 + (1 - 0.36) * self.level);
-                            animate color { duration: root.lyric-sweeping || Motion.reduced ? 0ms : 420ms; easing: ease-out; }
-                            // The lit line filling without pieces to draw it (no face to measure in).
-                            if root.lyric-sweeping && self.lit && root.lyric-pieces-side.length == 0: StyledText {
-                                width: 100%;
-                                height: 100%;
-                                default-font-size: 22px;
-                                default-color: Theme.text.with-alpha(0.36 + (1 - 0.36) * parent.level);
-                                text: parent.lit ? @markdown("**\{root.lyric-sung}<font color=\"\{Theme.text.with-alpha(0.36 + 0.64 * root.lyric-mix)}\">\{root.lyric-now}</font><font color=\"\{Theme.text.with-alpha(0.36)}\">\{root.lyric-rest}</font>**") : @markdown("**\{line}**");
-                            }
-                            if self.lit && root.lyric-sweeping && root.lyric-pieces-side.length > 0: Rectangle {
-                                width: 100%;
-                                height: 100%;
-                                for p in root.lyric-pieces-side: Text {
-                                    x: p.x * 1px;
-                                    y: p.y * 1px - p.lift * 2px;
-                                    width: p.w * 1px;
-                                    text: p.text;
-                                    wrap: no-wrap;
-                                    font-size: 22px;
-                                    font-weight: 700;
-                                    color: @linear-gradient(90deg, Theme.text.with-alpha(p.a0) 0%, Theme.text.with-alpha(p.aa) p.a * 100%, Theme.text.with-alpha(p.ab) p.b * 100%, Theme.text.with-alpha(p.a1) 100%);
-                                    transform-scale-x: (1 + 0.04 * p.swell) * 100%;
-                                    transform-scale-y: (1 + 0.04 * p.swell) * 100%;
+                            property <float> shown: clamp(self.shown-at / 48px, 0, 1) * clamp((lyric-flick.height - self.shown-at - self.height) / 48px, 0, 1);
+                            Text {
+                                // With word times the lit line is drawn by its pieces over this text, which keeps its place;
+                                // a line sung fades from white as the others do.
+                                text: root.lyrics-side-rows.length > i ? root.lyrics-side-rows[i] : line.text;
+                                wrap: word-wrap;
+                                font-size: 22px;
+                                font-weight: line.background ? 400 : 700;
+                                horizontal-alignment: line.right ? right : left;
+                                opacity: side-line.shown;
+                                color: !root.lyric-sweeping ? (!root.lyrics-synced || side-line.lit ? Theme.text : Theme.text.with-alpha(0.36))
+                                    : side-line.lit ? transparent : Theme.text.with-alpha(0.36 + (1 - 0.36) * side-line.level);
+                                animate color { duration: root.lyric-sweeping || Motion.reduced ? 0ms : 420ms; easing: ease-out; }
+                                // The lit line filling without pieces to draw it (no face to measure in).
+                                if root.lyric-sweeping && side-line.lit && root.lyric-pieces-side.length == 0: StyledText {
+                                    width: 100%;
+                                    height: 100%;
+                                    default-font-size: 22px;
+                                    default-color: Theme.text.with-alpha(0.36 + (1 - 0.36) * side-line.level);
+                                    text: side-line.lit ? @markdown("**\{root.lyric-sung}<font color=\"\{Theme.text.with-alpha(0.36 + 0.64 * root.lyric-mix)}\">\{root.lyric-now}</font><font color=\"\{Theme.text.with-alpha(0.36)}\">\{root.lyric-rest}</font>**") : @markdown("**\{line.text}**");
+                                }
+                                if side-line.lit && root.lyric-sweeping && root.lyric-pieces-side.length > 0: Rectangle {
+                                    width: 100%;
+                                    height: 100%;
+                                    for p in root.lyric-pieces-side: Text {
+                                        x: p.x * 1px;
+                                        y: p.y * 1px - p.lift * 2px;
+                                        width: p.w * 1px;
+                                        text: p.text;
+                                        wrap: no-wrap;
+                                        font-size: 22px;
+                                        font-weight: line.background ? 400 : 700;
+                                        color: @linear-gradient(90deg, Theme.text.with-alpha(p.a0) 0%, Theme.text.with-alpha(p.aa) p.a * 100%, Theme.text.with-alpha(p.ab) p.b * 100%, Theme.text.with-alpha(p.a1) 100%);
+                                        transform-scale-x: (1 + 0.04 * p.swell) * 100%;
+                                        transform-scale-y: (1 + 0.04 * p.swell) * 100%;
+                                    }
+                                }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.lyric-tapped(i); }
                                 }
                             }
-                            TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { root.lyric-tapped(i); }
+                            // Backing vocals sung over the line: smaller and under it, lit with it, as on Android.
+                            if line.backing != "": Text {
+                                text: line.backing;
+                                wrap: word-wrap;
+                                font-size: 22px * 0.72;
+                                horizontal-alignment: line.right ? right : left;
+                                opacity: side-line.shown;
+                                color: Theme.text.with-alpha(0.36 + (0.7 - 0.36) * side-line.level);
                             }
                         }
                         if root.lyrics-note != "": Text {
@@ -6557,8 +6698,8 @@ export component AppWindow inherits Window {
 
         // The player pill's menus, which open above it: the song playing's, and the sleep timer's.
         player-pop := PopupWindow {
-            x: Chrome.player-x + Chrome.player-w - 12px - self.width;
-            y: root.height - Chrome.bottom-room - self.height;
+            x: root.pop-at ? root.pop-x : Chrome.player-x + Chrome.player-w - 12px - self.width;
+            y: root.pop-at ? root.pop-y - Chrome.menu-lift(root.pop-y, self.height) : root.height - Chrome.bottom-room - self.height;
             width: MenuShape.width;
             close-policy: close-on-click-outside;
             SongMenuBody {
@@ -6578,6 +6719,16 @@ export component AppWindow inherits Window {
                     player-pop.close();
                 }
             }
+        }
+        album-pop := CollectionMenu {
+            x: root.pop-x;
+            y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
+            picture: root.art(root.now-art, 0, root.covers-rev);
+            title: root.now-album;
+            line: root.now-artist;
+            play => { root.play-album(root.now-album-id); }
+            queue(next) => { root.queue-card(0, root.now-album-id, next); }
+            jam => { root.jam-play(0, root.now-album-id); }
         }
         sleep-pop := PopupWindow {
             x: Chrome.player-x + Chrome.player-w - 12px - self.width;
@@ -6792,6 +6943,9 @@ export component AppWindow inherits Window {
                     source: root.art(root.now-art, 1, root.covers-rev);
                     transform-scale: root.playing ? 1 : 0.9;
                     animate transform-scale { duration: Motion.reduced ? 0ms : 500ms; easing: cubic-bezier(0.3, 1.35, 0.6, 1); }
+                    RightPress {
+                        menu(x, y) => { root.song-menu-at(x, y); }
+                    }
                 }
                 Rectangle {
                     height: 26px;
@@ -6809,6 +6963,9 @@ export component AppWindow inherits Window {
                                 font-size: 16px;
                                 font-weight: 600;
                                 overflow: elide;
+                                RightPress {
+                                    menu(x, y) => { root.song-menu-at(x, y); }
+                                }
                             }
                         }
                         HorizontalLayout {
@@ -6832,6 +6989,7 @@ export component AppWindow inherits Window {
                                 horizontal-stretch: 1;
                                 text: root.now-album;
                                 album: root.now-album-id;
+                                menu(x, y) => { root.album-menu-at(x, y); }
                                 color: Theme.text;
                                 font-size: 14px;
                                 overflow: elide;
@@ -7043,7 +7201,10 @@ export component AppWindow inherits Window {
                     padding-top: root.height * 0.36 - 48px;
                     padding-bottom: root.height;
                     spacing: 36px;
-                    for line[i] in full-lyrics.visible ? root.lyrics-lines : []: Text {
+                    for line[i] in full-lyrics.visible ? root.lyrics-lines : []: full-line := VerticalLayout {
+                        padding-left: line.right ? root.lyrics-lane : 0;
+                        padding-right: line.right ? 0 : root.lyrics-lane;
+                        spacing: 4px;
                         property <bool> lit: i == root.lyrics-active;
                         // The line the lyrics are scrolled to: the one sung, or the last once all are over.
                         property <bool> aimed: i == min(root.lyrics-active, root.lyrics-lines.length - 1);
@@ -7077,44 +7238,57 @@ export component AppWindow inherits Window {
                                 root.full-lyric-at = self.y;
                             }
                         }
-                        text: root.lyrics-full-rows.length > i ? root.lyrics-full-rows[i] : line;
-                        wrap: word-wrap;
-                        font-size: 44px;
-                        font-weight: 700;
                         // A line fades out over the last 72 px before either edge, gone before the edge would cut it.
                         property <length> shown-at: self.y + full-lyrics.content-y;
-                        opacity: clamp(self.shown-at / 72px, 0, 1) * clamp((full-lyrics.height - self.shown-at - self.height) / 72px, 0, 1);
-                        // Unsung lines are the ink at 36 %, as the swept line's are, so the cover's colours show through.
-                        color: !root.lyric-sweeping ? (!root.lyrics-synced || self.lit ? Theme.text : Theme.text.with-alpha(0.36))
-                            : self.lit ? transparent : Theme.text.with-alpha(0.36 + (1 - 0.36) * self.level);
-                        animate color { duration: root.lyric-sweeping || Motion.reduced ? 0ms : 500ms; easing: ease-out; }
-                        // The lit line filling without pieces to draw it (no face to measure in).
-                        if root.lyric-sweeping && self.lit && root.lyric-pieces-full.length == 0: StyledText {
-                            width: 100%;
-                            height: 100%;
-                            default-font-size: 44px;
-                            default-color: Theme.text.with-alpha(0.36 + (1 - 0.36) * parent.level);
-                            text: parent.lit ? @markdown("**\{root.lyric-sung}<font color=\"\{Theme.text.with-alpha(0.36 + 0.64 * root.lyric-mix)}\">\{root.lyric-now}</font><font color=\"\{Theme.dim}\">\{root.lyric-rest}</font>**") : @markdown("**\{line}**");
-                        }
-                        if self.lit && root.lyric-sweeping && root.lyric-pieces-full.length > 0: Rectangle {
-                            width: 100%;
-                            height: 100%;
-                            for p in root.lyric-pieces-full: Text {
-                                x: p.x * 1px;
-                                y: p.y * 1px - p.lift * 3px;
-                                width: p.w * 1px;
-                                text: p.text;
-                                wrap: no-wrap;
-                                font-size: 44px;
-                                font-weight: 700;
-                                color: @linear-gradient(90deg, Theme.text.with-alpha(p.a0) 0%, Theme.text.with-alpha(p.aa) p.a * 100%, Theme.text.with-alpha(p.ab) p.b * 100%, Theme.text.with-alpha(p.a1) 100%);
-                                transform-scale-x: (1 + 0.04 * p.swell) * 100%;
-                                transform-scale-y: (1 + 0.04 * p.swell) * 100%;
+                        property <float> shown: clamp(self.shown-at / 72px, 0, 1) * clamp((full-lyrics.height - self.shown-at - self.height) / 72px, 0, 1);
+                        Text {
+                            text: root.lyrics-full-rows.length > i ? root.lyrics-full-rows[i] : line.text;
+                            wrap: word-wrap;
+                            font-size: 44px;
+                            font-weight: line.background ? 400 : 700;
+                            horizontal-alignment: line.right ? right : left;
+                            opacity: full-line.shown;
+                            // Unsung lines are the ink at 36 %, as the swept line's are, so the cover's colours show through.
+                            color: !root.lyric-sweeping ? (!root.lyrics-synced || full-line.lit ? Theme.text : Theme.text.with-alpha(0.36))
+                                : full-line.lit ? transparent : Theme.text.with-alpha(0.36 + (1 - 0.36) * full-line.level);
+                            animate color { duration: root.lyric-sweeping || Motion.reduced ? 0ms : 500ms; easing: ease-out; }
+                            // The lit line filling without pieces to draw it (no face to measure in).
+                            if root.lyric-sweeping && full-line.lit && root.lyric-pieces-full.length == 0: StyledText {
+                                width: 100%;
+                                height: 100%;
+                                default-font-size: 44px;
+                                default-color: Theme.text.with-alpha(0.36 + (1 - 0.36) * full-line.level);
+                                text: full-line.lit ? @markdown("**\{root.lyric-sung}<font color=\"\{Theme.text.with-alpha(0.36 + 0.64 * root.lyric-mix)}\">\{root.lyric-now}</font><font color=\"\{Theme.dim}\">\{root.lyric-rest}</font>**") : @markdown("**\{line.text}**");
+                            }
+                            if full-line.lit && root.lyric-sweeping && root.lyric-pieces-full.length > 0: Rectangle {
+                                width: 100%;
+                                height: 100%;
+                                for p in root.lyric-pieces-full: Text {
+                                    x: p.x * 1px;
+                                    y: p.y * 1px - p.lift * 3px;
+                                    width: p.w * 1px;
+                                    text: p.text;
+                                    wrap: no-wrap;
+                                    font-size: 44px;
+                                    font-weight: line.background ? 400 : 700;
+                                    color: @linear-gradient(90deg, Theme.text.with-alpha(p.a0) 0%, Theme.text.with-alpha(p.aa) p.a * 100%, Theme.text.with-alpha(p.ab) p.b * 100%, Theme.text.with-alpha(p.a1) 100%);
+                                    transform-scale-x: (1 + 0.04 * p.swell) * 100%;
+                                    transform-scale-y: (1 + 0.04 * p.swell) * 100%;
+                                }
+                            }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.lyric-tapped(i); }
                             }
                         }
-                        TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.lyric-tapped(i); }
+                        // Backing vocals sung over the line: smaller and under it, lit with it, as on Android.
+                        if line.backing != "": Text {
+                            text: line.backing;
+                            wrap: word-wrap;
+                            font-size: 44px * 0.72;
+                            horizontal-alignment: line.right ? right : left;
+                            opacity: full-line.shown;
+                            color: Theme.text.with-alpha(0.36 + (0.7 - 0.36) * full-line.level);
                         }
                     }
                 }

@@ -464,7 +464,7 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
             if (!state.jamGuest) {
                 if (jam == null) Box(standing) {
                     OutputButton(
-                        state.playingOnKind, 22.dp,
+                        state.playingOnKind, state.playingOn, 22.dp,
                         idle = { look.color(CoverLook.CHROME_CONTENT_75) }, lit = { content },
                     )
                 }

@@ -619,6 +619,10 @@ impl ItemRenderer for SkiaItemRenderer<'_> {
         size: LogicalSize,
         _cache: &CachedRenderingData,
     ) {
+        // NORI: Read what the text is laid out from here, in the partial renderer's tracker. The layout
+        // cache replaces an item's entry when it is measured in another wrap mode; a tracker that reached
+        // these only through the old entry would miss the next change and keep the old text on screen.
+        let _ = (text.text(), text.font_request(self_rc), text.wrap(), text.overflow(), text.alignment(), text.is_markdown());
         let restore = self.save_canvas_and_pixel_align_origin();
         sharedparley::draw_text(self, text, Some(self_rc), size, Some(self.text_layout_cache));
         if restore {

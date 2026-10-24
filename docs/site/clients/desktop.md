@@ -34,12 +34,17 @@ plays) and the seal, then a line with the songs' count, length and format and th
 them to the queue or, on a mix, draw it again. A mix has Save as playlist beside Play: the playlist is called
 "nori <mix name>".
 
+Back returns to the page or tab a page was opened from, scrolled where you left it; the mouse's back and
+forward buttons go back and forward again.
+
 A favorite is a seal: an outline until you like a song, then filled and slightly tilted. Lyrics, the queue and
 your devices open in a sheet that floats on the right between the two outlines, over the page, which stays
 where it is; tabs at its top switch between them. In the full player the same tabs head the panel beside the
-cover. The queue shows the songs already played, dimmed above the one playing, then what plays next. A song's
+cover. Lyrics are set as on Android: backing vocals smaller under their line, and in a duet the second voice
+on the right. The queue shows the songs already played, dimmed above the one playing, then what plays next. A song's
 menu opens at the pointer on a right click, or beside the player's ⋯, and shows the song at its head, then its
-lines, the ones used less under More. With nothing typed, the search page lists your recent searches.
+lines, the ones used less under More. In the full player a right click on the cover or title opens the song's
+menu, and on the album its album's. A click anywhere outside a menu, the two outlines included, closes it. With nothing typed, the search page lists your recent searches.
 
 ## Look
 

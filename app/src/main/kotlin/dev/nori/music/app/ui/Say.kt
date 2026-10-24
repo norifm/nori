@@ -746,6 +746,9 @@ class Say(private val r: Resources) {
     /** What the player's output button says to a screen reader. */
     fun outputDescription(port: OutputPort, name: String?): String = r.getString(R.string.output_description, outputLabel(port, name))
 
+    /** What the output button says while device [name] plays: "Playing on S22". */
+    fun devicePlayingOn(name: String): String = r.getString(R.string.devices_playing_on, name)
+
     /** The mark on the device playing now, after its kind when it has one. */
     fun devicePlayingNow(afterKind: Boolean): String = r.getString(if (afterKind) R.string.device_playing_now_after else R.string.device_playing_now)
 
