@@ -27,7 +27,6 @@ Applies to nori 0.6. "All" means Android, the desktop, the terminal and the iPod
 ## Playback
 
 - Gapless, crossfade, AutoMix with beat matching. All.
-- Skipping silence: all.
 - Volume leveling by song, album or automatically, at a quiet, normal or loud level. All.
 - A queue that survives restarts, shuffle that spreads artists apart, autofill when the queue ends. All.
 - Sleep timer. Android and the iPod.

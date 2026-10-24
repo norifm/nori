@@ -480,8 +480,6 @@ pub struct StoredPrefs {
     #[setting("fadeMs", within(0, 5000), default = 0, show = K::Choice(&["0", "150", "300", "500", "1000"]), effect = PLAYER)]
     pub fade_ms: i32,
     // Controls.
-    #[setting("skipSilence", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO)]
-    pub skip_silence: bool,
     // The queue.
     #[setting("skipExplicit", FLAG, default = false, show = K::Switch)]
     pub skip_explicit: bool,
