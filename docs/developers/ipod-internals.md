@@ -1,11 +1,6 @@
----
-title: iPod internals
-description: "How the iPod touch client is built: the device, the toolchain, the sound, and the work packages."
-sidebar:
-  order: 7
----
+# iPod internals
 
-Applies to the iPod touch client (`crates/ios`, `ios/`) at 0.6. The user guide is [iPod touch](../clients/ipod.md).
+Applies to the iPod touch client (`crates/ios`, `ios/`) at 0.6. The user guide is [iPod touch](https://norifm.com/docs/clients/ipod/).
 
 A client for a jailbroken iPod touch (6th generation), built from the ground up on the nori engine.
 Three things come first, in this order when they collide: the sound, the feel of the interface, and what
@@ -473,7 +468,6 @@ In the tree, uncommitted:
   hand), `Info.plist` (`dev.nori.music`, iOS 12.2, portrait, `audio` background mode, launch image),
   `Launch-568h@2x.png`, `entitlements.plist`, `tools/ios-build/build.sh` (what builds it).
 - `tools/ipod.sh` with the steps `build install run` (section 4).
-- `docs/site/developers/ipod-internals.md`, this file.
 
 **Milestone 1 is done**: `rust` (48 s, 9.2 MB), `app` (Swift 5.9.2, 2.7 MB executable,
 `minos 12.2`), `sign`, `install`, and the app runs on the iPod as `mobile` at 11 MB RSS, having created

@@ -1,9 +1,4 @@
----
-title: Architecture
-description: "How nori is put together: one Rust core, thin clients, and where each decision lives."
-sidebar:
-  order: 1
----
+# Architecture
 
 Applies to the nori repository at 0.6.
 
@@ -34,7 +29,7 @@ there; the clients (Kotlin, Slint, ratatui, Swift) draw, hold the words, and wir
 - **`nori-host`** is the session the desktop, terminal and iPod share: engine, queue saving, remote
   control and jams, search, covers.
 
-The table of every crate, with what it holds, is in [AGENTS.md](../../../AGENTS.md#layout).
+The table of every crate, with what it holds, is in [AGENTS.md](../../AGENTS.md#layout).
 
 ## The rules that shape it
 
@@ -44,7 +39,8 @@ The table of every crate, with what it holds, is in [AGENTS.md](../../../AGENTS.
 - Every optional feature sits behind a setting, and costs nothing when it is off.
 - Where a piece of work lives is decided by measurement. See [Writing a client](writing-a-client.md).
 
-## Docs versions
+## Docs
 
-The docs are published from `docs/site/` as they are on `master`, as "latest". Versioned docs can be
-added later by building the site from each release tag into its own path.
+The user docs are on [norifm.com](https://norifm.com/docs/), kept in the website's repository,
+[norifm/norifm.com](https://github.com/norifm/norifm.com). The developer docs are these pages, in
+`docs/developers/`.

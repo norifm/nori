@@ -48,7 +48,7 @@ tools/check.sh android -PrustTargets=arm64-v8a         # a debug Android APK
 ```
 
 Android builds need the Android SDK, NDK, Rust Android targets, and `cargo-ndk`. Desktop builds need
-the platform libraries listed in [Building](docs/site/developers/building.md). Cargo commands use Cargo;
+the platform libraries listed in [Building](docs/developers/building.md). Cargo commands use Cargo;
 the optional native Bazel backend is described there too. Run Cargo with at most four jobs.
 
 ## License

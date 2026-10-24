@@ -1,9 +1,4 @@
----
-title: Providers
-description: Where a profile's music comes from, as a plug-in of the core, and what adding one takes.
-sidebar:
-  order: 8
----
+# Providers
 
 Applies to the nori repository at 0.6, every client.
 

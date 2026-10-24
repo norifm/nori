@@ -3,7 +3,7 @@ package dev.nori.music.app
 import androidx.compose.runtime.Composable
 
 /**
- * Where the perf build's recorder plugs in (src/perf, docs/site/developers/building.md). Only that build installs
+ * Where the perf build's recorder plugs in (src/perf, docs/developers/building.md). Only that build installs
  * one, at start; every other build has no recorder class at all, and what is left here is one null
  * field read when the app draws its first screen and a settings row that is never shown.
  */
