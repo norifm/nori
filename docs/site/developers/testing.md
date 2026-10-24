@@ -279,6 +279,7 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 | the batch reports a speed; an ETA (2) | a | transfers.rs |
 | a new playlist reaches the server; the song went in; the check cleans up (3) | a | client.rs |
 | adding to the queue grows it; play next grows it (2) | a | queue, controls.rs; smoke `queue` keeps one on the device |
+| the song playing, tapped in the queue, goes back to the player without starting again; "Playing next" shows once (3) | b | feature-e2e `queue-panel` (Compose taps and the panel switch) |
 | the favorites tile opens; lists what the server starred; starring adds; unstarring removes; tapping a row plays it; with the mix around it; the mix has songs (7) | b | feature-e2e `foryou` (the screen) |
 | a mix stays the same when opened again | a | board.rs |
 | a transition is planned at a track boundary (real album) | a | crossfade.rs, automix.rs, engine.rs; smoke `automix` hears one |

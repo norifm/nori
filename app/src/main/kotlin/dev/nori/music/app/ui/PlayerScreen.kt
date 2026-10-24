@@ -565,7 +565,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             )
                             .then(if (page == Panel.QUEUE) Modifier.padding(horizontal = 26.dp) else Modifier),
                     ) {
-                        if (page == Panel.QUEUE) Queue(vm) else LyricsView(vm, actions, state.advancing)
+                        if (page == Panel.QUEUE) Queue(vm) { choose(Panel.ART) } else LyricsView(vm, actions, state.advancing)
                     }
                 }
 
@@ -2619,8 +2619,9 @@ private fun MixingLabel(mixing: androidx.compose.runtime.State<Boolean>, free: B
 /** How long "MIXING" takes to come and go. */
 private const val MIXING_FADE_MS = 360f
 
+/** [showPlayer]: the song playing was tapped, which goes back to the player rather than starting it again. */
 @Composable
-private fun Queue(vm: PlayerViewModel) {
+private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     // In the order the songs will play, which under shuffle is not the order of the list itself. A drag
     // moves a song within the list, so reordering is offered only when the two are the same.
@@ -2681,7 +2682,7 @@ private fun Queue(vm: PlayerViewModel) {
         val edits = !state.jamGuest
         Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
             LookText(
-                remember { say.upNext }, ink, Modifier.padding(top = 4.dp, bottom = 8.dp),
+                remember { say.queue }, ink, Modifier.padding(top = 4.dp, bottom = 8.dp),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
             )
             if (state.offersReorder) Row(Modifier, Arrangement.spacedBy(4.dp), Alignment.CenterVertically) {
@@ -2868,7 +2869,7 @@ private fun Queue(vm: PlayerViewModel) {
                 Row(
                     Modifier.fillMaxWidth()
                         .then(if (played) Modifier.graphicsLayer { alpha = QUEUE_PLAYED_ALPHA } else Modifier)
-                        .then(if (edits) Modifier.swipeable(swipe, null, taken, null, gone = true, resist = i in kept).clickable { tapped = key; vm.skipTo(i) } else Modifier)
+                        .then(if (edits) Modifier.swipeable(swipe, null, taken, null, gone = true, resist = i in kept).clickable { if (i == state.index) showPlayer() else { tapped = key; vm.skipTo(i) } } else Modifier)
                         .padding(vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
