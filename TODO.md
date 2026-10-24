@@ -44,7 +44,7 @@ the owner asks for it, and delete its line once it ships.
 **Android**
 - Launcher shortcuts for playlists.
 - Check on a phone, frame by frame: the sleeve's soft bottom through swipes, sheet pulls and panel
-  changes; moving covers coming and going; sung lyrics (word-timed, duets, backing vocals); a skip to a
+  changes; sung lyrics (word-timed, duets, backing vocals); a skip to a
   song whose cover isn't loaded.
 
 ## Plugins

@@ -3,7 +3,7 @@
 #   build    build/ios/nori.app and nori-ipod-<version>.ipa, fake-signed for AppSync: tools/ios-build/build.sh in
 #            the Docker image of tools/ios-build/Dockerfile, the only thing a machine needs
 #   install  puts it in /Applications on the iPod and registers it (uicache)
-#   run      launches it and tails its log
+#   run      launches it and checks that it is running
 #   tools/ipod.sh                build, then install run when an iPod is on USB
 #   tools/ipod.sh install run    just those steps
 # The SDK and the toolchains' caches stay in Docker's volume nori-ios-cache. install and run need

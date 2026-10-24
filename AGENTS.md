@@ -96,7 +96,7 @@ The other languages:
 The developer docs live here, in `docs/developers/`, and change with the code in the same commit:
 `testing.md` test tiers and the local server, `writing-a-client.md` what is core vs client, `building.md`
 builds and the perf build, `ipod-internals.md` the iPod client. The user docs live in the website's
-repository, [norifm/norifm.com](https://github.com/norifm/norifm.com), under `src/content/docs/docs/`,
+repository, `norifm/norifm.com` (private), under `src/content/docs/docs/`,
 published at norifm.com/docs: when a change alters what users see, update the page there if it's
 wanted, as a commit in that repository.
 

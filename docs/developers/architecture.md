@@ -1,46 +1,53 @@
 # Architecture
 
-Applies to the nori repository at 0.6.
+Applies to nori 0.7, every client.
 
 nori is one Rust core with thin clients around it. Every decision lives once, in Rust, and is tested
-there; the clients (Kotlin, Slint, ratatui, Swift) draw, hold the words, and wire the operating system.
+there. The clients draw, hold the words and wire the operating system.
 
 ```
-┌──────────── clients: drawing, words, OS hooks ────────────┐
-│ Android (app/, core/)  desktop  terminal  iPod (ios/)     │
-├──────────── nori-host: the session every client shares ───┤
-│ nori-engine: the player on its own thread, in bursts      │
-├──────────── nori-core: Core per server, the Client ───────┤
-│ player · library · queue · lyrics · settings · devices    │
-│ covers · look · automix · transfers · db · net · model    │
-└───────────────────────────────────────────────────────────┘
+┌──────────── clients: drawing, words, OS hooks ─────────────────┐
+│ Android (app/, core/)  desktop  terminal  iPod (ios/)  web     │
+├──────────── nori-host: the session the other clients share ────┤
+│ nori-engine: the player on its own thread, in bursts           │
+├──────────── nori-core: a Core per profile, the Client ─────────┤
+│ player · library · queue · lyrics · settings · devices         │
+│ remote · covers · look · automix · transfers · db · net        │
+│ model · tasks · time                                           │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ## The layers
 
-- **The domain crates** each own one area: decoding and the sound chain (`player`), the library and its
-  pages (`library`), the queue and autofill (`queue`), lyrics (`lyrics`), settings (`settings`), outputs
-  and AutoEQ (`devices`), covers (`covers`), colors from covers (`look`), and so on.
-- **`nori-core`** holds a `Core` per server profile and the Subsonic `Client`, and re-exports every domain
-  crate, so a client can link it alone.
-- **`nori-engine`** is the whole player for a platform without one: it loads in bursts, decodes, runs the
-  sound chain and transitions, and sleeps in between. Android, the desktop, the terminal and the iPod all
-  play through it.
-- **`nori-host`** is the session the desktop, terminal and iPod share: engine, queue saving, remote
-  control and jams, search, covers.
+| layer | what it holds |
+|---|---|
+| domain crates | one area each: decoding and the sound chain (`player`), the library and its pages (`library`), the queue and autofill (`queue`), lyrics, settings, outputs and AutoEQ (`devices`), remote control and jams (`remote`), covers, colors from covers (`look`), and more |
+| `nori-tasks`, `nori-time` | where async work runs and the one clock the core reads, natively and in a browser |
+| `nori-core` | a `Core` per profile, the `Client`, and the [providers](providers.md) a profile plays from (a Subsonic server, YouTube Music). Re-exports every domain crate, so a client can link it alone |
+| `nori-engine` | the whole player on its own thread: it loads in bursts, decodes, runs the sound chain and transitions, and sleeps in between. Every client plays through it |
+| `nori-host` | the session the desktop, terminal, iPod and web clients share: the engine, queue saving, remote control and jams, the offline index, media controls. Android does not use it yet |
 
-The table of every crate, with what it holds, is in [AGENTS.md](../../AGENTS.md#layout).
+| client | language | where |
+|---|---|---|
+| Android | Kotlin, Compose | `app/` (UI), `core/` (media3 service, downloads, no UI), `crates/android` |
+| desktop | Rust, Slint | `crates/desktop`, `crates/desktop-ui` |
+| terminal | Rust, ratatui | `crates/cli` |
+| iPod touch | Swift, UIKit | `ios/`, `crates/ios` |
+| web (not released yet) | Svelte, TypeScript | `web/`, `crates/web` |
+
+Every crate, with what it holds, is in [AGENTS.md](../../AGENTS.md#layout).
 
 ## The rules that shape it
 
 - The core returns data and enums, never text a person reads. Every word is the client's.
-- Calls across the boundary are coarse: one page or one answer per call. Anything per frame or per
-  buffer goes through a thin native door with no allocation.
-- Every optional feature sits behind a setting, and costs nothing when it is off.
-- Where a piece of work lives is decided by measurement. See [Writing a client](writing-a-client.md).
+- Calls across the boundary are coarse: one page or one answer per call. Per-buffer work goes through
+  raw native doors that do not allocate.
+- Every optional feature sits behind a setting and costs nothing when it is off.
+- Speed, CPU, memory, wakeups and battery decide where work lives. See
+  [Writing a client](writing-a-client.md).
 
 ## Docs
 
-The user docs are on [norifm.com](https://norifm.com/docs/), kept in the website's repository,
-[norifm/norifm.com](https://github.com/norifm/norifm.com). The developer docs are these pages, in
-`docs/developers/`.
+- User docs: [norifm.com/docs](https://norifm.com/docs/), kept in
+  `norifm/norifm.com` (private).
+- Developer docs: these pages, in `docs/developers/`.

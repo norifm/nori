@@ -1,94 +1,88 @@
 # Building
 
-Applies to the nori repository at 0.6. Commands run from the repository's root.
+Applies to the nori repository at 0.7 (master is 0.7.1-beta). Commands run from the repository's root.
+The everyday commands are in [AGENTS.md](../../AGENTS.md#commands); this page has the setup and the
+details behind them.
 
-## Quick start
+## Requirements
 
-```sh
-cargo test -j4 --workspace                                   # every Rust test
-./gradlew :app:assembleDebug -PrustTargets=arm64-v8a         # a debug APK for an arm64 emulator or phone
-cargo run --release -p nori-desktop                          # the desktop client
-```
+| For | Needs |
+| --- | --- |
+| Every build | Rust stable through rustup; sccache (`cargo install --locked sccache`), since `.cargo/config.toml` sends every compile through it |
+| Rust tests | FFmpeg 8 or newer on the `PATH`: the engine tests encode their fixtures with it |
+| Android | Android SDK and NDK (`ANDROID_NDK_HOME`, or the newest under `$ANDROID_HOME/ndk`), a JDK 17 or newer, `rustup target add aarch64-linux-android x86_64-linux-android`, `cargo install cargo-ndk` |
+| Desktop and terminal on macOS | Xcode's command line tools |
+| Desktop and terminal on Linux | `build-essential pkg-config clang libasound2-dev libfontconfig1-dev libfreetype6-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev` (Ubuntu names, as `tools/host-release/Dockerfile` installs them; WebKitGTK is for the sign-in window) |
+| The iPod app, Linux release packages | Docker |
+| Optional | `brew install cargo-nextest bazelisk` for `tools/check.sh rust` and the Bazel backend |
 
-Android builds need the Android SDK and NDK, the Rust Android targets and `cargo-ndk`. Never run cargo
-with more than four jobs: the build machine runs out of memory. The full list of commands is in
-[AGENTS.md](../../AGENTS.md#commands).
+The web client has its own list, under [The web client](#the-web-client).
+
+Never run Cargo with more than four jobs: the build machine runs out of memory. `.cargo/config.toml`
+sets `jobs = 4` and `gradle.properties` sets four Gradle workers.
 
 ## Faster development checks
 
-Debug Android builds and `cargo run --release` use the `release` Rust profile:
-optimized, incremental, sixteen codegen units and no LTO, so an edit rebuilds in
-seconds. Release, perf and preview builds, desktop packages and the iPod app use
-`dist`, the shipping profile (fat LTO, one codegen unit), which takes minutes to link. The default debug ABI follows the host's
-architecture; override with `-PrustTargets=...`. Keep debug APKs out of runtime
-performance comparisons; use the perf profile for those.
+### Profiles
 
-Install the optional test/build runners on this Mac:
+| Cargo profile | Used by | What it is |
+| --- | --- | --- |
+| `dev` | `cargo test`, `cargo build` | Line tables only for the workspace, no debug info for dependencies. Test builds compile nori-player, nori-engine, nori-android, nori-ios and every dependency at opt-level 2, with debug assertions on. nori-stretch is always at opt-level 3 |
+| `release` | `cargo run --release`, debug APKs | Optimized and incremental: an edit rebuilds in seconds |
+| `dist` | release, perf and preview APKs, desktop packages, the iPod app | Fat LTO, one codegen unit, stripped, `panic = "unwind"`. Takes minutes to link |
+| `web` | `web/build.sh` | `dist` with `opt-level = "s"` and `panic = "abort"` |
 
-```sh
-brew install cargo-nextest bazelisk
-```
+Set `CARGO_PROFILE_DEV_DEBUG=true` for a session that needs a debugger's variables. Keep debug APKs
+out of performance comparisons; use [the perf build](#the-perf-build).
 
-Use the shared heavy-work queue across worktrees:
+Gradle properties for the Android build:
 
-```sh
-tools/check.sh rust --workspace                 # nextest, four build jobs and four test workers
-tools/check.sh rust -p nori-player               # iteration on one crate
-tools/check.sh rust-doc --workspace              # nextest does not run doctests
-tools/check.sh android                          # one debug APK
-python3 tools/with-resource.py build cargo test -j4 --workspace
-```
+| Property | Default | Effect |
+| --- | --- | --- |
+| `-PrustTargets=arm64-v8a` | debug: the host's emulator ABI; release, perf, preview: `arm64-v8a` | The ABIs the Rust core is built for |
+| `-PrustProfile=dist` | debug: `release`; release, perf, preview: `dist` | The Cargo profile of the native library |
+| `-PrustFeatures=` | `neural-beats` | Cargo features of the core. Empty leaves out tract and the "Better beat detection" setting |
+| `-PpretendVersion=0.3.9` | none | Builds the app as an older version, for testing the updater |
 
-The last command remains the complete pre-commit Rust check. The four-job and
-Gradle four-worker limits also apply when commands are called directly, but the
-machine-wide queue only applies through these wrappers. These are scheduling
-limits, not CPU quotas. Native libraries and generated bindings have Gradle
-cacheable outputs, keyed by sources, features, profiles, compiler and NDK
-versions and build flags. Binding source inputs list exported crates in
+The native library and the generated bindings are cacheable Gradle outputs, keyed by sources, features,
+profile, compiler, NDK and build environment. The binding inputs are the crates in `bindingCrates` in
 `core/build.gradle.kts`; extend that list when adding an FFI crate.
 
-### Debug info, worktrees and disk
+### The shared queue
 
-Debug and test builds keep line tables only for the workspace and no debug info for dependencies
-(`[profile.dev]` in Cargo.toml): panics and backtraces keep file and line, and the target directory is
-about a third smaller. Set `CARGO_PROFILE_DEV_DEBUG=true` for a session that needs a debugger's
-variables. Release, perf and Android profiles are unchanged.
+Heavy work goes through one machine-wide queue, so worktrees and agents take turns:
 
-Measured on October 20, 2026 (M4 Pro, 24 GB, other agents building at the same time, so single
-observations), `cargo test -j4 --workspace --no-run` into an empty target directory without sccache:
+| Command | Runs |
+| --- | --- |
+| `tools/check.sh rust --workspace` | `cargo nextest run` with four build jobs and four test threads; `-p <crate>` for one crate |
+| `tools/check.sh rust-doc --workspace` | the doctests, which nextest skips |
+| `tools/check.sh android [GRADLE OPTIONS]` | `./gradlew :app:assembleDebug` |
+| `tools/check.sh bazel <command> [...]` | a Bazel command |
+| `python3 tools/with-resource.py build <command>` | any other command, in the same queue |
 
-| | full debug info | line tables only |
-| --- | ---: | ---: |
-| Clean build | 461 s | 380 s |
-| Target directory after the build | 8.9 GB | 5.5 GB |
-| Target directory after the tests ran | 11 GB | 7.1 GB |
-| Rebuild after one constant in nori-player | 12.5 s | 12.4 s |
-| Nextest, whole workspace, four threads | 64.6 s | 64.0 s |
+`python3 tools/with-resource.py build cargo test -j4 --workspace` is the full pre-commit Rust check,
+doctests included. Direct commands keep the four-job limit but skip the queue.
 
-The edit's critical path is the desktop crate's test binary (6.4 s of the 12 s): iterate with
-`-p <crate>` when the desktop is not involved.
+### Worktrees and disk
 
-Each worktree keeps its own `target/` and Gradle `build/` directories. A shared writable Cargo target
-directory is not used: `target/debug/nori-cli` (the e2e peer) and the Android library under
-`target/<abi>/release` would be overwritten by whichever worktree built last, and Cargo's lock
-would serialize every build. What worktrees share instead:
+Each worktree has its own `target/` and Gradle `build/`. A shared Cargo target directory is not used:
+the e2e peer `target/debug/nori-cli` and the Android library would be overwritten by whichever worktree
+built last, and Cargo's lock would serialize every build. Worktrees share these caches instead:
 
-- sccache (`.cargo/config.toml`) holds compiled dependencies for every worktree; a fresh worktree's
-  full test build hit it for 68% of its crates (329 s under load). It cannot cache incremental
-  workspace crates or links. Its default limit is 10 GB, which it fills; a larger one
-  (`SCCACHE_CACHE_SIZE=30G` in the environment before the server starts) keeps more of it.
-- Gradle's build cache in `~/.gradle/caches` gives a fresh worktree its native library, bindings
-  and Kotlin classes when their inputs match; a changed Cargo.toml or Cargo.lock is a miss.
-- The Bazel disk cache (`~/.cache/nori/bazel`) for `tools/rust.py`.
+- sccache: compiled dependencies for every worktree, up to 30 GB (`SCCACHE_CACHE_SIZE` in
+  `.cargo/config.toml`). It cannot cache incremental workspace crates or links.
+- Gradle's build cache (`~/.gradle/caches`): the native library, bindings and Kotlin classes when their
+  inputs match. A changed `Cargo.toml` or `Cargo.lock` misses.
+- Bazel's disk cache (`~/.cache/nori/bazel`).
 
-A worktree's directories go with it when it is removed. The main checkout's `target/` only grows: every
-feature set, profile and target keeps its own artifacts, and stale ones are never removed (131 GB on
-this machine, 49 GB of it incremental caches). `cargo clean` (or `cargo sweep --time 14` from
-`cargo install cargo-sweep`) gives it back; the next build takes about the clean-build time above.
+A removed worktree takes its directories with it. The main checkout's `target/` only grows, since every
+profile, feature set and target keeps its own artifacts. `cargo clean`, or `cargo sweep --time 14` from
+`cargo install cargo-sweep`, gives the space back.
 
 ### Devices
 
-Start existing arm64 AVDs with hardware graphics and four guest CPUs:
+`tools/emulator.sh <avd> <port>` starts an existing arm64 AVD headless, with host graphics and four
+CPUs. Use a distinct even port per emulator. Create the AVDs in Android Studio first.
 
 ```sh
 tools/emulator.sh a16 5554
@@ -99,591 +93,329 @@ tools/device-check.sh --install app/build/outputs/apk/debug/app-debug.apk smoke
 tools/device-check.sh audio --only tuning,restart
 ```
 
-Create the second AVD in Android Studio first. A job leases the first available
-device through setup, installation, checks and cleanup. Direct smoke/audio/feature
-scripts lease their `ANDROID_SERIAL` too. Agent count can exceed device count;
-waiting jobs queue. Do not run direct app.sh/adb mutations on a leased device.
-Keep only as many emulators running as the workload needs.
+- `tools/device-check.sh [--install APK] smoke|audio|feature [--only SECTIONS]` leases the first free
+  device in `NORI_E2E_DEVICES` for the install, the checks and the cleanup. Jobs wait when every device
+  is taken. `smoke.sh`, `audio-e2e.sh` and `feature-e2e.sh` run directly lease their `ANDROID_SERIAL`
+  (default `emulator-5554`).
+- Don't drive a leased device with `tools/app.sh` or adb from elsewhere.
+- Each emulator gets its own Navidrome account (`nori-e2e-<serial>`), proxy port, terminal peer and
+  logs. `emulator-5554` uses proxy port 4534 and `emulator-5556` uses 4536; `NORI_E2E_PROXY_PORT`
+  sets it for other serials. The music library is shared.
+- A failed check saves the accessibility tree and a screenshot under `build/e2e/<serial>/failures/`.
+- `tools/ui-dump.sh` reads the visible accessibility tree through `tools/UiDump.java`, built on demand,
+  without waiting for an animating player to go idle.
+- Jam checks need an octo-fiesta relay on `localhost:5274` whose `/nori/jam` page offers "Open in nori".
+  `tools/jam-server.sh` starts one from the octo-fiesta checkout beside this one (`NORI_OCTO_ROOT` names
+  another), and says so when the relay there is outdated.
 
-Each local device uses its own Navidrome test account, stream-proxy port, CLI
-peer, guest logs and failure artifacts. Port 5554 uses proxy 4534; port 5556 uses
-4536. The library fixture is shared. An explicit `NORI_E2E_PROXY_PORT` supports
-other serials. Jam checks need an up-to-date octo-fiesta relay on localhost:5274
-whose `/nori/jam` page offers “Open in nori”. `tools/jam-server.sh` starts one
-from the neighboring octo-fiesta checkout; override with `NORI_OCTO_ROOT`. A missing or outdated prerequisite
-fails promptly. Generated fixture songs have no lyrics; test those against the
-real server as documented in [Testing](testing.md).
-
-Accessibility checks use the standalone shell helper `tools/UiDump.java`, built
-on demand by `tools/ui-dump.sh`. It reads visible nodes without waiting for an
-animating player to become idle. Conditions still wait for the expected state.
-Failures save XML and screenshots under `build/e2e/SERIAL/failures/`.
+The local server and what each check covers are in [Testing](testing.md).
 
 ### Native Rust with Bazel
 
-Cargo manifests and Cargo.lock remain the dependency source. The experimental
-Bazel backend covers native workspace libraries, client binaries, unit tests,
-and integration tests. Cargo commands continue to use Cargo. APKs, iPod builds,
-release packages, doctests, and device checks use their existing tools.
+An optional backend for cached native builds and tests across worktrees. Cargo manifests and
+`Cargo.lock` stay the source of truth; APKs, the iPod app, release packages, doctests and device checks
+keep their own tools.
 
 ```sh
 python3 tools/rust.py test --workspace
-python3 tools/rust.py test -p nori-player -- pipeline
+python3 tools/rust.py test -p nori-player -- pipeline     # arguments after -- go to the test binaries
 python3 tools/rust.py build -p nori-desktop
 python3 tools/rust.py run -p nori-cli
 ```
 
-The wrapper refreshes generated BUILD files from Cargo metadata and queues heavy
-work with the same resource guard as other checks. After changing manifests,
-regenerate and check the build definitions with:
+`tools/rust.py` regenerates the BUILD files from Cargo metadata and runs Bazel through the shared queue.
+After changing a manifest:
 
 ```sh
-python3 tools/bazel/generate.py
+python3 tools/bazel/generate.py                            # regenerate; never edit generated BUILD files
 python3 tools/bazel/generate.py --check
 python3 -m unittest discover -s tools/bazel -p 'test_*.py'
 tools/check.sh bazel test //crates/...
 ```
 
-The default test profile unifies workspace default and development features.
-Package selection limits the targets, with the workspace feature set preserved.
-Desktop build/run commands use the production desktop feature set. Arbitrary
-Cargo feature selections and cross-compilation are outside this experiment.
-Bazel builds are optimized; these binaries are for development, and release
-scripts continue to use Cargo's release profile. Native tests need the same
-platform libraries and FFmpeg as Cargo tests. The current validation and timing
-measurements are on Apple Silicon macOS.
+- Tests build with the workspace's default and development features; `-p` narrows the targets, not the
+  features. Desktop and terminal builds use their shipping features. Other feature selections and
+  cross-compilation are not supported.
+- Bazel builds are optimized (`--compilation_mode=opt`) and meant for development; releases use Cargo.
+- Native tests need the same platform libraries and FFmpeg as Cargo tests.
+- A passing test is cached and does not run again. Add `--nocache_test_results` to run it anyway.
+- Pass `--remote_cache` to a direct Bazel command where a remote cache exists. Remote execution is not
+  set up.
 
-The shared disk action cache is `~/.cache/nori/bazel`. Separate worktrees use
-separate Bazel output bases and can reuse identical compilation and test actions.
-Cached passing tests do not execute again; use `--nocache_test_results` when you
-need an actual repeat. The first dependency fetch and analysis are more expensive
-than an unchanged cached invocation. Add `--remote_cache` to a direct Bazel command
-when infrastructure is available; remote execution is not configured here.
-
-### Measurements
+### Timing a development command
 
 ```sh
 python3 tools/measure-dev.py --name rust-edit tools/check.sh android
 python3 tools/measure-dev.py --name smoke env NORI_E2E_SERVER=local tools/device-check.sh smoke
-python3 tools/test-resources.py
 ```
 
-Pass an executable command, for example `env NORI_E2E_SERVER=local
-tools/device-check.sh smoke`. The macOS recorder writes wall time, process-tree
-CPU, sampled compiler/JVM/emulator CPU and memory, and whole-machine activity to
-`build/development-timings/NAME/`. Emulator and JVM counters include all matching
-host processes; unrelated concurrent activity can affect them. 100% CPU means
-one core.
+On macOS, it writes wall time, the process tree's CPU, sampled compiler, JVM and emulator CPU and memory,
+and whole-machine activity to `build/development-timings/<name>/`. Emulator and JVM figures include
+every matching process on the host. 100% CPU is one core.
 
 ## The perf build
 
-A release build with a recorder in it, for measuring what the app costs on a real phone in real use:
-battery, CPU, wakeups, allocations, memory and frames, with no adb and no computer attached. The
-results are on a Performance page in settings, and a plain-text report can be shared from there.
-
-It is minified and not debuggable, like a release, so what it measures is what a release costs. It
-installs beside the normal app (id `dev.nori.music.perf`, named "nori dev"), with its own sign-in,
-settings and downloads.
-
-### Building and installing
+A release build with a recorder in it. It measures what the app costs on a real phone in real use
+(battery, CPU, wakeups, allocations, memory, frames), with no computer attached. It is minified and not
+debuggable, like a release, and installs beside the normal app as "nori dev" (`dev.nori.music.perf`)
+with its own sign-in, settings and downloads.
 
 ```sh
-./gradlew :app:assemblePerf -PrustTargets=arm64-v8a            # a phone
-./gradlew :app:assemblePerf -PrustTargets=x86_64               # the emulator
+./gradlew :app:assemblePerf -PrustTargets=arm64-v8a    # a phone
+./gradlew :app:assemblePerf -PrustTargets=x86_64       # an x86_64 emulator
+adb install -r app/build/outputs/apk/perf/app-perf.apk
 ```
 
-The APK is `app/build/outputs/apk/perf/app-perf.apk`, signed with the Android debug key. Put it on the
-phone either way:
+The APK is signed with the Android debug key. It can also be sent to the phone and opened there. The
+recorder starts with the app. Its page is Settings > Performance.
 
-- `adb install -r app/build/outputs/apk/perf/app-perf.apk`, or
-- send the file to the phone (a chat to yourself, a cloud drive, a USB cable) and open it there; Android
-  asks once to allow installing from that app.
+`./gradlew :app:assemblePreview -PrustTargets=arm64-v8a` builds "nori preview"
+(`dev.nori.music.preview`), a release build without the recorder, for trying a change beside the real
+app.
 
-Open nori dev, sign in, and the recorder is already running: it starts with the app's process.
-Settings > Performance is the page.
+### Stretches
 
-### What it records
+The recorder cuts the app's life into stretches, each spent in one state:
 
-The app's life is cut into **stretches**, each spent in one state:
-
-| State | |
-|---|---|
-| Screen off, playing | the number that matters most: music in the pocket |
-| Screen off, paused | should be close to nothing |
-| Screen on, playing, player open | the player sheet up |
-| Screen on, playing, other page | the app on screen, anywhere but the player |
-| Screen on, playing, another app | the phone in use, the music in the background |
+| State | Note |
+| --- | --- |
+| Screen off, playing | The figure that matters most |
+| Screen off, paused | Should be close to nothing |
+| Screen on, playing, player open | |
+| Screen on, playing, other page | |
+| Screen on, playing, another app | |
 | Screen on, paused | |
-| Charging | kept apart; left out of every battery figure |
+| Charging | Left out of every battery figure |
 
-A stretch also ends when a setting that changes the cost changes (equalizer, AutoMix, crossfade,
-offload, hi-res, bit-perfect), so every stretch was spent with one set of them; the stretch lists them
-in brackets, ending with whether offload was **wanted**: "offload wanted", or "offload not wanted: <the
-setting that keeps it off>". Wanted is not given: whether the audio chip really played the music is the
-output line's "offload given" or "PCM (<why>)", and the time it did is "offloaded 45 min 00 s of 1 h
-00 min (75 %)" on the stretch and, added up, on each state.
+A stretch also ends when a setting that changes the cost changes: equalizer, AutoMix, crossfade,
+offload, hi-res or bit-perfect. Each stretch lists those settings and whether offload was wanted.
+Stretches under 3 seconds are dropped. Stretches are kept for 14 days (`perf_stretches`); the stretch
+under way shows as "Now" and is lost if the process dies. "Start fresh" forgets everything.
 
-A stretch the chip played in also says what it cost the CPU: "wake lock held 12 s of 10 min 00 s
-(2 %), nori-engine 0.30 wakeups/s, the chip asked for more 0.25 times/s". The wake lock is the player's
-`nori:engine` one, which it lets go while the songs are offloaded and nothing but the platform's word is
-due (nori-engine's `Event::Awake`); the engine's wakeups are its thread's own; the chip's asks are the
-offloaded track's `onDataRequest`s, the platform's own pace, which the engine's wakes should match.
-Summed per state in "Really offloaded" over the stretches that were offloaded at all.
+Each stretch records:
 
-For each stretch:
+| Figure | Source |
+| --- | --- |
+| time | elapsed realtime, deep sleep included |
+| CPU % | the process's utime + stime (`/proc/self/stat`), in % of one core |
+| wakeups/s | voluntary context switches of the app's threads (`/proc/self/task/*/status`) |
+| KB/min, GCs | Java heap allocated (`art.gc.bytes-allocated`) and collections run |
+| PSS MB | proportional memory at the end (`Debug.MemoryInfo`) |
+| mAh, mAh/h | the whole phone's charge counter (`BATTERY_PROPERTY_CHARGE_COUNTER`); phones without it show the level's drop in % |
+| gauge mA | the fuel gauge's current at both ends, a cross-check only |
+| °C | battery temperature at both ends |
+| frames, janky | frames drawn while on screen and those that missed their deadline, with the slowest |
+| network | bytes received and sent (`TrafficStats`) |
 
-| Figure | What it is |
-|---|---|
-| time | how long the stretch lasted (the elapsed-realtime clock, which counts deep sleep) |
-| CPU % | the app process's CPU time (utime + stime, `/proc/self/stat`) over the stretch, in % of one core |
-| wakeups/s | voluntary context switches of the app's threads per second (`/proc/self/task/*/status`): each is a thread going to sleep and being woken again, which is what keeps the CPU out of deep idle. Summed over the threads alive at both ends, as `tools/bench.sh` does |
-| KB/min | Java heap allocated per minute (`art.gc.bytes-allocated`); GCs is the collections run |
-| PSS MB | the process's proportional memory at the end of the stretch (`Debug.MemoryInfo`) |
-| mAh, mAh/h | charge used by the whole phone, from the battery's own counter (`BATTERY_PROPERTY_CHARGE_COUNTER`); mAh/h is the average current in mA. Phones without the counter show the battery level's drop in % and %/h instead |
-| gauge mA | what the fuel gauge said at the two ends (its own average, `CURRENT_AVERAGE`, where it keeps one, else `CURRENT_NOW`): a cross-check, not a measurement |
-| °C | battery temperature at the two ends |
-| frames, janky | frames the app drew while on screen, and those that missed their deadline (Android 12 on) or took longer than one refresh of the display (before); the slowest frame's time |
-| network | bytes the app received and sent over the stretch (`TrafficStats`), where the phone counts them |
+Under each stretch:
 
-Under each stretch, on the page and in the report, two lines say why it cost what it did:
+- **Threads by wakeups**: the six threads that woke most, with wakeups/s and CPU. The Rust threads carry
+  their own names (`nori-engine`, `nori-track`, `nori-load`, ...).
+- **Output**: the last AudioTrack as the platform describes it against what was asked: rate, channels,
+  encoding, buffer, performance mode, offload, route, underruns. Offloaded stretches also show the
+  engine wake lock's held time, `nori-engine`'s wakeups and the chip's data requests per second.
+- **Timeline**: up to 150 timestamped events: songs (format and source), settings changed, the player
+  service starting or ending, outputs opened or released, offload entered or left, underruns, errors and
+  the shallow buffer switching.
 
-| Line | What it is |
-|---|---|
-| threads by wakeups | the six threads that woke most over the stretch (`/proc/self/task/*/stat` and `status`): each one's name, wakeups per second and CPU time. A thread that started during the stretch is marked "(new)". The Rust player's threads carry their own names (`nori-engine`, `nori-track`, `nori-load`, `nori-open`, `nori-covers`, `nori-analysis`); Java's are the platform's (`binder:…`, `RenderThread`, `main` is the app's package name) |
-| output | the AudioTrack the player last opened, as the platform describes it when the stretch ended, against what was asked of it: the engine, rate, channels and encoding, the buffer in ms (given, of what was asked, and the most it could grow to), the performance mode asked for and given (the player asks for power saving, the platform's deep-buffer output), whether it is offloaded to the audio chip, where it is routed, its underruns since it was made, and whether it was playing |
+"By state" sums the stretches of each state, with the share of time really offloaded. Battery figures
+are the whole phone's; CPU, wakeups, allocations and PSS are the app's.
 
-Under those, the stretch's **timeline**: what happened during it, one timestamped line each, folded on
-the page ("12 events") and printed in full in the report. At most 150 per stretch; past that the oldest
-go, and the stretch says how many.
+The core (crates/perf) files each stretch under its state, does the arithmetic and writes every word
+on the page and in the report; Android only reads the counters (`app/src/perf`).
 
-| Event | What it says |
-|---|---|
-| song | the song the ear arrived on: the file as the server has it (suffix, rate, bit depth, bit rate) and where its bytes come from (the download, the stream cache at which quality, or the network) |
-| settings | which settings changed, from what to what (the servers and keys only as "changed"); a slider dragged is one event |
-| engine | the player service started with an engine, or ended |
-| output | an AudioTrack opened or reopened, as the output line says it (format, buffer, mode, offload, route), or let go |
-| offload | entered, or left and why (the player's own reason, or the setting that keeps it off) |
-| underruns | the output's underrun count grew, with the reading before, between which and this one they first appeared |
-| error | a song or the output failed, in the player's words |
-| shallow | the output's shallow buffer (a sound page tuned) on or off; on the Rust engine also the size the track took for the output it plays on and why (`shallow 550 ms for Bluetooth: its latency is 200 ms, its pulls are 200 ms`), and any growth after it ran dry |
+### Invariant breaks
 
-**Invariant breaks** head the report (crates/perf/src/invariants.rs says what each one holds to). Two of
-them came of the S22's silent classical playlist (2026-09-26), where the player said it played, no output
-was open, no song was being fetched and nothing was said anywhere:
+The report starts with invariant breaks (crates/perf/src/invariants.rs), checked on events that happen
+anyway, never on a timer:
 
-| Break | When |
-|---|---|
-| silent | the engine plays, the place heard has stood still for 5 s with no output open and none of the song's bytes on their way. Said with the engine's own account of where it stood and what media3's stream cache keeps of the song (its metadata length, the spans cached, whole or not, being written or not) |
-| panic | a thread of the Rust library panicked, caught or not: its name, the message and where. Every build says it in the log (Android sends a Rust thread's standard error nowhere) |
+- an output holding music stops advancing ("stalled", "offload-starved") or goes unfed ("starved");
+- with no output open, the place stands still with nothing downloading ("silent");
+- one skip press moves more or less than one song;
+- the shown song or lyrics are not the heard song's, or the seek bar strays from the engine's place;
+- with AutoMix on, a queued song has no duration;
+- a changed setting has not reached the engine a second later;
+- a Rust thread panicked.
 
-With every break the app's own latest lines (under the `nori` tag, the core's and the Kotlin's, kept in
-memory by nori-model's alog: the last ten minutes', at least 500 and at most 5000) are copied into the database as it happens, the latest three
-breaks' worth, and printed before the log tail: logcat's buffer is the whole system's and a codec's chatter
-turns it over in minutes, so the tail rarely reached back to the moment something broke.
-
-Whatever the build, the engine does not stay silent: a panic on its thread is said and the song opened again
-from scratch, a song that makes it panic again is skipped as one that would not play, and playing with the
-place standing still for 10 s and nothing on its way makes the music again from scratch too (the song's
-bytes and its stream cache entry let go, a new output), said as an error (crates/engine tests/silent.rs).
-
-A buffer much smaller than asked, or power saving asked and not given, is what makes a writer wake more
-often than the design says: the Rust player's writer then tops the track up once per half of what it
-holds (and says so in the log), which the thread line shows as `nori-track`'s wakeups.
-
-"By state" adds the stretches of each state up. Battery is the whole phone's, not the app's alone:
-the screen, the radio and every other app are in it, which is why a fair test holds them still (below).
-CPU, wakeups, allocations and PSS are the app's own.
-
-Stretches are kept in the app's database (`perf_stretches`, crates/perf/src/perf_log.rs) for 14 days,
-each with its timeline; the last crash of each kind in `perf_crashes`. "Start fresh" forgets both.
-Stretches under 3 seconds are the blinks between two states (the screen going off also stops the
-activity) and are dropped. Android reads the counters and counts the frames (`app/src/perf`); which
-state a stretch is filed under, what two readings make, the sums by state and every word on the page
-and in the report are the core's (`perf_state`, `perf_stretch`, `perf_page`, `perf_report`), so a
-desktop recorder files and reports the same way. The stretch under way when the process dies is lost; the page shows it as
-"Now" while it lasts.
+With each break, the app's own recent log (the core's and Kotlin's lines under the `nori` tag, the last
+ten minutes, 500 to 5000 lines) is saved, for the latest three breaks.
 
 ### What it costs
 
-Nothing ticks. The counters are read only when something happens: the screen goes on or off, the
-power is connected or not, playback starts or stops (the service's own broadcast), the app comes to
-the front or leaves it, the player opens or closes, a setting above changes, or the Performance page
-opens. Each reading takes a few milliseconds (the PSS is most of it), on a thread of its own that
-sleeps in its looper in between. With the screen off and music playing the recorder runs only when a
-song changes, a moment the player and the service's broadcast already wake for, so it adds **no
-wakeups of its own** to the numbers it records. The thread list, the output and the
-network bytes are read at the same moments, not in between.
-
-The timeline is told, not looked for: the player service hands the recorder each song, output, error
-and tuning change as it happens (`PlaybackObserver`, null in every other build), and the settings flow
-each change. A song change wakes the recorder's thread once, as the service's broadcast on every song
-already did; it reads the output's underrun count then (a getter) and the song's record, and hands the
-core one note. The app's log is read from logcat only when the report is shared or the page's log is
-unfolded; the crash buffer once when the app starts, so a crash outlives logcat's buffer.
-
-While the app is on screen, Android hands every frame's timings to that thread
-(`Window.addOnFrameMetricsAvailableListener`); the listener is removed when the app leaves the
-screen. That is a small cost per frame drawn, in the screen-on stretches only.
-
-The benchmark buttons are real work: their cost lands in the stretch under way.
-
-### Where the memory goes
-
-The phone reports (a Galaxy S22) show 210-240 MB PSS with the screen off and
-280-440 MB with the player open. On the emulator, with the screen off, nori reads 197 MB against 114-138 MB
-for the other clients. What holds it, read from the code, and what was done:
-
-| What | Size | Engine | Done |
-|---|---|---|---|
-| Decoded covers (`CoverLoader`, hardware Bitmaps, counted under Graphics) | up to 15 % of the memory class: 29 MB on the emulator (192 MB), 38 MB on a 256 MB phone | both | a quarter stays while no screen is in sight (`cover_rules().hidden_share`). Covers still on the page are held by their views anyway |
-| Page colors (`CoverPalette`): 128 entries, each with a 128 px ARGB wash | up to 8 MB (native heap) | both | an LRU capped at 2 MB, about 30 washes |
-| The music's buffer (`load_control`): a quarter of the memory class, at most 48 MB, the whole song in one burst | the whole song, played part included | both | kept: one network wake per song is the battery design. The Rust loader could drop what it has played (it needs chunked storage, since `Vec::drain` keeps the allocation), but a seek back then needs the network |
-| The Rust engine's ring: 12 s of f32 | 4.2 MB at 44.1 kHz stereo, 9.2 MB at 96 kHz | Rust | kept: storing i16 for a 16-bit device would halve it, but the fades run on the samples as they are pulled |
-| The AudioTrack: 11.5 s | 2 MB i16, 4 MB float (shared memory) | Rust | kept (the burst design) |
-| SQLite: two connections at the default 2 MB page cache, no mmap | at most 4 MB, filled only by reads | both | kept |
-| Lyrics timing (4 sets), the covers' native memory cache (0 on Android), the loader's threads (rest after 20 s) | < 1 MB | both | nothing to do |
-| Thread stacks | virtual; only the pages a thread touches count | both | nothing to gain |
-| libnorimusic.so (8.0 MB arm64: fat LTO, one codegen unit, stripped, opt-level 3) | file-backed; only the touched pages count, and they are reclaimable | both | kept: `opt-level = "s"` would slow the decoders and the DSP, and `panic = "abort"` would end the app on a panic uniffi now turns into an exception |
-
-`tools/meminfo.sh <label>` prints one line of `dumpsys meminfo` (total PSS, Java heap, native heap, code,
-stack, graphics, other), plus the PSS of libnorimusic.so and the thread count. Use it for the
-before/after table in each state (cold start, library, a scrolled album grid, player open, lyrics, screen
-off). That table is still to be measured.
-
-### What the open player costs
-
-The phone reports (a Galaxy S22 at 120 Hz, Android 16) had the open player at 60-86 % of a core, 400-500
-wakeups/s and 190-310 mAh/h, and "other page" at 20 % and 241 wakeups/s. What drew, found on the emulator
-with `tools/cost.sh` (below), the test bridge's `states` and simpleperf:
-
-- **Word-synced lyrics** redrew on every display frame while a word moved (the core asks for one frame,
-  meaning a sixtieth of a second, and the loop counted display frames: 120 a second on the S22), and every
-  one of those frames also re-ran the composition: `active` and `glideMs` were `derivedStateOf` over the
-  frame state, so the composition had to check them each frame, found nothing, and cost the main thread
-  a recomposition pass per frame anyway. The fill also asked the text layout for the same horizontal
-  positions on every frame. Now the loop waits for the time the core asked for, not the number of display
-  frames (60 redraws a second at most, the same on a 60 Hz screen); the line lit and its glide are states
-  written only when they change; the positions are worked out once per laid-out line.
-- **The playing bars** beside the song on an album or playlist page ticked on every display frame for as
-  long as the page was open: that is the "other page" cost. They now step about twenty times a second.
-- **The equalizer's shallow buffer** stayed on for as long as the equalizer page stayed composed, and the
-  page stays composed under the player: opening the player after moving a band kept a 160 ms AudioTrack
-  (and the CPU that feeds it) for the whole time the player was open, and each later switch back reopened
-  the output, a gap in the sound. That is the user's stutter while opening and closing the player
-  (perf11, 10:10-10:11). Now the page asks for it only while it is in sight (resumed and not covered by
-  the player) and after a band has moved, and the service owns the switch: it passes on only real
-  changes, and drops it when the app's controller goes.
-- Checked and left as they were: the static sleeve, the soft sleeve's blur and the page wash (static, 6 fps
-  from the seek bar alone), line-synced lyrics (a glide when a line changes, nothing between), the title
-  marquee (two passes, then it rests), MIXING (a fade in and out, nothing between) and the mini player
-  (nothing ticks: 0 frames on Home).
-
-Emulator (x86_64, 60 Hz, debug build: interpreted, so the main thread's share is higher than a release
-build's), 30 s per state, before and after:
-
-| State | CPU % before | after | wakeups/s before | after | fps before | after | GCs/min before | after |
-|---|---|---|---|---|---|---|---|---|
-| Player open, static cover | 7.2 | 4.0 | 91 | 249 (a precache running) | 6.2 | 5.6 | 0 | 4 |
-| Lyrics, line-synced | 20.9 | 7.6 | 296 | 164 | 15 | 15 | 0 | 0 |
-| Lyrics, word-synced | 52.0 | 38-41 | 681 | 596-624 | 64 | 61-63 | 2 | 0-2 |
-| Album page, playing row (other page) | 19.2 | 12.6 | 366 | 260 | 36 | 22.5 | 2 | 0 |
-| Home, mini player | 0.4 | - | 0 | - | 0 | - | 0 | - |
-
-The emulator's display is 60 Hz, so the lyrics' biggest win is not in the table: on a 120 Hz phone the
-word-synced page drew twice as many frames as here, and now draws the same number. With the player toggled open and shut ten
-times on each engine, with AutoMix and the equalizer on (and with the shallow buffer forced on), the
-emulator counted no underruns: the gap on the phone was the output reopened, not a starved track.
-
-The shallow buffer's switches on the Rust engine are in place, both ways: the AudioTrack is opened deep
-once, in power saving mode, and a sound page being tuned only moves the part
-of it that may be filled (`AudioTrack.setBufferSizeInFrames`, crates/android track.rs `Writer::resize`); the
-engine's ring stays deep (a band moved replaces the ring's music ahead of the track, `nori_player::sink`).
-A second track carrying the music meanwhile was tried and dropped: lined up to the frame by play heads and
-timestamps, it was still heard as a cut on a Galaxy S22 over Bluetooth at every switch. The trade-off:
-- **Made shallow** as a sound page is tuned, the track still holds the seconds taken before (up to the
-  11.5 s buffer): it takes nothing more until it has played down to its fraction of a second, and a change
-  meanwhile is heard where it runs out. After that every band moved is heard ahead of the track's fraction
-  of a second, in place. Out of sight a change waits for what the deep track holds to play.
-- **Made deep**, the track is filled up from the engine's next burst: the same buffer, mode and ten-second
-  wakes as before the screen was tuned, so the battery is what it was.
-- **Latency while shallow**: the track stays on the output power saving chose when it was built (the deep
-  buffer mixer, on a phone that has one; the emulator has only the primary output). A smaller size does not
-  move it or change that output's periods, so its own latency (tens of ms on most phones) is added to the
-  ring's 40-80 ms and the track's 80-160 ms, where the old shallow track went to the normal mixer. The
-  sound server reads no more per period than before; the writer only tops the track up more often. The
-  start threshold is kept inside the size (Android 12 on), or a flush while shallow would wait for more
-  than the track may take.
-- **How shallow is the output's to say.** The first cut shrank the track to 160 ms wherever it played, and
-  on a Galaxy S22 with Sony WH-1000XM6 headphones it ran dry about every 300 ms (62 underruns in a few
-  minutes, against one on the speaker). The platform lets `setBufferSizeInFrames` go down to 16 frames
-  whatever the output needs, where a track opened anew is given at least `getMinBufferSize` for it; and the
-  writer's clock counts music from the play head the device presents, so a Bluetooth link's own couple of
-  hundred milliseconds counted as the track's: a 160 ms track on it held nothing. The shallow size is now
-  topped up while it still holds the output's latency (`getLatency` less the buffer), the least a new track
-  there is given and a wake's lateness, with a quarter of that again on top (`shallow_marks`; the speaker
-  keeps its 80/160 ms). While shallow the writer also watches the latency it sees (play head against what
-  was presented) and `getUnderrunCount`, and grows for either, never shrinking again on that output. On Bluetooth a band
-  moved is heard about half a second later, most of it the headphones' own latency.
-- Tested on the simulated track (crates/android track.rs, air.rs: every frame heard in order over a jittery
-  mixer and a late writer, never reopened or flushed). Over a Bluetooth-like output (bursts of 100-200 ms
-  taken at once, 200 ms of latency) the track never runs dry when the output says what it is
-  (`tuned_over_bluetooth_...`), and stops within a few underruns when it says nothing.
-
-`tools/cost.sh LABEL [SECONDS]` measures a state as it is on screen: CPU of a core and wakeups from
-`/proc/<pid>/task/*` (context switches), frames from `dumpsys gfxinfo`, GCs from the test bridge's `gc`.
+Nothing ticks. The counters are read only when something changes: the screen, the power, playback, the
+app coming to the front or leaving, the player opening or closing, a setting above, or the Performance
+page opening. With the screen off and music playing, that is only a song change, which wakes the app
+anyway, so the recorder adds no wakeups of its own. Frame timings are collected only while the app is on
+screen. The log is read from logcat only when the report is shared or the page's log is shown.
 
 ### A fair battery test
 
-Battery figures need long stretches: many phones move the charge counter in steps of a few mAh, and
-the level in whole percents. For one setting or one build against another:
+1. Unplugged for the whole run.
+2. The same playlist, volume, output, network and download state for every run.
+3. Screen off, 1 to 2 hours per stretch, the phone untouched.
+4. Three runs of each variant; compare the mAh/h of "Screen off, playing".
+5. The normal nori app not playing at the same time.
 
-1. Unplugged, and not charged during the run (a charging stretch is not counted).
-2. The same playlist, the same volume, the same output (speaker, the same headphones), the same
-   network (Wi-Fi or mobile, the same place), downloaded or streamed the same way.
-3. Screen off, 1 to 2 hours per stretch. Don't touch the phone: waking the screen ends the stretch.
-4. Three runs of each, and compare the mAh/h of "Screen off, playing". One run can be off by a lot:
-   the phone's own background work comes and goes.
-5. The normal nori app should not be playing at the same time.
+Press "Start fresh" before a series and share the report after each run.
 
-Press "Start fresh" before a series so the table holds only that series, and share the report after
-each (the report lists every stretch, with its settings).
+### Report, benchmarks and self test
 
-### Sharing
+- **Share report**: plain text through Android's share sheet: device, Android version, build, the
+  table by state, the latest stretches with their output and timeline, benchmark results, then the
+  app's own log, the crash buffer, the last uncaught exception and the process's last 400 logcat lines
+  (60 000 characters at most). Columns are aligned for a monospaced font.
+- **Run call benchmark** and **Run cover benchmark**: the same code as the debug build's `bench` and
+  `coverbench` test commands (`app/src/bench`). They time crossings into the core against the same
+  work in Kotlin, and the core's cover decoding ([Writing a client](writing-a-client.md)). Browse some
+  albums first so covers are cached. Their cost lands in the stretch under way.
+- **Run self test**: plays songs from the library (downloads first) and checks playback, the controls,
+  offload, settings applied live, lyrics and covers. It takes about six minutes and puts settings,
+  queue and place back afterwards.
 
-"Share report" opens Android's share sheet with the report as plain text: the device, the Android
-version, the build (version and commit), the table by state and how much of each state was really
-offloaded, the last stretches each with its output and its timeline, the benchmark results if they were
-run this session, and at the end the app's own log: the crash buffer (this and earlier runs of the
-app) or the copy of it kept at the last start, the last uncaught exception (kept in the app's database
-by the recorder's handler as the process died, then handed on to the platform's), and the process's
-last 400 log lines (`logcat --pid`), at most 60 000 characters, after the app's own lines of the last
-ten minutes (alog's, so a moment the logcat tail has lost is still there). Send it anywhere text goes; the table
-is in columns for a monospaced font. The page shows the same log folded at its end.
+### Measuring over adb
 
-### Benchmarks
+| Tool | Measures |
+| --- | --- |
+| `tools/cost.sh LABEL [SECONDS]` | the app as it is on screen: CPU, wakeups, frames/s, GCs/min and the six busiest threads (debug build) |
+| `tools/meminfo.sh LABEL [package]` | one line of `dumpsys meminfo`: total PSS, Java and native heap, code, stack, graphics, `libnorimusic.so`'s PSS, threads |
+| `tools/open-bench.sh <package> "<label>" [times] [flings]` | frames and janky frames of opening a page and flinging it, such as the seeded "Nori Bench 1000" playlist from Library > Playlists. Use a perf or release build |
+| `tools/scroll.sh <package> [flings]` | scroll jank of the list on screen |
 
-"Run call benchmark" and "Run cover benchmark" run the same code as the debug build's `bench` and
-`coverbench` test commands (`app/src/bench/.../Bench.kt`): what a crossing into the core costs by kind
-against the same work in Kotlin, and what the core's covers cost: the decode alone, and the whole way to a
-software or hardware Bitmap ([Writing a client](writing-a-client.md)). The cover benchmark needs covers on the disk and in memory,
-so browse some albums first.
+All honor `ANDROID_SERIAL`. For the engine's cost on the host, see
+[the host perf report](testing.md#the-host-perf-report).
 
 ## The web client
 
-Applies to the `slim` development branch (not in a release yet). The web client is `crates/web`
-(nori-web, built for `wasm32-unknown-unknown` with wasm-bindgen; natively an empty library, so the
-workspace's tests and clippy do not see it) and `web/` (Svelte 5 with runes, TypeScript and Vite).
-
-The look is Nori Seasons, the Android app's design language (paper and ink roles, the season tiles, the
-seal, Iconoir glyphs, Inter and Literata, pills and hairlines, no shadows), on the web's own layout: no
-sidebar, an outlined bar along the top (the wordmark, Home and the library's sections in the order kept,
-search, settings) and one along the bottom for the player, both blurring the page (`backdrop-filter`) with
-the page's color over it; below 720 px wide the phone's layout, one pill at the bottom holding the mini
-player over the tabs (Home, Library, Settings, Search). What Android decides, the web does too, from the
-core: Home's rows, the library's sections, the album orders, a list head's actions, the song menu's
-grouping, the queue offered to carry on. Colors come from the core (`Nori.theme` in `crates/web`, from the
-`season` and `theme` settings and the browser's date and zone) into CSS variables
-(`web/src/state/theme.svelte.ts`), never copied into the shell; album, artist and playlist pages and the
-player wear the season's paper dyed with their cover, also the core's (`Nori.cover_look`), and none in
-Midnight. Inter and Literata are the Android app's font files;
-`web/build.sh` copies them into `web/src/fonts` (not in git). The glyphs are nori's Iconoir set, written into
-`web/index.html`'s sprite by `tools/glyphs.py` (only those `web/src` names): after naming a new glyph in the
-source, run `python3 tools/glyphs.py <iconoir>/icons` again.
+Applies to master; the web client is not in a release yet. It is `crates/web` (nori-web, built for
+`wasm32-unknown-unknown` with wasm-bindgen; natively an empty library, so workspace tests and clippy
+skip it) and `web/` (Svelte 5, TypeScript, Vite).
 
 ### What it needs
 
-- the `wasm32-unknown-unknown` Rust target: `rustup target add wasm32-unknown-unknown`;
-- `wasm-bindgen-cli` at the version in `Cargo.lock`: `cargo install wasm-bindgen-cli --version 0.2.128`;
-- `wasm-opt` (binaryen), `brotli`, node and npm (dependencies are pinned in `web/package-lock.json`);
-- a clang that targets wasm32 for SQLite's C: Homebrew LLVM (`brew install llvm`) or the Android NDK's
-  clang, which `web/build.sh` finds by itself. Apple's clang has no wasm32 backend.
+- `rustup target add wasm32-unknown-unknown`
+- wasm-bindgen-cli at the version in `Cargo.lock`: `cargo install wasm-bindgen-cli --version 0.2.128`
+- `wasm-opt` (binaryen), `brotli`, node 20 or newer with npm (versions pinned in `web/package-lock.json`)
+- a clang that targets wasm32, for SQLite's C: Homebrew LLVM (`brew install llvm`) or the Android
+  NDK's, which `web/build.sh` finds itself. Apple's clang has no wasm32 backend. Or set
+  `CC_wasm32_unknown_unknown`.
 
 ### Building and serving
 
 ```sh
-web/build.sh                                  # web/dist: three wasm modules, the shell, a size table
-web/build.sh --shell                          # rebuild only the Svelte shell, keeping the wasm modules
-tools/dev-server.sh                           # the local Navidrome, admin/admin
-python3 web/serve.py                          # http://localhost:8080, /rest/ passed on to localhost:4533
-python3 web/serve.py --log --kbps 400         # each API request printed, its answers at most 400 kbit/s
-                                              # (--files-kbps: the client's own files too)
+web/build.sh                                # everything into web/dist, then a size table
+web/build.sh --shell                        # only the Svelte shell, over the wasm modules already built
+tools/dev-server.sh                         # the local Navidrome, admin/admin
+python3 web/serve.py                        # http://localhost:8080, /rest/ passed to localhost:4533
+python3 web/serve.py --log --kbps 400       # print each API request; answers at 400 kbit/s at most
 ```
 
-`web/build.sh` builds `core.wasm` (sign-in and the library), `player.wasm` (the shared session and the
-engine, decoding with the browser's WebCodecs) and `player-codecs.wasm` (the same with Vorbis, ALAC and
-Opus decoded in Rust, for a browser without them), each run through `wasm-opt -Oz`, compiles the
-Svelte shell with Vite, copies the static files and prints every piece's size raw and brotli-compressed. SQLite is
-built without the extras the core never uses (`CFLAGS_wasm32_unknown_unknown` in the script).
+`web/serve.py` also takes `--port`, `--server URL` and `--files-kbps` (throttles the client's own files
+too). It is for development only.
 
-A service worker keeps the shell and modules of the build it came with: after a rebuild, a page loaded
-once more picks up the new build (it loads twice). `web/dist` is static: any server that serves it from the same origin as the Subsonic API works (the
-page signs requests itself; there are no CORS headers to set). `web/serve.py` is for development only.
-Serve `.wasm` as `application/wasm` and, in production, precompressed with brotli.
+`web/build.sh` builds three modules, each through `wasm-opt -Oz`:
 
-The shell loads the other pages and the full player on demand. Wide windows have the top bar, the player
-bar and a side panel beside the full player's cover; phones have the bottom pill, the mini player and a
-full-screen player. Settings pages, Home's rows, the Library's sections, the
-album orders, page actions and playback rules come from Rust. To capture both layouts in Day, Night and
-Midnight and two seasons against a relay-backed development server (the theme is put back after):
+| Module | Holds |
+| --- | --- |
+| `core.wasm` | sign-in and the library |
+| `player.wasm` | the shared session and the engine, decoding with the browser's WebCodecs; loaded on the first Play |
+| `player-codecs.wasm` | the same with Vorbis, ALAC and Opus decoded in Rust, for browsers without them |
 
-```sh
-node web/check/shots.mjs http://localhost:8081/ /private/tmp/nori-web-shots
-```
+It then builds the shell with Vite, copies Inter and Literata from the Android app into `web/src/fonts`
+(not in git) and prints each piece's raw and brotli size. SQLite is built without the extras the core
+never uses (`CFLAGS_wasm32_unknown_unknown` in the script).
 
-To check only that it compiles:
+The glyphs are nori's Iconoir set, written into `web/index.html`'s sprite for the names `web/src`
+uses. After using a new glyph, run `python3 tools/glyphs.py <iconoir>/icons` again.
+
+### Deploying
+
+`web/dist` is static. Serve it from the same origin as the Subsonic API; the page signs its own
+requests, so no CORS headers are needed. Serve `.wasm` as `application/wasm`, precompressed with
+brotli in production. A service worker keeps the shell and modules of one build. A new build installs
+beside the running one and takes over at the next load, which reloads the page once.
+
+To check that it compiles without building it:
 
 ```sh
 cargo check -j4 --target wasm32-unknown-unknown -p nori-web                        # the player module
 cargo check -j4 --target wasm32-unknown-unknown -p nori-web --no-default-features  # the core module
 ```
 
-(`CC_wasm32_unknown_unknown` must name a clang with a wasm32 target, as for the build.)
+Browser checks are in [Testing](testing.md#the-web-client).
 
-### Checking it in a browser
+## Releases
 
-```sh
-npm --prefix web/check install
-node web/check/check.mjs http://localhost:8080/          # every phase; or add one: browse, play, lyrics,
-                                                         # skip, instant, automix, crossfade, codecs, speed, seekbar, edit,
-                                                         # crash, tabs, offline, slowstart, early
-```
-
-`web/check/jam.mjs` checks a jam between two browser profiles over a server with the relay
-(`tools/jam-server.sh`, then `python3 web/serve.py --port 8081 --server http://localhost:5274` and
-`node web/check/jam.mjs http://localhost:8081/`). `web/check/check.mjs` drives headless Chrome (`CHROME` names another browser) against `web/serve.py` and
-the local Navidrome: sign-in, the library pages and search, a song streamed and played for ten seconds
-without the AudioWorklet running dry, next and previous, synced lyrics moving on and a line clicked (or entered) heard from where it is sung, pause, play, seek and
-next heard at once on the sound card's clock (silent within 50 ms of a pause, a seek heard from its
-place within 100 ms) with the place following the music across a pause, the seek bar and its times
-moving with the core's place while playing and still while paused, an AutoMix transition
-planned from both songs' measurements and a crossfade with no silence over 20 ms, an Apple Lossless song
-(the Rust decoders loaded beside the player), and speed and pitch at their pace. With
-`THROTTLED_URL=http://localhost:8082/` and `python3 web/serve.py --port 8082 --kbps 400` running, it also
-times a song's first sound at 400 kbit/s and listens for running dry after it. It prints what it saw
-and exits non-zero when something is off. Headless Chrome is muted: it checks what the AudioWorklet
-played, not what a speaker would. It cannot check background audio with a locked screen (iOS Safari
-suspends an AudioContext when the page is hidden), Safari's or Firefox's codecs, or real latency.
-
-## Local and workflow releases
-
-Applies to 0.6 development. `tools/release.sh` builds Android, iPod, and both architectures of
-macOS and Linux desktop/CLI packages locally by default. Building does not dispatch Actions or
-require GitHub authentication. Publishing uses GitHub CLI authentication and a clean source tree.
-Windows packages are outside this release pipeline.
-
-A run again for the same commit keeps what an earlier run built and tested in
-`build/release-<version>/` and does only the rest. Each desktop platform builds on its own: one that
-fails is left out of the release, and running the same command again uploads it to the release
-already published.
-
-The complete local build runs on macOS or Linux with Rust, Docker, and the Android build tools
-described above. On Apple Silicon Macs, macOS packages use the installed Apple SDK, and the Intel
-package is cross-compiled. Linux hosts build both Mac architectures in a Docker image with
-Clang, lld, a checksum-verified macOS 14.5 SDK, and `rcodesign` for ad-hoc signatures. Intel Macs use
-that container for the Apple Silicon package. Linux packages use Ubuntu 22.04 Docker images
-for ARM64 and x86-64. The foreign architecture is cross-compiled in the image of the machine's own,
-and only packaged and checked under Docker emulation, which runs its binaries. The iPod build also uses Docker. Android
-signing uses the existing `nori-release.jks` and `keystore.properties`; retain the same key for updates.
-Workspace tests also need the native desktop dependencies described above and FFmpeg 8.
-
-Docker Desktop includes CPU emulation. On Linux, install Docker's binfmt handlers once when building
-the other CPU architecture: `docker run --privileged --rm tonistiigi/binfmt --install arm64,amd64`.
-Windows hosts can use the Linux path through WSL2 with Docker integration.
-
-The Linux cross-builder cannot execute macOS binaries or run Mac rendering tests. It still checks
-Mach-O signatures and the complete DMG filesystem contents. An interactive build asks for `y` before
-compiling with the Mac execution checks skipped. Unattended workers must explicitly pass
-`--allow-untested-macos`; otherwise the build stops before compiling. Native Mac builds retain
-their execution and rendering tests.
+`tools/release.sh` builds and publishes a release from this machine: the signed APK, the iPod app,
+and macOS and Linux desktop and terminal packages for both architectures. Building needs no GitHub
+access; publishing needs GitHub CLI authentication and a clean tree. Windows is not built.
 
 ```sh
-# All release artifacts, tests, and checks; nothing is published.
-tools/with-resource.py build tools/release.sh --build
-
-# An unattended Linux worker; acknowledge the unavailable Mac execution checks.
-tools/with-resource.py build tools/release.sh --build --allow-untested-macos
-
-# Build and publish the version already in the source as a public beta.
-tools/with-resource.py build tools/release.sh --publish --beta --live
+tools/release.sh                                                       # guided: asks the version, then every step
+tools/with-resource.py build tools/release.sh --build                  # build and check everything; publish nothing
+tools/with-resource.py build tools/release.sh --publish --beta --live  # publish the version in the source as a public beta
 ```
 
-Artifacts land under `build/release-<version>/`, with desktop and CLI packages in
-`hosts/<platform>/`. `--no-hosts` and `--no-ipod` omit those clients. The release's workspace tests
-(nextest, then doctests) cover the Mac clients; the native Linux builder also runs the Linux-only
-client tests (MPRIS, ALSA, X11) in a debug build. Emulated and cross-compiled builds run no tests: they
-check the same code as the native one. `--no-test` skips all of them.
+| Option | Effect |
+| --- | --- |
+| `--build` | build into `build/release-<version>/`; nothing leaves the machine |
+| `--publish` | build and publish without questions; a draft unless `--live` |
+| `--beta` | a GitHub prerelease, offered only to users with beta updates on; notes list the changes since the previous beta |
+| `--from DIR` | verify and publish artifacts built by release workers |
+| `--abi arm64-v8a` | an APK for phones only |
+| `--no-test`, `--no-hosts`, `--no-ipod` | skip the tests, the desktop and terminal packages, or the iPod app |
+| `--docker-macos` | build the Mac packages in Docker, even on a Mac |
+| `--allow-untested-macos` | acknowledge, on Linux, that the Mac packages cannot be run there |
 
-The steps run in three lanes side by side, each lane one step after another: the tests, then the APK;
-the two Mac packages (in `target/hosts`, so they never wait for the first lane's Cargo lock); the iPod
-app, then the two Linux packages (Docker). A shipping build spends most of its time in fat LTO on one
-core, so the lanes overlap instead of queueing. The terminal shows one line as each step starts and
-ends; each step's output is in `build/release-<version>/logs/<step>.log`. A failed step is reported when
-every lane is done.
+- Running again for the same commit keeps what was built and tested and does only the rest. A desktop
+  platform that fails is left out; running again adds it to the published release.
+- The steps run in three lanes side by side: tests then the APK; the two Mac packages; the iPod app then
+  the two Linux packages. Each step logs to `build/release-<version>/logs/<step>.log`.
+- The APK is signed with `nori-release.jks` through `keystore.properties` (both gitignored). Keep the
+  key: without it, installed copies cannot update.
+- On Apple Silicon, the Mac packages use the installed SDK and the Intel one is cross-compiled. Linux
+  packages build in Ubuntu 22.04 Docker images; the other architecture is cross-compiled and checked
+  under emulation. On Linux, install Docker's binfmt handlers once:
+  `docker run --privileged --rm tonistiigi/binfmt --install arm64,amd64`.
+- A Linux host builds the Mac packages in Docker and cannot run them. It checks signatures and the DMG's
+  contents, asks before building, and needs `--allow-untested-macos` when unattended.
+- Mac packages are ad-hoc signed, not notarized: a DMG for the desktop, an archive for the terminal.
+  Linux gets Debian packages, AppImages and a Flatpak (Freedesktop 25.08 runtime, `nori-cli`
+  included).
 
-The desktop/CLI builder can run independently or on a native worker:
+### Desktop and terminal packages alone
 
 ```sh
-# All four platforms on macOS or Linux.
-tools/with-resource.py build tools/host-release.sh
-
-# Build a committed revision, using the current packaging tools.
-tools/with-resource.py build tools/host-release.sh --source v0.6.0-beta.5
-
-# One Linux platform in Docker; --platform can be repeated.
-tools/with-resource.py build tools/host-release.sh --platform linux-x86_64
-
-# A native Linux worker, without Docker.
-tools/with-resource.py build tools/host-release.sh --native --platform linux-x86_64
-
-# Exercise the Linux Mac cross-builder even when the host is a Mac.
-tools/with-resource.py build tools/host-release.sh --docker-macos --allow-untested-macos --platform macos-aarch64
+tools/with-resource.py build tools/host-release.sh                                   # all four platforms
+tools/with-resource.py build tools/host-release.sh --source v0.7.0                   # a committed revision
+tools/with-resource.py build tools/host-release.sh --platform linux-x86_64           # one platform, in Docker
+tools/with-resource.py build tools/host-release.sh --native --platform linux-x86_64  # on this worker, no Docker
 ```
 
-The builders run in `build/release-python`, a Python environment made from `tools/host-release/requirements.txt` on first use; with `uv` installed it downloads its own Python, otherwise it needs `python3` 3.10 or later. Standalone packages land under `build/host-release/<platform>/`. Docker keeps separate Cargo,
-sccache, and Flatpak caches per architecture in named volumes. AppImage checks run temporary ELF
-copies with the format marker cleared for emulator compatibility; distributed AppImages keep their
-original headers. Emulated Flatpak checks keep the runtime and namespace isolation while omitting
-the syscall filter that CPU emulation cannot install. Native workers check the full sandbox; the
-distributed Flatpak permissions are unchanged. A native worker uses its local
-Cargo target directory. `--workspace DIR`, `--output DIR`, and `--jobs 1..4` let workers choose
-sources, handoff directories, and resource limits. Each worker builds, tests, packages, and runs
-package checks with the same command used locally.
+It also takes `--workspace DIR`, `--output DIR` (default `build/host-release`), `--jobs 1..4`,
+`--no-test`, `--docker-macos` and `--allow-untested-macos`. It runs in `build/release-python`, a
+Python environment made from `tools/host-release/requirements.txt` on first use (with `uv`, or
+`python3` 3.10 or newer). Docker keeps Cargo, sccache and Flatpak caches per architecture in named
+volumes.
 
-By default, workflow Mac builds use Apple Silicon workers for both architectures; the Intel package
-is cross-compiled and checked under Rosetta. The **macOS render** workflow runs the rendering tests.
-Enable `macos_on_linux` when dispatching either workflow to build both Mac packages on Linux Docker
-workers instead. That input explicitly acknowledges the skipped Mac execution and rendering checks.
+### Workflows and handoffs
 
-The **Full release** workflow runs the same builders for Android, iPod, and all four host platforms,
-plus the workspace tests. Select a source revision when dispatching it. The default builds, verifies the complete handoff, and
-uploads a combined `release` artifact; enable `publish` to create a release, and disable `draft` to make it public.
-The version and beta status come from the selected source. Signed Android builds require repository
-secrets `NORI_RELEASE_KEYSTORE_BASE64` (the existing keystore encoded as base64) and
-`NORI_KEYSTORE_PROPERTIES` (the existing properties). The workflow restores these privately and
-keeps the existing signing identity.
+| Workflow | Does |
+| --- | --- |
+| Full release (`release.yml`) | Android, iPod, all four desktop platforms and the workspace tests from a chosen revision; uploads a `release` artifact, or publishes with `publish` (and `draft` off for a public one). Signing needs the secrets `NORI_RELEASE_KEYSTORE_BASE64` and `NORI_KEYSTORE_PROPERTIES` |
+| Desktop and CLI release (`host-release.yml`) | the desktop and terminal packages; uploads to a release when given its tag. Also callable from other workflows |
+| macOS rendering checks (`macos-render.yml`) | the desktop's Metal pixel tests on a Mac runner |
+| Backfill Linux bundles, Backfill macOS disk images | add bundles or DMGs to an older release from its archives, without rebuilding |
 
-The **Desktop and CLI release** workflow is also callable by other workflows. Its manual dispatch
-builds only unless an existing release tag is supplied for uploading packages. Publishing a local
-release does not trigger another desktop build automatically.
+Mac builds in the workflows run on Apple Silicon; the Intel package is checked under Rosetta. The
+`macos_on_linux` input builds them on Linux instead and skips running them.
 
-Workers can hand off packages and their checksum files to a single publisher. Copy the Android
-APK and iPod IPA into the handoff directory root. Copy all desktop/CLI packages and their checksum
-manifests there too, preserving any host subdirectories containing a manifest and its files. Use the matching source checkout:
+Workers can hand their artifacts to one publisher. Put the APK, the IPA and every desktop package
+with its checksum manifest (keeping host subdirectories) in one directory, then, from the matching
+source checkout:
 
 ```sh
-# Verify and prepare a handoff without compiling or accessing the signing key.
-tools/release.sh --build --from build/workflow-release
-
-# Publish that verified handoff without rebuilding.
-tools/release.sh --publish --from build/workflow-release --live
+tools/release.sh --build --from build/workflow-release           # verify; no compiler or signing key needed
+tools/release.sh --publish --from build/workflow-release --live  # publish without rebuilding
 ```
 
-The publisher verifies supplied checksums and requires every selected platform before tagging.
-Native workers already execute their package checks; the publisher does not execute foreign binaries.
-Publishers need a Git committer identity and GitHub CLI authentication. The full workflow supplies
-the GitHub Actions bot identity and its release token.
-macOS packages are ad-hoc signed without Apple notarization. Desktop packages include a DMG with
-an Applications shortcut; CLI packages are archives. Linux builders also produce Debian packages,
-AppImages, and Flatpak bundles for both architectures. The Flatpak includes `nori-cli` and uses the
-Freedesktop 25.08 runtime. Existing backfill workflows can still add macOS disk images or Linux
-bundles to older releases using checksum-verified archives without rebuilding Rust.
+The publisher checks every checksum and requires every selected platform before it tags.
