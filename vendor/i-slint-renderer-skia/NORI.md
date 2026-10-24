@@ -6,5 +6,9 @@ owned cover uploads and GPU mosaics. Custom presentation skips unused native buf
 frames without a second vblank wait. These avoid duplicate raster buffers and bound retained GPU
 resources without borrowed Vulkan cover images.
 
+A drawn text reads its text, font, wrap, overflow, alignment and markdown flag itself, so partial
+rendering repaints it when they change even after the text layout cache replaced its entry (an item
+measured in another wrap mode): without that, a retained layer kept an old title on screen.
+
 This crate is a workspace member so Bazel resolves its local source without absolute path repositories.
 Two style lints allow the existing upstream rendering callback signatures.

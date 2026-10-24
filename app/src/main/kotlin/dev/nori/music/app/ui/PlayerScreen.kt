@@ -782,8 +782,8 @@ private fun playerTitleMeta(song: dev.nori.music.ffi.model.Song?, radio: String?
 
 /**
  * Where the sound is going, and one tap to change it: the glyph is what plays - another device of
- * [otherDevice]'s kind (the core's `Remote::active`), lit, or this phone's own output (its speaker,
- * headphones, Bluetooth).
+ * [otherDevice]'s kind named [otherName] (the core's `Remote::active`), lit, or this phone's own output
+ * (its speaker, headphones, Bluetooth).
  *
  * The picker itself is Android's own: `Settings.Panel.ACTION_MEDIA_OUTPUT` is the documented way in
  * and lists Bluetooth, wired, USB and any Cast target the system knows about - far more than this app
@@ -793,7 +793,7 @@ private fun playerTitleMeta(song: dev.nori.music.ffi.model.Song?, radio: String?
  */
 @Composable
 internal fun OutputButton(
-    otherDevice: dev.nori.music.ffi.remote.DeviceKind?, size: androidx.compose.ui.unit.Dp,
+    otherDevice: dev.nori.music.ffi.remote.DeviceKind?, otherName: String?, size: androidx.compose.ui.unit.Dp,
     idle: androidx.compose.ui.graphics.ColorProducer, lit: androidx.compose.ui.graphics.ColorProducer,
     named: Boolean = false,
 ) {
@@ -807,7 +807,7 @@ internal fun OutputButton(
         dev.nori.music.ffi.devices.OutputGlyph.BLUETOOTH -> Iconoir.Bluetooth
         dev.nori.music.ffi.devices.OutputGlyph.CAST -> Iconoir.Airplay
     }
-    val description = remember(o) { say.outputDescription(o.port, o.name) }
+    val description = remember(o, otherName) { otherName?.let(say::devicePlayingOn) ?: say.outputDescription(o.port, o.name) }
     // With remote control or jams on, the button opens nori's own devices first (RemoteScreens); this
     // phone's outputs are one row of it.
     val prefs by settings.prefs.collectAsStateWithLifecycle()
@@ -823,7 +823,7 @@ internal fun OutputButton(
     ) {
         LookIcon(icon, description, Modifier.size(size), color)
         LookText(
-            say.outputName(o.port, o.name), color, Modifier.weight(1f, fill = false),
+            otherName ?: say.outputName(o.port, o.name), color, Modifier.weight(1f, fill = false),
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
@@ -2237,7 +2237,7 @@ private fun OutputRow(vm: PlayerViewModel) {
         val jamOn = jam
         if (jamOn != null) JamButton(jamOn, 20.dp, idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ACCENT) })
         else if (!state.jamGuest) OutputButton(
-            state.playingOnKind, 22.dp,
+            state.playingOnKind, state.playingOn, 22.dp,
             idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ON) },
             named = true,
         )

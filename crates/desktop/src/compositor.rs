@@ -203,6 +203,8 @@ struct Shared {
     on_press_away: RefCell<Option<Rc<dyn Fn()>>>,
     /// Run when the window comes on screen (true) or leaves it (false).
     on_shown: RefCell<Option<ShownChanged>>,
+    /// Run on the mouse's back (false) and forward (true) buttons.
+    on_history: RefCell<Option<History>>,
 }
 
 type FocusSource = Box<dyn Fn() -> Option<Focus>>;
@@ -281,7 +283,7 @@ impl slint::platform::Platform for Platform {
 
     fn run_event_loop(&self) -> Result<(), PlatformError> {
         let event_loop = self.event_loop.borrow_mut().take().ok_or_else(|| PlatformError::from("the event loop ran already"))?;
-        let mut runner = Runner { shared: self.shared.clone(), draw: None, pointer: LogicalPosition::new(0.0, 0.0), over: None, held: None, modifiers: Default::default() };
+        let mut runner = Runner { shared: self.shared.clone(), draw: None, pointer: LogicalPosition::new(0.0, 0.0), over: None, held: None, swallowed: false, modifiers: Default::default() };
         event_loop.run_app(&mut runner).map_err(|e| PlatformError::from(e.to_string()))
     }
 
@@ -352,6 +354,7 @@ pub fn install() -> Result<Compositor, String> {
         typing: Cell::new(false),
         on_press_away: RefCell::new(None),
         on_shown: RefCell::new(None),
+        on_history: RefCell::new(None),
     });
     slint::platform::set_platform(Box::new(Platform { shared: shared.clone(), event_loop: RefCell::new(Some(event_loop)) })).map_err(|e| format!("the platform: {e}"))?;
     Ok(Compositor(shared))
@@ -477,9 +480,34 @@ impl Compositor {
     pub fn on_shown(&self, f: impl Fn(bool) + 'static) {
         *self.0.on_shown.borrow_mut() = Some(Rc::new(f));
     }
+
+    pub fn on_history(&self, f: impl Fn(bool) + 'static) {
+        *self.0.on_history.borrow_mut() = Some(Rc::new(f));
+    }
+
+    /// Closes every open menu, in any layer.
+    pub fn close_menus(&self) {
+        close_menus(&self.0, None);
+    }
+}
+
+/// Closes the menus open in every layer but `kept`'s; whether there were any. A menu closes on a press
+/// outside it only within its own layer, so a press on another layer closes it here.
+fn close_menus(s: &Shared, kept: Option<Role>) -> bool {
+    let mut closed = false;
+    for (layer, role) in s.layers.borrow().iter() {
+        let window = i_slint_core::window::WindowInner::from_pub(&layer.window);
+        if role.get() != kept && !window.active_popups().is_empty() {
+            window.close_all_popups();
+            closed = true;
+        }
+    }
+    closed
 }
 
 type ShownChanged = Rc<dyn Fn(bool)>;
+/// Called with true for forward, false for back.
+type History = Rc<dyn Fn(bool)>;
 
 /// Notes whether the window is off screen, telling `on_shown` when that changes.
 fn set_occluded(s: &Shared, occluded: bool) {
@@ -601,6 +629,8 @@ struct Runner {
     /// Layer under the pointer, and the layer a button was pressed in (captures until release).
     over: Option<Role>,
     held: Option<Role>,
+    /// A press that closed another layer's menus: it and its release go nowhere.
+    swallowed: bool,
     modifiers: winit::keyboard::ModifiersState,
 }
 
@@ -822,6 +852,10 @@ impl ApplicationHandler<Wake> for Runner {
                     old.window.dispatch_event(WindowEvent::PointerExited);
                 }
             }
+            E::MouseInput { state: ElementState::Pressed, button: button @ (MouseButton::Back | MouseButton::Forward), .. } => {
+                let history = self.shared.on_history.borrow().clone();
+                if let Some(f) = history { f(button == MouseButton::Forward); }
+            }
             E::MouseInput { state, button, .. } => {
                 let button = match button {
                     MouseButton::Left => PointerEventButton::Left,
@@ -832,6 +866,10 @@ impl ApplicationHandler<Wake> for Runner {
                 match state {
                     ElementState::Pressed => {
                         let on = self.under(self.pointer);
+                        if close_menus(&self.shared, Some(on)) {
+                            self.swallowed = true;
+                            return;
+                        }
                         if on != Role::Top && self.shared.typing.get() {
                             let away = self.shared.on_press_away.borrow().clone();
                             if let Some(f) = away { f(); }
@@ -839,6 +877,7 @@ impl ApplicationHandler<Wake> for Runner {
                         self.held = Some(on);
                         self.pointer(|position| WindowEvent::PointerPressed { position, button });
                     }
+                    ElementState::Released if std::mem::take(&mut self.swallowed) => {}
                     ElementState::Released => {
                         self.pointer(|position| WindowEvent::PointerReleased { position, button });
                         self.held = None;

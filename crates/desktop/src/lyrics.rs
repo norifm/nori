@@ -4,16 +4,18 @@
 use nori_core::lyrics_sources::LyricsOrigin;
 use nori_core::race::{lyrics_replaces, LyricsPick};
 use nori_look::lyrics::LyricClock;
-use skia_safe::Typeface;
 use slint::{ModelRc, SharedString, VecModel};
 
-use crate::sung::{self, Laid};
-use crate::LyricPiece;
+use crate::sung::{self, Faces, Laid};
+use crate::{LyricPiece, SungLine};
+
+/// In a duet, the room each voice leaves clear on the far side, so two singers read as a conversation.
+const DUET_LANE: f32 = 48.0;
 
 pub struct SongLyrics {
     pick: LyricsPick,
     clock: LyricClock,
-    face: Option<Typeface>,
+    faces: Option<Faces>,
     /// Active line as last laid out, per view (side panel, Now Playing).
     laid: [Option<Laid>; 2],
     /// The width every line was last broken into rows at, per view.
@@ -21,13 +23,24 @@ pub struct SongLyrics {
 }
 
 impl SongLyrics {
-    pub fn new(pick: LyricsPick, position_ms: i64, face: Option<Typeface>) -> SongLyrics {
+    pub fn new(pick: LyricsPick, position_ms: i64, faces: Option<Faces>) -> SongLyrics {
         let clock = nori_core::look::clock_on(&pick.lyrics, position_ms);
-        SongLyrics { pick, clock, face, laid: [None, None], rows_at: [None, None] }
+        SongLyrics { pick, clock, faces, laid: [None, None], rows_at: [None, None] }
     }
 
-    pub fn lines(&self) -> ModelRc<SharedString> {
-        ModelRc::new(VecModel::from(self.pick.lyrics.lines.iter().map(|l| SharedString::from(l.text.as_str())).collect::<Vec<_>>()))
+    pub fn lines(&self) -> ModelRc<SungLine> {
+        let lines = self.pick.lyrics.lines.iter().map(|l| SungLine {
+            text: l.text.as_str().into(),
+            backing: l.backing.as_str().into(),
+            right: l.voice == 1,
+            background: l.background,
+        });
+        ModelRc::new(VecModel::from(lines.collect::<Vec<_>>()))
+    }
+
+    /// The room every line leaves clear on its far side: a duet's lane, else none.
+    pub fn lane(&self) -> f32 {
+        if self.pick.lyrics.lines.iter().any(|l| l.voice == 1) { DUET_LANE } else { 0.0 }
     }
 
     pub fn pick(&self) -> &LyricsPick {
@@ -65,7 +78,7 @@ impl SongLyrics {
         let line = usize::try_from(step.frame.active).ok().and_then(|i| self.pick.lyrics.lines.get(i));
         // With a face the pieces draw the fill, so the split is not needed.
         let (sung, now, mix, rest) = match line {
-            Some(l) if sweeping && self.face.is_none() => split(&l.text, step.frame.sung),
+            Some(l) if sweeping && self.faces.is_none() => split(&l.text, step.frame.sung),
             _ => Default::default(),
         };
         Now { active: step.frame.active, sweeping, sung, now, mix, rest, wait, at: step.frame.sung, ms: self.clock.shown_ms() }
@@ -74,11 +87,12 @@ impl SongLyrics {
     /// The active line's pieces for `view` (0 side panel, 1 Now Playing); re-laid only when line, size
     /// or width change.
     pub fn pieces(&mut self, view: usize, now: &Now, size: f32, width: f32, lit: f32, dim: f32) -> Vec<LyricPiece> {
-        let Some(face) = &self.face else { return Vec::new() };
+        let Some(faces) = &self.faces else { return Vec::new() };
+        let width = width - self.lane();
         let Some((i, line)) = usize::try_from(now.active).ok().and_then(|i| self.pick.lyrics.lines.get(i).map(|l| (i, l))) else { return Vec::new() };
         let slot = &mut self.laid[view];
         if !slot.as_ref().is_some_and(|l| l.is_for(i, size, width)) {
-            *slot = Some(sung::lay(face, i, line, size, width));
+            *slot = Some(sung::lay(faces, i, line, size, width));
         }
         slot.as_ref().map_or_else(Vec::new, |l| sung::frame(l, line, now.at, now.ms, lit, dim, size * 0.6))
     }
@@ -86,12 +100,13 @@ impl SongLyrics {
     /// Every line broken into the rows its pieces take for `view` at `size` within `width`, when that width
     /// is new; None when the lines are already so, or there is no face to measure in.
     pub fn rows(&mut self, view: usize, size: f32, width: f32) -> Option<ModelRc<SharedString>> {
-        let face = self.face.as_ref()?;
+        let faces = self.faces.as_ref()?;
+        let width = width - self.lane();
         if self.rows_at[view] == Some(width) {
             return None;
         }
         self.rows_at[view] = Some(width);
-        let lines = self.pick.lyrics.lines.iter().enumerate().map(|(i, l)| SharedString::from(sung::lay(face, i, l, size, width).rows(&l.text)));
+        let lines = self.pick.lyrics.lines.iter().enumerate().map(|(i, l)| SharedString::from(sung::lay(faces, i, l, size, width).rows(&l.text)));
         Some(ModelRc::new(VecModel::from(lines.collect::<Vec<_>>())))
     }
 
@@ -174,7 +189,7 @@ mod tests {
         let word = |start_ms, end_ms, start, end| LyricWord { start_ms, end_ms, start, end };
         let line = LyricLine { start_ms: 1000, end_ms: 3000, text: "one two".into(), words: vec![word(1000, 2000, 0, 3), word(2000, 3000, 4, 7)], ..Default::default() };
         let lyrics = Lyrics { synced: true, word_timed: true, lines: vec![line], ..Default::default() };
-        let l = SongLyrics::new(LyricsPick { lyrics, origin: LyricsOrigin::Server }, 0, sung::bold_face());
+        let l = SongLyrics::new(LyricsPick { lyrics, origin: LyricsOrigin::Server }, 0, Faces::inter());
         let now = l.advance(2500, true, true);
         assert!(now.sweeping);
         assert_eq!((now.sung.as_str(), now.now.as_str(), now.rest.as_str()), ("", "", ""));
