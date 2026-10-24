@@ -322,7 +322,7 @@ numbers written by a Swift `Fmt` mirroring `core/text/Fmt.kt` with the same vect
 
 ### 6.2 The player
 
-As Android's (`docs/research/seasons-port-reference.md`): the artwork from the top, as wide as the screen
+As Android's: the artwork from the top, as wide as the screen
 and 44 pt deeper than square, melting into the page behind the title; the title row (Literata title,
 artist, album) with the seal and more; the seek bar with its times; one row of lyrics, previous, play,
 next and queue; then the output line, the device's glyph (the core's `output_look`, or the other device's
@@ -365,7 +365,7 @@ menu is. The tabs and the mini player are one outlined pill at the foot, drawn f
 
 ### 6.6 Motion
 
-The rules from `docs/motion.md` carry over: nothing animates unless the user touched it; `UIAccessibility
+Android's rules carry over: nothing animates unless the user touched it; `UIAccessibility
 .isReduceMotionEnabled` turns each into a snap or a short fade. Push/pop is UIKit's. The card, the paused
 cover, the mini player's progress and the lyrics fill are the animations the app has. All through
 `CALayer` properties (transform, opacity, position) so Core Animation runs them on the render server, not
@@ -427,7 +427,7 @@ Each ends with something that runs on the iPod; nothing moves on until the one b
    queue, downloads, the player card and mini player, settings (the curated pages, iOS words), lyrics,
    equalizer, per-device sound. Covers through `nori-covers` with the CGImage paint. Words carried over
    from `strings.xml`.
-4. **Polish and cost** (two weeks): every animation looked at as `docs/motion.md` does, VoiceOver, Dynamic
+4. **Polish and cost** (two weeks): every animation looked at one by one, VoiceOver, Dynamic
    Type, the 30-minute battery runs against Apple's Music app, memory under the budget with 2000 albums in
    the grid, the offload experiment (5.3) measured.
 5. **Release**: a `tools/release.sh` step that produces `nori-ipod.ipa` beside the APK; install over
@@ -738,7 +738,7 @@ perf recorder from `nori-perf` fed by a `crates/ios/src/perf.rs` reading `task_t
 
 ### W14 - polish and release
 
-The motion pass (every animation listed as `docs/motion.md` does, with its status), VoiceOver labels,
+The motion pass (every animation listed with its status), VoiceOver labels,
 Dynamic Type at the largest size on 320 pt, the memory budget with a 2000-album grid, the offload
 experiment of 5.3 if W13's numbers say the I/O thread is what costs. Done: `tools/release.sh` produces
 the .ipa (`tools/ipod.sh build`, Docker only); `--no-ipod` makes a release of the APK alone. The plan: `tools/release.sh` producing

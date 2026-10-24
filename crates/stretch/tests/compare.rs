@@ -6,7 +6,7 @@
 //! comparisons, so a rounding can grow: the original against itself on input one ulp away departs by 1e-3 of the
 //! peak within about 10 000 frames. Excerpts are checked sample for sample from a reset, long runs against the
 //! original's own spread under that nudge. (With the same exact FFT on both sides and no fused multiply-adds the
-//! outputs were bit-identical: docs/research/stretch-port.md.)
+//! outputs were bit-identical.)
 
 use nori_stretch::Stretch;
 use rustfft::num_complex::Complex32;

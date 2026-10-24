@@ -1,6 +1,6 @@
 //! A YouTube Music profile's account: a browser session's cookies, kept in the profile's rows and
 //! replaced there the moment YouTube rotates them, rotated before they go stale whenever the profile is
-//! used, and given up only when YouTube refuses them (docs/research/youtube-music.md, "Signing in").
+//! used, and given up only when YouTube refuses them.
 //!
 //! The cookies are kept in the profile's `kv` rows, not in the stored settings: the platform holds and
 //! writes the settings whole, and would put back the cookies of before a rotation.

@@ -4,7 +4,7 @@
 //!
 //! The app's graph expresses attention as ONNX `Attention` nodes (tools/beat-this/export.py), which tract runs as
 //! flash attention: about 100 MB held instead of 700 MB for MatMul/Softmax/MatMul. It runs on the calling thread
-//! (`TRACT_FLASH_SDPA_ST`). Costs: docs/research/analysis.md, tests/neural_memory.rs.
+//! (`TRACT_FLASH_SDPA_ST`). Memory: tests/neural_memory.rs.
 
 use std::path::Path;
 use std::sync::Arc;

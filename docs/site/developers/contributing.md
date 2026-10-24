@@ -27,8 +27,7 @@ One line, conventional, as [AGENTS.md](../../../AGENTS.md#commits) describes. Th
 - Published docs live in `docs/site/`, as Markdown with `title`, `description` and an optional
   `sidebar.order` in the frontmatter. They change with the code, in the same commit when they can.
 - The website copies them at build time; edit them here, never on the website.
-- Internal notes (`docs/features.md`, `docs/research/`, `docs/motion.md`, `docs/player-colour-band.md`)
-  stay unpublished.
+- Internal notes (`docs/features.md`, `docs/research/`) stay unpublished.
 - Every page says which versions and clients it applies to, and states only what the code does.
 
 ## Security

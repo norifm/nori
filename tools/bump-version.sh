@@ -7,7 +7,6 @@
 #                          beta being the beta's number, 99 for the release itself (0.5.2-beta.3 -> 50203,
 #                          0.5.2 -> 50299): every beta installs over the last, the release over its betas
 #   Cargo.toml             the workspace version, and Cargo.lock's entries for the workspace crates
-#   docs/features.md       "Living inventory for nori x.y.z"
 #
 # Left alone on purpose: the README's version badge reads the latest GitHub release by itself, and the
 # benchmark tables (docs/performance/raw/) name the version the numbers were measured on, which only a
@@ -27,7 +26,6 @@ python3 - "$root" "$old" "$new" "$code" <<'EOF'
 import re, sys, pathlib
 root, old, new, code = sys.argv[1:]
 root = pathlib.Path(root)
-esc = re.escape(old)
 
 def edit(path, subs):
     p = root / path
@@ -53,7 +51,6 @@ edit("Cargo.toml", [(r'(\[workspace\.package\][^\[]*?\nversion = )"[^"]+"', rf'\
 manifests = [(p / "Cargo.toml").read_text() for p in sorted((root / "crates").iterdir()) if (p / "Cargo.toml").exists()]
 members = [re.search(r'^name = "([^"]+)"', m, re.M).group(1) for m in manifests if re.search(r'^version\.workspace\s*=\s*true', m, re.M)]
 edit("Cargo.lock", [(rf'(\[\[package\]\]\nname = "{re.escape(m)}"\nversion = )"[^"]+"', rf'\g<1>"{new}"') for m in members])
-edit("docs/features.md", [(rf'nori {esc}\*\*', f'nori {new}**')])
 EOF
 # The Bazel BUILD files carry each crate's version.
 python3 "$(dirname "$0")/bazel/generate.py" >/dev/null && echo "  crates/*/BUILD.bazel"

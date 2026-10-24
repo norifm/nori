@@ -225,7 +225,7 @@ private fun LoadFailed(message: String) = Text(
  * Album, artist and playlist pages each have one drawing path, from whatever is known of the page so far.
  * What the row that opened it already knew (Nav's hint: cover, title, counts) is enough for the hero to be
  * there from the first frame of the slide (PageMotion), with Play held in its place and the
- * songs rising in under it (Arrive) when the server answers - docs/motion.md items 16 and 17. A page
+ * songs rising in under it (Arrive) when the server answers. A page
  * opened with no hint (a deep link, "Go to album" from a song) waits behind LoadBox, which fades the same
  * page in over its loader once the detail is there.
  */

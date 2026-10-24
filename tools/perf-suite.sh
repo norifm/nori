@@ -68,6 +68,7 @@ if "$ui" has "Server URL"; then
 fi
 "$ui" has "Shuffle everything" || { say "not logged in / home not showing; aborting"; "$ui" texts | head -12 >&2; exit 1; }
 
+mkdir -p "$(dirname "$out")"
 { echo; echo "### $model · Android $rel · $abi · $(date +%F)"; echo; } >> "$out"
 
 say "cold start x5"

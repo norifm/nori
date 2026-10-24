@@ -1,6 +1,6 @@
 //! A YouTube Music profile: innertube-music's answers as nori's records under `yt-` ids, its reads as
 //! the pages' `Page`s, its likes as hearts, its stream addresses and the URLs they open at. Best effort
-//! and server-less; signed in or not (account.rs) (docs/research/youtube-music.md).
+//! and server-less; signed in or not (account.rs).
 
 mod account;
 
