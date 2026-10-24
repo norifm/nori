@@ -8,7 +8,7 @@
 #   tools/feature-e2e.sh [--only <section>,...] [--list]     NORI_E2E_SERVER=local for tools/dev-server.sh
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="lyrics motion notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets remote jam"
+SECTIONS="lyrics motion notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel remote jam"
 OPT_IN="lyrics-services scrobble download-albums youtube-music"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
@@ -756,6 +756,19 @@ if want sheets; then section "a sheet over the sideways player, the shade pulled
   check "back closes the sheet" wait_until 10 off_screen 'text="Playing on"'
   adb shell settings put system user_rotation 0; adb shell settings put system accelerometer_rotation 1
   "$app" set remoteControl false >/dev/null
+fi
+
+if want queue-panel; then section "the song playing, tapped in the queue"
+  "$app" play "$PLAIN" >/dev/null; "$app" do "enqueue $SONG" >/dev/null
+  check "the song plays a few seconds" wait_for positionMs '>3000' 15
+  "$app" do pause >/dev/null; check "paused" wait_for playing False 5
+  at=$(field positionMs)
+  "$app" open queue >/dev/null
+  check "the queue opens" wait_until 10 on_screen 'content-desc="Shuffle"'
+  check "it says Playing next once" test "$(ui | grep -oi 'text="Playing next"' | wc -l | tr -d ' ')" = 1
+  tapnode text "$(field title)"
+  check "goes back to the player" wait_until 10 off_screen 'content-desc="Shuffle"'
+  check "and stays where it was" test "$(field positionMs)" = "$at"
 fi
 
 remote_checks() {
