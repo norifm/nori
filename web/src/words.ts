@@ -171,7 +171,6 @@ export const W = {
   } as Record<string, [string, string]>,
   sections: {
     Between: "Between songs",
-    Controls: "Controls",
     Queue: "Queue",
     Effects: "Effects",
     Volume: "Volume",
@@ -188,7 +187,6 @@ export const W = {
     autoMix: "AutoMix",
     autoMixBetterBeats: "Better beat detection",
     crossfadeKeepAlbums: "Keep albums gapless",
-    fadeMs: "Fade on play and pause",
     skipExplicit: "Skip explicit songs",
     autoFill: "Keep playing when the queue ends",
     autoFillKind: "Carry on with",
@@ -224,7 +222,6 @@ export const W = {
   } as Record<string, Record<string, string>>,
   choice: (name: string, v: string) => {
     if (name === "crossfadeSec") return v === "0" ? "Off" : `${v} s`;
-    if (name === "fadeMs") return v === "0" ? "Off" : Number(v) % 1000 === 0 ? `${Number(v) / 1000} s` : `${v} ms`;
     return W.choices[name]?.[v.toUpperCase()] ?? v;
   },
   level: (name: string, v: number) => (name === "volumeBoostDb" ? (v === 0 ? "Off" : `+${v.toFixed(1)} dB`) : String(v)),

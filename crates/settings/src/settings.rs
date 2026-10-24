@@ -477,9 +477,6 @@ pub struct StoredPrefs {
     /// Songs of one album that follow each other in order play gapless, with AutoMix or a crossfade.
     #[setting("crossfadeKeepAlbums", FLAG, default = true, show = K::Switch, effect = REPLAN)]
     pub crossfade_keep_albums: bool,
-    #[setting("fadeMs", within(0, 5000), default = 0, show = K::Choice(&["0", "150", "300", "500", "1000"]), effect = PLAYER)]
-    pub fade_ms: i32,
-    // Controls.
     // The queue.
     #[setting("skipExplicit", FLAG, default = false, show = K::Switch)]
     pub skip_explicit: bool,
@@ -2106,7 +2103,6 @@ mod tests {
         }
         assert_eq!(set_by_name(&p, "cacheMb", "10").unwrap().prefs.cache_mb, 256);
         assert_eq!(set_by_name(&p, "limiterThresholdDb", "9").unwrap().prefs.limiter_threshold_db, 0.0);
-        assert_eq!(set_by_name(&p, "fadeMs", "-5").unwrap().prefs.fade_ms, 0);
         assert_eq!(set_by_name(&p, "autoFillKind", "albums").unwrap().prefs.auto_fill_kind, AutoFillKind::Albums);
         assert_eq!(set_by_name(&p, "autoFillBasis", "era").unwrap().prefs.auto_fill_basis, AutoFillBasis::Era);
         assert_eq!(set_by_name(&p, "autoFillBasis", "mood"), None);

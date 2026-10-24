@@ -77,6 +77,8 @@ fn late_autofill_respects_playback_and_new_queues() {
             time.run(Duration::from_millis(1_200));
             s.engine.pause();
             assert!(time.until(Duration::from_secs(2), || s.engine.status().state == State::Paused));
+            // The pause fades out before the sound stops.
+            time.run(Duration::from_millis(500));
         } else {
             assert!(time.until(Duration::from_secs(5), || s.engine.status().state == State::Ended));
         }

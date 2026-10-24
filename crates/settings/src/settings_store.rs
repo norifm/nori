@@ -409,9 +409,9 @@ mod tests {
         let dir = nori_testdir::TempDir::new("settings");
         let s = open(&dir);
         assert_eq!(s.prefs, StoredPrefs::default());
-        write(&mut s.db.lock(), &StoredPrefs { fade_ms: 400, ..s.prefs.clone() }).unwrap();
+        write(&mut s.db.lock(), &StoredPrefs { crossfade_sec: 4, ..s.prefs.clone() }).unwrap();
         drop(s);
-        assert_eq!(open(&dir).prefs.fade_ms, 400);
+        assert_eq!(open(&dir).prefs.crossfade_sec, 4);
     }
 
     #[test]
@@ -426,7 +426,6 @@ mod tests {
             (StoredPrefs { level: Level::Loud, ..a.clone() }, APPLY_GAIN),
             (StoredPrefs { crossfade_sec: 6, ..a.clone() }, APPLY_AUDIO | REPLAN),
             (StoredPrefs { auto_mix: true, ..a.clone() }, APPLY_AUDIO | REPLAN),
-            (StoredPrefs { fade_ms: a.fade_ms + 300, ..a.clone() }, PLAYER),
             (StoredPrefs { hi_res: !a.hi_res, ..a.clone() }, PLAYER),
             (StoredPrefs { cache_mb: 4096, ..a.clone() }, CACHE_LIMIT),
         ];
@@ -473,13 +472,13 @@ mod tests {
     fn two_apps_over_one_database_keep_each_others_changes() {
         let dir = nori_testdir::TempDir::new("settings-shared");
         let (mut a, mut b) = (open(&dir), open(&dir));
-        a.edit(|p| StoredPrefs { fade_ms: 400, ..p.clone() });
+        a.edit(|p| StoredPrefs { crossfade_sec: 4, ..p.clone() });
         background::flush();
         b.edit(|p| StoredPrefs { theme: ThemeMode::Light, ..p.clone() });
         b.edit(|p| StoredPrefs { cache_mb: 4096, ..p.clone() });
         background::flush();
         let kept = open(&dir).prefs;
-        assert_eq!((kept.fade_ms, kept.theme, kept.cache_mb), (400, ThemeMode::Light, 4096));
+        assert_eq!((kept.crossfade_sec, kept.theme, kept.cache_mb), (4, ThemeMode::Light, 4096));
     }
 
     #[test]

@@ -45,7 +45,6 @@ fn sample() -> StoredPrefs {
         compressor_preset: CompressorPreset::Night,
         motion: Motion::Eink,
         playlist_notes: false,
-        fade_ms: 300,
         offload: false,
         bit_perfect: true,
         hi_res: true,

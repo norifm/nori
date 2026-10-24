@@ -1399,6 +1399,9 @@ pub fn queued_for(session: &Session, l: &nori_core::remote::Lead) -> (usize, boo
     }
 }
 
+/// How long play and pause fade in and out.
+const PLAY_PAUSE_FADE_MS: i32 = 150;
+
 /// Engine settings from the core's.
 pub fn settings(s: &StoredPrefs) -> Settings {
     let bands = if s.eq_enabled { s.eq_bands.iter().map(|b| Band { kind: b.kind, freq: b.freq as f64, gain_db: b.gain_db as f64, q: b.q as f64, channel: b.channel as i32 }).collect() } else { Vec::new() };
@@ -1416,7 +1419,7 @@ pub fn settings(s: &StoredPrefs) -> Settings {
     } };
     Settings {
         sound,
-        fade_ms: s.fade_ms,
+        fade_ms: PLAY_PAUSE_FADE_MS,
         hi_res: s.hi_res,
         // Bit-perfect plays each song at its own rate.
         max_rate: if s.bit_perfect { 0 } else { s.max_rate.hz() },

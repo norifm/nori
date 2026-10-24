@@ -442,7 +442,7 @@ mod tests {
             ..StoredPrefs::default()
         };
         let all = specs();
-        assert!(all.len() > 65, "{}", all.len());
+        assert!(all.len() > 60, "{}", all.len());
         let mut names: Vec<&str> = all.iter().map(|s| s.name.as_str()).collect();
         names.sort_unstable();
         names.dedup();

@@ -73,7 +73,6 @@ pub enum SectionId {
     MusicFolders,
     ThisServer,
     Between,
-    Controls,
     Queue,
     Equalizer,
     Effects,
@@ -334,7 +333,6 @@ impl Page<'_> {
         // AutoMix plans its own transitions, so the plain crossfade gives way to it.
         between.push(self.setting("crossfadeSec").enabled(live && !p.auto_mix));
         between.push(self.setting("crossfadeKeepAlbums").enabled(live && (p.auto_mix || p.crossfade_sec > 0)));
-        let controls = vec![self.setting("fadeMs")];
         let mut queue = vec![
             self.setting("skipExplicit"),
             self.setting("autoFill"),
@@ -345,7 +343,7 @@ impl Page<'_> {
         if !self.web() {
             queue.push(self.setting("bridgeOffline"));
         }
-        vec![(SectionId::Between, between), (SectionId::Controls, controls), (SectionId::Queue, queue)]
+        vec![(SectionId::Between, between), (SectionId::Queue, queue)]
     }
 
     fn sound(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
