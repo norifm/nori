@@ -108,8 +108,9 @@ The Albums page's sort options are pills below the top card.
 Pills start with Favorites, as a plain word with no star or icon. Pages that share a choice use the
 same word for it in the same place:
 
-- Albums: Favorites, Title, Artist, Year, Added, Most played, Random (core: `album_sorts`). Artist
-  groups albums into shelves per artist. There's no Played option anymore.
+- Albums: Favorites (a filter, on or off over any order: core `favorites_in_order`), then Title, Artist,
+  Year, Added, Most played, Random (core: `album_sorts`). Artist groups albums into shelves per artist.
+  There's no Played option anymore.
 - Songs: Favorites (a filter), Title, Artist, Album, Year, Added, Most played, Longest.
 
 Artists have no A-Z index. Playlist lists reload after a playlist is created, added to or deleted,

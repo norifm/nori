@@ -373,6 +373,7 @@
     <string name="note_no_downloads_help">Songs you download show here while they arrive, and for a while after.</string>
     <string name="note_download_failed">Couldn\'t download</string>
     <string name="note_no_favourite_songs">No favorite songs yet. Tap the seal on a song and it will be here.</string>
+    <string name="note_no_favourite_albums">No favorite albums yet. Tap the seal on an album and it will be here.</string>
     <string name="note_nothing_to_mix">Nothing to mix yet. Play some music, or sync the library in Settings.</string>
     <string name="note_smart_help">Matched against the synced library: sync it in Settings so every song can be found.</string>
     <string name="note_no_history">Nothing played yet, or listening history is off in Settings, under Library and lists.</string>

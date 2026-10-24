@@ -7,7 +7,7 @@ use std::ffi::{c_char, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use nori_core::browse::{album_sort_kept, album_sort_saved, album_sorts, artist_rows, home_pinned, home_row_page, song_sort_kept, song_sort_saved, song_sorts, AlbumSort, HomeShelf};
+use nori_core::browse::{album_sort_kept, album_sort_saved, album_sorts, artist_rows, favorites_in_order, home_pinned, home_row_page, next_album_page, song_sort_kept, song_sort_saved, song_sorts, AlbumSort, HomeShelf};
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::Starrable;
 use nori_core::menus::{download_entries, page_actions, DownloadAct, PageAction, PageKind, SongDownload};
@@ -27,6 +27,8 @@ use crate::session::{c_text, server, with_session};
 
 pub const PAGE_HOME: i32 = 1;
 pub const PAGE_ALBUMS: i32 = 2;
+/// [`PAGE_ALBUMS`]' `arg` for the favorite albums only, all on one page.
+const ALBUMS_FAVORITES: &str = "favorites";
 pub const PAGE_ARTISTS: i32 = 3;
 pub const PAGE_PLAYLISTS: i32 = 4;
 pub const PAGE_SONGS: i32 = 5;
@@ -362,30 +364,31 @@ fn song_letters(sort: &str) -> Option<&'static str> {
     }
 }
 
-/// A page of an album grid from `offset`: more follow while pages come full, except in random order,
-/// where a next page would repeat albums.
-fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, genre: Option<String>, offset: i32) {
-    let read = Read::AlbumList {
-        kind: sort,
-        size: ALBUM_PAGE,
-        offset,
-        genre,
+/// A page of an album grid from `offset`, or with `favorites` the starred albums whole in `sort`'s order:
+/// more follow while pages come full (`browse::next_album_page`).
+fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, favorites: bool, genre: Option<String>, offset: i32) {
+    let read = if favorites {
+        Read::StarredItems
+    } else {
+        Read::AlbumList { kind: sort, size: ALBUM_PAGE, offset, genre }
     };
-    pages(client, token, read, &|p| match p {
-        Page::Albums { v } => {
-            let sections = if sort == AlbumSort::ArtistRows {
-                artist_shelves(&v)
-            } else {
-                vec![section("albums", true, lettered(v.iter().map(album_json).collect(), album_letters(sort)))]
-            };
-            Some(json!({
-                "more": v.len() as i32 == ALBUM_PAGE && sort != AlbumSort::Random,
-                "next": offset + v.len() as i32, "from": offset,
-                "letters": album_letters(sort).is_some(),
-                "sections": sections,
-            }))
-        }
-        _ => None,
+    pages(client, token, read, &|p| {
+        let v = match p {
+            Page::Albums { v } => v,
+            Page::StarredPage { v } => favorites_in_order(v.albums, sort),
+            _ => return None,
+        };
+        let sections = if sort == AlbumSort::ArtistRows {
+            artist_shelves(&v)
+        } else {
+            vec![section("albums", true, lettered(v.iter().map(album_json).collect(), album_letters(sort)))]
+        };
+        Some(json!({
+            "more": next_album_page(sort, favorites, offset as u32, ALBUM_PAGE as u32, v.len() as u32).is_some(),
+            "next": offset + v.len() as i32, "from": offset,
+            "letters": album_letters(sort).is_some(),
+            "sections": sections,
+        }))
     });
 }
 
@@ -655,6 +658,7 @@ fn read(token: u64, kind: i32, arg: String) {
             token,
             &client,
             album_sort_saved(list_prefs()),
+            arg == ALBUMS_FAVORITES,
             None,
             arg.parse().unwrap_or(0),
         ),
@@ -678,7 +682,7 @@ fn read(token: u64, kind: i32, arg: String) {
         }),
         PAGE_GENRE => {
             let (genre, offset) = arg.split_once('\n').unwrap_or((arg.as_str(), "0"));
-            album_grid(token, &client, AlbumSort::ByGenre, Some(genre.into()), offset.parse().unwrap_or(0))
+            album_grid(token, &client, AlbumSort::ByGenre, false, Some(genre.into()), offset.parse().unwrap_or(0))
         }
         PAGE_STARRED => pages(&client, token, Read::StarredItems, &|p| match p {
             Page::StarredPage { v } => {

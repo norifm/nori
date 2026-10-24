@@ -793,7 +793,7 @@ private fun noteIcon(note: Note): androidx.compose.ui.graphics.vector.ImageVecto
     Note.NO_PLAYLISTS -> Iconoir.Playlist
     Note.NO_STATIONS -> Iconoir.AntennaSignal
     Note.NOTHING_DOWNLOADED, Note.NO_DOWNLOADS -> Iconoir.Download
-    Note.NO_FAVOURITE_SONGS -> Kanji.Seal
+    Note.NO_FAVOURITE_SONGS, Note.NO_FAVOURITE_ALBUMS -> Kanji.Seal
     Note.NOTHING_TO_MIX -> Iconoir.Sparks
     Note.NO_HISTORY -> Iconoir.ClockRotateRight
     Note.NOTHING_FOUND -> Iconoir.Search

@@ -11,8 +11,15 @@ use serde_json::{json, Value};
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Ask {
-    /// `sort` as the server calls it (`newest`, `alphabeticalByName`, ...).
-    Albums { sort: String, size: i32, offset: i32 },
+    /// `sort` as the server calls it (`newest`, `alphabeticalByName`, ...); with `favorites` the starred
+    /// albums only, all in one answer.
+    Albums {
+        sort: String,
+        size: i32,
+        offset: i32,
+        #[serde(default)]
+        favorites: bool,
+    },
     Album { id: String },
     Artists,
     Artist { id: String },
@@ -25,10 +32,15 @@ pub enum Ask {
     Search { query: String },
 }
 
+fn album_sort(name: &str) -> Result<AlbumSort, String> {
+    AlbumSort::of_name(name).ok_or(format!("no album order {name}"))
+}
+
 impl Ask {
     fn read(self) -> Result<Read, String> {
         Ok(match self {
-            Ask::Albums { sort, size, offset } => Read::AlbumList { kind: AlbumSort::of_name(&sort).ok_or(format!("no album order {sort}"))?, size, offset, genre: None },
+            Ask::Albums { favorites: true, .. } => Read::StarredItems,
+            Ask::Albums { sort, size, offset, favorites: false } => Read::AlbumList { kind: album_sort(&sort)?, size, offset, genre: None },
             Ask::Album { id } => Read::AlbumById { id },
             Ask::Artists => Read::ArtistIndex,
             Ask::Artist { id } => Read::ArtistById { id },
@@ -95,22 +107,26 @@ pub async fn change(client: &Client, change: &str) -> Result<(), String> {
 /// Reads what `ask` (JSON) names: the stored copy, then the server's if it differs; the last as JSON. An
 /// album list's answer says where its `next` page starts, or null.
 pub async fn read(client: &Client, ask: &str) -> Result<String, String> {
-    let read = serde_json::from_str::<Ask>(ask).map_err(|e| e.to_string())?.read()?;
-    let paged = match &read {
-        Read::AlbumList { kind, size, offset, .. } => Some((*kind, *offset as u32, *size as u32)),
+    let ask = serde_json::from_str::<Ask>(ask).map_err(|e| e.to_string())?;
+    let paged = match &ask {
+        Ask::Albums { sort, size, offset, favorites } => Some((album_sort(sort)?, *favorites, *offset as u32, *size as u32)),
         _ => None,
     };
     let mut last = None;
-    client.read_each(read, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
+    client.read_each(ask.read()?, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
     let core = client.core();
-    let Some(p) = last else { return Ok(Value::Null.to_string()) };
+    let p = match (last, paged) {
+        (None, _) => return Ok(Value::Null.to_string()),
+        (Some(Page::StarredPage { v }), Some((sort, true, ..))) => Page::Albums { v: nori_core::browse::favorites_in_order(v.albums, sort) },
+        (Some(p), _) => p,
+    };
     let got = match &p {
         Page::Albums { v } => v.len() as u32,
         _ => 0,
     };
     let mut v = page(core, p);
-    if let (Some((sort, offset, asked)), Value::Object(m)) = (paged, &mut v) {
-        m.insert("next".into(), json!(nori_core::browse::next_album_page(sort, offset, asked, got)));
+    if let (Some((sort, favorites, offset, asked)), Value::Object(m)) = (paged, &mut v) {
+        m.insert("next".into(), json!(nori_core::browse::next_album_page(sort, favorites, offset, asked, got)));
     }
     Ok(v.to_string())
 }

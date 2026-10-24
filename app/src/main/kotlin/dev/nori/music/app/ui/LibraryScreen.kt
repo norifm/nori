@@ -61,12 +61,15 @@ import dev.nori.music.app.vm.StarredViewModel
 /** The gap between the library's stacked parts: the pills' own (the strip of sections, the places, the filter, the order). */
 private val LIST_GAP = 10.dp
 
-/** The album orders as pills, as the songs have theirs: one lit, a tap chooses another. */
+/** The album orders as pills, as the songs have theirs: Favorites lit or not over them, one order lit, a tap chooses another. */
 @Composable
 private fun AlbumSortPills(vm: AlbumsViewModel) {
     val sort by vm.sort.collectAsStateWithLifecycle()
+    val favorites by vm.favorites.collectAsStateWithLifecycle()
+    val stars = LocalRules.current.stars
     val sorts = remember { dev.nori.music.ffi.library.albumSorts().map { it to say.albumSort(it) } }
     LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (stars) item(key = "favorites") { Chip(say.starredFavourites, favorites) { vm.setFavorites(!favorites) } }
         items(sorts, key = { it.first.name }) { (v, label) -> Chip(label, sort == v) { vm.setSort(v) } }
     }
 }
@@ -200,11 +203,14 @@ private fun Albums(vm: AlbumsViewModel, places: @Composable () -> Unit = {}) {
     val albums by vm.albums.collectAsStateWithLifecycle()
     val sort by vm.sort.collectAsStateWithLifecycle()
     val none by vm.none.collectAsStateWithLifecycle()
+    val favorites by vm.favorites.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     Column {
         if (none) {
             places()
-            return@Column EmptyNote(Note.NO_ALBUMS)
+            // The pills stay, so the filter that emptied the grid can be turned off.
+            if (favorites) AlbumSortPills(vm)
+            return@Column EmptyNote(if (favorites) Note.NO_FAVOURITE_ALBUMS else Note.NO_ALBUMS)
         }
         val header: @Composable () -> Unit = { places(); AlbumSortPills(vm) }
         if (sort == dev.nori.music.ffi.library.AlbumSort.ARTIST_ROWS) {

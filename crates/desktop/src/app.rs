@@ -412,9 +412,10 @@ pub struct App {
     home_rows: Vec<nori_core::settings::HomeRow>,
     /// The saved profile the sign-in form edits; None while it adds one.
     editing: Option<SavedServer>,
-    /// The album list's pages asked for, to this offset, and its order.
+    /// The album list's pages asked for, to this offset, its order, and whether only the favorites.
     albums_asked: u32,
     album_sort: AlbumSort,
+    albums_favorites: bool,
     /// The player pill and the top pill: windows of their own, laid over the blurred page.
     player: Option<PlayerBar>,
     top: Option<TopBar>,
@@ -536,14 +537,14 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
 
 /// The album list once its page from `offset` came (`page`), and the page to ask for next: while pages
 /// come full and new, each once (`asked`: the pages asked for, to this offset).
-fn albums_paged(list: &mut Vec<nori_core::Album>, sort: AlbumSort, offset: u32, page: &[nori_core::Album], asked: &mut u32) -> Option<u32> {
+fn albums_paged(list: &mut Vec<nori_core::Album>, sort: AlbumSort, favorites: bool, offset: u32, page: &[nori_core::Album], asked: &mut u32) -> Option<u32> {
     list.truncate(offset as usize);
     if nori_core::browse::album_page_repeats(list, page) {
         return None;
     }
     list.extend_from_slice(page);
     // Every page is read at once here.
-    let next = nori_core::browse::next_album_page(sort, offset, nori_host::pages::ALBUM_PAGE, page.len() as u32).filter(|&n| *asked < n)?;
+    let next = nori_core::browse::next_album_page(sort, favorites, offset, nori_host::pages::ALBUM_PAGE, page.len() as u32).filter(|&n| *asked < n)?;
     *asked = next;
     Some(next)
 }
@@ -631,6 +632,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             editing: None,
             albums_asked: 0,
             album_sort: AlbumSort::ByName,
+            albums_favorites: false,
             backdrop: None,
             page_cover: None,
             now_cover: None,
@@ -959,6 +961,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_choose_artist, h, |a, id| a.choose_artist(id.to_string()));
     on!(ui.on_album_sort_chosen, h, |a, at| a.sort_albums(at as usize));
+    on!(ui.on_albums_favorites_toggled, h, |a| a.toggle_album_favorites());
     on!(ui.on_open_accounts, h, |a| {
         let accounts = crate::settings::tabs(&a.facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Servers);
         a.ui().set_settings_tab(accounts.unwrap_or(0) as i32);
@@ -1114,6 +1117,7 @@ impl App {
                 ui.set_downloads(s.rules().downloads);
                 // Albums and artists carry the account's seals, as on Android.
                 ui.set_page_can_star(s.rules().account && s.rules().stars);
+                ui.set_favorites_offered(s.rules().stars);
                 self.session = Some(s);
                 // The last profile's song leaves the screen; the new one's, if it has one, comes with follow.
                 self.song_shown(None);
@@ -1198,7 +1202,7 @@ impl App {
                 self.albums_asked = 0;
                 self.album_sort = nori_core::browse::album_sort_saved(crate::session::app().settings.current().unwrap_or_default().list_prefs);
                 self.show_album_sorts();
-                Some(Req::Page(PageAsk::Albums { sort: self.album_sort, offset: 0 }))
+                Some(Req::Page(PageAsk::Albums { sort: self.album_sort, offset: 0, favorites: self.albums_favorites }))
             }
             ARTISTS => Some(Req::Page(PageAsk::Artists)),
             PLAYLISTS => Some(Req::Page(PageAsk::Playlists)),
@@ -1469,12 +1473,12 @@ impl App {
             }
             Data::Page(PageGot::Albums(v)) => {
                 // Pages of the list, each asked for once the one before came full.
-                let Req::Page(PageAsk::Albums { sort, offset }) = req else { return };
-                if sort != self.album_sort {
+                let Req::Page(PageAsk::Albums { sort, offset, favorites }) = req else { return };
+                if (sort, favorites) != (self.album_sort, self.albums_favorites) {
                     return;
                 }
-                if let Some(next) = albums_paged(&mut self.lists.albums, sort, offset, &v, &mut self.albums_asked) {
-                    self.on_session(|s| s.load(Req::Page(PageAsk::Albums { sort, offset: next })));
+                if let Some(next) = albums_paged(&mut self.lists.albums, sort, favorites, offset, &v, &mut self.albums_asked) {
+                    self.on_session(|s| s.load(Req::Page(PageAsk::Albums { sort, offset: next, favorites })));
                 }
                 self.narrowed();
             }
@@ -1785,9 +1789,10 @@ impl App {
         self.show_page_songs();
     }
 
-    /// The Albums page's sort menu, the order in use marked.
+    /// The Albums page's sort menu, the order in use marked, and its Favorites chip.
     fn show_album_sorts(&self) {
         let ui = self.ui();
+        ui.set_albums_favorites(self.albums_favorites);
         let sorts = nori_core::browse::album_sorts();
         ui.set_album_sorts(ModelRc::new(VecModel::from(sorts.iter().map(|&s| SharedString::from(words::album_sort(s))).collect::<Vec<_>>())));
         ui.set_album_sort(sorts.iter().position(|&s| s == self.album_sort).unwrap_or(0) as i32);
@@ -1806,11 +1811,22 @@ impl App {
         prefs.list_prefs.insert(kept.key, kept.value);
         settings.put(prefs);
         self.album_sort = sort;
+        self.reload_albums();
+    }
+
+    /// Lists only the favorite albums, or every album again, in the same order.
+    fn toggle_album_favorites(&mut self) {
+        self.albums_favorites = !self.albums_favorites;
+        self.reload_albums();
+    }
+
+    /// Reads the album list again from the top, in its order and filter.
+    fn reload_albums(&mut self) {
         self.albums_asked = 0;
         self.lists.albums.clear();
         self.narrowed();
         self.show_album_sorts();
-        self.load(Req::Page(PageAsk::Albums { sort, offset: 0 }));
+        self.load(Req::Page(PageAsk::Albums { sort: self.album_sort, offset: 0, favorites: self.albums_favorites }));
     }
 
     /// Shows an artist beside the Artists list.
@@ -2292,6 +2308,7 @@ impl App {
         let ui = self.ui();
         ui.set_downloads(rules.downloads);
         ui.set_page_can_star(rules.account && rules.stars);
+        ui.set_favorites_offered(rules.stars);
         match state {
             nori_core::providers::AccountState::Ended => self.offer_sign_in(),
             nori_core::providers::AccountState::SignedIn => ui.set_signin_open(false),
@@ -3566,17 +3583,19 @@ mod tests {
         let page = |from: usize, n: usize| (from..from + n).map(|i| nori_core::Album { id: i.to_string(), ..Default::default() }).collect::<Vec<_>>();
         let full = nori_host::pages::ALBUM_PAGE as usize;
         let (mut list, mut asked) = (Vec::new(), 0);
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, 0, &page(0, full), &mut asked), Some(full as u32));
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, 0, &page(0, full), &mut asked), None, "the server's copy of the first page");
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, full as u32, &page(full, 100), &mut asked), None, "the last page");
+        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, false, 0, &page(0, full), &mut asked), Some(full as u32));
+        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, false, 0, &page(0, full), &mut asked), None, "the server's copy of the first page");
+        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, false, full as u32, &page(full, 100), &mut asked), None, "the last page");
         assert_eq!(list.len(), full + 100);
         assert_eq!(list.last().map(|c| c.id.to_string()), Some((full + 99).to_string()));
         let (mut list, mut asked) = (Vec::new(), 0);
-        albums_paged(&mut list, AlbumSort::ByName, 0, &page(0, full), &mut asked);
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, full as u32, &page(0, full), &mut asked), None, "a server that ignores the offset");
+        albums_paged(&mut list, AlbumSort::ByName, false, 0, &page(0, full), &mut asked);
+        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, false, full as u32, &page(0, full), &mut asked), None, "a server that ignores the offset");
         assert_eq!(list.len(), full);
         let (mut list, mut asked) = (Vec::new(), 0);
-        assert_eq!(albums_paged(&mut list, AlbumSort::Random, 0, &page(0, full), &mut asked), None, "a random order is one page");
+        assert_eq!(albums_paged(&mut list, AlbumSort::Random, false, 0, &page(0, full), &mut asked), None, "a random order is one page");
+        let (mut list, mut asked) = (Vec::new(), 0);
+        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, true, 0, &page(0, full), &mut asked), None, "the favorites come whole");
     }
 
     #[test]

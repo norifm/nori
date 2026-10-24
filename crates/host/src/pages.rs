@@ -1,7 +1,7 @@
 //! The library's pages as the clients read them, each on a thread of its own: the stored copy first,
 //! then the server's when it differs. Home's shelves come in the core's order (`browse::home_shelves`).
 
-use nori_core::browse::{home_pinned, home_row_page, home_rows_shown, home_shelves, AlbumSort, HomeShelf};
+use nori_core::browse::{favorites_in_order, home_pinned, home_row_page, home_rows_shown, home_shelves, AlbumSort, HomeShelf};
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::Client;
 use nori_core::mixes::board::{MixLookup, MixSheet, MixTile};
@@ -14,8 +14,9 @@ use crate::session::{read_pages, Handle};
 /// A page a client reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PageAsk {
-    /// The albums in `sort`'s order, a page from `offset` (more follow while pages come full).
-    Albums { sort: AlbumSort, offset: u32 },
+    /// The albums in `sort`'s order, a page from `offset` (more follow while pages come full); with
+    /// `favorites`, the starred ones only, all on one page (`browse::next_album_page`).
+    Albums { sort: AlbumSort, offset: u32, favorites: bool },
     Artists,
     Playlists,
     /// What the account has starred.
@@ -102,7 +103,10 @@ impl Handle {
             }
         };
         match ask {
-            PageAsk::Albums { sort, offset } => {
+            PageAsk::Albums { sort, favorites: true, .. } => {
+                pages(Read::StarredItems, &|p| if let Page::StarredPage { v } = p { Some(PageGot::Albums(favorites_in_order(v.albums, sort))) } else { None });
+            }
+            PageAsk::Albums { sort, offset, favorites: false } => {
                 let read = Read::AlbumList { kind: sort, size: ALBUM_PAGE as i32, offset: offset as i32, genre: None };
                 pages(read, &|p| if let Page::Albums { v } = p { Some(PageGot::Albums(v)) } else { None });
             }

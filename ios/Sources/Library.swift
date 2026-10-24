@@ -39,7 +39,7 @@ final class LibraryPage: UIViewController {
         let (name, _, kind) = chips[i]
         UserDefaults.standard.set(Int(kind), forKey: LibraryPage.kept)
         let page = PageController(kind: kind, title: name)
-        page.top = { [unowned self] in self.head(chosen: i, kind: kind) }
+        page.top = { [unowned self, unowned page] in self.head(chosen: i, page: page) }
         addChild(page)
         page.view.frame = view.bounds
         page.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -48,14 +48,21 @@ final class LibraryPage: UIViewController {
         shown = page
     }
 
-    /// The strip of chips, the places and, for a list with orders, its pills.
-    private func head(chosen: Int, kind: Int32) -> UIView {
+    /// The strip of chips, the places and, for a list with orders, its pills: the albums' after a
+    /// Favorites chip where the profile has favorites.
+    private func head(chosen: Int, page: PageController) -> UIView {
+        let kind = page.kind
         let strip = ChipStrip(spacing: 6)
         strip.set(chips.map { $0.0 }, chosen: chosen)
         strip.picked = { [weak self] i in self?.show(i) }
         var parts: [UIView] = [strip]
         if let places = places(kind: kind) { parts.append(places) }
-        if let pills = SortPills(kind: kind, changed: { [weak self] in self?.shown?.reload() }).made { parts.append(pills) }
+        let favorites = kind == NORI_PAGE_ALBUMS && Core.shared.rules.stars ? page.arg == NORI_ALBUMS_FAVORITES : nil
+        let filtered = { [weak page] (on: Bool) in
+            page?.arg = on ? NORI_ALBUMS_FAVORITES : ""
+            page?.reload()
+        }
+        if let pills = SortPills(kind: kind, favorites: favorites, filtered: filtered, changed: { [weak self] in self?.shown?.reload() }).made { parts.append(pills) }
         let column = UIStackView(arrangedSubviews: parts)
         column.axis = .vertical
         column.spacing = 10
@@ -108,17 +115,19 @@ final class LibraryPage: UIViewController {
 }
 
 /// A long list's orders as pills (`nori_ios_sorts`: the core's, in its order): the one it is in lit, a tap
-/// chooses another and the list reads again.
+/// chooses another and the list reads again. With `favorites`, a Favorites chip before them, on or off,
+/// that `filtered` follows.
 struct SortPills {
     let made: ChipStrip?
 
-    init(kind: Int32, changed: @escaping () -> Void) {
+    init(kind: Int32, favorites: Bool? = nil, filtered: @escaping (Bool) -> Void = { _ in }, changed: @escaping () -> Void) {
         guard let d = takenJSON(nori_ios_sorts(kind)) as? [String: Any], let all = d["all"] as? [String] else {
             made = nil
             return
         }
         let strip = ChipStrip()
-        strip.set(all.map(Say.sort), chosen: all.firstIndex { $0 == d["now"] as? String } ?? 0)
+        strip.set(all.map(Say.sort), chosen: all.firstIndex { $0 == d["now"] as? String } ?? 0, filter: favorites.map { (Say.favorites, $0) })
+        strip.toggled = filtered
         strip.picked = { i in
             all[i].withCString { nori_ios_sort(kind, $0) }
             changed()

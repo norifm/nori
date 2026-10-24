@@ -138,7 +138,7 @@ void nori_ios_remote_pick(const char *id);
 #define NORI_NOTE_CURVE_FAILED 16
 
 /// Pages for `nori_ios_read`. `arg`: the id for album/artist/playlist/mix, the name for a genre, the
-/// query for search, the offset for songs; empty otherwise.
+/// query for search, the offset for songs and albums (or NORI_ALBUMS_FAVORITES); empty otherwise.
 #define NORI_PAGE_HOME 1
 #define NORI_PAGE_ALBUMS 2
 #define NORI_PAGE_ARTISTS 3
@@ -159,6 +159,8 @@ void nori_ios_remote_pick(const char *id);
 #define NORI_PAGE_DOWNLOADED_ALBUM 18
 /// A Home row in full: `arg` its shelf's key, then "\n" and an offset for a page past the first.
 #define NORI_PAGE_HOME_ROW 19
+/// NORI_PAGE_ALBUMS' `arg` for the favorite albums only, in the order chosen, all on one page.
+#define NORI_ALBUMS_FAVORITES "favorites"
 
 /// A page answer: `json` is valid for the call only. Comes on a library thread, the stored copy first.
 typedef void (*NoriPageFn)(uint64_t token, const char *json);

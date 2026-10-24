@@ -106,7 +106,8 @@ impl Msg {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Req {
     Home,
-    Albums { sort: nori_core::browse::AlbumSort, offset: u32 },
+    /// The albums in a `browse::album_sorts` order, `favorites` only the starred.
+    Albums { sort: nori_core::browse::AlbumSort, favorites: bool, offset: u32 },
     Artists,
     Playlists,
     /// The songs in a `browse::song_sorts` order, `starred` only the favorites.
@@ -243,7 +244,7 @@ impl Session {
             let _ = tx.send(Msg::From(id, Box::new(Msg::Data(asked.clone(), r))));
         };
         let ask = match req.clone() {
-            Req::Albums { sort, offset } => Some(PageAsk::Albums { sort, offset }),
+            Req::Albums { sort, favorites, offset } => Some(PageAsk::Albums { sort, offset, favorites }),
             Req::Artists => Some(PageAsk::Artists),
             Req::Playlists => Some(PageAsk::Playlists),
             Req::Album(id) => Some(PageAsk::Album(id)),

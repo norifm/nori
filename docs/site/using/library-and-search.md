@@ -11,7 +11,7 @@ Applies to nori 0.6. Every client browses and searches the same way; the gesture
 
 The library lists albums, artists, songs, playlists, genres, favorites, years and decades, folders as
 the server keeps them, internet radio and downloads. Album lists sort by name, artist, year, date added,
-last played, most played, starred or at random. On Android, Library sections are chips, with Favorites, Downloads and History in one grouped card, and
+most played or at random; Favorites narrows albums or songs to your favorites, in whichever order. On Android, Library sections are chips, with Favorites, Downloads and History in one grouped card, and
 **Albums by artist** puts each artist's covers in one shelf under their name. An artist's page groups albums, EPs, singles, live
 albums and compilations, with top songs and similar artists. Each song's info sheet shows its file, codec,
 sample rate, bit depth and ReplayGain.

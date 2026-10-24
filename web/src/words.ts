@@ -53,7 +53,6 @@ export const W = {
   librarySections: { Albums: "Albums", Artists: "Artists", Songs: "Songs", Playlists: "Playlists", Genres: "Genres", Favourites: "Favorites" } as Record<string, string>,
   /** The album grid's orders, by the server's names (`album_sorts`). */
   albumSorts: {
-    starred: "Favorites",
     alphabeticalByName: "Title",
     artistRows: "Artist",
     byYear: "Year",
@@ -150,6 +149,7 @@ export const W = {
   noAlbums: "No albums yet",
   noPlaylists: "No playlists yet",
   noFavoriteSongs: "No favorite songs yet. Tap the seal on a song and it will be here.",
+  noFavoriteAlbums: "No favorite albums yet. Tap the seal on an album and it will be here.",
   loading: "Loading",
   failed: (why: string) => `Something went wrong: ${why}`,
   songCount: (n: number) => plural(n, "song", "songs"),

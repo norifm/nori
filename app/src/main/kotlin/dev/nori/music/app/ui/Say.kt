@@ -944,6 +944,7 @@ enum class Note(val id: Int) {
     NO_DOWNLOADS_HELP(R.string.note_no_downloads_help),
     DOWNLOAD_FAILED(R.string.note_download_failed),
     NO_FAVOURITE_SONGS(R.string.note_no_favourite_songs),
+    NO_FAVOURITE_ALBUMS(R.string.note_no_favourite_albums),
     NOTHING_TO_MIX(R.string.note_nothing_to_mix),
     SMART_HELP(R.string.note_smart_help),
     NO_HISTORY(R.string.note_no_history),

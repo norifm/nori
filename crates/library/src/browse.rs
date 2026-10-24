@@ -177,9 +177,9 @@ pub fn albums_exhausted(got: u32) -> bool {
 }
 
 /// Where the album list's next page starts, after a page from `offset` asked `asked` albums long brought
-/// `got`: none once a page comes short, and a random order is one page.
-pub fn next_album_page(sort: AlbumSort, offset: u32, asked: u32, got: u32) -> Option<u32> {
-    (got >= asked && sort != AlbumSort::Random).then_some(offset + got)
+/// `got`: none once a page comes short, and a random order or the favorites (read whole) are one page.
+pub fn next_album_page(sort: AlbumSort, favorites: bool, offset: u32, asked: u32, got: u32) -> Option<u32> {
+    (got >= asked && sort != AlbumSort::Random && !favorites).then_some(offset + got)
 }
 
 /// Whether `page`, read after `listed`, starts with an album already listed: the server ignored the
@@ -244,12 +244,12 @@ impl AlbumSort {
 }
 
 /// The album grid's orders offered, in their order; the client names each. Those that mean the same on the
-/// songs list (favorites, title, artist, year, added, most played) come in its order. Artist is
-/// [`AlbumSort::ArtistRows`]: a plain A–Z by artist is no longer offered.
+/// songs list (title, artist, year, added, most played) come in its order. Artist is
+/// [`AlbumSort::ArtistRows`]: a plain A–Z by artist is no longer offered. Favorites are a filter over
+/// any of these, as on the songs list.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn album_sorts() -> Vec<AlbumSort> {
     vec![
-        AlbumSort::Starred,
         AlbumSort::ByName,
         AlbumSort::ArtistRows,
         AlbumSort::ByYear,
@@ -271,12 +271,13 @@ const ALBUMS_SORT_KEY: &str = "albums.sort";
 const SONGS_SORT_KEY: &str = "songs.sort";
 
 /// The album grid's order as it was left (A–Z the first time), kept by [`AlbumSort::name`]. A plain A–Z
-/// by artist, no longer offered, comes back as [`AlbumSort::ArtistRows`].
+/// by artist comes back as [`AlbumSort::ArtistRows`]; any other order no longer offered (favorites) as A–Z.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn album_sort_saved(prefs: std::collections::HashMap<String, String>) -> AlbumSort {
     match prefs.get(ALBUMS_SORT_KEY).and_then(|n| AlbumSort::of_name(n)) {
         Some(AlbumSort::ByArtist) => AlbumSort::ArtistRows,
-        kept => kept.unwrap_or(AlbumSort::ByName),
+        Some(kept) if album_sorts().contains(&kept) => kept,
+        _ => AlbumSort::ByName,
     }
 }
 
@@ -554,8 +555,11 @@ mod tests {
 
     #[test]
     fn album_pages_go_on_while_full() {
-        let next = |sort, got| next_album_page(sort, 1000, 500, got);
-        assert_eq!([next(AlbumSort::Newest, 500), next(AlbumSort::Newest, 100), next(AlbumSort::Newest, 0), next(AlbumSort::Random, 500)], [Some(1500), None, None, None]);
+        let next = |sort, favorites, got| next_album_page(sort, favorites, 1000, 500, got);
+        assert_eq!(
+            [next(AlbumSort::Newest, false, 500), next(AlbumSort::Newest, false, 100), next(AlbumSort::Newest, false, 0), next(AlbumSort::Random, false, 500), next(AlbumSort::ByName, true, 500)],
+            [Some(1500), None, None, None, None]
+        );
     }
 
     #[test]
@@ -694,6 +698,8 @@ mod tests {
         assert_eq!(album_sort_saved(HashMap::from([(rows.key, rows.value)])), AlbumSort::ArtistRows, "kept apart from ByArtist");
         let plain = album_sort_kept(AlbumSort::ByArtist);
         assert_eq!(album_sort_saved(HashMap::from([(plain.key, plain.value)])), AlbumSort::ArtistRows, "a plain A-Z by artist is shown as shelves");
+        let favorites = album_sort_kept(AlbumSort::Starred);
+        assert_eq!(album_sort_saved(HashMap::from([(favorites.key, favorites.value)])), AlbumSort::ByName, "favorites are a filter now");
         assert_eq!(AlbumSort::ArtistRows.api(), "alphabeticalByArtist");
         assert_eq!(song_sort_saved(HashMap::new()), "TITLE");
         assert_eq!(song_sort_saved(HashMap::from([("songs.sort".to_string(), "PLAYS".to_string())])), "PLAYS");

@@ -324,6 +324,8 @@ pub const OFFLINE: &str = "offline";
 pub const UNREACHABLE: &str = "unreachable";
 
 pub const SORT_BY: &str = "Sort by";
+/// Over a list showing only the favorites.
+pub const FAVORITES_ONLY: &str = "Favorites only";
 pub const FOR_YOU: &str = "For you";
 pub const SAVE_AS_PLAYLIST: &str = "Save as playlist";
 pub const NEW_PLAYLIST: &str = "New playlist";
@@ -454,19 +456,16 @@ pub fn album_sort(sort: nori_core::browse::AlbumSort) -> &'static str {
     }
 }
 
-/// One of the songs' orders: the favorites, or one of `browse::song_sorts` by its name.
-pub fn song_order(order: &crate::app::SongOrder) -> &'static str {
-    match order {
-        crate::app::SongOrder::Favorites => "Favorites",
-        crate::app::SongOrder::Sorted(name) => match name.as_str() {
-            "ARTIST" => "Artist",
-            "ALBUM" => "Album",
-            "YEAR" => "Year",
-            "ADDED" => "Added",
-            "PLAYS" => "Most played",
-            "LONGEST" => "Longest",
-            _ => "Title",
-        },
+/// One of `browse::song_sorts`, by its name.
+pub fn song_sort(name: &str) -> &'static str {
+    match name {
+        "ARTIST" => "Artist",
+        "ALBUM" => "Album",
+        "YEAR" => "Year",
+        "ADDED" => "Added",
+        "PLAYS" => "Most played",
+        "LONGEST" => "Longest",
+        _ => "Title",
     }
 }
 

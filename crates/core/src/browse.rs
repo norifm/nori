@@ -119,6 +119,26 @@ impl Client {
     }
 }
 
+/// The favorite albums, read whole (`Read::StarredItems`), in `sort`'s order as the server orders the
+/// album grid: A–Z by name, by artist (each artist's together, by year), newest year first, last added
+/// first, most played first, or shuffled.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn favorites_in_order(mut albums: Vec<crate::Album>, sort: AlbumSort) -> Vec<crate::Album> {
+    use std::cmp::Reverse;
+    let name = |a: &crate::Album| a.name.to_lowercase();
+    match sort {
+        AlbumSort::ByName => albums.sort_by_cached_key(|a| (name(a), a.artist.to_lowercase())),
+        AlbumSort::ByArtist | AlbumSort::ArtistRows => albums.sort_by_cached_key(|a| (a.artist.to_lowercase(), a.artist_id.clone(), a.year, name(a))),
+        AlbumSort::ByYear => albums.sort_by_cached_key(|a| (Reverse(a.year), name(a))),
+        AlbumSort::Newest => albums.sort_by_cached_key(|a| (Reverse(a.created.clone()), name(a))),
+        AlbumSort::Frequent => albums.sort_by_cached_key(|a| (Reverse(a.play_count), name(a))),
+        AlbumSort::Random => return crate::autofill::shuffled(albums),
+        // Not offered on the grid (`album_sorts`): as read.
+        AlbumSort::Recent | AlbumSort::ByGenre | AlbumSort::Starred => {}
+    }
+    albums
+}
+
 /// [`Core::browse_songs`]' query: offset ?1, limit ?2, and with `years` the range ?3..=?4.
 pub(crate) fn songs_sql(sort: &str, descending: bool, starred_only: bool, years: bool) -> String {
     let key = match sort {
@@ -211,4 +231,30 @@ pub(crate) mod tests {
         assert_eq!(second.next, None);
     }
 
+    #[test]
+    fn favorites_take_any_order() {
+        let album = |id: &str, name: &str, artist: &str, year: u32, created: &str, plays: u32| crate::Album {
+            id: id.into(), name: name.into(), artist: artist.into(), artist_id: Some(artist.to_lowercase()), year,
+            created: (!created.is_empty()).then(|| created.into()), play_count: plays, starred: true, ..Default::default()
+        };
+        let read = vec![
+            album("a", "beta", "Zed", 2001, "2024-03-01T00:00:00Z", 5),
+            album("b", "Alpha", "amy", 1999, "", 9),
+            album("c", "Gamma", "Zed", 2010, "2025-01-01T00:00:00Z", 3),
+            album("d", "Delta", "Bo", 0, "2023-07-01T00:00:00Z", 1),
+        ];
+        let order = |sort| favorites_in_order(read.clone(), sort).into_iter().map(|a| a.id).collect::<String>();
+        for (sort, want) in [
+            (AlbumSort::ByName, "badc"),
+            (AlbumSort::ArtistRows, "bdac"),
+            (AlbumSort::ByYear, "cabd"),
+            (AlbumSort::Newest, "cadb"),
+            (AlbumSort::Frequent, "bacd"),
+        ] {
+            assert_eq!(order(sort), want, "{sort:?}");
+        }
+        let mut shuffled = order(AlbumSort::Random).into_bytes();
+        shuffled.sort();
+        assert_eq!(shuffled, b"abcd", "a shuffle keeps every favorite once");
+    }
 }
