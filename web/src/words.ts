@@ -189,7 +189,6 @@ export const W = {
     autoMixBetterBeats: "Better beat detection",
     crossfadeKeepAlbums: "Keep albums gapless",
     fadeMs: "Fade on play and pause",
-    pitch: "Pitch",
     skipSilence: "Skip silence",
     skipExplicit: "Skip explicit songs",
     autoFill: "Keep playing when the queue ends",
@@ -227,10 +226,6 @@ export const W = {
   choice: (name: string, v: string) => {
     if (name === "crossfadeSec") return v === "0" ? "Off" : `${v} s`;
     if (name === "fadeMs") return v === "0" ? "Off" : Number(v) % 1000 === 0 ? `${Number(v) / 1000} s` : `${v} ms`;
-    if (name === "pitch") {
-      const pct = Math.round((Number(v) - 1) * 100);
-      return pct === 0 ? "Normal" : pct < 0 ? `−${-pct} %` : `+${pct} %`;
-    }
     return W.choices[name]?.[v.toUpperCase()] ?? v;
   },
   level: (name: string, v: number) => (name === "volumeBoostDb" ? (v === 0 ? "Off" : `+${v.toFixed(1)} dB`) : String(v)),

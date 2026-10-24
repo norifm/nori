@@ -24,7 +24,6 @@ import dev.nori.music.ffi.settings.SettingSpec
 import dev.nori.music.app.ui.providerStrings
 import dev.nori.music.playback.DacState
 import dev.nori.music.ffi.settings.StoredPrefs
-import kotlin.math.roundToInt
 import dev.nori.music.settings.label
 import dev.nori.music.update.Updates
 import dev.nori.music.net.said
@@ -185,7 +184,6 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "autoMixBetterBeats" to (R.string.settings_better_beats to R.string.settings_hint_better_beats),
     "crossfadeKeepAlbums" to (R.string.settings_keep_albums to R.string.settings_hint_keep_albums),
     "fadeMs" to (R.string.settings_fade to R.string.settings_hint_fade),
-    "pitch" to (R.string.settings_pitch to 0),
     "skipSilence" to (R.string.settings_skip_silence to R.string.settings_hint_skip_silence),
     "skipExplicit" to (R.string.settings_skip_explicit to R.string.settings_hint_skip_explicit),
     "autoFill" to (R.string.settings_auto_fill to R.string.settings_hint_auto_fill),
@@ -473,7 +471,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
     fun offOr(v: String, words: (String) -> String) = if (v == "0") str(R.string.settings_off) else words(v)
     fun seconds(v: String) = str(R.string.settings_seconds, v)
     fun millis(v: String) = str(R.string.settings_millis, v)
-    fun percent(v: String) = str(R.string.settings_percent, v)
 
     /** A setting value in words. */
     fun valueWords(name: String, v: String, options: List<String>): String {
@@ -481,14 +478,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         return when (name) {
             "crossfadeSec" -> offOr(v, ::seconds)
             "fadeMs" -> offOr(v) { if (it.toInt() % 1000 == 0) seconds((it.toInt() / 1000).toString()) else millis(it) }
-            "pitch" -> {
-                val pct = ((v.toFloatOrNull() ?: 1f) - 1f).times(100f).roundToInt()
-                when {
-                    pct == 0 -> str(R.string.settings_normal)
-                    pct < 0 -> percent("−${-pct}")
-                    else -> percent("+$pct")
-                }
-            }
             "lyricsSize" -> when (v) {
                 "0" -> str(R.string.settings_lyrics_size_small)
                 "1" -> str(R.string.settings_lyrics_size_medium)

@@ -376,14 +376,14 @@ fun plan(o: Options): List<Step> {
  */
 data class Knobs(
     val eq: Boolean, val headphone: dev.nori.music.ffi.settings.HeadphoneSound, val balance: Float, val mono: Boolean, val limiter: Boolean,
-    val pitch: Float, val skipSilence: Boolean, val offload: Boolean, val crossfadeSec: Int, val autoMix: Boolean,
+    val skipSilence: Boolean, val offload: Boolean, val crossfadeSec: Int, val autoMix: Boolean,
     val replayGain: GainMode, val scrobble: Boolean, val autoFill: Boolean, val skipExplicit: Boolean,
     val fadeMs: Int,
 )
 
 /** What the test starts from: the plain CPU path, nothing mixing, nothing reported, nothing added. */
 fun testKnobs(user: Knobs): Knobs = user.copy(
-    eq = false, headphone = dev.nori.music.ffi.settings.HeadphoneSound.OFF, balance = 0f, mono = false, limiter = false, pitch = 1f,
+    eq = false, headphone = dev.nori.music.ffi.settings.HeadphoneSound.OFF, balance = 0f, mono = false, limiter = false,
     skipSilence = false, offload = false, crossfadeSec = 0, autoMix = false, scrobble = false, autoFill = false,
     skipExplicit = false, fadeMs = 0,
 )
@@ -394,7 +394,7 @@ fun knobsDiffer(a: Knobs, b: Knobs): List<String> {
     fun d(name: String, x: Any, y: Any) { if (x != y) out += name }
     d("eqEnabled", a.eq, b.eq); d("headphoneSound", a.headphone, b.headphone)
     d("balance", a.balance, b.balance); d("mono", a.mono, b.mono); d("limiter", a.limiter, b.limiter)
-    d("pitch", a.pitch, b.pitch); d("skipSilence", a.skipSilence, b.skipSilence); d("offload", a.offload, b.offload)
+    d("skipSilence", a.skipSilence, b.skipSilence); d("offload", a.offload, b.offload)
     d("crossfadeSec", a.crossfadeSec, b.crossfadeSec); d("autoMix", a.autoMix, b.autoMix); d("replayGain", a.replayGain, b.replayGain)
     d("scrobble", a.scrobble, b.scrobble); d("autoFill", a.autoFill, b.autoFill); d("skipExplicit", a.skipExplicit, b.skipExplicit)
     d("fadeMs", a.fadeMs, b.fadeMs)

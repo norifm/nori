@@ -17,7 +17,6 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
-import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.SimpleBasePlayer
 import androidx.media3.common.Timeline
@@ -290,8 +289,6 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
      * the bridge, and says whether the music goes on (it jumped somewhere to play) or stops here.
      */
     var onBridge: (() -> Boolean)? = null
-    /** The pitch the engine plays at, as media3 is told it. */
-    private var parameters = nori.settings.value.let { PlaybackParameters(1f, it.pitch) }
     /**
      * How the engine follows a jam's host (nori-engine's `Event::Following`): -1 while it does not; else
      * bit 0 the music plays there, bit 1 this phone's own pause holds it here. While it follows, wanting to
@@ -324,14 +321,8 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
 
     // ---- what the service asks of it directly ----
 
-    /**
-     * The settings changed: the engine takes them from the core. The pitch is said to media3 as well.
-     */
-    fun applySettings() {
-        RustPlayerJni.applySettings(h)
-        val p = nori.settings.value.let { PlaybackParameters(1f, it.pitch) }
-        if (p != parameters) { parameters = p; invalidateState() }
-    }
+    /** The settings changed: the engine takes them from the core. */
+    fun applySettings() = RustPlayerJni.applySettings(h)
     fun gainChanged() = RustPlayerJni.gainChanged(h)
     /** A sound page is tuned: the engine trades its deep buffer for a shallow one until it stops. */
     fun setShallow(on: Boolean) = RustPlayerJni.setShallow(h, on)
@@ -447,7 +438,6 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
             .setPlaylist(timeline(), Tracks.EMPTY, announcement())
             .setCurrentMediaItemIndex(if (items.isEmpty()) C.INDEX_UNSET else current.coerceIn(0, items.size - 1))
             .setContentPositionMs(position(loops))
-            .setPlaybackParameters(parameters)
         error?.let { b.setPlayerError(it) }
         if (moved) {
             moved = false

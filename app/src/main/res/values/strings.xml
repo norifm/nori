@@ -35,10 +35,8 @@
     <!-- How options read. -->
     <string name="settings_off">Off</string>
     <string name="settings_on">On</string>
-    <string name="settings_normal">Normal</string>
     <string name="settings_seconds">%1$s s</string>
     <string name="settings_millis">%1$s ms</string>
-    <string name="settings_percent">%1$s %%</string>
     <string name="settings_db">%1$s dB</string>
     <string name="settings_kbps">%1$d kbps</string>
     <string name="settings_megabytes">%1$d MB</string>
@@ -70,7 +68,6 @@
     <string name="settings_measure_again">Measure again</string>
     <string name="settings_fade">Fade on play and pause</string>
     <string name="settings_keep_albums">Keep albums gapless</string>
-    <string name="settings_pitch">Pitch</string>
     <string name="settings_skip_silence">Skip silence</string>
     <string name="settings_skip_silence_held">Off in bit-perfect mode.</string>
     <string name="settings_skip_explicit">Skip explicit songs</string>

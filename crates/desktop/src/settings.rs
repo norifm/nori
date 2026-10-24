@@ -296,7 +296,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         }
         "crossfadeKeepAlbums" => ("Keep albums gapless", ""),
         "fadeMs" => ("Fade on play and pause", ""),
-        "pitch" => ("Pitch", ""),
         "skipSilence" => ("Skip silence", if s.untouched { "Off in bit-perfect mode." } else { "" }),
         "skipExplicit" => ("Skip explicit songs", ""),
         "autoFill" => ("Keep playing when the queue ends", ""),
@@ -344,11 +343,6 @@ fn option_words(name: &str, v: &str) -> String {
             Ok(ms) if ms % 1000 == 0 => seconds(&(ms / 1000).to_string()),
             _ => format!("{v} ms"),
         },
-        ("pitch", "1") => "Normal".into(),
-        ("pitch", v) => {
-            let pct = ((v.parse::<f32>().unwrap_or(1.0) - 1.0) * 100.0).round() as i32;
-            if pct < 0 { format!("−{} %", -pct) } else { format!("+{pct} %") }
-        }
         ("season", "FOLLOW") => "Follow the seasons".into(),
         ("season", "SPRING") => "Spring".into(),
         ("season", "SUMMER") => "Summer".into(),

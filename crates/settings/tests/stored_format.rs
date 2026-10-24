@@ -46,7 +46,6 @@ fn sample() -> StoredPrefs {
         motion: Motion::Eink,
         playlist_notes: false,
         fade_ms: 300,
-        pitch: 1.05,
         offload: false,
         bit_perfect: true,
         hi_res: true,
