@@ -264,8 +264,11 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
     LifecycleResumeEffect(Unit) { resumed = true; onPauseOrDispose { resumed = false } }
     // Put away with the player is the same as paused: nothing to keep in step.
     val live = resumed && shown
-    // The active line fills in word by word only when the listener wants it and the lyrics carry per-word times.
-    val sweep = prefs.lyricsSweep && clock.sweeps
+    // An e-ink screen steps from line to line, a refresh each, and lights the line where the song is on a seek.
+    val eink = LocalEinkScreen.current
+    // The active line fills in word by word only when the listener wants it, the lyrics carry per-word
+    // times and the screen is not e-ink, where every frame is paid for.
+    val sweep = prefs.lyricsSweep && clock.sweeps && !eink
     // What is on screen, as the clock packed it: the line lit, its change and how far it is sung. Written
     // only when that changes; only the draw phase of the active line reads the sung part.
     var frame by remember(clock) { mutableLongStateOf(clock.shown()) }
@@ -294,8 +297,6 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
     val hasBacking = remember(lyrics) { lyrics.lines.any { it.backing.isNotEmpty() } }
     // Words rise and glow as they are sung unless movement is reduced; then there is only the fill.
     val lively = !reduceMotion()
-    // An e-ink screen lights the line where the song is on play, pause and a seek, and does not step on its own.
-    val eink = LocalEinkScreen.current
     val seeking = if (eink) vm.pendingSeek.collectAsStateWithLifecycle().value else null
     LaunchedEffect(playing, live, sweep, lively, clock, following, eink, seeking) {
         if (!following) return@LaunchedEffect
@@ -309,7 +310,7 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
         lastMs[0] = shownMs
         if (hasBacking) backingSung = clock.atBackingSung
         var drawnAt = 0L
-        while (playing && live && !eink && isActive) {
+        while (playing && live && isActive) {
             val wait = LyricsClock.wait(step)
             if (wait == 0) break
             // Display frames while the fill moves; asleep between words and after a line is sung, when

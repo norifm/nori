@@ -1100,7 +1100,7 @@ fun reduceMotion(): Boolean {
 
 /**
  * The E-ink motion, provided once by App: the player redraws only when something changes (a song, play
- * or pause, a seek, a touch), so its seek bar, lyrics and playing bars do not run on their own.
+ * or pause, a seek, a touch, the next line of lyrics), so its seek bar and playing bars do not run on their own.
  */
 val LocalEinkScreen = androidx.compose.runtime.compositionLocalOf { false }
 
