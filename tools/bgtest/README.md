@@ -5,6 +5,8 @@ crossfade…), started on the same playlist in the same order, and measured over
 screen off or its full-screen player on screen. Every step checks the screen it should reach (a screenshot
 when it does not), and the phone is put back as it was whatever way the run ends.
 
+The emulator comparison behind the published performance page is in `compare/`.
+
 ```sh
 tools/bgtest/run.py                      # in a terminal: one screen to pick the phone, runs, playlists…
 tools/bgtest/run.py --list-devices

@@ -396,7 +396,7 @@ pub enum ServerKind {
     /// A Subsonic server (Navidrome, octo-fiesta).
     #[default]
     Subsonic,
-    /// YouTube Music: no server, best effort (docs/research/youtube-music.md).
+    /// YouTube Music: no server, best effort.
     YouTubeMusic,
 }
 

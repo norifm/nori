@@ -89,8 +89,8 @@ are never edited there. Each page says which versions and clients it applies to.
 vs client, `building.md` builds and the perf build, `ipod-internals.md` the iPod plan). Raw measurements:
 `docs/performance/raw/`.
 
-Internal notes, never published: `docs/features.md` (planned features, owner's decisions),
-`docs/research/`, `docs/motion.md`, `docs/player-colour-band.md`.
+Internal notes, never published: `docs/features.md` (planned features) and `docs/research/plugins.md`
+(the plugin plan).
 
 ## Boundaries
 

@@ -481,8 +481,7 @@ native heaps before and after.
   to a phone 411 dp wide when Android's display size is set large (`Theme.uiScale`). A desktop window
   lays its player out and sizes its text otherwise.
 - **Animations, gestures and transitions.** Their feel is per platform: easing, springs, flick
-  thresholds, swipe math. Android's are in `app/ui/` (`PlayerScreen.kt`, `Chrome.kt`, `Components.kt`),
-  described in `docs/motion.md`.
+  thresholds, swipe math. Android's are in `app/ui/` (`PlayerScreen.kt`, `Chrome.kt`, `Components.kt`).
 - **A perf recorder** (optional): read the platform's counters (CPU time, every thread's name, CPU time and
   context switches, heap, memory, the battery's counter and gauge, frames, the network bytes, and the audio
   output as the platform describes it against what was asked of it) at each change of state, and hand them

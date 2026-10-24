@@ -27,7 +27,7 @@ val shipping = gradle.startParameter.taskNames.any { t -> listOf("release", "per
 val emulatorAbi = if (System.getProperty("os.arch") in listOf("aarch64", "arm64")) "arm64-v8a" else "x86_64"
 val rustTargets = (project.findProperty("rustTargets") as String? ?: if (shipping) "arm64-v8a" else emulatorAbi).split(",")
 val rustProfile = project.findProperty("rustProfile") as String? ?: if (shipping) "dist" else "release"
-// Cargo features of the core. `neural-beats` builds in tract for "Better beat detection" (docs/research/analysis.md)
+// Cargo features of the core. `neural-beats` builds in tract for "Better beat detection"
 // and the model's graph, without weights: with the switch on, the core fetches the weights from the model's
 // authors once (crates/core/src/beat_download.rs), and nothing of them is in the APK. The setting stays off by
 // default. Every build has it, release included (the owner's call, 2026-09-26): it makes the arm64 APK about 15.7 MB

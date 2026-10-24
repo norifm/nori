@@ -14,11 +14,11 @@ notification, audio focus, routing, JNI, the service and a force stop.
 
 | Tier | What | Time | Who runs it |
 | --- | --- | --- | --- |
-| `cargo test -j4 --workspace` | every Rust test | 56 s (build warm, M4 Pro; [measurements](building.md#development-build-and-test-times)) | every agent, every change |
+| `cargo test -j4 --workspace` | every Rust test | 56 s (build warm, M4 Pro) | every agent, every change |
 | `tools/smoke.sh` | launch, login, play, pause, seek, next, a queue edit, one AutoMix transition, the equalizer tuned in place, offload on and off, the notification's pause and play, a download played offline, no crash or ANR | 56 s on the hardware-rendered arm64 emulator against the local server; 34 checks passed | every agent that touched Android, on its emulator turn |
 | `tools/audio-e2e.sh --only …`, `tools/feature-e2e.sh --only …` | the sections of the area a change touched | a section is 10-90 s | the agent that touched it |
 | `tools/audio-e2e.sh` in full | every audio device check | 95 s on the arm64 emulator against the local server; 33 checks passed | the coordinator, once per batch, before a perf APK build |
-| `tools/feature-e2e.sh` in full | every feature device check | 216 s, 123 passing checks, hardware graphics and isolated local fixtures ([details](building.md#development-build-and-test-times)) | the coordinator, once per batch, before a perf APK build |
+| `tools/feature-e2e.sh` in full | every feature device check | 216 s, 123 passing checks, hardware graphics and isolated local fixtures | the coordinator, once per batch, before a perf APK build |
 
 `NORI_E2E_SERVER=local tools/library-sync-e2e.sh` checks incoming authenticated favorite changes on an Android emulator. It verifies that JNI callbacks update the visible seal and media session buttons; Rust tests cover the network protocol and favorite policy. The check temporarily roots the emulator to find its local listener and restores its previous adb state.
 
@@ -360,26 +360,10 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 
 ## cargo test
 
-`cargo test -j4 --workspace` passed 1,129 tests in 72–79 s once built on 2026-10-10;
-the first warm measurement reported 54.87 s in test binaries. The older 2026-09-26
-baseline was about 1,120 tests in 30 s; its per-binary figures below are historical,
-not the current baseline. See [build and test times](building.md#development-build-and-test-times) for current timings.
 `[profile.test.package.…]` in Cargo.toml
 builds nori-player, nori-engine and every dependency at opt-level 2 for `cargo test` only; debug
 assertions and overflow checks stay on. The workspace's own crates that are not listed there (nori-core,
 the android crate) are unoptimized, so their tests keep their data small.
-
-Test binaries run one after another and the tests inside a binary side by side, so a binary takes as long
-as its slowest test or its total over the cores, whichever is more. The binaries that matter:
-
-| Binary | Tests | Time | Its slowest |
-| --- | --- | --- | --- |
-| crates/engine `--test engine` (engine.rs, paths.rs, radio.rs, tempo.rs, stretch.rs, estimated.rs, hung.rs, silent.rs, transcode.rs) | 144 | 10 s | offload tests of a few ffmpeg songs, 4-7 s each, and next pressed fast through four queues, 6 s |
-| crates/player `--test pipeline` | 67 | 4.6 s | levels.rs, 3-4 s each: every kind of transition through two 60 s songs |
-| crates/player lib | 262 | 3.6 s | automix/tests.rs, the synthetic songs analyzed side by side |
-| crates/android lib | 40 | 8 s | track.rs's two tests of the real engine thread on the wall clock, the rapid skips over a phone-like track 6 s |
-| crates/engine `--test one_fetch`, `--test core` | 1 each | 1-2 s | one core and one queue per process, so a binary each |
-| everything else | about 600 | under 1.3 s a binary | |
 
 ### What the output should have played
 
@@ -507,26 +491,6 @@ announcing and finding, the render timestamps' host time, the volume view moving
 the lock screen while another device plays.
 Battery and CPU are `tools/ipod-bench.sh` (unplugged, SSH over Wi-Fi), never on the host.
 
-
-## Issue 36 validation
-
-On the M4 Pro arm64 emulator, the updated full feature suite passed 123 checks in
-216 s; the full audio suite passed 33 in 95 s. These are local-fixture runs, so
-lyrics and physical offload remain unavailable here. Remote uses a freshly built
-CLI peer; Jam covers browser links and direct app links, requests, guest/admin
-playback and recovery when the host disappears. Missing prerequisites fail rather
-than passing through skipped dependent checks. The prior 785 s feature run had
-47 failures and is not a healthy performance baseline.
-
-Parallel smoke and feature checks exercised both emulators with separate
-accounts and ports. The resource harness tests exclusion, nested calls,
-cancellation/release and selecting an available pool device. It does not replace
-the device checks. Clippy completed with existing warnings in unchanged Rust
-code. The complete Cargo workspace check, Android APK build and actual Bazel
-player unit/pipeline execution also passed.
-
-The Android Jam device checks also verify that Start a Jam expands the existing devices sheet.
-Compose navigation and the sheet animation are platform UI behavior and cannot be tested in Rust.
 
 ## Release tooling checks
 

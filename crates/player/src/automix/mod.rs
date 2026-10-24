@@ -1,4 +1,4 @@
-//! AutoMix: DJ-style transitions (see docs/research/automix.md).
+//! AutoMix: DJ-style transitions.
 //!
 //! - `analysis`, `tempo`, `structure`, `loudness`: one streamed pass over a track's PCM gives a `TrackAnalysis`.
 //! - `beats` (+ `neural`, `weights`, `checkpoint` with `neural-beats`): the optional Beat This! tracker, whose

@@ -18,7 +18,7 @@ border of 6 on each side) with both outputs as logits. Then, each checked:
   does, and the app only uses tract.
 - The weights are stored as fp16 with a Cast back to fp32 in front of each: half the size, and tract still computes
   in fp32 (logits move by about 0.01; no frame changes side of zero on the check below). Dynamic int8 does not load
-  in tract, and BitChord's int8 small export misbehaves; see docs/research/analysis.md.
+  in tract, and BitChord's int8 small export misbehaves.
 - Every weight then leaves the file (`split`): each initializer becomes external data at its place in the weights
   file (`location`, `offset`, `length`, as ONNX has it), plus how to make it from the checkpoint's state_dict, the
   "model." prefix stripped as beat_this does: `nori.op` is `copy`, `transpose` (a Linear's weight, as the exporter

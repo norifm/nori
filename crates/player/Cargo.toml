@@ -15,7 +15,7 @@ name = "nori_player"
 rust-codecs = ["dep:opus-rs", "symphonia/vorbis", "symphonia/alac"]
 # Synthetic tracks with a known tempo and structure, and the simulated player in `sim`, for tests.
 synth = []
-# The optional neural beat tracker, Beat This! through tract (automix/neural.rs, docs/research/analysis.md).
+# The optional neural beat tracker, Beat This! through tract (automix/neural.rs).
 # Without it nothing of tract is compiled or linked; nori-engine's feature of the same name turns it on.
 neural-beats = ["dep:tract-onnx", "dep:prost"]
 
