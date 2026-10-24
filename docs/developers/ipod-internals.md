@@ -182,8 +182,7 @@ Bluetooth). `MPNowPlayingInfoCenter` gets the title, artist, album, duration, el
 the queue and artwork at the player card's size, updated on each change, never on a timer.
 
 Everything the engine does plays here too: gapless, crossfade, AutoMix, the equalizer, limiter and
-headphone sound, volume leveling, speed and pitch, silence skipping, the sleep timer, the offline bridge
-and fetching ahead in one burst.
+headphone sound, volume leveling, the sleep timer, the offline bridge and fetching ahead in one burst.
 
 ## The interface
 

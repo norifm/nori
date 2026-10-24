@@ -304,7 +304,7 @@ The phases: `browse`, `play`, `lyrics`, `skip`, `instant`, `automix`, `crossfade
 names another browser): sign-in, browsing and search, playback without the AudioWorklet running dry,
 next and previous, lyrics and a tapped line heard from where it is sung, pause silent within 50 ms, a
 seek heard from its place within 100 ms, the seek bar, an AutoMix transition and a crossfade with no
-silence over 20 ms, an Apple Lossless song through the Rust decoders, speed and pitch.
+silence over 20 ms, an Apple Lossless song through the Rust decoders.
 `THROTTLED_URL=http://localhost:8082/`, with `python3 web/serve.py --port 8082 --kbps 400` running,
 also times a song's first sound at 400 kbit/s; `SLOW_URL` adds a Play during a slow load.
 
