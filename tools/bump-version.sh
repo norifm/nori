@@ -8,9 +8,8 @@
 #                          0.5.2 -> 50299): every beta installs over the last, the release over its betas
 #   Cargo.toml             the workspace version, and Cargo.lock's entries for the workspace crates
 #
-# Left alone on purpose: the README's version badge reads the latest GitHub release by itself, and the
-# benchmark tables (docs/performance/raw/) name the version the numbers were measured on, which only a
-# new measurement should change. Prints what changed; commits nothing.
+# Left alone on purpose: the README's version badge reads the latest GitHub release by itself. Prints what
+# changed; commits nothing.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 new="${1:-}"

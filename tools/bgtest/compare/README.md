@@ -2,7 +2,7 @@
 
 Plays the same playlist in each app on one emulator, screen off and media volume 0, and records CPU,
 context switches, low-wakeup intervals and PSS over two 90-second windows, then five cold launches.
-The published numbers are on `docs/site/performance.md`.
+The published numbers are on [norifm.com](https://norifm.com/docs/performance/).
 
 ## Builds
 
@@ -28,5 +28,5 @@ python3 tools/bgtest/compare/run.py musly
 python3 tools/bgtest/compare/run.py navic
 ```
 
-Results go to `build/website/emulator-music-replay/<app>/`; the published summary is `docs/performance/raw/android-emulator-music-2026-10-14/summary.json`, which the website reads. Check each session audit covers all five
+Results go to `build/website/emulator-music-replay/<app>/`; the published summary is `src/data/benchmarks/` in the website's repository. Check each session audit covers all five
 formats before comparing an app's two windows.

@@ -1,9 +1,4 @@
----
-title: Testing
-description: The test tiers, from cargo test to the device checks, and the local server they run against.
-sidebar:
-  order: 4
----
+# Testing
 
 Applies to the nori repository at 0.6.
 

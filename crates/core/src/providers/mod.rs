@@ -1,6 +1,6 @@
 //! Where a profile's music comes from, as a plug-in: a [`Provider`] answers the core's reads and writes,
 //! says where songs and covers are, the rules of its profiles, and how one is added and signed in. The
-//! rest of the core and every client go through it and never name one (docs/site/developers/providers.md).
+//! rest of the core and every client go through it and never name one (docs/developers/providers.md).
 //! Not octo-fiesta's provider items (`ext-` ids), which are a Subsonic server's.
 
 pub(crate) mod subsonic;

@@ -26,7 +26,7 @@ tools/feature-e2e.sh --only <sections>
 tools/perf-host.sh [rev]                            # engine wakes/CPU/allocs per minute vs another revision, on the host
 cargo run --release -p nori-cli                     # terminal client
 cargo run --release -p nori-desktop                 # desktop client
-tools/ipod.sh [build install run]                   # the iPod app's .ipa, built in Docker; installs and runs it if an iPod is on USB (docs/site/developers/ipod-internals.md)
+tools/ipod.sh [build install run]                   # the iPod app's .ipa, built in Docker; installs and runs it if an iPod is on USB (docs/developers/ipod-internals.md)
 tools/ipod-bench.sh nori|music                      # iPod battery/CPU for 30 min, unplugged, SSH over Wi-Fi (NORI_IPOD_HOST)
 ```
 
@@ -34,7 +34,7 @@ Before committing: `cargo test -j4 --workspace` and a build. If the change reach
 `tools/smoke.sh` plus the `--only` sections it touches. The full e2e suites run once per batch.
 Use `tools/check.sh` or `tools/with-resource.py build <command>` for heavy commands across agents.
 Device scripts lease their emulator; `tools/device-check.sh` allocates from `NORI_E2E_DEVICES`.
-Multiple emulators are supported, with isolated fixture accounts and ports. See `docs/site/developers/building.md`.
+Multiple emulators are supported, with isolated fixture accounts and ports. See docs/developers/building.md.
 
 The optional Bazel wrapper generates BUILD files from Cargo manifests and Cargo.lock and queues heavy
 work automatically. Use it for cached native checks across worktrees; Cargo remains useful for local
@@ -42,7 +42,7 @@ edits. Passing Bazel tests may be cached; execute them again with
 `tools/check.sh bazel test //crates/... --nocache_test_results`.
 Cargo handles doctests, and Cargo/Gradle handle mobile
 builds and releases. After manifest changes, run `python3 tools/bazel/generate.py`; generated BUILD
-files are not edited by hand. See the native Rust Bazel section in `docs/site/developers/building.md`.
+files are not edited by hand. See the native Rust Bazel section in docs/developers/building.md.
 
 ## Layout
 
@@ -72,7 +72,7 @@ via nori-core):
 | http, output-cpal, mpris | desktop: ureq transport, cpal output, Linux media controls |
 | cli, desktop | terminal (ratatui) and desktop (Slint) clients |
 | desktop-ui | the desktop client's Slint interface (`ui/app.slint`), its own crate so Rust edits don't recompile it |
-| ios | the iPod touch client's static library over nori-host behind a C ABI; the Swift app is `ios/`, the plan and work packages `docs/site/developers/ipod-internals.md` |
+| ios | the iPod touch client's static library over nori-host behind a C ABI; the Swift app is `ios/`, the plan and work packages docs/developers/ipod-internals.md |
 | host | the session every client shares (terminal, desktop and iPod today; Android is moving onto it): engine, queue saving, remote and jams, config, index sync, media controls |
 | uniffi-jni-runtime, uniffi-bindgen | upstream uniffi JNI runtime with changes marked `NORI`; Kotlin binding generator |
 | testdir | `TempDir` for tests; every test that writes files uses it |
@@ -82,15 +82,16 @@ object graph). `app/` is UI only: `vm/` ViewModels, `ui/` Compose.
 
 ## Docs
 
-Published docs live in `docs/site/` (Starlight Markdown: `title`, `description`, optional `sidebar.order`)
-and change with the code, in the same commit when they can. norifm.com copies them at build time; they
-are never edited there. Each page says which versions and clients it applies to. The developer pages:
-`docs/site/developers/` (`testing.md` test tiers and the local server, `writing-a-client.md` what is core
-vs client, `building.md` builds and the perf build, `ipod-internals.md` the iPod plan). Raw measurements:
-`docs/performance/raw/`.
+The developer docs live here, in `docs/developers/`, and change with the code in the same commit:
+`testing.md` test tiers and the local server, `writing-a-client.md` what is core vs client, `building.md`
+builds and the perf build, `ipod-internals.md` the iPod plan. The user docs live in the website's
+repository, [norifm/norifm.com](https://github.com/norifm/norifm.com), under `src/content/docs/docs/`,
+published at norifm.com/docs: when a change alters what users see, update the page there if it's
+wanted, as a commit in that repository.
 
-Internal notes, never published: `docs/features.md` (planned features) and `docs/research/plugins.md`
-(the plugin plan).
+Besides the developer docs, this repository keeps what development needs: decisions the owner asked to
+save, research and plans (`docs/features.md` planned features, `docs/research/plugins.md` the plugin
+plan). Never published.
 
 ## Boundaries
 
@@ -174,7 +175,7 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
 
 - Behaviour Rust owns is tested in Rust, on the virtual clock where time matters. A device check is only
   for Android glue (AudioTrack, MediaCodec, media3, session, focus, routing, JNI, the service); a new
-  one needs a line in docs/site/developers/testing.md saying why it can't be Rust.
+  one needs a line in docs/developers/testing.md saying why it can't be Rust.
 - A bug fix starts with a test that fails on the bug.
 - Every test can fail on a real bug. No asserting constants or defaults, no asserts an `if` can skip,
   no ignored tests that only print. Near-duplicates become one table test.
@@ -210,13 +211,13 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
 ## Builds and releases
 
 - `tools/apk.sh [x86_64] [--install]`: release APK into `build/`. `./gradlew :app:assemblePerf
-  -PrustTargets=arm64-v8a`: perf build ("nori dev"), see docs/site/developers/building.md.
+  -PrustTargets=arm64-v8a`: perf build ("nori dev"), see docs/developers/building.md.
 - `./gradlew :app:assemblePreview -PrustTargets=arm64-v8a`: a release build named "nori preview" (id
   `dev.nori.music.preview`) that installs beside the real app, for trying a change on a phone.
 - `tools/app.sh` drives a debug build over adb (`open`, `play`, `do`, `set`, `state`).
 - `tools/release.sh` is the whole release, step by step. The changelog comes from `feat`/`fix`/`perf`
-  commit subjects, so write those for users. Signing key `nori-release.jks` + `keystore.properties`
-  (gitignored); losing it breaks updates.
+  commit subjects, so write those for users. Signing key `nori-release.jks` +
+  `keystore.properties` (gitignored); losing it breaks updates.
 
 ## Commits
 

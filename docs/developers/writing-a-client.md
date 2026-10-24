@@ -1,9 +1,4 @@
----
-title: Writing a client
-description: What the Rust core already does, and what every nori client builds for itself.
-sidebar:
-  order: 2
----
+# Writing a client
 
 Applies to the nori repository at 0.6. The Android app (`app/`, `core/`) is the reference for each item.
 

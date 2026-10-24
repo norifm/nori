@@ -1,9 +1,4 @@
----
-title: Desktop profiling
-description: "Measuring the desktop client: CPU, memory and GPU, and what was found."
-sidebar:
-  order: 6
----
+# Desktop profiling
 
 Applies to the desktop client (`crates/desktop`) at 0.6.
 

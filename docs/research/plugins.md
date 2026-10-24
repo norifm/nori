@@ -433,7 +433,7 @@ The deleted code is at `6d83364d^` and ports to the SDK nearly unchanged:
 ## Providers
 
 `WasmProvider` implements `Provider` by calling the plugin, so nothing else in the core or a client
-changes (`docs/site/developers/providers.md`).
+changes (docs/developers/providers.md).
 
 - Its add form is its own: `info` returns the fields adding a profile asks for (`FormField`: address,
   user, key; plain or advanced) and how it signs in, and every client draws that form as it does for
@@ -642,7 +642,7 @@ asks for more asks again.
 - A planner plugin's bad plan falls back to nori's.
 - `perf-host` with no plugins equals master.
 - Device checks only for the Bluetooth channel and the sign-in handover
-  (`docs/site/developers/testing.md`).
+  (docs/developers/testing.md).
 
 ## Phases
 

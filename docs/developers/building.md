@@ -1,9 +1,4 @@
----
-title: Building
-description: Building nori's apps and checks, keeping them fast across parallel work, the perf build, and the web client.
-sidebar:
-  order: 3
----
+# Building
 
 Applies to the nori repository at 0.6. Commands run from the repository's root.
 
@@ -17,7 +12,7 @@ cargo run --release -p nori-desktop                          # the desktop clien
 
 Android builds need the Android SDK and NDK, the Rust Android targets and `cargo-ndk`. Never run cargo
 with more than four jobs: the build machine runs out of memory. The full list of commands is in
-[AGENTS.md](../../../AGENTS.md#commands).
+[AGENTS.md](../../AGENTS.md#commands).
 
 ## Faster development checks
 
@@ -470,7 +465,7 @@ is in columns for a monospaced font. The page shows the same log folded at its e
 "Run call benchmark" and "Run cover benchmark" run the same code as the debug build's `bench` and
 `coverbench` test commands (`app/src/bench/.../Bench.kt`): what a crossing into the core costs by kind
 against the same work in Kotlin, and what the core's covers cost: the decode alone, and the whole way to a
-software or hardware Bitmap (docs/site/developers/writing-a-client.md). The cover benchmark needs covers on the disk and in memory,
+software or hardware Bitmap ([Writing a client](writing-a-client.md)). The cover benchmark needs covers on the disk and in memory,
 so browse some albums first.
 
 ## The web client
