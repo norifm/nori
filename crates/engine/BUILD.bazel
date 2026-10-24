@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-engine',
  'edition': '2021',
- 'version': '0.7.0',
+ 'version': '0.7.1-beta.1',
  'targets': [{'name': 'nori_engine', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True},
              {'name': 'engine', 'kind': 'test', 'root': 'tests/main.rs', 'test': True},
              {'name': 'core', 'kind': 'test', 'root': 'tests/core.rs', 'test': True},
