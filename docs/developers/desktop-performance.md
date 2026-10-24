@@ -1,11 +1,19 @@
 # Desktop profiling
 
-Applies to the desktop client (`crates/desktop`) at 0.6.
+Applies to the nori 0.7 desktop client (`crates/desktop`) on Linux and macOS.
 
-Measure an optimized binary with symbols. Debug builds and Xvfb presentation timings do not represent
-the owner's desktop. Keep automated clicks on Xvfb with a private audio sink unless the owner
-authorizes physical-display interaction. Check that DPMS says `Monitor is On` before timing it;
-NVIDIA presentation with the monitors off waited about one second in a later trace.
+## Before measuring
+
+- Measure an optimized build with symbols. Debug builds, and presentation timings on Xvfb, do not
+  represent a physical display.
+- Run automated clicks on Xvfb with a private audio sink, as [Testing](testing.md) describes.
+- On a physical display, check that `xset q` says `Monitor is On` before timing: with the monitors off,
+  NVIDIA presentation waits about a second per frame.
+- To profile a real library, use a private copy of the database and the cover and music caches. Keep
+  the copy private: the database holds credentials. A test process must not request provider (`ext-`)
+  songs nobody asked to play.
+
+## CPU
 
 ```sh
 cargo rustc -j4 --release -p nori-desktop -- \
@@ -17,293 +25,39 @@ perf script -i build/desktop-cpu.data | stackcollapse-perf.pl | flamegraph.pl \
   > build/desktop-cpu.svg
 ```
 
-The last two commands use Brendan Gregg's FlameGraph scripts. Dependency frame pointers require a
-separate `RUSTFLAGS` build; the command above adds them only to the desktop crate. NVIDIA's proprietary
-libraries have incomplete symbols/unwinding, so inspect flat samples alongside the call graph.
+- The last command uses Brendan Gregg's FlameGraph scripts.
+- The `cargo rustc` flags add frame pointers to the desktop crate only. Dependencies need a separate
+  `RUSTFLAGS` build.
+- NVIDIA's proprietary libraries have incomplete symbols and unwinding: read the flat samples beside
+  the call graph.
 
-For memory, read `/proc/$NORI_PID/smaps_rollup` and group `smaps` RSS by mapping. RSS includes resident
-code, shared libraries, driver mappings and allocator slack. It is not the live Rust heap. Sample a
-separate test process with jemalloc's `LD_PRELOAD` and
-`MALLOC_CONF=prof:true,prof_active:true,lg_prof_sample:17`; dump its live heap with `mallctl("prof.dump")`
-while it is still running. `jeprof --collapsed --inuse_space BINARY DUMP` produces stacks for
-`flamegraph.pl`. An exit dump misses allocations released during shutdown. Sampling at 128 KiB gives
-estimates; stack branches overlap and must not be added together.
+## Memory
 
-Use a private SQLite backup and copied cover/music caches when profiling the owner's library. Keep
-the copy private: its database contains credentials. Test processes need their own audio sink and
-normally their own display, and must not receive provider songs that the owner did not request.
+- RSS: `/proc/$NORI_PID/smaps_rollup`, and `smaps` grouped by mapping. RSS includes code, shared
+  libraries, driver mappings and allocator slack; it is not the live Rust heap. Anonymous resident
+  memory compares more steadily between builds.
+- Live heap: run a separate process with jemalloc's `LD_PRELOAD` and
+  `MALLOC_CONF=prof:true,prof_active:true,lg_prof_sample:17`, and dump it with `mallctl("prof.dump")`
+  while it runs (an exit dump misses what shutdown frees). `jeprof --collapsed --inuse_space BINARY DUMP`
+  makes stacks for `flamegraph.pl`. Sampling at 128 KiB gives estimates, and branches overlap, so do
+  not add them up.
 
-For GPU work, RenderDoc's Vulkan capture and `EventGPUDuration` counters measure individual draw/copy
-events. Their sum excludes presentation and some synchronization. Record image acquisition, painting,
-encoding, submission and presentation CPU times separately when investigating frame delays.
+## GPU
 
-## October 2026 measurements
+- RenderDoc's Vulkan capture and its `EventGPUDuration` counters time each draw and copy. Their sum
+  leaves out presentation and some synchronization.
+- For frame delays, time image acquisition, painting, encoding, submission and presentation apart.
 
-Linux X11, NVIDIA GTX 960, 1280 × 820/900 virtual window. The physical-display run used the owner's
-window and library. These are workload observations, not a fixed memory guarantee or frame-rate test.
+## What the client keeps to
 
-| Measurement | Before | After |
-|---|---:|---:|
-| GPU process memory, fixture and repeated pause animation | 258–262 MiB | 95–97 MiB |
-| Captured fullscreen pause frame, summed GPU draw/copy events | 0.474 ms | 0.375 ms |
-| Sampled decoded-cover allocations, copied owner library | 45.4 MiB | 21.3 MiB |
-| Sampled total live heap, copied owner library | 127.6 MiB | 102.6 MiB |
-| Desktop decoded-cover cache budget | 90 MiB | 56 MiB |
-| Normal-process RSS after pause loop, copied owner library | 320 MiB | 285 MiB |
-
-The GPU memory change uses wgpu's `MemoryUsage` allocation hint. Grid and Home shelf virtualization
-release offscreen image components. Desktop disables the cover loader's duplicate decoded cache and
-keeps its own LRU. Hidden sidebar/player layers and a page covered by an opaque fullscreen player do
-not render. Top Picks combine four covers into one image to avoid independent GPU pixel rounding.
-
-Home creates album cards only for shelves within the vertical viewport and Top Picks cards only
-within the horizontal viewport. Offscreen shelves keep their layout space without loading covers,
-so a long Home page cannot evict visible artwork and trigger repeated downloads while stationary.
-The desktop test `home_keeps_pick_covers` checks stable cover requests and loading after scrolling.
-Cached Top Picks mosaics refresh the usage times of their source covers and keep their completed
-image visible while a replacement is composed. A source-cover update swaps the mosaic only when
-the new image is ready; the card's background stays behind its artwork during asynchronous updates.
-
-Playing Next creates artwork bindings only while its docked panel or fullscreen view is visible.
-Within an open queue, only rows within the viewport and a 100-pixel margin request covers. Hidden
-queues and offscreen tracks therefore cannot evict visible Home or miniplayer artwork. The
-`home_keeps_pick_covers` regression includes 500 queued tracks, opens both queue views, and scrolls
-to the last track before closing them.
-
-In a 60-second physical-display interaction trace, the updated app averaged 13.2% of one CPU core and
-312–359 MiB RSS. Roughly 75% of sampled user CPU cycles were on the UI thread, 14% on analysis and 10%
-on the playback engine. This includes pauses between interactions and has no matched physical-display
-baseline. It does not establish animation frame percentiles or solve the remaining RAM cost.
-
-Xvfb pause loops used about 76–79% of one CPU core. Instrumentation measured median painting at
-0.76 ms and presentation at 27.08 ms. Refresh pacing did not improve that test and was discarded;
-the virtual presentation bottleneck must not be attributed to the physical monitor.
-
-The physical trace also exposed a playback stall: a silent pull after a skip advanced the ring past
-discarded audio without updating the output's accounting. This created about ten seconds of phantom
-device latency. A failing clock-based output test reproduces it; thirty rapid skips on the private
-copy completed without the watchdog restarting playback after the correction.
-
-## Direct GPU cover uploads
-
-A further comparison against `2b4f8c95` used the same private library on Xvfb, one test process at a
-time, and thirty alternating play/pause actions spaced 650 ms apart. These numbers are from separate
-normal-process and jemalloc-profiled runs; profiling RSS is not used to measure the saving.
-
-| Measurement | Before | After |
-|---|---:|---:|
-| Sampled total live heap | 103.1 MiB | 59.7 MiB |
-| Anonymous resident memory after the loop | 114.3 MiB | 81.5 MiB |
-| Normal-process RSS after the loop | 276.7 MiB | 223.4 MiB |
-| Normal-process PSS after the loop | 218.0 MiB | 164.6 MiB |
-| GPU process memory | 103 MiB | 123 MiB |
-| Animation-loop CPU, percent of one core | 89.6% | 89.1% |
-
-Decoded covers upload directly to Slint's GPU images on the compositor's device. This removes the
-app's retained CPU pixel copies and Skia's raster copies. Top Picks copy the four equal square card
-textures into one texture, without rasterizing or reading pixels back to the CPU. Cover regions in
-the matched Home screenshots were pixel-identical. GPU cache entries keep the existing byte limits;
-the GPU memory increase reflects covers now retained there instead of in the CPU heap.
-
-The compositor also omits wgpu's unused indirect-command validation pipelines: every compositor draw
-uses a fixed vertex range. Ordinary validation stays enabled. The NVIDIA compiler's large allocation
-is still present when Skia builds its rendering pipelines; disabling the unused indirect pipelines
-does not eliminate that driver allocation.
-
-About 28 MiB of the remaining sampled heap belongs to NVIDIA driver allocations, and about 13 MiB
-to the playback engine. RSS additionally includes code, shared libraries, driver mappings and
-allocator slack. Library sharing makes RSS comparisons less stable than the anonymous and live-heap
-measurements. This batch establishes a RAM reduction, not an animation CPU or frame-rate improvement.
-
-## Resize rendering and repeated skips
-
-Fresh Slint layer textures were drawn through Skia without being initialized in wgpu's tracker.
-The first wgpu read therefore cleared the rendered pixels. The compositor forced another draw to
-recover, leaving a black frame on each resize. It now initializes fresh attachments through wgpu
-before Skia draws and transitions existing attachments back from sampling to rendering state.
-The forced second redraw is removed.
-
-A GPU regression failed with transparent black pixels before the change and passes after it.
-In Xvfb recordings of repeated resizing on Home and fullscreen, the unchanged central region
-contained 473 mostly black frames out of 542 before, and zero out of 572 after. Different frame
-counts reflect recording duration; this checks flashing rather than frame pacing.
-
-Six batches of thirty next/previous actions over already-requested tracks completed without
-playback stalls. Anonymous resident memory was 90.1, 90.3, 85.0, 85.0, 85.1 and 85.2 MiB,
-respectively. After warm-up it varied by less than 0.3 MiB across the last four batches.
-This demonstrates a plateau for that workload, not proof that every path is leak-free.
-
-## Mouse scrolling and border dragging
-
-The custom backend now forwards wheel phases as Slint's native winit backend does. The public
-`PointerScrolled` event marks wheels as canceled, which makes Flickable jump immediately instead
-of using its wheel deceleration. A virtual-clock regression failed before the phase correction;
-it checks motion between notches and the final accumulated distance. Precise touchpad phases
-remain intact. Shelves support mouse dragging, Shift+wheel and arrows.
-Their Show all links open vertically scrollable, virtualized album or Top Picks grids.
-
-Border-drag comparisons used a private xfwm4 session with compositing disabled on a 1920 × 1080
-Xvfb screen. Each run dragged the corner and right border inward and outward on Home and fullscreen.
-The observed client widths ranged from 1000 to 1280 pixels. Recordings contained no black flashes;
-the final browsing build had zero mostly black frames out of 601.
-With the same instrumented optimized build, reducing Linux's maximum queued frames from two to
-one changed median whole-frame CPU time from 42.1 to 38.2 ms. Painting remained about 3.4 ms;
-presentation dominated at 29.6 versus 28.2 ms. Vsync remains enabled. This modest virtual-display
-improvement does not establish smooth physical-display resizing or a CPU/memory reduction.
-
-## Linux GPU fault follow-up
-
-A physical-display back-navigation failure was followed by a reboot. The previous boot's kernel
-log records NVIDIA Xid 13 and Xid 31 (GPU memory read fault), attributed to the same nori-desktop
-process as Slint's failed Vulkan texture import. This is a GPU fault, not just a UI exception.
-Slint's Vulkan import wraps a borrowed image handle; its Skia image does not retain the wgpu texture
-that owns it. Linux now supplies raster cover images and mosaics so Skia owns their GPU uploads.
-The direct-upload memory figures above describe the earlier implementation; Linux restores CPU
-cover copies in this fix. Other platforms retain their existing upload path. The one-frame latency
-trial is reverted, and the horizontal shelf scrollbar is removed.
-
-The compositor now keeps the physical window dimensions from resize events. Winit's X11
-`inner_size()` makes a synchronous XGetGeometry request; drawing and pointer routing no longer
-repeat that request. Resize events update the latest dimensions, and layer layout and surface
-reconfiguration run once before drawing rather than on every intermediate resize event.
-Software Vulkan navigation checks isolate the NVIDIA GPU, but cannot prove hardware-specific
-fault recovery or 60 fps physical-display resizing.
-
-Ten overview/back cycles passed with software Vulkan. One bounded Xvfb check of both collection
-views on NVIDIA also passed, with no new kernel Xids during that run. Software-Vulkan corner and
-side dragging produced zero mostly black frames out of 661, and the GPU pixel regression passed.
-These are bounded checks, not a guarantee that every NVIDIA rendering path is fault-free.
-
-## Owned raster covers and allocator retention
-
-Linux keeps each decoded cover in an owned Skia raster image shared with Slint. This removes the
-second retained Slint pixel buffer while preserving ownership through GPU uploads. Raster Top Picks
-also share their source images and retain the surface snapshot instead of reading it back into
-another buffer. Each of the three Skia contexts has a 16 MiB resource-cache budget.
-
-glibc's dynamic mmap threshold let large freed cover and analysis buffers accumulate in arenas.
-The Linux GNU desktop sets a 256 KiB mmap threshold and 128 KiB trim threshold at startup, allowing
-freed large buffers to return to the OS. This does not limit allocator arenas or audio threads.
-
-A physical X11 comparison against `098f878f` used optimized binaries, normal glibc allocation,
-the same copied library and queue, the fullscreen player and sixty consecutive skips. Before each
-run, the private database was restored and its queue position reset to zero. Both runs used the
-same already-requested music cache and private audio sink; jemalloc profiling was disabled.
-
-| Measurement | Pushed build | Updated build |
-|---|---:|---:|
-| RSS before skipping | 251.7 MiB | 211.4 MiB |
-| RSS after 60 skips | 388.7 MiB | 308.8 MiB |
-| Anonymous resident memory after 60 skips | 256.0 MiB | 171.1 MiB |
-
-The final two updated measurements, after 50 and 60 skips, were 304.2 and 308.8 MiB RSS.
-A prior pacing trial ended at 289.4 MiB; asynchronous analysis and buffer lifetime affect the
-snapshot. This is a bounded workload result, not a promise that every path is leak-free. Native libraries,
-NVIDIA allocations, retained covers and playback buffers still account for substantial memory.
-
-A longer run played through sixty consecutive skips, then three batches of sixty alternating
-previous/next actions in the same process. RSS after each alternating batch was 268.3 MiB,
-with 143.4 MiB anonymous memory. The released background-analysis buffers explain the drop from
-292.4 MiB at the end of that run's initial sixty skips. This checks retention over already-visited
-tracks; it does not establish a bound for every library or navigation path.
-
-On composited X11, drawing uses supported Immediate presentation and coalesces requests at the
-monitor refresh interval. The window manager handles display synchronization; drawing does not
-wait on vblank for every ordinary frame. Other display paths retain AutoVsync. There is no frame
-timer when no redraw is pending. A clock-based test checks coalescing and immediate idle recovery.
-
-An unrecorded corner/right-border drag on Home and fullscreen averaged 21.3% of one CPU core for
-the pushed build, 17.8% for the pacing trial and 19.9% after correcting resize recovery. These
-single comparisons are not CPU guarantees.
-Observed client-size changes still had a median interval around 33.5 ms in both builds; neither
-one queued frame nor an experimental X11 resize-sync patch improved it. Both experiments were
-discarded. A final physical-display recording had zero mostly black frames out of 331, and the
-GPU pixel regression passed, but this does not establish 60 fps live resizing. Issue #33 remains
-open for the remaining resize and memory work.
-
-A lightweight xterm reference accepted about 60 size updates per second on the physical desktop
-(median observed interval 16.7 ms), so the 30 Hz Nori result is not a universal xfwm4 resize limit.
-The reference used eight-pixel pointer steps to exceed terminal cell-size constraints; Nori's
-drag used four-pixel steps. Both delivered motion at 60 Hz with geometry sampling on a separate
-thread. Vulkan swapchain retirement in wgpu 30 calls `vkDeviceWaitIdle` to wait for outstanding
-presentation before releasing resources. Painting was usually about 2 ms; acquire/reconfiguration
-and presentation each reached roughly 12–16 ms in the physical resize trace.
-
-The trace also found 166 abandoned acquisitions versus 187 completed frames. The window could
-resize during configuration's wait, making the cached dimensions outdated before acquisition.
-The old error path configured the same dimensions again and returned without requesting a draw.
-On Outdated, the backend now re-reads the actual native size after the wait, updates layout and
-acquires once with those dimensions. Another Outdated or Timeout leaves a paced redraw pending;
-Timeout does not rebuild the surface. This reduced abandoned draws to 50 and increased completed
-frames to 277 in the same instrumented drag workload. A second X11 resize-sync trial still had a
-long first-drag pause and was discarded. This improves recovery during movement without claiming
-60 fps resizing.
-
-## Shared OpenGL renderer and resize layout
-
-Linux now renders all three Slint layers through one Skia OpenGL context. The same WGSL glass
-and lyrics-focus shaders are compiled to desktop GLSL and GLSL ES at build time. The sidebar and
-player retain their live blur. Other platforms keep the wgpu renderer.
-
-Skia owns uploaded cover textures, and Top Picks mosaics are composed on the GPU before the next
-frame. A single context shares fonts and its 16 MiB resource budget across layers. There are no
-borrowed Vulkan cover handles. The native X11 visual is selected from EGL's compatible opaque
-configurations. Custom presentation uses the compositor's retained layer textures rather than
-querying unused native buffer history. Uniform uploads rename their storage to avoid waiting for
-a previous pass. Linux coalesces pending draws at the monitor refresh interval, including display
-paths where swap interval does not provide pacing; idle windows have no frame timer.
-
-Resize changes update page width, panel position and fullscreen artwork immediately. Animations
-are attached to the panel's opening width and the artwork's selected position, so opening or
-closing still animates without animating every window-size change. The software regression fails
-on the old layout with 288,456 differing pixels between the immediate and settled snapshots.
-
-A physical X11 comparison against `d9b68a2d` used the same copied database, already-requested
-music cache, private audio sink, optimized build profile and sixty skips. Each run restored the
-private database and queue position before starting. These are ordinary glibc measurements,
-without heap profiling enabled.
-
-| Measurement | Previous renderer | Shared OpenGL renderer |
-|---|---:|---:|
-| RSS before skipping | 218.5 MiB | 201.4 MiB |
-| RSS after 60 skips | 299.6 MiB | 241.0 MiB |
-| Anonymous resident memory after 60 skips | 178.9 MiB | 126.2 MiB |
-
-The updated measurements after 50 and 60 skips were 239.7 and 241.0 MiB RSS. This checks this
-workload, rather than establishing a universal memory bound. Shared libraries and audio analysis
-still contribute to the process's memory.
-
-The OpenGL trace's median swap time was about 0.06 ms. Fast 60 Hz corner/right-border input
-still produced variable drawing times, including frames over 16.7 ms, and active CPU measurements
-varied substantially between runs. A renderer-owned X11 child surface did not improve them and
-was discarded. This change fixes layout animation during resize and reduces cover retention;
-it does not establish Chrome-like 60 fps resizing. Issue #33 remains open for that remaining work.
-
-GPU pixel regressions passed on physical X11 and on a 1920×1080 Xvfb display using OpenGL ES,
-covering resized buffers, GPU cover ownership, opaque mosaic seams, and blur smoothness and
-orientation. The macOS wgpu handoff regression also passed. A private Xvfb control check exercised
-panels, fullscreen, twenty play/pause actions, thirty next/previous actions and advancing audio.
-The control check used a 960×600 window to keep software rendering cheap; hardware resize
-measurements used the physical display.
-
-## Playback controls
-
-The desktop seek timer now uses subpixel updates; large seeks/skips and incoming volume changes
-animate, while small playback increments do not keep a whole layer animating every frame. Hidden
-fullscreen/compact layouts keep their last displayed position until opened. Android's shared Rust
-seek pacer draws quarter-pixel steps and still becomes idle while paused or off screen.
-
-A separate local Navidrome fixture on the physical X11/NVIDIA display, at 1280 × 820, used an
-optimized `release` build with symbols, a private audio sink and generated music. After startup
-settled, five-second samples measured 0.4% of one CPU core paused, 10.2% playing on Home and 12.0%
-in fullscreen. The current fixture song was 80 seconds long. RSS was 128–144 MiB and anonymous RSS
-47–54 MiB. The fixture has no cover images; these are observations, not a matched CPU improvement
-or a memory guarantee for the owner's library. Two subsequent skips and play/pause completed.
-
-## Sidebar cover requests
-
-After beta4, the playlist sidebar creates rows only around its viewport. Previously, layout evaluated
-cover bindings for offscreen playlists too. A long playlist list could displace visible covers from
-the bounded cache and request them again on the next cover revision, even with the window still.
-The regression test uses 500 playlists, checks that offscreen covers are not requested, verifies
-stable pixels and cached covers across redraws, and scrolls to the last playlist.
+| rule | where, and its test |
+|---|---|
+| Only what is on screen holds covers: Home shelves and Top Picks cards in the viewport, grid rows in view, queue rows only while the queue is open. Offscreen items would evict visible covers and download them again. | `crates/desktop-ui/ui/app.slint`; `home_keeps_pick_covers`, `album_views_release_offscreen_covers` |
+| Decoded covers live in the desktop's own cache: 32 MiB of small covers, 24 MiB of large ones. | `SMALL_BYTES`, `LARGE_BYTES` in `crates/desktop/src/app.rs`; `cover_bursts_keep_the_cache_bounded` |
+| A hidden layer, or a page under the opaque fullscreen player, does not draw. | `fullscreen_does_not_draw_the_hidden_page` |
+| Linux draws every layer through one Skia OpenGL context, which owns its cover textures. Borrowed Vulkan images caused NVIDIA GPU faults. macOS uses wgpu with the `MemoryUsage` hint. Each Skia context has a 16 MiB resource cache. | `crates/desktop/src/compositor.rs`, `compositor/gl.rs`; `layers_resize_without_losing_pixels_or_blur` (X11, `--ignored`), `cover_pixels_survive_async_layers_and_mosaics` (macOS) |
+| On Linux with glibc, the mmap threshold is 256 KiB and the trim threshold 128 KiB, so freed cover and analysis buffers go back to the system. | `crates/desktop/src/main.rs` |
+| Redraws coalesce at the monitor's refresh interval. With nothing to redraw there is no frame timer. Composited X11 presents Immediate; everything else uses AutoVsync. | `redraw_bursts_wait_for_the_next_frame` |
+| A window resize changes the layout at once; only opening and closing a panel animates. | `resizing_does_not_animate_layout` |
+| The seek bar follows playback in small steps without animating a whole layer. Large seeks and incoming volume changes animate. | `volume_and_seek_animate_between_updates` |
+| Mouse wheels scroll with deceleration, as Slint's own winit backend does. | `wheel_scroll_moves_over_time` |

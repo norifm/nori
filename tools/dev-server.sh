@@ -7,7 +7,7 @@
 # container is called) is used as it is. Docker or Podman, whichever is installed.
 #
 # Besides the first generated albums it seeds what the e2e checks need (tools/e2e-lib.sh, local mode):
-#   Nori E2E / Long Album       twelve songs of 75-130 s, every third one FLAC (the bridge, album pages)
+#   Nori E2E / Long Album       twelve songs of 80-135 s, every third one FLAC (the bridge, album pages)
 #   Nori E2E Two / Far Side     three songs of 150-190 s off another album (crossfades are not gapless
 #                               album joins), "Far Song One" the one transcoded to Opus in the checks
 #   Nori Codecs / Lossless      one Apple Lossless song of 20 s (no browser decodes ALAC: the web client's

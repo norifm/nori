@@ -9,7 +9,7 @@ from . import App
 class Nori(App):
     pkg = "dev.nori.music.perf"
     name = "nori"
-    # Its defaults are what a fresh install has: load ahead 2 songs on Wi-Fi, 1 on mobile data.
+    # Its defaults are what a fresh install has: load ahead 3 songs on Wi-Fi, 1 on mobile data.
     variants = {
         # Nothing changed: offloaded when the song's format allows (see SETTINGS.md).
         "plain": {},

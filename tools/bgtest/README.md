@@ -1,58 +1,94 @@
-# bgtest: battery tests of Nori against other players, on a real phone
+# bgtest: battery tests on a real phone
 
-Each player (Nori, Musly, Navic, Symfonium) is wiped, logged in, set to a variant (EQ, AutoMix, offload,
-crossfade…), started on the same playlist in the same order, and measured over the same stretch with the
-screen off or its full-screen player on screen. Every step checks the screen it should reach (a screenshot
-when it does not), and the phone is put back as it was whatever way the run ends.
+Applies to the nori Android perf build (`dev.nori.music.perf`) at 0.7, against Musly, Navic and
+Symfonium.
 
-The emulator comparison behind the published performance page is in `compare/`.
+Each run wipes a player (`pm clear`), logs it in, sets one variant (equalizer, AutoMix, offload,
+crossfade...), plays the same playlist in the same order, skips a few songs and measures the same
+stretch, either with the screen off or with the full-screen player on screen. Every step checks the
+screen it should reach and takes a screenshot when it does not. The phone is put back as it was however
+the run ends.
+
+The emulator comparison behind the published performance page is in [compare/](compare/README.md).
+
+## Run
 
 ```sh
-tools/bgtest/run.py                      # in a terminal: one screen to pick the phone, runs, playlists…
+tools/bgtest/run.py                      # in a terminal: one screen to pick the phone, runs, playlists
 tools/bgtest/run.py --list-devices
+tools/bgtest/run.py --serial <serial> --wifi --plan quick       # every app, default settings, 3 min each
+tools/bgtest/run.py --serial <serial> --wifi --plan matrix      # every setting that changes the playback path
 tools/bgtest/run.py --serial <serial> --wifi --server local --playlist bg-mp3,bg-quick \
     --runs nori:plain,nori:eq-automix,musly:default,navic:default,symfonium:default --minutes 20 --repeat 3
+tools/bgtest/run.py --resume             # continue the newest session that stopped
 tools/bgtest/bgtest.py --list            # the apps and their variants
-tools/bgtest/server.py                   # the local test server (below)
+tools/bgtest/bgtest.py --restore         # only put the phone back as a stopped session left it
+tools/bgtest/server.py                   # start the local test server
 ```
 
-One run per phone at a time: a second one on the same serial refuses to start (a lock in `build/bgtest/`).
-The media volume is set to the same step for every run (`--volume`, default 1) and put back afterwards,
-like the brightness of the player scenario (`--brightness`, default 1).
+| option | default | what |
+|---|---|---|
+| `--scenario` | `screen-off` | `screen-off`, `player` (full-screen player on screen), or both, comma separated |
+| `--order` (bgtest.py) | `play` | `play`: the list in order in every app; `shuffle`: each app's own shuffle |
+| `--volume` | `1` | media volume step for every run, or `keep`; put back afterwards |
+| `--brightness` | `1` | screen brightness 1 to 255 in the player scenario |
+| `--nori-pkg` | `dev.nori.music.perf` | or `dev.nori.music` for a normal build |
+| `--stay-plugged` | off | measure on the cable (no real current then) |
 
-A session that stopped (Ctrl+C, the computer asleep, the phone gone from adb) is continued with
-`run.py --resume` (or `bgtest.py --resume [FOLDER]`): it shows what the newest session ran, what is left
-and about when it would end, asks, then runs the rest with the session's own settings into the same
-folder. Every session keeps its settings and plan in `session.json`; older ones are read from their log.
+- With `--wifi`, a phone on a cable moves to adb over Wi-Fi and the run waits for the cable to be
+  pulled, so it measures on battery.
+- One run per phone at a time: a second one on the same serial refuses to start (a lock in
+  `build/bgtest/`).
+- With no terminal (an agent), `run.py` never asks: every choice is a flag. `ACTION:` lines are for the
+  person at the phone, and the last line is `RESULTS: <folder>`.
 
-adb over Wi-Fi can drop (the phone's Wi-Fi dozing with the screen off, the router). Before every
-run the Wi-Fi connection is made anew (`adb disconnect`/`connect`), and every adb call that
-finds the phone gone reconnects (`adb disconnect`/`connect`) and waits up to 3 minutes for it; a run whose
-batterystats still cannot be read is recorded as failed, and a phone that never comes back stops the
-session cleanly (exit 3) for `--resume`, keeping the phone's record for the next run to put back (or
-`bgtest.py --restore`).
+## When the phone drops
 
-With no terminal (an agent), `run.py` never asks: every choice is a flag, `ACTION:` lines are for the
-person at the phone (unplug the cable…), and the last line is `RESULTS: <folder>`.
+- Before every run, adb over Wi-Fi reconnects (`adb disconnect`, `adb connect`).
+- An adb call that finds the phone gone reconnects and waits up to 3 minutes for it. A run whose
+  batterystats still cannot be read is recorded as failed.
+- A phone that never comes back stops the session cleanly (exit code 3) and keeps the phone's record,
+  so `--resume` or `--restore` can put it back.
+- `--resume` shows what the session ran, what is left and when it would end, asks, then runs the rest
+  with the session's own settings into the same folder. Each session keeps its settings and plan in
+  `session.json`.
 
-- `run.py`: the entry point. Picks the phone, moves a cabled one to adb over Wi-Fi and waits for the
-  cable to be pulled (so it measures on battery), starts the local server, runs `bgtest.py`.
-- `tui.py`: the picker `run.py` shows with no options.
-- `bgtest.py`: the runs, the measuring (batterystats, the real current, AudioFlinger's view of the
-  app's track, frames, network) and the tables.
-- `apps/`: one module per player: log in, variants, start the playlist, download it, open the player.
-- `phone.py`: what is changed on the phone, remembered first and put back.
-- `ui.py`: adb and a UI driver that finds things by what the screen says.
-- `server.py`: a local Navidrome (port 4540, admin/admin) with songs taken once from the server in
-  `~/.music.pass`, in several formats: `bg-mp3`, `bg-flac-44`, `bg-flac-48`, `bg-flac-96`, `bg-48k`,
-  `bg-mixed` and `bg-quick` (one-minute clips, every format twice, after three fillers for the skips).
-- `SETTINGS.md`: where each player keeps each setting, and what was found testing them.
+## Files
 
-The APKs (`build/bgtest/apks/<package>.apk`, installed when a player is missing), the server's music and
-database (`build/bgtest/server/`) and the results (`build/bgtest/results/<time>/`: `results.md`,
-`runs.jsonl`, each run's batterystats, log and screenshots) stay out of git.
+| file | what |
+|---|---|
+| `run.py` | the entry point: picks the phone, moves it to Wi-Fi, starts the local server, runs `bgtest.py` |
+| `tui.py` | the picker `run.py` shows with no options |
+| `bgtest.py` | the runs, the measuring (batterystats, real current, AudioFlinger's view of the app's track, frames, network) and the tables |
+| `apps/` | one module per player: log in, variants, start and download the playlist, open the player |
+| `phone.py` | what is changed on the phone, remembered first and put back |
+| `ui.py` | adb, and a UI driver that finds things by what the screen says |
+| `server.py` | a local Navidrome (port 4540, admin/admin), below |
+| [`SETTINGS.md`](SETTINGS.md) | where each player keeps each setting, and each app's variants |
 
-What the numbers are: batterystats' figures are estimates from CPU and wakelock time, without its fixed
-audio-hardware and screen models (the same for every app, charged to an app only on some paths); the
-real current (`mA`, `hours`) is measured only on battery. Musly and Navic decode in Android's mediacodec
-service, which is added to their figure.
+Kept out of git, under `build/bgtest/`:
+
+- `apks/<package>.apk`: installed when a player is missing.
+- `server/`: the test server's music and database.
+- `results/<time>/`: `results.md`, `runs.jsonl`, and each run's batterystats, log and screenshots.
+
+## The test server
+
+`server.py` downloads songs once from the server in `~/.music.pass` and builds these playlists:
+
+| playlist | songs |
+|---|---|
+| `bg-mp3` | the MP3s as they are (320 kbps, 44.1 kHz) |
+| `bg-flac-44` | FLAC 16-bit 44.1 kHz |
+| `bg-flac-48` | FLAC 24-bit 48 kHz |
+| `bg-flac-96` | FLAC 24-bit 96 kHz |
+| `bg-48k` | the original 48 kHz MP3s |
+| `bg-mixed` | a bit of everything, in turn |
+| `bg-quick` | 3 short fillers for the skips, then one-minute clips in each format, twice: a 5-minute run hears every format |
+
+## What the numbers are
+
+- batterystats' figures are estimates from CPU and wakelock time. Its fixed audio-hardware and screen
+  models are kept apart: they are the same for every app and charged to an app only on some paths.
+- The real current (`mA`, `hours`) is measured only on battery.
+- Musly and Navic decode in Android's mediacodec service. Its figure is added to theirs.
