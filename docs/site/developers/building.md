@@ -361,13 +361,12 @@ The benchmark buttons are real work: their cost lands in the stretch under way.
 
 ### Where the memory goes
 
-The phone reports (a Galaxy S22, motion artwork on) show 210-240 MB PSS with the screen off and
+The phone reports (a Galaxy S22) show 210-240 MB PSS with the screen off and
 280-440 MB with the player open. On the emulator, with the screen off, nori reads 197 MB against 114-138 MB
 for the other clients. What holds it, read from the code, and what was done:
 
 | What | Size | Engine | Done |
 |---|---|---|---|
-| The moving cover's ExoPlayer: media3's default `DefaultLoadControl`, 50 s ahead, looping, up to 1080 px HLS in the Java heap | tens of MB with the player open (50 s at 5-10 Mbit/s is 30-60 MB) | both | `motion_load_control`: 4-8 s, at most 4 MB. The loop comes from the disk cache, so this costs no network |
 | Decoded covers (`CoverLoader`, hardware Bitmaps, counted under Graphics) | up to 15 % of the memory class: 29 MB on the emulator (192 MB), 38 MB on a 256 MB phone | both | a quarter stays while no screen is in sight (`cover_rules().hidden_share`). Covers still on the page are held by their views anyway |
 | Page colors (`CoverPalette`): 128 entries, each with a 128 px ARGB wash | up to 8 MB (native heap) | both | an LRU capped at 2 MB, about 30 washes |
 | The music's buffer (`load_control`): a quarter of the memory class, at most 48 MB, the whole song in one burst | the whole song, played part included | both | kept: one network wake per song is the battery design. The Rust loader could drop what it has played (it needs chunked storage, since `Vec::drain` keeps the allocation), but a seek back then needs the network |
@@ -399,11 +398,6 @@ with `tools/cost.sh` (below), the test bridge's `states` and simpleperf:
   written only when they change; the positions are worked out once per laid-out line.
 - **The playing bars** beside the song on an album or playlist page ticked on every display frame for as
   long as the page was open: that is the "other page" cost. They now step about twenty times a second.
-- **The moving cover** plays at its own 24 frames a second (Apple's HLS says `FRAME-RATE=24.000`); nothing
-  else redraws with it. Its playback thread no longer wakes every 10 ms (`experimentalSetDynamicScheduling`).
-  With the music paused it goes on looping (the owner's call, 2026-09-26: held, it stopped mid-motion on an odd
-  frame). It costs its 24 frames a second while the player is open and the screen on; the screen's timeout, the
-  app going behind or the player closing stops it.
 - **The equalizer's shallow buffer** stayed on for as long as the equalizer page stayed composed, and the
   page stays composed under the player: opening the player after moving a band kept a 160 ms AudioTrack
   (and the CPU that feeds it) for the whole time the player was open, and each later switch back reopened
@@ -422,17 +416,13 @@ build's), 30 s per state, before and after:
 | State | CPU % before | after | wakeups/s before | after | fps before | after | GCs/min before | after |
 |---|---|---|---|---|---|---|---|---|
 | Player open, static cover | 7.2 | 4.0 | 91 | 249 (a precache running) | 6.2 | 5.6 | 0 | 4 |
-| Player open, moving cover, music playing | 33-41 | 41-46 | 1026-1073 | 1020-1069 | 31-33 | 28-33 | 2-4 | 0 |
-| Player open, moving cover, music paused | 6.5 | 0 | 123 | 0 | 0 | 0 | 0 | 0 |
 | Lyrics, line-synced | 20.9 | 7.6 | 296 | 164 | 15 | 15 | 0 | 0 |
 | Lyrics, word-synced | 52.0 | 38-41 | 681 | 596-624 | 64 | 61-63 | 2 | 0-2 |
 | Album page, playing row (other page) | 19.2 | 12.6 | 366 | 260 | 36 | 22.5 | 2 | 0 |
 | Home, mini player | 0.4 | - | 0 | - | 0 | - | 0 | - |
 
 The emulator's display is 60 Hz, so the lyrics' biggest win is not in the table: on a 120 Hz phone the
-word-synced page drew twice as many frames as here, and now draws the same number. The moving cover's cost
-on the emulator is its software video path (the goldfish decoder's HwBinder and MediaCodec threads) and
-varies by ±10 % from run to run; the phone decodes in hardware. With the player toggled open and shut ten
+word-synced page drew twice as many frames as here, and now draws the same number. With the player toggled open and shut ten
 times on each engine, with AutoMix and the equalizer on (and with the shallow buffer forced on), the
 emulator counted no underruns: the gap on the phone was the output reopened, not a starved track.
 

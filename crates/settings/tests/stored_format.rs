@@ -82,8 +82,6 @@ fn sample() -> StoredPrefs {
         auto_eq_auto: true,
         auto_eq_download: false,
         lyrics_sweep: false,
-        motion_artwork: true,
-        motion_artwork_wifi_only: false,
         lyrics_keep_screen_on: false,
         lyrics_translation: false,
         lyrics_size: 2,

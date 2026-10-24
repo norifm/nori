@@ -116,8 +116,6 @@ class Nori private constructor(private val context: Context) {
     val dac = BitPerfect(context)
     val outputs = Outputs(context, settings.core)
     val widgets = dev.nori.music.playback.PlacedWidgets(context)
-    /** A player for the moving cover; the screen's view model makes one when it first shows one. */
-    fun motionPlayer(onGone: (String) -> Unit) = dev.nori.music.playback.MotionPlayer(context, http, sources, onGone)
     /** Each output device's own sound; built when the playback service first sees a device. */
     val deviceSound by lazy { dev.nori.music.playback.DeviceSound(settings, { core }, { client }, { http.metered }) }
     /** Remote control and jams; nothing runs unless they are switched on (or this is a jam guest). */

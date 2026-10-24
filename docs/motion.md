@@ -276,31 +276,9 @@ Status is one of: **todo**, **doing**, **done (commit)**, **leave** (looked at, 
   flight into the sleeve, and follows artwork → lyrics → artwork; no step at either end. Not yet on a phone.
 - Status: **doing**
 
-### 19. The moving cover — `SleeveMotion.kt` `MotionDirector`, `MotionCover`, `SleeveMotion`
+### 19. The moving cover
 
-- Now: with Settings, Look, "Moving covers" on, an album's Apple Music motion artwork plays in the
-  sleeve over the still cover (a TextureView inside the showing record, inside `SoftSleeve`). It is the
-  one thing that moves without being touched, like the playing bars, and only while the player is fully
-  open on the artwork, the app is in front with the screen on, the record is at rest, no finger is on
-  the player and motion is not reduced.
-- Should: never appear or leave in one frame. In: 480 ms, only after its first frame is on the surface,
-  and 350 ms after a move has ended (at once after a tap that moved nothing). Out: 160 ms, at a
-  finger's first touch (ahead of a swipe, a skip, a pull on the sheet or a panel change), when the
-  sheet leaves fully open, and on a new album before its video is loaded. Flights draw the still cover.
-- Check: an album with motion artwork: open the player (the still cover comes alive after a beat);
-  touch and hold the sleeve (the video steps back before the record lifts); swipe, skip with a button,
-  pull the sheet slowly, go to the lyrics and back; turn the screen off and on. With reduced motion on,
-  the cover stays still.
-- A song that changes by itself (item 21) takes the video out with the record it played on, fading as
-  it slides; it used to vanish on the slide's first frame, the still cover showing in its place. The
-  surface is composed beside the records rather than inside the showing one, so it is never made again
-  mid-move. With the moving covers on, a song change crashed the app: the lookup of an album without a
-  video answers none, and the generated Kotlin asserted every async answer non-null (fixed in
-  crates/uniffi-bindgen).
-- Known: a very quick pull on the sheet or the back gesture can catch the video part faded, since the
-  sleeve hands over to the flight's still cover on the first frame of a move; and the blurred band at
-  the sleeve's foot is the still cover's (a surface is drawn once).
-- Status: **doing**
+- Dropped (the owner's call, 2026-10-24): no moving covers.
 
 ### 20. Lyrics sung the way Apple's are — `LyricsView.kt` `SungText`, `drawSung`, nori-look `lyrics.rs`
 

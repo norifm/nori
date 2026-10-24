@@ -44,7 +44,6 @@ platform opens and re-exports every crate below it by its module name (`nori_cor
 | A perf recorder's bookkeeping: the state a stretch is filed under, what two readings of the counters make (the threads that woke most among them), the stretches kept, their sums by state, the page's figures, the audio output's line and the shared report | `nori-perf::perf_log` |
 | Cover colors: palette, theme, the page's color scheme, the wash and melt behind the player | `nori-look::cover`, `palette`, `theme`, `dress` |
 | Cover art: fetched through the `Transport`, kept on disk and in memory, JPEG, PNG, WebP and a GIF's first frame decoded straight to the size drawn and turned as their EXIF says (Android's Bitmaps included) | `nori-covers` |
-| Moving album covers: finding an album's motion artwork in Apple Music's catalog (the search, the web player's token, the square video's address), remembered per album | `nori-core::motion` (`Client::motion_video`, `motion_forget`) |
 | The car browse tree | `nori-library::car` |
 | Remote control and jams: the relay's long polls, nearby devices' doors, the clocks learned, a jam's members and requests; its polls, time keeping and sends are futures on a `Tasks`, natively one thread that sleeps while they wait (a quiet device wakes about once a minute, for the relay's held poll), in a browser the page's event loop; the device id, one per kind of client (`RemoteMe::kind`) and per copy running over one app database, held by a lock file next to it while the remote runs | `nori-remote`; `nori-core::remote` (`Remote`); `nori-tasks` (`Tasks`, `Native`, `Local`) |
 
@@ -280,8 +279,7 @@ read into one kept).
 
 Android plays through the engine, and only through it: the ExoPlayer path it was measured against is
 gone (2026-09-25; git history has it, should it be wanted again). media3 stays for the session, the
-notification, Android Auto, the stream cache and downloads, and ExoPlayer only for the moving covers'
-muted video (`MotionPlayer.kt`).
+notification, Android Auto, the stream cache and downloads.
 `crates/android/src/track.rs` is the engine's output there: a thread of its own pours the ring into an
 AudioTrack whose buffer holds one of the engine's bursts and a second and a half more, in the
 power-saving mode, waking when a second is left and taking everything the ring has, so the engine is
@@ -477,10 +475,6 @@ native heaps before and after.
   `crates/cli/src/settings_view.rs`, the desktop's in `crates/desktop/src/settings.rs`. Sizes on disk and
   counts are numbers the client reads itself (`lyrics_cache_bytes`, `analysis_count`, `index_size`) and
   hands to the page as `PageFacts`.
-- **Moving covers** (optional): play the HLS address `motion_video` gives, muted and looping, only while
-  the player is on screen and at rest, and let the player go when it is not. Android: `MotionPlayer`
-  (core/playback, its own ExoPlayer with media3's HLS module and a 64 MB cache, so a loop is fetched
-  once) in a TextureView in the sleeve (app/ui `SleeveMotion.kt`). A video decoder is the platform's.
 - **Where things sit on the screen.** The core gives the gradients' stops, the timings and the colors;
   the boxes are the platform's. Android's player sleeve is 0.74 wide for 1 tall and runs 9.5 % of its
   height under the title (`PlayerScreen.kt`), tuned for a phone held upright; the interface is scaled
@@ -699,10 +693,6 @@ What stays in the client with no twin:
   sorting of media3's error codes and exceptions into the core's kinds (`failureKind`, `isNetworkish`,
   the 5000s as the output), and the uniffi/JNI wrappers that unpack what the core packed (`LyricsClock`),
   or turn what it hands over into a Flow (`Library.lyricsFor` over `LyricsShown`).
-- **Video**: the moving cover's player (`MotionPlayer`, media3's ExoPlayer with its HLS module, muted,
-  looping, no audio track, focus, session or wake lock) and when it plays, fades and is let go
-  (`SleeveMotion.kt`: only on screen, at rest, and never with the screen off). Finding the video is the
-  core's.
 - **The perf build's counters**: reading `/proc`, `BatteryManager`, `Debug.MemoryInfo`, `TrafficStats`,
   the AudioTrack the player opened (`PlaybackService.track`) and `FrameMetrics`, and counting frames as they
   are drawn. What a stretch is, which threads it names and how it is said are the core's (`perf_log`).

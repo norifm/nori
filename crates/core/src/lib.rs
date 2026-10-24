@@ -13,7 +13,6 @@ pub mod smart;
 pub mod actions;
 pub mod browse;
 pub mod covers;
-pub mod motion;
 pub mod search;
 pub mod shown;
 pub mod client;

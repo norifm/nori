@@ -260,7 +260,6 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 | YouTube WebM songs mix, keep the vocal curve, download and play offline | a | engine `webm_pair_plays_through_its_mix`, `webm_arrivals_keep_analysis_and_voice`; feature-e2e `youtube-music` checks the AudioTrack, media3 resolver, download cache and downloaded-file bridge |
 | a sign-in page is done only back on music.youtube.com with a session | a | innertube-music auth.rs |
 | a radio from the song playing goes on with it | a | crates/host refill_tests.rs `a_radio_from_the_song_playing_keeps_it_playing`; feature-e2e `youtube-music` (the song menu's Kotlin path to media3) |
-| no video player while off; let go when put away (2) | b | feature-e2e `motion` (ExoPlayer, Kotlin) |
 | starring reaches the server | a | client.rs |
 | the server is told what is playing | a | client.rs, scrobble.rs |
 | the notification has a seal and a shuffle; its seal stars the song; it redraws; its shuffle toggles (4) | b | feature-e2e `notification` |

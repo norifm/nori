@@ -165,8 +165,6 @@ dependencies {
     api(libs.media3.exoplayer)
     api(libs.media3.session)
     implementation(libs.media3.datasource.okhttp)
-    // Moving covers are HLS (MotionPlayer); nothing of it is loaded while they are switched off.
-    implementation(libs.media3.exoplayer.hls)
     api(libs.okhttp)
     api(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.guava)

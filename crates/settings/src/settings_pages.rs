@@ -387,9 +387,6 @@ impl Page<'_> {
         if self.web() {
             return vec![(SectionId::Theme, theme)];
         }
-        if self.phone() {
-            theme.push(self.setting("movingCovers"));
-        }
         let mut out = vec![(SectionId::Theme, theme)];
         if self.phone() {
             use crate::settings::DimIdle;
@@ -632,7 +629,7 @@ mod tests {
         for client in [SettingsClient::Desktop, SettingsClient::Terminal] {
             let rows = every_row(client, &d, &facts());
             let has = names(&rows, false);
-            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "movingCovers", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate"] {
+            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate"] {
                 assert!(phone.iter().any(|n| n == phone_only) && !has.iter().any(|n| n == phone_only), "{phone_only} offered by {client:?}");
             }
             assert!(rows.iter().any(|r| matches!(r.item, RowItem::LyricsSource { .. })), "the services are on the lyrics page");
@@ -657,7 +654,7 @@ mod tests {
         for kept in ["autoMix", "crossfadeSec", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season", "theme"] {
             assert!(has.iter().any(|n| n == kept), "{kept} is on the web's pages");
         }
-        for left in ["bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize", "movingCovers"] {
+        for left in ["bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize"] {
             assert!(!has.iter().any(|n| n == left), "{left} is not offered in a browser");
         }
         assert!(!rows.iter().any(|r| matches!(r.item, RowItem::Action { .. } | RowItem::Link { .. } | RowItem::LyricsSource { .. })), "nothing the web has no screen or work for");

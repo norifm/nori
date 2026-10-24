@@ -522,7 +522,7 @@ internal class Recorder(private val app: Application) : PerfHooks.Recorder, Play
     /**
      * Where the memory is (the core's `memory_line` says it): Android's app summary of the PSS just read,
      * the native heap's allocated bytes, and what of it is the app's own - the Rust side's (the core's
-     * `perf_rust_memory`), the covers' Bitmaps and the moving cover's player.
+     * `perf_rust_memory`) and the covers' Bitmaps.
      */
     private fun memory(m: Debug.MemoryInfo): PerfMemory {
         fun stat(name: String) = m.getMemoryStat("summary.$name")?.toLongOrNull() ?: 0L
@@ -532,7 +532,6 @@ internal class Recorder(private val app: Application) : PerfHooks.Recorder, Play
             graphicsKb = stat("graphics"), otherKb = stat("private-other"), systemKb = stat("system"),
             nativeAllocKb = Debug.getNativeHeapAllocatedSize() / 1024,
             coversKb = covers.keptBytes() / 1024, covers = covers.keptCount(),
-            motion = dev.nori.music.playback.MotionPlayer.live,
             rust = runCatching { dev.nori.music.ffi.perf.perfRustMemory(dev.nori.music.playback.PlaybackService.rustPlayer?.memory().orEmpty()) }.getOrNull(),
         )
     }

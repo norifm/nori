@@ -498,25 +498,8 @@ The owner asked for these explicitly.
 
 | Feature | S | M | N | nori | Plan |
 |---|---|---|---|---|---|
-| Moving album covers in the player (Apple Music's motion artwork) | | | | yes | done: Settings, Look; behind the lookups switch, and off by default itself though the lookups switch is on (heavier, a few megabytes each); Wi-Fi only by default; see below |
+| Moving album covers in the player (Apple Music's motion artwork) | | | | | dropped (the owner's call, 2026-10-24) |
 | Spotify Canvas (a looping clip per song) | | | | | skip: needs the listener's Spotify login; see below |
-
-**Moving covers.** Apple Music has a short looping video of the cover for some albums, mostly recent
-ones from the larger labels, and plays it in the full-bleed sleeve. nori plays the same video in the
-same place, over the still cover and cropped the same way, only while the player is open and at rest
-and the screen is on, and never with reduced motion. It is found in three requests to Apple, all made by
-the core (`crates/core/src/motion.rs`, through the client's transport): the public iTunes Search API
-for the album's catalogue id, then the catalogue itself for that album's video, read with the token
-Apple's own web player gives every visitor, which is taken from the player's scripts and looked for again
-when it is refused. The artist and the album name are what leave the phone. A video is a few megabytes,
-hence Wi-Fi only unless allowed, and each is kept in a 64 MB cache so that the loop is fetched once. The
-answer is remembered per album in the app's database: a video for good, "none" asked again after a week,
-a failed request not at all. Playing it is Android's (`MotionPlayer`, its own muted ExoPlayer with the
-HLS module). **Unverified**: none of these requests could be tried where this was written, and Apple
-documents none of them for this use; their shapes are what other clients were seen sending in 2026. If
-Apple changes them, nothing breaks: no cover moves. Costs nothing switched off (no lookup, no player, no
-listener, no surface); switched on, a hardware video decode and a redraw of the sleeve per video frame
-while it plays, and nothing at all with the player closed or the screen off.
 
 **Why Spotify Canvas is not there.** Spotify has no public API for Canvas. The clips come from an
 internal endpoint of Spotify's own apps (`spclient.wg.spotify.com/canvaz-cache`, protobuf), which
