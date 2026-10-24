@@ -1322,7 +1322,7 @@ pub(crate) fn offload_reason() -> Option<&'static str> {
         crossfade_s: s.crossfade_sec,
         auto_mix: s.auto_mix,
         speed: 1.0,
-        pitch: s.pitch,
+        pitch: 1.0,
     };
     let output = nori_model::OutputState { hi_res: s.hi_res, ..Default::default() };
     nori_player::policy::offload_blocked(&prefs, &output)

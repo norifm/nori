@@ -480,8 +480,6 @@ pub struct StoredPrefs {
     #[setting("fadeMs", within(0, 5000), default = 0, show = K::Choice(&["0", "150", "300", "500", "1000"]), effect = PLAYER)]
     pub fade_ms: i32,
     // Controls.
-    #[setting("pitch", within(RATE.0, RATE.1), default = 1.0, show = K::Choice(&["0.9", "0.95", "1", "1.05", "1.1"]), effect = APPLY_AUDIO)]
-    pub pitch: f32,
     #[setting("skipSilence", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO)]
     pub skip_silence: bool,
     // The queue.
@@ -860,9 +858,6 @@ impl From<nori_model::CoreError> for SoundError {
         SoundError::Db(e.to_string())
     }
 }
-
-/// Speed and pitch range.
-const RATE: (f32, f32) = (0.25, 4.0);
 
 /// The ten default bands: flat peaking filters an octave apart.
 pub fn graphic() -> Vec<SoundBand> {

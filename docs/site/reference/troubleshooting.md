@@ -38,7 +38,7 @@ order stay gapless while **Keep albums gapless** is on. See
 
 ## Battery use is higher than expected
 
-The equalizer, effects, pitch, skipping silence, AutoMix and crossfade all need the CPU to process the
+The equalizer, effects, skipping silence, AutoMix and crossfade all need the CPU to process the
 music, so the audio chip cannot play it on its own. Settings shows when offload is paused and why. See
 [Offload and processing](../sound/offload.md).
 

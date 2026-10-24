@@ -191,7 +191,7 @@ pub fn state(p: &StoredPrefs, out: Output, model: &beat_model::ModelFile) -> Set
         crossfade_s: p.crossfade_sec,
         auto_mix: p.auto_mix,
         speed: 1.0,
-        pitch: p.pitch,
+        pitch: 1.0,
     };
     // A refused offload is only known to the playback service.
     let output = nori_model::OutputState { hi_res: p.hi_res, bit_perfect: out.dac_bit_perfect, usb: out.usb, offload_refused: false };
@@ -473,7 +473,7 @@ mod tests {
 
         // Values match option form.
         let d = StoredPrefs::default();
-        assert_eq!(value_of(&StoredPrefs { pitch: 0.9, ..d.clone() }, "pitch").as_deref(), Some("0.9"));
+        assert_eq!(value_of(&StoredPrefs { volume_boost_db: 3.5, ..d.clone() }, "volumeBoostDb").as_deref(), Some("3.5"));
         assert_eq!(value_of(&d, "nope"), None);
         // In effect: off while looking things up is off.
         let off = StoredPrefs { third_party_lookups: false, ..d.clone() };
