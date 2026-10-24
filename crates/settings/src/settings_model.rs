@@ -190,7 +190,7 @@ pub fn state(p: &StoredPrefs, out: Output, model: &beat_model::ModelFile) -> Set
         offload: p.offload,
         crossfade_s: p.crossfade_sec,
         auto_mix: p.auto_mix,
-        speed: p.speed,
+        speed: 1.0,
         pitch: p.pitch,
     };
     // A refused offload is only known to the playback service.

@@ -199,7 +199,7 @@ class SelfTestLogicTest {
     // ---- putting things back ----
 
     private val user = Knobs(
-        eq = true, headphone = dev.nori.music.ffi.settings.HeadphoneSound.NATURAL, balance = 0f, mono = false, limiter = true, speed = 1f, pitch = 1f,
+        eq = true, headphone = dev.nori.music.ffi.settings.HeadphoneSound.NATURAL, balance = 0f, mono = false, limiter = true, pitch = 1f,
         skipSilence = false, offload = true, crossfadeSec = 4, autoMix = true, replayGain = GainMode.AUTO, scrobble = true,
         autoFill = true, skipExplicit = false, fadeMs = 200,
     )

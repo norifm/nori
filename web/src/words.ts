@@ -189,7 +189,6 @@ export const W = {
     autoMixBetterBeats: "Better beat detection",
     crossfadeKeepAlbums: "Keep albums gapless",
     fadeMs: "Fade on play and pause",
-    speed: "Speed",
     pitch: "Pitch",
     skipSilence: "Skip silence",
     skipExplicit: "Skip explicit songs",
@@ -228,7 +227,6 @@ export const W = {
   choice: (name: string, v: string) => {
     if (name === "crossfadeSec") return v === "0" ? "Off" : `${v} s`;
     if (name === "fadeMs") return v === "0" ? "Off" : Number(v) % 1000 === 0 ? `${Number(v) / 1000} s` : `${v} ms`;
-    if (name === "speed") return Number(v) === 1 ? "Normal" : `${v}×`;
     if (name === "pitch") {
       const pct = Math.round((Number(v) - 1) * 100);
       return pct === 0 ? "Normal" : pct < 0 ? `−${-pct} %` : `+${pct} %`;

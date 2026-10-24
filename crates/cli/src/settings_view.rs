@@ -507,7 +507,6 @@ fn setting_words(name: &str, p: &StoredPrefs, s: &SettingsState) -> (String, Str
         }
         "crossfadeKeepAlbums" => "Keep albums gapless",
         "fadeMs" => "Fade on play and pause",
-        "speed" => "Speed",
         "pitch" => "Pitch",
         "skipSilence" => return ("Skip silence".into(), if s.untouched { "Off in bit-perfect mode.".into() } else { String::new() }),
         "skipExplicit" => "Skip explicit songs",
@@ -560,8 +559,7 @@ fn option_words(name: &str, v: &str) -> String {
             Ok(ms) if ms % 1000 == 0 => format!("{} s", ms / 1000),
             _ => format!("{v} ms"),
         }),
-        ("speed", "1") | ("pitch", "1") => "Normal".into(),
-        ("speed", v) => format!("{v}×"),
+        ("pitch", "1") => "Normal".into(),
         ("pitch", v) => {
             let pct = ((v.parse::<f32>().unwrap_or(1.0) - 1.0) * 100.0).round() as i32;
             if pct < 0 { format!("−{} %", -pct) } else { format!("+{pct} %") }
@@ -1214,7 +1212,7 @@ mod tests {
         };
         assert_eq!(shown("replayGain"), "Automatic");
         assert_eq!(shown("wifi"), "Original");
-        assert_eq!(shown("speed"), "Normal");
+        assert_eq!(shown("pitch"), "Normal");
         assert_eq!((quality("320:mp3"), quality("128:opus")), ("MP3 320".to_string(), "Opus 128".to_string()));
 
         // Phone only settings hidden.
