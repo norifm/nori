@@ -36,7 +36,6 @@
     <string name="settings_off">Off</string>
     <string name="settings_on">On</string>
     <string name="settings_seconds">%1$s s</string>
-    <string name="settings_millis">%1$s ms</string>
     <string name="settings_db">%1$s dB</string>
     <string name="settings_kbps">%1$d kbps</string>
     <string name="settings_megabytes">%1$d MB</string>
@@ -48,7 +47,6 @@
 
     <!-- Playback. -->
     <string name="settings_section_between">Between songs</string>
-    <string name="settings_section_controls">Controls</string>
     <string name="settings_section_queue">Queue</string>
     <string name="settings_held_by_dac">Off in bit-perfect mode.</string>
     <string name="settings_crossfade">Crossfade</string>
@@ -66,7 +64,6 @@
         <item quantity="other">%1$d songs measured for tempo and beats.</item>
     </plurals>
     <string name="settings_measure_again">Measure again</string>
-    <string name="settings_fade">Fade on play and pause</string>
     <string name="settings_keep_albums">Keep albums gapless</string>
     <string name="settings_skip_explicit">Skip explicit songs</string>
     <string name="settings_auto_fill">Keep playing when the queue ends</string>
@@ -355,7 +352,6 @@
     <string name="settings_hint_automix">Blends songs like a DJ, matching the beat</string>
     <string name="settings_hint_better_beats">A neural beat tracker for AutoMix, downloaded once (Beat This!)</string>
     <string name="settings_hint_measured">Tempo and beats, measured on this device</string>
-    <string name="settings_hint_fade">A short fade when you play, pause, seek or skip</string>
     <string name="settings_hint_skip_explicit">Songs your server marks explicit</string>
     <string name="settings_hint_auto_fill">Adds more music automatically</string>
     <string name="settings_hint_auto_fill_kind">Songs, or a whole album at a time</string>

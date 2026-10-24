@@ -183,7 +183,6 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "autoMix" to (R.string.settings_automix to R.string.settings_hint_automix),
     "autoMixBetterBeats" to (R.string.settings_better_beats to R.string.settings_hint_better_beats),
     "crossfadeKeepAlbums" to (R.string.settings_keep_albums to R.string.settings_hint_keep_albums),
-    "fadeMs" to (R.string.settings_fade to R.string.settings_hint_fade),
     "skipExplicit" to (R.string.settings_skip_explicit to R.string.settings_hint_skip_explicit),
     "autoFill" to (R.string.settings_auto_fill to R.string.settings_hint_auto_fill),
     "autoFillKind" to (R.string.settings_auto_fill_kind to R.string.settings_hint_auto_fill_kind),
@@ -442,7 +441,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         SectionId.ACCOUNTS -> R.string.settings_section_accounts
         SectionId.MUSIC_FOLDERS, SectionId.THIS_SERVER -> R.string.settings_section_this_server
         SectionId.BETWEEN -> R.string.settings_section_between
-        SectionId.CONTROLS -> R.string.settings_section_controls
         SectionId.QUEUE -> R.string.settings_section_queue
         SectionId.EQUALIZER -> R.string.settings_section_equalizer
         SectionId.EFFECTS -> R.string.settings_section_effects
@@ -469,14 +467,12 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
     // How values read.
     fun offOr(v: String, words: (String) -> String) = if (v == "0") str(R.string.settings_off) else words(v)
     fun seconds(v: String) = str(R.string.settings_seconds, v)
-    fun millis(v: String) = str(R.string.settings_millis, v)
 
     /** A setting value in words. */
     fun valueWords(name: String, v: String, options: List<String>): String {
         NAMED[name]?.let { labels -> return options.indexOf(v).takeIf { it in labels.indices }?.let { str(labels[it]) } ?: v }
         return when (name) {
             "crossfadeSec" -> offOr(v, ::seconds)
-            "fadeMs" -> offOr(v) { if (it.toInt() % 1000 == 0) seconds((it.toInt() / 1000).toString()) else millis(it) }
             "lyricsSize" -> when (v) {
                 "0" -> str(R.string.settings_lyrics_size_small)
                 "1" -> str(R.string.settings_lyrics_size_medium)

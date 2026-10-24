@@ -41,7 +41,7 @@ network.
 
 Without AutoMix, **Crossfade** overlaps the end of one song with the start of the next for 1 to 12
 seconds (off by default), at equal power so the level holds through the overlap. Songs of one album in
-order are not crossfaded either while **Keep albums gapless** is on. **Fade on play and pause** softens starts and stops (off, or 150 ms
-to 1 s).
+order are not crossfaded either while **Keep albums gapless** is on. Play and pause fade in and out
+over 150 ms.
 
 Gapless playback needs no setting: songs that run into each other join sample for sample.

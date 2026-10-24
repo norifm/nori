@@ -461,7 +461,6 @@ fn section_title(id: SectionId) -> &'static str {
         Accounts => "Accounts",
         MusicFolders | ThisServer => "This server",
         Between => "Between songs",
-        Controls => "Controls",
         Queue => "Queue",
         Equalizer => "Equalizer",
         Effects => "Effects",
@@ -506,7 +505,6 @@ fn setting_words(name: &str, p: &StoredPrefs, s: &SettingsState) -> (String, Str
             return ("Better beat detection".into(), state);
         }
         "crossfadeKeepAlbums" => "Keep albums gapless",
-        "fadeMs" => "Fade on play and pause",
         "skipExplicit" => "Skip explicit songs",
         "autoFill" => "Keep playing when the queue ends",
         "autoFillKind" => "Carry on with",
@@ -553,10 +551,6 @@ fn option_words(name: &str, v: &str) -> String {
     let off_or = |v: &str, words: &dyn Fn(&str) -> String| if v == "0" { "Off".to_string() } else { words(v) };
     match (name, v) {
         ("crossfadeSec", v) => off_or(v, &|v| format!("{v} s")),
-        ("fadeMs", v) => off_or(v, &|v| match v.parse::<u32>() {
-            Ok(ms) if ms % 1000 == 0 => format!("{} s", ms / 1000),
-            _ => format!("{v} ms"),
-        }),
         ("season", "FOLLOW") => "Follow the calendar".into(),
         ("season", v) => TILES.iter().find(|t| t.2 == v).map_or(v, |t| t.0).into(),
         ("theme", "SYSTEM") => "System".into(),

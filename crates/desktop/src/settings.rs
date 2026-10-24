@@ -254,7 +254,6 @@ fn section_title(id: SectionId) -> &'static str {
         MusicFolders => "This server",
         ThisServer => "This server",
         Between => "Between songs",
-        Controls => "Controls",
         Queue => "Queue",
         Equalizer => "Equalizer",
         Effects => "Effects",
@@ -295,7 +294,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
             return ("Better beat detection".into(), detail);
         }
         "crossfadeKeepAlbums" => ("Keep albums gapless", ""),
-        "fadeMs" => ("Fade on play and pause", ""),
         "skipExplicit" => ("Skip explicit songs", ""),
         "autoFill" => ("Keep playing when the queue ends", ""),
         "autoFillKind" => ("Carry on with", ""),
@@ -334,14 +332,9 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
 
 /// A setting's value in words.
 fn option_words(name: &str, v: &str) -> String {
-    let seconds = |v: &str| format!("{v} s");
     match (name, v) {
-        ("crossfadeSec" | "fadeMs", "0") => "Off".into(),
-        ("crossfadeSec", v) => seconds(v),
-        ("fadeMs", v) => match v.parse::<u32>() {
-            Ok(ms) if ms % 1000 == 0 => seconds(&(ms / 1000).to_string()),
-            _ => format!("{v} ms"),
-        },
+        ("crossfadeSec", "0") => "Off".into(),
+        ("crossfadeSec", v) => format!("{v} s"),
         ("season", "FOLLOW") => "Follow the seasons".into(),
         ("season", "SPRING") => "Spring".into(),
         ("season", "SUMMER") => "Summer".into(),
