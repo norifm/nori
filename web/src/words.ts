@@ -189,7 +189,6 @@ export const W = {
     autoMixBetterBeats: "Better beat detection",
     crossfadeKeepAlbums: "Keep albums gapless",
     fadeMs: "Fade on play and pause",
-    previousAlwaysSkips: "Previous goes back a song",
     speed: "Speed",
     pitch: "Pitch",
     skipSilence: "Skip silence",

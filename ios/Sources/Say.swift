@@ -152,7 +152,6 @@ enum Say {
             ("autoMix", "AutoMix"),
             ("crossfadeKeepAlbums", "Keep albums gapless"),
             ("skipSilence", "Skip silence"),
-            ("previousAlwaysSkips", "Previous always skips"),
         ]),
         ("Queue", [
             ("skipExplicit", "Skip explicit songs"),

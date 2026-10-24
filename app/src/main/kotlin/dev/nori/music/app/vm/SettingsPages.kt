@@ -185,7 +185,6 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "autoMixBetterBeats" to (R.string.settings_better_beats to R.string.settings_hint_better_beats),
     "crossfadeKeepAlbums" to (R.string.settings_keep_albums to R.string.settings_hint_keep_albums),
     "fadeMs" to (R.string.settings_fade to R.string.settings_hint_fade),
-    "previousAlwaysSkips" to (R.string.settings_previous to R.string.settings_hint_previous),
     "speed" to (R.string.settings_speed to 0),
     "pitch" to (R.string.settings_pitch to 0),
     "skipSilence" to (R.string.settings_skip_silence to R.string.settings_hint_skip_silence),

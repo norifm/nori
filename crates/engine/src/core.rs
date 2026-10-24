@@ -1427,7 +1427,7 @@ pub fn settings(s: &StoredPrefs) -> Settings {
         crossfade_s: s.crossfade_sec,
         auto_mix: s.auto_mix,
         gain_boost_db: if s.gain_prefs().boosts() { nori_player::gain::BOOST_MAX_DB } else { 0.0 },
-        previous_always_skips: s.previous_always_skips,
+        ..Settings::default()
     }
 }
 

@@ -47,7 +47,6 @@ fn sample() -> StoredPrefs {
         playlist_notes: false,
         fade_ms: 300,
         pitch: 1.05,
-        previous_always_skips: true,
         offload: false,
         bit_perfect: true,
         hi_res: true,

@@ -719,7 +719,7 @@ class PlaybackService : MediaLibraryService() {
         override fun seekToNextMediaItem() = jam(dev.nori.music.ffi.remote.Op.Next) { observer?.skipped(currentMediaItemIndex); andPlay { super.seekToNextMediaItem() } }
         override fun seekToPreviousMediaItem() = jam(dev.nori.music.ffi.remote.Op.Previous) { observer?.skipped(currentMediaItemIndex); andPlay { super.seekToPreviousMediaItem() } }
         // Well into a song this goes back to 0:00 rather than to the song before (media3's own rule,
-        // three seconds, unless the user has previous always skip: nori_player::queue::previous_restarts),
+        // three seconds: nori_player::queue::previous_restarts),
         // which paused means: start this one again, from the top, playing.
         override fun seekToPrevious() = jam(dev.nori.music.ffi.remote.Op.Previous) {
             andPlay {
