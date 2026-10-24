@@ -1,8 +1,9 @@
 # TODO
 
-Internal note, not published. What to build next, in rough order. Delete a line once it ships.
+Ideas the owner may pick later, roughly in order. Nothing here is work to start: build an item only when
+the owner asks for it, and delete its line once it ships.
 
-## Next
+## First
 
 **Queue**
 - Clear the upcoming songs (Android).
