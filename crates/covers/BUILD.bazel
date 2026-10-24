@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-covers',
  'edition': '2021',
- 'version': '0.7.0',
+ 'version': '0.7.1-beta.1',
  'targets': [{'name': 'nori_covers', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True},
              {'name': 'decode', 'kind': 'test', 'root': 'tests/decode.rs', 'test': True},
              {'name': 'loader', 'kind': 'test', 'root': 'tests/loader.rs', 'test': True}],
