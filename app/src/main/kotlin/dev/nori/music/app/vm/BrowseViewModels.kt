@@ -2,6 +2,7 @@ package dev.nori.music.app.vm
 
 import android.app.Application
 import androidx.lifecycle.viewModelScope
+import dev.nori.music.ffi.favoritesInOrder
 import dev.nori.music.ffi.library.AlbumSort
 import dev.nori.music.ffi.library.albumSortKept
 import dev.nori.music.ffi.library.albumSortSaved
@@ -288,8 +289,8 @@ class HomeRowViewModel(app: Application) : NoriViewModel(app) {
 }
 
 /**
- * The album grid: one sort order at a time, pages appended as the list nears its end. In artist rows,
- * also those albums a row per artist ([rows]).
+ * The album grid: one sort order at a time, pages appended as the list nears its end; with [favorites],
+ * the starred albums in that order, all at once. In artist rows, also those albums a row per artist ([rows]).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AlbumsViewModel(app: Application) : NoriViewModel(app) {
@@ -297,6 +298,8 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
     // The order it was left in, and how that is kept, are the core's (`album_sort_saved`, `album_sort_kept`).
     private val _sort = MutableStateFlow(albumSortSaved(nori.settings.value.listPrefs))
     val sort: StateFlow<AlbumSort> = _sort
+    private val _favorites = MutableStateFlow(false)
+    val favorites: StateFlow<Boolean> = _favorites
     private val _albums = MutableStateFlow(Grown.empty<Album>())
     val albums: StateFlow<List<Album>> = _albums
     private val _none = MutableStateFlow(false)
@@ -313,10 +316,16 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
 
     fun setSort(s: AlbumSort) {
         if (s == _sort.value) return
-        job?.cancel()
         _sort.value = s
         val kept = albumSortKept(s)
         nori.settings.update { it.copy(listPrefs = it.listPrefs + (kept.key to kept.value)) }
+        reset()
+    }
+
+    fun setFavorites(on: Boolean) { _favorites.value = on; reset() }
+
+    private fun reset() {
+        job?.cancel()
         _albums.value = Grown.empty()
         _none.value = false
         _rows.value = emptyList()
@@ -328,6 +337,7 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
     fun loadMore() {
         if (exhausted || job?.isActive == true) return
         val sort = _sort.value
+        if (_favorites.value) return loadFavorites(sort)
         val offset = _albums.value.size
         job = viewModelScope.launch {
             nori.library.albums(sort, pageSize, offset).catch { }.collect { page ->
@@ -336,6 +346,19 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
                 _albums.value = all
                 exhausted = albumsExhausted(page.size.toUInt())
                 _none.value = offset == 0 && page.isEmpty()
+            }
+        }
+    }
+
+    /** Every favorite at once, in [sort]'s order (the core's `favorites_in_order`): the stored answer, then the server's. */
+    private fun loadFavorites(sort: AlbumSort) {
+        exhausted = true
+        job = viewModelScope.launch {
+            nori.library.starred().catch { }.collect { starred ->
+                val all = withContext(Dispatchers.Default) { favoritesInOrder(starred.albums, sort) }
+                if (sort == AlbumSort.ARTIST_ROWS) regroup(all, 0)
+                _albums.value = _albums.value.from(0, all)
+                _none.value = all.isEmpty()
             }
         }
     }

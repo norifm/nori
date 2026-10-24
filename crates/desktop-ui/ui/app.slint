@@ -1299,11 +1299,15 @@ component Grid inherits Remembered {
     in property <bool> round;
     in property <length> pad: 32px;
     in property <length> bottom: 100px;
-    // A page title above the cards, scrolling with them, and the orders it can be in as chips under it.
+    // A page title above the cards, scrolling with them, and the orders it can be in as chips under it,
+    // after a filter's chip where it has one (none: "").
     in property <string> title;
     in property <[string]> orders;
     in property <int> order;
     callback ordered(int);
+    in property <string> filter;
+    in property <bool> filtered;
+    callback filter-toggled();
     property <length> head: root.title == "" ? 0 : Chrome.top-room + 56px + (root.orders.length > 0 ? 48px : 0);
     pure callback art(string, int, int) -> image;
     callback open(Card);
@@ -1333,6 +1337,11 @@ component Grid inherits Remembered {
         y: Chrome.top-room + 58px;
         height: 34px;
         spacing: 8px;
+        if root.filter != "": Chip {
+            text: root.filter;
+            lit: root.filtered;
+            clicked => { root.filter-toggled(); }
+        }
         for o[i] in root.orders: Chip {
             text: o;
             lit: i == root.order;
@@ -4891,12 +4900,16 @@ export component AppWindow inherits Window {
     in property <bool> picks-loaded;
     callback open-mix(string);
     in property <[Card]> albums;
-    // The album grid's orders, the one in use, and its rows when it is drawn a row per artist.
+    // The album grid's orders, the one in use, and its rows when it is drawn a row per artist; whether it
+    // lists only the favorites, where the profile has them.
     in property <[string]> album-sorts;
     in property <int> album-sort;
     in property <bool> albums-in-rows;
     in property <[Shelf]> album-rows;
     callback album-sort-chosen(int);
+    in property <bool> albums-favorites;
+    in property <bool> favorites-offered;
+    callback albums-favorites-toggled();
     in property <[Card]> artists;
     in property <[Card]> playlists;
     in property <[SongRow]> songs;
@@ -5806,6 +5819,11 @@ export component AppWindow inherits Window {
                             y: Chrome.top-room + 58px;
                             height: 34px;
                             spacing: 8px;
+                            if root.favorites-offered: Chip {
+                                text: "Favorites";
+                                lit: root.albums-favorites;
+                                clicked => { root.albums-favorites-toggled(); }
+                            }
                             for o[i] in root.album-sorts: Chip {
                                 text: o;
                                 lit: i == root.album-sort;
@@ -5842,6 +5860,9 @@ export component AppWindow inherits Window {
                         orders: root.view == 2 ? root.album-sorts : [];
                         order: root.album-sort;
                         ordered(i) => { root.album-sort-chosen(i); }
+                        filter: root.view == 2 && root.favorites-offered ? "Favorites" : "";
+                        filtered: root.albums-favorites;
+                        filter-toggled => { root.albums-favorites-toggled(); }
                         cards: root.view == 10 ? root.shelves[root.shown-shelf].cards : root.view == 2 ? root.albums : root.playlists;
                         rev: root.covers-rev;
                         art(a, s, r) => { return root.art(a, s, r); }

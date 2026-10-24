@@ -556,16 +556,17 @@ fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused:
         View::Songs => (state(&l.songs), l.songs_more, "song", "songs"),
         _ => (state(&l.playlists), false, "playlist", "playlists"),
     };
-    let order = match view {
-        View::Albums => Some(crate::text::album_sort(l.album_sort)),
-        View::Songs => Some(crate::text::song_order(&l.song_sort)),
-        _ => None,
+    let (order, favorites) = match view {
+        View::Albums => (Some(crate::text::album_sort(l.album_sort)), l.albums_favorites),
+        View::Songs => (Some(crate::text::song_sort(&l.song_sort)), l.songs_favorites),
+        _ => (None, false),
     };
     let caption = match &loaded {
         Ok(Some(n)) => crate::text::count(*n as u64, one, many) + if more { "+" } else { "" },
         _ => String::new(),
     };
-    let sort = order.map_or_else(String::new, |o| format!("{}  {o} ", crate::text::SORT_BY));
+    let only = if favorites { format!("{}   ", crate::text::FAVORITES_ONLY) } else { String::new() };
+    let sort = order.map_or_else(String::new, |o| format!("{only}{}  {o} ", crate::text::SORT_BY));
     put(f, Paragraph::new(spread(vec![Span::styled(caption, t.dim())], Span::styled(sort, t.dim()), area.width as usize)), row_of(area, 0));
     let body = below(area, 1);
     match loaded {

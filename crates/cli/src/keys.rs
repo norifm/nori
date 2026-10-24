@@ -54,6 +54,8 @@ pub enum Action {
     ShuffleAll,
     /// The next order of the list.
     Sort,
+    /// The list's favorites only, or everything.
+    Favorites,
     /// The menu of what is selected, or of the song playing in the full player.
     Menu,
     /// Starts a jam around the selected item.
@@ -184,6 +186,7 @@ pub const BINDINGS: &[Binding] = &[
     b!(List, "f", Action::Star, "Favorite or not", [(Char('f'), N)]),
     b!(List, "i", Action::Jam, "Start a jam with it: it plays, and friends with the link ask for songs", [(Char('i'), N)]),
     b!(List, "S", Action::Sort, "The albums' or the songs' next order", [(Char('S'), S), (Char('S'), N)]),
+    b!(List, "*", Action::Favorites, "The albums or songs: only the favorites, or all", [(Char('*'), S), (Char('*'), N)]),
     b!(List, "[ ]", Action::GroupBack, "The library's section, or the settings' group, before or after", [(Char('['), N)]),
     b!(List, "", Action::GroupOn, "", [(Char(']'), N)]),
     b!(Edit, "d / delete", Action::Remove, "Take it out (of the queue, or off this computer); refuse a jam request (enter accepts)", [(Char('d'), N), (Delete, N)]),

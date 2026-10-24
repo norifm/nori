@@ -55,7 +55,6 @@ enum Say {
         case "newest", "ADDED": return "Added"
         case "recent": return "Played"
         case "frequent", "PLAYS": return "Most played"
-        case "starred": return "Favorites"
         case "byYear", "YEAR": return "Year"
         case "random": return "Random"
         case "TITLE": return "Title"

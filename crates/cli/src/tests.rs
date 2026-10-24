@@ -411,15 +411,15 @@ fn the_library_has_its_places_and_orders() {
     assert_eq!(a.cmds.last(), Some(&Cmd::ShuffleLibrary { albums: true }));
     // S: the next of the core's orders, kept, read again; Artist is a shelf per artist.
     let orders: Vec<nori_core::browse::AlbumSort> = nori_core::browse::album_sorts();
-    assert_eq!(a.library.album_sort, orders[1], "Title, after Favorites");
+    assert_eq!(a.library.album_sort, orders[0], "Title first");
     a.cmds.clear();
     key(&mut a, KeyCode::Char('S'));
     let artist = nori_core::browse::AlbumSort::ArtistRows;
     assert_eq!(a.library.album_sort, artist);
-    assert_eq!(a.cmds, [Cmd::Keep(nori_core::browse::album_sort_kept(artist)), Cmd::Load(Req::Albums { sort: artist, offset: 0 })]);
+    assert_eq!(a.cmds, [Cmd::Keep(nori_core::browse::album_sort_kept(artist)), Cmd::Load(Req::Albums { sort: artist, favorites: false, offset: 0 })]);
     a.handle(Msg::Data(albums_req(), Ok(Data::Albums(albums[..1].to_vec()))));
     assert!(a.library.albums.ready().is_none(), "an order left since is not shown");
-    a.handle(Msg::Data(Req::Albums { sort: artist, offset: 0 }, Ok(Data::Albums(albums.clone()))));
+    a.handle(Msg::Data(Req::Albums { sort: artist, favorites: false, offset: 0 }, Ok(Data::Albums(albums.clone()))));
     let s = draw(&mut a, 120, 30);
     let lines: Vec<&str> = s.lines().map(str::trim_end).collect();
     let ann = lines.iter().position(|l| l.trim_start().starts_with("Ann")).unwrap_or_else(|| panic!("{s}"));
@@ -430,8 +430,18 @@ fn the_library_has_its_places_and_orders() {
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
     assert!(a.cmds.contains(&Cmd::Load(Req::Artist("ar-b".into()))), "{:?}", a.cmds);
+    // *: only the favorites, in the order chosen; another order keeps them so.
+    a.go(View::Albums);
+    key(&mut a, KeyCode::Char('*'));
+    assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Albums { sort: artist, favorites: true, offset: 0 })));
+    key(&mut a, KeyCode::Char('S'));
+    let year = orders[2];
+    assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Albums { sort: year, favorites: true, offset: 0 })));
+    a.handle(Msg::Data(Req::Albums { sort: year, favorites: true, offset: 0 }, Ok(Data::Albums(albums[..1].to_vec()))));
+    assert!(!a.library.albums_more, "the favorites come whole");
+    assert!(draw(&mut a, 120, 30).contains("Favorites only   Sort by  Year"));
 
-    // The songs: the favorites first, then the core's sorts.
+    // The songs: the core's sorts, round; the favorites a filter over any of them.
     let mut a = app();
     a.go(View::Songs);
     assert!(a.cmds.contains(&Cmd::Load(songs_req())));
@@ -441,9 +451,12 @@ fn the_library_has_its_places_and_orders() {
     for _ in 0..6 {
         key(&mut a, KeyCode::Char('S'));
     }
-    assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Songs { sort: "TITLE".into(), starred: true, offset: 0 })), "round to the favorites");
-    a.handle(Msg::Data(Req::Songs { sort: "TITLE".into(), starred: true, offset: 0 }, Ok(Data::Songs(vec![song("1", "Kept", 100)], true))));
-    assert!(draw(&mut a, 120, 30).contains("Sort by  Favorites"));
+    assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Songs { sort: "TITLE".into(), starred: false, offset: 0 })), "round to the first");
+    key(&mut a, KeyCode::Char('*'));
+    key(&mut a, KeyCode::Char('S'));
+    assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Songs { sort: "ARTIST".into(), starred: true, offset: 0 })));
+    a.handle(Msg::Data(Req::Songs { sort: "ARTIST".into(), starred: true, offset: 0 }, Ok(Data::Songs(vec![song("1", "Kept", 100)], true))));
+    assert!(draw(&mut a, 120, 30).contains("Favorites only   Sort by  Artist"));
 }
 
 #[test]
@@ -1770,7 +1783,7 @@ fn the_main_screens() {
 
 /// The albums' first page in the first order.
 fn albums_req() -> Req {
-    Req::Albums { sort: nori_core::browse::AlbumSort::ByName, offset: 0 }
+    Req::Albums { sort: nori_core::browse::AlbumSort::ByName, favorites: false, offset: 0 }
 }
 
 /// The songs' first page by title.

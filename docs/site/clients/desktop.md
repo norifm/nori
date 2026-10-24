@@ -25,8 +25,8 @@ them. A narrow window drops the tab names, then the volume slider and the panel 
 
 Home starts with a Continue card when another device left a queue on your server: Resume carries it on here,
 the cross turns it down, and either way that queue is not offered again. Every row's title has an arrow that
-opens the whole row. Albums lists its orders as chips under its title (Favorites, Title, Artist, Year, Added,
-Most played, Random); Artist shows a shelf per artist.
+opens the whole row. Albums lists its orders as chips under its title (Title, Artist, Year, Added, Most played,
+Random), after Favorites, which lists only the favorite albums in that order; Artist shows a shelf per artist.
 
 An album, playlist or mix page shows its cover beside its name (a mix its covers two by two), an artist's
 page the picture across the window under the name. Under them are Shuffle, Play (Pause while that page's queue

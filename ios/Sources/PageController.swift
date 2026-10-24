@@ -4,7 +4,8 @@ import UIKit
 /// `given`, sections already in hand (a shelf opened in full).
 class PageController: UITableViewController {
     let kind: Int32
-    let arg: String
+    /// What `kind` reads (`nori_ios_read`); the album grid changes it to filter its albums.
+    var arg: String
     private let given: [Section]?
     private(set) var token: UInt64 = 0
     private(set) var answer: PageAnswer?

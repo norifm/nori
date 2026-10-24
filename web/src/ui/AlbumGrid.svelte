@@ -1,7 +1,8 @@
 <script lang="ts">
-  // Every album in the order `sort` (the server's name for it), read a page after another once the first
-  // is in: a grid of cards or, in the Artist order (`artistRows`), a shelf per artist under their name and
-  // how many, the name a way to the artist. `head` goes above (a page's places and orders).
+  // Every album in the order `sort` (the server's name for it), or with `favorites` the starred ones, read a
+  // page after another once the first is in: a grid of cards or, in the Artist order (`artistRows`), a shelf
+  // per artist under their name and how many, the name a way to the artist. `head` goes above (a page's
+  // places and orders).
   import type { Snippet } from "svelte";
   import { ask, read } from "../rpc";
   import { reading } from "../state/library.svelte";
@@ -11,8 +12,8 @@
   import Cards from "./Cards.svelte";
   import Icon from "./Icon.svelte";
 
-  let { sort, top, head }: { sort: string; top: string; head?: Snippet } = $props();
-  const page = (offset: number) => read<{ albums?: Album[]; next: number | null }>({ kind: "albums", sort, size: 500, offset });
+  let { sort, favorites = false, top, head }: { sort: string; favorites?: boolean; top: string; head?: Snippet } = $props();
+  const page = (offset: number) => read<{ albums?: Album[]; next: number | null }>({ kind: "albums", sort, favorites, size: 500, offset });
   // The page's name for a check: it does not change while the grid is shown.
   // svelte-ignore state_referenced_locally
   const first = reading(top, () => page(0));
@@ -53,6 +54,7 @@
 
 {@render head?.()}
 {#if first.error}<p class="empty">{W.failed(first.error)}</p>
+{:else if first.data && !albums.length && favorites}<p class="empty"><Icon name="seal" />{W.noFavoriteAlbums}</p>
 {:else if first.data && !albums.length}<p class="empty"><Icon name="compact-disc" />{W.noAlbums}</p>
 {:else if sort === "artistRows"}
   {#each shelves as row (row[0].id)}

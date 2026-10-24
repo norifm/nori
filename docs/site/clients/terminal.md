@@ -48,9 +48,9 @@ or after). Each starts with the library's places, Favorites, Downloads (with wha
 they weigh), History and Shuffle, then its entries, the first of them selected.
 
 Albums and songs have an order, named at the top right: `S` goes to the next and it is kept. Albums go by
-Favorites, Title, Artist, Year, Added, Most played and Random; in Artist order each artist's albums are
-listed under their name, which opens their page. Songs go by Favorites (only those), Title, Artist, Album,
-Year, Added, Most played and Longest.
+Title, Artist, Year, Added, Most played and Random; in Artist order each artist's albums are listed under
+their name, which opens their page. Songs go by Title, Artist, Album, Year, Added, Most played and Longest.
+`*` lists only the favorites, in the same order ("Favorites only" at the top right), or everything again.
 
 ## Pages
 
@@ -109,6 +109,7 @@ the outer terminal, and nori draws them again when the pane has focus back; it t
 | `1` … `9` | Home, Albums, Artists, Songs, Playlists, Favorites, Downloads, Equalizer, Settings |
 | `[` / `]` | the library's section, or the settings' group, before or after |
 | `S` | the albums' or songs' next order |
+| `*` | the albums or songs: only the favorites, or all |
 | `P` / `Q` / `L` / `C` | the full player on the song alone, its queue, lyrics or devices (again: back) |
 | `tab` | in the full player, the next panel |
 | `t` | radio from the playing song, where the server has it |
