@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Random albums, as the Home page's Random row: a grid of covers, drawn again with the shuffle. -->
+<!-- Random albums, as the Home page's Random row: a grid of covers, drawn again with the refresh. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent">
     <ImageView android:id="@+id/widget_back" android:layout_width="match_parent" android:layout_height="match_parent"
@@ -11,9 +11,9 @@
             <TextView android:id="@+id/widget_header" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                 android:ellipsize="end" android:maxLines="1" android:fontFamily="@font/inter" android:textFontWeight="600"
                 android:textSize="20sp" android:letterSpacing="-0.02" android:textColor="#FFFFFFFF" android:text="@string/home_row_random" />
-            <FrameLayout android:id="@+id/widget_shuffle" android:layout_width="36dp" android:layout_height="36dp">
-            <ImageView android:id="@+id/widget_shuffle_glyph" android:layout_width="match_parent" android:layout_height="match_parent"
-                android:padding="7dp" android:src="@drawable/widget_shuffle" android:contentDescription="@string/shuffle" />
+            <FrameLayout android:id="@+id/widget_refresh" android:layout_width="36dp" android:layout_height="36dp">
+            <ImageView android:id="@+id/widget_refresh_glyph" android:layout_width="match_parent" android:layout_height="match_parent"
+                android:padding="7dp" android:src="@drawable/widget_refresh" android:contentDescription="@string/widget_other_albums" />
         </FrameLayout>
         </LinearLayout>
         <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="vertical"

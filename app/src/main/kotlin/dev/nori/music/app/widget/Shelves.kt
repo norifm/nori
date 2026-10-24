@@ -133,14 +133,14 @@ class MixesWidget : NoriWidget() {
 
 /**
  * Random albums, as the Home page's Random row: as many covers as fit, a tap playing the album (see [Widgets.playOrOpen]), and the
- * shuffle drawing others. The same albums are kept through a resize; drawn anew when placed and on the
- * shuffle only. Never polled.
+ * refresh drawing others. The same albums are kept through a resize; drawn anew when placed and on the
+ * refresh only. Never polled.
  */
 class AlbumsWidget : NoriWidget() {
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         when (intent.action) {
-            SHUFFLE -> {
+            REFRESH -> {
                 drawn = emptyList()
                 draw(context.applicationContext, Widgets.ids(context, AlbumsWidget::class.java))
             }
@@ -157,7 +157,7 @@ class AlbumsWidget : NoriWidget() {
     override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: Bundle) = draw(context.applicationContext, intArrayOf(id))
 
     companion object {
-        const val SHUFFLE = "dev.nori.music.widget.SHUFFLE_ALBUMS"
+        const val REFRESH = "dev.nori.music.widget.SHUFFLE_ALBUMS"
 
         /** The albums drawn last, shared by every placed one. Main thread. */
         var drawn: List<Album> = emptyList()
@@ -188,8 +188,8 @@ class AlbumsWidget : NoriWidget() {
                 val look = theme.look
                 val (wDp, hDp) = Widgets.sizeDp(context, id)
                 val v = shelf(context, R.layout.widget_albums, look, hDp)
-                v.tint(R.id.widget_shuffle_glyph, look[CoverLook.ON_VARIANT])
-                v.setOnClickPendingIntent(R.id.widget_shuffle, Widgets.self(context, AlbumsWidget::class.java, SHUFFLE))
+                v.tint(R.id.widget_refresh_glyph, look[CoverLook.ON_VARIANT])
+                v.setOnClickPendingIntent(R.id.widget_refresh, Widgets.self(context, AlbumsWidget::class.java, REFRESH))
                 val cols = ((wDp - 2 * SIDE + GAP).toFloat() / (AIM + GAP)).roundToInt().coerceIn(1, ALBUMS[0].size)
                 val side = (wDp - 2 * SIDE - GAP * (cols - 1)) / cols
                 val rows = ((tilesDp(hDp) + GAP).toFloat() / (side + GAP)).roundToInt().coerceIn(1, ROWS.size)
