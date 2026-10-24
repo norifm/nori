@@ -9,6 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SYSTEMS = ("macos", "linux", "android", "ios", "windows")
+# Test targets only Cargo runs: they read files from across the whole checkout, which Bazel's sandbox does not hold.
+CARGO_ONLY_TESTS = {"agents_map"}
 
 
 def applies(expression, system):
@@ -158,7 +160,7 @@ def main():
                         target = str(path.relative_to(other_folder)) if path.suffix == ".rs" else "resources"
                         resources.add(f"//{other_folder.relative_to(ROOT)}:{target}")
         spec = {"name": name, "edition": package["edition"], "version": package["version"],
-                "targets": [{"name": t["name"], "kind": t["kind"][0], "root": str(Path(t["src_path"]).relative_to(ROOT / folder)), "test": t["test"]} for t in package["targets"] if t["kind"][0] != "example"],
+                "targets": [{"name": t["name"], "kind": t["kind"][0], "root": str(Path(t["src_path"]).relative_to(ROOT / folder)), "test": t["test"]} for t in package["targets"] if t["kind"][0] != "example" and t["name"] not in CARGO_ONLY_TESTS],
                 "features": {profile: features[name] for profile, (features, _) in profiles.items()}, "local": local, "registry": registry,
                 "resources": sorted(resources), "aliases": {d["label"]: d["alias"] for d in local if d["alias"] != d["label"].rsplit(":", 1)[1]}}
         contents = '# Generated from Cargo manifests by tools/bazel/generate.py.\nload("//tools/bazel:workspace.bzl", "workspace_crate")\n\nworkspace_crate(' + pprint.pformat(spec, sort_dicts=False, width=100) + ')\n'

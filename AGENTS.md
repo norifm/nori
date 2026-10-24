@@ -71,27 +71,38 @@ via nori-core):
 | android | Android only: the `norimusic` cdylib, uniffi scaffolding, JNI doors, AudioTrack writer (track.rs), playback path (player.rs) |
 | http, output-cpal, mpris | desktop: ureq transport, cpal output, Linux media controls |
 | cli, desktop | terminal (ratatui) and desktop (Slint) clients |
+| sign-in-window | desktop: a provider's sign-in page in the system web view, the client's own binary run as a second process |
+| web | the web client's core in a browser's Dedicated Worker (`core.wasm`, `player.wasm`), over fetch, played through an AudioWorklet |
 | desktop-ui | the desktop client's Slint interface (`ui/app.slint`), its own crate so Rust edits don't recompile it |
-| ios | the iPod touch client's static library over nori-host behind a C ABI; the Swift app is `ios/`, the plan and work packages docs/developers/ipod-internals.md |
+| ios | the iPod touch client's static library over nori-host behind a C ABI (docs/developers/ipod-internals.md) |
+| remote | remote control and jams: one protocol (wire.rs) over octo-fiesta's relay or the LAN door (lan.rs); what a controlled device admits (device.rs), a jam's members and requests (jam.rs) |
+| tasks, time | where async work runs (one thread per executor natively, the event loop in a browser); the one clock every crate reads |
 | host | the session every client shares (terminal, desktop and iPod today; Android is moving onto it): engine, queue saving, remote and jams, config, index sync, media controls |
 | uniffi-jni-runtime, uniffi-bindgen | upstream uniffi JNI runtime with changes marked `NORI`; Kotlin binding generator |
 | testdir | `TempDir` for tests; every test that writes files uses it |
 
-Kotlin: `core/` is the Android library with no UI (media3 service, `RustPlayer.kt`, downloads, `Nori.kt`
-object graph). `app/` is UI only: `vm/` ViewModels, `ui/` Compose.
+The other languages:
+
+- Android, Kotlin: `core/src/main/kotlin/dev/nori/music/` is the library with no UI (media3 service,
+  `playback/RustPlayer.kt`, downloads, the `Nori.kt` object graph). `app/src/main/kotlin/dev/nori/music/app/`
+  is UI only: `vm/` ViewModels, `ui/` Compose (`ui/Design.kt` shapes, `ui/Say.kt` words).
+- iPod, Swift: `ios/Sources/`, `Bridge.swift` and `nori_ios.h` over crates/ios, `Say.swift` words.
+- Web, Svelte: `web/src/` (`pages/` screens, `ui/` parts, `state/`, `words.ts`, `rpc.ts` to the worker in
+  crates/web); browser checks in `web/check/`.
+- Tooling: `tools/` (device scripts, release, perf, Bazel).
 
 ## Docs
 
 The developer docs live here, in `docs/developers/`, and change with the code in the same commit:
 `testing.md` test tiers and the local server, `writing-a-client.md` what is core vs client, `building.md`
-builds and the perf build, `ipod-internals.md` the iPod plan. The user docs live in the website's
+builds and the perf build, `ipod-internals.md` the iPod client. The user docs live in the website's
 repository, [norifm/norifm.com](https://github.com/norifm/norifm.com), under `src/content/docs/docs/`,
 published at norifm.com/docs: when a change alters what users see, update the page there if it's
 wanted, as a commit in that repository.
 
-Besides the developer docs, this repository keeps what development needs: decisions the owner asked to
-save, research and plans (`TODO.md` what to build next, `docs/research/plugins.md` the plugin
-plan). Never published.
+Besides the developer docs, this repository keeps what development needs, never published: decisions
+the owner asked to save, research and plans. `TODO.md` lists ideas for later, built only when the owner
+asks; `docs/research/plugins.md` is the plugin plan.
 
 ## Boundaries
 
@@ -111,7 +122,7 @@ plan). Never published.
   only one. When the request does not say, ask after building it whether the other clients get it too,
   and list the ones still missing it.
 - The core returns data and enums, never user-facing text. Words live in each client: Android string
-  resources (`strings.xml`, `strings_ui.xml`, read via `app/ui/Say.kt`), `crates/cli/src/text.rs`,
+  resources (`strings.xml`, `strings_ui.xml`, read via `ui/Say.kt`), `crates/cli/src/text.rs`,
   the desktop's `words.rs`. Logs, perf report and self test are English.
 - `ui/` reads ViewModel state and calls ViewModel functions only; it may call the core's pure
   functions. It never touches `Nori`, media3, OkHttp or core state. `core/` never knows a UI exists.
@@ -120,10 +131,11 @@ plan). Never published.
   `Java_` names. Primitive-only signatures are `@CriticalNative` (no env/class params), short
   array/buffer ones `@FastNative`; the Kotlin `external fun` and the Rust function must agree. Doors
   only convert; logic belongs in the core.
-- A new core crate goes into `crates/android/build.rs`'s list, nori-android's dependencies and
+- A new crate gets its row in Layout (`crates/testdir/tests/agents_map.rs` checks the map). A new core crate
+  also goes into `crates/android/build.rs`'s list, nori-android's dependencies and
   nori-core's `ffi` feature, and `core/build.gradle.kts`'s binding inputs if it exports an interface.
 - A new setting: one `StoredPrefs` field with its `#[setting(...)]` line (crates/settings), then its row
-  in `app/.../vm/SettingsPages.kt` + `strings.xml` (+ `INDEX` entry if searchable) and, if it makes
+  in the app's `vm/SettingsPages.kt` + `strings.xml` (+ `INDEX` entry if searchable) and, if it makes
   sense, `crates/cli/src/settings_view.rs`. `tests/stored_format.rs` guards the stored format
   (`NORI_BLESS=1` only for an intended change).
 - Every optional feature sits behind a `StoredPrefs` switch; off, it costs nothing (no init, listener,
@@ -205,7 +217,7 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
 - Queue or prefetch provider (`ext-`) tracks the user didn't ask to play: a stream request makes the
   server download them. Provider items are never indexed.
 - Use raw Material widgets (`Button`, `FilterChip`, `OutlinedTextField`, `Divider`) in screens; use the
-  shapes in `app/.../ui/Design.kt`. No liquid-glass imitation on Android; nothing animates unless the
+  shapes in the app's `ui/Design.kt`. No liquid-glass imitation on Android; nothing animates unless the
   user touched it; measure before adding blur or per-frame effects.
 
 ## Builds and releases
