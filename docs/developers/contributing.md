@@ -23,7 +23,7 @@ One line, conventional, as [AGENTS.md](../../AGENTS.md#commits) describes. The c
   [norifm/norifm.com](https://github.com/norifm/norifm.com), under `src/content/docs/docs/`. A change
   that alters what users see can update them there.
 - The developer docs are here, in `docs/developers/`, and change with the code in the same commit.
-- Internal notes (`docs/features.md`, `docs/research/`) stay unpublished.
+- Internal notes (`TODO.md`, `docs/research/`) stay unpublished.
 - Every page says which versions and clients it applies to, and states only what the code does.
 
 ## Security

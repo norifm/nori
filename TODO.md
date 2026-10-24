@@ -1,4 +1,4 @@
-# Planned features
+# TODO
 
 Internal note, not published. What to build next, in rough order. Delete a line once it ships.
 

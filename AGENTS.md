@@ -90,7 +90,7 @@ published at norifm.com/docs: when a change alters what users see, update the pa
 wanted, as a commit in that repository.
 
 Besides the developer docs, this repository keeps what development needs: decisions the owner asked to
-save, research and plans (`docs/features.md` planned features, `docs/research/plugins.md` the plugin
+save, research and plans (`TODO.md` what to build next, `docs/research/plugins.md` the plugin
 plan). Never published.
 
 ## Boundaries
