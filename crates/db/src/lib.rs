@@ -167,6 +167,10 @@ impl Profile {
     pub fn get(&self) -> Option<Arc<Mutex<Connection>>> {
         self.0.lock().upgrade()
     }
+
+    pub fn weak(&self) -> Weak<Mutex<Connection>> {
+        self.0.lock().clone()
+    }
 }
 
 /// The database file name.

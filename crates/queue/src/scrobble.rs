@@ -2,9 +2,13 @@
 //! timer). The song left is recorded in the local history in the background; the platform is told what
 //! to send the server.
 
+use std::sync::Weak;
+
 use nori_db as db;
 use nori_db::background;
 use nori_model::{Listen, Song};
+use parking_lot::Mutex;
+use rusqlite::Connection;
 
 use crate::{queue, Session};
 
@@ -12,6 +16,8 @@ use crate::{queue, Session};
 pub(crate) struct Scrobbler {
     /// The current song, kept from its start: the queue may be replaced before it is left.
     song: Option<Song>,
+    /// The database of the profile the current song started in.
+    profile: Weak<Mutex<Connection>>,
     incoming: Option<Listen>,
     started_at: i64,
     heard_ms: i64,
@@ -31,10 +37,12 @@ impl Scrobbler {
         }
     }
 
-    /// Moves to `next`; returns the song left, how long it was heard and when it started.
-    fn switch(&mut self, next: Option<Song>, playing: bool, now_ms: i64, wall_ms: i64) -> (Option<Song>, i64, i64) {
+    /// Moves to `next`, started in `profile`; returns the song left, how long it was heard, when it
+    /// started and the profile it started in.
+    fn switch(&mut self, next: Option<Song>, profile: Weak<Mutex<Connection>>, playing: bool, now_ms: i64, wall_ms: i64) -> (Option<Song>, i64, i64, Weak<Mutex<Connection>>) {
         self.edge(false, now_ms);
         let done = std::mem::replace(&mut self.song, next);
+        let left_in = std::mem::replace(&mut self.profile, profile);
         let heard = std::mem::take(&mut self.heard_ms);
         let at = std::mem::replace(&mut self.started_at, wall_ms);
         if let Some(listen) = self.incoming.take().filter(|l| self.song.as_ref().is_some_and(|s| s.id == l.song_id)) {
@@ -42,7 +50,7 @@ impl Scrobbler {
             self.heard_ms = listen.heard_ms.max(0);
         }
         self.edge(playing, now_ms);
-        (done, heard, at)
+        (done, heard, at, left_in)
     }
 }
 
@@ -111,10 +119,12 @@ impl Session {
         let (taste_model, scrobble) = self.settings.prefs(|p| (p.taste_model, p.scrobble));
         let next = followed(id, why);
         let song = next.as_deref().and_then(|id| self.song(id));
-        let (done, heard, at) = self.scrobbler.lock().switch(song, playing, now_ms, wall_ms);
-        // The profile playing now, not the one open when the write runs.
+        let open = self.db.weak();
+        let (done, heard, at, left_in) = self.scrobbler.lock().switch(song, open.clone(), playing, now_ms, wall_ms);
+        let still_open = Weak::ptr_eq(&left_in, &open);
+        // The profile the song started in, not one opened since or while the write waits.
         if taste_model {
-            if let (Some(song), Some(db)) = (done.clone(), self.db.get()) {
+            if let (Some(song), Some(db)) = (done.clone(), left_in.upgrade()) {
                 background::run(move || {
                     let _ = nori_library::history::record(&mut db.lock(), &song, at, heard, tz_offset_ms, db::now_ms());
                 });
@@ -123,7 +133,7 @@ impl Session {
         if !scrobble {
             return ScrobbleSend { submit_id: None, submit_at: 0, now_playing_id: None };
         }
-        let submit_id = done.filter(|s| heard >= needed_ms(s.duration as i64)).map(|s| s.id);
+        let submit_id = done.filter(|s| still_open && heard >= needed_ms(s.duration as i64)).map(|s| s.id);
         ScrobbleSend { submit_id, submit_at: at, now_playing_id: next }
     }
 }
@@ -148,12 +158,12 @@ mod tests {
         // Heard time sums play edges only.
         let mut s = Scrobbler::default();
         let song = Song::only_id("a".into());
-        s.switch(Some(song.clone()), true, 1_000, 50);
+        s.switch(Some(song.clone()), Weak::new(), true, 1_000, 50);
         s.edge(true, 2_000);
         s.edge(false, 5_000);
         s.edge(false, 9_000);
         s.edge(true, 10_000);
-        let (done, heard, at) = s.switch(None, false, 12_000, 60);
+        let (done, heard, at, _) = s.switch(None, Weak::new(), false, 12_000, 60);
         assert_eq!((done, heard, at), (Some(song), 6_000, 50));
     }
 

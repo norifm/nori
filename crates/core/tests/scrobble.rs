@@ -44,3 +44,19 @@ fn a_handed_listen_preserves_other_queue_entries() {
     let repeated = session.scrobble_track(None, TrackChange::Ended, false, 300_000, 301_000, 0);
     assert_eq!(repeated.submit_id, None, "a repeated queue entry does not inherit handed time");
 }
+
+#[test]
+fn a_listen_left_after_a_profile_switch_stays_with_its_profile() {
+    let session = Arc::new(Session::default());
+    let first = Core::new(String::new(), "first".into(), session.clone()).unwrap();
+    let song = Song { id: "yt-a".into(), title: "Last Resort".into(), duration: 200, ..Default::default() };
+    let other = Song { id: "b".into(), title: "Session".into(), duration: 200, ..Default::default() };
+    session.register(vec![song, other]);
+    session.scrobble_track(Some("yt-a".into()), TrackChange::Moved, true, 0, 1_000, 0);
+    let second = Core::new(String::new(), "second".into(), session.clone()).unwrap();
+    let left = session.scrobble_track(Some("b".into()), TrackChange::Moved, true, 150_000, 151_000, 0);
+    background::flush();
+    assert_eq!(left.submit_id, None, "not scrobbled to the second profile's server");
+    assert_eq!(second.history_recent(10, None, true).unwrap().0.len(), 0);
+    assert_eq!(first.history_recent(10, None, true).unwrap().0.len(), 1);
+}
