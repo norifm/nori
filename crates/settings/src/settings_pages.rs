@@ -334,7 +334,7 @@ impl Page<'_> {
         // AutoMix plans its own transitions, so the plain crossfade gives way to it.
         between.push(self.setting("crossfadeSec").enabled(live && !p.auto_mix));
         between.push(self.setting("crossfadeKeepAlbums").enabled(live && (p.auto_mix || p.crossfade_sec > 0)));
-        let controls = vec![self.setting("previousAlwaysSkips"), self.setting("speed"), self.setting("pitch"), self.setting("skipSilence").enabled(live), self.setting("fadeMs")];
+        let controls = vec![self.setting("speed"), self.setting("pitch"), self.setting("skipSilence").enabled(live), self.setting("fadeMs")];
         let mut queue = vec![
             self.setting("skipExplicit"),
             self.setting("autoFill"),

@@ -377,7 +377,7 @@ fun plan(o: Options): List<Step> {
 data class Knobs(
     val eq: Boolean, val headphone: dev.nori.music.ffi.settings.HeadphoneSound, val balance: Float, val mono: Boolean, val limiter: Boolean,
     val speed: Float, val pitch: Float, val skipSilence: Boolean, val offload: Boolean, val crossfadeSec: Int, val autoMix: Boolean,
-    val replayGain: GainMode, val scrobble: Boolean, val autoFill: Boolean, val skipExplicit: Boolean, val previousAlwaysSkips: Boolean,
+    val replayGain: GainMode, val scrobble: Boolean, val autoFill: Boolean, val skipExplicit: Boolean,
     val fadeMs: Int,
 )
 
@@ -385,7 +385,7 @@ data class Knobs(
 fun testKnobs(user: Knobs): Knobs = user.copy(
     eq = false, headphone = dev.nori.music.ffi.settings.HeadphoneSound.OFF, balance = 0f, mono = false, limiter = false, speed = 1f, pitch = 1f,
     skipSilence = false, offload = false, crossfadeSec = 0, autoMix = false, scrobble = false, autoFill = false,
-    skipExplicit = false, previousAlwaysSkips = false, fadeMs = 0,
+    skipExplicit = false, fadeMs = 0,
 )
 
 /** Names of the settings that differ between [a] and [b]: what putting [a] back changes. */
@@ -397,7 +397,7 @@ fun knobsDiffer(a: Knobs, b: Knobs): List<String> {
     d("pitch", a.pitch, b.pitch); d("skipSilence", a.skipSilence, b.skipSilence); d("offload", a.offload, b.offload)
     d("crossfadeSec", a.crossfadeSec, b.crossfadeSec); d("autoMix", a.autoMix, b.autoMix); d("replayGain", a.replayGain, b.replayGain)
     d("scrobble", a.scrobble, b.scrobble); d("autoFill", a.autoFill, b.autoFill); d("skipExplicit", a.skipExplicit, b.skipExplicit)
-    d("previousAlwaysSkips", a.previousAlwaysSkips, b.previousAlwaysSkips); d("fadeMs", a.fadeMs, b.fadeMs)
+    d("fadeMs", a.fadeMs, b.fadeMs)
     return out
 }
 

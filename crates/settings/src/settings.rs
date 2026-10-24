@@ -480,8 +480,6 @@ pub struct StoredPrefs {
     #[setting("fadeMs", within(0, 5000), default = 0, show = K::Choice(&["0", "150", "300", "500", "1000"]), effect = PLAYER)]
     pub fade_ms: i32,
     // Controls.
-    #[setting("previousAlwaysSkips", FLAG, default = false, show = K::Switch, effect = PLAYER)]
-    pub previous_always_skips: bool,
     #[setting("speed", within(RATE.0, RATE.1), default = 1.0, show = K::Choice(&["0.75", "1", "1.25", "1.5", "2"]), effect = APPLY_AUDIO)]
     pub speed: f32,
     #[setting("pitch", within(RATE.0, RATE.1), default = 1.0, show = K::Choice(&["0.9", "0.95", "1", "1.05", "1.1"]), effect = APPLY_AUDIO)]

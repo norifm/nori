@@ -149,9 +149,9 @@ impl Session {
     }
 
 
-    /// Whether previous restarts the current song (per "previous always skips").
+    /// Whether previous restarts the current song.
     pub fn queue_previous_restarts(&self, position_ms: i64, has_previous: bool) -> bool {
-        q::previous_restarts(position_ms, has_previous, self.settings.prefs(|p| p.previous_always_skips))
+        q::previous_restarts(position_ms, has_previous, false)
     }
 }
 
