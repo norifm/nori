@@ -1321,7 +1321,7 @@ pub(crate) fn offload_reason() -> Option<&'static str> {
         offload: s.offload,
         crossfade_s: s.crossfade_sec,
         auto_mix: s.auto_mix,
-        speed: s.speed,
+        speed: 1.0,
         pitch: s.pitch,
     };
     let output = nori_model::OutputState { hi_res: s.hi_res, ..Default::default() };

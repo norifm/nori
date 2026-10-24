@@ -480,8 +480,6 @@ pub struct StoredPrefs {
     #[setting("fadeMs", within(0, 5000), default = 0, show = K::Choice(&["0", "150", "300", "500", "1000"]), effect = PLAYER)]
     pub fade_ms: i32,
     // Controls.
-    #[setting("speed", within(RATE.0, RATE.1), default = 1.0, show = K::Choice(&["0.75", "1", "1.25", "1.5", "2"]), effect = APPLY_AUDIO)]
-    pub speed: f32,
     #[setting("pitch", within(RATE.0, RATE.1), default = 1.0, show = K::Choice(&["0.9", "0.95", "1", "1.05", "1.1"]), effect = APPLY_AUDIO)]
     pub pitch: f32,
     #[setting("skipSilence", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO)]
@@ -2114,7 +2112,7 @@ mod tests {
             assert_eq!(set_by_name(&p, "volumeBoostDb", not_a_number).unwrap().prefs.volume_boost_db, p.volume_boost_db, "{not_a_number}");
         }
         assert_eq!(set_by_name(&p, "cacheMb", "10").unwrap().prefs.cache_mb, 256);
-        assert_eq!(set_by_name(&p, "speed", "9").unwrap().prefs.speed, 4.0);
+        assert_eq!(set_by_name(&p, "limiterThresholdDb", "9").unwrap().prefs.limiter_threshold_db, 0.0);
         assert_eq!(set_by_name(&p, "fadeMs", "-5").unwrap().prefs.fade_ms, 0);
         assert_eq!(set_by_name(&p, "autoFillKind", "albums").unwrap().prefs.auto_fill_kind, AutoFillKind::Albums);
         assert_eq!(set_by_name(&p, "autoFillBasis", "era").unwrap().prefs.auto_fill_basis, AutoFillBasis::Era);
@@ -2134,7 +2132,6 @@ mod tests {
         assert_eq!(set("mobile", "0:").mobile, SavedQuality::default());
         assert_eq!(set_by_name(&p, "download", "flac"), None);
         assert_eq!(set("season", "WINTER").season, ThemeSeason::Winter);
-        assert_eq!(set("speed", "0.75").speed, 0.75);
         assert_eq!(set("lyricsSize", "7").lyrics_size, 2);
         assert_eq!(set("loudnessLevel", "loud").level, Level::Loud);
         assert_eq!(set("motion", "EINK").motion, Motion::Eink);

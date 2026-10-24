@@ -2443,10 +2443,10 @@ impl Remote {
         (lyrics.song == id).then(|| lyrics.service.clone())
     }
 
-    /// What guests play along by: this device's speed and pitch, and the plan out of the song heard.
+    /// What guests play along by: this device's pitch, and the plan out of the song heard.
     fn along(&self, index: Option<u32>, playing: Playing) -> Along {
         let session = &self.client.core.session;
-        let (speed, pitch) = session.settings.with_prefs(|p| (p.speed, p.pitch)).unwrap_or((1.0, 1.0));
+        let pitch = session.settings.with_prefs(|p| p.pitch).unwrap_or(1.0);
         let mix = playing.mix_from.or(index).and_then(|at| {
             let id = session.playlist(|p| p.ids().get(at as usize).cloned())?;
             let mut mix = mix_of(at, &session.planner.made(&id)??)?;
@@ -2456,7 +2456,7 @@ impl Remote {
             }
             Some(mix)
         });
-        Along { speed, pitch, mix }
+        Along { speed: 1.0, pitch, mix }
     }
 
     fn out(&self, o: Out) {

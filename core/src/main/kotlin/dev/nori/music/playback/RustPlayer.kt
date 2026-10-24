@@ -290,8 +290,8 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
      * the bridge, and says whether the music goes on (it jumped somewhere to play) or stops here.
      */
     var onBridge: (() -> Boolean)? = null
-    /** The speed and pitch the engine plays at, as media3 is told them. */
-    private var parameters = nori.settings.value.let { PlaybackParameters(it.speed, it.pitch) }
+    /** The pitch the engine plays at, as media3 is told it. */
+    private var parameters = nori.settings.value.let { PlaybackParameters(1f, it.pitch) }
     /**
      * How the engine follows a jam's host (nori-engine's `Event::Following`): -1 while it does not; else
      * bit 0 the music plays there, bit 1 this phone's own pause holds it here. While it follows, wanting to
@@ -325,12 +325,11 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     // ---- what the service asks of it directly ----
 
     /**
-     * The settings changed: the engine takes them from the core. The speed and pitch are said to media3
-     * as well, which runs the session's and the controllers' position on at that pace between readings.
+     * The settings changed: the engine takes them from the core. The pitch is said to media3 as well.
      */
     fun applySettings() {
         RustPlayerJni.applySettings(h)
-        val p = nori.settings.value.let { PlaybackParameters(it.speed, it.pitch) }
+        val p = nori.settings.value.let { PlaybackParameters(1f, it.pitch) }
         if (p != parameters) { parameters = p; invalidateState() }
     }
     fun gainChanged() = RustPlayerJni.gainChanged(h)

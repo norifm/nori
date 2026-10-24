@@ -185,7 +185,6 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "autoMixBetterBeats" to (R.string.settings_better_beats to R.string.settings_hint_better_beats),
     "crossfadeKeepAlbums" to (R.string.settings_keep_albums to R.string.settings_hint_keep_albums),
     "fadeMs" to (R.string.settings_fade to R.string.settings_hint_fade),
-    "speed" to (R.string.settings_speed to 0),
     "pitch" to (R.string.settings_pitch to 0),
     "skipSilence" to (R.string.settings_skip_silence to R.string.settings_hint_skip_silence),
     "skipExplicit" to (R.string.settings_skip_explicit to R.string.settings_hint_skip_explicit),
@@ -482,7 +481,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         return when (name) {
             "crossfadeSec" -> offOr(v, ::seconds)
             "fadeMs" -> offOr(v) { if (it.toInt() % 1000 == 0) seconds((it.toInt() / 1000).toString()) else millis(it) }
-            "speed" -> if (v == "1") str(R.string.settings_normal) else str(R.string.settings_times, v)
             "pitch" -> {
                 val pct = ((v.toFloatOrNull() ?: 1f) - 1f).times(100f).roundToInt()
                 when {

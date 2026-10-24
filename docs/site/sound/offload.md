@@ -14,7 +14,7 @@ Offload needs the music untouched. It pauses, and nori decodes on the CPU in sho
 something needs the samples:
 
 - the equalizer or any effect;
-- speed, pitch or skipping silence;
+- pitch or skipping silence;
 - AutoMix, or a crossfade between songs;
 - a song turned up by ReplayGain (turning down is fine);
 - a format the chip does not decode.

@@ -1,6 +1,6 @@
 // The web client in headless Chrome against the local Navidrome (tools/dev-server.sh) through
 // web/serve.py: sign-in, browsing, search, a song streamed and played, next and previous, synced lyrics,
-// a crossfade and an AutoMix transition heard as continuous samples, speed and pitch, the seek bar
+// a crossfade and an AutoMix transition heard as continuous samples, the seek bar
 // running and holding, a click on a lyric line, how soon a pause is heard. Exits non-zero when
 // something is off, and prints what it saw.
 //
@@ -339,25 +339,6 @@ if (!only || only.includes("codecs")) {
   const [after, n] = [(await facts()).heard, await now()];
   report.codecs = { song: n.song?.title, index: n.index, state: n.state, heardS: Math.round(after.seconds - before.seconds), dry: after.dry - before.dry, peak: after.peak };
   expect(n.song?.title === "Lossless Song" && after.seconds - before.seconds > 7 && after.dry === before.dry && after.peak > 0.01, "an Apple Lossless song plays");
-}
-
-if (!only || only.includes("speed")) {
-  await playAlbum(album("Second Wind", "Alpha Waves"));
-  report.speed = {};
-  for (const [speed, pitch] of [["1.5", "1"], ["0.75", "1"], ["1", "1.1"]]) {
-    await ask("setting", "speed", speed);
-    await ask("setting", "pitch", pitch);
-    // Taken up once the sound heard has run on a while; then the song's pace against the sound's.
-    await heardFor(1.5, (await facts()).heard);
-    const [h0, a] = [(await facts()).heard, await now()];
-    await heardFor(4, h0);
-    const [h1, b] = [(await facts()).heard, await now()];
-    const rate = (b.positionMs - a.positionMs) / ((h1.seconds - h0.seconds) * 1000);
-    report.speed[`${speed}x pitch ${pitch}`] = { rate: Math.round(rate * 100) / 100, dry: h1.dry - h0.dry };
-    expect(Math.abs(rate - Number(speed)) < 0.05 && h1.dry === h0.dry, `speed ${speed} and pitch ${pitch} play at their pace`);
-  }
-  await ask("setting", "speed", "1");
-  await ask("setting", "pitch", "1");
 }
 
 /** The seek bar's run, 0 to 1, as the browser draws it now. */

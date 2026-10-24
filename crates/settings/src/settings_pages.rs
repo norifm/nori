@@ -334,7 +334,7 @@ impl Page<'_> {
         // AutoMix plans its own transitions, so the plain crossfade gives way to it.
         between.push(self.setting("crossfadeSec").enabled(live && !p.auto_mix));
         between.push(self.setting("crossfadeKeepAlbums").enabled(live && (p.auto_mix || p.crossfade_sec > 0)));
-        let controls = vec![self.setting("speed"), self.setting("pitch"), self.setting("skipSilence").enabled(live), self.setting("fadeMs")];
+        let controls = vec![self.setting("pitch"), self.setting("skipSilence").enabled(live), self.setting("fadeMs")];
         let mut queue = vec![
             self.setting("skipExplicit"),
             self.setting("autoFill"),
@@ -656,7 +656,7 @@ mod tests {
         assert_eq!(pages(SettingsClient::Web, &ALL_PARTS), [SettingsPage::Playing, SettingsPage::Sound, SettingsPage::Look, SettingsPage::Lyrics, SettingsPage::Library]);
         let rows = every_row(SettingsClient::Web, &d, &facts());
         let has = names(&rows, false);
-        for kept in ["autoMix", "crossfadeSec", "speed", "pitch", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season", "theme"] {
+        for kept in ["autoMix", "crossfadeSec", "pitch", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season", "theme"] {
             assert!(has.iter().any(|n| n == kept), "{kept} is on the web's pages");
         }
         for left in ["bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize", "movingCovers"] {
