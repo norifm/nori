@@ -8,7 +8,7 @@
 #   tools/feature-e2e.sh [--only <section>,...] [--list]     NORI_E2E_SERVER=local for tools/dev-server.sh
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="lyrics motion notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel remote jam"
+SECTIONS="lyrics notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel remote jam"
 OPT_IN="lyrics-services scrobble download-albums youtube-music"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
@@ -337,22 +337,6 @@ PY
   check "the server's profile opens again" wait_for server "$APP_URL" 30
   "$app" play "$SONG" >/dev/null
   check "and its songs play" sounds 20
-fi
-
-if want motion; then section "moving covers"
-  # Off, which is the default, opening the player builds nothing: no video player and no lookup.
-  "$app" set movingCovers off >/dev/null; "$app" open player >/dev/null
-  wait_for route player 5 >/dev/null
-  check "switched off, the open player makes no video player" test "$(field motionPlayers)" = 0
-  # On, over any network. Whether an album has one is Apple's to say, and a test server's generated
-  # music has none, so a video found is reported here rather than required.
-  "$app" set movingCovers always >/dev/null
-  wait_for motionPlayers ">0" 8 2>/dev/null
-  echo "     video for this album: '$(field motionVideo)', players: $(field motionPlayers)"
-  "$app" open home >/dev/null
-  check "put away, the video player is let go" wait_for motionPlayers 0 5
-  "$app" set movingCovers off >/dev/null
-  "$app" set thirdPartyLookups true >/dev/null
 fi
 
 if want notification; then section "the notification's seal and shuffle"

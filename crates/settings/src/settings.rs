@@ -568,12 +568,6 @@ pub struct StoredPrefs {
     pub dim_level: DimLevel,
     #[setting("controlsSide", PICK, default = ControlsSide::Driver, show = K::Choice(ControlsSide::NAMES))]
     pub controls_side: ControlsSide,
-    /// Apple Music motion artwork in the player; offered with the next as one choice, `movingCovers`.
-    #[setting("motionArtwork", FLAG, default = false)]
-    pub motion_artwork: bool,
-    /// Motion artwork only on unmetered networks (each is a few MB).
-    #[setting("motionArtworkWifiOnly", FLAG, default = true)]
-    pub motion_artwork_wifi_only: bool,
     #[setting("motion", PICK, default = Motion::Full, show = K::Choice(Motion::NAMES))]
     pub motion: Motion,
     // Lyrics.
@@ -621,7 +615,7 @@ pub struct StoredPrefs {
     /// Offers the queue another device or app left on the server when nothing plays here.
     #[setting("queueOffer", FLAG, default = true, show = K::Switch)]
     pub queue_offer: bool,
-    /// Master switch over third-party lookups (lyrics, AutoEQ, motion artwork), each with its own switch.
+    /// Master switch over third-party lookups (lyrics, AutoEQ), each with its own switch.
     #[setting("thirdPartyLookups", FLAG, default = true, show = K::Switch)]
     pub third_party_lookups: bool,
     /// Check GitHub for a new release at most daily (nori-core update.rs). Not under the lookups switch.
@@ -662,7 +656,6 @@ pub struct StoredPrefs {
 /// Offered settings that are not a field of their own; read and changed in [`value_of_special`] and
 /// [`set_special`].
 pub(crate) const SPECIAL_SPECS: &[(&str, K)] = &[
-    ("movingCovers", K::Choice(&["off", "wifi", "always"])),
     ("altMaxBitRate", K::Choice(&["0", "320", "192", "128", "96"])),
     ("eqLayout", K::Choice(&["5", "10", "15", "31"])),
 ];
@@ -1403,12 +1396,6 @@ fn set_special(p: &StoredPrefs, n: &mut StoredPrefs, server: &mut bool, name: &s
             Some((sliders, preamp)) => (n.eq_graphic, n.eq_preamp_db) = (sliders, Some(preamp)),
             None => n.eq_graphic = relayout_graphic(&p.eq_graphic, c),
         }),
-        // `motionArtwork` and `motionArtworkWifiOnly` as one choice; on, it needs the online lookups.
-        "movingCovers" => matches!(value, "off" | "wifi" | "always").then(|| {
-            n.motion_artwork = value != "off";
-            n.motion_artwork_wifi_only = value == "wifi";
-            n.third_party_lookups |= n.motion_artwork;
-        }),
         // The active server profile's own settings.
         // The active server profile's own settings; `musicFolders` is a value of [`folder_switches`].
         "musicFolders" | "altMaxBitRate" => n.servers.iter_mut().find(|s| s.id == p.active_server_id).map(|s| {
@@ -1427,12 +1414,6 @@ fn set_special(p: &StoredPrefs, n: &mut StoredPrefs, server: &mut bool, name: &s
 pub(crate) fn value_of_special(p: &StoredPrefs, name: &str) -> Option<String> {
     let server = || p.active_server();
     Some(match name {
-        "movingCovers" => match (p.motion_artwork && p.third_party_lookups, p.motion_artwork_wifi_only) {
-            (false, _) => "off",
-            (true, true) => "wifi",
-            (true, false) => "always",
-        }
-        .to_string(),
         "eqLayout" => p.eq_graphic.len().to_string(),
         "altMaxBitRate" => server().map_or(0, |s| s.alt_max_bit_rate).to_string(),
         _ => return None,
@@ -2553,18 +2534,4 @@ mod tests {
         assert_eq!(storage_index_files(names), [0, 1, 2]);
     }
 
-    #[test]
-    fn moving_covers_is_one_choice() {
-        let off = StoredPrefs { third_party_lookups: false, ..StoredPrefs::default() };
-        let value = |p: &StoredPrefs| crate::settings_model::value_of(p, "movingCovers").unwrap();
-        assert_eq!(value(&off), "off");
-        for (choice, (on, wifi_only)) in [("wifi", (true, true)), ("always", (true, false)), ("off", (false, false))] {
-            let n = set_by_name(&off, "movingCovers", choice).unwrap().prefs;
-            assert_eq!((n.motion_artwork, n.motion_artwork_wifi_only, value(&n)), (on, wifi_only, choice.to_string()), "{choice}");
-            assert_eq!(n.third_party_lookups, on, "{choice}: on needs the lookups, off leaves them");
-        }
-        let looked_up_off = StoredPrefs { motion_artwork: true, ..off.clone() };
-        assert_eq!(value(&looked_up_off), "off", "off while lookups are off");
-        assert!(set_by_name(&off, "movingCovers", "sometimes").is_none());
-    }
 }

@@ -627,7 +627,7 @@ fn settings_page() {
         }
     }
     // What only a phone can do, or a desk has no use for, is not listed here.
-    for phone in ["System audio effects", "Save battery", "Swipe", "Moving covers", "Black background", "Covers fetched ahead", "offload", "Search delay", "bitrate cap"] {
+    for phone in ["System audio effects", "Save battery", "Swipe", "Black background", "Covers fetched ahead", "offload", "Search delay", "bitrate cap"] {
         assert!(!s.contains(phone), "{phone} listed in a terminal:\n{s}");
     }
     // The page never rests on a heading; a switch shows its state, and enter asks the core to change it by

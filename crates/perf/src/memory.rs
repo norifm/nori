@@ -1,5 +1,5 @@
 //! Memory breakdown read at a stretch's ends: Android's PSS summary, native heap, and the app's big
-//! holders (Rust heap, engine song buffers, beat model, cover Bitmaps, moving cover player). The engine
+//! holders (Rust heap, engine song buffers, beat model, cover Bitmaps). The engine
 //! part is read by the platform from its player ([`perf_rust_memory`]), since this crate does not link
 //! the engine.
 
@@ -52,9 +52,6 @@ pub struct PerfMemory {
     pub covers_kb: i64,
     #[serde(rename = "cn")]
     pub covers: i32,
-    /// Live moving-cover players.
-    #[serde(rename = "mv", default)]
-    pub motion: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rust: Option<PerfRust>,
 }
@@ -106,9 +103,6 @@ pub fn memory_line(m: &PerfMemory) -> String {
         }
     }
     out.push_str(&format!("; covers {} in {} Bitmaps", mb(m.covers_kb), m.covers));
-    if m.motion > 0 {
-        out.push_str(&format!(", moving cover playing ({})", m.motion));
-    }
     out
 }
 
@@ -129,7 +123,6 @@ mod tests {
             native_alloc_kb: 46 * 1024,
             covers_kb: 12 * 1024,
             covers: 30,
-            motion: 0,
             rust: Some(PerfRust { heap_kb: 18 * 1024, songs: 2, songs_kb: 21 * 1024, songs_on_disk: 1, model_kb: 0 }),
         };
         assert_eq!(
@@ -139,11 +132,10 @@ mod tests {
         );
 
         // Memory line omits unknown parts.
-        let m = PerfMemory { rust: Some(PerfRust { heap_kb: -1, model_kb: 60 * 1024, ..Default::default() }), motion: 1, ..Default::default() };
+        let m = PerfMemory { rust: Some(PerfRust { heap_kb: -1, model_kb: 60 * 1024, ..Default::default() }), ..Default::default() };
         let line = memory_line(&m);
         assert!(!line.contains("of it Rust"), "{line}");
         assert!(line.contains("beat model 60"), "{line}");
-        assert!(line.ends_with("moving cover playing (1)"), "{line}");
 
         // Memory json uses short keys and round trips.
         let m = PerfMemory { java_kb: 1, rust: Some(PerfRust { heap_kb: 2, ..Default::default() }), ..Default::default() };

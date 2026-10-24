@@ -205,7 +205,6 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "offload" to (R.string.settings_offload to R.string.settings_hint_offload),
     "season" to (R.string.settings_season to R.string.settings_hint_season),
     "theme" to (R.string.settings_mode to 0),
-    "movingCovers" to (R.string.settings_moving_covers to R.string.settings_hint_moving_covers),
     "hideStatusBar" to (R.string.settings_hide_status_bar to R.string.settings_hint_hide_status_bar),
     "keepAwake" to (R.string.settings_keep_awake to R.string.settings_hint_keep_awake),
     "burnInProtection" to (R.string.settings_burn_in to R.string.settings_hint_burn_in),
@@ -244,7 +243,6 @@ private val NAMED: Map<String, IntArray> = mapOf(
     "autoFillKind" to intArrayOf(R.string.settings_auto_fill_kind_songs, R.string.settings_auto_fill_kind_albums),
     "autoFillBasis" to intArrayOf(R.string.settings_auto_fill_basis_similar, R.string.settings_auto_fill_basis_artist, R.string.settings_auto_fill_basis_genre, R.string.settings_auto_fill_basis_era),
     "headphoneSound" to intArrayOf(R.string.settings_off, R.string.settings_headphone_natural, R.string.settings_headphone_wide),
-    "movingCovers" to intArrayOf(R.string.settings_off, R.string.settings_moving_covers_wifi, R.string.settings_moving_covers_always),
     "compressorPreset" to intArrayOf(R.string.settings_compressor_light, R.string.settings_compressor_car, R.string.settings_compressor_night),
     "replayGain" to intArrayOf(R.string.settings_off, R.string.settings_leveling_song, R.string.settings_leveling_album, R.string.settings_leveling_auto),
     "loudnessLevel" to intArrayOf(R.string.settings_level_quiet, R.string.settings_level_normal, R.string.settings_level_loud),
@@ -512,7 +510,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         }
         "bitPerfect" -> bitPerfectWords(f.dac)
         "offload" -> if (f.dac.device != null) str(R.string.settings_offload_usb) else if (s.offloadPaused) str(R.string.settings_offload_paused) else ""
-        "movingCovers" -> if (s.values["movingCovers"] != "off" && p.motion != dev.nori.music.ffi.settings.Motion.FULL) str(R.string.settings_moving_covers_still) else ""
         else -> ""
     }
 

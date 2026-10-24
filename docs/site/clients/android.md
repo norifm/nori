@@ -37,8 +37,3 @@ system's media controls, notification and lock screen.
   samples. See [Offload and processing](../sound/offload.md).
 - **Updates**: the app checks GitHub for a newer release at most once a day and offers to install it.
   Turn this off in the Updates section of Settings, or opt into beta releases there.
-- **Moving covers** (off by default): some albums on Apple Music have a short looping video of their
-  cover, and the player can play it in place of the still cover, only while the player is open and at
-  rest. Finding the video asks Apple's public search and its catalog for the album, sending the artist
-  and album name; it is unofficial. One choice sets it: Off, On Wi-Fi or Always (from 0.7.0; before, a
-  switch and a separate mobile data switch). See [Privacy and network](../privacy.md).

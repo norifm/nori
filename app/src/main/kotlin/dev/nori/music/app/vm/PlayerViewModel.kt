@@ -7,12 +7,9 @@ import dev.nori.music.data.followSong
 import dev.nori.music.ffi.settings.LyricsOrigin
 import dev.nori.music.net.said
 import dev.nori.music.playback.PlayerState
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
@@ -125,59 +122,6 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
             keep = { it is Load.Ready && it.data.lyrics.lines.isNotEmpty() },
         ) { song -> (dev.nori.music.app.testLyrics(song) ?: nori.library.lyricsFor(song)).map<FoundLyrics, Load<FoundLyrics>> { Load.Ready(it) } }
 
-    /**
-     * The moving cover of the album playing (Settings, Look): an HLS address, or null when it has none,
-     * when the switch is off, or on mobile data while it is kept to Wi-Fi. Found by the core
-     * (`motion_video`, which remembers every answer) only while the player collects this, which is while
-     * it is open, and once per album: the next song of the same record carries on with the video it has.
-     * A new album starts from null, so the last one's video steps back at once rather than playing on
-     * under the new cover. Switched off, nothing is asked at all.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val motionVideo: StateFlow<String?> = kotlinx.coroutines.flow.combine(
-        state.map { it.current }.distinctUntilChanged { a, b -> a?.albumId == b?.albumId && a?.album == b?.album && a?.artist == b?.artist },
-        nori.settings.prefs.map { (it.thirdPartyLookups && it.motionArtwork) to it.motionArtworkWifiOnly }.distinctUntilChanged(),
-    ) { song, rule -> song to rule.first }
-        .flatMapLatest { (song, on) ->
-            if (song == null || !on) flowOf<String?>(null)
-            else kotlinx.coroutines.flow.flow<String?> {
-                emit(null)
-                emit(kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { nori.client.motionVideo(song, nori.http.metered) })
-            }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-
-    /**
-     * The player behind the moving cover. The object is only made when the screen first hands it a
-     * surface, and its ExoPlayer only when it first plays; with the switch off neither ever is.
-     */
-    private val motionLazy = lazy {
-        nori.motionPlayer { gone -> viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { nori.client.motionForget(gone) } }
-    }
-    private val motion by motionLazy
-
-    /** The moving cover whose first frame is on its surface; the screen fades it in after this. */
-    val motionReady: StateFlow<String?> get() = motion.ready
-
-    /** The moving cover's surface arrived on screen ([shown]) or left it. */
-    fun motionView(view: android.view.TextureView, shown: Boolean) {
-        if (shown) motion.show(view) else if (motionLazy.isInitialized()) motion.hide(view)
-    }
-
-    fun motionPlay(url: String) = motion.play(url)
-
-    fun motionPause() {
-        if (motionLazy.isInitialized()) motion.pause()
-    }
-
-    fun motionRelease() {
-        if (motionLazy.isInitialized()) motion.release()
-    }
-
-    override fun onCleared() {
-        motionRelease()
-        super.onCleared()
-    }
-
     private val _coversNear = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
     /** The playing song's cover and those a skip either way lands on, for the bar to work their colours out ahead. */
     val coversNear: StateFlow<List<String>> = _coversNear
@@ -209,7 +153,6 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
                 }
         }
     }
-
 
     /** Pull, do not push: the UI reads this on its own clock while the seek bar is on screen. */
     val positionMs: Long get() = player.positionMs
