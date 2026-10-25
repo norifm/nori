@@ -802,7 +802,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     text(f, Rect { width: area.width.saturating_sub(seal_w), ..row_of(area, 0) }, &title, bold().fg(t.ink));
     if let Some(on) = sealed {
         let r = Rect { x: area.x + (title.width() as u16 + 1).min(area.width.saturating_sub(2)), width: 2, ..row_of(area, 0) };
-        put(f, Paragraph::new(seal(on, false, t)), r);
+        put(f, Paragraph::new(seal(on, false, t.dim(), t)), r);
         hits.push((r, Hit::Button(Button::Star)));
     }
     // Words that act, right-aligned on `r` beside `left`.
@@ -1466,7 +1466,7 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
         let liked = app.starred(Starrable::Song, &song.id, song.starred);
         let r = Rect { x: area.x + w - 2, width: 2, ..row(y) };
         let flash = liked && app.flash.is_some_and(|(b, _)| b == Button::StarSong);
-        put(f, Paragraph::new(seal(liked, flash, t)), r);
+        put(f, Paragraph::new(seal(liked, flash, Style::default().fg(t.ink), t)), r);
         app.hits.push((Rect { x: r.x - 1, width: 3, ..r }, Hit::Button(Button::StarSong)));
     }
     y += 1;
@@ -1556,8 +1556,9 @@ fn volume_line(f: &mut Frame, r: Rect, app: &mut App, t: &Theme) {
 
 /// The seal: not liked the symbol in quiet ink, liked the symbol on the accent (`flash`: the one frame of
 /// the stamp, inverted). Two cells wide.
-pub fn seal(liked: bool, flash: bool, t: &Theme) -> Span<'static> {
-    let style = if liked { t.liked() } else { t.dim() };
+/// The seal, `idle` while the song or page is not a favorite: the ink of the row it sits in.
+pub fn seal(liked: bool, flash: bool, idle: Style, t: &Theme) -> Span<'static> {
+    let style = if liked { t.liked() } else { idle };
     let style = if flash { style.add_modifier(Modifier::REVERSED) } else { style };
     Span::styled("好", style)
 }
@@ -1589,7 +1590,7 @@ fn now_playing(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     }
     if let Some(s) = song.as_ref().filter(|_| app.rules.stars) {
         let liked = app.starred(Starrable::Song, &s.id, s.starred);
-        marks.push((seal(liked, liked && app.flash.is_some_and(|(b, _)| b == Button::StarSong), t), Button::StarSong));
+        marks.push((seal(liked, liked && app.flash.is_some_and(|(b, _)| b == Button::StarSong), t.dim(), t), Button::StarSong));
     }
     let w: u16 = marks.iter().map(|(s, _)| s.width() as u16 + 3).sum::<u16>().saturating_sub(3);
     let at = Rect { x: bar.marks.x + bar.marks.width.saturating_sub(w), width: w.min(bar.marks.width), ..bar.marks };
