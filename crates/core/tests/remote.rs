@@ -912,6 +912,26 @@ fn only_the_device_playing_shows_a_song() {
 }
 
 #[test]
+fn a_like_where_the_music_plays_shows_on_every_page() {
+    let relay = Relay::new();
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    desk.playing(&["a", "b"], 0);
+    desk.remote.clone().serve(true);
+    phone.remote.clone().watch(true);
+    phone.remote.clone().discover_active(true);
+    phone.until("the desk followed", |r| r.active());
+    let marked = |d: &Device, id: &str| d.remote.star_marks().songs.get(id).copied();
+    // Liked from the phone's player, starred on the desk: the phone's pages show it as well.
+    assert!(phone.remote.clone().star_where_playing("a".into(), true));
+    assert_eq!(marked(&phone, "a"), Some(true));
+    // Liked on the desk: the phone hears it in the desk's queue.
+    relay.sim.run("a request", desk.client.star(Starrable::Song, "b".into(), true, Arc::new(NoMarks))).unwrap();
+    phone.until("the desk's like", |r| r.star_marks().songs.get("b").copied().filter(|on| *on));
+    relay.close();
+}
+
+#[test]
 fn active_discovery_respects_local_controls_and_visibility() {
     for case in ["hidden", "picked here", "playing here", "paused peer"] {
         let relay = Relay::new();
