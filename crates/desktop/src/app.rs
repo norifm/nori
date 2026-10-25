@@ -3774,7 +3774,7 @@ mod tests {
         ui.show().unwrap();
         // How many pixel rows of the panel a lyric line takes: drawn, against the line with no words.
         let tall = |text: &str| {
-            let mut shot = |text: &str| {
+            let shot = |text: &str| {
                 ui.set_lyrics_lines(ModelRc::new(VecModel::from(vec![crate::SungLine { text: text.into(), ..Default::default() }])));
                 ui.set_lyrics_side_rows(ModelRc::new(VecModel::from(vec![SharedString::from(text)])));
                 i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
@@ -4721,7 +4721,7 @@ mod tests {
             for _ in 0..4 {
                 ui.set_covers_rev(ui.get_covers_rev() + 1);
                 ui.window().take_snapshot().unwrap();
-                let pending: Vec<_> = art.borrow_mut().wanted.drain(..).collect();
+                let pending: Vec<_> = std::mem::take(&mut art.borrow_mut().wanted);
                 for key in pending {
                     art.borrow_mut().insert(key, image.clone(), None, Instant::now());
                 }
