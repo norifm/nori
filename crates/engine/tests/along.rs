@@ -1269,6 +1269,18 @@ fn mix_clocks_advance_at_their_own_rates() {
 }
 
 #[test]
+fn the_position_holds_while_a_start_is_not_heard() {
+    let status = nori_engine::Status {
+        state: nori_engine::State::Playing,
+        at: std::time::Instant::now() - Duration::from_secs(1),
+        position_ms: 0,
+        buffering: true,
+        ..Default::default()
+    };
+    assert_eq!(status.position_now(), 0);
+}
+
+#[test]
 fn a_host_pause_uses_no_guest_fade() {
     let a = song(30.0, 1, None);
     let mut jam = Jam::new(&[("a", &a)], None, Settings::default(), &two_ways()[..1]);

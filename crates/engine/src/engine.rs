@@ -250,9 +250,9 @@ impl Default for Status {
 }
 
 impl Status {
-    /// The position now: the last reading moved on at its pace while playing.
+    /// The position now: the last reading moved on at its pace while playing and heard.
     pub fn position_now(&self) -> i64 {
-        self.positions_at(Instant::now(), false).0
+        self.positions_at(Instant::now(), self.buffering).0
     }
 
     /// The displayed and outgoing transition positions at one moment, held while waiting for audio.
