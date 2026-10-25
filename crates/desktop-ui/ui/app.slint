@@ -2440,7 +2440,7 @@ component PlayerControls inherits Rectangle {
                 y: (parent.height - self.height) / 2;
                 height: 34px;
                 icon: 20px;
-                idle: root.inspector == 3 ? Theme.accent : Theme.text;
+                idle: root.inspector == 3 ? Theme.accent : Theme.dim;
                 clicked => { root.set-inspector(root.inspector == 3 ? 0 : 3); }
             }
             if root.has-song && !root.guest: Seal {
@@ -2449,12 +2449,14 @@ component PlayerControls inherits Rectangle {
                 width: 34px;
                 height: 34px;
                 liked: root.now-starred;
+                muted: Theme.dim;
                 clicked => { root.star(); }
             }
             if root.roomy || root.inspector == 2: IconButton {
                 y: (parent.height - self.height) / 2;
                 glyph: Icons.emoji-sing-right-note;
                 lit: root.inspector == 2;
+                quiet: true;
                 size: 34px;
                 clicked => { root.set-inspector(root.inspector == 2 ? 0 : 2); }
             }
@@ -2462,12 +2464,14 @@ component PlayerControls inherits Rectangle {
                 y: (parent.height - self.height) / 2;
                 glyph: Icons.playlist;
                 lit: root.inspector == 1;
+                quiet: true;
                 size: 34px;
                 clicked => { root.set-inspector(root.inspector == 1 ? 0 : 1); }
             }
             if root.wide && !root.guest: IconButton {
                 y: (parent.height - self.height) / 2;
                 glyph: root.volume <= 0 ? Icons.sound-off : (root.volume < 0.5 ? Icons.sound-low : Icons.sound-high);
+                quiet: true;
                 size: 34px;
                 clicked => { root.set-volume(root.volume > 0 ? 0 : 1); }
             }
@@ -7252,12 +7256,12 @@ export component AppWindow inherits Window {
                                 text: root.now-artist;
                                 artist: root.now-artist-id;
                                 credits: root.now-credits;
-                                color: Theme.text;
+                                color: Theme.text.with-alpha(0.6);
                                 font-size: 14px;
                             }
                             if root.now-album != "": Text {
                                 text: " — ";
-                                color: Theme.text;
+                                color: Theme.text.with-alpha(0.45);
                                 font-size: 14px;
                             }
                             if root.now-album != "": Link {
@@ -7265,7 +7269,7 @@ export component AppWindow inherits Window {
                                 text: root.now-album;
                                 album: root.now-album-id;
                                 menu(x, y) => { root.album-menu-at(x, y); }
-                                color: Theme.text;
+                                color: Theme.text.with-alpha(0.45);
                                 font-size: 14px;
                                 overflow: elide;
                             }
@@ -7367,7 +7371,7 @@ export component AppWindow inherits Window {
                         y: (parent.height - self.height) / 2;
                         glyph: Icons.shuffle;
                         lit: root.shuffle;
-                        ink: Theme.text;
+                        quiet: true;
                         icon: 19px;
                         size: 36px;
                         clicked => { root.toggle-shuffle(); }
@@ -7400,7 +7404,7 @@ export component AppWindow inherits Window {
                         y: (parent.height - self.height) / 2;
                         glyph: root.repeat == 1 ? Icons.repeat-once : Icons.repeat;
                         lit: root.repeat != 0;
-                        ink: Theme.text;
+                        quiet: true;
                         icon: 19px;
                         size: 36px;
                         clicked => { root.cycle-repeat(); }
