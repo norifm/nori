@@ -27,7 +27,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Alignment
@@ -611,7 +614,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
               }
               }
               }
-              PlayerLayer(sheet) { CompositionLocalProvider(LocalStarMarks provides marks) { PlayerScreen(player, actions) } }
+              PlayerLayer(sheet) { CompositionLocalProvider(LocalStarMarks provides marks, LocalDrifting provides protecting) { PlayerScreen(player, actions) } }
               }
               // Top: less in the way of the now-playing bar; swipe or the X dismisses.
               SnackbarHost(
@@ -988,7 +991,8 @@ private fun PlayerLayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
                 SheetEdge.RIGHT -> androidx.compose.foundation.shape.RoundedCornerShape(topStart = r, bottomStart = r)
                 SheetEdge.LEFT -> androidx.compose.foundation.shape.RoundedCornerShape(topEnd = r, bottomEnd = r)
             }
-            clip = true
+            // Open, it has no corners to cut, and what bleeds past the screen's edges (Modifier.bleed) stays.
+            clip = sheet.progress.value < 1f
         }
             // The player is a page, not a pane of glass. Only its buttons and gestures listened, so a
             // tap anywhere else on it - between the lyrics, beside the artwork - fell through to what
@@ -1027,6 +1031,27 @@ private fun rememberCharging(watch: Boolean): Boolean {
         onDispose { context.unregisterReceiver(receiver) }
     }
     return charging
+}
+
+/** Burn-in protection moves the screen ([burnInProtection]): what runs to its edges reaches past them ([bleed]). */
+val LocalDrifting = androidx.compose.runtime.compositionLocalOf { false }
+
+/**
+ * Laid out the core's burn-in reach past every side while the screen drifts ([LocalDrifting]), taking the room
+ * it would otherwise: something drawn to the screen's edges never leaves one bare as the screen moves.
+ */
+@Composable
+fun Modifier.bleed(): Modifier {
+    if (!LocalDrifting.current) return this
+    return layout { measurable, constraints ->
+        val r = stage.burnInReachDp.dp.roundToPx()
+        val grown = constraints.copy(
+            minWidth = constraints.minWidth + 2 * r, maxWidth = if (constraints.hasBoundedWidth) constraints.maxWidth + 2 * r else constraints.maxWidth,
+            minHeight = constraints.minHeight + 2 * r, maxHeight = if (constraints.hasBoundedHeight) constraints.maxHeight + 2 * r else constraints.maxHeight,
+        )
+        val p = measurable.measure(grown)
+        layout(constraints.constrainWidth(p.width - 2 * r), constraints.constrainHeight(p.height - 2 * r)) { p.place(-r, -r) }
+    }
 }
 
 /**

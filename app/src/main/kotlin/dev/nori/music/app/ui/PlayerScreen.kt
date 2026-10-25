@@ -912,7 +912,7 @@ private fun Artwork(
             // to about half of it - 977 wide by roughly 1050 tall - so it is the cover scaled to fill and
             // cropped a little at the sides. That is how it manages to have no top edge *and* reach down
             // behind the title; a full-width square can only do one or the other. Cover crops already.
-            if (LocalWide.current) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(SLEEVE),
+            Modifier.bleed().then(if (LocalWide.current) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(SLEEVE)),
         ) {
             SleeveCarousel(
                 art, currentUrl, previousUrl, nextUrl, previousTint, nextTint, songs,
