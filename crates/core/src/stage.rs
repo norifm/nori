@@ -49,6 +49,9 @@ pub struct Stage {
     pub quick_load_ms: i64,
     /// Limiter meter poll interval on the equalizer screen.
     pub meter_ms: i64,
+    /// How far burn-in protection moves the screen either way: what runs to the screen's edges reaches this
+    /// far past them, so no edge shows as it moves.
+    pub burn_in_reach_dp: f32,
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -80,6 +83,7 @@ pub fn stage() -> Stage {
         lyrics_unsung: nori_look::lyrics::UNSUNG,
         quick_load_ms: 300,
         meter_ms: 120,
+        burn_in_reach_dp: nori_look::burn_in::REACH_DP,
     }
 }
 
