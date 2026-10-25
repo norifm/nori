@@ -797,6 +797,8 @@ class Say(private val r: Resources) {
         if (found == 0) r.getString(R.string.m3u_none_found, entries) else r.getString(R.string.m3u_imported, found, entries, playlist)
     fun autoeqApplied(name: String): String = r.getString(R.string.autoeq_applied, name)
     fun deleteNamed(name: String): String = r.getString(R.string.delete_named, name)
+    fun deleteQuestion(name: String): String = r.getString(R.string.delete_question, name)
+    val cannotBeUndone: String get() = r.getString(R.string.cannot_be_undone)
 
     /** Stopping every download: its title, and what it does to [unfinished] songs. */
     val stopAllTitle: String get() = r.getString(R.string.stop_all_title)
