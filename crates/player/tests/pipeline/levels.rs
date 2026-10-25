@@ -77,6 +77,7 @@ fn measured(id: &str, bpm: f64, lufs: f32) -> TrackAnalysis {
 
 /// One way through a transition: the settings, what the two songs measured as, and the words the
 /// planner's log line carries for it.
+#[derive(Clone)]
 struct Kind {
     name: &'static str,
     prefs: TransitionPrefs,
@@ -350,11 +351,13 @@ fn loudness_match_lets_go_gently(la: f32, lb: f32) {
         for kind in kinds(la, lb).into_iter().skip(1) {
             let (curve, r) = trim_curve(&kind);
             let known: Vec<(usize, f64)> = curve.iter().cloned().enumerate().filter(|(_, v)| v.is_finite()).collect();
-            let first = known.first().map_or(0.0, |v| v.1);
             let last = known.last().map_or(0.0, |v| v.1);
             let step = known.windows(2).filter(|w| w[1].0 == w[0].0 + 1).map(|w| (w[1].1 - w[0].1).abs()).fold(0.0, f64::max);
-            println!("{} ({la} -> {lb} LUFS): matched by {first:+.2} dB, {last:+.2} dB after, largest 100 ms move {step:.2} dB; {}", kind.name, r.line);
-            assert!((first - (la - lb) as f64).abs() < 0.3, "{}: the incoming song matched by {first:.2} dB, not {}", kind.name, la - lb);
+            println!("{} ({la} -> {lb} LUFS): {last:+.2} dB after, largest 100 ms move {step:.2} dB; {}", kind.name, r.line);
+            // From the whole gap at the mix's start to none at its end, evenly.
+            let len = r.mix.1 as f64 / RATE as f64;
+            let off = known.iter().map(|&(k, v)| v - (la - lb) as f64 * (1.0 - (k as f64 + 0.5) * WIN_S / len).max(0.0)).fold(0.0, |m: f64, d| if d.abs() > m.abs() { d } else { m });
+            assert!(off.abs() < 0.3, "{}: the match {off:+.2} dB off its glide", kind.name);
             assert!(last.abs() < 0.05, "{}: {last:.2} dB still turned after the mix", kind.name);
             if step > 1.0 {
                 bad.push(format!("{} ({la} -> {lb} LUFS): the match lets go by {step:.2} dB in 100 ms ({})", kind.name, r.line));
@@ -368,7 +371,8 @@ fn loudness_match_lets_go_gently(la: f32, lb: f32) {
 fn tiny_stretch_keeps_level() {
     // Stretched by 0.075 %, the incoming song came out of the pitch-keeping stretcher up to 2.6 dB quiet (on
     // noise-like music: cymbals, a crowd, a pad) for the whole mix and the ramp after it, and came back with a
-    // step where the stretch handed over. The outgoing song silent, so what is heard is the incoming one.
+    // step where the stretch handed over. The outgoing song silent, so what is heard is the incoming one,
+    // against the same mix unstretched.
     let b = noise(0.3, SONG_S, 77);
     let quiet = silence(SONG_S);
     let kind = Kind {
@@ -379,15 +383,55 @@ fn tiny_stretch_keeps_level() {
         logged: &["BeatMatched", "tempo x0.999"],
     };
     let got = run(&kind, &quiet, &b, &[], true);
+    let plain = run(&Kind { b: measured("b", 120.0, -14.0), logged: &["BeatMatched", "tempo x1.000"], ..kind.clone() }, &quiet, &b, &[], true);
+    assert_eq!(got.mix, plain.mix, "{} against {}", got.line, plain.line);
     let (s, n) = got.mix;
-    let x = left(&got.out);
-    let own = db(rms(&left(&b)[frames(30.0)..frames(40.0)]));
     // From where the incoming song is fully in (the second half of the mix) to twenty seconds past it.
-    let l = levels(&x, s + n / 2, s + n + frames(20.0));
-    let (lo, hi) = l.iter().fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(*v - own), hi.max(*v - own)));
+    let l = levels(&left(&got.out), s + n / 2, s + n + frames(20.0));
+    let own = levels(&left(&plain.out), s + n / 2, s + n + frames(20.0));
+    let (lo, hi) = l.iter().zip(&own).fold((f64::MAX, f64::MIN), |(lo, hi), (v, o)| (lo.min(v - o), hi.max(v - o)));
     let (step, i) = largest_move(&l);
     println!("{}: {}; the incoming song at {lo:.2}..{hi:.2} dB of its own, largest 100 ms move {step:.2} dB", kind.name, got.line);
     assert!(lo > -0.6 && hi < 0.6, "{}: the incoming song at {lo:.2}..{hi:.2} dB of its own level", kind.name);
     assert!(step <= 1.0, "{}: {step:.2} dB in 100 ms, {:.1} s into the second half of the mix", kind.name, i as f64 * WIN_S);
 }
 
+/// Two different songs at one loudness: every kind of mix holds that level while both play (echo-out's
+/// gap between them aside), never louder or quieter than the songs themselves, as heard: over 400 ms, the
+/// window momentary loudness is measured over.
+#[test]
+fn level_holds_through_each_mix() {
+    let (a, b) = (steady(SONG_S, 31, 0.3), steady(SONG_S, 32, 0.3));
+    let own = db(rms(&left(&a)[frames(10.0)..frames(20.0)]));
+    let mut bad = Vec::new();
+    for kind in kinds(-14.0, -14.0).into_iter().filter(|k| k.name != "echo-out") {
+        let got = run(&kind, &a, &b, &[], true);
+        let (s, n) = got.mix;
+        let x = left(&got.out);
+        let w = frames(0.4);
+        let l: Vec<f64> = (s..(s + n).saturating_sub(w)).step_by(frames(WIN_S)).map(|i| db(rms(&x[i..i + w]))).collect();
+        let (lo, hi) = l.iter().fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(v - own), hi.max(v - own)));
+        println!("{}: {lo:+.2}..{hi:+.2} dB through the mix ({})", kind.name, got.line);
+        if lo < -1.0 || hi > 1.0 {
+            bad.push(format!("{}: {lo:+.2}..{hi:+.2} dB through the mix ({})", kind.name, got.line));
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// Into a song 6 dB quieter, with the loudness match on: the two meet, the level gliding from one to the
+/// other across the mix, so half way it is half way, and none of the drop is left for the mix's end.
+#[test]
+fn level_glides_across_a_loudness_gap() {
+    let (a, b) = (steady(SONG_S, 31, 0.4), steady(SONG_S, 32, 0.2));
+    let own = |s: &[i16]| db(rms(&left(s)[frames(10.0)..frames(20.0)]));
+    let (la, lb) = (own(&a), own(&b));
+    for kind in kinds(-8.0, -14.0).into_iter().filter(|k| k.name != "echo-out" && k.name != "equal-power crossfade") {
+        let got = run(&kind, &a, &b, &[], false);
+        let (s, n) = got.mix;
+        let mid = db(rms(&left(&got.out)[s + n / 2 - frames(0.5)..s + n / 2 + frames(0.5)]));
+        let want = (la + lb) / 2.0;
+        println!("{}: {mid:.2} dB half way, between {la:.2} and {lb:.2} ({})", kind.name, got.line);
+        assert!((mid - want).abs() < 1.5, "{}: {mid:.2} dB half way through, not near {want:.2} ({})", kind.name, got.line);
+    }
+}

@@ -869,7 +869,6 @@ fn one_grid(a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, room: Room, s:
                 continue;
             }
             let mut p = blank(TransitionKind::MixRampFade, start, in_start, dur, String::new());
-            p.fade_curve = FadeCurve::SineSquared;
             apply_fade_filter(&mut p, a, b, s, dur);
             p.in_gain_db = loudness_trim(a, b, s);
             p.reason = format!("downbeat-aligned fade, {bars} bars out{tail}");
@@ -895,7 +894,6 @@ fn one_grid(a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, room: Room, s:
                 continue;
             }
             let mut p = blank(TransitionKind::MixRampFade, start, in_start, dur, String::new());
-            p.fade_curve = FadeCurve::SineSquared;
             apply_fade_filter(&mut p, a, b, s, dur);
             p.in_gain_db = loudness_trim(a, b, s);
             p.reason = format!("downbeat-aligned fade, {bars} bars in{tail}");
@@ -918,8 +916,13 @@ fn mixramp(a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, room: Room, s: 
     }
     let dur = dur.max(MIN_MIXRAMP_MS).clamp(MIN_FADE_MS.min(max_len), max_len);
     let mut p = blank(TransitionKind::MixRampFade, end_a - dur, in_start, dur, String::new());
-    // A loud start comes in at once; a quiet one rides its own ramp.
-    p.in_fade_end_ms = head.map_or(dur, |h| h.clamp(MIN_FADE_MS.min(dur), dur));
+    // A quiet start rides its own ramp; a loud one comes in at once only over the outgoing song's quiet tail,
+    // and over a loud ending fades in as that one fades out.
+    p.in_fade_end_ms = match (head, tail) {
+        (Some(h), _) if h > 0 => h.clamp(MIN_FADE_MS.min(dur), dur),
+        (Some(_), Some(t)) if t > 0 => MIN_FADE_MS.min(dur),
+        _ => dur,
+    };
     apply_fade_filter(&mut p, a, b, s, dur);
     p.in_gain_db = loudness_trim(a, b, s);
     p.reason = format!("mixramp fade {:.1} s{}", dur as f64 / 1000.0, if why_not.is_empty() { String::new() } else { format!(" ({why_not})") });
@@ -1294,11 +1297,15 @@ mod tests {
         assert_eq!(p.in_gain_db, 6.0, "incoming 6 dB quieter gets 6 dB");
         check_skip(&p, &a, &b, 240_000);
 
-        // An abrupt end into a loud start still shares the last five seconds.
+        // An abrupt end into a loud start still shares the last five seconds, the two crossing over all of it:
+        // a loud start comes in at once only over a quiet tail.
         let a = TrackAnalysis { bpm: 0.0, outro_bpm: 0.0, silence_end_ms: 240_000, mixramp_end_ms: 240_000, ..track(128.0) };
         let b = TrackAnalysis { bpm: 0.0, intro_bpm: 0.0, silence_start_ms: 0, mixramp_start_ms: 0, ..track(128.0) };
         let p = plan(Some(&a), Some(&b), 240_000, 240_000, &s);
-        assert_eq!((p.duration_ms, p.in_fade_end_ms, p.out_start_ms), (MIN_MIXRAMP_MS, MIN_FADE_MS, 240_000 - MIN_MIXRAMP_MS));
+        assert_eq!((p.duration_ms, p.in_fade_end_ms, p.out_start_ms), (MIN_MIXRAMP_MS, MIN_MIXRAMP_MS, 240_000 - MIN_MIXRAMP_MS));
+        let quiet_tail = TrackAnalysis { mixramp_end_ms: 234_000, ..a.clone() };
+        let p = plan(Some(&quiet_tail), Some(&b), 240_000, 240_000, &s);
+        assert_eq!(p.in_fade_end_ms, MIN_FADE_MS, "over a quiet tail a loud start comes in at once");
 
         let p = plan(Some(&a), None, 240_000, 240_000, &s);
         assert_eq!(p.kind, TransitionKind::MixRampFade);
