@@ -17,6 +17,8 @@ export type Song = {
 };
 /** `subtitle`: a card's line under its name, as the core words it. */
 export type Album = { id: string; name: string; artist: string; artistId?: string; year: number; cover?: string; songCount: number; duration: number; genre?: string; starred?: boolean; subtitle?: string };
+/** What a card plays whole. */
+export type Whole = "album" | "playlist" | "artist";
 export type Artist = { id: string; name: string; cover?: string; albumCount?: number | null; starred?: boolean };
 export type Playlist = { id: string; name: string; songCount: number; duration: number; cover?: string; comment?: string; owner?: string };
 /** As the server names it: the name is `value`. */

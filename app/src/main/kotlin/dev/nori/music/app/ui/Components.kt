@@ -656,8 +656,8 @@ fun RemoteLine(
 
 /** A round portrait, for artists. */
 @Composable
-fun ArtistCard(name: String, subtitle: String, coverUrl: String?, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.width(size).clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally) {
+fun ArtistCard(name: String, subtitle: String, coverUrl: String?, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null) {
+    Column(modifier.width(size).combinedClickable(onClick = onClick, onLongClick = onLongClick), horizontalAlignment = Alignment.CenterHorizontally) {
         Cover(coverUrl, size, radius = size / 2)
         Text(
             name, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,

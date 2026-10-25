@@ -7,8 +7,8 @@ import { library } from "./library.svelte";
 import { player } from "./player.svelte";
 import { remote } from "./remote.svelte";
 import { go } from "./route.svelte";
-import { ui, type Anchor, type Item } from "./ui.svelte";
-import type { MenuAction, Song } from "./types";
+import { ui, type Anchor, type Head, type Item } from "./ui.svelte";
+import type { MenuAction, Song, Whole } from "./types";
 
 /** Picks a playlist for `songs`, or makes a new one with them; the menu opens `at` (where the last one
  * did when not said). */
@@ -20,6 +20,20 @@ export async function addToPlaylist(songs: Song[], at?: Anchor) {
     [
       { label: W.newPlaylist, icon: "plus", run: () => newPlaylist(songIds) },
       ...(playlists ?? []).map((p) => ({ label: p.name, icon: "playlist", run: () => library.change({ kind: "addToPlaylist", id: p.id, songIds }) })),
+    ],
+    [],
+    at,
+  );
+}
+
+/** An album's, playlist's or artist's card menu, opening `at`: play it, play it next, add it to the queue. */
+export function wholeMenu(kind: Whole, id: string, head: Head, at: Anchor) {
+  ui.menu(
+    head,
+    [
+      { label: W.play, icon: "play", run: () => player.playWhole(kind, id, false) },
+      { label: W.playNext, icon: "playlist-play", run: () => player.queueWhole(kind, id, true) },
+      { label: W.addToQueue, icon: "playlist", run: () => player.queueWhole(kind, id, false) },
     ],
     [],
     at,

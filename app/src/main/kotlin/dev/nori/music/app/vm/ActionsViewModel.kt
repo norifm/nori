@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import dev.nori.music.data.StarKind
 import dev.nori.music.downloads.DownloadState
 import dev.nori.music.downloads.DownloadMark
+import dev.nori.music.ffi.model.Artist
 import dev.nori.music.ffi.transfers.DownloadQueueCounts
 import dev.nori.music.ffi.transfers.DownloadSections
 import dev.nori.music.net.said
@@ -113,16 +114,18 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     fun queueArtist(artistId: String) = attempt(null) { enqueue(nori.library.artistSongs(artistId)) }
     fun downloadArtist(artistId: String) = attempt(null) { download(nori.library.artistSongs(artistId)) }
 
-    /** An album or playlist [CardMenu] opened on, played or queued whole. */
+    /** An album, playlist or artist [CardMenu] opened on, played or queued whole. */
     fun play(c: CardItem) = attempt(null) { start(songsOf(c), from = originOf(c)) }
     fun queue(c: CardItem, next: Boolean) = attempt(null) { songsOf(c).let { if (next) playNext(it) else enqueue(it) } }
     private suspend fun songsOf(c: CardItem): List<Song> = when (c) {
         is CardItem.OfAlbum -> nori.library.albumSongs(c.album.id)
         is CardItem.OfPlaylist -> nori.library.playlistSongs(c.playlist.id)
+        is CardItem.OfArtist -> nori.library.artistSongs(c.artist.id)
     }
     private fun originOf(c: CardItem) = when (c) {
         is CardItem.OfAlbum -> PageOrigin(OriginKind.ALBUM, c.album.id)
         is CardItem.OfPlaylist -> PageOrigin(OriginKind.PLAYLIST, c.playlist.id)
+        is CardItem.OfArtist -> PageOrigin(OriginKind.ARTIST, c.artist.id)
     }
 
     /** [songs] from [index]; [from] the page they are the list of, if they are one page's (see [tap]). */
@@ -277,8 +280,9 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     fun addToNewPlaylist(name: String, songs: List<Song>) = attempt(say.playlistCreated(name)) { nori.library.createPlaylist(name, songs.map { it.id }) }
 }
 
-/** An album's or playlist's card, which a long press opens a menu on. */
+/** An album's, playlist's or artist's card or row, which a long press opens a menu on. */
 sealed interface CardItem {
     data class OfAlbum(val album: Album) : CardItem
     data class OfPlaylist(val playlist: Playlist) : CardItem
+    data class OfArtist(val artist: Artist) : CardItem
 }

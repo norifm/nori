@@ -1,6 +1,7 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.text.withStyle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -424,7 +425,8 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                         SectionTitle(say.similarArtists)
                         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             items(similar, key = { it.id }) { a ->
-                                Text(a.name, Modifier.clickable { nav.artist(a.id, a) }.padding(8.dp))
+                                val cardMenu = LocalCardMenu.current
+                                Text(a.name, Modifier.combinedClickable(onClick = { nav.artist(a.id, a) }, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) }).padding(8.dp))
                             }
                         }
                     }
