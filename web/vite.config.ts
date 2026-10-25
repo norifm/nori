@@ -32,5 +32,7 @@ export default defineConfig(({ mode }) =>
           },
         },
         worker: { format: "es" },
+        // The top bar's wordmark is docs/brand's.
+        server: { fs: { allow: [".", "../docs/brand"] } },
       },
 );
