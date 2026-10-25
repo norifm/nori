@@ -15,12 +15,13 @@
 <script lang="ts">
   // The top bar on a wide screen: one outline with Home and the library's sections in the order kept (the
   // core's `library_sections`), the current one in the accent; the search field and the settings button
-  // beside it. Settings opens the account, the season and appearance, Genres, Play on and Settings.
+  // beside it. Settings opens the account, the season and appearance, Genres, Devices and Settings.
   import { ask } from "../rpc";
   import { remote } from "../state/remote.svelte";
   import { go, route } from "../state/route.svelte";
   import { ui } from "../state/ui.svelte";
   import { W } from "../words";
+  import wordmark from "../../../docs/brand/nori-wordmark.svg?raw";
   import Icon from "./Icon.svelte";
   import Look from "./Look.svelte";
   import SearchBox from "./SearchBox.svelte";
@@ -51,7 +52,7 @@
 <svelte:window onpointerdown={(e) => pop && !bar?.contains(e.target as Node) && (pop = null)} onkeydown={(e) => e.key === "Escape" && (pop = null)} onhashchange={() => (pop = null)} />
 
 <header class="top" bind:this={bar}>
-  <a class="brand" href={href("home")}>{W.appName}</a>
+  <a class="brand" href={href("home")} aria-label={W.appName}>{@html wordmark}</a>
   <nav class="chrome tabs" id="nav" aria-label={W.library}>
     <a class="tab" class:on={on("home", "row")} href={href("home")} data-top="home"><Icon name="home-simple" /><span>{W.home}</span></a>
     <span class="sep"></span>
@@ -92,11 +93,17 @@
     gap: 12px;
     height: 50px;
   }
+  /* The wordmark in the page's ink, its record's face the page's paper; its left edge on the page's. */
   .brand {
-    font: 700 22px/1 var(--display);
-    letter-spacing: -0.3px;
-    padding-left: 6px;
+    --logo-ink: var(--ink);
+    --logo-rice: var(--page);
+    padding-left: calc(var(--gutter) - 16px);
     justify-self: start;
+  }
+  .brand :global(svg) {
+    display: block;
+    height: 26px;
+    width: auto;
   }
   .tabs {
     display: flex;
