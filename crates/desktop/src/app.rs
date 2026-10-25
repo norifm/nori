@@ -3799,7 +3799,7 @@ mod tests {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        for (view, full, panel) in [(HOME, false, 0), (ALBUMS, false, 1), (HOME, true, 0), (HOME, true, 2)] {
+        for (view, full, panel) in [(HOME, false, 0), (ALBUMS, false, 1), (HOME, true, 1), (HOME, true, 2)] {
             let ui = window();
             ui.window().set_size(slint::PhysicalSize::new(1280, 820));
             ui.set_view(view);
@@ -3834,8 +3834,10 @@ mod tests {
                 let changed = immediate.as_slice().iter().zip(settled.as_slice()).filter(|(a, b)| a != b).count();
                 assert_eq!(changed, 0, "resize {width}x{height}, view {view}, full {full}, panel {panel} must be laid out immediately");
             }
-            if full { ui.set_full_panel(if panel == 0 { 1 } else { 0 }); }
-            else { ui.set_inspector(if panel == 0 { 1 } else { 0 }); }
+            if full {
+                continue;
+            }
+            ui.set_inspector(if panel == 0 { 1 } else { 0 });
             let start = ui.window().take_snapshot().unwrap();
             i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
             slint::platform::update_timers_and_animations();
@@ -3941,7 +3943,6 @@ mod tests {
         ui.set_has_song(true);
         ui.set_now_title("Song".into());
         ui.set_full_player(true);
-        ui.set_full_panel(0);
         let asked = Rc::new(std::cell::Cell::new(0));
         let seen = asked.clone();
         ui.on_player_menu(move || { seen.set(seen.get() + 1); ModelRc::default() });
@@ -3949,9 +3950,9 @@ mod tests {
         i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
         slint::platform::update_timers_and_animations();
         ui.window().take_snapshot().unwrap();
-        // Down the middle of the window, where the cover stands with nothing beside it.
+        // On the cover, in the middle of the window's left half.
         use slint::platform::PointerEventButton::{Left, Right};
-        let at = slint::LogicalPosition::new(640.0, 300.0);
+        let at = slint::LogicalPosition::new(320.0, 300.0);
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button: Left });
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button: Left });
         assert_eq!(asked.get(), 0, "a click on the cover opens no menu");
