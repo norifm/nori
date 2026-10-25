@@ -1261,7 +1261,8 @@ fn terminal_replies() {
 fn device(id: &str, name: &str, kind: nori_core::remote::wire::DeviceKind, playing: Option<&str>) -> nori_core::remote::RemoteDevice {
     use nori_core::remote::wire::{DeviceState, Entry};
     let state = playing.map(|title| DeviceState { playing: true, index: Some(0), entries: vec![Entry { title: title.into(), artist: "Artist".into(), ..Default::default() }], ..Default::default() });
-    nori_core::remote::RemoteDevice { id: id.into(), name: name.into(), kind, state, age_ms: 0, nearby: true, refused: None }
+    let now = state.as_ref().and_then(|s| s.entries.first().cloned());
+    nori_core::remote::RemoteDevice { id: id.into(), name: name.into(), kind, state, now, age_ms: 0, nearby: true, refused: None }
 }
 
 /// A hosted jam with two listeners and two requests, the first a provider's song.

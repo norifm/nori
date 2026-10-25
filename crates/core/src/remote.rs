@@ -164,6 +164,9 @@ pub struct RemoteDevice {
     pub name: String,
     pub kind: DeviceKind,
     pub state: Option<DeviceState>,
+    /// The song it plays, while it plays or is the account's active device: one another took over from
+    /// keeps its queue, but plays none of it.
+    pub now: Option<Entry>,
     /// How long ago `state` arrived (`nori_remote::position_now`).
     pub age_ms: i64,
     /// Reached on this network rather than through the relay.
@@ -1579,7 +1582,9 @@ impl Remote {
     pub fn devices(&self) -> Vec<RemoteDevice> {
         let now = self.now();
         let i = self.inner.lock();
-        let seen = |m: &Member, age_ms: i64, nearby: bool| RemoteDevice { id: m.id.clone(), name: m.name.clone(), kind: m.kind, state: m.state.clone(), age_ms, nearby, refused: i.refused.get(&m.id).copied() };
+        let active = i.mirror.as_ref().map(|m| m.id.as_str());
+        let song = |m: &Member| m.state.as_ref().filter(|s| s.playing || active == Some(m.id.as_str())).and_then(|s| s.entries.iter().find(|e| Some(e.index) == s.index).cloned());
+        let seen = |m: &Member, age_ms: i64, nearby: bool| RemoteDevice { id: m.id.clone(), name: m.name.clone(), kind: m.kind, state: m.state.clone(), now: song(m), age_ms, nearby, refused: i.refused.get(&m.id).copied() };
         let mut out: Vec<RemoteDevice> = i.peers.iter().filter(|p| p.member.state.is_some()).map(|p| seen(&p.member, (now - p.received) / 1000, true)).collect();
         for room in i.rooms.iter().filter(|r| !r.jam && !i.relay_down) {
             for m in room.members.iter().filter(|m| m.state.is_some()) {
@@ -3931,7 +3936,7 @@ mod tests {
             (&[("Mac", Terminal, "1111ab"), ("Mac", Terminal, "2222cd")], &["Mac (1111)", "Mac (2222)"]),
         ];
         for (devices, want) in cases {
-            let devices = devices.iter().map(|&(name, kind, id)| RemoteDevice { id: id.into(), name: name.into(), kind, state: None, age_ms: 0, nearby: false, refused: None }).collect();
+            let devices = devices.iter().map(|&(name, kind, id)| RemoteDevice { id: id.into(), name: name.into(), kind, state: None, now: None, age_ms: 0, nearby: false, refused: None }).collect();
             assert_eq!(device_names(devices, me.clone(), words.clone()), *want);
         }
     }
