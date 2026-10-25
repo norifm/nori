@@ -81,10 +81,10 @@ impl nori_core::library::StarsShown for Unshown {
     fn marks(&self, _: nori_core::stars::StarMarks) {}
 }
 
-/// Asks the server for `change` (JSON); kept for later when offline.
-pub async fn change(client: &Client, change: &str) -> Result<(), String> {
+/// Asks the server for `change`; kept for later when offline.
+pub async fn change(client: &Client, change: Change) -> Result<(), String> {
     use nori_core::client::{Starrable, Write};
-    let w = match serde_json::from_str::<Change>(change).map_err(|e| e.to_string())? {
+    let w = match change {
         Change::CreatePlaylist { name, song_ids } => Write::CreatePlaylist { name, song_ids },
         Change::AddToPlaylist { id, song_ids } => Write::AddToPlaylist { id, song_ids },
         Change::RemoveFromPlaylist { id, index } => Write::RemoveFromPlaylist { id, index },

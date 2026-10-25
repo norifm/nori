@@ -179,7 +179,7 @@ impl Elsewhere {
     }
 
     /// Stars song `id` there when its queue has it ([`Remote::star_where_playing`]); false otherwise.
-    pub(crate) fn star(&self, id: &str, on: bool) -> bool {
+    pub fn star(&self, id: &str, on: bool) -> bool {
         self.remote.clone().star_where_playing(id.to_string(), on)
     }
 
