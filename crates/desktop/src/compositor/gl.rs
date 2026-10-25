@@ -1430,7 +1430,7 @@ mod tests {
             crate::look::Today { month: 10, day: 19, southern: false },
         );
         let bar = crate::PlayerBar::new().unwrap();
-        look.paint(&bar.global::<crate::Theme>());
+        look.paint(&bar);
         let bar_layer = layers.borrow().last().unwrap().clone();
         let cover = gpu.picture(&[200, 120, 40, 255].repeat(8 * 8), 8, 8);
         let art = cover.clone();
@@ -1549,7 +1549,7 @@ mod tests {
 
         // An artist's page scrolled by the wheel under the pointer, its rows lit as the pointer passes.
         let page = crate::AppWindow::new().unwrap();
-        look.paint(&page.global::<crate::Theme>());
+        look.paint(&page);
         let page_layer = layers.borrow().last().unwrap().clone();
         let art = cover.clone();
         page.on_art(move |id, _, _| if id.is_empty() { slint::Image::default() } else { art.clone() });
