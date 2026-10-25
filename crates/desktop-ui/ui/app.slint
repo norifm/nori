@@ -6776,7 +6776,7 @@ export component AppWindow inherits Window {
                     y: 10px;
                     current: root.shown-panel;
                     devices: root.devices-on;
-                    picked(p) => { root.inspector = p; }
+                    picked(p) => { root.inspector = root.inspector == p ? 0 : p; }
                 }
                 // Under the tabs, the panel showing.
                 if root.shown-panel == 2 && (root.lyrics-lines.length == 0 || root.lyrics-waiting): Text {
@@ -7447,19 +7447,6 @@ export component AppWindow inherits Window {
                 }
             }
 
-            // The panel's sheet, under its tabs and what it shows: a step of ink over the song's colours and a
-            // hairline round it, as the web's.
-            Rectangle {
-                x: root.width / 2;
-                y: 8px;
-                width: root.width / 2 - 40px;
-                height: root.height - 8px - 32px;
-                border-radius: 24px;
-                border-width: 1px;
-                border-color: Theme.outline;
-                background: Theme.text.with-alpha(0.06);
-            }
-
             // The lyrics: big, the line sung at a fixed height and sharp, the rest soft and dim.
             if root.full-panel == 2 && (root.lyrics-lines.length == 0 || root.lyrics-waiting): Text {
                 x: root.width / 2 + 20px;
@@ -7624,10 +7611,10 @@ export component AppWindow inherits Window {
                 undo => { root.undo-removed(); }
             }
 
-            // The panel's tabs, heading its sheet: the devices, lyrics, the queue.
+            // The panel's tabs, heading the right half: the devices, lyrics, the queue. One is always showing.
             PanelTabs {
-                x: root.width / 2 + 6px;
-                y: 14px;
+                x: root.width / 2 + 10px;
+                y: 8px;
                 current: root.full-panel;
                 devices: root.devices-on;
                 picked(p) => { root.full-panel = p; }
