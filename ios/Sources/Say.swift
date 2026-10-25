@@ -293,6 +293,28 @@ enum Say {
     static let apiKey = "API key instead of password (OpenSubsonic)"
     static let equalizer = "Equalizer"
     static let presets = "Presets"
+    static let graphic = "Graphic"
+    static let parametric = "Parametric"
+    static let band = "Band"
+    static let removeBand = "Remove the band"
+    static let narrower = "Narrower"
+    static let wider = "Wider"
+    static let eqHintGraphic = "Drag a point up or down."
+    static let eqHintParametric = "Drag a band to move it, or touch the curve to add one."
+    /// A parametric band's kind by its `EqKind` ordinal.
+    static func bandKind(_ k: Int) -> String {
+        ["Peak", "Low shelf", "High shelf", "Low pass", "High pass", "Band pass", "Notch", "All pass",
+         "Low shelf (slope)", "High shelf (slope)"][safe: k] ?? ""
+    }
+    /// Which side a band is heard on, by its `BandChannel` ordinal.
+    static func bandSide(_ c: Int) -> String { ["Both sides", "Left only", "Right only"][safe: c] ?? "" }
+    /// The chosen band in a line: "125  +11.0 dB", a parametric one with its kind, width and side.
+    static func eqBand(_ label: String, _ value: String, kind: Int?, width: String, side: Int, usesGain: Bool) -> String {
+        guard let kind = kind else { return "\(label)  \(value) dB" }
+        let gain = usesGain ? "  \(value) dB" : ""
+        let w = kind >= 8 ? "slope" : "Q"
+        return "\(label)\(gain)  ·  \(bandKind(kind))  ·  \(w) \(width)  ·  \(bandSide(side).lowercased())"
+    }
     static let on = "On"
     static let off = "Off"
     static let refreshIndex = "Refresh the offline index"

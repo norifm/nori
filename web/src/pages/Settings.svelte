@@ -79,6 +79,8 @@
 {#snippet row(r: SettingRow)}
   {#if r.item.kind === "note"}
     <p class="note">{W.notes[r.item.note] ?? ""}</p>
+  {:else if r.item.kind === "link"}
+    <a class="group-row" href={href(r.item.to)} data-link={r.item.to}><span class="words">{W.equalizer}</span><Icon name="nav-arrow-right" /></a>
   {:else}
     {@const it = r.item}
     {#if it.type === "Switch"}

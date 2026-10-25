@@ -104,6 +104,48 @@ pub fn bands_response(bands: Vec<crate::settings::SoundBand>, freqs: Vec<f32>) -
     BandsResponse { left: side(BandChannel::Right), right: split.then(|| side(BandChannel::Left)), each }
 }
 
+/// How far an equalizer's drawn curve reaches up and down, dB.
+pub const CURVE_DB: f32 = 15.0;
+
+/// What the equalizer in use plays, for drawing: `curve` in dB at `samples` frequencies spread evenly on
+/// the band scale ([`band_position`], 20 Hz to 20 kHz; the left side where the sides differ), `each`
+/// parametric band's own the same way, and each band's point on it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EqDrawing {
+    pub curve: Vec<f32>,
+    pub each: Vec<Vec<f32>>,
+    pub points: Vec<EqPoint>,
+}
+
+/// A band's point: `x` on the band scale (0..1), `db` its height (0 for a kind without gain).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EqPoint {
+    pub x: f32,
+    pub db: f32,
+}
+
+/// [`EqDrawing`] of `p`'s equalizer.
+pub fn eq_drawing(p: &crate::settings::StoredPrefs, samples: u32) -> EqDrawing {
+    let last = samples.saturating_sub(1).max(1) as f32;
+    let freqs: Vec<f32> = (0..samples).map(|i| 20.0 * 1000f32.powf(i as f32 / last)).collect();
+    if p.eq_mode == crate::settings::EqMode::Graphic {
+        let centres = graphic_bands(p.eq_graphic.len() as u32);
+        let points = p.eq_graphic.iter().zip(&centres).map(|(g, b)| EqPoint { x: band_position(b.freq), db: *g }).collect();
+        EqDrawing { curve: graphic_response(p.eq_graphic.clone(), freqs), each: Vec::new(), points }
+    } else {
+        let points = p.eq_bands.iter().map(|b| EqPoint { x: band_position(b.freq), db: if b.kind.uses_gain() { b.gain_db } else { 0.0 } }).collect();
+        let r = bands_response(p.eq_bands.clone(), freqs);
+        EqDrawing { curve: r.left, each: r.each, points }
+    }
+}
+
+/// A band at `freq` moved to `position` on the band scale: the frequency there, or `freq` itself when
+/// that rounds the same, so a band moved only up or down keeps its exact frequency.
+pub fn band_moved(freq: f32, position: f32) -> f32 {
+    let to = band_freq_at(position);
+    if to == band_freq_at(band_position(freq)) { freq } else { to }
+}
+
 /// The built-in equalizer curves.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn eq_presets() -> Vec<nori_model::NamedPreset> {
@@ -122,6 +164,29 @@ mod tests {
             assert_eq!(band_freq_at(position), freq, "at {position}");
         }
         assert!((band_position(632.5) - 0.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_drawing_puts_each_band_on_its_curve() {
+        use crate::settings::{EqMode, StoredPrefs};
+        let graphic = StoredPrefs { eq_mode: EqMode::Graphic, eq_graphic: vec![0.0, 6.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], ..StoredPrefs::default() };
+        let d = eq_drawing(&graphic, 49);
+        assert_eq!((d.curve.len(), d.each.len(), d.points.len()), (49, 0, 10));
+        let at = |d: &EqDrawing, x: f32| d.curve[(x * 48.0).round() as usize];
+        assert!((at(&d, d.points[1].x) - 6.0).abs() < 1.0, "the curve passes the raised slider: {}", at(&d, d.points[1].x));
+        let cut = SoundBand { kind: EqKind::Peaking, freq: 1000.0, gain_db: -4.0, q: 1.0, channel: BandChannel::Both };
+        let pass = SoundBand { kind: EqKind::HighPass, freq: 40.0, gain_db: 3.0, q: 0.7, channel: BandChannel::Both };
+        let parametric = StoredPrefs { eq_mode: EqMode::Parametric, eq_bands: vec![cut, pass], ..StoredPrefs::default() };
+        let d = eq_drawing(&parametric, 49);
+        assert_eq!(d.each.len(), 2);
+        assert_eq!(d.points[1].db, 0.0, "a high pass has no gain to show");
+        assert!((at(&d, d.points[0].x) + 4.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn a_band_moved_up_keeps_its_frequency() {
+        assert_eq!(band_moved(1234.0, band_position(1234.0)), 1234.0);
+        assert_eq!(band_moved(1234.0, band_position(2000.0)), 2000.0);
     }
 
     #[test]

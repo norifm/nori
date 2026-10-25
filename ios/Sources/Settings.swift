@@ -309,12 +309,143 @@ final class SeasonTile: UIControl {
     @objc private func tap() { picked() }
 }
 
-/// The graphic equalizer: one switch and a slider per band. While it is in sight and touched, the
-/// output runs its short buffer so a move is heard at once.
+/// The equalizer's curve, a point on it for each band: drawn from the core's samples, touched to choose
+/// a band and drag it (a graphic one only up and down), or on a parametric curve to add a band there.
+final class EqCurveView: UIView {
+    var eq: [String: Any] = [:] { didSet { setNeedsDisplay() } }
+    var chosen = -1 { didSet { setNeedsDisplay() } }
+    /// A band touched (its index), dragged to a place across (0..1) and a gain, or a band to add there.
+    var touched: ((Int) -> Void)?
+    var dragged: ((Int, Float, Float) -> Void)?
+    var added: ((Float, Float) -> Void)?
+    private var held = -1
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        contentMode = .redraw
+        layer.cornerRadius = Radius.card
+        isAccessibilityElement = true
+        accessibilityLabel = Say.equalizer
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private var on: Bool { eq["on"] as? Bool ?? false }
+    private var reach: CGFloat { CGFloat(eq["reach"] as? Double ?? 15) }
+    private var points: [[String: Any]] { eq["points"] as? [[String: Any]] ?? [] }
+    private var plot: CGRect { bounds.insetBy(dx: 12, dy: 14) }
+
+    private func xOf(_ x: Double) -> CGFloat { plot.minX + CGFloat(x) * plot.width }
+    private func yOf(_ db: Double) -> CGFloat { plot.midY - CGFloat(db) / reach * plot.height / 2 }
+
+    private func trace(_ samples: [Double], closed: Bool) -> UIBezierPath {
+        let path = UIBezierPath()
+        guard samples.count > 1 else { return path }
+        for (i, db) in samples.enumerated() {
+            let p = CGPoint(x: plot.minX + CGFloat(i) / CGFloat(samples.count - 1) * plot.width, y: yOf(min(max(db, -Double(reach)), Double(reach))))
+            i == 0 ? path.move(to: p) : path.addLine(to: p)
+        }
+        if closed {
+            path.addLine(to: CGPoint(x: plot.maxX, y: yOf(0)))
+            path.addLine(to: CGPoint(x: plot.minX, y: yOf(0)))
+            path.close()
+        }
+        return path
+    }
+
+    override func draw(_ rect: CGRect) {
+        Theme.row.setFill()
+        UIBezierPath(roundedRect: bounds, cornerRadius: Radius.card).fill()
+        let ink = on ? Theme.accent : Theme.secondary
+        Theme.hairline.setStroke()
+        for db in [-12.0, 0, 12] {
+            let line = UIBezierPath()
+            line.move(to: CGPoint(x: plot.minX, y: yOf(db)))
+            line.addLine(to: CGPoint(x: plot.maxX, y: yOf(db)))
+            line.lineWidth = db == 0 ? 1 : hairlineWidth
+            line.stroke()
+        }
+        let small: [NSAttributedString.Key: Any] = [.font: Fonts.digits(10), .foregroundColor: Theme.secondary]
+        for mark in eq["marks"] as? [[String: Any]] ?? [] {
+            let x = xOf(mark["x"] as? Double ?? 0)
+            let line = UIBezierPath()
+            line.move(to: CGPoint(x: x, y: plot.minY))
+            line.addLine(to: CGPoint(x: x, y: plot.maxY))
+            line.lineWidth = hairlineWidth
+            line.stroke()
+            ((mark["label"] as? String ?? "") as NSString).draw(at: CGPoint(x: x + 3, y: plot.maxY - 12), withAttributes: small)
+        }
+        let each = eq["each"] as? [[Double]] ?? []
+        if chosen >= 0, chosen < each.count, on {
+            ink.withAlphaComponent(0.22).setFill()
+            trace(each[chosen], closed: true).fill()
+        }
+        let curve = eq["curve"] as? [Double] ?? []
+        ink.withAlphaComponent(0.12).setFill()
+        trace(curve, closed: true).fill()
+        ink.setStroke()
+        let line = trace(curve, closed: false)
+        line.lineWidth = 2
+        line.lineJoinStyle = .round
+        line.stroke()
+        for (i, pt) in points.enumerated() {
+            let lit = on && (i == chosen || i == held)
+            let r: CGFloat = lit ? 7 : 5
+            let c = CGPoint(x: xOf(pt["x"] as? Double ?? 0), y: yOf(pt["db"] as? Double ?? 0))
+            let dot = UIBezierPath(ovalIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+            (lit ? Theme.accent : Theme.label).setFill()
+            dot.fill()
+        }
+    }
+
+    /// Where `p` is on the curve: across (0..1) and dB, held to the curve's reach.
+    private func place(_ p: CGPoint) -> (Float, Float) {
+        let across = Float(min(max((p.x - plot.minX) / plot.width, 0), 1))
+        let db = Float(min(max((plot.midY - p.y) / (plot.height / 2) * reach, -reach), reach))
+        return (across, (db * 2).rounded() / 2)
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard on, let p = touches.first?.location(in: self) else { return }
+        let near = points.enumerated().map { (i, pt) -> (Int, CGFloat) in
+            (i, hypot(xOf(pt["x"] as? Double ?? 0) - p.x, yOf(pt["db"] as? Double ?? 0) - p.y))
+        }.min { $0.1 < $1.1 }
+        if let (i, d) = near, d < 28 {
+            held = i
+            touched?(i)
+        } else if !(eq["graphic"] as? Bool ?? true) {
+            let (across, db) = place(p)
+            added?(across, db)
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard held >= 0, let p = touches.first?.location(in: self) else { return }
+        let (across, db) = place(p)
+        dragged?(held, across, db)
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { held = -1; setNeedsDisplay() }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { held = -1; setNeedsDisplay() }
+}
+
+/// The equalizer: graphic or parametric, its curve to touch, the chosen band in words and, for a
+/// parametric band, its kind, side and width. While it is in sight and touched, the output runs its
+/// short buffer so a change is heard at once.
 final class EqualizerPage: UIViewController {
     private let toggle = UISwitch()
-    private var sliders: [UISlider] = []
     private let stack = UIStackView()
+    private let curve = EqCurveView()
+    private let graphic = Chip(Say.graphic)
+    private let parametric = Chip(Say.parametric)
+    private let words = label(Fonts.digits(13), Theme.secondary, lines: 2)
+    private let bandButton = PillButton(Say.band, nil, prominent: false)
+    private let narrower = PillButton(Say.narrower, nil, prominent: false)
+    private let wider = PillButton(Say.wider, nil, prominent: false)
+    private lazy var bandRow = UIStackView(arrangedSubviews: [bandButton, narrower, wider])
+    private var eq: [String: Any] = [:]
+    private var chosen = -1
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -325,10 +456,11 @@ final class EqualizerPage: UIViewController {
         toggle.addTarget(self, action: #selector(switched), for: .valueChanged)
         navigationItem.rightBarButtonItem = UIBarButtonItem(customView: toggle)
         stack.axis = .vertical
-        stack.spacing = 4
+        stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         let scroll = UIScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.delaysContentTouches = false
         view.addSubview(scroll)
         scroll.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -342,7 +474,32 @@ final class EqualizerPage: UIViewController {
             stack.bottomAnchor.constraint(equalTo: scroll.bottomAnchor, constant: -16),
             stack.widthAnchor.constraint(equalTo: scroll.widthAnchor, constant: -Space.gutter * 2),
         ])
-        load()
+        guard takenJSON(nori_ios_equalizer()) is [String: Any] else {
+            stack.addArrangedSubview(EmptyState(title: Say.noServer, detail: Say.noServerDetail))
+            toggle.isEnabled = false
+            return
+        }
+        graphic.addTarget(self, action: #selector(toGraphic), for: .touchUpInside)
+        parametric.addTarget(self, action: #selector(toParametric), for: .touchUpInside)
+        let presets = PillButton(Say.presets, nil, prominent: false)
+        presets.addTarget(self, action: #selector(presetsTapped), for: .touchUpInside)
+        let modes = UIStackView(arrangedSubviews: [graphic, parametric, UIView(), presets])
+        modes.spacing = 8
+        modes.alignment = .center
+        stack.addArrangedSubview(modes)
+        curve.heightAnchor.constraint(equalToConstant: 200).isActive = true
+        curve.touched = { [weak self] i in self?.choose(i) }
+        curve.dragged = { [weak self] i, across, db in self?.drag(i, across, db) }
+        curve.added = { [weak self] across, db in self?.add(across, db) }
+        stack.addArrangedSubview(curve)
+        stack.addArrangedSubview(words)
+        bandRow.spacing = 8
+        bandRow.distribution = .fillEqually
+        bandButton.addTarget(self, action: #selector(bandTapped), for: .touchUpInside)
+        narrower.addTarget(self, action: #selector(narrowerTapped), for: .touchUpInside)
+        wider.addTarget(self, action: #selector(widerTapped), for: .touchUpInside)
+        stack.addArrangedSubview(bandRow)
+        paint()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -355,45 +512,104 @@ final class EqualizerPage: UIViewController {
         nori_ios_tuning(0, 0)
     }
 
-    private func load() {
-        guard let eq = takenJSON(nori_ios_equalizer()) as? [String: Any] else {
-            stack.addArrangedSubview(EmptyState(title: Say.noServer, detail: Say.noServerDetail))
-            toggle.isEnabled = false
-            return
+    private var bands: [[String: Any]] { eq["bands"] as? [[String: Any]] ?? [] }
+    private var isGraphic: Bool { eq["graphic"] as? Bool ?? true }
+
+    /// Everything as the settings now hold them.
+    private func paint() {
+        guard let now = takenJSON(nori_ios_equalizer()) as? [String: Any] else { return }
+        eq = now
+        if chosen >= bands.count { chosen = -1 }
+        let on = eq["on"] as? Bool ?? false
+        toggle.isOn = on
+        graphic.chosen = isGraphic
+        parametric.chosen = !isGraphic
+        curve.eq = eq
+        curve.chosen = chosen
+        if chosen >= 0 {
+            let b = bands[chosen]
+            words.text = Say.eqBand(b["label"] as? String ?? "", b["value"] as? String ?? "", kind: isGraphic ? nil : b["kind"] as? Int,
+                                    width: b["width"] as? String ?? "", side: b["channel"] as? Int ?? 0, usesGain: b["usesGain"] as? Bool ?? true)
+            words.textColor = on ? Theme.accent : Theme.label
+        } else {
+            words.text = isGraphic ? Say.eqHintGraphic : Say.eqHintParametric
+            words.textColor = Theme.secondary
         }
-        toggle.isOn = eq["on"] as? Bool ?? false
-        let presets = PillButton(Say.presets, nil, prominent: false)
-        presets.addTarget(self, action: #selector(presetsTapped), for: .touchUpInside)
-        stack.addArrangedSubview(presets)
-        stack.setCustomSpacing(12, after: presets)
-        let gains = eq["gains"] as? [Double] ?? []
-        let hz = eq["hz"] as? [Double] ?? []
-        for (i, g) in gains.enumerated() {
-            let band = label(Fonts.digits(12), Theme.secondary)
-            let f = i < hz.count ? hz[i] : 0
-            band.text = f >= 1000 ? String(format: "%g kHz", f / 1000) : String(format: "%g Hz", f)
-            band.widthAnchor.constraint(equalToConstant: 64).isActive = true
-            let slider = UISlider()
-            slider.minimumValue = -12
-            slider.maximumValue = 12
-            slider.value = Float(g)
-            slider.tag = i
-            slider.minimumTrackTintColor = Theme.label
-            slider.maximumTrackTintColor = Theme.track
-            slider.isEnabled = toggle.isOn
-            slider.addTarget(self, action: #selector(moved(_:)), for: .valueChanged)
-            sliders.append(slider)
-            let row = UIStackView(arrangedSubviews: [band, slider])
-            row.spacing = 8
-            row.heightAnchor.constraint(equalToConstant: 40).isActive = true
-            stack.addArrangedSubview(row)
+        bandRow.isHidden = isGraphic || chosen < 0 || !on
+    }
+
+    private func choose(_ i: Int) {
+        chosen = i
+        paint()
+    }
+
+    /// Band `i` set as `pos`, `gain` and what else it has, or as its editor changed it.
+    private func set(_ i: Int, pos: Float? = nil, gain: Float? = nil, q: Float? = nil, kind: Int? = nil, channel: Int? = nil) {
+        guard i >= 0, i < bands.count, i < (eq["points"] as? [[String: Any]] ?? []).count else { return }
+        let b = bands[i]
+        let point = (eq["points"] as? [[String: Any]] ?? [])[i]
+        nori_ios_tuning(1, 1)
+        let changed = nori_ios_eq_point(UInt32(i), pos ?? Float(point["x"] as? Double ?? 0), gain ?? Float(b["gain"] as? Double ?? 0),
+                                        q ?? Float(b["q"] as? Double ?? 1), Int32(kind ?? b["kind"] as? Int ?? 0), Int32(channel ?? b["channel"] as? Int ?? 0))
+        if changed == 1 { paint() }
+    }
+
+    private func drag(_ i: Int, _ across: Float, _ db: Float) {
+        chosen = i
+        let gain = (bands[safe: i]?["usesGain"] as? Bool ?? true) ? db : nil
+        set(i, pos: isGraphic ? nil : across, gain: gain)
+    }
+
+    private func add(_ across: Float, _ db: Float) {
+        nori_ios_tuning(1, 1)
+        if nori_ios_eq_band(0, across, db) == 1 {
+            chosen = bands.count
+            paint()
         }
     }
 
     @objc private func switched() {
         _ = "eq".withCString { n in (toggle.isOn ? "true" : "false").withCString { v in nori_ios_set(n, v) } }
-        sliders.forEach { $0.isEnabled = toggle.isOn }
         nori_ios_tuning(1, 1)
+        paint()
+    }
+
+    private func mode(_ value: String) {
+        chosen = -1
+        _ = "eqMode".withCString { n in value.withCString { v in nori_ios_set(n, v) } }
+        nori_ios_tuning(1, 1)
+        paint()
+    }
+
+    @objc private func toGraphic() { if !isGraphic { mode("GRAPHIC") } }
+    @objc private func toParametric() { if isGraphic { mode("PARAMETRIC") } }
+
+    @objc private func narrowerTapped() { width(by: 1.25) }
+    @objc private func widerTapped() { width(by: 0.8) }
+
+    private func width(by factor: Double) {
+        guard let q = bands[safe: chosen]?["q"] as? Double else { return }
+        set(chosen, q: Float(q * factor))
+    }
+
+    @objc private func bandTapped() {
+        guard let b = bands[safe: chosen] else { return }
+        let i = chosen
+        let sheet = Sheet(Say.band)
+        for k in 0..<10 {
+            sheet.add(Say.bandKind(k), checked: b["kind"] as? Int == k) { [weak self] in self?.set(i, kind: k) }
+        }
+        for c in 0..<3 {
+            sheet.add(Say.bandSide(c), checked: b["channel"] as? Int == c) { [weak self] in self?.set(i, channel: c) }
+        }
+        sheet.add(Say.removeBand, destructive: true) { [weak self] in
+            nori_ios_tuning(1, 1)
+            if nori_ios_eq_band(UInt32(i), -1, 0) == 1 {
+                self?.chosen = -1
+                self?.paint()
+            }
+        }
+        sheet.show(from: self)
     }
 
     @objc private func presetsTapped() {
@@ -406,22 +622,5 @@ final class EqualizerPage: UIViewController {
             }
         }
         sheet.show(from: self)
-    }
-
-    /// The switch and sliders as the settings now hold them.
-    private func paint() {
-        guard let eq = takenJSON(nori_ios_equalizer()) as? [String: Any] else { return }
-        toggle.isOn = eq["on"] as? Bool ?? false
-        let gains = eq["gains"] as? [Double] ?? []
-        for (slider, g) in zip(sliders, gains) {
-            slider.isEnabled = toggle.isOn
-            slider.setValue(Float(g), animated: true)
-        }
-    }
-
-    @objc private func moved(_ s: UISlider) {
-        nori_ios_tuning(1, 1)
-        let rounded = (s.value * 2).rounded() / 2
-        s.value = nori_ios_equalizer_band(UInt32(s.tag), rounded)
     }
 }

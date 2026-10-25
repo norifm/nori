@@ -77,6 +77,13 @@ pub enum Action {
     // Settings and equalizer values
     Decrease,
     Increase,
+    // A parametric band: its frequency down or up, narrower or wider, its next kind or side
+    FreqDown,
+    FreqUp,
+    Narrower,
+    Wider,
+    BandKind,
+    BandSide,
     // Previous or next settings group
     GroupBack,
     GroupOn,
@@ -203,6 +210,12 @@ pub const BINDINGS: &[Binding] = &[
     b!(Eq, "", Action::Decrease, "", [(Down, N), (Char('j'), N)]),
     b!(Eq, "enter", Action::Open, "Switch, choose presets, add a band, back to flat", [(Enter, N)]),
     b!(Eq, "d / delete", Action::Remove, "Remove the band (parametric)", [(Char('d'), N), (Delete, N)]),
+    b!(Eq, "[ ]", Action::FreqDown, "Move the band lower or higher (parametric)", [(Char('['), N)]),
+    b!(Eq, "", Action::FreqUp, "", [(Char(']'), N)]),
+    b!(Eq, "{ }", Action::Wider, "Make the band wider or narrower (parametric)", [(Char('{'), N), (Char('{'), S)]),
+    b!(Eq, "", Action::Narrower, "", [(Char('}'), N), (Char('}'), S)]),
+    b!(Eq, "t", Action::BandKind, "The band's next kind: peak, shelf, pass… (parametric)", [(Char('t'), N)]),
+    b!(Eq, "c", Action::BandSide, "The band on both sides, the left or the right (parametric)", [(Char('c'), N)]),
     b!(Values, "e", Action::Key, "Add or change a lyrics service's key", [(Char('e'), N)]),
     b!(Values, "← → / h l", Action::Decrease, "Change the value (seek with , and . here)", [(Left, N), (Char('h'), N)]),
     b!(Values, "", Action::Increase, "", [(Right, N), (Char('l'), N)]),

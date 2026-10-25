@@ -82,7 +82,7 @@ export type Jam = {
 export type Devices = { on: boolean; me?: string; active: string | null; list: { id: string; name: string; kind: string; playing: boolean; nearby: boolean }[] };
 
 export type SettingRow = {
-  item: { kind: "setting"; name: string; type: "Switch" | "Choice" | "Level" | "Text" | "Colour"; options: string[]; min: number; max: number; value: string; chips: boolean } | { kind: "note"; note: string };
+  item: { kind: "setting"; name: string; type: "Switch" | "Choice" | "Level" | "Text" | "Colour"; options: string[]; min: number; max: number; value: string; chips: boolean } | { kind: "note"; note: string } | { kind: "link"; to: string };
   shown: boolean;
   enabled: boolean;
   depth: number;
@@ -90,3 +90,26 @@ export type SettingRow = {
 export type SettingsSection = { id: string; rows: SettingRow[] };
 
 export type MenuAction = { action: string; more: boolean; enabled: boolean; on?: boolean; id?: string; name?: string; named?: boolean };
+
+/** A band as the equalizer page draws it (crates/web/src/eq.rs): `x` across the curve (0..1), `db` its
+ * point's height, the rest its editor's. */
+export type EqBand = { x: number; db: number; gain: number; label: string; value: string; usesGain: boolean; kind: number; channel: number; q: number; freq: string; shape: string };
+export type Equalizer = {
+  on: boolean;
+  graphic: boolean;
+  count: number;
+  layouts: number[];
+  reach: number;
+  curve: number[];
+  each: number[][];
+  bands: EqBand[];
+  presets: string[];
+  preamp: number;
+  auto: boolean;
+  balance: number;
+  mono: boolean;
+  limiter: boolean;
+  ceiling: number;
+  ranges: { gain: [number, number]; preamp: [number, number]; balance: [number, number]; limiter: [number, number]; q: [number, number] };
+  bypass: string | null;
+};

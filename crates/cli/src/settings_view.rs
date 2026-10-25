@@ -873,6 +873,13 @@ pub enum EqRow {
     Ceiling,
 }
 
+/// A parametric band's frequency step for [ and ], on the band scale (a sixth of an octave).
+const FREQ_STEP: f32 = 1.0 / 60.0;
+/// A parametric band's Q step for { and }.
+const Q_STEP: f32 = 1.12;
+/// The band kinds there are (`EqKind`).
+const KINDS: i32 = 10;
+
 /// The controls in ← → order.
 pub fn eq_rows(p: &StoredPrefs) -> Vec<EqRow> {
     let graphic = p.eq_mode == EqMode::Graphic;
@@ -942,18 +949,54 @@ impl EqRow {
         matches!(self, EqRow::Enabled | EqRow::Mode | EqRow::Layout | EqRow::Presets | EqRow::AutoPreamp | EqRow::Preamp | EqRow::AddBand | EqRow::Reset)
     }
 
-    /// Sets a band fader to `db`, rounded to 0.5 dB; None if unchanged.
-    pub fn set_gain(&self, p: &StoredPrefs, db: f32) -> Option<Cmd> {
+    /// Its point dragged to `pos` across the curve and `db` (rounded to 0.5 dB): a graphic band only up
+    /// or down; None if unchanged.
+    pub fn place(&self, p: &StoredPrefs, pos: f32, db: f32) -> Option<Cmd> {
         let r = EQ_RANGES.gain;
         let db = ((db * 2.0).round() / 2.0).clamp(r.min, r.max);
         match *self {
             EqRow::Slider(i) => (p.eq_graphic.get(i).copied()? != db).then_some(Cmd::Graphic(i as u32, db)),
             EqRow::Band(i) => {
                 let b = *p.eq_bands.get(i)?;
-                (b.gain_db != db).then_some(Cmd::Band(i as u32, SoundBand { gain_db: db, ..b }))
+                let gain_db = if b.kind.uses_gain() { db } else { b.gain_db };
+                self.band_to(p, SoundBand { freq: nori_core::dsp::band_moved(b.freq, pos), gain_db, ..b })
             }
             _ => None,
         }
+    }
+
+    /// A parametric band's frequency a step up or down the band scale.
+    pub fn shift(&self, p: &StoredPrefs, up: bool) -> Option<Cmd> {
+        let b = self.parametric(p)?;
+        let at = nori_core::dsp::band_position(b.freq) + if up { FREQ_STEP } else { -FREQ_STEP };
+        self.band_to(p, SoundBand { freq: nori_core::dsp::band_freq_at(at), ..b })
+    }
+
+    /// A parametric band narrower (a higher Q or steeper slope) or wider.
+    pub fn width(&self, p: &StoredPrefs, narrower: bool) -> Option<Cmd> {
+        let b = self.parametric(p)?;
+        let q = if narrower { b.q * Q_STEP } else { b.q / Q_STEP };
+        self.band_to(p, SoundBand { q: ((q * 100.0).round() / 100.0).clamp(EQ_RANGES.q.min, EQ_RANGES.q.max), ..b })
+    }
+
+    /// A parametric band's next kind, or next side (both, left, right).
+    pub fn cycle(&self, p: &StoredPrefs, side: bool) -> Option<Cmd> {
+        let b = self.parametric(p)?;
+        let (kind, channel) = if side { (b.kind as i32, (b.channel as i32 + 1) % 3) } else { ((b.kind as i32 + 1) % KINDS, b.channel as i32) };
+        self.band_to(p, nori_core::settings::band_from(kind, b.freq, b.gain_db, b.q, channel))
+    }
+
+    fn parametric(&self, p: &StoredPrefs) -> Option<SoundBand> {
+        match *self {
+            EqRow::Band(i) => p.eq_bands.get(i).copied(),
+            _ => None,
+        }
+    }
+
+    /// Band `self` set to `to`; None if that is how it is.
+    fn band_to(&self, p: &StoredPrefs, to: SoundBand) -> Option<Cmd> {
+        let EqRow::Band(i) = *self else { return None };
+        (p.eq_bands.get(i)? != &to).then_some(Cmd::Band(i as u32, to))
     }
 
     /// Whether a single click activates it.
@@ -1022,7 +1065,7 @@ impl EqRow {
             EqRow::Mono => Some(Cmd::Setting("mono".into(), (!p.mono).to_string())),
             EqRow::Limiter => Some(Cmd::Setting("limiter".into(), (!p.limiter).to_string())),
             EqRow::AutoPreamp => Some(Cmd::Sound(SoundToolCmd::AutoPreamp(p.eq_preamp_db.is_some()))),
-            EqRow::AddBand => Some(Cmd::Sound(SoundToolCmd::AddBand)),
+            EqRow::AddBand => Some(Cmd::Sound(SoundToolCmd::AddBand(1000.0, 0.0))),
             EqRow::Reset => Some(Cmd::Sound(SoundToolCmd::ResetBands)),
             _ => None,
         }
