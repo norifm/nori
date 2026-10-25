@@ -183,11 +183,20 @@ export struct LoginKind {
 }
 
 // A band of the equalizer page: its label, its gain, and what its value reads.
+// A band as the curve draws it: `x` its place across (0..1), `db` its point's height; `freq` and `shape`
+// (its Q or slope) are the editor's words, `kind` and `channel` ordinals.
 export struct EqBandRow {
     label: string,
     gain: float,
     value: string,
     uses-gain: bool,
+    x: float,
+    db: float,
+    kind: int,
+    channel: int,
+    q: float,
+    freq: string,
+    shape: string,
 }
 
 // A mix on Home's "For you": its id, name and caption, up to four cover ids, the mix's own colour under its
@@ -4039,63 +4048,6 @@ component SettingLine inherits VerticalLayout {
     }
 }
 
-// A vertical slider, as a graphic equalizer's band: dragged up and down, filled from 0 dB to its level.
-component BandSlider inherits Rectangle {
-    in property <float> value;
-    in property <float> lo: -12;
-    in property <float> hi: 12;
-    in property <bool> enabled: true;
-    callback moved(float, bool);
-    property <float> held: -100;
-    property <float> shown: root.held > -99 ? root.held : root.value;
-    property <length> track: root.height - 14px;
-    property <length> knob: (1 - (root.shown - root.lo) / (root.hi - root.lo)) * root.track;
-    property <length> zero: (1 - (0 - root.lo) / (root.hi - root.lo)) * root.track;
-    width: 22px;
-    opacity: root.enabled ? 1 : 0.45;
-    Rectangle {
-        x: (parent.width - self.width) / 2;
-        y: 7px;
-        height: root.track;
-        width: 4px;
-        border-radius: 2px;
-        background: Theme.chosen;
-    }
-    Rectangle {
-        x: (parent.width - self.width) / 2;
-        y: min(root.knob, root.zero) + 7px;
-        width: 4px;
-        height: abs(root.knob - root.zero);
-        background: Theme.text;
-    }
-    Rectangle {
-        y: root.knob;
-        width: parent.width;
-        height: 14px;
-        border-radius: 7px;
-        background: Theme.text;
-    }
-    ta := TouchArea {
-        enabled: root.enabled;
-        pointer-event(e) => {
-            if e.button == PointerEventButton.left && e.kind == PointerEventKind.down {
-                root.held = round(max(root.lo, min(root.hi, root.hi - (self.mouse-y - 7px) / root.track * (root.hi - root.lo))) * 2) / 2;
-                root.moved(root.held, false);
-            }
-            if e.button == PointerEventButton.left && e.kind == PointerEventKind.up && root.held > -99 {
-                root.moved(root.held, true);
-                root.held = -100;
-            }
-        }
-        moved => {
-            if self.pressed {
-                root.held = round(max(root.lo, min(root.hi, root.hi - (self.mouse-y - 7px) / root.track * (root.hi - root.lo))) * 2) / 2;
-                root.moved(root.held, false);
-            }
-        }
-    }
-}
-
 // A row with a label, a horizontal slider and its value.
 component LevelRow inherits HorizontalLayout {
     in property <string> label;
@@ -4189,6 +4141,9 @@ component EqualizerPage inherits Flickable {
     in property <[int]> layouts;
     in property <[EqBandRow]> bands;
     in property <string> curve;
+    in property <string> area;
+    in property <[string]> shape-areas;
+    in property <[string]> kinds;
     in property <[string]> presets;
     in property <bool> auto-preamp;
     in property <float> preamp;
@@ -4204,9 +4159,26 @@ component EqualizerPage inherits Flickable {
     callback back;
     callback set(string, string);
     callback level(string, float, bool);
-    callback gain(int, float, bool);
+    // Band i set to a place across the curve, gain, Q, kind and channel; the last on release.
+    callback band(int, float, float, float, int, int, bool);
+    callback add(float, float);
     callback tool(string, int);
     callback sized(length, length);
+    // The band whose editor shows under the curve, and the one a pointer holds.
+    property <int> chosen: -1;
+    property <int> held: -1;
+    // A mouse drag moves the curve's points; the wheel scrolls.
+    mouse-drag-pan-enabled: false;
+    property <float> gain-lo: root.ranges.length > 1 ? root.ranges[0] : -12;
+    property <float> gain-hi: root.ranges.length > 1 ? root.ranges[1] : 12;
+    property <float> q-lo: root.ranges.length > 9 ? root.ranges[8] : 0.1;
+    property <float> q-hi: root.ranges.length > 9 ? root.ranges[9] : 10;
+    property <EqBandRow> pick: root.chosen >= 0 && root.chosen < root.bands.length ? root.bands[root.chosen] : { };
+    changed graphic => { root.chosen = -1; }
+    changed count => { root.chosen = -1; }
+    function set-band(i: int, x: float, db: float, q: float, kind: int, channel: int, last: bool) {
+        root.band(i, x, max(root.gain-lo, min(root.gain-hi, round(db * 2) / 2)), q, kind, channel, last);
+    }
     // Headphones: the AutoEQ list (none until fetched), searched; the last curve's word or a failure.
     in property <int> autoeq-count;
     in property <string> autoeq-search-words;
@@ -4298,29 +4270,79 @@ component EqualizerPage inherits Flickable {
                 }
             }
         }
-        Text {
-            text: root.graphic ? "Each slider is the level at its frequency. Neighbouring bands are corrected for each other, so the sound follows the sliders." : "Each band is a filter of its own: drag its level, or add another.";
-            color: Theme.dim;
-            font-size: 12px;
-            wrap: word-wrap;
-        }
-        // The curve the equalizer plays; the graphic one's vertical sliders under it.
-        Rectangle {
-            height: 96px;
+        // The curve the equalizer plays, a point on it for each band: drag one, or click it to edit it below.
+        // Clicking elsewhere adds a parametric band there.
+        curve-box := Rectangle {
+            property <length> inset: 14px;
+            property <length> across: self.width - 2 * self.inset;
+            property <length> half: self.height / 2 - 3px;
+            height: 240px;
             border-radius: 10px;
             background: Theme.hover;
-            Rectangle {
-                y: parent.height / 2;
+            clip: true;
+            changed width => { root.sized(self.width - 2 * self.inset, self.height); }
+            init => { root.sized(self.width - 2 * self.inset, self.height); }
+            for d in [-12, -6, 0, 6, 12]: Rectangle {
+                x: curve-box.inset;
+                width: curve-box.across;
+                y: curve-box.height / 2 - d / 15 * curve-box.half;
                 height: 1px;
-                background: Theme.hairline;
+                background: d == 0 ? Theme.hairline : Theme.hairline.with-alpha(0.45);
             }
-            // Drawn by the core at this box's own size, so the curve fills it (a path keeps its box's shape).
-            changed width => { root.sized(self.width - 24px, self.height); }
-            init => { root.sized(self.width - 24px, self.height); }
+            for d in [12, -12]: Text {
+                x: curve-box.inset + 2px;
+                y: curve-box.height / 2 - d / 15 * curve-box.half + (d > 0 ? 2px : -self.height - 2px);
+                text: d > 0 ? "+" + d : "−" + abs(d);
+                color: Theme.dim;
+                font-size: 10px;
+            }
+            // 100 Hz, 1 kHz and 10 kHz on the scale `band_position` keeps.
+            for f in [{ at: 0.233, name: "100" }, { at: 0.566, name: "1k" }, { at: 0.9, name: "10k" }]: Rectangle {
+                x: curve-box.inset + f.at * curve-box.across;
+                width: 1px;
+                background: Theme.hairline.with-alpha(0.45);
+                Text {
+                    x: 4px;
+                    y: curve-box.height - self.height - 4px;
+                    text: f.name;
+                    color: Theme.dim;
+                    font-size: 10px;
+                }
+            }
+            back-touch := TouchArea {
+                enabled: root.on && !root.graphic;
+                mouse-cursor: root.on && !root.graphic ? MouseCursor.crosshair : MouseCursor.default;
+                clicked => {
+                    root.chosen = root.bands.length;
+                    root.add(max(0, min(1, (self.mouse-x - curve-box.inset) / curve-box.across)),
+                        max(root.gain-lo, min(root.gain-hi, round((curve-box.height / 2 - self.mouse-y) / curve-box.half * 15 * 2) / 2)));
+                }
+            }
+            for a[i] in root.shape-areas: Path {
+                x: curve-box.inset;
+                width: curve-box.across;
+                height: curve-box.height;
+                viewbox-width: self.width / 1px;
+                viewbox-height: self.height / 1px;
+                commands: a;
+                fill: i == root.chosen && root.on ? Theme.accent.with-alpha(0.22) : Theme.text.with-alpha(0.04);
+                stroke: i == root.chosen && root.on ? Theme.accent.with-alpha(0.6) : Theme.text.with-alpha(0.12);
+                stroke-width: 1px;
+            }
             Path {
-                x: 12px;
-                width: parent.width - 24px;
-                height: parent.height;
+                x: curve-box.inset;
+                width: curve-box.across;
+                height: curve-box.height;
+                viewbox-width: self.width / 1px;
+                viewbox-height: self.height / 1px;
+                commands: root.area;
+                fill: (root.on ? Theme.accent : Theme.dim).with-alpha(0.1);
+                stroke: transparent;
+            }
+            Path {
+                x: curve-box.inset;
+                width: curve-box.across;
+                height: curve-box.height;
                 viewbox-width: self.width / 1px;
                 viewbox-height: self.height / 1px;
                 commands: root.curve;
@@ -4330,75 +4352,229 @@ component EqualizerPage inherits Flickable {
                 stroke-line-join: round;
                 fill: transparent;
             }
-        }
-        if root.graphic: HorizontalLayout {
-            height: 220px;
-            alignment: space-between;
-            for b[i] in root.bands: VerticalLayout {
-                spacing: 6px;
-                Text {
-                    text: b.value;
-                    color: Theme.dim;
-                    font-size: 10px;
-                    horizontal-alignment: center;
+            if root.held >= 0 && root.held < root.bands.length: Rectangle {
+                x: curve-box.inset + root.bands[root.held].x * curve-box.across;
+                width: 1px;
+                background: Theme.accent.with-alpha(0.5);
+            }
+            for b[i] in root.bands: Rectangle {
+                property <length> cx: curve-box.inset + b.x * curve-box.across;
+                property <length> cy: curve-box.height / 2 - max(-15, min(15, b.db)) / 15 * curve-box.half;
+                property <bool> lit: root.on && (i == root.chosen || i == root.held);
+                x: self.cx - self.width / 2;
+                y: self.cy - self.height / 2;
+                width: 28px;
+                height: 28px;
+                Rectangle {
+                    width: parent.lit ? 16px : point-touch.has-hover ? 14px : 12px;
+                    height: self.width;
+                    border-radius: self.width / 2;
+                    background: parent.lit ? Theme.accent : root.on ? Theme.text : Theme.dim;
+                    border-width: 2px;
+                    border-color: Theme.hover;
                 }
-                HorizontalLayout {
-                    vertical-stretch: 1;
-                    alignment: center;
-                    BandSlider {
-                        value: b.gain;
-                        lo: root.ranges.length > 1 ? root.ranges[0] : -12;
-                        hi: root.ranges.length > 1 ? root.ranges[1] : 12;
-                        enabled: root.on;
-                        moved(v, last) => { root.gain(i, v, last); }
+                point-touch := TouchArea {
+                    enabled: root.on;
+                    mouse-cursor: root.graphic ? MouseCursor.ns-resize : MouseCursor.move;
+                    pointer-event(e) => {
+                        if e.button == PointerEventButton.left && e.kind == PointerEventKind.down {
+                            root.chosen = i;
+                            root.held = i;
+                        }
+                        if e.button == PointerEventButton.left && e.kind == PointerEventKind.up && root.held == i {
+                            root.held = -1;
+                            if self.moved-once {
+                                root.set-band(i, b.x, b.gain, b.q, b.kind, b.channel, true);
+                            }
+                            self.moved-once = false;
+                        }
+                    }
+                    property <bool> moved-once;
+                    moved => {
+                        if self.pressed && root.held == i {
+                            self.moved-once = true;
+                            root.set-band(i,
+                                root.graphic ? b.x : max(0, min(1, (parent.x + self.mouse-x - curve-box.inset) / curve-box.across)),
+                                (curve-box.height / 2 - (parent.y + self.mouse-y)) / curve-box.half * 15,
+                                b.q, b.kind, b.channel, false);
+                        }
                     }
                 }
-                Text {
-                    text: b.label;
-                    color: Theme.dim;
-                    font-size: 10px;
-                    horizontal-alignment: center;
+            }
+            // What the held point says: its frequency and level.
+            if root.held >= 0 && root.held < root.bands.length: Rectangle {
+                property <EqBandRow> h: root.bands[root.held];
+                property <length> cx: curve-box.inset + self.h.x * curve-box.across;
+                x: max(4px, min(curve-box.width - self.width - 4px, self.cx - self.width / 2));
+                y: 6px;
+                height: 24px;
+                width: bubble.preferred-width + 16px;
+                border-radius: 12px;
+                background: Theme.panel;
+                border-width: 1px;
+                border-color: Theme.hairline;
+                bubble := Text {
+                    text: (root.graphic ? parent.h.label : parent.h.freq) + "  " + parent.h.value + (parent.h.uses-gain ? " dB" : "");
+                    color: Theme.text;
+                    font-size: 11px;
                 }
             }
         }
-        if !root.graphic: VerticalLayout {
-            spacing: 2px;
-            for b[i] in root.bands: HorizontalLayout {
+        Text {
+            text: !root.on ? "" : root.chosen >= 0 && root.chosen < root.bands.length ? "" : root.graphic ? "Drag a point, or click it to set it exactly." : root.bands.length == 0 ? "Click the curve to add a band." : "Drag a band to move it, click it to edit it, or click the curve to add one.";
+            visible: self.text != "";
+            height: self.text != "" ? self.preferred-height : 0;
+            color: Theme.dim;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        // The chosen graphic band: step to its neighbours, slide it, or nudge it half a decibel.
+        if root.on && root.graphic && root.chosen >= 0 && root.chosen < root.bands.length: VerticalLayout {
+            spacing: 8px;
+            HorizontalLayout {
                 spacing: 8px;
-                if b.uses-gain: LevelRow {
-                    horizontal-stretch: 1;
-                    label: b.label;
-                    shown: b.value + " dB";
-                    value: b.gain;
-                    lo: root.ranges.length > 1 ? root.ranges[0] : -12;
-                    hi: root.ranges.length > 1 ? root.ranges[1] : 12;
-                    enabled: root.on;
-                    moved(v, last) => { root.gain(i, v, last); }
+                IconButton {
+                    glyph: Icons.nav-arrow-left;
+                    quiet: true;
+                    size: 28px;
+                    icon: 14px;
+                    enabled: root.chosen > 0;
+                    clicked => { root.chosen -= 1; }
                 }
-                if !b.uses-gain: Text {
-                    horizontal-stretch: 1;
-                    text: b.label + "   " + b.value;
+                Text {
+                    text: root.pick.label;
                     color: Theme.text;
-                    height: 32px;
+                    font-weight: 600;
                     vertical-alignment: center;
                 }
                 IconButton {
-                    y: (parent.height - self.height) / 2;
-                    glyph: Icons.xmark;
+                    glyph: Icons.nav-arrow-right;
                     quiet: true;
-                    size: 26px;
-                    icon: 12px;
-                    clicked => { root.tool("remove-band", i); }
+                    size: 28px;
+                    icon: 14px;
+                    enabled: root.chosen < root.bands.length - 1;
+                    clicked => { root.chosen += 1; }
                 }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                IconButton {
+                    glyph: Icons.minus-circle;
+                    quiet: true;
+                    size: 28px;
+                    icon: 16px;
+                    clicked => { root.set-band(root.chosen, root.pick.x, root.pick.gain - 0.5, root.pick.q, root.pick.kind, root.pick.channel, true); }
+                }
+                IconButton {
+                    glyph: Icons.plus-circle;
+                    quiet: true;
+                    size: 28px;
+                    icon: 16px;
+                    clicked => { root.set-band(root.chosen, root.pick.x, root.pick.gain + 0.5, root.pick.q, root.pick.kind, root.pick.channel, true); }
+                }
+            }
+            LevelRow {
+                label: "Gain";
+                shown: root.pick.value + " dB";
+                value: root.pick.gain;
+                lo: root.gain-lo;
+                hi: root.gain-hi;
+                moved(v, last) => { root.set-band(root.chosen, root.pick.x, v, root.pick.q, root.pick.kind, root.pick.channel, last); }
+            }
+        }
+        // The chosen parametric band: its kind, side, frequency, gain and width.
+        if root.on && !root.graphic && root.chosen >= 0 && root.chosen < root.bands.length: VerticalLayout {
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 6px;
+                Chip {
+                    text: (root.pick.kind < root.kinds.length ? root.kinds[root.pick.kind] : "") + "  ▾";
+                    lit: true;
+                    clicked => { kind-list.show(); }
+                    kind-list := PopupWindow {
+                        x: 0;
+                        y: parent.height + 4px;
+                        width: 200px;
+                        close-policy: close-on-click-outside;
+                        Rectangle {
+                            border-radius: MenuShape.radius;
+                            background: Theme.panel;
+                            border-width: 1px;
+                            border-color: Theme.hairline;
+                            VerticalLayout {
+                                padding: MenuShape.inset;
+                                for k[ki] in root.kinds: Rectangle {
+                                    height: MenuShape.row;
+                                    border-radius: MenuShape.inner;
+                                    background: ka.has-hover ? Theme.hover : transparent;
+                                    Text {
+                                        x: 10px;
+                                        text: k;
+                                        color: ki == root.pick.kind ? Theme.accent : Theme.text;
+                                        font-size: 13px;
+                                        vertical-alignment: center;
+                                    }
+                                    ka := TouchArea {
+                                        clicked => {
+                                            root.set-band(root.chosen, root.pick.x, root.pick.gain, root.pick.q, ki, root.pick.channel, true);
+                                            kind-list.close();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Rectangle {
+                    width: 10px;
+                }
+                for c[ci] in ["Both sides", "Left", "Right"]: Chip {
+                    text: c;
+                    lit: root.pick.channel == ci;
+                    clicked => { root.set-band(root.chosen, root.pick.x, root.pick.gain, root.pick.q, root.pick.kind, ci, true); }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                IconButton {
+                    glyph: Icons.trash;
+                    quiet: true;
+                    size: 30px;
+                    icon: 16px;
+                    clicked => {
+                        root.tool("remove-band", root.chosen);
+                        root.chosen = -1;
+                    }
+                }
+            }
+            LevelRow {
+                label: "Frequency";
+                shown: root.pick.freq;
+                value: root.pick.x;
+                lo: 0;
+                hi: 1;
+                moved(v, last) => { root.set-band(root.chosen, v, root.pick.gain, root.pick.q, root.pick.kind, root.pick.channel, last); }
+            }
+            if root.pick.uses-gain: LevelRow {
+                label: "Gain";
+                shown: root.pick.value + " dB";
+                value: root.pick.gain;
+                lo: root.gain-lo;
+                hi: root.gain-hi;
+                moved(v, last) => { root.set-band(root.chosen, root.pick.x, v, root.pick.q, root.pick.kind, root.pick.channel, last); }
+            }
+            LevelRow {
+                label: root.pick.kind == 8 || root.pick.kind == 9 ? "Slope" : "Q";
+                shown: root.pick.shape;
+                value: root.pick.q;
+                lo: root.q-lo;
+                hi: root.q-hi;
+                moved(v, last) => { root.set-band(root.chosen, root.pick.x, root.pick.gain, round(v * 100) / 100, root.pick.kind, root.pick.channel, last); }
             }
         }
         HorizontalLayout {
             spacing: 8px;
             alignment: start;
-            if !root.graphic: Chip {
-                text: "Add band";
-                clicked => { root.tool("add-band", 0); }
-            }
             Chip {
                 text: "Reset";
                 clicked => { root.tool("reset", 0); }
@@ -5127,6 +5303,9 @@ export component AppWindow inherits Window {
     in property <[int]> eq-layouts;
     in property <[EqBandRow]> eq-bands;
     in property <string> eq-curve;
+    in property <string> eq-area;
+    in property <[string]> eq-shape-areas;
+    in property <[string]> eq-kinds;
     in property <[string]> eq-presets;
     in property <bool> eq-auto-preamp;
     in property <float> eq-preamp;
@@ -5162,12 +5341,13 @@ export component AppWindow inherits Window {
     in-out property <string> key-text;
     in-out property <bool> key-set;
     callback eq-set(string, string);
-    callback eq-gain(int, float, bool);
+    callback eq-band(int, float, float, float, int, int, bool);
+    callback eq-add(float, float);
     callback eq-tool(string, int);
     callback eq-sized(length, length);
     // The curve's box, points.
     in-out property <length> eq-curve-w: 800px;
-    in-out property <length> eq-curve-h: 96px;
+    in-out property <length> eq-curve-h: 240px;
     // Where the queue's songs come from.
     in property <string> queue-from;
     callback clear-queue();
@@ -6431,6 +6611,9 @@ export component AppWindow inherits Window {
                         layouts: root.eq-layouts;
                         bands: root.eq-bands;
                         curve: root.eq-curve;
+                        area: root.eq-area;
+                        shape-areas: root.eq-shape-areas;
+                        kinds: root.eq-kinds;
                         presets: root.eq-presets;
                         auto-preamp: root.eq-auto-preamp;
                         preamp: root.eq-preamp;
@@ -6459,7 +6642,8 @@ export component AppWindow inherits Window {
                         back => { root.go(8); }
                         set(name, value) => { root.eq-set(name, value); }
                         level(name, v, last) => { root.setting-slid(name, v, last); }
-                        gain(i, v, last) => { root.eq-gain(i, v, last); }
+                        band(i, x, db, q, kind, channel, last) => { root.eq-band(i, x, db, q, kind, channel, last); }
+                        add(x, db) => { root.eq-add(x, db); }
                         tool(name, i) => { root.eq-tool(name, i); }
                         sized(w, h) => { root.eq-sized(w, h); }
                     }

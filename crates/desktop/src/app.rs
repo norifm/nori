@@ -1035,7 +1035,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.setting(&name, &value);
         a.tune();
     });
-    on!(ui.on_eq_gain, h, |a, i, v, last| a.eq_gain(i.max(0) as usize, v, last));
+    on!(ui.on_eq_band, h, |a, i, pos, gain, q, kind, channel, last| a.eq_band(i.max(0) as usize, crate::eq::BandEdit { pos, gain, q, kind, channel }, last));
+    on!(ui.on_eq_add, h, |a, pos, gain| a.eq_add(pos, gain));
     on!(ui.on_eq_tool, h, |a, name, i| a.eq_tool(&name, i.max(0) as usize));
     on!(ui.on_eq_autoeq_search, h, |a, q| a.autoeq_search(&q));
     on!(ui.on_eq_autoeq_pick, h, |a, i| a.autoeq_pick(i.max(0) as usize));
@@ -3088,13 +3089,21 @@ impl App {
         }
     }
 
-    /// Edits an EQ band; the curve updates at once, the page on release.
-    fn eq_gain(&mut self, i: usize, v: f32, last: bool) {
-        let Some(p) = crate::session::app().settings.current() else { return };
+    /// Sets band `i` as the curve or its editor left it; the curve updates at once, the page on release.
+    /// `pos` is its place across the curve (a graphic band keeps its own); a frequency that rounds the
+    /// same as before keeps the band's exact one.
+    fn eq_band(&mut self, i: usize, edit: crate::eq::BandEdit, last: bool) {
+        use nori_core::dsp::{band_freq_at, band_position};
+        let settings = &crate::session::app().settings;
+        let Some(p) = settings.current() else { return };
         let effect = if p.eq_mode == nori_core::settings::EqMode::Graphic {
-            crate::session::app().settings.edit_graphic(i as u32, v).map(|e| e.0)
+            settings.edit_graphic(i as u32, edit.gain).map(|e| e.0)
         } else {
-            p.eq_bands.get(i).and_then(|b| crate::session::app().settings.edit_band(i as u32, nori_core::settings::SoundBand { gain_db: v, ..*b }).map(|e| e.0))
+            p.eq_bands.get(i).and_then(|b| {
+                let freq = band_freq_at(edit.pos);
+                let freq = if freq == band_freq_at(band_position(b.freq)) { b.freq } else { freq };
+                settings.edit_band(i as u32, nori_core::settings::band_from(edit.kind, freq, edit.gain, edit.q, edit.channel)).map(|e| e.0)
+            })
         };
         if let Some(effect) = effect {
             self.on_session(|s| s.applied(effect));
@@ -3102,9 +3111,15 @@ impl App {
         }
         if last {
             self.settings_shown();
-        } else if let Some(p) = crate::session::app().settings.current() {
+        } else if let Some(p) = settings.current() {
             crate::eq::curve_only(&self.ui(), &p);
         }
+    }
+
+    /// Adds a parametric band where the curve was clicked.
+    fn eq_add(&mut self, pos: f32, gain_db: f32) {
+        let freq = nori_core::dsp::band_freq_at(pos);
+        self.sound_tool(nori_core::settings_store::SoundTool::AddBand { freq, gain_db });
     }
 
     fn eq_tool(&mut self, name: &str, i: usize) {
@@ -3113,12 +3128,16 @@ impl App {
             "preset" => nori_core::dsp::eq_presets().get(i).cloned().map(|preset| SoundTool::Preset { preset }),
             "auto-preamp" => Some(SoundTool::AutoPreamp { automatic: true }),
             "manual-preamp" => Some(SoundTool::AutoPreamp { automatic: false }),
-            "add-band" => Some(SoundTool::AddBand { freq: 1000.0, gain_db: 0.0 }),
             "remove-band" => Some(SoundTool::RemoveBand { index: i as u32 }),
             "reset" => Some(SoundTool::ResetBands),
             _ => None,
         };
-        let Some(tool) = tool else { return };
+        if let Some(tool) = tool {
+            self.sound_tool(tool);
+        }
+    }
+
+    fn sound_tool(&mut self, tool: nori_core::settings_store::SoundTool) {
         match crate::session::app().settings.sound_tool(tool) {
             Ok(Some(change)) => {
                 self.on_session(|s| s.applied(change.effect));
