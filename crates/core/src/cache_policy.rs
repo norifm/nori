@@ -23,13 +23,15 @@ const HOUR: i64 = 60 * MINUTE;
 const DAY: i64 = 24 * HOUR;
 /// Freshness window of most reads.
 const BROWSE: i64 = 2 * MINUTE;
+/// A random draw stays as first shown, so a list opened from it shows the same, until a refresh drops it.
+const UNTIL_REFRESH: i64 = i64::MAX;
 
 /// A read of the profile's source. Variants up to `FolderById`, and `HomeFeed`, are kept; the rest
 /// always ask.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum Read {
-    /// Albums in `kind`'s order. `ByYear` means this year; `Random` is never kept.
+    /// Albums in `kind`'s order. `ByYear` means this year; a `Random` draw is kept until a refresh.
     AlbumList { kind: AlbumSort, size: i32, offset: i32, genre: Option<String> },
     AlbumsByYear { from: i32, to: i32, size: i32, offset: i32 },
     /// The starred `AlbumList` (the same kept page) with this session's star changes applied.
@@ -143,10 +145,10 @@ pub(crate) fn this_year() -> i32 {
 pub(crate) fn kept_as(read: &Read) -> Option<(String, i64)> {
     let by_year = |from: i32, to: i32, size: i32, offset: i32| format!("page:albums/byYear/{from}/{to}/{size}/{offset}");
     Some(match read {
-        Read::AlbumList { kind: AlbumSort::Random, .. } => return None,
         Read::AlbumList { kind: AlbumSort::ByYear, size, offset, .. } => (by_year(this_year(), 0, *size, *offset), BROWSE),
         Read::AlbumList { kind, size, offset, genre } => {
-            (format!("page:albums/{}/{size}/{offset}{}", kind.api(), genre.as_ref().map(|g| format!("/{g}")).unwrap_or_default()), BROWSE)
+            let window = if *kind == AlbumSort::Random { UNTIL_REFRESH } else { BROWSE };
+            (format!("page:albums/{}/{size}/{offset}{}", kind.api(), genre.as_ref().map(|g| format!("/{g}")).unwrap_or_default()), window)
         }
         Read::AlbumsByYear { from, to, size, offset } => (by_year(*from, *to, *size, *offset), BROWSE),
         Read::FavouriteAlbums { size } => (format!("page:albums/{}/{size}/0", AlbumSort::Starred.api()), BROWSE),
@@ -687,28 +689,28 @@ mod tests {
             }
         }
 
-        // Random is uncached and by year is this year.
+        // A random draw is kept as first shown until a refresh drops it, and by year is this year.
         let (c, fake) = setup();
         let random = Read::AlbumList { kind: crate::browse::AlbumSort::Random, size: 5, offset: 0, genre: Some("Rock".into()) };
-        assert!(c.read_stored(random.clone()).unwrap().digest.is_none());
         let list = r#"{"subsonic-response":{"status":"ok","albumList2":{"album":[{"id":"a","name":"A"}]}}}"#;
         fake.answer(list);
         assert!(block(c.read_fetch(random.clone(), None)).unwrap().is_some());
-        fake.answer(list);
-        assert!(block(c.read_fetch(random, None)).unwrap().is_some());
-        assert_eq!(c.core.db.lock().query_row("SELECT count(*) FROM cache", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        assert!(c.read_stored(random.clone()).unwrap().fresh);
+        let (key, window) = kept_as(&random).unwrap();
+        assert_eq!(window, i64::MAX, "{key}: never stale by age");
+        assert!(crate::browse::home_refresh_drops().iter().any(|d| key.starts_with(d.as_str())), "{key}: dropped by a refresh");
         assert!(fake.asked()[0].ends_with("&type=random&size=5&offset=0&genre=Rock&musicFolderId=7"));
 
         fake.answer(list);
         block(c.read_fetch(Read::AlbumList { kind: crate::browse::AlbumSort::ByYear, size: 50, offset: 0, genre: None }, None)).unwrap();
         let year = this_year();
-        assert!(fake.asked()[2].ends_with(&format!("&type=byYear&fromYear={year}&toYear=0&size=50&offset=0&musicFolderId=7")));
+        assert!(fake.asked()[1].ends_with(&format!("&type=byYear&fromYear={year}&toYear=0&size=50&offset=0&musicFolderId=7")));
 
         // A page of every song, as a profile without the offline index lists them.
         fake.answer(r#"{"subsonic-response":{"status":"ok","searchResult3":{"song":[{"id":"s9","title":"t"}]}}}"#);
         let page = block(c.read_now(Read::SongPage { offset: 100, count: 50 })).unwrap();
         assert!(matches!(page, Page::Found { v } if v.songs.iter().map(|s| s.id.as_str()).eq(["s9"])));
-        assert!(fake.asked()[3].ends_with("&query=&songCount=50&songOffset=100&albumCount=0&artistCount=0&musicFolderId=7"), "{}", fake.asked()[3]);
+        assert!(fake.asked()[2].ends_with("&query=&songCount=50&songOffset=100&albumCount=0&artistCount=0&musicFolderId=7"), "{}", fake.asked()[2]);
     }
 
     #[test]
