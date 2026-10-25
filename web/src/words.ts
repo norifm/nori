@@ -328,7 +328,7 @@ export const W = {
   copied: "Copied",
   roles: { Host: "Host", Admin: "Admin", Guest: "Guest" } as Record<string, string>,
   // Moving the music between devices.
-  playOn: "Play on",
+  devices: "Devices",
   playingOn: (device: string) => `Playing on ${device}`,
   thisBrowser: "This browser",
   devicePlaying: "Playing",

@@ -28,7 +28,7 @@
   const pane = $derived<Pane | null>(ui.pane ?? (ui.wide ? "lyrics" : null));
   const panes: [Pane, string, string][] = [
     ["lyrics", "emoji-sing-right-note", W.lyrics],
-    ["devices", "computer", W.playOn],
+    ["devices", "computer", W.devices],
     ["queue", "playlist", W.queue],
   ];
   const close = () => {
