@@ -242,7 +242,8 @@ impl Cmd {
 pub enum SoundToolCmd {
     Preset(usize),
     AutoPreamp(bool),
-    AddBand,
+    /// At a frequency and gain.
+    AddBand(f32, f32),
     RemoveBand(u32),
     ResetBands,
 }
@@ -252,7 +253,7 @@ impl SoundToolCmd {
         Some(match self {
             SoundToolCmd::Preset(i) => SoundTool::Preset { preset: nori_core::dsp::eq_presets().get(*i)?.clone() },
             SoundToolCmd::AutoPreamp(a) => SoundTool::AutoPreamp { automatic: *a },
-            SoundToolCmd::AddBand => SoundTool::AddBand { freq: 1000.0, gain_db: 0.0 },
+            SoundToolCmd::AddBand(freq, gain_db) => SoundTool::AddBand { freq: *freq, gain_db: *gain_db },
             SoundToolCmd::RemoveBand(i) => SoundTool::RemoveBand { index: *i },
             SoundToolCmd::ResetBands => SoundTool::ResetBands,
         })
@@ -866,6 +867,8 @@ pub enum Hit {
     LoginField(usize),
     /// Index into `settings_view::GROUPS`.
     Group(usize),
+    /// The equalizer's curve, off its points.
+    Curve,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1046,8 +1049,8 @@ pub struct App {
     /// The sound was changed on the equalizer since it was opened.
     pub touched: bool,
     pub drag: Option<Drag>,
-    /// Equalizer fader track top row and height, for mouse hits.
-    pub eq_track: (u16, u16),
+    /// Where the equalizer's curve was drawn, for the mouse.
+    pub eq_plot: Rect,
     pub seek_rect: Rect,
     pub volume_rect: Rect,
     /// The last left click, to detect a second click on the same target.
@@ -2219,6 +2222,18 @@ impl App {
                     self.cmds.push(Cmd::Sound(SoundToolCmd::RemoveBand(*i as u32)));
                 }
             }
+            Action::FreqDown | Action::FreqUp | Action::Narrower | Action::Wider | Action::BandKind | Action::BandSide => {
+                let rows = crate::settings_view::eq_rows(&self.prefs);
+                let cmd = rows.get(self.eq_sel.at).filter(|_| self.view == View::Equalizer).and_then(|row| match a {
+                    Action::FreqDown | Action::FreqUp => row.shift(&self.prefs, a == Action::FreqUp),
+                    Action::Narrower | Action::Wider => row.width(&self.prefs, a == Action::Narrower),
+                    _ => row.cycle(&self.prefs, a == Action::BandSide),
+                });
+                match cmd {
+                    Some(c) => self.cmds.push(c),
+                    None => self.dirty = false,
+                }
+            }
             Action::Remove if self.focus == Focus::Main && self.view == View::Downloads => {
                 if let Some(Item::Song(songs, i)) = self.selected() {
                     self.cmds.push(Cmd::DownloadRemove(songs[i].id.clone()));
@@ -3169,7 +3184,7 @@ impl App {
             MouseEventKind::Drag(MouseButton::Left) => match self.drag {
                 Some(Drag::Seek(_)) => self.drag = Some(Drag::Seek(share(self.seek_rect, m.column))),
                 Some(Drag::Volume) => self.set_volume(share(self.volume_rect, m.column)),
-                Some(Drag::Band(i)) => self.band_to(i, m.row),
+                Some(Drag::Band(i)) => self.band_to(i, m.column, m.row),
                 None => self.dirty = false,
             },
             MouseEventKind::Up(MouseButton::Left) => match self.drag.take() {
@@ -3266,6 +3281,7 @@ impl App {
                     self.dirty = false;
                 }
             }
+            Hit::Curve => self.add_band_at(col, row),
             Hit::Row(ListRef::Eq, i) => {
                 self.focus = Focus::Main;
                 self.eq_sel.at = i;
@@ -3273,7 +3289,6 @@ impl App {
                 match rows.get(i) {
                     Some(r) if r.band(&self.prefs).is_some() => {
                         self.drag = Some(Drag::Band(i));
-                        self.band_to(i, row);
                     }
                     Some(r) if r.clicks() || again => self.eq_open(),
                     _ => {}
@@ -3283,18 +3298,40 @@ impl App {
         }
     }
 
-    /// Sets fader `i` from pointer row `y` on its track.
-    fn band_to(&mut self, i: usize, y: u16) {
-        let (top, h) = self.eq_track;
-        if h < 2 {
-            return;
+    /// Where cell `x`, `y` is on the equalizer's curve: across (0..1) and dB.
+    fn on_curve(&self, x: u16, y: u16) -> Option<(f32, f32)> {
+        let r = self.eq_plot;
+        if r.width < 2 || r.height < 2 {
+            return None;
         }
-        let r = nori_core::settings::EQ_RANGES.gain;
-        let share = (y.saturating_sub(top).min(h - 1)) as f32 / (h - 1) as f32;
-        let db = r.max - share * (r.max - r.min);
+        let across = (x.saturating_sub(r.x).min(r.width - 1) as f32 + 0.5) / r.width as f32;
+        let down = (y.saturating_sub(r.y).min(r.height - 1) as f32 + 0.5) / r.height as f32;
+        Some((across, (1.0 - 2.0 * down) * nori_core::dsp::CURVE_DB))
+    }
+
+    /// Band row `i` dragged to cell `x`, `y` on the curve.
+    fn band_to(&mut self, i: usize, x: u16, y: u16) {
+        let Some((at, db)) = self.on_curve(x, y) else { return };
         let rows = crate::settings_view::eq_rows(&self.prefs);
-        if let Some(c) = rows.get(i).and_then(|row| row.set_gain(&self.prefs, db)) {
-            self.cmds.push(c);
+        match rows.get(i).and_then(|row| row.place(&self.prefs, at, db)) {
+            Some(c) => self.cmds.push(c),
+            None => self.dirty = false,
+        }
+    }
+
+    /// A click on the parametric curve off its points: a band added there, and chosen.
+    fn add_band_at(&mut self, x: u16, y: u16) {
+        let Some((at, db)) = self.on_curve(x, y).filter(|_| self.prefs.eq_mode == nori_core::settings::EqMode::Parametric && self.prefs.eq_enabled) else {
+            self.dirty = false;
+            return;
+        };
+        let r = nori_core::settings::EQ_RANGES.gain;
+        self.cmds.push(Cmd::Sound(SoundToolCmd::AddBand(nori_core::dsp::band_freq_at(at), ((db * 2.0).round() / 2.0).clamp(r.min, r.max))));
+        // The new band's row: after the bands there are, where Balance is now.
+        let rows = crate::settings_view::eq_rows(&self.prefs);
+        if let Some(at) = rows.iter().position(|r| matches!(r, crate::settings_view::EqRow::Balance)) {
+            self.focus = Focus::Main;
+            self.eq_sel.at = at;
         }
     }
 

@@ -917,7 +917,7 @@ fn equalizer(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
     chips(f, under_area, &under, &chip, chosen, focused, &mut app.hits, t, &|i| lit(&rows[i], &p));
     let mid = Rect { y: area.y + top_h + 1, height: under_area.y.saturating_sub(area.y + top_h + 2), ..area };
     let on_ = p.eq_enabled && bypass.is_none();
-    sliders(f, mid, &rows, &bands, &p, chosen, on_, app, t);
+    curve(f, mid, &rows, &bands, &p, chosen, on_, app, t);
 }
 
 /// Whether a switch is on.
@@ -975,55 +975,113 @@ fn chips(f: &mut Frame, area: Rect, which: &[usize], label: &dyn Fn(usize) -> St
     (y + 1).saturating_sub(area.y)
 }
 
-/// Band faders: a track filled from 0 dB to the knob, frequency and gain below.
+/// The curve the equalizer plays, in braille dots (2 across and 4 down a cell), with a point on it for
+/// each band: the one chosen in the accent, and a parametric band's own shape shaded. Under it the scale,
+/// then the chosen band in words.
 #[allow(clippy::too_many_arguments)]
-fn sliders(f: &mut Frame, area: Rect, rows: &[EqRow], bands: &[usize], p: &nori_core::settings::StoredPrefs, chosen: usize, on_: bool, app: &mut App, t: &Theme) {
-    if bands.is_empty() || area.height < 6 || area.width < 16 {
+fn curve(f: &mut Frame, area: Rect, rows: &[EqRow], bands: &[usize], p: &nori_core::settings::StoredPrefs, chosen: usize, on_: bool, app: &mut App, t: &Theme) {
+    const SCALE_W: u16 = 5;
+    if area.height < 6 || area.width < SCALE_W + 20 {
         return;
     }
-    let range = nori_core::settings::EQ_RANGES.gain.max;
-    // An odd height so 0 dB gets its own middle row; two rows below for labels.
-    let h = (area.height - 2).min(25);
-    let h = if h % 2 == 0 { h - 1 } else { h };
-    let mid = h / 2;
-    let top = area.y;
-    app.eq_track = (top, h);
-    let n = bands.len() as u16;
-    let col = ((area.width.saturating_sub(6)) / n).clamp(4, 10);
-    let x0 = area.x + 6 + (area.width.saturating_sub(6 + col * n)) / 2;
-    for (y, s) in [(0, format!("+{range:.0}")), (mid, "0 dB".into()), (h - 1, format!("-{range:.0}"))] {
-        put(f, Paragraph::new(Span::styled(format!("{s:>5}"), t.dim())), Rect { x: area.x, y: top + y, width: 5, height: 1 });
-    }
-    let line_w = col * n;
-    put(f, Paragraph::new(Span::styled("┈".repeat(line_w as usize), t.dim())), Rect { x: x0, y: top + mid, width: line_w, height: 1 });
-    for (k, &i) in bands.iter().enumerate() {
-        let Some((_, gain)) = rows[i].band(p) else { continue };
-        let x = x0 + k as u16 * col;
-        let c = x + (col - 1) / 2;
-        let is = i == chosen;
-        let fill_colour = if !on_ { t.quiet } else if is { t.accent } else { t.ink };
-        let knob_y = (mid as f32 - (gain / range).clamp(-1.0, 1.0) * mid as f32).round() as u16;
-        for y in 0..h {
-            let (sym, style) = if y == knob_y {
-                (if col >= 5 { "━●━" } else { "●" }, Style::default().fg(if is { t.accent } else { fill_colour }).add_modifier(Modifier::BOLD))
-            } else if (y > knob_y && y < mid) || (y < knob_y && y > mid) || (y == mid && knob_y != mid) {
-                ("┃", Style::default().fg(fill_colour))
-            } else {
-                ("│", t.dim())
-            };
-            let w = sym.width() as u16;
-            put(f, Paragraph::new(Span::styled(sym, style)), Rect { x: c + 1 - w.div_ceil(2), y: top + y, width: w, height: 1 });
+    let reach = nori_core::dsp::CURVE_DB;
+    let h = (area.height - 2).min(21);
+    let plot = Rect { x: area.x + SCALE_W + 1, y: area.y, width: area.width - SCALE_W - 2, height: h };
+    app.eq_plot = plot;
+    app.hits.push((plot, Hit::Curve));
+    let (dw, dh) = (plot.width as usize * 2, plot.height as usize * 4);
+    let drawing = nori_core::dsp::eq_drawing(p, dw as u32);
+    let dot_y = |db: f32| ((1.0 - db.clamp(-reach, reach) / reach) / 2.0 * (dh - 1) as f32).round() as usize;
+    let dot_x = |x: f32| ((x.clamp(0.0, 1.0)) * (dw - 1) as f32).round() as usize;
+    // Four layers of dots, from the back: the grid, the area under the curve, the chosen band's shape,
+    // the curve itself. A cell takes the colour of its frontmost layer.
+    let mut layers = vec![vec![0u8; plot.width as usize * plot.height as usize]; 4];
+    let mut dot = |layer: usize, x: usize, y: usize| {
+        const BITS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
+        if x < dw && y < dh {
+            layers[layer][(y / 4) * plot.width as usize + x / 2] |= BITS[y % 4][x % 2];
         }
-        let (name, _) = rows[i].words(p);
-        let label_style = if is { t.current() } else { t.dim() };
-        let cw = (col - 1) as usize;
-        let centre = |s: &str| format!("{:^cw$}", fit(s, cw));
-        put(f, Paragraph::new(Span::styled(centre(&name), label_style)), Rect { x, y: top + h, width: col - 1, height: 1 });
-        let value = nori_core::numbers::signed_db(gain, nori_core::numbers::POINT);
-        let value_style = if is { Style::default().fg(t.accent) } else { t.dim() };
-        put(f, Paragraph::new(Span::styled(centre(&value), value_style)), Rect { x, y: top + h + 1, width: col - 1, height: 1 });
-        app.hits.push((Rect { x, y: top, width: col, height: h + 2 }.intersection(area), Hit::Row(ListRef::Eq, i)));
+    };
+    let zero = dot_y(0.0);
+    for x in (0..dw).step_by(2) {
+        dot(0, x, zero);
+        for db in [-12.0, 12.0] {
+            if x % 8 == 0 {
+                dot(0, x, dot_y(db));
+            }
+        }
     }
+    let ticks = [(100.0f32, "100"), (1000.0, "1k"), (10_000.0, "10k")];
+    for (freq, _) in ticks {
+        let x = dot_x(nori_core::dsp::band_position(freq));
+        for y in (0..dh).step_by(4) {
+            dot(0, x, y);
+        }
+    }
+    let shade = |layer: usize, r: &[f32], dot: &mut dyn FnMut(usize, usize, usize)| {
+        for (x, db) in r.iter().enumerate() {
+            let y = dot_y(*db);
+            for y in y.min(zero)..=y.max(zero) {
+                if x % 2 == 0 && y % 2 == 0 {
+                    dot(layer, x, y);
+                }
+            }
+        }
+    };
+    shade(1, &drawing.curve, &mut dot);
+    let chosen_band = rows.get(chosen).and_then(|r| r.band(p)).map(|(i, _)| i);
+    if let Some(own) = chosen_band.and_then(|i| drawing.each.get(i)) {
+        shade(2, own, &mut dot);
+    }
+    let mut last: Option<usize> = None;
+    for (x, db) in drawing.curve.iter().enumerate() {
+        let y = dot_y(*db);
+        let from = last.unwrap_or(y);
+        for y in y.min(from)..=y.max(from) {
+            dot(3, x, y);
+        }
+        last = Some(y);
+    }
+    let colours = [t.quiet, t.quiet, if on_ { t.accent } else { t.quiet }, if on_ { t.accent } else { t.ink }];
+    let buf = f.buffer_mut();
+    for cy in 0..plot.height {
+        for cx in 0..plot.width {
+            let k = cy as usize * plot.width as usize + cx as usize;
+            let bits = layers.iter().fold(0u8, |a, l| a | l[k]);
+            if bits == 0 {
+                continue;
+            }
+            let front = (0..4).rev().find(|&l| layers[l][k] != 0).unwrap_or(0);
+            let style = if front == 0 { t.dim() } else { Style::default().fg(colours[front]) };
+            if let Some(cell) = buf.cell_mut((plot.x + cx, plot.y + cy)) {
+                cell.set_char(char::from_u32(0x2800 + bits as u32).unwrap_or(' ')).set_style(style);
+            }
+        }
+    }
+    // The points, over the curve; each answers a click on it and the cell either side.
+    for (k, &i) in bands.iter().enumerate() {
+        let Some(point) = drawing.points.get(k) else { continue };
+        let cx = plot.x + (dot_x(point.x) / 2) as u16;
+        let cy = plot.y + (dot_y(point.db) / 4) as u16;
+        let is = i == chosen;
+        let style = Style::default().fg(if !on_ { t.quiet } else if is { t.accent } else { t.ink }).add_modifier(Modifier::BOLD);
+        put(f, Paragraph::new(Span::styled(if is { "◆" } else { "●" }, style)), Rect { x: cx, y: cy, width: 1, height: 1 });
+        app.hits.push((Rect { x: cx.saturating_sub(1), y: cy, width: 3, height: 1 }.intersection(plot), Hit::Row(ListRef::Eq, i)));
+    }
+    for (db, s) in [(12.0, "+12"), (0.0, "0 dB"), (-12.0, "−12")] {
+        let y = plot.y + (dot_y(db) / 4) as u16;
+        put(f, Paragraph::new(Span::styled(format!("{s:>w$}", w = SCALE_W as usize), t.dim())), Rect { x: area.x, y, width: SCALE_W, height: 1 });
+    }
+    let scale_y = plot.y + plot.height;
+    for (freq, name) in ticks {
+        let x = plot.x + (dot_x(nori_core::dsp::band_position(freq)) / 2) as u16;
+        put(f, Paragraph::new(Span::styled(name, t.dim())), Rect { x, y: scale_y, width: name.len() as u16, height: 1 });
+    }
+    let line = match chosen_band {
+        Some(i) => Line::from(vec![Span::styled(crate::text::band_line(p, i), Style::default().fg(if on_ { t.accent } else { t.ink })), Span::styled(format!("    {}", crate::text::eq_curve_keys(p.eq_mode == nori_core::settings::EqMode::Graphic)), t.dim())]),
+        None => Line::from(Span::styled(crate::text::eq_curve_keys(p.eq_mode == nori_core::settings::EqMode::Graphic), t.dim())),
+    };
+    put(f, Paragraph::new(line), Rect { x: plot.x, y: scale_y + 1, width: plot.width, height: 1 });
 }
 
 fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
