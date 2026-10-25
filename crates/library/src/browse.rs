@@ -62,13 +62,13 @@ pub fn home_shelves(rows: Vec<HomeRow>) -> Vec<HomeShelf> {
 /// What page `offset` entries into a home row's full view ("see all") reads, in the same shapes as the
 /// shelf: `size` and `limit` are the page, and a page shorter than that is the last. A favourites page past
 /// the first is read from the starred list at `offset` (the first, from the shelf's read, carries this
-/// session's marks). None once the row has nothing past `offset`: whole lists (playlists, pinned) and a
-/// random draw are one page.
+/// session's marks). None once the row has nothing past `offset`: whole lists (playlists, pinned) are one
+/// page, and a random draw is the shelf's own (kept until a refresh), so its full view shows the same albums.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn home_row_page(row: HomeRow, offset: u32) -> Option<HomeShelf> {
     let first = offset == 0;
     match shelf(row) {
-        HomeShelf::Albums { sort: AlbumSort::Random, .. } if !first => None,
+        random @ HomeShelf::Albums { sort: AlbumSort::Random, .. } => first.then_some(random),
         HomeShelf::Albums { sort, follows_stars, .. } => Some(HomeShelf::Albums { sort, size: FULL_VIEW_PAGE, follows_stars }),
         HomeShelf::Songs { sort, descending, .. } => Some(HomeShelf::Songs { sort, descending, limit: FULL_VIEW_PAGE }),
         HomeShelf::Playlists { .. } => first.then_some(HomeShelf::Playlists { take: WHOLE }),
@@ -632,8 +632,8 @@ mod tests {
             (HomeRow::Recent, 120, albums(AlbumSort::Recent, false)),
             (HomeRow::Starred, 0, albums(AlbumSort::Starred, true)),
             (HomeRow::Starred, 60, albums(AlbumSort::Starred, true)),
-            (HomeRow::Random, 0, albums(AlbumSort::Random, false)),
-            (HomeRow::Random, 60, None),
+            (HomeRow::Random, 0, Some(HomeShelf::Albums { sort: AlbumSort::Random, size: 20, follows_stars: false })),
+            (HomeRow::Random, 20, None),
             (HomeRow::TopSongs, 0, songs.clone()),
             (HomeRow::TopSongs, 60, songs),
             (HomeRow::Playlists, 0, whole),
@@ -644,6 +644,8 @@ mod tests {
         for (row, offset, want) in cases {
             assert_eq!(home_row_page(row, offset), want, "{row:?} at {offset}");
         }
+        // The random row's full view is the shelf's own draw, not another.
+        assert_eq!(home_row_page(HomeRow::Random, 0).as_ref(), home_shelves(vec![HomeRow::Random]).first());
     }
 
     #[test]
