@@ -46,8 +46,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.R
 import dev.nori.music.app.vm.RemoteViewModel
 import dev.nori.music.ffi.remote.DeviceKind
-import dev.nori.music.ffi.remote.DeviceState
-import dev.nori.music.ffi.remote.Entry
 import dev.nori.music.ffi.remote.Refusal
 import dev.nori.music.ffi.remote.Role
 
@@ -76,7 +74,6 @@ internal fun refusal(r: Refusal): String = words(
 )
 
 /** The song a state is on, if it lists it. */
-private fun DeviceState.current(): Entry? = entries.firstOrNull { it.index == index }
 
 /**
  * Where the music plays: this phone, or one of the account's other devices with nori (one tap moves the
@@ -118,7 +115,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                 GroupCard {
                     DeviceRow(words(R.string.devices_this), kindIcon(DeviceKind.PHONE), null, mirror == null, divider = hosted == null && devices.isNotEmpty()) { pick(null) }
                     if (hosted == null) devices.forEachIndexed { k, d ->
-                        val now = d.state?.current()
+                        val now = d.now
                         DeviceRow(
                             names.getOrNull(k) ?: d.name, kindIcon(d.kind),
                             now?.let { "${it.title} · ${it.artist}" } ?: words(R.string.devices_idle),

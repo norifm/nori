@@ -560,10 +560,8 @@ pub fn device_line(d: &RemoteDevice) -> String {
     if !refused.is_empty() {
         return refused.into();
     }
-    let state = d.state.as_ref();
-    let now = state.and_then(|s| s.entries.iter().find(|e| Some(e.index) == s.index));
-    match now {
-        Some(e) if state.is_some_and(|s| s.playing) => format!("{} · {}", e.title, e.artist),
+    match &d.now {
+        Some(e) if d.state.as_ref().is_some_and(|s| s.playing) => format!("{} · {}", e.title, e.artist),
         Some(e) => format!("Paused · {}", e.title),
         None => "Not playing".into(),
     }
@@ -711,10 +709,14 @@ mod tests {
             entries: vec![nori_core::remote::wire::Entry { index: 4, title: "Wish".into(), artist: "Gus".into(), ..Default::default() }],
             ..Default::default()
         };
-        let mut d = RemoteDevice { id: "d".into(), name: "Desk".into(), kind: DeviceKind::Desktop, state: Some(state(true)), age_ms: 0, nearby: true, refused: None };
+        let wish = state(true).entries.pop();
+        let mut d = RemoteDevice { id: "d".into(), name: "Desk".into(), kind: DeviceKind::Desktop, state: Some(state(true)), now: wish.clone(), age_ms: 0, nearby: true, refused: None };
         assert_eq!(device_line(&d), "Wish · Gus");
         d.state = Some(state(false));
-        assert_eq!(device_line(&d), "Paused · Wish");
+        assert_eq!(device_line(&d), "Paused · Wish", "the active device, paused");
+        d.now = None;
+        assert_eq!(device_line(&d), "Not playing", "a device another took over from");
+        d.now = wish;
         d.refused = Some(Refusal::Stale);
         assert_eq!(device_line(&d), "The queue changed there. Try again.", "a refusal over what it plays");
 

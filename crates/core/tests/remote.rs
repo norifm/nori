@@ -887,6 +887,31 @@ fn active_discovery_follows_the_playing_device() {
 }
 
 #[test]
+fn only_the_device_playing_shows_a_song() {
+    let relay = Relay::new();
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let term = Device::account(&relay, DeviceKind::Terminal, "Term");
+    // The phone and the terminal played before and keep their queues; the desk plays now.
+    phone.queued(&["c"]);
+    term.queued(&["b"]);
+    desk.playing(&["a"], 0);
+    for d in [&desk, &phone, &term] {
+        d.remote.clone().serve(true);
+        d.remote.clone().watch(true);
+    }
+    phone.remote.clone().discover_active(true);
+    phone.until("the desk followed", |r| r.active());
+    let now = |d: &Device, name: &str| d.until(name, |r| r.devices().into_iter().find(|x| x.name == name && x.state.is_some())).now.map(|e| e.id);
+    assert_eq!(now(&phone, "Desk").as_deref(), Some("a"), "the device playing");
+    assert_eq!(now(&phone, "Term"), None, "the terminal plays nothing");
+    assert_eq!(now(&desk, "Phone"), None, "the phone plays nothing");
+    assert_eq!(now(&desk, "Term"), None);
+    assert_eq!(now(&term, "Phone"), None);
+    relay.close();
+}
+
+#[test]
 fn active_discovery_respects_local_controls_and_visibility() {
     for case in ["hidden", "picked here", "playing here", "paused peer"] {
         let relay = Relay::new();

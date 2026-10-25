@@ -113,7 +113,7 @@ fn refusal_code(r: Option<Refusal>) -> u8 {
 
 fn device_json(d: &RemoteDevice, active: bool) -> Value {
     let state = d.state.as_ref();
-    let song = state.and_then(|s| s.entries.iter().find(|e| Some(e.index) == s.index));
+    let song = d.now.as_ref();
     json!({
         "id": d.id, "name": d.name, "active": active, "playing": state.is_some_and(|s| s.playing),
         "title": song.map(|e| e.title.as_str()), "artist": song.map(|e| e.artist.as_str()),
