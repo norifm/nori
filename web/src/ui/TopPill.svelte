@@ -72,7 +72,7 @@
       <Look />
       <a class="popover-item" href={href("genres")}><Icon name="view-grid" /><span class="clip">{W.librarySections.Genres}</span></a>
       {#if remote.devices.on}
-        <button class="popover-item" onclick={() => (ui.show("devices"), (pop = null))}><Icon name="computer" /><span class="clip">{W.playOn}</span></button>
+        <button class="popover-item" onclick={() => (ui.show("devices"), (pop = null))}><Icon name="computer" /><span class="clip">{W.devices}</span></button>
       {/if}
       <button class="popover-item" onclick={() => (go("settings"), (pop = null))}><Icon name="settings" /><span class="clip">{W.settings}</span></button>
     </div>
