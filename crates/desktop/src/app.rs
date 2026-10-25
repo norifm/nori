@@ -3775,6 +3775,38 @@ mod tests {
     }
 
     #[test]
+    fn lyric_rows_are_drawn_as_broken() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_lyrics_synced(true);
+        ui.set_inspector(2);
+        ui.show().unwrap();
+        // How many pixel rows of the panel a lyric line takes: drawn, against the line with no words.
+        let tall = |text: &str| {
+            let mut shot = |text: &str| {
+                ui.set_lyrics_lines(ModelRc::new(VecModel::from(vec![crate::SungLine { text: text.into(), ..Default::default() }])));
+                ui.set_lyrics_side_rows(ModelRc::new(VecModel::from(vec![SharedString::from(text)])));
+                i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+                slint::platform::update_timers_and_animations();
+                ui.window().take_snapshot().unwrap()
+            };
+            let (bare, drawn) = (shot("."), shot(text));
+            let w = bare.width() as usize;
+            let rows: Vec<usize> = (0..bare.height() as usize)
+                .filter(|y| (w - 300..w).any(|x| bare.as_slice()[y * w + x] != drawn.as_slice()[y * w + x]))
+                .collect();
+            rows.last().unwrap() - rows.first().unwrap()
+        };
+        // A row wider than the panel, as one measured a hair differently from the window can be.
+        let long = tall("every word of this row stays on it however wide it runs");
+        let short = tall("every word");
+        assert!(short > 10 && long <= short + 4, "one row each, never wrapped again: {long} px against {short} px");
+    }
+
+    #[test]
     fn resizing_does_not_animate_layout() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },

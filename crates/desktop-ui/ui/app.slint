@@ -6878,7 +6878,8 @@ export component AppWindow inherits Window {
                                 // With word times the lit line is drawn by its pieces over this text, which keeps its place;
                                 // a line sung fades from white as the others do.
                                 text: root.lyrics-side-rows.length > i ? root.lyrics-side-rows[i] : line.text;
-                                wrap: word-wrap;
+                                // Broken into rows where the sung pieces break (lyrics.rs `rows`): never wrapped again here.
+                                wrap: root.lyrics-side-rows.length > i ? TextWrap.no-wrap : TextWrap.word-wrap;
                                 font-size: 22px;
                                 font-weight: line.background ? 400 : 700;
                                 horizontal-alignment: line.right ? right : left;
@@ -6918,7 +6919,8 @@ export component AppWindow inherits Window {
                             // Backing vocals sung over the line: smaller and under it, lit as they are sung, as on Android.
                             if line.backing != "": Text {
                                 text: root.lyrics-side-backing-rows.length > i ? root.lyrics-side-backing-rows[i] : line.backing;
-                                wrap: word-wrap;
+                                // Broken into rows where the sung pieces break (lyrics.rs `rows`): never wrapped again here.
+                                wrap: root.lyrics-side-backing-rows.length > i ? TextWrap.no-wrap : TextWrap.word-wrap;
                                 font-size: 22px * 0.72;
                                 horizontal-alignment: line.right ? right : left;
                                 opacity: side-line.shown;
@@ -7536,7 +7538,8 @@ export component AppWindow inherits Window {
                         property <float> shown: clamp(self.shown-at / 72px, 0, 1) * clamp((full-lyrics.height - self.shown-at - self.height) / 72px, 0, 1);
                         Text {
                             text: root.lyrics-full-rows.length > i ? root.lyrics-full-rows[i] : line.text;
-                            wrap: word-wrap;
+                            // Broken into rows where the sung pieces break (lyrics.rs `rows`): never wrapped again here.
+                            wrap: root.lyrics-full-rows.length > i ? TextWrap.no-wrap : TextWrap.word-wrap;
                             font-size: 44px;
                             font-weight: line.background ? 400 : 700;
                             horizontal-alignment: line.right ? right : left;
@@ -7577,7 +7580,8 @@ export component AppWindow inherits Window {
                         // Backing vocals sung over the line: smaller and under it, lit as they are sung, as on Android.
                         if line.backing != "": Text {
                             text: root.lyrics-full-backing-rows.length > i ? root.lyrics-full-backing-rows[i] : line.backing;
-                            wrap: word-wrap;
+                            // Broken into rows where the sung pieces break (lyrics.rs `rows`): never wrapped again here.
+                            wrap: root.lyrics-full-backing-rows.length > i ? TextWrap.no-wrap : TextWrap.word-wrap;
                             font-size: 44px * 0.72;
                             horizontal-alignment: line.right ? right : left;
                             opacity: full-line.shown;
