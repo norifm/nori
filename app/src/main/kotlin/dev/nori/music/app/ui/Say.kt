@@ -214,11 +214,9 @@ class Say(private val r: Resources) {
     val detectingBeats: String = r.getString(R.string.detecting_beats)
     val nothingToAnalyse: String = r.getString(R.string.said_nothing_to_analyse)
     val equalizer: String = r.getString(R.string.equalizer)
-    val eqHint: String = r.getString(R.string.eq_hint)
     val addBand: String = r.getString(R.string.add_band)
     val eqGraphic: String = r.getString(R.string.eq_graphic)
     val eqParametric: String = r.getString(R.string.eq_parametric)
-    val eqGraphicHint: String = r.getString(R.string.eq_graphic_hint)
     fun eqBandCount(n: Int): String = r.getString(R.string.eq_band_count, n)
     /**
      * How closely the graphic equalizer follows a headphone correction, by its largest difference; past
@@ -234,7 +232,6 @@ class Say(private val r: Resources) {
     }
     val pastePreset: String = r.getString(R.string.paste_preset)
     val presets: String = r.getString(R.string.presets)
-    val autoPreampHint: String = r.getString(R.string.auto_preamp_hint)
     val output: String = r.getString(R.string.output)
     val balance: String = r.getString(R.string.balance)
     val mono: String = r.getString(R.string.mono)
@@ -249,6 +246,12 @@ class Say(private val r: Resources) {
     val importPresetExample: String = r.getString(R.string.import_preset_example)
     val noFiltersFound: String = r.getString(R.string.no_filters_found)
     val frequency: String = r.getString(R.string.frequency)
+    val gain: String = r.getString(R.string.gain)
+    val eqTapToAdd: String = r.getString(R.string.eq_tap_to_add)
+    val eqTapABand: String = r.getString(R.string.eq_tap_a_band)
+    val eqTapGraphic: String = r.getString(R.string.eq_tap_graphic)
+    val eqLower: String = r.getString(R.string.eq_lower)
+    val eqRaise: String = r.getString(R.string.eq_raise)
     val removeBand: String = r.getString(R.string.remove_band)
     val headphonePresets: String = r.getString(R.string.headphone_presets)
     val autoeqAbout: String = r.getString(R.string.autoeq_about)

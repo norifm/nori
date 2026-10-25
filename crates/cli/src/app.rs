@@ -252,7 +252,7 @@ impl SoundToolCmd {
         Some(match self {
             SoundToolCmd::Preset(i) => SoundTool::Preset { preset: nori_core::dsp::eq_presets().get(*i)?.clone() },
             SoundToolCmd::AutoPreamp(a) => SoundTool::AutoPreamp { automatic: *a },
-            SoundToolCmd::AddBand => SoundTool::AddBand,
+            SoundToolCmd::AddBand => SoundTool::AddBand { freq: 1000.0, gain_db: 0.0 },
             SoundToolCmd::RemoveBand(i) => SoundTool::RemoveBand { index: *i },
             SoundToolCmd::ResetBands => SoundTool::ResetBands,
         })

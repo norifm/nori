@@ -845,7 +845,7 @@ fn equalizer_screen() {
     assert!(a.cmds.contains(&Cmd::Tuning(false)));
     // The parametric one draws its own bands, and d takes the one chosen out.
     let mut p = StoredPrefs { eq_enabled: true, eq_mode: nori_core::settings::EqMode::Parametric, ..StoredPrefs::default() };
-    p.eq_bands = nori_core::settings::graphic();
+    p.eq_bands = (0..3).map(|i| nori_core::settings::SoundBand { kind: nori_core::EqKind::Peaking, freq: 100.0 * 10f32.powi(i), gain_db: 0.0, q: 1.0, channel: nori_core::settings::BandChannel::Both }).collect();
     a.prefs_changed(p);
     a.go(View::Equalizer);
     let s = draw(&mut a, 160, 44);

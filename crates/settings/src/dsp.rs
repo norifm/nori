@@ -18,6 +18,25 @@ pub fn graphic_sliders(s: &crate::settings::StoredPrefs) -> Vec<f64> {
     }
 }
 
+/// Where `freq` sits on a band's frequency scale: 20 Hz at 0 to 20 kHz at 1, logarithmic.
+pub fn band_position(freq: f32) -> f32 {
+    ((freq.max(1.0) as f64 / 20.0).log10() / 3.0) as f32
+}
+
+/// The frequency at `position` on a band's frequency scale ([`band_position`]), to two significant digits:
+/// steps of 10 Hz from 100 Hz, 100 Hz from 1 kHz.
+pub fn band_freq_at(position: f32) -> f32 {
+    let f = 20.0 * 1000f64.powf(position.clamp(0.0, 1.0) as f64);
+    let step = 10f64.powi(f.log10().floor() as i32 - 1);
+    ((f / step).round() * step).clamp(20.0, 20_000.0) as f32
+}
+
+/// The graphic equalizer's layouts, by band count.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn graphic_layouts() -> Vec<u32> {
+    nori_player::graphic::LAYOUTS.iter().map(|&n| n as u32).collect()
+}
+
 /// The graphic band centres for `count` sliders, low to high, with their ISO labels. Empty for an
 /// invalid count.
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -64,8 +83,58 @@ pub fn graphic_response(sliders: Vec<f32>, freqs: Vec<f32>) -> Vec<f32> {
     freqs.iter().map(|f| nori_player::graphic::response_db(48_000.0, &bands, *f as f64) as f32).collect()
 }
 
+/// What the parametric bands play, dB at each of `freqs` (48 kHz), for drawing the curve: `right` only when
+/// a band is for one side; `each`, every band's own, in order.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct BandsResponse {
+    pub left: Vec<f32>,
+    pub right: Option<Vec<f32>>,
+    pub each: Vec<Vec<f32>>,
+}
+
+/// [`BandsResponse`] for `bands`.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn bands_response(bands: Vec<crate::settings::SoundBand>, freqs: Vec<f32>) -> BandsResponse {
+    use crate::settings::BandChannel;
+    let curve = |heard: &[Band]| -> Vec<f32> { freqs.iter().map(|f| nori_player::graphic::response_db(48_000.0, heard, *f as f64) as f32).collect() };
+    let side = |skip: BandChannel| curve(&bands.iter().filter(|b| b.channel != skip).map(Band::from).collect::<Vec<_>>());
+    let split = bands.iter().any(|b| b.channel != BandChannel::Both);
+    let each = bands.iter().map(|b| curve(&[Band::from(b)])).collect();
+    BandsResponse { left: side(BandChannel::Right), right: split.then(|| side(BandChannel::Left)), each }
+}
+
 /// The built-in equalizer curves.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn eq_presets() -> Vec<nori_model::NamedPreset> {
     nori_player::dsp::eq_presets()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::{BandChannel, SoundBand};
+    use nori_model::EqKind;
+
+    #[test]
+    fn band_scale_rounds_to_two_digits() {
+        for (position, freq) in [(0.0, 20.0), (1.0, 20_000.0), (-1.0, 20.0), (2.0, 20_000.0), (band_position(2109.0), 2100.0), (band_position(503.0), 500.0), (band_position(31.4), 31.0)] {
+            assert_eq!(band_freq_at(position), freq, "at {position}");
+        }
+        assert!((band_position(632.5) - 0.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn bands_response_follows_each_side() {
+        let bell = |channel| SoundBand { kind: EqKind::Peaking, freq: 1000.0, gain_db: 6.0, q: 1.0, channel };
+        let at = |r: &[f32]| (r[0], r[1]);
+        let both = bands_response(vec![bell(BandChannel::Both)], vec![100.0, 1000.0]);
+        assert!((at(&both.left).1 - 6.0).abs() < 0.05 && at(&both.left).0 < 1.0, "{both:?}");
+        assert_eq!(both.right, None, "both sides hear the same");
+        let two = bands_response(vec![bell(BandChannel::Both), SoundBand { freq: 100.0, gain_db: -3.0, ..bell(BandChannel::Both) }], vec![100.0, 1000.0]);
+        assert!((at(&two.each[0]).1 - 6.0).abs() < 0.05 && (at(&two.each[1]).0 + 3.0).abs() < 0.05, "each band alone: {two:?}");
+        let left = bands_response(vec![bell(BandChannel::Left)], vec![100.0, 1000.0]);
+        assert!((at(&left.left).1 - 6.0).abs() < 0.05, "{left:?}");
+        assert!(left.right.as_deref().is_some_and(|r| r.iter().all(|d| d.abs() < 1e-3)), "{left:?}");
+    }
 }
