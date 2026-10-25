@@ -139,7 +139,8 @@ impl Nori {
     /// Reads a page (`{ kind, ... }`, see `pages::Ask`): its JSON.
     pub async fn read(&self, ask: String) -> Result<String, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        pages::read(&client, &ask).await.map_err(error)
+        let user = self.active().filter(|_| self.rules().account).map(|p| p.user);
+        pages::read(&client, &ask, user.as_deref()).await.map_err(error)
     }
 
     /// The queue another device or app left on the server, offered while nothing plays here

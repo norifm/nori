@@ -17,6 +17,7 @@
   });
   let found = $state.raw<Found | null>(null);
   let open = $state(false);
+  let focused = $state(false);
   let box = $state<HTMLDivElement>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let asked = 0;
@@ -51,9 +52,19 @@
 <svelte:window onpointerdown={(e) => open && !box?.contains(e.target as Node) && close()} onkeydown={(e) => e.key === "Escape" && close()} />
 
 <div class="box" bind:this={box}>
-  <form class="chrome search" class:on={route.tab === "search"} role="search" onsubmit={submit}>
+  <form class="search" class:on={route.tab === "search" || focused} role="search" onsubmit={submit}>
     <Icon name="search" />
-    <input type="search" placeholder={W.searchHint} aria-label={W.search} autocomplete="off" bind:value={query} oninput={typed} onfocus={() => query.trim() && (open = true)} />
+    <input
+      type="search"
+      placeholder={focused ? W.searchHint : W.search}
+      aria-label={W.search}
+      autocomplete="off"
+      bind:value={query}
+      oninput={typed}
+      onfocus={() => ((focused = true), query.trim() && (open = true))}
+      onblur={() => (focused = false)}
+      onkeydown={(e) => e.key === "Escape" && e.currentTarget.blur()}
+    />
   </form>
   {#if open && found}
     <div class="results" role="listbox">
@@ -76,44 +87,64 @@
   .box {
     position: relative;
   }
+  /* As the desktop's: a capsule in the top pill that widens while it is typed in. */
   .search {
     display: flex;
     align-items: center;
-    gap: 8px;
-    width: 220px;
-    height: 50px;
-    padding: 0 16px;
-    border-radius: 25px;
-    transition: width 200ms;
-    color: color-mix(in srgb, var(--ink) 65%, transparent);
+    gap: 7px;
+    width: 180px;
+    height: 36px;
+    padding: 0 12px 0 10px;
+    border-radius: 18px;
+    background: var(--surface);
+    border: 1px solid var(--hair);
+    transition: width 200ms ease-out;
+    color: var(--ink2);
+  }
+  .search:hover {
+    background: color-mix(in srgb, var(--ink) 4%, var(--surface));
   }
   .search.on {
     color: var(--accent);
   }
   .search:focus-within {
-    width: 320px;
-    border: 1px solid var(--accent);
+    width: 280px;
+    border-color: var(--accent);
   }
   .search :global(.icon) {
-    width: 21px;
-    height: 21px;
+    width: 18px;
+    height: 18px;
+    flex: none;
+  }
+  @media (max-width: 1023px) {
+    .search {
+      width: 36px;
+      padding: 0 8px;
+    }
+    .search:focus-within {
+      width: 220px;
+      padding: 0 12px 0 10px;
+    }
   }
   input {
     all: unset;
     flex: 1;
     min-width: 0;
     color: var(--ink);
-    font-size: 15px;
+    font-size: 13px;
   }
   input::placeholder {
     color: var(--ink2);
+  }
+  input:focus::placeholder {
+    color: color-mix(in srgb, var(--ink) 35%, transparent);
   }
   input::-webkit-search-cancel-button {
     display: none;
   }
   .results {
     position: absolute;
-    top: 58px;
+    top: 46px;
     right: 0;
     width: 360px;
     padding: 6px;

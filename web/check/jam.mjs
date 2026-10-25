@@ -43,10 +43,10 @@ const json = async (page, call, ...args) => JSON.parse(await ask(page, call, ...
 const until = (page, f, arg, timeout = 30000) => page.waitForFunction(f, { timeout, polling: 250 }, arg);
 const heard = (page) => page.evaluate(async () => (await window.nori.heard?.())?.seconds ?? 0);
 
-/** Opens pane `name` beside the page from the player bar. */
+/** Opens pane `name` in the side sheet from the player bar. */
 async function pane(page, name) {
-  if (!(await page.$(`#full #${name}`))) await page.click(`#bar [data-pane=${name}]`);
-  await page.waitForSelector(`#full #${name}`);
+  if (!(await page.$(`#side #${name}`))) await page.click(`#bar [data-pane=${name}]`);
+  await page.waitForSelector(`#side #${name}`);
 }
 
 const host = await open("host");
@@ -127,10 +127,10 @@ if (!only || only.includes("jam")) {
   // The guest joins with the link from its devices pane.
   await guest.bringToFront();
   await pane(guest, "devices");
+  await guest.click("#jam-join-open");
   await guest.waitForSelector("#jam-link");
   await guest.type("#jam-link", link);
-  await guest.type("#jam-name", "Guest Browser");
-  await guest.click("#jam-join");
+  await guest.keyboard.press("Enter");
   await until(guest, async () => JSON.parse(await window.ask("jam"))?.guest === true, null, 60000);
   await until(guest, async () => JSON.parse(await window.ask("now"))?.song?.title, null, 60000);
   const seen = await json(guest, "now");

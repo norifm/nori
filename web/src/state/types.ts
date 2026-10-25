@@ -20,7 +20,7 @@ export type Album = { id: string; name: string; artist: string; artistId?: strin
 /** What a card plays whole. */
 export type Whole = "album" | "playlist" | "artist";
 export type Artist = { id: string; name: string; cover?: string; albumCount?: number | null; starred?: boolean };
-export type Playlist = { id: string; name: string; songCount: number; duration: number; cover?: string; comment?: string; owner?: string };
+export type Playlist = { id: string; name: string; songCount: number; duration: number; cover?: string; comment?: string; owner?: string; /** The account may change it (the core's `playlist_editable`). */ editable?: boolean };
 /** As the server names it: the name is `value`. */
 export type Genre = { value: string; songCount: number; albumCount: number };
 

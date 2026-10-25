@@ -1,8 +1,10 @@
 <script lang="ts">
-  // Settings, as Android's: the root lists the pages the core lays out for a browser (`settings_pages`),
-  // each with its glyph and what it holds, then the account and About; a page (`#/settings/<page>`) has its
-  // sections as small-caps labels over grouped cards, each row drawn by its kind and worded here. A row says
-  // only what is not obvious from its name. Appearance is the look the top bar's menu has too.
+  // Settings. On a wide screen as the desktop's: the pages the core lays out for a browser
+  // (`settings_pages`) and the account as tabs under the title, the one open below them. On a phone as
+  // Android's: the root lists them, each with its glyph and what it holds, and a page (`#/settings/<page>`)
+  // opens on its own. A page has its sections as small-caps labels over grouped cards, each row drawn by
+  // its kind and worded here. A row says only what is not obvious from its name. Appearance is the look
+  // the top bar's menu has too.
   import { ask } from "../rpc";
   import { reading } from "../state/library.svelte";
   import { route, href } from "../state/route.svelte";
@@ -19,12 +21,14 @@
   const page = reading("settings", async () => {
     void rev;
     const names = JSON.parse(await ask<string>("settings_pages")) as string[];
-    const name = route.arg;
+    const name = route.arg || (ui.wide ? names[0] : "");
     const sections = names.includes(name) ? (JSON.parse(await ask<string>("settings_page", name)) as SettingsSection[]) : [];
     const profile = JSON.parse(await ask<string>("profile")) as { url: string; user: string } | null;
     return { names, sections, profile };
   });
-  const name = $derived(route.arg);
+  /** The page open: on a wide screen the first while none is asked for. */
+  const name = $derived(route.arg || (ui.wide ? (page.data?.names[0] ?? "") : ""));
+  const tabs = $derived([...(page.data?.names ?? []).map((n) => [n, W.settingsPages[n]?.[0] ?? n]), ["Account", W.account]]);
   /** The page's sections the rows draw: Appearance is the look, drawn whole. */
   const drawn = $derived(name === "Look" ? [] : (page.data?.sections ?? []));
 
@@ -44,7 +48,16 @@
   const label = (setting: string) => W.settingNames[setting] ?? setting;
 </script>
 
-{#if !name}
+{#if ui.wide}
+  <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
+    <nav class="tabs" aria-label={W.settings}>
+      {#each tabs as [n, label] (n)}
+        <a class="tab" class:on={n === name} aria-current={n === name ? "page" : undefined} href={href("settings", n)} data-page={n}>{label}</a>
+      {/each}
+    </nav>
+    {#if name === "Account"}{@render accountPage()}{:else}{@render settingsPage()}{/if}
+  </Page>
+{:else if !name}
   <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
     <div class="group root">
       {#each page.data?.names ?? [] as n (n)}
@@ -54,27 +67,31 @@
     </div>
   </Page>
 {:else if name === "Account"}
-  <Page title={W.account} back narrow ready={!!page.data} error={page.error}>
-    <div class="group-label">{W.thisServer}</div>
-    <div class="group">
-      <div class="group-row"><Icon name="server" /><span class="words"><span>{page.data?.profile?.user ?? ""}</span><span class="sub">{page.data?.profile?.url ?? ""}</span></span></div>
-      <button class="group-row" onclick={() => void signOut()}><Icon name="log-out" /><span class="words">{W.signOut}</span></button>
-    </div>
-  </Page>
+  <Page title={W.account} back narrow ready={!!page.data} error={page.error}>{@render accountPage()}</Page>
 {:else}
-  <Page title={W.settingsPages[name]?.[0] ?? name} back narrow ready={!!page.data} error={page.error}>
-    {#if name === "Look"}<Look />{/if}
-    {#each drawn as sec (sec.id)}
-      {@const rest = shownRows(sec)}
-      {#if rest.length}
-        <div class="group-label">{W.sections[sec.id] ?? sec.id}</div>
-        <div class="group">
-          {#each rest as r, i (i)}{@render row(r)}{/each}
-        </div>
-      {/if}
-    {/each}
-  </Page>
+  <Page title={W.settingsPages[name]?.[0] ?? name} back narrow ready={!!page.data} error={page.error}>{@render settingsPage()}</Page>
 {/if}
+
+{#snippet accountPage()}
+  <div class="group-label">{W.thisServer}</div>
+  <div class="group">
+    <div class="group-row"><Icon name="server" /><span class="words"><span>{page.data?.profile?.user ?? ""}</span><span class="sub">{page.data?.profile?.url ?? ""}</span></span></div>
+    <button class="group-row" onclick={() => void signOut()}><Icon name="log-out" /><span class="words">{W.signOut}</span></button>
+  </div>
+{/snippet}
+
+{#snippet settingsPage()}
+  {#if name === "Look"}<Look />{/if}
+  {#each drawn as sec (sec.id)}
+    {@const rest = shownRows(sec)}
+    {#if rest.length}
+      <div class="group-label">{W.sections[sec.id] ?? sec.id}</div>
+      <div class="group">
+        {#each rest as r, i (i)}{@render row(r)}{/each}
+      </div>
+    {/if}
+  {/each}
+{/snippet}
 
 {#snippet row(r: SettingRow)}
   {#if r.item.kind === "note"}
@@ -129,6 +146,33 @@
 {/snippet}
 
 <style>
+  /* The pages as chips under the title, as the desktop's; the one open raised on the paper. */
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+    margin: -4px 0 6px;
+  }
+  .tab {
+    display: flex;
+    align-items: center;
+    height: 34px;
+    padding: 0 14px;
+    border-radius: 17px;
+    border: 1px solid transparent;
+    color: var(--ink2);
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .tab:hover {
+    color: var(--ink);
+  }
+  .tab.on {
+    color: var(--ink);
+    background: var(--surface);
+    border-color: var(--hair);
+  }
   .root {
     margin: 10px -4px 0;
   }

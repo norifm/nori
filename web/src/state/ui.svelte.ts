@@ -25,9 +25,17 @@ class Ui {
    * sheet from the bottom. */
   open = $state.raw<Menu | null>(null);
   prompt = $state.raw<{ title: string; value: string; done: (v: string | null) => void } | null>(null);
+  /** A question before something that cannot be undone (deleting a playlist). */
+  confirming = $state.raw<{ title: string; line: string; action: string; done: (yes: boolean) => void } | null>(null);
+  /** Joining someone's jam: the sheet asking for its link. */
+  joining = $state(false);
+  /** The playlists `songIds` may be added to, with a new one named there. */
+  picking = $state.raw<{ songIds: string[]; playlists: { id: string; name: string }[] } | null>(null);
   /** The full player, and what it shows beside the cover (on a phone: in its place). */
   full = $state(false);
   pane = $state<Pane | null>(null);
+  /** On a wide screen, the sheet beside the pages and what it shows; closed while null. */
+  side = $state<Pane | null>(null);
   /** The lyrics' source and timing, over the player. */
   lyricsInfo = $state(false);
   /** The colors a page about one cover lends the page and the chrome (`coverLook`'s), and who lent them. */
@@ -76,10 +84,30 @@ class Ui {
     });
   }
 
-  /** Opens the full player showing `pane`; on a phone, again, it goes back to the cover. */
+  /** Asks whether to `action` (the button's word), `title` and `line` saying what goes; true for yes. */
+  confirm(title: string, line: string, action: string): Promise<boolean> {
+    return new Promise((done) => {
+      this.confirming = {
+        title,
+        line,
+        action,
+        done: (yes) => {
+          this.confirming = null;
+          done(yes);
+        },
+      };
+    });
+  }
+
+  /** Shows `pane`: on a wide screen in the full player when it is open, else in the side sheet (closed
+   * by asking for it again); on a phone in the full player, and asked again it goes back to the cover. */
   show(pane: Pane) {
-    this.full = true;
-    this.pane = this.wide ? pane : this.pane === pane ? null : pane;
+    if (this.wide && this.full) this.pane = pane;
+    else if (this.wide) this.side = this.side === pane ? null : pane;
+    else {
+      this.full = true;
+      this.pane = this.pane === pane ? null : pane;
+    }
   }
 }
 

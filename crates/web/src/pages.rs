@@ -106,7 +106,9 @@ pub async fn change(client: &Client, change: Change) -> Result<(), String> {
 
 /// Reads what `ask` (JSON) names: the stored copy, then the server's if it differs; the last as JSON. An
 /// album list's answer says where its `next` page starts, or null.
-pub async fn read(client: &Client, ask: &str) -> Result<String, String> {
+/// `user`: the account signed in, whose own playlists it may change (the core's `playlist_editable`);
+/// None for a profile without an account's things.
+pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<String, String> {
     let ask = serde_json::from_str::<Ask>(ask).map_err(|e| e.to_string())?;
     let paged = match &ask {
         Ask::Albums { sort, size, offset, favorites } => Some((album_sort(sort)?, *favorites, *offset as u32, *size as u32)),
@@ -124,7 +126,7 @@ pub async fn read(client: &Client, ask: &str) -> Result<String, String> {
         Page::Albums { v } => v.len() as u32,
         _ => 0,
     };
-    let mut v = page(core, p);
+    let mut v = page(core, p, user);
     if let (Some((sort, favorites, offset, asked)), Value::Object(m)) = (paged, &mut v) {
         m.insert("next".into(), json!(nori_core::browse::next_album_page(sort, favorites, offset, asked, got)));
     }
@@ -173,10 +175,14 @@ fn songs(core: &Core, v: &[Song]) -> Value {
     v.iter().map(|s| song(core, s)).collect()
 }
 
-fn playlist(core: &Core, p: &nori_core::Playlist) -> Value {
+/// Playlist `p`, with whether `user` may change it.
+fn playlist(core: &Core, p: &nori_core::Playlist, user: Option<&str>) -> Value {
     let mut v = serde_json::to_value(p).unwrap_or(Value::Null);
-    if let (Value::Object(m), Some(art)) = (&mut v, p.cover_art.as_ref()) {
-        m.insert("cover".into(), Value::String(cover(core, art, 300)));
+    if let Value::Object(m) = &mut v {
+        if let Some(art) = p.cover_art.as_ref() {
+            m.insert("cover".into(), Value::String(cover(core, art, 300)));
+        }
+        m.insert("editable".into(), Value::Bool(user.is_some_and(|u| nori_core::menus::playlist_editable(p, u, true))));
     }
     v
 }
@@ -187,7 +193,7 @@ fn few(v: &[Song]) -> u32 {
 }
 
 /// A page as the web draws it.
-fn page(core: &Core, p: Page) -> Value {
+fn page(core: &Core, p: Page, user: Option<&str>) -> Value {
     match p {
         Page::Albums { v } => json!({ "albums": albums(core, &v) }),
         Page::Artists { v } => json!({ "artists": artists(core, &v) }),
@@ -201,8 +207,8 @@ fn page(core: &Core, p: Page) -> Value {
             "groups": v.groups.iter().map(|g| json!({ "kind": format!("{:?}", g.kind), "tag": g.tag, "albums": g.albums })).collect::<Value>(),
         }),
         Page::Songs { v } => json!({ "songs": songs(core, &v) }),
-        Page::Playlists { v } => json!({ "playlists": v.iter().map(|p| playlist(core, p)).collect::<Value>() }),
-        Page::PlaylistPage { v } => json!({ "playlist": playlist(core, &v.playlist), "songs": songs(core, &v.songs), "seconds": v.seconds }),
+        Page::Playlists { v } => json!({ "playlists": v.iter().map(|p| playlist(core, p, user)).collect::<Value>() }),
+        Page::PlaylistPage { v } => json!({ "playlist": playlist(core, &v.playlist, user), "songs": songs(core, &v.songs), "seconds": v.seconds }),
         Page::StarredPage { v } => json!({ "artists": artists(core, &v.artists), "albums": albums(core, &v.albums), "songs": songs(core, &v.songs) }),
         Page::Genres { v } => json!({ "genres": v }),
         Page::Found { v } => json!({ "artists": artists(core, &v.artists), "albums": albums(core, &v.albums), "songs": songs(core, &v.songs), "few": few(&v.songs) }),
