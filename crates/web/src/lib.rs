@@ -126,7 +126,14 @@ impl Nori {
     /// renamed, filled, reordered or deleted, and hearts. Kept for later when offline.
     pub async fn change(&self, change: String) -> Result<(), JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        pages::change(&client, &change).await.map_err(error)
+        let change = serde_json::from_str::<pages::Change>(&change).map_err(error)?;
+        #[cfg(feature = "engine")]
+        if let pages::Change::Star { what, id, on } = &change {
+            if what == "song" && self.star_there(id, *on) {
+                return Ok(());
+            }
+        }
+        pages::change(&client, change).await.map_err(error)
     }
 
     /// Reads a page (`{ kind, ... }`, see `pages::Ask`): its JSON.

@@ -252,6 +252,12 @@ impl Nori {
         self.live.open.borrow().as_ref().map(|o| o.host.client.clone())
     }
 
+    /// Stars song `id` through the device playing elsewhere while its queue has it, as the desktop does:
+    /// that device tells the server and shows it at once. False when it is starred from here.
+    pub(crate) fn star_there(&self, id: &str, on: bool) -> bool {
+        self.with(|h| h.elsewhere().is_some_and(|e| e.star(id, on))).unwrap_or(false)
+    }
+
     pub(crate) fn with<R>(&self, f: impl FnOnce(&Session) -> R) -> Option<R> {
         self.live.open.borrow().as_ref().map(|o| f(&o.host))
     }
