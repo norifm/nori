@@ -181,8 +181,10 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
 - State lives in the struct that owns it and is passed in. A global holding state only where nothing can
   carry a handle (JNI entry points, the allocator, the logger), with a one-line reason; keep the logic
   in a struct even then.
-- Fix the cause of a bug, not its symptom: no flags steering other code, no retry loops or sleeps, no
-  safeguards for states that shouldn't arise.
+- Fix the cause of a bug, not its symptom: find the root cause first (reproduce it, read the code
+  path, prove it with a failing test), then fix it there. No band-aids that cost code quality: no flags
+  steering other code, no retry loops or sleeps, no special cases, no safeguards for states that
+  shouldn't arise. If the cause can't be found, say so instead of patching around it.
 - Entries and streams are identified by index or sequence, not by content ids.
 - No abstraction with one implementation or caller, no dead code, no unused `pub`, no copied blocks.
 - Touch only what the task needs; prefer the change that removes code while keeping the behaviour.
