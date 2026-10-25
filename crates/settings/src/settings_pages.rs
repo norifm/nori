@@ -353,11 +353,11 @@ impl Page<'_> {
             self.chips("loudnessLevel").under().enabled(p.replay_gain != GainMode::Off),
             self.setting("volumeBoostDb"),
         ];
+        let mut eq = vec![row(RowItem::Link { to: SettingsLink::Equalizer })];
         if self.web() {
             let effects = vec![self.setting("compressor"), self.chips("compressorPreset").under().enabled(p.compressor)];
-            return vec![(SectionId::Effects, effects), (SectionId::Volume, volume)];
+            return vec![(SectionId::Equalizer, eq), (SectionId::Effects, effects), (SectionId::Volume, volume)];
         }
-        let mut eq = vec![row(RowItem::Link { to: SettingsLink::Equalizer })];
         if self.windowed() {
             eq.extend([self.setting("autoEqAuto"), self.setting("autoEqDownload"), self.setting("profilePerOutput")]);
         }
@@ -657,7 +657,12 @@ mod tests {
         for left in ["bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize"] {
             assert!(!has.iter().any(|n| n == left), "{left} is not offered in a browser");
         }
-        assert!(!rows.iter().any(|r| matches!(r.item, RowItem::Action { .. } | RowItem::Link { .. } | RowItem::LyricsSource { .. })), "nothing the web has no screen or work for");
+        let links: Vec<_> = rows.iter().filter_map(|r| match r.item {
+            RowItem::Link { to } => Some(to),
+            _ => None,
+        }).collect();
+        assert_eq!(links, [SettingsLink::Equalizer], "the equalizer is the web's one page within Settings");
+        assert!(!rows.iter().any(|r| matches!(r.item, RowItem::Action { .. } | RowItem::LyricsSource { .. })), "nothing the web has no screen or work for");
         assert!(!live(SettingsClient::Web, &StoredPrefs { auto_mix: true, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
     }
 

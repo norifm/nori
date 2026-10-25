@@ -796,7 +796,7 @@ fn equalizer_screen() {
     a.go(View::Equalizer);
     assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Tuning(_))), "opening it leaves the output as it is");
     let s = draw(&mut a, 160, 44);
-    assert!(s.contains("┃") && s.contains("━●━") && s.contains("1k") && s.contains(" Presets ") && !s.contains("▾") && s.contains("Equalizer on") && s.contains("Limiter"), "{s}");
+    assert!(s.contains("●") && s.contains("0 dB") && s.contains("1k") && s.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)) && s.contains(" Presets ") && !s.contains("▾") && s.contains("Equalizer on") && s.contains("Limiter"), "{s}");
     dump("equalizer", &s);
     // ← and → walk the chips and the faders and change nothing; redrawing asks nothing either.
     let before = a.cmds.len();
@@ -817,12 +817,16 @@ fn equalizer_screen() {
     }
     key(&mut a, KeyCode::Up);
     assert_eq!(a.cmds.last(), Some(&Cmd::Graphic(0, 0.5)));
-    // A click at the top of a fader's track puts it at the top of the range.
+    // A band's point dragged to the top of the curve is at the top of the range; it stays at its frequency.
     draw(&mut a, 160, 44);
-    let fader = hit_rect(&a, Hit::Row(ListRef::Eq, first + 3));
-    let top = a.eq_track.0;
-    click(&mut a, fader.x + 1, top);
-    assert!(matches!(a.cmds.last(), Some(Cmd::Graphic(3, db)) if *db == nori_core::settings::EQ_RANGES.gain.max), "{:?}", a.cmds.last());
+    let point = hit_rect(&a, Hit::Row(ListRef::Eq, first + 3));
+    let m = |kind, x, y| Msg::Mouse(MouseEvent { kind, column: x, row: y, modifiers: KeyModifiers::NONE });
+    a.handle(m(MouseEventKind::Down(MouseButton::Left), point.x + 1, point.y));
+    assert_eq!(a.eq_sel.at, first + 3, "pressed, the point is chosen");
+    a.handle(m(MouseEventKind::Drag(MouseButton::Left), point.x + 30, a.eq_plot.y));
+    a.handle(m(MouseEventKind::Up(MouseButton::Left), point.x + 30, a.eq_plot.y));
+    let reach = nori_core::dsp::CURVE_DB.min(nori_core::settings::EQ_RANGES.gain.max);
+    assert!(matches!(a.cmds.last(), Some(Cmd::Graphic(3, db)) if (db - reach).abs() <= 1.0), "{:?}", a.cmds.last());
     // A click on a switch switches it.
     let on = hit_rect(&a, Hit::Row(ListRef::Eq, 0));
     click(&mut a, on.x + 2, on.y);
@@ -852,8 +856,35 @@ fn equalizer_screen() {
     assert!(s.contains("Add a band") && s.contains("Parametric"), "{s}");
     let rows = crate::settings_view::eq_rows(&a.prefs);
     a.eq_sel.at = rows.iter().position(|r| matches!(r, crate::settings_view::EqRow::Band(1))).unwrap();
+    let s = draw(&mut a, 160, 44);
+    assert!(s.contains("1k  +0.0 dB  ·  Peak  ·  Q 1.00  ·  both sides"), "the chosen band in words: {s}");
     key(&mut a, KeyCode::Char('d'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Sound(crate::app::SoundToolCmd::RemoveBand(1))));
+    let band = |a: &App| match a.cmds.last() {
+        Some(Cmd::Band(1, b)) => *b,
+        other => panic!("{other:?}"),
+    };
+    // [ ] move it along the scale, } narrows it, t and c give it the next kind and side.
+    key(&mut a, KeyCode::Char(']'));
+    assert!(band(&a).freq > 1000.0 && band(&a).freq < 1300.0, "{:?}", band(&a));
+    key(&mut a, KeyCode::Char('['));
+    assert!(band(&a).freq < 1000.0, "{:?}", band(&a));
+    key(&mut a, KeyCode::Char('}'));
+    assert!(band(&a).q > 1.0, "{:?}", band(&a));
+    key(&mut a, KeyCode::Char('t'));
+    assert_eq!(band(&a).kind, nori_core::EqKind::LowShelf);
+    key(&mut a, KeyCode::Char('c'));
+    assert_eq!(band(&a).channel, nori_core::settings::BandChannel::Left);
+    // A point dragged moves both its frequency and its gain.
+    let point = hit_rect(&a, Hit::Row(ListRef::Eq, a.eq_sel.at));
+    a.handle(m(MouseEventKind::Down(MouseButton::Left), point.x + 1, point.y));
+    a.handle(m(MouseEventKind::Drag(MouseButton::Left), point.x + 12, a.eq_plot.y + 1));
+    assert!(band(&a).freq > 1500.0 && band(&a).gain_db > 6.0, "{:?}", band(&a));
+    a.handle(m(MouseEventKind::Up(MouseButton::Left), point.x + 12, a.eq_plot.y + 1));
+    // A click on the curve away from the points adds a band there.
+    let plot = a.eq_plot;
+    click(&mut a, plot.x + plot.width - 3, plot.y + plot.height - 2);
+    assert!(matches!(a.cmds.last(), Some(Cmd::Sound(crate::app::SoundToolCmd::AddBand(freq, gain))) if *freq > 12_000.0 && *gain < -6.0), "{:?}", a.cmds.last());
 }
 
 #[test]

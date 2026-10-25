@@ -252,7 +252,7 @@ impl Nori {
         self.live.open.borrow().as_ref().map(|o| o.host.client.clone())
     }
 
-    fn with<R>(&self, f: impl FnOnce(&Session) -> R) -> Option<R> {
+    pub(crate) fn with<R>(&self, f: impl FnOnce(&Session) -> R) -> Option<R> {
         self.live.open.borrow().as_ref().map(|o| f(&o.host))
     }
 

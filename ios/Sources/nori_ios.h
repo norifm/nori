@@ -279,9 +279,12 @@ int32_t nori_ios_preset(uint32_t index);
 char *nori_ios_settings(void);
 int32_t nori_ios_set(const char *name, const char *value);
 
-/// The graphic equalizer as JSON (free it); move one band, getting the gain kept.
+/// The equalizer, its curve and bands, as JSON (free it). A band's point moved or its editor changed;
+/// a parametric band added at `pos` across the curve, or band `index` removed (`pos` below 0). 1 when
+/// the sound changed.
 char *nori_ios_equalizer(void);
-float nori_ios_equalizer_band(uint32_t index, float gain_db);
+int32_t nori_ios_eq_point(uint32_t index, float pos, float gain_db, float q, int32_t kind, int32_t channel);
+int32_t nori_ios_eq_band(uint32_t index, float pos, float gain_db);
 /// The equalizer screen is in sight and was touched: the short output buffer follows the core's rule.
 void nori_ios_tuning(int32_t in_sight, int32_t touched);
 

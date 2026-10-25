@@ -189,6 +189,15 @@ impl SettingsStore {
         Some((self.edit_sound(s)?, kept))
     }
 
+    fn edit_point(&mut self, index: u32, point: BandPoint) -> Option<u32> {
+        if self.prefs.eq_mode == crate::settings::EqMode::Graphic {
+            return self.edit_graphic(index, point.gain_db).map(|e| e.0);
+        }
+        let b = *self.prefs.eq_bands.get(index as usize)?;
+        let freq = crate::dsp::band_moved(b.freq, point.pos);
+        self.edit_band(index, crate::settings::band_from(point.kind, freq, point.gain_db, point.q, point.channel)).map(|e| e.0)
+    }
+
     fn edit_level(&mut self, level: EqLevel, value: f32) -> Option<(u32, f32)> {
         let s = set_level(self.prefs.sound(), level, value);
         let kept = match level {
@@ -315,6 +324,12 @@ impl Settings {
         self.with_store(|s| s.edit_graphic(index, gain_db))
     }
 
+    /// Band `index` as the equalizer's curve or its editor left it, in the mode the equalizer is in: the
+    /// effect bits; None when nothing changed.
+    pub fn edit_point(&self, index: u32, point: BandPoint) -> Option<u32> {
+        self.with_store(|s| s.edit_point(index, point))
+    }
+
     /// A level slider changed (`settings::set_level`): the effect bits and the value as kept (held in
     /// range and snapped).
     pub fn edit_level(&self, level: EqLevel, value: f32) -> Option<(u32, f32)> {
@@ -385,6 +400,17 @@ impl SoundTool {
     }
 }
 
+/// A band's point on the equalizer's curve and its editor: `pos` across the curve (0..1, which a graphic
+/// band ignores), its gain, Q, and `EqKind` and `BandChannel` ordinals (which only a parametric band has).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BandPoint {
+    pub pos: f32,
+    pub gain_db: f32,
+    pub q: f32,
+    pub kind: i32,
+    pub channel: i32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,6 +472,28 @@ mod tests {
         let eq = StoredPrefs { eq_enabled: true, ..a.clone() };
         assert_eq!(effects(&eq, &StoredPrefs { balance: 0.3, ..eq.clone() }), SOUND, "chain already running");
         assert_eq!(effects(&eq, &StoredPrefs { limiter_threshold_db: -3.0, ..eq.clone() }), SOUND);
+    }
+
+    #[test]
+    fn a_point_moves_the_band_of_the_mode_the_equalizer_is_in() {
+        let dir = nori_testdir::TempDir::new("settings-point");
+        let mut s = open(&dir);
+        s.sound_tool(SoundTool::AddBand { freq: 1000.0, gain_db: 0.0 }).unwrap();
+        let at = |freq| crate::dsp::band_position(freq);
+        let point = |pos, gain_db| BandPoint { pos, gain_db, q: 2.0, kind: 1, channel: 2 };
+        // Graphic: only the slider's gain, whatever the point's place.
+        assert!(s.edit_point(3, point(at(8000.0), 4.0)).is_some());
+        assert_eq!(s.prefs.eq_graphic[3], 4.0);
+        assert_eq!(s.prefs.eq_bands[0].freq, 1000.0, "the parametric bands stay");
+        // Parametric: the band moves along the curve and takes the editor's kind, width and side.
+        s.edit_by_name(EQ_MODE_KEY, "PARAMETRIC").unwrap();
+        assert!(s.edit_point(0, point(at(4000.0), -3.0)).is_some());
+        let b = s.prefs.eq_bands[0];
+        assert!((b.freq - 4000.0).abs() < 40.0, "{b:?}");
+        assert_eq!((b.gain_db, b.q, b.kind as i32, b.channel as i32), (-3.0, 2.0, 1, 2));
+        assert_eq!(s.prefs.eq_graphic[3], 4.0);
+        assert_eq!(s.edit_point(0, point(at(b.freq), -3.0)), None, "nothing changed");
+        assert_eq!(s.edit_point(5, point(0.5, 0.0)), None, "no such band");
     }
 
     #[test]

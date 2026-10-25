@@ -167,6 +167,55 @@ pub fn nudge(ms: i64) -> String {
     format!("{} s", numbers::nudge(ms, POINT))
 }
 
+/// A parametric band's kind.
+pub fn band_kind(kind: nori_core::EqKind) -> &'static str {
+    use nori_core::EqKind as K;
+    match kind {
+        K::Peaking => "Peak",
+        K::LowShelf => "Low shelf",
+        K::HighShelf => "High shelf",
+        K::LowPass => "Low pass",
+        K::HighPass => "High pass",
+        K::BandPass => "Band pass",
+        K::Notch => "Notch",
+        K::AllPass => "All pass",
+        K::LowShelfSlope => "Low shelf (slope)",
+        K::HighShelfSlope => "High shelf (slope)",
+    }
+}
+
+/// Which side a parametric band is heard on.
+pub fn band_side(channel: nori_core::settings::BandChannel) -> &'static str {
+    use nori_core::settings::BandChannel as C;
+    match channel {
+        C::Both => "both sides",
+        C::Left => "left only",
+        C::Right => "right only",
+    }
+}
+
+/// The band chosen on the curve, in a line: "250  +6.5 dB", or a parametric band's kind, width and side.
+pub fn band_line(p: &nori_core::settings::StoredPrefs, band: usize) -> String {
+    use nori_core::EqKind as K;
+    if p.eq_mode == nori_core::settings::EqMode::Graphic {
+        let label = nori_core::dsp::graphic_bands(p.eq_graphic.len() as u32).get(band).map_or(0.0, |b| b.label_hz);
+        return format!("{}  {} dB", numbers::iso_band(label, POINT), numbers::signed_db(p.eq_graphic.get(band).copied().unwrap_or(0.0), POINT));
+    }
+    let Some(b) = p.eq_bands.get(band) else { return String::new() };
+    let width = if matches!(b.kind, K::LowShelfSlope | K::HighShelfSlope) { "slope" } else { "Q" };
+    let gain = if b.kind.uses_gain() { format!("  {} dB", numbers::signed_db(b.gain_db, POINT)) } else { String::new() };
+    format!("{}{gain}  ·  {}  ·  {width} {}  ·  {}", numbers::hz(b.freq, POINT), band_kind(b.kind), numbers::fixed(b.q as f64, 2, false, POINT), band_side(b.channel))
+}
+
+/// What the curve's keys and clicks do, under it.
+pub fn eq_curve_keys(graphic: bool) -> &'static str {
+    if graphic {
+        "↑ ↓ level · drag a point"
+    } else {
+        "↑ ↓ level · [ ] frequency · { } width · t kind · c side · d remove · click the curve to add"
+    }
+}
+
 /// A band's label: its frequency and its mark ("1k L", "63 low shelf").
 pub fn band(freq: f32, mark: BandMark) -> String {
     let mark = match mark {

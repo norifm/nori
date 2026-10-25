@@ -6,6 +6,7 @@
 
 #![cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 
+mod eq;
 mod fetch;
 mod pages;
 #[cfg(feature = "engine")]
@@ -382,6 +383,7 @@ fn settings_row(r: &settings_pages::SettingsRow) -> Option<Value> {
     let item = match &r.item {
         RowItem::Setting { spec, value, chips } => json!({ "kind": "setting", "name": spec.name, "type": format!("{:?}", spec.kind), "options": spec.options, "min": spec.min, "max": spec.max, "value": value, "chips": chips }),
         RowItem::Note { note } => json!({ "kind": "note", "note": format!("{note:?}") }),
+        RowItem::Link { to: settings_pages::SettingsLink::Equalizer } => json!({ "kind": "link", "to": "equalizer" }),
         _ => return None,
     };
     Some(json!({ "item": item, "shown": r.shown, "enabled": r.enabled, "depth": r.depth }))

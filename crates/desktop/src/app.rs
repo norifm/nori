@@ -1035,7 +1035,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.setting(&name, &value);
         a.tune();
     });
-    on!(ui.on_eq_band, h, |a, i, pos, gain, q, kind, channel, last| a.eq_band(i.max(0) as usize, crate::eq::BandEdit { pos, gain, q, kind, channel }, last));
+    on!(ui.on_eq_band, h, |a, i, pos, gain, q, kind, channel, last| a.eq_band(i.max(0) as u32, nori_core::settings_store::BandPoint { pos, gain_db: gain, q, kind, channel }, last));
     on!(ui.on_eq_add, h, |a, pos, gain| a.eq_add(pos, gain));
     on!(ui.on_eq_tool, h, |a, name, i| a.eq_tool(&name, i.max(0) as usize));
     on!(ui.on_eq_autoeq_search, h, |a, q| a.autoeq_search(&q));
@@ -3090,22 +3090,10 @@ impl App {
     }
 
     /// Sets band `i` as the curve or its editor left it; the curve updates at once, the page on release.
-    /// `pos` is its place across the curve (a graphic band keeps its own); a frequency that rounds the
-    /// same as before keeps the band's exact one.
-    fn eq_band(&mut self, i: usize, edit: crate::eq::BandEdit, last: bool) {
-        use nori_core::dsp::{band_freq_at, band_position};
+    /// `pos` is its place across the curve (a graphic band keeps its own).
+    fn eq_band(&mut self, i: u32, point: nori_core::settings_store::BandPoint, last: bool) {
         let settings = &crate::session::app().settings;
-        let Some(p) = settings.current() else { return };
-        let effect = if p.eq_mode == nori_core::settings::EqMode::Graphic {
-            settings.edit_graphic(i as u32, edit.gain).map(|e| e.0)
-        } else {
-            p.eq_bands.get(i).and_then(|b| {
-                let freq = band_freq_at(edit.pos);
-                let freq = if freq == band_freq_at(band_position(b.freq)) { b.freq } else { freq };
-                settings.edit_band(i as u32, nori_core::settings::band_from(edit.kind, freq, edit.gain, edit.q, edit.channel)).map(|e| e.0)
-            })
-        };
-        if let Some(effect) = effect {
+        if let Some(effect) = settings.edit_point(i, point) {
             self.on_session(|s| s.applied(effect));
             self.tune();
         }
