@@ -108,9 +108,12 @@ impl AudioOutput for Output {
     }
 
     /// On the worklet's own level, heard at once.
-    fn ramp(&mut self, from: Option<f32>, target: f32, ms: i64) -> bool {
-        self.0.lock().orders.push(Order::Ramp { from, to: target, ms });
+    fn fades(&self) -> bool {
         true
+    }
+
+    fn ramp(&mut self, from: Option<f32>, target: f32, ms: i64) {
+        self.0.lock().orders.push(Order::Ramp { from, to: target, ms });
     }
 
     fn holding(&self) -> bool {
