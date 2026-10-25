@@ -12,13 +12,18 @@ pub fn rgba() -> Option<Vec<u8>> {
     nori_covers::decode::Decoder::new().decode(PNG, SIDE as usize, SIDE as usize, nori_covers::Alpha::Straight).ok()
 }
 
-/// Shows the icon in the Dock and the app switcher, as the bundle's would. Main thread.
+/// Shows the icon in the Dock and the app switcher when nori runs outside its bundle. From the bundle the
+/// Dock shows the bundle's own icon, which macOS styles with the system's icon look; an image set here
+/// would replace it. Main thread.
 #[cfg(target_os = "macos")]
 pub fn dock() {
     use objc2::{AllocAnyThread, MainThreadMarker};
     use objc2_app_kit::{NSApplication, NSImage};
-    use objc2_foundation::NSData;
+    use objc2_foundation::{NSBundle, NSData};
     let Some(mtm) = MainThreadMarker::new() else { return };
+    if NSBundle::mainBundle().bundleIdentifier().is_some() {
+        return;
+    }
     let data = NSData::with_bytes(PNG);
     if let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) {
         // SAFETY: on the main thread, with an image that lives as long as the app keeps it.

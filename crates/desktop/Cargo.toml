@@ -54,7 +54,7 @@ libc = "0.2"
 muda = { version = "0.19", default-features = false }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow", "NSToolbar", "NSApplication", "NSImage"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSBundle", "NSString"] }
 
 [build-dependencies]
 naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
