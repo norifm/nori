@@ -63,13 +63,15 @@ def cross_macos(workspace, output, target_platform, jobs, package_only):
     run(sys.executable, ROOT / "tools/host-release/check.py", "--checksums-only", output, env=environment)
 
 
-def native(workspace, output, target_platform, jobs, test, package_only, target_dir, binaries=None, compile_into=None):
+def native(workspace, output, target_platform, jobs, test, package_only, target_dir, binaries=None, compile_into=None,
+           flatpak="with"):
     """Builds and packages `target_platform` on this worker. `compile_into`: only compiles, cross-compiling a
-    Linux of another architecture, and leaves the binaries there; `binaries`: packages those instead."""
+    Linux of another architecture, and leaves the binaries there; `binaries`: packages those instead.
+    `flatpak`: "with" the other packages, "without" it, or "only" it (for another architecture too)."""
     system, arch = target_platform.split("-", 1)
     current = {"Darwin": "macos", "Linux": "linux"}[platform.system()]
     cross = arch != ARCHES[platform.machine()]
-    if system != current or (system == "linux" and cross and compile_into is None):
+    if system != current or (system == "linux" and cross and compile_into is None and flatpak != "only"):
         raise SystemExit(f"{target_platform} requires a matching native worker")
     environment = dict(os.environ)
     target_dir = Path(environment.get("CARGO_TARGET_DIR", target_dir)).resolve()
@@ -100,11 +102,15 @@ def native(workspace, output, target_platform, jobs, test, package_only, target_
         return
     binaries = Path(binaries) if binaries else built
     version = re.search(r'^version = "([^"]+)"', (workspace / "Cargo.toml").read_text(), re.M).group(1)
+    linux = ["dbus-run-session", "--", sys.executable, ROOT / "tools/host-release/linux.py",
+             "--binaries", binaries, "--version", version, "--arch", arch, "--output", output]
+    if flatpak == "only":
+        run(*linux, "--only", "flatpak", env=environment)
+        return
     run(sys.executable, ROOT / "tools/host-release/package.py", "--binaries", binaries,
         "--version", version, "--arch", arch, "--output", output, env=environment)
     if system == "linux":
-        run("dbus-run-session", "--", sys.executable, ROOT / "tools/host-release/linux.py",
-            "--binaries", binaries, "--version", version, "--output", output, env=environment)
+        run(*linux, *(["--only", "appimage"] if flatpak == "without" else []), env=environment)
     run(sys.executable, ROOT / "tools/host-release/check.py", output, env=environment)
 
 
@@ -119,11 +125,13 @@ def container(workspace, output, target_platform, jobs, test, package_only):
     if arch == here or package_only:
         in_linux(here if arch == here else arch, workspace, output, command + (["--package-only"] if package_only else []))
         return
-    # Compiled by this machine's own architecture, cross; only packaging, which runs the binaries, is emulated.
+    # Compiled by this machine's own architecture, cross, and the Flatpak made here too (bwrap cannot sandbox
+    # under qemu); only the rest of the packaging, which runs the binaries, is emulated.
     with tempfile.TemporaryDirectory(prefix=".binaries-", dir=output.parent) as binaries:
         inside = f"/output/{Path(binaries).name}"
         in_linux(here, workspace, output, command + ["--compile-into", inside])
-        in_linux(arch, workspace, output, command + ["--package-only", "--binaries", inside])
+        in_linux(here, workspace, output, command + ["--package-only", "--flatpak", "only", "--binaries", inside])
+        in_linux(arch, workspace, output, command + ["--package-only", "--binaries", inside, "--flatpak", "without"])
 
 
 def in_linux(arch, workspace, output, command):
@@ -133,9 +141,6 @@ def in_linux(arch, workspace, output, command):
     cache = f"nori-host-{arch}-cache"
     run("docker", "build", "--platform", docker_platform, "--build-arg", f"NORI_UID={os.getuid()}",
         "--build-arg", f"NORI_GID={os.getgid()}", "-t", image, ROOT / "tools/host-release")
-    flatpak_environment = []
-    if arch != ARCHES[platform.machine()]:
-        flatpak_environment = ["--env", "FLATPAK_BWRAP=/tooling/tools/host-release/emulated-bwrap.py"]
     run("docker", "run", "--rm", "--init", "--privileged", "--platform", docker_platform,
         "--mount", f"type=bind,source={workspace},target=/workspace,readonly",
         "--mount", f"type=bind,source={ROOT},target=/tooling,readonly",
@@ -143,7 +148,7 @@ def in_linux(arch, workspace, output, command):
         "--mount", f"type=volume,source={cache},target=/cache",
         "--mount", f"type=volume,source=nori-host-{arch}-home,target=/home/build",
         "--env", "CARGO_HOME=/cache/cargo", "--env", "CARGO_TARGET_DIR=/cache/target",
-        "--env", "SCCACHE_DIR=/cache/sccache", *flatpak_environment, "--workdir", "/workspace", image, *command)
+        "--env", "SCCACHE_DIR=/cache/sccache", "--workdir", "/workspace", image, *command)
 
 
 def main():
@@ -162,6 +167,7 @@ def main():
     parser.add_argument("--cross-macos", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--compile-into", help=argparse.SUPPRESS)
     parser.add_argument("--binaries", help=argparse.SUPPRESS)
+    parser.add_argument("--flatpak", choices=("with", "without", "only"), default="with", help=argparse.SUPPRESS)
     args = parser.parse_args()
     selected = args.platforms or list(PLATFORMS)
     if args.native and not args.platforms:
@@ -193,7 +199,7 @@ def main():
                 macos_container(workspace, target_output, target_platform, args.jobs, args.package_only)
             elif args.native or target_platform.startswith("macos-"):
                 native(workspace, target_output, target_platform, args.jobs, not args.no_test, args.package_only, target_dir,
-                       args.binaries, args.compile_into)
+                       args.binaries, args.compile_into, args.flatpak)
             else:
                 container(workspace, target_output, target_platform, args.jobs, not args.no_test, args.package_only)
     print(f"Desktop and CLI packages: {output}")
