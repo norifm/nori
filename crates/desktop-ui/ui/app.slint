@@ -2607,16 +2607,6 @@ component DevicesView inherits Rectangle {
             padding-left: 10px;
             padding-right: 10px;
             spacing: 2px;
-            HorizontalLayout {
-                padding-left: 6px;
-                height: 34px;
-                Text {
-                    text: "Play on";
-                    color: Theme.text;
-                    font-size: 17px;
-                    font-weight: 700;
-                }
-            }
             for d in root.devices: VerticalLayout {
                 PanelRow {
                     icon: Glyphs.device(d.kind);
@@ -5234,7 +5224,7 @@ export component AppWindow inherits Window {
         self.player-changed();
     }
     in-out property <bool> full-player;
-    // What Now Playing shows beside the artwork: 0 nothing, 1 the queue, 2 the lyrics; and how tall the line
+    // What Now Playing shows beside the artwork: 1 the queue, 2 the lyrics, 3 the other devices; and how tall the line
     // sung is (the compositor keeps it sharp).
     in-out property <int> full-panel: 2;
     out property <length> full-lyric-h: 60px;
@@ -6786,7 +6776,7 @@ export component AppWindow inherits Window {
                     y: 10px;
                     current: root.shown-panel;
                     devices: root.devices-on;
-                    picked(p) => { root.inspector = root.inspector == p ? 0 : p; }
+                    picked(p) => { root.inspector = p; }
                 }
                 // Under the tabs, the panel showing.
                 if root.shown-panel == 2 && (root.lyrics-lines.length == 0 || root.lyrics-waiting): Text {
@@ -7217,15 +7207,12 @@ export component AppWindow inherits Window {
                 }
             }
 
-            // The artwork and the controls: centred in the window with nothing beside them, in the left half
-            // with the lyrics or the queue.
-            property <length> side: min(460px, root.height - 330px, (root.full-panel != 0 ? root.width / 2 : root.width) - 120px);
-            property <float> art-centre: root.full-panel != 0 ? 0.25 : 0.5;
-            animate art-centre { duration: Motion.reduced ? 0ms : 380ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+            // The artwork and the controls in the left half; the panel in the right.
+            property <length> side: min(460px, root.height - 330px, root.width / 2 - 120px);
             property <length> art-rise: root.full-player ? 0px : 30px;
             animate art-rise { duration: Motion.reduced ? 0ms : 420ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
             full-art := VerticalLayout {
-                x: root.width * parent.art-centre - parent.side / 2;
+                x: root.width / 4 - parent.side / 2;
                 y: (root.height - self.preferred-height) / 2 + parent.art-rise;
                 width: parent.side;
                 height: self.preferred-height;
@@ -7460,6 +7447,19 @@ export component AppWindow inherits Window {
                 }
             }
 
+            // The panel's sheet, under its tabs and what it shows: a step of ink over the song's colours and a
+            // hairline round it, as the web's.
+            Rectangle {
+                x: root.width / 2;
+                y: 8px;
+                width: root.width / 2 - 40px;
+                height: root.height - 8px - 32px;
+                border-radius: 24px;
+                border-width: 1px;
+                border-color: Theme.outline;
+                background: Theme.text.with-alpha(0.06);
+            }
+
             // The lyrics: big, the line sung at a fixed height and sharp, the rest soft and dim.
             if root.full-panel == 2 && (root.lyrics-lines.length == 0 || root.lyrics-waiting): Text {
                 x: root.width / 2 + 20px;
@@ -7624,14 +7624,13 @@ export component AppWindow inherits Window {
                 undo => { root.undo-removed(); }
             }
 
-            // The panel's tabs, heading the right half: the devices, lyrics, the queue. Pressing the lit one shows the
-            // artwork alone.
+            // The panel's tabs, heading its sheet: the devices, lyrics, the queue.
             PanelTabs {
-                x: root.width / 2 + 10px;
-                y: 8px;
+                x: root.width / 2 + 6px;
+                y: 14px;
                 current: root.full-panel;
                 devices: root.devices-on;
-                picked(p) => { root.full-panel = root.full-panel == p ? 0 : p; }
+                picked(p) => { root.full-panel = p; }
             }
             if full-screen.visible && root.full-panel == 3: DevicesView {
                 x: root.width / 2 + 10px;
