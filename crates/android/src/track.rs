@@ -1106,9 +1106,12 @@ impl AudioOutput for TrackOutput {
         self.shared.tell(|_| {});
     }
 
-    fn ramp(&mut self, from: Option<f32>, target: f32, ms: i64) -> bool {
-        self.shared.tell(|c| c.ramp = Some((from, target, ms)));
+    fn fades(&self) -> bool {
         true
+    }
+
+    fn ramp(&mut self, from: Option<f32>, target: f32, ms: i64) {
+        self.shared.tell(|c| c.ramp = Some((from, target, ms)));
     }
 
     /// Resized in place ([`Sink::resize`]).

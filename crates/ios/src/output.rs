@@ -840,7 +840,7 @@ mod tests {
         assert_eq!(sim.lock().opens, vec![(44_100, 2, DEEP_IO_MS)]);
         assert!(out.takes_float());
         assert!(!out.bursts());
-        assert!(!out.ramp(None, 0.0, 20));
+        assert!(!out.fades());
     }
 
     #[test]

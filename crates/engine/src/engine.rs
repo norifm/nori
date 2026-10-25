@@ -1058,11 +1058,15 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
     }
 
-    /// Fades the path that holds the song from `from` (or where it is) to `to` over `ms`.
-    fn ramp(&mut self, from: Option<f32>, to: f32, ms: i64) {
+    /// Fades the path that holds the song from `from` (or where it is) to `to` over `ms`. Returns how long
+    /// until the fade's end is heard, ms.
+    fn ramp(&mut self, from: Option<f32>, to: f32, ms: i64) -> i64 {
         let now = self.now();
         match self.chip_mut() {
-            Some(o) => o.ramp(from, to, ms, now),
+            Some(o) => {
+                o.ramp(from, to, ms, now);
+                ms
+            }
             None => self.p.sink.track.ramp(from, to, ms),
         }
     }
@@ -1928,7 +1932,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         match self.settings.fade_ms {
             ms if ms > 0 => self.ramp(Some(0.0), 1.0, ms as i64),
             _ => self.ramp(None, 1.0, 0),
-        }
+        };
         self.set_state(State::Playing);
     }
 
@@ -1976,8 +1980,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         // A pause never swallows the switch it interrupts.
         self.end_dip();
         if fade_ms > 0 {
-            self.ramp(None, 0.0, fade_ms as i64);
-            self.pause_at = Some(now + fade_ms as i64);
+            // The device stops once the fade's bottom is heard, not when it was pulled.
+            self.pause_at = Some(now + self.ramp(None, 0.0, fade_ms as i64));
         } else {
             self.halt();
         }

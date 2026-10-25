@@ -310,6 +310,10 @@ struct Card {
     periods: Option<(usize, u64)>,
     said: Arc<nori_engine::Heard>,
     now_us: u64,
+    /// With [`Extra::periods`]: when the last music louder than a whisper is heard, and when the device
+    /// last paused.
+    loud_until_us: u64,
+    paused_us: u64,
 }
 
 /// Frames the card pulls at a time.
@@ -332,6 +336,10 @@ impl common::Device for Card {
             self.block.resize(frames * feed.format().channels, 0);
             let got = feed.pull_i16(&mut self.block);
             self.said.pulled(self.now_us + delay_us, got, rate);
+            let ch = feed.format().channels;
+            if let Some(last) = self.block[..got * ch].iter().rposition(|v| v.abs() >= 100) {
+                self.loud_until_us = self.now_us + delay_us + (last / ch) as u64 * 1_000_000 / rate as u64;
+            }
             self.heard.lock().extend_from_slice(&self.block[..got * feed.format().channels]);
             return waits && !feed.engine_waits();
         }
@@ -434,7 +442,9 @@ impl AudioOutput for Recorder {
     }
 
     fn pause(&mut self) {
-        self.card.lock().playing = false;
+        let mut c = self.card.lock();
+        c.playing = false;
+        c.paused_us = c.now_us;
     }
 
     fn resume(&mut self) {
@@ -554,6 +564,8 @@ impl Rig {
             periods,
             said: Arc::default(),
             now_us: 0,
+            loud_until_us: 0,
+            paused_us: 0,
         }));
         let out = Recorder { card: card.clone(), opened: Arc::default(), shut: Arc::default(), watch: Arc::default(), flushes: Arc::default(), shallow: Arc::default() };
         let (opened, shut, watch, flushes, shallow) = (out.opened.clone(), out.shut.clone(), out.watch.clone(), out.flushes.clone(), out.shallow.clone());
@@ -1129,6 +1141,25 @@ fn pause_fades() {
     let heard = rig.heard.lock().clone();
     assert!(heard[heard.len() - 2].abs() < 100, "faded to silence: {}", heard[heard.len() - 2]);
     assert!(heard.iter().any(|&v| v > 2000 && v < 6000), "a ramp down, not a cut");
+}
+
+/// A device that plays each pull later, as a cpal stream does, stops only once the fade's bottom is
+/// heard, so the fade is not cut off before it reaches the ear.
+#[test]
+fn pause_fades_to_silence_heard() {
+    let a = vec![8000i16; RATE as usize * 2 * 20];
+    // A pull every 10 ms, each heard 150 ms later.
+    let extra = Extra { periods: Some((RATE as usize / 100, 150_000)), ..Extra::default() };
+    let rig = Rig::build(files(&[("a", &a)]), sim::App::new(), Settings { fade_ms: 150, ..Settings::default() }, extra);
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2 * 2));
+    rig.engine.pause();
+    assert!(rig.wait_for(5, |r| r.engine.status().state == State::Paused));
+    rig.run(2_000);
+    // The card reads the time at its pulls: the pause is known to a period.
+    let c = rig.card.lock();
+    assert!(c.paused_us + 10_000 >= c.loud_until_us, "paused at {} µs, music heard until {} µs", c.paused_us, c.loud_until_us);
+    assert!(rig.heard.lock().iter().any(|&v| v > 2000 && v < 6000), "a ramp down, not a cut");
 }
 
 /// A new queue started at the same index says its song, playing and paused.

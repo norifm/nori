@@ -68,11 +68,13 @@ pub trait AudioOutput: Send {
     /// change): an output with a buffer of seconds drops its own too and gives back what it did not play
     /// ([`Feed::rewind`]); [`Feed::flushed`] marks where the new music starts.
     fn flush(&mut self) {}
-    /// Fades from `from` (or where it is) to `target` over `ms`. An output holding seconds runs it on
-    /// the device's volume, where it is heard at once, and returns true; otherwise the ring runs it.
-    fn ramp(&mut self, _from: Option<f32>, _target: f32, _ms: i64) -> bool {
+    /// The device fades itself ([`AudioOutput::ramp`]), on its volume, where a fade is heard at once: an
+    /// output holding seconds. Otherwise the ring's pulls run fades, heard the device's latency later.
+    fn fades(&self) -> bool {
         false
     }
+    /// Fades from `from` (or where it is) to `target` over `ms`, where [`AudioOutput::fades`].
+    fn ramp(&mut self, _from: Option<f32>, _target: f32, _ms: i64) {}
     /// The device still holds unplayed music taken from the ring.
     fn holding(&self) -> bool {
         false
@@ -775,8 +777,8 @@ impl RingTrack {
     }
 
     /// Fades from `from` (or where it is) to `target` over `ms`, on the device if it fades itself, else
-    /// in the pulls.
-    pub(crate) fn ramp(&mut self, from: Option<f32>, target: f32, ms: i64) {
+    /// in the pulls. Returns how long until the fade's end is heard, ms.
+    pub(crate) fn ramp(&mut self, from: Option<f32>, target: f32, ms: i64) -> i64 {
         match self.untold.as_mut().filter(|_| self.ring.is_some()) {
             // The device still plays pre-flush music: the fade goes with the flush; a start level
             // applies at once.
@@ -788,12 +790,19 @@ impl RingTrack {
             }
             None => self.ramp_now(from, target, ms),
         }
+        if self.ring.is_none() || self.output.fades() {
+            ms
+        } else {
+            ms + self.latency_us() / 1000
+        }
     }
 
     fn ramp_now(&mut self, from: Option<f32>, target: f32, ms: i64) {
         match &self.ring {
             Some(r) => {
-                if !self.output.ramp(from, target, ms) {
+                if self.output.fades() {
+                    self.output.ramp(from, target, ms);
+                } else {
                     r.ramp(from, target, ms);
                 }
             }
