@@ -246,6 +246,8 @@ class Say(private val r: Resources) {
     val importPresetExample: String = r.getString(R.string.import_preset_example)
     val noFiltersFound: String = r.getString(R.string.no_filters_found)
     val frequency: String = r.getString(R.string.frequency)
+    val gain: String = r.getString(R.string.gain)
+    val eqTapToAdd: String = r.getString(R.string.eq_tap_to_add)
     val removeBand: String = r.getString(R.string.remove_band)
     val headphonePresets: String = r.getString(R.string.headphone_presets)
     val autoeqAbout: String = r.getString(R.string.autoeq_about)

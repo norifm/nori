@@ -176,6 +176,8 @@
     <string name="import_preset_example">Preamp: -6.2 dB\nFilter 1: ON PK Fc 105 Hz Gain -3.5 dB Q 0.70</string>
     <string name="no_filters_found">No filters found in that text</string>
     <string name="frequency">Frequency</string>
+    <string name="gain">Gain</string>
+    <string name="eq_tap_to_add">Tap the curve to add a band</string>
     <string name="remove_band">Remove band</string>
     <string name="headphone_presets">Headphone presets</string>
     <string name="autoeq_about">AutoEQ measures headphones and publishes a correction curve for each. The list is one 850 kB request to github.com, made by itself on Wi-Fi while Keep the AutoEQ list is on; after that, searching happens on this device.</string>

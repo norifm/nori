@@ -1442,7 +1442,8 @@ mod tests {
     #[test]
     fn settings_build_the_chain() {
         use nori_core::settings::EqMode;
-        let p = StoredPrefs { eq_enabled: true, eq_mode: EqMode::Parametric, eq_graphic: vec![3.0; 10], ..StoredPrefs::default() };
+        let bell = nori_core::settings::SoundBand { kind: nori_core::EqKind::Peaking, freq: 1000.0, gain_db: 2.0, q: 1.0, channel: nori_core::settings::BandChannel::Both };
+        let p = StoredPrefs { eq_enabled: true, eq_mode: EqMode::Parametric, eq_graphic: vec![3.0; 10], eq_bands: vec![bell], ..StoredPrefs::default() };
         let s = settings(&p).sound;
         assert!(s.graphic.is_empty() && !s.bands.is_empty(), "parametric: the bands play");
         let g = settings(&StoredPrefs { eq_mode: EqMode::Graphic, ..p.clone() }).sound;

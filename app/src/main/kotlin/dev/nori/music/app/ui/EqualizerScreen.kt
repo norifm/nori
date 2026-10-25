@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
@@ -70,10 +73,8 @@ fun EqualizerScreen(vm: SettingsViewModel) {
     LifecycleStartEffect(vm) { vm.soundPageShown(true); onStopOrDispose { vm.soundPageShown(false) } }
     val nav = LocalNav.current
     var importing by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf(-1) }
 
     NoriDialog(importing, { importing = false }) { ImportDialog(vm) { importing = false } }
-    NoriDialog(p.eqBands.getOrNull(editing), { editing = -1 }) { band -> BandDialog(band, { b -> vm.setBand(editing, b) }, { vm.removeBand(editing); editing = -1 }) { editing = -1 } }
 
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = LocalChromeInset.current)) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
@@ -99,7 +100,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
         }
 
         if (graphic) GraphicBands(vm, p.eqGraphic, p.eqGraphicTarget, p.eqEnabled)
-        else ParametricBands(vm, p.eqBands, p.eqEnabled) { editing = it }
+        else ParametricBands(vm, p.eqBands, p.eqEnabled)
 
         GroupLabel(say.presets)
         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -208,9 +209,13 @@ private fun GraphicBands(vm: SettingsViewModel, sliders: List<Float>, target: Li
     }
 }
 
-/** The parametric equalizer: its curve with a point per band, and the bands, each opening its editor. */
+/**
+ * The parametric equalizer, as many bands as wanted anywhere: a tap on the curve adds one there, a drag
+ * moves one in frequency and gain, and the chosen one is edited in full under the curve.
+ */
 @Composable
-private fun ParametricBands(vm: SettingsViewModel, bands: List<SoundBand>, enabled: Boolean, onEdit: (Int) -> Unit) {
+private fun ParametricBands(vm: SettingsViewModel, bands: List<SoundBand>, enabled: Boolean) {
+    var chosen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(-1) }
     val response = remember(bands) { dev.nori.music.ffi.settings.bandsResponse(bands, CURVE_FREQS) }
     val points = remember(bands) { bands.map { CurvePoint(EqBands.position(it.freq), if (it.kind.usesGain) it.gainDb else 0f) } }
     val gain = ranges.gain
@@ -218,26 +223,77 @@ private fun ParametricBands(vm: SettingsViewModel, bands: List<SoundBand>, enabl
         response.left, response.right.orEmpty(), points, enabled,
         label = { i -> bands.getOrNull(i)?.let(::bandLabel).orEmpty() },
         nearestAcross = false,
-        onTap = onEdit,
+        shapes = response.each, chosen = chosen,
+        onTap = { chosen = it },
+        onEmpty = { x, db ->
+            chosen = bands.size
+            vm.addBand(EqBands.freqAt(x), (db * 2f).roundToInt() / 2f)
+        },
         onDrag = { i, x, db ->
+            chosen = i
             val b = bands.getOrNull(i) ?: return@CurveCard
-            val freq = EqBands.freqAt(x.coerceIn(0f, 1f))
-            vm.setBand(i, if (b.kind.usesGain) b.copy(freq = freq, gainDb = db.coerceIn(gain.min, gain.max)) else b.copy(freq = freq))
+            val freq = EqBands.freqAt(x)
+            vm.setBand(i, if (b.kind.usesGain) b.copy(freq = freq, gainDb = ((db * 2f).roundToInt() / 2f).coerceIn(gain.min, gain.max)) else b.copy(freq = freq))
         },
     )
-    Spacer(Modifier.height(10.dp))
-    GroupCard {
-        bands.forEachIndexed { i, b ->
-            // Once per band shape, not on every frame of a drag.
-            val label = remember(b.freq, b.channel, b.kind) { bandLabel(b) }
-            val shape = remember(b.kind, b.q) { "${say.bandKind(b.kind)} · ${say.shape(b.kind.slope, b.q)}" }
-            GroupRow(
-                label, { onEdit(i) }, subtitle = shape, chevron = true,
-                value = if (b.kind.usesGain) remember(b.gainDb) { dev.nori.music.text.Fmt.signedDb(b.gainDb) } else null,
-            )
-        }
-        GroupRow(say.addBand, vm::addBand, icon = Iconoir.Plus, divider = false)
+    val band = bands.getOrNull(chosen)
+    if (band == null) Text(
+        say.eqTapToAdd, Modifier.padding(horizontal = Space.gutter + 4.dp, vertical = 8.dp),
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    ) else {
+        Spacer(Modifier.height(10.dp))
+        BandEditor(band, enabled, { b -> vm.setBand(chosen, b) }) { vm.removeBand(chosen); chosen = -1 }
     }
+    if (bands.isNotEmpty()) {
+        Spacer(Modifier.height(10.dp))
+        GroupCard {
+            bands.forEachIndexed { i, b ->
+                // Once per band shape, not on every frame of a drag.
+                val label = remember(b.freq, b.channel, b.kind) { bandLabel(b) }
+                val shape = remember(b.kind, b.q) { "${say.bandKind(b.kind)} · ${say.shape(b.kind.slope, b.q)}" }
+                GroupRow(
+                    label, { chosen = if (chosen == i) -1 else i }, subtitle = shape, divider = i < bands.lastIndex,
+                    modifier = if (i == chosen) Modifier.background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)) else Modifier,
+                    value = if (b.kind.usesGain) remember(b.gainDb) { dev.nori.music.text.Fmt.signedDb(b.gainDb) } else null,
+                )
+            }
+        }
+    }
+}
+
+/** The chosen band in full: its kind and side, then frequency, gain and width, and a way to remove it. */
+@Composable
+private fun BandEditor(band: SoundBand, enabled: Boolean, onChange: (SoundBand) -> Unit, onRemove: () -> Unit) {
+    val gain = ranges.gain
+    GroupCard {
+        GroupRow(
+            remember(band.freq, band.channel, band.kind) { bandLabel(band) }, divider = false,
+            trailing = { IconButton(onRemove) { Icon(Iconoir.Trash, say.removeBand, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
+        )
+        LazyRow(contentPadding = PaddingValues(horizontal = GROUP_INSET - 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            items(EqKind.entries) { k -> Chip(say.bandKind(k), band.kind == k) { onChange(band.copy(kind = k)) } }
+        }
+        Row(Modifier.padding(horizontal = GROUP_INSET - 4.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            BandChannel.entries.forEach { c -> Chip(say.bandChannel(c), band.channel == c) { onChange(band.copy(channel = c)) } }
+        }
+        Hairline(startIndent = GROUP_INSET)
+        EditorSlider(say.frequency, remember(band.freq) { dev.nori.music.text.Fmt.hz(band.freq) }, EqBands.position(band.freq), 0f..1f, enabled) { x -> onChange(band.copy(freq = EqBands.freqAt(x))) }
+        if (band.kind.usesGain) EditorSlider(say.gain, remember(band.gainDb) { dev.nori.music.text.Fmt.signedDb(band.gainDb) }, band.gainDb, gain.min..gain.max, enabled, centred = true) { v -> onChange(band.copy(gainDb = (v * 2f).roundToInt() / 2f)) }
+        EditorSlider(remember(band.kind, band.q) { say.shape(band.kind.slope, band.q) }, null, band.q, ranges.q.min..ranges.q.max, enabled) { q -> onChange(band.copy(q = (q * 100f).roundToInt() / 100f)) }
+    }
+}
+
+/** A named slider in the band editor, its value at the right of the name. */
+@Composable
+private fun EditorSlider(
+    name: String, value: String?, at: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean,
+    centred: Boolean = false, onChange: (Float) -> Unit,
+) {
+    Row(Modifier.fillMaxWidth().padding(start = GROUP_INSET, end = GROUP_INSET, top = 10.dp)) {
+        Text(name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        if (value != null) Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    NoriSlider(at, range, onChange, Modifier.padding(horizontal = GROUP_INSET), enabled = enabled, centred = centred)
 }
 
 /** Where the curve is read, 20 Hz to 20 kHz on a log scale. */
@@ -260,6 +316,7 @@ private fun CurveCard(
     curve: List<Float>, faint: List<Float>, points: List<CurvePoint>, enabled: Boolean,
     label: (Int) -> String, nearestAcross: Boolean,
     onDrag: (Int, Float, Float) -> Unit, onTap: ((Int) -> Unit)? = null,
+    onEmpty: ((Float, Float) -> Unit)? = null, shapes: List<List<Float>> = emptyList(), chosen: Int = -1,
 ) {
     val scheme = MaterialTheme.colorScheme
     val ink = if (enabled) scheme.onSurface else scheme.onSurfaceVariant
@@ -272,6 +329,7 @@ private fun CurveCard(
     val latest = androidx.compose.runtime.rememberUpdatedState(points)
     val drag = androidx.compose.runtime.rememberUpdatedState(onDrag)
     val tap = androidx.compose.runtime.rememberUpdatedState(onTap)
+    val empty = androidx.compose.runtime.rememberUpdatedState(onEmpty)
     val axis = remember { listOf(100f, 1000f, 10000f).map { EqBands.position(it) to dev.nori.music.text.Fmt.isoBand(it) } }
     GroupCard {
         androidx.compose.foundation.Canvas(
@@ -295,7 +353,14 @@ private fun CurveCard(
                     awaitEachGesture {
                         val down = awaitFirstDown()
                         val i = nearest(down.position)
-                        if (i < 0) return@awaitEachGesture
+                        if (i < 0) {
+                            // Away from every point: a tap there is a new band, a drag is the page's scroll.
+                            val up = waitForUpOrCancellation() ?: return@awaitEachGesture
+                            if ((up.position - down.position).getDistance() < viewConfiguration.touchSlop && up.position.y < plotHeight()) {
+                                empty.value?.invoke(xOf(up.position.x).coerceIn(0f, 1f), dbOf(up.position.y))
+                            }
+                            return@awaitEachGesture
+                        }
                         held = i
                         val start = latest.value[i]
                         val grabbed = androidx.compose.ui.geometry.Offset(start.x * size.width, (1f - start.db / CURVE_DB) * plotHeight() / 2f) - down.position
@@ -343,6 +408,16 @@ private fun CurveCard(
             }
             val stroke = { w: Float -> androidx.compose.ui.graphics.drawscope.Stroke(width = w, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round) }
             if (faint.isNotEmpty()) drawPath(trace(faint), ink.copy(alpha = 0.35f), style = stroke(1.5.dp.toPx()))
+            // Each band's own shape, quietly; the chosen one in the accent.
+            shapes.forEachIndexed { i, shape ->
+                if (i == chosen || i == held) return@forEachIndexed
+                drawPath(trace(shape), ink.copy(alpha = 0.22f), style = stroke(1.dp.toPx()))
+            }
+            shapes.getOrNull(if (held >= 0) held else chosen)?.let { shape ->
+                val line = trace(shape)
+                val area = androidx.compose.ui.graphics.Path().apply { addPath(line); lineTo(size.width, mid); lineTo(0f, mid); close() }
+                drawPath(area, accent.copy(alpha = 0.2f))
+            }
             if (curve.isNotEmpty()) {
                 val line = trace(curve)
                 val area = androidx.compose.ui.graphics.Path().apply {
@@ -356,10 +431,11 @@ private fun CurveCard(
                 if (i == held) return@forEachIndexed
                 val c = androidx.compose.ui.geometry.Offset(pt.x * size.width, y(pt.db))
                 drawCircle(surface, r + 1.5.dp.toPx(), c)
-                drawCircle(ink, r, c)
+                drawCircle(if (i == chosen) accent else ink, r, c)
             }
             points.getOrNull(held)?.let { pt ->
                 val c = androidx.compose.ui.geometry.Offset(pt.x * size.width, y(pt.db))
+                drawLine(accent.copy(alpha = 0.5f), androidx.compose.ui.geometry.Offset(c.x, 0f), androidx.compose.ui.geometry.Offset(c.x, h), 1.dp.toPx())
                 drawCircle(surface, 9.dp.toPx(), c)
                 drawCircle(accent, 7.5.dp.toPx(), c)
                 // What the held point is and where it sits, over it (under it near the top).
@@ -407,32 +483,5 @@ private fun ImportDialog(vm: SettingsViewModel, onDone: () -> Unit) {
         },
         confirmButton = { TextAction(say.import, { if (vm.importPreset(text) > 0) onDone() else error = true }) },
         dismissButton = { TextAction(say.cancel, onDone) },
-    )
-}
-
-@Composable
-private fun BandDialog(band: SoundBand, onChange: (SoundBand) -> Unit, onRemove: () -> Unit, onDone: () -> Unit) {
-    // Asked again only when what they say changes, not on every recomposition a drag makes.
-    val title = remember(band.freq) { say.hzTitle(band.freq) }
-    val shape = remember(band.kind.slope, band.q) { say.shape(band.kind.slope, band.q) }
-    AlertCard(
-        title = { Text(title) },
-        text = {
-            Column {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    items(EqKind.entries) { k -> Chip(say.bandKind(k), band.kind == k) { onChange(band.copy(kind = k)) } }
-                }
-                Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    BandChannel.entries.forEach { c -> Chip(say.bandChannel(c), band.channel == c) { onChange(band.copy(channel = c)) } }
-                }
-                Text(say.frequency, style = MaterialTheme.typography.labelMedium)
-                // Logarithmic: the slider position is the exponent, 20 Hz to 20 kHz.
-                NoriSlider(EqBands.position(band.freq), 0f..1f, { x -> onChange(band.copy(freq = EqBands.freqAt(x))) })
-                Text(shape, style = MaterialTheme.typography.labelMedium)
-                NoriSlider(band.q, ranges.q.min..ranges.q.max, { q -> onChange(band.copy(q = q)) })
-            }
-        },
-        confirmButton = { TextAction(say.done, onDone) },
-        dismissButton = { TextAction(say.removeBand, onRemove, destructive = true) },
     )
 }

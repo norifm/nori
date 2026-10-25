@@ -84,24 +84,24 @@ pub fn graphic_response(sliders: Vec<f32>, freqs: Vec<f32>) -> Vec<f32> {
 }
 
 /// What the parametric bands play, dB at each of `freqs` (48 kHz), for drawing the curve: `right` only when
-/// a band is for one side.
+/// a band is for one side; `each`, every band's own, in order.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct BandsResponse {
     pub left: Vec<f32>,
     pub right: Option<Vec<f32>>,
+    pub each: Vec<Vec<f32>>,
 }
 
 /// [`BandsResponse`] for `bands`.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn bands_response(bands: Vec<crate::settings::SoundBand>, freqs: Vec<f32>) -> BandsResponse {
     use crate::settings::BandChannel;
-    let side = |skip: BandChannel| -> Vec<f32> {
-        let heard: Vec<Band> = bands.iter().filter(|b| b.channel != skip).map(Band::from).collect();
-        freqs.iter().map(|f| nori_player::graphic::response_db(48_000.0, &heard, *f as f64) as f32).collect()
-    };
+    let curve = |heard: &[Band]| -> Vec<f32> { freqs.iter().map(|f| nori_player::graphic::response_db(48_000.0, heard, *f as f64) as f32).collect() };
+    let side = |skip: BandChannel| curve(&bands.iter().filter(|b| b.channel != skip).map(Band::from).collect::<Vec<_>>());
     let split = bands.iter().any(|b| b.channel != BandChannel::Both);
-    BandsResponse { left: side(BandChannel::Right), right: split.then(|| side(BandChannel::Left)) }
+    let each = bands.iter().map(|b| curve(&[Band::from(b)])).collect();
+    BandsResponse { left: side(BandChannel::Right), right: split.then(|| side(BandChannel::Left)), each }
 }
 
 /// The built-in equalizer curves.
@@ -131,6 +131,8 @@ mod tests {
         let both = bands_response(vec![bell(BandChannel::Both)], vec![100.0, 1000.0]);
         assert!((at(&both.left).1 - 6.0).abs() < 0.05 && at(&both.left).0 < 1.0, "{both:?}");
         assert_eq!(both.right, None, "both sides hear the same");
+        let two = bands_response(vec![bell(BandChannel::Both), SoundBand { freq: 100.0, gain_db: -3.0, ..bell(BandChannel::Both) }], vec![100.0, 1000.0]);
+        assert!((at(&two.each[0]).1 - 6.0).abs() < 0.05 && (at(&two.each[1]).0 + 3.0).abs() < 0.05, "each band alone: {two:?}");
         let left = bands_response(vec![bell(BandChannel::Left)], vec![100.0, 1000.0]);
         assert!((at(&left.left).1 - 6.0).abs() < 0.05, "{left:?}");
         assert!(left.right.as_deref().is_some_and(|r| r.iter().all(|d| d.abs() < 1e-3)), "{left:?}");
