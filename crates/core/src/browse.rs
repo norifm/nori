@@ -6,6 +6,18 @@ use crate::{db, history, Core, Result};
 
 pub use nori_library::browse::*;
 
+/// The server read page `offset` of a home album shelf is ([`home_shelves`], [`home_row_page`]): the
+/// favourites' first page is the starred albums with this session's marks laid over them, every other page
+/// the album list.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn shelf_albums_read(sort: AlbumSort, size: u32, follows_stars: bool, offset: u32) -> Read {
+    if follows_stars && offset == 0 {
+        Read::FavouriteAlbums { size: size as i32 }
+    } else {
+        Read::AlbumList { kind: sort, size: size as i32, offset: offset as i32, genre: None }
+    }
+}
+
 /// Receives a profile's rules whenever they change: its source ended the account's session, or took it
 /// up again.
 #[cfg_attr(feature = "ffi", uniffi::export(with_foreign))]
@@ -170,6 +182,13 @@ pub(crate) mod tests {
     use super::*;
     use crate::history::tests::song;
     use crate::Song;
+
+    #[test]
+    fn shelf_reads() {
+        assert!(matches!(shelf_albums_read(AlbumSort::Starred, 60, true, 0), Read::FavouriteAlbums { size: 60 }), "the favourites, marked");
+        assert!(matches!(shelf_albums_read(AlbumSort::Starred, 60, true, 60), Read::AlbumList { kind: AlbumSort::Starred, size: 60, offset: 60, genre: None }), "then the starred list");
+        assert!(matches!(shelf_albums_read(AlbumSort::Recent, 60, false, 0), Read::AlbumList { kind: AlbumSort::Recent, size: 60, offset: 0, genre: None }));
+    }
 
     #[test]
     fn pages() {

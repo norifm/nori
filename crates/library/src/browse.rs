@@ -76,6 +76,16 @@ pub fn home_row_page(row: HomeRow, offset: u32) -> Option<HomeShelf> {
     }
 }
 
+/// Whether a home row's full view has more after a page of `got` entries read for `shelf`
+/// ([`home_row_page`]): a page shorter than asked for is the last, and a whole list is one page.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn home_row_more(shelf: HomeShelf, got: u32) -> bool {
+    match shelf {
+        HomeShelf::Albums { size: page, .. } | HomeShelf::Songs { limit: page, .. } => got >= page,
+        HomeShelf::Playlists { .. } | HomeShelf::Pinned => false,
+    }
+}
+
 /// The home rows a profile shows of the ones kept: without the `account`'s things (a jam guest's,
 /// [`ProfileRules::account`]) the server's album shelves, not its favourites, playlists or indexed songs.
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -643,6 +653,17 @@ mod tests {
         ];
         for (row, offset, want) in cases {
             assert_eq!(home_row_page(row, offset), want, "{row:?} at {offset}");
+        }
+        // A page as long as asked for may have more after it; a shorter one, or a whole list, is the last.
+        for (shelf, got, more) in [
+            (albums(AlbumSort::Recent, false), 60, true),
+            (albums(AlbumSort::Recent, false), 59, false),
+            (Some(HomeShelf::Songs { sort: "title".into(), descending: false, limit: 60 }), 60, true),
+            (Some(HomeShelf::Songs { sort: "title".into(), descending: false, limit: 60 }), 3, false),
+            (Some(HomeShelf::Playlists { take: 20 }), 20, false),
+            (Some(HomeShelf::Pinned), 4, false),
+        ] {
+            assert_eq!(home_row_more(shelf.clone().unwrap(), got), more, "{shelf:?} after {got}");
         }
         // The random row's full view is the shelf's own draw, not another.
         assert_eq!(home_row_page(HomeRow::Random, 0).as_ref(), home_shelves(vec![HomeRow::Random]).first());

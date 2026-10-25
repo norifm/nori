@@ -7,7 +7,7 @@ use std::ffi::{c_char, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use nori_core::browse::{album_sort_kept, album_sort_saved, album_sorts, artist_rows, favorites_in_order, home_pinned, home_row_page, next_album_page, song_sort_kept, song_sort_saved, song_sorts, AlbumSort, HomeShelf};
+use nori_core::browse::{album_sort_kept, album_sort_saved, album_sorts, artist_rows, favorites_in_order, home_pinned, home_row_more, home_row_page, next_album_page, shelf_albums_read, song_sort_kept, song_sort_saved, song_sorts, AlbumSort, HomeShelf};
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::Starrable;
 use nori_core::menus::{download_entries, page_actions, DownloadAct, PageAction, PageKind, SongDownload};
@@ -452,16 +452,12 @@ fn home_row(token: u64, client: &nori_core::client::Client, core: &nori_core::Co
         return send(token, &json!({ "sections": [], "from": offset }));
     };
     let key = shelf_key(row);
-    match shelf {
+    let more = |got: usize| home_row_more(shelf.clone(), got as u32);
+    match shelf.clone() {
         HomeShelf::Albums { sort, size, follows_stars } => {
-            let read = if follows_stars && offset == 0 {
-                Read::FavouriteAlbums { size: size as i32 }
-            } else {
-                Read::AlbumList { kind: sort, size: size as i32, offset: offset as i32, genre: None }
-            };
-            pages(client, token, read, &|p| match p {
+            pages(client, token, shelf_albums_read(sort, size, follows_stars, offset), &|p| match p {
                 Page::Albums { v } => Some(json!({
-                    "more": v.len() as u32 == size, "next": offset + v.len() as u32, "from": offset,
+                    "more": more(v.len()), "next": offset + v.len() as u32, "from": offset,
                     "sections": [section(key, true, v.iter().map(album_json).collect())],
                 })),
                 _ => None,
@@ -471,7 +467,7 @@ fn home_row(token: u64, client: &nori_core::client::Client, core: &nori_core::Co
             let songs = core.browse_songs(sort, descending, false, 0, 0, offset, limit).unwrap_or_default();
             let from = if offset == 0 { None } else { extend_list(token, &songs) }.unwrap_or(0);
             let v = json!({
-                "more": songs.len() as u32 == limit, "next": offset + songs.len() as u32, "from": offset,
+                "more": more(songs.len()), "next": offset + songs.len() as u32, "from": offset,
                 "sections": [songs_section(key, &songs, from)],
             });
             if offset == 0 {
