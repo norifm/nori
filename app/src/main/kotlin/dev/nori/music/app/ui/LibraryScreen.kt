@@ -1,6 +1,7 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -46,6 +47,7 @@ import dev.nori.music.app.vm.AlbumsViewModel
 import dev.nori.music.app.vm.ArtistsViewModel
 import dev.nori.music.app.vm.DecadesViewModel
 import dev.nori.music.app.vm.FoldersViewModel
+import dev.nori.music.ffi.model.Artist
 import dev.nori.music.ffi.settings.LibrarySection
 import dev.nori.music.app.vm.LibraryHomeViewModel
 import dev.nori.music.app.vm.SongSort
@@ -269,9 +271,15 @@ private fun ArtistRows(vm: AlbumsViewModel, header: @Composable () -> Unit) {
         items(rows, key = { it.first().id }, contentType = { "artist" }) { row ->
             val first = row.first()
             val artist = first.artistId
+            val cardMenu = LocalCardMenu.current
             Column(Modifier.padding(bottom = 22.dp)) {
                 Row(
-                    Modifier.fillMaxWidth().then(if (artist != null) Modifier.clickable { nav.artist(artist) } else Modifier)
+                    Modifier.fillMaxWidth().then(
+                        if (artist != null) Modifier.combinedClickable(
+                            onClick = { nav.artist(artist) },
+                            onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(Artist(artist, first.artist, first.coverArt, null, row.size.toUInt(), false, first.isExternal))) },
+                        ) else Modifier,
+                    )
                         .padding(horizontal = Space.gutter).padding(bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -314,8 +322,9 @@ private fun Artists(header: @Composable () -> Unit = {}, vm: ArtistsViewModel = 
             item { header() }
             item { SearchField(filter, { filter = it }, say.filterArtists, Modifier.padding(start = Space.gutter, end = Space.gutter, bottom = LIST_GAP)) }
             items(artists, key = { it.id }, contentType = { "artist" }) { a ->
+                val cardMenu = LocalCardMenu.current
                 Column {
-                    Row(Modifier.fillMaxWidth().clickable { nav.artist(a.id, a) }.padding(horizontal = Space.gutter, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().combinedClickable(onClick = { nav.artist(a.id, a) }, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) }).padding(horizontal = Space.gutter, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                         Cover(vm.cover(a.coverArt, CoverSize.ROW), 48.dp, radius = 24.dp)
                         Column(Modifier.padding(start = 12.dp)) {
                             Text(a.name, style = MaterialTheme.typography.bodyLarge)
@@ -456,8 +465,9 @@ private fun Favourites(actions: ActionsViewModel, vm: StarredViewModel = viewMod
                 }
             }
             items(s.artists, key = { "ar" + it.id }) { a ->
+                val cardMenu = LocalCardMenu.current
                 NavRow(
-                    a.name, { nav.artist(a.id, a) }, chevron = true,
+                    a.name, { nav.artist(a.id, a) }, chevron = true, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) },
                     leading = { Cover(vm.cover(a.coverArt, CoverSize.ROW), 44.dp, radius = 22.dp) },
                 )
             }

@@ -1,12 +1,15 @@
 <script lang="ts">
   // An album's, artist's or playlist's card: its cover with the card's corners (an artist's round, its
-  // name under it in the middle), its name and a quiet line under it.
+  // name under it in the middle), its name and a quiet line under it. A right click opens its menu.
+  import { wholeMenu } from "../state/menus";
+  import type { Whole } from "../state/types";
+  import { pointer } from "../state/ui.svelte";
   import Cover from "./Cover.svelte";
 
-  let { href, cover, title, sub = "", round = false, fallback = "music-note" }: { href: string; cover?: string; title: string; sub?: string; round?: boolean; fallback?: string } = $props();
+  let { href, kind, id, cover, title, sub = "", round = false, fallback = "music-note" }: { href: string; kind: Whole; id: string; cover?: string; title: string; sub?: string; round?: boolean; fallback?: string } = $props();
 </script>
 
-<a class="card" class:round {href}>
+<a class="card" class:round {href} oncontextmenu={(e) => (e.preventDefault(), wholeMenu(kind, id, { title, line: sub, cover }, pointer(e)))}>
   <Cover src={cover} {round} radius="var(--r-card)" {fallback} />
   <span class="title clip">{title}</span>
   {#if sub}<span class="sub clip">{sub}</span>{/if}

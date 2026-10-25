@@ -7,7 +7,7 @@ import { ask, facts } from "../rpc";
 import workletUrl from "../worklet.ts?worker&url";
 import { ui } from "./ui.svelte";
 import { W } from "../words";
-import type { Now, Shown, Song } from "./types";
+import type { Now, Shown, Song, Whole } from "./types";
 
 /** Where the song was at a moment of the page's clock, and how fast it runs on from there (0: it holds). */
 export type Anchor = { ms: number; at: number; pace: number; length: number };
@@ -102,17 +102,17 @@ class Player {
     await this.refresh();
   }
 
-  /** Everything `artist` has in the library. */
-  async playArtist(artist: string, shuffle: boolean) {
+  /** An album, a playlist, or everything an artist has in the library. */
+  async playWhole(kind: Whole, id: string, shuffle: boolean) {
     await this.soundCard();
-    if ((await ask<number>("play_artist", artist, shuffle)) === 0) ui.say(W.nothingToPlay);
+    if ((await ask<number>("play_whole", kind, id, shuffle)) === 0) ui.say(W.nothingToPlay);
     await this.refresh();
   }
 
-  /** Everything `artist` has in the library, at the end of the queue. */
-  async queueArtist(artist: string) {
+  /** An album, a playlist, or everything an artist has, after the song playing (`next`) or at the end. */
+  async queueWhole(kind: Whole, id: string, next: boolean) {
     await this.soundCard();
-    if ((await ask<number>("queue_artist", artist)) === 0) ui.say(W.nothingToPlay);
+    if ((await ask<number>("queue_whole", kind, id, next)) === 0) ui.say(W.nothingToPlay);
     await this.refresh();
   }
 

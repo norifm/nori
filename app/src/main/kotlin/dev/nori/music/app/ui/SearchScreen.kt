@@ -88,7 +88,8 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
                 SectionTitle(say.artists)
                 LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(r.artists, key = { it.id }) { a ->
-                        ArtistCard(a.name, "", vm.cover(a.coverArt, CoverSize.ROW), 96.dp, onClick = { vm.remember(); nav.artist(a.id, a) })
+                        val cardMenu = LocalCardMenu.current
+                        ArtistCard(a.name, "", vm.cover(a.coverArt, CoverSize.ROW), 96.dp, onClick = { vm.remember(); nav.artist(a.id, a) }, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) })
                     }
                 }
             }

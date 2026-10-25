@@ -33,7 +33,7 @@
 
 <Page back ready={!!a} error={page.error}>
   {#if a}
-    <Hero cover={a.cover} title={a.name} round fallback="user" {label} onplay={(s) => void player.playArtist(id, s)}>
+    <Hero cover={a.cover} title={a.name} round fallback="user" {label} onplay={(s) => void player.playWhole("artist", id, s)}>
       {#snippet actions()}
         {#if !remote.jam?.guest}<Seal what="artist" id={a.id} on={!!a.starred} />{/if}
         <PageTools tools={page.data?.tools ?? []} artist={a.id} />

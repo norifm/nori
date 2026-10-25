@@ -4,7 +4,7 @@
 use std::time::{Duration, Instant};
 
 use nori_core::settings::StoredPrefs;
-use nori_core::{Album, Song};
+use nori_core::{Album, Artist, Song};
 use nori_engine::State;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -1983,6 +1983,15 @@ fn the_menu_lists_what_the_core_offers() {
     key(&mut a, KeyCode::Down);
     key(&mut a, KeyCode::Enter);
     assert!(matches!(a.cmds.last(), Some(Cmd::EnqueueFetch(crate::backend::Fetch::Album(id), true)) if id == "al-9"));
+
+    // An artist's, the same.
+    let mut a = app();
+    a.go(View::Artists);
+    a.handle(Msg::Data(Req::Artists, Ok(Data::Artists(vec![Artist { id: "ar-1".into(), name: "One".into(), ..Default::default() }]))));
+    key(&mut a, KeyCode::Char('m'));
+    assert!(matches!(&a.overlay, Some(Overlay::Menu { title, lines, .. }) if title == "One" && *lines == [MenuLine::Act(MenuAct::Play), MenuLine::Act(MenuAct::PlayNext), MenuLine::Act(MenuAct::AddToQueue)]));
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Artist(id), false)) if id == "ar-1"));
     // M switches the mouse.
     key(&mut a, KeyCode::Char('M'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Mouse(false)));

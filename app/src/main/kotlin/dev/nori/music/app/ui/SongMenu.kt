@@ -170,16 +170,17 @@ fun SongMenu(
     }
 }
 
-/** An album's or playlist's card menu: play it, play it next, add it to the queue. A jam guest only asks. */
+/** An album's, playlist's or artist's card menu: play it, play it next, add it to the queue. A jam guest only asks. */
 @Composable
 fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) {
     NoriSheet(card, onDismiss) { card ->
         val (title, line, art) = when (card) {
             is CardItem.OfAlbum -> Triple(card.album.name, card.album.subtitle, card.album.coverArt)
             is CardItem.OfPlaylist -> Triple(card.playlist.name, card.playlist.owner.orEmpty(), card.playlist.coverArt)
+            is CardItem.OfArtist -> Triple(card.artist.name, card.artist.albumCount?.takeIf { it > 0u }?.let { say.albums(it.toInt()) }.orEmpty(), card.artist.coverArt)
         }
         Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
-            SheetHead(actions.cover(art, CoverSize.ROW), title, line)
+            SheetHead(actions.cover(art, CoverSize.ROW), title, line, round = card is CardItem.OfArtist)
             SheetRows(head = true) {
                 if (!LocalRules.current.asks) Item(say.play, Iconoir.Play) { actions.play(card); onDismiss() }
                 Item(say.menuPlayNext, Iconoir.PlaylistPlay) { actions.queue(card, next = true); onDismiss() }
@@ -202,9 +203,9 @@ private val KeepUpwardDrags = object : androidx.compose.ui.input.nestedscroll.Ne
 
 /** The song or record a menu is about, right under the sheet's handle: its cover, its name, a line, and [more]. */
 @Composable
-private fun SheetHead(cover: String?, title: String, line: String, more: @Composable () -> Unit = {}) {
+private fun SheetHead(cover: String?, title: String, line: String, round: Boolean = false, more: @Composable () -> Unit = {}) {
     Row(Modifier.fillMaxWidth().padding(start = SHEET_EDGE, end = SHEET_EDGE, bottom = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        Cover(cover, 52.dp, radius = 8.dp)
+        Cover(cover, 52.dp, radius = if (round) 26.dp else 8.dp)
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)

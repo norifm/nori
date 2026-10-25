@@ -1,5 +1,5 @@
 //! The menu of what is selected: a song's as the core lists it (`menus::song_menu`, its less used actions
-//! under More), an album's or a playlist's, and on a page the page's own actions after the song's.
+//! under More), an album's, a playlist's or an artist's, and on a page the page's own actions after the song's.
 
 use nori_core::client::Starrable;
 use nori_core::menus::{JamOffer, PageAction, SongAction, SongDownload};
@@ -22,7 +22,7 @@ pub enum MenuLine {
 #[derive(Debug, Clone, PartialEq)]
 pub enum MenuAct {
     Song(SongAction),
-    /// An album's or a playlist's.
+    /// An album's, a playlist's or an artist's.
     Play,
     PlayNext,
     AddToQueue,
@@ -53,10 +53,11 @@ impl App {
                 }
                 Some(Overlay::Menu { title: song.title.clone(), item: Box::new(Item::Song(vec![song], 0)), lines, folded, sel: Sel::default() })
             }
-            Some(item @ (Item::Album(_) | Item::Playlist(_))) => {
+            Some(item @ (Item::Album(_) | Item::Playlist(_) | Item::Artist(_))) => {
                 let title = match &item {
                     Item::Album(a) => a.name.clone(),
                     Item::Playlist(p) => p.name.clone(),
+                    Item::Artist(a) => a.name.clone(),
                     _ => String::new(),
                 };
                 // A jam guest only asks for songs.
@@ -120,6 +121,7 @@ impl App {
         let fetch = match &item {
             Item::Album(a) => Some(Fetch::Album(a.id.clone())),
             Item::Playlist(p) => Some(Fetch::Playlist(p.id.clone())),
+            Item::Artist(a) => Some(Fetch::Artist(a.id.clone())),
             _ => None,
         };
         match (act, song) {

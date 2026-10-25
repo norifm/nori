@@ -11,6 +11,6 @@
 
 {#each tools as t (t)}
   {#if t === "AddToQueue"}
-    <button class="glyph quiet" aria-label={W.addToQueue} title={W.addToQueue} onclick={() => void (artist ? player.queueArtist(artist) : player.enqueue(songs, false))}><Icon name="playlist" /></button>
+    <button class="glyph quiet" aria-label={W.addToQueue} title={W.addToQueue} onclick={() => void (artist ? player.queueWhole("artist", artist, false) : player.enqueue(songs, false))}><Icon name="playlist" /></button>
   {/if}
 {/each}

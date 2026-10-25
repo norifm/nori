@@ -323,10 +323,10 @@ impl Nori {
         Ok(n)
     }
 
-    /// Plays everything artist `id` has in the library, shuffled with `shuffle`: the songs played (0: none).
-    pub async fn play_artist(&self, id: String, shuffle: bool) -> Result<usize, JsValue> {
+    /// Plays album, playlist or artist (`kind`) `id` whole, shuffled with `shuffle`: the songs played (0: none).
+    pub async fn play_whole(&self, kind: String, id: String, shuffle: bool) -> Result<usize, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        let what = nori_host::Fetch::Artist(id);
+        let what = whole(&kind, id)?;
         let from = what.origin();
         let songs = what.songs(&client).await.map_err(error)?;
         let n = songs.len();
@@ -336,13 +336,14 @@ impl Nori {
         Ok(n)
     }
 
-    /// Adds everything artist `id` has in the library to the end of the queue: the songs added (0: none).
-    pub async fn queue_artist(&self, id: String) -> Result<usize, JsValue> {
+    /// Adds album, playlist or artist (`kind`) `id` whole to the queue, after the song playing with `next`:
+    /// the songs added (0: none).
+    pub async fn queue_whole(&self, kind: String, id: String, next: bool) -> Result<usize, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        let songs = nori_host::Fetch::Artist(id).songs(&client).await.map_err(error)?;
+        let songs = whole(&kind, id)?.songs(&client).await.map_err(error)?;
         let n = songs.len();
         if n > 0 {
-            self.with(|h| h.enqueue(songs, false));
+            self.with(|h| h.enqueue(songs, next));
         }
         Ok(n)
     }
@@ -788,5 +789,15 @@ fn note(n: &Note) -> Value {
         Note::NothingToPutBack => json!({ "what": "nothingToPutBack" }),
         Note::StarFailed(e) => json!({ "what": "starFailed", "why": e.to_string() }),
         _ => json!({ "what": "other" }),
+    }
+}
+
+/// The songs of an album, playlist or artist, as the page names its kind.
+fn whole(kind: &str, id: String) -> Result<nori_host::Fetch, JsValue> {
+    match kind {
+        "album" => Ok(nori_host::Fetch::Album(id)),
+        "playlist" => Ok(nori_host::Fetch::Playlist(id)),
+        "artist" => Ok(nori_host::Fetch::Artist(id)),
+        _ => Err(error(format!("no such kind: {kind}"))),
     }
 }
