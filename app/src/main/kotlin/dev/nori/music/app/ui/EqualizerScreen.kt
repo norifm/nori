@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -187,12 +187,29 @@ private fun GraphicBands(vm: SettingsViewModel, sliders: List<Float>, target: Li
     }
     val points = remember(bands, sliders) { sliders.mapIndexed { i, v -> CurvePoint(bands.getOrNull(i)?.let { EqBands.position(it.freq) } ?: 0f, v) } }
     val gain = ranges.gain
+    var chosen by androidx.compose.runtime.saveable.rememberSaveable(count) { mutableStateOf(-1) }
+    val label = { i: Int -> bands.getOrNull(i)?.let { dev.nori.music.text.Fmt.isoBand(it.labelHz) }.orEmpty() }
+    val set = { i: Int, db: Float -> vm.setGraphic(i, ((db * 2f).roundToInt() / 2f).coerceIn(gain.min, gain.max)) }
     CurveCard(
-        response, aim, points, enabled,
-        label = { i -> bands.getOrNull(i)?.let { dev.nori.music.text.Fmt.isoBand(it.labelHz) }.orEmpty() },
-        nearestAcross = true,
-        onDrag = { i, _, db -> vm.setGraphic(i, ((db * 2f).roundToInt() / 2f).coerceIn(gain.min, gain.max)) },
+        response, aim, points, enabled, label,
+        nearestAcross = true, chosen = chosen,
+        onTap = { chosen = if (chosen == it) -1 else it },
+        onDrag = { i, _, db -> chosen = i; set(i, db) },
     )
+    val v = sliders.getOrNull(chosen)
+    if (v == null) Hint(say.eqTapGraphic) else {
+        Spacer(Modifier.height(10.dp))
+        GroupCard {
+            BandHeader(remember(chosen, count) { label(chosen) }, chosen, count, { chosen = it }) {
+                Text(remember(v) { dev.nori.music.text.Fmt.signedDb(v) }, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Row(Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton({ set(chosen, v - 0.5f) }, enabled = enabled && v > gain.min) { Icon(Iconoir.MinusCircle, say.eqLower, Modifier.size(22.dp)) }
+                NoriSlider(v, gain.min..gain.max, { x -> set(chosen, x) }, Modifier.weight(1f), enabled = enabled, centred = true)
+                IconButton({ set(chosen, v + 0.5f) }, enabled = enabled && v < gain.max) { Icon(Iconoir.PlusCircle, say.eqRaise, Modifier.size(22.dp)) }
+            }
+        }
+    }
     Row(Modifier.padding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         dev.nori.music.ffi.settings.graphicLayouts().forEach { n -> Chip(say.eqBandCount(n.toInt()), n.toInt() == count) { if (n.toInt() != count) vm.setEqLayout(n.toInt()) } }
     }
@@ -237,39 +254,41 @@ private fun ParametricBands(vm: SettingsViewModel, bands: List<SoundBand>, enabl
         },
     )
     val band = bands.getOrNull(chosen)
-    if (band == null) Text(
-        say.eqTapToAdd, Modifier.padding(horizontal = Space.gutter + 4.dp, vertical = 8.dp),
-        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-    ) else {
+    if (band == null) Hint(if (bands.isEmpty()) say.eqTapToAdd else say.eqTapABand) else {
         Spacer(Modifier.height(10.dp))
-        BandEditor(band, enabled, { b -> vm.setBand(chosen, b) }) { vm.removeBand(chosen); chosen = -1 }
+        BandEditor(band, chosen, bands.size, { chosen = it }, enabled, { b -> vm.setBand(chosen, b) }) { vm.removeBand(chosen); chosen = -1 }
     }
-    if (bands.isNotEmpty()) {
-        Spacer(Modifier.height(10.dp))
-        GroupCard {
-            bands.forEachIndexed { i, b ->
-                // Once per band shape, not on every frame of a drag.
-                val label = remember(b.freq, b.channel, b.kind) { bandLabel(b) }
-                val shape = remember(b.kind, b.q) { "${say.bandKind(b.kind)} · ${say.shape(b.kind.slope, b.q)}" }
-                GroupRow(
-                    label, { chosen = if (chosen == i) -1 else i }, subtitle = shape, divider = i < bands.lastIndex,
-                    modifier = if (i == chosen) Modifier.background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)) else Modifier,
-                    value = if (b.kind.usesGain) remember(b.gainDb) { dev.nori.music.text.Fmt.signedDb(b.gainDb) } else null,
-                )
-            }
-        }
+}
+
+/** A quiet line under the curve saying what a touch does there. */
+@Composable
+private fun Hint(text: String) {
+    Text(text, Modifier.padding(horizontal = Space.gutter + 4.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/**
+ * The top of a band's editor: its name between steps to the band before and after (bands too close to
+ * tell apart by touch are reached this way), then [trailing].
+ */
+@Composable
+private fun BandHeader(name: String, at: Int, count: Int, onGo: (Int) -> Unit, trailing: @Composable () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = GROUP_INSET), verticalAlignment = Alignment.CenterVertically) {
+        IconButton({ onGo(at - 1) }, enabled = at > 0) { Icon(Iconoir.NavArrowLeft, say.previous, Modifier.size(20.dp)) }
+        Text(name, Modifier.widthIn(min = 44.dp), style = MaterialTheme.typography.titleMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        IconButton({ onGo(at + 1) }, enabled = at < count - 1) { Icon(Iconoir.NavArrowRight, say.next, Modifier.size(20.dp)) }
+        Spacer(Modifier.weight(1f))
+        trailing()
     }
 }
 
 /** The chosen band in full: its kind and side, then frequency, gain and width, and a way to remove it. */
 @Composable
-private fun BandEditor(band: SoundBand, enabled: Boolean, onChange: (SoundBand) -> Unit, onRemove: () -> Unit) {
+private fun BandEditor(band: SoundBand, at: Int, count: Int, onGo: (Int) -> Unit, enabled: Boolean, onChange: (SoundBand) -> Unit, onRemove: () -> Unit) {
     val gain = ranges.gain
     GroupCard {
-        GroupRow(
-            remember(band.freq, band.channel, band.kind) { bandLabel(band) }, divider = false,
-            trailing = { IconButton(onRemove) { Icon(Iconoir.Trash, say.removeBand, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
-        )
+        BandHeader(remember(band.freq, band.channel, band.kind) { bandLabel(band) }, at, count, onGo) {
+            IconButton(onRemove) { Icon(Iconoir.Trash, say.removeBand, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
         LazyRow(contentPadding = PaddingValues(horizontal = GROUP_INSET - 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             items(EqKind.entries) { k -> Chip(say.bandKind(k), band.kind == k) { onChange(band.copy(kind = k)) } }
         }

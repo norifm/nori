@@ -178,6 +178,10 @@
     <string name="frequency">Frequency</string>
     <string name="gain">Gain</string>
     <string name="eq_tap_to_add">Tap the curve to add a band</string>
+    <string name="eq_tap_a_band">Tap a band to edit it, or the curve to add one</string>
+    <string name="eq_tap_graphic">Drag a band, or tap it to set it exactly</string>
+    <string name="eq_lower">Lower by half a dB</string>
+    <string name="eq_raise">Raise by half a dB</string>
     <string name="remove_band">Remove band</string>
     <string name="headphone_presets">Headphone presets</string>
     <string name="autoeq_about">AutoEQ measures headphones and publishes a correction curve for each. The list is one 850 kB request to github.com, made by itself on Wi-Fi while Keep the AutoEQ list is on; after that, searching happens on this device.</string>
