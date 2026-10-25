@@ -642,8 +642,13 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     }
 
     /// Updates the clock for commands between render turns.
+    /// Sets the time, and while playing reads the place from the output's clock: the last turn may have
+    /// been a burst ago, and what is done now (a pause, a report) goes from where the music is.
     pub fn clock(&mut self, now_ms: i64) {
         self.now_ms = now_ms;
+        if self.playing {
+            self.follow_clock();
+        }
     }
 
     pub fn pause(&mut self) {
@@ -1154,7 +1159,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
 
     /// One render turn at `now_ms`: reads the clock and offers audio until the output refuses.
     pub fn turn(&mut self, now_ms: i64) {
-        self.clock(now_ms);
+        self.now_ms = now_ms;
         self.opened();
         self.remade();
         if !self.playing && !self.priming {

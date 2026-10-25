@@ -493,7 +493,9 @@ impl AudioOutput for Recorder {
 }
 
 struct Rig {
-    engine: Engine,
+    engine: Arc<Engine>,
+    /// Each state the engine said, with the place its status held as it said it: what a client reads.
+    states: Arc<Mutex<Vec<(State, i64)>>>,
     time: Stepper<Card>,
     pace: f64,
     opened: Arc<AtomicU64>,
@@ -573,12 +575,22 @@ impl Rig {
         *server.clock.lock() = Some(clock.clone());
         let events = Arc::new(Mutex::new(Vec::new()));
         let seen = events.clone();
+        let states = Arc::new(Mutex::new(Vec::new()));
+        let (me, said) = (Arc::new(std::sync::OnceLock::<std::sync::Weak<Engine>>::new()), states.clone());
+        let reader = me.clone();
         let library = Songs { server: server.clone(), lengths, store, pieces, hint: hint.unwrap_or("wav") };
         let mut config = Config { memory_mb: memory_mb.unwrap_or(256), settings, watch: watching.map(nori_engine::watch::Watcher), ..Config::default() };
         config.idle_release_ms = idle_release_ms.unwrap_or(config.idle_release_ms);
-        let engine = Engine::start_on(library, app, queue, Box::new(out), None, config, clock.clone(), move |e| seen.lock().push(e));
+        let engine = Engine::start_on(library, app, queue, Box::new(out), None, config, clock.clone(), move |e| {
+            if let (Event::State(s), Some(engine)) = (&e, reader.get().and_then(std::sync::Weak::upgrade)) {
+                said.lock().push((*s, engine.status().position_ms));
+            }
+            seen.lock().push(e)
+        });
+        let engine = Arc::new(engine);
+        me.set(Arc::downgrade(&engine)).ok();
         let time = Stepper::new(clock, card.clone());
-        Rig { engine, time, pace: pace.unwrap_or(20.0), opened, shut, watch, heard, heard_f, underruns, server, events, die, flushes, shallow, card, queue: list }
+        Rig { engine, states, time, pace: pace.unwrap_or(20.0), opened, shut, watch, heard, heard_f, underruns, server, events, die, flushes, shallow, card, queue: list }
     }
 
     /// Underruns so far.
@@ -1160,6 +1172,25 @@ fn pause_fades_to_silence_heard() {
     let c = rig.card.lock();
     assert!(c.paused_us + 10_000 >= c.loud_until_us, "paused at {} µs, music heard until {} µs", c.paused_us, c.loud_until_us);
     assert!(rig.heard.lock().iter().any(|&v| v > 2000 && v < 6000), "a ramp down, not a cut");
+}
+
+/// A pause says where the music stopped: the place a client reads as it hears of the pause is the one
+/// the output reached, not the one last read a burst before.
+#[test]
+fn a_pause_says_the_place_heard() {
+    let a = music(30.0, 71);
+    let rig = Rig::new(&[("a", &a)], prefs_off(), Settings { fade_ms: 150, ..Settings::default() });
+    rig.engine.play_at(0, 0);
+    // Well into a burst: the ring was filled seconds ago.
+    assert!(rig.wait_for(20, |r| r.heard.lock().len() > RATE as usize * 2 * 7));
+    rig.engine.pause();
+    assert!(rig.wait_for(5, |r| r.engine.status().state == State::Paused));
+    rig.run(2_000);
+    let stopped = rig.engine.status().position_ms;
+    let heard = rig.heard.lock().len() as i64 * 1000 / (RATE as i64 * 2);
+    assert!((stopped - heard).abs() < 300, "stopped at {stopped} ms, heard {heard} ms");
+    let said = rig.states.lock().iter().rev().find(|(s, _)| *s == State::Paused).map(|p| p.1);
+    assert!(said.is_some_and(|ms| (ms - stopped).abs() < 300), "said paused at {said:?} ms, stopped at {stopped} ms");
 }
 
 /// A new queue started at the same index says its song, playing and paused.
