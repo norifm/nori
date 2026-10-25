@@ -1653,7 +1653,8 @@ impl Remote {
     pub fn star_where_playing(self: Arc<Self>, id: String, on: bool) -> bool {
         let device = self.inner.lock().mirror.as_ref().filter(|m| m.rows().iter().any(|e| e.id == id)).map(|m| m.id.clone());
         let Some(device) = device else { return false };
-        self.send(device, Op::Star { id, on });
+        self.clone().send(device, Op::Star { id: id.clone(), on });
+        self.marked(vec![wire::LibraryMark { kind: crate::client::Starrable::Song, id, on }]);
         true
     }
 
@@ -2564,7 +2565,30 @@ impl Remote {
         lan_secret(&self.client).map(|secret| lan::account_tag(&user, &secret))
     }
 
-    pub(crate) fn sync_mark(&self, kind: crate::client::Starrable, id: String) {
+    /// Likes this account made on another device: this session's marks, and the cached pages they touch
+    /// stale.
+    fn marked(&self, marks: Vec<wire::LibraryMark>) {
+        if marks.is_empty() {
+            return;
+        }
+        for mark in &marks {
+            for prefix in crate::cache_policy::stale(&crate::client::Write::Star { kind: mark.kind, id: mark.id.clone(), on: mark.on }) {
+                let _ = self.client.core.cache_stale(prefix);
+            }
+        }
+        {
+            let mut stars = self.client.core.stars.lock();
+            for mark in marks {
+                stars.insert(mark.kind, mark.id, mark.on);
+            }
+        }
+        self.shown.marks_changed();
+    }
+
+    /// A like made here: shown in this device's state, and sent to nearby devices that keep marks.
+    pub(crate) fn sync_mark(self: &Arc<Self>, kind: crate::client::Starrable, id: String) {
+        // Its queue's hearts are in its state.
+        self.publish();
         if !self.client.core.session.settings.with_prefs(|p| p.remote_control).unwrap_or(false) {
             return;
         }
@@ -3182,6 +3206,7 @@ impl Remote {
             self.keep_polling();
         }
         let mut page = None;
+        let mut liked = Vec::new();
         let next = {
             let mut i = self.inner.lock();
             let Some(id) = i.mirror.as_ref().map(|m| m.id.clone()) else { return };
@@ -3195,6 +3220,9 @@ impl Remote {
             let heard = i.state_of(&id).map(|(s, at)| (s.clone(), at.unwrap_or_else(|| self.now())));
             let me = self.id.clone();
             let m = i.mirror.as_mut().expect("mirrored");
+            if let (Some((st, _)), Some(last)) = (&heard, &m.heard) {
+                liked = liked_since(last, st);
+            }
             let moved = match heard {
                 Some((st, at)) if m.heard(&st, at, &me) => {
                     // It may have started or stopped playing: the time keeper looks again.
@@ -3212,6 +3240,7 @@ impl Remote {
             }
             moved
         };
+        self.marked(liked);
         if let Some(to) = next {
             return self.set_active(Some(to), true);
         }
@@ -3228,18 +3257,7 @@ impl Remote {
                     && self.client.core.session.settings.with_prefs(|p| p.remote_control).unwrap_or(false)
                     && self.account_tag().is_some();
                 let refusal = if allowed {
-                    for mark in &marks {
-                        for prefix in crate::cache_policy::stale(&crate::client::Write::Star { kind: mark.kind, id: mark.id.clone(), on: mark.on }) {
-                            let _ = self.client.core.cache_stale(prefix);
-                        }
-                    }
-                    {
-                        let mut stars = self.client.core.stars.lock();
-                        for mark in marks {
-                            stars.insert(mark.kind, mark.id, mark.on);
-                        }
-                    }
-                    self.shown.marks_changed();
+                    self.marked(marks);
                     self.publish();
                     None
                 } else {
@@ -3600,6 +3618,15 @@ fn note(i: &mut Inner, from: &str, id: u64, refusal: Option<Refusal>, now: i64) 
             i.refused.remove(from);
         }
     }
+}
+
+/// The songs whose like changed from state `last` to `now` of the same device: its account's likes.
+fn liked_since(last: &DeviceState, now: &DeviceState) -> Vec<wire::LibraryMark> {
+    now.entries
+        .iter()
+        .filter(|e| last.entries.iter().any(|l| l.id == e.id && l.starred != e.starred))
+        .map(|e| wire::LibraryMark { kind: crate::client::Starrable::Song, id: e.id.clone(), on: e.starred })
+        .collect()
 }
 
 /// Whether `now` is `last` with only its position run on as time passed.
