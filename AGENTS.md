@@ -154,6 +154,10 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
   cover-colors setting.
 - One accent, only for "you, now": the current tab, the song playing, a lit shuffle or repeat, a liked
   seal, a focused field. A selected row is raised, never filled with the accent.
+- The players: the transport is ink; secondary words and controls that are off are the quiet ink; a glyph
+  takes the ink of the row it sits in (the seal is ink beside the full player's title, quiet in the mini
+  player and the bar). Another device playing is ink, not the accent. The seek bar is a 22 % ink track,
+  an ink fill and an accent playhead.
 - A favorite is the seal 好, never a heart. Inter for everything; Literata only for what a page is called.
 - Shapes: covers, cards and grouped rows, sheets and popovers, pills each have their radius; nested
   corners are concentric (outer = inner + inset). Navigation and the player are one outlined pill each,
