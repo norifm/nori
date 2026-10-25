@@ -26,12 +26,13 @@ pub(crate) fn crossover_ms(p: &TransitionPlan) -> i64 {
     let out_fade = span_ms(p.out_fade_start_ms, p.out_fade_end_ms, len);
     let in_fade = span_ms(p.in_fade_start_ms, p.in_fade_end_ms, len);
     let out_gain = db_to_gain((p.out_gain_db as f64).clamp(-24.0, 12.0));
-    let (in_gain_db, glide_ms) = trim(len, p.in_gain_db as f64);
+    let gap = trim(len, p.in_gain_db as f64);
     let progress = |(start, end): (f64, f64), t: f64| if t <= start { 0.0 } else if t >= end { 1.0 } else { (t - start) / (end - start) };
     let mut t = 0.0;
     while t < len {
-        let g_out = fade(p.fade_curve, progress(out_fade, t), true) * out_gain;
-        let g_in = fade(p.fade_curve, progress(in_fade, t), false) * db_to_gain(in_gain_db * (1.0 - progress((len - glide_ms, len), t)));
+        let (trim_out, trim_in) = trims(gap, progress((0.0, len), t));
+        let g_out = fade(p.fade_curve, progress(out_fade, t), true) * out_gain * db_to_gain(trim_out);
+        let g_in = fade(p.fade_curve, progress(in_fade, t), false) * db_to_gain(trim_in);
         if g_in >= g_out {
             return t as i64;
         }
@@ -49,13 +50,17 @@ fn span_ms(a: i64, b: i64, len: f64) -> (f64, f64) {
     }
 }
 
-/// The incoming trim a transition of `len_ms` can carry, dB, and how long before its end it starts to glide back:
-/// the last quarter, or longer when that would be faster than [`TRIM_GLIDE_MS_PER_DB`].
-fn trim(len_ms: f64, db: f64) -> (f64, f64) {
-    let len_ms = len_ms.max(0.0);
-    let most = len_ms / TRIM_GLIDE_MS_PER_DB;
-    let db = db.clamp(-12.0, 12.0).clamp(-most, most);
-    (db, (len_ms / 4.0).max(db.abs() * TRIM_GLIDE_MS_PER_DB).min(len_ms))
+/// The loudness gap a transition of `len_ms` can carry, dB: the incoming song starts turned by it to the
+/// outgoing one's level, and the two meet as the level glides to the incoming song's own over the whole
+/// transition, no faster than [`TRIM_GLIDE_MS_PER_DB`]. At its end the incoming song is at its own level.
+fn trim(len_ms: f64, db: f64) -> f64 {
+    let most = len_ms.max(0.0) / TRIM_GLIDE_MS_PER_DB;
+    db.clamp(-12.0, 12.0).clamp(-most, most)
+}
+
+/// The outgoing and incoming songs' turns, dB, `progress` (0..1) through a transition carrying `gap` dB.
+fn trims(gap: f64, progress: f64) -> (f64, f64) {
+    (-gap * progress, gap * (1.0 - progress))
 }
 
 fn db_to_gain(db: f64) -> f64 {
@@ -76,6 +81,34 @@ fn fade(curve: FadeCurve, x: f64, down: bool) -> f64 {
 #[inline]
 fn raised_cos(x: f64) -> f64 {
     0.5 - 0.5 * (x * PI).cos()
+}
+
+/// A high shelf at one frequency (RBJ, slope 1), its gain set per frame.
+#[derive(Clone, Copy, Default)]
+struct Shelf {
+    sin: f64,
+    cos: f64,
+}
+
+impl Shelf {
+    fn at(rate: f64, hz: f64) -> Self {
+        let (sin, cos) = (2.0 * PI * hz.clamp(10.0, rate * 0.49) / rate).sin_cos();
+        Shelf { sin, cos }
+    }
+
+    /// Lows untouched, highs times `gain`; at a gain of 1 it passes its input exactly.
+    fn coef(&self, gain: f64) -> Coef {
+        let a = gain.sqrt();
+        let (c, beta) = (self.cos, 2.0 * a.sqrt() * self.sin / std::f64::consts::SQRT_2);
+        let a0 = (a + 1.0) - (a - 1.0) * c + beta;
+        Coef {
+            b0: a * ((a + 1.0) + (a - 1.0) * c + beta) / a0,
+            b1: -2.0 * a * ((a - 1.0) + (a + 1.0) * c) / a0,
+            b2: a * ((a + 1.0) + (a - 1.0) * c - beta) / a0,
+            a1: 2.0 * ((a - 1.0) - (a + 1.0) * c) / a0,
+            a2: ((a + 1.0) - (a - 1.0) * c - beta) / a0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -113,6 +146,13 @@ impl Coef {
         s[0] = self.b1 * x - self.a1 * y + s[1];
         s[1] = self.b2 * x - self.a2 * y;
         y
+    }
+
+    /// Two cascaded sections on channel `c`.
+    #[inline]
+    fn run2(&self, s: &mut [[[f64; 2]; MAX_CHANNELS]; 2], c: usize, x: f64) -> f64 {
+        let y = self.run(&mut s[0][c], x);
+        self.run(&mut s[1][c], y)
     }
 }
 
@@ -220,11 +260,12 @@ struct FadeRun {
     to: Fades,
 }
 
-/// The fade curves' gains at one frame.
+/// The fade curves' gains at one frame, and what both decks together are scaled by to one song's power.
 #[derive(Clone, Copy, Debug, Default)]
 struct Fades {
     out: f64,
     inc: f64,
+    held: f64,
 }
 
 impl FadeRun {
@@ -233,7 +274,7 @@ impl FadeRun {
     fn at(&self, p: u64) -> Fades {
         let t = (p - self.start) as f64 / (self.end - self.start) as f64;
         let (a, b) = (self.from, self.to);
-        Fades { out: a.out + (b.out - a.out) * t, inc: a.inc + (b.inc - a.inc) * t }
+        Fades { out: a.out + (b.out - a.out) * t, inc: a.inc + (b.inc - a.inc) * t, held: a.held + (b.held - a.held) * t }
     }
 }
 
@@ -246,12 +287,15 @@ pub struct Mixer {
     out_fade: Span,
     in_fade: Span,
     out_gain: f64,
-    in_gain_db: f64,
-    trim_glide: Span,
+    /// The loudness gap the two songs meet across ([`trim`]).
+    gap_db: f64,
     swap: Option<Span>,
     swap_coef: Coef,
     /// Two cascaded sections per deck per channel: [deck][section][channel].
     swap_state: [[[[f64; 2]; MAX_CHANNELS]; 2]; 2],
+    /// Holds the highs both decks play at the swap's cut, per deck per channel.
+    hold_shelf: Shelf,
+    hold_state: [[[f64; 2]; MAX_CHANNELS]; 2],
     high_pass: Option<SweepFilter>,
     low_pass: Option<SweepFilter>,
     sweep_entry: u64,
@@ -280,11 +324,12 @@ impl Mixer {
             out_fade: Span::default(),
             in_fade: Span::default(),
             out_gain: 1.0,
-            in_gain_db: 0.0,
-            trim_glide: Span::default(),
+            gap_db: 0.0,
             swap: None,
             swap_coef: Coef::default(),
             swap_state: [[[[0.0; 2]; MAX_CHANNELS]; 2]; 2],
+            hold_shelf: Shelf::default(),
+            hold_state: [[[0.0; 2]; MAX_CHANNELS]; 2],
             high_pass: None,
             low_pass: None,
             sweep_entry: 1,
@@ -315,14 +360,13 @@ impl Mixer {
         self.out_fade = span(p.out_fade_start_ms, p.out_fade_end_ms);
         self.in_fade = span(p.in_fade_start_ms, p.in_fade_end_ms);
         self.out_gain = db_to_gain((p.out_gain_db as f64).clamp(-24.0, 12.0));
-        let (in_gain_db, glide_ms) = trim(p.duration_ms as f64, p.in_gain_db as f64);
-        self.in_gain_db = in_gain_db;
-        self.trim_glide = Span { start: len.saturating_sub(frames(glide_ms)), end: len };
+        self.gap_db = trim(p.duration_ms as f64, p.in_gain_db as f64);
         self.swap = p.bass_swap.map(|s| {
             let start = frames(s.at_ms as f64);
             Span { start: start.min(len), end: (start + frames((s.len_ms as f64).max(1.0))).min(len.max(1)) }
         });
-        self.swap_coef = Coef::pass(rate, p.bass_swap.map_or(180.0, |s| s.cut_hz as f64), false);
+        let cut = p.bass_swap.map_or(180.0, |s| s.cut_hz as f64);
+        (self.swap_coef, self.hold_shelf) = (Coef::pass(rate, cut, false), Shelf::at(rate, cut));
         let sweep = |s: crate::types::Sweep, low| SweepFilter::new(rate, span(s.start_ms, s.end_ms), s.from_hz as f64, s.to_hz as f64, low);
         self.high_pass = p.high_pass.map(|s| sweep(s, false));
         self.low_pass = p.low_pass.map(|s| sweep(s, true));
@@ -348,6 +392,7 @@ impl Mixer {
             self.echo_pos = 0;
         }
         self.swap_state = [[[[0.0; 2]; MAX_CHANNELS]; 2]; 2];
+        self.hold_state = [[[0.0; 2]; MAX_CHANNELS]; 2];
         self.duck_state = [[0.0; 2]; MAX_CHANNELS];
     }
 
@@ -411,8 +456,12 @@ impl Mixer {
         }
     }
 
+    /// The fade gains at frame `p`, and how much what both decks play together is held down to one song's
+    /// power: where both are up at once, two songs would otherwise play louder than either. Lows a bass
+    /// swap gives to one deck at a time are not held down.
     fn fades_at(&self, p: u64) -> Fades {
-        Fades { out: fade(self.curve, self.out_fade.progress(p), true), inc: fade(self.curve, self.in_fade.progress(p), false) }
+        let (out, inc) = (fade(self.curve, self.out_fade.progress(p), true), fade(self.curve, self.in_fade.progress(p), false));
+        Fades { out, inc, held: 1.0 / (out * out + inc * inc).sqrt().max(1.0) }
     }
 
     /// The run from frame `p` (inside the transition): up to [`FADE_RUN`] frames, ending at the next fade
@@ -436,10 +485,13 @@ impl Mixer {
             self.fades = self.fade_run(p);
         }
         let fades = self.fades.at(p);
-        let g_out = fades.out * self.out_gain;
-        let trim = self.in_gain_db * (1.0 - self.trim_glide.progress(p));
-        // No trim (none asked, or its glide done) is exactly unity: no power per frame.
-        let g_in = fades.inc * if trim == 0.0 { 1.0 } else { db_to_gain(trim) };
+        // No gap is exactly unity: no power per frame.
+        let (g_out, g_in) = if self.gap_db == 0.0 {
+            (fades.out * self.out_gain, fades.inc)
+        } else {
+            let (trim_out, trim_in) = trims(self.gap_db, p as f64 / self.len as f64);
+            (fades.out * self.out_gain * db_to_gain(trim_out), fades.inc * db_to_gain(trim_in))
+        };
         let (rate, entry) = (self.rate, self.sweep_entry);
         for f in [&mut self.high_pass, &mut self.low_pass].into_iter().flatten() {
             let wet = f.wet(rate, entry, p);
@@ -465,26 +517,31 @@ impl Mixer {
             for c in 0..ch {
                 let idx = self.echo_pos * ch + c;
                 let rep = self.echo_buf[idx];
-                self.echo_buf[idx] = o[c] * g_out + rep * fb;
-                o[c] = o[c] * g_out + rep * wet * left + i[c] * g_in;
+                self.echo_buf[idx] = o[c] * g_out * fades.held + rep * fb;
+                o[c] = o[c] * g_out * fades.held + rep * wet * left + i[c] * g_in * fades.held;
             }
             self.echo_pos = (self.echo_pos + 1) % d;
             return;
         }
-        // k_out: how much of the outgoing lows is cut; the incoming lows are cut by the rest.
-        let k_out = self.swap.map(|s| raised_cos(s.progress(p)));
+        // The lows change hands at equal power, two bass lines being as unrelated as two songs. They go to
+        // one deck at a time, so only the highs are held to one song's power, by a shelf that is no filter
+        // at all once nothing is held.
+        let swap = self.swap.map(|s| {
+            let (lows_in, lows_out) = (s.progress(p) * std::f64::consts::FRAC_PI_2).sin_cos();
+            (lows_out, lows_in, self.hold_shelf.coef(fades.held))
+        });
         for c in 0..ch {
-            let (mut x, mut y) = (o[c], i[c]);
-            if let Some(k_out) = k_out {
-                let (k, s) = (&self.swap_coef, &mut self.swap_state);
-                let hx = k.run(&mut s[0][0][c], x);
-                let hx = k.run(&mut s[0][1][c], hx);
-                let hy = k.run(&mut s[1][0][c], y);
-                let hy = k.run(&mut s[1][1][c], hy);
-                x = x * (1.0 - k_out) + hx * k_out;
-                y = y * k_out + hy * (1.0 - k_out);
-            }
-            o[c] = x * g_out + y * g_in;
+            let (x, y) = (o[c], i[c]);
+            o[c] = match swap {
+                Some((lows_out, lows_in, shelf)) => {
+                    let (k, s, h) = (&self.swap_coef, &mut self.swap_state, &mut self.hold_state);
+                    let (hx, hy) = (k.run2(&mut s[0], c, x), k.run2(&mut s[1], c, y));
+                    let x = shelf.run(&mut h[0][c], x * lows_out + hx * (1.0 - lows_out));
+                    let y = shelf.run(&mut h[1][c], y * lows_in + hy * (1.0 - lows_in));
+                    x * g_out + y * g_in
+                }
+                None => (x * g_out + y * g_in) * fades.held,
+            };
         }
     }
 }
@@ -626,44 +683,65 @@ mod tests {
     }
 
     #[test]
-    fn fades_follow_windows_and_trim() {
+    fn fades_follow_windows() {
         let mut p = plan();
         p.duration_ms = 4000;
         p.fade_curve = FadeCurve::Linear;
-        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (2000, 4000, 0, 2000);
-        p.in_gain_db = -6.0;
+        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (2000, 4000, 2000, 4000);
         let (ones, zeros) = (vec![1f32; 192000], vec![0f32; 192000]);
         let y = mix(&p, &ones, &zeros);
         assert!((y[48000] - 1.0).abs() < 1e-6 && (y[144000] - 0.5).abs() < 1e-3, "outgoing holds, then falls linearly");
         let y = mix(&p, &zeros, &ones);
-        assert!((y[48000] as f64 - 0.5 * 0.501).abs() < 2e-3, "half way up, at -6 dB: {}", y[48000]);
-        assert!((y[120000] as f64 - 0.501).abs() < 2e-3, "fully up, still trimmed: {}", y[120000]);
-        assert!((y[191999] - 1.0).abs() < 2e-3, "trim back to 0 dB by the end: {}", y[191999]);
+        assert!(y[48000].abs() < 1e-6 && (y[144000] - 0.5).abs() < 1e-3, "incoming waits, then rises linearly");
     }
 
-    /// The incoming deck's level through a transition of `ms` trimmed by `db`, dB every 100 ms and after it.
-    fn trim_levels(ms: i64, db: f32) -> Vec<f64> {
+    /// Both decks up at once (the incoming one in before the outgoing one goes) hold one song's power, the
+    /// two still in the windows' proportion: two songs never play louder than one.
+    #[test]
+    fn decks_up_together_hold_one_songs_power() {
+        let mut p = plan();
+        p.duration_ms = 4000;
+        p.fade_curve = FadeCurve::Linear;
+        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (2000, 4000, 0, 2000);
+        let (ones, zeros) = (vec![1f32; 192000], vec![0f32; 192000]);
+        let (out, inc) = (mix(&p, &ones, &zeros), mix(&p, &zeros, &ones));
+        for (at, ratio) in [(48000, 0.5), (96000, 1.0), (144000, 2.0)] {
+            let (o, i) = (out[at] as f64, inc[at] as f64);
+            assert!((o * o + i * i - 1.0).abs() < 2e-3, "at frame {at}: {o:.3} and {i:.3}");
+            assert!((i / o - ratio).abs() < 2e-3, "at frame {at}: {o:.3} and {i:.3}");
+        }
+    }
+
+    /// One deck's level, dB every 100 ms and after, through a transition of `ms` across a loudness gap of
+    /// `db`, the other deck gone: the outgoing one up to the end, or the incoming one up from the start.
+    fn trim_levels(ms: i64, db: f32, incoming: bool) -> Vec<f64> {
         let mut p = plan();
         p.duration_ms = ms;
-        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (0, ms, 0, 0);
+        (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = if incoming { (0, 0, 0, 0) } else { (ms, ms, ms, ms) };
         p.in_gain_db = db;
         let n = (ms as f64 / 1000.0 * RATE) as usize + 4800;
-        let y = mix(&p, &vec![0f32; n], &vec![1f32; n]);
+        let (deck, quiet) = (vec![1f32; n], vec![0f32; n]);
+        let y = if incoming { mix(&p, &quiet, &deck) } else { mix(&p, &deck, &quiet) };
         y.iter().skip(1).step_by(4800).map(|v| 20.0 * (*v as f64).log10()).collect()
     }
 
+    /// The two songs meet across a loudness gap: the incoming one starts turned to the outgoing one's level,
+    /// the outgoing one ends turned to the incoming one's, and the level glides evenly between, no faster
+    /// than the limit, so the incoming song is at its own level as the transition ends and stays so.
     #[test]
-    fn trim_glides_no_faster_than_limit() {
-        let l = trim_levels(8000, 6.0);
-        assert!((l[50] - 6.0).abs() < 0.01 && (l[60] - 6.0).abs() < 0.01, "held through three quarters: {:.2} {:.2}", l[50], l[60]);
-        assert!((l[70] - 3.0).abs() < 0.01, "half let go half way through the last quarter: {:.2}", l[70]);
-        for (ms, db) in [(8000, 9.0), (2000, 9.0), (2000, -9.0), (1000, 6.0), (300, -9.0)] {
-            let l = trim_levels(ms, db);
-            let step = l.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f64::max);
-            assert!(step <= 0.67 + 1e-3, "{ms} ms, {db} dB: {step:.2} dB in 100 ms: {l:.2?}");
-            assert!(l.last().unwrap().abs() < 1e-3, "{ms} ms, {db} dB: all of it let go by the end");
-            let most = (ms as f64 / TRIM_GLIDE_MS_PER_DB).min(db.abs() as f64);
-            assert!((l[0].abs() - most).abs() < 0.01, "{ms} ms, {db} dB: trimmed by {:.2}", l[0]);
+    fn songs_meet_across_a_loudness_gap() {
+        for (ms, db) in [(8000, 6.0f32), (8000, 9.0), (2000, 9.0), (2000, -9.0), (1000, 6.0), (300, -9.0)] {
+            let gap = (ms as f64 / TRIM_GLIDE_MS_PER_DB).min(db.abs() as f64).copysign(db as f64);
+            let inc = trim_levels(ms, db, true);
+            let step = inc.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f64::max);
+            assert!(step <= 0.67 + 1e-3, "{ms} ms, {db} dB: {step:.2} dB in 100 ms: {inc:.2?}");
+            assert!((inc[0] - gap).abs() < 0.01, "{ms} ms, {db} dB: the incoming song starts turned by {:.2}", inc[0]);
+            assert!(inc.last().unwrap().abs() < 1e-3, "{ms} ms, {db} dB: at its own level after: {inc:.2?}");
+            let mid = inc.len() / 2;
+            assert!((inc[mid] - gap * (1.0 - (mid as f64 * 100.0) / ms as f64)).abs() < 0.05, "{ms} ms, {db} dB: evenly: {inc:.2?}");
+            let out = trim_levels(ms, db, false);
+            let k = (ms / 100 - 1) as usize;
+            assert!(out[0].abs() < 0.01 && (out[k] + gap * k as f64 * 100.0 / ms as f64).abs() < 0.05, "{ms} ms, {db} dB: the outgoing song turned towards the incoming one: {out:.2?}");
         }
     }
 
@@ -710,7 +788,8 @@ mod tests {
     fn bass_swap_moves_lows_between_decks() {
         let mut p = plan();
         p.fade_curve = FadeCurve::Linear;
-        // Both decks at full gain the whole time, so only the filters act.
+        // Both decks up the whole time, so only the filters act: the lows, on one deck at a time, at full
+        // level, and the highs both play held to one song's power between them.
         (p.out_fade_start_ms, p.out_fade_end_ms, p.in_fade_start_ms, p.in_fade_end_ms) = (1000, 1000, 0, 0);
         p.bass_swap = Some(crate::types::BassSwap { at_ms: 500, len_ms: 100, cut_hz: 200.0 });
         let (bass, zeros) = (sine(50.0, 48000), vec![0f32; 48000]);
@@ -723,7 +802,7 @@ mod tests {
         assert!((rms(&y[30000..42000]) / r - 1.0).abs() < 0.02, "and whole after it");
         let hi = sine(3000.0, 48000);
         let y = mix(&p, &zeros, &hi);
-        assert!((rms(&y[2400..24000]) / rms(&hi) - 1.0).abs() < 0.03, "highs pass throughout");
+        assert!((rms(&y[2400..24000]) / rms(&hi) / std::f64::consts::FRAC_1_SQRT_2 - 1.0).abs() < 0.03, "highs pass throughout");
     }
 
     #[test]
