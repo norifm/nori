@@ -124,11 +124,13 @@ fun SideChrome(
     // Off the edge it stands on by what it stood off the bottom (BottomChrome), so a turn leaves it in place.
     val edge = with(androidx.compose.ui.platform.LocalDensity.current) { gestureBarRoom.getBottom(this).toDp() }.coerceAtLeast(BAR_OFF)
     // Clear of a status bar the app keeps, by its room whether it is showing yet or not: the bar going away
-    // just after a turn would otherwise slide the whole pill up, a second motion after the turn.
+    // just after a turn would otherwise slide the whole pill up, a second motion after the turn. Clear of
+    // the gesture bar on every side: along the bottom its strip belongs to the system's gestures, and the
+    // pill's end there is the play button when the phone is turned one way.
     val top = if (LocalHiddenBars.current.value.status) WindowInsets(0) else WindowInsets.statusBarsIgnoringVisibility.only(WindowInsetsSides.Top)
     Box(
         modifier.fillMaxHeight()
-            .windowInsetsPadding(top.union(gestureBarRoom.only(WindowInsetsSides.Horizontal)))
+            .windowInsetsPadding(top.union(gestureBarRoom))
             .padding(top = BAR_END, bottom = BAR_END, start = if (left) edge else BAR_END, end = if (left) BAR_END else edge),
         Alignment.Center,
     ) {
