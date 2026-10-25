@@ -1,7 +1,7 @@
 //! The library's pages as the clients read them, each on a thread of its own: the stored copy first,
 //! then the server's when it differs. Home's shelves come in the core's order (`browse::home_shelves`).
 
-use nori_core::browse::{favorites_in_order, home_pinned, home_row_page, home_rows_shown, home_shelves, AlbumSort, HomeShelf};
+use nori_core::browse::{favorites_in_order, home_pinned, home_row_more, home_row_page, home_rows_shown, home_shelves, shelf_albums_read, AlbumSort, HomeShelf};
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::Client;
 use nori_core::mixes::board::{MixLookup, MixSheet, MixTile};
@@ -125,20 +125,18 @@ impl Handle {
                 Ok(p) => Ok(PageGot::Songs { songs: p.songs, exhausted: p.exhausted }),
                 Err(e) => Err(PageFailed::Net(e)),
             }),
-            PageAsk::HomeRow { row, offset } => match home_row_page(row, offset) {
+            PageAsk::HomeRow { row, offset } => match home_row_page(row, offset).map(|s| (s.clone(), s)) {
                 // Nothing past `offset`: the row is all here.
                 None => each(Err(PageFailed::Nothing)),
-                Some(HomeShelf::Albums { sort, size, follows_stars }) => {
-                    // A favourites row's first page is the shelf's own read, with this session's marks.
-                    let read = if follows_stars && offset == 0 { Read::FavouriteAlbums { size: size as i32 } } else { Read::AlbumList { kind: sort, size: size as i32, offset: offset as i32, genre: None } };
-                    pages(read, &|p| if let Page::Albums { v } = p { Some(PageGot::Albums(v)) } else { None });
+                Some((_, HomeShelf::Albums { sort, size, follows_stars })) => {
+                    pages(shelf_albums_read(sort, size, follows_stars, offset), &|p| if let Page::Albums { v } = p { Some(PageGot::Albums(v)) } else { None });
                 }
-                Some(HomeShelf::Songs { sort, descending, limit }) => each(match self.core.browse_songs(sort, descending, false, 0, 0, offset, limit) {
-                    Ok(songs) => Ok(PageGot::Songs { exhausted: (songs.len() as u32) < limit, songs }),
+                Some((shelf, HomeShelf::Songs { sort, descending, limit })) => each(match self.core.browse_songs(sort, descending, false, 0, 0, offset, limit) {
+                    Ok(songs) => Ok(PageGot::Songs { exhausted: !home_row_more(shelf, songs.len() as u32), songs }),
                     Err(e) => Err(PageFailed::Stored(e)),
                 }),
-                Some(HomeShelf::Playlists { take }) => pages(Read::PlaylistList, &|p| if let Page::Playlists { v } = p { Some(PageGot::Playlists(v.into_iter().take(take as usize).collect())) } else { None }),
-                Some(HomeShelf::Pinned) => {
+                Some((_, HomeShelf::Playlists { take })) => pages(Read::PlaylistList, &|p| if let Page::Playlists { v } = p { Some(PageGot::Playlists(v.into_iter().take(take as usize).collect())) } else { None }),
+                Some((_, HomeShelf::Pinned)) => {
                     let pins = self.core.session.settings.prefs(|p| p.pinned_playlists.clone());
                     pages(Read::PlaylistList, &|p| if let Page::Playlists { v } = p { Some(PageGot::Playlists(home_pinned(v, pins.clone()))) } else { None });
                 }
@@ -202,12 +200,8 @@ impl Handle {
         let rows = if self.rules().feed { Vec::new() } else { rows };
         for (at, shelf) in home_shelves(rows).into_iter().enumerate() {
             let r = match shelf {
-                HomeShelf::Albums { sort, size, .. } => {
-                    let read = match sort {
-                        AlbumSort::Starred => Read::FavouriteAlbums { size: size as i32 },
-                        _ => Read::AlbumList { kind: sort, size: size as i32, offset: 0, genre: None },
-                    };
-                    shelf_pages(client, read, at, each, |p| if let Page::Albums { v } = p { Some(ShelfItems::Albums(v)) } else { None })
+                HomeShelf::Albums { sort, size, follows_stars } => {
+                    shelf_pages(client, shelf_albums_read(sort, size, follows_stars, 0), at, each, |p| if let Page::Albums { v } = p { Some(ShelfItems::Albums(v)) } else { None })
                 }
                 HomeShelf::Playlists { take } => shelf_pages(client, Read::PlaylistList, at, each, |p| if let Page::Playlists { v } = p { Some(ShelfItems::Playlists(v.into_iter().take(take as usize).collect())) } else { None }),
                 HomeShelf::Pinned => shelf_pages(client, Read::PlaylistList, at, each, |p| if let Page::Playlists { v } = p { Some(ShelfItems::Playlists(home_pinned(v, pins.clone()))) } else { None }),

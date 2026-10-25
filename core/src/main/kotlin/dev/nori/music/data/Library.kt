@@ -159,8 +159,9 @@ class Library(
     fun artists(): Flow<List<Artist>> = cached(Read.ArtistIndex) { (it as Page.Artists).v }
     fun album(id: String): Flow<AlbumDetail> = cached(Read.AlbumById(id)) { (it as Page.AlbumPage).v }
 
-    /** The home page's favourite albums: the starred album list with this session's marks laid over it by the core. */
-    fun favouriteAlbums(size: Int): Flow<List<Album>> = cached(Read.FavouriteAlbums(size)) { (it as Page.Albums).v }
+    /** Page [offset] of a home album shelf, read as the core says (`shelf_albums_read`). */
+    fun shelfAlbums(shelf: dev.nori.music.ffi.library.HomeShelf.Albums, offset: Int = 0): Flow<List<Album>> =
+        cached(dev.nori.music.ffi.shelfAlbumsRead(shelf.sort, shelf.size, shelf.followsStars, offset.toUInt())) { (it as Page.Albums).v }
     fun artist(id: String): Flow<ArtistDetail> = cached(Read.ArtistById(id)) { (it as Page.ArtistPage).v }
     fun artistInfo(id: String): Flow<ArtistInfo> = cached(Read.ArtistAbout(id)) { (it as Page.About).v }
     fun topSongs(artist: String): Flow<List<Song>> = cached(Read.TopSongs(artist)) { (it as Page.Songs).v }

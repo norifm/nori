@@ -145,13 +145,11 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
     /** What each shelf is and where it comes from is the core's (browse.rs); this only makes the requests. */
     private fun source(r: HomeRow, shelf: HomeShelf): kotlinx.coroutines.flow.Flow<Shelf> = when (shelf) {
         is HomeShelf.Albums -> {
-            val sort = shelf.sort
-            val size = shelf.size.toInt()
             // Re-read on every star change, and the core lays this session's marks over what it reads.
-            if (shelf.followsStars) combine(refreshes, nori.library.starsVersion) { _, v -> v }.flatMapLatest { nori.library.favouriteAlbums(size) }
+            if (shelf.followsStars) combine(refreshes, nori.library.starsVersion) { _, v -> v }.flatMapLatest { nori.library.shelfAlbums(shelf) }
                 .map { Shelf.Albums(r, it) }
                 .catch { emit(Shelf.Albums(r, emptyList())) }.onStart { emit(Shelf.Albums(r, emptyList())) }
-            else refreshes.flatMapLatest { nori.library.albums(sort, size = size) }
+            else refreshes.flatMapLatest { nori.library.shelfAlbums(shelf) }
                 .catch { failed(it); emit(emptyList()) }.onStart { emit(emptyList()) }.map { Shelf.Albums(r, it) }
         }
         is HomeShelf.Playlists -> combine(refreshes, nori.library.playlistsVersion) { _, v -> v }.flatMapLatest { nori.library.playlists() }.map { Shelf.Playlists(r, it.take(shelf.take.toInt())) }
@@ -258,19 +256,16 @@ class HomeRowViewModel(app: Application) : NoriViewModel(app) {
                 if (shelf == null) { exhausted = true; return@launch }
                 when (shelf) {
                     is HomeShelf.Albums -> {
-                        val size = shelf.size.toInt()
-                        val read = if (shelf.followsStars && offset == 0) nori.library.favouriteAlbums(size) else nori.library.albums(shelf.sort, size, offset)
-                        val got = runCatching { read.first() }.getOrDefault(emptyList())
+                        val got = runCatching { nori.library.shelfAlbums(shelf, offset).first() }.getOrDefault(emptyList())
                         albums = albums.from(offset, got)
                         _entries.value = RowEntries.Albums(albums)
-                        exhausted = got.size < size
+                        exhausted = !dev.nori.music.ffi.library.homeRowMore(shelf, got.size.toUInt())
                     }
                     is HomeShelf.Songs -> {
-                        val limit = shelf.limit.toInt()
-                        val got = runCatching { nori.library.browseSongs(shelf.sort, shelf.descending, false, null, offset, limit) }.getOrDefault(emptyList())
+                        val got = runCatching { nori.library.browseSongs(shelf.sort, shelf.descending, false, null, offset, shelf.limit.toInt()) }.getOrDefault(emptyList())
                         songs = songs.from(offset, got)
                         _entries.value = RowEntries.Songs(songs, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, row.name))
-                        exhausted = got.size < limit
+                        exhausted = !dev.nori.music.ffi.library.homeRowMore(shelf, got.size.toUInt())
                     }
                     is HomeShelf.Playlists -> {
                         val all = runCatching { nori.library.playlists().first() }.getOrDefault(emptyList())

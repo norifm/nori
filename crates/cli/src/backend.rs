@@ -261,15 +261,11 @@ impl Session {
         match req {
             Req::Row { row, offset } => {
                 use crate::app::Item;
-                // A page shorter than asked for is the last; whole lists come as one.
-                let size = match nori_core::browse::home_row_page(row, offset) {
-                    Some(nori_core::browse::HomeShelf::Albums { size, .. }) => size as usize,
-                    Some(nori_core::browse::HomeShelf::Songs { limit, .. }) => limit as usize,
-                    _ => usize::MAX,
-                };
+                let page = nori_core::browse::home_row_page(row, offset);
                 self.host.read_page(PageAsk::HomeRow { row, offset }, move |r| {
+                    let last = |got: usize| !page.clone().is_some_and(|s| nori_core::browse::home_row_more(s, got as u32));
                     send(match r {
-                        Ok(PageGot::Albums(v)) => Ok(Data::Row(v.iter().cloned().map(Item::Album).collect(), v.len() < size)),
+                        Ok(PageGot::Albums(v)) => Ok(Data::Row(v.iter().cloned().map(Item::Album).collect(), last(v.len()))),
                         Ok(PageGot::Playlists(v)) => Ok(Data::Row(v.into_iter().map(Item::Playlist).collect(), true)),
                         Ok(PageGot::Songs { songs, exhausted }) => Ok(Data::Row((0..songs.len()).map(|n| Item::Song(songs.clone(), n)).collect(), exhausted)),
                         Ok(_) | Err(PageFailed::Nothing) => Ok(Data::Row(Vec::new(), true)),
