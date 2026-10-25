@@ -1,7 +1,7 @@
 //! The equalizer page, as Android's EqualizerScreen: mode, bands and curve, presets, pre-amp, balance,
 //! mono and limiter. All numbers come from the core.
 
-use nori_core::dsp::{effective_preamp_db, eq_presets, graphic_bands, graphic_response};
+use nori_core::dsp::{bands_response, effective_preamp_db, eq_presets, graphic_bands, graphic_layouts, graphic_response};
 use nori_core::numbers::{self, POINT};
 use nori_core::settings::{EqMode, StoredPrefs, EQ_RANGES};
 use nori_core::{EqKind, PresetKind};
@@ -40,10 +40,11 @@ fn kind_name(k: EqKind) -> &'static str {
     }
 }
 
-/// The graphic EQ response as an SVG path in a `w` x `h` box (20 Hz..20 kHz, ±15 dB).
-fn curve(sliders: &[f32], w: f32, h: f32) -> String {
+/// The equalizer's response as an SVG path in a `w` x `h` box (20 Hz..20 kHz, ±15 dB): the graphic
+/// sliders', or the parametric bands' (the left channel's, where the sides differ).
+fn curve(p: &StoredPrefs, w: f32, h: f32) -> String {
     let freqs: Vec<f32> = (0..97).map(|i| 20.0 * 1000f32.powf(i as f32 / 96.0)).collect();
-    let r = graphic_response(sliders.to_vec(), freqs);
+    let r = if p.eq_mode == EqMode::Graphic { graphic_response(p.eq_graphic.clone(), freqs) } else { bands_response(p.eq_bands.clone(), freqs).left };
     let mut out = String::new();
     for (i, db) in r.iter().enumerate() {
         let x = w * i as f32 / 96.0;
@@ -55,9 +56,7 @@ fn curve(sliders: &[f32], w: f32, h: f32) -> String {
 
 /// Updates only the curve, while a band is dragged.
 pub fn curve_only(ui: &AppWindow, p: &StoredPrefs) {
-    if p.eq_mode == EqMode::Graphic {
-        ui.set_eq_curve(curve(&p.eq_graphic, ui.get_eq_curve_w(), ui.get_eq_curve_h()).into());
-    }
+    ui.set_eq_curve(curve(p, ui.get_eq_curve_w(), ui.get_eq_curve_h()).into());
 }
 
 pub fn fill(ui: &AppWindow, p: &StoredPrefs) {
@@ -65,6 +64,7 @@ pub fn fill(ui: &AppWindow, p: &StoredPrefs) {
     ui.set_eq_on(p.eq_enabled);
     ui.set_eq_graphic(graphic);
     ui.set_eq_count(p.eq_graphic.len() as i32);
+    ui.set_eq_layouts(ModelRc::new(VecModel::from(graphic_layouts().into_iter().map(|n| n as i32).collect::<Vec<_>>())));
     let bands: Vec<EqBandRow> = if graphic {
         let centres = graphic_bands(p.eq_graphic.len() as u32);
         p.eq_graphic
@@ -91,7 +91,7 @@ pub fn fill(ui: &AppWindow, p: &StoredPrefs) {
             .collect()
     };
     ui.set_eq_bands(ModelRc::new(VecModel::from(bands)));
-    ui.set_eq_curve(if graphic { curve(&p.eq_graphic, ui.get_eq_curve_w(), ui.get_eq_curve_h()).into() } else { SharedString::new() });
+    ui.set_eq_curve(curve(p, ui.get_eq_curve_w(), ui.get_eq_curve_h()).into());
     let presets: Vec<SharedString> = eq_presets().iter().map(|x| preset_name(x.kind).into()).collect();
     ui.set_eq_presets(ModelRc::new(VecModel::from(presets)));
     let auto = p.eq_preamp_db.is_none();
@@ -124,10 +124,17 @@ mod tests {
     #[test]
     fn eq_drawing() {
         // Curve spans the box flat at zero.
-        let c = curve(&[0.0; 10], 960.0, 96.0);
+        let flat = StoredPrefs { eq_mode: EqMode::Graphic, eq_graphic: vec![0.0; 10], ..StoredPrefs::default() };
+        let c = curve(&flat, 960.0, 96.0);
         assert_eq!(c.matches('L').count(), 96);
         assert!(c.starts_with("M0.0 48.0"), "{c}");
         assert!(c.trim_end().ends_with("L960.0 48.0"), "{c}");
+        // The parametric bands draw their own curve: a boost at 1 kHz rises in the middle.
+        let bell = nori_core::settings::SoundBand { kind: EqKind::Peaking, freq: 632.5, gain_db: 6.0, q: 1.0, channel: nori_core::settings::BandChannel::Both };
+        let parametric = StoredPrefs { eq_mode: EqMode::Parametric, eq_bands: vec![bell], ..StoredPrefs::default() };
+        let c = curve(&parametric, 960.0, 96.0);
+        let middle: f32 = c.split_whitespace().nth(97).unwrap().parse().unwrap();
+        assert!(middle < 35.0, "{c}");
     }
 
 }

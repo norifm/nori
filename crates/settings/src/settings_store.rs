@@ -355,7 +355,8 @@ impl Settings {
 pub enum SoundTool {
     Preset { preset: nori_model::NamedPreset },
     AutoPreamp { automatic: bool },
-    AddBand,
+    /// A peaking band at `freq`, `gain_db`, after the others.
+    AddBand { freq: f32, gain_db: f32 },
     RemoveBand { index: u32 },
     ResetBands,
     /// AutoEQ "ParametricEQ.txt" or Equalizer APO text.
@@ -376,7 +377,7 @@ impl SoundTool {
         Ok(match self {
             SoundTool::Preset { preset } => st::apply_preset(s, &preset),
             SoundTool::AutoPreamp { automatic } => st::set_auto_preamp(s, automatic),
-            SoundTool::AddBand => st::add_band(s),
+            SoundTool::AddBand { freq, gain_db } => st::add_band(s, freq, gain_db),
             SoundTool::RemoveBand { index } => st::remove_band(s, index),
             SoundTool::ResetBands => st::eq_reset_bands(s),
             SoundTool::Import { text } => st::import(s, &text)?,
@@ -451,6 +452,9 @@ mod tests {
     fn slider_edits() {
         let dir = nori_testdir::TempDir::new("settings-edit");
         let mut s = open(&dir);
+        for freq in [100.0, 1000.0, 5000.0] {
+            s.sound_tool(SoundTool::AddBand { freq, gain_db: 0.0 }).unwrap();
+        }
         let band = s.prefs.eq_bands[2];
         let (effect, kept) = s.edit_band(2, SoundBand { gain_db: 99.0, ..band }).unwrap();
         assert_eq!(effect, SOUND);
@@ -550,7 +554,7 @@ mod tests {
         assert_eq!(s.prefs, with_server);
         assert_eq!(c.effect, 0);
 
-        let tool = s.sound_tool(SoundTool::AddBand).unwrap().unwrap();
+        let tool = s.sound_tool(SoundTool::AddBand { freq: 1000.0, gain_db: 0.0 }).unwrap().unwrap();
         assert_eq!(tool.sound, s.prefs.sound());
         assert_eq!(tool.effect, SOUND);
         let n = tool.sound.eq_bands.len();

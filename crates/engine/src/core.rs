@@ -1404,7 +1404,7 @@ const PLAY_PAUSE_FADE_MS: i32 = 150;
 
 /// Engine settings from the core's.
 pub fn settings(s: &StoredPrefs) -> Settings {
-    let bands = if s.eq_enabled { s.eq_bands.iter().map(|b| Band { kind: b.kind, freq: b.freq as f64, gain_db: b.gain_db as f64, q: b.q as f64, channel: b.channel as i32 }).collect() } else { Vec::new() };
+    let bands = if s.eq_enabled { s.eq_bands.iter().map(Band::from).collect() } else { Vec::new() };
     let sound = if s.sound_bypass { Sound::default() } else { Sound {
         // The graphic equalizer replaces the parametric bands.
         graphic: nori_core::dsp::graphic_sliders(s),
@@ -1442,7 +1442,8 @@ mod tests {
     #[test]
     fn settings_build_the_chain() {
         use nori_core::settings::EqMode;
-        let p = StoredPrefs { eq_enabled: true, eq_mode: EqMode::Parametric, eq_graphic: vec![3.0; 10], ..StoredPrefs::default() };
+        let bell = nori_core::settings::SoundBand { kind: nori_core::EqKind::Peaking, freq: 1000.0, gain_db: 2.0, q: 1.0, channel: nori_core::settings::BandChannel::Both };
+        let p = StoredPrefs { eq_enabled: true, eq_mode: EqMode::Parametric, eq_graphic: vec![3.0; 10], eq_bands: vec![bell], ..StoredPrefs::default() };
         let s = settings(&p).sound;
         assert!(s.graphic.is_empty() && !s.bands.is_empty(), "parametric: the bands play");
         let g = settings(&StoredPrefs { eq_mode: EqMode::Graphic, ..p.clone() }).sound;

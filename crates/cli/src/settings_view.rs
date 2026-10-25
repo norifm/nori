@@ -1291,7 +1291,7 @@ mod tests {
         assert!(parametric.contains(&EqRow::Mode) && !parametric.contains(&EqRow::Layout));
 
         // Parametric bands step in range.
-        let prefs = StoredPrefs { eq_mode: EqMode::Parametric, eq_bands: nori_core::settings::graphic(), ..StoredPrefs::default() };
+        let prefs = StoredPrefs { eq_mode: EqMode::Parametric, eq_bands: (0..3).map(|i| SoundBand { kind: nori_core::EqKind::Peaking, freq: 100.0 * 10f32.powi(i), gain_db: 0.0, q: 1.0, channel: nori_core::settings::BandChannel::Both }).collect(), ..StoredPrefs::default() };
         let rows = eq_rows(&prefs);
         assert_eq!(rows.iter().filter(|r| matches!(r, EqRow::Band(_))).count(), prefs.eq_bands.len());
         let Some(Cmd::Band(0, b)) = EqRow::Band(0).step(&prefs, true) else { panic!() };

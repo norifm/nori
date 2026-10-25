@@ -3113,7 +3113,7 @@ impl App {
             "preset" => nori_core::dsp::eq_presets().get(i).cloned().map(|preset| SoundTool::Preset { preset }),
             "auto-preamp" => Some(SoundTool::AutoPreamp { automatic: true }),
             "manual-preamp" => Some(SoundTool::AutoPreamp { automatic: false }),
-            "add-band" => Some(SoundTool::AddBand),
+            "add-band" => Some(SoundTool::AddBand { freq: 1000.0, gain_db: 0.0 }),
             "remove-band" => Some(SoundTool::RemoveBand { index: i as u32 }),
             "reset" => Some(SoundTool::ResetBands),
             _ => None,

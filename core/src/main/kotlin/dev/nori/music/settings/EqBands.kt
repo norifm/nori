@@ -4,9 +4,8 @@ import dalvik.annotation.optimization.CriticalNative
 import dalvik.annotation.optimization.FastNative
 
 /**
- * What the equalizer screen asks of the core about its bands. The screen's words and figures are the
- * app's own; the only question for the core is what kind of band a label marks, which follows from the
- * sound chain's filter kinds.
+ * What the equalizer screen asks of the core about its bands on every frame of a drag, as primitives:
+ * what a band's label marks and where a frequency sits on the band scale.
  */
 object EqBands {
     init { System.loadLibrary("norimusic") }
@@ -17,10 +16,11 @@ object EqBands {
      */
     @JvmStatic @CriticalNative external fun mark(kind: Int, channel: Int): Int
 
-    /** The logarithmic frequency slider: its position is the exponent, 20 Hz at 0 to 20 kHz at 1. */
-    fun freqToSlider(freq: Float): Float = kotlin.math.log10((freq / 20f).toDouble()).toFloat() / 3f
+    /** Where a frequency sits on a band's frequency scale, 20 Hz at 0 to 20 kHz at 1 (`dsp::band_position`). */
+    @JvmStatic @CriticalNative external fun position(freq: Float): Float
 
-    fun sliderToFreq(x: Float): Float = 20f * Math.pow(10.0, x.toDouble() * 3.0).toFloat()
+    /** The frequency at a place on that scale, rounded as the core rounds it (`dsp::band_freq_at`). */
+    @JvmStatic @CriticalNative external fun freqAt(position: Float): Float
 }
 
 /**

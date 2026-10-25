@@ -477,7 +477,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     /** The automatic pre-amp on or off; off starts from the level it was at. */
     fun setAutoPreamp(automatic: Boolean) { nori.settings.soundTool(SoundTool.AutoPreamp(automatic)) }
-    fun addBand() { nori.settings.soundTool(SoundTool.AddBand) }
+    fun addBand(freq: Float, gainDb: Float) { nori.settings.soundTool(SoundTool.AddBand(freq, gainDb)) }
     fun removeBand(index: Int) { nori.settings.soundTool(SoundTool.RemoveBand(index.toUInt())) }
     fun resetBands() { nori.settings.soundTool(SoundTool.ResetBands) }
 

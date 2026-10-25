@@ -32,6 +32,12 @@ pub struct SoundBand {
     pub channel: BandChannel,
 }
 
+impl From<&SoundBand> for nori_player::dsp::Band {
+    fn from(b: &SoundBand) -> Self {
+        Self { kind: b.kind, freq: b.freq as f64, gain_db: b.gain_db as f64, q: b.q as f64, channel: b.channel as i32 }
+    }
+}
+
 /// Which channel a band applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -494,7 +500,7 @@ pub struct StoredPrefs {
     // Sound.
     #[setting("eqEnabled", FLAG, default = false, name = "eq", show = K::Switch, effect = APPLY_AUDIO | SOUND, sound)]
     pub eq_enabled: bool,
-    #[setting("eqBands", BANDS, default = graphic(), hidden, effect = SOUND, sound)]
+    #[setting("eqBands", BANDS, default = Vec::new(), hidden, effect = SOUND, sound)]
     pub eq_bands: Vec<SoundBand>,
     /// Graphic on a new install; older installs with a parametric setup keep it ([`load`]).
     #[setting("eqMode", PICK, default = EqMode::Graphic, show = K::Choice(EqMode::NAMES), effect = SOUND, sound)]
@@ -847,8 +853,9 @@ impl From<nori_model::CoreError> for SoundError {
     }
 }
 
-/// The ten default bands: flat peaking filters an octave apart.
-pub fn graphic() -> Vec<SoundBand> {
+/// The parametric equalizer's bands before it started with none: flat peaking filters an octave apart.
+/// Settings stored then hold them while untouched.
+fn ten_flat_bands() -> Vec<SoundBand> {
     [31.0, 62.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
         .into_iter()
         .map(|freq| SoundBand { kind: EqKind::Peaking, freq, gain_db: 0.0, q: 1.41, channel: BandChannel::Both })
@@ -945,7 +952,7 @@ pub fn sound_from(json: &str) -> Option<SoundSettings> {
     let d = SoundEffects::default();
     let mut s = SoundSettings {
         eq_enabled: opt_bool(o, "eqEnabled"),
-        eq_bands: decode_bands(&opt_string(o, "eqBands")).unwrap_or_else(graphic),
+        eq_bands: decode_bands(&opt_string(o, "eqBands")).unwrap_or_default(),
         eq_mode: EqMode::nth(opt_i32(o, "eqMode")).unwrap_or(EqMode::Parametric),
         eq_graphic: decode_graphic(&opt_string(o, "eqGraphic")).unwrap_or_else(|| vec![0.0; 10]),
         eq_graphic_target: decode_target(&opt_string(o, "eqGraphicTarget")),
@@ -1281,12 +1288,12 @@ pub(crate) const EQ_MODE_KEY: &str = "eqMode";
 /// Whether settings stored before the graphic equalizer have the parametric one set up (on, a pre-amp,
 /// or bands other than the flat defaults); such installs keep it.
 pub(crate) fn parametric_set_up(p: &StoredPrefs) -> bool {
-    p.eq_enabled || p.eq_preamp_db.is_some() || p.eq_bands != graphic()
+    p.eq_enabled || p.eq_preamp_db.is_some() || !(p.eq_bands.is_empty() || p.eq_bands == ten_flat_bands())
 }
 
 /// Whether a saved sound profile's JSON has a parametric equalizer set up.
 pub(crate) fn profile_parametric(json: &str) -> bool {
-    sound_from(json).is_some_and(|s| s.eq_enabled && (s.eq_bands != graphic() || s.eq_preamp_db.is_some()))
+    sound_from(json).is_some_and(|s| s.eq_enabled && (!(s.eq_bands.is_empty() || s.eq_bands == ten_flat_bands()) || s.eq_preamp_db.is_some()))
 }
 
 /// Everything to write for these settings.
@@ -1526,7 +1533,7 @@ pub fn apply_preset(s: SoundSettings, p: &NamedPreset) -> SoundSettings {
     SoundSettings {
         eq_enabled: true,
         eq_preamp_db: (p.preamp_db != 0.0).then_some(p.preamp_db),
-        eq_bands: if bands.is_empty() { graphic() } else { bands },
+        eq_bands: bands,
         ..s
     }
 }
@@ -1549,16 +1556,16 @@ pub fn import(s: SoundSettings, text: &str) -> Result<SoundSettings, SoundError>
 }
 
 /// Appends a flat 1 kHz peak.
-pub fn add_band(s: SoundSettings) -> SoundSettings {
+pub fn add_band(s: SoundSettings, freq: f32, gain_db: f32) -> SoundSettings {
     let mut bands = s.eq_bands.clone();
-    bands.push(SoundBand { kind: EqKind::Peaking, freq: 1000.0, gain_db: 0.0, q: 1.0, channel: BandChannel::Both });
+    bands.push(SoundBand { kind: EqKind::Peaking, freq, gain_db, q: 1.0, channel: BandChannel::Both });
     with_bands(s, bands)
 }
 
-/// Removes a band; removing the last one restores the ten defaults.
+/// Removes a band.
 pub fn remove_band(s: SoundSettings, index: u32) -> SoundSettings {
     let bands: Vec<SoundBand> = s.eq_bands.iter().enumerate().filter(|(i, _)| *i != index as usize).map(|(_, b)| *b).collect();
-    with_bands(s, if bands.is_empty() { graphic() } else { bands })
+    with_bands(s, bands)
 }
 
 /// A control's range; every edit through the core is held inside it.
@@ -1880,12 +1887,12 @@ pub fn sound_from_json(json: String) -> Option<SoundSettings> {
     sound_from(&json)
 }
 
-/// The equalizer in use reset to flat with the automatic pre-amp: the ten default bands (parametric)
-/// or every slider at 0 in the same layout (graphic).
+/// The equalizer in use reset to flat with the automatic pre-amp: no bands (parametric) or every slider
+/// at 0 in the same layout (graphic).
 pub(crate) fn eq_reset_bands(sound: SoundSettings) -> SoundSettings {
     match sound.eq_mode {
         EqMode::Graphic => SoundSettings { eq_graphic: vec![0.0; sound.eq_graphic.len().max(1)], eq_graphic_target: Vec::new(), eq_preamp_db: None, ..sound },
-        EqMode::Parametric => SoundSettings { eq_bands: graphic(), eq_preamp_db: None, ..sound },
+        EqMode::Parametric => SoundSettings { eq_bands: Vec::new(), eq_preamp_db: None, ..sound },
     }
 }
 
@@ -2044,7 +2051,7 @@ mod tests {
 
         // Sound json defaults.
         let s = sound_from("{}").unwrap();
-        assert_eq!(s.eq_bands, graphic());
+        assert_eq!(s.eq_bands, [], "the parametric equalizer starts with no bands");
         assert_eq!(s.limiter_threshold_db, -1.0);
         assert_eq!(s.eq_preamp_db, None);
         assert_eq!(sound_from(r#"{"replayGain":7}"#).unwrap().replay_gain, GainMode::Auto);
@@ -2195,7 +2202,7 @@ mod tests {
 
     #[test]
     fn band_levels() {
-        let s = sound();
+        let s = SoundSettings { eq_bands: ten_flat_bands(), ..sound() };
         let b = set_band(s.clone(), 3, band_from(42, 5.0, 30.0, 0.0, 7));
         assert_eq!(b.eq_bands[3], band_from(0, 20.0, 12.0, 0.2, 0));
         let ok = band_from(1, 120.0, -3.5, 0.7, 2);
@@ -2247,7 +2254,7 @@ mod tests {
         assert!(!sound_json(&busy.sound()).contains("bypass"), "left out when off, as before");
 
         // Auto preamp off keeps level.
-        let mut s = sound();
+        let mut s = SoundSettings { eq_bands: ten_flat_bands(), ..sound() };
         s.eq_enabled = true;
         s.eq_bands[2].gain_db = 4.5;
         assert_eq!(s.effective_preamp_db(), -4.5);
@@ -2350,19 +2357,17 @@ mod tests {
         let s = apply_preset(SoundSettings { eq_preamp_db: Some(-4.0), ..sound() }, &flat);
         assert!(s.eq_enabled);
         assert_eq!(s.eq_preamp_db, None, "a pre-amp of 0 is automatic");
-        assert_eq!(s.eq_bands, graphic());
+        assert_eq!(s.eq_bands, []);
         let bass = NamedPreset { kind: nori_model::PresetKind::BassBoost, preamp_db: -6.0, bands: vec![nori_model::EqBand { kind: EqKind::LowShelf, freq: 100.0, gain_db: 6.0, q: 0.7 }] };
         let s = apply_preset(sound(), &bass);
         assert_eq!(s.eq_preamp_db, Some(-6.0));
         assert_eq!(s.eq_bands, [band_from(1, 100.0, 6.0, 0.7, 0)]);
 
-        let added = add_band(sound());
-        assert_eq!(added.eq_bands.len(), 11);
-        assert_eq!(added.eq_bands[10], band_from(0, 1000.0, 0.0, 1.0, 0));
-        assert_eq!(remove_band(added.clone(), 10).eq_bands, graphic());
-        assert_eq!(remove_band(added, 99).eq_bands.len(), 11);
-        let one = SoundSettings { eq_bands: vec![band_from(2, 5.0, 1.0, 1.0, 0)], ..sound() };
-        assert_eq!(remove_band(one, 0).eq_bands, graphic(), "never an empty equalizer");
+        let added = add_band(add_band(sound(), 200.0, 3.0), 4000.0, -2.0);
+        assert_eq!(added.eq_bands, [band_from(0, 200.0, 3.0, 1.0, 0), band_from(0, 4000.0, -2.0, 1.0, 0)], "where it was put, after the others");
+        assert_eq!(remove_band(added.clone(), 0).eq_bands, [band_from(0, 4000.0, -2.0, 1.0, 0)]);
+        assert_eq!(remove_band(added.clone(), 99).eq_bands, added.eq_bands);
+        assert_eq!(remove_band(remove_band(added, 1), 0).eq_bands, [], "the last band goes too");
 
         // Graphic edits.
         let g = SoundSettings { eq_mode: EqMode::Graphic, ..sound() };
@@ -2393,15 +2398,16 @@ mod tests {
         assert_eq!(load(&HashMap::new()).eq_mode, EqMode::Graphic, "a new install");
         // From before this version, with only the defaults: nothing was set up, so graphic.
         assert_eq!(load(&stored_before(StoredPrefs::default())).eq_mode, EqMode::Graphic);
+        assert_eq!(load(&stored_before(StoredPrefs { eq_bands: ten_flat_bands(), ..StoredPrefs::default() })).eq_mode, EqMode::Graphic, "the old flat bands");
         // From before, with a parametric equalizer in any form: it stays.
         let d = StoredPrefs::default();
-        let mut moved = graphic();
+        let mut moved = ten_flat_bands();
         moved[3].gain_db = 2.5;
         let bass = vec![band_from(1, 100.0, 6.0, 0.7, 0)];
         for (what, p) in [
             ("a band moved", StoredPrefs { eq_bands: moved, ..d.clone() }),
             ("a preset or an AutoEQ curve", StoredPrefs { eq_bands: bass, eq_preamp_db: Some(-6.0), ..d.clone() }),
-            ("a band added", StoredPrefs { eq_bands: add_band(d.sound()).eq_bands, ..d.clone() }),
+            ("a band added", StoredPrefs { eq_bands: add_band(StoredPrefs { eq_bands: ten_flat_bands(), ..d.clone() }.sound(), 1000.0, 0.0).eq_bands, ..d.clone() }),
             ("the equalizer on, flat", StoredPrefs { eq_enabled: true, ..d.clone() }),
             ("a pre-amp of its own", StoredPrefs { eq_preamp_db: Some(-3.0), ..d.clone() }),
         ] {
