@@ -219,16 +219,22 @@ impl LyricTiming {
                 ((gap.min(LONGEST_GAP_MS) as f64 * GLIDE_SHARE) as i32).clamp(MIN_GLIDE_MS, GLIDE_MS)
             })
             .collect();
-        // Switch times strictly increase.
+        // When the words of each line are sung.
+        let sung_by = |i: usize| [spans[i], backing_spans[i]].iter().flat_map(|&(from, to)| &words[from as usize..to as usize]).map(|w| w.end_ms).max();
+        // Switch times strictly increase. Filled word by word, a line is left only once its last word is
+        // sung (by the next line's start at the latest), so a quick change does not rush that word.
         let mut switch_at: Vec<i64> = Vec::with_capacity(n);
         for i in 0..n {
-            let at = starts[i] - (glide[i] / 2) as i64;
+            let mut at = starts[i] - (glide[i] / 2) as i64;
+            if let Some(end) = i.checked_sub(1).filter(|_| word_timed).and_then(sung_by) {
+                at = at.max(end.min(starts[i]));
+            }
             switch_at.push(if i == 0 { at } else { at.max(switch_at[i - 1] + 1) });
         }
         // The last line is over at its end (given or LAST_LINE_MS), after its words stop animating, and
         // never before it has been lit.
         let over_at = n.checked_sub(1).map(|last| {
-            let sung = [spans[last], backing_spans[last]].iter().flat_map(|&(from, to)| &words[from as usize..to as usize]).map(|w| w.end_ms + MOTION_TAIL_MS).max();
+            let sung = sung_by(last).map(|end| end + MOTION_TAIL_MS);
             let end = if last_end > starts[last] { last_end } else { starts[last] + LAST_LINE_MS };
             end.max(sung.unwrap_or(end)).max(switch_at[last] + 1)
         });
@@ -658,6 +664,28 @@ mod tests {
         let t = LyricTiming::new(true, true, vec![Line { start_ms: 0, len: 10, words: vec![w(0, 500, 1, 4), w(500, 1_000, 5, 9)], ..Default::default() }]);
         assert_eq!(t.sung_offset(0, 1_000), 10.0);
         assert_eq!(t.sung_offset(0, 750), 7.5);
+    }
+
+    /// Filled word by word, a line is left once its last word is sung, never later than the next line's
+    /// start: a quick line change does not rush the end of a word.
+    #[test]
+    fn a_line_is_left_once_its_last_word_is_sung() {
+        // Line starts 0 and 1000; the glide into the second leads its start by 310 ms.
+        let line = |start_ms, words| Line { start_ms, len: 9, words, ..Default::default() };
+        let cases = [
+            // (first line's last word ends, switch to the second line)
+            (600, 690),
+            (800, 800),
+            (999, 999),
+            (1_200, 1_000),
+        ];
+        for (end, switch) in cases {
+            let t = LyricTiming::new(true, true, vec![line(0, vec![w(0, 300, 0, 4), w(300, end, 5, 9)]), line(1_000, vec![w(1_000, 1_500, 0, 9)])]);
+            assert_eq!(t.switch_at[1], switch, "last word ending at {end}");
+        }
+        // Without word times the change stays centred on the start.
+        let t = LyricTiming::new(true, false, vec![line(0, vec![w(0, 300, 0, 4), w(300, 999, 5, 9)]), line(1_000, Vec::new())]);
+        assert_eq!(t.switch_at[1], 690);
     }
 
     #[test]
