@@ -492,6 +492,12 @@ fn to_main_with<A>(ui: &AppWindow, f: impl Fn(&AppWindow, A) + 'static) -> impl 
     }
 }
 
+/// Where in the main window a menu asked for at `x` in the player pill opens: above the pill.
+fn over_pill(m: &AppWindow, x: f32) -> (f32, f32) {
+    let chrome = m.global::<crate::Chrome>();
+    (chrome.get_player_x() + x, chrome.get_window_height() - chrome.get_bottom_room())
+}
+
 /// The player pill's window; its buttons forward to the main window.
 fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) -> Option<PlayerBar> {
     let bar = PlayerBar::new().map_err(|e| eprintln!("nori: no player window: {e}")).ok()?;
@@ -510,10 +516,24 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
     }));
     bar.on_seek(to_main_with(ui, |m, v| m.invoke_seek(v)));
     bar.on_set_volume(to_main_with(ui, |m, v| m.invoke_set_volume(v)));
-    bar.on_open_song_menu(to_main(ui, |m| m.invoke_show_player_menu()));
+    bar.on_song_menu(to_main_with(ui, |m, x| {
+        let (x, y) = over_pill(m, x);
+        m.invoke_song_menu_at(x, y);
+    }));
+    bar.on_album_menu(to_main_with(ui, |m, x| {
+        let (x, y) = over_pill(m, x);
+        m.invoke_album_menu_at(x, y);
+    }));
     let go = bar.global::<crate::Go>();
     go.on_artist(to_main_with(ui, |m, id| m.global::<crate::Go>().invoke_artist(id)));
     go.on_album(to_main_with(ui, |m, id| m.global::<crate::Go>().invoke_album(id)));
+    let main = ui.as_weak();
+    go.on_artist_menu(move |id, name, x, _| {
+        if let Some(m) = main.upgrade() {
+            let (x, y) = over_pill(&m, x);
+            m.invoke_artist_menu_at(id, name, x, y);
+        }
+    });
     bar.on_set_inspector(to_main_with(ui, |m, i| {
         m.set_inspector(i);
         m.invoke_player_changed();
@@ -814,6 +834,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_open_playlist, h, |a, id| a.open_page(PageAsk::Playlist(id.into())));
     on!(ui.on_open_mix, h, |a, id| a.open_page(PageAsk::Mix(id.into())));
     on!(ui.on_play_album, h, |a, id| a.play_fetch(Fetch::Album(id.into())));
+    on!(ui.on_play_artist, h, |a, id| a.play_fetch(Fetch::Artist(id.into())));
     on!(ui.on_play_playlist, h, |a, id| a.play_fetch(Fetch::Playlist(id.into())));
     on!(ui.on_play_mix, h, |a, id| a.play_fetch(Fetch::Mix(id.into())));
     on!(ui.on_queue_card, h, |a, kind, id, next| a.queue_card(kind, id.into(), next));
@@ -899,8 +920,14 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     let go = ui.global::<crate::Go>();
     on!(go.on_artist, h, |a, id| a.go_to(PageAsk::Artist(id.into())));
     on!(go.on_album, h, |a, id| a.go_to(PageAsk::Album(id.into())));
+    let main = ui.as_weak();
+    go.on_artist_menu(move |id, name, x, y| {
+        if let Some(m) = main.upgrade() {
+            m.invoke_artist_menu_at(id, name, x, y);
+        }
+    });
     on!(ui.on_jam_play, h, |a, kind, id| {
-        let what = if kind == 0 { Fetch::Album(id.into()) } else { Fetch::Playlist(id.into()) };
+        let Some(what) = card_fetch(kind, id.into()) else { return };
         a.on_session(|s| {
             s.play_later(what, false);
             s.jam_open();
@@ -1929,19 +1956,15 @@ impl App {
     /// Card `id` of `kind` (`Card::kind`, or 4 a mix) next or at the end of the queue; a song card, the
     /// song alone.
     fn queue_card(&self, kind: i32, id: String, next: bool) {
-        let what = match kind {
-            0 => Fetch::Album(id),
-            2 => Fetch::Playlist(id),
-            3 => {
-                if let Some(song) = self.feed_songs.iter().flatten().find(|s| s.id == id) {
-                    self.on_session(|s| s.enqueue(vec![song.clone()], next));
-                }
-                return;
+        if kind == 3 {
+            if let Some(song) = self.feed_songs.iter().flatten().find(|s| s.id == id) {
+                self.on_session(|s| s.enqueue(vec![song.clone()], next));
             }
-            4 => Fetch::Mix(id),
-            _ => return,
-        };
-        self.on_session(|s| s.enqueue_later(what, next));
+            return;
+        }
+        if let Some(what) = card_fetch(kind, id) {
+            self.on_session(|s| s.enqueue_later(what, next));
+        }
     }
 
     fn list_song(&self, list: i32, i: usize) -> Option<Song> {
@@ -3384,6 +3407,17 @@ fn album_card(a: &nori_core::Album) -> Card {
     Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: nori_core::lines::album_subtitle(&a.artist, a.year).into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 0 }
 }
 
+/// The songs card `id` of `Card::kind` (or 4, a mix) stands for, fetched whole; a song card's are at hand.
+fn card_fetch(kind: i32, id: String) -> Option<Fetch> {
+    match kind {
+        0 => Some(Fetch::Album(id)),
+        1 => Some(Fetch::Artist(id)),
+        2 => Some(Fetch::Playlist(id)),
+        4 => Some(Fetch::Mix(id)),
+        _ => None,
+    }
+}
+
 fn artist_card(a: &nori_core::Artist) -> Card {
     Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.album_count.map(words::albums).unwrap_or_default().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 1 }
 }
@@ -3877,36 +3911,85 @@ mod tests {
         assert_eq!(asked.get(), 1);
     }
 
+    /// The main window and its player pill as the app joins them, the pill at x 140 and 1000 wide.
+    fn window_and_pill() -> (AppWindow, crate::PlayerBar) {
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        let chrome = ui.global::<crate::Chrome>();
+        chrome.set_window_width(1280.0);
+        chrome.set_window_height(820.0);
+        chrome.set_player_x(140.0);
+        chrome.set_player_w(1000.0);
+        ui.set_has_song(true);
+        let bar = player(&ui, |_, _| Image::default()).unwrap();
+        dressed().paint(&bar);
+        bar.window().set_size(slint::PhysicalSize::new(1000, 64));
+        bar.set_room(1000.0);
+        bar.set_has_song(true);
+        bar.set_now_title("Song".into());
+        bar.set_now_artist("Artist".into());
+        bar.set_now_artist_id("a1".into());
+        ui.show().unwrap();
+        bar.show().unwrap();
+        (ui, bar)
+    }
+
+    fn press(window: &slint::Window, x: f32, y: f32, button: slint::platform::PointerEventButton) {
+        let at = slint::LogicalPosition::new(x, y);
+        window.dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
+        window.dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
+        window.dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button });
+    }
+
     #[test]
-    fn the_players_menu_acts() {
+    fn a_right_press_on_the_pills_title_opens_the_songs_menu() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        let ui = window();
-        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
-        ui.global::<crate::Chrome>().set_player_x(140.0);
-        ui.global::<crate::Chrome>().set_player_w(1000.0);
+        let (ui, bar) = window_and_pill();
         ui.on_player_menu(|| ModelRc::new(VecModel::from(vec![crate::SongGo { kind: 17, title: "Sleep timer…".into(), enabled: true, ..Default::default() }])));
         let did = Rc::new(RefCell::new(Vec::new()));
         let seen = did.clone();
         ui.on_player_act(move |kind, _| seen.borrow_mut().push(kind));
-        ui.show().unwrap();
         let settle = || {
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
             ui.window().take_snapshot().unwrap();
+            bar.window().take_snapshot().unwrap();
         };
         settle();
-        ui.invoke_show_player_menu();
+        use slint::platform::PointerEventButton::{Left, Right};
+        press(bar.window(), 75.0, 24.0, Right);
         settle();
-        // One row under the song's head: the popover's foot on the pill's room, its right edge the ⋯ button's.
-        let at = slint::LogicalPosition::new(1128.0 - 100.0, 820.0 - 96.0 - 6.0 - 16.0);
-        use slint::platform::PointerEventButton::Left;
-        ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
-        ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button: Left });
-        ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button: Left });
+        // The menu's one line, its foot on the pill's room, beside where the pill was pressed.
+        press(ui.window(), 140.0 + 75.0 + 60.0, 820.0 - 96.0 - 6.0 - 16.0, Left);
         settle();
         assert_eq!(*did.borrow(), [17]);
+    }
+
+    #[test]
+    fn a_right_press_on_an_artists_name_offers_to_play_the_artist() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let (ui, bar) = window_and_pill();
+        let played = Rc::new(RefCell::new(Vec::new()));
+        let seen = played.clone();
+        ui.on_play_artist(move |id| seen.borrow_mut().push(id.to_string()));
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+            bar.window().take_snapshot().unwrap();
+        };
+        settle();
+        use slint::platform::PointerEventButton::{Left, Right};
+        press(bar.window(), 75.0, 41.0, Right);
+        settle();
+        // Play, the first of its three lines over the pill: Play, Play next, Add to queue.
+        press(ui.window(), 140.0 + 75.0 + 60.0, 820.0 - 96.0 - 6.0 - 16.0 - 2.0 * 32.0, Left);
+        settle();
+        assert_eq!(*played.borrow(), ["a1"]);
     }
 
     /// A queue song dragged two rows down glides into its slot, then is moved once; on the frame the list
