@@ -64,7 +64,7 @@
   }
   .mini :global(.output),
   .mini :global(.seal) {
-    color: color-mix(in srgb, var(--ink) 75%, transparent);
+    color: color-mix(in srgb, var(--ink) 65%, transparent);
   }
   .mini :global(.output.lit) {
     color: var(--ink);
