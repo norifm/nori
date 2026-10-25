@@ -1529,13 +1529,13 @@ fn panel_tabs(f: &mut Frame, app: &mut App, t: &Theme, r: Rect) {
     }
 }
 
-/// Where the music plays: another device by name, lit, or this computer's output.
+/// Where the music plays: another device by name, in bold ink, or this computer's output.
 fn output_line(f: &mut Frame, r: Rect, app: &mut App, t: &Theme) {
     let (name, lit) = match &app.devices.active {
         Some((_, name)) => (crate::text::playing_on(name), true),
         None => (crate::text::output_name(&app.output), false),
     };
-    text(f, r, &name, if lit { t.current() } else { t.dim() });
+    text(f, r, &name, if lit { bold().fg(t.ink) } else { t.dim() });
     if app.devices.on {
         app.hits.push((Rect { width: (name.width() as u16).min(r.width), ..r }, Hit::Button(Button::Panel(Panel::Devices))));
     }
