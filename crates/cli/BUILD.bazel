@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-cli',
  'edition': '2021',
- 'version': '0.7.1-beta.1',
+ 'version': '0.7.1-beta.2',
  'targets': [{'name': 'nori-cli', 'kind': 'bin', 'root': 'src/main.rs', 'test': True},
              {'name': 'beat_model', 'kind': 'test', 'root': 'tests/beat_model.rs', 'test': True}],
  'features': {'tests': ['default', 'sign-in-window'],

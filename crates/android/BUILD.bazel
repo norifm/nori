@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-android',
  'edition': '2021',
- 'version': '0.7.1-beta.1',
+ 'version': '0.7.1-beta.2',
  'targets': [{'name': 'norimusic', 'kind': 'cdylib', 'root': 'src/lib.rs', 'test': True},
              {'name': 'build-script-build',
               'kind': 'custom-build',
