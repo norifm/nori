@@ -6,18 +6,22 @@ use nori_core::race::{lyrics_replaces, LyricsPick};
 use nori_look::lyrics::LyricClock;
 use slint::{ModelRc, SharedString, VecModel};
 
-use crate::sung::{self, Faces, Laid};
+use crate::sung::{self, Faces, Laid, Part};
 use crate::{LyricPiece, SungLine};
 
 /// In a duet, the room each voice leaves clear on the far side, so two singers read as a conversation.
 const DUET_LANE: f32 = 48.0;
+/// Backing vocals' size against their line's (app.slint draws them so).
+const BACKING_SIZE: f32 = 0.72;
+/// What is not sung yet is the ink at this alpha, as app.slint draws unsung lines.
+const UNSUNG: f32 = 0.36;
 
 pub struct SongLyrics {
     pick: LyricsPick,
     clock: LyricClock,
     faces: Option<Faces>,
-    /// Active line as last laid out, per view (side panel, Now Playing).
-    laid: [Option<Laid>; 2],
+    /// Active line as last laid out, per view (side panel, Now Playing) and part (lead, backing).
+    laid: [[Option<Laid>; 2]; 2],
     /// The width every line was last broken into rows at, per view.
     rows_at: [Option<f32>; 2],
 }
@@ -25,7 +29,7 @@ pub struct SongLyrics {
 impl SongLyrics {
     pub fn new(pick: LyricsPick, position_ms: i64, faces: Option<Faces>) -> SongLyrics {
         let clock = nori_core::look::clock_on(&pick.lyrics, position_ms);
-        SongLyrics { pick, clock, faces, laid: [None, None], rows_at: [None, None] }
+        SongLyrics { pick, clock, faces, laid: Default::default(), rows_at: [None, None] }
     }
 
     pub fn lines(&self) -> ModelRc<SungLine> {
@@ -81,33 +85,46 @@ impl SongLyrics {
             Some(l) if sweeping && self.faces.is_none() => split(&l.text, step.frame.sung),
             _ => Default::default(),
         };
-        Now { active: step.frame.active, sweeping, sung, now, mix, rest, wait, at: step.frame.sung, ms: self.clock.shown_ms() }
+        Now { active: step.frame.active, sweeping, sung, now, mix, rest, wait, at: step.frame.sung, backing_at: self.clock.backing_sung(), ms: self.clock.shown_ms() }
     }
 
-    /// The active line's pieces for `view` (0 side panel, 1 Now Playing); re-laid only when line, size
-    /// or width change.
-    pub fn pieces(&mut self, view: usize, now: &Now, size: f32, width: f32, lit: f32, dim: f32) -> Vec<LyricPiece> {
+    /// The pieces of the active line's `part` for `view` (0 side panel, 1 Now Playing), the line drawn at
+    /// `size`, what is sung at alpha `lit`; re-laid only when line, size or width change. Empty when it has
+    /// no such part.
+    pub fn pieces(&mut self, view: usize, part: Part, now: &Now, size: f32, width: f32, lit: f32) -> Vec<LyricPiece> {
         let Some(faces) = &self.faces else { return Vec::new() };
         let width = width - self.lane();
         let Some((i, line)) = usize::try_from(now.active).ok().and_then(|i| self.pick.lyrics.lines.get(i).map(|l| (i, l))) else { return Vec::new() };
-        let slot = &mut self.laid[view];
-        if !slot.as_ref().is_some_and(|l| l.is_for(i, size, width)) {
-            *slot = Some(sung::lay(faces, i, line, size, width));
+        let (text, words) = part.of(line);
+        if text.is_empty() {
+            return Vec::new();
         }
-        slot.as_ref().map_or_else(Vec::new, |l| sung::frame(l, line, now.at, now.ms, lit, dim, size * 0.6))
+        let (size, sung) = match part {
+            Part::Lead => (size, now.at),
+            Part::Backing => (size * BACKING_SIZE, now.backing_at),
+        };
+        let slot = &mut self.laid[view][part as usize];
+        if !slot.as_ref().is_some_and(|l| l.is_for(i, part, size, width)) {
+            *slot = Some(sung::lay(faces, i, line, part, size, width));
+        }
+        slot.as_ref().map_or_else(Vec::new, |l| sung::frame(l, words, sung, now.ms, lit, UNSUNG, size * 0.6))
     }
 
-    /// Every line broken into the rows its pieces take for `view` at `size` within `width`, when that width
-    /// is new; None when the lines are already so, or there is no face to measure in.
-    pub fn rows(&mut self, view: usize, size: f32, width: f32) -> Option<ModelRc<SharedString>> {
+    /// Every line and its backing vocals broken into the rows their pieces take for `view` at `size` within
+    /// `width`, when that width is new; None when the lines are already so, or there is no face to measure in.
+    pub fn rows(&mut self, view: usize, size: f32, width: f32) -> Option<[ModelRc<SharedString>; 2]> {
         let faces = self.faces.as_ref()?;
         let width = width - self.lane();
         if self.rows_at[view] == Some(width) {
             return None;
         }
         self.rows_at[view] = Some(width);
-        let lines = self.pick.lyrics.lines.iter().enumerate().map(|(i, l)| SharedString::from(sung::lay(faces, i, l, size, width).rows(&l.text)));
-        Some(ModelRc::new(VecModel::from(lines.collect::<Vec<_>>())))
+        let lines = &self.pick.lyrics.lines;
+        let rows = |part: Part, size: f32| {
+            let rows = lines.iter().enumerate().map(|(i, l)| SharedString::from(sung::lay(faces, i, l, part, size, width).rows(part.of(l).0)));
+            ModelRc::new(VecModel::from(rows.collect::<Vec<_>>()))
+        };
+        Some([rows(Part::Lead, size), rows(Part::Backing, size * BACKING_SIZE)])
     }
 
     /// Seek target for a click on `line`.
@@ -126,8 +143,10 @@ pub struct Now {
     pub mix: f32,
     pub rest: String,
     pub wait: Option<u64>,
-    /// Fill position in the active line (UTF-16 units), and the lyric-time ms it corresponds to.
+    /// Fill position in the active line and in its backing vocals (UTF-16 units), and the lyric-time ms it
+    /// corresponds to.
     pub at: f32,
+    pub backing_at: f32,
     pub ms: i64,
 }
 
@@ -193,6 +212,30 @@ mod tests {
         let now = l.advance(2500, true, true);
         assert!(now.sweeping);
         assert_eq!((now.sung.as_str(), now.now.as_str(), now.rest.as_str()), ("", "", ""));
+    }
+
+    /// Backing vocals sung over a line fill as they are sung, apart from the line's own words.
+    #[test]
+    fn backing_vocals_fill_as_they_are_sung() {
+        let word = |start_ms, end_ms, start, end| LyricWord { start_ms, end_ms, start, end };
+        let line = LyricLine {
+            start_ms: 1000,
+            end_ms: 3000,
+            text: "one two".into(),
+            words: vec![word(1000, 2000, 0, 3), word(2000, 3000, 4, 7)],
+            backing: "(oh oh)".into(),
+            backing_words: vec![word(1000, 1200, 0, 3), word(2600, 3000, 4, 7)],
+            ..Default::default()
+        };
+        let lyrics = Lyrics { synced: true, word_timed: true, lines: vec![line], ..Default::default() };
+        let mut l = SongLyrics::new(LyricsPick { lyrics, origin: LyricsOrigin::Server }, 0, Faces::inter());
+        let now = l.advance(1500, true, true);
+        let lead = l.pieces(0, Part::Lead, &now, 22.0, 300.0, 1.0);
+        let backing = l.pieces(0, Part::Backing, &now, 22.0, 300.0, 0.7);
+        let texts: Vec<&str> = backing.iter().map(|p| p.text.as_str()).collect();
+        assert_eq!(texts, ["(oh", " ", "oh)"]);
+        assert_eq!((backing[0].a0, backing[2].a1), (0.7, 0.36), "the first sung, the second not yet");
+        assert_eq!((lead[0].a0, lead[0].a1), (1.0, 0.36), "the lead is part way through its first word");
     }
 
 }

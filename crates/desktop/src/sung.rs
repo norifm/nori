@@ -22,9 +22,26 @@ struct Placed {
     word: Option<usize>,
 }
 
+/// What of a line is laid out: what is sung, or the backing vocals sung over it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Part {
+    Lead,
+    Backing,
+}
+
+impl Part {
+    /// The part's text and its word times.
+    pub fn of(self, line: &LyricLine) -> (&str, &[LyricWord]) {
+        match self {
+            Part::Lead => (&line.text, &line.words),
+            Part::Backing => (&line.backing, &line.backing_words),
+        }
+    }
+}
+
 /// A line laid out at one size and width.
 pub struct Laid {
-    key: (usize, u32, u32),
+    key: (usize, Part, u32, u32),
     pieces: Vec<Placed>,
     row_h: f32,
 }
@@ -46,9 +63,9 @@ impl Faces {
         Some(Faces { bold: weighted(&face, 700.0), regular: weighted(&face, 400.0) })
     }
 
-    /// Backing vocals alone on their line are drawn lighter.
-    fn font(&self, line: &LyricLine, size: f32) -> Font {
-        Font::from_typeface(if line.background { &self.regular } else { &self.bold }.clone(), size)
+    /// Backing vocals, alone on their line or sung over it, are drawn lighter.
+    fn font(&self, line: &LyricLine, part: Part, size: f32) -> Font {
+        Font::from_typeface(if line.background || part == Part::Backing { &self.regular } else { &self.bold }.clone(), size)
     }
 }
 
@@ -76,19 +93,19 @@ fn byte_at(s: &str, u: u32) -> usize {
     s.len()
 }
 
-/// Lays out line `index` at `size` px within `width`, wrapping at spaces like the text does; the second
-/// voice's rows end at the right edge, as its text is aligned.
-pub fn lay(faces: &Faces, index: usize, line: &LyricLine, size: f32, width: f32) -> Laid {
-    let key = (index, size.to_bits(), width.to_bits());
-    let font = faces.font(line, size);
+/// Lays out `part` of line `index` at `size` px within `width`, wrapping at spaces like the text does; the
+/// second voice's rows end at the right edge, as its text is aligned.
+pub fn lay(faces: &Faces, index: usize, line: &LyricLine, part: Part, size: f32, width: f32) -> Laid {
+    let key = (index, part, size.to_bits(), width.to_bits());
+    let font = faces.font(line, part, size);
     let (spacing, _) = font.metrics();
     let measure = |s: &str| font.measure_str(s, None).0;
-    let text = &line.text;
+    let (text, words) = part.of(line);
     let total = units(text);
     // Cut at word edges: one piece per timed word, plus the gaps.
     let mut cuts: Vec<(u32, u32, Option<usize>)> = Vec::new();
     let mut at = 0;
-    let mut words: Vec<(usize, &LyricWord)> = line.words.iter().enumerate().filter(|(_, w)| w.start < w.end && w.end <= total).collect();
+    let mut words: Vec<(usize, &LyricWord)> = words.iter().enumerate().filter(|(_, w)| w.start < w.end && w.end <= total).collect();
     words.sort_by_key(|(_, w)| w.start);
     for (k, w) in words {
         if w.start < at {
@@ -190,9 +207,9 @@ fn held(w: &LyricWord, ms: i64) -> f32 {
     }
 }
 
-/// The pieces at `ms` with the fill `sung` UTF-16 units in: alpha `lit` before it, `dim` after, over a
-/// `feather` px edge.
-pub fn frame(laid: &Laid, line: &LyricLine, sung: f32, ms: i64, lit: f32, dim: f32, feather: f32) -> Vec<LyricPiece> {
+/// The pieces of `words`' text at `ms` with the fill `sung` UTF-16 units in: alpha `lit` before it, `dim`
+/// after, over a `feather` px edge.
+pub fn frame(laid: &Laid, words: &[LyricWord], sung: f32, ms: i64, lit: f32, dim: f32, feather: f32) -> Vec<LyricPiece> {
     // Row and x of the fill edge.
     let (row_s, x_s) = laid
         .pieces
@@ -216,7 +233,7 @@ pub fn frame(laid: &Laid, line: &LyricLine, sung: f32, ms: i64, lit: f32, dim: f
             let w = p.w.max(1.0);
             let a = ((x_s - feather / 2.0 - p.x) / w).clamp(0.0, 1.0);
             let b = ((x_s + feather / 2.0 - p.x) / w).clamp(0.0, 1.0);
-            let word = p.word.and_then(|k| line.words.get(k));
+            let word = p.word.and_then(|k| words.get(k));
             LyricPiece {
                 text: p.text.clone(),
                 x: p.x,
@@ -236,8 +253,8 @@ pub fn frame(laid: &Laid, line: &LyricLine, sung: f32, ms: i64, lit: f32, dim: f
 }
 
 impl Laid {
-    pub fn is_for(&self, index: usize, size: f32, width: f32) -> bool {
-        self.key == (index, size.to_bits(), width.to_bits())
+    pub fn is_for(&self, index: usize, part: Part, size: f32, width: f32) -> bool {
+        self.key == (index, part, size.to_bits(), width.to_bits())
     }
 
     /// `text` (the line laid) with a line end for the space at each of its row breaks: drawn so, a line
@@ -277,13 +294,13 @@ mod tests {
 
     #[test]
     fn words_are_measured_in_the_face_the_window_draws() {
-        assert_eq!(faces().font(&line(), 20.0).typeface().family_name(), "Inter Variable");
+        assert_eq!(faces().font(&line(), Part::Lead, 20.0).typeface().family_name(), "Inter Variable");
     }
 
     #[test]
     fn lines_are_measured_in_one_typeface_per_weight() {
         let faces = faces();
-        let id = |line: &LyricLine| faces.font(line, 20.0).typeface().unique_id();
+        let id = |line: &LyricLine| faces.font(line, Part::Lead, 20.0).typeface().unique_id();
         let backing = LyricLine { background: true, ..line() };
         assert_eq!(id(&line()), id(&line()));
         assert_eq!(id(&backing), id(&backing));
@@ -292,14 +309,14 @@ mod tests {
 
     #[test]
     fn line_breaks() {
-        let l = lay(&faces(), 0, &line(), 20.0, 1000.0);
+        let l = lay(&faces(), 0, &line(), Part::Lead, 20.0, 1000.0);
         let texts: Vec<&str> = l.pieces.iter().map(|p| p.text.as_str()).collect();
         assert_eq!(texts, ["I", " ", "won", "der", " ", "why"]);
         assert_eq!(l.pieces.iter().map(|p| p.row).max(), Some(0));
         assert!(l.pieces.windows(2).all(|w| w[1].x > w[0].x));
 
         // Narrow line wraps at spaces.
-        let l = lay(&faces(), 0, &line(), 20.0, 40.0);
+        let l = lay(&faces(), 0, &line(), Part::Lead, 20.0, 40.0);
         assert!(l.pieces.iter().map(|p| p.row).max().unwrap_or(0) > 0);
         assert!(l.pieces.iter().filter(|p| p.x == 0.0).all(|p| !p.text.starts_with(' ')));
     }
@@ -307,9 +324,9 @@ mod tests {
     #[test]
     fn the_second_voice_ends_its_rows_at_the_right_edge() {
         let line = LyricLine { voice: 1, ..line() };
-        let font = faces().font(&line, 20.0);
+        let font = faces().font(&line, Part::Lead, 20.0);
         for width in [1000.0, 60.0] {
-            let l = lay(&faces(), 0, &line, 20.0, width);
+            let l = lay(&faces(), 0, &line, Part::Lead, 20.0, width);
             for row in 0..=l.pieces.iter().map(|p| p.row).max().unwrap() {
                 let end = l.pieces.iter().filter(|p| p.row == row).map(|p| p.x + font.measure_str(p.text.trim_end(), None).0).fold(0.0, f32::max);
                 assert!((end - width).abs() < 0.01, "row {row} at width {width} ends at {end}");
@@ -322,9 +339,9 @@ mod tests {
     #[test]
     fn rows_break_where_the_pieces_wrap() {
         let line = line();
-        let wide = lay(&faces(), 0, &line, 20.0, 1000.0);
+        let wide = lay(&faces(), 0, &line, Part::Lead, 20.0, 1000.0);
         assert_eq!(wide.rows(&line.text), "I wonder why");
-        let narrow = lay(&faces(), 0, &line, 20.0, 40.0);
+        let narrow = lay(&faces(), 0, &line, Part::Lead, 20.0, 40.0);
         let rows = narrow.rows(&line.text);
         let starts: Vec<u32> = narrow.pieces.iter().filter(|p| p.x == 0.0).map(|p| p.start).collect();
         let mut at = 0;
@@ -337,8 +354,8 @@ mod tests {
     #[test]
     fn frames_share_the_piece_text() {
         let line = line();
-        let l = lay(&faces(), 0, &line, 20.0, 1000.0);
-        let (a, b) = (frame(&l, &line, 1.0, 100, 1.0, 0.3, 4.0), frame(&l, &line, 6.0, 900, 1.0, 0.3, 4.0));
+        let l = lay(&faces(), 0, &line, Part::Lead, 20.0, 1000.0);
+        let (a, b) = (frame(&l, &line.words, 1.0, 100, 1.0, 0.3, 4.0), frame(&l, &line.words, 6.0, 900, 1.0, 0.3, 4.0));
         assert!(a.iter().zip(&b).all(|(x, y)| x.text.as_ptr() == y.text.as_ptr()), "a frame reuses the laid-out text");
     }
 
@@ -354,8 +371,8 @@ mod tests {
 
         // Fill is lit behind and dim ahead.
         let line = line();
-        let l = lay(&faces(), 0, &line, 20.0, 1000.0);
-        let f = frame(&l, &line, 6.0, 1000, 1.0, 0.3, 4.0);
+        let l = lay(&faces(), 0, &line, Part::Lead, 20.0, 1000.0);
+        let f = frame(&l, &line.words, 6.0, 1000, 1.0, 0.3, 4.0);
         assert_eq!(f.first().map(|p| p.a0), Some(1.0));
         assert_eq!(f.last().map(|p| p.a1), Some(0.3));
     }
