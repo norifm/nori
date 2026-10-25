@@ -2431,7 +2431,7 @@ component PlayerControls inherits Rectangle {
                 y: (parent.height - self.height) / 2;
                 height: 34px;
                 icon: 20px;
-                idle: root.inspector == 3 ? Theme.accent : Theme.text.with-alpha(0.75);
+                idle: root.inspector == 3 ? Theme.accent : Theme.text;
                 clicked => { root.set-inspector(root.inspector == 3 ? 0 : 3); }
             }
             if root.has-song && !root.guest: Seal {
@@ -2439,7 +2439,6 @@ component PlayerControls inherits Rectangle {
                 size: 20px;
                 width: 34px;
                 height: 34px;
-                muted: Theme.text.with-alpha(0.75);
                 liked: root.now-starred;
                 clicked => { root.star(); }
             }
@@ -6145,9 +6144,10 @@ export component AppWindow inherits Window {
                     push: true;
                     Rectangle {
                         // The cover's own wash across the top, running out into the page's dyed paper, as Android's
-                        // page lets its cover melt into it. Inside the page, which is opaque while it slides in.
+                        // page lets its cover melt into it. Inside the page, which is opaque while it slides in. It
+                        // scrolls with the cover and title it sits behind.
                         Image {
-                            y: 0;
+                            y: min(0px, page-flick.content-y);
                             width: 100%;
                             height: 440px;
                             visible: root.covers-tint;
@@ -6155,7 +6155,7 @@ export component AppWindow inherits Window {
                             image-fit: fill;
                         }
                         Rectangle {
-                            y: 0;
+                            y: min(0px, page-flick.content-y);
                             height: 440px;
                             background: @linear-gradient(180deg, Theme.ground.with-alpha(0.15) 0%, Theme.ground.with-alpha(0.55) 55%, Theme.ground 100%);
                         }
