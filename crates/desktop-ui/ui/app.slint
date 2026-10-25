@@ -1732,6 +1732,7 @@ global SongIcons {
         if kind == 15 { return Icons.community; }
         if kind == 16 { return Icons.emoji-sing-right-note; }
         if kind == 17 { return Icons.half-moon; }
+        if kind == 18 { return Icons.minus-circle; }
         return Icons.info-circle;
     }
 }
@@ -5404,12 +5405,22 @@ export component AppWindow inherits Window {
     // A song's details, in a sheet.
     in-out property <bool> details-open;
     in property <[Detail]> details;
-    // Adding a song to a playlist: the sheet open, the playlists offered, and a new one's name.
+    // Adding a song to a playlist: the sheet open, the playlists offered, whether a new one is being named,
+    // and its name.
     in-out property <bool> picker-open;
     in property <[Card]> picker-playlists;
+    in-out property <bool> picker-naming;
     in-out property <string> picker-name;
     callback add-to-playlist(string);
     callback add-to-new-playlist(string);
+    // The playlist shown can be changed (the core's `playlist_editable`): its list head renames and deletes it.
+    in property <bool> page-editable;
+    in-out property <bool> rename-open;
+    in-out property <string> rename-name;
+    callback rename-playlist(string);
+    // Deleting the playlist shown, asked first.
+    in-out property <bool> delete-open;
+    callback delete-playlist();
     // "Join a Jam": the sheet open, its link, why it failed, and joining under way.
     in-out property <bool> join-open;
     // Signing the profile's account in with cookies pasted from a browser (YouTube Music).
@@ -6479,6 +6490,25 @@ export component AppWindow inherits Window {
                                             size: 44px;
                                             icon: 24px;
                                             clicked => { root.page-act(a); }
+                                        }
+                                        if root.page-editable: IconButton {
+                                            y: (parent.height - self.height) / 2;
+                                            glyph: Icons.edit-pencil;
+                                            quiet: true;
+                                            size: 44px;
+                                            icon: 24px;
+                                            clicked => {
+                                                root.rename-name = root.page-title;
+                                                root.rename-open = true;
+                                            }
+                                        }
+                                        if root.page-editable: IconButton {
+                                            y: (parent.height - self.height) / 2;
+                                            glyph: Icons.trash;
+                                            quiet: true;
+                                            size: 44px;
+                                            icon: 24px;
+                                            clicked => { root.delete-open = true; }
                                         }
                                     }
                                     Rectangle {
@@ -7824,6 +7854,8 @@ export component AppWindow inherits Window {
             }
         }
 
+        // Add to playlist: New playlist first, which takes its name in its place, then the playlists the song
+        // can go into; picking one adds it.
         if root.picker-open: Rectangle {
             background: Theme.ground.with-alpha(0.6);
             TouchArea {
@@ -7844,16 +7876,34 @@ export component AppWindow inherits Window {
                         font-size: 17px;
                         font-weight: 700;
                     }
-                    Field {
-                        height: 34px;
-                        border-radius: 8px;
-                        clip: true;
+                    if !root.picker-naming: MenuRow {
                         icon: Icons.plus;
-                        placeholder: "New playlist";
-                        text <=> root.picker-name;
-                        accepted => {
-                            if root.picker-name != "" {
-                                root.add-to-new-playlist(root.picker-name);
+                        text: "New playlist";
+                        clicked => { root.picker-naming = true; }
+                    }
+                    if root.picker-naming: HorizontalLayout {
+                        spacing: 8px;
+                        Field {
+                            height: 34px;
+                            border-radius: 8px;
+                            clip: true;
+                            icon: Icons.plus;
+                            placeholder: "Name";
+                            text <=> root.picker-name;
+                            init => { self.take-focus(); }
+                            accepted => {
+                                if root.picker-name != "" {
+                                    root.add-to-new-playlist(root.picker-name);
+                                }
+                            }
+                        }
+                        Capsule {
+                            y: (parent.height - self.height) / 2;
+                            text: "Create";
+                            clicked => {
+                                if root.picker-name != "" {
+                                    root.add-to-new-playlist(root.picker-name);
+                                }
                             }
                         }
                     }
@@ -7866,9 +7916,51 @@ export component AppWindow inherits Window {
                             for c in root.picker-playlists: MenuRow {
                                 icon: Icons.playlist;
                                 text: c.title;
+                                detail: c.sub;
                                 clicked => { root.add-to-playlist(c.id); }
                             }
                         }
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        SmallButton {
+                            text: "Cancel";
+                            clicked => { root.picker-open = false; }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.rename-open: Rectangle {
+            background: Theme.ground.with-alpha(0.6);
+            TouchArea {
+                clicked => { root.rename-open = false; }
+            }
+            MenuSheet {
+                x: (parent.width - self.width) / 2;
+                y: 80px;
+                width: 380px;
+                height: rename-sheet.preferred-height;
+                TouchArea {}
+                rename-sheet := VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+                    Text {
+                        text: "Rename playlist";
+                        color: Theme.text;
+                        font-size: 17px;
+                        font-weight: 700;
+                    }
+                    Field {
+                        height: 34px;
+                        border-radius: 8px;
+                        clip: true;
+                        icon: Icons.edit-pencil;
+                        placeholder: "Name";
+                        text <=> root.rename-name;
+                        init => { self.take-focus(); }
+                        accepted => { root.rename-playlist(root.rename-name); }
                     }
                     HorizontalLayout {
                         alignment: end;
@@ -7876,15 +7968,58 @@ export component AppWindow inherits Window {
                         SmallButton {
                             y: (parent.height - self.height) / 2;
                             text: "Cancel";
-                            clicked => { root.picker-open = false; }
+                            clicked => { root.rename-open = false; }
                         }
                         Capsule {
-                            text: "Create";
-                            clicked => {
-                                if root.picker-name != "" {
-                                    root.add-to-new-playlist(root.picker-name);
-                                }
-                            }
+                            text: "Rename";
+                            clicked => { root.rename-playlist(root.rename-name); }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.delete-open: Rectangle {
+            background: Theme.ground.with-alpha(0.6);
+            TouchArea {
+                clicked => { root.delete-open = false; }
+            }
+            MenuSheet {
+                x: (parent.width - self.width) / 2;
+                y: 80px;
+                width: 380px;
+                height: delete-sheet.preferred-height;
+                TouchArea {}
+                delete-sheet := VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+                    Text {
+                        text: "Delete “" + root.page-title + "”?";
+                        color: Theme.text;
+                        font-size: 17px;
+                        font-weight: 700;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: "It is deleted on the server, for every device.";
+                        color: Theme.dim;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+                        SmallButton {
+                            y: (parent.height - self.height) / 2;
+                            text: "Cancel";
+                            clicked => { root.delete-open = false; }
+                        }
+                        Capsule {
+                            text: "Delete";
+                            icon: Icons.trash;
+                            ink: Theme.danger;
+                            label: Theme.ground;
+                            clicked => { root.delete-playlist(); }
                         }
                     }
                 }

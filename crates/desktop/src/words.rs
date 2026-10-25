@@ -243,6 +243,20 @@ pub fn playlist_created(name: &str) -> String {
     format!("Made {name}")
 }
 
+pub fn removed_from_playlist(name: &str) -> String {
+    format!("Removed from {name}")
+}
+
+pub fn playlist_renamed(name: &str) -> String {
+    format!("Renamed to {name}")
+}
+
+pub fn playlist_deleted(name: &str) -> String {
+    format!("Deleted {name}")
+}
+
+pub const REMOVE_FROM_PLAYLIST: &str = "Remove from playlist";
+
 pub fn playlist_failed(e: &str) -> String {
     format!("The playlist could not be changed: {e}")
 }

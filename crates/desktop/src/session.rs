@@ -51,6 +51,8 @@ pub enum Msg {
     Lyrics { song: String, pick: LyricsPick },
     Facts(Box<crate::settings::Facts>),
     Note { text: String, error: bool },
+    /// A playlist write the server took, and what to say: the playlists are read again.
+    Playlist { text: String, change: PlaylistChange },
     /// A note with a button, answered with [`nori_host::session::Handle::curve_answer`].
     Ask { text: String, action: String },
     LoggedIn(Result<SavedServer, String>),
@@ -81,6 +83,14 @@ pub enum Msg {
     Offer(Option<nori_core::library::QueueOffer>),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
+}
+
+/// What a playlist write did, for the pages that show it.
+pub enum PlaylistChange {
+    Made,
+    /// Its songs or its name, by id.
+    Changed(String),
+    Deleted(String),
 }
 
 /// Sends [`Msg`]s to the UI thread: queued in the app's inbox, then the window is woken to drain it.
