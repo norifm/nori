@@ -647,6 +647,11 @@ impl Mirrored {
     /// every command of this device's (`me`) it says it carried out and shows; the rest still shows over it. False
     /// when it is the one already heard.
     fn heard(&mut self, state: &DeviceState, at: i64, me: &str) -> bool {
+        // Shown what this device handed it (`handed`), its state from before the hand-off is old news.
+        let handed_here = self.heard.is_none() && self.shown.is_some();
+        if handed_here && self.handed_at.is_some_and(|h| (state.instance, state.seq) <= h) {
+            return false;
+        }
         if let Some(last) = &self.heard {
             if state.instance == last.instance {
                 if state.seq < last.seq || state == last {
@@ -691,6 +696,13 @@ impl Mirrored {
         self.show();
         self.reached();
         true
+    }
+
+    /// Playback was handed to it as `state` at `at` (this device's clock): shown so until it says more.
+    fn handed(&mut self, state: DeviceState, at: i64) {
+        self.shown = Some(state);
+        self.at = at;
+        self.device_at = None;
     }
 
     /// Heard from it: it is there.
@@ -3411,10 +3423,11 @@ impl Remote {
         let (ids, index, order, shuffle, repeat) = session.playlist(|p| (p.ids().to_vec(), p.current(), p.lit().then(|| p.play_order().map(|i| i as u32).collect()), p.lit(), p.repeat()));
         let Some(index) = index else { return };
         let songs = ids.into_iter().map(|id| session.song(&id).unwrap_or_else(|| Song::only_id(id))).collect();
-        let (playing, position_ms) = {
+        let (playing, position_ms, handed) = {
             let mut i = self.inner.lock();
             i.handed_to = Some(to.clone());
-            (i.playing.playing, i.position_now(self.now()))
+            let (playing, position_ms) = (i.playing.playing, i.position_now(self.now()));
+            (playing, position_ms, DeviceState { playing, buffering: false, position_ms, handed_to: None, obeyed: Vec::new(), ..self.state_now(&i) })
         };
         let accepts_listen = (to == from && listen_handoff) || {
             let i = self.inner.lock();
@@ -3432,7 +3445,11 @@ impl Remote {
             self.out(Out::send(link, Outgoing { to: Some(to.clone()), body: Some(command), ..Default::default() }));
         }
         self.player.apply(Op::Pause);
-        self.set_active(Some(to), true);
+        self.set_active(Some(to.clone()), true);
+        if let Some(m) = self.inner.lock().mirror.as_mut().filter(|m| m.id == to) {
+            m.handed(handed, self.now());
+        }
+        self.shown.changed();
         self.publish();
     }
 
@@ -3861,6 +3878,20 @@ mod tests {
             let shown = m.shown.as_ref().unwrap();
             assert_eq!((shown.index, shown.playing), (expected.index, expected.playing));
         }
+    }
+
+    #[test]
+    fn a_handed_device_shows_what_it_was_handed_until_it_says_more() {
+        let entry = |index: u32| Entry { index, turn: index, id: format!("s{index}"), duration: 300, ..Default::default() };
+        let before = DeviceState { seq: 5, index: Some(0), len: 4, entries: (0..4).map(entry).collect(), ..Default::default() };
+        let handed = DeviceState { seq: 9, index: Some(2), position_ms: 40_000, playing: true, ..before.clone() };
+        let mut m = Mirrored { handed_at: Some((before.instance, before.seq)), ..Mirrored::new("desk".into(), clock::now_us()) };
+        m.handed(handed, clock::now_us());
+        assert!(!m.heard(&before, 0, "me"), "its state from before the hand-off is old news");
+        let shown = m.shown.as_ref().unwrap();
+        assert_eq!((shown.index, shown.playing, shown.position_ms), (Some(2), true, 40_000));
+        assert!(m.heard(&DeviceState { seq: 6, index: Some(2), position_ms: 40_100, playing: true, ..before }, 1, "me"));
+        assert_eq!(m.shown.as_ref().unwrap().position_ms, 40_100);
     }
 
     #[test]
