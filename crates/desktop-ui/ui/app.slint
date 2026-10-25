@@ -1,9 +1,11 @@
 // nori's desktop window, laid out as Android's look has it on a wide screen: the page under a top pill and a
 // player pill, a panel on the right (queue, lyrics) and a full-window Now Playing. Draws and forwards input only.
 
-import { ListView, Switch, ComboBox } from "std-widgets.slint";
+import { ListView, Switch, ComboBox, Palette } from "std-widgets.slint";
 import { Icons, Glyph } from "icons.slint";
 export { Icons }
+// Its colour scheme follows the theme (look.rs), for the std widgets and any text without a colour of its own.
+export { Palette }
 // The Android app's typefaces, from its resources.
 import "../../../app/src/main/res/font/inter.ttf";
 import "../../../app/src/main/res/font/literata.ttf";

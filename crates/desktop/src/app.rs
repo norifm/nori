@@ -27,7 +27,7 @@ use nori_host::pages::{HomePart, PageAsk, PageGot, ShelfItems};
 use nori_host::player::{Playback, QueueShown};
 use crate::settings::{Act, Target};
 use crate::words;
-use crate::{AppWindow, ArtistLink, Card, Credits, Detail, LoginKind, LyricPiece, Motion, Pick, PlayerBar, Shelf, SongGo, SongRow, Theme, TopBar};
+use crate::{AppWindow, ArtistLink, Card, Credits, Detail, LoginKind, LyricPiece, Motion, Pick, PlayerBar, Shelf, SongGo, SongRow, TopBar};
 
 /// Cover fetch sizes, px square.
 const SMALL_PX: u32 = 256;
@@ -1418,12 +1418,12 @@ impl App {
     }
 
     fn paint(&self, look: &crate::look::Look) {
-        look.paint(&self.ui().global::<Theme>());
+        look.paint(&self.ui());
         if let Some(p) = &self.player {
-            look.paint(&p.global::<Theme>());
+            look.paint(p);
         }
         if let Some(t) = &self.top {
-            look.paint(&t.global::<Theme>());
+            look.paint(t);
         }
         self.compositor.set_page_colour(look.page());
     }
@@ -3510,7 +3510,7 @@ mod tests {
     /// A window in the theme's colors, as the app paints it.
     fn window() -> AppWindow {
         let ui = AppWindow::new().unwrap();
-        dressed().paint(&ui.global::<Theme>());
+        dressed().paint(&ui);
         ui
     }
 
@@ -3561,7 +3561,7 @@ mod tests {
 
     fn pill() -> crate::PlayerBar {
         let bar = crate::PlayerBar::new().unwrap();
-        dressed().paint(&bar.global::<Theme>());
+        dressed().paint(&bar);
         bar
     }
 
@@ -4137,7 +4137,7 @@ mod tests {
         ))).unwrap();
         for dark in [false, true] {
             let bar = crate::PlayerBar::new().unwrap();
-            crate::look::plain(&nori_core::settings::StoredPrefs::default(), dark, crate::look::Today { month: 10, day: 19, southern: false }).paint(&bar.global::<Theme>());
+            crate::look::plain(&nori_core::settings::StoredPrefs::default(), dark, crate::look::Today { month: 10, day: 19, southern: false }).paint(&bar);
             bar.window().set_size(slint::PhysicalSize::new(1200, 64));
             bar.set_room(1200.0);
             bar.set_has_song(true);
@@ -4157,6 +4157,20 @@ mod tests {
             let ink = |g: (usize, usize, usize, usize)| (g.2..=g.3).flat_map(|y| (g.0..=g.1).map(move |x| (x, y)))
                 .map(|(x, y)| shot.as_slice()[y * 1200 + x]).max_by_key(|&p| apart(p, ground)).unwrap();
             assert!(apart(ink(seal), ink(speaker)) <= 24, "dark {dark}: seal {:?}, speaker {:?}", ink(seal), ink(speaker));
+        }
+    }
+
+    #[test]
+    fn text_without_a_colour_takes_the_themes_ink() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        for dark in [false, true] {
+            let ui = AppWindow::new().unwrap();
+            crate::look::plain(&nori_core::settings::StoredPrefs::default(), dark, crate::look::Today { month: 10, day: 19, southern: false }).paint(&ui);
+            let ink = ui.global::<crate::Palette>().get_foreground().color().to_argb_u8();
+            let light = nori_look::color::luminance(u32::from_be_bytes([ink.alpha, ink.red, ink.green, ink.blue])) > 0.5;
+            assert_eq!(light, dark, "dark {dark}: {ink:?}");
         }
     }
 
@@ -4401,7 +4415,7 @@ mod tests {
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
             let frame = ui.window().take_snapshot().unwrap();
-            let dim = ui.global::<Theme>().get_dim().to_argb_u8();
+            let dim = ui.global::<crate::Theme>().get_dim().to_argb_u8();
             let links: Vec<_> = frame.as_slice().iter().enumerate().filter(|(i, p)| i % 1280 > 1100 && (100..320).contains(&(i / 1280)) && p.r.abs_diff(dim.red) < 24 && p.g.abs_diff(dim.green) < 24 && p.b.abs_diff(dim.blue) < 24).map(|(i, _)| (i % 1280, i / 1280)).collect();
             assert!(!links.is_empty(), "Show all is visible in the shelf header");
             let position = slint::LogicalPosition::new(links[links.len() / 2].0 as f32, links[links.len() / 2].1 as f32);

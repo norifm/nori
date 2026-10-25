@@ -7,7 +7,8 @@ use nori_look::cover::CoverColours;
 use nori_look::dress::{self, Scheme, LEN};
 use nori_look::theme::{self, Dye, Palette, Season};
 
-use crate::Theme;
+use crate::{Palette as WidgetPalette, Theme};
+use slint::language::ColorScheme;
 
 pub use nori_host::desktop::Today;
 
@@ -112,8 +113,14 @@ impl Look {
         self.table[dress::ACCENT]
     }
 
-    /// Sets the roles on a window's `Theme`.
-    pub fn paint(&self, theme: &Theme) {
+    /// Sets the roles on a window's `Theme`, and its std widgets' palette to the same light or dark.
+    pub fn paint<W>(&self, window: &W)
+    where
+        W: slint::ComponentHandle,
+        for<'a> Theme<'a>: slint::Global<'a, W>,
+        for<'a> WidgetPalette<'a>: slint::Global<'a, W>,
+    {
+        let theme = window.global::<Theme>();
         let t = &self.table;
         let c = |argb| slint::Color::from_argb_encoded(argb);
         theme.set_ground(c(t[dress::BACKGROUND]));
@@ -137,7 +144,9 @@ impl Look {
         theme.set_on_on(c(self.on_on));
         theme.set_danger(c(self.danger));
         theme.set_edge(c(t[dress::EDGE]));
-        theme.set_dark(nori_look::color::luminance(t[dress::BACKGROUND]) < 0.5);
+        let dark = nori_look::color::luminance(t[dress::BACKGROUND]) < 0.5;
+        theme.set_dark(dark);
+        window.global::<WidgetPalette>().set_color_scheme(if dark { ColorScheme::Dark } else { ColorScheme::Light });
         let colors = |pick: fn(&(u32, u32)) -> u32| slint::ModelRc::new(slint::VecModel::from(self.seasons.iter().map(|s| c(pick(s))).collect::<Vec<_>>()));
         theme.set_season_pages(colors(|s| s.0));
         theme.set_season_accents(colors(|s| s.1));
