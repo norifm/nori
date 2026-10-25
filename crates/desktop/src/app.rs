@@ -3992,6 +3992,46 @@ mod tests {
         assert_eq!(*played.borrow(), ["a1"]);
     }
 
+    #[test]
+    fn the_queue_follows_the_next_song_to_its_top() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_has_song(true);
+        ui.set_inspector(1);
+        let row = |i: i32, playing: i32| SongRow { title: format!("Song {i}").into(), index: i, playing: i == playing, played: i < playing, ..Default::default() };
+        let queue = Rc::new(VecModel::from((0..40).map(|i| row(i, 0)).collect::<Vec<_>>()));
+        ui.set_queue(ModelRc::from(queue.clone()));
+        let jumped = Rc::new(RefCell::new(Vec::new()));
+        let seen = jumped.clone();
+        ui.on_jump(move |i| seen.borrow_mut().push(i));
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        settle();
+        // A double click plays the row under it.
+        let play_at = || {
+            use slint::platform::PointerEventButton::Left;
+            press(ui.window(), 1100.0, 271.0, Left);
+            press(ui.window(), 1100.0, 271.0, Left);
+            settle();
+        };
+        play_at();
+        for i in 0..40 {
+            queue.set_row_data(i, row(i as i32, 10));
+        }
+        settle();
+        play_at();
+        let j = jumped.borrow();
+        assert_eq!(j.len(), 2, "{j:?}");
+        assert_eq!(j[1], j[0] + 10, "{j:?}");
+    }
+
     /// A queue song dragged two rows down glides into its slot, then is moved once; on the frame the list
     /// takes its new order, the rows are already where they end, with nothing sliding back.
     #[test]

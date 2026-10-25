@@ -3207,8 +3207,11 @@ component QueueView inherits Rectangle {
     // The song at a list index moved to another's.
     callback move(int, int);
     callback undo;
-    // The list was scrolled by hand: it stays where it was put until the panel opens again.
+    // The list was scrolled by hand away from the song playing: it stays where it was put until it is
+    // scrolled back to that song (or to the end), as Android's does.
     property <bool> browsed;
+    // Where the song playing's row starts in the list.
+    property <length> playing-at;
     // A song being dragged to another place: its row (-1: none), how far it has moved, and the row it would
     // land on (rows of 54 px; only among the songs still to come).
     property <int> drag-from: -1;
@@ -3272,7 +3275,10 @@ component QueueView inherits Rectangle {
             content-width: self.width;
             vertical-stretch: 1;
             content-height: rows.preferred-height;
-            flicked => { root.browsed = true; }
+            flicked => {
+                let top = -self.content-y;
+                root.browsed = abs(top - root.playing-at) >= 27px && top < self.content-height - self.height - 1px;
+            }
             rows := VerticalLayout {
             width: parent.width;
             alignment: start;
@@ -3297,6 +3303,7 @@ component QueueView inherits Rectangle {
                 changed is-playing => {
                     if self.is-playing {
                         root.playing-row = i;
+                        self.follow();
                     }
                 }
                 // Where a drag puts this row: the dragged one under the pointer, those it passes a row aside.
@@ -3310,8 +3317,11 @@ component QueueView inherits Rectangle {
                 }
                 // The song playing is the list's first row: when it opens, and when the next one takes over.
                 function follow() {
-                    if s.playing && !root.browsed {
-                        queue-scroll.content-y = -max(0px, min(self.y + self.caption-h, queue-scroll.content-height - queue-scroll.height));
+                    if s.playing {
+                        root.playing-at = self.y + self.caption-h;
+                        if !root.browsed {
+                            queue-scroll.content-y = -max(0px, min(root.playing-at, queue-scroll.content-height - queue-scroll.height));
+                        }
                     }
                 }
                 init => {
