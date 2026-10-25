@@ -918,6 +918,8 @@ component Bar inherits Rectangle {
     in property <length> thick: 5px;
     in property <color> fill: Theme.text;
     in property <color> track: Theme.chosen;
+    // The song's place: an accent dot at the end of the fill, larger under the pointer.
+    in property <bool> playhead;
     out property <bool> hot: touch.has-hover || root.held >= 0;
     callback moved(float);
     callback done(float);
@@ -939,6 +941,16 @@ component Bar inherits Rectangle {
             border-radius: parent.border-radius;
             background: root.fill;
         }
+    }
+    if root.playhead: Rectangle {
+        property <length> d: root.hot ? 2.4 * root.thick : 1.4 * root.thin;
+        animate d { duration: Motion.reduced ? 0ms : 120ms; easing: ease-out; }
+        x: root.width * root.shown - self.d / 2;
+        y: (parent.height - self.height) / 2;
+        width: self.d;
+        height: self.d;
+        border-radius: self.d / 2;
+        background: Theme.accent;
     }
     touch := TouchArea {
         pointer-event(e) => {
@@ -2406,8 +2418,9 @@ component PlayerControls inherits Rectangle {
                     value: root.duration-ms > 0 ? root.shown-ms / root.duration-ms : 0;
                     progress: true;
                     settling: 250ms;
+                    playhead: true;
                     fill: Theme.text;
-                    track: Theme.chosen;
+                    track: Theme.text.with-alpha(0.22);
                     moved(v) => {
                         if root.can-seek {
                             root.dragged = v * root.duration-ms;
@@ -7326,8 +7339,9 @@ export component AppWindow inherits Window {
                         width: 100%;
                         thin: 5px;
                         thick: 8px;
+                        playhead: true;
                         fill: Theme.text;
-                        track: Theme.faint;
+                        track: Theme.text.with-alpha(0.22);
                         value: root.duration-ms > 0 ? (parent.dragged >= 0 ? parent.dragged : root.display-position-ms) / root.duration-ms : 0;
                         progress: true;
                         settling: 250ms;

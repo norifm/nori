@@ -199,9 +199,9 @@ final class PlayerCard: UIViewController {
         album.textColor = look.ink.withAlphaComponent(0.45)
         for l in [elapsed, remaining, mixing] { l.textColor = look.quiet }
         seek.minimumTrackTintColor = look.ink
-        seek.maximumTrackTintColor = look.veil(0.2)
-        seek.setThumbImage(PlayerCard.dot(8, look.ink), for: .normal)
-        seek.setThumbImage(PlayerCard.dot(16, look.ink), for: .highlighted)
+        seek.maximumTrackTintColor = look.veil(0.22)
+        seek.setThumbImage(PlayerCard.dot(8, look.accent), for: .normal)
+        seek.setThumbImage(PlayerCard.dot(16, look.accent), for: .highlighted)
         for b in [seal, more, lyrics, previous, play, nextButton, queue] { b.look = look }
         paintSeal()
         paintOutput()
