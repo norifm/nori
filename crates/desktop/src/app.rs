@@ -2848,7 +2848,7 @@ impl App {
     /// Follows the other devices while their panel is open (remote control), and lists them.
     fn devices_watched(&self) {
         let ui = self.ui();
-        let open = ui.get_inspector() == 3;
+        let open = devices_open(&ui);
         // A jam guest follows its jam all along.
         if let Some(r) = self.session.as_ref().and_then(|s| s.remote()).filter(|_| !self.guest()) {
             r.watch(open);
@@ -2864,7 +2864,7 @@ impl App {
         let remote = self.session.as_ref().and_then(|s| s.remote());
         // A jam guest's music is the jam's; it moves to no other device.
         ui.set_devices_on(remote.is_some() && !self.guest());
-        let Some(r) = remote.filter(|_| ui.get_inspector() == 3) else { return };
+        let Some(r) = remote.filter(|_| devices_open(&ui)) else { return };
         let active = self.there().map(|e| e.mirror.id.as_str());
         let here = std::iter::once(words::device_row(None, active.is_none()));
         let mut devices = r.devices();
@@ -3540,6 +3540,11 @@ fn queue_from<'a>(upcoming: impl Iterator<Item = &'a Song>) -> String {
         Some(first) if !first.is_empty() && albums.all(|a| a == first) => first.to_string(),
         _ => String::new(),
     }
+}
+
+/// Whether a devices panel shows: the full player's, or the side sheet's beside the pages.
+fn devices_open(ui: &AppWindow) -> bool {
+    if ui.get_full_player() { ui.get_full_panel() == 3 } else { ui.get_inspector() == 3 }
 }
 
 fn devices_set(ui: &AppWindow, rows: Vec<crate::DeviceRow>) {
@@ -4776,6 +4781,20 @@ mod tests {
         slint::platform::update_timers_and_animations();
         ui.window().take_snapshot().unwrap();
         assert!(art.borrow().wanted.iter().any(|key| key.id.starts_with("album-19-")), "scrolling reveals the last shelf's covers");
+    }
+
+    #[test]
+    fn devices_open_in_the_full_player() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        for (full, panel, inspector, open) in [(false, 2, 3, true), (false, 3, 1, false), (true, 3, 0, true), (true, 2, 3, false)] {
+            ui.set_full_player(full);
+            ui.set_full_panel(panel);
+            ui.set_inspector(inspector);
+            assert_eq!(devices_open(&ui), open, "full {full}, panel {panel}, inspector {inspector}");
+        }
     }
 
     #[test]
