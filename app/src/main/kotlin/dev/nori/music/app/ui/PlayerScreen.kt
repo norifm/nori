@@ -2241,7 +2241,7 @@ internal fun Modifier.readable(iterations: Int = READ_OUT, key: String? = null):
     // Only the first copy of the line reads it out; one drawn after it (another panel) holds still at the start,
     // as the line settles, rather than walking it from the beginning again.
     val still = reduceMotion()
-    val walks = remember(seen, still) { if (seen?.started == true || still) 0 else iterations }
+    val walks = remember(seen, still, iterations) { if (seen?.started == true || still) 0 else iterations }
     if (seen != null && over && walks > 0) LaunchedEffect(seen) { seen.started = true }
     return onSizeChanged { room = it.width; seen?.room = it.width }
         .then(
