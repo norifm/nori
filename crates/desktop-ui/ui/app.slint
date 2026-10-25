@@ -4187,6 +4187,7 @@ component EqualizerPage inherits Flickable {
     in property <bool> on;
     in property <bool> graphic;
     in property <int> count;
+    in property <[int]> layouts;
     in property <[EqBandRow]> bands;
     in property <string> curve;
     in property <[string]> presets;
@@ -4291,7 +4292,7 @@ component EqualizerPage inherits Flickable {
             }
             if root.graphic: HorizontalLayout {
                 spacing: 8px;
-                for n in [5, 10, 15, 31]: Chip {
+                for n in root.layouts: Chip {
                     text: n + " bands";
                     lit: root.count == n;
                     clicked => { root.set("eqLayout", n); }
@@ -4304,8 +4305,8 @@ component EqualizerPage inherits Flickable {
             font-size: 12px;
             wrap: word-wrap;
         }
-        // The curve the graphic equalizer plays, and a vertical slider per band under it.
-        if root.graphic: Rectangle {
+        // The curve the equalizer plays; the graphic one's vertical sliders under it.
+        Rectangle {
             height: 96px;
             border-radius: 10px;
             background: Theme.hover;
@@ -5124,6 +5125,7 @@ export component AppWindow inherits Window {
     in property <bool> eq-on;
     in property <bool> eq-graphic;
     in property <int> eq-count;
+    in property <[int]> eq-layouts;
     in property <[EqBandRow]> eq-bands;
     in property <string> eq-curve;
     in property <[string]> eq-presets;
@@ -6426,6 +6428,7 @@ export component AppWindow inherits Window {
                         on: root.eq-on;
                         graphic: root.eq-graphic;
                         count: root.eq-count;
+                        layouts: root.eq-layouts;
                         bands: root.eq-bands;
                         curve: root.eq-curve;
                         presets: root.eq-presets;

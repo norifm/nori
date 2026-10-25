@@ -32,6 +32,12 @@ pub struct SoundBand {
     pub channel: BandChannel,
 }
 
+impl From<&SoundBand> for nori_player::dsp::Band {
+    fn from(b: &SoundBand) -> Self {
+        Self { kind: b.kind, freq: b.freq as f64, gain_db: b.gain_db as f64, q: b.q as f64, channel: b.channel as i32 }
+    }
+}
+
 /// Which channel a band applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
