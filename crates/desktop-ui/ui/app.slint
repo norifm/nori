@@ -2288,13 +2288,13 @@ component PlayerControls inherits Rectangle {
                     Icon {
                         y: (parent.height - self.height) / 2;
                         glyph: root.playing-on != "" ? Output.shown : Icons.community;
-                        colour: Theme.accent;
+                        colour: root.playing-on != "" ? Theme.text : Theme.accent;
                         width: 14px;
                         height: 14px;
                     }
                     Text {
                         text: root.playing-on != "" ? root.playing-on : root.jam;
-                        color: Theme.accent;
+                        color: root.playing-on != "" ? Theme.text : Theme.accent;
                         font-size: 12px;
                         font-weight: 600;
                         overflow: elide;
