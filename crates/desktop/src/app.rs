@@ -3090,18 +3090,15 @@ impl App {
     }
 
     /// Sets band `i` as the curve or its editor left it; the curve updates at once, the page on release.
-    /// `pos` is its place across the curve (a graphic band keeps its own); a frequency that rounds the
-    /// same as before keeps the band's exact one.
+    /// `pos` is its place across the curve (a graphic band keeps its own).
     fn eq_band(&mut self, i: usize, edit: crate::eq::BandEdit, last: bool) {
-        use nori_core::dsp::{band_freq_at, band_position};
         let settings = &crate::session::app().settings;
         let Some(p) = settings.current() else { return };
         let effect = if p.eq_mode == nori_core::settings::EqMode::Graphic {
             settings.edit_graphic(i as u32, edit.gain).map(|e| e.0)
         } else {
             p.eq_bands.get(i).and_then(|b| {
-                let freq = band_freq_at(edit.pos);
-                let freq = if freq == band_freq_at(band_position(b.freq)) { b.freq } else { freq };
+                let freq = nori_core::dsp::band_moved(b.freq, edit.pos);
                 settings.edit_band(i as u32, nori_core::settings::band_from(edit.kind, freq, edit.gain, edit.q, edit.channel)).map(|e| e.0)
             })
         };

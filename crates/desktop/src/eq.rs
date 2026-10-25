@@ -1,7 +1,7 @@
 //! The equalizer page, as Android's EqualizerScreen: mode, bands and curve, presets, pre-amp, balance,
 //! mono and limiter. All numbers come from the core.
 
-use nori_core::dsp::{band_position, bands_response, effective_preamp_db, eq_presets, graphic_bands, graphic_layouts, graphic_response};
+use nori_core::dsp::{eq_drawing, effective_preamp_db, eq_presets, graphic_bands, graphic_layouts, EqDrawing, EqPoint, CURVE_DB};
 use nori_core::numbers::{self, POINT};
 use nori_core::settings::{EqMode, StoredPrefs, EQ_RANGES};
 use nori_core::{EqKind, PresetKind};
@@ -40,9 +40,6 @@ fn kind_name(k: EqKind) -> &'static str {
     }
 }
 
-/// How far the curve reaches up and down, dB.
-const CURVE_DB: f32 = 15.0;
-
 /// The curve's points as SVG path commands in a `w` x `h` box: 20 Hz..20 kHz across, ±[`CURVE_DB`]. `closed`
 /// runs back along the 0 dB line, to fill what it lifts or cuts.
 fn trace(r: &[f32], w: f32, h: f32, closed: bool) -> String {
@@ -67,30 +64,24 @@ struct Drawn {
     areas: Vec<String>,
 }
 
-fn curve(p: &StoredPrefs, w: f32, h: f32) -> Drawn {
-    let freqs: Vec<f32> = (0..97).map(|i| 20.0 * 1000f32.powf(i as f32 / 96.0)).collect();
-    let (r, each) = if p.eq_mode == EqMode::Graphic {
-        (graphic_response(p.eq_graphic.clone(), freqs), Vec::new())
-    } else {
-        let b = bands_response(p.eq_bands.clone(), freqs);
-        (b.left, b.each)
-    };
+fn curve(d: &EqDrawing, w: f32, h: f32) -> Drawn {
     Drawn {
-        line: trace(&r, w, h, false),
-        area: trace(&r, w, h, true),
-        areas: each.iter().map(|e| trace(e, w, h, true)).collect(),
+        line: trace(&d.curve, w, h, false),
+        area: trace(&d.curve, w, h, true),
+        areas: d.each.iter().map(|e| trace(e, w, h, true)).collect(),
     }
 }
 
-fn show_curve(ui: &AppWindow, p: &StoredPrefs) {
-    let d = curve(p, ui.get_eq_curve_w(), ui.get_eq_curve_h());
+fn show_curve(ui: &AppWindow, drawing: &EqDrawing) {
+    let d = curve(drawing, ui.get_eq_curve_w(), ui.get_eq_curve_h());
     ui.set_eq_curve(d.line.into());
     ui.set_eq_area(d.area.into());
     ui.set_eq_shape_areas(ModelRc::new(VecModel::from(d.areas.into_iter().map(SharedString::from).collect::<Vec<_>>())));
 }
 
 /// The bands as the page draws them: where each sits on the curve, and what its editor shows.
-fn band_rows(p: &StoredPrefs) -> Vec<EqBandRow> {
+fn band_rows(p: &StoredPrefs, points: &[EqPoint]) -> Vec<EqBandRow> {
+    let point = |i: usize| points.get(i).copied().unwrap_or(EqPoint { x: 0.0, db: 0.0 });
     if p.eq_mode == EqMode::Graphic {
         let centres = graphic_bands(p.eq_graphic.len() as u32);
         p.eq_graphic
@@ -103,8 +94,8 @@ fn band_rows(p: &StoredPrefs) -> Vec<EqBandRow> {
                     gain: *g,
                     value: signed(*g).into(),
                     uses_gain: true,
-                    x: centre.map_or(0.0, |b| band_position(b.freq)),
-                    db: *g,
+                    x: point(i).x,
+                    db: point(i).db,
                     ..Default::default()
                 }
             })
@@ -112,7 +103,8 @@ fn band_rows(p: &StoredPrefs) -> Vec<EqBandRow> {
     } else {
         p.eq_bands
             .iter()
-            .map(|b| {
+            .enumerate()
+            .map(|(i, b)| {
                 let side = match b.channel as i32 {
                     1 => " L",
                     2 => " R",
@@ -123,8 +115,8 @@ fn band_rows(p: &StoredPrefs) -> Vec<EqBandRow> {
                     gain: b.gain_db,
                     value: if b.kind.uses_gain() { signed(b.gain_db).into() } else { kind_name(b.kind).into() },
                     uses_gain: b.kind.uses_gain(),
-                    x: band_position(b.freq),
-                    db: if b.kind.uses_gain() { b.gain_db } else { 0.0 },
+                    x: point(i).x,
+                    db: point(i).db,
                     kind: b.kind as i32,
                     channel: b.channel as i32,
                     q: b.q,
@@ -138,8 +130,9 @@ fn band_rows(p: &StoredPrefs) -> Vec<EqBandRow> {
 
 /// While a band is dragged: the curve, and the bands changed in place, so the one held stays held.
 pub fn curve_only(ui: &AppWindow, p: &StoredPrefs) {
-    show_curve(ui, p);
-    let rows = band_rows(p);
+    let drawing = eq_drawing(p, 97);
+    show_curve(ui, &drawing);
+    let rows = band_rows(p, &drawing.points);
     let model = ui.get_eq_bands();
     match model.as_any().downcast_ref::<VecModel<EqBandRow>>().filter(|m| m.row_count() == rows.len()) {
         Some(m) => {
@@ -222,17 +215,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn eq_drawing() {
+    fn curve_traces_the_drawing() {
         // Curve spans the box flat at zero.
         let flat = StoredPrefs { eq_mode: EqMode::Graphic, eq_graphic: vec![0.0; 10], ..StoredPrefs::default() };
-        let c = curve(&flat, 960.0, 96.0).line;
+        let c = curve(&eq_drawing(&flat, 97), 960.0, 96.0).line;
         assert_eq!(c.matches('L').count(), 96);
         assert!(c.starts_with("M0.0 48.0"), "{c}");
         assert!(c.trim_end().ends_with("L960.0 48.0"), "{c}");
         // The parametric bands draw their own curve: a boost at 1 kHz rises in the middle.
         let bell = nori_core::settings::SoundBand { kind: EqKind::Peaking, freq: 632.5, gain_db: 6.0, q: 1.0, channel: nori_core::settings::BandChannel::Both };
         let parametric = StoredPrefs { eq_mode: EqMode::Parametric, eq_bands: vec![bell], ..StoredPrefs::default() };
-        let drawn = curve(&parametric, 960.0, 96.0);
+        let drawn = curve(&eq_drawing(&parametric, 97), 960.0, 96.0);
         assert_eq!(drawn.areas.len(), 1, "the band's own curve");
         assert!(drawn.area.ends_with("Z"), "the area closes along 0 dB");
         let c = drawn.line;
