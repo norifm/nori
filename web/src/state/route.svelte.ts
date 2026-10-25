@@ -19,7 +19,7 @@ class Route {
   visit = $state(0);
 
   /** The tab the page sits under on a phone. */
-  tab = $derived(LIBRARY.includes(this.top) ? "library" : this.top === "row" ? "home" : this.top);
+  tab = $derived(LIBRARY.includes(this.top) ? "library" : this.top === "row" ? "home" : this.top === "equalizer" ? "settings" : this.top);
 
   read() {
     const [, top = "", a = ""] = location.hash.replace(/^#\/?/, "/").split("/");

@@ -146,15 +146,6 @@ pub fn curve_only(ui: &AppWindow, p: &StoredPrefs) {
     }
 }
 
-/// A band as the page sets it: its place across the curve, gain, Q, and kind and channel ordinals.
-pub struct BandEdit {
-    pub pos: f32,
-    pub gain: f32,
-    pub q: f32,
-    pub kind: i32,
-    pub channel: i32,
-}
-
 /// The band kinds' names, in `EqKind` order.
 pub fn kind_names() -> Vec<SharedString> {
     [
