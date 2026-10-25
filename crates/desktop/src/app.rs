@@ -26,6 +26,7 @@ use crate::session::{self, CoverKey, CoverSize, Data, Fetch, Msg, Req, Session, 
 use nori_host::pages::{HomePart, PageAsk, PageGot, ShelfItems};
 use nori_host::player::{Playback, QueueShown};
 use crate::settings::{Act, Target};
+use crate::sung::Part;
 use crate::words;
 use crate::{AppWindow, ArtistLink, Card, Credits, Detail, LoginKind, LyricPiece, Motion, Pick, PlayerBar, Shelf, SongGo, SongRow, TopBar};
 
@@ -445,8 +446,10 @@ pub struct App {
     tuning: bool,
     lyrics: Option<crate::lyrics::SongLyrics>,
     lyrics_timer: Timer,
-    /// Active lyric line pieces in the side panel and Now Playing, updated in place each frame.
+    /// Active lyric line pieces in the side panel and Now Playing, and its backing vocals', updated in
+    /// place each frame.
     pieces: [Rc<VecModel<LyricPiece>>; 2],
+    backing_pieces: [Rc<VecModel<LyricPiece>>; 2],
     /// Queue rows, edited in place; leaving rows fold first, then the list settles to `queue_next`.
     queue_rows: Rc<VecModel<SongRow>>,
     queue_next: Option<Vec<SongRow>>,
@@ -672,6 +675,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             lyrics: None,
             lyrics_timer: Timer::default(),
             pieces: [Rc::new(VecModel::default()), Rc::new(VecModel::default())],
+            backing_pieces: [Rc::new(VecModel::default()), Rc::new(VecModel::default())],
             queue_rows: Rc::new(VecModel::default()),
             queue_next: None,
             queue_timer: Timer::default(),
@@ -705,6 +709,8 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         ui.set_queue(ModelRc::from(a.queue_rows.clone()));
         ui.set_lyric_pieces_side(ModelRc::from(a.pieces[0].clone()));
         ui.set_lyric_pieces_full(ModelRc::from(a.pieces[1].clone()));
+        ui.set_lyric_backing_pieces_side(ModelRc::from(a.backing_pieces[0].clone()));
+        ui.set_lyric_backing_pieces_full(ModelRc::from(a.backing_pieces[1].clone()));
         if let (Some(top), Some(player)) = (&a.top, &a.player) {
             a.compositor.roles(ui.window(), top.window(), player.window());
             let compositor = a.compositor.clone();
@@ -2747,17 +2753,21 @@ impl App {
         ui.set_lyrics_active(now.active);
         ui.set_lyric_sweeping(now.sweeping);
         let width = ui.window().size().to_logical(ui.window().scale_factor()).width;
-        let mut pieces = |view, on: bool, size, w, lit, dim| if on && now.sweeping { l.pieces(view, &now, size, w, lit, dim) } else { Vec::new() };
+        let mut pieces = |view, part, on: bool, size, w, lit| if on && now.sweeping { l.pieces(view, part, &now, size, w, lit) } else { Vec::new() };
         // Every line is drawn in the rows the sung pieces take, a hair narrower than the view so the
-        // window's own wrapping never breaks them again.
+        // window's own wrapping never breaks them again. Backing vocals are lit to 70 %, as app.slint draws them.
         let (side_w, full_w) = (320.0 - 44.0 - 2.0, width / 2.0 - 140.0 - 2.0);
-        renew(&self.pieces[0], pieces(0, side, 22.0, side_w, 1.0, 0.36));
-        renew(&self.pieces[1], pieces(1, full, 44.0, full_w, 1.0, 0.36));
-        if let Some(rows) = side.then(|| l.rows(0, 22.0, side_w)).flatten() {
-            ui.set_lyrics_side_rows(rows);
+        renew(&self.pieces[0], pieces(0, Part::Lead, side, 22.0, side_w, 1.0));
+        renew(&self.pieces[1], pieces(1, Part::Lead, full, 44.0, full_w, 1.0));
+        renew(&self.backing_pieces[0], pieces(0, Part::Backing, side, 22.0, side_w, 0.7));
+        renew(&self.backing_pieces[1], pieces(1, Part::Backing, full, 44.0, full_w, 0.7));
+        if let Some([lead, backing]) = side.then(|| l.rows(0, 22.0, side_w)).flatten() {
+            ui.set_lyrics_side_rows(lead);
+            ui.set_lyrics_side_backing_rows(backing);
         }
-        if let Some(rows) = full.then(|| l.rows(1, 44.0, full_w)).flatten() {
-            ui.set_lyrics_full_rows(rows);
+        if let Some([lead, backing]) = full.then(|| l.rows(1, 44.0, full_w)).flatten() {
+            ui.set_lyrics_full_rows(lead);
+            ui.set_lyrics_full_backing_rows(backing);
         }
         ui.set_lyric_sung(now.sung.into());
         ui.set_lyric_now(now.now.into());

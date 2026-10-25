@@ -5072,6 +5072,8 @@ export component AppWindow inherits Window {
     // moves its words as it is sung or let go. Empty until laid out.
     in property <[string]> lyrics-side-rows;
     in property <[string]> lyrics-full-rows;
+    in property <[string]> lyrics-side-backing-rows;
+    in property <[string]> lyrics-full-backing-rows;
     in property <int> lyrics-active: -1;
     // The lit line filling word by word (lyrics with word times): what is sung, the character being sung and
     // how far, and the rest.
@@ -5083,6 +5085,8 @@ export component AppWindow inherits Window {
     callback lyric-tapped(int);
     in property <[LyricPiece]> lyric-pieces-side;
     in property <[LyricPiece]> lyric-pieces-full;
+    in property <[LyricPiece]> lyric-backing-pieces-side;
+    in property <[LyricPiece]> lyric-backing-pieces-full;
     in property <bool> lyrics-synced;
     in property <string> lyrics-note;
     // The song's lyrics are being looked for; their words come only if that takes a while
@@ -6707,14 +6711,29 @@ export component AppWindow inherits Window {
                                     clicked => { root.lyric-tapped(i); }
                                 }
                             }
-                            // Backing vocals sung over the line: smaller and under it, lit with it, as on Android.
+                            // Backing vocals sung over the line: smaller and under it, lit as they are sung, as on Android.
                             if line.backing != "": Text {
-                                text: line.backing;
+                                text: root.lyrics-side-backing-rows.length > i ? root.lyrics-side-backing-rows[i] : line.backing;
                                 wrap: word-wrap;
                                 font-size: 22px * 0.72;
                                 horizontal-alignment: line.right ? right : left;
                                 opacity: side-line.shown;
-                                color: Theme.text.with-alpha(0.36 + (0.7 - 0.36) * side-line.level);
+                                color: side-line.lit && root.lyric-sweeping && root.lyric-backing-pieces-side.length > 0 ? transparent : Theme.text.with-alpha(0.36 + (0.7 - 0.36) * side-line.level);
+                                if side-line.lit && root.lyric-sweeping && root.lyric-backing-pieces-side.length > 0: Rectangle {
+                                    width: 100%;
+                                    height: 100%;
+                                    for p in root.lyric-backing-pieces-side: Text {
+                                        x: p.x * 1px;
+                                        y: p.y * 1px - p.lift * 2px * 0.72;
+                                        width: p.w * 1px;
+                                        text: p.text;
+                                        wrap: no-wrap;
+                                        font-size: 22px * 0.72;
+                                        color: @linear-gradient(90deg, Theme.text.with-alpha(p.a0) 0%, Theme.text.with-alpha(p.aa) p.a * 100%, Theme.text.with-alpha(p.ab) p.b * 100%, Theme.text.with-alpha(p.a1) 100%);
+                                        transform-scale-x: (1 + 0.04 * p.swell) * 100%;
+                                        transform-scale-y: (1 + 0.04 * p.swell) * 100%;
+                                    }
+                                }
                             }
                         }
                         if root.lyrics-note != "": Text {
@@ -7350,14 +7369,29 @@ export component AppWindow inherits Window {
                                 clicked => { root.lyric-tapped(i); }
                             }
                         }
-                        // Backing vocals sung over the line: smaller and under it, lit with it, as on Android.
+                        // Backing vocals sung over the line: smaller and under it, lit as they are sung, as on Android.
                         if line.backing != "": Text {
-                            text: line.backing;
+                            text: root.lyrics-full-backing-rows.length > i ? root.lyrics-full-backing-rows[i] : line.backing;
                             wrap: word-wrap;
                             font-size: 44px * 0.72;
                             horizontal-alignment: line.right ? right : left;
                             opacity: full-line.shown;
-                            color: Theme.text.with-alpha(0.36 + (0.7 - 0.36) * full-line.level);
+                            color: full-line.lit && root.lyric-sweeping && root.lyric-backing-pieces-full.length > 0 ? transparent : Theme.text.with-alpha(0.36 + (0.7 - 0.36) * full-line.level);
+                            if full-line.lit && root.lyric-sweeping && root.lyric-backing-pieces-full.length > 0: Rectangle {
+                                width: 100%;
+                                height: 100%;
+                                for p in root.lyric-backing-pieces-full: Text {
+                                    x: p.x * 1px;
+                                    y: p.y * 1px - p.lift * 3px * 0.72;
+                                    width: p.w * 1px;
+                                    text: p.text;
+                                    wrap: no-wrap;
+                                    font-size: 44px * 0.72;
+                                    color: @linear-gradient(90deg, Theme.text.with-alpha(p.a0) 0%, Theme.text.with-alpha(p.aa) p.a * 100%, Theme.text.with-alpha(p.ab) p.b * 100%, Theme.text.with-alpha(p.a1) 100%);
+                                    transform-scale-x: (1 + 0.04 * p.swell) * 100%;
+                                    transform-scale-y: (1 + 0.04 * p.swell) * 100%;
+                                }
+                            }
                         }
                     }
                 }
