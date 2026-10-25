@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use nori_core::browse::{album_sort_kept, album_sort_saved, album_sorts, artist_rows, favorites_in_order, home_pinned, home_row_more, home_row_page, next_album_page, shelf_albums_read, song_sort_kept, song_sort_saved, song_sorts, AlbumSort, HomeShelf};
 use nori_core::cache_policy::{Page, Read};
+use nori_core::numbers::{self, POINT};
 use nori_core::client::Starrable;
 use nori_core::menus::{download_entries, page_actions, DownloadAct, PageAction, PageKind, SongDownload};
 use nori_core::pages::release_groups;
@@ -1490,19 +1491,68 @@ pub unsafe extern "C" fn nori_ios_set(name: *const c_char, value: *const c_char)
     with_session(|s| i32::from(s.setting(&name, &value).is_some())).unwrap_or(0)
 }
 
-/// The graphic equalizer: on, slider gains in dB and band labels in Hz, as JSON to free.
+/// Points across the drawn curve.
+const CURVE_SAMPLES: u32 = 97;
+
+/// The equalizer as JSON to free: `{ on, graphic, reach, curve, each, points, marks, bands }`. `curve` is the
+/// sound heard in dB at `CURVE_SAMPLES` points across, `each` every band's own, `points` each band's
+/// `{x, db}` on it (x 0..1), `marks` the scale's `{label, x}`. A band is `{label, gain, value}` (its
+/// frequency and gain as figures), and a parametric one also `{q, width, kind, channel, usesGain}`, kind
+/// and channel ordinals for the client to word.
 #[no_mangle]
 pub extern "C" fn nori_ios_equalizer() -> *mut c_char {
     with_session(|s| {
         let p = s.core.session.settings.current().unwrap_or_default();
-        let bands = nori_core::dsp::graphic_bands(p.eq_graphic.len() as u32);
+        let drawing = nori_core::dsp::eq_drawing(&p, CURVE_SAMPLES);
+        let graphic = p.eq_mode == nori_core::settings::EqMode::Graphic;
+        let bands: Vec<serde_json::Value> = if graphic {
+            let centres = nori_core::dsp::graphic_bands(p.eq_graphic.len() as u32);
+            p.eq_graphic.iter().zip(&centres).map(|(g, c)| json!({ "label": numbers::iso_band(c.label_hz, POINT), "gain": g, "value": numbers::signed_db(*g, POINT) })).collect()
+        } else {
+            p.eq_bands
+                .iter()
+                .map(|b| {
+                    json!({ "label": numbers::hz(b.freq, POINT), "gain": b.gain_db, "value": numbers::signed_db(b.gain_db, POINT), "q": b.q,
+                            "width": numbers::fixed(b.q as f64, 2, false, POINT), "kind": b.kind as i32, "channel": b.channel as i32, "usesGain": b.kind.uses_gain() })
+                })
+                .collect()
+        };
+        let marks: Vec<_> = [100.0f32, 1000.0, 10_000.0].iter().map(|&hz| json!({ "label": numbers::hz(hz, POINT), "x": nori_core::dsp::band_position(hz) })).collect();
         owned(&json!({
             "on": p.eq_enabled,
-            "gains": p.eq_graphic,
-            "hz": bands.iter().map(|b| b.label_hz).collect::<Vec<_>>(),
+            "graphic": graphic,
+            "reach": nori_core::dsp::CURVE_DB,
+            "curve": drawing.curve,
+            "each": drawing.each,
+            "points": drawing.points.iter().map(|pt| json!({ "x": pt.x, "db": pt.db })).collect::<Vec<_>>(),
+            "marks": marks,
+            "bands": bands,
         }))
     })
     .unwrap_or(std::ptr::null_mut())
+}
+
+/// Band `index` as the curve or its editor left it ([`nori_core::settings_store::BandPoint`]): `pos`
+/// across the curve, its gain, Q, and kind and channel ordinals. 1 when the sound changed.
+#[no_mangle]
+pub extern "C" fn nori_ios_eq_point(index: u32, pos: f32, gain_db: f32, q: f32, kind: i32, channel: i32) -> i32 {
+    with_session(|s| match s.core.session.settings.edit_point(index, nori_core::settings_store::BandPoint { pos, gain_db, q, kind, channel }) {
+        Some(effect) => {
+            s.applied(effect);
+            1
+        }
+        None => 0,
+    })
+    .unwrap_or(0)
+}
+
+/// A parametric band added at `pos` across the curve and `gain_db`, or band `index` removed (`pos`
+/// below 0). 1 when the sound changed.
+#[no_mangle]
+pub extern "C" fn nori_ios_eq_band(index: u32, pos: f32, gain_db: f32) -> i32 {
+    use nori_core::settings_store::SoundTool;
+    let tool = if pos < 0.0 { SoundTool::RemoveBand { index } } else { SoundTool::AddBand { freq: nori_core::dsp::band_freq_at(pos), gain_db } };
+    sound_tool(tool)
 }
 
 /// The built-in equalizer curves, in menu order, by their `PresetKind` code for the client to word: a
@@ -1522,30 +1572,19 @@ pub extern "C" fn nori_ios_preset(index: u32) -> i32 {
     let Some(preset) = nori_core::dsp::eq_presets().into_iter().nth(index as usize) else {
         return 0;
     };
-    with_session(|s| {
-        let tool = nori_core::settings_store::SoundTool::Preset { preset };
-        match s.core.session.settings.sound_tool(tool) {
-            Ok(Some(change)) => {
-                s.applied(change.effect);
-                1
-            }
-            _ => 0,
-        }
-    })
-    .unwrap_or(0)
+    sound_tool(nori_core::settings_store::SoundTool::Preset { preset })
 }
 
-/// Moves graphic band `index` to `gain_db`; returns the gain kept.
-#[no_mangle]
-pub extern "C" fn nori_ios_equalizer_band(index: u32, gain_db: f32) -> f32 {
-    with_session(|s| match s.core.session.settings.edit_graphic(index, gain_db) {
-        Some((effect, kept)) => {
-            s.applied(effect);
-            kept
+/// 1 when `tool` changed the sound, which the engine then hears.
+fn sound_tool(tool: nori_core::settings_store::SoundTool) -> i32 {
+    with_session(|s| match s.core.session.settings.sound_tool(tool) {
+        Ok(Some(change)) => {
+            s.applied(change.effect);
+            1
         }
-        None => gain_db,
+        _ => 0,
     })
-    .unwrap_or(gain_db)
+    .unwrap_or(0)
 }
 
 /// The equalizer screen is in sight (`in_sight`) and was touched: the output's short buffer follows
