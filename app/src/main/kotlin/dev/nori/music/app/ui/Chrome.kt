@@ -462,19 +462,19 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
             // for it because the title beside it is already allowed to run out of space gracefully. The skip is
             // a swipe away. A jam guest's speaker and seal would be the host's; its play is the one its role offers.
             // While a jam is on it stands in the speaker's place: a jam plays on this device only.
-            jam?.let { Box(standing) { JamButton(it, 24.dp, idle = { look.color(CoverLook.CHROME_CONTENT_75) }, lit = { look.color(CoverLook.ACCENT) }) } }
+            jam?.let { Box(standing) { JamButton(it, 24.dp, idle = { look.color(CoverLook.CHROME_CONTENT_65) }, lit = { look.color(CoverLook.ACCENT) }) } }
             if (!state.jamGuest) {
                 if (jam == null) Box(standing) {
                     OutputButton(
                         state.playingOnKind, state.playingOn, 22.dp,
-                        idle = { look.color(CoverLook.CHROME_CONTENT_75) }, lit = { content },
+                        idle = { look.color(CoverLook.CHROME_CONTENT_65) }, lit = { content },
                     )
                 }
                 // Seals where songs carry favorites (a provider's only signed in): the bar's one color, the accent.
                 val tap = LocalSealTap.current
                 if (LocalRules.current.seals) song?.let { s ->
                     val starred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, s.id, s.starred)
-                    Box(standing) { FavoriteSeal(starred, tint = look.color(CoverLook.ACCENT), muted = look.color(CoverLook.CHROME_CONTENT_75)) { tap(s, !starred) } }
+                    Box(standing) { FavoriteSeal(starred, tint = look.color(CoverLook.ACCENT), muted = look.color(CoverLook.CHROME_CONTENT_65)) { tap(s, !starred) } }
                 }
             }
             if (state.offersPlayPause) IconButton(vm::toggle, standing) { PlayPauseGlyph(state.playing, state.buffering, 26.dp, 20.dp) }
