@@ -453,8 +453,8 @@ private const val BARS_STEP_MS = 34L
  * says "this one, but stopped" without a second icon.
  *
  * Moving over a page that stands still, they are drawn by an [Island] of their own over the page, which
- * repaints only their few pixels; whenever something is in the way - the player on its way up, the row
- * meeting the chrome or a banner, or cut by the list's edge - they are drawn here again, in their place
+ * repaints only their few pixels; whenever something is in the way - the row meeting the chrome or a
+ * banner, cut by the list's edge, or anything round it moving (HoldIslands) - they are drawn here again, in their place
  * among the page's layers. Both read the same clock, so the hand-over does not jump. Nothing runs at all
  * while the music is paused, while this row is not composed or not [seen] (screen off, or the player over
  * the page).
@@ -469,11 +469,9 @@ fun PlayingBars(tint: Color, modifier: Modifier = Modifier) {
     val moving = advancing && !LocalEinkScreen.current
     val phase = remember { androidx.compose.runtime.mutableFloatStateOf(barsClock()) }
     val seen = seen()
-    val sheet = LocalPlayerSheet.current
-    val sheetDown by remember(sheet) { derivedStateOf { sheet.progress.value <= 0f } }
     val drawing = remember { BarsDrawing() }
     drawing.paint.color = tint.toArgb()
-    val slot = rememberIsland(drawing, wanted = moving && seen && sheetDown, overPage = true)
+    val slot = rememberIsland(drawing, wanted = moving && seen, overPage = true)
     androidx.compose.runtime.LaunchedEffect(moving, seen, slot.apart) {
         if (slot.apart || !moving || !seen) return@LaunchedEffect
         // One callback object for every frame, handed to the frame clock as it is: the millisecond
@@ -488,7 +486,7 @@ fun PlayingBars(tint: Color, modifier: Modifier = Modifier) {
         }
     }
     androidx.compose.foundation.Canvas(modifier.island(slot)) {
-        if (slot.apart) return@Canvas
+        if (slot.handOff()) return@Canvas
         val t = phase.floatValue
         val w = size.width / (BARS * 2 - 1)
         for (i in 0 until BARS) {

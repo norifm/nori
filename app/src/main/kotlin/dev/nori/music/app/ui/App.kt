@@ -284,6 +284,9 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         var playerWasOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
         val sheet = remember { PlayerSheet(sheetScope, startOpen = playerWasOpen) }
         sheet.plain = reduceMotion()
+        // The player on its way up or down, or a cover in flight between panels, moves what islands draw.
+        val sheetMoving by remember(sheet) { androidx.compose.runtime.derivedStateOf { sheet.progress.value > 0f && sheet.progress.value < 1f || sheet.panelFlight } }
+        HoldIslands(sheetMoving)
         LaunchedEffect(sheet) {
             androidx.compose.runtime.snapshotFlow { sheet.isOpen }.collect { playerWasOpen = it }
         }
@@ -852,6 +855,7 @@ private fun androidx.compose.animation.AnimatedVisibilityScope.Page(entry: andro
     }
     androidx.compose.runtime.DisposableEffect(entry.id) { onDispose { swipe.left(entry.id) } }
     val swiped = swipe.moving == entry.id
+    HoldIslands(moving || swiped)
     val onTop = swiped || moving && !plain && when (PageMotion.pop) {
         true -> transition.targetState == androidx.compose.animation.EnterExitState.PostExit
         false -> transition.targetState == androidx.compose.animation.EnterExitState.Visible

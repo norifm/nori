@@ -35,6 +35,14 @@ class Islands(context: Context) : FrameLayout(context) {
 
     fun clearOf(r: Rect): Boolean = covers.values.none { Rect.intersects(it, r) }
 
+    /**
+     * What is moving or fading the screen round the islands' elements now (a page sliding, a panel
+     * dissolving, the player's sheet or colours on their way): see [HoldIslands]. An island is drawn
+     * over the window, outside those animations, so while any runs none draws and Compose draws them all.
+     */
+    val holds = androidx.compose.runtime.mutableStateListOf<Any>()
+
+
     internal fun take(): Island = Island(context).also { addView(it, LayoutParams(1, 1)) }
     internal fun give(island: Island) = removeView(island)
 }
@@ -52,9 +60,9 @@ fun interface IslandDrawing {
 
 /**
  * One island's view: where its element is, cut to the part of it that shows, stepping itself between draws.
- * It is there for as long as its element wants it, and draws only while [IslandSlot.apart] - read while
- * drawing, as the element reads it while drawing itself, in the same frame - so the two never both draw
- * the element, and never neither.
+ * It is there for as long as its element wants it, and draws only what the element's own drawing last left
+ * to it ([IslandSlot.handOff]), told in that same drawing pass: the two never both draw the element, and
+ * never neither, not even for the frame a hand-over happens in.
  */
 class Island internal constructor(context: Context) : View(context) {
     internal var slot: IslandSlot? = null
@@ -62,6 +70,7 @@ class Island internal constructor(context: Context) : View(context) {
     internal var margin = 0
     private val step = Runnable { invalidate() }
     private val cut = Rect()
+    private val layer = IntArray(2)
 
     init {
         visibility = GONE
@@ -71,8 +80,11 @@ class Island internal constructor(context: Context) : View(context) {
         if (layoutParams.width != spot.width || layoutParams.height != spot.height) {
             layoutParams = layoutParams.apply { width = spot.width; height = spot.height }
         }
-        translationX = spot.x
-        translationY = spot.y
+        // The spot is in the window; this view is in the islands' layer, which starts wherever the activity's
+        // content does - not at the window's corner under a cutout or a system bar set beside it.
+        (parent as? View)?.getLocationInWindow(layer)
+        translationX = spot.x - layer[0]
+        translationY = spot.y - layer[1]
         margin = spot.margin
         cut.set(spot.visible)
         cut.offset(-spot.x.toInt(), -spot.y.toInt())
@@ -87,7 +99,7 @@ class Island internal constructor(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         removeCallbacks(step)
-        if (slot?.apart != true) return
+        if (slot?.told != true) return
         val m = margin.toFloat()
         canvas.translate(m, m)
         val wait = drawing?.draw(canvas, width - 2 * margin, height - 2 * margin) ?: -1L
@@ -137,11 +149,24 @@ class IslandSlot internal constructor(private val islands: Islands?) {
     private var placedOnce = false
 
     /** Drawn by the island, so the element draws nothing itself. Read in composition or while drawing. */
-    val apart: Boolean get() = wanted && clear
+    val apart: Boolean get() = wanted && clear && islands?.holds?.isEmpty() == true
+
+    /** What the element's drawing last left to the island. */
+    internal var told = false
+
+    /**
+     * For the element's own drawing, every time it draws: whether the island has it now, so the element draws
+     * nothing. A change is passed to the island in this drawing pass, so it draws, or stops, in the same frame.
+     */
+    fun handOff(): Boolean {
+        val a = apart
+        if (a != told) { told = a; island?.invalidate() }
+        return a
+    }
 
     /** Asks the island to draw again, for a change it cannot see (a colour, playing again). */
     fun poke() {
-        if (apart) island?.invalidate()
+        if (told) island?.invalidate()
     }
 
     internal fun placed(c: LayoutCoordinates) {
@@ -154,7 +179,7 @@ class IslandSlot internal constructor(private val islands: Islands?) {
     internal fun recheck() {
         val i = islands ?: return
         val now = spot.whole && (!overPage || i.clearOf(spot.visible)) && within.let { it == null || it.contains(spot.visible) }
-        if (now != clear) { clear = now; island?.invalidate() }
+        if (now != clear) clear = now
     }
 
     /** After each composition: the island is there while the element wants it, drawing what it is given now. */
@@ -165,7 +190,7 @@ class IslandSlot internal constructor(private val islands: Islands?) {
             view.drawing = drawing
             if (placedOnce) view.place(spot)
             view.invalidate()
-        } else island?.hide()
+        } else { told = false; island?.hide() }
     }
 
     internal fun release() {
@@ -178,7 +203,7 @@ class IslandSlot internal constructor(private val islands: Islands?) {
  * An island for one element, drawn with [drawing] while [wanted] (the caller's own "nothing moves here": not
  * dragged, not fading) and while the element shows whole, inside [within], and, [overPage], clear of
  * everything drawn over the page; [margin] pixels round it are its too. Place it with [island] on the
- * element; draw nothing there while [IslandSlot.apart].
+ * element, and draw nothing there while [IslandSlot.handOff], asked in the element's drawing.
  */
 @Composable
 fun rememberIsland(drawing: IslandDrawing, wanted: Boolean, overPage: Boolean, margin: Int = 0, within: Rect? = null): IslandSlot {
@@ -197,6 +222,20 @@ fun rememberIsland(drawing: IslandDrawing, wanted: Boolean, overPage: Boolean, m
         snapshotFlow { islands.covers.values.toList() }.collect { slot.recheck() }
     }
     return slot
+}
+
+/**
+ * Holds every island off while [moving]: for an animation that moves or fades part of the screen an island's
+ * element may be in, which the island, drawn over the window, would not follow.
+ */
+@Composable
+fun HoldIslands(moving: Boolean) {
+    val islands = LocalIslands.current ?: return
+    val key = remember { Any() }
+    DisposableEffect(islands, moving) {
+        if (moving) islands.holds.add(key)
+        onDispose { islands.holds.remove(key) }
+    }
 }
 
 /** Tells [slot] where this element is, as it is placed. */

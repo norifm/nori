@@ -715,7 +715,7 @@ private fun SungText(
             slot.poke()
         },
         modifier = modifier.island(slot).drawWithContent {
-            if (slot.apart) return@drawWithContent
+            if (slot.handOff()) return@drawWithContent
             drawSungText(d)
         },
     )

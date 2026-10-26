@@ -355,6 +355,9 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
             }
         }
     }
+    // Colours on their way from one song's to the next are read as they are drawn; an island would not follow them.
+    val liveSettled by remember(live) { derivedStateOf { live.settled } }
+    HoldIslands(!liveSettled)
     val baseLook = LocalLook.current
     // The sleeve's placeholder and its sheen are in the theme's own colours, never the song's.
     androidx.compose.runtime.SideEffect { if (sleeveArt.neutral !== baseLook) sleeveArt.neutral = baseLook }
@@ -451,6 +454,8 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                 },
                 label = "panel",
             ) { page ->
+            // Dissolving into the next panel, with the controls shared across and moving between them.
+            HoldIslands(transition.currentState != transition.targetState)
             // 1 for the panel that is leaving - it has the transition's own fade on top of it - and the
             // arrival for the one coming in, read in the draw phase so a dissolve recomposes nothing.
             val panelFade = FloatReader { if (page == panel) arrived.read() else 1f }
@@ -2374,11 +2379,8 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     val einkShown = remember { mutableLongStateOf(0L) }
     val stepped = remember { longArrayOf(0L) }
     // While the player stands open and still, the bar and its times are drawn by an island of their own
-    // (SeekDrawing), which repaints only them; held, gliding into a new look, or with a sleep timer counting
-    // down between the times, they are drawn here.
-    val sheet = LocalPlayerSheet.current
-    val sheetUp by remember(sheet) { derivedStateOf { sheet.progress.value >= 1f && !sheet.panelFlight } }
-    val settled by remember(look) { derivedStateOf { look.settled } }
+    // (SeekDrawing), which repaints only them; held, or with a sleep timer counting down between the times,
+    // they are drawn here, as they are while anything round them moves (HoldIslands).
     val drawing = remember(pace) { SeekDrawing(pace, vm, stepped) }
     drawing.look = look
     drawing.length = length
@@ -2386,7 +2388,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     drawing.glyphs = rememberTimeGlyphs(MaterialTheme.typography.labelSmall)
     drawing.density = androidx.compose.ui.platform.LocalDensity.current
     drawing.thickness = with(drawing.density) { SEEK_THICKNESS.dp.toPx() }
-    val slot = rememberIsland(drawing, wanted = free && live && !eink && sheetUp && settled && state.sleepAt <= 0L, overPage = false)
+    val slot = rememberIsland(drawing, wanted = free && live && !eink && state.sleepAt <= 0L, overPage = false)
     // Handed back, what the island stepped the pace to is shown here at once.
     val wasApart = remember { booleanArrayOf(false) }
     androidx.compose.runtime.SideEffect {
@@ -2437,7 +2439,6 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     // seen. Animated both ways: nothing here changes size in one frame.
     val thickness = animateFloatAsState(if (dragging.value) 11f else SEEK_THICKNESS, spring(0.9f, 420f), label = "seek")
     val knob = animateFloatAsState(if (dragging.value) 1.5f else 0f, spring(0.9f, 420f), label = "knob")
-    val apart = slot.apart
     Column(Modifier.island(slot).onGloballyPositioned { drawing.origin = it.positionInWindow() }.padding(horizontal = PLAYER_GUTTER, vertical = 4.dp)) {
         Box(
             // The strip is wider than the hairline it draws: a thumb is not a mouse.
@@ -2479,7 +2480,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
                     }
                 }
                 .drawBehind {
-                    if (apart) return@drawBehind
+                    if (slot.handOff()) return@drawBehind
                     // Where the bar is, worked out here in the draw phase from primitives: no lambda
                     // returning a boxed Float on every frame.
                     val hold = held.value
@@ -2507,7 +2508,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
                 },
         )
         val mixing = vm.mixing.collectAsStateWithLifecycle()
-        SeekTimes(times, fadingFrom, fade, dragging, drag, held, if (eink) einkShown else null, durationMs, state.error, state.sleepAtEndOfTrack, state.sleepAt, mixing, drawing.glyphs!!, apart, { drawing.left = it.positionInWindow() }, { drawing.right = it.positionInWindow(); drawing.rightWidth = it.size.width })
+        SeekTimes(times, fadingFrom, fade, dragging, drag, held, if (eink) einkShown else null, durationMs, state.error, state.sleepAtEndOfTrack, state.sleepAt, mixing, drawing.glyphs!!, slot, { drawing.left = it.positionInWindow() }, { drawing.right = it.positionInWindow(); drawing.rightWidth = it.size.width })
     }
 }
 
@@ -2522,7 +2523,7 @@ private fun SeekTimes(
     times: androidx.compose.runtime.LongState, fadingFrom: androidx.compose.runtime.LongState, fade: androidx.compose.runtime.FloatState,
     dragging: androidx.compose.runtime.State<Boolean>, drag: androidx.compose.runtime.FloatState, held: androidx.compose.runtime.State<Long?>,
     eink: androidx.compose.runtime.LongState?, durationMs: Long, error: String?, sleepAtEndOfTrack: Boolean, sleepAt: Long, mixing: androidx.compose.runtime.State<Boolean>,
-    glyphs: TimeGlyphs, apart: Boolean, onLeft: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit, onRight: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit,
+    glyphs: TimeGlyphs, island: IslandSlot, onLeft: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit, onRight: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit,
 ) {
     val look = LocalLook.current
     val quiet = androidx.compose.ui.graphics.ColorProducer { look.color(CoverLook.ON_VARIANT) }
@@ -2537,9 +2538,10 @@ private fun SeekTimes(
     val style = MaterialTheme.typography.labelSmall
     val longest = (durationMs / 1000).coerceAtLeast(0)
     // The new times come in as the old ones go; with nothing fading this is 1 and the old layer draws nothing.
-    // Drawn by the seek bar's island instead while it has them ([apart]).
-    val inAlpha = Modifier.graphicsLayer { alpha = if (apart) 0f else if (gone() < 0) 1f else fade.floatValue }
-    val outAlpha = Modifier.graphicsLayer { alpha = if (apart) 0f else 1f - fade.floatValue }
+    // Drawn by the seek bar's island instead while it has them.
+    val apart = Modifier.drawWithContent { if (!island.handOff()) drawContent() }
+    val inAlpha = apart.graphicsLayer { alpha = if (gone() < 0) 1f else fade.floatValue }
+    val outAlpha = apart.graphicsLayer { alpha = 1f - fade.floatValue }
     // On e-ink, the whole minutes played and the song's length, unless a finger has the bar: read here, so
     // they recompose once a minute rather than redrawing each second.
     val still = eink != null && !dragging.value && held.value == null
