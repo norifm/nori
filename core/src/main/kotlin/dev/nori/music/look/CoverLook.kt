@@ -129,7 +129,7 @@ object CoverLook {
 
     // The seek bar's pace (nori_look::motion::SeekPace), through [SeekPace]: a handle and primitives in,
     // what it shows left in [SeekPace]'s view.
-    @JvmStatic @CriticalNative external fun seekPaceNew(view: Long, reduced: Boolean): Long
+    @JvmStatic @CriticalNative external fun seekPaceNew(view: Long): Long
     @JvmStatic @CriticalNative external fun seekPaceFree(h: Long)
     @JvmStatic @CriticalNative external fun seekPaceSync(h: Long, positionMs: Long, durationMs: Long)
     @JvmStatic @CriticalNative external fun seekPaceHold(h: Long, bar: Float, positionMs: Long, durationMs: Long)

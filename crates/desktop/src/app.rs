@@ -3384,7 +3384,7 @@ impl App {
             ui.set_queue_from(queue_from(q.upcoming().map(|(_, s)| s)).into());
             self.queue = Some(q);
         }
-        // Seek bar timer: only while playing, quarter-pixel steps of the widest bar.
+        // Seek bar timer: only while playing, a step per pixel of the widest bar.
         let step = pixel_ms(ui.get_duration_ms() as i64);
         let ticks = playing && !self.hidden;
         if ticks && (!self.tick.running() || self.tick_ms != step) {
@@ -3410,9 +3410,9 @@ fn position_shown(ui: &AppWindow, player: Option<&PlayerBar>, position_ms: i32) 
     if let Some(player) = player.filter(|_| !ui.get_full_player()) { player.set_position_ms(position_ms); }
 }
 
-/// Seek bar step: a quarter pixel of the widest bar (~380 pt at 2x), clamped to 16..250 ms.
+/// Seek bar step: a pixel of the widest bar (~380 pt at 2x), clamped to 16..250 ms.
 fn pixel_ms(duration_ms: i64) -> u64 {
-    (duration_ms.max(1) as u64 / (760 * 4)).clamp(16, 250)
+    (duration_ms.max(1) as u64 / 760).clamp(16, 250)
 }
 
 fn cards(it: impl Iterator<Item = Card>) -> ModelRc<Card> {
