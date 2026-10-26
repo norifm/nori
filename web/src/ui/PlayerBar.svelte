@@ -20,7 +20,7 @@
   const s = $derived(player.song);
   const n = $derived(player.now);
   const panes: [Pane, string, string][] = [
-    ["lyrics", "emoji-sing-right-note", W.lyrics],
+    ["lyrics", "quote-message", W.lyrics],
     ["queue", "playlist", W.queue],
   ];
   /** The pane showing: the full player's while it is open, else the side sheet's. */

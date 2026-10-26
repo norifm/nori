@@ -675,7 +675,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                 // A jam guest's transport is what its role offers (Spotify's Jam): an admin's is the host's, a
                 // guest listening here has play and pause of its own, one only watching has none.
                 Row(kept("transport").fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 18.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
-                    PanelButton(Iconoir.EmojiSingRightNote, say.lyrics, page == Panel.LYRICS, enabled = !radio, lower = 2.dp) { choose(Panel.LYRICS) }
+                    PanelButton(Iconoir.QuoteMessage, say.lyrics, page == Panel.LYRICS, enabled = !radio, lower = 2.dp) { choose(Panel.LYRICS) }
                     // The buttons send the record across exactly as a swipe does, so the two ways of
                     // changing song look like the same thing happening. A previous that only rewinds
                     // this song is not a record change and gets no slide - there is nothing to slide

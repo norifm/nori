@@ -73,7 +73,7 @@ function item(a: MenuAction, s: Song): Item | null {
     case "GoToArtist":
       return { label: W.goToArtist(a.name ?? "", !!a.named), icon: "user", run: () => ((ui.full = false), go("artist", a.id!)) };
     case "Lyrics":
-      return { label: W.lyrics, icon: "emoji-sing-right-note", run: () => (ui.lyricsInfo = true) };
+      return { label: W.lyrics, icon: "quote-message", run: () => (ui.lyricsInfo = true) };
     case "StartRadio":
       return { label: W.startRadio, icon: "antenna-signal", run: () => player.mix(s, true) };
     case "InstantMix":

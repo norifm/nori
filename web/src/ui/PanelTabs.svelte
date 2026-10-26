@@ -8,7 +8,7 @@
 
   let { current, pick }: { current: Pane | null; pick: (p: Pane) => void } = $props();
   const tabs = $derived(
-    ([["devices", "computer", W.devices], ["lyrics", "emoji-sing-right-note", W.lyrics], ["queue", "playlist", W.queue]] as [Pane, string, string][]).filter(([p]) => p !== "devices" || remote.devices.on),
+    ([["devices", "computer", W.devices], ["lyrics", "quote-message", W.lyrics], ["queue", "playlist", W.queue]] as [Pane, string, string][]).filter(([p]) => p !== "devices" || remote.devices.on),
   );
 </script>
 

@@ -112,7 +112,7 @@
       </div>
       <Controls big />
       <nav class="pane-tabs">
-        {#each [["lyrics", "emoji-sing-right-note", W.lyrics], ["devices", "computer", W.devices], ["queue", "playlist", W.queue]] as [p, icon, label] (p)}
+        {#each [["lyrics", "quote-message", W.lyrics], ["devices", "computer", W.devices], ["queue", "playlist", W.queue]] as [p, icon, label] (p)}
           {#if p !== "devices" || remote.devices.on}
             <button class="glyph quiet" class:on={pane === p} aria-pressed={pane === p} aria-label={label} title={label} data-pane={p} onclick={() => (ui.pane = ui.pane === p ? null : (p as Pane))}><Icon name={icon} /></button>
           {/if}
