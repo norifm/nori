@@ -14,6 +14,7 @@ const clock = (ms: number) => {
 export const W = {
   appName: "nori",
   signInLead: "Your server's address, user and password.",
+  signInOwnLead: "Your user and password.",
   server: "Server",
   user: "User",
   password: "Password",
