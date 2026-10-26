@@ -50,8 +50,14 @@ fun interface IslandDrawing {
     fun draw(canvas: Canvas, width: Int, height: Int): Long
 }
 
-/** One island's view: where its element is, cut to the part of it that shows, stepping itself between draws. */
+/**
+ * One island's view: where its element is, cut to the part of it that shows, stepping itself between draws.
+ * It is there for as long as its element wants it, and draws only while [IslandSlot.apart] - read while
+ * drawing, as the element reads it while drawing itself, in the same frame - so the two never both draw
+ * the element, and never neither.
+ */
 class Island internal constructor(context: Context) : View(context) {
+    internal var slot: IslandSlot? = null
     internal var drawing: IslandDrawing? = null
     internal var margin = 0
     private val step = Runnable { invalidate() }
@@ -81,6 +87,7 @@ class Island internal constructor(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         removeCallbacks(step)
+        if (slot?.apart != true) return
         val m = margin.toFloat()
         canvas.translate(m, m)
         val wait = drawing?.draw(canvas, width - 2 * margin, height - 2 * margin) ?: -1L
@@ -118,7 +125,8 @@ class IslandSpot {
 /** An element's island: whether it is drawn there now ([apart]), and how to ask it to draw again ([poke]). */
 class IslandSlot internal constructor(private val islands: Islands?) {
     internal var drawing: IslandDrawing? = null
-    internal var wanted = false
+    /** The caller's own condition, as state like [clear]: a draw that reads [apart] is drawn again when either changes. */
+    internal var wanted by mutableStateOf(false)
     internal var overPage = false
     internal var margin = 0
     /** Where the element must lie, in the window, for the island to have it (a list's unfaded middle); null for anywhere. */
@@ -126,8 +134,9 @@ class IslandSlot internal constructor(private val islands: Islands?) {
     internal val spot = IslandSpot()
     private var clear by mutableStateOf(false)
     private var island: Island? = null
+    private var placedOnce = false
 
-    /** Drawn by the island, so the element draws nothing itself. Read in composition. */
+    /** Drawn by the island, so the element draws nothing itself. Read in composition or while drawing. */
     val apart: Boolean get() = wanted && clear
 
     /** Asks the island to draw again, for a change it cannot see (a colour, playing again). */
@@ -137,21 +146,24 @@ class IslandSlot internal constructor(private val islands: Islands?) {
 
     internal fun placed(c: LayoutCoordinates) {
         spot.update(c, margin)
+        placedOnce = true
         recheck()
-        if (apart) island?.place(spot)
+        island?.place(spot)
     }
 
     internal fun recheck() {
         val i = islands ?: return
-        clear = spot.whole && (!overPage || i.clearOf(spot.visible)) && within.let { it == null || it.contains(spot.visible) }
+        val now = spot.whole && (!overPage || i.clearOf(spot.visible)) && within.let { it == null || it.contains(spot.visible) }
+        if (now != clear) { clear = now; island?.invalidate() }
     }
 
+    /** After each composition: the island is there while the element wants it, drawing what it is given now. */
     internal fun sync() {
         val i = islands ?: return
-        if (apart) {
-            val view = island ?: i.take().also { island = it }
+        if (wanted) {
+            val view = island ?: i.take().also { island = it; it.slot = this }
             view.drawing = drawing
-            view.place(spot)
+            if (placedOnce) view.place(spot)
             view.invalidate()
         } else island?.hide()
     }
@@ -173,7 +185,7 @@ fun rememberIsland(drawing: IslandDrawing, wanted: Boolean, overPage: Boolean, m
     val islands = LocalIslands.current
     val slot = remember(islands) { IslandSlot(islands) }
     slot.drawing = drawing
-    slot.wanted = wanted && islands != null
+    (wanted && islands != null).let { if (slot.wanted != it) slot.wanted = it }
     slot.overPage = overPage
     slot.margin = margin
     slot.within = within
