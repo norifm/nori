@@ -1,0 +1,51 @@
+name: Checks
+on:
+  push:
+  workflow_dispatch:
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+env:
+  RUSTC_WRAPPER: ''
+  CARGO_BUILD_JOBS: '4'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+jobs:
+  rust:
+    timeout-minutes: 45
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libasound2-dev libfontconfig1-dev libfreetype6-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev
+          rustup update stable --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - run: cargo test -j4 --workspace
+  web:
+    timeout-minutes: 40
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: web
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - uses: ./.github/actions/web-toolchain
+      - run: web/build.sh
+  android:
+    timeout-minutes: 40
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-debug
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - uses: ./.github/actions/android-toolchain
+      - run: ./gradlew :app:compileDebugKotlin -PrustTargets=arm64-v8a
