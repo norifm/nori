@@ -4,7 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Rect
 import android.view.View
-import android.widget.FrameLayout
+import android.view.ViewGroup
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -29,7 +29,16 @@ import androidx.compose.ui.layout.positionInWindow
  * few pixels. Each is used only while nothing else moves where it is ([rememberIsland]); otherwise Compose
  * draws the thing in its place among the page's layers, where a frame being drawn anyway costs nothing more.
  */
-class Islands(context: Context) : FrameLayout(context) {
+class Islands(context: Context) : ViewGroup(context) {
+    // Its islands are sized and placed by their elements, in the frame the element is placed
+    // ([Island.place]), never by a layout pass of this view: a size asked for halfway through a frame
+    // waited for the next pass, and one asked for while drawing could be dropped, leaving an island as
+    // large as it last was, or nothing, for good.
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) =
+        setMeasuredDimension(getDefaultSize(0, widthMeasureSpec), getDefaultSize(0, heightMeasureSpec))
+
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {}
+
     /** What the app draws over the page (chrome, banners), by who drew it, in window pixels: see [coversPage]. */
     val covers = mutableStateMapOf<Any, Rect>()
 
@@ -43,7 +52,7 @@ class Islands(context: Context) : FrameLayout(context) {
     val holds = androidx.compose.runtime.mutableStateListOf<Any>()
 
 
-    internal fun take(): Island = Island(context).also { addView(it, LayoutParams(1, 1)) }
+    internal fun take(): Island = Island(context).also { addView(it, LayoutParams(0, 0)) }
     internal fun give(island: Island) = removeView(island)
 }
 
@@ -77,9 +86,7 @@ class Island internal constructor(context: Context) : View(context) {
     }
 
     internal fun place(spot: IslandSpot) {
-        if (layoutParams.width != spot.width || layoutParams.height != spot.height) {
-            layoutParams = layoutParams.apply { width = spot.width; height = spot.height }
-        }
+        if (width != spot.width || height != spot.height) layout(0, 0, spot.width, spot.height)
         // The spot is in the window; this view is in the islands' layer, which starts wherever the activity's
         // content does - not at the window's corner under a cutout or a system bar set beside it.
         (parent as? View)?.getLocationInWindow(layer)
