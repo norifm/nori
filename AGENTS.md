@@ -232,8 +232,8 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
 
 - `tools/apk.sh [x86_64] [--install]`: release APK into `build/`. `./gradlew :app:assemblePerf
   -PrustTargets=arm64-v8a`: perf build ("nori dev"), see docs/developers/building.md.
-- `./gradlew :app:assemblePreview -PrustTargets=arm64-v8a`: a release build named "nori preview" (id
-  `dev.nori.music.preview`) that installs beside the real app, for trying a change on a phone.
+- `./gradlew :app:assembleNightly -PrustTargets=arm64-v8a`: a release build named "nori nightly" (id
+  `dev.nori.music.nightly`) that installs beside the real app; CI publishes one each night (nightly.yml).
 - `tools/app.sh` drives a debug build over adb (`open`, `play`, `do`, `set`, `state`).
 - `tools/release.sh` is the whole release, step by step. The changelog comes from `feat`/`fix`/`perf`
   commit subjects, so write those for users. Signing key `nori-release.jks` +

@@ -14,7 +14,7 @@ class NoriApp : Application() {
         val nori = Nori.get(this)
         // Only a release build installs a release over itself: a debug build is the same app signed and
         // built differently, and the perf build another app, so both only say a newer version is out.
-        nori.updates.configure(BuildConfig.VERSION_NAME, installs = BuildConfig.BUILD_TYPE == "release")
+        nori.updates.configure(BuildConfig.VERSION_NAME, installs = BuildConfig.BUILD_TYPE in setOf("release", "nightly"))
         // Then the AutoEQ list, if the core says it is due (one request on Wi-Fi, once a month at most), and
         // whether there is a newer release (once a day at most, unless switched off).
         // The app's log is kept on the disk for a report of a problem (Settings > About), from here on.

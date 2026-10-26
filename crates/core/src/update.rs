@@ -9,7 +9,7 @@ use crate::transport::{Exchange, NetError};
 
 /// Latest published release (GitHub leaves out drafts and prereleases).
 pub(crate) const LATEST_URL: &str = "https://api.github.com/repos/norifm/nori/releases/latest";
-/// The newest releases, prereleases among them, for the beta channel.
+/// The newest releases, prereleases among them, for the beta and nightly channels.
 pub(crate) const RECENT_URL: &str = "https://api.github.com/repos/norifm/nori/releases?per_page=20";
 /// Minimum interval between automatic checks.
 pub(crate) const CHECK_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -60,6 +60,53 @@ impl Version {
         };
         Some(Version { major, minor, patch, pre })
     }
+
+    /// A nightly build's version, as CI stamps it: "0.7.2-nightly.202610270200".
+    fn nightly(&self) -> bool {
+        self.pre.first().is_some_and(|p| p == "nightly")
+    }
+}
+
+/// The tag of the one rolling nightly release, moved each night; builds before nightlies skip it, as it
+/// is no version.
+const NIGHTLY_TAG: &str = "nightly";
+
+impl Release {
+    /// The version it holds, as shown: its tag without the "v", or the rolling nightly's from its title
+    /// ("nori 0.7.2-nightly.202610270200").
+    fn version(&self) -> Option<(Version, String)> {
+        let shown = if self.tag_name == NIGHTLY_TAG { self.name.trim().strip_prefix("nori ")? } else { self.tag_name.trim().trim_start_matches(['v', 'V']) };
+        Version::parse(shown).map(|v| (v, shown.to_string()))
+    }
+}
+
+/// Which releases a build is offered.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Channel {
+    Stable,
+    /// Prereleases too, by the beta switch.
+    Beta,
+    /// Only nightlies, for a nightly build ("nori nightly"), which is its own app.
+    Nightly,
+}
+
+impl Channel {
+    /// The channel of build `current` with the beta switch `beta`.
+    fn of(current: &str, beta: bool) -> Channel {
+        match Version::parse(current) {
+            Some(v) if v.nightly() => Channel::Nightly,
+            _ if beta => Channel::Beta,
+            _ => Channel::Stable,
+        }
+    }
+
+    fn offers(self, release: &Release, version: &Version) -> bool {
+        match self {
+            Channel::Stable => !release.prerelease,
+            Channel::Beta => !version.nightly(),
+            Channel::Nightly => version.nightly(),
+        }
+    }
 }
 
 impl Ord for Version {
@@ -108,6 +155,8 @@ struct Asset {
 #[derive(Debug, Clone, Deserialize)]
 struct Release {
     tag_name: String,
+    #[serde(default)]
+    name: String,
     #[serde(default)]
     html_url: String,
     #[serde(default)]
@@ -165,16 +214,21 @@ pub enum UpdateCheck {
     NoApk { version: String, page: String },
 }
 
-/// The newest of `releases` a channel offers: published ones, prereleases only on the beta channel.
-fn newest(releases: Vec<Release>, beta: bool) -> Option<Release> {
-    releases.into_iter().filter(|r| !r.draft && (beta || !r.prerelease)).filter_map(|r| Version::parse(&r.tag_name).map(|v| (v, r))).max_by(|a, b| a.0.cmp(&b.0)).map(|(_, r)| r)
+/// The newest of `releases` `channel` offers, drafts never.
+fn newest(releases: Vec<Release>, channel: Channel) -> Option<Release> {
+    releases
+        .into_iter()
+        .filter(|r| !r.draft)
+        .filter_map(|r| r.version().map(|(v, _)| (v, r)))
+        .filter(|(v, r)| channel.offers(r, v))
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, r)| r)
 }
 
 /// The check outcome for `release` (one its channel offers) against build `current`; an error for an
 /// unparseable tag.
 fn decide(release: &Release, current: &str, abis: &[String], skipped: Option<&str>) -> Result<UpdateCheck, String> {
-    let latest = Version::parse(&release.tag_name).ok_or_else(|| format!("tag {:?} is no version", release.tag_name))?;
-    let shown = release.tag_name.trim().trim_start_matches(['v', 'V']).to_string();
+    let (latest, shown) = release.version().ok_or_else(|| format!("tag {:?} is no version", release.tag_name))?;
     let newer = Version::parse(current).is_some_and(|c| latest > c);
     if !newer {
         return Ok(UpdateCheck::UpToDate { latest: shown });
@@ -330,9 +384,9 @@ impl Client {
             }
         }
         self.settings().keep_app_value(CHECKED_KEY, now.to_string());
-        let beta = self.settings().prefs(|p| p.update_beta);
+        let channel = Channel::of(&version, self.settings().prefs(|p| p.update_beta));
         let request = Exchange {
-            url: if beta { RECENT_URL } else { LATEST_URL }.to_string(),
+            url: if channel == Channel::Stable { LATEST_URL } else { RECENT_URL }.to_string(),
             headers: [("Accept".to_string(), "application/vnd.github+json".to_string()), ("X-GitHub-Api-Version".to_string(), "2022-11-28".to_string())].into(),
             timeout_ms: TIMEOUT_MS,
             ..Default::default()
@@ -342,9 +396,9 @@ impl Client {
             return Err(NetError::Http { status: r.status });
         }
         let parse = |e: serde_json::Error| NetError::Parse { reason: format!("latest release: {e}") };
-        let release: Release = if beta {
+        let release: Release = if channel != Channel::Stable {
             let all: Vec<Release> = serde_json::from_slice(&r.body).map_err(parse)?;
-            newest(all, true).ok_or_else(|| NetError::Parse { reason: "no release".into() })?
+            newest(all, channel).ok_or_else(|| NetError::Parse { reason: "no release".into() })?
         } else {
             serde_json::from_slice(&r.body).map_err(parse)?
         };
@@ -420,11 +474,36 @@ mod tests {
     fn channel_takes_the_newest_it_offers() {
         let r = |tag: &str, prerelease: bool, draft: bool| Release { tag_name: tag.into(), prerelease, draft, ..latest() };
         let tag = |r: Option<Release>| r.map(|r| r.tag_name);
-        let found = || vec![r("v0.5.1", false, false), r("v0.5.2-beta.2", true, false), r("v0.5.2-beta.3", true, true), r("v0.5.2-beta.1", true, false), r("nightly", true, false)];
-        assert_eq!(tag(newest(found(), true)), Some("v0.5.2-beta.2".into()), "the newest beta, not the draft");
-        assert_eq!(tag(newest(found(), false)), Some("v0.5.1".into()), "stable only off the beta channel");
+        let found = || {
+            vec![
+                r("v0.5.1", false, false),
+                r("v0.5.2-beta.2", true, false),
+                r("v0.5.2-beta.3", true, true),
+                r("v0.5.2-beta.1", true, false),
+                Release { name: "nori 0.5.3-nightly.202610270200".into(), ..r(NIGHTLY_TAG, true, false) },
+            ]
+        };
+        assert_eq!(tag(newest(found(), Channel::Beta)), Some("v0.5.2-beta.2".into()), "the newest beta, not the draft nor a nightly");
+        assert_eq!(tag(newest(found(), Channel::Stable)), Some("v0.5.1".into()), "stable only off the beta channel");
+        let nightly = newest(found(), Channel::Nightly).expect("the nightly");
+        assert_eq!(nightly.version().map(|(_, shown)| shown), Some("0.5.3-nightly.202610270200".into()), "from its title");
+        assert_eq!(tag(newest(vec![Release { name: "nori 0.5.3".into(), ..r(NIGHTLY_TAG, true, false) }], Channel::Nightly)), None, "a title of no nightly");
         let released = vec![r("v0.5.2", false, false), r("v0.5.2-beta.2", true, false)];
-        assert_eq!(tag(newest(released, true)), Some("v0.5.2".into()), "the release outranks its betas");
+        assert_eq!(tag(newest(released.clone(), Channel::Beta)), Some("v0.5.2".into()), "the release outranks its betas");
+        assert_eq!(tag(newest(released, Channel::Nightly)), None, "a nightly build is offered no release");
+    }
+
+    #[test]
+    fn a_build_follows_its_channel() {
+        for (current, beta, want) in [
+            ("0.7.1", false, Channel::Stable),
+            ("0.7.1-beta.2", false, Channel::Stable),
+            ("0.7.1", true, Channel::Beta),
+            ("0.7.2-nightly.202610270200", false, Channel::Nightly),
+            ("0.7.2-nightly.202610270200", true, Channel::Nightly),
+        ] {
+            assert_eq!(Channel::of(current, beta), want, "{current} beta {beta}");
+        }
     }
 
     #[test]
@@ -449,7 +528,12 @@ mod tests {
             decide(&only_x86, "0.4.0", &phone, None).unwrap(),
             UpdateCheck::NoApk { version: "0.5.0".into(), page: "https://github.com/norifm/nori/releases/tag/v0.5.0".into() }
         );
-        assert!(decide(&Release { tag_name: "nightly".into(), ..latest() }, "0.4.0", &phone, None).is_err());
+        assert!(decide(&Release { tag_name: "nightly".into(), name: "nightly build".into(), ..latest() }, "0.4.0", &phone, None).is_err());
+        // A nightly build takes the next night's, by the version in its title.
+        let night = Release { tag_name: NIGHTLY_TAG.into(), name: "nori 0.7.2-nightly.202610280200".into(), prerelease: true, ..latest() };
+        let UpdateCheck::Available { update, .. } = decide(&night, "0.7.2-nightly.202610270200", &phone, None).unwrap() else { panic!("offered") };
+        assert_eq!(update.version, "0.7.2-nightly.202610280200");
+        assert_eq!(decide(&night, "0.7.2-nightly.202610280200", &phone, None).unwrap(), UpdateCheck::UpToDate { latest: "0.7.2-nightly.202610280200".into() });
         // The beta channel takes a prerelease.
         let beta = Release { prerelease: true, tag_name: "v0.5.0-beta.2".into(), ..latest() };
         assert!(matches!(decide(&beta, "0.4.0", &phone, None).unwrap(), UpdateCheck::Available { .. }));

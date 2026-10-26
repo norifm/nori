@@ -25,6 +25,9 @@ android {
             versionName = v
             versionCode = major * 1000000 + minor * 10000 + patch * 100 + beta
         }
+        // The nightly build's version, `-Pnightly=0.7.2-nightly.202610270200`, which its updater compares with
+        // the next night's (.github/workflows/nightly.yml).
+        (project.findProperty("nightly") as String?)?.let { versionName = it }
         ndk { abiFilters += (project.findProperty("rustTargets") as String? ?: "arm64-v8a,x86_64").split(",") }
         // What About can say about this build beyond a version number: the commit it was cut from, and
         // the versions of what it is built on - the Rust crates read from Cargo.lock, the Android ones
@@ -84,13 +87,13 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += "release"
         }
-        // A release build to try a change on a phone beside the real app: its own id and name, so nothing
-        // of the installed app is touched.
-        create("preview") {
+        // "nori nightly", built from master each night: a release build beside the real app, its own id and
+        // name, so nothing of the installed app is touched. Signed as a release, so each night's updates it
+        // in place.
+        create("nightly") {
             initWith(getByName("release"))
-            applicationIdSuffix = ".preview"
+            applicationIdSuffix = ".nightly"
             isDebuggable = false
-            signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += "release"
         }
     }
@@ -104,7 +107,7 @@ android {
         // drives the app by itself and needs none of the bridge.
         getByName("release").kotlin.srcDir("src/noTest/kotlin")
         getByName("perf").kotlin.srcDir("src/noTest/kotlin")
-        getByName("preview").kotlin.srcDir("src/noTest/kotlin")
+        getByName("nightly").kotlin.srcDir("src/noTest/kotlin")
         // The self test's plain logic (no Android in it): built into the perf build, and tested on the JVM
         // with the unit tests, which AGP runs for the debug build only.
         getByName("perf").kotlin.srcDir("src/perf/logic")

@@ -23,7 +23,7 @@ plugins {
 // Which ABIs the Rust core is built for. Asked explicitly with -PrustTargets; otherwise a debug build is for the
 // host's emulator architecture and a perf or release build for phones (arm64-v8a): building both every time doubled
 // each build for a chip nobody was going to run it on.
-val shipping = gradle.startParameter.taskNames.any { t -> listOf("release", "perf", "preview", "bundle").any { t.contains(it, ignoreCase = true) } }
+val shipping = gradle.startParameter.taskNames.any { t -> listOf("release", "perf", "nightly", "bundle").any { t.contains(it, ignoreCase = true) } }
 val emulatorAbi = if (System.getProperty("os.arch") in listOf("aarch64", "arm64")) "arm64-v8a" else "x86_64"
 val rustTargets = (project.findProperty("rustTargets") as String? ?: if (shipping) "arm64-v8a" else emulatorAbi).split(",")
 val rustProfile = project.findProperty("rustProfile") as String? ?: if (shipping) "dist" else "release"
