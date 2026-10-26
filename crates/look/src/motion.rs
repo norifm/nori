@@ -7,8 +7,9 @@ const EASE_S: f32 = 0.14;
 const SETTLED_PX: f32 = 2.0;
 /// Below this gap the bar does not move (absorbs position jitter).
 const STILL_PX: f32 = 0.5;
-/// How far the bar moves per redraw while it keeps up: a whole pixel, under half a dp on a phone.
-const DRAW_PX: f32 = 1.0;
+const DRAW_PX: f32 = 0.25;
+/// The step under reduced motion: a quarter of the redraws, still moving (a pixel is under half a dp).
+const REDUCED_DRAW_PX: f32 = 1.0;
 /// Wait bounds between draws while keeping up: one frame to one second.
 const MIN_WAIT_MS: i32 = 16;
 const MAX_WAIT_MS: i32 = 1000;
@@ -50,7 +51,7 @@ fn ease(t: f32) -> f32 {
 }
 
 /// Seek bar position and time labels. During normal playback the bar tracks the song exactly, redrawn
-/// once per pixel or label second. A jump glides the bar over [`GLIDE_S`] (chasing the moving target)
+/// once per quarter pixel (a whole one under reduced motion) or label second. A jump glides the bar over [`GLIDE_S`] (chasing the moving target)
 /// and cross-fades the labels. Call [`SeekPace::sync`] when a page reappears so it does not glide from a
 /// stale position.
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +69,8 @@ pub struct SeekPace {
     fade_from: Option<(i64, i64)>,
     fade_s: f32,
     synced: bool,
+    /// How far the bar moves per redraw while it keeps up: [`DRAW_PX`], or [`REDUCED_DRAW_PX`].
+    step_px: f32,
 }
 
 impl Default for SeekPace {
@@ -92,13 +95,18 @@ fn times(position_ms: i64, duration_ms: i64) -> (i64, i64) {
 
 impl SeekPace {
     pub const fn new() -> Self {
-        SeekPace { bar: 0.0, glide_from: None, glide_s: 0.0, target: 0.0, at_ms: 0, duration_ms: 0, fade_from: None, fade_s: 0.0, synced: false }
+        SeekPace { bar: 0.0, glide_from: None, glide_s: 0.0, target: 0.0, at_ms: 0, duration_ms: 0, fade_from: None, fade_s: 0.0, synced: false, step_px: DRAW_PX }
+    }
+
+    /// A pace for reduced motion: the bar steps a whole pixel at a time.
+    pub const fn reduced() -> Self {
+        SeekPace { step_px: REDUCED_DRAW_PX, ..SeekPace::new() }
     }
 
     /// Jumps straight to the song's position with no glide or fade.
     pub fn sync(&mut self, position_ms: i64, duration_ms: i64) {
         let bar = fraction(position_ms, duration_ms);
-        *self = SeekPace { bar, target: bar, at_ms: position_ms.max(0), duration_ms, synced: true, ..SeekPace::new() };
+        *self = SeekPace { bar, target: bar, at_ms: position_ms.max(0), duration_ms, synced: true, step_px: self.step_px, ..SeekPace::new() };
     }
 
     /// Holds the bar at `bar` (0..1), e.g. where a released scrub left it.
@@ -160,7 +168,7 @@ impl SeekPace {
                 self.bar = from + (target - from) * ease(t);
                 return 0;
             }
-        } else if gap_px.abs() >= DRAW_PX / 2.0 {
+        } else if gap_px.abs() >= self.step_px / 2.0 {
             self.bar = target;
         }
         if self.fade_from.is_some() {
@@ -169,10 +177,10 @@ impl SeekPace {
         if rate <= 0.0 {
             return -1;
         }
-        // A redraw per pixel keeps the rounded edge moving without ticking every frame.
-        let ahead_px = ((target - self.bar) * width).clamp(0.0, DRAW_PX);
+        // Quarter-pixel steps keep the rounded edge moving without ticking every frame.
+        let ahead_px = ((target - self.bar) * width).clamp(0.0, self.step_px);
         let px_ms = if duration_ms > 0 { duration_ms as f32 / (width * rate) } else { MAX_WAIT_MS as f32 };
-        let pixel = (DRAW_PX - ahead_px) * px_ms;
+        let pixel = (self.step_px - ahead_px) * px_ms;
         let second = (1000 - position_ms.rem_euclid(1000)) as f32 / rate;
         (pixel.min(second) as i32).clamp(MIN_WAIT_MS, MAX_WAIT_MS)
     }
@@ -269,23 +277,24 @@ mod tests {
         assert_eq!((p.times(), p.bar()), ((65, 0), 0.0));
     }
 
-    /// The bar redraws once per pixel it moves, and no more often.
+    /// Reduced motion steps the bar a whole pixel at a time: a quarter of the redraws.
     #[test]
-    fn steps_whole_pixels() {
-        // 100 s over 1000 px is 10 px/s: about 100 draws in 10 s.
-        let mut p = SeekPace::new();
-        p.sync(10_000, 100_000);
-        let (mut at, mut dt, mut moved) = (10_000i64, 0.0f32, 0);
-        while at < 20_000 {
-            let before = p.bar();
-            let wait = p.step(at, 100_000, dt, 1000.0, 1.0);
-            if p.bar() != before {
-                moved += 1;
+    fn reduced_motion_steps_whole_pixels() {
+        // 100 s over 1000 px is 10 px/s: in 10 s about 400 quarter-pixel draws, or 100 whole ones.
+        for (mut p, draws) in [(SeekPace::new(), 380..=420), (SeekPace::reduced(), 95..=105)] {
+            p.sync(10_000, 100_000);
+            let (mut at, mut dt, mut moved) = (10_000i64, 0.0f32, 0);
+            while at < 20_000 {
+                let before = p.bar();
+                let wait = p.step(at, 100_000, dt, 1000.0, 1.0);
+                if p.bar() != before {
+                    moved += 1;
+                }
+                at += wait as i64;
+                dt = wait as f32 / 1000.0;
             }
-            at += wait as i64;
-            dt = wait as f32 / 1000.0;
+            assert!(draws.contains(&moved), "{moved} draws");
         }
-        assert!((95..=105).contains(&moved), "{moved} draws");
     }
 
     #[test]
@@ -296,8 +305,8 @@ mod tests {
         let mut dt = 0.0;
         for _ in 0..20 {
             let wait = p.step(at, 360_000, dt, 400.0, 1.0);
-            assert!((16..=1000).contains(&wait), "visible playback waited {wait}ms");
-            assert!(((fraction(at, 360_000) - p.bar()) * 400.0).abs() <= 1.01);
+            assert!((16..=225).contains(&wait), "visible playback waited {wait}ms");
+            assert!(((fraction(at, 360_000) - p.bar()) * 400.0).abs() <= 0.26);
             at += wait as i64;
             dt = wait as f32 / 1000.0;
         }

@@ -21,7 +21,7 @@ pub(crate) static COVER: Class = Class {
         native!(c"seekTimes", c"(ZFJJJ)J", seek_times),
         native!(c"einkSeek", c"(JJ)J", eink_seek),
         native!(c"seekStep", c"(FFFFF)J", seek_step),
-        native!(c"seekPaceNew", c"(J)J", seek_pace_new),
+        native!(c"seekPaceNew", c"(JZ)J", seek_pace_new),
         native!(c"seekPaceFree", c"(J)V", seek_pace_free),
         native!(c"seekPaceSync", c"(JJJ)V", seek_pace_sync),
         native!(c"seekPaceHold", c"(JFJJ)V", seek_pace_hold),
@@ -329,9 +329,9 @@ fn pack_times((at, left): (i64, i64)) -> jlong {
     (at << 32) | (left & 0xFFFF_FFFF)
 }
 
-/// A pace showing into `view` (a `NativeView` address of 24 bytes).
-extern "system" fn seek_pace_new(view: jlong) -> jlong {
-    let p = Pace { pace: SeekPace::new(), view };
+/// A pace showing into `view` (a `NativeView` address of 24 bytes); `reduced` for reduced motion.
+extern "system" fn seek_pace_new(view: jlong, reduced: jboolean) -> jlong {
+    let p = Pace { pace: if reduced != 0 { SeekPace::reduced() } else { SeekPace::new() }, view };
     p.show();
     Box::into_raw(Box::new(p)) as jlong
 }

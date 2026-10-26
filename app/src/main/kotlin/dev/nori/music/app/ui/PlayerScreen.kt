@@ -2337,7 +2337,8 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     val watched by vm.pendingSeek.collectAsStateWithLifecycle()
     LaunchedEffect(watched, held.value) { if (held.value != null && vm.pendingSeek.value == null) held.value = null }
 
-    val pace = remember { dev.nori.music.look.SeekPace() }
+    val reduced = reduceMotion()
+    val pace = remember(reduced) { dev.nori.music.look.SeekPace(reduced) }
     androidx.compose.runtime.DisposableEffect(pace) { onDispose { pace.close() } }
     // What the pace says, as the draw phase reads it: written only when it changes.
     val bar = remember { mutableFloatStateOf(0f) }
@@ -2380,7 +2381,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     }
     // Paused, the loop settles the bar and stops - nothing ticks over a paused song - so anything that
     // can move a paused player restarts it: play, a skip, a seek. While the music plays it keeps going,
-    // a step every frame through a glide and one a pixel or a second otherwise. A seek starts it again
+    // a step every frame through a glide and one a quarter pixel or a second otherwise. A seek starts it again
     // twice, as it is asked and as it lands, mid-glide: a loop stepped a moment ago steps on from that
     // step in its first frame (waiting a frame for a time to count from held the bar still for it).
     val stepped = remember { longArrayOf(0L) }
