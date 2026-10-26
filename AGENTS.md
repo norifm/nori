@@ -185,6 +185,8 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
   path, prove it with a failing test), then fix it there. No band-aids that cost code quality: no flags
   steering other code, no retry loops or sleeps, no special cases, no safeguards for states that
   shouldn't arise. If the cause can't be found, say so instead of patching around it.
+- Once the cause is found, look for it everywhere else: every other use of the same API, pattern or
+  assumption, in every client. Fix those in the same change, or list the ones left and why.
 - Entries and streams are identified by index or sequence, not by content ids.
 - No abstraction with one implementation or caller, no dead code, no unused `pub`, no copied blocks.
 - Touch only what the task needs; prefer the change that removes code while keeping the behaviour.
