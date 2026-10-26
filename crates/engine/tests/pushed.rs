@@ -150,6 +150,29 @@ fn a_pushed_song_opens_half_way() {
     }
 }
 
+/// A window holding less than a song needs ready ahead (a low bitrate, a short window): ready at its
+/// high mark, where the fetching waits.
+#[test]
+fn a_pushed_song_opens_with_a_window_under_ready() {
+    if !common::ffmpeg() {
+        return;
+    }
+    // 2-8 s ahead: at most 130 kB of these songs, under READY.
+    const TINY_WINDOW: [i64; 5] = [2_000, 8_000, 0, 0, 1 << 30];
+    let dir = nori_testdir::TempDir::new("pushed-tiny");
+    let songs = [
+        ("flac", encode(dir.path(), "d.flac", 60, &["-c:a", "flac"])),
+        ("mp3", encode(dir.path(), "d.mp3", 60, &["-c:a", "libmp3lame", "-b:a", "128k"])),
+        ("ogg", encode(dir.path(), "d.ogg", 60, &["-c:a", "libopus", "-b:a", "96k"])),
+    ];
+    for (hint, song) in &songs {
+        for from_ms in [0, 40_000] {
+            let (heard, want, asked) = pushed_and_file(song, hint, 60, from_ms, TINY_WINDOW, 16 * 1024);
+            assert!(!want.is_empty() && heard == want, "{hint} from {from_ms} ms: the same samples as from a file ({} and {} bytes), asked {asked:?}", heard.len(), want.len());
+        }
+    }
+}
+
 /// [`Pushes`] behind a cache that forgets a song whenever told (the phone's media3 cache), counting how
 /// often.
 #[derive(Default)]
