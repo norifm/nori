@@ -879,6 +879,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_search_step, h, |a, by| a.search_step(by));
     on!(ui.on_search_accepted, h, |a| a.search_accepted());
     on!(ui.on_search_preview_pick, h, |a, i| a.search_pick(i as usize));
+    on!(ui.on_search_preview_changed, h, |a| a.mirror());
     on!(ui.on_search_again, h, |a, t| a.search_again(&t));
     on!(ui.on_forget_searches, h, |a| a.forget_searches());
     on!(ui.on_toggle, h, |a| a.on_session(|s| s.toggle()));
@@ -2856,6 +2857,7 @@ impl App {
             t.set_view(ui.get_view());
             t.set_page_kind(ui.get_page_kind());
             t.set_guest(ui.global::<crate::Jam>().get_guest());
+            t.set_previewing(ui.get_search_preview_shown());
         }
     }
 

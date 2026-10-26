@@ -248,6 +248,13 @@ export global Chrome {
     }
 }
 
+// The search field's preview hangs from the field, as wide as it: the field widens to this while it shows,
+// on a pill wide enough to name its tabs or not.
+global SearchShape {
+    out property <length> wide: 360px;
+    out property <length> narrow: 300px;
+}
+
 // The menus' shapes: every menu is one popover, its rows inset by `inset`, so a row's corner (and the cover at a
 // menu's head) is the popover's less that inset, concentric with it.
 global MenuShape {
@@ -4890,6 +4897,8 @@ component TopContent inherits Rectangle {
     // The pill's width (the window's), which decides whether the tabs are named.
     in property <length> room;
     property <bool> named: root.room >= 880px;
+    // The field's preview shows under it: the field is as wide as the preview.
+    in property <bool> previewing;
     public function focus-search() {
         input.focus();
     }
@@ -4963,7 +4972,7 @@ component TopContent inherits Rectangle {
         // while typed in; typing shows what it finds in a preview under it.
         Rectangle {
             y: (parent.height - self.height) / 2;
-            width: input.has-focus ? (root.named ? 280px : 220px) : root.named ? 180px : 36px;
+            width: input.has-focus ? (root.previewing ? (root.named ? SearchShape.wide : SearchShape.narrow) : root.named ? 280px : 220px) : root.named ? 180px : 36px;
             animate width { duration: Motion.reduced ? 0ms : 200ms; easing: ease-out; }
             height: 36px;
             border-radius: 18px;
@@ -5489,6 +5498,10 @@ export component AppWindow inherits Window {
     in-out property <bool> search-preview-open;
     in-out property <int> search-preview-at: -1;
     callback search-preview-pick(int);
+    // The preview shows: the top pill widens its field to it.
+    out property <bool> search-preview-shown: root.search-preview-open && root.view != 1 && (root.search-preview.length > 0 || root.search-nothing);
+    callback search-preview-changed();
+    changed search-preview-shown => { root.search-preview-changed(); }
     // From the top pill's field: the arrows' step through the preview, and Enter.
     callback search-step(int);
     callback search-accepted();
@@ -8219,19 +8232,24 @@ export component AppWindow inherits Window {
             }
         }
 
-        // Pair a device: this computer's code to scan with nori, or to copy, in a sheet over the window.
-        // The search field's preview, under the field as the settings menu opens under the pill: groups of the
-        // best few under their heads, then every result. A press beside it shuts it. It fades in and settles
-        // as the menus do; nothing in it moves the page.
+        // The search field's preview, hanging from the field: as wide as the field (which widens to it) and
+        // level with its edges, in the pill's paper, outline and corner, so field and preview read as one.
+        // Groups of the best few under their heads, then every result. A press beside it shuts it. It fades in
+        // and settles as the menus do; nothing in it moves the page.
         if root.search-preview-open: TouchArea {
             clicked => { root.search-preview-open = false; }
         }
-        Popover {
-            property <bool> shown: root.search-preview-open && root.view != 1 && (root.search-preview.length > 0 || root.search-nothing);
+        Rectangle {
+            property <bool> shown: root.search-preview-shown;
             x: Chrome.top-x + Chrome.top-w - 46px - self.width;
             y: Chrome.top-room - 12px + (self.shown ? 0px : -6px);
             animate y { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
-            width: 380px;
+            width: Chrome.top-w >= 880px ? SearchShape.wide : SearchShape.narrow;
+            border-radius: Chrome.top-radius;
+            // The pill's paper where nothing under it is blurred (Chrome's 88 %), and its outline.
+            background: Theme.ground.with-alpha(0.88);
+            border-width: 1px;
+            border-color: Theme.outline;
             height: min(hits.preferred-height, root.height - Chrome.top-room - Chrome.bottom-room + 12px);
             opacity: self.shown ? 1 : 0;
             animate opacity { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
@@ -8268,7 +8286,7 @@ export component AppWindow inherits Window {
                         Rectangle {
                             y: c.kind == 5 ? 6px : 0px;
                             height: parent.height - self.y;
-                            border-radius: MenuShape.inner;
+                            border-radius: Chrome.top-radius - MenuShape.inset;
                             background: hit.lit ? Theme.hover : transparent;
                             if c.kind >= 0 && c.kind <= 3: HorizontalLayout {
                                 padding-left: 6px;
@@ -8338,6 +8356,7 @@ export component AppWindow inherits Window {
             }
         }
 
+        // Pair a device: this computer's code to scan with nori, or to copy, in a sheet over the window.
         if root.pairing-open: Rectangle {
             background: Theme.ground.with-alpha(0.6);
             TouchArea {
@@ -8534,6 +8553,7 @@ export component TopBar inherits Window {
     in property <int> view;
     in property <int> page-kind;
     in property <bool> guest;
+    in property <bool> previewing;
     in-out property <string> search-text;
     callback go(int);
     callback open-menu();
@@ -8561,6 +8581,7 @@ export component TopBar inherits Window {
         view: root.view;
         page-kind: root.page-kind;
         guest: root.guest;
+        previewing: root.previewing;
         search-text <=> root.search-text;
         go(v) => { root.go(v); }
         open-menu => { root.open-menu(); }
