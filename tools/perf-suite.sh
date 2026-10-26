@@ -67,7 +67,7 @@ if "$ui" has "Server URL"; then
   say "login"; "$ui" tap "Server URL"; sleep 1; adb shell input text "$url"; adb shell input keyevent 61; adb shell input text "$user"; adb shell input keyevent 61; adb shell input text "$pass"
   adb shell input keyevent 4; sleep 1; "$ui" tap Connect; sleep 6
 fi
-"$ui" has "Shuffle everything" || { say "not logged in / home not showing; aborting"; "$ui" texts | head -12 >&2; exit 1; }
+"$ui" has "Listen now" || { say "not logged in / home not showing; aborting"; "$ui" texts | head -12 >&2; exit 1; }
 
 mkdir -p "$(dirname "$out")"
 { echo; echo "### $model · Android $rel · $abi · $(date +%F)"; echo; } >> "$out"
@@ -90,11 +90,11 @@ say "lyrics sweep"; "$ui" tap Lyrics; sleep 4; row "Lyrics, word sweep on (45 s)
 adb shell input keyevent 4; sleep 1
 say "FLAC screen off"; play "Noise flac"; adb shell input keyevent 3; row "FLAC, screen off (90 s)" "$(bench 90 off)"
 say "DSP on"; adb logcat -c; wake; adb shell am start -n $pkg/.app.MainActivity >/dev/null 2>&1; sleep 2; "$ui" tapn Settings 1; sleep 2
-for _ in 1 2 3 4 5 6 7 8; do "$ui" has "Equalizer and crossfeed" && break; adb shell input swipe $((w/2)) $((h*7/10)) $((w/2)) $((h*3/10)) 400; sleep 1; done
-"$ui" tap "Equalizer and crossfeed"; sleep 2; tapright Equalizer 90; sleep 1; tapright 62 78; tapright 8k 35; sleep 1; adb shell input keyevent 4; sleep 1
+# Settings > Sound > Equalizer and crossfeed: switched on with a preset that bends the curve.
+"$ui" tap Sound; sleep 2; "$ui" tap "Equalizer and crossfeed"; sleep 2; tapright Equalizer 90; sleep 1; "$ui" tap "Bass boost"; sleep 1; adb shell input keyevent 4; sleep 1
 adb logcat -d -s nori:I | grep -q "equalizer in chain" || say "WARNING: equalizer did not join the chain"
 adb shell input keyevent 3; row "FLAC + equalizer, screen off (90 s)" "$(bench 90 off)"
-wake; adb shell am start -n $pkg/.app.MainActivity >/dev/null 2>&1; sleep 2; "$ui" has Enabled || "$ui" tap "Equalizer and crossfeed"; sleep 2; tapright Equalizer 90; "$ui" tap Reset; adb shell input keyevent 4
+wake; adb shell am start -n $pkg/.app.MainActivity >/dev/null 2>&1; sleep 2; "$ui" tap "Equalizer and crossfeed"; sleep 2; "$ui" tap Reset; tapright Equalizer 90; adb shell input keyevent 4
 say "paused"; adb shell input keyevent 127; sleep 3; adb shell input keyevent 3; row "Paused in background (30 s)" "$(bench 30 off)"
 echo >> "$out"; echo "Audio offload threads active during MP3 playback: $offload" >> "$out"
 say "done -> $out"
