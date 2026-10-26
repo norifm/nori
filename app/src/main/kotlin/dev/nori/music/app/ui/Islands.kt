@@ -51,6 +51,17 @@ class Islands(context: Context) : ViewGroup(context) {
      */
     val holds = androidx.compose.runtime.mutableStateListOf<Any>()
 
+    /**
+     * A hold starting stops every island in that frame. An element being moved or faded is not always drawn
+     * again (a panel leaving is moved and faded as it last drew), so waiting for its drawing to take it back
+     * left its island drawing it on top of the copy Compose moves in. Released, an island starts again only
+     * from its element's drawing ([IslandSlot.handOff]).
+     */
+    internal fun hold(key: Any) {
+        holds.add(key)
+        for (i in 0 until childCount) (getChildAt(i) as? Island)?.stop()
+    }
+
 
     internal fun take(): Island = Island(context).also { addView(it, LayoutParams(0, 0)) }
     internal fun give(island: Island) = removeView(island)
@@ -102,6 +113,13 @@ class Island internal constructor(context: Context) : View(context) {
     internal fun hide() {
         visibility = GONE
         removeCallbacks(step)
+    }
+
+    /** Draws nothing from this frame until its element's drawing hands it the element again. */
+    internal fun stop() {
+        slot?.told = false
+        removeCallbacks(step)
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -240,7 +258,7 @@ fun HoldIslands(moving: Boolean) {
     val islands = LocalIslands.current ?: return
     val key = remember { Any() }
     DisposableEffect(islands, moving) {
-        if (moving) islands.holds.add(key)
+        if (moving) islands.hold(key)
         onDispose { islands.holds.remove(key) }
     }
 }
