@@ -395,6 +395,8 @@ pub struct App {
     mixes: Vec<nori_core::mixes::board::MixTile>,
     songs: Vec<Song>,
     search_songs: Vec<Song>,
+    /// The search field's preview of the answer shown, line by line as the main window lists it.
+    search_preview: Vec<nori_core::search::PreviewLine>,
     /// Search's Show all pressed, for the query in `search_query`.
     search_songs_all: bool,
     search_query: String,
@@ -551,12 +553,10 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
     let bar = TopBar::new().map_err(|e| eprintln!("nori: no top pill: {e}")).ok()?;
     bar.on_go(to_main_with(ui, |m, v| m.invoke_go(v)));
     bar.on_open_menu(to_main(ui, |m| m.invoke_show_menu()));
-    bar.on_search_edited(to_main_with(ui, |m, text| {
-        if m.get_view() != SEARCH {
-            m.invoke_go(SEARCH);
-        }
-        m.invoke_search_edited(text);
-    }));
+    bar.on_search_edited(to_main_with(ui, |m, text| m.invoke_search_edited(text)));
+    bar.on_search_step(to_main_with(ui, |m, by| m.invoke_search_step(by)));
+    bar.on_search_accepted(to_main(ui, |m| m.invoke_search_accepted()));
+    bar.on_search_escaped(to_main(ui, |m| m.set_search_preview_open(false)));
     Some(bar)
 }
 
@@ -644,6 +644,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             mixes: Vec::new(),
             songs: Vec::new(),
             search_songs: Vec::new(),
+            search_preview: Vec::new(),
             search_songs_all: false,
             search_query: String::new(),
             autoeq_query: String::new(),
@@ -875,6 +876,9 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_dismiss_offer, h, |a| a.close_offer(false));
     on!(ui.on_more, h, |a| a.more_songs());
     on!(ui.on_search_edited, h, |a, t| a.search_edited(&t));
+    on!(ui.on_search_step, h, |a, by| a.search_step(by));
+    on!(ui.on_search_accepted, h, |a| a.search_accepted());
+    on!(ui.on_search_preview_pick, h, |a, i| a.search_pick(i as usize));
     on!(ui.on_search_again, h, |a, t| a.search_again(&t));
     on!(ui.on_forget_searches, h, |a| a.forget_searches());
     on!(ui.on_toggle, h, |a| a.on_session(|s| s.toggle()));
@@ -1913,6 +1917,11 @@ impl App {
 
     fn search_edited(&mut self, text: &str) {
         let Some(s) = &self.session else { return };
+        // Away from the search page, what it finds shows in the field's preview.
+        let ui = self.ui();
+        if ui.get_view() != SEARCH {
+            ui.set_search_preview_open(!text.trim().is_empty());
+        }
         let view = s.search_typed(text);
         let query = view.query.clone();
         self.show_search(view);
@@ -1950,6 +1959,9 @@ impl App {
             ui.set_recent_searches(ModelRc::new(VecModel::from(recent.into_iter().map(SharedString::from).collect::<Vec<_>>())));
         }
         let found = v.shown.unwrap_or_default();
+        self.search_preview = nori_core::search::search_preview(&found);
+        ui.set_search_preview(ModelRc::new(VecModel::from(preview_cards(&self.search_preview, &found))));
+        ui.set_search_preview_at(-1);
         ui.set_search_artists(cards(found.artists.iter().map(artist_card)));
         ui.set_search_albums(cards(found.albums.iter().map(album_card)));
         ui.set_search_playlists(cards(found.playlists.iter().map(playlist_card)));
@@ -1966,6 +1978,50 @@ impl App {
             String::new()
         };
         ui.set_search_note(note.into());
+    }
+
+    /// The arrows in the search field: the preview's line `by` lines on, past the groups' heads.
+    fn search_step(&mut self, by: i32) {
+        let ui = self.ui();
+        if !ui.get_search_preview_open() {
+            return;
+        }
+        ui.set_search_preview_at(preview_step(&self.search_preview, ui.get_search_preview_at(), by));
+    }
+
+    /// Enter in the search field: the preview's line walked to, or the search page.
+    fn search_accepted(&mut self) {
+        let ui = self.ui();
+        let at = ui.get_search_preview_at();
+        if ui.get_search_preview_open() && at >= 0 {
+            self.search_pick(at as usize);
+        } else {
+            ui.set_search_preview_open(false);
+            self.trail.left();
+            self.go(SEARCH);
+        }
+    }
+
+    /// Line `i` of the search field's preview picked: its page, its song played, or every result.
+    fn search_pick(&mut self, i: usize) {
+        use nori_core::search::PreviewLine;
+        let ui = self.ui();
+        ui.set_search_preview_open(false);
+        if let Some(top) = &self.top {
+            top.invoke_end_search();
+        }
+        let id = |m: &ModelRc<Card>| m.row_data(i).map(|c| c.id.to_string()).unwrap_or_default();
+        match self.search_preview.get(i).copied() {
+            Some(PreviewLine::Artist { .. }) => self.open_page(PageAsk::Artist(id(&ui.get_search_preview()))),
+            Some(PreviewLine::Album { .. }) => self.open_page(PageAsk::Album(id(&ui.get_search_preview()))),
+            Some(PreviewLine::Playlist { .. }) => self.open_page(PageAsk::Playlist(id(&ui.get_search_preview()))),
+            Some(PreviewLine::Song { at }) => self.song(2, at as usize, -1),
+            Some(PreviewLine::All) => {
+                self.trail.left();
+                self.go(SEARCH);
+            }
+            Some(PreviewLine::Head { .. }) | None => {}
+        }
     }
 
     fn play_fetch(&self, what: Fetch) {
@@ -3515,6 +3571,35 @@ fn card_fetch(kind: i32, id: String) -> Option<Fetch> {
     }
 }
 
+/// The search field's preview `lines` of `found` as the main window draws them: a group's head as kind -1,
+/// every result as kind 5, the rest as their cards.
+fn preview_cards(lines: &[nori_core::search::PreviewLine], found: &nori_core::SearchResult) -> Vec<Card> {
+    use nori_core::search::PreviewLine;
+    let words_card = |kind: i32, title: &str| Card { id: SharedString::default(), title: title.into(), sub: SharedString::default(), art: SharedString::default(), sub_artist: SharedString::default(), kind };
+    lines
+        .iter()
+        .map(|l| match *l {
+            PreviewLine::Head { kind } => words_card(-1, words::preview_group(kind)),
+            PreviewLine::Artist { at } => artist_card(&found.artists[at as usize]),
+            PreviewLine::Album { at } => album_card(&found.albums[at as usize]),
+            PreviewLine::Playlist { at } => playlist_card(&found.playlists[at as usize]),
+            PreviewLine::Song { at } => song_card(&found.songs[at as usize]),
+            PreviewLine::All => words_card(5, words::ALL_RESULTS),
+        })
+        .collect()
+}
+
+/// The preview's line `by` lines on from `at` (-1 for none), past the groups' heads and round its ends.
+fn preview_step(lines: &[nori_core::search::PreviewLine], at: i32, by: i32) -> i32 {
+    let stops: Vec<i32> = lines.iter().enumerate().filter(|(_, l)| !matches!(l, nori_core::search::PreviewLine::Head { .. })).map(|(i, _)| i as i32).collect();
+    if stops.is_empty() {
+        return -1;
+    }
+    let n = stops.len() as i32;
+    let from = stops.iter().position(|&s| s == at).map(|k| k as i32).unwrap_or(if by > 0 { -1 } else { 0 });
+    stops[(from + by).rem_euclid(n) as usize]
+}
+
 fn artist_card(a: &nori_core::Artist) -> Card {
     Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.album_count.map(words::albums).unwrap_or_default().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 1 }
 }
@@ -4493,9 +4578,29 @@ mod tests {
         key("b");
         assert_eq!(bar.get_search_text(), "ab");
         assert_eq!(typed.borrow().last().map(String::as_str), Some("ab"));
+        let said = Rc::new(RefCell::new(Vec::<String>::new()));
+        let (st, ac, es) = (said.clone(), said.clone(), said.clone());
+        bar.on_search_step(move |by| st.borrow_mut().push(format!("step {by}")));
+        bar.on_search_accepted(move || ac.borrow_mut().push("enter".into()));
+        bar.on_search_escaped(move || es.borrow_mut().push("escape".into()));
+        key(&SharedString::from(slint::platform::Key::DownArrow));
+        key(&SharedString::from(slint::platform::Key::UpArrow));
+        key("\n");
+        assert_eq!(bar.get_search_text(), "ab", "the arrows walk the preview, not the text");
         key(&SharedString::from(slint::platform::Key::Escape));
         settle();
+        assert_eq!(*said.borrow(), ["step 1", "step -1", "enter", "escape"]);
         assert!(!typing.get(), "Escape gives the keys back to the page");
+    }
+
+    #[test]
+    fn the_search_preview_steps_past_its_heads_and_round_its_ends() {
+        use nori_core::search::{PreviewKind, PreviewLine as L};
+        let lines = [L::Head { kind: PreviewKind::Artists }, L::Artist { at: 0 }, L::Head { kind: PreviewKind::Songs }, L::Song { at: 0 }, L::Song { at: 1 }, L::All];
+        for (at, by, to) in [(-1, 1, 1), (-1, -1, 5), (1, 1, 3), (3, -1, 1), (5, 1, 1), (1, -1, 5)] {
+            assert_eq!(preview_step(&lines, at, by), to, "from {at} by {by}");
+        }
+        assert_eq!(preview_step(&[], -1, 1), -1);
     }
 
     #[test]

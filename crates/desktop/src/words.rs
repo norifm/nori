@@ -33,6 +33,19 @@ pub fn provider(kind: ServerKind) -> ProviderWords {
 }
 
 pub const SHOW_ALL: &str = "Show all";
+
+/// A group's head in the search field's preview.
+pub fn preview_group(kind: nori_core::search::PreviewKind) -> &'static str {
+    use nori_core::search::PreviewKind;
+    match kind {
+        PreviewKind::Artists => "ARTISTS",
+        PreviewKind::Albums => "ALBUMS",
+        PreviewKind::Playlists => "PLAYLISTS",
+        PreviewKind::Songs => "SONGS",
+    }
+}
+
+pub const ALL_RESULTS: &str = "All results";
 /// Home's title.
 pub const LISTEN_NOW: &str = "Listen now";
 pub const MIXING: &str = "MIXING";

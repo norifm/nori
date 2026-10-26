@@ -1,6 +1,7 @@
 <script lang="ts">
   // Adding songs to a playlist, as Spotify's picker: a field that finds a playlist as it is typed in, or
-  // names a new one; the playlists under it, a click adding the songs.
+  // names a new one; the playlists under it, a click adding the songs. New playlist with nothing typed
+  // asks for its name in the field, as the desktop's turns into one.
   import { library } from "../state/library.svelte";
   import { ui } from "../state/ui.svelte";
   import { W } from "../words";
@@ -9,6 +10,9 @@
   let dialog = $state<HTMLDialogElement>();
   const p = $derived(ui.picking!);
   let name = $state("");
+  let field = $state<HTMLInputElement>();
+  /** New playlist was pressed with nothing typed: the field asks for its name. */
+  let naming = $state(false);
   const typed = $derived(name.trim());
   const found = $derived(p.playlists.filter((x) => x.name.toLowerCase().includes(typed.toLowerCase())));
   const close = () => (ui.picking = null);
@@ -21,7 +25,11 @@
     ui.say(W.addedTo(title));
   }
   async function create() {
-    if (!typed) return;
+    if (!typed) {
+      naming = true;
+      field?.focus();
+      return;
+    }
     const [name, songIds] = [typed, p.songIds];
     close();
     await library.change({ kind: "createPlaylist", name, songIds });
@@ -39,10 +47,10 @@
     }}
   >
     <Icon name="search" />
-    <input bind:value={name} placeholder={W.findOrName} aria-label={W.findOrName} autocomplete="off" />
+    <input bind:this={field} bind:value={name} placeholder={naming ? W.playlistName : W.findOrName} aria-label={naming ? W.playlistName : W.findOrName} autocomplete="off" />
   </form>
   <div class="list">
-    <button class="row new" disabled={!typed} onclick={() => void create()}><span class="disc"><Icon name="plus" /></span><span class="clip">{typed ? W.newPlaylistNamed(typed) : W.newPlaylist}</span></button>
+    <button class="row new" onclick={() => void create()}><span class="disc"><Icon name="plus" /></span><span class="clip">{typed ? W.newPlaylistNamed(typed) : W.newPlaylist}</span></button>
     {#each found as x (x.id)}
       <button class="row" onclick={() => void add(x.id, x.name)}><span class="disc"><Icon name="playlist" /></span><span class="clip">{x.name}</span></button>
     {/each}
@@ -113,12 +121,8 @@
     text-align: left;
     font-size: 14px;
   }
-  .row:hover:enabled {
+  .row:hover {
     background: var(--hover);
-  }
-  .row:disabled {
-    opacity: 1;
-    cursor: default;
   }
   .disc {
     display: grid;

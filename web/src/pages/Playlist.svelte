@@ -4,6 +4,7 @@
   // it (the core's `playlist_editable`). Deleting asks first.
   import { ask, read } from "../rpc";
   import { library, reading } from "../state/library.svelte";
+  import { deletePlaylist } from "../state/menus";
   import { player } from "../state/player.svelte";
   import { go } from "../state/route.svelte";
   import { ui, type Item } from "../state/ui.svelte";
@@ -45,9 +46,7 @@
       {
         label: W.deletePlaylist,
         run: async () => {
-          if (!(await ui.confirm(W.deleteConfirm(pl!.name), W.deleteLine, W.delete))) return;
-          await library.change({ kind: "deletePlaylist", id });
-          go("playlists");
+          if (await deletePlaylist(id, pl!.name)) go("playlists");
         },
       },
     ]);

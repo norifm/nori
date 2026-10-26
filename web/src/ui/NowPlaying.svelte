@@ -22,6 +22,7 @@
   import PanelTabs from "./PanelTabs.svelte";
   import Volume from "./Volume.svelte";
   import { coverLook, type CoverLook } from "../state/coverLook";
+  import { fade } from "svelte/transition";
 
   const s = $derived(player.song!);
   const n = $derived(player.now);
@@ -48,19 +49,19 @@
     else look = null;
     return () => (gone = true);
   });
-  let washed = $state<HTMLCanvasElement>();
-  $effect(() => {
-    const w = look?.wash;
-    if (!washed || !w) return;
-    washed.width = w.width;
-    washed.height = w.height;
-    washed.getContext("2d")?.putImageData(w, 0, 0);
-  });
+  /** Draws a wash into its canvas. */
+  function paint(canvas: HTMLCanvasElement, w: ImageData) {
+    canvas.width = w.width;
+    canvas.height = w.height;
+    canvas.getContext("2d")?.putImageData(w, 0, 0);
+  }
+  const still = () => document.documentElement.classList.contains("still");
 </script>
 
 <div class="full tinted" class:wide={ui.wide} class:paned={!!pane} role="dialog" aria-modal="true" aria-label={s.title} id="full" style={look?.vars}>
-  {#if look?.wash}<canvas class="wash" bind:this={washed} aria-hidden="true"></canvas>{/if}
-  <button class="close" aria-label={W.close} title={W.close} onclick={close}><Icon name="nav-arrow-down" /></button>
+  <!-- The next song's wash fades in over the last one's, as the desktop's two layers cross. -->
+  {#key look?.wash}{#if look?.wash}<canvas class="wash" use:paint={look.wash} transition:fade={{ duration: still() ? 0 : 800 }} aria-hidden="true"></canvas>{/if}{/key}
+  <button class="close" aria-label={W.back} title={W.back} onclick={close}><Icon name="arrow-left" /></button>
   {#if ui.wide}
     <section class="left">
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -130,6 +131,15 @@
     color: var(--ink);
     overflow: hidden;
     animation: shown 300ms ease-out;
+    /* The next song's colors cross-fade in, as the desktop's look does. */
+    transition:
+      --page 340ms,
+      --surface 340ms,
+      --ink 340ms,
+      --ink2 340ms,
+      --hair 340ms,
+      --outline 340ms,
+      --accent 340ms;
   }
   @keyframes shown {
     from {

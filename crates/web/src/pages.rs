@@ -114,6 +114,10 @@ pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<Stri
         Ask::Albums { sort, size, offset, favorites } => Some((album_sort(sort)?, *favorites, *offset as u32, *size as u32)),
         _ => None,
     };
+    let query = match &ask {
+        Ask::Search { query } => Some(query.clone()),
+        _ => None,
+    };
     let mut last = None;
     client.read_each(ask.read()?, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
     let core = client.core();
@@ -122,6 +126,16 @@ pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<Stri
         (Some(Page::StarredPage { v }), Some((sort, true, ..))) => Page::Albums { v: nori_core::browse::favorites_in_order(v.albums, sort) },
         (Some(p), _) => p,
     };
+    // A search's answer ranked as every client's is, with the field's preview of it.
+    if let (Some(query), Page::Found { v }) = (query, &p) {
+        let found = nori_core::search::search_split(v.clone(), &query).everything;
+        let mut v = page(core, Page::Found { v: found.clone() }, user);
+        if let Value::Object(m) = &mut v {
+            m.insert("playlists".into(), found.playlists.iter().map(|p| playlist(core, p, user)).collect());
+            m.insert("preview".into(), json!(nori_core::search::search_preview(&found)));
+        }
+        return Ok(v.to_string());
+    }
     let got = match &p {
         Page::Albums { v } => v.len() as u32,
         _ => 0,
@@ -131,6 +145,61 @@ pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<Stri
         m.insert("next".into(), json!(nori_core::browse::next_album_page(sort, favorites, offset, asked, got)));
     }
     Ok(v.to_string())
+}
+
+/// The season's paper the mix cards are dyed on: light, dark, and whether the dark is worn.
+pub struct Papers {
+    pub light: nori_look::theme::Palette,
+    pub dark: nori_look::theme::Palette,
+    pub dark_theme: bool,
+}
+
+fn hex(c: u32) -> String {
+    format!("#{:06x}", c & 0xFF_FFFF)
+}
+
+/// Home's "For you", as the desktop's: the mixes' tiles (the core's `mix_cards`), each with its name (the
+/// core's `MixName`), its covers' addresses and its card's paper and ink (`mix_card_colours`). `warm`: the
+/// server's starred songs and this period's draws are brought up to date first; otherwise the stored
+/// favourites are handed over, so it answers at once. Empty where the profile has no mixes.
+pub async fn mixes(client: &Client, warm: bool, taste: bool, papers: &Papers) -> String {
+    use nori_core::mixes::board::mix_card_colours;
+    // A network that does not answer leaves the tiles as they were drawn last.
+    if warm {
+        let _ = client.mix_hand_favourites().await;
+        client.mix_warm_all().await;
+    } else {
+        let _ = client.mix_favourites_stored();
+    }
+    let core = client.core();
+    let tiles: Vec<Value> = core
+        .mix_cards(taste)
+        .into_iter()
+        .map(|t| {
+            let card = mix_card_colours(t.id.clone(), papers.light, papers.dark, papers.dark_theme);
+            json!({
+                "id": t.id, "name": format!("{:?}", t.name), "favourites": t.favourites,
+                "covers": t.covers.iter().map(|c| cover(core, c, 300)).collect::<Vec<_>>(),
+                "page": hex(card.page), "ink": hex(card.ink),
+            })
+        })
+        .collect();
+    Value::from(tiles).to_string()
+}
+
+/// Mix `id`'s page: its name, covers, songs as they play and their length; null for an id no mix has.
+pub async fn mix(client: &Client, id: String) -> Result<String, String> {
+    use nori_core::mixes::board::MixLookup;
+    client.mix_songs(id.clone()).await.map_err(|e| e.to_string())?;
+    let core = client.core();
+    Ok(match core.mix_page(id) {
+        MixLookup::Ready { sheet } => json!({
+            "id": sheet.id, "name": format!("{:?}", sheet.name), "favourites": sheet.favourites, "seconds": sheet.seconds,
+            "covers": sheet.covers.iter().map(|c| cover(core, c, 300)).collect::<Vec<_>>(), "songs": songs(core, &sheet.songs),
+        }),
+        MixLookup::NotDrawn | MixLookup::Unknown => Value::Null,
+    }
+    .to_string())
 }
 
 /// A cover's address for `px` square.
@@ -204,6 +273,8 @@ fn page(core: &Core, p: Page, user: Option<&str>) -> Value {
         }),
         Page::ArtistPage { v } => json!({
             "artist": artist(core, &v.artist), "albums": albums(core, &v.albums), "songs": songs(core, &v.songs), "few": few(&v.songs),
+            // The picture across the page's head, at the full size.
+            "picture": v.artist.cover_art.as_ref().map(|art| cover(core, art, 800)),
             "groups": v.groups.iter().map(|g| json!({ "kind": format!("{:?}", g.kind), "tag": g.tag, "albums": g.albums })).collect::<Value>(),
         }),
         Page::Songs { v } => json!({ "songs": songs(core, &v) }),

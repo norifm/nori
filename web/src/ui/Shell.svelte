@@ -32,6 +32,7 @@
     artist: () => import("../pages/Artist.svelte"),
     playlists: () => import("../pages/Playlists.svelte"),
     playlist: () => import("../pages/Playlist.svelte"),
+    mix: () => import("../pages/Mix.svelte"),
     genres: () => import("../pages/Genres.svelte"),
     genre: () => import("../pages/Genre.svelte"),
     songs: () => import("../pages/Songs.svelte"),

@@ -127,7 +127,7 @@ for (const [theme, season] of [["LIGHT", "AUTUMN"], ["DARK", "AUTUMN"], ["LIGHT"
       await wait(400);
       await shot(name("devices"));
     }
-    await page.click("#full [aria-label=Close]");
+    await page.click("#full .close");
   }
 }
 await ask("jam_close").catch(() => {});

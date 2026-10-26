@@ -3298,7 +3298,8 @@ component QueueView inherits Rectangle {
             rows := VerticalLayout {
             width: parent.width;
             alignment: start;
-            padding-bottom: 60px;
+            // Room after the last song, so any song, the last too, can be the list's first row.
+            padding-bottom: max(60px, root.height - 54px);
             for s[i] in root.queue: qrow := Rectangle {
                 width: parent.width;
                 property <length> top: self.y + rows.y + queue-scroll.content-y;
@@ -3306,7 +3307,7 @@ component QueueView inherits Rectangle {
                 // A row put in opens from nothing; one leaving folds away (app.rs takes it out after).
                 property <bool> opened: !s.fresh;
                 // Its buttons show while the pointer is over the row.
-                property <bool> hot: qt.has-hover || up.hovered || dn.hovered || rm.hovered;
+                property <bool> hot: qt.has-hover || rm.hovered;
                 // A caption over the first song played, and over the first after the one playing.
                 property <string> caption: i == 0 && s.played ? "HISTORY" : i > 0 && root.queue[i - 1].playing ? "PLAYING NEXT" : "";
                 property <length> caption-h: self.caption == "" ? 0 : 34px;
@@ -3478,40 +3479,13 @@ component QueueView inherits Rectangle {
                                 overflow: elide;
                             }
                         }
-                        // Up and down for the songs still to come, and out, while hovered.
+                        // Out, while hovered; the songs still to come are dragged to another place.
                         edit := Rectangle {
-                            property <bool> to-come: !s.played && !s.playing;
-                            width: root.editable && qrow.hot ? (root.movable && self.to-come ? 78px : 26px) : 0;
+                            width: root.editable && qrow.hot ? 26px : 0;
                             clip: true;
                             animate width { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
                             HorizontalLayout {
                                 alignment: end;
-                                up := IconButton {
-                                    y: (parent.height - self.height) / 2;
-                                    visible: root.movable && edit.to-come;
-                                    glyph: Icons.nav-arrow-up;
-                                    size: 26px;
-                                    icon: 14px;
-                                    quiet: i == 0 || root.queue[i - 1].playing;
-                                    clicked => {
-                                        if i > 0 && !root.queue[i - 1].playing {
-                                            root.move(s.index, root.queue[i - 1].index);
-                                        }
-                                    }
-                                }
-                                dn := IconButton {
-                                    y: (parent.height - self.height) / 2;
-                                    visible: root.movable && edit.to-come;
-                                    glyph: Icons.nav-arrow-down;
-                                    size: 26px;
-                                    icon: 14px;
-                                    quiet: i == root.queue.length - 1;
-                                    clicked => {
-                                        if i < root.queue.length - 1 {
-                                            root.move(s.index, root.queue[i + 1].index);
-                                        }
-                                    }
-                                }
                                 rm := IconButton {
                                     y: (parent.height - self.height) / 2;
                                     glyph: Icons.xmark;
@@ -4908,6 +4882,11 @@ component TopContent inherits Rectangle {
     callback search-edited(string);
     // The search field took or gave up the keys.
     callback typing(bool);
+    // In the field: the arrows walk the preview under it (by a line up or down), Enter opens the line walked
+    // to or the search page, Escape shuts the preview and gives the keys back.
+    callback search-step(int);
+    callback search-accepted();
+    callback search-escaped();
     // The pill's width (the window's), which decides whether the tabs are named.
     in property <length> room;
     property <bool> named: root.room >= 880px;
@@ -4981,7 +4960,7 @@ component TopContent inherits Rectangle {
             horizontal-stretch: 1;
         }
         // The search field, a filled capsule 6 px in from the pill (its corner the pill's less that). It widens
-        // while typed in; typing shows what it finds on the search page.
+        // while typed in; typing shows what it finds in a preview under it.
         Rectangle {
             y: (parent.height - self.height) / 2;
             width: input.has-focus ? (root.named ? 280px : 220px) : root.named ? 180px : 36px;
@@ -5006,8 +4985,16 @@ component TopContent inherits Rectangle {
                 }
                 Rectangle {
                     FocusScope {
+                        capture-key-pressed(e) => {
+                            if e.text == Key.UpArrow || e.text == Key.DownArrow {
+                                root.search-step(e.text == Key.UpArrow ? -1 : 1);
+                                return accept;
+                            }
+                            reject
+                        }
                         key-pressed(e) => {
                             if e.text == Key.Escape {
+                                root.search-escaped();
                                 input.clear-focus();
                                 return accept;
                             }
@@ -5022,6 +5009,7 @@ component TopContent inherits Rectangle {
                             single-line: true;
                             selection-background-color: Theme.accent.with-alpha(0.4);
                             edited => { root.search-edited(self.text); }
+                            accepted => { root.search-accepted(); }
                             changed has-focus => { root.typing(self.has-focus); }
                         }
                     }
@@ -5039,7 +5027,7 @@ component TopContent inherits Rectangle {
                 mouse-cursor: text;
                 clicked => {
                     input.focus();
-                    if root.search-text != "" && root.view != 1 { root.go(1); }
+                    if root.search-text != "" && root.view != 1 { root.search-edited(root.search-text); }
                 }
             }
         }
@@ -5247,7 +5235,10 @@ export component AppWindow inherits Window {
     }
     changed full-player => { root.player-changed(); }
     changed full-panel => { root.player-changed(); }
-    changed view => { root.player-changed(); }
+    changed view => {
+        root.search-preview-open = false;
+        root.player-changed();
+    }
     // The lyrics of the song playing: the lines, the one sung (-1 for none), and a line about them.
     in property <[SungLine]> lyrics-lines;
     // A duet's lane: each voice leaves this clear on the far side.
@@ -5491,6 +5482,16 @@ export component AppWindow inherits Window {
     callback page-star();
     callback more();
     callback search-edited(string);
+    // The top pill's search field's preview while it is typed in away from the search page: the core's
+    // `search_preview` as cards, a group's head as kind -1 (its title the group's name) and the way to every
+    // result as kind 5; the line the arrows or the pointer are on (-1 none), and a line picked.
+    in property <[Card]> search-preview;
+    in-out property <bool> search-preview-open;
+    in-out property <int> search-preview-at: -1;
+    callback search-preview-pick(int);
+    // From the top pill's field: the arrows' step through the preview, and Enter.
+    callback search-step(int);
+    callback search-accepted();
     // Nothing is typed in the search field: the page lists the searches made before.
     in property <bool> search-blank: true;
     // The search found nothing for `search-query`.
@@ -7231,7 +7232,7 @@ export component AppWindow inherits Window {
                 border-width: 1px;
                 border-color: Theme.outline;
                 IconButton {
-                    glyph: Icons.nav-arrow-down;
+                    glyph: Icons.arrow-left;
                     size: 36px;
                     clicked => { root.full-player = false; }
                 }
@@ -8219,6 +8220,124 @@ export component AppWindow inherits Window {
         }
 
         // Pair a device: this computer's code to scan with nori, or to copy, in a sheet over the window.
+        // The search field's preview, under the field as the settings menu opens under the pill: groups of the
+        // best few under their heads, then every result. A press beside it shuts it. It fades in and settles
+        // as the menus do; nothing in it moves the page.
+        if root.search-preview-open: TouchArea {
+            clicked => { root.search-preview-open = false; }
+        }
+        Popover {
+            property <bool> shown: root.search-preview-open && root.view != 1 && (root.search-preview.length > 0 || root.search-nothing);
+            x: Chrome.top-x + Chrome.top-w - 46px - self.width;
+            y: Chrome.top-room - 12px + (self.shown ? 0px : -6px);
+            animate y { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
+            width: 380px;
+            height: min(hits.preferred-height, root.height - Chrome.top-room - Chrome.bottom-room + 12px);
+            opacity: self.shown ? 1 : 0;
+            animate opacity { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
+            visible: self.opacity > 0.01;
+            clip: true;
+            TouchArea {}
+            Flickable {
+                content-height: hits.preferred-height;
+                hits := VerticalLayout {
+                    padding: MenuShape.inset;
+                    if root.search-preview.length == 0: Text {
+                        height: 40px;
+                        x: 10px;
+                        text: "Nothing found";
+                        color: Theme.dim;
+                        vertical-alignment: center;
+                    }
+                    for c[i] in root.search-preview: hit := Rectangle {
+                        property <bool> lit: c.kind >= 0 && i == root.search-preview-at;
+                        height: c.kind == -1 ? (i == 0 ? 24px : 38px) : c.kind == 5 ? 46px : 48px;
+                        // A group after another, and every result, stand a hairline apart.
+                        if (c.kind == -1 && i > 0) || c.kind == 5: Rectangle {
+                            x: -MenuShape.inset;
+                            y: c.kind == 5 ? 3px : 6px;
+                            width: parent.width + 2 * MenuShape.inset;
+                            height: 1px;
+                            background: Theme.hairline;
+                        }
+                        if c.kind == -1: Caption {
+                            x: 10px;
+                            y: parent.height - self.height - 4px;
+                            text: c.title;
+                        }
+                        Rectangle {
+                            y: c.kind == 5 ? 6px : 0px;
+                            height: parent.height - self.y;
+                            border-radius: MenuShape.inner;
+                            background: hit.lit ? Theme.hover : transparent;
+                            if c.kind >= 0 && c.kind <= 3: HorizontalLayout {
+                                padding-left: 6px;
+                                padding-right: 10px;
+                                spacing: 12px;
+                                Art {
+                                    y: (parent.height - self.height) / 2;
+                                    width: 36px;
+                                    height: 36px;
+                                    border-radius: c.kind == 1 ? 18px : 6px;
+                                    source: root.art(c.art, 0, root.covers-rev);
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: c.title;
+                                        color: Theme.text;
+                                        font-size: 13px;
+                                        overflow: elide;
+                                    }
+                                    if c.sub != "": Text {
+                                        text: c.sub;
+                                        color: Theme.dim;
+                                        font-size: 12px;
+                                        overflow: elide;
+                                    }
+                                }
+                                if c.kind == 3: Icon {
+                                    y: (parent.height - self.height) / 2;
+                                    glyph: Icons.play-solid;
+                                    colour: Theme.dim;
+                                    width: 15px;
+                                    height: 15px;
+                                    opacity: hit.lit ? 1 : 0;
+                                }
+                            }
+                            if c.kind == 5: HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: c.title;
+                                    color: hit.lit ? Theme.text : Theme.dim;
+                                    vertical-alignment: center;
+                                }
+                                Icon {
+                                    y: (parent.height - self.height) / 2;
+                                    glyph: Icons.nav-arrow-right;
+                                    colour: Theme.dim;
+                                    width: 16px;
+                                    height: 16px;
+                                }
+                            }
+                            if c.kind >= 0: TouchArea {
+                                mouse-cursor: pointer;
+                                changed has-hover => {
+                                    if self.has-hover {
+                                        root.search-preview-at = i;
+                                    }
+                                }
+                                clicked => { root.search-preview-pick(i); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if root.pairing-open: Rectangle {
             background: Theme.ground.with-alpha(0.6);
             TouchArea {
@@ -8420,6 +8539,9 @@ export component TopBar inherits Window {
     callback open-menu();
     callback search-edited(string);
     callback typing(bool);
+    callback search-step(int);
+    callback search-accepted();
+    callback search-escaped();
     public function focus-search() {
         content.focus-search();
     }
@@ -8444,5 +8566,8 @@ export component TopBar inherits Window {
         open-menu => { root.open-menu(); }
         search-edited(t) => { root.search-edited(t); }
         typing(on) => { root.typing(on); }
+        search-step(by) => { root.search-step(by); }
+        search-accepted => { root.search-accepted(); }
+        search-escaped => { root.search-escaped(); }
     }
 }

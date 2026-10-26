@@ -31,7 +31,7 @@ for (const step of steps.length ? steps : ["home", "play", "bar", "full", "queue
   else if (step === "full") { await page.click("#bar .art"); await wait(1200); }
   else if (step.startsWith("pane:")) { await page.click(`#full [data-pane=${step.slice(5)}]`); await wait(800); }
   else if (step.startsWith("side:")) { await page.click(`#bar [data-pane=${step.slice(5)}]`); await wait(800); }
-  else if (step === "close") { await page.keyboard.press("Escape"); await page.click("#full [aria-label=Close]").catch(() => {}); await wait(500); continue; }
+  else if (step === "close") { await page.keyboard.press("Escape"); await page.click("#full .close").catch(() => {}); await wait(500); continue; }
   else if (step.startsWith("#")) { await page.evaluate((h) => (location.hash = h), step); await wait(1000); }
   else if (step.startsWith("click:")) { await page.click(step.slice(6)); await wait(600); }
   else if (step.startsWith("rclick:")) { await page.click(step.slice(7), { button: "right" }); await wait(600); }

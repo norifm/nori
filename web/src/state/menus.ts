@@ -1,5 +1,5 @@
-// Menus: a song's (the core's `song_menu`, worded and done here), adding to a playlist, a playlist's
-// name. What each does is the core's; this offers it.
+// Menus: a song's (the core's `song_menu`, worded and done here), a card's, adding to a playlist, a
+// playlist's name. What each does is the core's; this offers it.
 
 import { ask, read } from "../rpc";
 import { W } from "../words";
@@ -17,18 +17,37 @@ export async function addToPlaylist(songs: Song[]) {
   ui.picking = { songIds: songs.map((s) => s.id), playlists: (playlists ?? []).filter((p) => p.editable) };
 }
 
-/** An album's, playlist's or artist's card menu, opening `at`: play it, play it next, add it to the queue. */
-export function wholeMenu(kind: Whole, id: string, head: Head, at: Anchor) {
+/** An album's, playlist's, artist's or mix's card menu, opening `at`, as the desktop's: play it, play it
+ * next, add it to the queue, start a jam with it where one can start, and for a playlist the account may
+ * change (`editable`), delete it. */
+export function wholeMenu(kind: Whole, id: string, head: Head, at: Anchor, editable = false) {
   ui.menu(
     head,
     [
       { label: W.play, icon: "play", run: () => player.playWhole(kind, id, false) },
       { label: W.playNext, icon: "playlist-play", run: () => player.queueWhole(kind, id, true) },
       { label: W.addToQueue, icon: "playlist", run: () => player.queueWhole(kind, id, false) },
+      ...(remote.jam?.start === "Offered" ? [{ label: W.startJam, icon: "community", run: () => jamWith(kind, id) }] : []),
+      ...(editable ? [{ label: W.deletePlaylist, icon: "trash", run: () => deletePlaylist(id, head.title) }] : []),
     ],
     [],
     at,
   );
+}
+
+/** Plays album, playlist, artist or mix `id` and opens a jam around it, as a song's Start jam does. */
+async function jamWith(kind: Whole, id: string) {
+  await player.playWhole(kind, id, false);
+  await remote.act(() => ask("jam_open"));
+  await player.refresh();
+  ui.show("devices");
+}
+
+/** Deletes playlist `id` (called `name`) once asked whether to; whether it was. */
+export async function deletePlaylist(id: string, name: string): Promise<boolean> {
+  if (!(await ui.confirm(W.deleteConfirm(name), W.deleteLine, W.delete))) return false;
+  await library.change({ kind: "deletePlaylist", id });
+  return true;
 }
 
 /** Asks for a name and makes a playlist of `songIds` called that. */

@@ -190,13 +190,14 @@
   .duet {
     text-align: right;
   }
-  /* A word as it is sung: the ink up to where the line is sung, softly, then the quiet ink. */
+  /* A word as it is sung: the ink up to where the line is sung, softly, then the quiet ink. The soft edge
+     runs from before the word to past it, so a word not yet sung is all quiet and one sung all ink. */
   .word {
     --feather: 0.3em;
     display: inline-block;
     white-space: pre;
     color: transparent;
-    background: linear-gradient(90deg, var(--ink) calc(var(--p) * 100% - var(--feather)), var(--quiet) calc(var(--p) * 100% + var(--feather)));
+    background: linear-gradient(90deg, var(--ink) calc(var(--p) * (100% + 2 * var(--feather)) - 2 * var(--feather)), var(--quiet) calc(var(--p) * (100% + 2 * var(--feather))));
     background-clip: text;
     -webkit-background-clip: text;
     transition: translate 420ms ease-out;

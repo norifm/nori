@@ -1,15 +1,22 @@
 <script lang="ts">
-  // The top bar's search: a field that widens when focused and lists the best matches under it as you
-  // type; Enter opens the whole search page. Read a moment after the typing stops.
+  // The top bar's search: a field that widens when focused and, as you type, a preview under it of the
+  // best few artists, albums, playlists and songs (the core's `search_preview` of its ranked answer), then
+  // a way to every result. Arrows walk the preview, Enter opens the line walked to or the search page.
+  // Read a moment after the typing stops; the last answer stays until the next comes. Not on the search
+  // page, which shows the answer itself.
+  import { fly } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import { read } from "../rpc";
-  import { href, route, searchFor } from "../state/route.svelte";
+  import { go, route, searchFor } from "../state/route.svelte";
   import { player } from "../state/player.svelte";
-  import type { Album, Artist, Song } from "../state/types";
+  import type { Album, Artist, Playlist, Song } from "../state/types";
   import { W } from "../words";
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
 
-  type Found = { artists?: Artist[]; albums?: Album[]; songs?: Song[] };
+  type Kind = "artists" | "albums" | "playlists" | "songs";
+  type Line = { line: "head"; kind: Kind } | { line: "artist" | "album" | "playlist" | "song"; at: number } | { line: "all" };
+  type Found = { artists: Artist[]; albums: Album[]; playlists: Playlist[]; songs: Song[]; preview: Line[] };
   let query = $state("");
   // The search page's query, however it was reached (typed, a link, Back).
   $effect(() => {
@@ -18,9 +25,12 @@
   let found = $state.raw<Found | null>(null);
   let open = $state(false);
   let focused = $state(false);
+  /** The line the arrows are on, by its place in the preview; -1 for none. */
+  let at = $state(-1);
   let box = $state<HTMLDivElement>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let asked = 0;
+  const still = () => document.documentElement.classList.contains("still");
 
   function typed() {
     clearTimeout(timer);
@@ -34,22 +44,64 @@
     }
     timer = setTimeout(async () => {
       const p = await read<Found>({ kind: "search", query: q }).catch(() => null);
-      if (mine === asked) found = p;
+      if (mine !== asked || !p) return;
+      found = p;
+      at = -1;
     }, 200);
     open = true;
   }
 
+  const shown = $derived(open && !!found && route.top !== "search");
+  const lines = $derived(found?.preview ?? []);
+  /** The lines the arrows stop on: all but the groups' heads. */
+  const stops = $derived(lines.flatMap((l, i) => (l.line === "head" ? [] : [i])));
+
+  const close = () => {
+    open = false;
+    at = -1;
+  };
+  function choose(l: Line) {
+    const f = found;
+    close();
+    if (!f) return;
+    switch (l.line) {
+      case "artist":
+        return go("artist", f.artists[l.at].id);
+      case "album":
+        return go("album", f.albums[l.at].id);
+      case "playlist":
+        return go("playlist", f.playlists[l.at].id);
+      case "song":
+        return void player.play(f.songs.slice(l.at, l.at + 1), 0);
+      case "all":
+        return searchFor(query);
+    }
+  }
+
+  function keys(e: KeyboardEvent & { currentTarget: HTMLInputElement }) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (shown) close();
+      else e.currentTarget.blur();
+    } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && shown && stops.length) {
+      e.preventDefault();
+      const k = stops.indexOf(at);
+      const next = e.key === "ArrowDown" ? (k + 1) % stops.length : k <= 0 ? stops.length - 1 : k - 1;
+      at = stops[next];
+      box?.querySelector(`[data-line="${at}"]`)?.scrollIntoView({ block: "nearest" });
+    }
+  }
   function submit(e: SubmitEvent) {
     e.preventDefault();
-    open = false;
+    if (shown && at >= 0) return choose(lines[at]);
+    close();
     if (query.trim()) searchFor(query);
   }
 
-  const none = $derived(found && !found.artists?.length && !found.albums?.length && !found.songs?.length);
-  const close = () => (open = false);
+  const heads: Record<Kind, string> = { artists: W.artists, albums: W.albums, playlists: W.playlists, songs: W.songs };
 </script>
 
-<svelte:window onpointerdown={(e) => open && !box?.contains(e.target as Node) && close()} onkeydown={(e) => e.key === "Escape" && close()} />
+<svelte:window onpointerdown={(e) => open && !box?.contains(e.target as Node) && close()} />
 
 <div class="box" bind:this={box}>
   <form class="search" class:on={route.tab === "search" || focused} role="search" onsubmit={submit}>
@@ -58,27 +110,46 @@
       type="search"
       placeholder={focused ? W.searchHint : W.search}
       aria-label={W.search}
+      aria-expanded={shown}
+      aria-controls="search-preview"
+      aria-activedescendant={shown && at >= 0 ? `search-line-${at}` : undefined}
+      role="combobox"
       autocomplete="off"
       bind:value={query}
       oninput={typed}
       onfocus={() => ((focused = true), query.trim() && (open = true))}
       onblur={() => (focused = false)}
-      onkeydown={(e) => e.key === "Escape" && e.currentTarget.blur()}
+      onkeydown={keys}
     />
   </form>
-  {#if open && found}
-    <div class="results" role="listbox">
-      {#if none}<p class="sub empty">{W.noResults}</p>{/if}
-      {#each (found.artists ?? []).slice(0, 2) as a (a.id)}
-        <a class="res" href={href("artist", a.id)} onclick={close}><span class="art"><Cover src={a.cover} round fallback="user" /></span><span class="clip">{a.name}</span></a>
+  {#if shown && found}
+    <div class="popover results" id="search-preview" role="listbox" aria-label={W.search} transition:fly={{ y: -6, duration: still() ? 0 : 160, easing: cubicOut }}>
+      {#if !lines.length}<p class="empty">{W.noResults}</p>{/if}
+      {#each lines as l, i (i)}
+        {#if l.line === "head"}
+          <div class="cap" class:first={i === 0}>{heads[l.kind]}</div>
+        {:else}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <div class="res" class:all={l.line === "all"} class:lit={i === at} id="search-line-{i}" data-line={i} role="option" tabindex="-1" aria-selected={i === at} onpointerenter={() => (at = i)} onclick={() => choose(l)}>
+            {#if l.line === "artist"}
+              {@const a = found.artists[l.at]}
+              <span class="art"><Cover src={a.cover} round fallback="user" /></span><span class="words"><span class="clip">{a.name}</span></span>
+            {:else if l.line === "album"}
+              {@const a = found.albums[l.at]}
+              <span class="art"><Cover src={a.cover} radius="var(--inner-art)" fallback="compact-disc" /></span><span class="words"><span class="clip">{a.name}</span><span class="sub clip">{a.artist}</span></span>
+            {:else if l.line === "playlist"}
+              {@const p = found.playlists[l.at]}
+              <span class="art"><Cover src={p.cover} radius="var(--inner-art)" fallback="playlist" /></span><span class="words"><span class="clip">{p.name}</span><span class="sub clip">{W.songCount(p.songCount)}</span></span>
+            {:else if l.line === "song"}
+              {@const s = found.songs[l.at]}
+              <span class="art"><Cover src={s.cover} radius="var(--inner-art)" /></span><span class="words"><span class="clip">{s.title}</span><span class="sub clip">{s.artist}</span></span>
+              <Icon name="play-solid" />
+            {:else}
+              <span class="words"><span class="clip">{W.moreResults}</span></span><Icon name="nav-arrow-right" />
+            {/if}
+          </div>
+        {/if}
       {/each}
-      {#each (found.albums ?? []).slice(0, 3) as a (a.id)}
-        <a class="res" href={href("album", a.id)} onclick={close}><span class="art"><Cover src={a.cover} fallback="compact-disc" /></span><span class="clip">{a.name}<span class="sub">{a.artist}</span></span></a>
-      {/each}
-      {#each (found.songs ?? []).slice(0, 4) as s, i (s.id)}
-        <button class="res" onclick={() => (close(), void player.play(found?.songs?.slice(i, i + 1) ?? [], 0))}><span class="art"><Cover src={s.cover} /></span><span class="clip">{s.title}<span class="sub">{s.artist}</span></span></button>
-      {/each}
-      {#if !none}<a class="res more" href={href("search", query.trim())} onclick={close}>{W.moreResults}</a>{/if}
     </div>
   {/if}
 </div>
@@ -142,48 +213,88 @@
   input::-webkit-search-cancel-button {
     display: none;
   }
+  /* A popover, as the menus: under the pill, level with the field's right edge. Its rows' corners are the
+     tile's less the inset; a cover's are the row's less the 6 px it sits in. */
   .results {
+    --inner-art: calc(var(--inner) - 6px);
     position: absolute;
     top: 46px;
     right: 0;
-    width: 360px;
-    padding: 6px;
-    border-radius: var(--r-tile);
-    background: var(--surface);
-    border: var(--hairline) solid var(--hair);
-    display: flex;
-    flex-direction: column;
+    width: 380px;
+    max-height: calc(100vh - 160px);
+    overflow-y: auto;
     z-index: 5;
+  }
+  .cap {
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink2);
+    padding: 12px 10px 4px;
+    border-top: 1px solid var(--line);
+    margin-top: 6px;
+  }
+  .cap.first {
+    border-top: 0;
+    margin-top: 0;
+    padding-top: 6px;
   }
   .res {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 6px 8px;
-    border-radius: var(--r-card);
-    text-align: left;
-    font-size: 15px;
+    min-height: 48px;
+    padding: 6px;
+    border-radius: var(--inner);
+    cursor: pointer;
   }
-  .res:hover {
+  .res.lit {
     background: var(--hover);
   }
-  .res .clip {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-  }
   .art {
-    width: 40px;
+    width: 36px;
     flex: none;
   }
-  .more {
-    color: var(--ink2);
-    justify-content: center;
+  .words {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
     font-size: 14px;
+    line-height: 18px;
+  }
+  .sub {
+    font-size: 12.5px;
+    color: var(--ink2);
+  }
+  .res > :global(.icon) {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    margin-right: 6px;
+    color: var(--ink2);
+    opacity: 0;
+  }
+  .res.lit > :global(.icon),
+  .res.all > :global(.icon) {
+    opacity: 1;
+  }
+  .res.all {
     min-height: 40px;
+    margin-top: 6px;
+    padding-left: 10px;
+    border-top: 1px solid var(--line);
+    border-radius: 0 0 var(--inner) var(--inner);
+    color: var(--ink2);
+  }
+  .res.all.lit {
+    color: var(--ink);
   }
   .empty {
     margin: 0;
-    padding: 12px;
+    padding: 12px 10px;
+    color: var(--ink2);
+    font-size: 14px;
   }
 </style>

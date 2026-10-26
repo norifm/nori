@@ -18,7 +18,12 @@ export type Song = {
 /** `subtitle`: a card's line under its name, as the core words it. */
 export type Album = { id: string; name: string; artist: string; artistId?: string; year: number; cover?: string; songCount: number; duration: number; genre?: string; starred?: boolean; subtitle?: string };
 /** What a card plays whole. */
-export type Whole = "album" | "playlist" | "artist";
+export type Whole = "album" | "playlist" | "artist" | "mix";
+/** A mix on Home's "For you" (the core's `mix_cards`): `name` the core's `MixName`, up to four covers, and
+ * its card's paper and ink (`mix_card_colours`). */
+export type MixTile = { id: string; name: string; favourites: boolean; covers: string[]; page: string; ink: string };
+/** A mix's page (the core's `mix_page`): the songs as they play. */
+export type MixPage = { id: string; name: string; favourites: boolean; seconds: number; covers: string[]; songs: Song[] };
 export type Artist = { id: string; name: string; cover?: string; albumCount?: number | null; starred?: boolean };
 export type Playlist = { id: string; name: string; songCount: number; duration: number; cover?: string; comment?: string; owner?: string; /** The account may change it (the core's `playlist_editable`). */ editable?: boolean };
 /** As the server names it: the name is `value`. */
