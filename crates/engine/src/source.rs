@@ -724,7 +724,13 @@ impl State {
     fn ready_from(&self, at: u64, now: Instant) -> bool {
         let (end, window) = self.held_run(at);
         let held = end - at;
-        self.error.is_some() || self.closed || held >= READY || self.len.is_some_and(|l| end >= l) || (held > 0 && window && (self.done || self.in_time(held, now)))
+        self.error.is_some() || self.closed || held >= self.ready_bytes() || self.len.is_some_and(|l| end >= l) || (held > 0 && window && (self.done || self.in_time(held, now)))
+    }
+
+    /// Bytes ahead that make a read ready: [`READY`], or the window's high mark when that is less (no
+    /// more is fetched ahead).
+    fn ready_bytes(&self) -> u64 {
+        self.window.map_or(READY, |w| self.within_budget(w).high.clamp(1, READY))
     }
 
     fn in_window(&self, at: u64) -> bool {
@@ -790,7 +796,7 @@ impl State {
         if let Some(at) = self.in_piece {
             return self.ready_from(at, now);
         }
-        self.at_end() || self.error.is_some() || self.ahead() >= if self.live { LIVE_READY } else { READY } || self.in_time(self.ahead(), now)
+        self.at_end() || self.error.is_some() || self.ahead() >= if self.live { LIVE_READY } else { self.ready_bytes() } || self.in_time(self.ahead(), now)
     }
 
     /// The running burst's rate, bytes per ms, once it ran for [`RATE_MS`].
