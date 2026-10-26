@@ -27,7 +27,7 @@
   /** On a wide screen something is always beside the cover: the lyrics unless another was picked. */
   const pane = $derived<Pane | null>(ui.pane ?? (ui.wide ? "lyrics" : null));
   const panes: [Pane, string, string][] = [
-    ["lyrics", "emoji-sing-right-note", W.lyrics],
+    ["lyrics", "quote-message", W.lyrics],
     ["devices", "computer", W.devices],
     ["queue", "playlist", W.queue],
   ];
