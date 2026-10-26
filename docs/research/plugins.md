@@ -1,7 +1,8 @@
 # Plugins
 
-Internal planning note, not published. Written 2026-10-24 against `master` at `2413016a`. Nothing here
-is built yet.
+Internal planning note, not published. Written 2026-10-24 against `master` at `2413016a`; updated
+2026-10-27 at `29bc5e0e` with what each feature nori removed needs to come back as a plugin, and what
+the plugin system may cost with no plugin. Nothing here is built yet.
 
 ## Owner decisions so far (2026-10-24)
 
@@ -34,10 +35,18 @@ is built yet.
   that names no plugin starts once with every plugin off.
 - Casting (Snapcast, UPnP/DLNA, Chromecast) is plugins, not built into nori.
 - A plugin can't change nori's UI: it has its own pages (and a device's section, a provider's add
-  form), drawn by nori from its rows. Slots in nori's own screens, drawn by nori from the plugin's
-  data, are proposed (Slots) and not yet decided.
+  form), drawn by nori from its rows, and fills slots in nori's own screens, drawn by nori from the
+  plugin's data (Slots, decided 2026-10-27).
 - Distribution is GitHub and F-Droid. Google Play is not a goal; if it ever is, a build feature switches
   off what Play forbids.
+
+## Owner decisions (2026-10-27)
+
+- With no plugin installed, nori runs as it would without the plugin system: the same wakeups, CPU,
+  allocations, threads and start time. Every seam below is built to that rule (Performance rules).
+- APK size is not a constraint: Cranelift ships, and so does what a slot needs (HLS for moving covers).
+- Every feature nori removed must be possible again as a plugin, even if nori never ships one (What
+  nori removed, as plugins).
 
 ## What a plugin is
 
@@ -79,14 +88,28 @@ wasmtime with the component model.
   them with jco at install, or loads a core module build. The web host comes last.
 - **iPod:** none.
 
-If Cranelift costs too much APK size (to be measured, phase 0), the fallback is wasmtime's Pulley
-interpreter: fine for providers and device control, which wait on the network and Bluetooth, but heavier
-on battery for sound stages.
+Cranelift ships on every native client; its APK size is accepted. It compiles wasm SIMD (`simd128`),
+which sound stages and song preparation need: a neural model such as Sing's comes near native speed
+only with SIMD. wasmtime's Pulley interpreter is kept only for a platform where Cranelift can't run,
+and there it hosts providers and device control (they wait on the network and Bluetooth), not sound
+stages or song preparation.
 
 ## Performance rules
 
 - **No plugin installed or enabled:** wasmtime is never created. The engine checks an `Option` once per
-  burst for a sound stage. Same wakeups, CPU and allocations as today (`tools/perf-host.sh` checks it).
+  burst for a sound stage and for song preparation. Same wakeups, CPU, allocations and start time as
+  today (Tests).
+- **Each seam checks before it builds:** the enabled plugins' manifests make one bitmask of what they
+  use (events, deciders, slots, inputs). A seam checks its bit first; with it clear, nori takes its own
+  path and builds no event payload, no decider inputs and no copy of its own answer. A decider with no
+  plugin returns nori's answer as it is.
+- **The checks sit where nori already decides:** on a settings change, a song change, a menu opening, a
+  focus change; never per buffer or per frame.
+- **Nothing exists ahead of use:** no listener, thread, surface, video player, receiver, cache folder or
+  timer is made for a seam no plugin uses. Android receivers that would start nori for a plugin are
+  declared disabled and enabled only while a plugin subscribes (Wake and commands).
+- **An event can't start a clock nori doesn't run:** a subscription that needs one (lyric lines with
+  the screen off) is a cost the plugin declares and the install sheet shows.
 - **Instances are created when needed:** a provider when its profile opens, a device controller when its
   device connects, a hook plugin when an event it subscribed to fires. An idle plugin holds no memory
   beyond its cached compiled code.
@@ -108,7 +131,8 @@ on battery for sound stages.
 | **Rows** | its settings rows, actions, status | its stored values, change events | row rendering in every client |
 | **Overrides** | override values for nori's settings and tunables | effective and stored settings, change events | `Tunables`, the override layer, the page notice |
 | **Provider** | the `Provider` trait as WIT | HTTP to its domains, its store, a sign-in page | `WasmProvider: Provider` in `crates/core/src/providers/` |
-| **Sound stage** | `configure`, `process`, `reset`, state region, latency | samples, inputs (volume, gain, route, song) | two slots in the chain, state keeping, policy |
+| **Sound stage** | `configure`, `process`, `reset`, state region, latency | samples, inputs (volume, gain, route, song, its prepared data) | two slots in the chain, state keeping, policy |
+| **Song preparation** | per-song data made from the samples ahead of playback | the decoded samples of the song playing and the next, as the engine reads them | a feed beside the engine's read-ahead (Song preparation) |
 | **AutoMix analysis** | a streamed pass over a song, and/or refining nori's analysis | the PCM chunks nori's pass reads, nori's `TrackAnalysis` | a seam in the analysis pass, plugin data in the analysis store |
 | **AutoMix planner** | a `TransitionPlan` for two songs, or none for nori's | both analyses (nori's and its own), the transition settings, nori's plan | a seam in `nori_automix::planner`, plan validation |
 | **Device control** | which devices it handles; their state and commands | a Bluetooth channel to the device | the channel on Android and desktop, a section on the device page |
@@ -132,13 +156,23 @@ over its time budget. Nothing in the engine is patched, and every choice can be 
 | prefetch, downloads | counts, tries, downloads at once | download, cancel | what is prefetched and downloaded next |
 | library, search | page sizes, delays, freshness | browse, search, favorite, playlists | search ranking, smart playlist rules, mixes |
 | lyrics | timeouts, trust | | services; transforming lyrics (translation, romanization) |
-| covers, metadata | sizes, caches | | cover sources, tag fixes, artist info |
+| covers, metadata | sizes, caches | | cover sources (a still or a loop, Artwork), tag fixes, artist info |
+| now playing | | | what the notification, lock screen, MPRIS and Bluetooth (AVRCP) show for the song |
+| media buttons | | | what a headset or Bluetooth button press does (play, skip, a plugin's action) |
+| audio focus | | | what a focus loss, a transient loss and a duck do |
+| look | | | the palette of a season of the plugin's own: the five roles, checked for contrast by nori-look; the accent keeps its one meaning |
 | devices | | | Bluetooth control, per-device profiles, the AutoEQ pick |
 | remote, jams | | invite, accept, remove a guest | what a guest may do, accepting requests |
 | scrobbling | scrobble point | | where scrobbles go |
 
-A decider runs where nori's own decision runs (a queue change, the queue running low, a replan), never
-per buffer. One on a command's path (skip, play) has a short budget; past it, nori's answer stands.
+A decider runs where nori's own decision runs (a queue change, the queue running low, a replan, a song
+change, a button press, a focus change), never per buffer. One on a command's path (skip, play, a
+button) has a short budget; past it, nori's answer stands.
+
+Audio focus is decided in Kotlin today (`RustPlayer.kt` `onFocus`); it moves to a pure function in
+Rust first, as the boundaries ask anyway, and becomes a decider there. The look decider runs where
+nori-look works out a page's colors (a cover or theme change); disabling the plugin brings back
+nori's own seasons. With the `motion` and `coverColorsOn` overrides it is what an e-ink plugin needs.
 
 **Casting** is plugins, through two seams:
 
@@ -206,7 +240,9 @@ the install sheet.
 | slot | the plugin gives | example |
 |---|---|---|
 | device card | known controls and rows (Device control) | headphone ANC and battery |
-| menu actions | a label and a glyph for the menus of songs (in lists, the queue and the player), albums, artists, playlists and a selection of several; which items it applies to; a call with the items when tapped | "Find on Bandcamp", "Send to my other speaker" |
+| artwork | for the player's sleeve: a still image or a muted looping video (Artwork) | moving covers, Spotify Canvas, larger covers |
+| player control | a small card of its rows (a level, a status, an action) over the foot of the lyrics or the artwork, while the plugin says it is active | Sing's vocals level and "getting this song ready" |
+| menu actions | a label and a glyph for the menus of songs (in lists, the queue and the player), albums, artists, playlists and a selection of several; which items it applies to; a call with the items when tapped, or a sheet of its rows for those items | "Find on Bandcamp", "Send to my other speaker", "Rate" |
 | home shelf | a titled row of songs, albums, artists or playlists | "Concerts near you" |
 | page | a titled list of songs, albums, artists or playlists, reached from Library | "Your year in music" |
 | song info section | a few lines and links in a song's info | credits, the artist's tour dates |
@@ -217,13 +253,41 @@ the install sheet.
   `SongAction`, `PageAction`) as one more action kind, after nori's own, so every client gets them
   where it opens that menu: the "..." button and a long press on Android, a right click on the desktop
   and the web, the action key in the terminal. The menu shows at once; a plugin's answer to "does this
-  apply" comes from its manifest's filter (item kind, provider, local or not), not from a call.
+  apply" comes from its manifest's filter (item kind, provider, local or not), not from a call. With no
+  plugin action, `song_menu` appends an empty list and allocates nothing.
+- A menu action can be bound to one of the plugin's switch rows: its label and glyph follow the row's
+  stored value ("Sing", "Turn off Sing"), read by the host without calling the plugin, and tapping it
+  flips the row.
+- A menu action can open a sheet of the plugin's rows for the chosen items (a choice of 1 to 5 stars);
+  the plugin gets the items and the values set.
 - Glyphs come from nori's icon set, or a one-color SVG nori tints.
 - Content is asked for when the slot comes into view and kept until it changes; the UI thread never
   waits for a plugin: a slot shows nothing until its answer arrives, then shows it.
 - Each client draws the slots its screens have; a client without such a screen skips that slot.
 
-v1: device card, menu actions, page, home shelf. The rest later.
+v1: device card, artwork, player control, menu actions, page, home shelf. The rest later.
+
+#### Artwork
+
+A plugin gives the sleeve, for the song playing, a still image or a muted looping video (an HLS or MP4
+URL). nori plays the video itself and owns every rule moving covers had:
+
+- it plays only while the full player is open on the artwork, at rest, the app in front, the screen on
+  and Motion not off; otherwise the still cover shows;
+- it fades in only after its first frame is on the surface (and a moment after a move has ended), and
+  fades out at a finger's first touch, when the sheet leaves fully open, and on a new album before its
+  video is ready; flights draw the still cover. Nothing appears or leaves in one frame;
+- mobile data only if the plugin's page allows it (Wi-Fi only by default);
+- the bytes go through the one OkHttp pool into the plugin's cache (Storage), so a loop is fetched once;
+- a video that answers an HTTP error is reported to the plugin, which can look it up again.
+
+The plugin is asked when the song changes and the slot is in view, never ahead; it finds the video
+itself (`net:` to its domains) and keeps its answers in its store. Android plays the loop with a muted
+ExoPlayer of its own (no audio track, no focus, no session, no wake lock), made on first use and let go
+of when the player is put away, the app is left or the screen goes off; `media3-exoplayer-hls` ships
+for it. With no artwork plugin the sleeve draws the still cover as now: no player, surface or listener
+is made. The desktop and the web play it with their own video (the web's `<video>`); the terminal and
+the iPod have no such slot.
 
 Words come from the plugin's `strings/`, the one exception to "the core returns no words". They are
 short and plain like nori's own, but nori can't enforce that.
@@ -283,8 +347,10 @@ else the stored setting (for settings) or the default (for tunables).
 
 ### What becomes overridable
 
-From the inventory of `master` at `2413016a`. **Expert** marks a value that only makes sense together
-with others; it is still overridable, and nori documents it only in the SDK.
+From the inventory of `master` at `2413016a`, with the settings dropped later that day (speed, pitch,
+skip silence, previous always skips), whose code still runs with fixed values. **Expert** marks a value
+that only makes sense together with others; it is still overridable, and nori documents it only in the
+SDK.
 
 **Between songs, AutoMix** (the removed AutoMix settings come back as tunables read by
 `Settings::transition_prefs`):
@@ -322,13 +388,21 @@ with others; it is still overridable, and nori documents it only in the SDK.
 | key | default | was |
 |---|---|---|
 | `scrobble.atShare`, `scrobble.atMostS`, `.atLeastS` | half, 4 min, 10 s | `scrobblePercent` |
+| `playback.speed`, `playback.pitch` | 1.0, 1.0 (the engine's `Settings`, `engine.rs`) | `speed`, `pitch` (dropped 2026-10-24) |
+| `silence.skip` | off (the engine's `Settings`) | `skipSilence` (dropped 2026-10-24) |
 | `queue.skipAfterErrors` | 3 in a row | `skipOnError` |
+| `queue.previousAlwaysSkips` | off (the engine's `Settings`, `queue/src/rules.rs` `queue_previous_restarts`) | `previousAlwaysSkips` (dropped 2026-10-24) |
 | `queue.previousRestartsAfterMs` | 3000 | |
 | `prefetch.afterMs`, `prefetch.lookAt` | 6000, 8 | |
 | `queue.releaseIdleMs` | 5 min | |
 | `autofill.songs`, `.fillAhead`, `.recentDays`, `.forgetDays` | 15, 2, 14, 90 | |
 | `mix.radio`, `.instantMix`, `.shuffleAll`, `.shuffleAlbums` | 50, 50, 200, 10 | |
 | `history.halfLifeDays`, `.minHeardS` | 30, 2 | |
+
+Speed and pitch are the session's as well as the sound's: a listening jam guest or a device following
+another plays the leader's (`led_speed` in `engine.rs`), so an override on the leader reaches them as
+session state, as speed did as a setting. A speed other than 1.0 or skipping silence turns offload off
+through `nori_player::policy`, as before.
 
 **Library, search, downloads, network, covers:**
 
@@ -354,7 +428,8 @@ home rows and other UI state: each has its own editor or is a secret), analysis 
 the burst buffer and read-ahead (10 s / 2 s), engine stall and clock constants, the effect bits.
 
 `uiScale`, `reduceMotion` and the rest of the removed look settings have no Rust code left; their
-replacements (`Motion`, `coverColorsOn`) are ordinary settings and overridable as such.
+replacements (`Motion`, `coverColorsOn`) are ordinary settings and overridable as such. Colors beyond
+them go through the look decider (Deciders).
 
 ## Sound stage
 
@@ -393,6 +468,10 @@ edits them in place. Nothing allocates on the audio path; the `no_alloc` tests c
   | output route and device kind (speaker, wired, Bluetooth, USB, car) | headphone-only processing |
   | sample rate, channels, float or 16-bit | |
   | its own row values | its parameters |
+  | its own data for this song, from song preparation (read-only, mapped into its memory) | Sing's vocal mask, any precomputed processing |
+
+  Prepared data that arrives while its song plays is an input change: the stage passes the song
+  through until then, and the change is spliced in like any other.
 
 - **Latency and tail.** A stage reports both. Latency is compensated in the position the player shows
   and in transition timing; a jam guest runs its own plugins, so sync is unaffected.
@@ -404,9 +483,40 @@ edits them in place. Nothing allocates on the audio path; the `no_alloc` tests c
 - **Analysis reads before plugins.** AutoMix and lyrics sync measure nori's decoded audio, never a
   plugin's output.
 
-### Reimplementing what 0.6.3 removed
+### Song preparation
 
-The deleted code is at `6d83364d^` and ports to the SDK nearly unchanged:
+Some processing needs the whole song, or seconds of it ahead, before it can play: a vocal mask from a
+neural model, a precomputed filter. A preparation plugin is fed the decoded samples of the song playing
+and the next, as the engine reads them ahead (no extra decode), on a low-priority thread of its own,
+and returns its data for that song. nori keeps the data in the plugin's cache (Storage) and hands it to
+the plugin's sound stage as an input.
+
+- It runs only while the plugin says it is active (Sing switched on), and only for those two songs:
+  never for the library, never for a provider song the user didn't ask to play.
+- The engine copies samples into a preallocated feed it checks once per burst; with no preparation
+  plugin active the feed doesn't exist. The copy never waits: a full feed drops the rest, and the
+  plugin's data for that song comes later or not at all. The `no_alloc` tests cover the feed.
+- The thread keeps the plugin's instance (and its model) for a while after the last feed, then lets
+  it go. It works only while a song's data is missing and never on a timer: with the screen off it
+  wakes with the read-ahead that feeds it and sleeps once the data is made.
+- Its time budget is per song, not per block: it may take the song's length, and the stage plays the
+  song unprocessed until the data is there.
+
+## What nori removed, as plugins
+
+Every feature nori dropped can come back as a plugin, through the seams above. nori ships none of them.
+
+| feature | removed | how a plugin brings it back |
+|---|---|---|
+| Moving covers (Apple Music's motion artwork) | `60d04a8b` | the artwork slot with a loop; `net:` to Apple's iTunes Search and catalogue APIs (the old `crates/core/src/motion.rs` ports nearly unchanged); its answers per album in its store, the loops in its cache |
+| Spotify Canvas (never built) | | the same slot per song, with `signin:` for the listener's Spotify session |
+| Sing (vocals turned down) | `7a830087` | song preparation makes the mask (the Open-Unmix model as an asset), a song-slot stage applies it; a menu action bound to its switch; the player control slot for the vocals level and why a song still has its vocals |
+| Speed, pitch, skip silence, previous always skips | 2026-10-24 | overrides (`playback.speed`, `playback.pitch`, `silence.skip`, `queue.previousAlwaysSkips`); a player control or a menu action to change them |
+| 1-5 star ratings | `2175dddc` | `account.subsonic` for `setRating`; a menu action opening a sheet with the stars; the song info section for the rating shown. `userRating` is still in the library data, smart playlists and mixes |
+| Removed look settings (e-ink, colors per screen) | `6d83364d` | the look decider for the palette, with the `motion` and `coverColorsOn` overrides |
+| Removed sound knobs | `6d83364d` | below |
+
+The removed sound code is at `6d83364d^` and ports to the SDK nearly unchanged:
 
 - **Loudness compensation (ISO 226):** `player/src/contour.rs` designs shelves from the reference level
   and the volume. As a master-slot stage: reads the volume input, a row for the reference (70-90 phon),
@@ -482,8 +592,23 @@ changes (docs/developers/providers.md).
 
 Events a plugin can subscribe to: playback started or paused, song changed, queue changed, favorite
 changed, profile opened, output route changed, device connected, settings changed (stored or
-effective). It answers with session API calls (add to queue, set a setting, show a notice), each behind
-its permission.
+effective), a media button pressed, a lyric line reached. It answers with session API calls (add to
+queue, set a setting, show a notice), each behind its permission.
+
+An event is built only when an enabled plugin subscribed to it. Lyric lines need a wake per line,
+which nori never has with the screen off; a plugin subscribing to them then (lyrics over Bluetooth,
+through the now-playing decider) brings that wake, and its install sheet says so.
+
+### Wake and commands
+
+- **Wake:** a plugin can ask to start nori when an event happens while nori is closed (headphones
+  connected: autoplay). Android declares the receivers for these disabled and enables one only while
+  an enabled plugin subscribes; while disabled, Android never starts nori for it. The desktop has no
+  such wake.
+- **Commands:** a plugin declares named commands other apps may run (Tasker-style automation).
+  Android receives them as an intent behind a permission of nori's own, on a receiver enabled only
+  while such a plugin is; Linux over D-Bus, registered only then. A command is handed to its
+  plugin like an action row's call.
 
 ## Host APIs
 
@@ -504,7 +629,20 @@ crates), nori's own where the platform needs nori in the middle. Each is behind 
 | `nori:plugin/session` | queue, playback, library, settings and overrides, notices | `crates/host`'s session API |
 | `nori:plugin/events` | subscriptions | |
 | `nori:plugin/store`, `log`, `rows` | its own data, the log, its pages | |
+| `nori:plugin/cache`, `assets` | its cache and its declared downloads (Storage) | |
 | `nori:plugin/sign-in` | the visible sign-in page and its cookies | Android WebView, the desktop's sign-in window |
+
+### Storage
+
+| tier | what | size | backed up |
+|---|---|---|---|
+| store | rows, overrides, small data (answers per album, cookies) | small, capped | yes |
+| cache | bytes it can fetch or make again (video loops, prepared song data); least recently used go first | the quota in its manifest, shown on the install sheet | no |
+| assets | large files it names in its manifest (a model of tens of MB): URL, size, sha256 | as declared, shown before the download | no; fetched again after a restore |
+
+nori fetches assets itself through `Transport`, on Wi-Fi unless the user allows mobile data, and shows
+the progress as a status row on the plugin's page; the plugin is told when one is in. A plugin's cache
+and assets live in a folder made on first use and removed with the plugin.
 
 ### What each needs
 
@@ -569,8 +707,12 @@ HTTP).
 | `playback.read`, `playback.control` | now playing and the queue; changing them |
 | `library.read`, `library.write` | browsing; favorites and playlists |
 | `account.subsonic` | the profile's Subsonic API through the core (never the password itself) |
-| `audio.process` | a sound stage |
+| `audio.process` | a sound stage, song preparation |
 | `automix.analyze`, `automix.plan` | the AutoMix seams |
+| `artwork` | the player's artwork slot |
+| `now-playing`, `media-buttons`, `audio-focus`, `look` | those deciders |
+| `wake:<events>` | starting nori on those events while it is closed |
+| `commands` | other apps running its declared commands |
 | `bluetooth:<filter>` | a channel to matching devices |
 | `signin:<domains>` | the sign-in page |
 | `notices` | showing a notice |
@@ -614,18 +756,19 @@ asks for more asks again.
 
 | client | work |
 |---|---|
-| Android | row rendering with `Design.kt` shapes, Settings › Plugins, install sheet, page notice, device page section, Bluetooth channel, sign-in page handover |
-| desktop | rows in Slint, the same pages, Bluetooth channel (Linux, macOS) |
+| Android | row rendering with `Design.kt` shapes, Settings › Plugins, install sheet, page notice, device page section, Bluetooth channel, sign-in page handover, the artwork loop (muted ExoPlayer, HLS), the player control slot, the disabled wake and command receivers, audio focus moved to Rust |
+| desktop | rows in Slint, the same pages, Bluetooth channel (Linux, macOS), the artwork loop (its video player to choose), the player control slot, commands over D-Bus on Linux |
 | terminal | rows in its settings view, the same pages, Bluetooth channel on Linux |
-| web | the jco host, rows in Svelte, Web Bluetooth |
+| web | the jco host, rows in Svelte, Web Bluetooth, the artwork loop (`<video>`), the player control slot |
 | iPod | none |
 
 ## Size estimate (to be measured in phase 0)
 
 | part | estimate |
 |---|---|
-| wasmtime runtime + component model | ~1-3 MB per Android ABI |
-| Cranelift | several MB more |
+| wasmtime runtime + component model | ~1-3 MB per Android ABI (accepted) |
+| Cranelift | several MB more (accepted) |
+| `media3-exoplayer-hls` | its size, loaded only when a loop plays (accepted) |
 | `crates/plugins` | 4-6k lines of Rust |
 | `crates/plugin-sdk` | 1-2k lines |
 | `Tunables` + override layer, consts moved | ~1k lines, mostly one line per value |
@@ -640,22 +783,29 @@ asks for more asks again.
   (identical output after a splice), bypass on a trap and on an overrun, `no_alloc`.
 - An override test per kind: effective value, range clamp, effect bits applied, removal restores.
 - A planner plugin's bad plan falls back to nori's.
-- `perf-host` with no plugins equals master.
-- Device checks only for the Bluetooth channel and the sign-in handover
-  (docs/developers/testing.md).
+- With the `plugins` feature on and no plugin installed: `perf-host` equals master, the `no_alloc` tests
+  pass unchanged, and Android's cold start stays within a fixed budget of master's.
+- Song preparation: the feed doesn't exist with no active plugin; with one, `no_alloc` holds and a full
+  feed drops samples instead of waiting.
+- A decider with no plugin gets nori's answer back without its inputs being built.
+- Device checks only for the Bluetooth channel, the sign-in handover, the artwork loop's surface and the
+  wake and command receivers (docs/developers/testing.md).
 
 ## Phases
 
-0. Spike: wasmtime with and without Cranelift on Android arm64: APK size, compile time at install, a
-   biquad stage's CPU per minute against native.
-1. Host, rows, repos and install, `Tunables` and overrides, hooks, the first deciders (queue). Sample
-   plugins live in the SDK's repo, as tests of the API.
+0. Spike: wasmtime with Cranelift on Android arm64: compile time at install, cold start with wasmtime
+   linked, a biquad stage's CPU per minute against native, and a neural model of Sing's size with wasm
+   SIMD against native.
+1. Host, rows, slots, repos and install, storage, `Tunables` and overrides (with speed, pitch, skip
+   silence and previous), hooks, the first deciders (queue, now playing, media buttons). Sample plugins
+   live in the SDK's repo, as tests of the API; moving covers among them, for the artwork slot.
 2. Provider seam; YouTube Music as a plugin; the built-in one removed when on par.
-3. Sound stage. Loudness compensation and the expander as sample plugins in the SDK repo (testing the
-   API, not shipped in nori's repo unless decided).
+3. Sound stage and song preparation. Loudness compensation, the expander and Sing as sample plugins
+   in the SDK repo (testing the API, not shipped in nori's repo unless decided). Audio focus moves to
+   Rust and becomes a decider.
 4. AutoMix analysis and planner seams.
 5. Device control and Bluetooth; a Soundcore or Sony plugin as the first.
-6. Lyrics service and scrobbler seams.
+6. Lyrics service and scrobbler seams; the lyric line event; wake and commands; the look decider.
 7. The web host.
 8. Output sink and playback target; Snapcast as the first sink, UPnP/DLNA as the first target.
 
@@ -663,4 +813,6 @@ Settings backup (with its password) is its own feature; plugins join it when bot
 
 ## Open questions
 
-- APK size budget for Cranelift, after phase 0.
+- The desktop's video player for artwork loops (Slint draws no video).
+- Whether wasm SIMD is fast enough for Sing's model on a phone, or a host interface that runs a model
+  natively is needed (phase 0).
