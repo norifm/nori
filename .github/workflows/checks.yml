@@ -26,6 +26,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
+      - run: cargo clippy -j4 --workspace --all-targets -- -D warnings
       - run: cargo test -j4 --workspace
   web:
     timeout-minutes: 40
@@ -38,6 +39,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - uses: ./.github/actions/web-toolchain
       - run: web/build.sh
+      - name: Clippy, both web modules
+        run: |
+          cargo clippy -j4 --target wasm32-unknown-unknown -p nori-web --all-targets -- -D warnings
+          cargo clippy -j4 --target wasm32-unknown-unknown -p nori-web --all-targets --no-default-features -- -D warnings
   android:
     timeout-minutes: 40
     runs-on: ubuntu-24.04

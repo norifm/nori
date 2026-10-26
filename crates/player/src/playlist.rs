@@ -727,7 +727,8 @@ mod tests {
     #[test]
     fn every_edit_is_counted() {
         let mut p = Playlist::default();
-        let edits: [(&str, bool, fn(&mut Playlist)); 7] = [
+        type Edit = (&'static str, bool, fn(&mut Playlist));
+        let edits: [Edit; 7] = [
             ("set", true, |p| _ = p.set(ids(&["a", "b", "c", "d"]), Some(1), false, 0)),
             ("add", true, |p| _ = p.add(ids(&["e"]), Hand::Next)),
             ("insert", true, |p| p.insert(0, ids(&["f"]), Hand::No)),

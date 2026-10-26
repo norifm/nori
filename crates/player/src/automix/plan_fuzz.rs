@@ -108,7 +108,7 @@ fn planned(how: Rows, seed: u64, n: usize) {
 
 #[test]
 fn planner_never_panics() {
-    for (how, seed, n) in [(Rows::Sensible, 0x9E37_79B9_7F4A_7C15, 50_000), (Rows::Anywhere, 0xABCD_EF12_345, 100_000), (Rows::Absurd, 0x123_4567, 50_000)] {
+    for (how, seed, n) in [(Rows::Sensible, 0x9E37_79B9_7F4A_7C15, 50_000), (Rows::Anywhere, 0x0ABC_DEF1_2345, 100_000), (Rows::Absurd, 0x123_4567, 50_000)] {
         planned(how, seed, n);
     }
 }

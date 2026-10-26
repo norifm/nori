@@ -1352,7 +1352,10 @@ fn set_special(p: &StoredPrefs, n: &mut StoredPrefs, server: &mut bool, name: &s
         // Test bridge: "raw" or "<format>:<kbps>" (e.g. "opus:128").
         "wifiQuality" => match value.split_once(':') {
             Some((format, kbps)) => kbps.parse().ok().map(|bit_rate| n.wifi = SavedQuality { bit_rate, format: format.to_string() }),
-            None if value == "raw" => Some(n.wifi = SavedQuality::default()),
+            None if value == "raw" => {
+                n.wifi = SavedQuality::default();
+                Some(())
+            }
             None => None,
         },
         // Also switches online lyrics, both ways.
@@ -1360,19 +1363,21 @@ fn set_special(p: &StoredPrefs, n: &mut StoredPrefs, server: &mut bool, name: &s
         // Test bridge: back to the defaults.
         "lyricsSources" if value.trim().eq_ignore_ascii_case("default") => {
             n.lyrics_order = lyrics_sources::default_order();
-            Some(n.lyrics_on = lyrics_sources::default_on())
+            n.lyrics_on = lyrics_sources::default_on();
+            Some(())
         }
         // Test bridge: only these services, in this order (`lrclib,unison`).
         "lyricsSources" => {
             let on = lyrics_sources::parse(value);
             let rest = p.lyrics_order.iter().filter(|s| !on.contains(s)).copied();
             n.lyrics_order = on.iter().copied().chain(rest).collect();
-            Some(n.lyrics_on = on)
+            n.lyrics_on = on;
+            Some(())
         }
         // One service moved to a rank (drag and drop): `NETEASE:3`.
-        "lyricsPlace" => service(value).and_then(|(s, to)| Some(n.lyrics_order = lyrics_sources::placed(p, s, to.parse().ok()?))),
+        "lyricsPlace" => service(value).and_then(|(s, to)| to.parse().ok().map(|to| n.lyrics_order = lyrics_sources::placed(p, s, to))),
         // One service moved by places: `NETEASE:-1`.
-        "lyricsMove" => service(value).and_then(|(s, by)| Some(n.lyrics_order = lyrics_sources::moved(p, s, by.parse().ok()?))),
+        "lyricsMove" => service(value).and_then(|(s, by)| by.parse().ok().map(|by| n.lyrics_order = lyrics_sources::moved(p, s, by))),
         // `lyricsService:NETEASE`: one service on or off. One that needs a key is not switched on without
         // it: the key is given with `lyricsKey:<name>`.
         _ if name.starts_with("lyricsService:") => LyricsService::named(&name["lyricsService:".len()..]).filter(|s| !on(value) || lyrics_sources::can_be_on(p, *s)).map(|s| {
@@ -2392,7 +2397,7 @@ mod tests {
         // Another layout draws the same curve.
         assert_eq!(relayout_graphic(&[0.0, 2.0, 4.0, 6.0, 4.0, 2.0, 0.0, -2.0, -4.0, -6.0], 31).len(), 31);
         assert_eq!(decode_graphic("1,2,3"), None, "not a layout");
-        assert_eq!(decode_graphic(&vec!["99"; 10].join(",")), Some(vec![12.0; 10]));
+        assert_eq!(decode_graphic(&["99"; 10].join(",")), Some(vec![12.0; 10]));
 
         // Eq mode migration.
         assert_eq!(load(&HashMap::new()).eq_mode, EqMode::Graphic, "a new install");

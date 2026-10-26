@@ -476,7 +476,7 @@ fn orient(src: &[u8], w: usize, h: usize, turn: u8, t: &mut Target) {
     let px = |x: usize, y: usize| -> [u8; 4] { src[(y * w + x) * 4..][..4].try_into().expect("four bytes") };
     for y in 0..t.height {
         let row = &mut t.px[y * t.stride..][..t.width * 4];
-        for (x, out) in row.chunks_exact_mut(4).enumerate() {
+        for (x, out) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let p = match turn {
                 2 => px(w - 1 - x, y),
                 3 => px(w - 1 - x, h - 1 - y),
@@ -486,7 +486,7 @@ fn orient(src: &[u8], w: usize, h: usize, turn: u8, t: &mut Target) {
                 7 => px(w - 1 - y, h - 1 - x),
                 _ => px(w - 1 - y, x),
             };
-            out.copy_from_slice(&p);
+            *out = p;
         }
     }
 }
