@@ -177,8 +177,7 @@
             <button class="glyph quiet" aria-label={W.eq.lower} onclick={() => place(chosen, band.x, band.gain - 0.5)}><Icon name="minus-circle" /></button>
             <button class="glyph quiet" aria-label={W.eq.raise} onclick={() => place(chosen, band.x, band.gain + 0.5)}><Icon name="plus-circle" /></button>
           </div>
-          <div class="fields">{@render field(W.eq.gain, band.value, "gain")}</div>
-          {@render level(W.eq.gain, "", band.gain, eq.ranges.gain, 0.5, (v) => place(chosen, band.x, v))}
+          {@render level(W.eq.gain, band.value, band.gain, eq.ranges.gain, 0.5, (v) => place(chosen, band.x, v), "gain")}
         </div>
       {:else if eq.on && band}
         {@const width = band.kind === 8 || band.kind === 9 ? W.eq.slope : W.eq.q}
@@ -192,14 +191,9 @@
             <span class="fill"></span>
             <button class="glyph quiet" aria-label={W.eq.remove} title={W.eq.remove} onclick={() => { const i = chosen; chosen = -1; void send(() => ask<string>("eq_tool", "remove", i)); }}><Icon name="trash" /></button>
           </div>
-          <div class="fields">
-            {@render field(W.eq.frequency, band.freq, "freq")}
-            {#if band.usesGain}{@render field(W.eq.gain, band.value, "gain")}{/if}
-            {@render field(width, band.shape, "q")}
-          </div>
-          {@render level(W.eq.frequency, "", band.x, [0, 1], 0.001, (v) => place(chosen, v, band.gain))}
-          {#if band.usesGain}{@render level(W.eq.gain, "", band.gain, eq.ranges.gain, 0.5, (v) => place(chosen, band.x, v))}{/if}
-          {@render level(width, "", band.q, eq.ranges.q, 0.01, (v) => place(chosen, band.x, band.gain, v))}
+          {@render level(W.eq.frequency, band.freq, band.x, [0, 1], 0.001, (v) => place(chosen, v, band.gain), "freq")}
+          {#if band.usesGain}{@render level(W.eq.gain, band.value, band.gain, eq.ranges.gain, 0.5, (v) => place(chosen, band.x, v), "gain")}{/if}
+          {@render level(width, band.shape, band.q, eq.ranges.q, 0.01, (v) => place(chosen, band.x, band.gain, v), "q")}
         </div>
       {/if}
       <div class="chips-line"><button class="chip" onclick={() => { chosen = -1; void send(() => ask<string>("eq_tool", "reset", 0)); }}>{W.eq.reset}</button></div>
@@ -228,10 +222,9 @@
   {/if}
 </Page>
 
-<!-- A band's value to type: Enter or leaving it hands it to the core, Escape puts it back. -->
-{#snippet field(name: string, shown: string, key: "freq" | "gain" | "q")}
+<!-- A band's value at its row's end, typed: Enter or leaving it hands it to the core, Escape puts it back. -->
+{#snippet number(name: string, shown: string, key: "freq" | "gain" | "q")}
   <label class="typed">
-    <span class="name">{name}</span>
     {#key typedRev}
       <input
         value={shown}
@@ -240,6 +233,7 @@
         spellcheck="false"
         autocomplete="off"
         disabled={!eq?.on}
+        aria-label={name}
         onfocus={(e) => e.currentTarget.select()}
         onkeydown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
@@ -254,7 +248,8 @@
   </label>
 {/snippet}
 
-{#snippet level(name: string, shown: string, value: number, range: [number, number], by: number, moved: (v: number) => void)}
+<!-- A value's row: its name, a slider, and its value at the end (typed there, for a band's `key`). -->
+{#snippet level(name: string, shown: string, value: number, range: [number, number], by: number, moved: (v: number) => void, key?: "freq" | "gain" | "q")}
   <div class="level">
     <span class="name">{name}</span>
     <input
@@ -268,7 +263,7 @@
       aria-label={name}
       oninput={(e) => moved(Number(e.currentTarget.value))}
     />
-    <span class="value">{shown}</span>
+    {#if key}{@render number(name, shown, key)}{:else}<span class="value">{shown}</span>{/if}
   </div>
 {/snippet}
 
@@ -412,17 +407,10 @@
     align-items: center;
     gap: 6px;
   }
-  .fields {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
-    gap: 8px;
-  }
   .typed {
     display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 6px 10px;
-    border-radius: 10px;
+    padding: 4px 8px;
+    border-radius: 8px;
     background: var(--page);
     border: var(--hairline) solid var(--hair);
     cursor: text;
@@ -430,13 +418,11 @@
   .typed:focus-within {
     border-color: var(--accent);
   }
-  .typed .name {
-    font-size: 11px;
-    color: var(--ink2);
-  }
   .typed input {
-    font: 600 16px/22px var(--font);
-    height: 22px;
+    font: 500 13px/20px var(--font);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    height: 20px;
     color: var(--ink);
     background: none;
     border: 0;

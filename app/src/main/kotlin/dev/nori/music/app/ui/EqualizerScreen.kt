@@ -206,15 +206,14 @@ private fun GraphicBands(vm: SettingsViewModel, sliders: List<Float>, target: Li
     if (v == null) Hint(say.eqTapGraphic) else {
         Spacer(Modifier.height(10.dp))
         GroupCard {
-            BandHeader(remember(chosen, count) { label(chosen) }, chosen, count, { chosen = it }) {
-                ValueField(say.gain, remember(v) { dev.nori.music.text.Fmt.signedDb(v) }, enabled, Modifier.padding(top = 8.dp, bottom = 2.dp).widthIn(min = 96.dp)) { typed ->
-                    dev.nori.music.ffi.settings.bandTyped(BandField.GAIN, typed)?.let { set(chosen, it) }
-                }
-            }
-            Row(Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            BandHeader(remember(chosen, count) { label(chosen) }, chosen, count, { chosen = it }) {}
+            Row(Modifier.padding(start = 4.dp, end = GROUP_INSET, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton({ set(chosen, v - 0.5f) }, enabled = enabled && v > gain.min) { Icon(Iconoir.MinusCircle, say.eqLower, Modifier.size(22.dp)) }
                 NoriSlider(v, gain.min..gain.max, { x -> set(chosen, x) }, Modifier.weight(1f), enabled = enabled, centred = true)
                 IconButton({ set(chosen, v + 0.5f) }, enabled = enabled && v < gain.max) { Icon(Iconoir.PlusCircle, say.eqRaise, Modifier.size(22.dp)) }
+                ValueField(remember(v) { dev.nori.music.text.Fmt.signedDb(v) }, enabled, Modifier.width(NUMBER_W)) { typed ->
+                    dev.nori.music.ffi.settings.bandTyped(BandField.GAIN, typed)?.let { set(chosen, it) }
+                }
             }
         }
     }
@@ -310,16 +309,14 @@ private fun BandEditor(band: SoundBand, at: Int, count: Int, onGo: (Int) -> Unit
             Spacer(Modifier.weight(0.01f))
             BandChannel.entries.forEach { c -> Chip(say.bandChannel(c), band.channel == c) { onChange(band.copy(channel = c)) } }
         }
-        Row(Modifier.padding(horizontal = GROUP_INSET - 4.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            ValueField(say.frequency, remember(band.freq) { dev.nori.music.text.Fmt.hz(band.freq) }, enabled, Modifier.weight(1f)) { typed(BandField.FREQUENCY, it) }
-            if (band.kind.usesGain) ValueField(say.gain, remember(band.gainDb) { dev.nori.music.text.Fmt.signedDb(band.gainDb) }, enabled, Modifier.weight(1f)) { typed(BandField.GAIN, it) }
-            ValueField(say.widthName(band.kind.slope), remember(band.q) { dev.nori.music.text.Fmt.fixed(band.q.toDouble(), 2) }, enabled, Modifier.weight(1f)) { typed(BandField.Q, it) }
-        }
-        Hairline(startIndent = GROUP_INSET)
-        EditorSlider(say.frequency, EqBands.position(band.freq), 0f..1f, enabled) { x -> onChange(band.copy(freq = EqBands.freqAt(x))) }
-        if (band.kind.usesGain) EditorSlider(say.gain, band.gainDb, gain.min..gain.max, enabled, centred = true) { v -> onChange(band.copy(gainDb = (v * 2f).roundToInt() / 2f)) }
-        EditorSlider(say.widthName(band.kind.slope), band.q, ranges.q.min..ranges.q.max, enabled) { q -> onChange(band.copy(q = (q * 100f).roundToInt() / 100f)) }
         Spacer(Modifier.height(6.dp))
+        ValueRow(say.frequency, remember(band.freq) { dev.nori.music.text.Fmt.hz(band.freq) }, EqBands.position(band.freq), 0f..1f, enabled,
+            onSlide = { x -> onChange(band.copy(freq = EqBands.freqAt(x))) }) { typed(BandField.FREQUENCY, it) }
+        if (band.kind.usesGain) ValueRow(say.gain, remember(band.gainDb) { dev.nori.music.text.Fmt.signedDb(band.gainDb) }, band.gainDb, gain.min..gain.max, enabled, centred = true,
+            onSlide = { v -> onChange(band.copy(gainDb = (v * 2f).roundToInt() / 2f)) }) { typed(BandField.GAIN, it) }
+        ValueRow(say.widthName(band.kind.slope), remember(band.q) { dev.nori.music.text.Fmt.fixed(band.q.toDouble(), 2) }, band.q, ranges.q.min..ranges.q.max, enabled,
+            onSlide = { q -> onChange(band.copy(q = (q * 100f).roundToInt() / 100f)) }) { typed(BandField.Q, it) }
+        Spacer(Modifier.height(8.dp))
     }
 }
 
@@ -344,12 +341,12 @@ private fun KindPicker(kind: EqKind, modifier: Modifier, onPick: (EqKind) -> Uni
 }
 
 /**
- * A band's value under its name. A tap makes it typed, with the number keys; Done or leaving it hands the
+ * A band's value as a number at the end of its row. A tap makes it typed, with the number keys; Done or leaving it hands the
  * words to [onTyped], which reads them through the core (`settings::band_typed`): words it cannot read
  * leave the value as it was.
  */
 @Composable
-private fun ValueField(name: String, shown: String, enabled: Boolean, modifier: Modifier = Modifier, onTyped: (String) -> Unit) {
+private fun ValueField(shown: String, enabled: Boolean, modifier: Modifier = Modifier, onTyped: (String) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     var editing by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue()) }
@@ -372,10 +369,13 @@ private fun ValueField(name: String, shown: String, enabled: Boolean, modifier: 
                 text = androidx.compose.ui.text.input.TextFieldValue(shown, androidx.compose.ui.text.TextRange(0, shown.length))
                 editing = true
             }
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 7.dp),
     ) {
-        Text(name, style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant, maxLines = 1)
-        val style = MaterialTheme.typography.titleMedium.copy(color = if (enabled) scheme.onSurface else scheme.onSurfaceVariant)
+        val style = MaterialTheme.typography.bodyMedium.copy(
+            color = if (enabled) scheme.onSurface else scheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            fontFeatureSettings = "tnum",
+        )
         if (editing) {
             androidx.compose.foundation.text.BasicTextField(
                 text, { text = it },
@@ -391,18 +391,25 @@ private fun ValueField(name: String, shown: String, enabled: Boolean, modifier: 
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(scheme.primary),
             )
             androidx.compose.runtime.LaunchedEffect(Unit) { focus.requestFocus() }
-        } else Text(shown, style = style, maxLines = 1)
+        } else Text(shown, Modifier.fillMaxWidth(), style = style, maxLines = 1)
     }
 }
 
-/** A named slider in the band editor. */
+/** How wide a row's number is: room for "+12.5" or "20.0k" and the box round it. */
+private val NUMBER_W = 76.dp
+
+/** One of a band's values: its name, a slider for a coarse move, and its number at the end, typed on a tap. */
 @Composable
-private fun EditorSlider(
-    name: String, at: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean,
-    centred: Boolean = false, onChange: (Float) -> Unit,
+private fun ValueRow(
+    name: String, shown: String, at: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean,
+    centred: Boolean = false, onSlide: (Float) -> Unit, onTyped: (String) -> Unit,
 ) {
-    Text(name, Modifier.padding(start = GROUP_INSET, end = GROUP_INSET, top = 10.dp), style = MaterialTheme.typography.bodyMedium)
-    NoriSlider(at, range, onChange, Modifier.padding(horizontal = GROUP_INSET), enabled = enabled, centred = centred)
+    Row(Modifier.fillMaxWidth().padding(start = GROUP_INSET, end = GROUP_INSET, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(name, Modifier.width(84.dp), style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+        NoriSlider(at, range, onSlide, Modifier.weight(1f), enabled = enabled, centred = centred)
+        Spacer(Modifier.width(10.dp))
+        ValueField(shown, enabled, Modifier.width(NUMBER_W), onTyped)
+    }
 }
 
 /** Where the curve is read, 20 Hz to 20 kHz on a log scale. */
