@@ -1,8 +1,8 @@
 <script lang="ts">
   // An artist page's head, as the desktop's (after iOS's artist pages): the artist's picture across the
   // page's whole width, on the cover's own wash, dissolving into the page's paper; it drifts up slower than
-  // the page as the page scrolls and fades as it goes. Over its foot, centered, the name and Play, Shuffle
-  // and the page's own buttons. The page and the chrome wear the picture's colors while it is open.
+  // the page as the page scrolls and fades as it goes. Over its foot, centered, the name and, as Android's
+  // and the desktop's pages, Shuffle as a bare glyph, Play as the ink pill, then the page's own buttons. The page and the chrome wear the picture's colors while it is open.
   import type { Snippet } from "svelte";
   import { lendCover } from "../state/lend.svelte";
   import { W } from "../words";
@@ -47,8 +47,8 @@
 <header class="head">
   <h1>{name}</h1>
   <div class="actions">
-    <button class="pill" onclick={() => onplay(false)}><Icon name="play-solid" />{W.play}</button>
-    <button class="pill quiet" onclick={() => onplay(true)}><Icon name="shuffle" />{W.shuffle}</button>
+    <button class="glyph shuffle" aria-label={W.shuffle} title={W.shuffle} onclick={() => onplay(true)}><Icon name="shuffle" /></button>
+    <button class="pill play" onclick={() => onplay(false)}><Icon name="play-solid" />{W.play}</button>
     {@render actions?.()}
   </div>
 </header>
@@ -117,10 +117,18 @@
   .actions {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
   }
-  .actions .pill {
-    min-width: 116px;
+  .shuffle {
+    width: 48px;
+    height: 48px;
+  }
+  .shuffle :global(.icon) {
+    width: 24px;
+    height: 24px;
+  }
+  .play {
+    min-width: 180px;
   }
   @media (max-width: 719px) {
     h1 {
@@ -131,6 +139,14 @@
     }
     .head {
       min-height: calc(max(340px, 52vh) - var(--top-h) - 26px);
+    }
+    /* Play fills the row between the glyphs, as on Android. */
+    .actions {
+      align-self: stretch;
+    }
+    .play {
+      flex: 1;
+      min-width: 0;
     }
   }
 </style>
