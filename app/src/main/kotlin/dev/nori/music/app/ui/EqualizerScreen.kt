@@ -45,6 +45,12 @@ import androidx.compose.runtime.collectAsState
 import dev.nori.music.ffi.settings.EqLevel
 import dev.nori.music.ffi.settings.EqMode
 import dev.nori.music.ffi.settings.SoundBand
+import dev.nori.music.ffi.settings.BandField
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import dev.nori.music.ffi.settings.BandChannel
 import dev.nori.music.ffi.model.EqKind
 import dev.nori.music.settings.EqBands
@@ -201,7 +207,9 @@ private fun GraphicBands(vm: SettingsViewModel, sliders: List<Float>, target: Li
         Spacer(Modifier.height(10.dp))
         GroupCard {
             BandHeader(remember(chosen, count) { label(chosen) }, chosen, count, { chosen = it }) {
-                Text(remember(v) { dev.nori.music.text.Fmt.signedDb(v) }, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                ValueField(say.gain, remember(v) { dev.nori.music.text.Fmt.signedDb(v) }, enabled, Modifier.padding(top = 8.dp, bottom = 2.dp).widthIn(min = 96.dp)) { typed ->
+                    dev.nori.music.ffi.settings.bandTyped(BandField.GAIN, typed)?.let { set(chosen, it) }
+                }
             }
             Row(Modifier.padding(start = 4.dp, end = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton({ set(chosen, v - 0.5f) }, enabled = enabled && v > gain.min) { Icon(Iconoir.MinusCircle, say.eqLower, Modifier.size(22.dp)) }
@@ -249,7 +257,7 @@ private fun ParametricBands(vm: SettingsViewModel, bands: List<SoundBand>, enabl
         onDrag = { i, x, db ->
             chosen = i
             val b = bands.getOrNull(i) ?: return@CurveCard
-            val freq = EqBands.freqAt(x)
+            val freq = EqBands.moved(b.freq, x)
             vm.setBand(i, if (b.kind.usesGain) b.copy(freq = freq, gainDb = ((db * 2f).roundToInt() / 2f).coerceIn(gain.min, gain.max)) else b.copy(freq = freq))
         },
     )
@@ -281,37 +289,119 @@ private fun BandHeader(name: String, at: Int, count: Int, onGo: (Int) -> Unit, t
     }
 }
 
-/** The chosen band in full: its kind and side, then frequency, gain and width, and a way to remove it. */
+/**
+ * The chosen band in full: its kind (a list) and side, then its frequency, gain and width as numbers to
+ * type, each with a slider under them for a coarse move, and a way to remove it.
+ */
 @Composable
 private fun BandEditor(band: SoundBand, at: Int, count: Int, onGo: (Int) -> Unit, enabled: Boolean, onChange: (SoundBand) -> Unit, onRemove: () -> Unit) {
     val gain = ranges.gain
+    val typed = { field: BandField, text: String ->
+        dev.nori.music.ffi.settings.bandTyped(field, text)?.let { v ->
+            onChange(when (field) { BandField.FREQUENCY -> band.copy(freq = v); BandField.GAIN -> band.copy(gainDb = v); BandField.Q -> band.copy(q = v) })
+        }
+    }
     GroupCard {
         BandHeader(remember(band.freq, band.channel, band.kind) { bandLabel(band) }, at, count, onGo) {
             IconButton(onRemove) { Icon(Iconoir.Trash, say.removeBand, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
-        LazyRow(contentPadding = PaddingValues(horizontal = GROUP_INSET - 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            items(EqKind.entries) { k -> Chip(say.bandKind(k), band.kind == k) { onChange(band.copy(kind = k)) } }
-        }
-        Row(Modifier.padding(horizontal = GROUP_INSET - 4.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.padding(horizontal = GROUP_INSET - 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            KindPicker(band.kind, Modifier.weight(1f, fill = false)) { k -> onChange(band.copy(kind = k)) }
+            Spacer(Modifier.weight(0.01f))
             BandChannel.entries.forEach { c -> Chip(say.bandChannel(c), band.channel == c) { onChange(band.copy(channel = c)) } }
         }
+        Row(Modifier.padding(horizontal = GROUP_INSET - 4.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ValueField(say.frequency, remember(band.freq) { dev.nori.music.text.Fmt.hz(band.freq) }, enabled, Modifier.weight(1f)) { typed(BandField.FREQUENCY, it) }
+            if (band.kind.usesGain) ValueField(say.gain, remember(band.gainDb) { dev.nori.music.text.Fmt.signedDb(band.gainDb) }, enabled, Modifier.weight(1f)) { typed(BandField.GAIN, it) }
+            ValueField(say.widthName(band.kind.slope), remember(band.q) { dev.nori.music.text.Fmt.fixed(band.q.toDouble(), 2) }, enabled, Modifier.weight(1f)) { typed(BandField.Q, it) }
+        }
         Hairline(startIndent = GROUP_INSET)
-        EditorSlider(say.frequency, remember(band.freq) { dev.nori.music.text.Fmt.hz(band.freq) }, EqBands.position(band.freq), 0f..1f, enabled) { x -> onChange(band.copy(freq = EqBands.freqAt(x))) }
-        if (band.kind.usesGain) EditorSlider(say.gain, remember(band.gainDb) { dev.nori.music.text.Fmt.signedDb(band.gainDb) }, band.gainDb, gain.min..gain.max, enabled, centred = true) { v -> onChange(band.copy(gainDb = (v * 2f).roundToInt() / 2f)) }
-        EditorSlider(remember(band.kind, band.q) { say.shape(band.kind.slope, band.q) }, null, band.q, ranges.q.min..ranges.q.max, enabled) { q -> onChange(band.copy(q = (q * 100f).roundToInt() / 100f)) }
+        EditorSlider(say.frequency, EqBands.position(band.freq), 0f..1f, enabled) { x -> onChange(band.copy(freq = EqBands.freqAt(x))) }
+        if (band.kind.usesGain) EditorSlider(say.gain, band.gainDb, gain.min..gain.max, enabled, centred = true) { v -> onChange(band.copy(gainDb = (v * 2f).roundToInt() / 2f)) }
+        EditorSlider(say.widthName(band.kind.slope), band.q, ranges.q.min..ranges.q.max, enabled) { q -> onChange(band.copy(q = (q * 100f).roundToInt() / 100f)) }
+        Spacer(Modifier.height(6.dp))
     }
 }
 
-/** A named slider in the band editor, its value at the right of the name. */
+/** The band's kind, and the list of kinds it opens. */
+@Composable
+private fun KindPicker(kind: EqKind, modifier: Modifier, onPick: (EqKind) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val scheme = MaterialTheme.colorScheme
+    androidx.compose.foundation.layout.Box(modifier) {
+        androidx.compose.runtime.CompositionLocalProvider(androidx.compose.material3.LocalMinimumInteractiveComponentSize provides androidx.compose.ui.unit.Dp.Unspecified) {
+            Surface(onClick = { open = true }, shape = PillShape, color = scheme.surface, contentColor = scheme.onSurface, border = hairlineBorder()) {
+                Row(Modifier.height(34.dp).padding(start = 14.dp, end = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(say.bandKind(kind), Modifier.weight(1f, fill = false), style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    Icon(Iconoir.NavArrowDown, null, Modifier.padding(start = 4.dp).size(16.dp), tint = scheme.onSurfaceVariant)
+                }
+            }
+        }
+        NoriPopover(open, { open = false }) {
+            EqKind.entries.forEach { k -> PopoverItem(say.bandKind(k), k == kind) { open = false; if (k != kind) onPick(k) } }
+        }
+    }
+}
+
+/**
+ * A band's value under its name. A tap makes it typed, with the number keys; Done or leaving it hands the
+ * words to [onTyped], which reads them through the core (`settings::band_typed`): words it cannot read
+ * leave the value as it was.
+ */
+@Composable
+private fun ValueField(name: String, shown: String, enabled: Boolean, modifier: Modifier = Modifier, onTyped: (String) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    var editing by remember { mutableStateOf(false) }
+    var text by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue()) }
+    var focused by remember { mutableStateOf(false) }
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val done = {
+        if (editing) {
+            editing = false
+            focused = false
+            onTyped(text.text)
+        }
+    }
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
+    Column(
+        modifier
+            .clip(shape)
+            .background(scheme.surface)
+            .border(1.dp, if (editing) scheme.primary else scheme.outlineVariant, shape)
+            .clickable(enabled = enabled && !editing) {
+                text = androidx.compose.ui.text.input.TextFieldValue(shown, androidx.compose.ui.text.TextRange(0, shown.length))
+                editing = true
+            }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Text(name, style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant, maxLines = 1)
+        val style = MaterialTheme.typography.titleMedium.copy(color = if (enabled) scheme.onSurface else scheme.onSurfaceVariant)
+        if (editing) {
+            androidx.compose.foundation.text.BasicTextField(
+                text, { text = it },
+                Modifier.fillMaxWidth().focusRequester(focus).onFocusChanged { f ->
+                    if (f.isFocused) focused = true else if (focused) done()
+                },
+                singleLine = true, textStyle = style,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal,
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+                ),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { done() }),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(scheme.primary),
+            )
+            androidx.compose.runtime.LaunchedEffect(Unit) { focus.requestFocus() }
+        } else Text(shown, style = style, maxLines = 1)
+    }
+}
+
+/** A named slider in the band editor. */
 @Composable
 private fun EditorSlider(
-    name: String, value: String?, at: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean,
+    name: String, at: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean,
     centred: Boolean = false, onChange: (Float) -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth().padding(start = GROUP_INSET, end = GROUP_INSET, top = 10.dp)) {
-        Text(name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        if (value != null) Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
+    Text(name, Modifier.padding(start = GROUP_INSET, end = GROUP_INSET, top = 10.dp), style = MaterialTheme.typography.bodyMedium)
     NoriSlider(at, range, onChange, Modifier.padding(horizontal = GROUP_INSET), enabled = enabled, centred = centred)
 }
 
@@ -362,11 +452,14 @@ private fun CurveCard(
                     fun nearest(at: androidx.compose.ui.geometry.Offset): Int {
                         val ps = latest.value
                         val reach = 40.dp.toPx()
+                        val dy = { i: Int -> (1f - ps[i].db / CURVE_DB) * plotHeight() / 2f - at.y }
                         return ps.indices.minByOrNull { i ->
                             val dx = ps[i].x * size.width - at.x
-                            if (nearestAcross) kotlin.math.abs(dx) else kotlin.math.hypot(dx, (1f - ps[i].db / CURVE_DB) * plotHeight() / 2f - at.y)
+                            if (nearestAcross) kotlin.math.abs(dx) else kotlin.math.hypot(dx, dy(i))
                         }?.takeIf { i ->
-                            nearestAcross || kotlin.math.hypot(latest.value[i].x * size.width - at.x, (1f - latest.value[i].db / CURVE_DB) * plotHeight() / 2f - at.y) < reach
+                            // Graphic bands stand closer than a finger: the nearest across is taken, but only
+                            // near its height, so a swipe elsewhere on the curve still scrolls the page.
+                            if (nearestAcross) kotlin.math.abs(dy(i)) < reach else kotlin.math.hypot(ps[i].x * size.width - at.x, dy(i)) < reach
                         } ?: -1
                     }
                     awaitEachGesture {
@@ -393,7 +486,10 @@ private fun CurveCard(
                             if (moved) {
                                 change.consume()
                                 val at = change.position + grabbed
-                                drag.value(i, xOf(at.x), dbOf(at.y))
+                                // A finger moving up or down wavers sideways: under the slop the band stays
+                                // where it was across, keeping its frequency.
+                                val across = if (kotlin.math.abs(change.position.x - down.position.x) < slop) start.x else xOf(at.x)
+                                drag.value(i, across, dbOf(at.y))
                             }
                         }
                         if (!moved) tap.value?.invoke(i)
@@ -457,13 +553,14 @@ private fun CurveCard(
                 drawLine(accent.copy(alpha = 0.5f), androidx.compose.ui.geometry.Offset(c.x, 0f), androidx.compose.ui.geometry.Offset(c.x, h), 1.dp.toPx())
                 drawCircle(surface, 9.dp.toPx(), c)
                 drawCircle(accent, 7.5.dp.toPx(), c)
-                // What the held point is and where it sits, over it (under it near the top).
+                // What the held point is and where it sits, along the top of the curve above it: anywhere
+                // nearer, the finger holding the point covers it.
                 val t = measurer.measure("${label(held)}  ${dev.nori.music.text.Fmt.signedDb(pt.db)}", bubbleStyle)
                 val pad = 8.dp.toPx()
                 val w = t.size.width + pad * 2
                 val bh = t.size.height + pad
                 val left = (c.x - w / 2f).coerceIn(0f, size.width - w)
-                val top = if (c.y - bh - 14.dp.toPx() >= 0f) c.y - bh - 14.dp.toPx() else c.y + 14.dp.toPx()
+                val top = 0f
                 drawRoundRect(accent, androidx.compose.ui.geometry.Offset(left, top), androidx.compose.ui.geometry.Size(w, bh), androidx.compose.ui.geometry.CornerRadius(bh / 2f))
                 drawText(t, topLeft = androidx.compose.ui.geometry.Offset(left + pad, top + pad / 2f))
             }

@@ -4141,6 +4141,71 @@ component EqPlate inherits Rectangle {
     }
 }
 
+// A band's value under its name, to type: Enter or leaving it hands the words to the core (which reads
+// them, `settings::band_typed`), Escape puts the value back.
+component TypedField inherits Rectangle {
+    in property <string> label;
+    in property <string> shown;
+    in property <bool> enabled: true;
+    callback typed(string);
+    height: 48px;
+    // Equal shares of the row, whatever each one says.
+    preferred-width: 100px;
+    horizontal-stretch: 1;
+    border-radius: 9px;
+    background: Theme.ground;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.hairline;
+    property <bool> focused: input.has-focus;
+    // Taken back from the core: typed words it could not read show the value again.
+    changed shown => {
+        if !input.has-focus {
+            input.text = root.shown;
+        }
+    }
+    changed focused => {
+        if self.focused {
+            input.select-all();
+        } else if input.text != root.shown {
+            root.typed(input.text);
+            input.text = root.shown;
+        }
+    }
+    init => { input.text = root.shown; }
+    VerticalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        spacing: 1px;
+        Text {
+            text: root.label;
+            color: Theme.dim;
+            font-size: 11px;
+        }
+        FocusScope {
+            key-pressed(e) => {
+                if e.text == Key.Escape {
+                    input.text = root.shown;
+                    input.clear-focus();
+                    return accept;
+                }
+                reject
+            }
+            input := TextInput {
+                enabled: root.enabled;
+                color: root.enabled ? Theme.text : Theme.dim;
+                font-size: 15px;
+                font-weight: 600;
+                single-line: true;
+                vertical-alignment: center;
+                selection-background-color: Theme.accent.with-alpha(0.4);
+                accepted => { self.clear-focus(); }
+            }
+        }
+    }
+}
+
 component EqualizerPage inherits Flickable {
     in property <bool> on;
     in property <bool> graphic;
@@ -4169,6 +4234,8 @@ component EqualizerPage inherits Flickable {
     // Band i set to a place across the curve, gain, Q, kind and channel; the last on release.
     callback band(int, float, float, float, int, int, bool);
     callback add(float, float);
+    // What was typed for a field (0 frequency, 1 gain, 2 Q) of band i.
+    callback typed(int, int, string);
     callback tool(string, int);
     callback sized(length, length);
     // The band whose editor shows under the curve, and the one a pointer holds.
@@ -4480,9 +4547,17 @@ component EqualizerPage inherits Flickable {
                     clicked => { root.set-band(root.chosen, root.pick.x, root.pick.gain + 0.5, root.pick.q, root.pick.kind, root.pick.channel, true); }
                 }
             }
+            HorizontalLayout {
+                alignment: start;
+                TypedField {
+                    width: 180px;
+                    label: "Gain";
+                    shown: root.pick.value;
+                    typed(t) => { root.typed(root.chosen, 1, t); }
+                }
+            }
             LevelRow {
                 label: "Gain";
-                shown: root.pick.value + " dB";
                 value: root.pick.gain;
                 lo: root.gain-lo;
                 hi: root.gain-hi;
@@ -4554,9 +4629,26 @@ component EqualizerPage inherits Flickable {
                     }
                 }
             }
+            HorizontalLayout {
+                spacing: 8px;
+                TypedField {
+                    label: "Frequency";
+                    shown: root.pick.freq;
+                    typed(t) => { root.typed(root.chosen, 0, t); }
+                }
+                if root.pick.uses-gain: TypedField {
+                    label: "Gain";
+                    shown: root.pick.value;
+                    typed(t) => { root.typed(root.chosen, 1, t); }
+                }
+                TypedField {
+                    label: root.pick.kind == 8 || root.pick.kind == 9 ? "Slope" : "Q";
+                    shown: root.pick.shape;
+                    typed(t) => { root.typed(root.chosen, 2, t); }
+                }
+            }
             LevelRow {
                 label: "Frequency";
-                shown: root.pick.freq;
                 value: root.pick.x;
                 lo: 0;
                 hi: 1;
@@ -4564,7 +4656,6 @@ component EqualizerPage inherits Flickable {
             }
             if root.pick.uses-gain: LevelRow {
                 label: "Gain";
-                shown: root.pick.value + " dB";
                 value: root.pick.gain;
                 lo: root.gain-lo;
                 hi: root.gain-hi;
@@ -4572,7 +4663,6 @@ component EqualizerPage inherits Flickable {
             }
             LevelRow {
                 label: root.pick.kind == 8 || root.pick.kind == 9 ? "Slope" : "Q";
-                shown: root.pick.shape;
                 value: root.pick.q;
                 lo: root.q-lo;
                 hi: root.q-hi;
@@ -5349,6 +5439,7 @@ export component AppWindow inherits Window {
     in-out property <bool> key-set;
     callback eq-set(string, string);
     callback eq-band(int, float, float, float, int, int, bool);
+    callback eq-typed(int, int, string);
     callback eq-add(float, float);
     callback eq-tool(string, int);
     callback eq-sized(length, length);
@@ -6650,6 +6741,7 @@ export component AppWindow inherits Window {
                         set(name, value) => { root.eq-set(name, value); }
                         level(name, v, last) => { root.setting-slid(name, v, last); }
                         band(i, x, db, q, kind, channel, last) => { root.eq-band(i, x, db, q, kind, channel, last); }
+                        typed(i, field, text) => { root.eq-typed(i, field, text); }
                         add(x, db) => { root.eq-add(x, db); }
                         tool(name, i) => { root.eq-tool(name, i); }
                         sized(w, h) => { root.eq-sized(w, h); }
