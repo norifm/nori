@@ -53,6 +53,7 @@ fun interface IslandDrawing {
 /** One island's view: where its element is, cut to the part of it that shows, stepping itself between draws. */
 class Island internal constructor(context: Context) : View(context) {
     internal var drawing: IslandDrawing? = null
+    internal var margin = 0
     private val step = Runnable { invalidate() }
     private val cut = Rect()
 
@@ -66,6 +67,7 @@ class Island internal constructor(context: Context) : View(context) {
         }
         translationX = spot.x
         translationY = spot.y
+        margin = spot.margin
         cut.set(spot.visible)
         cut.offset(-spot.x.toInt(), -spot.y.toInt())
         clipBounds = cut
@@ -79,30 +81,37 @@ class Island internal constructor(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         removeCallbacks(step)
-        val wait = drawing?.draw(canvas, width, height) ?: -1L
+        val m = margin.toFloat()
+        canvas.translate(m, m)
+        val wait = drawing?.draw(canvas, width - 2 * margin, height - 2 * margin) ?: -1L
         if (wait >= 0) postOnAnimationDelayed(step, wait)
     }
 }
 
-/** Where an element is in the window: its top left, its size, and the part of it not cut off by what holds it. */
+/**
+ * Where an island is in the window: its element with [margin] round it (for what the element draws past its
+ * edges, a glow), and the part of that not cut off by what holds the element.
+ */
 class IslandSpot {
     var x = 0f
     var y = 0f
     var width = 0
     var height = 0
+    var margin = 0
     val visible = Rect()
-    /** Nothing of it cut off by the list or panel holding it. */
+    /** Nothing of the element cut off by the list or panel holding it. */
     var whole = false
 
-    internal fun update(c: LayoutCoordinates) {
+    internal fun update(c: LayoutCoordinates, m: Int) {
         val at = c.positionInWindow()
         val b = c.boundsInWindow()
-        x = at.x
-        y = at.y
-        width = c.size.width
-        height = c.size.height
-        visible.set(b.left.toInt(), b.top.toInt(), kotlin.math.ceil(b.right).toInt(), kotlin.math.ceil(b.bottom).toInt())
-        whole = b.width >= width - 0.5f && b.height >= height - 0.5f
+        margin = m
+        x = at.x - m
+        y = at.y - m
+        width = c.size.width + 2 * m
+        height = c.size.height + 2 * m
+        visible.set(b.left.toInt() - m, b.top.toInt() - m, kotlin.math.ceil(b.right).toInt() + m, kotlin.math.ceil(b.bottom).toInt() + m)
+        whole = b.width >= c.size.width - 0.5f && b.height >= c.size.height - 0.5f
     }
 }
 
@@ -111,6 +120,9 @@ class IslandSlot internal constructor(private val islands: Islands?) {
     internal var drawing: IslandDrawing? = null
     internal var wanted = false
     internal var overPage = false
+    internal var margin = 0
+    /** Where the element must lie, in the window, for the island to have it (a list's unfaded middle); null for anywhere. */
+    internal var within: Rect? = null
     internal val spot = IslandSpot()
     private var clear by mutableStateOf(false)
     private var island: Island? = null
@@ -124,14 +136,14 @@ class IslandSlot internal constructor(private val islands: Islands?) {
     }
 
     internal fun placed(c: LayoutCoordinates) {
-        spot.update(c)
+        spot.update(c, margin)
         recheck()
         if (apart) island?.place(spot)
     }
 
     internal fun recheck() {
         val i = islands ?: return
-        clear = spot.whole && (!overPage || i.clearOf(spot.visible))
+        clear = spot.whole && (!overPage || i.clearOf(spot.visible)) && within.let { it == null || it.contains(spot.visible) }
     }
 
     internal fun sync() {
@@ -152,16 +164,19 @@ class IslandSlot internal constructor(private val islands: Islands?) {
 
 /**
  * An island for one element, drawn with [drawing] while [wanted] (the caller's own "nothing moves here": not
- * dragged, not fading) and while the element shows whole and, [overPage], clear of everything drawn over the
- * page. Place it with [island] on the element; draw nothing there while [IslandSlot.apart].
+ * dragged, not fading) and while the element shows whole, inside [within], and, [overPage], clear of
+ * everything drawn over the page; [margin] pixels round it are its too. Place it with [island] on the
+ * element; draw nothing there while [IslandSlot.apart].
  */
 @Composable
-fun rememberIsland(drawing: IslandDrawing, wanted: Boolean, overPage: Boolean): IslandSlot {
+fun rememberIsland(drawing: IslandDrawing, wanted: Boolean, overPage: Boolean, margin: Int = 0, within: Rect? = null): IslandSlot {
     val islands = LocalIslands.current
     val slot = remember(islands) { IslandSlot(islands) }
     slot.drawing = drawing
     slot.wanted = wanted && islands != null
     slot.overPage = overPage
+    slot.margin = margin
+    slot.within = within
     DisposableEffect(slot) { onDispose { slot.release() } }
     SideEffect { slot.sync() }
     // Something drawn over the page coming or going (a banner, the chrome moving) is checked again here; the

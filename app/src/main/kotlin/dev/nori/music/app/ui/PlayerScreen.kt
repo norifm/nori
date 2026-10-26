@@ -3068,9 +3068,9 @@ private class SeekDrawing(private val pace: dev.nori.music.look.SeekPace, privat
     var right = Offset.Zero
     var rightWidth = 0
     private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-    private var nodes: Array<android.graphics.Picture>? = null
-    private var nodesFor: TimeGlyphs? = null
-    private var nodesColour = 0
+    private var pictures: Array<android.graphics.Picture>? = null
+    private var picturesFor: TimeGlyphs? = null
+    private var picturesColour = 0
 
     override fun draw(canvas: android.graphics.Canvas, width: Int, height: Int): Long {
         val now = System.nanoTime()
@@ -3100,7 +3100,7 @@ private class SeekDrawing(private val pace: dev.nori.music.look.SeekPace, privat
     private fun drawTimes(canvas: android.graphics.Canvas, packed: Long, alpha: Float) {
         if (alpha <= 0f) return
         val g = glyphs ?: return
-        val n = glyphNodes(g, look.argb(CoverLook.ON_VARIANT))
+        val n = glyphPictures(g, look.argb(CoverLook.ON_VARIANT))
         drawTime(canvas, g, n, duration(packed ushr 32), left.x - origin.x, left.y - origin.y, alpha)
         val t = durationLeft(packed and 0xFFFF_FFFFL)
         drawTime(canvas, g, n, t, right.x - origin.x + rightWidth - g.width(t, widestDigits = false), right.y - origin.y, alpha)
@@ -3126,8 +3126,8 @@ private class SeekDrawing(private val pace: dev.nori.music.look.SeekPace, privat
      * Each glyph drawn once in [argb] by Compose itself, kept until the glyphs or the colour change. Pictures,
      * not render nodes: a render node no frame drew last loses what was recorded in it.
      */
-    private fun glyphNodes(g: TimeGlyphs, argb: Int): Array<android.graphics.Picture> {
-        nodes?.let { if (nodesFor === g && nodesColour == argb) return it }
+    private fun glyphPictures(g: TimeGlyphs, argb: Int): Array<android.graphics.Picture> {
+        pictures?.let { if (picturesFor === g && picturesColour == argb) return it }
         val made = Array(g.glyphs.size) { i ->
             val layout = g.glyphs[i]
             android.graphics.Picture().apply {
@@ -3139,7 +3139,7 @@ private class SeekDrawing(private val pace: dev.nori.music.look.SeekPace, privat
                 endRecording()
             }
         }
-        nodes = made; nodesFor = g; nodesColour = argb
+        pictures = made; picturesFor = g; picturesColour = argb
         return made
     }
 }
