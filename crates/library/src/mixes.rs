@@ -22,7 +22,7 @@ impl Rng {
         Rng(seed)
     }
 
-    pub fn next(&mut self) -> u64 {
+    pub fn next_u64(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -32,11 +32,11 @@ impl Rng {
 
     /// In (0, 1], so its logarithm is finite.
     fn unit(&mut self) -> f64 {
-        ((self.next() >> 11) + 1) as f64 / (1u64 << 53) as f64
+        ((self.next_u64() >> 11) + 1) as f64 / (1u64 << 53) as f64
     }
 
     fn below(&mut self, n: usize) -> usize {
-        (self.next() % n.max(1) as u64) as usize
+        (self.next_u64() % n.max(1) as u64) as usize
     }
 }
 
@@ -50,7 +50,7 @@ pub(crate) fn shuffled_order(rowid: &str, a: usize, b: usize) -> String {
 
 pub(crate) fn shuffled_params(seed: u64) -> [Value; 2] {
     let mut r = Rng::new(seed);
-    [Value::Integer(1 + (r.next() % (LCG_P as u64 - 1)) as i64), Value::Integer((r.next() % LCG_P as u64) as i64)]
+    [Value::Integer(1 + (r.next_u64() % (LCG_P as u64 - 1)) as i64), Value::Integer((r.next_u64() % LCG_P as u64) as i64)]
 }
 
 /// This server's songs; `likelihood` keeps the planner (without ANALYZE data) on the expression indexes.
@@ -236,8 +236,8 @@ pub fn quick_picks(c: &Connection, limit: usize, seed: u64, now_ms: i64) -> rusq
     let rested = || vec![Value::Integer(now_ms - 3 * DAY_MS)];
     let mut cands = pool(c, true, "s.last_played_ms<?1 AND s.taste>0", rested(), Order::Taste, (limit * 4).max(100), now_ms)?;
     // Two statements because each can only use its own partial index.
-    cands.extend(pool(c, false, "json_extract(i.json,'$.starred')=1 AND coalesce(s.last_played_ms,0)<?1", rested(), Order::Shuffled(rng.next()), limit * 2, now_ms)?);
-    cands.extend(pool(c, false, "json_extract(i.json,'$.userRating')>=4 AND coalesce(s.last_played_ms,0)<?1", rested(), Order::Shuffled(rng.next()), limit * 2, now_ms)?);
+    cands.extend(pool(c, false, "json_extract(i.json,'$.starred')=1 AND coalesce(s.last_played_ms,0)<?1", rested(), Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
+    cands.extend(pool(c, false, "json_extract(i.json,'$.userRating')>=4 AND coalesce(s.last_played_ms,0)<?1", rested(), Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
     let picked = sample(cands.into_iter().filter(|c| c.taste > 0.0).map(|c| (c.song, c.taste)).collect(), limit, (limit / 5).max(2), &mut rng);
     Ok(spread(picked, &mut rng, None))
 }
@@ -260,7 +260,7 @@ pub fn top(c: &Connection, limit: usize, now_ms: i64) -> rusqlite::Result<Vec<So
 pub fn discover(c: &Connection, limit: usize, seed: u64, now_ms: i64) -> rusqlite::Result<Vec<Song>> {
     let mut rng = Rng::new(seed);
     let mut liked = pool(c, true, "1", vec![], Order::Taste, 500, now_ms)?;
-    liked.extend(pool(c, false, "json_extract(i.json,'$.starred')=1", vec![], Order::Shuffled(rng.next()), 200, now_ms)?);
+    liked.extend(pool(c, false, "json_extract(i.json,'$.starred')=1", vec![], Order::Shuffled(rng.next_u64()), 200, now_ms)?);
     let (mut artists, mut genres): (HashMap<String, f64>, HashMap<String, f64>) = (HashMap::new(), HashMap::new());
     let mut seen = HashSet::new();
     for l in liked.iter().filter(|l| seen.insert(l.song.id.clone())) {
@@ -282,12 +282,12 @@ pub fn discover(c: &Connection, limit: usize, seed: u64, now_ms: i64) -> rusqlit
     const FRESH: &str = "coalesce(s.plays,0)<=1 AND coalesce(s.skips,0)=0";
     let mut cands = Vec::new();
     for (id, _) in &top_artists {
-        cands.extend(pool(c, false, &format!("json_extract(i.json,'$.artistId')=?1 AND {FRESH}"), vec![text(id)], Order::Shuffled(rng.next()), limit, now_ms)?);
+        cands.extend(pool(c, false, &format!("json_extract(i.json,'$.artistId')=?1 AND {FRESH}"), vec![text(id)], Order::Shuffled(rng.next_u64()), limit, now_ms)?);
     }
     for (g, _) in &top_genres {
-        cands.extend(pool(c, false, &format!("json_extract(i.json,'$.genre')=?1 COLLATE NOCASE AND {FRESH}"), vec![text(g)], Order::Shuffled(rng.next()), limit * 2, now_ms)?);
+        cands.extend(pool(c, false, &format!("json_extract(i.json,'$.genre')=?1 COLLATE NOCASE AND {FRESH}"), vec![text(g)], Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
     }
-    cands.extend(pool(c, false, FRESH, vec![], Order::Shuffled(rng.next()), limit * 2, now_ms)?);
+    cands.extend(pool(c, false, FRESH, vec![], Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
 
     // Affinity relative to the favourite, so the weights mean the same for a light and a heavy listener.
     let norm = |m: &HashMap<String, f64>, l: &[(String, f64)], k: Option<String>| -> f64 {
@@ -327,13 +327,13 @@ pub fn instant(c: &Connection, seed_song_id: &str, limit: usize, seed: u64, now_
     let decade = (first.year / 10 * 10) as i64;
     let mut cands = Vec::new();
     if let Some(g) = first.genre.as_deref().filter(|g| !g.is_empty()) {
-        cands.extend(pool(c, false, "json_extract(i.json,'$.genre')=?1 COLLATE NOCASE", vec![text(g)], Order::Shuffled(rng.next()), limit * 3, now_ms)?);
+        cands.extend(pool(c, false, "json_extract(i.json,'$.genre')=?1 COLLATE NOCASE", vec![text(g)], Order::Shuffled(rng.next_u64()), limit * 3, now_ms)?);
     }
     if let Some(a) = first.artist_id.as_deref().filter(|a| !a.is_empty()) {
-        cands.extend(pool(c, false, "json_extract(i.json,'$.artistId')=?1", vec![text(a)], Order::Shuffled(rng.next()), limit, now_ms)?);
+        cands.extend(pool(c, false, "json_extract(i.json,'$.artistId')=?1", vec![text(a)], Order::Shuffled(rng.next_u64()), limit, now_ms)?);
     }
     if first.year > 0 {
-        cands.extend(pool(c, false, "json_extract(i.json,'$.year') BETWEEN ?1 AND ?2", vec![Value::Integer(decade), Value::Integer(decade + 9)], Order::Shuffled(rng.next()), limit * 2, now_ms)?);
+        cands.extend(pool(c, false, "json_extract(i.json,'$.year') BETWEEN ?1 AND ?2", vec![Value::Integer(decade), Value::Integer(decade + 9)], Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
     }
     let genre = first.genre.as_ref().map(|g| g.to_lowercase());
     let weighted = cands
@@ -388,8 +388,8 @@ mod tests {
     #[test]
     fn rng_is_deterministic_and_uniformish() {
         let (mut a, mut b) = (Rng::new(7), Rng::new(7));
-        assert_eq!((0..5).map(|_| a.next()).collect::<Vec<_>>(), (0..5).map(|_| b.next()).collect::<Vec<_>>());
-        assert_ne!(Rng::new(1).next(), Rng::new(2).next());
+        assert_eq!((0..5).map(|_| a.next_u64()).collect::<Vec<_>>(), (0..5).map(|_| b.next_u64()).collect::<Vec<_>>());
+        assert_ne!(Rng::new(1).next_u64(), Rng::new(2).next_u64());
         let mut r = Rng::new(0);
         let mean = (0..10_000).map(|_| r.unit()).sum::<f64>() / 10_000.0;
         assert!((mean - 0.5).abs() < 0.02, "{mean}");

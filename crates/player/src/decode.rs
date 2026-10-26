@@ -97,7 +97,7 @@ const OPUS_SEEK_PREROLL: usize = 3840;
 enum Engine {
     Symphonia(Box<dyn Inner>),
     #[cfg(feature = "rust-codecs")]
-    Opus { dec: opus_rs::OpusDecoder, channels: usize, pre_skip: usize, pre_roll: usize, gain: f32 },
+    Opus { dec: Box<opus_rs::OpusDecoder>, channels: usize, pre_skip: usize, pre_roll: usize, gain: f32 },
     Platform(Box<dyn PlatformDecoder>),
 }
 
@@ -289,7 +289,7 @@ impl Decoder {
             let (channels, pre_skip, pre_roll, gain) = opus_setup(extra).ok_or("not a mono or stereo Opus stream")?;
             let dec = opus_rs::OpusDecoder::new(OPUS_RATE as i32, channels).map_err(str::to_string)?;
             return Ok(Decoder {
-                inner: Engine::Opus { dec, channels, pre_skip, pre_roll, gain },
+                inner: Engine::Opus { dec: Box::new(dec), channels, pre_skip, pre_roll, gain },
                 codec,
                 channels,
                 rate: OPUS_RATE,
@@ -476,7 +476,7 @@ impl Decoder {
             Engine::Opus { dec, channels, pre_skip, pre_roll, .. } => {
                 // opus-rs has no reset: replace it.
                 if let Ok(d) = opus_rs::OpusDecoder::new(OPUS_RATE as i32, *channels) {
-                    *dec = d;
+                    **dec = d;
                 }
                 self.skip = if at_start { *pre_skip } else { *pre_roll };
             }

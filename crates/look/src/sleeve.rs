@@ -98,7 +98,7 @@ mod tests {
                 last = a;
             }
         }
-        assert!(ACROSS_MELT < crate::cover::FADE_SHARE);
+        const { assert!(ACROSS_MELT < crate::cover::FADE_SHARE) };
     }
 
     #[test]

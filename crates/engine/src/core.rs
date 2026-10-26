@@ -576,6 +576,7 @@ impl Downloader {
                 }
             };
             if !broke && body.len.is_none_or(|l| at == l) && file.flush().is_ok() {
+                #[allow(clippy::drop_non_drop, reason = "closes the file before the rename; wasm's File has no Drop")]
                 drop(file);
                 let kept = std::fs::rename(&part, self.store.download_path(id)).is_ok();
                 if let Some(t) = taker.take() {

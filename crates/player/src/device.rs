@@ -138,7 +138,8 @@ mod tests {
         let warm = s(&["USB: K3", "Bluetooth: Other"]);
         let profiles: [(&str, &[String]); 2] = [(FLAT, &flat), ("Warm", &warm)];
         let rows = super::rows(&known, "Bluetooth: Other", &profiles, &s(&["Bluetooth: buds"]));
-        let got: Vec<(&str, OutputPort, Option<&str>, bool, ChoiceKind, Option<&str>)> =
+        type Shown<'a> = (&'a str, OutputPort, Option<&'a str>, bool, ChoiceKind, Option<&'a str>);
+        let got: Vec<Shown> =
             rows.iter().map(|r| (r.output.as_str(), r.port, r.name.as_deref(), r.current, r.choice, r.profile.as_deref())).collect();
         assert_eq!(
             got,

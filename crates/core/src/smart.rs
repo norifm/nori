@@ -24,7 +24,7 @@ impl Core {
         let now = db::now_ms();
         let id = if id.is_empty() {
             let stored: i64 = c.query_row("SELECT count(*) FROM smart_playlists WHERE server=sid()", [], |r| r.get(0))?;
-            format!("sp-{:x}", mixes::Rng::new(now as u64 ^ (stored as u64) << 48).next())
+            format!("sp-{:x}", mixes::Rng::new(now as u64 ^ (stored as u64) << 48).next_u64())
         } else {
             id
         };

@@ -178,7 +178,7 @@ pub fn rank(candidates: Vec<String>, used: &HashMap<String, i64>, now_ms: i64, s
     let (mut fresh, mut stale): (Vec<String>, Vec<String>) =
         candidates.into_iter().filter(|c| seen.insert(c.clone())).partition(|c| used.get(c).is_none_or(|&t| now_ms - t >= LATELY_MS));
     if !fresh.is_empty() {
-        let first = (Rng::new(seed).next() % fresh.len().min(TOP_DRAW) as u64) as usize;
+        let first = (Rng::new(seed).next_u64() % fresh.len().min(TOP_DRAW) as u64) as usize;
         let pick = fresh.remove(first);
         fresh.insert(0, pick);
     }

@@ -279,11 +279,10 @@ impl Crossfeed {
 
     #[inline]
     fn frame(&mut self, l: f64, r: f64) -> (f64, f64) {
-        let x = [l, r];
-        for c in 0..2 {
-            self.lo[c] = self.a0_lo * x[c] + self.b1_lo * self.lo[c];
-            self.hi[c] = self.a0_hi * x[c] + self.a1_hi * self.last[c] + self.b1_hi * self.hi[c];
-            self.last[c] = x[c];
+        for (c, x) in [l, r].into_iter().enumerate() {
+            self.lo[c] = self.a0_lo * x + self.b1_lo * self.lo[c];
+            self.hi[c] = self.a0_hi * x + self.a1_hi * self.last[c] + self.b1_hi * self.hi[c];
+            self.last[c] = x;
         }
         ((self.hi[0] + self.lo[1]) * self.gain, (self.hi[1] + self.lo[0]) * self.gain)
     }

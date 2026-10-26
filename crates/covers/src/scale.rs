@@ -274,7 +274,7 @@ fn along<const C: usize>(row: &[u8], h: &Axis, out: &mut [[u16; 4]]) {
     for ((o, &first), ws) in out.iter_mut().zip(&h.first).zip(h.weights.chunks_exact(taps)) {
         let from = &row[first as usize * C..][..taps * C];
         let mut acc = [128u32; C];
-        for (p, &w) in from.chunks_exact(C).zip(ws) {
+        for (p, &w) in from.as_chunks::<C>().0.iter().zip(ws) {
             for ch in 0..C {
                 acc[ch] += w as u32 * p[ch] as u32;
             }
@@ -322,12 +322,12 @@ fn expand<const C: usize>(row: &[u8], out: &mut [u8]) {
         out.copy_from_slice(row);
         return;
     }
-    for (p, o) in row.chunks_exact(C).zip(out.chunks_exact_mut(4)) {
-        o.copy_from_slice(&match C {
+    for (p, o) in row.as_chunks::<C>().0.iter().zip(out.as_chunks_mut::<4>().0) {
+        *o = match C {
             1 => [p[0], p[0], p[0], 255],
             2 => [p[0], p[0], p[0], p[1]],
             _ => [p[0], p[1], p[2], 255],
-        });
+        };
     }
 }
 
@@ -345,11 +345,11 @@ pub(crate) fn premultiply(px: &mut [u8], c: usize) {
 
 /// Converts premultiplied RGBA back to straight.
 pub(crate) fn unpremultiply(px: &mut [u8]) {
-    for p in px.chunks_exact_mut(4) {
+    for p in px.as_chunks_mut::<4>().0 {
         let a = p[3] as u32;
         if a != 255 {
             for v in &mut p[..3] {
-                *v = if a == 0 { 0 } else { ((*v as u32 * 255 + a / 2) / a).min(255) as u8 };
+                *v = (*v as u32 * 255 + a / 2).checked_div(a).unwrap_or(0).min(255) as u8;
             }
         }
     }
@@ -406,7 +406,7 @@ mod tests {
         let mut out = [7u8; 2 * 12];
         let src = Source { px: &mut px, width: 1, height: 1, stride: 3, channels: 3 };
         Scaler::default().fill(src, &mut Target { px: &mut out, width: 2, height: 2, stride: 12 }, Alpha::Straight);
-        for row in out.chunks_exact(12) {
+        for row in out.as_chunks::<12>().0 {
             assert_eq!(row, &[10, 20, 30, 255, 10, 20, 30, 255, 7, 7, 7, 7]);
         }
     }

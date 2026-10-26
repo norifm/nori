@@ -399,7 +399,7 @@ mod tests {
         assert!(p.dominant.is_none() && p.vibrant.is_none());
 
         // Quantizes to at most max colors.
-        let px: Vec<u32> = (0..160 * 160).map(|i| rgb((i * 7 % 256) as i32, (i * 13 % 256) as i32, (i * 29 % 256) as i32)).collect();
+        let px: Vec<u32> = (0..160 * 160).map(|i| rgb(i * 7 % 256, i * 13 % 256, i * 29 % 256)).collect();
         let scaled = scale_down(&px, 160, 160);
         let swatches = quantize(scaled.as_deref().unwrap_or(&px), 16);
         assert!((2..=16).contains(&swatches.len()), "{} swatches", swatches.len());

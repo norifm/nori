@@ -400,7 +400,7 @@ mod tests {
         };
         for (take, (out, late, cents)) in [(&mut l, 0.0, 0.0), (&mut r, 0.012, 7.0)].into_iter().enumerate() {
             let mut phase = [0f64; 3];
-            for i in 0..len {
+            for (i, o) in out.iter_mut().enumerate() {
                 let note_at = (i as f64 / rate / eighth) as u64 * 2 + take as u64;
                 let t = i as f64 / rate - late - 0.008 * hash(note_at);
                 let cents = cents + 10.0 * hash(note_at + 1_000_000) - 5.0;
@@ -419,7 +419,7 @@ mod tests {
                     v += 2.0 * phase[h] - 1.0;
                 }
                 let pick = (since / 0.005).min(1.0) * (0.75 + 0.25 * (-since / 0.3).exp());
-                out[i] += 0.3 * (3.0 * v * pick).tanh();
+                *o += 0.3 * (3.0 * v * pick).tanh();
             }
         }
         // Kick on every beat, snare on two and four.

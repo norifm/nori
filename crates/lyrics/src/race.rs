@@ -274,7 +274,7 @@ impl Race {
 
     /// What to put on screen now. With nothing shown: the leader once sure, once the first wave is in, or
     /// at the `last`. Otherwise the leader only when strictly better and agreeing, or far better.
-    pub(crate) fn to_show(&mut self, last: bool) -> Option<(usize, Lyrics)> {
+    pub(crate) fn choose_shown(&mut self, last: bool) -> Option<(usize, Lyrics)> {
         let scores = self.scores();
         let (leader, best) = Self::leader_in(&scores)?;
         let take = match self.shown {
@@ -560,7 +560,7 @@ async fn run_race<F: Future<Output = Option<(Lyrics, Named)>>>(race: &mut Race, 
             out.push(async move { (rank, ask(rank).await) });
         }
         let last = out.is_empty();
-        if let Some((rank, lyrics)) = race.to_show(last) {
+        if let Some((rank, lyrics)) = race.choose_shown(last) {
             show(rank, lyrics);
         }
         if last {
@@ -664,12 +664,12 @@ mod tests {
         let mut r = Race::new(&tune(), vec![entry(0.9, true, W), entry(0.85, true, W), entry(0.85, true, W)], true, Timing::Empty);
         assert_eq!(r.next(0, 6), [0, 1, 2]);
         r.answer(0, Some((words(&THEIRS, true), Named::default())));
-        assert_eq!(r.to_show(false), None, "a lone answer naming nothing waits for the first wave");
+        assert_eq!(r.choose_shown(false), None, "a lone answer naming nothing waits for the first wave");
         r.answer(1, Some((words(&OURS, false), naming("Glass Harbour"))));
         r.answer(2, Some((words(&OURS, true), Named::default())));
         let scores = r.scores();
         assert!(scores[0].unwrap().score + OVERRULE < scores[2].unwrap().score, "outvoted: {:?}", scores[0]);
-        let (rank, _) = r.to_show(false).expect("shown");
+        let (rank, _) = r.choose_shown(false).expect("shown");
         assert_eq!(rank, 2, "the word-timed answer the others agree with");
         assert!(r.runner_up().is_some_and(|(r, _)| r == 1));
 
@@ -722,14 +722,14 @@ mod tests {
         r.next(0, 6);
         r.answer(0, Some((words(&OURS, false), naming("Glass Harbour"))));
         r.answer(1, Some((words(&THEIRS, true), Named::default())));
-        assert_eq!(r.to_show(true).map(|x| x.0), Some(0), "the answer naming the song, though timed by line");
+        assert_eq!(r.choose_shown(true).map(|x| x.0), Some(0), "the answer naming the song, though timed by line");
         // A third answer with the named one's words, timed word by word, then wins over both.
         let mut three = Race::new(&tune(), vec![entry(0.85, true, W), entry(0.85, true, W), entry(0.9, true, W)], true, Timing::Empty);
         three.next(0, 6);
         three.answer(0, Some((words(&OURS, false), naming("Glass Harbour"))));
         three.answer(1, Some((words(&THEIRS, true), Named::default())));
         three.answer(2, Some((words(&OURS, true), naming("Glass Harbour"))));
-        assert_eq!(three.to_show(true).map(|x| x.0), Some(2));
+        assert_eq!(three.choose_shown(true).map(|x| x.0), Some(2));
 
         // Word timed words win over line timed ones.
         let (web, cache) = (Web::default(), Kept::default());
@@ -755,7 +755,7 @@ mod tests {
         r.answer(1, Some((words(&OURS, false), naming("Glass Harbour"))));
         let s = r.scores();
         assert!(s[0].unwrap().penalty > 0.2, "{:?}", s[0]);
-        assert_eq!(r.to_show(true).map(|x| x.0), Some(1));
+        assert_eq!(r.choose_shown(true).map(|x| x.0), Some(1));
 
         // Credits stripped before scoring.
         let (web, cache) = (Web::default(), Kept::default());
@@ -779,7 +779,7 @@ mod tests {
                 for line in &mut lyrics.lines { line.start_ms /= 4; }
             }
             r.answer(1, Some((lyrics, Named::new("", "", "", length))));
-            assert_eq!(r.to_show(false).is_some(), early, "length {length}, short {short}");
+            assert_eq!(r.choose_shown(false).is_some(), early, "length {length}, short {short}");
         }
     }
 
@@ -788,13 +788,13 @@ mod tests {
         let mut r = Race::new(&tune(), vec![entry(0.85, true, W), entry(0.85, true, W), entry(0.85, true, W)], true, Timing::Empty);
         r.next(0, 6);
         r.answer(1, Some((words(&OURS, false), naming("Glass Harbour"))));
-        assert_eq!(r.to_show(false).map(|x| x.0), Some(1), "sure, and naming the song: shown at once");
+        assert_eq!(r.choose_shown(false).map(|x| x.0), Some(1), "sure, and naming the song: shown at once");
         let mut alike = words(&OURS, false);
         alike.lines[0].text = "first line of this song".into();
         r.answer(0, Some((alike, naming("Glass Harbour"))));
-        assert_eq!(r.to_show(false), None, "timed alike and scored alike: no swap");
+        assert_eq!(r.choose_shown(false), None, "timed alike and scored alike: no swap");
         r.answer(2, Some((words(&OURS, true), naming("Glass Harbour"))));
-        assert_eq!(r.to_show(false).map(|x| x.0), Some(2), "word timing of the same words: strictly better");
+        assert_eq!(r.choose_shown(false).map(|x| x.0), Some(2), "word timing of the same words: strictly better");
 
         // Server untimed not replaced by untimed.
         let mut r = Race::new(&tune(), vec![entry(0.85, true, W), entry(0.7, false, U)], true, Timing::Untimed);
@@ -805,7 +805,7 @@ mod tests {
         plain.synced = false;
         let mut s = Race::new(&tune(), vec![entry(0.85, true, U)], true, U);
         s.answer(0, Some((plain, Named::default())));
-        assert_eq!(s.to_show(true), None);
+        assert_eq!(s.choose_shown(true), None);
     }
 
     // ---- checked against the song's voice ----------------------------------------------------------------
@@ -837,14 +837,14 @@ mod tests {
             r
         };
         let mut deaf = race(false);
-        assert_eq!(deaf.to_show(true).map(|x| x.0), Some(0), "unmeasured, word timing wins as before");
+        assert_eq!(deaf.choose_shown(true).map(|x| x.0), Some(0), "unmeasured, word timing wins as before");
         assert!(deaf.scores()[0].unwrap().sync.is_none());
         let mut hearing = race(true);
         let scores = hearing.scores();
         assert_eq!(hearing.check(0).map(|c| c.kind), Some(SyncKind::Drifts), "{:?}", hearing.check(0));
         assert_eq!(hearing.check(1).map(|c| c.kind), Some(SyncKind::Fits), "{:?}", hearing.check(1));
         assert!(scores[1].unwrap().score > scores[0].unwrap().score, "{scores:?}");
-        assert_eq!(hearing.to_show(true).map(|x| x.0), Some(1), "the timing that fits the voice");
+        assert_eq!(hearing.choose_shown(true).map(|x| x.0), Some(1), "the timing that fits the voice");
     }
 
     #[test]
@@ -855,7 +855,7 @@ mod tests {
         r.hear(curve);
         r.next(0, 6);
         r.answer(0, Some((late, Named::new("Glass Harbour", "The Lanterns", "", s.duration as f64))));
-        let (_, shown) = r.to_show(true).expect("shown");
+        let (_, shown) = r.choose_shown(true).expect("shown");
         assert!((shown.timing.offset_ms() - 1000).abs() < 120, "{:?}", shown.timing);
         assert!(sync_words(&r.check(0).unwrap()).starts_with("sync 0."), "{}", sync_words(&r.check(0).unwrap()));
         let pick = |lyrics| LyricsPick { lyrics, origin: LyricsOrigin::Lrclib };

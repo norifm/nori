@@ -504,7 +504,7 @@ mod tests {
     }
 
     fn hz(x: &[i16], rate: u32) -> f64 {
-        let l: Vec<i16> = x.chunks_exact(2).map(|f| f[0]).collect();
+        let l: Vec<i16> = x.as_chunks::<2>().0.iter().map(|f| f[0]).collect();
         let m = &l[l.len() / 4..l.len() * 3 / 4];
         m.windows(2).filter(|w| w[0] <= 0 && w[1] > 0).count() as f64 / (m.len() as f64 / rate as f64)
     }

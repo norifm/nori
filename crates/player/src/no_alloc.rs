@@ -179,7 +179,7 @@ fn parametric_equalizer() {
     let bands = [Band { kind: crate::types::EqKind::Peaking, freq: 1000.0, gain_db: 4.0, q: 1.0, channel: 0 }, Band { kind: crate::types::EqKind::LowShelf, freq: 90.0, gain_db: 3.0, q: 0.7, channel: 0 }];
     eq.configure(&bands, -3.0, -6.0);
     eq.configure_output(0.1, false, -1.0, 120.0, 5.0);
-    let x: Vec<i16> = tone(2.0, 440.0).chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+    let x: Vec<i16> = tone(2.0, 440.0).as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(*c)).collect();
     let mut y = vec![0i16; CHUNK / 2];
     assert_eq!(steady(&x, CHUNK / 2, |c| eq.process_i16(c, &mut y[..c.len()])), 0);
 }
@@ -191,7 +191,7 @@ fn graphic_equalizer_and_effects() {
     let fx = crate::dsp::Effects { compressor: Some(crate::compressor::CompressorPreset::Car.settings()), virtualizer: 0.7, boost_db: 4.0 };
     eq.configure_effects(&fx);
     eq.configure_output(0.0, true, -1.0, 120.0, 5.0);
-    let x: Vec<i16> = tone(4.0, 440.0).chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+    let x: Vec<i16> = tone(4.0, 440.0).as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(*c)).collect();
     let mut y = vec![0i16; CHUNK / 2];
     assert_eq!(steady(&x, CHUNK / 2, |c| eq.process_i16(c, &mut y[..c.len()])), 0, "16-bit, dithered");
     let xf: Vec<f32> = x.iter().map(|v| *v as f32 / 32768.0).collect();
@@ -216,14 +216,14 @@ fn speed_and_silence_skipping() {
     let quiet: Vec<u8> = x.iter().enumerate().map(|(i, &b)| if (i / 40_000) % 3 == 0 { 0 } else { b }).collect();
     let mut si = SilenceSkipper::new(RATE, 2, false);
     assert_eq!(run(&mut |c, o| si.process(c, o), &quiet, CHUNK), 0, "silence skipping");
-    let quiet_f: Vec<u8> = quiet.chunks_exact(2).flat_map(|c| (i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).to_le_bytes()).collect();
+    let quiet_f: Vec<u8> = quiet.as_chunks::<2>().0.iter().flat_map(|c| (i16::from_le_bytes(*c) as f32 / 32768.0).to_le_bytes()).collect();
     let mut si = SilenceSkipper::new(RATE, 2, true);
     assert_eq!(run(&mut |c, o| si.process(c, o), &quiet_f, CHUNK * 2), 0, "float silence skipping");
 }
 
 #[test]
 fn analysis() {
-    let x: Vec<f32> = tone(30.0, 440.0).chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).collect();
+    let x: Vec<f32> = tone(30.0, 440.0).as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(*c) as f32 / 32768.0).collect();
     // Mono-alike and panned (the side feeds the vocal curve).
     let panned: Vec<f32> = x.iter().enumerate().map(|(i, v)| if i % 2 == 0 { *v } else { *v * 0.5 }).collect();
     for x in [&x, &panned] {

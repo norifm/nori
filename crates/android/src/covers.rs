@@ -278,14 +278,15 @@ fn pack_565(rgba: &[u8], width: usize, height: usize, out: &mut [u8], stride: us
     for y in 0..height {
         let from = &rgba[y * width * 4..(y + 1) * width * 4];
         let to = &mut out[y * stride..y * stride + width * 2];
-        for (p, q) in from.as_chunks::<4>().0.iter().zip(to.chunks_exact_mut(2)) {
+        for (p, q) in from.as_chunks::<4>().0.iter().zip(to.as_chunks_mut::<2>().0) {
             let v = (u16::from(p[0]) >> 3) << 11 | (u16::from(p[1]) >> 2) << 5 | u16::from(p[2]) >> 3;
-            q.copy_from_slice(&v.to_le_bytes());
+            *q = v.to_le_bytes();
         }
     }
 }
 
 /// Decodes `bytes` to fill `bitmap` (`idct`: `Decoder::set_idct_scaling`). RGB_565 goes through `rgba`.
+#[allow(clippy::ptr_arg, reason = "the Android build resizes `rgba`")]
 fn draw(env: &JNIEnv, decoder: &mut Decoder, rgba: &mut Vec<u8>, bytes: &[u8], bitmap: &JObject, idct: bool) -> Result<(), Fail> {
     #[cfg(target_os = "android")]
     {
@@ -547,8 +548,8 @@ mod tests {
         pack_565(&rgba, 2, 2, &mut out, 6);
         let px = |i: usize| u16::from_le_bytes([out[i], out[i + 1]]);
         assert_eq!((px(0), px(2), px(4)), (0xFFFF, 0x0000, 0xAAAA));
-        assert_eq!(px(6), 0b11111_000001_00001, "red's top five, green's top six, blue's top five");
-        assert_eq!(px(8), 0b00000_111111_11110);
+        assert_eq!(px(6), 0b1111_1000_0010_0001, "red's top five, green's top six, blue's top five");
+        assert_eq!(px(8), 0b0000_0111_1111_1110);
         assert_eq!(px(10), 0xAAAA);
 
         // Error codes for kotlin.

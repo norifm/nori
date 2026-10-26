@@ -730,6 +730,13 @@ pub fn room_settings(along: bool, remote_songs: bool) -> [String; 2] {
     ]
 }
 
+pub const PAIR_DEVICES: &str = "Pair devices (paste another device’s code with o)";
+pub const FORGET_DEVICES: &str = "Forget paired devices";
+pub const PAIRED: &str = "Devices paired";
+pub const PAIR_FAILED: &str = "Pairing failed";
+pub const FORGOTTEN: &str = "Paired devices forgotten";
+pub const PAIR_UNAVAILABLE: &str = "Pairing unavailable";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -779,10 +786,3 @@ mod tests {
     }
 
 }
-
-pub const PAIR_DEVICES: &str = "Pair devices (paste another device’s code with o)";
-pub const FORGET_DEVICES: &str = "Forget paired devices";
-pub const PAIRED: &str = "Devices paired";
-pub const PAIR_FAILED: &str = "Pairing failed";
-pub const FORGOTTEN: &str = "Paired devices forgotten";
-pub const PAIR_UNAVAILABLE: &str = "Pairing unavailable";

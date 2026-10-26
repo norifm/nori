@@ -102,13 +102,13 @@ impl Meter {
 /// Sum of the squares, in eight lanes so it vectorises.
 fn sum_of_squares(x: &[f32]) -> f64 {
     let mut lanes = [0f64; 8];
-    let mut chunks = x.chunks_exact(8);
-    for c in &mut chunks {
+    let (chunks, rest) = x.as_chunks::<8>();
+    for c in chunks {
         for (l, v) in lanes.iter_mut().zip(c) {
             *l += *v as f64 * *v as f64;
         }
     }
-    chunks.remainder().iter().map(|v| *v as f64 * *v as f64).sum::<f64>() + lanes.iter().sum::<f64>()
+    rest.iter().map(|v| *v as f64 * *v as f64).sum::<f64>() + lanes.iter().sum::<f64>()
 }
 
 fn lufs_of(mean_square: f64) -> f64 {

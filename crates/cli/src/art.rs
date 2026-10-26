@@ -292,8 +292,8 @@ mod tests {
     #[test]
     fn covers() {
         let mut px = vec![0u8; 32 * 32 * 4];
-        for p in px.chunks_exact_mut(4) {
-            p.copy_from_slice(&[180, 20, 30, 255]);
+        for p in px.as_chunks_mut::<4>().0 {
+            *p = [180, 20, 30, 255];
         }
         let image = Image { width: 32, height: 32, pixels: px.into_boxed_slice() };
         let c = nori_host::derive(&image);

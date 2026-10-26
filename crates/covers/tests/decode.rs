@@ -30,7 +30,7 @@ fn decoders_match() {
         close(name, &decode(name, 40, 30, Alpha::Straight), &file(&format!("{name}.rgba")), 0.0, 0);
     }
     let photo = decode("photo.png", 40, 30, Alpha::Straight);
-    assert!(photo.chunks_exact(4).all(|p| p[3] == 255));
+    assert!(photo.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
 
     // Lossy formats match reference decoders.
     // JPEGs differ from libjpeg-turbo only in chroma upsampling.
@@ -53,9 +53,9 @@ fn decoders_match() {
 fn premultiplied_is_times_alpha() {
     let straight = decode("alpha.png", 40, 30, Alpha::Straight);
     let pre = decode("alpha.png", 40, 30, Alpha::Premultiplied);
-    for (s, p) in straight.chunks_exact(4).zip(pre.chunks_exact(4)) {
+    for (s, p) in straight.as_chunks::<4>().0.iter().zip(pre.as_chunks::<4>().0) {
         let a = s[3] as u32;
-        assert_eq!(p, [0, 1, 2].map(|i| ((s[i] as u32 * a + 127) / 255) as u8).iter().chain([&s[3]]).copied().collect::<Vec<_>>());
+        assert_eq!(&p[..], [0, 1, 2].map(|i| ((s[i] as u32 * a + 127) / 255) as u8).iter().chain([&s[3]]).copied().collect::<Vec<_>>());
     }
 }
 

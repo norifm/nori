@@ -93,7 +93,7 @@ const REFINE: usize = 3;
 pub fn design(rate: f64, sliders: &[f64]) -> Vec<Band> {
     let count = sliders.len();
     let Some(per_octave) = per_octave(count) else { return Vec::new() };
-    if !(rate > 0.0) {
+    if rate.is_nan() || rate <= 0.0 {
         return Vec::new();
     }
     let octaves = width_for(count) / per_octave;
@@ -185,6 +185,7 @@ fn solve(b: &[Vec<f64>], points: &[(f64, f64, f64)], t: &[f64], bias: &[f64], ri
 
 /// Solves the augmented system `a` (n rows of n + 1) by Gauss-Jordan with partial pivoting; a singular
 /// unknown is 0.
+#[allow(clippy::needless_range_loop, reason = "each step reads the pivot row while writing another")]
 fn gauss_jordan(mut a: Vec<Vec<f64>>) -> Vec<f64> {
     let n = a.len();
     for c in 0..n {
@@ -346,24 +347,24 @@ fn level_free_step(columns: &[Vec<f64>], r: &[f64], s: &[f64]) -> Vec<f64> {
     let m = n + 1; // the level is the last unknown, with no ridge on it
     let col = |j: usize, i: usize| if j < n { columns[j][i] } else { 1.0 };
     let mut a = vec![vec![0.0; m + 1]; m];
-    for i in 0..r.len() {
-        for p in 0..m {
+    for (i, &ri) in r.iter().enumerate() {
+        for (p, row) in a.iter_mut().enumerate() {
             let cp = col(p, i);
-            for q in 0..m {
-                a[p][q] += cp * col(q, i);
+            for (q, v) in row[..m].iter_mut().enumerate() {
+                *v += cp * col(q, i);
             }
-            a[p][m] += cp * r[i];
+            row[m] += cp * ri;
         }
     }
     // Penalise the sliders' mean so the free level takes it, leaving the sliders' range for the shape.
     let sum: f64 = s.iter().sum();
-    for j in 0..n {
-        a[j][j] += FIT_RIDGE;
-        a[j][m] -= FIT_RIDGE * s[j];
-        for k in 0..n {
-            a[j][k] += COMMON_COST / n as f64;
+    for (j, (row, &sj)) in a.iter_mut().zip(s).enumerate() {
+        row[j] += FIT_RIDGE;
+        row[m] -= FIT_RIDGE * sj;
+        for v in &mut row[..n] {
+            *v += COMMON_COST / n as f64;
         }
-        a[j][m] -= COMMON_COST / n as f64 * sum;
+        row[m] -= COMMON_COST / n as f64 * sum;
     }
     let mut x = gauss_jordan(a);
     x.truncate(n);

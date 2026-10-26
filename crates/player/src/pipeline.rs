@@ -686,7 +686,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     }
 
     /// Next, as the button does it.
-    pub fn next(&mut self) -> bool {
+    pub fn next_song(&mut self) -> bool {
         match self.queue.read(Playlist::next) {
             Some(n) => {
                 self.jump(n, 0);

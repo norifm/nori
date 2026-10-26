@@ -15,6 +15,9 @@ fn main() {
     lines[on_load] = &renamed;
     lines.remove(on_load - 1);
     let mut scaffolding = cancellable_calls(&retain_async_objects(&lines.join("\n")));
+    // Beside the generator's own allows: it matches every error variant as `{ .. }`, whatever its fields.
+    let module = scaffolding.find("mod uniffi_bindgen_kotlin_jni_scaffolding {").expect("the generated scaffolding is one module");
+    scaffolding.insert_str(module, "#[allow(clippy::unneeded_struct_pattern)]\n");
     let end = scaffolding.rfind('}').expect("the generated scaffolding closes its module");
     scaffolding.insert_str(end, "include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/kotlin_calls.rs\"));\n");
     let end = scaffolding.rfind('}').expect("the generated scaffolding closes its module");

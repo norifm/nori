@@ -150,7 +150,8 @@ fn each_setting_change_is_planned_with() {
     rig.engine.play_at(0, 0);
     assert!(rig.until(20, |r| r.engine.status().index == Some(0) && r.engine.status().position_ms > 2_000));
     // Each early in a song: the plan out of it uses the new value.
-    let cases: [(&str, &str, fn(&nori_core::automix::planner::TransitionNote) -> bool); 3] = [
+    type Case = (&'static str, &'static str, fn(&nori_core::automix::planner::TransitionNote) -> bool);
+    let cases: [Case; 3] = [
         ("crossfadeSec", "3", |n| n.duration_ms > 0 && n.duration_ms <= 3_000),
         ("crossfadeSec", "5", |n| n.duration_ms > 3_000 && n.duration_ms <= 5_000),
         ("autoMix", "true", |n| n.kind != nori_player::types::TransitionKind::Gapless),

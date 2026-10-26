@@ -352,13 +352,13 @@ mod tests {
     #[test]
     fn float_matches_16_bit() {
         let x = [frames(8000, 1.0), frames(300, 3.0), frames(-8000, 0.5), frames(0, 0.05), frames(8000, 1.0)].concat();
-        let f: Vec<u8> = x.chunks_exact(2).flat_map(|c| (i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).to_le_bytes()).collect();
+        let f: Vec<u8> = x.as_chunks::<2>().0.iter().flat_map(|c| (i16::from_le_bytes(*c) as f32 / 32768.0).to_le_bytes()).collect();
         let (mut a, mut b) = (SilenceSkipper::new(RATE, 2, false), SilenceSkipper::new(RATE, 2, true));
         let (y16, yf) = (run(&mut a, &x), run(&mut b, &f));
         assert_eq!(a.skipped_frames(), b.skipped_frames());
         assert!(a.skipped_frames() > RATE as u64, "the pause was shortened");
-        let back: Vec<i16> = yf.chunks_exact(4).map(|c| (f32::from_le_bytes([c[0], c[1], c[2], c[3]]) * 32768.0) as i16).collect();
-        let want: Vec<i16> = y16.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+        let back: Vec<i16> = yf.as_chunks::<4>().0.iter().map(|c| (f32::from_le_bytes(*c) * 32768.0) as i16).collect();
+        let want: Vec<i16> = y16.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(*c)).collect();
         assert_eq!(back.len(), want.len());
         assert!(back.iter().zip(&want).all(|(p, q)| (p - q).abs() <= 1), "the same fades, to the 16-bit step");
     }
