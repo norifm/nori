@@ -31,7 +31,6 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.constrainWidth
-import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.fillMaxSize
@@ -871,7 +870,7 @@ private fun androidx.compose.animation.AnimatedVisibilityScope.Page(entry: andro
     var at by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     Box(
         Modifier.fillMaxSize()
-            .onGloballyPositioned { at = it.positionInRoot().x }
+            .onGloballyPositioned { at = it.placeInRoot().x }
             .graphicsLayer { translationX = if (swiped) swipe.offset else 0f }
             .drawBehind {
                 if (!moving && !swiped) return@drawBehind

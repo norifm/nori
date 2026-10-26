@@ -16,7 +16,6 @@ import androidx.compose.foundation.basicMarquee
 import kotlin.math.roundToInt
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.zIndex
 import androidx.compose.runtime.mutableIntStateOf
@@ -69,7 +68,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
@@ -511,7 +509,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             // picture, and the picture runs on under the title.
                             val drawn = it.size.width / SLEEVE
                             val top = player[0]?.takeIf { p -> p.isAttached }?.localPositionOf(it, Offset.Zero)?.y
-                                ?: it.positionInRoot().y
+                                ?: it.placeInRoot().y
                             sleeveBottom = top + drawn
                             sleeveHeight = drawn
                         }
@@ -2440,12 +2438,12 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     // seen. Animated both ways: nothing here changes size in one frame.
     val thickness = animateFloatAsState(if (dragging.value) 11f else SEEK_THICKNESS, spring(0.9f, 420f), label = "seek")
     val knob = animateFloatAsState(if (dragging.value) 1.5f else 0f, spring(0.9f, 420f), label = "knob")
-    Column(Modifier.island(slot).onGloballyPositioned { drawing.origin = it.positionInWindow() }.padding(horizontal = PLAYER_GUTTER, vertical = 4.dp)) {
+    Column(Modifier.island(slot).onGloballyPositioned { drawing.origin = it.placeInWindow() }.padding(horizontal = PLAYER_GUTTER, vertical = 4.dp)) {
         Box(
             // The strip is wider than the hairline it draws: a thumb is not a mouse.
             Modifier.fillMaxWidth().height(34.dp)
                 .onSizeChanged { barWidth.floatValue = it.width.toFloat() }
-                .onGloballyPositioned { drawing.strip = it.positionInWindow(); drawing.stripSize = it.size }
+                .onGloballyPositioned { drawing.strip = it.placeInWindow(); drawing.stripSize = it.size }
                 .pointerInput(seekable, pace) {
                     if (!seekable) return@pointerInput
                     // Written out rather than assembled from the drag and tap detectors, because both
@@ -2509,7 +2507,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
                 },
         )
         val mixing = vm.mixing.collectAsStateWithLifecycle()
-        SeekTimes(times, fadingFrom, fade, dragging, drag, held, if (eink) einkShown else null, durationMs, state.error, state.sleepAtEndOfTrack, state.sleepAt, mixing, drawing.glyphs!!, slot, { drawing.left = it.positionInWindow() }, { drawing.right = it.positionInWindow(); drawing.rightWidth = it.size.width })
+        SeekTimes(times, fadingFrom, fade, dragging, drag, held, if (eink) einkShown else null, durationMs, state.error, state.sleepAtEndOfTrack, state.sleepAt, mixing, drawing.glyphs!!, slot, { drawing.left = it.placeInWindow() }, { drawing.right = it.placeInWindow(); drawing.rightWidth = it.size.width })
     }
 }
 

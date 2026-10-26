@@ -20,7 +20,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
 
 /**
  * Small things that move by themselves - the playing row's bars, the seek bar - drawn by views of their own
@@ -147,7 +146,7 @@ class IslandSpot {
     var whole = false
 
     internal fun update(c: LayoutCoordinates, m: Int) {
-        val at = c.positionInWindow()
+        val at = c.placeInWindow()
         val b = c.boundsInWindow()
         margin = m
         x = at.x - m
