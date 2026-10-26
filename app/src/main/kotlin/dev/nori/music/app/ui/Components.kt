@@ -63,9 +63,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
-import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -448,20 +445,19 @@ fun SongRow(
 }
 
 /** How long the playing bars wait between steps, ms: with the frame after it, about twenty steps a second. */
-internal const val BARS_STEP_MS = 34L
+private const val BARS_STEP_MS = 34L
 
 /**
  * The bars Apple draws where a playing track's number would be. They move while the music does and
  * stand still when it is paused, which is the cue that matters: a frozen glyph beside the marked row
  * says "this one, but stopped" without a second icon.
  *
- * Moving over a page that stands still, they are drawn by [BarsIsland], a view of their own over the page:
- * Compose repaints its whole window for any change inside it, so a step drawn here is a frame of the whole
- * screen, while the island repaints only its few pixels. Whenever anything else is in the way - the player on
- * its way up, the row meeting the chrome or a banner ([coversPage]) or cut by the list's edge - they are drawn here again, in their
- * place among the page's layers, where the frame being drawn costs nothing more. Both read the same clock,
- * so the hand-over does not jump. Nothing runs at all while the music is paused, while this row is not
- * composed or not [seen] (screen off, or the player over the page).
+ * Moving over a page that stands still, they are drawn by an [Island] of their own over the page, which
+ * repaints only their few pixels; whenever something is in the way - the player on its way up, the row
+ * meeting the chrome or a banner, or cut by the list's edge - they are drawn here again, in their place
+ * among the page's layers. Both read the same clock, so the hand-over does not jump. Nothing runs at all
+ * while the music is paused, while this row is not composed or not [seen] (screen off, or the player over
+ * the page).
  */
 @Composable
 fun PlayingBars(tint: Color, modifier: Modifier = Modifier) {
@@ -473,27 +469,13 @@ fun PlayingBars(tint: Color, modifier: Modifier = Modifier) {
     val moving = advancing && !LocalEinkScreen.current
     val phase = remember { androidx.compose.runtime.mutableFloatStateOf(barsClock()) }
     val seen = seen()
-    val island = LocalBarsIsland.current
     val sheet = LocalPlayerSheet.current
     val sheetDown by remember(sheet) { derivedStateOf { sheet.progress.value <= 0f } }
-    val tintArgb = tint.toArgb()
-    // Where the row last put the bars, in the window, and whether all of them showed there.
-    val spot = remember { BarsSpot() }
-    var clear by remember { mutableStateOf(false) }
-    val watched = island != null && moving && seen
-    val islanded = watched && sheetDown && clear
-    val islandedNow by rememberUpdatedState(islanded)
-    if (island != null) {
-        androidx.compose.runtime.DisposableEffect(island, islanded) { onDispose { island.hide() } }
-        androidx.compose.runtime.SideEffect { if (islanded) island.place(spot, tintArgb) }
-        // Something drawn over the page coming or going (a banner, the chrome moving) is checked again here; the
-        // row's own moves are checked as it is placed.
-        if (watched) androidx.compose.runtime.LaunchedEffect(island) {
-            androidx.compose.runtime.snapshotFlow { island.covers.values.toList() }.collect { clear = spot.whole && island.clearOf(spot.visible) }
-        }
-    }
-    androidx.compose.runtime.LaunchedEffect(moving, seen, islanded) {
-        if (islanded || !moving || !seen) return@LaunchedEffect
+    val drawing = remember { BarsDrawing() }
+    drawing.paint.color = tint.toArgb()
+    val slot = rememberIsland(drawing, wanted = moving && seen && sheetDown, overPage = true)
+    androidx.compose.runtime.LaunchedEffect(moving, seen, slot.apart) {
+        if (slot.apart || !moving || !seen) return@LaunchedEffect
         // One callback object for every frame, handed to the frame clock as it is: the millisecond
         // variants wrap it in a new lambda each frame, which is garbage for as long as the music plays.
         val tick: (Long) -> Unit = { phase.floatValue = barsClock() }
@@ -505,13 +487,8 @@ fun PlayingBars(tint: Color, modifier: Modifier = Modifier) {
             kotlinx.coroutines.delay(BARS_STEP_MS)
         }
     }
-    val placed = if (!watched) modifier else modifier.onGloballyPositioned { c ->
-        spot.update(c)
-        clear = spot.whole && island!!.clearOf(spot.visible)
-        if (islandedNow) island?.place(spot, tintArgb)
-    }
-    androidx.compose.foundation.Canvas(placed) {
-        if (islanded) return@Canvas
+    androidx.compose.foundation.Canvas(modifier.island(slot)) {
+        if (slot.apart) return@Canvas
         val t = phase.floatValue
         val w = size.width / (BARS * 2 - 1)
         for (i in 0 until BARS) {
@@ -526,33 +503,29 @@ fun PlayingBars(tint: Color, modifier: Modifier = Modifier) {
     }
 }
 
-/** Where a row's bars are in the window: their top left, their side, and the part of them not cut off. */
-class BarsSpot {
-    var x = 0f
-    var y = 0f
-    var side = 0
-    val visible = android.graphics.Rect()
-    /** Nothing of them cut off by the list's edge. */
-    var whole = false
+/** The bars as their island draws them: the same heights on the same clock as [PlayingBars] draws. */
+private class BarsDrawing : IslandDrawing {
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
 
-    fun update(c: androidx.compose.ui.layout.LayoutCoordinates) {
-        val at = c.positionInWindow()
-        val b = c.boundsInWindow()
-        x = at.x
-        y = at.y
-        side = c.size.width
-        visible.set(b.left.toInt(), b.top.toInt(), kotlin.math.ceil(b.right).toInt(), kotlin.math.ceil(b.bottom).toInt())
-        whole = b.width >= c.size.width - 0.5f && b.height >= c.size.height - 0.5f
+    override fun draw(canvas: android.graphics.Canvas, width: Int, height: Int): Long {
+        val t = barsClock()
+        val w = width.toFloat() / (BARS * 2 - 1)
+        val h = height.toFloat()
+        for (i in 0 until BARS) {
+            val bar = h * barLevel(t, i)
+            canvas.drawRoundRect(i * w * 2f, h - bar, i * w * 2f + w, h, w / 2f, w / 2f, paint)
+        }
+        return BARS_STEP_MS
     }
 }
 
 /** The bars' clock, seconds; one for both places they are drawn, so a hand-over does not jump. */
-internal fun barsClock(): Float = (android.os.SystemClock.uptimeMillis() % 3_600_000L) / 1000f
+private fun barsClock(): Float = (android.os.SystemClock.uptimeMillis() % 3_600_000L) / 1000f
 
 /** Bar [i]'s height at [t], as a share of the box: four speeds that never fall into step, so it reads as music, not a meter. */
-internal fun barLevel(t: Float, i: Int): Float = 0.28f + 0.72f * (0.5f + 0.5f * kotlin.math.sin(t * (5.1f + i * 1.3f) + i * 1.7f))
+private fun barLevel(t: Float, i: Int): Float = 0.28f + 0.72f * (0.5f + 0.5f * kotlin.math.sin(t * (5.1f + i * 1.3f) + i * 1.7f))
 
-internal const val BARS = 4
+private const val BARS = 4
 
 /** What the bars stand at while the music is paused: a shape, not a flat line. */
 private val RESTING = floatArrayOf(0.532f, 0.856f, 0.64f, 0.748f)

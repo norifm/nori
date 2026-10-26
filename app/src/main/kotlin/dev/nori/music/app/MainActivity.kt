@@ -51,9 +51,9 @@ class MainActivity : ComponentActivity() {
         // Only a fresh launch: a recreated activity (rotation) already went where its intent asked.
         if (savedInstanceState == null) launchRoute.value = routeOf(intent)
         if (savedInstanceState == null) joinJam(intent)
-        val bars = dev.nori.music.app.ui.BarsIsland(this)
-        setContent(recomposer) { androidx.compose.runtime.CompositionLocalProvider(dev.nori.music.app.ui.LocalBarsIsland provides bars) { App(launchRoute) } }
-        addContentView(bars, android.widget.FrameLayout.LayoutParams(1, 1))
+        val islands = dev.nori.music.app.ui.Islands(this)
+        setContent(recomposer) { androidx.compose.runtime.CompositionLocalProvider(dev.nori.music.app.ui.LocalIslands provides islands) { App(launchRoute) } }
+        addContentView(islands, android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.MATCH_PARENT))
     }
 
     /** The app already running: singleTop hands the notification's intent here instead of to a new activity. */
