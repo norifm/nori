@@ -4,12 +4,13 @@ package dev.nori.music.look
  * The seek bar's place and the times under it, stepped towards where the song is by nori-look
  * (`nori_look::motion::SeekPace`): drawn where the song is while it plays, gliding over a jump (a new song,
  * a seek, a mix handing over) while the times cross-fade, and [sync]ed straight to the song when the bar
- * comes back on screen. One per seek bar, used from the main thread only; [close] it when the bar goes.
+ * comes back on screen. [reduced] motion steps it a whole pixel at a time rather than a quarter. One per
+ * seek bar, used from the main thread only; [close] it when the bar goes.
  */
-class SeekPace : AutoCloseable {
+class SeekPace(reduced: Boolean) : AutoCloseable {
     /** What the bar shows, left here by every change (`PaceShown` in crates/android/src/look.rs). */
     private val view = dev.nori.music.NativeView(24)
-    private var h = CoverLook.seekPaceNew(view.address)
+    private var h = CoverLook.seekPaceNew(view.address, reduced)
 
     /** Everything where the song is, at once, with nothing gliding: a bar coming (back) on screen. */
     fun sync(positionMs: Long, durationMs: Long) = CoverLook.seekPaceSync(h, positionMs, durationMs)
