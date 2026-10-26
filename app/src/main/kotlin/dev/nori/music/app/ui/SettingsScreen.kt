@@ -199,7 +199,7 @@ private fun groupIcon(id: String): ImageVector = when (id) {
     "playing" -> Iconoir.Play
     "sound" -> Iconoir.ControlSlider
     "look" -> Iconoir.Palette
-    "lyrics" -> Iconoir.EmojiSingRightNote
+    "lyrics" -> Iconoir.QuoteMessage
     "library" -> Iconoir.AlbumList
     "data" -> Iconoir.CloudDownload
     "about" -> Iconoir.InfoCircle

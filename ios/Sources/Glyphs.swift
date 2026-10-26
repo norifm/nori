@@ -20,7 +20,7 @@ enum Glyph {
     static let repeatAll = draw(Iconoir.`repeat`, 22)
     static let repeatOne = draw(Iconoir.repeatOnce, 22)
     /// The player's panels.
-    static let lyrics = draw(Iconoir.emojiSingRightNote, 24)
+    static let lyrics = draw(Iconoir.quoteMessage, 24)
     static let queue = draw(Iconoir.playlist, 24)
     /// A jam: someone listens (lit) or no one yet.
     static let jam = draw(Iconoir.community, 22)

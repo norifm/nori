@@ -69,7 +69,7 @@ struct SettingsGroup {
                       sections: ["Playback", "Queue", "When something goes wrong", "Remote control"]),
         SettingsGroup(id: "sound", title: Say.sound, summary: Say.groupSoundSummary, icon: Iconoir.controlSlider, sections: ["Sound"]),
         SettingsGroup(id: "look", title: Say.appearance, summary: Say.lookSummary, icon: Iconoir.palette, sections: []),
-        SettingsGroup(id: "lyrics", title: Say.lyrics, summary: Say.groupLyricsSummary, icon: Iconoir.emojiSingRightNote, sections: ["Lyrics"]),
+        SettingsGroup(id: "lyrics", title: Say.lyrics, summary: Say.groupLyricsSummary, icon: Iconoir.quoteMessage, sections: ["Lyrics"]),
         SettingsGroup(id: "library", title: Say.library, summary: Say.groupLibrarySummary, icon: Iconoir.albumList, sections: ["Song rows", "Server"]),
         SettingsGroup(id: "about", title: Say.about, summary: Say.groupAboutSummary, icon: Iconoir.infoCircle, sections: []),
     ]

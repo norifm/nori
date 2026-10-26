@@ -14,7 +14,7 @@
   import Look from "../ui/Look.svelte";
   import Page from "../ui/Page.svelte";
 
-  const glyphs: Record<string, string> = { Playing: "play", Sound: "control-slider", Look: "palette", Lyrics: "emoji-sing-right-note", Library: "album-list", Account: "server", About: "info-circle" };
+  const glyphs: Record<string, string> = { Playing: "play", Sound: "control-slider", Look: "palette", Lyrics: "quote-message", Library: "album-list", Account: "server", About: "info-circle" };
   let rev = $state(0);
   const page = reading("settings", async () => {
     void rev;

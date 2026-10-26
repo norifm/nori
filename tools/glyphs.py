@@ -39,7 +39,7 @@ GLYPHS = {
     "Shuffle": ("shuffle", "regular", False),
     "Repeat": ("repeat", "regular", False),
     "RepeatOnce": ("repeat-once", "regular", False),
-    "EmojiSingRightNote": ("emoji-sing-right-note", "regular", False),
+    "QuoteMessage": ("quote-message", "regular", False),
     "Playlist": ("playlist", "regular", True),
     "PlaylistPlay": ("playlist-play", "regular", True),
     "PlusCircle": ("plus-circle", "regular", False),
