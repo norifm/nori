@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use nori_core::look::clock_on;
 use nori_core::race::LyricsPick;
+use nori_core::rules::QueueMoment;
 use nori_core::settings::SavedServer;
 use nori_core::{LyricsTiming, OriginKind, PageOrigin, Song};
 use nori_engine::{AudioOutput, Body, ByteSource, Feed, Filling, OpenError, OutputFormat, State};
@@ -312,6 +313,12 @@ impl Nori {
 
     pub fn toggle(&self) {
         self.with(|h| h.toggle());
+    }
+
+    /// The page went out of sight, where a browser may close it without a word: the queue is kept as
+    /// it is when an app closes (`rules::queue_keep`).
+    pub fn hidden(&self) {
+        self.with(|h| h.keep(QueueMoment::Closing));
     }
 
     pub fn next(&self) {

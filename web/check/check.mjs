@@ -1,8 +1,8 @@
 // The web client in headless Chrome against the local Navidrome (tools/dev-server.sh) through
 // web/serve.py: sign-in, browsing, search, a song streamed and played, next and previous, synced lyrics,
 // a crossfade and an AutoMix transition heard as continuous samples, the seek bar
-// running and holding, a click on a lyric line, how soon a pause is heard. Exits non-zero when
-// something is off, and prints what it saw.
+// running and holding, a click on a lyric line, how soon a pause is heard, a page reopened where it
+// left. Exits non-zero when something is off, and prints what it saw.
 //
 //   npm --prefix web/check install && node web/check/check.mjs [http://localhost:8080/] [phase]
 //   SLOW_URL=http://localhost:8081/ node web/check/check.mjs ...   (also a Play during a slow load)
@@ -479,6 +479,19 @@ if (!only || only.includes("crash")) {
   const back = await now();
   report.crash = { song: [was.song?.title, back.song?.title], ms: [was.positionMs, back.positionMs], state: back.state, said: (await facts()).restartedAt };
   expect(back.song?.id === was.song?.id && back.positionMs >= was.positionMs && back.state === "Playing", "after a crash the player plays on at the song and place it was");
+}
+
+if (!only || only.includes("reopen")) {
+  // A page closed while it plays comes back with its queue, paused at the song and place it left.
+  await playAlbum(album("Second Wind", "Alpha Waves"), 1);
+  await ask("seek", 20000);
+  await page.waitForFunction(async () => JSON.parse(await window.ask("now")).positionMs > 23000, { timeout: 30000, polling: 100 });
+  const was = await now();
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(async () => window.nori.playerReadyAt !== undefined && JSON.parse(await window.ask("now"))?.song, { timeout: 60000, polling: 250 });
+  const back = await now();
+  report.reopen = { song: [was.song?.title, back.song?.title], ms: [was.positionMs, back.positionMs], state: back.state, queue: [was.queue.length, back.queue.length] };
+  expect(back.song?.id === was.song?.id && back.state === "Idle" && Math.abs(back.positionMs - was.positionMs) < 1500 && back.queue.length === was.queue.length, "a page closed while it plays comes back paused at the song and place it left, with its queue");
 }
 
 if (!only || only.includes("tabs")) {
