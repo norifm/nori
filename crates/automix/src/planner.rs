@@ -11,6 +11,7 @@ use nori_player::automix::analysis::Analyzer;
 use nori_player::engine::Plan;
 use nori_player::transitions::{engine_plan, pick, whole_song, Skip, TransitionPrefs, WindowSong};
 pub use nori_player::types::TransitionKind;
+use nori_player::types::TransitionPlan;
 use parking_lot::Mutex;
 
 use super::store::{get, missing};
@@ -35,11 +36,14 @@ struct State {
     /// The last few plans made, newest last, each told and as made (None: gapless): a jam's guests still
     /// learn the plan out of the song heard once the host's decoder has planned the next one.
     made: Vec<(TransitionNote, Option<Plan>)>,
+    /// The transition another device was in the middle of when it handed its queue here, out of that
+    /// song (its id): played on as it was planned there rather than planned again.
+    handed: Option<(String, Plan)>,
 }
 
 impl State {
     const fn new() -> Self {
-        State { prefs: None, transitions_off: false, window: Vec::new(), shuffling: false, generation: 0, none: None, made: Vec::new() }
+        State { prefs: None, transitions_off: false, window: Vec::new(), shuffling: false, generation: 0, none: None, made: Vec::new(), handed: None }
     }
 
     fn take_prefs(&mut self, prefs: TransitionPrefs) {
@@ -130,6 +134,13 @@ impl Planner {
         // Read without the planner locked: the settings may call into the planner under their own lock.
         let kept = (self.read_settings)();
         let mut p = self.state.lock();
+        // A handed transition holds while its song is the one ending; asked for another, it is over.
+        if let Some((id, plan)) = p.handed.take() {
+            if id == outgoing_id {
+                p.handed = Some((id, plan.clone()));
+                return Some(plan);
+            }
+        }
         if let Some(kept) = kept {
             p.take_prefs(kept);
         }
@@ -166,15 +177,7 @@ impl Planner {
         };
         let t = nori_player::automix::plan::plan(a.as_ref(), b.as_ref(), o.duration_ms, n.duration_ms, &chosen.settings);
         let plan = engine_plan(&t, &n.id);
-        let note = TransitionNote {
-            outgoing_id: o.id.clone(),
-            incoming_id: n.id.clone(),
-            kind: if plan.is_some() { t.kind } else { TransitionKind::Gapless },
-            start_ms: t.out_start_ms,
-            duration_ms: if plan.is_some() { t.duration_ms } else { 0 },
-            tempo_ratio: t.tempo_ratio as f32,
-            reason: t.reason.clone(),
-        };
+        let note = TransitionNote::of(&o.id, &n.id, &t, plan.is_some());
         {
             let mut p = self.state.lock();
             p.none = plan.is_none().then(|| (outgoing_id.to_string(), generation, None));
@@ -214,6 +217,15 @@ impl Planner {
                 s.duration_ms = *ms;
             }
         }
+    }
+
+    /// The transition out of `outgoing_id` into `incoming_id` that another device was in the middle of
+    /// when it handed its queue here: the engine mixes on by it, from wherever in it the song starts.
+    pub fn handed(&self, outgoing_id: &str, incoming_id: &str, t: &TransitionPlan) {
+        let plan = engine_plan(t, incoming_id);
+        let mut p = self.state.lock();
+        p.keep(TransitionNote::of(outgoing_id, incoming_id, t, plan.is_some()), plan.clone());
+        p.handed = plan.map(|plan| (outgoing_id.to_string(), plan));
     }
 
     /// The plan last made out of `outgoing_id`: None while none was, Some(None) when gapless.
@@ -324,6 +336,21 @@ pub struct TransitionNote {
     pub duration_ms: i64,
     pub tempo_ratio: f32,
     pub reason: String,
+}
+
+impl TransitionNote {
+    /// What is told of transition `t` out of `outgoing_id` into `incoming_id`; gapless without an engine plan.
+    fn of(outgoing_id: &str, incoming_id: &str, t: &TransitionPlan, mixed: bool) -> TransitionNote {
+        TransitionNote {
+            outgoing_id: outgoing_id.to_string(),
+            incoming_id: incoming_id.to_string(),
+            kind: if mixed { t.kind } else { TransitionKind::Gapless },
+            start_ms: t.out_start_ms,
+            duration_ms: if mixed { t.duration_ms } else { 0 },
+            tempo_ratio: t.tempo_ratio as f32,
+            reason: t.reason.clone(),
+        }
+    }
 }
 
 /// `BeatMatched` -> `BEAT_MATCHED`, as the logs name kinds.

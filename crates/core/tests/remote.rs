@@ -850,7 +850,7 @@ fn returning_here_does_not_wait_for_a_dead_device() {
             to: Some(desk.remote.id()),
             body: Some(Body::Command { id: 999, op: Box::new(Op::Replace {
                 songs: vec![Song::only_id("remote".into())], index: 0, position_ms: 5_000,
-                play: true, order: None, shuffle: false, repeat: 0, transfer, listen: None,
+                play: true, order: None, shuffle: false, repeat: 0, transfer, listen: None, mix: None,
             }) }),
             ..Default::default()
         };
@@ -1078,6 +1078,51 @@ fn a_handoff_counts_one_listen() {
         assert!(history[0].heard_ms >= 2 * heard);
         relay.close();
     }
+}
+
+#[test]
+fn a_handoff_during_a_mix_carries_it_on() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    let session = &phone.core.session;
+    session.settings.open("").unwrap();
+    let mut prefs = session.settings.current().unwrap();
+    prefs.crossfade_sec = 6;
+    session.settings.put(prefs);
+    phone.playing(&["s1", "s2", "s3"], 1);
+    session.planner.transition_window(
+        ["s1", "s2", "s3"].into_iter().map(|id| nori_player::transitions::WindowSong { id: id.into(), duration_ms: 200_000, ..Default::default() }).collect(),
+        false,
+    );
+    let plan = session.planner.plan_for("s1").expect("a crossfade out of s1");
+    // Three seconds into the crossfade: s2 is the song shown, s1's ending still sounds.
+    phone.remote.clone().played(Playing {
+        playing: true,
+        mixing: true,
+        mix_from: Some(0),
+        mix_position_ms: 197_000,
+        mix_rate: 1.0,
+        position_ms: 3_000,
+        index: Some(1),
+        volume: Some(40),
+        ..Default::default()
+    });
+    phone.remote.clone().serve(true);
+    desk.remote.clone().watch(true);
+    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.name == "Phone"));
+
+    desk.remote.clone().send(phone.remote.id(), Op::Transfer { to: desk.remote.id(), listen_handoff: true });
+    match desk.told() {
+        Op::Replace { index, position_ms, mix, .. } => {
+            assert_eq!(index, 0, "the song mixed out of goes on");
+            assert!((197_000..198_000).contains(&position_ms), "where it was heard, at {position_ms}");
+            assert_eq!(mix.map(|m| (m.from, m.into)), Some((0, "s2".to_string())));
+        }
+        op => panic!("{op:?}"),
+    }
+    assert_eq!(desk.core.session.planner.plan_for("s1"), Some(plan), "the desk mixes on by the phone's plan");
+    relay.close();
 }
 
 #[test]
@@ -2641,7 +2686,7 @@ fn jam_controls_reach_by_role() {
         order: None,
         shuffle: false,
         repeat: 0,
-        transfer: None, listen: None,
+        transfer: None, listen: None, mix: None,
     };
     assert_eq!(dee.remote.clone().jam_press(replace.clone()), Reach::Jam);
     assert_eq!(

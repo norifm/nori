@@ -1419,7 +1419,7 @@ impl Handle {
             let Some(r) = self.remotes.get() else { return };
             if r.jam_controls().is_some_and(|c| !c.asks) {
                 let repeat = r.jam_playing().map_or(0, |m| m.repeat);
-                r.jam_press(Op::Replace { songs, index: start as u32, position_ms: 0, play: true, order: None, shuffle, repeat, transfer: None, listen: None });
+                r.jam_press(Op::Replace { songs, index: start as u32, position_ms: 0, play: true, order: None, shuffle, repeat, transfer: None, listen: None, mix: None });
             } else {
                 self.ask(songs.into_iter().skip(start).take(1).collect());
             }

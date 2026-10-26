@@ -210,3 +210,22 @@ fn measure_again_plans_the_ending_again() {
     rig.until(5, |r| r.engine.status().index != Some(0) || asked.load(Ordering::Relaxed) > 0);
     assert!(asked.load(Ordering::Relaxed) > 0, "f1's ending planned again before it plays: {:?}", rig.engine.status());
 }
+
+/// A queue handed over in the middle of a mix: the song mixed out of starts where its ending was, and the
+/// rest of the transition plays by the plan it came with, although nothing here would mix.
+#[test]
+fn a_handed_mix_plays_on() {
+    let rig = Rig::new("replan-handed", &["g1", "g2"], false);
+    rig.set("autoMix", "false");
+    let t = nori_player::automix::plan::plan(None, None, SECS as i64 * 1000, SECS as i64 * 1000, &Default::default());
+    assert!(t.duration_ms >= 2_000, "a crossfade to hand over: {t:?}");
+    rig.core.session.planner.handed("g1", "g2", &t);
+    rig.engine.play_at(0, t.out_start_ms + t.duration_ms / 2);
+    let mut from_the_ending = false;
+    assert!(rig.until(10, |r| {
+        let s = r.engine.status();
+        from_the_ending |= s.mixing && s.mix_from == Some(0);
+        s.index == Some(1)
+    }), "the second song comes: {:?}", rig.engine.status());
+    assert!(from_the_ending, "the first song's ending mixed into it");
+}

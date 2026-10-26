@@ -166,6 +166,10 @@ pub enum Op {
         /// Listening accumulated on the device handing over playback.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         listen: Option<nori_model::Listen>,
+        /// A handover in the middle of a mix: the transition out of song `index` (heard at `position_ms`)
+        /// as it was planned there, so it plays on here as it was.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mix: Option<Mix>,
     },
     /// The device's media volume, 0 to 100.
     Volume { percent: u8 },

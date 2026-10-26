@@ -1191,6 +1191,12 @@ impl Inner {
         if self.playing.playing { self.playing.position_ms + (elapsed as f64 * self.playing.rate as f64) as i64 } else { self.playing.position_ms }
     }
 
+    /// Where the ending a mix plays out of is at `now`.
+    fn mix_position_now(&self, now: i64) -> i64 {
+        let elapsed = self.since_played_ms(now);
+        if self.playing.playing { self.playing.mix_position_ms + (elapsed as f64 * self.playing.mix_rate as f64) as i64 } else { self.playing.mix_position_ms }
+    }
+
     /// Where this device's song is at `now_us`, held to the end of `state`'s song.
     fn position_at_of(&self, state: &DeviceState, now_us: i64) -> i64 {
         nori_remote::position_now(&DeviceState { position_ms: self.playing.position_ms, ..state.clone() }, self.since_played_ms(now_us))
@@ -3385,7 +3391,13 @@ impl Remote {
             }
             op => {
                 // A queue sent here plays here: this is the active device.
-                if let Op::Replace { listen, .. } = &op {
+                if let Op::Replace { listen, songs, mix, .. } = &op {
+                    // Before the song starts: its ending mixes by the plan it came with.
+                    if let Some(m) = mix {
+                        if let (Some(from), Ok(plan)) = (songs.get(m.from as usize), serde_json::from_str::<TransitionPlan>(&m.plan)) {
+                            self.client.core.session.planner.handed(&from.id, &m.into, &plan);
+                        }
+                    }
                     self.client.core.session.receive_listen(listen.clone());
                     self.inner.lock().handed_to = None;
                     self.set_active(None, false);
@@ -3413,7 +3425,8 @@ impl Remote {
     }
 
     /// Hands the queue, its play order, shuffle, repeat and the position to device `to`, then pauses here
-    /// and follows `to`, the active device now.
+    /// and follows `to`, the active device now. In the middle of a mix it hands the song mixed out of, where
+    /// its ending is, with the transition's plan, so the mix plays on there as it was.
     fn transfer(self: &Arc<Self>, via: &Via, from: &str, to: String, transfer: Option<u64>, listen_handoff: bool) {
         if to != self.id && self.inner.lock().jams() {
             return;
@@ -3421,21 +3434,30 @@ impl Remote {
         let session = &self.client.core.session;
         // A weighted shuffle's list is already in play order: shown shuffled, it goes as that order.
         let (ids, index, order, shuffle, repeat) = session.playlist(|p| (p.ids().to_vec(), p.current(), p.lit().then(|| p.play_order().map(|i| i as u32).collect()), p.lit(), p.repeat()));
-        let Some(index) = index else { return };
-        let songs = ids.into_iter().map(|id| session.song(&id).unwrap_or_else(|| Song::only_id(id))).collect();
-        let (playing, position_ms, handed) = {
+        let Some(current) = index else { return };
+        let (playing, index, position_ms, mix, handed) = {
             let mut i = self.inner.lock();
             i.handed_to = Some(to.clone());
-            let (playing, position_ms) = (i.playing.playing, i.position_now(self.now()));
-            (playing, position_ms, DeviceState { playing, buffering: false, position_ms, handed_to: None, obeyed: Vec::new(), ..self.state_now(&i) })
+            let now = self.now();
+            let shown = DeviceState { playing: i.playing.playing, buffering: false, position_ms: i.position_now(now), handed_to: None, obeyed: Vec::new(), ..self.state_now(&i) };
+            let mixed_out_of = i.playing.mix_from.filter(|&from| i.playing.mixing && (from as usize) < ids.len());
+            let (index, position_ms, mix) = match mixed_out_of {
+                Some(from) => {
+                    let mix = session.planner.made(&ids[from as usize]).flatten().and_then(|plan| mix_of(from, &plan));
+                    (from, i.mix_position_now(now), mix)
+                }
+                None => (current as u32, i.position_now(now), None),
+            };
+            (i.playing.playing, index, position_ms, mix, shown)
         };
+        let songs = ids.into_iter().map(|id| session.song(&id).unwrap_or_else(|| Song::only_id(id))).collect();
         let accepts_listen = (to == from && listen_handoff) || {
             let i = self.inner.lock();
             i.peers.iter().map(|p| &p.member).chain(i.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members))
                 .any(|m| m.id == to && m.state.as_ref().is_some_and(|s| s.listen_handoff))
         };
         let listen = accepts_listen.then(|| session.hand_listen(self.now() / 1_000)).flatten();
-        let op = Op::Replace { songs, index: index as u32, position_ms, play: playing, order, shuffle, repeat, transfer, listen };
+        let op = Op::Replace { songs, index, position_ms, play: playing, order, shuffle, repeat, transfer, listen, mix };
         let id = self.next_id();
         let command = Body::Command { id, op: Box::new(op) };
         if to == from {

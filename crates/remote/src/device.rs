@@ -145,6 +145,7 @@ mod tests {
             repeat: 0,
             transfer: None,
             listen: None,
+            mix: None,
         };
         for op in [
             replace,
