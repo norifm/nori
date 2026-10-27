@@ -19,6 +19,7 @@ use nori_player::transitions::WindowSong;
 use nori_core::client::Client;
 use nori_core::providers::{ResolveStream, StreamParts};
 use nori_core::queue::Session;
+use nori_core::overrides::Layer;
 use nori_core::settings::StoredPrefs;
 
 use nori_core::transfers;
@@ -161,7 +162,7 @@ impl App for CoreApp {
             Some(s) => {
                 let prefs = self.session.settings.current()?.with_sound(s);
                 self.session.settings.put(prefs.clone());
-                Some(settings(&prefs).sound)
+                Some(settings(&prefs, self.session.settings.layer()).sound)
             }
             None => None,
         };
@@ -1403,8 +1404,17 @@ pub fn queued_for(session: &Session, l: &nori_core::remote::Lead) -> (usize, boo
 /// How long play and pause fade in and out.
 const PLAY_PAUSE_FADE_MS: i32 = 150;
 
-/// Engine settings from the core's.
-pub fn settings(s: &StoredPrefs) -> Settings {
+/// Engine settings from the core's, with what plugins lay over them (`nori_core::overrides`): their
+/// overrides and their sound stages.
+pub fn settings(stored: &StoredPrefs, layer: Layer) -> Settings {
+    let effective;
+    let s = if layer.overrides.is_empty() {
+        stored
+    } else {
+        effective = nori_core::overrides::effective(stored, &layer.overrides);
+        &effective
+    };
+    let t = nori_core::overrides::Tunables::with(&layer.overrides);
     let bands = if s.eq_enabled { s.eq_bands.iter().map(Band::from).collect() } else { Vec::new() };
     let sound = if s.sound_bypass { Sound::default() } else { Sound {
         // The graphic equalizer replaces the parametric bands.
@@ -1428,7 +1438,11 @@ pub fn settings(s: &StoredPrefs) -> Settings {
         crossfade_s: s.crossfade_sec,
         auto_mix: s.auto_mix,
         gain_boost_db: if s.gain_prefs().boosts() { nori_player::gain::BOOST_MAX_DB } else { 0.0 },
-        ..Settings::default()
+        speed: t.speed,
+        pitch: t.pitch,
+        skip_silence: t.skip_silence,
+        previous_always_skips: t.previous_always_skips,
+        stages: layer.stages,
     }
 }
 

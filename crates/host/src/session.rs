@@ -380,7 +380,7 @@ impl Session {
             _ => app,
         };
         let library = CoreLibrary { client: client.clone(), bytes: audio, store: store.clone(), analyses };
-        let config = Config { memory_mb: o.memory_mb, settings: settings(&prefs), platform: o.decoders, ..Config::default() };
+        let config = Config { memory_mb: o.memory_mb, settings: settings(&prefs, core.session.settings.layer()), platform: o.decoders, ..Config::default() };
         // Each event is the session's first (among its tasks, off the engine's thread), then the client's.
         let heard: Arc<std::sync::OnceLock<std::sync::Weak<Parts>>> = Arc::default();
         let (to, out, tasks) = (heard.clone(), o.out.clone(), o.tasks.clone());
@@ -909,7 +909,7 @@ impl Handle {
     /// Applies a settings change's `effect` bits to the engine.
     pub fn apply(&self, effect: u32, prefs: &StoredPrefs) {
         if effect & (APPLY_AUDIO | SOUND | PLAYER) != 0 {
-            self.engine.set_settings(settings(prefs));
+            self.engine.set_settings(settings(prefs, self.core.session.settings.layer()));
         }
         if effect & APPLY_GAIN != 0 {
             self.engine.gain_changed();

@@ -1,9 +1,8 @@
 //! The host interfaces a plugin calls, over what the rest of nori gives the plugin host ([`Side`]).
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use nori_net::transport::{Exchange, FailureKind, Transport, TransportError};
+use nori_net::transport::{Exchange, FailureKind, TransportError};
 
 use crate::runtime::nori::plugin::{http, log, notices, rows, settings, store};
 use crate::runtime::{types, Host};
@@ -66,6 +65,17 @@ impl Value {
         })
     }
 
+    /// As the settings read an override: `true`/`false`, a choice's index, a number, the text.
+    pub fn text(&self) -> String {
+        match self {
+            Value::Switch(b) => b.to_string(),
+            Value::Choice(c) => c.to_string(),
+            Value::Flags(f) => f.to_string(),
+            Value::Level(l) => l.to_string(),
+            Value::Text(t) => t.clone(),
+        }
+    }
+
     /// As a sound stage reads a row: switches 0 or 1, choices their index.
     pub fn number(&self) -> Option<f64> {
         match self {
@@ -79,14 +89,13 @@ impl Value {
 
 /// What the plugin host is given by the session that runs it.
 pub trait Side: Send + Sync {
-    /// The core's transport (one connection pool); None before a profile is open.
-    fn transport(&self) -> Option<Arc<dyn Transport>>;
     /// The user's stored value of nori's setting `key`.
     fn stored(&self, key: &str) -> Option<Value>;
     /// Its value in effect, overrides applied.
     fn effective(&self, key: &str) -> Option<Value>;
-    /// Plugin `id`'s overrides changed: settings are derived again.
-    fn overrides_changed(&self, id: &str);
+    /// What plugin `id` lays over the settings changed (its overrides, rows, place or being on): they
+    /// are derived again.
+    fn laid(&self, id: &str);
     /// A status row's line changed (words from the plugin's strings).
     fn status(&self, id: &str, row: &str, words: &str, args: &[String]);
     /// A row is hidden or greyed (on top of its manifest's own conditions).
@@ -148,7 +157,7 @@ impl http::Host for Host {
         if !self.manifest.reaches(host) {
             return Err(error(types::ErrorKind::Refused, format!("{host} is not among its net hosts")));
         }
-        let transport = self.side.transport().ok_or_else(|| error(types::ErrorKind::Network, "no transport yet"))?;
+        let transport = self.transport.lock().expect("not poisoned").clone().ok_or_else(|| error(types::ErrorKind::Network, "no transport yet"))?;
         let mut headers: HashMap<String, String> = request.headers.into_iter().map(|h| (h.name, h.value)).collect();
         // The transport sends a body as JSON or as a form, by its content type.
         let content = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.to_ascii_lowercase());
@@ -189,7 +198,7 @@ impl settings::Host for Host {
         for (k, v) in values {
             self.store.set(&format!("{OVERRIDES}{k}"), &Value::from(v).encode());
         }
-        self.side.overrides_changed(&self.id);
+        self.side.laid(&self.id);
         Ok(())
     }
 
@@ -198,7 +207,7 @@ impl settings::Host for Host {
         for k in keys {
             self.store.remove(&format!("{OVERRIDES}{k}"));
         }
-        self.side.overrides_changed(&self.id);
+        self.side.laid(&self.id);
     }
 }
 

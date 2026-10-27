@@ -28,7 +28,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn start(manifest: Arc<Manifest>, dir: PathBuf, component: Component, side: Arc<dyn Side>) -> Result<Worker, Refusal> {
+    pub(crate) fn start(manifest: Arc<Manifest>, dir: PathBuf, component: Component, side: Arc<dyn Side>, transport: crate::Transported) -> Result<Worker, Refusal> {
         let linker = runtime::linker()?;
         let (jobs, rx) = mpsc::channel::<Job>();
         let name = format!("plugin {}", manifest.id);
@@ -36,7 +36,7 @@ impl Worker {
             .name(name)
             .spawn(move || {
                 let make = || -> wasmtime::Result<Running> {
-                    let mut store = runtime::store(manifest.clone(), &dir, side.clone());
+                    let mut store = runtime::store(manifest.clone(), &dir, side.clone(), transport.clone());
                     store.set_fuel(runtime::CALL_FUEL)?;
                     let plugin = Plugin::instantiate(&mut store, &component, &linker)?;
                     Ok(Running { store, plugin })

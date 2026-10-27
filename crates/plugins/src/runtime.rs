@@ -97,6 +97,8 @@ pub struct Host {
     pub(crate) manifest: Arc<Manifest>,
     pub(crate) store: store::Store,
     pub(crate) side: Arc<dyn Side>,
+    /// The open profile's transport, shared with the plugin host.
+    pub(crate) transport: crate::Transported,
 }
 
 impl WasiView for Host {
@@ -106,7 +108,7 @@ impl WasiView for Host {
 }
 
 /// A store for a plugin instance whose imports reach the host, with its memory capped.
-pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>) -> Store<Host> {
+pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>, transport: crate::Transported) -> Store<Host> {
     let host = Host {
         wasi: WasiCtx::builder().build(),
         table: ResourceTable::new(),
@@ -115,6 +117,7 @@ pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>) ->
         store: store::Store::new(dir.join("store")),
         manifest,
         side,
+        transport,
     };
     let mut s = Store::new(engine(), host);
     s.limiter(|h| &mut h.limits);

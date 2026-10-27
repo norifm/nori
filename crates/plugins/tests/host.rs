@@ -87,21 +87,18 @@ impl Transport for Web {
 #[derive(Default)]
 struct Session {
     web: Arc<Web>,
-    overrides_changed: Mutex<Vec<String>>,
+    laid: Mutex<Vec<String>>,
 }
 
 impl Side for Session {
-    fn transport(&self) -> Option<Arc<dyn Transport>> {
-        Some(self.web.clone())
-    }
     fn stored(&self, _: &str) -> Option<Value> {
         None
     }
     fn effective(&self, _: &str) -> Option<Value> {
         None
     }
-    fn overrides_changed(&self, id: &str) {
-        self.overrides_changed.lock().unwrap().push(id.to_string());
+    fn laid(&self, id: &str) {
+        self.laid.lock().unwrap().push(id.to_string());
     }
     fn status(&self, _: &str, _: &str, _: &str, _: &[String]) {}
     fn shown(&self, _: &str, _: &str, _: bool, _: bool) {}
@@ -157,17 +154,18 @@ fn its_lifecycle_overrides_and_reaches_only_its_hosts() {
     let dir = nori_testdir::TempDir::new("plugins-lifecycle");
     let session = Arc::new(Session::default());
     let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.set_transport(Some(session.web.clone()));
     plugins.install(&fixture("")).unwrap();
     assert!(plugins.overrides().is_empty());
     plugins.set_enabled(ID, true);
     let w = plugins.worker(ID).unwrap();
     // Calls run in order: once this one answers, `start` has run.
     assert_eq!(nori_tasks::block_on(w.call(|_, _| Ok(1))), Some(1));
-    assert_eq!(plugins.overrides().into_iter().collect::<Vec<_>>(), vec![("playback.speed".to_string(), Value::Level(1.25))], "only the key it may override");
+    assert_eq!(plugins.overrides(), vec![("playback.speed".to_string(), "1.25".to_string())], "only the key it may override");
     assert_eq!(*session.web.asked.lock().unwrap(), vec!["https://allowed.example/a".to_string()], "the other host is refused before any request");
     plugins.set_enabled(ID, false);
     assert!(plugins.overrides().is_empty(), "off, it overrides nothing");
-    assert!(session.overrides_changed.lock().unwrap().len() >= 2);
+    assert!(session.laid.lock().unwrap().len() >= 2, "each change is laid over the settings again");
 
     // Reopened, the folder keeps what was installed and set.
     let again = Plugins::open(dir.path().to_path_buf(), session);

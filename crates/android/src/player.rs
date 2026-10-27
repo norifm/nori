@@ -1445,7 +1445,7 @@ extern "system" fn create(env: JNIEnv, _: JClass, bridge: JObject, current: jlon
     let stations = Arc::new(Mutex::new(Vec::new()));
     let ahead = Ahead::new();
     let library = AndroidLibrary { bridge: bridge.clone(), queue: queue.clone(), current: current.clone(), analyses: analyses.clone(), stations: stations.clone(), ahead: ahead.clone() };
-    let sound = queue.settings.current().map(|p| settings(&p)).unwrap_or_default();
+    let sound = queue.settings.current().map(|p| settings(&p, queue.settings.layer())).unwrap_or_default();
     let watch = Some(nori_engine::watch::Watcher(Arc::new(PerfWatch { current, bridge: bridge.clone() })));
     let config = Config { memory_mb: memory_mb.max(16) as u32, settings: sound, watch, platform: nori_player::decode::Platform { aac: crate::mediacodec::platform_aac(), later: None }, ..Config::default() };
     let events = Arc::new(Events { bridge: bridge.clone(), queue: Mutex::default(), signalled: AtomicBool::new(false), text: Mutex::default(), jumps: AtomicI64::new(0) });
@@ -1548,7 +1548,7 @@ extern "system" fn set_shallow(h: jlong, on: jboolean) {
 extern "system" fn apply_settings(h: jlong) {
     let Some(p) = player(h) else { return };
     if let Some(prefs) = p.queue.settings.current() {
-        p.engine.set_settings(settings(&prefs));
+        p.engine.set_settings(settings(&prefs, p.queue.settings.layer()));
     }
 }
 

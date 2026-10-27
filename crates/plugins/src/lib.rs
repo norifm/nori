@@ -2,6 +2,7 @@
 //! under one folder, each in its own: its manifest, its wasm, its strings, its store and its compiled
 //! code. With none enabled nothing here runs: no engine is made, no file is read past the index.
 
+mod app;
 mod host;
 mod manifest;
 mod package;
@@ -14,6 +15,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+pub use app::{open, Client};
 pub use host::{Side, Value};
 pub use manifest::{Manifest, Refusal, RowKind, RowSpec, Slot, API, POINTS};
 pub use runtime::{Host, LINKED};
@@ -34,6 +36,9 @@ pub struct Installed {
     pub manifest: Arc<Manifest>,
     pub enabled: bool,
 }
+
+/// The open profile's transport, which plugins' HTTP goes through; None before one is open.
+pub(crate) type Transported = Arc<Mutex<Option<Arc<dyn nori_net::transport::Transport>>>>;
 
 /// A plugin's sound stage maker, by its id.
 type Made = (String, Arc<stage::Maker>);
@@ -59,6 +64,7 @@ pub struct Plugins {
     stages: Mutex<Option<Vec<Made>>>,
     /// The enabled plugins' own instances, each made at its first call.
     workers: Mutex<BTreeMap<String, Worker>>,
+    transport: Transported,
 }
 
 impl Plugins {
@@ -74,7 +80,12 @@ impl Plugins {
                 Some(Installed { manifest: Arc::new(manifest), enabled: e.enabled })
             })
             .collect();
-        Plugins { dir, side, installed: Mutex::new(installed), stages: Mutex::new(None), workers: Mutex::new(BTreeMap::new()) }
+        Plugins { dir, side, installed: Mutex::new(installed), stages: Mutex::new(None), workers: Mutex::new(BTreeMap::new()), transport: Arc::default() }
+    }
+
+    /// The open profile's transport, for plugins' HTTP.
+    pub fn set_transport(&self, t: Option<Arc<dyn nori_net::transport::Transport>>) {
+        *self.transport.lock().expect("not poisoned") = t;
     }
 
     pub fn installed(&self) -> Vec<Installed> {
@@ -106,7 +117,7 @@ impl Plugins {
         self.workers.lock().expect("not poisoned").remove(id);
         let _ = std::fs::remove_dir_all(self.folder(id));
         *self.stages.lock().expect("not poisoned") = None;
-        self.side.overrides_changed(id);
+        self.side.laid(id);
     }
 
     pub fn set_enabled(&self, id: &str, on: bool) {
@@ -119,7 +130,7 @@ impl Plugins {
             self.workers.lock().expect("not poisoned").remove(id);
         }
         *self.stages.lock().expect("not poisoned") = None;
-        self.side.overrides_changed(id);
+        self.side.laid(id);
     }
 
     /// Moves plugin `id` to `index` in the order they apply in.
@@ -132,7 +143,7 @@ impl Plugins {
         self.keep(&list);
         drop(list);
         *self.stages.lock().expect("not poisoned") = None;
-        self.side.overrides_changed(id);
+        self.side.laid(id);
     }
 
     fn keep(&self, list: &[Installed]) {
@@ -150,6 +161,7 @@ impl Plugins {
     /// Sets one of plugin `id`'s rows; a plugin with a lifecycle hears of it.
     pub fn set_row(&self, id: &str, row: &str, value: Value) {
         store::Store::new(self.folder(id).join("store")).set(&format!("{ROWS}{row}"), &value.encode());
+        self.side.laid(id);
         if self.installed().iter().any(|i| i.enabled && i.manifest.id == id && i.manifest.extends("lifecycle")) {
             if let Some(w) = self.worker(id) {
                 let (row, value) = (row.to_string(), value.into());
@@ -167,7 +179,7 @@ impl Plugins {
         let i = self.installed().into_iter().find(|i| i.enabled && i.manifest.id == id)?;
         let folder = self.folder(id);
         let component = runtime::component(&folder).map_err(|e| nori_model::alog::info(&format!("plugin {id}: {e:?}"))).ok()?;
-        let w = Worker::start(i.manifest.clone(), folder, component, self.side.clone()).ok()?;
+        let w = Worker::start(i.manifest.clone(), folder, component, self.side.clone(), self.transport.clone()).ok()?;
         if i.manifest.extends("lifecycle") {
             w.post(|store, p| p.nori_plugin_lifecycle().call_start(store));
         }
@@ -175,15 +187,16 @@ impl Plugins {
         Some(w)
     }
 
-    /// The overrides of the enabled plugins, in order: a later plugin's value of a key wins.
-    pub fn overrides(&self) -> BTreeMap<String, Value> {
-        let mut out = BTreeMap::new();
+    /// The overrides of the enabled plugins as text, in their order: applied in turn, a later
+    /// plugin's value of a key wins (`nori_settings::overrides`).
+    pub fn overrides(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
         for i in self.installed().iter().filter(|i| i.enabled && !i.manifest.overrides.is_empty()) {
             let s = store::Store::new(self.folder(&i.manifest.id).join("store"));
             for k in s.keys(host::OVERRIDES) {
                 let key = &k[host::OVERRIDES.len()..];
                 if let (true, Some(v)) = (i.manifest.overrides.iter().any(|o| o == key), s.get(&k).and_then(|b| Value::decode(&b))) {
-                    out.insert(key.to_string(), v);
+                    out.push((key.to_string(), v.text()));
                 }
             }
         }

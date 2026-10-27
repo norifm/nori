@@ -84,6 +84,8 @@ pub enum Refusal {
     Needs(Vec<String>),
     /// Its id isn't reverse DNS.
     Id,
+    /// It would override a value nori doesn't have.
+    UnknownKey(String),
 }
 
 /// Reads the section's fields in order.
@@ -128,6 +130,9 @@ impl Manifest {
         let parts: Vec<&str> = m.id.split('.').collect();
         if parts.len() < 2 || parts.iter().any(|p| p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')) {
             return Err(Refusal::Id);
+        }
+        if let Some(k) = m.overrides.iter().find(|k| !nori_settings::overrides::overridable(k)) {
+            return Err(Refusal::UnknownKey(k.clone()));
         }
         Ok(m)
     }

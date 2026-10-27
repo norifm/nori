@@ -5123,6 +5123,7 @@ dependencies = [
  "nori-net",
  "nori-player",
  "nori-plugin-sdk",
+ "nori-settings",
  "nori-tasks",
  "nori-testdir",
  "serde",

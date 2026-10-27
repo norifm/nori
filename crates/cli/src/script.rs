@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::{Client, NetProfile};
+use nori_core::overrides::Layer;
 use nori_core::settings::{GainMode, SavedServer, ServerKind, StoredPrefs};
 use nori_core::settings_store::{APPLY_AUDIO, APPLY_GAIN, REPLAN, SOUND};
 use nori_core::{Core, Song};
@@ -248,7 +249,7 @@ impl Cli {
     fn apply(&mut self, effect: u32) {
         self.prefs = self.kept();
         if effect & (APPLY_AUDIO | SOUND) != 0 {
-            self.engine.set_settings(settings(&self.prefs));
+            self.engine.set_settings(settings(&self.prefs, Layer::default()));
         }
         if effect & APPLY_GAIN != 0 {
             self.engine.gain_changed();
@@ -321,7 +322,7 @@ pub fn main(argv: Vec<String>) {
     let downloader = Downloader::new(client.clone(), bytes.clone(), store.clone(), analyses.clone());
     let app = CoreApp::new(core.session.clone()).measuring(Measurer::new(analyses.clone(), store.clone())).per_device(core.clone());
     let library = CoreLibrary { client: client.clone(), bytes, store: Some(store), analyses };
-    let engine = Engine::start(library, app, CoreQueue(core.session.clone()), output, None, Config { memory_mb: 256, settings: settings(&prefs), ..Config::default() }, move |e| {
+    let engine = Engine::start(library, app, CoreQueue(core.session.clone()), output, None, Config { memory_mb: 256, settings: settings(&prefs, Layer::default()), ..Config::default() }, move |e| {
         let _ = tx.send(e);
     });
     let mut cli = Cli { core, client, prefs, engine: Arc::new(engine), songs: Arc::default(), downloader };

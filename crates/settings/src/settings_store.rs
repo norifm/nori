@@ -246,6 +246,20 @@ impl SettingsStore {
 pub struct Settings {
     kept: RwLock<Option<SettingsStore>>,
     pub model: nori_automix::beat_model::ModelFile,
+    /// What enabled plugins lay over the settings; never stored.
+    layer: Mutex<crate::overrides::Layer>,
+}
+
+impl Settings {
+    /// What enabled plugins lay over the settings now.
+    pub fn layer(&self) -> crate::overrides::Layer {
+        self.layer.lock().clone()
+    }
+
+    /// The plugin host's new layer; whoever derives settings from it is told by the host.
+    pub fn set_layer(&self, layer: crate::overrides::Layer) {
+        *self.layer.lock() = layer;
+    }
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
