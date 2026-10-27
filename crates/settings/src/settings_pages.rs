@@ -203,6 +203,8 @@ pub struct PageFacts {
     /// Changes waiting for the server, and dropped unsent since the profile opened.
     pub unsent_waiting: u32,
     pub unsent_dropped: u32,
+    /// A nightly build: it follows the nightlies whatever the beta switch says.
+    pub nightly: bool,
 }
 
 /// The pages `client` has, in the order the root lists them; those the profile opens.
@@ -492,7 +494,11 @@ impl Page<'_> {
         if !self.phone() {
             return Vec::new();
         }
-        vec![(SectionId::Updates, vec![row(RowItem::Action { action: SettingsAction::CheckUpdate }), self.setting("updateCheck"), self.setting("updateBeta")])]
+        let mut updates = vec![row(RowItem::Action { action: SettingsAction::CheckUpdate }), self.setting("updateCheck")];
+        if !self.f.nightly {
+            updates.push(self.setting("updateBeta"));
+        }
+        vec![(SectionId::Updates, updates)]
     }
 }
 
@@ -643,6 +649,9 @@ mod tests {
         // Not on a car's screen: no side for the controls.
         let parked = PageFacts { car: false, ..facts() };
         assert!(!names(&every_row(SettingsClient::Phone, &d, &parked), false).iter().any(|n| n == "controlsSide"));
+        // A nightly build has no beta channel to choose.
+        let nightly = PageFacts { nightly: true, ..facts() };
+        assert!(!names(&every_row(SettingsClient::Phone, &d, &nightly), false).iter().any(|n| n == "updateBeta"));
     }
 
     #[test]
