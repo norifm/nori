@@ -12,20 +12,21 @@
 #   tools/release.sh --allow-untested-macos  acknowledge skipped Mac execution checks on Linux
 #   tools/release.sh --docker-macos     build Mac packages in Docker even on a Mac
 #   tools/release.sh --no-ipod          the APK alone, without the iPod app (built in Docker)
-#   tools/release.sh --beta             a beta (0.5.2-beta.1): a GitHub prerelease, offered in the app only to
-#                                       those who turned on Beta updates. Its notes are the changes since the
-#                                       previous beta (or release), linking that beta, written by
-#                                       tools/changelog.py; CHANGELOG.md is left alone, so the release after it
-#                                       lists everything its betas had.
+#   tools/release.sh --beta             a beta (0.5.2-beta.1) without asking: a GitHub prerelease, offered in
+#                                       the app only to those who turned on Beta updates. Its notes are the
+#                                       changes since the previous beta (or release), linking that beta,
+#                                       written by tools/changelog.py; CHANGELOG.md is left alone, so the
+#                                       release after it lists everything its betas had.
 #
-# The guided release shows the latest version on GitHub and the one in the code, asks for the new
-# version, then does every step itself: tools/bump-version.sh, tools/changelog.py --update and
-# --release, shows the notes (and opens $EDITOR on CHANGELOG.md if you want to reword them), commits
-# "build: release <version>", then builds, tags, pushes and creates the GitHub release - a draft or live,
-# as you answer - on this machine, or pushes the commit and leaves all of that to the Full release
-# workflow (.github/workflows/release.yml), signed with the key in the repository's secrets. Saying no to any question puts every file back as it was. If the build fails after
-# the commit, run it again: a version that is in the code but not yet on GitHub is offered first, and
-# its changelog section is kept; what it built and tested for the same commit is not done again. A
+# The guided release shows the latest version on GitHub and the one in the code, asks whether it is a
+# stable release or a beta and for the new version, then does every step itself: tools/bump-version.sh,
+# tools/changelog.py --update and --release, shows the notes (and opens $EDITOR on CHANGELOG.md if you
+# want to reword them), commits "build: release <version>", then builds, tags, pushes and creates the
+# GitHub release - a draft or live, as you answer - on this machine, or pushes the commit and leaves all
+# of that to the Full release workflow (.github/workflows/release.yml), signed with the key in the
+# repository's secrets. Saying no to any question puts every file back as it was. If the build fails
+# after the commit, run it again: a version that is in the code but not yet on GitHub is offered first,
+# and its changelog section is kept; what it built and tested for the same commit is not done again. A
 # desktop platform whose packages fail is left out, and running the same command again adds it to the
 # release. A release already on GitHub without the iPod app is offered it first,
 # when only build, docs, test or chore commits came since.
@@ -142,6 +143,10 @@ if [ "$GUIDED" = 1 ]; then
         exit 0
       fi
     fi
+  fi
+  if [ "$BETA" = 0 ]; then
+    read -erp "a (s)table release or a (b)eta? [s/b] " a
+    [[ ! "$a" =~ ^[Bb] ]] || BETA=1
   fi
   # A version already in the code but not yet released is what a failed or first run left behind:
   # offer that. Otherwise the next patch after whichever of the two is further on.
