@@ -8,6 +8,10 @@ on:
       macos_on_linux:
         type: boolean
         default: false
+      # A version to build as instead of the source's own (a nightly's), stamped by tools/bump-version.sh.
+      version:
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       source:
@@ -62,6 +66,9 @@ jobs:
         run: sudo softwareupdate --install-rosetta --agree-to-license
       - name: Install Rust
         run: rustup update stable --no-self-update && rustup default stable
+      - name: Stamp the version
+        if: inputs.version != ''
+        run: tools/bump-version.sh "${{ inputs.version }}"
       # Dependencies only; the release link (fat LTO) is never cached.
       - uses: Swatinem/rust-cache@v2
         with:
