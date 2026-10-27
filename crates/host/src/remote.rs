@@ -68,7 +68,7 @@ impl Remotes {
     /// Tells the remote (if any) where the engine is now.
     pub fn played(&self, engine: &Engine) {
         let Some(r) = self.get() else { return };
-        r.played(self.playing(&engine.status()));
+        r.played(engine.status_with(|s| self.playing(s)));
     }
 
     /// The playback other devices see, from the engine's status `s`.
