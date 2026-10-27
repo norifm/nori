@@ -1410,6 +1410,56 @@ fn nearby_devices_need_no_relay() {
     assert!(stranger.remote.devices().is_empty(), "the announced account tag differs");
 }
 
+/// mDNS says a door went away of a device still there (an announcement missed while the network slept):
+/// the device mirrored through it stays mirrored while its door answers, and goes once it does not.
+#[test]
+fn a_mirrored_door_whose_announcement_went_stays_while_it_answers() {
+    let relay = Relay::absent();
+    let announced = Arc::new(Announced::default());
+    let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
+    phone.playing(&["s1", "s2"], 0);
+    phone.remote.clone().serve(true);
+    let door = announced.0.lock().clone().expect("the door announced");
+    let phone_id = phone.remote.id();
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    desk.remote.clone().watch(true);
+    desk.remote.clone().lan_found(door.name.clone(), "127.0.0.1".into(), door.port, door.txt.clone());
+    desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.state.is_some()));
+    desk.remote.clone().watch(false);
+    desk.remote.clone().pick(Some(phone_id.clone()));
+    desk.until("the phone mirrored", |r| r.active().filter(|m| m.playing));
+
+    desk.remote.clone().lan_lost(door.name.clone());
+    assert_eq!(desk.remote.active().map(|m| m.id), Some(phone_id.clone()), "still mirrored");
+    phone.remote.clone().played(Playing { playing: false, position_ms: 9_000, index: None, volume: None, ..Default::default() });
+    desk.until("the phone's newer word", |r| r.active().filter(|m| !m.playing && m.position_ms == 9_000));
+
+    stop(&phone);
+    desk.until("the phone gone", |r| r.active().is_none().then_some(()));
+    assert!(desk.remote.devices().is_empty());
+    relay.close();
+}
+
+/// A door whose announcement went that nothing follows leaves the devices at once.
+#[test]
+fn a_door_whose_announcement_went_leaves_the_picker_once_closed() {
+    let relay = Relay::absent();
+    let announced = Arc::new(Announced::default());
+    let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
+    phone.remote.clone().serve(true);
+    let door = announced.0.lock().clone().expect("the door announced");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    desk.remote.clone().watch(true);
+    desk.remote.clone().lan_found(door.name.clone(), "127.0.0.1".into(), door.port, door.txt.clone());
+    desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.state.is_some()));
+
+    desk.remote.clone().lan_lost(door.name.clone());
+    assert_eq!(desk.remote.devices().len(), 1, "listed while the open picker follows it");
+    desk.remote.clone().watch(false);
+    assert!(desk.remote.devices().is_empty(), "gone once nothing follows it");
+    relay.close();
+}
+
 #[test]
 fn a_server_without_the_relay_is_asked_again_only_by_a_picker() {
     let relay = Relay::absent();
