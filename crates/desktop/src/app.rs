@@ -2051,12 +2051,21 @@ impl App {
 
     fn list_song(&self, list: i32, i: usize) -> Option<Song> {
         match list {
-            0 => &self.page_songs,
-            1 => &self.songs,
-            _ => &self.search_songs,
+            0 => self.page_songs.get(i),
+            1 => self.songs.get(i),
+            3 => self.queue.as_ref().and_then(|q| q.view.songs.get(i)),
+            4 => self.preview_song(i).and_then(|at| self.search_songs.get(at)),
+            _ => self.search_songs.get(i),
         }
-        .get(i)
         .cloned()
+    }
+
+    /// The search song at line `i` of the preview, by its place in the search's songs.
+    fn preview_song(&self, i: usize) -> Option<usize> {
+        match self.search_preview.get(i) {
+            Some(nori_core::search::PreviewLine::Song { at }) => Some(*at as usize),
+            _ => None,
+        }
     }
 
     /// Song `i` of `list`'s menu, made as it opens. A song of a playlist the profile may change also offers
@@ -2116,13 +2125,21 @@ impl App {
 
     /// Plays song `i` of `list` (`how` -1), or does its menu's line `how` (`SongGo::kind`).
     fn song(&mut self, list: i32, i: usize, how: i32) {
+        if list == 4 {
+            if let Some(at) = self.preview_song(i) {
+                self.song(2, at, how);
+            }
+            return;
+        }
         let Some(one) = self.list_song(list, i) else { return };
         let (songs, origin) = match list {
             0 => (self.page_songs.clone(), self.page_fetch.as_ref().map(Fetch::origin)),
             1 => (self.songs.clone(), None),
+            3 => (self.queue.as_ref().map(|q| q.view.songs.clone()).unwrap_or_default(), None),
             _ => (self.search_songs.clone(), None),
         };
         match how {
+            -1 if list == 3 => self.on_session(|s| s.jump(i)),
             -1 => self.on_session(|s| s.play(songs, i, false, origin)),
             15 => self.on_session(|s| s.start_jam(songs, i)),
             18 => self.remove_from_playlist(i),
@@ -4297,6 +4314,100 @@ mod tests {
         let j = jumped.borrow();
         assert_eq!(j.len(), 2, "{j:?}");
         assert_eq!(j[1], j[0] + 10, "{j:?}");
+    }
+
+    /// A queue row's right press opens the song's menu there: Play jumps to the row's song, and a line
+    /// reaches the app as the queue's (list 3) by the row's list index.
+    #[test]
+    fn a_right_press_on_a_queue_row_opens_its_songs_menu() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_has_song(true);
+        ui.set_inspector(1);
+        let rows: Vec<SongRow> = (0..6).map(|i| SongRow { title: format!("Song {i}").into(), index: 100 + i, playing: i == 0, ..Default::default() }).collect();
+        ui.set_queue(ModelRc::new(VecModel::from(rows)));
+        let menu = vec![crate::SongGo { kind: 5, title: "Play next".into(), enabled: true, ..Default::default() }];
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        let seen = asked.clone();
+        ui.on_song_menu(move |list, i| {
+            seen.borrow_mut().push(format!("menu {list} {i}"));
+            ModelRc::new(VecModel::from(menu.clone()))
+        });
+        let seen = asked.clone();
+        ui.on_song(move |list, i, how| seen.borrow_mut().push(format!("song {list} {i} {how}")));
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        settle();
+        use slint::platform::PointerEventButton::{Left, Right};
+        let row = (1100.0, 271.0);
+        // Its 6 px inset, the song's head (53 px with its hairline), then 32 px rows, the menu flipped left
+        // of the pointer near the window's edge.
+        let entry = |n: f32| row.1 + 6.0 + 53.0 + n * 32.0 + 16.0;
+        let x = row.0 - 60.0;
+        press(ui.window(), row.0, row.1, Right);
+        settle();
+        press(ui.window(), x, entry(1.0), Left);
+        settle();
+        press(ui.window(), row.0, row.1, Right);
+        settle();
+        press(ui.window(), x, entry(0.0), Left);
+        settle();
+        let asked = asked.borrow();
+        assert_eq!(asked.len(), 4, "{asked:?}");
+        let i: i32 = asked[0].trim_start_matches("menu 3 ").parse().unwrap_or_else(|_| panic!("the queue's menu: {asked:?}"));
+        assert!((100..106).contains(&i), "{asked:?}");
+        assert_eq!(asked[1..], [format!("song 3 {i} 5"), format!("menu 3 {i}"), format!("song 3 {i} -1")]);
+    }
+
+    /// The search preview's lines open their menus on a right press: an album's plays next by its id, a
+    /// song's acts as the preview's (list 4) by its line.
+    #[test]
+    fn a_right_press_on_the_search_preview_opens_its_menus() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.global::<crate::Chrome>().set_top_x(190.0);
+        ui.global::<crate::Chrome>().set_top_w(900.0);
+        let card = |kind: i32, id: &str| Card { id: id.into(), title: id.into(), kind, ..Default::default() };
+        ui.set_search_preview(ModelRc::new(VecModel::from(vec![card(-1, "Albums"), card(0, "al1"), card(3, "s1")])));
+        ui.set_search_preview_open(true);
+        let did = Rc::new(RefCell::new(Vec::new()));
+        let seen = did.clone();
+        ui.on_queue_card(move |kind, id, next| seen.borrow_mut().push(format!("card {kind} {id} {next}")));
+        let menu = vec![crate::SongGo { kind: 6, title: "Add to queue".into(), enabled: true, ..Default::default() }];
+        ui.on_song_menu(move |_, _| ModelRc::new(VecModel::from(menu.clone())));
+        let seen = did.clone();
+        ui.on_song(move |list, i, how| seen.borrow_mut().push(format!("song {list} {i} {how}")));
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        settle();
+        use slint::platform::PointerEventButton::{Left, Right};
+        // The preview's lines under its 6 px inset, 64 px down at the top pill's right: the 24 px head,
+        // then 48 px lines.
+        let (x, album, song) = (864.0, 64.0 + 6.0 + 24.0 + 24.0, 64.0 + 6.0 + 24.0 + 48.0 + 24.0);
+        let entry = |y: f32, n: f32| y + 6.0 + 53.0 + n * 32.0 + 16.0;
+        press(ui.window(), x, album, Right);
+        settle();
+        press(ui.window(), x + 60.0, entry(album, 1.0), Left);
+        settle();
+        press(ui.window(), x, song, Right);
+        settle();
+        press(ui.window(), x + 60.0, entry(song, 1.0), Left);
+        settle();
+        assert_eq!(*did.borrow(), ["card 0 al1 true", "song 4 2 6"]);
     }
 
     /// A queue song dragged two rows down glides into its slot, then is moved once; on the frame the list
