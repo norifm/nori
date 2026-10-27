@@ -52,7 +52,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -89,7 +88,7 @@ private fun Modifier.spotlight(key: String?): Modifier {
     }
     val colour = MaterialTheme.colorScheme.onSurface
     return this
-        .onGloballyPositioned { spot.onPlaced(it.positionInWindow().y.toInt()) }
+        .onGloballyPositioned { spot.onPlaced(it.placeInWindow().y.toInt()) }
         .drawBehind { drawRect(colour.copy(alpha = 0.10f * fade.value)) }
 }
 

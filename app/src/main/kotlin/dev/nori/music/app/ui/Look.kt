@@ -45,6 +45,8 @@ import dev.nori.music.look.CoverLook
 interface Look {
     fun argb(entry: Int): Int
     fun color(entry: Int): Color = Color(argb(entry))
+    /** Not on its way from one look to another. Read where it is used, like the colours. */
+    val settled: Boolean get() = true
 }
 
 /** A look that does not move: a page's own table, looked up. */
@@ -79,6 +81,8 @@ class LiveLook(private val progress: Progress) : Look {
         if (this.from !== from) this.from = from
         if (this.mode != mode) this.mode = mode
     }
+
+    override val settled: Boolean get() = t() >= 1f
 
     /** How far along, 0 at [from] and 1 at [to]; 1 when there is nothing to mix. */
     fun t(): Float {
@@ -132,27 +136,47 @@ fun LookText(
  * the time never moves what is beside it; [end] draws it against the box's right edge.
  */
 @Composable
-fun LookTime(text: () -> String, widest: String, color: ColorProducer, style: TextStyle, end: Boolean, modifier: Modifier = Modifier) {
-    val measurer = androidx.compose.ui.text.rememberTextMeasurer(cacheSize = 0)
-    val glyphs = remember(measurer, style) { Array(TIME_GLYPHS.length) { measurer.measure(TIME_GLYPHS[it].toString(), style) } }
-    val advance = remember(glyphs) { FloatArray(glyphs.size) { glyphs[it].multiParagraph.maxIntrinsicWidth } }
+fun LookTime(text: () -> String, widest: String, color: ColorProducer, style: TextStyle, end: Boolean, modifier: Modifier = Modifier, glyphs: TimeGlyphs = rememberTimeGlyphs(style)) {
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val digit = remember(advance) { (0..9).maxOf { advance[it] } }
-    val width = remember(widest, advance) { widest.sumOf { c -> (if (c in '0'..'9') digit else advance.getOrElse(TIME_GLYPHS.indexOf(c)) { 0f }).toDouble() }.toFloat() }
-    val size = with(density) { androidx.compose.ui.unit.DpSize(width.toDp(), glyphs[0].size.height.toDp()) }
+    val size = with(density) { androidx.compose.ui.unit.DpSize(glyphs.width(widest).toDp(), glyphs.height.toDp()) }
     Box(modifier.size(size).drawBehind {
         val t = text()
-        var total = 0f
-        for (c in t) { val i = TIME_GLYPHS.indexOf(c); if (i >= 0) total += advance[i] }
-        var x = if (end) this.size.width - total else 0f
+        var x = if (end) this.size.width - glyphs.width(t, widestDigits = false) else 0f
         val col = color()
         for (c in t) {
             val i = TIME_GLYPHS.indexOf(c)
             if (i < 0) continue
-            drawText(glyphs[i], col, androidx.compose.ui.geometry.Offset(x, 0f))
-            x += advance[i]
+            drawText(glyphs.glyphs[i], col, androidx.compose.ui.geometry.Offset(x, 0f))
+            x += glyphs.advance[i]
         }
     })
+}
+
+/** The twelve glyphs a time is made of ([TIME_GLYPHS]), each laid out once for one style; see [LookTime]. */
+class TimeGlyphs(measurer: androidx.compose.ui.text.TextMeasurer, style: TextStyle) {
+    val glyphs: Array<TextLayoutResult> = Array(TIME_GLYPHS.length) { measurer.measure(TIME_GLYPHS[it].toString(), style) }
+    val advance = FloatArray(glyphs.size) { glyphs[it].multiParagraph.maxIntrinsicWidth }
+    private val digit = (0..9).maxOf { advance[it] }
+    val height: Int get() = glyphs[0].size.height
+
+    /** How wide [t] draws; with [widestDigits], as wide as it could be with any digits in it. */
+    fun width(t: String, widestDigits: Boolean = true): Float {
+        var w = 0f
+        for (c in t) {
+            val i = TIME_GLYPHS.indexOf(c)
+            if (i >= 0) w += if (widestDigits && c in '0'..'9') digit else advance[i]
+        }
+        return w
+    }
+
+    /** Where glyph [c] is in [glyphs], or -1. */
+    fun index(c: Char): Int = TIME_GLYPHS.indexOf(c)
+}
+
+@Composable
+fun rememberTimeGlyphs(style: TextStyle): TimeGlyphs {
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer(cacheSize = 0)
+    return remember(measurer, style) { TimeGlyphs(measurer, style) }
 }
 
 /** What a time under the seek bar is made of: nori-core's `fmt::duration` writes only these. */

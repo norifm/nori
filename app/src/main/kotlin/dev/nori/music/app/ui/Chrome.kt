@@ -58,7 +58,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -184,7 +183,7 @@ private fun ChromePill(
 private fun Pill(shape: androidx.compose.ui.graphics.Shape, chrome: ChromeColours, modifier: Modifier, content: @Composable () -> Unit) {
     val backdrop = LocalBackdrop.current
     var at by remember { mutableStateOf(Offset.Zero) }
-    Box(modifier.onGloballyPositioned { at = it.positionInRoot() }.clip(shape)) {
+    Box(modifier.onGloballyPositioned { at = it.placeInRoot() }.clip(shape)) {
         if (backdrop != null) Box(
             Modifier.matchParentSize()
                 .graphicsLayer {
@@ -228,7 +227,7 @@ fun rememberBackdrop(): Backdrop? {
 
 /** Draws through [backdrop]'s layer, so the chrome can draw what is here again, blurred. */
 fun Modifier.drawsBackdrop(backdrop: Backdrop?): Modifier = if (backdrop == null) this else this
-    .onGloballyPositioned { backdrop.origin = it.positionInRoot() }
+    .onGloballyPositioned { backdrop.origin = it.placeInRoot() }
     .drawWithContent {
         backdrop.layer.record { this@drawWithContent.drawContent() }
         drawLayer(backdrop.layer)

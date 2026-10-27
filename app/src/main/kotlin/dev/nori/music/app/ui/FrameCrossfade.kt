@@ -137,6 +137,7 @@ internal fun <T> FrameCrossfade(
     // In this composition, before the pieces are read below: the new piece is composed on the frame the
     // target changed, together with whatever else changed with it (the song's title, the page).
     fades.show(target)
+    HoldIslands(fades.moving)
     LaunchedEffect(fades) {
         snapshotFlow { fades.moving }.collectLatest { moving ->
             if (!moving) return@collectLatest
