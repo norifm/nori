@@ -161,7 +161,8 @@ impl ByteSource for Server {
             Some((_, d)) if !first => Some(d),
             _ => self.slow.lock().iter().find(|(u, _)| u == url).map(|s| s.1),
         };
-        if let (Some(d), Some(clock)) = (slow, self.clock.lock().clone()) {
+        let clock = self.clock.lock().clone();
+        if let (Some(d), Some(clock)) = (slow, clock) {
             clock.wait_until(clock.now_ns() + d.as_nanos() as i64);
         }
         if let Some((id, secs)) = url.split_once("&timeOffset=").filter(|(id, _)| self.transcodes.lock().iter().any(|t| t == id)) {

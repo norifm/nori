@@ -1394,6 +1394,7 @@ impl Demuxed {
         let (o, l, hint) = (opening.clone(), loader.clone(), hint.map(str::to_string));
         // What the opening reads stays at hand wherever it reads next (an MP4's index at its end).
         loader.opening(true);
+        let opener = loader.opener();
         let spawned = std::thread::Builder::new().name("nori-open".into()).spawn(move || {
             // An MP4 transcode's length is an estimate, so its index at the end is not asked for: the
             // whole song first, mostly one burst.
@@ -1420,8 +1421,12 @@ impl Demuxed {
             let mut done = o.done.lock();
             done.opened = Some(opened);
             if let Some(t) = done.waiter.take() {
-                t.unpark();
+                l.wake(&t);
             }
+            drop(done);
+            // Letting go of the song calls off its request; the clock waits for that too.
+            drop(l);
+            drop(opener);
         });
         let state = match spawned {
             Ok(_) => State::Opening(opening),
