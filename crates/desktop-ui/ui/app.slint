@@ -7607,36 +7607,42 @@ export component AppWindow inherits Window {
                         padding-right: line.right ? 0 : root.lyrics-lane;
                         spacing: 4px;
                         property <bool> lit: i == root.lyrics-active;
-                        // The line the lyrics are scrolled to: the one sung, or the last once all are over.
-                        property <bool> aimed: i == min(root.lyrics-active, root.lyrics-lines.length - 1);
+                        // The line the lyrics are scrolled to: the one sung, the first before it is, or the last once
+                        // all are over.
+                        property <bool> aimed: i == clamp(root.lyrics-active, 0, root.lyrics-lines.length - 1);
                         // As the panel's: how lit, fading as it changes, whether or not the line is drawn just then.
                         property <float> level;
                         animate level { duration: Motion.reduced ? 0ms : 500ms; easing: ease-out; }
+                        function aim() {
+                            full-lyrics.content-y = -(self.y - (root.height * 0.36 - 48px));
+                            root.full-lyric-h = self.height;
+                            root.full-lyric-at = self.y;
+                        }
+                        // A line sung or aimed at takes the lyrics back from a hand's scroll; the first line,
+                        // aimed at all through the intro, does so when it is sung.
                         changed lit => {
                             self.level = self.lit ? 1 : 0;
+                            if self.lit {
+                                self.aim();
+                                root.full-lyrics-browsed = false;
+                            }
                         }
                         changed aimed => {
                             if self.aimed {
-                                full-lyrics.content-y = -(self.y - (root.height * 0.36 - 48px));
-                                root.full-lyric-h = self.height;
-                                root.full-lyric-at = self.y;
+                                self.aim();
                                 root.full-lyrics-browsed = false;
                             }
                         }
                         init => {
                             self.level = self.lit ? 1 : 0;
                             if self.aimed {
-                                full-lyrics.content-y = -(self.y - (root.height * 0.36 - 48px));
-                                root.full-lyric-h = self.height;
-                                root.full-lyric-at = self.y;
+                                self.aim();
                             }
                         }
                         // Laid out after init when the lyrics open, and again when a resize wraps the lines.
                         changed y => {
                             if self.aimed {
-                                full-lyrics.content-y = -(self.y - (root.height * 0.36 - 48px));
-                                root.full-lyric-h = self.height;
-                                root.full-lyric-at = self.y;
+                                self.aim();
                             }
                         }
                         // A line fades out over the last 72 px before either edge, gone before the edge would cut it.

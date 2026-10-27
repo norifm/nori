@@ -50,14 +50,14 @@
     };
   });
 
-  /** The line the lines are moved to: the one sung, or the last once all are over. */
-  const aimed = $derived(shown ? Math.min(player.line, shown.lyrics.lines.length - 1) : -1);
+  /** The line the lines are moved to: the one sung, the first before it, or the last once all are over. */
+  const aimed = $derived(shown ? Math.max(0, Math.min(player.line, shown.lyrics.lines.length - 1)) : -1);
   /** Each line's top and height, measured once laid out and again when a resize wraps them. */
   let tops = $state<{ top: number; height: number }[]>([]);
   /** Moved by hand from where the sung line puts them; null while they follow it. */
   let browsed = $state<number | null>(null);
   $effect(() => {
-    void aimed;
+    void player.line;
     browsed = null;
   });
   const measure = () => {
