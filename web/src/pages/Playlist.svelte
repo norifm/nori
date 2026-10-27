@@ -1,8 +1,10 @@
 <script lang="ts">
   // A playlist: its head ("8 songs · 36:28", what the core offers for its songs, its menu: rename, delete),
-  // and its songs, each movable and removable.
+  // and its songs, each movable and removable; the menu and the edits only where the account may change
+  // it (the core's `playlist_editable`). Deleting asks first.
   import { ask, read } from "../rpc";
   import { library, reading } from "../state/library.svelte";
+  import { deletePlaylist } from "../state/menus";
   import { player } from "../state/player.svelte";
   import { go } from "../state/route.svelte";
   import { ui, type Item } from "../state/ui.svelte";
@@ -27,7 +29,7 @@
     order.splice(to, 0, ...order.splice(i, 1));
     return library.change({ kind: "reorderPlaylist", id, songIds: order });
   };
-  const edits = (_: Song, i: number): Item[] => [
+  const edits = (_: Song, i: number): Item[] => !pl?.editable ? [] : [
     ...(i > 0 ? [{ label: W.moveUp, icon: "nav-arrow-up", run: () => moved(i, i - 1) }] : []),
     ...(i < songs.length - 1 ? [{ label: W.moveDown, icon: "nav-arrow-down", run: () => moved(i, i + 1) }] : []),
     { label: W.removeFromPlaylist, icon: "xmark", run: () => library.change({ kind: "removeFromPlaylist", id, index: i }) },
@@ -44,9 +46,7 @@
       {
         label: W.deletePlaylist,
         run: async () => {
-          if (!confirm(W.deleteConfirm(pl!.name))) return;
-          await library.change({ kind: "deletePlaylist", id });
-          go("playlists");
+          if (await deletePlaylist(id, pl!.name)) go("playlists");
         },
       },
     ]);
@@ -58,10 +58,10 @@
       {#snippet by()}{#if pl.comment}<span class="comment">{pl.comment}</span>{/if}{/snippet}
       {#snippet actions()}
         <PageTools tools={page.data?.tools ?? []} {songs} />
-        <button class="glyph" aria-label={W.more} title={W.more} onclick={more}><Icon name="more-horiz" /></button>
+        {#if pl.editable}<button class="glyph" aria-label={W.more} title={W.more} onclick={more}><Icon name="more-horiz" /></button>{/if}
       {/snippet}
     </Hero>
-    <SongList {songs} kind="Playlist" {id} extra={edits} {moved} />
+    <SongList {songs} kind="Playlist" {id} extra={edits} moved={pl.editable ? moved : undefined} />
   {/if}
 </Page>
 

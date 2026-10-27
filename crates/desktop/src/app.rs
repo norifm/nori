@@ -22,7 +22,7 @@ use nori_look::cover::CoverColours;
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel};
 
 use crate::compositor::{Compositor, Focus};
-use crate::session::{self, CoverKey, CoverSize, Data, Fetch, Msg, Req, Session, Tx};
+use crate::session::{self, CoverKey, CoverSize, Data, Fetch, Msg, PlaylistChange, Req, Session, Tx};
 use nori_host::pages::{HomePart, PageAsk, PageGot, ShelfItems};
 use nori_host::player::{Playback, QueueShown};
 use crate::settings::{Act, Target};
@@ -159,7 +159,7 @@ macro_rules! on {
 struct Lists {
     albums: Vec<nori_core::Album>,
     artists: Vec<Card>,
-    playlists: Vec<Card>,
+    playlists: Vec<nori_core::Playlist>,
 }
 
 /// Decoded covers, looked up by the `art` callback while drawing. A missing cover is requested once;
@@ -387,12 +387,16 @@ pub struct App {
     page_fetch: Option<Fetch>,
     /// The mix shown, its id and its name: it can be drawn again and kept as a playlist.
     page_mix: Option<(String, String)>,
+    /// The playlist shown, while the profile may change it (the core's `playlist_editable`).
+    page_playlist: Option<nori_core::Playlist>,
     /// The queue another device or app left on the server, offered at the top of Home (the core's `queue_offer`).
     offer: Option<nori_core::library::QueueOffer>,
     /// Home's mixes, whose cards take their first cover's colors once known.
     mixes: Vec<nori_core::mixes::board::MixTile>,
     songs: Vec<Song>,
     search_songs: Vec<Song>,
+    /// The search field's preview of the answer shown, line by line as the main window lists it.
+    search_preview: Vec<nori_core::search::PreviewLine>,
     /// Search's Show all pressed, for the query in `search_query`.
     search_songs_all: bool,
     search_query: String,
@@ -549,12 +553,10 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
     let bar = TopBar::new().map_err(|e| eprintln!("nori: no top pill: {e}")).ok()?;
     bar.on_go(to_main_with(ui, |m, v| m.invoke_go(v)));
     bar.on_open_menu(to_main(ui, |m| m.invoke_show_menu()));
-    bar.on_search_edited(to_main_with(ui, |m, text| {
-        if m.get_view() != SEARCH {
-            m.invoke_go(SEARCH);
-        }
-        m.invoke_search_edited(text);
-    }));
+    bar.on_search_edited(to_main_with(ui, |m, text| m.invoke_search_edited(text)));
+    bar.on_search_step(to_main_with(ui, |m, by| m.invoke_search_step(by)));
+    bar.on_search_accepted(to_main(ui, |m| m.invoke_search_accepted()));
+    bar.on_search_escaped(to_main(ui, |m| m.set_search_preview_open(false)));
     Some(bar)
 }
 
@@ -637,10 +639,12 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             page_songs_all: false,
             page_fetch: None,
             page_mix: None,
+            page_playlist: None,
             offer: None,
             mixes: Vec::new(),
             songs: Vec::new(),
             search_songs: Vec::new(),
+            search_preview: Vec::new(),
             search_songs_all: false,
             search_query: String::new(),
             autoeq_query: String::new(),
@@ -862,6 +866,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_lyrics_nudge, h, |a, dir| a.lyrics_nudge(dir));
     on!(ui.on_add_to_playlist, h, |a, id| a.add_to_playlist(Ok(id.into())));
     on!(ui.on_add_to_new_playlist, h, |a, name| a.add_to_playlist(Err(name.into())));
+    on!(ui.on_rename_playlist, h, |a, name| a.rename_playlist(name.as_str()));
+    on!(ui.on_delete_playlist, h, |a| a.delete_playlist());
     on!(ui.on_play_page, h, |a, shuffle| a.play_page(shuffle));
     on!(ui.on_page_star, h, |a| a.star_page());
     on!(ui.on_page_act, h, |a, act| a.page_act(act));
@@ -870,6 +876,10 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_dismiss_offer, h, |a| a.close_offer(false));
     on!(ui.on_more, h, |a| a.more_songs());
     on!(ui.on_search_edited, h, |a, t| a.search_edited(&t));
+    on!(ui.on_search_step, h, |a, by| a.search_step(by));
+    on!(ui.on_search_accepted, h, |a| a.search_accepted());
+    on!(ui.on_search_preview_pick, h, |a, i| a.search_pick(i as usize));
+    on!(ui.on_search_preview_changed, h, |a| a.mirror());
     on!(ui.on_search_again, h, |a, t| a.search_again(&t));
     on!(ui.on_forget_searches, h, |a| a.forget_searches());
     on!(ui.on_toggle, h, |a| a.on_session(|s| s.toggle()));
@@ -1337,7 +1347,9 @@ impl App {
         ui.set_page_covers(ModelRc::default());
         ui.set_page_acts(ModelRc::default());
         ui.set_page_can_save(false);
+        ui.set_page_editable(false);
         self.page_mix = None;
+        self.page_playlist = None;
         ui.set_page_songs(ModelRc::default());
         ui.set_page_shelves(ModelRc::default());
         self.page_colours(None);
@@ -1535,8 +1547,11 @@ impl App {
                 }
             }
             Data::Page(PageGot::Playlists(v)) => {
-                self.lists.playlists = v.iter().map(playlist_card).collect();
+                self.lists.playlists = v;
                 self.narrowed();
+                if ui.get_picker_open() {
+                    self.picker_shown();
+                }
             }
             Data::Page(PageGot::Favorites(v)) => {
                 self.songs = v.songs;
@@ -1587,6 +1602,8 @@ impl App {
                 ui.set_page_sub(nori_core::pages::playlist_description(d.playlist.comment.clone(), notes).unwrap_or_default().into());
                 ui.set_page_caption(if d.songs.is_empty() { String::new() } else { words::songs_caption(d.songs.len(), d.seconds) }.into());
                 self.set_page_art(d.playlist.cover_art.clone());
+                self.page_playlist = Some(d.playlist).filter(|p| self.editable(p));
+                ui.set_page_editable(self.page_playlist.is_some());
                 self.page_songs = d.songs;
                 self.page_actions(PageKind::Playlist);
                 self.show_page_songs();
@@ -1763,7 +1780,7 @@ impl App {
             };
             let name = nori_core::menus::saved_mix_name(title, existing);
             let note = match nori_core::transport::block_on(client.write(nori_core::client::Write::CreatePlaylist { name: name.clone(), song_ids: ids })) {
-                Ok(_) => Msg::Note { text: words::playlist_created(&name), error: false },
+                Ok(_) => Msg::Playlist { text: words::playlist_created(&name), change: PlaylistChange::Made },
                 Err(e) => Msg::Note { text: words::playlist_failed(&words::net_error(&e)), error: true },
             };
             tx.send(note);
@@ -1823,7 +1840,7 @@ impl App {
         }
         ui.set_albums(cards(albums.iter().map(album_card)));
         ui.set_artists(pick(&self.lists.artists));
-        ui.set_playlists(pick(&self.lists.playlists));
+        ui.set_playlists(pick(&self.lists.playlists.iter().map(playlist_card).collect::<Vec<_>>()));
         ui.set_songs(self.rows(&self.songs));
         self.show_page_songs();
     }
@@ -1906,6 +1923,11 @@ impl App {
 
     fn search_edited(&mut self, text: &str) {
         let Some(s) = &self.session else { return };
+        // Away from the search page, what it finds shows in the field's preview.
+        let ui = self.ui();
+        if ui.get_view() != SEARCH {
+            ui.set_search_preview_open(!text.trim().is_empty());
+        }
         let view = s.search_typed(text);
         let query = view.query.clone();
         self.show_search(view);
@@ -1943,6 +1965,9 @@ impl App {
             ui.set_recent_searches(ModelRc::new(VecModel::from(recent.into_iter().map(SharedString::from).collect::<Vec<_>>())));
         }
         let found = v.shown.unwrap_or_default();
+        self.search_preview = nori_core::search::search_preview(&found);
+        ui.set_search_preview(ModelRc::new(VecModel::from(preview_cards(&self.search_preview, &found))));
+        ui.set_search_preview_at(-1);
         ui.set_search_artists(cards(found.artists.iter().map(artist_card)));
         ui.set_search_albums(cards(found.albums.iter().map(album_card)));
         ui.set_search_playlists(cards(found.playlists.iter().map(playlist_card)));
@@ -1959,6 +1984,50 @@ impl App {
             String::new()
         };
         ui.set_search_note(note.into());
+    }
+
+    /// The arrows in the search field: the preview's line `by` lines on, past the groups' heads.
+    fn search_step(&mut self, by: i32) {
+        let ui = self.ui();
+        if !ui.get_search_preview_open() {
+            return;
+        }
+        ui.set_search_preview_at(preview_step(&self.search_preview, ui.get_search_preview_at(), by));
+    }
+
+    /// Enter in the search field: the preview's line walked to, or the search page.
+    fn search_accepted(&mut self) {
+        let ui = self.ui();
+        let at = ui.get_search_preview_at();
+        if ui.get_search_preview_open() && at >= 0 {
+            self.search_pick(at as usize);
+        } else {
+            ui.set_search_preview_open(false);
+            self.trail.left();
+            self.go(SEARCH);
+        }
+    }
+
+    /// Line `i` of the search field's preview picked: its page, its song played, or every result.
+    fn search_pick(&mut self, i: usize) {
+        use nori_core::search::PreviewLine;
+        let ui = self.ui();
+        ui.set_search_preview_open(false);
+        if let Some(top) = &self.top {
+            top.invoke_end_search();
+        }
+        let id = |m: &ModelRc<Card>| m.row_data(i).map(|c| c.id.to_string()).unwrap_or_default();
+        match self.search_preview.get(i).copied() {
+            Some(PreviewLine::Artist { .. }) => self.open_page(PageAsk::Artist(id(&ui.get_search_preview()))),
+            Some(PreviewLine::Album { .. }) => self.open_page(PageAsk::Album(id(&ui.get_search_preview()))),
+            Some(PreviewLine::Playlist { .. }) => self.open_page(PageAsk::Playlist(id(&ui.get_search_preview()))),
+            Some(PreviewLine::Song { at }) => self.song(2, at as usize, -1),
+            Some(PreviewLine::All) => {
+                self.trail.left();
+                self.go(SEARCH);
+            }
+            Some(PreviewLine::Head { .. }) | None => {}
+        }
     }
 
     fn play_fetch(&self, what: Fetch) {
@@ -1989,20 +2058,27 @@ impl App {
         .cloned()
     }
 
-    /// Song `i` of `list`'s menu, made as it opens.
+    /// Song `i` of `list`'s menu, made as it opens. A song of a playlist the profile may change also offers
+    /// to take it out, after Add to playlist.
     fn song_menu(&self, list: i32, i: usize) -> ModelRc<SongGo> {
-        self.list_song(list, i).map_or_else(ModelRc::default, |one| self.menu_lines(one, false))
+        let Some(one) = self.list_song(list, i) else { return ModelRc::default() };
+        let mut lines = self.menu_lines(one, false);
+        if list == 0 && self.page_playlist.is_some() {
+            let at = lines.iter().position(|l| l.kind == 7).map_or(lines.len(), |p| p + 1);
+            lines.insert(at, SongGo { title: words::REMOVE_FROM_PLAYLIST.into(), kind: 18, id: SharedString::default(), more: false, enabled: true, filled: false });
+        }
+        ModelRc::new(VecModel::from(lines))
     }
 
     /// The menu of the song playing, with the player's lines.
     fn player_menu(&self) -> ModelRc<SongGo> {
-        self.song.clone().map_or_else(ModelRc::default, |one| self.menu_lines(one, true))
+        self.song.clone().map_or_else(ModelRc::default, |one| ModelRc::new(VecModel::from(self.menu_lines(one, true))))
     }
 
     /// `one`'s menu as the core lists it (menus.rs's `song_menu`); `player`: opened from the player.
-    fn menu_lines(&self, one: Song, player: bool) -> ModelRc<SongGo> {
+    fn menu_lines(&self, one: Song, player: bool) -> Vec<SongGo> {
         use nori_core::menus::{song_menu, JamOffer, SongAction as A, SongDownload};
-        let Some(s) = self.session.as_ref() else { return ModelRc::default() };
+        let Some(s) = self.session.as_ref() else { return Vec::new() };
         let ui = self.ui();
         let jam = ui.global::<crate::Jam>();
         let offer = if s.rules().asks { Some(JamOffer::Guest) } else { (jam.get_on() && !jam.get_hosting()).then_some(JamOffer::Start) };
@@ -2034,7 +2110,7 @@ impl App {
             let filled = matches!(m.action, A::Favourite { on: false });
             SongGo { title: words::song_action(&m.action).into(), kind, id: id.into(), more: m.more, enabled: m.enabled, filled }
         });
-        ModelRc::new(VecModel::from(lines.collect::<Vec<_>>()))
+        lines.collect()
     }
 
     /// Plays song `i` of `list` (`how` -1), or does its menu's line `how` (`SongGo::kind`).
@@ -2048,6 +2124,7 @@ impl App {
         match how {
             -1 => self.on_session(|s| s.play(songs, i, false, origin)),
             15 => self.on_session(|s| s.start_jam(songs, i)),
+            18 => self.remove_from_playlist(i),
             _ => self.song_act(one, how),
         }
     }
@@ -2080,10 +2157,12 @@ impl App {
             5 | 6 => self.on_session(|s| s.enqueue(vec![one], how == 5)),
             7 => {
                 let ui = self.ui();
-                ui.set_picker_playlists(cards(self.lists.playlists.iter().cloned()));
+                self.picker_shown();
                 ui.set_picker_name("".into());
+                ui.set_picker_naming(false);
                 ui.set_picker_open(true);
                 self.menu_song = Some(one);
+                self.on_session(|s| s.load(Req::Page(PageAsk::Playlists)));
             }
             8 | 9 => self.on_session(|s| s.download_remove(&one.id)),
             10 => self.on_session(|s| s.star(nori_core::client::Starrable::Song, one.id, true)),
@@ -2173,29 +2252,86 @@ impl App {
         });
     }
 
+    /// The picker's playlists: those the song can be added to.
+    fn picker_shown(&self) {
+        let own = self.lists.playlists.iter().filter(|p| self.editable(p)).map(playlist_card);
+        self.ui().set_picker_playlists(cards(own));
+    }
+
+    /// Whether the profile may change `p` (the core's `playlist_editable`), signed in as its user.
+    fn editable(&self, p: &nori_core::Playlist) -> bool {
+        let user = crate::session::app().settings.current().and_then(|prefs| prefs.active_server().map(|sv| sv.user.clone())).unwrap_or_default();
+        nori_core::menus::playlist_editable(p, &user, self.account())
+    }
+
     /// Adds the song whose menu asked to playlist `id`, or to a new one named `name`.
     fn add_to_playlist(&mut self, to: Result<String, String>) {
-        let ui = self.ui();
-        ui.set_picker_open(false);
-        let (Some(song), Some(client)) = (self.menu_song.take(), self.session.as_ref().map(|s| s.client.clone())) else { return };
-        let (write, done) = match to {
+        self.ui().set_picker_open(false);
+        let Some(song) = self.menu_song.take() else { return };
+        match to {
             Ok(id) => {
-                let name = self.lists.playlists.iter().find(|p| p.id == id.as_str()).map(|p| p.title.to_string()).unwrap_or_default();
-                (nori_core::client::Write::AddToPlaylist { id, song_ids: vec![song.id] }, words::added_to_playlist(&name))
+                let name = self.lists.playlists.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default();
+                self.playlist_write(nori_core::client::Write::AddToPlaylist { id: id.clone(), song_ids: vec![song.id] }, words::added_to_playlist(&name), PlaylistChange::Changed(id));
             }
             Err(name) => {
                 let name = name.trim().to_string();
-                (nori_core::client::Write::CreatePlaylist { name: name.clone(), song_ids: vec![song.id] }, words::playlist_created(&name))
+                if !name.is_empty() {
+                    self.playlist_write(nori_core::client::Write::CreatePlaylist { name: name.clone(), song_ids: vec![song.id] }, words::playlist_created(&name), PlaylistChange::Made);
+                }
             }
-        };
+        }
+    }
+
+    /// Takes entry `index` out of the playlist shown.
+    fn remove_from_playlist(&self, index: usize) {
+        let Some(p) = &self.page_playlist else { return };
+        let write = nori_core::client::Write::RemoveFromPlaylist { id: p.id.clone(), index: index as i32 };
+        self.playlist_write(write, words::removed_from_playlist(&p.name), PlaylistChange::Changed(p.id.clone()));
+    }
+
+    /// Names the playlist shown `name`.
+    fn rename_playlist(&self, name: &str) {
+        let (Some(p), name) = (&self.page_playlist, name.trim()) else { return };
+        if name.is_empty() {
+            return;
+        }
+        self.ui().set_rename_open(false);
+        let write = nori_core::client::Write::RenamePlaylist { id: p.id.clone(), name: name.to_string() };
+        self.playlist_write(write, words::playlist_renamed(name), PlaylistChange::Changed(p.id.clone()));
+    }
+
+    /// Deletes the playlist shown, once its sheet asked.
+    fn delete_playlist(&self) {
+        self.ui().set_delete_open(false);
+        let Some(p) = &self.page_playlist else { return };
+        self.playlist_write(nori_core::client::Write::DeletePlaylist { id: p.id.clone() }, words::playlist_deleted(&p.name), PlaylistChange::Deleted(p.id.clone()));
+    }
+
+    /// Sends `write` to the server; `done` is said once it took it.
+    fn playlist_write(&self, write: nori_core::client::Write, done: String, change: PlaylistChange) {
+        let Some(client) = self.session.as_ref().map(|s| s.client.clone()) else { return };
         let tx = self.tx.clone();
-        nori_host::spawn("nori-playlist-add", move || {
+        nori_host::spawn("nori-playlist-write", move || {
             let note = match nori_core::transport::block_on(client.write(write)) {
-                Ok(_) => Msg::Note { text: done, error: false },
+                Ok(()) => Msg::Playlist { text: done, change },
                 Err(e) => Msg::Note { text: words::playlist_failed(&words::net_error(&e)), error: true },
             };
             tx.send(note);
         });
+    }
+
+    /// A playlist write the server took: the playlists are read again, and the page of the one it changed,
+    /// or Back from it once deleted.
+    fn playlist_changed(&mut self, text: &str, change: PlaylistChange) {
+        self.say(text, false);
+        self.on_session(|s| s.load(Req::Page(PageAsk::Playlists)));
+        let on_page = self.ui().get_view() == PAGE;
+        let shown = |id: &str| on_page && self.page_playlist.as_ref().is_some_and(|p| p.id == id);
+        match change {
+            PlaylistChange::Changed(id) if shown(&id) => self.load(Req::Page(PageAsk::Playlist(id))),
+            PlaylistChange::Deleted(id) if shown(&id) => self.back(),
+            _ => {}
+        }
     }
 
     fn play_page(&self, shuffle: bool) {
@@ -2510,6 +2646,7 @@ impl App {
                 self.settings_shown();
             }
             Msg::Note { text, error } => self.say(&text, error),
+            Msg::Playlist { text, change } => self.playlist_changed(&text, change),
             Msg::Shared(Some(link)) => self.copy(link),
             Msg::Offer(offer) => {
                 let (playing, here) = (self.ui().get_playing(), self.heard.clone());
@@ -2725,6 +2862,7 @@ impl App {
             t.set_view(ui.get_view());
             t.set_page_kind(ui.get_page_kind());
             t.set_guest(ui.global::<crate::Jam>().get_guest());
+            t.set_previewing(ui.get_search_preview_shown());
         }
     }
 
@@ -3448,6 +3586,35 @@ fn card_fetch(kind: i32, id: String) -> Option<Fetch> {
         4 => Some(Fetch::Mix(id)),
         _ => None,
     }
+}
+
+/// The search field's preview `lines` of `found` as the main window draws them: a group's head as kind -1,
+/// every result as kind 5, the rest as their cards.
+fn preview_cards(lines: &[nori_core::search::PreviewLine], found: &nori_core::SearchResult) -> Vec<Card> {
+    use nori_core::search::PreviewLine;
+    let words_card = |kind: i32, title: &str| Card { id: SharedString::default(), title: title.into(), sub: SharedString::default(), art: SharedString::default(), sub_artist: SharedString::default(), kind };
+    lines
+        .iter()
+        .map(|l| match *l {
+            PreviewLine::Head { kind } => words_card(-1, words::preview_group(kind)),
+            PreviewLine::Artist { at } => artist_card(&found.artists[at as usize]),
+            PreviewLine::Album { at } => album_card(&found.albums[at as usize]),
+            PreviewLine::Playlist { at } => playlist_card(&found.playlists[at as usize]),
+            PreviewLine::Song { at } => song_card(&found.songs[at as usize]),
+            PreviewLine::All => words_card(5, words::ALL_RESULTS),
+        })
+        .collect()
+}
+
+/// The preview's line `by` lines on from `at` (-1 for none), past the groups' heads and round its ends.
+fn preview_step(lines: &[nori_core::search::PreviewLine], at: i32, by: i32) -> i32 {
+    let stops: Vec<i32> = lines.iter().enumerate().filter(|(_, l)| !matches!(l, nori_core::search::PreviewLine::Head { .. })).map(|(i, _)| i as i32).collect();
+    if stops.is_empty() {
+        return -1;
+    }
+    let n = stops.len() as i32;
+    let from = stops.iter().position(|&s| s == at).map(|k| k as i32).unwrap_or(if by > 0 { -1 } else { 0 });
+    stops[(from + by).rem_euclid(n) as usize]
 }
 
 fn artist_card(a: &nori_core::Artist) -> Card {
@@ -4428,9 +4595,29 @@ mod tests {
         key("b");
         assert_eq!(bar.get_search_text(), "ab");
         assert_eq!(typed.borrow().last().map(String::as_str), Some("ab"));
+        let said = Rc::new(RefCell::new(Vec::<String>::new()));
+        let (st, ac, es) = (said.clone(), said.clone(), said.clone());
+        bar.on_search_step(move |by| st.borrow_mut().push(format!("step {by}")));
+        bar.on_search_accepted(move || ac.borrow_mut().push("enter".into()));
+        bar.on_search_escaped(move || es.borrow_mut().push("escape".into()));
+        key(&SharedString::from(slint::platform::Key::DownArrow));
+        key(&SharedString::from(slint::platform::Key::UpArrow));
+        key("\n");
+        assert_eq!(bar.get_search_text(), "ab", "the arrows walk the preview, not the text");
         key(&SharedString::from(slint::platform::Key::Escape));
         settle();
+        assert_eq!(*said.borrow(), ["step 1", "step -1", "enter", "escape"]);
         assert!(!typing.get(), "Escape gives the keys back to the page");
+    }
+
+    #[test]
+    fn the_search_preview_steps_past_its_heads_and_round_its_ends() {
+        use nori_core::search::{PreviewKind, PreviewLine as L};
+        let lines = [L::Head { kind: PreviewKind::Artists }, L::Artist { at: 0 }, L::Head { kind: PreviewKind::Songs }, L::Song { at: 0 }, L::Song { at: 1 }, L::All];
+        for (at, by, to) in [(-1, 1, 1), (-1, -1, 5), (1, 1, 3), (3, -1, 1), (5, 1, 1), (1, -1, 5)] {
+            assert_eq!(preview_step(&lines, at, by), to, "from {at} by {by}");
+        }
+        assert_eq!(preview_step(&[], -1, 1), -1);
     }
 
     #[test]
@@ -4916,5 +5103,95 @@ mod tests {
         assert!(model == ui.get_devices(), "a disconnected device leaves the existing picker");
         assert_eq!(model.row_count(), 1);
         assert_eq!(model.row_data(0), Some(here));
+    }
+
+    /// A playlist page the profile may change: its list head renames it with its name filled in, and
+    /// deletes it only once the sheet that asks is answered.
+    #[test]
+    fn a_playlist_is_renamed_and_deleted_only_once_asked() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_view(PAGE);
+        ui.set_page_kind(2);
+        ui.set_page_title("Road trip".into());
+        ui.set_page_editable(true);
+        let did = Rc::new(RefCell::new(Vec::new()));
+        let seen = did.clone();
+        ui.on_rename_playlist(move |name| seen.borrow_mut().push(format!("rename {name}")));
+        let seen = did.clone();
+        ui.on_delete_playlist(move || seen.borrow_mut().push("delete".to_string()));
+        ui.show().unwrap();
+        let tap = |x: f32, y: f32| {
+            press(ui.window(), x, y, slint::platform::PointerEventButton::Left);
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        tap(0.0, 0.0);
+        // The list head's pencil and trash, at its right end; the sheets' buttons at their foot.
+        let (rename, delete) = ((1180.0, 405.0), (1225.0, 405.0));
+        let (cancel, confirm) = ((675.0, 170.0), (765.0, 170.0));
+        tap(rename.0, rename.1);
+        assert_eq!(ui.get_rename_name(), "Road trip", "the field starts with the playlist's name");
+        ui.set_rename_name("Rain".into());
+        tap(confirm.0, 189.0);
+        assert_eq!(*did.borrow(), ["rename Rain"]);
+        // The app closes it once the name is sent.
+        ui.set_rename_open(false);
+        tap(delete.0, delete.1);
+        assert!(ui.get_delete_open());
+        tap(cancel.0, cancel.1);
+        assert!(!ui.get_delete_open(), "Cancel closes the sheet");
+        tap(delete.0, delete.1);
+        tap(100.0, 600.0);
+        assert!(!ui.get_delete_open(), "a press beside the sheet closes it");
+        assert_eq!(*did.borrow(), ["rename Rain"], "nothing is deleted before the sheet is answered");
+        tap(delete.0, delete.1);
+        tap(confirm.0, confirm.1);
+        assert_eq!(*did.borrow(), ["rename Rain", "delete"]);
+    }
+
+    /// Add to playlist: a playlist picked takes the song, and New playlist turns into its name's field in
+    /// place, made with Create.
+    #[test]
+    fn the_playlist_picker_adds_to_one_or_names_a_new_one() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_picker_playlists(cards([Card { id: "p1".into(), title: "Road trip".into(), kind: 2, ..Default::default() }].into_iter()));
+        ui.set_picker_open(true);
+        let did = Rc::new(RefCell::new(Vec::new()));
+        let seen = did.clone();
+        ui.on_add_to_playlist(move |id| seen.borrow_mut().push(format!("add {id}")));
+        let seen = did.clone();
+        ui.on_add_to_new_playlist(move |name| seen.borrow_mut().push(format!("new {name}")));
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        let tap = |x: f32, y: f32| {
+            press(ui.window(), x, y, slint::platform::PointerEventButton::Left);
+            settle();
+        };
+        settle();
+        // The sheet's rows under its title: New playlist, then the playlists.
+        let (new, first) = (125.0, 169.0);
+        tap(600.0, first);
+        tap(600.0, new);
+        assert!(ui.get_picker_naming(), "New playlist turns into its name's field");
+        for key in ["R", "a", "i", "n"] {
+            ui.window().dispatch_event(slint::platform::WindowEvent::KeyPressed { text: key.into() });
+            ui.window().dispatch_event(slint::platform::WindowEvent::KeyReleased { text: key.into() });
+        }
+        settle();
+        tap(790.0, 126.0);
+        assert_eq!(*did.borrow(), ["add p1", "new Rain"]);
     }
 }

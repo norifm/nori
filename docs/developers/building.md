@@ -330,10 +330,17 @@ uses. After using a new glyph, run `python3 tools/glyphs.py <iconoir>/icons` aga
 
 ### Deploying
 
-`web/dist` is static. Serve it from the same origin as the Subsonic API; the page signs its own
-requests, so no CORS headers are needed. Serve `.wasm` as `application/wasm`, precompressed with
+`web/dist` is static. Served from the same origin as a Subsonic API (its `/rest/ping` answers), the
+page signs in to that server only and asks for no address. Served anywhere else, it asks for the
+server's address, and that server must answer CORS preflights (Navidrome does; octo-fiesta does from
+`fbe3dc1`). A page over https cannot reach a server over plain http. The page needs a secure context
+(https, or localhost) for its databases. Serve `.wasm` as `application/wasm`, precompressed with
 brotli in production. A service worker keeps the shell and modules of one build. A new build installs
 beside the running one and takes over at the next load, which reloads the page once.
+
+Every push to master that touches the web client builds it into `ghcr.io/norifm/nori-web`
+(`.github/workflows/web.yml`): an image of just `web/dist` at its root, for a server's image to copy
+(`web/Dockerfile`). navi-fiesta (norifm/bento) serves it at `/`.
 
 To check that it compiles without building it:
 

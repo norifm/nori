@@ -386,6 +386,8 @@
     <string name="note_could_not_load">Could not load</string>
     <string name="note_could_not_evaluate">Could not evaluate</string>
     <string name="delete_named">Delete %1$s</string>
+    <string name="delete_question">Delete “%1$s”?</string>
+    <string name="cannot_be_undone">This can’t be undone.</string>
 
     <!-- The equalizer's figures. -->
     <string name="eq_preamp">Pre-amp %1$s dB</string>
