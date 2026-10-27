@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-web',
  'edition': '2021',
- 'version': '0.7.1-beta.2',
+ 'version': '0.7.1',
  'targets': [{'name': 'nori_web', 'kind': 'cdylib', 'root': 'src/lib.rs', 'test': True}],
  'features': {'tests': ['default', 'engine'], 'desktop': [], 'desktop-tests': []},
  'local': [{'package': 'nori-core',
