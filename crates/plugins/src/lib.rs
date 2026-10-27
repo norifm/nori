@@ -9,6 +9,7 @@ mod app;
 mod host;
 mod manifest;
 mod package;
+mod repo;
 pub(crate) mod runtime;
 mod stage;
 mod store;
@@ -20,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub use app::{open, open_plugins, Client};
+pub use repo::{Offer, Offers, Repo, RepoFailure, OFFICIAL};
 pub use view::{PluginCard, PluginRow};
 pub use host::{Side, Value};
 pub use manifest::{Manifest, Refusal, RowKind, RowSpec, Slot, API, POINTS};
@@ -58,6 +60,9 @@ type Made = (String, Arc<stage::Maker>);
 struct Index {
     #[serde(default)]
     plugin: Vec<IndexEntry>,
+    /// Repos the user added (nori's own is always there).
+    #[serde(default)]
+    repos: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,14 +73,16 @@ struct IndexEntry {
 
 #[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct Plugins {
-    dir: PathBuf,
+    pub(crate) dir: PathBuf,
     side: Arc<dyn Side>,
     installed: Mutex<Vec<Installed>>,
     /// The enabled sound stages' makers, made at first need and kept while the set is the same.
     stages: Mutex<Option<Vec<Made>>>,
     /// The enabled plugins' own instances, each made at its first call.
     workers: Mutex<BTreeMap<String, Worker>>,
-    transport: Transported,
+    pub(crate) transport: Transported,
+    /// The repos the user added, as the index keeps them.
+    repos: Mutex<Vec<String>>,
 }
 
 impl Plugins {
@@ -91,7 +98,7 @@ impl Plugins {
                 Some(Installed { manifest: Arc::new(manifest), enabled: e.enabled })
             })
             .collect();
-        Plugins { dir, side, installed: Mutex::new(installed), stages: Mutex::new(None), workers: Mutex::new(BTreeMap::new()), transport: Arc::default() }
+        Plugins { dir, side, installed: Mutex::new(installed), stages: Mutex::new(None), workers: Mutex::new(BTreeMap::new()), transport: Arc::default(), repos: Mutex::new(index.repos) }
     }
 
     /// The open profile's transport, for plugins' HTTP.
@@ -157,8 +164,17 @@ impl Plugins {
         self.side.laid(id);
     }
 
+    pub(crate) fn added_repos(&self) -> Vec<String> {
+        self.repos.lock().expect("not poisoned").clone()
+    }
+
+    pub(crate) fn keep_repos(&self, repos: Vec<String>) {
+        *self.repos.lock().expect("not poisoned") = repos;
+        self.keep(&self.installed());
+    }
+
     fn keep(&self, list: &[Installed]) {
-        let index = Index { plugin: list.iter().map(|i| IndexEntry { id: i.manifest.id.clone(), enabled: i.enabled }).collect() };
+        let index = Index { plugin: list.iter().map(|i| IndexEntry { id: i.manifest.id.clone(), enabled: i.enabled }).collect(), repos: self.added_repos() };
         let _ = std::fs::create_dir_all(&self.dir);
         let _ = std::fs::write(self.dir.join("index.toml"), toml::to_string(&index).unwrap_or_default());
     }

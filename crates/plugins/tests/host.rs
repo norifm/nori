@@ -60,17 +60,19 @@ fn fixture(features: &str) -> PathBuf {
     folder
 }
 
-/// Answers every request with 200 "ok", noting each URL.
+/// Answers each URL it serves with its body, any other with 200 "ok", noting each URL.
 #[derive(Default)]
 struct Web {
     asked: Mutex<Vec<String>>,
+    serves: Mutex<Vec<(String, Vec<u8>)>>,
 }
 
 #[async_trait::async_trait]
 impl Transport for Web {
     async fn get(&self, url: String, _: u32) -> Result<TransportResponse, TransportError> {
-        self.asked.lock().unwrap().push(url);
-        Ok(TransportResponse { status: 200, body: b"ok".to_vec(), set_cookies: Vec::new() })
+        self.asked.lock().unwrap().push(url.clone());
+        let body = self.serves.lock().unwrap().iter().find(|(u, _)| *u == url).map_or(b"ok".to_vec(), |(_, b)| b.clone());
+        Ok(TransportResponse { status: 200, body, set_cookies: Vec::new() })
     }
 
     async fn send(&self, e: Exchange) -> Result<TransportResponse, TransportError> {
@@ -178,4 +180,46 @@ fn a_plugin_needing_what_this_host_lacks_is_refused() {
     let plugins = Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()));
     assert_eq!(plugins.install(&fixture("timers")), Err(Refusal::Needs(vec!["timers".to_string()])));
     assert!(plugins.installed().is_empty());
+}
+
+/// The fixture as a `.noriplugin`.
+fn package() -> Vec<u8> {
+    use std::io::Write;
+    let folder = fixture("");
+    let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for name in ["plugin.wasm", "strings/en.toml"] {
+        z.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+        z.write_all(&std::fs::read(folder.join(name)).unwrap()).unwrap();
+    }
+    z.finish().unwrap().into_inner()
+}
+
+#[test]
+fn a_repo_offers_and_installs_what_it_lists() {
+    use sha2::Digest;
+    let dir = nori_testdir::TempDir::new("plugins-repo");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.set_transport(Some(session.web.clone()));
+    let repo = "https://friend.example/nori/index.json";
+    plugins.add_repo(repo.into());
+    assert_eq!(plugins.repos().iter().map(|r| (r.url.as_str(), r.official)).collect::<Vec<_>>(), vec![(nori_plugins::OFFICIAL, true), (repo, false)]);
+    let pkg = package();
+    let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
+    let index = |sha: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "version": "1.0.0", "api": 1, "url": "test.noriplugin", "sha256": "{sha}"}}]}}"#);
+    let serve = |index: String| *session.web.serves.lock().unwrap() = vec![(repo.into(), index.into_bytes()), ("https://friend.example/nori/test.noriplugin".into(), pkg.clone())];
+    serve(index(&"0".repeat(64)));
+    let got = nori_tasks::block_on(plugins.offers());
+    assert_eq!(got.failed.len(), 1, "nori's own answers no index here: {:?}", got.failed);
+    let offer = got.offers.into_iter().find(|o| o.id == ID).unwrap();
+    assert_eq!((offer.installed.as_deref(), offer.repo.official), (None, false));
+    assert!(matches!(nori_tasks::block_on(plugins.install_offer(offer)), Err(Refusal::Unreadable(_))), "a package that isn't the one listed");
+    assert!(plugins.installed().is_empty());
+    serve(index(&sha));
+    let offer = nori_tasks::block_on(plugins.offers()).offers.into_iter().find(|o| o.id == ID).unwrap();
+    assert_eq!(nori_tasks::block_on(plugins.install_offer(offer)), Ok(ID.to_string()));
+    let again = nori_tasks::block_on(plugins.offers()).offers.into_iter().find(|o| o.id == ID).unwrap();
+    assert_eq!(again.installed.as_deref(), Some("0.1.0"), "listed with what is installed");
+    plugins.remove_repo(repo.into());
+    assert_eq!(Plugins::open(dir.path().to_path_buf(), session).repos().len(), 1, "kept in the index");
 }
