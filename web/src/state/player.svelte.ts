@@ -236,6 +236,10 @@ class Player {
       m.setActionHandler("previoustrack", () => void this.control("previous"));
       m.setActionHandler("seekto", (d) => d.seekTime !== undefined && void this.seek(d.seekTime * 1000));
     }
+    // A browser may close a page out of sight without a word: the queue is kept as it goes.
+    const hide = () => rpc.player && void ask("hidden").catch(() => {});
+    document.addEventListener("visibilitychange", () => document.hidden && hide());
+    addEventListener("pagehide", hide);
     addEventListener("pointerdown", () => this.unhold(), { capture: true });
     addEventListener("keydown", (e) => {
       const t = e.target as HTMLElement;

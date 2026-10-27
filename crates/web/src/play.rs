@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use nori_core::look::clock_on;
 use nori_core::race::LyricsPick;
+use nori_core::rules::QueueMoment;
 use nori_core::settings::SavedServer;
 use nori_core::{LyricsTiming, OriginKind, PageOrigin, Song};
 use nori_engine::{AudioOutput, Body, ByteSource, Feed, Filling, OpenError, OutputFormat, State};
@@ -33,6 +34,9 @@ enum Order {
     Flush,
     /// Fade to `to` over `ms`, from `from` or where it is.
     Ramp { from: Option<f32>, to: f32, ms: i64 },
+    /// The listener's volume, 0 to 1, laid over everything the engine does (the desktop's sound card
+    /// level).
+    Volume { level: f32 },
 }
 
 /// The AudioWorklet's side: what the worker pulls for it, and what it holds.
@@ -192,7 +196,13 @@ impl Nori {
             http: Arc::new(Fetch(live.wake.clone())),
             profile,
             output: Box::new(Output(live.card.clone())),
-            volume: nori_host::Level::new(1.0, None),
+            volume: {
+                let (card, wake) = (live.card.clone(), live.wake.clone());
+                nori_host::Level::new(1.0, Some(Box::new(move |level| {
+                    card.lock().orders.push(Order::Volume { level });
+                    wake.call();
+                })))
+            },
             memory_mb: 128,
             covers: None,
             offline: false,
@@ -303,6 +313,12 @@ impl Nori {
 
     pub fn toggle(&self) {
         self.with(|h| h.toggle());
+    }
+
+    /// The page went out of sight, where a browser may close it without a word: the queue is kept as
+    /// it is when an app closes (`rules::queue_keep`).
+    pub fn hidden(&self) {
+        self.with(|h| h.keep(QueueMoment::Closing));
     }
 
     pub fn next(&self) {
@@ -546,6 +562,7 @@ impl Nori {
                 Order::Resume => json!({ "do": "resume" }),
                 Order::Flush => json!({ "do": "flush" }),
                 Order::Ramp { from, to, ms } => json!({ "do": "ramp", "from": from, "to": to, "ms": ms }),
+                Order::Volume { level } => json!({ "do": "volume", "level": level }),
             })
             .collect();
         Value::Array(told).to_string()
@@ -804,6 +821,7 @@ fn whole(kind: &str, id: String) -> Result<nori_host::Fetch, JsValue> {
         "album" => Ok(nori_host::Fetch::Album(id)),
         "playlist" => Ok(nori_host::Fetch::Playlist(id)),
         "artist" => Ok(nori_host::Fetch::Artist(id)),
+        "mix" => Ok(nori_host::Fetch::Mix(id)),
         _ => Err(error(format!("no such kind: {kind}"))),
     }
 }

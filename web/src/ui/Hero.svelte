@@ -1,8 +1,9 @@
 <script lang="ts">
   // An album's, playlist's or artist's head: the cover, the title, who, what the list holds ("2026 · 4 songs ·
   // 8:00 · MP3 128 kbps"), Play and Shuffle, and the page's own buttons (the seal, what the core offers for
-  // its songs, a menu). The page and the chrome wear the season's paper dyed with the cover while it is open
-  // (not in Midnight).
+  // its songs, a menu). The page and the chrome wear the season's paper dyed with the cover while it is open,
+  // and the cover's own wash runs across the page's top into it, scrolling with the head, as the desktop's
+  // page (not in Midnight).
   import type { Snippet } from "svelte";
   import { coverLook } from "../state/coverLook";
   import { looks } from "../state/theme.svelte";
@@ -24,21 +25,38 @@
 
   // The cover's colors, lent to the page and the chrome while it is open; the season's until they come.
   const me = {};
+  let own = $state.raw<ImageData | null>(null);
   $effect(() => {
     void looks.rev;
     const src = cover;
     let gone = false;
-    if (src) void coverLook(src).then((l) => !gone && (ui.tint = l ? { by: me, vars: l.vars } : null));
-    else ui.tint = null;
+    if (src)
+      void coverLook(src).then((l) => {
+        if (gone) return;
+        ui.tint = l ? { by: me, vars: l.vars } : null;
+        own = l?.own ?? null;
+      });
+    else {
+      ui.tint = null;
+      own = null;
+    }
     return () => {
       gone = true;
     };
+  });
+  let washed = $state<HTMLCanvasElement>();
+  $effect(() => {
+    if (!washed || !own) return;
+    washed.width = own.width;
+    washed.height = own.height;
+    washed.getContext("2d")?.putImageData(own, 0, 0);
   });
   $effect(() => () => {
     if (ui.tint?.by === me) ui.tint = null;
   });
 </script>
 
+{#if own}<div class="head-wash" aria-hidden="true"><canvas bind:this={washed}></canvas></div>{/if}
 <div class="hero" class:circle={round}>
   <div class="art"><Cover src={cover} {round} radius="var(--r-card)" {fallback} /></div>
   <div class="text">
@@ -55,6 +73,34 @@
 </div>
 
 <style>
+  /* Across the top of the page that scrolls (main), behind its head: drawn small and stretched, as it is
+     already soft, under the page's paper growing from 15 % to whole. */
+  .head-wash {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 440px;
+    z-index: -1;
+    pointer-events: none;
+    animation: washed 400ms ease-out;
+  }
+  @keyframes washed {
+    from {
+      opacity: 0;
+    }
+  }
+  .head-wash canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .head-wash::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(color-mix(in srgb, var(--page) 15%, transparent), color-mix(in srgb, var(--page) 55%, transparent) 55%, var(--page));
+  }
   .hero {
     display: flex;
     align-items: flex-end;

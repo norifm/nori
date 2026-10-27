@@ -6,9 +6,9 @@ import { today } from "./theme.svelte";
 
 const SIDE = 64;
 
-/** The CSS custom properties to wear (the page's roles, the artwork's dissolve), the cover blurred to lie
- * behind them, and where the player's sleeve starts to fade. */
-export type CoverLook = { vars: string; wash: ImageData | null; melt: number };
+/** The CSS custom properties to wear (the page's roles, the artwork's dissolve), the cover blurred and dyed to
+ * lie behind the player, the same undyed for a page's head, and where the player's sleeve starts to fade. */
+export type CoverLook = { vars: string; wash: ImageData | null; own: ImageData | null; melt: number };
 
 type Colors = {
   page: string;
@@ -37,13 +37,14 @@ export async function coverLook(src: string): Promise<CoverLook | null> {
     g.drawImage(bitmap, 0, 0);
     bitmap.close();
     const rgba = new Uint8Array(g.getImageData(0, 0, SIDE, SIDE).data.buffer);
-    const [json, wash] = await ask<[string | null, Uint8ClampedArray | null]>("cover_look", rgba, SIDE, SIDE, ...today());
+    const [json, wash, own] = await ask<[string | null, Uint8ClampedArray | null, Uint8ClampedArray | null]>("cover_look", rgba, SIDE, SIDE, ...today());
     if (!json) return null;
     const c = JSON.parse(json) as Colors;
     const [a, b, m] = c.heroStops.map((s) => `${(s * 100).toFixed(1)}%`);
     const dissolve = `linear-gradient(to bottom, transparent ${a}, ${c.heroEdge} ${b}, ${c.heroMid} ${m}, ${c.page})`;
     const vars = `--page:${c.page};--surface:${c.surface};--ink:${c.ink};--ink2:${c.ink2};--outline:${c.outline};--hair:${c.hair};--accent:${c.accent};--on-accent:${c.onAccent};--dissolve:${dissolve}`;
-    return { vars, wash: wash && c.washSide ? new ImageData(new Uint8ClampedArray(wash), c.washSide, c.washSide) : null, melt: c.melt };
+    const image = (px: Uint8ClampedArray | null) => (px && c.washSide ? new ImageData(new Uint8ClampedArray(px), c.washSide, c.washSide) : null);
+    return { vars, wash: image(wash), own: image(own), melt: c.melt };
   } catch {
     return null;
   }

@@ -139,7 +139,8 @@ impl Nori {
     /// Reads a page (`{ kind, ... }`, see `pages::Ask`): its JSON.
     pub async fn read(&self, ask: String) -> Result<String, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        pages::read(&client, &ask).await.map_err(error)
+        let user = self.active().filter(|_| self.rules().account).map(|p| p.user);
+        pages::read(&client, &ask, user.as_deref()).await.map_err(error)
     }
 
     /// The queue another device or app left on the server, offered while nothing plays here
@@ -197,18 +198,19 @@ impl Nori {
     }
 
     /// What a cover's page wears (an album's, an artist's, the player's), from `rgba` (a `w` x `h` copy
-    /// the page decoded), dyed on the season's paper as Android's pages are: `[colors, wash]`, the colors JSON
+    /// the page decoded), dyed on the season's paper as Android's pages are: `[colors, wash, own]`, the colors JSON
     /// `{ page, surface, ink, ink2, outline, hair, accent, onAccent, heroEdge, heroMid, heroStops, melt,
     /// washSide }` (each color a `#rrggbbaa`; `heroStops` where the artwork's dissolve reaches `heroEdge`,
     /// `heroMid` and the page; `melt` the share of the player's sleeve that fades) and the wash (the cover
-    /// blurred, RGBA, `washSide` square) or null. Both null where the appearance wears no cover colors
-    /// (Midnight). The date, zone and `system_dark` as for [`Nori::theme`].
+    /// blurred and dyed, RGBA, `washSide` square, the player's ground) and `own` (the same undyed, a page's
+    /// head, as the desktop's) or null. All null where the appearance wears no cover colors (Midnight). The
+    /// date, zone and `system_dark` as for [`Nori::theme`].
     #[allow(clippy::too_many_arguments)]
     pub fn cover_look(&self, rgba: Vec<u8>, w: u32, h: u32, month: u32, day: u32, zone: String, system_dark: bool) -> js_sys::Array {
         use nori_look::dress;
         let prefs = self.app.settings.current().unwrap_or_default();
         if !prefs.theme.covers_tint_pages() {
-            return js_sys::Array::of2(&JsValue::NULL, &JsValue::NULL);
+            return js_sys::Array::of3(&JsValue::NULL, &JsValue::NULL, &JsValue::NULL);
         }
         let argb: Vec<u32> = rgba.as_chunks::<4>().0.iter().map(|&[r, g, b, a]| u32::from_be_bytes([a, r, g, b])).collect();
         let c = nori_look::cover::derive(&argb, w.max(1) as usize, h.max(1) as usize, false);
@@ -226,11 +228,13 @@ impl Nori {
             "heroEdge": hex(t[dress::HERO_EDGE]), "heroMid": hex(t[dress::HERO_MID]), "heroStops": nori_look::sleeve::HERO_STOPS,
             "melt": nori_look::cover::FADE_SHARE, "washSide": side,
         });
-        let wash = c.wash.map_or(JsValue::NULL, |w| {
-            let bytes: Vec<u8> = w.iter().flat_map(|&p| { let [a, r, g, b] = dye.wash(p).to_be_bytes(); [r, g, b, a] }).collect();
-            js_sys::Uint8ClampedArray::from(bytes.as_slice()).into()
-        });
-        js_sys::Array::of2(&JsValue::from_str(&colors.to_string()), &wash)
+        let rgba = |dyed: bool| {
+            c.wash.as_ref().map_or(JsValue::NULL, |w| {
+                let bytes: Vec<u8> = w.iter().flat_map(|&p| { let [a, r, g, b] = if dyed { dye.wash(p) } else { p }.to_be_bytes(); [r, g, b, a] }).collect();
+                js_sys::Uint8ClampedArray::from(bytes.as_slice()).into()
+            })
+        };
+        js_sys::Array::of3(&JsValue::from_str(&colors.to_string()), &rgba(true), &rgba(false))
     }
 
     /// The album grid's orders, in the order offered, by name (`browse::album_sorts`): `newest`, `artistRows`, ...
@@ -285,6 +289,23 @@ impl Nori {
             })
             .collect();
         Value::from(out).to_string()
+    }
+
+    /// Home's "For you" (`pages::mixes`), on the season's paper for the date, zone and `system_dark` as
+    /// for [`Nori::theme`]: at once with `warm` false, brought up to date with it true.
+    pub async fn mixes(&self, warm: bool, month: u32, day: u32, zone: String, system_dark: bool) -> String {
+        let prefs = self.app.settings.current().unwrap_or_default();
+        let Some(client) = self.client().filter(|_| self.rules().mixes) else { return "[]".into() };
+        let south = nori_look::theme::southern(&zone);
+        let paper = |dark| nori_core::settings::season_palette(prefs.season, prefs.theme, dark, month, day, south);
+        let papers = pages::Papers { light: paper(false), dark: paper(true), dark_theme: prefs.theme.is_dark(system_dark) };
+        pages::mixes(&client, warm, prefs.taste_model, &papers).await
+    }
+
+    /// Mix `id`'s page (`pages::mix`).
+    pub async fn mix_page(&self, id: String) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        pages::mix(&client, id).await.map_err(error)
     }
 
     /// The Library page's sections a browser has, in the order kept (`browse::library_sections_shown`), by

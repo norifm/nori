@@ -40,27 +40,33 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 2px;
-  }
-  .glyph {
-    width: 40px;
+    gap: 6px;
     height: 40px;
+  }
+  /* The player bar's, as the desktop's: the ends 34, skips 38 with 24 px glyphs, play 44 with 26. */
+  .side {
+    width: 34px;
+    height: 34px;
   }
   .side :global(.icon) {
     width: 20px;
     height: 20px;
+  }
+  .skip {
+    width: 38px;
+    height: 38px;
   }
   .skip :global(.icon) {
     width: 24px;
     height: 24px;
   }
   .main {
-    width: 46px;
-    height: 46px;
+    width: 44px;
+    height: 44px;
   }
   .main :global(.icon) {
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
   }
   .turn {
     display: grid;
@@ -86,27 +92,33 @@
       transform: rotate(360deg);
     }
   }
+  /* The full player's, as the desktop's: the ends 36 with 19 px glyphs, skips 50 with 34, play 76 with 52. */
   .big {
     gap: 20px;
+    height: auto;
   }
-  .big .glyph {
-    width: 52px;
-    height: 52px;
-  }
-  .big .side :global(.icon) {
-    width: 24px;
-    height: 24px;
-  }
-  .big .skip :global(.icon) {
+  .big .side {
     width: 36px;
     height: 36px;
   }
+  .big .side :global(.icon) {
+    width: 19px;
+    height: 19px;
+  }
+  .big .skip {
+    width: 50px;
+    height: 50px;
+  }
+  .big .skip :global(.icon) {
+    width: 34px;
+    height: 34px;
+  }
   .big .main {
-    width: 72px;
-    height: 72px;
+    width: 76px;
+    height: 76px;
   }
   .big .main :global(.icon) {
-    width: 56px;
-    height: 56px;
+    width: 52px;
+    height: 52px;
   }
 </style>

@@ -1,6 +1,7 @@
 <script lang="ts">
   // Starting: a new build waiting takes over; one tab holds the databases; the profile signed in last
-  // opens, or sign in.
+  // opens, or sign in. A page served by a Subsonic server signs in to that server only; one served
+  // elsewhere asks for the server's address.
   import { ask, boot, facts, onMovedAway, playerSoon, takeOver } from "../rpc";
   import { drawn } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
@@ -12,7 +13,9 @@
   let phase = $state<"starting" | "login" | "elsewhere" | "in">("starting");
   let failed = $state("");
   let busy = $state(false);
-  let url = $state(location.origin);
+  let url = $state("");
+  /** The page's own address is the server's. */
+  let own = $state(false);
   let user = $state("admin");
   let password = $state("admin");
 
@@ -67,7 +70,21 @@
     }
     void refreshTheme();
     if (await ask<boolean>("resume")) enter();
-    else phase = "login";
+    else {
+      own = await isServer(location.origin);
+      if (own) url = location.origin;
+      phase = "login";
+    }
+  }
+
+  /** Whether `at` answers as a Subsonic server: any answer of its API, signed in or not. */
+  async function isServer(at: string): Promise<boolean> {
+    try {
+      const answer = await fetch(`${at}/rest/ping?f=json`);
+      return "subsonic-response" in ((await answer.json()) as object);
+    } catch {
+      return false;
+    }
   }
 
   void start();
@@ -78,8 +95,8 @@
 {:else if phase === "login"}
   <form id="login" class="gate" onsubmit={signIn}>
     <h1>{W.appName}</h1>
-    <p class="sub">{W.signInLead}</p>
-    <input class="field" bind:value={url} aria-label={W.server} placeholder={W.server} autocomplete="url" />
+    <p class="sub">{own ? W.signInOwnLead : W.signInLead}</p>
+    {#if !own}<input class="field" bind:value={url} aria-label={W.server} placeholder={W.server} autocomplete="url" />{/if}
     <input class="field" bind:value={user} aria-label={W.user} placeholder={W.user} autocomplete="username" />
     <input class="field" type="password" bind:value={password} aria-label={W.password} placeholder={W.password} autocomplete="current-password" />
     <button class="pill" disabled={busy}>{busy ? W.signingIn : W.signIn}</button>

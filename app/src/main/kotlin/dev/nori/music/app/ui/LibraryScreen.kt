@@ -414,6 +414,8 @@ private fun Playlists(actions: ActionsViewModel, header: @Composable () -> Unit 
             actions.importM3u(dev.nori.music.ffi.library.m3uPlaylistName(uri.lastPathSegment), text)
         }
     }
+    var deleting by remember { mutableStateOf<dev.nori.music.ffi.model.Playlist?>(null) }
+    DeleteQuestion(deleting, { it.name }, { vm.delete(it.id) }, { deleting = null })
     NoriDialog(creating, { creating = false }) {
         AlertCard(
             title = { Text(say.newPlaylist) },
@@ -437,7 +439,7 @@ private fun Playlists(actions: ActionsViewModel, header: @Composable () -> Unit 
                     p.name, { nav.playlist(p.id, p) },
                     subtitle = remember(p.songCount, p.duration) { say.listCaption(p.songCount.toInt(), p.duration.toLong(), false) },
                     leading = { Cover(vm.cover(p.coverArt, CoverSize.ROW), 48.dp) },
-                    action = { IconButton({ vm.delete(p.id) }, Modifier.size(40.dp)) { Icon(Iconoir.Trash, say.delete, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    action = { IconButton({ deleting = p }, Modifier.size(40.dp)) { Icon(Iconoir.Trash, say.delete, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 )
             }
         }
@@ -496,6 +498,8 @@ private fun Radio(header: @Composable () -> Unit = {}, vm: RadioViewModel = view
     var adding by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
+    var deleting by remember { mutableStateOf<dev.nori.music.ffi.model.RadioStation?>(null) }
+    DeleteQuestion(deleting, { it.name }, { vm.delete(it.id) }, { deleting = null })
     NoriDialog(adding, { adding = false }) {
         AlertCard(
             title = { Text(say.newStation) },
@@ -512,7 +516,7 @@ private fun Radio(header: @Composable () -> Unit = {}, vm: RadioViewModel = view
                 NavRow(
                     s.name, { vm.play(s) },
                     leading = { Icon(Iconoir.AntennaSignal, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
-                    action = { IconButton({ vm.delete(s.id) }, Modifier.size(40.dp)) { Icon(Iconoir.Trash, say.delete, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    action = { IconButton({ deleting = s }, Modifier.size(40.dp)) { Icon(Iconoir.Trash, say.delete, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 )
             }
         }

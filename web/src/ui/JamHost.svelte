@@ -5,14 +5,14 @@
   import { ask, playerUp } from "../rpc";
   import { player } from "../state/player.svelte";
   import { remote } from "../state/remote.svelte";
+  import { ui } from "../state/ui.svelte";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
+  import PanelRow from "./PanelRow.svelte";
 
   const j = $derived(remote.jam);
   let inviting = $state(false);
   let copied = $state(false);
-  let link = $state("");
-  let name = $state("");
   let said = $state("");
   let qr = $state<{ size: number; dark: string } | null>(null);
   const guests = $derived(j?.members.filter((m) => m.role !== "Host") ?? []);
@@ -25,10 +25,6 @@
       said = W.failed(String((e as Error).message ?? e));
     }
   };
-  const join = act(async () => {
-    const r = await remote.join(link, name);
-    if (r !== "joined") said = r === "own" ? W.jamOwn : W.jamEnded;
-  });
   $effect(() => {
     const l = j?.link;
     if (inviting && l) void ask<string>("qr", l).then((q) => (qr = JSON.parse(q)));
@@ -44,7 +40,7 @@
 <div class="jam" id="jam-host">
   {#if !player.up || !j}
     <!-- The player module runs the remote: it loads in the background, or now. -->
-    <button class="pill" onclick={act(playerUp)}><Icon name="community" />{W.jamStart}</button>
+    <PanelRow icon="community" title={W.jamStart} onclick={act(playerUp)} />
   {:else if j.hosting && inviting}
     <button class="pill small quiet" onclick={() => (inviting = false)}><Icon name="arrow-left" />{W.back}</button>
     <h3>{W.jamInviteTitle}</h3>
@@ -86,12 +82,9 @@
     {#if j.start === "Unsupported"}
       <p class="sub">{W.jamUnavailable}</p>
     {:else if j.start !== "Unavailable"}
-      <button class="pill" id="jam-start" disabled={j.start === "Starting"} onclick={act(() => ask("jam_open"))}><Icon name="community" />{j.start === "Starting" ? W.jamStarting : W.jamStart}</button>
+      <PanelRow icon="community" title={j.start === "Starting" ? W.jamStarting : W.jamStart} id="jam-start" disabled={j.start === "Starting"} onclick={act(() => ask("jam_open"))} />
     {/if}
-    <h4>{W.jamJoin}</h4>
-    <input class="field" id="jam-link" bind:value={link} placeholder={W.jamPaste} aria-label={W.jamLink} />
-    <input class="field" id="jam-name" bind:value={name} placeholder={W.jamName} aria-label={W.jamName} />
-    <button class="pill quiet" id="jam-join" onclick={join}>{W.jamJoin}</button>
+    <PanelRow icon="user-plus" title={W.jamJoin} id="jam-join-open" onclick={() => (ui.joining = true)} />
   {/if}
   {#if said}<p class="sub">{said}</p>{/if}
 </div>
@@ -100,14 +93,18 @@
   .jam {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 2px;
     align-items: stretch;
-    padding: 12px 4px 16px;
+    padding: 8px 0 16px;
     border-top: var(--hairline) solid var(--hair);
     margin-top: 8px;
   }
   .jam > .pill {
     align-self: flex-start;
+  }
+  .jam > :global(.panel-row) {
+    margin: 0 -8px;
+    width: calc(100% + 16px);
   }
   .line {
     display: flex;

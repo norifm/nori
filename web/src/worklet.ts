@@ -16,11 +16,15 @@ const REPORT = 2048;
 const START = 4096;
 /** The fade a pause, a resume or a flush makes so nothing clicks, per frame (15 ms). */
 const EDGE_STEP = 1 / (0.015 * sampleRate);
+/** How far the listener's volume moves per frame toward where it was set: a whole turn in 30 ms, so a
+ * dragged slider does not click. */
+const VOLUME_STEP = 1 / (0.03 * sampleRate);
 
 type Chunk = { pcm: Float32Array; channels: number };
 /** From the engine's output: stop where it is keeping the music held, go on from there, drop the music
- * held (answered with the frames dropped), or fade to `to` over `ms` (from `from`, or where it is). */
-type Order = { do: "pause" } | { do: "resume" } | { do: "flush" } | { do: "ramp"; from: number | null; to: number; ms: number };
+ * held (answered with the frames dropped), fade to `to` over `ms` (from `from`, or where it is), or the
+ * listener's volume. */
+type Order = { do: "pause" } | { do: "resume" } | { do: "flush" } | { do: "ramp"; from: number | null; to: number; ms: number } | { do: "volume"; level: number };
 /** From the worker: music, an order, whether the player is holding (paused or stopped: running out is
  * no fault), or a request for the diagnostics. */
 type Message = Chunk | Order | { held: boolean } | { diagnose: true };
@@ -65,6 +69,9 @@ class Out extends AudioWorkletProcessor {
   private level = 1;
   private levelTo = 1;
   private levelStep = 0;
+  /** The listener's volume, and where it was set. */
+  private volume = 1;
+  private volumeTo = 1;
   private diag = noDiagnostics();
   private worker?: MessagePort;
 
@@ -100,6 +107,7 @@ class Out extends AudioWorkletProcessor {
     } else if (m.do === "pause") this.paused = true;
     else if (m.do === "resume") this.paused = false;
     else if (m.do === "flush") this.flushes++;
+    else if (m.do === "volume") this.volumeTo = m.level;
     else {
       if (m.from !== null) this.level = m.from;
       this.levelTo = m.to;
@@ -125,7 +133,8 @@ class Out extends AudioWorkletProcessor {
           this.level += this.levelStep;
           if ((this.levelStep >= 0 && this.level >= this.levelTo) || (this.levelStep < 0 && this.level <= this.levelTo)) this.level = this.levelTo;
         }
-        const gain = this.level * this.edge;
+        if (this.volume !== this.volumeTo) this.volume += Math.max(-VOLUME_STEP, Math.min(VOLUME_STEP, this.volumeTo - this.volume));
+        const gain = this.level * this.edge * this.volume;
         const t = currentTime + (made + f) / sampleRate;
         if (d.fresh) {
           d.fresh = false;

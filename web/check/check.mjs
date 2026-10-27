@@ -1,8 +1,8 @@
 // The web client in headless Chrome against the local Navidrome (tools/dev-server.sh) through
 // web/serve.py: sign-in, browsing, search, a song streamed and played, next and previous, synced lyrics,
 // a crossfade and an AutoMix transition heard as continuous samples, the seek bar
-// running and holding, a click on a lyric line, how soon a pause is heard. Exits non-zero when
-// something is off, and prints what it saw.
+// running and holding, a click on a lyric line, how soon a pause is heard, a page reopened where it
+// left. Exits non-zero when something is off, and prints what it saw.
 //
 //   npm --prefix web/check install && node web/check/check.mjs [http://localhost:8080/] [phase]
 //   SLOW_URL=http://localhost:8081/ node web/check/check.mjs ...   (also a Play during a slow load)
@@ -144,10 +144,10 @@ if (!only || only.includes("play")) {
   expect(after.seconds - before.seconds > 9 && after.dry === before.dry, "ten seconds play without running dry");
 }
 
-/** Opens pane `name` (lyrics, queue, devices, jam) beside the page, from the player bar. */
+/** Opens pane `name` (lyrics, queue, devices, jam) in the side sheet, from the player bar. */
 async function pane(name, p = page) {
-  if (!(await p.$(`#full #${name}`))) await p.click(`#bar [data-pane=${name}]`);
-  await p.waitForSelector(`#full #${name}`);
+  if (!(await p.$(`#side #${name}`))) await p.click(`#bar [data-pane=${name}]`);
+  await p.waitForSelector(`#side #${name}`);
 }
 
 if (!only || only.includes("lyrics")) {
@@ -185,7 +185,7 @@ if (!only || only.includes("lyrics")) {
   report.lyrics.tap = { line: later, litMs, heardMs: Math.round((tapHeard - tapped.t) * 1000), soughtMs: sought, placeMs: Math.round(landed - (sought + (at - tapHeard) * 1000)), enterLit: (await facts()).lyricLine === enter };
   const tap = report.lyrics.tap;
   expect(tap.litMs < 100 && tap.heardMs >= 0 && tap.heardMs < 100 && Math.abs(tap.placeMs) < 100 && tap.enterLit, "a lyric line clicked or entered lights at once and is heard from where it is sung");
-  await page.click("#full [aria-label=Close]");
+  await page.click("#bar [data-pane=lyrics]");
 }
 
 if (!only || only.includes("skip")) {
@@ -389,7 +389,6 @@ if (!only || only.includes("seekbar")) {
 if (!only || only.includes("edit")) {
   // Playlists made, filled, renamed, reordered, emptied and deleted, and hearts, through the pages' own
   // menus; what the server then holds is read back.
-  page.on("dialog", (d) => void d.accept());
   const menu = async (label) => {
     // A song's sheet, or a menu dropped from a button.
     await page.waitForSelector("dialog.menu .menu-item, .popover .popover-item");
@@ -415,7 +414,10 @@ if (!only || only.includes("edit")) {
   for (let i = 0; i < 3; i++) {
     await (await page.$$(".songs li button[aria-label='More']"))[i].click();
     await menu("Add to playlist…");
-    await menu(name);
+    // The picker: the playlist found by its name, then picked.
+    await page.waitForSelector("#playlist-picker input");
+    await page.type("#playlist-picker input", name);
+    await page.$$eval("#playlist-picker .row:not(.new)", (rows, n) => rows.find((r) => r.textContent.trim() === n).click(), name);
     await page.waitForFunction(async ([id, n]) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlist", id }))).songs.length === n, { timeout: 30000, polling: 250 }, [made.id, i + 1]);
   }
   const songsOf = async () => (await read({ kind: "playlist", id: made.id })).songs.map((s) => s.title);
@@ -453,6 +455,9 @@ if (!only || only.includes("edit")) {
   await hash(`#/playlist/${made.id}`, "playlist");
   await page.click(".hero-actions button[aria-label='More']");
   await menu("Delete playlist");
+  // Asked first, in the page's own dialog.
+  await page.waitForSelector("#confirm-yes");
+  await page.click("#confirm-yes");
   await page.waitForFunction(async (id) => !JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlists" }))).playlists.some((p) => p.id === id), { timeout: 30000, polling: 250 }, made.id);
   report.edit = { added, reordered, removed, favorited, deleted: true };
   expect(added.length === 3 && reordered[1] === added[0] && reordered[0] === added[1] && removed.length === 2 && favorited, "playlists are made, filled, renamed, reordered, emptied and deleted, and hearts show on Favorites");
@@ -474,6 +479,19 @@ if (!only || only.includes("crash")) {
   const back = await now();
   report.crash = { song: [was.song?.title, back.song?.title], ms: [was.positionMs, back.positionMs], state: back.state, said: (await facts()).restartedAt };
   expect(back.song?.id === was.song?.id && back.positionMs >= was.positionMs && back.state === "Playing", "after a crash the player plays on at the song and place it was");
+}
+
+if (!only || only.includes("reopen")) {
+  // A page closed while it plays comes back with its queue, paused at the song and place it left.
+  await playAlbum(album("Second Wind", "Alpha Waves"), 1);
+  await ask("seek", 20000);
+  await page.waitForFunction(async () => JSON.parse(await window.ask("now")).positionMs > 23000, { timeout: 30000, polling: 100 });
+  const was = await now();
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(async () => window.nori.playerReadyAt !== undefined && JSON.parse(await window.ask("now"))?.song, { timeout: 60000, polling: 250 });
+  const back = await now();
+  report.reopen = { song: [was.song?.title, back.song?.title], ms: [was.positionMs, back.positionMs], state: back.state, queue: [was.queue.length, back.queue.length] };
+  expect(back.song?.id === was.song?.id && back.state === "Idle" && Math.abs(back.positionMs - was.positionMs) < 1500 && back.queue.length === was.queue.length, "a page closed while it plays comes back paused at the song and place it left, with its queue");
 }
 
 if (!only || only.includes("tabs")) {

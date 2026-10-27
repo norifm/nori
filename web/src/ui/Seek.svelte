@@ -13,8 +13,9 @@
   import { player } from "../state/player.svelte";
   import { W } from "../words";
 
-  /** `inline`: the times at the ends of the bar, in a row. */
-  let { times = true, inline = false }: { times?: boolean; inline?: boolean } = $props();
+  /** `inline`: the times at the ends of the bar, in a row; `mixing`: words between the times while
+   * the song mixes into the next. */
+  let { times = true, inline = false, mixing = "" }: { times?: boolean; inline?: boolean; mixing?: string } = $props();
 
   let run = $state<HTMLDivElement>();
   let dragging = $state(false);
@@ -97,7 +98,7 @@
   </div>
   {#if times && inline}<span class="time">-{W.time(length - shownMs)}</span>{/if}
   {#if times && !inline}
-    <div class="times"><span>{W.time(shownMs)}</span><span>-{W.time(length - shownMs)}</span></div>
+    <div class="times"><span>{W.time(shownMs)}</span>{#if mixing}<span class="mixing">{mixing}</span>{/if}<span>-{W.time(length - shownMs)}</span></div>
   {/if}
 </div>
 
@@ -177,5 +178,10 @@
     display: flex;
     justify-content: space-between;
     padding-top: 6px;
+  }
+  .mixing {
+    font-weight: 600;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
   }
 </style>

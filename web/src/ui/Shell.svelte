@@ -14,8 +14,12 @@
   import PlayerBar from "./PlayerBar.svelte";
   import MiniPlayer from "./MiniPlayer.svelte";
   import Sheet from "./Sheet.svelte";
+  import SideSheet from "./SideSheet.svelte";
   import Popover from "./Popover.svelte";
   import Prompt from "./Prompt.svelte";
+  import Confirm from "./Confirm.svelte";
+  import JoinJam from "./JoinJam.svelte";
+  import PlaylistPicker from "./PlaylistPicker.svelte";
   import Home from "../pages/Home.svelte";
 
   type Loaded = Promise<{ default: Component<any> }>;
@@ -28,6 +32,7 @@
     artist: () => import("../pages/Artist.svelte"),
     playlists: () => import("../pages/Playlists.svelte"),
     playlist: () => import("../pages/Playlist.svelte"),
+    mix: () => import("../pages/Mix.svelte"),
     genres: () => import("../pages/Genres.svelte"),
     genre: () => import("../pages/Genre.svelte"),
     songs: () => import("../pages/Songs.svelte"),
@@ -68,6 +73,7 @@
   </main>
   {#if ui.wide}
     <TopPill />
+    {#if ui.side && !ui.full}<SideSheet pane={ui.side} />{/if}
     <PlayerBar />
   {:else}
     <div class="dock chrome" class:playing>
@@ -80,6 +86,9 @@
 {#if ui.lyricsInfo}{#await lyricsInfo() then m}<m.default />{/await}{/if}
 {#if ui.open}{#if ui.open.head && !ui.wide}<Sheet />{:else}<Popover />{/if}{/if}
 {#if ui.prompt}<Prompt />{/if}
+{#if ui.confirming}<Confirm />{/if}
+{#if ui.joining}<JoinJam close={() => (ui.joining = false)} />{/if}
+{#if ui.picking}<PlaylistPicker />{/if}
 {#if ui.toast}<div class="toast" role="status">{ui.toast}</div>{/if}
 
 <style>

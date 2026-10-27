@@ -1,6 +1,6 @@
 // Screenshots of the web client at a desktop's and a phone's width, in Day, Night and Midnight and two
 // seasons: Home, Library, an album, an artist, search, the player bar, the full player with lyrics and
-// with the queue, the devices and a jam, Settings and Appearance. The theme is put back after. Against a server with the relay (for the jam):
+// with the queue, the side sheet, the devices and a jam, Settings and Appearance. The theme is put back after. Against a server with the relay (for the jam):
 //
 //   python3 web/serve.py --port 8081 --server http://localhost:5274
 //   node web/check/shots.mjs http://localhost:8081/ <directory>
@@ -50,7 +50,7 @@ await (await page.$$(".songs li .play"))[0].click();
 await page.waitForFunction(async () => ((await window.nori.heard?.())?.seconds ?? 0) > 1, { timeout: 60000 });
 await page.click("#bar [data-pane=lyrics]");
 await page.waitForFunction(() => window.nori.lyrics, { timeout: 30000 });
-await page.click("#full [aria-label=Close]");
+await page.click("#bar [data-pane=lyrics]");
 await ask("jam_open").catch(() => {});
 await wait(1500);
 
@@ -93,18 +93,18 @@ for (const [theme, season] of [["LIGHT", "AUTUMN"], ["DARK", "AUTUMN"], ["LIGHT"
     await go("#/settings/Look", "settings");
     await shot(name("appearance"));
     if (size === "desktop") {
-      // The player bar with the lyrics beside the page, then the queue, then the devices and the jam.
+      // The side sheet with the lyrics beside the page, then the queue, then the devices and the jam.
       await go(`#/album/${sung.id}`, "album");
       await page.click("#bar [data-pane=lyrics]");
       await wait(800);
       await shot(name("player-bar-lyrics"));
-      await page.click("#full [data-pane=queue]");
+      await page.click("#side [data-pane=queue]");
       await wait(400);
       await shot(name("player-bar-queue"));
-      await page.click("#full [data-pane=devices]");
+      await page.click("#side [data-pane=devices]");
       await wait(400);
       await shot(name("devices"));
-      await page.click("#full [aria-label=Close]");
+      await page.click("#side [data-pane=devices]");
       await page.click("#bar .art");
     } else {
       await shot(name("mini-player"));
@@ -127,7 +127,7 @@ for (const [theme, season] of [["LIGHT", "AUTUMN"], ["DARK", "AUTUMN"], ["LIGHT"
       await wait(400);
       await shot(name("devices"));
     }
-    await page.click("#full [aria-label=Close]");
+    await page.click("#full .close");
   }
 }
 await ask("jam_close").catch(() => {});

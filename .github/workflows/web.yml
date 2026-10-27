@@ -1,0 +1,49 @@
+name: Web image
+on:
+  push:
+    branches: [master]
+    paths:
+      - web/**
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - app/src/main/res/font/**
+      - .github/workflows/web.yml
+  workflow_dispatch:
+concurrency:
+  group: web-image
+  cancel-in-progress: true
+permissions:
+  contents: read
+  packages: write
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/nori-web
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      RUSTC_WRAPPER: ''
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: web
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - uses: ./.github/actions/web-toolchain
+      - run: web/build.sh
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Files only, so one build serves every platform.
+      - uses: docker/build-push-action@v6
+        with:
+          context: web
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
