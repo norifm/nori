@@ -556,6 +556,9 @@ struct Peer {
     received: i64,
     since: Option<u64>,
     polling: bool,
+    /// mDNS said its door went, as it also says of a device still there: it stays while followed, and
+    /// goes when its poller hears nothing.
+    lost: bool,
 }
 
 struct Hosted {
@@ -1029,6 +1032,12 @@ impl Inner {
         }
         let m = self.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members).find(|m| m.id == id)?;
         m.state.as_ref().map(|s| (s, self.received.get(id).copied()))
+    }
+
+    /// Lets go of the doors mDNS said went that nothing follows.
+    fn forget_lost(&mut self) {
+        let gone: Vec<String> = self.peers.iter().filter(|p| p.lost && !self.follows_peer(&p.member.id)).map(|p| p.service.clone()).collect();
+        self.peers.retain(|p| !gone.contains(&p.service));
     }
 
     /// Whether device `id` is still there to be followed, as [`Remote::devices`] lists it: heard from nearby,
@@ -1692,6 +1701,7 @@ impl Remote {
             // Seen again, maybe at another of its addresses: its poller goes on, and tries that one too.
             if let Some(p) = i.peers.iter_mut().find(|p| p.service == service && p.member.id == id) {
                 p.library_marks = get("marks") == "1";
+                p.lost = false;
                 if !p.bases.contains(&base) {
                     p.bases.push(base);
                 }
@@ -1699,14 +1709,18 @@ impl Remote {
             }
             i.peers.retain(|p| p.service != service && p.member.id != id);
             let member = Member { id, name: get("name"), kind, state: None };
-            i.peers.push(Peer { library_marks: get("marks") == "1", service, bases: vec![base], failed: 0, member, received: self.now(), since: None, polling: false });
+            i.peers.push(Peer { library_marks: get("marks") == "1", service, bases: vec![base], failed: 0, member, received: self.now(), since: None, polling: false, lost: false });
         }
         self.keep_polling();
     }
 
-    /// A door went away.
+    /// mDNS says a door went away.
     pub fn lan_lost(self: Arc<Self>, service: String) {
-        self.inner.lock().peers.retain(|p| p.service != service);
+        {
+            let mut i = self.inner.lock();
+            i.peers.iter_mut().filter(|p| p.service == service).for_each(|p| p.lost = true);
+            i.forget_lost();
+        }
         self.follow_active();
         self.shown.changed();
     }
@@ -2748,6 +2762,7 @@ impl Remote {
                 i.end_relay_poll();
                 self.cancel.notify();
             }
+            i.forget_lost();
             let generation = i.lan_generation;
             let follow: Vec<bool> = i.peers.iter().map(|p| !p.polling && i.follows_peer(&p.member.id)).collect();
             for (p, _) in i.peers.iter_mut().zip(follow).filter(|(_, f)| *f) {
@@ -2901,6 +2916,13 @@ impl Remote {
         self.shown.changed();
     }
 
+    /// A door answers no more.
+    fn lan_gone(self: &Arc<Self>, service: &str) {
+        self.inner.lock().peers.retain(|p| p.service != service);
+        self.follow_active();
+        self.shown.changed();
+    }
+
     async fn poll_peer(self: Arc<Self>, service: String, generation: u64) {
         loop {
             let (base, since) = {
@@ -2934,7 +2956,7 @@ impl Remote {
                     p.failed >= p.bases.len()
                 };
                 if gone {
-                    self.lan_lost(service);
+                    self.lan_gone(&service);
                     return;
                 }
                 continue;
