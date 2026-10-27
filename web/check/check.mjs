@@ -1,5 +1,6 @@
 // The web client in headless Chrome against the local Navidrome (tools/dev-server.sh) through
-// web/serve.py: sign-in, browsing, search, a song streamed and played, next and previous, synced lyrics,
+// web/serve.py: sign-in, browsing, search, a song streamed and played, next and previous, a song taken out
+// of the queue, synced lyrics,
 // a crossfade and an AutoMix transition heard as continuous samples, the seek bar
 // running and holding, a click on a lyric line, how soon a pause is heard, a page reopened where it
 // left. Exits non-zero when something is off, and prints what it saw.
@@ -199,6 +200,30 @@ if (!only || only.includes("skip")) {
   const c = await now();
   report.skip = { start: a.index, afterNext: b.index, afterPrevious: c.index };
   expect(a.index === 0 && b.index === 1 && c.index === 0, "next and previous move through the queue");
+}
+
+if (!only || only.includes("queue")) {
+  // A song still to come taken out by its row's button (the song heard has none); a row's menu is the
+  // song's own.
+  await playAlbum(album("Second Wind", "Alpha Waves"));
+  await pane("queue");
+  await page.waitForSelector("#queue .row.current");
+  const before = (await now()).queue;
+  const heardHasNone = !(await page.$("#queue .row.current button[aria-label='Remove']"));
+  const later = "#queue .row:not(.current):not(.past)";
+  await page.click(later, { button: "right" });
+  await page.waitForSelector("dialog.menu .menu-item, .popover .popover-item");
+  const lines = await page.$$eval("dialog.menu .menu-item, .popover .popover-item", (b) => b.map((x) => x.textContent));
+  await page.keyboard.press("Escape");
+  const title = await page.$eval(`${later} .title`, (e) => e.textContent);
+  await page.hover(later);
+  await page.click(`${later} button[aria-label='Remove']`);
+  await page.waitForFunction(async (n) => JSON.parse(await window.ask("now")).queue.length === n, { timeout: 10000, polling: 100 }, before.length - 1).catch(() => {});
+  const after = (await now()).queue;
+  report.queue = { heardHasNone, lines, title, before: before.length, after: after.length };
+  expect(heardHasNone, "the song heard has no Remove button");
+  expect(lines.length > 0 && !lines.some((l) => ["Remove", "Move up", "Move down"].includes(l)), "a queue row's menu is the song's own");
+  expect(after.length === before.length - 1 && after.filter((s) => s.title === title).length === before.filter((s) => s.title === title).length - 1, "a row's Remove button takes its song out");
 }
 
 if (!only || only.includes("instant")) {

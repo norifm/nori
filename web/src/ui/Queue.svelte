@@ -1,6 +1,6 @@
 <script lang="ts">
   // The queue in play order: what played (dimmed), the song heard, what plays next. A click plays a
-  // song; its menu moves or removes it, and a song still to come is dragged anywhere on its row to
+  // song, its button beside takes it out, and a song still to come is dragged anywhere on its row to
   // another place (only while play order is list order). As the desktop's, rows glide to where a move or
   // the next song puts them, and come and go folding.
   import { player } from "../state/player.svelte";
@@ -82,11 +82,6 @@
     void player.control("jump", q.index);
   };
   const move = (from: number, to: number) => player.control("move_song", from, to);
-  const extra = (q: QueueSong, at: number) => [
-    ...(n?.reorderable && at > 0 ? [{ label: W.moveUp, icon: "nav-arrow-up", run: () => move(q.index, rows[at - 1].index) }] : []),
-    ...(n?.reorderable && at < rows.length - 1 ? [{ label: W.moveDown, icon: "nav-arrow-down", run: () => move(q.index, rows[at + 1].index) }] : []),
-    ...(at !== current ? [{ label: W.remove, icon: "xmark", run: () => player.control("remove", q.index) }] : []),
-  ];
 </script>
 
 <JamQueue />
@@ -99,7 +94,7 @@
       class={q ? "row" : "head"}
       animate:moved
       transition:slide={{ duration: still() ? 0 : 180 }}
-      oncontextmenu={(e) => q?.id && (e.preventDefault(), void songMenu(q as Song, pointer(e), { play: () => jump(q), extra: extra(q, at) }))}
+      oncontextmenu={(e) => q?.id && (e.preventDefault(), void songMenu(q as Song, pointer(e), { play: () => jump(q) }))}
       class:current={q && at === current}
       class:past={q && at < current}
       data-row={q && n?.reorderable && at > current ? "" : undefined}
@@ -115,7 +110,10 @@
           {#if at === current}<Icon name={player.playing ? "play-solid" : "pause-solid"} />{/if}
         </button>
         {#if q.id}
-          <button class="more" data-still aria-label={W.more} title={W.more} onclick={(e) => void songMenu(q as Song, beside(e), { play: () => jump(q), extra: extra(q, at) })}><Icon name="more-horiz" /></button>
+          <button class="tool" data-still aria-label={W.more} title={W.more} onclick={(e) => void songMenu(q as Song, beside(e), { play: () => jump(q) })}><Icon name="more-horiz" /></button>
+        {/if}
+        {#if at !== current}
+          <button class="tool" data-still aria-label={W.remove} title={W.remove} onclick={() => void player.control("remove", q.index)}><Icon name="xmark" /></button>
         {/if}
       {:else}{item.head}{/if}
     </li>
@@ -202,7 +200,7 @@
   .title {
     font-size: 15px;
   }
-  .more {
+  .tool {
     display: grid;
     place-items: center;
     width: 36px;
@@ -211,16 +209,16 @@
     color: var(--ink2);
     opacity: 0;
   }
-  .more :global(.icon) {
+  .tool :global(.icon) {
     width: 20px;
     height: 20px;
   }
-  .row:hover .more,
-  .more:focus-visible {
+  .row:hover .tool,
+  .tool:focus-visible {
     opacity: 1;
   }
   @media (hover: none) {
-    .more {
+    .tool {
       opacity: 1;
     }
   }
