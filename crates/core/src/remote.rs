@@ -1035,9 +1035,10 @@ impl Peer {
 }
 
 impl Inner {
-    /// Whether `s`, device `id`'s state, was said before it handed its playback here.
-    fn before_handing_here(&self, id: &str, s: &DeviceState) -> bool {
-        self.handed_by.as_ref().is_some_and(|(by, at)| by == id && (s.instance, s.seq) <= *at)
+    /// Whether `s`, device `id`'s state, was said before it handed its playback to `me`, or since without
+    /// playing again.
+    fn before_handing_here(&self, me: &str, id: &str, s: &DeviceState) -> bool {
+        s.handed_to.as_deref() == Some(me) || self.handed_by.as_ref().is_some_and(|(by, at)| by == id && (s.instance, s.seq) <= *at)
     }
 
     fn browsing(&self) -> bool {
@@ -3253,7 +3254,7 @@ impl Remote {
             let mut i = self.inner.lock();
             let to = if i.discovering && i.mirror.is_none() && i.taking.is_none() && !i.playing.playing && !i.jams() {
                 i.peers.iter().map(|p| &p.member).chain(i.rooms.iter().filter(|r| !r.jam && !i.relay_down).flat_map(|r| &r.members))
-                    .find(|m| i.state_of(&m.id).is_some_and(|(s, _)| s.playing && s.index.is_some() && !i.before_handing_here(&m.id, s)))
+                    .find(|m| i.state_of(&m.id).is_some_and(|(s, _)| s.playing && s.index.is_some() && !i.before_handing_here(&self.id, &m.id, s)))
                     .map(|m| m.id.clone())
             } else {
                 None

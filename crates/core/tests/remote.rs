@@ -3123,8 +3123,10 @@ fn a_device_handed_the_queue_does_not_follow_the_one_that_handed_it() {
     phone.remote.clone().pick(Some(desk_id.clone()));
     assert!(matches!(desk.told(), Op::Replace { play: true, .. }));
     assert_eq!(phone.told(), Op::Pause);
-    // The desk's song is still loading, and the phone's pause has not been heard yet, when the desk's
-    // window comes into sight again.
+    // The desk's song is still loading, and the phone has said a state since the hand-off but not its
+    // pause, when the desk's window comes into sight again.
+    phone.remote.clone().played(Playing { playing: true, position_ms: 5_000, volume: Some(41), ..Default::default() });
+    desk.until("the desk hears the phone after the hand-off", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.state.as_ref().is_some_and(|s| s.volume == Some(41))));
     desk.remote.clone().discover_active(true);
     relay.sim.pass(Duration::from_secs(5));
     assert!(desk.remote.active().is_none(), "the desk plays the queue handed to it");
