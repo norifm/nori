@@ -3484,7 +3484,8 @@ impl Remote {
         self.shown.changed();
     }
 
-    /// Takes the controls back here while the previous device answers with its queue.
+    /// Takes the playback back here: the previous device goes on being shown until it answers with its
+    /// queue, for [`FORESEEN_US`] at most, so one that is gone holds the controls no longer than that.
     fn pull(self: &Arc<Self>, from: String) {
         let id = self.next_id();
         let rev = self.client.core.session.playlist(|p| p.rev());
@@ -3492,12 +3493,28 @@ impl Remote {
             let mut i = self.inner.lock();
             let link = i.peers.iter().find(|p| p.member.id == from).map_or(Link::Relay, |p| Link::Lan(p.base()));
             i.taking = Some(PendingTransfer { from: from.clone(), id, rev });
-            i.mirror = None;
             link
         };
-        self.retime();
         self.out(Out::send(link, Outgoing { to: Some(from), body: Some(Body::Command { id, op: Box::new(Op::Transfer { to: self.id.clone(), listen_handoff: true }) }), ..Default::default() }));
         self.keep_polling();
+        let me = self.clone();
+        self.spawn(async move {
+            me.tasks.sleep(Duration::from_micros(FORESEEN_US as u64)).await;
+            me.taken_late(id);
+        });
+    }
+
+    /// The queue asked for by command `id` has not come: the controls are here while it is awaited.
+    fn taken_late(self: &Arc<Self>, id: u64) {
+        let released = {
+            let mut i = self.inner.lock();
+            let from = i.taking.as_ref().filter(|t| t.id == id).map(|t| t.from.clone());
+            from.is_some() && i.mirror.take_if(|m| Some(&m.id) == from.as_ref()).is_some()
+        };
+        if released {
+            self.retime();
+            self.keep_polling();
+        }
     }
 
     /// Hands the queue, its play order, shuffle, repeat and the position to device `to`, then pauses here
