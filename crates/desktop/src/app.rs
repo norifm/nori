@@ -743,22 +743,9 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         }
         ui.set_traffic_lights(cfg!(target_os = "macos"));
         menu_actions(ui, &a.compositor);
-        // Now Playing's lyrics: the active line sharp, the rest blurred by the compositor.
+        // Now Playing's lyrics: the line they are scrolled to sharp, the rest blurred by the compositor.
         let weak = ui.as_weak();
-        a.compositor.set_focus_source(move || {
-            let ui = weak.upgrade()?;
-            // Only while a line is lit: none before the first, and none once the last is over.
-            let lit = usize::try_from(ui.get_lyrics_active()).is_ok_and(|i| i < ui.get_lyrics_lines().row_count());
-            if !ui.get_full_player() || ui.get_full_panel() != 2 || !lit || !ui.get_lyrics_synced() || ui.get_full_lyrics_browsed() {
-                return None;
-            }
-            let size = ui.window().size().to_logical(ui.window().scale_factor());
-            let x = size.width / 2.0;
-            // Clear of the volume pill above and the lyrics/queue pill below.
-            // The band where the line sung is now, moving with it as the lyrics scroll; a step a line of 44 px
-            // text and its 36 px gap.
-            Some(Focus { region: [x, 48.0, size.width - x - 100.0, size.height - 48.0 - 56.0], band_top: ui.get_full_lyric_top() - 8.0, band_h: ui.get_full_lyric_h() + 16.0, pitch: 90.0 })
-        });
+        a.compositor.set_focus_source(move || lyrics_focus(&weak.upgrade()?));
         a.settings_shown();
         let wake = a.me.clone();
         a.compositor.on_wake(move || wake.with(|a| a.repaint()));
@@ -769,6 +756,20 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         }
     });
     app
+}
+
+/// Where Now Playing's synced lyrics are sharp: the band of the line they are scrolled to, the next one before the
+/// first is sung and the last once all are. None while they are not shown or scrolled by hand.
+fn lyrics_focus(ui: &AppWindow) -> Option<Focus> {
+    if !ui.get_full_player() || ui.get_full_panel() != 2 || ui.get_lyrics_lines().row_count() == 0 || !ui.get_lyrics_synced() || ui.get_full_lyrics_browsed() {
+        return None;
+    }
+    let size = ui.window().size().to_logical(ui.window().scale_factor());
+    let x = size.width / 2.0;
+    // Clear of the volume pill above and the lyrics/queue pill below.
+    // The band where the line sung is now, moving with it as the lyrics scroll; a step a line of 44 px
+    // text and its 36 px gap.
+    Some(Focus { region: [x, 48.0, size.width - x - 100.0, size.height - 48.0 - 56.0], band_top: ui.get_full_lyric_top() - 8.0, band_h: ui.get_full_lyric_h() + 16.0, pitch: 90.0 })
 }
 
 /// Menu bar items do what the window's buttons and keys do.
@@ -3947,6 +3948,35 @@ mod tests {
         keep_shown_mosaics(&mut art, &[tile("a"), tile("c")]);
         assert!(art.mosaics.contains_key(&covers("a")));
         assert!(!art.mosaics.contains_key(&covers("b")));
+    }
+
+    #[test]
+    fn lyrics_are_sharp_only_at_the_line_aimed_at_from_the_intro_on() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_full_player(true);
+        ui.set_full_panel(2);
+        ui.set_lyrics_synced(true);
+        ui.set_lyrics_lines(ModelRc::new(VecModel::from((0..6).map(|i| crate::SungLine { text: format!("line {i}").into(), ..Default::default() }).collect::<Vec<_>>())));
+        ui.show().unwrap();
+        let band = |active: i32| {
+            ui.set_lyrics_active(active);
+            for _ in 0..2 {
+                ui.window().take_snapshot().unwrap();
+                i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+                slint::platform::update_timers_and_animations();
+            }
+            lyrics_focus(&ui).map(|f| (f.band_top, f.band_h))
+        };
+        let sung = |active| band(active).unwrap_or_else(|| panic!("line {active} sung: the others are blurred"));
+        let intro = band(-1).expect("before the first line, the lines are blurred");
+        let first = sung(0);
+        assert_eq!(intro, first, "through the intro the first line, where it will be sung, is the sharp one");
+        assert_eq!(sung(2), first, "each line sung is scrolled to the same place");
+        assert_eq!(band(6), Some(first), "once all are over, the last line is aimed at and the rest stay blurred");
     }
 
     #[test]
