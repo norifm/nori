@@ -2,7 +2,8 @@
 # A fresh accessibility tree without waiting for an animating player to go idle.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"
+# The SDK Gradle builds with (local.properties), unless the environment names one.
+sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$(sed -n 's/^sdk\.dir=//p' "$here/../local.properties")}}"
 out="$here/../build/ui-dump"
 if [ ! -f "$out/classes.dex" ] || [ "$here/UiDump.java" -nt "$out/classes.dex" ]; then
   if [ "${1:-}" != --build ]; then
