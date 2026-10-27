@@ -811,14 +811,14 @@ PY
     check "reopening follows the peer without the device picker" wait_for playingOn "$name" 15 || return 1
     check "the remote media session returns after reopening" wait_until 10 remote_session
     check "reopening does not play the saved queue on this phone" silent 10
-    # The cells lit in the terminal's volume bar, after its speaker.
-    peer_volume() { screen | perl -CS -Mutf8 -ne 'if (/[\x{1F507}-\x{1F50A}] (━*)/) { $n = length $1 } END { print $n // "" }'; }
+    # The cells lit in the terminal's volume bar, after its word.
+    peer_volume() { screen | perl -CS -Mutf8 -ne 'if (/Volume (━*)/) { $n = length $1 } END { print $n // "" }'; }
     before=$(peer_volume)
     check "the peer shows its volume" test -n "$before"
     adb shell dumpsys media_router > "$here/../build/e2e/$ANDROID_SERIAL/native-routes.txt"
     adb shell input keyevent KEYCODE_VOLUME_UP; adb shell input keyevent KEYCODE_VOLUME_UP
     louder() { [ "$(peer_volume)" -gt "$before" ]; }
-    check "the volume keys turn the peer up ($before of 12)" wait_until 10 louder
+    check "the volume keys turn the peer up (from $before)" wait_until 10 louder
     for track in 02 03 04; do
       "$app" do next >/dev/null
       check "the remote queue reaches song $track" wait_for title "Long Track $track" 10
@@ -890,8 +890,8 @@ jam_checks() {
     check "the relay serves its invite page" bash -c "curl -fsS '$jam_server/nori/jam' | grep -q 'Open in nori'" || return 1
     app_jam=$(echo "$jam_server" | sed 's#localhost#10.0.2.2#')
     start_jam() {
-      tapnode text "Start a Jam" || return 1
-      wait_until 10 on_screen 'text="Your Jam"'
+      tapnode text "Start a jam" || return 1
+      wait_until 10 on_screen 'text="Your jam"'
     }
     lib_song=$(song_id "Far Song Two"); first=$(song_id "Long Track 04")
     # A provider's song for Dee to ask for: only its id and words travel, nothing streams it.
@@ -900,22 +900,22 @@ jam_checks() {
     "$app" set remoteControl true >/dev/null
     "$app" play "song:$first" >/dev/null; sounds 20
     "$app" open devices >/dev/null
-    check "the devices sheet offers to start a jam" wait_until 10 on_screen 'text="Start a Jam"' || return 1
+    check "the devices sheet offers to start a jam" wait_until 10 on_screen 'text="Start a jam"' || return 1
     check "starting the jam expands the existing devices sheet" start_jam || return 1
-    check "the devices sheet shows the hosted jam" wait_until 10 on_screen 'text="Your Jam"' || return 1
+    check "the devices sheet shows the hosted jam" wait_until 10 on_screen 'text="Your jam"' || return 1
     check "nobody listens yet" on_screen 'text="Jam · no one yet"'
     check "the devices sheet offers the invite" wait_until 10 on_screen 'text="Invite"'
     tapnode text Invite
     check "Invite shows the code and the link" wait_until 10 on_screen 'text="Copy link"'
     ui > "$here/../build/e2e/$ANDROID_SERIAL/jam-invite.xml"
     link=$(cat "$here/../build/e2e/$ANDROID_SERIAL/jam-invite.xml" | grep -oE 'text="https?://[^"]*/nori/jam#[^"]*"' | head -1 | cut -d'"' -f2 | sed 's/&amp;/\&/g')
-    tapnode text Back
-    check "Invite returns to the existing room drawer" wait_until 10 on_screen 'text="Your Jam"'
+    tapnode content-desc Back
+    check "Invite returns to the existing room drawer" wait_until 10 on_screen 'text="Your jam"'
     check "the invite content is replaced" off_screen 'text="Copy link"'
     tapnode text Invite
     check "Invite opens again in the same drawer" wait_until 10 on_screen 'text="Copy link"'
     adb shell input keyevent KEYCODE_BACK
-    check "system back returns to the room drawer" wait_until 10 on_screen 'text="Your Jam"'
+    check "system back returns to the room drawer" wait_until 10 on_screen 'text="Your jam"'
     adb shell input keyevent KEYCODE_BACK
     if on_screen 'content-desc="Close sheet"'; then tapnode content-desc "Close sheet"; fi
     # Its own invite opened here is refused: this phone stays the host, on its own profile.
@@ -927,8 +927,8 @@ jam_checks() {
     tapnode content-desc Settings
     check "room settings replace the drawer" wait_until 10 on_screen 'text="Allow remote songs"'
     tapnode text "Allow remote songs"
-    tapnode text Back
-    check "settings return to the existing room drawer" wait_until 10 on_screen 'text="Your Jam"'
+    tapnode content-desc Back
+    check "settings return to the existing room drawer" wait_until 10 on_screen 'text="Your jam"'
     adb shell input keyevent KEYCODE_BACK
     "$app" open queue >/dev/null
     guests="$here/../build/e2e/$ANDROID_SERIAL/jam"; mkdir -p "$guests"
@@ -963,9 +963,9 @@ jam_checks() {
     check "on its own profile, in no jam" bash -c "'$app' remote view | grep -q 'no jam'"
     check "no jam under the song" off_screen 'text="Jam · '
     "$app" open devices >/dev/null
-    check "the devices sheet offers a jam again" wait_until 10 on_screen 'text="Start a Jam"'
+    check "the devices sheet offers a jam again" wait_until 10 on_screen 'text="Start a jam"'
     check "restarting the jam expands the existing devices sheet" start_jam || return 1
-    check "and it starts at once" wait_until 5 on_screen 'text="Your Jam"'
+    check "and it starts at once" wait_until 5 on_screen 'text="Your jam"'
     tapnode content-desc End
     adb shell input keyevent KEYCODE_BACK
     check "and ends" wait_until 10 bash -c "'$app' remote view | grep -q 'no jam'"
@@ -986,7 +986,7 @@ print(json.dumps({k:s.get(k) for k in ['id','title','artist','album','albumId','
     check "the guest invite reaches nori" open_invite "$link" || return 1
     check "the invite opens the player on the host's jam" wait_until 20 on_screen 'text="Mac Host’s Jam"' || return 1
     check "playing what the host plays" wait_for title "Long Track 04" 15
-    check "said under the song" wait_until 10 on_screen 'text="Jam · Mac Host · Not playing here"'
+    check "the jam button says so" wait_until 10 on_screen 'content-desc="Jam · Mac Host · Not playing here"'
     no_controls() { off_screen 'content-desc="Next"' && off_screen 'content-desc="Shuffle"' && off_screen 'content-desc="Remove"'; }
     check "with no controls of its own" no_controls
     check "watching is clearly marked" wait_until 10 on_screen 'text="Watching the Jam · Tap Listen here to hear the music"'
