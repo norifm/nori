@@ -44,12 +44,22 @@ struct State {
     loading: u32,
     loads: u64,
     loads_gave_up: u64,
+    /// Servers hanging while a condition holds ([`Virtual::hang_while`]), and those let go that have yet to
+    /// finish ([`Hang`]): the clock waits for them.
+    hangs: Vec<(u64, Arc<dyn Fn() -> bool + Send + Sync>)>,
+    next_hang: u64,
+    leaving: u32,
 }
 
 impl State {
     /// A loader takes bytes in, not counting one in a server waiting for this clock, nor those given up on.
     fn loaders_busy(&self) -> bool {
         self.loading > self.time_waiters && self.loads_gave_up != self.loads
+    }
+
+    /// A hanging server was let go and has not finished.
+    fn hang_ended(&self) -> bool {
+        self.leaving > 0 || self.hangs.iter().any(|(_, on)| !on())
     }
 
     /// Real time to wait for bytes or loaders that do not move on: a loader taking bytes in works in real
@@ -158,7 +168,7 @@ impl Virtual {
         let mut s = self.0.s.lock();
         let mut still_since: Option<((u64, u64), Instant)> = None;
         loop {
-            if s.parked && !s.woken {
+            if s.parked && !s.woken && !s.hang_ended() {
                 if !(s.bytes && s.gave_up != s.sleeps) && !s.loaders_busy() {
                     return;
                 }
@@ -233,11 +243,15 @@ impl Virtual {
         }
     }
 
-    /// Blocks a server thread while `on` holds (a hung request), at most `limit`; returns whether it
-    /// still held. Meanwhile byte waits are [`TIME_WAIT`].
-    pub fn hang_while(&self, mut on: impl FnMut() -> bool, limit: Duration) -> bool {
+    /// Blocks a server thread while `on` holds (a hung request), at most `limit`. Meanwhile byte waits are
+    /// [`TIME_WAIT`]; once `on` no longer holds, the clock waits until the [`Hang`] is dropped.
+    pub fn hang_while(&self, on: impl Fn() -> bool + Send + Sync + 'static, limit: Duration) -> Hang {
         let started = Instant::now();
+        let on: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(on);
         let mut s = self.0.s.lock();
+        let id = s.next_hang;
+        s.next_hang += 1;
+        s.hangs.push((id, on.clone()));
         s.time_waiters += 1;
         let held = loop {
             if !on() {
@@ -248,8 +262,11 @@ impl Virtual {
             }
             self.0.cv.wait_for(&mut s, Duration::from_millis(1));
         };
+        s.hangs.retain(|(h, _)| *h != id);
         s.time_waiters -= 1;
-        held
+        s.leaving += !held as u32;
+        self.0.cv.notify_all();
+        Hang { clock: self.clone(), held }
     }
 
     /// Sleeps so far.
@@ -303,6 +320,28 @@ impl Delivery {
 impl Drop for Delivery {
     fn drop(&mut self) {
         self.clock.handed(&mut self.handing);
+    }
+}
+
+/// A server's hang ([`Virtual::hang_while`]); one let go holds the clock until dropped.
+pub struct Hang {
+    clock: Virtual,
+    held: bool,
+}
+
+impl Hang {
+    /// It ran out of real time while its condition still held.
+    pub fn held(&self) -> bool {
+        self.held
+    }
+}
+
+impl Drop for Hang {
+    fn drop(&mut self) {
+        if !self.held {
+            self.clock.0.s.lock().leaving -= 1;
+            self.clock.0.cv.notify_all();
+        }
     }
 }
 

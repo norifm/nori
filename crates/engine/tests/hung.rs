@@ -45,8 +45,9 @@ struct Server {
     hang: Hang,
     /// Requests holding a slot.
     running: Mutex<usize>,
-    /// Requests that hung, and those cancelled.
+    /// Requests that hung, those the player called off, and those of them its server let go.
     hung: AtomicU64,
+    cancelled: AtomicU64,
     called_off: AtomicU64,
 }
 
@@ -63,7 +64,7 @@ impl Server {
     fn slot(self: &Arc<Self>, call: &Call) -> bool {
         let me = self.clone();
         let c = call.clone();
-        self.clock.hang_while(move || *me.running.lock() >= SLOTS && !c.off(), FOREVER);
+        let _hang = self.clock.hang_while(move || *me.running.lock() >= SLOTS && !c.off(), FOREVER);
         let mut running = self.running.lock();
         if call.off() || *running >= SLOTS {
             return false;
@@ -72,14 +73,15 @@ impl Server {
         true
     }
 
-    /// Hangs until the request is cancelled.
-    fn hang(&self, call: &Call) {
+    /// Hangs until the request is cancelled; the clock goes on once the hang is dropped.
+    fn hang(&self, call: &Call) -> common::Hang {
         self.hung.fetch_add(1, Ordering::Relaxed);
         let c = call.clone();
-        self.clock.hang_while(move || !c.off(), FOREVER);
+        let hang = self.clock.hang_while(move || !c.off(), FOREVER);
         if call.off() {
             self.called_off.fetch_add(1, Ordering::Relaxed);
         }
+        hang
     }
 }
 
@@ -121,7 +123,7 @@ impl Read for Answer {
                 Ok(n)
             }
             None => {
-                self._slot.0.hang(&self.call);
+                let _hang = self._slot.0.hang(&self.call);
                 Err(std::io::Error::other("no bytes ever came"))
             }
         }
@@ -139,14 +141,19 @@ impl ByteSource for Net {
     fn open_cancellable(&self, url: &str, _key: Option<&str>, from: u64, cancel: &Cancel) -> Result<Body, OpenError> {
         let s = &self.0;
         let call = Call::default();
-        let c = call.clone();
-        cancel.on_cancel(move || c.0.store(true, Ordering::Release));
+        let (c, server) = (call.clone(), s.clone());
+        cancel.on_cancel(move || {
+            c.0.store(true, Ordering::Release);
+            server.cancelled.fetch_add(1, Ordering::Relaxed);
+        });
         if !s.slot(&call) {
             return Err("called off before it was made".into());
         }
         let slot = Slot(s.clone());
         if Server::hangs(url) && s.hang == Hang::Headers {
-            s.hang(&call);
+            let hang = s.hang(&call);
+            drop(slot);
+            drop(hang);
             return Err("no answer ever came".into());
         }
         let file = s.files.iter().find(|(u, _)| u == url).map(|(_, f)| f.clone()).ok_or("404")?;
@@ -194,7 +201,7 @@ fn rig(hang: Hang, hung: usize, fine: usize) -> Rig {
     let album: Vec<String> = (0..hung).map(|k| format!("ext-{k}")).collect();
     let playlist: Vec<String> = (0..fine).map(|k| format!("n{k}")).collect();
     let files = album.iter().chain(&playlist).enumerate().map(|(k, id)| (id.clone(), wav(220.0 + 40.0 * k as f64))).collect();
-    let server = Arc::new(Server { clock: clock.clone(), files, hang, running: Mutex::new(0), hung: AtomicU64::new(0), called_off: AtomicU64::new(0) });
+    let server = Arc::new(Server { clock: clock.clone(), files, hang, running: Mutex::new(0), hung: AtomicU64::new(0), cancelled: AtomicU64::new(0), called_off: AtomicU64::new(0) });
     let queue = SharedQueue::default();
     queue.0.lock().set(album.clone(), Some(0), false, 0);
     let card = Card::new();
@@ -269,6 +276,21 @@ fn hung_songs_skipped() {
     r.skip_through_the_album();
     r.playlist_plays(0);
     r.album_let_go();
+}
+
+/// A hung request the player calls off is let go before the clock moves on, however late its server's
+/// thread runs.
+#[test]
+fn hung_request_let_go_as_the_clock_moves() {
+    let r = rig(Hang::Headers, 3, 0);
+    r.engine.play_at(0, 0);
+    for _ in 0..2 {
+        r.time.run(Duration::from_millis(300));
+        r.engine.next();
+    }
+    // The engine keeps the song before the one playing: the first is called off.
+    assert!(r.time.until(Duration::from_secs(1), || r.server.cancelled.load(Ordering::Relaxed) > 0), "{}", r.state());
+    assert_eq!(r.server.called_off.load(Ordering::Relaxed), r.server.cancelled.load(Ordering::Relaxed), "{}", r.state());
 }
 
 /// The queue follows skips and held jumps at once, so a saved queue restores that song.
