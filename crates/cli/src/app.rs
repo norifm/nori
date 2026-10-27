@@ -186,7 +186,32 @@ pub enum Cmd {
     Listen(bool),
     JamAlong(bool),
     JamRemoteSongs(bool),
+    Plugin(PluginCmd),
     Quit,
+}
+
+/// What the runner does with the plugins (Settings › Plugins); each reads them again after.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PluginCmd {
+    Read,
+    /// Installs the `.noriplugin` or plugin folder at this path.
+    Install(String),
+    Turn(String, bool),
+    /// Moves the plugin to this place in the order.
+    Place(String, u32),
+    Uninstall(String),
+    /// A row of a plugin, its new value.
+    Set(String, String, nori_plugins::Value),
+    /// Runs a plugin's action row.
+    Act(String, String),
+    /// Asks the repos what they offer.
+    Look,
+    /// Installs a version (newest first) of the offer at this place in those last read.
+    Get(u32, u32),
+    /// Keeps a plugin at its version, or lets it update.
+    Hold(String, bool),
+    AddRepo(String),
+    RemoveRepo(String),
 }
 
 impl Cmd {
@@ -232,6 +257,8 @@ impl Cmd {
             Cmd::JamRemoteSongs(on) => format!("room remote songs {on}"),
             Cmd::Listen(on) => format!("listen along {on}"),
             Cmd::Quit => "quit".into(),
+            Cmd::Plugin(PluginCmd::Set(id, row, _)) => format!("plugin {id} row {row}"),
+            Cmd::Plugin(c) => format!("plugin {c:?}"),
             _ => "an edit".into(),
         }
     }
@@ -356,8 +383,8 @@ impl Page {
         }
     }
 
-    /// The page's songs: an album's, a playlist's, a mix's, and an artist's that lists no albums (a YouTube
-    /// Music profile's videos); an artist with albums lists those.
+    /// The page's songs: an album's, a playlist's, a mix's, and an artist's that lists no albums (a provider's
+    /// songs); an artist with albums lists those.
     pub fn songs(&self) -> Option<&[Song]> {
         match self {
             Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
@@ -813,8 +840,10 @@ pub enum Overlay {
     Help { scroll: usize },
     /// A choice list; `target` receives the value picked.
     Picker { title: String, options: Vec<(String, String)>, sel: Sel, target: Target },
-    /// A text field for setting `name`.
-    Input { title: String, text: String, secret: bool, name: String },
+    /// A text field whose text goes to `target`.
+    Input { title: String, text: String, secret: bool, target: Target },
+    /// The warning before adding a repo that isn't nori's, at `url`.
+    Trust { url: String },
     /// What the selection's menu offers, the song's less used actions `folded` under More until it opens.
     Menu { title: String, item: Box<Item>, lines: Vec<crate::menu::MenuLine>, folded: Vec<crate::menu::MenuLine>, sel: Sel },
     /// A new playlist's name, for `songs`.
@@ -837,6 +866,14 @@ pub enum Target {
     Preset,
     /// The playlist these songs go to (empty: a new one).
     Playlist(Vec<String>),
+    /// A sound level the equalizer's tools set.
+    Level(EqLevel),
+    /// A row of plugin `plugin`, of `kind`.
+    Plugin { plugin: String, row: String, kind: nori_plugins::RowKind },
+    /// The plugin file or folder to install.
+    Install,
+    /// The repo to add, once the user trusts it.
+    AddRepo,
 }
 
 impl Target {
@@ -847,6 +884,20 @@ impl Target {
             Target::Device => Some(Cmd::Device(value)),
             Target::Preset => value.parse().ok().map(|i| Cmd::Sound(SoundToolCmd::Preset(i))),
             Target::Playlist(songs) => Some(Cmd::AddToPlaylist { id: value, songs }),
+            Target::Level(l) => value.parse().ok().map(|v| Cmd::Level(l, v)),
+            Target::Plugin { plugin, row, kind } => {
+                use nori_plugins::{RowKind, Value};
+                let v = match kind {
+                    RowKind::Switch => Value::Switch(value.parse().ok()?),
+                    RowKind::Choice => Value::Choice(value.parse().ok()?),
+                    RowKind::Level => Value::Level(value.parse().ok()?),
+                    RowKind::Text | RowKind::Secret => Value::Text(value),
+                    RowKind::Action | RowKind::Status | RowKind::Section | RowKind::Note => return None,
+                };
+                Some(Cmd::Plugin(PluginCmd::Set(plugin, row, v)))
+            }
+            Target::Install => Some(Cmd::Plugin(PluginCmd::Install(value.trim().to_string()))),
+            Target::AddRepo => Some(Cmd::Plugin(PluginCmd::AddRepo(value.trim().to_string()))),
         }
     }
 }
@@ -1080,6 +1131,11 @@ impl App {
         self
     }
 
+    /// What the terminal calls profile kind `kind`.
+    pub fn provider_words(&self, kind: &nori_core::settings::ServerKind) -> crate::text::ProviderWords {
+        crate::text::provider_of(&self.settings.own.kinds, kind)
+    }
+
     pub fn say(&mut self, text: impl Into<String>, error: bool) {
         self.note = Some((text.into(), error, Instant::now()));
         self.dirty = true;
@@ -1301,6 +1357,7 @@ impl App {
             View::Settings if !self.settings.facts_asked => {
                 self.settings.facts_asked = true;
                 self.cmds.push(Cmd::Load(Req::Facts));
+                self.cmds.push(Cmd::Plugin(PluginCmd::Read));
             }
             View::Search if self.search.view.is_none() => self.search.editing = true,
             _ => {}
@@ -1502,14 +1559,30 @@ impl App {
             },
             // The runner opens these, and the profiles a jam is joined and left with.
             Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { .. }) => self.overlay = None,
-            Msg::SignedIn(r) => match &mut self.overlay {
-                Some(Overlay::Account { kind, error, busy, .. }) => {
-                    *error = Some(crate::text::sign_in(*kind, &r));
-                    *busy = false;
+            Msg::SignedIn(r) => {
+                let kind = self.prefs.active_server().map(|p| p.kind.clone()).unwrap_or_default();
+                let said = crate::text::sign_in(&self.provider_words(&kind).name, &r);
+                match &mut self.overlay {
+                    Some(Overlay::Account { error, busy, .. }) => {
+                        *error = Some(said);
+                        *busy = false;
+                    }
+                    _ => self.say(said, true),
                 }
-                _ => self.say(crate::text::sign_in(nori_core::settings::ServerKind::YouTubeMusic, &r), true),
-            },
-            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) => {}
+            }
+            Msg::Installed(r) => {
+                match r {
+                    Ok(_) => self.say(crate::text::PLUGIN_INSTALLED, false),
+                    Err(e) => self.say(crate::text::plugin_refused(&e), true),
+                }
+                self.cmds.push(Cmd::Plugin(PluginCmd::Read));
+            }
+            Msg::Updated(updated) => {
+                let named: Vec<(String, String)> = updated.into_iter().map(|(id, to)| (self.settings.own.plugins.iter().find(|c| c.id == id).map_or(id, |c| c.name.clone()), to)).collect();
+                self.say(crate::text::plugins_updated(&named), false);
+                self.cmds.push(Cmd::Plugin(PluginCmd::Read));
+            }
+            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) => {}
         }
     }
 
@@ -2081,11 +2154,24 @@ impl App {
                 KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
                 _ => {}
             },
-            Overlay::Input { text, name, .. } => match k.code {
+            Overlay::Trust { url } => match k.code {
                 KeyCode::Enter => {
-                    let (name, value) = (name.clone(), text.clone());
+                    self.cmds.push(Cmd::Plugin(PluginCmd::AddRepo(url.clone())));
                     self.overlay = None;
-                    self.cmds.push(Cmd::Setting(name, value));
+                }
+                KeyCode::Esc => self.overlay = None,
+                _ => self.dirty = false,
+            },
+            Overlay::Input { text, target, .. } => match k.code {
+                KeyCode::Enter => {
+                    let (target, typed) = (target.clone(), text.clone());
+                    self.overlay = None;
+                    match target {
+                        // A repo that isn't nori's is added only once the user says they trust it.
+                        Target::AddRepo if !typed.trim().is_empty() => self.overlay = Some(Overlay::Trust { url: typed.trim().to_string() }),
+                        Target::AddRepo => {}
+                        t => self.cmds.extend(t.cmd(typed)),
+                    }
                 }
                 KeyCode::Esc => self.overlay = None,
                 KeyCode::Backspace => {
@@ -2234,6 +2320,10 @@ impl App {
                     None => self.dirty = false,
                 }
             }
+            Action::Remove if self.focus == Focus::Main && self.view == View::Settings => match self.settings.plugin_key(a) {
+                Some(c) => self.cmds.push(c),
+                None => self.dirty = false,
+            },
             Action::Remove if self.focus == Focus::Main && self.view == View::Downloads => {
                 if let Some(Item::Song(songs, i)) = self.selected() {
                     self.cmds.push(Cmd::DownloadRemove(songs[i].id.clone()));
@@ -2263,6 +2353,10 @@ impl App {
                 None => self.say("Nothing to put back", false),
             },
             Action::Undo => self.dirty = false,
+            Action::MoveUp | Action::MoveDown if self.view == View::Settings && !self.queue_in_focus() => match self.settings.plugin_key(a) {
+                Some(c) => self.cmds.push(c),
+                None => self.dirty = false,
+            },
             Action::MoveUp | Action::MoveDown if !self.queue_in_focus() => self.dirty = false,
             Action::MoveUp | Action::MoveDown => self.queue_move(a == Action::MoveDown),
             _ => self.list_action(a),
@@ -3108,7 +3202,7 @@ impl App {
             Switch::Mouse => self.do_action(Action::Mouse),
             Switch::Images => self.do_action(Action::Images),
             Switch::Transparent => self.cmds.push(Cmd::Paint(!self.paint)),
-            Switch::Setting(_) | Switch::Stores(..) => {}
+            Switch::Setting(_) | Switch::Stores(..) | Switch::Plugin { .. } | Switch::Hold(_) => {}
         }
         self.settings.invalidate();
     }

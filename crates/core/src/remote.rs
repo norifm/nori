@@ -2155,7 +2155,9 @@ pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, re
     let nonce = if local.is_some() { lan::new_secret().map_err(|e| NetError::Parse { reason: e.to_string() })? } else { String::new() };
     #[cfg(target_arch = "wasm32")]
     let nonce = if local.is_some() { return Err(NetError::Parse { reason: "LAN jams need a native client".into() }); } else { String::new() };
-    if let Some(secret) = local {
+    if let Some(local) = local {
+        // The host's kind rides after the secret ([`Remote::open_lan_jam`]); the door knows the secret alone.
+        let (secret, kind) = local.split_once('~').map_or((local, None), |(s, k)| (s, crate::settings::ServerKind::from_id(k)));
         let url = format!("{}{}", server.trim_end_matches('/'), lan::signed(secret, "GET", &lan::target("noriRemote.join", &[("name".into(), name), ("nonce".into(), nonce.clone())]), b"", db::now_ms()));
         // A door refuses with 401 and a JSON body, which `transport::get` would take for an answer.
         match transport.get(url, 0).await?.status {
@@ -2164,8 +2166,7 @@ pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, re
             status => return Err(NetError::Http { status }),
         }
         let key = format!("lan-{}", lan::member_secret(secret, &nonce));
-        let kind = secret.rsplit_once('~').and_then(|(_, k)| crate::settings::ServerKind::from_id(k)).unwrap_or_default();
-        return Ok(JamJoin::Joined { pass: JamPass { url: server, api_key: nori_remote::guest_key(&key), kind } });
+        return Ok(JamJoin::Joined { pass: JamPass { url: server, api_key: nori_remote::guest_key(&key), kind: kind.unwrap_or_default() } });
     }
     let url = api::Server::with(&server, api::Auth::ApiKey(&nori_remote::guest_key(&invite))).url("noriRemote.join", &[("name".into(), name)]);
     let body = match transport::get(&*transport, url, 0).await {

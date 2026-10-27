@@ -157,6 +157,8 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
     /** Opens the player, on [panel] if one is asked for. */
     fun player(panel: Panel? = null) { sheet.panelAsked = panel; sheet.open() }
     fun equalizer() = go("equalizer")
+    fun plugins() = go("plugins")
+    fun plugin(id: String) = go("plugins/${Uri.encode(id)}")
     fun homeRows() = go("home-rows")
     fun librarySections() = go("library-sections")
     fun librarySection(s: dev.nori.music.ffi.settings.LibrarySection) = go("library/${s.name}")
@@ -254,7 +256,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         val plain = reduceMotion()
         // A jam guest's profile is the same app over its host's library, started afresh on joining and on leaving.
         val guest = remember(prefs.activeServerId, prefs.server?.apiKey) { prefs.server?.apiKey?.let { dev.nori.music.ffi.remote.isGuestKey(it) } == true }
-        val kind = prefs.server?.kind ?: dev.nori.music.ffi.settings.ServerKind.SUBSONIC
+        val kind = prefs.server?.kind ?: dev.nori.music.ffi.settings.ServerKind.Subsonic
         androidx.compose.animation.Crossfade(
             targetState = Triple(prefs.loggedIn, guest, kind),
             animationSpec = if (plain) androidx.compose.animation.core.snap() else androidx.compose.animation.core.tween(280),
@@ -555,6 +557,8 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                         SettingsGroupScreen(settings, e.arguments!!.getString("id")!!, e.arguments?.getString("key").orEmpty(), actions)
                     }
                     page("equalizer") { EqualizerScreen(settings) }
+                    page("plugins") { PluginsScreen(viewModel()) }
+                    page("plugins/{id}") { PluginPage(viewModel(), it.arguments!!.getString("id")!!) }
                     page("home-rows") { HomeRows(settings) }
                     page("library-sections") { LibrarySections(settings) }
                     page("library/{section}") {

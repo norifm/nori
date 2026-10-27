@@ -120,7 +120,7 @@ transport (`Kinds::set_transport`). See [Providers](providers.md).
 ## Tests
 
 - `cargo test -p nori-plugins`: the manifest as the SDK writes it, the extension points' order against
-  `wit/`, the store, and `tests/host.rs` over a real plugin (`tests/fixture`, built to wasm by the test:
+  `wit/`, the store, and `tests/host.rs` over a real plugin (`fixture/`, built to wasm by the `testing` feature:
   needs `rustup target add wasm32-wasip2`): its stage and kept state, no allocation per block, its
   overrides, its HTTP refused outside its hosts, and a plugin needing an unlinked interface refused.
 - `cargo test -p nori-player --test pipeline stage`: stages in the chain on the virtual clock.

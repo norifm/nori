@@ -15,44 +15,112 @@ use nori_core::{AlbumDetail, Playlist, PlaylistDetail, PresetKind, Song};
 /// needs here.
 pub struct ProviderWords {
     /// What a profile of the kind is called without a name of its own.
-    pub name: &'static str,
+    pub name: String,
     /// Under a profile that names no user.
     pub no_user: &'static str,
-    /// A sign-in's answer held no signed-in session.
-    pub no_session: &'static str,
-    /// The source did not take the sign-in.
-    pub refused: &'static str,
-    /// The source could not be asked.
-    pub unreachable: &'static str,
 }
 
-pub fn provider(kind: ServerKind) -> ProviderWords {
+/// The words of `kind`; `plugin_name` is a plugin kind's name in its own words.
+pub fn provider(kind: &ServerKind, plugin_name: Option<String>) -> ProviderWords {
     match kind {
-        ServerKind::Subsonic => ProviderWords {
-            name: "Your server",
-            no_user: "API key",
-            no_session: "That isn't a signed-in session",
-            refused: "The server didn't accept this sign-in",
-            unreachable: "Couldn't reach the server",
-        },
-        ServerKind::YouTubeMusic => ProviderWords {
-            name: "YouTube Music",
-            no_user: "best effort",
-            no_session: "These aren't a signed-in session's cookies: copy them from music.youtube.com while signed in",
-            refused: "YouTube didn't accept these cookies: sign in again in a private window and copy them anew",
-            unreachable: "Couldn't reach YouTube",
-        },
+        ServerKind::Subsonic => ProviderWords { name: "Your server".into(), no_user: "API key" },
+        ServerKind::Plugin { id } => ProviderWords { name: plugin_name.unwrap_or_else(|| id.clone()), no_user: "no account" },
     }
 }
 
-/// How a sign-in to a `kind` profile went.
-pub fn sign_in(kind: ServerKind, r: &SignInResult) -> String {
-    let w = provider(kind);
+/// The words of `kind`, a plugin's named in its own words.
+pub fn provider_of(kinds: &nori_core::providers::Kinds, kind: &ServerKind) -> ProviderWords {
+    provider(kind, kinds.plugin_name(kind.clone(), "en".into()))
+}
+
+/// How a sign-in to a profile of the kind called `name` went.
+pub fn sign_in(name: &str, r: &SignInResult) -> String {
     match r {
-        SignInResult::SignedIn { name } => format!("Signed in to {} as {name}", w.name),
-        SignInResult::NoSession => w.no_session.into(),
-        SignInResult::Refused => w.refused.into(),
-        SignInResult::Unreachable { reason } => format!("{} ({reason}); nothing changed", w.unreachable),
+        SignInResult::SignedIn { name: user } => format!("Signed in to {name} as {user}"),
+        SignInResult::NoSession => "That isn't a signed-in session".into(),
+        SignInResult::Refused => format!("{name} didn't accept this sign-in"),
+        SignInResult::Unreachable { reason } => format!("Couldn't reach {name} ({reason}); nothing changed"),
+    }
+}
+
+pub const INSTALL_PLUGIN: &str = "Install a plugin";
+pub const PLUGIN_PATH: &str = "A .noriplugin file or a plugin folder";
+pub const NO_PLUGINS: &str = "No plugins installed.";
+pub const PLUGIN_VERSION: &str = "Version";
+pub const PLUGIN_NET: &str = "Connects to";
+pub const SECRET_SET: &str = "Set";
+pub const PLUGIN_INSTALLED: &str = "Plugin installed. Switch it on in Settings › Plugins.";
+pub const GET_PLUGINS: &str = "Get plugins";
+pub const LOOK_FOR_PLUGINS: &str = "Look for plugins";
+pub const LOOK_AGAIN: &str = "Look again";
+pub const LOOKING: &str = "Looking…";
+pub const NOTHING_OFFERED: &str = "No plugins offered.";
+pub const INSTALL: &str = "Install";
+pub const UPDATE: &str = "Update";
+pub const INSTALLED: &str = "Installed";
+pub const REPOS: &str = "Repos";
+pub const KEEP_VERSION: &str = "Keep this version";
+pub const VERSIONS: &str = "Versions";
+pub const SOURCE: &str = "Source";
+
+/// Plugins updated on their own: each one's name and new version.
+pub fn plugins_updated(updated: &[(String, String)]) -> String {
+    let each: Vec<String> = updated.iter().map(|(name, to)| format!("{name} to {to}")).collect();
+    format!("Updated {}", each.join(", "))
+}
+pub const ADD_REPO: &str = "Add repo";
+pub const REPO_ADDRESS: &str = "Repo address (its index.json)";
+pub const TRUST_REPO: &str = "This repo isn't nori's. Its plugins can do what their pages say; add it only if you trust it.";
+pub const TRUST_KEYS: &str = "enter add · esc cancel";
+
+/// A repo by its host; nori's own by name.
+pub fn repo_name(r: &nori_plugins::Repo) -> String {
+    if r.official {
+        return "nori's own".into();
+    }
+    host(&r.url).to_string()
+}
+
+/// The host in `url`.
+fn host(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    rest.split('/').next().unwrap_or(rest)
+}
+
+/// A repo that couldn't be read.
+pub fn repo_failed(r: &nori_plugins::Repo) -> String {
+    format!("Couldn't reach {}", host(&r.url))
+}
+pub const NOT_SET: &str = "Not set";
+
+/// Why a plugin wasn't installed.
+pub fn plugin_refused(r: &nori_plugins::Refusal) -> String {
+    use nori_plugins::Refusal;
+    let why = match r {
+        Refusal::Unreadable(what) => format!("can't be read ({what})"),
+        Refusal::Api(v) => format!("made for plugin API {v}"),
+        Refusal::Needs(what) => format!("needs: {}", what.join(", ")),
+        Refusal::Id => "its id isn't a reverse domain name".into(),
+        Refusal::UnknownKey(key) => format!("changes {key}, which nori doesn't have"),
+    };
+    format!("Not installed: {why}")
+}
+
+/// A plugin's level at its step: whole numbers for whole steps.
+pub fn level(v: f32, step: f32) -> String {
+    let places = if step >= 1.0 { 0 } else { (-step.log10()).ceil().clamp(1.0, 3.0) as usize };
+    format!("{v:.places$}")
+}
+
+/// A plugin's status row's value; `options` name a choice's.
+pub fn plugin_value(v: &nori_plugins::Value, options: &[String]) -> String {
+    use nori_plugins::Value;
+    match v {
+        Value::Switch(on) => on_off(*on).into(),
+        Value::Choice(i) => options.get(*i as usize).cloned().unwrap_or_default(),
+        Value::Flags(f) => format!("{f:#x}"),
+        Value::Level(l) => level(*l as f32, 0.01),
+        Value::Text(t) => t.clone(),
     }
 }
 
@@ -565,15 +633,17 @@ pub fn output_name(output: &str) -> String {
     }
 }
 
-pub const SIGNED_OUT_AGAIN: &str = "YouTube signed you out. Sign in again to see your library and likes.";
+/// The account's session ended at the source called `name`.
+pub fn signed_out_again(name: &str) -> String {
+    format!("{name} signed you out. Sign in again to see your library and likes.")
+}
 pub const SIGN_IN_WHY: &str = "See your own Home, your library and your likes. Music plays without it too.";
-pub const SIGN_IN_KEYS: &str = "enter sign in with Google · p paste cookies · esc close";
-pub const SIGN_IN_KEYS_ENDED: &str = "enter sign in with Google · p paste cookies · d don't show again · esc close";
+pub const SIGN_IN_KEYS: &str = "enter sign in · p paste cookies · esc close";
+pub const SIGN_IN_KEYS_ENDED: &str = "enter sign in · p paste cookies · d don't show again · esc close";
 pub const SIGNED_IN_KEYS: &str = "enter sign out · esc close";
 pub const SIGNING_IN: &str = "Finish signing in in the window that opened.";
-pub const PASTE_COOKIES: &str = "Sign in to music.youtube.com in a private browser window, copy the Cookie header of any request it makes from the developer tools, and paste it here. enter signs in · esc back";
+pub const PASTE_COOKIES: &str = "Sign in in a private browser window, copy the Cookie header of any request the page makes from the developer tools, and paste it here. enter signs in · esc back";
 pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window couldn't open here. Paste cookies from a browser instead.";
-pub const RISK: &str = "Unofficial apps are against YouTube's terms, and YouTube may flag an account that uses one.";
 pub const THIS_COMPUTER: &str = "This computer";
 pub const REMOTE_OFF: &str = "Remote control and jams are off: switch them on in Settings, under Other devices";
 

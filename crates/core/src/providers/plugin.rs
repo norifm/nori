@@ -83,17 +83,17 @@ fn profile_of(p: &SavedServer) -> w::Profile {
 fn rules(said: Option<w::ProfileRules>, signs_in: bool, guest: bool) -> ProfileRules {
     use SettingsPart::*;
     let r = said.unwrap_or(w::ProfileRules { account: false, downloads: false, radio: false, feed: false, stars: false, scrobbles: false, sections: Vec::new(), measures: true, ahead: None });
-    let sections = r.sections.iter().filter_map(|s| match s {
-        w::LibrarySection::Songs => Some(LibrarySection::Songs),
-        w::LibrarySection::Albums => Some(LibrarySection::Albums),
-        w::LibrarySection::Favorites => Some(LibrarySection::Favourites),
-        w::LibrarySection::History => Some(LibrarySection::History),
-        w::LibrarySection::Artists => Some(LibrarySection::Artists),
-        w::LibrarySection::Playlists => Some(LibrarySection::Playlists),
-        w::LibrarySection::Genres => Some(LibrarySection::Genres),
-        w::LibrarySection::Folders => Some(LibrarySection::Folders),
-        w::LibrarySection::Radio => Some(LibrarySection::Radio),
-        w::LibrarySection::Downloads => Some(LibrarySection::Downloads),
+    let sections = r.sections.iter().map(|s| match s {
+        w::LibrarySection::Songs => LibrarySection::Songs,
+        w::LibrarySection::Albums => LibrarySection::Albums,
+        w::LibrarySection::Favorites => LibrarySection::Favourites,
+        w::LibrarySection::History => LibrarySection::History,
+        w::LibrarySection::Artists => LibrarySection::Artists,
+        w::LibrarySection::Playlists => LibrarySection::Playlists,
+        w::LibrarySection::Genres => LibrarySection::Genres,
+        w::LibrarySection::Folders => LibrarySection::Folders,
+        w::LibrarySection::Radio => LibrarySection::Radio,
+        w::LibrarySection::Downloads => LibrarySection::Downloads,
     });
     let mut shown = ProfileRules {
         asks: guest,
@@ -170,7 +170,7 @@ fn album(a: t::Album) -> Album {
 }
 
 fn artist(a: t::Artist) -> Artist {
-    Artist { id: a.id, name: a.name, cover_art: a.cover, artist_image_url: a.image_url, album_count: a.album_count, starred: a.starred, is_external: a.external, ..Default::default() }
+    Artist { id: a.id, name: a.name, cover_art: a.cover, artist_image_url: a.image_url, album_count: a.album_count, starred: a.starred, is_external: a.external }
 }
 
 fn playlist(p: t::Playlist) -> Playlist {
@@ -259,7 +259,6 @@ fn page(read: &Read, p: w::Page) -> Option<Page> {
                     albums: s.albums.into_iter().map(album).collect(),
                     artists: s.artists.into_iter().map(artist).collect(),
                     playlists: s.playlists.into_iter().map(playlist).collect(),
-                    ..Default::default()
                 })
                 .collect(),
         },

@@ -276,13 +276,9 @@ enum Say {
         switch kind {
         case "subsonic":
             return ProviderWords(name: "Your server", note: "Navidrome, octo-fiesta or any Subsonic server", add: connect)
-        case "youtubeMusic":
-            return ProviderWords(
-                name: "YouTube Music",
-                note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Sign in for your library and likes. Songs, albums and playlists can be downloaded for offline playback. Devices on your network can be paired for remote control and jams. Scrobbling is off.",
-                add: "Add YouTube Music")
         default:
-            return ProviderWords(name: kind, note: "", add: connect)
+            // A plugin's kind, which the iPod never offers.
+            return ProviderWords(name: "Plugin", note: "", add: connect)
         }
     }
     static let serverUrl = "Server URL"

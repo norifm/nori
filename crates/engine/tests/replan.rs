@@ -71,7 +71,7 @@ impl Rig {
         let library = CoreLibrary { client, bytes: net, store: Some(store), analyses };
         let card = Card::new();
         let clock = Virtual::default();
-        let engine = common::Running(Engine::start_on(library, CoreApp::new(core.session.clone()), CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 128, settings: settings(&prefs), ..Config::default() }, clock.clone(), |_| {}));
+        let engine = common::Running(Engine::start_on(library, CoreApp::new(core.session.clone()), CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 128, settings: settings(&prefs, Default::default()), ..Config::default() }, clock.clone(), |_| {}));
         engine.queue_changed();
         Rig { engine, core, time: Stepper::new(clock, card.pull.clone()), _dir: dir }
     }
@@ -96,7 +96,7 @@ impl Rig {
     /// Relays a change's effects to the engine, as PlaybackService does.
     fn relay(&self, effect: u32) {
         if effect & APPLY_AUDIO != 0 {
-            self.engine.set_settings(settings(&self.core.session.settings.current().unwrap()));
+            self.engine.set_settings(settings(&self.core.session.settings.current().unwrap(), Default::default()));
         }
         if effect & REPLAN != 0 {
             self.engine.replan();
@@ -182,7 +182,7 @@ fn automix_on_before_play_mixes() {
     let mut prefs = rig.core.session.settings.current().unwrap();
     prefs.auto_mix = false;
     rig.core.session.settings.put(prefs.clone());
-    rig.engine.set_settings(settings(&prefs));
+    rig.engine.set_settings(settings(&prefs, Default::default()));
     rig.engine.play_at(2, 0);
     assert!(rig.until(20, |r| r.engine.status().index == Some(2) && r.engine.status().position_ms > 2_000));
     let effect = rig.set_only("autoMix", "true");

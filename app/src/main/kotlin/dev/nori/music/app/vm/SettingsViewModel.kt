@@ -163,10 +163,10 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     /** What a settings page depends on besides the settings, from this platform. */
     val settingsFacts: StateFlow<SettingsFacts> by lazy {
-        combine(combine(dac, _sync, _storage, _analysed, _folders, ::factsOf), update) { f, u -> f.copy(update = u, installsUpdates = nori.updates.installs) }
+        combine(combine(dac, _sync, _storage, _analysed, _folders, ::factsOf), update, nori.plugins.names) { f, u, names -> f.copy(update = u, installsUpdates = nori.updates.installs, pluginNames = names) }
             .stateIn(
                 viewModelScope, SharingStarted.WhileSubscribed(5_000),
-                factsOf(dac.value, _sync.value, _storage.value, _analysed.value, _folders.value).copy(update = update.value, installsUpdates = nori.updates.installs),
+                factsOf(dac.value, _sync.value, _storage.value, _analysed.value, _folders.value).copy(update = update.value, installsUpdates = nori.updates.installs, pluginNames = nori.plugins.names.value),
             )
     }
 
@@ -317,10 +317,27 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     /** A blank profile for the "add server" form, with a fresh id from the core. */
     fun newProfile() = dev.nori.music.settings.newServer(newServerId())
 
-    /** The kinds of profile this build adds, and how each is added and signed in (the core's `providers`). */
-    val providers: List<dev.nori.music.ffi.ProviderInfo> by lazy { dev.nori.music.ffi.providers() }
+    /** The kinds of profile that can be added here, and how each is added and signed in (the core's `Kinds::providers`). */
+    val providers: StateFlow<List<dev.nori.music.ffi.ProviderInfo>> = nori.plugins.providers
 
-    fun provider(kind: dev.nori.music.ffi.settings.ServerKind): dev.nori.music.ffi.ProviderInfo? = providers.firstOrNull { it.kind == kind }
+    fun provider(kind: dev.nori.music.ffi.settings.ServerKind): dev.nori.music.ffi.ProviderInfo? = providers.value.firstOrNull { it.kind == kind }
+
+    /** Installed plugins' names by id, which name their kinds of profile. */
+    val pluginNames: StateFlow<Map<String, String>> = nori.plugins.names
+
+    /** The installed plugins, for a plugin kind's about. */
+    val pluginCards = nori.plugins.cards
+
+    init {
+        viewModelScope.launch { nori.plugins.refresh() }
+    }
+
+    /** Whether the add form [p] can be sent (its provider's say). */
+    suspend fun serverReady(p: SavedServer): Boolean = withContext(Dispatchers.IO) { nori.plugins.kinds.serverReady(p) }
+
+    /** Whether a [kind] sign-in page showing [address], holding [cookies], is done (its provider's say). */
+    suspend fun signInDone(kind: dev.nori.music.ffi.settings.ServerKind, address: String, cookies: String): Boolean =
+        withContext(Dispatchers.IO) { nori.plugins.kinds.signInDone(kind, address, cookies) }
 
     private val _account = MutableStateFlow(AccountUi())
     val account: StateFlow<AccountUi> = _account

@@ -195,6 +195,7 @@ impl Nori {
             data: Path::new(""),
             http: Arc::new(Fetch(live.wake.clone())),
             profile,
+            kinds: nori_core::providers::Kinds::builtin(),
             output: Box::new(Output(live.card.clone())),
             volume: {
                 let (card, wake) = (live.card.clone(), live.wake.clone());

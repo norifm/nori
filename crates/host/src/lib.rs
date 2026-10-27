@@ -296,6 +296,7 @@ impl PlaceSeen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nori_core::settings::ServerKind;
 
     /// Saves are put off until the last one asked for is due; none after the stop.
     #[test]
@@ -331,7 +332,7 @@ mod tests {
         prefs.servers = vec![own("home"), own("work")];
         prefs.active_server_id = "work".into();
         settings.put(prefs);
-        let pass = |n: u8| JamPass { url: "http://friend".into(), api_key: nori_remote::guest_key(&format!("key{n}")) };
+        let pass = |n: u8| JamPass { url: "http://friend".into(), api_key: nori_remote::guest_key(&format!("key{n}")), kind: ServerKind::Subsonic };
 
         let first = jam_joined(&settings, pass(1), "Jam");
         nori_core::background::flush();
@@ -349,16 +350,17 @@ mod tests {
     }
 
     #[test]
-    fn youtube_jam_guest_is_signed_out_and_temporary() {
-        let dir = nori_testdir::TempDir::new("host-youtube-jam");
+    fn plugin_jam_guest_is_signed_out_and_temporary() {
+        let dir = nori_testdir::TempDir::new("host-plugin-jam");
         let settings = Settings::new();
         let mut prefs = settings.open(&db_path(dir.path())).unwrap();
-        let own = SavedServer { id: "mine".into(), kind: nori_core::settings::ServerKind::YouTubeMusic, user: "private-account".into(), password: "private-cookie".into(), ..Default::default() };
+        let kind = ServerKind::Plugin { id: "dev.example.music".into() };
+        let own = SavedServer { id: "mine".into(), kind: kind.clone(), user: "private-account".into(), password: "private-cookie".into(), ..Default::default() };
         prefs.servers.push(own.clone());
         prefs.active_server_id = own.id.clone();
         settings.put(prefs);
-        let guest = jam_joined(&settings, JamPass { url: "http://192.168.1.2:5678".into(), api_key: nori_remote::guest_key("lan-guestsecret") }, "Jam");
-        assert_eq!(guest.kind, nori_core::settings::ServerKind::YouTubeMusic);
+        let guest = jam_joined(&settings, JamPass { url: "http://192.168.1.2:5678".into(), api_key: nori_remote::guest_key("lan-guestsecret"), kind: kind.clone() }, "Jam");
+        assert_eq!(guest.kind, kind);
         assert!(guest.user.is_empty() && guest.password.is_empty());
         assert_eq!(jam_left(&settings).unwrap(), own);
     }
@@ -374,7 +376,7 @@ mod tests {
         prefs.servers = vec![own("home"), own("work")];
         prefs.active_server_id = "gone".into();
         settings.put(prefs);
-        let pass = JamPass { url: "http://friend".into(), api_key: nori_remote::guest_key("key") };
+        let pass = JamPass { url: "http://friend".into(), api_key: nori_remote::guest_key("key"), kind: ServerKind::Subsonic };
         jam_joined(&settings, pass.clone(), "Jam");
         assert_eq!(jam_left(&settings).map(|s| s.id), Some("work".into()));
 

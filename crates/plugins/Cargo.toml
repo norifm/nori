@@ -10,6 +10,8 @@ publish = false
 name = "nori_plugins"
 
 [features]
+# The test plugin, built for other crates' tests (testing.rs).
+testing = []
 # The uniffi exports the Android app's Kotlin bindings are generated from (view.rs).
 ffi = ["dep:uniffi", "nori-settings/ffi", "nori-net/ffi"]
 
@@ -41,6 +43,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 futures-channel = "0.3"
 
 [dev-dependencies]
+nori-plugins = { path = ".", features = ["testing"] }
 nori-testdir = { path = "../testdir" }
 async-trait = "0.1"
 # Manifests written as the SDK writes them.

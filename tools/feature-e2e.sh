@@ -8,7 +8,7 @@
 #   tools/feature-e2e.sh [--only <section>,...] [--list]     NORI_E2E_SERVER=local for tools/dev-server.sh
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="lyrics notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel remote jam"
+SECTIONS="plugins lyrics notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel remote jam"
 OPT_IN="lyrics-services scrobble download-albums youtube-music"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
@@ -122,6 +122,69 @@ if want scrobble; then section scrobble
   "$app" do pause >/dev/null
 fi
 
+# The packed plugins (nori-plugins' tools/pack.py, dist/<name>-<version>.noriplugin).
+plugins_dist=${NORI_PLUGINS_DIST:-$here/../../nori-plugins/dist}
+plugin_package() { ls "$plugins_dist/$1"-[0-9]*.noriplugin 2>/dev/null | sort -V | tail -1; }
+# Orbit's package as a repo of this computer's, over HTTP the emulator reaches: its index.json beside it.
+serve_plugins() {
+  local repo; repo=$(mktemp -d)
+  cp "$(plugin_package orbit)" "$repo/" || return 1
+  python3 - "$repo" <<'INDEX' || return 1
+import hashlib, json, pathlib, sys
+repo = pathlib.Path(sys.argv[1]); pkg = next(repo.glob("orbit-*.noriplugin"))
+version = pkg.stem.removeprefix("orbit-")
+(repo / "index.json").write_text(json.dumps({"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "versions": [
+    {"version": version, "api": 1, "url": pkg.name, "sha256": hashlib.sha256(pkg.read_bytes()).hexdigest()}]}]}))
+INDEX
+  plugins_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+  python3 -m http.server "$plugins_port" --bind 127.0.0.1 --directory "$repo" >/dev/null 2>&1 &
+  plugins_server=$!
+  wait_until 10 curl -sf "http://127.0.0.1:$plugins_port/index.json" -o /dev/null
+}
+plugin_is() { "$app" plugin cards | grep -q "$1"; }
+# Installs and turns on plugin $1's newest package, pushed into the app's cache: the id.
+plugin_from_file() {
+  adb exec-in run-as "$pkg" sh -c "cat > cache/$1.noriplugin" < "$(plugin_package "$1")" || return 1
+  local id; id=$("$app" plugin install "/data/data/$pkg/cache/$1.noriplugin")
+  [[ "$id" == *.* && "$id" != *failed* ]] || return 1
+  "$app" plugin turn "$id on" >/dev/null && echo "$id"
+}
+
+if want plugins; then section "plugins: a repo added, orbit installed from it and turned on, music still sounding"
+  # The plugin host's runtime on the device's ABI, the Plugins page and its sheet, a repo fetched through
+  # OkHttp, and a plugin's sound stage reaching the AudioTrack player; what plugins may do is Rust's.
+  check "orbit is packed" test -n "$(plugin_package orbit)"
+  check "their repo is served" serve_plugins
+  "$app" plugin reset >/dev/null
+  "$app" open plugins >/dev/null
+  check "the Plugins page opens" wait_until 10 on_screen 'text="Add Repo"'
+  shots="$here/../build/e2e/$ANDROID_SERIAL/plugins"; mkdir -p "$shots"
+  tapnode text "Add Repo"
+  check "adding a repo warns first" wait_until 10 on_screen 'Add it only if you trust it'
+  tapnode text "Repo address"
+  adb shell input text "http://10.0.2.2:$plugins_port/index.json"
+  tapnode text Add
+  check "the repo offers orbit" wait_until 30 on_screen 'text="Orbit"'
+  tapnode text Install
+  check "orbit installs from the repo, off" wait_until 30 plugin_is 'fm.nori.orbit:off'
+  check "the page lists it" wait_until 10 on_screen 'text="Version '
+  "$app" plugin turn "fm.nori.orbit on" >/dev/null
+  check "orbit turns on" wait_until 10 plugin_is 'fm.nori.orbit:on'
+  adb exec-out screencap -p > "$shots/plugins.png"
+  tapnode text Orbit
+  check "its page draws its rows" wait_until 10 on_screen 'text="Turns per second"'
+  adb exec-out screencap -p > "$shots/orbit.png"
+  "$app" play "$SONG" >/dev/null
+  check "music sounds with orbit's stage in the chain" sounds 20
+  at=$(field positionMs)
+  check "and plays on" wait_for positionMs ">$((at + 3000))" 15
+  "$app" do pause >/dev/null
+  "$app" plugin reset >/dev/null
+  check "a reset leaves no plugin" wait_until 10 plugin_is none
+  kill "$plugins_server" 2>/dev/null
+  "$app" open settings >/dev/null
+fi
+
 if want lyrics; then section lyrics
   # Which answer wins, word timing, the lookups switch and every service's format are the lyrics crate's
   # (crates/lyrics tests, over recorded answers). Here: that an answer comes back through the platform.
@@ -196,8 +259,11 @@ if want youtube-music; then section "a YouTube Music profile, then the server's 
   # from googlevideo: the glue Rust's tests stand in for. Opt-in, since YouTube may refuse on any day.
   server_widget_albums=$(widget_albums)
   check "the album widget has server albums before switching" test -n "$server_widget_albums"
-  "$app" login kind:YOU_TUBE_MUSIC >/dev/null
-  check "the YouTube Music profile opens" wait_for kind YOU_TUBE_MUSIC 20
+  # YouTube Music is a plugin: installed from its package and turned on, its kind is offered.
+  ytid=$(plugin_from_file youtube-music)
+  check "the YouTube Music plugin installs and turns on" test -n "$ytid"
+  "$app" login "kind:plugin:$ytid" >/dev/null
+  check "the YouTube Music profile opens" wait_for kind "plugin:$ytid" 20
   yt_widget_albums=$(widget_albums)
   check "the album widget replaces the server's albums with YouTube albums" python3 - "$yt_widget_albums" <<'WIDGET'
 import sys
@@ -208,7 +274,7 @@ WIDGET
   # Rust's (the provider's sign_in_done, auth::signed_in_at).
   # That it opens, and that Cancel leaves the WebView no cookies, only a device can say.
   if [ "$(field signInOffer)" = True ]; then
-    check "the profile just added offers Google's sign-in" tapnode text "Sign in with Google"
+    check "the profile just added offers Google's sign-in" tapnode text "Sign in to YouTube Music"
   else
     "$app" open sign-in >/dev/null
   fi
@@ -337,6 +403,7 @@ PY
   check "the server's profile opens again" wait_for server "$APP_URL" 30
   "$app" play "$SONG" >/dev/null
   check "and its songs play" sounds 20
+  "$app" plugin reset >/dev/null
 fi
 
 if want notification; then section "the notification's seal and shuffle"

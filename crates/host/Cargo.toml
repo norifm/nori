@@ -45,3 +45,5 @@ nori-core = { path = "../core", default-features = false, features = ["plugins"]
 nori-http = { path = "../http" }
 nori-engine = { path = "../engine", features = ["testing"] }
 nori-testdir = { path = "../testdir" }
+# The test plugin, whose provider has no Subsonic server (tests/lan_jam.rs).
+nori-plugins = { path = "../plugins", features = ["testing"] }

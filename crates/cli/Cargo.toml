@@ -19,7 +19,7 @@ sign-in-window = ["dep:nori-sign-in-window"]
 neural-beats = ["nori-engine/neural-beats"]
 
 [dependencies]
-# The providers this client offers: a Subsonic server's and YouTube Music.
+# The providers this client offers: a Subsonic server's and its plugins'.
 nori-core = { path = "../core", default-features = false, features = ["plugins"] }
 nori-sign-in-window = { path = "../sign-in-window", optional = true }
 nori-engine = { path = "../engine", features = ["core"] }
@@ -27,6 +27,8 @@ nori-output-cpal = { path = "../output-cpal" }
 nori-http = { path = "../http" }
 nori-mpris = { path = "../mpris" }
 nori-host = { path = "../host" }
+# Settings › Plugins: the plugin host's cards and rows.
+nori-plugins = { path = "../plugins" }
 nori-covers = { path = "../covers" }
 nori-look = { path = "../look" }
 parking_lot = "0.12"

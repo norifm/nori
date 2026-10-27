@@ -1,9 +1,9 @@
-//! Each extension point the host's tests check, in its plainest form.
+//! Each extension point nori's tests check, in its plainest form (nori_plugins::testing).
 
 use nori_plugin_sdk::http::{Method, Request};
 use nori_plugin_sdk::sound_stage::{Format, Inputs};
 use nori_plugin_sdk::types::Value;
-use nori_plugin_sdk::{settings, state, store, Lifecycle, Manifest, Row, Slot, SoundStage};
+use nori_plugin_sdk::{settings, state, store, Lifecycle, Manifest, Provider, Row, Slot, SoundStage};
 
 #[derive(Default)]
 struct Test {
@@ -56,6 +56,9 @@ impl SoundStage for Test {
     }
 }
 
+/// nori's own answers: a profile with no Subsonic server.
+impl Provider for Test {}
+
 const MANIFEST: Manifest = Manifest {
     stage: Some(Slot::Master),
     net: &["allowed.example"],
@@ -64,4 +67,4 @@ const MANIFEST: Manifest = Manifest {
     ..Manifest::new("fm.nori.test")
 };
 
-nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, sound_stage);
+nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, sound_stage, provider);

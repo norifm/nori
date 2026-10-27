@@ -72,7 +72,10 @@ class Nori private constructor(private val context: Context) {
     /** AutoMix's analyses over [currentClient] (crates/android measure.rs), for the player, the measurer and the downloads. */
     val analyses: Long by lazy { dev.nori.music.playback.MeasureJni.analyses(currentClient.uniffiCloneHandle(), sessionHandle) }
 
-    /** The core's one door to the network; built with [http]. */
+    /** The plugin host, under `<filesDir>/plugins`: its kinds are every core's. Opened off the main thread ([warmUp]). */
+    val plugins = dev.nori.music.plugins.PluginHost(File(context.filesDir, "plugins"), settings) { transport }
+
+    /** The core's one door to the network; built with [http]. Plugins' HTTP goes through it too. */
     private val transport by lazy { http.transport { library.onServerChanged() }.also { coverNet.setTransport(it) } }
 
     private fun active(): Opened {
@@ -128,7 +131,7 @@ class Nori private constructor(private val context: Context) {
      */
     val rules: dev.nori.music.ffi.library.ProfileRules get() =
         _reportedRules.value?.takeIf { it.first == settings.value.activeServerId }?.second
-            ?: dev.nori.music.ffi.rulesOf(settings.value.server ?: dev.nori.music.settings.newServer(""), remotes.isGuest())
+            ?: plugins.kinds.rulesOf(settings.value.server ?: dev.nori.music.settings.newServer(""), remotes.isGuest())
     val player = PlayerConnection(context, this)
 
     /**
@@ -174,13 +177,18 @@ class Nori private constructor(private val context: Context) {
     val updates = dev.nori.music.update.Updates(context, { http }, { client })
 
     private fun open(id: String, profile: SavedServer?): Core =
-        Core(File(context.filesDir, dev.nori.music.ffi.db.dbFileName()).path, id, session).also { c -> profile?.let(c::configureProfile) }
+        Core(File(context.filesDir, dev.nori.music.ffi.db.dbFileName()).path, id, session).also { c ->
+            c.useKinds(plugins.kinds)
+            // A profile of a plugin's kind opens only while that plugin is installed and on.
+            profile?.let { p -> runCatching { c.configureProfile(p) }.onFailure { NoriLog.w("profile ${p.id} not opened: ${it.message}") } }
+        }
 
     private fun SavedServer.net() = NetProfile(url, altUrl, musicFolderIds, altMaxBitRate.coerceAtLeast(0).toUInt())
 
     /** Called off the main thread at process start. */
     fun warmUp() {
         val t = android.os.SystemClock.elapsedRealtime()
+        kotlinx.coroutines.runBlocking { plugins.refresh() }
         core; http; sources
         dev.nori.music.NoriLog.i("core ready in ${android.os.SystemClock.elapsedRealtime() - t} ms")
     }
@@ -215,11 +223,11 @@ class Nori private constructor(private val context: Context) {
     suspend fun login(form: SavedServer): SavedServer = withContext(Dispatchers.IO) {
         // A server and user already saved is that profile logged in to again, not a copy with an empty
         // library and no downloads (the core's `server_for_login`).
-        val draft = dev.nori.music.ffi.serverForLogin(settings.value.serverList(), form)
+        val draft = plugins.kinds.loginProfile(settings.value.serverList(), form)
         val old = settings.value.server
         val accepted = try {
             http.configure(draft)
-            lifted { dev.nori.music.ffi.checkProfile(transport, draft) }
+            lifted { plugins.kinds.checkProfile(transport, draft) }
         } catch (e: Exception) {
             http.configure(old)
             throw e

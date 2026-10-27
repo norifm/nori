@@ -50,6 +50,9 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     // A process started in the background could not restart the download service; with a screen up it can.
     init { nori.downloads.resume() }
 
+    // Plugins updated from their repos as the app came to the front, said quietly.
+    init { viewModelScope.launch { nori.plugins.updated.collect { done -> done.forEach { (name, u) -> _messages.trySend(say.pluginUpdated(name, u.to)) } } } }
+
     internal fun attempt(done: String?, block: suspend () -> Unit) = viewModelScope.launch {
         try { block(); done?.let { _messages.send(it) } } catch (e: Exception) { _messages.send(e.said ?: say.saidFailed) }
     }

@@ -1,13 +1,12 @@
-//! The host over a real plugin (tests/fixture, built to wasm here): installing, its sound stage and
+//! The host over a real plugin (fixture/, built to wasm by nori_plugins::testing): installing, its sound stage and
 //! the state nori keeps of it, its lifecycle's overrides and HTTP, and refusing what it can't link.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
-use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use nori_net::transport::{Exchange, Network, Transport, TransportError, TransportResponse};
+use nori_plugins::testing::{fixture, FIXTURE};
 use nori_plugins::{Plugins, Refusal, Side, Value};
 
 /// Counts this thread's allocations while `COUNTING` is on.
@@ -40,24 +39,6 @@ fn allocations(f: impl FnOnce()) -> u64 {
     f();
     COUNTING.with(|c| c.set(false));
     ALLOCATIONS.with(Cell::get)
-}
-
-/// The fixture built with `features`, as a plugin folder.
-fn fixture(features: &str) -> PathBuf {
-    let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixture");
-    let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/plugin-fixture").join(if features.is_empty() { "plain" } else { features });
-    let status = Command::new(env!("CARGO"))
-        .args(["build", "-q", "--release", "--target", "wasm32-wasip2", "--features", features, "--manifest-path"])
-        .arg(here.join("Cargo.toml"))
-        .env("CARGO_TARGET_DIR", &target)
-        .status()
-        .expect("cargo runs");
-    assert!(status.success(), "the fixture builds (rustup target add wasm32-wasip2)");
-    let folder = target.join("plugin");
-    std::fs::create_dir_all(folder.join("strings")).unwrap();
-    std::fs::copy(target.join("wasm32-wasip2/release/nori_test_plugin.wasm"), folder.join("plugin.wasm")).unwrap();
-    std::fs::copy(here.join("strings/en.toml"), folder.join("strings/en.toml")).unwrap();
-    folder
 }
 
 /// Answers each URL it serves with its body, any other with 200 "ok", noting each URL.
@@ -107,7 +88,7 @@ impl Side for Session {
     fn notice(&self, _: &str, _: bool, _: &str, _: &[String]) {}
 }
 
-const ID: &str = "fm.nori.test";
+const ID: &str = FIXTURE;
 
 #[test]
 fn a_stage_runs_and_its_state_is_kept() {

@@ -81,6 +81,12 @@ pub enum Msg {
     Shared(Option<String>),
     /// A queue another device or app left on the server, worth offering here, or none.
     Offer(Option<nori_core::library::QueueOffer>),
+    /// A plugin installed (its id), or why not.
+    PluginInstalled(Result<String, nori_plugins::Refusal>),
+    /// What the plugin repos offer.
+    PluginOffers(nori_plugins::Offers),
+    /// Plugins updated on their own: each one's id and new version.
+    PluginsUpdated(Vec<(String, String)>),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }
@@ -136,8 +142,8 @@ pub mod own {
 }
 
 /// Logs `draft` in and keeps it as the active profile (blocking).
-pub fn check_login(http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
-    nori_host::desktop::log_in(http, draft).map_err(|e| net_error(&e))
+pub fn check_login(data: &std::path::Path, http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
+    nori_host::desktop::log_in(data, http, draft).map_err(|e| net_error(&e))
 }
 
 /// One open server profile; its messages come tagged with its id.

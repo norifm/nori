@@ -127,7 +127,7 @@ impl Rig {
         let app = CoreApp::new(core.session.clone()).measuring(measurer.clone());
         let card = Card::new();
         let clock = Virtual::default();
-        let engine = common::Running(Engine::start_on(library, app, CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 256, settings: settings(&prefs), ..Config::default() }, clock.clone(), |_| {}));
+        let engine = common::Running(Engine::start_on(library, app, CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 256, settings: settings(&prefs, Default::default()), ..Config::default() }, clock.clone(), |_| {}));
         engine.queue_changed();
         Rig { engine, time: Stepper::new(clock, card.pull.clone()), core, store, net, whole, analyses, measurer, ids: ids.iter().map(|s| s.to_string()).collect(), _dir: dir }
     }

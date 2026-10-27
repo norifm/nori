@@ -48,7 +48,7 @@ fn usage() -> ! {
          \x20      nori-cli --script ... (the non-interactive player; nori-cli --script --help)\n\
          \x20      nori-cli --devices\n\
          The url, user and password may also come from NORI_URL, NORI_USER and NORI_PASSWORD.\n\
-         KIND is a profile kind that needs no server, as the settings store it (youtubeMusic).\n\
+         KIND is a profile kind that needs no server, as the settings store it (a plugin's id).\n\
          --no-paint leaves the terminal's own background and text colors; NO_COLOR shows no colors at all.\n\
          --debug (or NORI_DEBUG=1) writes every event, frame and picture sent to nori.log in the data directory."
     );

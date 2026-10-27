@@ -13,6 +13,8 @@ mod repo;
 pub(crate) mod runtime;
 mod stage;
 mod store;
+#[cfg(feature = "testing")]
+pub mod testing;
 mod view;
 mod worker;
 
@@ -21,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub use app::{open, open_plugins, Client};
-pub use repo::{Offer, Offers, Repo, RepoFailure, Version, OFFICIAL};
+pub use repo::{Offer, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
 pub use view::{PluginCard, PluginRow};
 pub use host::{Side, Value};
 pub use manifest::{Manifest, Refusal, RowKind, RowSpec, Slot, API, POINTS};

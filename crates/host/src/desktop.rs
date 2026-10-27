@@ -79,6 +79,42 @@ pub fn plugins(data: &Path) -> &'static Plugged {
     })
 }
 
+/// Updates the plugins at most once a day, off this thread, through the open profile's connection;
+/// `done` hears each plugin updated and its new version, when any was.
+pub fn update_plugins(data: &Path, done: impl FnOnce(Vec<(String, String)>) + Send + 'static) {
+    let host = plugins(data).host.clone();
+    if !host.updates_due(nori_time::unix_ms()) {
+        return;
+    }
+    crate::spawn("nori-plugin-update", move || {
+        let updated = block_on(host.update(nori_time::unix_ms()));
+        if !updated.is_empty() {
+            done(updated.into_iter().map(|u| (u.id, u.to)).collect());
+        }
+    });
+}
+
+/// Where a plugin a repo offers stands here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OfferState {
+    New,
+    /// Another version is installed.
+    Update,
+    Installed,
+}
+
+/// The newest version `offer` has that this nori runs, and where the plugin stands against it; None
+/// without one.
+pub fn offer_state(offer: &nori_plugins::Offer) -> Option<(&nori_plugins::Version, OfferState)> {
+    let newest = offer.versions.first()?;
+    let state = match &offer.installed {
+        None => OfferState::New,
+        Some(v) if *v == newest.version => OfferState::Installed,
+        Some(_) => OfferState::Update,
+    };
+    Some((newest, state))
+}
+
 /// The plugin host, the kinds of profile it adds, and what hears from it.
 pub struct Plugged {
     pub host: Arc<nori_plugins::Plugins>,

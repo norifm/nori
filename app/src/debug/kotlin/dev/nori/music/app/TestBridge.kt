@@ -74,6 +74,31 @@ class TestBridge : BroadcastReceiver() {
             Thread({ answer(runCatching { remoteCheck(nori, arg, value, context) }.getOrElse { "remote failed: ${it.javaClass.simpleName}" }) }, "remotecheck").start()
             return
         }
+        // The plugin host, as the plugin checks drive it: "install <path>" (answers the id), "turn <id> on|off",
+        // "cards" (each installed plugin's id and whether it is on), "reset". Off the main thread, as the app calls it.
+        if (cmd == "plugin") {
+            val host = dev.nori.music.Nori.get(context).plugins
+            Thread({
+                answer(runCatching {
+                    kotlinx.coroutines.runBlocking {
+                        when (arg) {
+                            "install" -> host.install(value)
+                            "turn" -> value.split(" ").let { (id, on) -> host.turn(id, on == "on"); "ok" }
+                            // Every plugin and added repo gone, for a check that starts afresh.
+                            "reset" -> {
+                                host.refresh()
+                                host.cards.value.forEach { host.uninstall(it.id) }
+                                host.repos.value.filter { !it.official }.forEach { host.removeRepo(it.url) }
+                                "ok"
+                            }
+                            "cards" -> { host.refresh(); host.cards.value.joinToString(" ") { "${it.id}:${if (it.enabled) "on" else "off"}" }.ifEmpty { "none" } }
+                            else -> "unknown plugin check $arg"
+                        }
+                    }
+                }.getOrElse { "plugin failed: ${it.javaClass.simpleName}" })
+            }, "plugincheck").start()
+            return
+        }
         Handler(Looper.getMainLooper()).post {
             val reply = when (cmd) {
                 "open" -> TestHooks.open?.let { it(arg); "ok" } ?: "no ui"

@@ -163,6 +163,8 @@ export struct SettingRow {
     shares: [float],
     // A usage row's downloads, a line per profile, drawn under its downloads part.
     breakdown: [string],
+    // A buttons row's names, one per option: a button sends its own.
+    names: [string],
 }
 
 // A line with a quieter one under it: an AutoEQ curve, a saved sound profile.
@@ -3947,6 +3949,14 @@ component SettingLine inherits VerticalLayout {
                     enabled: root.item.enabled;
                     clicked => { root.action(root.item.name); }
                 }
+                if root.item.kind == 16: HorizontalLayout {
+                    spacing: 6px;
+                    for o[i] in root.item.options: SmallButton {
+                        y: (parent.height - self.height) / 2;
+                        text: o;
+                        clicked => { root.action(root.item.names[i]); }
+                    }
+                }
                 if root.item.kind == 8 && root.item.button != "": SmallButton {
                     y: (parent.height - self.height) / 2;
                     text: root.item.button;
@@ -5422,6 +5432,16 @@ export component AppWindow inherits Window {
     // A lyrics service dragged some places (down +), and the sheet its key is typed in.
     callback source-moved(string, int);
     in-out property <bool> key-open;
+    // A line asked for (a plugin's text, a file or a repo's address), or a warning to confirm: what is
+    // typed goes to `setting-typed(ask-name, …)`.
+    in-out property <bool> ask-open;
+    in property <string> ask-title;
+    in property <string> ask-note;
+    in property <string> ask-name;
+    in property <string> ask-button;
+    in property <bool> ask-field;
+    in property <bool> ask-secret;
+    in-out property <string> ask-text;
     in-out property <string> key-service;
     in-out property <string> key-title;
     in-out property <string> key-text;
@@ -5528,7 +5548,7 @@ export component AppWindow inherits Window {
     callback delete-playlist();
     // "Join a Jam": the sheet open, its link, why it failed, and joining under way.
     in-out property <bool> join-open;
-    // Signing the profile's account in with cookies pasted from a browser (YouTube Music).
+    // Signing the profile's account in with cookies pasted from a browser.
     in-out property <bool> signin-open;
     in-out property <string> signin-text;
     in property <bool> signin-busy;
@@ -5537,6 +5557,8 @@ export component AppWindow inherits Window {
     callback open-sign-in-page();
     // The account sheet: who is signed in (empty: no one), and pasting unfolded under Sign in.
     in property <string> signin-user;
+    // What the profile in use signs in to, by name.
+    in property <string> signin-service;
     in-out property <bool> signin-pasting;
     callback sign-in-window();
     callback sign-out();
@@ -7852,6 +7874,63 @@ export component AppWindow inherits Window {
         // Join a Jam: a sheet over the window, as the Mac's sheets come down from its top.
         // A lyrics service's key: typed, it is kept and the service switched on; removed, every service that
         // needs it is switched off.
+        if root.ask-open: Rectangle {
+            background: Theme.ground.with-alpha(0.6);
+            TouchArea {
+                clicked => { root.ask-open = false; }
+            }
+            MenuSheet {
+                x: (parent.width - self.width) / 2;
+                y: 80px;
+                width: 420px;
+                height: ask-sheet.preferred-height;
+                TouchArea {}
+                ask-sheet := VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+                    Text {
+                        text: root.ask-title;
+                        color: Theme.text;
+                        font-size: 17px;
+                        font-weight: 700;
+                    }
+                    if root.ask-note != "": Text {
+                        text: root.ask-note;
+                        color: Theme.dim;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                    }
+                    if root.ask-field: Field {
+                        height: 34px;
+                        border-radius: 8px;
+                        clip: true;
+                        secret: root.ask-secret;
+                        text <=> root.ask-text;
+                        accepted => {
+                            root.ask-open = false;
+                            root.setting-typed(root.ask-name, root.ask-text);
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle { horizontal-stretch: 1; }
+                        SmallButton {
+                            y: (parent.height - self.height) / 2;
+                            text: "Cancel";
+                            clicked => { root.ask-open = false; }
+                        }
+                        Capsule {
+                            text: root.ask-button;
+                            clicked => {
+                                root.ask-open = false;
+                                root.setting-typed(root.ask-name, root.ask-text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if root.key-open: Rectangle {
             background: Theme.ground.with-alpha(0.6);
             TouchArea {
@@ -8300,7 +8379,7 @@ export component AppWindow inherits Window {
                     padding: 16px;
                     spacing: 12px;
                     Text {
-                        text: root.signin-user != "" ? "YouTube Music" : "Sign in to YouTube Music";
+                        text: root.signin-user != "" ? root.signin-service : "Sign in to " + root.signin-service;
                         color: Theme.text;
                         font-size: 17px;
                         font-weight: 700;
@@ -8323,7 +8402,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.signin-user == "": Text {
-                        text: root.signin-busy ? "Finish signing in in the window that opened." : root.signin-ended ? "YouTube signed you out. Sign in again to see your library and likes." : "See your own Home, your library and your likes. Music plays without it too.";
+                        text: root.signin-busy ? "Finish signing in in the window that opened." : root.signin-ended ? root.signin-service + " signed you out. Sign in again to see your library and likes." : "See your own Home, your library and your likes. Music plays without it too.";
                         color: Theme.dim;
                         font-size: 13px;
                         wrap: word-wrap;
@@ -8332,7 +8411,7 @@ export component AppWindow inherits Window {
                     if root.signin-user == "": HorizontalLayout {
                         alignment: center;
                         Capsule {
-                            text: root.signin-busy ? "Signing in…" : "Sign in with Google";
+                            text: root.signin-busy ? "Signing in…" : "Sign in";
                             icon: Icons.user;
                             clicked => { root.sign-in-window(); }
                         }
@@ -8354,7 +8433,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.signin-user == "" && root.signin-pasting: Text {
-                        text: "Sign in to music.youtube.com in a private browser window, copy the Cookie header of any request it makes from the developer tools, and paste it here.";
+                        text: "Sign in in a private browser window, copy the Cookie header of any request the page makes from the developer tools, and paste it here.";
                         color: Theme.dim;
                         font-size: 12px;
                         wrap: word-wrap;
@@ -8370,7 +8449,7 @@ export component AppWindow inherits Window {
                         }
                         SmallButton {
                             y: (parent.height - self.height) / 2;
-                            text: "Open YouTube Music";
+                            text: "Open the sign-in page";
                             clicked => { root.open-sign-in-page(); }
                         }
                         SmallButton {
@@ -8379,13 +8458,6 @@ export component AppWindow inherits Window {
                             enabled: root.signin-text != "";
                             clicked => { root.sign-in(root.signin-text); }
                         }
-                    }
-                    Text {
-                        text: "Unofficial apps are against YouTube’s terms, and YouTube may flag an account that uses one.";
-                        color: Theme.faint;
-                        font-size: 11px;
-                        wrap: word-wrap;
-                        horizontal-alignment: center;
                     }
                     HorizontalLayout {
                         alignment: end;

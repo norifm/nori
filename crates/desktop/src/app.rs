@@ -446,6 +446,8 @@ pub struct App {
     lists: Lists,
     find: String,
     facts: crate::settings::Facts,
+    /// Settings › Plugins as last read.
+    plugged: crate::settings::Plugged,
     /// The engine is in its shallow equalizer-tuning buffer.
     tuning: bool,
     lyrics: Option<crate::lyrics::SongLyrics>,
@@ -583,7 +585,7 @@ fn login_draft(info: &nori_core::providers::ProviderInfo, editing: Option<SavedS
     // What the form does not ask stays as saved (nothing, for a new profile).
     let text = |what, typed: String, saved: &str| if asks(what) { typed.trim().to_string() } else { saved.to_string() };
     SavedServer {
-        kind: info.kind,
+        kind: info.kind.clone(),
         name: text(FormField::Name, name, &base.name),
         url: text(FormField::Address, url, &base.url).trim_end_matches('/').to_string(),
         user: text(FormField::User, user, &base.user),
@@ -604,7 +606,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
     ui.set_greeting(words::LISTEN_NOW.into());
     ui.set_show_all_text(words::SHOW_ALL.into());
     ui.set_mixing_label(words::MIXING.into());
-    ui.set_login_kinds(ModelRc::new(VecModel::from(nori_core::providers::providers().iter().map(login_kind).collect::<Vec<_>>())));
+    ui.set_login_kinds(login_kinds(&nori_host::desktop::plugins(&data).kinds));
     let (tx, inbox) = Tx::new(ui.as_weak());
     let art = Rc::new(RefCell::new(Art::default()));
     let app = Rc::new_cyclic(|me: &Weak<RefCell<App>>| {
@@ -673,6 +675,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             still: false,
             lyrics_viewed: false,
             facts: crate::settings::Facts::default(),
+            plugged: Default::default(),
             lists: Lists::default(),
             find: String::new(),
             tuning: false,
@@ -746,7 +749,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         // Now Playing's lyrics: the line they are scrolled to sharp, the rest blurred by the compositor.
         let weak = ui.as_weak();
         a.compositor.set_focus_source(move || lyrics_focus(&weak.upgrade()?));
-        a.settings_shown();
+        a.plugins_read();
         let wake = a.me.clone();
         a.compositor.on_wake(move || wake.with(|a| a.repaint()));
         let prefs = crate::session::app().settings.current().unwrap_or_default();
@@ -810,10 +813,15 @@ fn open_in_browser(url: &str) {
     let _ = std::process::Command::new(opener).arg(url).spawn();
 }
 
+/// The kinds of profile the login page offers.
+fn login_kinds(kinds: &nori_core::providers::Kinds) -> ModelRc<LoginKind> {
+    ModelRc::new(VecModel::from(kinds.providers().iter().map(|i| login_kind(kinds, i)).collect::<Vec<_>>()))
+}
+
 /// A kind of profile as the login page offers it.
-fn login_kind(info: &nori_core::providers::ProviderInfo) -> LoginKind {
+fn login_kind(kinds: &nori_core::providers::Kinds, info: &nori_core::providers::ProviderInfo) -> LoginKind {
     use nori_core::providers::FormField;
-    let w = words::provider(info.kind);
+    let w = words::provider_of(kinds, &info.kind);
     let asks = |what| info.fields.iter().any(|f| f.what == what && !f.advanced);
     LoginKind {
         name: w.name.into(),
@@ -971,7 +979,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_sign_in_window, h, |a| a.sign_in_window());
     on!(ui.on_sign_out, h, |a| a.sign_out());
     on!(ui.on_sign_in_quiet, h, |a| a.sign_in_quiet());
-    ui.on_open_sign_in_page(|| open_in_browser(words::YOUTUBE_MUSIC_PAGE));
+    on!(ui.on_open_sign_in_page, h, |a| a.open_sign_in_page());
     on!(jam.on_listen, h, |a, on| {
         if let Some(r) = a.session.as_ref().and_then(|s| s.remote()) {
             r.listen(on);
@@ -1030,17 +1038,35 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_settings_tab_chosen, h, |a, t| {
         a.ui().set_settings_tab(t);
+        a.plugins_read();
         a.untune(SETTINGS);
         a.settings_shown();
     });
-    on!(ui.on_setting_toggled, h, |a, name, on| {
-        let (name, value) = crate::settings::toggled(&name, on);
-        a.setting(name, &value);
+    on!(ui.on_setting_toggled, h, |a, name, on| match crate::settings::PluginAct::of(&name) {
+        Some(act) => a.plugin_set(act, nori_plugins::Value::Switch(on)),
+        None => {
+            let (name, value) = crate::settings::toggled(&name, on);
+            a.setting(name, &value);
+        }
     });
-    on!(ui.on_setting_chosen, h, |a, name, i| a.setting_chosen(&name, i.max(0) as usize));
-    on!(ui.on_setting_action, h, |a, name| a.setting_action(&name));
-    on!(ui.on_setting_slid, h, |a, name, v, last| a.slid(&name, v, last));
-    on!(ui.on_setting_typed, h, |a, name, text| a.setting(&name, &text));
+    on!(ui.on_setting_chosen, h, |a, name, i| match crate::settings::PluginAct::of(&name) {
+        Some(act) => a.plugin_set(act, nori_plugins::Value::Choice(i.max(0) as u32)),
+        None => a.setting_chosen(&name, i.max(0) as usize),
+    });
+    on!(ui.on_setting_action, h, |a, name| match crate::settings::PluginAct::of(&name) {
+        Some(act) => a.plugin_act(act),
+        None => a.setting_action(&name),
+    });
+    // A plugin's level is kept once let go.
+    on!(ui.on_setting_slid, h, |a, name, v, last| match crate::settings::PluginAct::of(&name) {
+        Some(act) if last => a.plugin_set(act, nori_plugins::Value::Level(v as f64)),
+        Some(_) => {}
+        None => a.slid(&name, v, last),
+    });
+    on!(ui.on_setting_typed, h, |a, name, text| match crate::settings::PluginAct::of(&name) {
+        Some(act) => a.plugin_typed(act, text.to_string()),
+        None => a.setting(&name, &text),
+    });
     on!(ui.on_source_moved, h, |a, id, by| a.source_moved(&id, by));
     on!(ui.on_eq_set, h, |a, name, value| {
         a.setting(&name, &value);
@@ -1156,7 +1182,7 @@ impl App {
             s.close();
         }
         let ui = self.ui();
-        let (who, where_) = words::profile_lines(&profile);
+        let (who, where_) = words::profile_lines(&profile, self.kinds());
         ui.set_account_initial(who.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default().into());
         ui.set_account(who.into());
         ui.set_server(where_.into());
@@ -1169,6 +1195,7 @@ impl App {
                 ui.set_page_can_star(s.rules().account && s.rules().stars);
                 ui.set_favorites_offered(s.rules().stars);
                 self.session = Some(s);
+                self.update_plugins();
                 // The last profile's song leaves the screen; the new one's, if it has one, comes with follow.
                 self.song_shown(None);
                 // The new profile's core has no lyrics view open yet.
@@ -1199,17 +1226,17 @@ impl App {
 
     fn login(&mut self) {
         let ui = self.ui();
-        let Some(info) = nori_core::providers::providers().into_iter().nth(ui.get_login_kind().max(0) as usize) else { return };
+        let Some(info) = self.kinds().providers().into_iter().nth(ui.get_login_kind().max(0) as usize) else { return };
         let form = [ui.get_login_name(), ui.get_login_url(), ui.get_login_user(), ui.get_login_password()].map(|t| t.to_string());
         let draft = login_draft(&info, self.editing.clone(), form);
-        if !nori_core::providers::server_ready(draft.clone()) {
+        if !self.kinds().server_ready(draft.clone()) {
             ui.set_login_error("The server's address and a user name, please.".into());
             return;
         }
         ui.set_login_busy(true);
         ui.set_login_error("".into());
-        let (http, tx) = (self.http.clone(), self.tx.clone());
-        std::thread::spawn(move || tx.send(Msg::LoggedIn(session::check_login(http, draft))));
+        let (data, http, tx) = (self.data.clone(), self.http.clone(), self.tx.clone());
+        std::thread::spawn(move || tx.send(Msg::LoggedIn(session::check_login(&data, http, draft))));
     }
 
     fn go(&mut self, view: i32) {
@@ -2474,7 +2501,7 @@ impl App {
     fn edit_profile(&mut self, id: String) {
         let prefs = crate::session::app().settings.current().unwrap_or_default();
         let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
-        let providers = nori_core::providers::providers();
+        let providers = self.kinds().providers();
         if id == prefs.active_server_id && providers.iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
             return self.offer_sign_in();
         }
@@ -2505,6 +2532,148 @@ impl App {
         }
     }
 
+    /// The kinds of profile this computer opens: nori's own and its plugins'.
+    fn kinds(&self) -> &'static Arc<nori_core::providers::Kinds> {
+        &nori_host::desktop::plugins(&self.data).kinds
+    }
+
+    /// The sign-in page of the profile in use's provider, in the browser.
+    fn open_sign_in_page(&self) {
+        let Some(kind) = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.kind.clone())) else { return };
+        let page = self.kinds().providers().into_iter().find(|i| i.kind == kind).and_then(|i| {
+            i.sign_in.into_iter().find_map(|s| match s {
+                nori_core::providers::SignIn::WebPage { start_url } => Some(start_url),
+                nori_core::providers::SignIn::Paste => None,
+            })
+        });
+        if let Some(url) = page {
+            open_in_browser(&url);
+        }
+    }
+
+    fn plugin_host(&self) -> &'static Arc<nori_plugins::Plugins> {
+        &nori_host::desktop::plugins(&self.data).host
+    }
+
+    /// Reads the plugins and repos again, and the kinds of profile the login page offers with them.
+    fn plugins_read(&mut self) {
+        let host = self.plugin_host();
+        let cards = host.cards("en".into());
+        // What was installed since the repos were asked shows as installed.
+        if let crate::settings::Shelf::Read(offers) = &mut self.plugged.shelf {
+            for o in &mut offers.offers {
+                o.installed = cards.iter().find(|c| c.id == o.id).map(|c| c.version.clone());
+            }
+        }
+        self.plugged.cards = cards;
+        self.plugged.repos = host.repos();
+        self.ui().set_login_kinds(login_kinds(self.kinds()));
+        self.settings_shown();
+    }
+
+    /// Updates the plugins once a day, from the open profile's connection.
+    fn update_plugins(&self) {
+        let tx = self.tx.clone();
+        nori_host::desktop::update_plugins(&self.data, move |updated| tx.send(Msg::PluginsUpdated(updated)));
+    }
+
+    /// Sets a plugin's row, or switches the plugin or its version's hold, to `v`.
+    fn plugin_set(&mut self, act: crate::settings::PluginAct, v: nori_plugins::Value) {
+        use crate::settings::PluginAct;
+        let host = self.plugin_host();
+        match (act, v) {
+            (PluginAct::Turn(id), nori_plugins::Value::Switch(on)) => host.turn(id, on),
+            (PluginAct::Hold(id), nori_plugins::Value::Switch(on)) => host.hold_at(id, on),
+            (PluginAct::Row(id, row), v) => host.set(id, row, v),
+            _ => return,
+        }
+        self.plugins_read();
+    }
+
+    /// A button of Settings › Plugins.
+    fn plugin_act(&mut self, act: crate::settings::PluginAct) {
+        use crate::settings::PluginAct;
+        let host = self.plugin_host().clone();
+        let ui = self.ui();
+        let ask = |title: &str, name: String, secret: bool| {
+            ui.set_ask_title(title.into());
+            ui.set_ask_note("".into());
+            ui.set_ask_name(name.into());
+            ui.set_ask_button(words::SAVE.into());
+            ui.set_ask_field(true);
+            ui.set_ask_secret(secret);
+            ui.set_ask_text("".into());
+            ui.set_ask_open(true);
+        };
+        match act {
+            PluginAct::Row(id, row) => {
+                let Some(r) = self.plugged.cards.iter().find(|c| c.id == id).and_then(|c| c.rows.iter().find(|r| r.id == row)) else { return };
+                match r.kind {
+                    nori_plugins::RowKind::Text | nori_plugins::RowKind::Secret => {
+                        let (title, secret) = (r.label.clone(), r.kind == nori_plugins::RowKind::Secret);
+                        return ask(&title, PluginAct::Row(id, row).name(), secret);
+                    }
+                    _ => host.act(id, row),
+                }
+            }
+            PluginAct::Move(id, by) => {
+                let Some(at) = self.plugged.cards.iter().position(|c| c.id == id) else { return };
+                host.place(id, (at as i32 + by).max(0) as u32);
+            }
+            PluginAct::Remove(id) => host.uninstall(id),
+            PluginAct::Install => return ask(words::PLUGIN_PATH, PluginAct::Install.name(), false),
+            PluginAct::AddRepo => return ask(words::REPO_ADDRESS, PluginAct::AddRepo.name(), false),
+            PluginAct::RemoveRepo(url) => host.remove_repo(url),
+            PluginAct::Open(url) => return open_in_browser(&url),
+            PluginAct::Look => {
+                self.plugged.shelf = crate::settings::Shelf::Asking;
+                let tx = self.tx.clone();
+                nori_host::spawn("nori-plugin-offers", move || tx.send(Msg::PluginOffers(nori_core::transport::block_on(host.offers()))));
+            }
+            PluginAct::Get(offer, version) => {
+                let crate::settings::Shelf::Read(offers) = &self.plugged.shelf else { return };
+                let Some(v) = offers.offers.get(offer as usize).and_then(|o| o.versions.get(version as usize)).cloned() else { return };
+                let tx = self.tx.clone();
+                nori_host::spawn("nori-plugin-get", move || tx.send(Msg::PluginInstalled(nori_core::transport::block_on(host.install_version(v)))));
+            }
+            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::TrustRepo(_) => return,
+        }
+        self.plugins_read();
+    }
+
+    /// What the ask sheet took for `act`: a plugin's text, a path to install, or a repo's address,
+    /// which is added only once the warning is answered.
+    fn plugin_typed(&mut self, act: crate::settings::PluginAct, text: String) {
+        use crate::settings::PluginAct;
+        let host = self.plugin_host().clone();
+        match act {
+            PluginAct::Row(id, row) => host.set(id, row, nori_plugins::Value::Text(text)),
+            PluginAct::Install => {
+                let (tx, path) = (self.tx.clone(), text.trim().to_string());
+                nori_host::spawn("nori-plugin-install", move || tx.send(Msg::PluginInstalled(host.install_from(path))));
+                return;
+            }
+            PluginAct::AddRepo if !text.trim().is_empty() => {
+                let ui = self.ui();
+                let url = text.trim().to_string();
+                ui.set_ask_title(words::ADD_REPO.into());
+                ui.set_ask_note(format!("{}\n\n{url}", words::TRUST_REPO).into());
+                ui.set_ask_name(PluginAct::TrustRepo(url).name().into());
+                ui.set_ask_button(words::ADD.into());
+                ui.set_ask_field(false);
+                ui.set_ask_open(true);
+                return;
+            }
+            PluginAct::TrustRepo(url) => {
+                host.add_repo(url);
+                self.plugins_read();
+                return self.plugin_act(PluginAct::Look);
+            }
+            _ => return,
+        }
+        self.plugins_read();
+    }
+
     /// The ended session's sheet no longer comes back at start.
     fn sign_in_quiet(&self) {
         self.on_session(|s| s.client.stop_reminding());
@@ -2514,9 +2683,11 @@ impl App {
     fn offer_sign_in(&mut self) {
         use nori_core::providers::AccountState;
         let ended = self.session.as_ref().is_some_and(|s| s.client.account() == AccountState::Ended);
-        let user = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.user.clone())).filter(|_| !ended).unwrap_or_default();
+        let Some(profile) = crate::session::app().settings.current().and_then(|p| p.active_server().cloned()) else { return };
+        let user = if ended { String::new() } else { profile.user.clone() };
         let ui = self.ui();
         ui.set_signin_user(user.into());
+        ui.set_signin_service(words::provider_of(self.kinds(), &profile.kind).name.into());
         ui.set_signin_pasting(false);
         ui.set_signin_error("".into());
         ui.set_signin_ended(ended);
@@ -2527,12 +2698,13 @@ impl App {
     /// web view); where that cannot start, the sheet unfolds pasting with why.
     fn sign_in_window(&mut self) {
         let Some(s) = &self.session else { return };
-        let Some(kind) = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.kind)) else { return };
+        let Some(kind) = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.kind.clone())) else { return };
         if self.sign_in_window.as_mut().is_some_and(|w| w.open_now()) {
             return;
         }
         let (h, tx) = ((***s).clone(), self.tx.clone());
-        let window = nori_sign_in_window::SignInWindow::open(kind, format!("Sign in to {}", words::provider(kind).name), move |id, cookies| {
+        let title = format!("Sign in to {}", words::provider_of(self.kinds(), &kind).name);
+        let window = nori_sign_in_window::SignInWindow::open(self.kinds().clone(), kind, title, move |id, cookies| {
             tx.send(Msg::SignInWindowDone(id, h.sign_in(cookies)))
         });
         let ui = self.ui();
@@ -2745,6 +2917,22 @@ impl App {
                     ui.set_eq_autoeq_note(e.into());
                 }
                 self.settings_shown();
+            }
+            Msg::PluginInstalled(r) => {
+                match r {
+                    Ok(_) => self.say(words::PLUGIN_INSTALLED, false),
+                    Err(e) => self.say(&words::plugin_refused(&e), true),
+                }
+                self.plugins_read();
+            }
+            Msg::PluginOffers(o) => {
+                self.plugged.shelf = crate::settings::Shelf::Read(o);
+                self.plugins_read();
+            }
+            Msg::PluginsUpdated(updated) => {
+                let named: Vec<(String, String)> = updated.into_iter().map(|(id, to)| (self.plugged.cards.iter().find(|c| c.id == id).map_or(id, |c| c.name.clone()), to)).collect();
+                self.say(&words::plugins_updated(&named), false);
+                self.plugins_read();
             }
             Msg::SignInWindowDone(pid, r) => {
                 self.sign_in_window.take_if(|w| w.id() == pid);
@@ -3114,8 +3302,17 @@ impl App {
         ui.set_appearance_pick(crate::settings::appearance_pick(&prefs));
         let view = ui.get_view();
         if view == SETTINGS {
-            ui.set_settings_tabs(ModelRc::new(VecModel::from(crate::settings::tabs(&self.facts.rules.settings).into_iter().map(|p| SharedString::from(crate::settings::tab_name(p))).collect::<Vec<_>>())));
-            ui.set_settings(crate::settings::rows(&prefs, &self.facts, ui.get_settings_tab(), today));
+            // The core's pages, then Plugins.
+            let mut tabs: Vec<SharedString> = crate::settings::tabs(&self.facts.rules.settings).into_iter().map(|p| SharedString::from(crate::settings::tab_name(p))).collect();
+            let plugins_tab = tabs.len() as i32;
+            tabs.push(words::PLUGINS.into());
+            ui.set_settings_tabs(ModelRc::new(VecModel::from(tabs)));
+            let tab = ui.get_settings_tab();
+            ui.set_settings(if tab == plugins_tab {
+                crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, today)
+            } else {
+                crate::settings::rows(&prefs, &self.facts, self.kinds(), tab, today)
+            });
         }
         if view == EQUALIZER {
             crate::eq::fill(&ui, &prefs);
@@ -3823,7 +4020,7 @@ mod tests {
 
     #[test]
     fn an_edited_profile_keeps_its_id_and_password() {
-        let info = nori_core::providers::providers().into_iter().find(|i| i.kind == nori_core::settings::ServerKind::Subsonic).unwrap();
+        let info = nori_core::providers::Kinds::builtin().providers().into_iter().find(|i| i.kind == nori_core::settings::ServerKind::Subsonic).unwrap();
         let saved = SavedServer { id: "p1".into(), url: "https://old".into(), user: "me".into(), password: "secret".into(), music_folder_ids: vec!["f".into()], ..Default::default() };
         let saved = SavedServer { name: "Home".into(), ..saved };
         let form = |pw: &str| ["Typed".to_string(), "https://new/".into(), " me ".into(), pw.into()];
@@ -4475,7 +4672,7 @@ mod tests {
         let facts = crate::settings::Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() };
         let tab = crate::settings::tabs(&facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Lyrics).unwrap() as i32;
         ui.set_view(SETTINGS);
-        ui.set_settings(crate::settings::rows(&nori_core::settings::StoredPrefs::default(), &facts, tab, crate::look::Today { month: 10, day: 19, southern: false }));
+        ui.set_settings(crate::settings::rows(&nori_core::settings::StoredPrefs::default(), &facts, &nori_core::providers::Kinds::builtin(), tab, crate::look::Today { month: 10, day: 19, southern: false }));
         let moved = Rc::new(RefCell::new(Vec::new()));
         let seen = moved.clone();
         ui.on_source_moved(move |id, by| seen.borrow_mut().push((id.to_string(), by)));
@@ -4806,7 +5003,7 @@ mod tests {
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_mixing_label(words::MIXING.into());
-    ui.set_login_kinds(ModelRc::new(VecModel::from(nori_core::providers::providers().iter().map(login_kind).collect::<Vec<_>>())));
+    ui.set_login_kinds(login_kinds(&nori_core::providers::Kinds::builtin()));
         ui.set_has_song(true);
         ui.set_playing(true);
         ui.set_now_title("Track".into());
@@ -4913,7 +5110,7 @@ mod tests {
             ui.set_picks_loaded(true);
             ui.set_show_all_text(words::SHOW_ALL.into());
     ui.set_mixing_label(words::MIXING.into());
-    ui.set_login_kinds(ModelRc::new(VecModel::from(nori_core::providers::providers().iter().map(login_kind).collect::<Vec<_>>())));
+    ui.set_login_kinds(login_kinds(&nori_core::providers::Kinds::builtin()));
             ui.set_shelves(ModelRc::new(VecModel::from(vec![Shelf {
                 title: "Recently played".into(), loaded: true,
                 cards: cards((0..100).map(|i| Card { id: i.to_string().into(), art: i.to_string().into(), ..Default::default() })),

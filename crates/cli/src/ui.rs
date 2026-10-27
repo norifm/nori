@@ -1086,8 +1086,8 @@ fn curve(f: &mut Frame, area: Rect, rows: &[EqRow], bands: &[usize], p: &nori_co
 
 fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let prefs = app.prefs.clone();
-    let own = &app.settings.own;
-    app.settings.own = settings_view::Own { mouse: app.mouse, images: app.images, paint: app.paint, protocol: app.protocol.to_string(), data: own.data.clone(), device: own.device.clone(), dark: app.dark };
+    let own = app.settings.own.clone();
+    app.settings.own = settings_view::Own { mouse: app.mouse, images: app.images, paint: app.paint, protocol: app.protocol.to_string(), dark: app.dark, ..own };
     let body = heading(f, area, View::Settings.name(), "", t);
     let App { settings: v, hits, .. } = app;
     let pages = v.pages(&prefs).to_vec();
@@ -1165,14 +1165,14 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
         return Line::from(Span::styled(fit(&format!("    {detail}"), w).into_owned(), t.dim().add_modifier(Modifier::ITALIC)));
     }
     let value = match row {
-        settings_view::Row::Toggle { on, .. } | settings_view::Row::Ranked { on, .. } => crate::text::on_off(*on).to_string(),
+        settings_view::Row::Toggle { on, .. } | settings_view::Row::Ranked { on, .. } | settings_view::Row::Plugin { on, .. } => crate::text::on_off(*on).to_string(),
         _ => settings_view::row_value(row),
     };
     let mut left = vec![Span::styled(format!("    {title}"), text_style)];
     if !detail.is_empty() {
         left.push(Span::styled(format!("  {detail}"), t.dim()));
     }
-    let switched = matches!(row, settings_view::Row::Toggle { on: true, .. } | settings_view::Row::Ranked { on: true, .. });
+    let switched = matches!(row, settings_view::Row::Toggle { on: true, .. } | settings_view::Row::Ranked { on: true, .. } | settings_view::Row::Plugin { on: true, .. });
     let value_style = if !live { t.dim() } else if switched { Style::default().fg(t.on) } else { Style::default().fg(t.ink) };
     spread(left, Span::styled(value + " ", value_style), w)
 }
@@ -1800,7 +1800,8 @@ fn qr_lines(code: &nori_core::remote::QrCode) -> Vec<Line<'static>> {
 
 fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let missing = app.page_missing();
-    let App { overlay, hits, devices, .. } = app;
+    let App { overlay, hits, devices, settings, .. } = app;
+    let kinds = &*settings.own.kinds;
     let Some(o) = overlay else { return };
     match o {
         Overlay::Help { scroll } => {
@@ -1881,7 +1882,7 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         Overlay::Account { kind, user, ended, pasting, text: typed, error, busy } => {
             let w = 76.min(area.width);
             let iw = w.saturating_sub(4).max(1) as usize;
-            let name = crate::text::provider(*kind).name;
+            let name = crate::text::provider_of(kinds, kind).name;
             let title = if user.is_empty() { format!(" Sign in to {name} ") } else { format!(" {name} ") };
             let mut said: Vec<(String, Style)> = Vec::new();
             if !user.is_empty() {
@@ -1893,14 +1894,13 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
                 let dots = "•".repeat(typed.chars().count().min(iw.saturating_sub(1)));
                 said.push((format!("{dots}▏"), Style::default().fg(t.ink)));
             } else {
-                let why = if *busy { crate::text::SIGNING_IN } else if *ended { crate::text::SIGNED_OUT_AGAIN } else { crate::text::SIGN_IN_WHY };
-                said.push((why.into(), Style::default().fg(t.ink)));
+                let why = if *busy { crate::text::SIGNING_IN.into() } else if *ended { crate::text::signed_out_again(&name) } else { crate::text::SIGN_IN_WHY.into() };
+                said.push((why, Style::default().fg(t.ink)));
                 said.push(((if *ended { crate::text::SIGN_IN_KEYS_ENDED } else { crate::text::SIGN_IN_KEYS }).into(), t.dim()));
             }
             if let Some(e) = error {
                 said.push((e.clone(), Style::default().fg(Color::LightRed)));
             }
-            said.push((crate::text::RISK.into(), t.dim()));
             let rows: usize = said.iter().map(|(l, _)| l.chars().count().div_ceil(iw).max(1)).sum::<usize>() + said.len() - 1;
             let r = centred(area, w, rows as u16 + 3);
             let inner = popup(f, r, Span::styled(title, bold().fg(t.ink)), t);
@@ -1940,6 +1940,19 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             let inner = popup(f, r, Span::styled(format!(" {title} · enter keeps, esc drops "), bold().fg(t.ink)), t);
             let shown = if *secret { "•".repeat(typed.chars().count()) } else { typed.clone() };
             put(f, Paragraph::new(format!(" {shown}▏")), inner);
+        }
+        Overlay::Trust { url } => {
+            let w = 64.min(area.width);
+            let lines = vec![
+                Line::from(Span::styled(crate::text::TRUST_REPO, Style::default().fg(t.ink))),
+                Line::from(""),
+                Line::from(Span::styled(url.clone(), t.dim())),
+                Line::from(""),
+                Line::from(Span::styled(crate::text::TRUST_KEYS, t.dim())),
+            ];
+            let r = centred(area, w, 8);
+            let inner = popup(f, r, Span::styled(format!(" {} ", crate::text::ADD_REPO), bold().fg(t.ink)), t);
+            put(f, Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner });
         }
     }
 }

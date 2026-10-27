@@ -32,30 +32,37 @@ import dev.nori.music.ffi.settings.ServerKind
 import dev.nori.music.text.Fmt
 
 /**
- * A kind of profile's words (the core's providers) as string resources: what it is called, what adding
- * one does and its button, and what is said under a profile that names no user. The only part of the
- * app that is a provider's own; a provider added in the core needs one entry here.
+ * A kind of profile's words (the core's providers): what it is called, what adding one does and its button,
+ * what is said under a profile that names no user, and its account's words. Subsonic's are the app's own; a
+ * plugin's name and about are the plugin's ([pluginName], [pluginAbout]), the rest the app's words for any
+ * provider, its name in them.
  */
-class ProviderStrings(val name: Int, val hint: Int, val add: Int, val noUser: Int, val account: AccountStrings? = null)
+class ProviderWords(val name: String, val hint: String, val add: String, val noUser: String, val account: AccountWords)
 
 /** The words of a provider whose account signs in apart from its form (`ProviderInfo.sign_in`). */
-class AccountStrings(
-    val signInHint: Int, val pageButton: Int, val pageTitle: Int, val pageRefused: Int, val pasteInstead: Int, val pasteHint: Int,
-    val pasteLabel: Int, val risk: Int, val offerTitle: Int, val offerText: Int, val signedOutAgain: Int, val noSession: Int,
-    val refused: Int, val unreachable: Int,
+class AccountWords(
+    val signInHint: String, val pageButton: String, val pageTitle: String, val pageRefused: String, val pasteInstead: String, val pasteHint: String,
+    val pasteLabel: String, val risk: String, val offerTitle: String, val offerText: String, val signedOutAgain: String, val noSession: String,
+    val refused: String, val unreachable: String,
 )
 
-fun providerStrings(kind: ServerKind): ProviderStrings = when (kind) {
-    ServerKind.SUBSONIC -> ProviderStrings(R.string.profile_kind_server, R.string.server_hint, R.string.connect, R.string.settings_server_api_key)
-    ServerKind.YOU_TUBE_MUSIC -> ProviderStrings(
-        R.string.youtube_music, R.string.youtube_music_hint, R.string.youtube_music_add, R.string.settings_server_best_effort,
-        AccountStrings(
-            R.string.youtube_sign_in_hint, R.string.youtube_sign_in_google, R.string.youtube_sign_in_title, R.string.youtube_page_refused,
-            R.string.youtube_paste_instead, R.string.youtube_paste_hint, R.string.youtube_cookies, R.string.youtube_account_risk,
-            R.string.youtube_offer_title, R.string.youtube_offer_text, R.string.youtube_signed_out_again, R.string.youtube_no_session,
-            R.string.youtube_refused, R.string.youtube_unreachable,
-        ),
+/** [kind]'s words; a plugin kind is named by [pluginName] (its id until the plugin's words are read), [pluginAbout] its hint. */
+fun providerWords(r: Resources, kind: ServerKind, pluginName: String? = null, pluginAbout: String? = null): ProviderWords {
+    val name = when (kind) {
+        ServerKind.Subsonic -> r.getString(R.string.profile_kind_server)
+        is ServerKind.Plugin -> pluginName ?: kind.id
+    }
+    val account = AccountWords(
+        r.getString(R.string.provider_sign_in_hint), r.getString(R.string.provider_sign_in_page, name), name, r.getString(R.string.provider_page_refused, name),
+        r.getString(R.string.provider_paste_instead), r.getString(R.string.provider_paste_hint, name), r.getString(R.string.provider_cookies),
+        r.getString(R.string.provider_account_risk, name), r.getString(R.string.provider_offer_title, name), r.getString(R.string.provider_offer_text),
+        r.getString(R.string.provider_signed_out_again, name), r.getString(R.string.provider_no_session), r.getString(R.string.provider_refused, name),
+        r.getString(R.string.provider_unreachable, name),
     )
+    return when (kind) {
+        ServerKind.Subsonic -> ProviderWords(name, r.getString(R.string.server_hint), r.getString(R.string.connect), r.getString(R.string.settings_server_api_key), account)
+        is ServerKind.Plugin -> ProviderWords(name, pluginAbout.orEmpty(), r.getString(R.string.provider_add, name), r.getString(R.string.profile_kind_plugin_no_user), account)
+    }
 }
 
 /**
@@ -280,7 +287,7 @@ class Say(private val r: Resources) {
     val server: String = r.getString(R.string.server)
     val serverHint: String = r.getString(R.string.server_hint)
     val serverUrl: String = r.getString(R.string.server_url)
-    /** One of [providerStrings]' words. */
+    /** A word by its resource id. */
     fun word(id: Int): String = r.getString(id)
     val account: String get() = r.getString(R.string.account)
     fun signedInAs(name: String): String = r.getString(R.string.signed_in_as, name)
@@ -289,24 +296,47 @@ class Say(private val r: Resources) {
     val signingIn: String get() = r.getString(R.string.signing_in)
     val tryAgain: String get() = r.getString(R.string.try_again)
     val notNow: String get() = r.getString(R.string.not_now)
-    /** Why a sign-in page's session did not sign in a [kind] profile: it always holds a session, so only the provider's refusal or the network is left. */
-    fun signInPage(kind: ServerKind, result: dev.nori.music.ffi.SignInResult): String = providerStrings(kind).account.let { w ->
-        when {
-            w == null -> ""
-            result is dev.nori.music.ffi.SignInResult.Unreachable -> r.getString(w.unreachable)
-            else -> r.getString(w.pageRefused)
-        }
+    /** [kind]'s words ([providerWords]). */
+    fun provider(kind: ServerKind, pluginName: String? = null, pluginAbout: String? = null) = providerWords(r, kind, pluginName, pluginAbout)
+    /** Why a sign-in page's session did not sign in: it always holds a session, so only the provider's refusal or the network is left. */
+    fun signInPage(w: AccountWords, result: dev.nori.music.ffi.SignInResult): String =
+        if (result is dev.nori.music.ffi.SignInResult.Unreachable) w.unreachable else w.pageRefused
+    /** How a sign-in went. */
+    fun signIn(w: AccountWords, result: dev.nori.music.ffi.SignInResult): String = when (result) {
+        is dev.nori.music.ffi.SignInResult.SignedIn -> signedInAs(result.name)
+        dev.nori.music.ffi.SignInResult.NoSession -> w.noSession
+        dev.nori.music.ffi.SignInResult.Refused -> w.refused
+        is dev.nori.music.ffi.SignInResult.Unreachable -> w.unreachable
     }
-    /** How a sign-in of a [kind] profile went. */
-    fun signIn(kind: ServerKind, result: dev.nori.music.ffi.SignInResult): String {
-        val w = providerStrings(kind).account
-        return when (result) {
-            is dev.nori.music.ffi.SignInResult.SignedIn -> signedInAs(result.name)
-            dev.nori.music.ffi.SignInResult.NoSession -> w?.let { r.getString(it.noSession) }.orEmpty()
-            dev.nori.music.ffi.SignInResult.Refused -> w?.let { r.getString(it.refused) }.orEmpty()
-            is dev.nori.music.ffi.SignInResult.Unreachable -> w?.let { r.getString(it.unreachable) }.orEmpty()
-        }
-    }
+    val plugins: String get() = r.getString(R.string.plugins)
+    val pluginsSummary: String get() = r.getString(R.string.plugins_summary)
+    val pluginsNone: String get() = r.getString(R.string.plugins_none)
+    val pluginsInstalled: String get() = r.getString(R.string.plugins_installed_list)
+    val pluginsInstallFile: String get() = r.getString(R.string.plugins_install_file)
+    fun pluginVersion(v: String): String = r.getString(R.string.plugins_version, v)
+    val pluginMoveUp: String get() = r.getString(R.string.plugins_move_up)
+    val pluginMoveDown: String get() = r.getString(R.string.plugins_move_down)
+    val pluginOn: String get() = r.getString(R.string.plugins_on)
+    fun pluginTalksTo(hosts: List<String>): String = r.getString(R.string.plugins_talks_to, hosts.joinToString(", "))
+    fun pluginChanges(keys: List<String>): String = r.getString(R.string.plugins_changes, keys.joinToString(", "))
+    val pluginsGet: String get() = r.getString(R.string.plugins_get)
+    val pluginsAsking: String get() = r.getString(R.string.plugins_asking)
+    fun pluginOfferLine(version: String, repo: String): String = r.getString(R.string.plugins_offer_line, version, repo)
+    val pluginInstall: String get() = r.getString(R.string.plugins_install)
+    val pluginUpdate: String get() = r.getString(R.string.plugins_update)
+    val pluginUpToDate: String get() = r.getString(R.string.plugins_up_to_date)
+    val pluginRepos: String get() = r.getString(R.string.plugins_repos)
+    val pluginRepoOfficial: String get() = r.getString(R.string.plugins_repo_official)
+    fun pluginRepoUnreachable(host: String): String = r.getString(R.string.plugins_repo_unreachable, host)
+    val pluginAddRepo: String get() = r.getString(R.string.plugins_add_repo)
+    fun pluginUpdated(name: String, to: String): String = r.getString(R.string.plugins_updated, name, to)
+    val pluginVersions: String get() = r.getString(R.string.plugins_versions)
+    val pluginKeepVersion: String get() = r.getString(R.string.plugins_keep_version)
+    val pluginSource: String get() = r.getString(R.string.plugins_source)
+    val pluginFromFile: String get() = r.getString(R.string.plugins_from_file)
+    fun pluginVersionLine(version: String, released: String?): String = released?.let { r.getString(R.string.plugins_offer_line, version, it) } ?: version
+    val pluginRepoUrl: String get() = r.getString(R.string.plugins_repo_url)
+    val pluginRepoWarning: String get() = r.getString(R.string.plugins_repo_warning)
     val user: String = r.getString(R.string.user)
     val password: String = r.getString(R.string.password)
     val connecting: String = r.getString(R.string.connecting)
