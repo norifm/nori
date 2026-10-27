@@ -6,6 +6,102 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-27
+
+### Added
+
+- Favorites in albums filter any order, as they do in songs
+- Drop the Previous goes back a song setting
+- Drop the Speed setting
+- Drop the Pitch setting
+- Drop the Skip silence setting
+- Play and pause always fade over 150 ms
+- Drop moving covers
+- Desktop menus on a right press of the pill's song and any artist (fixes #119)
+- Desktop backing vocals fill word by word as they are sung (fixes #120)
+- Artist menus on android and the terminal, card menus on the web
+- An equalizer curve you drag, with free parametric bands (#123)
+- The desktop equalizer curve you drag, bands added on it
+- The equalizer curve on the web, terminal and iPod (#125)
+- Lyrics are marked with a speech bubble on every client
+- Nightly nori builds that update themselves, and checks on every push
+- Equalizer bands take typed values and pick their kind from a list (#128)
+- The web as the desktop, playlist management, deletes ask first (#126)
+- Right-click menus on the desktop's queue, search preview and artists list
+- The web queue takes a song out by its row's button, its menu the song's own
+
+### Changed
+
+- Home rows read and page as the core says on every client
+
+### Fixed
+
+- Moving playback between devices no longer crashes the app
+- A deeply nested lrclib lyrics file no longer crashes the app
+- A refused favorite no longer freezes a device serving remotes
+- A song with no audio on repeat no longer hangs playback
+- The remote-control door no longer spins the cpu
+- Changing the streamed music space can no longer freeze playback
+- A request made while the player reconnects runs once
+- A download that keeps restarting from zero now fails
+- Fetching ahead no longer refetches songs that overflow the cache
+- An empty beat model answer no longer repeats the request forever
+- A server that ignores paging no longer makes lists load forever
+- A radio station that keeps dropping is no longer redialed nonstop
+- A truncated ogg file on android is fetched again once, not forever
+- The terminal client no longer spins when a jam ends signed out
+- Desktop lyrics memory, menus, back navigation and smoother redraws (#109)
+- The playing song in the queue opens the player; title says Queue
+- A song playing during a profile switch stays in its own profile
+- Lyrics move from line to line on an e-ink screen (fixes #110)
+- The random albums widget refreshes with the refresh glyph
+- Text in desktop menus follows the day or night theme (fixes #118)
+- The desktop queue scrolls to each new song unless scrolled away (fixes #115)
+- A pause fades out fully before the desktop's sound stops (fixes #116)
+- The random albums row keeps its draw until a refresh (fixes #113)
+- A lyric line is left once its last word is sung (fixes #121)
+- The landscape cover reaches the edges as burn-in protection moves it (fixes #112)
+- The mini player's title walks again after a motion change (fixes #117)
+- Automix holds one level through a mix and ends at the new song's
+- A pause says where the music stopped, not a burst before (fixes #114)
+- The sideways player pill keeps clear of the gesture bar
+- Desktop seal in full ink, bundled icon left to macOS (fixes #122)
+- Device lists show a song only where it plays now
+- A like on the device playing shows on every page (fixes #124)
+- Desktop player buttons stay quiet until switched on
+- Music playing on another device shows in ink, not the accent
+- The mini player's quiet glyphs share one gray
+- The seek bar has one track and an accent playhead everywhere
+- The terminal's full player seal is in ink beside the title
+- Desktop lyrics keep their rows once sung, so nothing shifts
+- A like on the web shows at once on the device playing the song
+- The desktop's full player always shows one panel, in its own sheet
+- The web calls its devices panel Devices, as the desktop does
+- The web's top bar shows the nori wordmark on the page's edge
+- The sideways player pill stays put again, off the gesture bar's sides only
+- The desktop's full player panel is borderless again, the side sheet closes
+- The desktop's full player lists devices as they appear
+- The seek bar holds still while a song loads
+- Switching devices shows the handed song and place, no old cover
+- The seek bar moves a quarter pixel at a time again, as smoothly as before
+- A download's files reach the disk before it counts as downloaded
+- Moving music to another device mid-mix carries the mix on there
+- An MP3 started mid-song streams from there instead of loading up to it
+- A song streamed at a low bitrate no longer stalls when it opens partway
+- A download media3 lost track of can still be removed
+- A device played on stays controlled when its network announcement drops
+- Handing playback to another device never shows its old song first
+- Lyrics stay blurred round the next line before the first is sung
+- Taking playback back shows the other device until its queue is here
+- Nori nightly installs the next nightly instead of calling it not newer
+- Nori nightly no longer shows the beta updates switch
+
+### Performance
+
+- The seek bar redraws once per pixel, a quarter as often
+- Small moving things repaint only themselves, not the whole screen (#127)
+- The lyrics list draws in an island of its own while nothing round it moves (#129)
+
 ## [0.7.0] - 2026-10-23
 
 **nori has a new look.** It's called Nori Seasons, and every app wears it: Android, the desktop, the
