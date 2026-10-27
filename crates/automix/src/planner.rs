@@ -122,6 +122,9 @@ impl Planner {
     /// The songs in play order: the one before the current one, the current one, and those after it.
     pub fn transition_window(&self, window: Vec<WindowSong>, shuffling: bool) {
         let mut p = self.state.lock();
+        if p.window == window && p.shuffling == shuffling {
+            return;
+        }
         p.window = window;
         p.shuffling = shuffling;
         p.generation += 1;
@@ -449,6 +452,27 @@ mod tests {
         *crossfade.lock() = 4;
         assert!(planner.plan_for("a").is_some(), "crossfade on again");
         assert_eq!(planner.transition_note("a").unwrap().duration_ms, 4000);
+    }
+
+    #[test]
+    fn the_same_window_again_keeps_a_cached_no() {
+        let db = Arc::new(Mutex::new(nori_db::open("", "t").unwrap()));
+        let profile = Arc::new(nori_db::Profile::default());
+        profile.set(&db);
+        let planner = Planner::new(profile, Box::new(|| Some(TransitionPrefs { auto_mix: true, ..nori_player::sim::prefs_off() })));
+        let made = Arc::new(Mutex::new(0));
+        let count = made.clone();
+        planner.on_plan(Some(Box::new(move || *count.lock() += 1)));
+        let track = |id: &str, track| WindowSong { album_id: Some("x".into()), track, ..song(id, 200_000) };
+        let window = || vec![track("a", 1), track("b", 2)];
+        planner.transition_window(window(), false);
+        assert!(planner.plan_for("a").is_none(), "same album in order: gapless");
+        planner.transition_window(window(), false);
+        assert!(planner.plan_for("a").is_none());
+        assert_eq!(*made.lock(), 1, "planned once");
+        planner.transition_window(vec![track("a", 1), track("c", 2)], false);
+        assert!(planner.plan_for("a").is_none());
+        assert_eq!(*made.lock(), 2, "another window is planned again");
     }
 
     /// The engine's decoder asks for the plan out of the next song while the song heard still plays to its
