@@ -451,24 +451,25 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     private fun request(id: String): DownloadRequest =
         DownloadRequest.Builder(id, Uri.parse(sources.downloadUrl(id))).setCustomCacheKey(sources.downloadKey(id)).build()
 
+    /**
+     * Removes downloads. The index entry goes at once as well as through media3's callback: a song media3
+     * has no download for (left pending by an earlier session, or finished just before a power cut rolled
+     * media3's own record back) gets no callback, and would otherwise stay for ever.
+     */
     fun remove(ids: List<String>) {
         if (ids.isEmpty()) return
         runCatching {
             DownloadService.start(context, DownloadWorker::class.java)
             for (id in ids) manager.removeDownload(id)
         }.onFailure { Log.w(TAG, "could not remove ${ids.size} downloads", it) }
+        for (id in ids) settle(id, false)
     }
 
-    /**
-     * Stops downloads that have not finished and forgets them. The index entry goes at once as well as
-     * through media3's callback: a song left pending by an earlier session may have no media3 download
-     * to remove, and would otherwise sit in the queue for ever.
-     */
+    /** Stops downloads that have not finished and forgets them. */
     fun cancel(ids: List<String>) {
         if (ids.isEmpty()) return
         unmark(ids)
         remove(ids)
-        for (id in ids) settle(id, false)
     }
 
     /**
