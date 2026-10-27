@@ -707,7 +707,9 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                 )
 
                 if (page == Panel.ART && !across) Spacer(Modifier.weight(0.1f))
-                if (state.offersVolume) Box(kept("output")) { OutputRow(vm) }
+                // A watching guest has no volume, but still the jam's button.
+                val jamOn = vm.jamStrip.collectAsStateWithLifecycle().value != null
+                if (state.offersVolume || jamOn) Box(kept("output")) { OutputRow(vm) }
                 if (page == Panel.ART && !across) Spacer(Modifier.weight(0.25f))
             })
             }
