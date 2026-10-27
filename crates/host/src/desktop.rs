@@ -68,9 +68,50 @@ pub mod own {
     }
 }
 
+/// The app's plugins, installed under `data`/plugins and laid over its settings, and the kinds of
+/// profile they and nori open. Opened once, at the first call.
+pub fn plugins(data: &Path) -> &'static Plugged {
+    static PLUGINS: std::sync::OnceLock<Plugged> = std::sync::OnceLock::new();
+    PLUGINS.get_or_init(|| {
+        let watched = Arc::new(Watched::default());
+        let host = nori_plugins::open(data.join("plugins"), app().settings.clone(), watched.clone());
+        Plugged { kinds: nori_core::providers::Kinds::with_plugins(host.clone()), host, watched }
+    })
+}
+
+/// The plugin host, the kinds of profile it adds, and what hears from it.
+pub struct Plugged {
+    pub host: Arc<nori_plugins::Plugins>,
+    pub kinds: Arc<nori_core::providers::Kinds>,
+    pub watched: Arc<Watched>,
+}
+
+/// What a desktop client does with what plugins say: the open session takes the settings laid anew;
+/// lines and notices go to the log until the client shows them.
+#[derive(Default)]
+pub struct Watched {
+    engine: std::sync::Mutex<Option<std::sync::Weak<nori_engine::Engine>>>,
+}
+
+impl nori_plugins::Client for Watched {
+    fn layer_changed(&self) {
+        let engine = self.engine.lock().expect("not poisoned").as_ref().and_then(std::sync::Weak::upgrade);
+        if let (Some(engine), Some(prefs)) = (engine, app().settings.current()) {
+            engine.set_settings(nori_engine::core::settings(&prefs, app().settings.layer()));
+        }
+    }
+    fn status(&self, id: String, row: String, words: String, args: Vec<String>) {
+        nori_core::alog::info(&format!("plugin {id}: {row} is {words} {args:?}"));
+    }
+    fn shown(&self, _: String, _: String, _: bool, _: bool) {}
+    fn notice(&self, id: String, problem: bool, words: String, args: Vec<String>) {
+        nori_core::alog::info(&format!("plugin {id} says{}: {words} {args:?}", if problem { " (a problem)" } else { "" }));
+    }
+}
+
 /// Logs `draft` in and keeps it as the active profile, blocking ([`nori_core::providers::log_in`]).
-pub fn log_in(http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, NetError> {
-    block_on(nori_core::providers::log_in(http, &app().settings, draft))
+pub fn log_in(data: &Path, http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, NetError> {
+    block_on(nori_core::providers::log_in(&plugins(data).kinds, http, &app().settings, draft))
 }
 
 /// The cpal device named `device` (else the system's default) at `volume` (0 to 1).
@@ -104,7 +145,8 @@ pub struct DesktopOpen<'a> {
 /// Opens the profile on the sound card, without touching the network ([`Session::open`]).
 pub fn open(o: DesktopOpen) -> Result<Session, String> {
     let (output, volume) = sound(o.device.as_deref(), o.volume);
-    Session::open(Open {
+    let plugged = plugins(o.data);
+    let session = Session::open(Open {
         queue: app().clone(),
         data: o.data,
         http: o.http,
@@ -121,7 +163,10 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
         keeps_music: true,
         decoders: Default::default(),
         out: o.out,
-    })
+        kinds: plugged.kinds.clone(),
+    })?;
+    *plugged.watched.engine.lock().expect("not poisoned") = Some(Arc::downgrade(&session.engine));
+    Ok(session)
 }
 
 #[cfg(test)]

@@ -2,6 +2,9 @@
 //! under one folder, each in its own: its manifest, its wasm, its strings, its store and its compiled
 //! code. With none enabled nothing here runs: no engine is made, no file is read past the index.
 
+#[cfg(feature = "ffi")]
+uniffi::setup_scaffolding!();
+
 mod app;
 mod host;
 mod manifest;
@@ -9,17 +12,24 @@ mod package;
 pub(crate) mod runtime;
 mod stage;
 mod store;
+mod view;
 mod worker;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-pub use app::{open, Client};
+pub use app::{open, open_plugins, Client};
+pub use view::{PluginCard, PluginRow};
 pub use host::{Side, Value};
 pub use manifest::{Manifest, Refusal, RowKind, RowSpec, Slot, API, POINTS};
 pub use runtime::{Host, LINKED};
 pub use worker::Worker;
+
+/// What a call through a [`Worker`] runs on.
+pub type Store = wasmtime::Store<Host>;
+/// What such a call answers.
+pub type CallResult<T> = wasmtime::Result<T>;
 
 /// The plugin API's generated types and calls, for the core's side of an extension point.
 pub mod wit {
@@ -56,6 +66,7 @@ struct IndexEntry {
     enabled: bool,
 }
 
+#[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct Plugins {
     dir: PathBuf,
     side: Arc<dyn Side>,
@@ -92,7 +103,7 @@ impl Plugins {
         self.installed.lock().expect("not poisoned").clone()
     }
 
-    fn folder(&self, id: &str) -> PathBuf {
+    pub(crate) fn folder(&self, id: &str) -> PathBuf {
         self.dir.join(id)
     }
 

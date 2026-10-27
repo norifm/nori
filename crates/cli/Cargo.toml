@@ -20,7 +20,7 @@ neural-beats = ["nori-engine/neural-beats"]
 
 [dependencies]
 # The providers this client offers: a Subsonic server's and YouTube Music.
-nori-core = { path = "../core", default-features = false, features = ["youtube"] }
+nori-core = { path = "../core", default-features = false, features = ["plugins"] }
 nori-sign-in-window = { path = "../sign-in-window", optional = true }
 nori-engine = { path = "../engine", features = ["core"] }
 nori-output-cpal = { path = "../output-cpal" }

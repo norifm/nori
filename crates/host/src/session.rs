@@ -257,6 +257,8 @@ pub struct Open<'a> {
     /// The platform's own decoders, preferred to those here.
     pub decoders: nori_engine::Platform,
     pub out: Out,
+    /// The kinds of profile it opens: nori's own, and its plugins' where the client has them.
+    pub kinds: Arc<nori_core::providers::Kinds>,
 }
 
 #[cfg(feature = "desktop")]
@@ -354,8 +356,10 @@ impl Session {
     fn open_with(o: Open, turns: bool, start: impl FnOnce(CoreLibrary, CoreApp, CoreQueue, Box<dyn AudioOutput>, Config, Events) -> Engine) -> Result<Session, String> {
         let db = db_path(o.data);
         let core = Core::new(db.clone(), nori_core::settings::server_db_id(&o.profile.id), o.queue.clone()).map_err(|e| format!("the database: {e}"))?;
-        core.configure_profile(o.profile.clone()).map_err(|e| format!("the server: {e}"))?;
+        core.use_kinds(o.kinds.clone());
         let transport: Arc<dyn Transport> = if o.offline { Arc::new(Offline) } else { o.http.clone() };
+        o.kinds.set_transport(transport.clone());
+        core.configure_profile(o.profile.clone()).map_err(|e| format!("the server: {e}"))?;
         let cover_net = CoverNet::over(o.http.clone());
         let client = Client::new(core.clone(), transport, cover_net.clone());
         client.set_profile(net(&o.profile));

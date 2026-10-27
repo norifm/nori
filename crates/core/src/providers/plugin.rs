@@ -1,0 +1,429 @@
+//! A plugin's provider: [`Provider`] answered by the plugin's own instance, the core's records turned
+//! into the plugin API's and back. Its calls run on the plugin's thread; async ones wait for it there,
+//! the few the trait asks for at once hop to it. What it doesn't say (the settings it opens, a guest's
+//! rules) is a provider's with no server: its library is the account's, never indexed.
+
+use std::sync::Arc;
+
+use nori_plugins::wit::provider as w;
+use nori_plugins::wit::types as t;
+use nori_plugins::{CallResult, Plugins, Store, Worker};
+use parking_lot::RwLock;
+
+use super::{AccountState, Answer, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
+use crate::browse::{AlbumSort, LibrarySection, ProfileRules, SettingsPart};
+use crate::cache_policy::{Page, Read};
+use crate::client::{Client, NetResult, Starrable, Write};
+use crate::settings::{SavedServer, ServerKind};
+use crate::stream::{StreamQuality, StreamTarget};
+use crate::transport::{block_on, NetError, Transport};
+use crate::{Album, AlbumDetail, Artist, ArtistDetail, ArtistInfo, ArtistRef, Core, FeedShelf, Playlist, PlaylistDetail, SearchResult, Song, Starred};
+
+/// What a plugin's stream addresses start with; the song's id follows.
+const ADDRESS: &str = "plugin-song:";
+
+pub(crate) struct PluginProvider {
+    id: String,
+    plugins: Arc<Plugins>,
+    worker: Worker,
+    /// Its add form and sign-in, asked once.
+    info: std::sync::OnceLock<ProviderInfo>,
+    /// Its rules as it last said, for the profile open, and how far ahead songs may be fetched.
+    rules: RwLock<Option<(ProfileRules, Option<usize>)>>,
+    /// The profile open, as [`Provider::configure`] was given it.
+    open: RwLock<SavedServer>,
+}
+
+impl PluginProvider {
+    pub(crate) fn new(id: &str, plugins: Arc<Plugins>) -> Option<PluginProvider> {
+        let worker = plugins.worker(id)?;
+        Some(PluginProvider { id: id.to_string(), plugins, worker, info: std::sync::OnceLock::new(), rules: RwLock::new(None), open: RwLock::default() })
+    }
+
+    fn kind(&self) -> ServerKind {
+        ServerKind::Plugin { id: self.id.clone() }
+    }
+
+    /// Runs `f` on the plugin's thread and waits for it here.
+    fn now<R: Send + 'static>(&self, f: impl FnOnce(&mut Store, &nori_plugins::wit::Plugin) -> CallResult<R> + Send + 'static) -> Option<R> {
+        block_on(self.worker.call(f))
+    }
+
+    /// Its rules for `profile` asked anew and kept.
+    fn ask_rules(&self, profile: &SavedServer, guest: bool) -> ProfileRules {
+        let p = profile_of(profile);
+        let said = self.now(move |s, x| x.nori_plugin_provider().call_rules(s, &p, guest)).flatten();
+        let ahead = said.as_ref().and_then(|r| r.ahead).map(|a| a as usize);
+        let rules = rules(said, !self.info().sign_in.is_empty(), guest);
+        *self.rules.write() = Some((rules.clone(), ahead));
+        rules
+    }
+}
+
+fn net_error(e: t::Error) -> NetError {
+    match e.kind {
+        t::ErrorKind::Network | t::ErrorKind::Timeout => NetError::Transport { kind: crate::transport::FailureKind::Connect, detail: Some(e.detail) },
+        t::ErrorKind::Unauthorized => NetError::Http { status: 401 },
+        t::ErrorKind::NotFound => NetError::Http { status: 404 },
+        t::ErrorKind::Parse => NetError::Parse { reason: e.detail },
+        t::ErrorKind::Refused | t::ErrorKind::Unsupported | t::ErrorKind::Other => NetError::Api { code: 0, reason: e.detail },
+    }
+}
+
+/// A call the plugin couldn't answer (it trapped, or ran over its budget).
+fn stopped() -> NetError {
+    NetError::Api { code: 0, reason: "the plugin stopped".into() }
+}
+
+fn profile_of(p: &SavedServer) -> w::Profile {
+    w::Profile { id: p.id.clone(), name: p.name.clone(), address: p.url.clone(), user: p.user.clone(), password: p.password.clone(), api_key: p.api_key.clone() }
+}
+
+/// nori's rules from what the plugin said; `signs_in` when its account signs in at all.
+fn rules(said: Option<w::ProfileRules>, signs_in: bool, guest: bool) -> ProfileRules {
+    use SettingsPart::*;
+    let r = said.unwrap_or(w::ProfileRules { account: false, downloads: false, radio: false, feed: false, stars: false, scrobbles: false, sections: Vec::new(), measures: true, ahead: None });
+    let sections = r.sections.iter().filter_map(|s| match s {
+        w::LibrarySection::Songs => Some(LibrarySection::Songs),
+        w::LibrarySection::Albums => Some(LibrarySection::Albums),
+        w::LibrarySection::Artists => Some(LibrarySection::Artists),
+        w::LibrarySection::Playlists => Some(LibrarySection::Playlists),
+        w::LibrarySection::Genres => Some(LibrarySection::Genres),
+        w::LibrarySection::Folders => Some(LibrarySection::Folders),
+        w::LibrarySection::Radio => Some(LibrarySection::Radio),
+        w::LibrarySection::Downloads => Some(LibrarySection::Downloads),
+    });
+    let mut shown = ProfileRules {
+        asks: guest,
+        account: false,
+        downloads: r.downloads && !guest,
+        radio: r.radio && !guest,
+        indexed: false,
+        sections: if guest { Vec::new() } else { sections.collect() },
+        settings: vec![Profiles, ServerOptions, Look, Playback, Sound, Lyrics, Downloads, Storage, About],
+        remote: true,
+        measures: r.measures && !guest,
+        stars: r.stars && !guest,
+        stars_after_sign_in: signs_in && !r.account && !guest,
+        scrobbles: r.scrobbles && !guest,
+        feed: r.feed,
+        mixes: r.account && !guest,
+    };
+    if guest {
+        shown.settings.retain(|p| !matches!(p, ServerOptions | Downloads));
+    }
+    shown
+}
+
+fn explicit(e: t::Explicit) -> nori_model::ExplicitStatus {
+    match e {
+        t::Explicit::Unknown => nori_model::ExplicitStatus::Unmarked,
+        t::Explicit::Clean => nori_model::ExplicitStatus::Clean,
+        t::Explicit::Explicit => nori_model::ExplicitStatus::Explicit,
+    }
+}
+
+fn song(s: t::Song) -> Song {
+    Song {
+        id: s.id,
+        title: s.title,
+        artist: s.artist,
+        artist_id: s.artist_id,
+        artists: s.artists.into_iter().map(|a| ArtistRef { id: a.id.unwrap_or_default(), name: a.name }).collect(),
+        album: s.album,
+        album_id: s.album_id,
+        cover_art: s.cover,
+        duration: s.duration,
+        track: s.track,
+        disc_number: s.disc,
+        year: s.year,
+        genre: s.genre,
+        starred: s.starred,
+        is_external: s.external,
+        explicit_status: explicit(s.explicit),
+        replay_gain: s.replay_gain.map(|g| crate::ReplayGain { track_gain: g.track_db, album_gain: g.album_db, track_peak: g.track_peak, album_peak: g.album_peak, ..Default::default() }),
+        bpm: s.bpm,
+        user_rating: s.rating,
+        ..Default::default()
+    }
+    .dressed()
+}
+
+fn album(a: t::Album) -> Album {
+    Album {
+        id: a.id,
+        subtitle: nori_model::lines::album_subtitle(&a.artist, a.year),
+        name: a.name,
+        artist: a.artist,
+        artist_id: a.artist_id,
+        cover_art: a.cover,
+        song_count: a.song_count,
+        duration: a.duration,
+        year: a.year,
+        genre: a.genre,
+        starred: a.starred,
+        is_external: a.external,
+        ..Default::default()
+    }
+}
+
+fn artist(a: t::Artist) -> Artist {
+    Artist { id: a.id, name: a.name, cover_art: a.cover, artist_image_url: a.image_url, album_count: a.album_count, starred: a.starred, is_external: a.external, ..Default::default() }
+}
+
+fn playlist(p: t::Playlist) -> Playlist {
+    Playlist { id: p.id, name: p.name, comment: p.comment, owner: p.owner, public: true, song_count: p.song_count, duration: p.duration, cover_art: p.cover }
+}
+
+fn found(f: t::Found) -> SearchResult {
+    SearchResult {
+        songs: f.songs.into_iter().map(song).collect(),
+        albums: f.albums.into_iter().map(album).collect(),
+        artists: f.artists.into_iter().map(artist).collect(),
+        playlists: f.playlists.into_iter().map(playlist).collect(),
+    }
+}
+
+/// The plugin's request for `read`; None when a provider has nothing for it (the empty page).
+fn request(read: &Read) -> Option<w::Request> {
+    let n = |v: i32| v.max(0) as u32;
+    Some(match read {
+        Read::Search { query, songs, albums, artists } => w::Request::Search((query.clone(), n(*songs), n(*albums), n(*artists))),
+        Read::AlbumById { id } | Read::AlbumSongs { id } => w::Request::Album(id.clone()),
+        Read::ArtistById { id } | Read::TopSongs { artist: id } => w::Request::Artist(id.clone()),
+        Read::ArtistAbout { id } => w::Request::ArtistAbout(id.clone()),
+        Read::PlaylistById { id } | Read::PlaylistSongs { id } => w::Request::Playlist(id.clone()),
+        Read::PlaylistList => w::Request::Playlists,
+        Read::AlbumList { kind, size, offset, .. } => w::Request::Albums((sort(*kind), n(*size), n(*offset))),
+        Read::FavouriteAlbums { size } => w::Request::Albums((w::AlbumSort::Starred, n(*size), 0)),
+        Read::StarredItems => w::Request::Starred,
+        Read::SimilarSongs { id, count } => w::Request::SimilarSongs((id.clone(), n(*count))),
+        Read::SongById { id } => w::Request::Song(id.clone()),
+        Read::HomeFeed => w::Request::HomeFeed,
+        _ => return None,
+    })
+}
+
+fn sort(k: AlbumSort) -> w::AlbumSort {
+    match k {
+        AlbumSort::Newest => w::AlbumSort::Newest,
+        AlbumSort::Recent => w::AlbumSort::Recent,
+        AlbumSort::Frequent => w::AlbumSort::Frequent,
+        AlbumSort::Random => w::AlbumSort::Random,
+        AlbumSort::Starred => w::AlbumSort::Starred,
+        _ => w::AlbumSort::Alphabetical,
+    }
+}
+
+/// The page `read` asked for, from the plugin's answer; None for nothing (the empty page).
+fn page(read: &Read, p: w::Page) -> Option<Page> {
+    Some(match (read, p) {
+        (Read::AlbumSongs { .. }, w::Page::Album(a)) => Page::Songs { v: a.songs.into_iter().map(song).collect() },
+        (Read::PlaylistSongs { .. }, w::Page::Playlist(l)) => Page::Songs { v: l.songs.into_iter().map(song).collect() },
+        (Read::TopSongs { .. }, w::Page::Artist(a)) => Page::Songs { v: a.top_songs.into_iter().map(song).collect() },
+        (Read::StarredItems, w::Page::Found(f)) => {
+            let f = found(f);
+            Page::StarredPage { v: Starred { artists: f.artists, albums: f.albums, songs: f.songs, ..Default::default() } }
+        }
+        (_, w::Page::Songs(v)) => Page::Songs { v: v.into_iter().map(song).collect() },
+        (_, w::Page::OneSong(v)) => Page::OneSong { v: v.map(song) },
+        (_, w::Page::Albums(v)) => Page::Albums { v: v.into_iter().map(album).collect() },
+        (_, w::Page::Artists(v)) => Page::Artists { v: v.into_iter().map(artist).collect() },
+        (_, w::Page::Playlists(v)) => Page::Playlists { v: v.into_iter().map(playlist).collect() },
+        (_, w::Page::Album(a)) => {
+            let songs: Vec<Song> = a.songs.into_iter().map(song).collect();
+            let mut al = album(a.album);
+            al.song_count = songs.len() as u32;
+            al.duration = songs.iter().map(|s| s.duration).sum();
+            Page::AlbumPage { v: AlbumDetail::new(al, songs, Vec::new()) }
+        }
+        (_, w::Page::Artist(a)) => {
+            let albums: Vec<Album> = a.albums.into_iter().map(album).collect();
+            let mut ar = artist(a.artist);
+            ar.album_count = Some(albums.len() as u32);
+            Page::ArtistPage { v: ArtistDetail::new(ar, albums, a.top_songs.into_iter().map(song).collect()) }
+        }
+        (_, w::Page::About(a)) => Page::About { v: ArtistInfo { biography: a.biography, image_url: a.image_url, similar: a.similar.into_iter().map(artist).collect(), ..Default::default() } },
+        (_, w::Page::Playlist(l)) => {
+            let songs: Vec<Song> = l.songs.into_iter().map(song).collect();
+            Page::PlaylistPage { v: PlaylistDetail::new(playlist(l.playlist), songs) }
+        }
+        (_, w::Page::Found(f)) => Page::Found { v: found(f) },
+        (_, w::Page::Feed(v)) => Page::Feed {
+            v: v.into_iter()
+                .map(|s| FeedShelf {
+                    title: s.title,
+                    songs: s.songs.into_iter().map(song).collect(),
+                    albums: s.albums.into_iter().map(album).collect(),
+                    artists: s.artists.into_iter().map(artist).collect(),
+                    playlists: s.playlists.into_iter().map(playlist).collect(),
+                    ..Default::default()
+                })
+                .collect(),
+        },
+        (_, w::Page::None) => return None,
+    })
+}
+
+/// The plugin's change for `w`; None for what a provider has nowhere to send.
+fn change(c: Write) -> Option<w::Change> {
+    let star = |k: Starrable| match k {
+        Starrable::Song => w::StarKind::Song,
+        Starrable::Album => w::StarKind::Album,
+        Starrable::Artist => w::StarKind::Artist,
+    };
+    Some(match c {
+        Write::Star { kind, id, on } => w::Change::Star((star(kind), id, on)),
+        Write::CreatePlaylist { name, song_ids } => w::Change::CreatePlaylist((name, song_ids)),
+        Write::AddToPlaylist { id, song_ids } => w::Change::AddToPlaylist((id, song_ids)),
+        Write::RemoveFromPlaylist { id, index } => w::Change::RemoveFromPlaylist((id, index.max(0) as u32)),
+        Write::RenamePlaylist { id, name } => w::Change::RenamePlaylist((id, name)),
+        Write::DeletePlaylist { id } => w::Change::DeletePlaylist(id),
+        Write::Scrobble { id, submission, time_ms } => w::Change::Scrobble((id, submission, time_ms)),
+        Write::ReplacePlaylist { .. } | Write::CreateRadio { .. } | Write::DeleteRadio { .. } | Write::SaveQueue { .. } => return None,
+    })
+}
+
+#[async_trait::async_trait]
+impl Provider for PluginProvider {
+    fn info(&self) -> ProviderInfo {
+        self.info.get_or_init(|| self.ask_info()).clone()
+    }
+
+    fn ready(&self, profile: &SavedServer) -> bool {
+        let p = profile_of(profile);
+        self.now(move |s, x| x.nori_plugin_provider().call_ready(s, &p)).unwrap_or(false)
+    }
+
+    async fn check(&self, transport: Arc<dyn Transport>, profile: SavedServer) -> NetResult<SavedServer> {
+        self.plugins.set_transport(Some(transport));
+        let p = profile_of(&profile);
+        let checked = self.worker.call(move |s, x| x.nori_plugin_provider().call_check(s, &p)).await.ok_or_else(stopped)?.map_err(net_error)?;
+        Ok(SavedServer { name: checked.name, url: checked.address, user: checked.user, password: checked.password, api_key: checked.api_key, ..profile })
+    }
+
+    fn rules(&self, profile: &SavedServer, guest: bool) -> ProfileRules {
+        if let Some((r, _)) = self.rules.read().clone() {
+            return r;
+        }
+        self.ask_rules(profile, guest)
+    }
+
+    fn configure(&self, core: &Core, profile: &SavedServer) -> nori_model::Result<()> {
+        core.serves(&format!("plugin:{}", self.id))?;
+        *core.server.write() = crate::api::Server::default();
+        *self.open.write() = profile.clone();
+        let p = profile_of(profile);
+        self.now(move |s, x| x.nori_plugin_provider().call_open(s, &p));
+        let guest = nori_remote::is_guest_key(&profile.api_key);
+        core.set_rules(self.ask_rules(profile, guest));
+        *core.native_login.write() = None;
+        *core.account.write() = None;
+        Ok(())
+    }
+
+    async fn read(&self, _client: &Client, read: Read) -> NetResult<Option<Answer>> {
+        let Some(asked) = request(&read) else { return Ok(None) };
+        let said = self.worker.call(move |s, x| x.nori_plugin_provider().call_read(s, &asked)).await.ok_or_else(stopped)?.map_err(net_error)?;
+        Ok(page(&read, said).map(|p| Answer::Page(Box::new(p))))
+    }
+
+    async fn write(&self, _client: &Client, c: Write) -> NetResult<()> {
+        let Some(c) = change(c) else { return Err(super::nowhere("place for this change")) };
+        self.worker.call(move |s, x| x.nori_plugin_provider().call_write(s, &c)).await.ok_or_else(stopped)?.map_err(net_error)
+    }
+
+    /// The plugin resolves its songs where they open; the bytes are kept by song.
+    fn stream(&self, _: &Client, id: String, _: StreamQuality) -> StreamTarget {
+        StreamTarget { url: format!("{ADDRESS}{id}"), key: format!("{id}:0") }
+    }
+
+    fn ahead(&self) -> Option<usize> {
+        self.rules.read().as_ref().and_then(|(_, a)| *a)
+    }
+
+    fn cover_address(&self, _: &Core, cover: &str, size: u32) -> String {
+        let c = cover.to_string();
+        self.now(move |s, x| x.nori_plugin_provider().call_cover(s, &c, size)).flatten().unwrap_or_else(|| cover.to_string())
+    }
+
+    fn resolver(&self, _client: &Arc<Client>) -> Option<Arc<dyn ResolveStream>> {
+        Some(Arc::new(Resolver { worker: self.worker.clone() }))
+    }
+
+    fn sign_in_done(&self, address: &str, cookies: &str) -> bool {
+        let (a, c) = (address.to_string(), cookies.to_string());
+        self.now(move |s, x| x.nori_plugin_provider().call_sign_in_done(s, &a, &c)).unwrap_or(false)
+    }
+
+    async fn sign_in(&self, client: &Client, answer: String) -> SignInResult {
+        self.plugins.set_transport(Some(client.transport.clone()));
+        let said = self.worker.call(move |s, x| x.nori_plugin_provider().call_sign_in(s, &answer)).await.flatten();
+        let result = match said {
+            Some(w::SignInResult::SignedIn(name)) => SignInResult::SignedIn { name },
+            Some(w::SignInResult::NoSession) => SignInResult::NoSession,
+            Some(w::SignInResult::Unreachable(reason)) => SignInResult::Unreachable { reason },
+            Some(w::SignInResult::Refused) | None => SignInResult::Refused,
+        };
+        let profile = self.open.read().clone();
+        client.core.set_rules(self.ask_rules(&profile, false));
+        result
+    }
+
+    fn sign_out(&self, client: &Client) {
+        self.now(|s, x| x.nori_plugin_provider().call_sign_out(s));
+        let profile = self.open.read().clone();
+        client.core.set_rules(self.ask_rules(&profile, false));
+    }
+
+    fn account(&self, _client: &Client) -> AccountState {
+        match self.now(|s, x| x.nori_plugin_provider().call_account(s)).flatten() {
+            Some(w::AccountState::SignedIn) => AccountState::SignedIn,
+            Some(w::AccountState::Ended) => AccountState::Ended,
+            Some(w::AccountState::SignedOut) | None => AccountState::SignedOut,
+        }
+    }
+}
+
+impl PluginProvider {
+    fn ask_info(&self) -> ProviderInfo {
+        let said = self.now(|s, x| x.nori_plugin_provider().call_info(s)).flatten();
+        let said = said.unwrap_or(w::ProviderInfo { fields: Vec::new(), sign_in: Vec::new() });
+        let field = |f: w::Field| match f {
+            w::Field::Name => FormField::Name,
+            w::Field::Address => FormField::Address,
+            w::Field::User => FormField::User,
+            w::Field::Password => FormField::Password,
+            w::Field::SecondAddress => FormField::SecondAddress,
+            w::Field::ApiKey => FormField::ApiKey,
+            w::Field::Headers => FormField::Headers,
+        };
+        ProviderInfo {
+            kind: self.kind(),
+            fields: said.fields.into_iter().map(|f| FieldSpec { what: field(f.field), advanced: f.advanced }).collect(),
+            sign_in: said.sign_in.into_iter().map(|s| match s {
+                w::SignInWay::WebPage(start_url) => SignIn::WebPage { start_url },
+                w::SignInWay::Paste => SignIn::Paste,
+            }).collect(),
+        }
+    }
+}
+
+/// Opens a plugin's stream addresses at the URLs the plugin says, on a loader's thread.
+struct Resolver {
+    worker: Worker,
+}
+
+impl ResolveStream for Resolver {
+    fn resolve(&self, address: &str) -> Option<NetResult<String>> {
+        let id = address.strip_prefix(ADDRESS)?.to_string();
+        let said = block_on(self.worker.call(move |s, x| x.nori_plugin_provider().call_source(s, &id, 0)));
+        Some(said.ok_or_else(stopped).and_then(|r| r.map(|src| src.url).map_err(net_error)))
+    }
+
+    fn refused(&self, address: &str) {
+        if let Some(id) = address.strip_prefix(ADDRESS).map(str::to_string) {
+            self.worker.post(move |s, x| x.nori_plugin_provider().call_refused(s, &id));
+        }
+    }
+}

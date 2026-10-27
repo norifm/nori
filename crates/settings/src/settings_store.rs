@@ -738,7 +738,7 @@ mod tests {
             assert_eq!(stored, save(&prefs));
         }
         let (prefs, _) = open_old("old-changed", &stored_062(true));
-        assert_eq!((prefs.servers.len(), prefs.theme, prefs.cache_mb, prefs.crossfade_keep_albums), (1, ThemeMode::Midnight, 4096, false), "the rest as it was, pure black with dark becoming Midnight");
+        assert_eq!((prefs.servers.len(), prefs.theme, prefs.cache_mb, prefs.crossfade_keep_albums), (0, ThemeMode::Midnight, 4096, false), "its built-in YouTube Music profile gone, the rest as it was, pure black with dark becoming Midnight");
     }
 
     #[test]

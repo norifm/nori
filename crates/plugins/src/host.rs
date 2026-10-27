@@ -9,6 +9,7 @@ use crate::runtime::{types, Host};
 
 /// A value of a plugin's row or one of nori's settings.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum Value {
     Switch(bool),
     Choice(u32),

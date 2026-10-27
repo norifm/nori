@@ -9,7 +9,12 @@ publish = false
 [lib]
 name = "nori_plugins"
 
+[features]
+# The uniffi exports the Android app's Kotlin bindings are generated from (view.rs).
+ffi = ["dep:uniffi", "nori-settings/ffi", "nori-net/ffi"]
+
 [dependencies]
+uniffi = { workspace = true, optional = true }
 nori-model = { path = "../model" }
 nori-net = { path = "../net" }
 nori-player = { path = "../player" }

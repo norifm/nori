@@ -51,6 +51,7 @@ pub struct RowSpec {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum RowKind {
     Switch,
     Choice,
@@ -75,6 +76,7 @@ impl RowKind {
 
 /// Why a plugin can't be installed.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Error))]
 pub enum Refusal {
     /// Its package, wasm or manifest can't be read.
     Unreadable(String),
@@ -87,6 +89,15 @@ pub enum Refusal {
     /// It would override a value nori doesn't have.
     UnknownKey(String),
 }
+
+/// For logs (uniffi gives no message).
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl std::error::Error for Refusal {}
 
 /// Reads the section's fields in order.
 struct In<'a>(&'a [u8]);

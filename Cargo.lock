@@ -3830,15 +3830,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "innertube-music"
-version = "0.1.0"
-source = "git+https://github.com/filipton/innertube-music#68594e8ea53bbcf949dc1b1f2ead8aa075387350"
-dependencies = [
- "serde_json",
- "sha1_smol",
-]
-
-[[package]]
 name = "input"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4734,6 +4725,7 @@ dependencies = [
  "nori-net",
  "nori-perf",
  "nori-player",
+ "nori-plugins",
  "nori-queue",
  "nori-remote",
  "nori-settings",
@@ -4790,7 +4782,6 @@ version = "0.7.1"
 dependencies = [
  "async-trait",
  "futures-util",
- "innertube-music",
  "nori-automix",
  "nori-db",
  "nori-devices",
@@ -4801,6 +4792,7 @@ dependencies = [
  "nori-net",
  "nori-perf",
  "nori-player",
+ "nori-plugins",
  "nori-queue",
  "nori-remote",
  "nori-settings",
@@ -4939,6 +4931,7 @@ dependencies = [
  "nori-look",
  "nori-mpris",
  "nori-output-cpal",
+ "nori-plugins",
  "nori-remote",
  "nori-tasks",
  "nori-testdir",
@@ -5129,6 +5122,7 @@ dependencies = [
  "serde",
  "sha2 0.10.9",
  "toml 0.8.2",
+ "uniffi",
  "wasmparser 0.261.0",
  "wasmtime",
  "wasmtime-wasi",
@@ -7268,12 +7262,6 @@ checksum = "170fb83ab34de17dc69aa7c67482b22218ddb85da56546f9bd6b929e32a05930"
 dependencies = [
  "stable_deref_trait",
 ]
-
-[[package]]
-name = "sha1_smol"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "sha2"

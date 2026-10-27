@@ -12,13 +12,14 @@ use crate::host::{Side, Value};
 use crate::Plugins;
 
 /// What a client does with what plugins say.
+#[cfg_attr(feature = "ffi", uniffi::export(with_foreign))]
 pub trait Client: Send + Sync {
     /// The settings' layer changed: the client derives the engine's settings again.
     fn layer_changed(&self);
     /// A status row's line, from plugin `id`'s strings.
-    fn status(&self, id: &str, row: &str, words: &str, args: &[String]);
-    fn shown(&self, id: &str, row: &str, shown: bool, enabled: bool);
-    fn notice(&self, id: &str, problem: bool, words: &str, args: &[String]);
+    fn status(&self, id: String, row: String, words: String, args: Vec<String>);
+    fn shown(&self, id: String, row: String, shown: bool, enabled: bool);
+    fn notice(&self, id: String, problem: bool, words: String, args: Vec<String>);
 }
 
 struct App {
@@ -53,16 +54,22 @@ impl Side for App {
     }
 
     fn status(&self, id: &str, row: &str, words: &str, args: &[String]) {
-        self.client.status(id, row, words, args);
+        self.client.status(id.into(), row.into(), words.into(), args.to_vec());
     }
 
     fn shown(&self, id: &str, row: &str, shown: bool, enabled: bool) {
-        self.client.shown(id, row, shown, enabled);
+        self.client.shown(id.into(), row.into(), shown, enabled);
     }
 
     fn notice(&self, id: &str, problem: bool, words: &str, args: &[String]) {
-        self.client.notice(id, problem, words, args);
+        self.client.notice(id.into(), problem, words.into(), args.to_vec());
     }
+}
+
+/// The plugin host for the app, for a client over uniffi ([`open`]).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn open_plugins(dir: String, settings: Arc<Settings>, client: Arc<dyn Client>) -> Arc<Plugins> {
+    open(PathBuf::from(dir), settings, client)
 }
 
 /// The plugin host for the app: the plugins installed under `dir`, laid over `settings` (so the
