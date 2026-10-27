@@ -1,0 +1,216 @@
+package nori:plugin@1.0.0;
+
+/// The plugin's line in nori's log. Secrets never go here.
+interface log {
+    enum level {
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    write: func(level: level, line: string);
+}
+
+/// The plugin's own small store: its rows' values, overrides, small data (answers kept per album,
+/// cookies). Backed up with nori's settings. Capped; a write over the cap fails.
+interface store {
+    use types.{error};
+
+    get: func(key: string) -> option<list<u8>>;
+    set: func(key: string, value: list<u8>) -> result<_, error>;
+    remove: func(key: string);
+    keys: func(prefix: string) -> list<string>;
+}
+
+/// Bytes the plugin can fetch or make again, up to its manifest's quota; the least recently used go
+/// first. Never backed up.
+interface cache {
+    use types.{error};
+
+    get: func(key: string) -> option<list<u8>>;
+    put: func(key: string, value: list<u8>) -> result<_, error>;
+    remove: func(key: string);
+    /// The file nori keeps `key` in, for a host capability that reads it (an artwork loop).
+    path: func(key: string) -> option<string>;
+}
+
+/// The large files the manifest names (URL, size, sha256), fetched by nori on Wi-Fi unless the user
+/// allows mobile data.
+interface assets {
+    enum asset-state {
+        missing,
+        fetching,
+        ready,
+        failed,
+    }
+
+    state: func(name: string) -> asset-state;
+    /// Asks nori to fetch it; the plugin's `asset-ready` hook says when it is in.
+    fetch: func(name: string);
+    /// Its bytes, read-only, once ready.
+    read: func(name: string) -> option<list<u8>>;
+}
+
+/// HTTP through nori's own transport (one connection pool), only to the manifest's `net:` domains, or
+/// to private addresses with `lan`.
+interface http {
+    use types.{header, error};
+
+    enum method {
+        get,
+        head,
+        post,
+        put,
+        patch,
+        delete,
+    }
+
+    record request {
+        method: method,
+        url: string,
+        headers: list<header>,
+        body: option<list<u8>>,
+        /// Nori's own timeout when none.
+        timeout-ms: option<u32>,
+    }
+
+    record response {
+        status: u16,
+        headers: list<header>,
+        body: list<u8>,
+    }
+
+    fetch: func(request: request) -> result<response, error>;
+}
+
+/// A line shown to the user: short and plain, from the plugin's own strings.
+interface notices {
+    enum tone {
+        info,
+        problem,
+    }
+
+    /// `words` is a key of the plugin's `strings/`; `args` fill its `{0}`, `{1}`.
+    show: func(tone: tone, words: string, args: list<string>);
+}
+
+/// Nori's settings, read as stored and as in effect, and the plugin's overrides of the keys its
+/// manifest lists. Overrides never change what the user stored; removing the plugin removes them.
+interface settings {
+    use types.{value, error};
+
+    /// The user's stored value of `key`.
+    stored: func(key: string) -> option<value>;
+    /// The value in effect: the last enabled plugin's override, else the stored setting or the default.
+    effective: func(key: string) -> option<value>;
+    /// Sets overrides; one call applies as one change (nori replans or splices once). Keys the
+    /// manifest does not list are refused, values outside a key's range clamped.
+    override: func(values: list<tuple<string, value>>) -> result<_, error>;
+    /// Drops overrides of `keys` (all of the plugin's when empty).
+    clear: func(keys: list<string>);
+}
+
+/// The session every client shares: what a client can do, each part behind a permission.
+interface session {
+    use types.{song, item, item-kind, route, error};
+
+    enum repeat {
+        off,
+        all,
+        one,
+    }
+
+    record now-playing {
+        song: option<song>,
+        /// Index in the queue.
+        index: option<u32>,
+        playing: bool,
+        position-ms: u64,
+        shuffle: bool,
+        repeat: repeat,
+        /// The output route playing now.
+        route: route,
+        /// The output's name ("WH-1000XM5").
+        output: string,
+    }
+
+    record profile {
+        /// Nori's id of the profile.
+        id: string,
+        /// The provider kind: "subsonic", "youtubeMusic", or a plugin's id.
+        kind: string,
+        name: string,
+    }
+
+    // `playback.read`
+    now: func() -> now-playing;
+    queue: func(start: u32, count: u32) -> list<song>;
+    queue-length: func() -> u32;
+    current-profile: func() -> option<profile>;
+
+    // `playback.control`
+    play: func();
+    pause: func();
+    next: func();
+    previous: func();
+    seek: func(position-ms: u64);
+    play-at: func(index: u32);
+    set-shuffle: func(on: bool);
+    set-repeat: func(repeat: repeat);
+    /// Adds songs by id after the one playing (`next`) or at the end. Provider songs the user did not
+    /// ask for are refused unless the user's "may add provider songs" switch allows nori's own autofill.
+    add: func(ids: list<string>, next: bool) -> result<_, error>;
+    remove: func(index: u32);
+    move: func(index: u32, to: u32);
+    clear: func();
+
+    // `library.read`
+    search: func(query: string, count: u32) -> result<list<item>, error>;
+    lookup: func(kind: item-kind, id: string) -> result<item, error>;
+    songs-of: func(kind: item-kind, id: string) -> result<list<song>, error>;
+
+    // `library.write`
+    star: func(kind: item-kind, id: string, on: bool) -> result<_, error>;
+    add-to-playlist: func(playlist: string, ids: list<string>) -> result<_, error>;
+}
+
+/// The open profile's Subsonic API through the core, signed by it (`account.subsonic`). The plugin
+/// never sees the password or the token.
+interface subsonic {
+    use types.{error};
+
+    /// `method` without `.view` ("setRating"), the query's own parameters; the JSON answer's body.
+    call: func(method: string, params: list<tuple<string, string>>) -> result<list<u8>, error>;
+}
+
+/// One-shot and repeating wakes. While the plugin has an active session (a cast, a connected device)
+/// as often as it needs; otherwise only with `schedule`, at most one per period, never during
+/// screen-off playback.
+interface timers {
+    enum when {
+        /// Whenever due.
+        always,
+        /// Only while a screen shows what it updates (a position), like the seek bar's timer.
+        while-visible,
+    }
+
+    /// Wakes the plugin's `timer` hook with `id` after `ms`, and every `ms` after when `repeat`.
+    start: func(id: u32, ms: u32, repeat: bool, when: when);
+    stop: func(id: u32);
+}
+
+/// The visible sign-in page of the client (Android's WebView, the desktop's sign-in window), for
+/// `signin:` domains. The cookies come back for those domains only.
+interface sign-in {
+    use types.{error};
+
+    open: func(start-url: string) -> result<_, error>;
+}
+
+/// Wakes that start nori while it is closed (`wake:`), and commands other apps run (`commands`). The
+/// manifest declares both; nothing here is needed to receive them (the `hooks` export does).
+interface wake {
+    /// Turns this plugin's wake receivers on or off (they are off while no plugin wants them).
+    want: func(events: list<string>);
+}

@@ -1,0 +1,41 @@
+[package]
+name = "nori-plugins"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The plugin host: loading and compiling plugins (WebAssembly components), their permissions, stores and overrides, and their sound stages"
+publish = false
+
+[lib]
+name = "nori_plugins"
+
+[dependencies]
+nori-model = { path = "../model" }
+nori-net = { path = "../net" }
+nori-player = { path = "../player" }
+nori-tasks = { path = "../tasks" }
+# The runtime: components compiled by Cranelift once at install (never downloaded as native code),
+# fuel for every call's budget.
+wasmtime = { version = "50", default-features = false, features = ["cranelift", "runtime", "component-model", "std", "parallel-compilation"] }
+# WASI 0.2 for what a Rust plugin's std imports (clocks, randomness, its own stdout); nothing of the
+# device's: no files, environment or sockets.
+wasmtime-wasi = { version = "50", default-features = false, features = ["p2"] }
+# index.toml (the plugins' order) and strings/*.toml.
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+# The manifest, in the wasm's `nori:plugin` custom section; wasmtime's own parser.
+wasmparser = "0.261"
+# A compiled plugin's cache key: the hash of its wasm.
+sha2 = "0.10"
+# A `.noriplugin` package.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# What a provider plugin's async calls wait on while its thread works.
+futures-channel = "0.3"
+
+[dev-dependencies]
+nori-testdir = { path = "../testdir" }
+async-trait = "0.1"
+# Manifests written as the SDK writes them.
+nori-plugin-sdk = { path = "../plugin-sdk" }
+# The extension points' order, read from wit/.
+wit-parser = "0.239"

@@ -1,0 +1,16 @@
+[package]
+name = "nori-plugin-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "For plugin authors: nori's plugin API (wit/) as Rust, every extension point answered with nori's own answer unless the plugin says otherwise"
+
+[lib]
+name = "nori_plugin_sdk"
+
+[dependencies]
+wit-bindgen = "0.46"
+
+[build-dependencies]
+# Reads wit/ to write the extension points' traits and their defaults (build.rs); wit-bindgen's own parser.
+wit-parser = "0.239"

@@ -1,0 +1,185 @@
+package nori:plugin@1.0.0;
+
+/// What plugins and nori say to each other about music: records of nori's own, never its internals.
+interface types {
+    /// Why a call failed. A trap or a call over its budget fails as `timeout`.
+    enum error-kind {
+        network,
+        timeout,
+        unauthorized,
+        not-found,
+        refused,
+        /// The host or this client has no such capability (an optional import's stand-in).
+        unsupported,
+        parse,
+        other,
+    }
+
+    record error {
+        kind: error-kind,
+        /// For the log; never shown as is.
+        detail: string,
+    }
+
+    record header {
+        name: string,
+        value: string,
+    }
+
+    enum explicit {
+        unknown,
+        clean,
+        explicit,
+    }
+
+    record artist-ref {
+        id: option<string>,
+        name: string,
+    }
+
+    record replay-gain {
+        track-db: option<f32>,
+        album-db: option<f32>,
+        track-peak: option<f32>,
+        album-peak: option<f32>,
+    }
+
+    record song {
+        id: string,
+        title: string,
+        artist: string,
+        artist-id: option<string>,
+        artists: list<artist-ref>,
+        album: string,
+        album-id: option<string>,
+        cover: option<string>,
+        /// Seconds; 0 when unknown.
+        duration: u32,
+        track: u32,
+        disc: u32,
+        year: u32,
+        genre: option<string>,
+        starred: bool,
+        /// Fetched from outside the source when streamed (octo-fiesta's `ext-` songs).
+        external: bool,
+        explicit: explicit,
+        replay-gain: option<replay-gain>,
+        bpm: u32,
+        /// 0 when unrated.
+        rating: u8,
+    }
+
+    record album {
+        id: string,
+        name: string,
+        artist: string,
+        artist-id: option<string>,
+        cover: option<string>,
+        song-count: u32,
+        duration: u32,
+        year: u32,
+        genre: option<string>,
+        starred: bool,
+        external: bool,
+    }
+
+    record artist {
+        id: string,
+        name: string,
+        cover: option<string>,
+        image-url: option<string>,
+        album-count: option<u32>,
+        starred: bool,
+        external: bool,
+    }
+
+    record playlist {
+        id: string,
+        name: string,
+        comment: option<string>,
+        owner: option<string>,
+        song-count: u32,
+        duration: u32,
+        cover: option<string>,
+    }
+
+    record album-page {
+        album: album,
+        songs: list<song>,
+    }
+
+    record artist-page {
+        artist: artist,
+        albums: list<album>,
+        top-songs: list<song>,
+    }
+
+    record artist-about {
+        biography: option<string>,
+        image-url: option<string>,
+        similar: list<artist>,
+    }
+
+    record playlist-page {
+        playlist: playlist,
+        songs: list<song>,
+    }
+
+    record found {
+        songs: list<song>,
+        albums: list<album>,
+        artists: list<artist>,
+        playlists: list<playlist>,
+    }
+
+    record shelf {
+        title: string,
+        songs: list<song>,
+        albums: list<album>,
+        artists: list<artist>,
+        playlists: list<playlist>,
+    }
+
+    enum item-kind {
+        song,
+        album,
+        artist,
+        playlist,
+    }
+
+    variant item {
+        song(song),
+        album(album),
+        artist(artist),
+        playlist(playlist),
+    }
+
+    /// Where an output plays.
+    enum route {
+        speaker,
+        wired,
+        bluetooth,
+        usb,
+        car,
+        hdmi,
+        cast,
+        other,
+    }
+
+    /// A service found on the LAN by mDNS.
+    record service {
+        name: string,
+        host: string,
+        port: u16,
+        txt: list<tuple<string, string>>,
+    }
+
+    /// A value of one of the plugin's rows, or of one of nori's settings.
+    variant value {
+        switch(bool),
+        choice(u32),
+        %flags(u64),
+        level(f64),
+        text(string),
+    }
+}

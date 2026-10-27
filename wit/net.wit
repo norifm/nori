@@ -1,0 +1,127 @@
+package nori:plugin@1.0.0;
+
+/// TCP and UDP. With `lan` only to private addresses; each socket closes when its handle is dropped.
+interface sockets {
+    use types.{error};
+
+    resource tcp {
+        connect: static func(host: string, port: u16, timeout-ms: u32) -> result<tcp, error>;
+        /// Up to `max` bytes; empty at the end of the stream. Waits at most `timeout-ms`.
+        read: func(max: u32, timeout-ms: u32) -> result<list<u8>, error>;
+        write: func(bytes: list<u8>) -> result<_, error>;
+        /// Wraps the stream in TLS (rustls in the host).
+        tls: func(server-name: string, verify: tls-verify) -> result<_, error>;
+    }
+
+    variant tls-verify {
+        /// The system's roots.
+        system,
+        /// Only this certificate (DER).
+        pinned(list<u8>),
+        /// None: only for a private address the plugin discovered (a Chromecast's own certificate).
+        none,
+    }
+
+    resource udp {
+        bind: static func(port: u16) -> result<udp, error>;
+        /// Joins a multicast group; the host holds Android's multicast lock while one is joined.
+        join: func(group: string) -> result<_, error>;
+        send: func(host: string, port: u16, bytes: list<u8>) -> result<_, error>;
+        /// A datagram and who sent it, waiting at most `timeout-ms`; none on timeout.
+        receive: func(timeout-ms: u32) -> result<option<tuple<string, u16, list<u8>>>, error>;
+    }
+}
+
+/// mDNS browsing (Android's NSD, the desktop's mDNS), only while the plugin asks (an output picker open).
+interface discovery {
+    /// Starts browsing `kind` ("_googlecast._tcp"); services found come to the `discovered` hook.
+    browse: func(kind: string);
+    stop: func(kind: string);
+}
+
+/// HTTP endpoints under nori's LAN door, at `/p/<plugin>/...`: requests come to the `served` hook.
+interface lan-serve {
+    /// The door's base URL other devices on the LAN reach, once it is open.
+    base: func() -> option<string>;
+    open: func();
+    close: func();
+}
+
+/// Nori's final audio for a cast. The host moves every byte, in real time; no plugin code runs per
+/// buffer.
+interface audio-out {
+    use types.{error};
+    use sockets.{tcp};
+
+    enum encoding {
+        pcm16,
+        wav,
+        flac,
+    }
+
+    /// Pumps the audio into a socket the plugin opened, at `rate` and `channels`.
+    to-socket: func(socket: borrow<tcp>, encoding: encoding, rate: u32, channels: u8) -> result<_, error>;
+    /// Serves it at a LAN URL under the door; the URL.
+    serve: func(encoding: encoding) -> result<string, error>;
+    /// The device's delay, ms: the seek bar and lyrics move by it.
+    set-latency: func(ms: u32);
+    stop: func();
+}
+
+/// What another device on the LAN fetches to play a song itself.
+interface media {
+    use types.{error};
+
+    /// The song's stream URL reachable from the LAN (the server's own signed URL, or the door proxying it).
+    stream-url: func(id: string) -> result<string, error>;
+    cover-url: func(id: string, size: u32) -> result<string, error>;
+}
+
+/// A cast is a session the host owns: while one runs it holds what the platform needs (a Wi-Fi lock
+/// for a sink, the session showing the cast, the volume keys), and drops it all when it ends, the
+/// plugin stops or the device is lost.
+interface cast {
+    enum kind {
+        /// Nori's final audio goes to the device (`audio-out`).
+        sink,
+        /// The device plays songs itself from URLs (`media`).
+        target,
+    }
+
+    start: func(kind: kind, device-name: string);
+    /// The device's state, for the player.
+    report: func(playing: bool, position-ms: u64, volume: option<u8>);
+    end: func();
+}
+
+/// Bluetooth to the devices the manifest's filter matches.
+interface bluetooth {
+    use types.{error};
+
+    record device {
+        /// The host's id of it.
+        id: string,
+        name: string,
+        services: list<string>,
+        vendor: option<u16>,
+        product: option<u16>,
+    }
+
+    connected: func() -> list<device>;
+
+    /// An RFCOMM channel by service UUID.
+    resource rfcomm {
+        open: static func(device: string, service: string) -> result<rfcomm, error>;
+        read: func(max: u32, timeout-ms: u32) -> result<list<u8>, error>;
+        write: func(bytes: list<u8>) -> result<_, error>;
+    }
+
+    /// A BLE GATT connection; notifications come to the `notified` hook.
+    resource gatt {
+        open: static func(device: string) -> result<gatt, error>;
+        mtu: func() -> u16;
+        read: func(service: string, characteristic: string) -> result<list<u8>, error>;
+        write: func(service: string, characteristic: string, bytes: list<u8>, with-response: bool) -> result<_, error>;
+        notify: func(service: string, characteristic: string, on: bool) -> result<_, error>;
+    }
+}
