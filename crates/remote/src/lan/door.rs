@@ -347,12 +347,16 @@ fn answer(s: &Shared, conn: &TcpStream, method: &str, target: &str, body: &[u8],
 /// Holds a poll while the door has nothing past `since`, until it changes, closes, [`HOLD_MS`] pass or
 /// the controller speaks again; None when it hung up.
 fn hold_poll(s: &Shared, i: &mut MutexGuard<Inside>, conn: &TcpStream, since: u64) -> Option<()> {
+    // Checked and held under one lock, so a change or close after this rings the hold.
+    if i.seq > since || s.closed.load(Ordering::Acquire) {
+        return Some(());
+    }
     let until = Instant::now() + Duration::from_millis(HOLD_MS as u64);
     let Ok((bell, ear)) = alarm() else { return Some(()) };
     let hold = i.holds_opened;
     i.holds_opened += 1;
     i.holds.insert(hold, (bell, s.tasks.waiting()));
-    let mut woke = if i.seq <= since && !s.closed.load(Ordering::Acquire) { Woke::Interrupted } else { Woke::Rung };
+    let mut woke = Woke::Interrupted;
     while woke == Woke::Interrupted {
         woke = MutexGuard::unlocked(i, || wait(conn, &ear, until));
     }
