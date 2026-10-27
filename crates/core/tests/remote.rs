@@ -1908,6 +1908,69 @@ fn controllers_follow_playback_to_where_it_was_handed() {
     relay.close();
 }
 
+/// The device playback was handed to says it got the queue before its player has it (the player takes a
+/// moment): the controller goes on showing the song it handed, never the device's song from before.
+#[test]
+fn a_handed_device_shows_the_handed_song_until_its_player_has_it() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["p1", "p2"], 1);
+    desk.queued(&["d1", "d2"]);
+    for d in [&phone, &desk] {
+        d.remote.clone().serve(true);
+    }
+    let desk_id = desk.remote.id();
+    phone.remote.clone().watch(true);
+    phone.until("the desk", |r| r.devices().into_iter().find(|d| d.id == desk_id && d.state.is_some()));
+    phone.remote.clone().watch(false);
+    let song = |r: &Remote| r.active().and_then(|m| m.at.and_then(|a| m.rows.get(a as usize)).map(|row| row.song.id.clone()));
+
+    phone.remote.clone().hand_over(desk_id.clone());
+    assert_eq!(song(&phone.remote).as_deref(), Some("p2"));
+    assert!(matches!(desk.told(), Op::Replace { .. }));
+    // Its next state answers the command, its player still on the song from before.
+    desk.remote.clone().volume_changed(Some(33));
+    phone.until("the desk's answer", |r| r.devices().into_iter().find(|d| d.id == desk_id).and_then(|d| d.state).filter(|s| s.volume == Some(33)));
+    assert_eq!(song(&phone.remote).as_deref(), Some("p2"), "still the handed song");
+
+    desk.playing(&["p1", "p2"], 1);
+    desk.remote.clone().volume_changed(Some(34));
+    phone.until("the desk playing it", |r| r.active().filter(|m| m.volume == Some(34)));
+    assert_eq!(song(&phone.remote).as_deref(), Some("p2"));
+    relay.close();
+}
+
+/// A controller moving playback from one device to another shows the second playing what the first
+/// handed it, never its song from before.
+#[test]
+fn a_device_picked_from_another_shows_what_it_is_handed() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    let tablet = Device::account(&relay, DeviceKind::Phone, "Tablet");
+    phone.playing(&["p1", "p2"], 1);
+    desk.queued(&["d1", "d2"]);
+    for d in [&phone, &desk] {
+        d.remote.clone().serve(true);
+    }
+    let (phone_id, desk_id) = (phone.remote.id(), desk.remote.id());
+    tablet.remote.clone().watch(true);
+    tablet.until("both", |r| (r.devices().iter().filter(|d| d.state.is_some()).count() == 2).then_some(()));
+    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
+    tablet.remote.clone().pick(Some(phone_id.clone()));
+    tablet.until("the phone mirrored", |r| r.active().filter(|m| m.at.is_some()));
+
+    tablet.remote.clone().pick(Some(desk_id.clone()));
+    let song = |r: &Remote| r.active().and_then(|m| m.at.and_then(|a| m.rows.get(a as usize)).map(|row| row.song.id.clone()));
+    assert_eq!(song(&tablet.remote).as_deref(), Some("p2"));
+    // The desk's word from before it has the queue.
+    desk.remote.clone().volume_changed(Some(33));
+    tablet.until("the desk's word", |r| r.devices().into_iter().find(|d| d.id == desk_id).and_then(|d| d.state).filter(|s| s.volume == Some(33)));
+    assert_eq!(song(&tablet.remote).as_deref(), Some("p2"), "still what it is handed");
+    relay.close();
+}
+
 /// Playback handed back to a device that has not played since: it no longer says it handed it on, so
 /// a controller picking it stays there.
 #[test]

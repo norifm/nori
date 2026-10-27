@@ -627,6 +627,8 @@ enum Change {
     Repeat(u8),
     Volume(u8),
     Star { id: String, on: bool },
+    /// Playback handed to it as `state`, as of `at` (this device's clock).
+    Handed { state: Box<DeviceState>, at: i64 },
 }
 
 impl Change {
@@ -636,9 +638,15 @@ impl Change {
         match *self {
             Change::Playing { playing, .. } => state.playing == playing,
             Change::Place { index, .. } => state.index == index,
+            Change::Handed { state: ref handed, .. } => state.playing == handed.playing && song_at(state) == song_at(handed),
             _ => true,
         }
     }
+}
+
+/// The id of the song `state` is at.
+fn song_at(state: &DeviceState) -> Option<&str> {
+    state.entries.iter().find(|e| Some(e.index) == state.index).map(|e| e.id.as_str())
 }
 
 impl Mirrored {
@@ -671,6 +679,7 @@ impl Mirrored {
                 self.shown = None;
             }
         }
+        self.foreseen.retain(|f| !matches!(f.change, Change::Handed { .. }) || !f.change.shown_in(state));
         if let Some(done) = state.obeyed.iter().find(|o| o.from == me) {
             let confirmed = self.foreseen.iter().filter(|f| f.id <= done.id && f.change.shown_in(state));
             let playing = confirmed.clone().filter(|f| matches!(f.change, Change::Playing { .. })).map(|f| f.id).max();
@@ -701,11 +710,12 @@ impl Mirrored {
         true
     }
 
-    /// Playback was handed to it as `state` at `at` (this device's clock): shown so until it says more.
-    fn handed(&mut self, state: DeviceState, at: i64) {
-        self.shown = Some(state);
-        self.at = at;
-        self.device_at = None;
+    /// Playback was handed to it by command `id` as `state` at `at` (this device's clock): shown so until
+    /// it plays that, or the command expires.
+    fn handed(&mut self, id: u64, state: Box<DeviceState>, at: i64) {
+        let change = Change::Handed { state, at };
+        self.foreseen.push(Foreseen { id, until: Some(at + FORESEEN_US), change });
+        self.show();
     }
 
     /// Heard from it: it is there.
@@ -731,9 +741,12 @@ impl Mirrored {
 
     /// `shown`: the state heard, with the commands foreseen over it.
     fn show(&mut self) {
-        self.shown = self.heard.clone();
-        self.at = self.arrived;
-        self.device_at = self.heard.as_ref().and_then(|s| s.at_us);
+        // Nothing heard from it yet: what it was handed stays shown.
+        if self.heard.is_some() {
+            self.shown = self.heard.clone();
+            self.at = self.arrived;
+            self.device_at = self.heard.as_ref().and_then(|s| s.at_us);
+        }
         for change in self.foreseen.iter().map(|f| f.change.clone()).collect::<Vec<_>>() {
             self.put(&change);
         }
@@ -756,7 +769,18 @@ impl Mirrored {
     }
 
     fn put(&mut self, change: &Change) {
-        let Some(st) = &mut self.shown else { return };
+        let st = match change {
+            Change::Handed { state, at } => {
+                self.shown = Some((**state).clone());
+                self.at = *at;
+                self.device_at = None;
+                return;
+            }
+            _ => match &mut self.shown {
+                Some(st) => st,
+                None => return,
+            },
+        };
         let (index, ms, at) = match *change {
             Change::Playing { playing, ms, at } => {
                 st.playing = playing;
@@ -773,6 +797,7 @@ impl Mirrored {
                 }
                 return;
             }
+            Change::Handed { .. } => return,
         };
         st.index = index;
         st.position_ms = ms;
@@ -908,6 +933,17 @@ impl Mirrored {
         }
         Some(mirror)
     }
+}
+
+/// How a device becomes the active one.
+enum Becomes {
+    /// It is followed as it is.
+    Followed,
+    /// Playback was handed to it.
+    Handed,
+    /// Playback was handed to it by command `id` as `state`, as of `at` (this device's clock): shown so
+    /// until it plays that.
+    HandedAs { id: u64, state: Box<DeviceState>, at: i64 },
 }
 
 struct PendingTransfer {
@@ -1523,7 +1559,7 @@ impl Remote {
             self.clone().discover_active(false);
         }
         if started {
-            self.set_active(None, false);
+            self.set_active(None, Becomes::Followed);
         }
         if publish {
             self.publish();
@@ -1589,15 +1625,22 @@ impl Remote {
         let here = self.client.core.session.playlist(|p| p.current().is_some());
         match (active, device) {
             (None, None) => {}
-            (Some(_), None) if idle => self.set_active(None, false),
+            (Some(_), None) if idle => self.set_active(None, Becomes::Followed),
             (Some(a), None) => self.pull(a),
             (None, Some(d)) if here && !leads => self.clone().hand_over(d),
-            (None, Some(d)) => self.set_active(Some(d), false),
+            (None, Some(d)) => self.set_active(Some(d), Becomes::Followed),
             (Some(a), Some(d)) if a == d => {}
-            (Some(_), Some(d)) if plays => self.set_active(Some(d), false),
+            (Some(_), Some(d)) if plays => self.set_active(Some(d), Becomes::Followed),
             (Some(a), Some(d)) => {
-                self.clone().send(a, Op::Transfer { to: d.clone(), listen_handoff: false });
-                self.set_active(Some(d), true);
+                let id = self.next_id();
+                let shown = self.inner.lock().mirror.as_ref().and_then(|m| Some((m.shown.clone()?, m.shown_at())));
+                self.clone().command(id, a, Op::Transfer { to: d.clone(), listen_handoff: false });
+                let how = match shown {
+                    Some((state, at)) => Becomes::HandedAs { id, state: Box::new(DeviceState { handed_to: None, obeyed: Vec::new(), ..state }), at },
+                    None => Becomes::Handed,
+                };
+                self.set_active(Some(d), how);
+                self.end_foresight();
             }
         }
         if cancelled {
@@ -1631,33 +1674,7 @@ impl Remote {
             return;
         }
         let id = self.next_id();
-        let mut foreseen = false;
-        let link = {
-            let mut i = self.inner.lock();
-            if let Some(m) = i.mirror.as_mut().filter(|m| m.id == device) {
-                if let Op::Remove { index, .. } = op {
-                    if let Some(e) = m.rows().into_iter().find(|e| e.index == index) {
-                        m.taken.push((e.song(), index));
-                    }
-                }
-                m.foresee(id, &op, self.now());
-                // A play foreseen starts the time keeper, and a foresight ends on time.
-                self.timing.notify();
-                foreseen = true;
-            }
-            i.refused.remove(&device);
-            let lan = i.peers.iter().find(|p| p.member.id == device).map(|p| Link::Lan(p.base()));
-            match lan {
-                Some(l) => l,
-                None if i.relay == RelaySupport::Unsupported => return,
-                None => Link::Relay,
-            }
-        };
-        if foreseen {
-            self.end_foresight();
-        }
-        self.out(Out::send(link, Outgoing { to: Some(device), body: Some(Body::Command { id, op: Box::new(op) }), ..Default::default() }));
-        self.shown.changed();
+        self.command(id, device, op);
     }
 
     /// Undoes the removal of song `id` from the mirrored device `device`'s queue: it goes back where it
@@ -3075,16 +3092,22 @@ impl Remote {
         self.shown.changed();
     }
 
-    /// Makes `to` the active device (None: this one), and follows it while it is another; `handed`:
-    /// playback was just handed to it.
-    fn set_active(self: &Arc<Self>, to: Option<String>, handed: bool) {
+    /// Makes `to` the active device (None: this one), and follows it while it is another.
+    fn set_active(self: &Arc<Self>, to: Option<String>, how: Becomes) {
         {
             let mut i = self.inner.lock();
             if i.mirror.as_ref().map(|m| &m.id) == to.as_ref() || (to.is_some() && i.jams()) {
                 return;
             }
+            let handed = !matches!(how, Becomes::Followed);
             let handed_at = to.as_deref().filter(|_| handed).and_then(|id| i.state_of(id)).map(|(s, _)| (s.instance, s.seq));
-            i.mirror = to.map(|id| Mirrored { handed_at, ..Mirrored::new(id, self.now()) });
+            i.mirror = to.map(|id| {
+                let mut m = Mirrored { handed_at, ..Mirrored::new(id, self.now()) };
+                if let Becomes::HandedAs { id, state, at } = how {
+                    m.handed(id, state, at);
+                }
+                m
+            });
         }
         self.retime();
         self.follow_active();
@@ -3282,7 +3305,7 @@ impl Remote {
         };
         self.marked(liked);
         if let Some(to) = next {
-            return self.set_active(Some(to), true);
+            return self.set_active(Some(to), Becomes::Handed);
         }
         if let Some((id, from)) = page {
             self.clone().send(id, Op::Page { from, count: PAGE });
@@ -3422,12 +3445,43 @@ impl Remote {
                     }
                     self.client.core.session.receive_listen(listen.clone());
                     self.inner.lock().handed_to = None;
-                    self.set_active(None, false);
+                    self.set_active(None, Becomes::Followed);
                 }
                 self.player.apply(op)
             }
         }
         Ok(())
+    }
+
+    /// Sends `op` to device `device` as command `id`.
+    fn command(self: Arc<Self>, id: u64, device: String, op: Op) {
+        let mut foreseen = false;
+        let link = {
+            let mut i = self.inner.lock();
+            if let Some(m) = i.mirror.as_mut().filter(|m| m.id == device) {
+                if let Op::Remove { index, .. } = op {
+                    if let Some(e) = m.rows().into_iter().find(|e| e.index == index) {
+                        m.taken.push((e.song(), index));
+                    }
+                }
+                m.foresee(id, &op, self.now());
+                // A play foreseen starts the time keeper, and a foresight ends on time.
+                self.timing.notify();
+                foreseen = true;
+            }
+            i.refused.remove(&device);
+            let lan = i.peers.iter().find(|p| p.member.id == device).map(|p| Link::Lan(p.base()));
+            match lan {
+                Some(l) => l,
+                None if i.relay == RelaySupport::Unsupported => return,
+                None => Link::Relay,
+            }
+        };
+        if foreseen {
+            self.end_foresight();
+        }
+        self.out(Out::send(link, Outgoing { to: Some(device), body: Some(Body::Command { id, op: Box::new(op) }), ..Default::default() }));
+        self.shown.changed();
     }
 
     /// Takes the controls back here while the previous device answers with its queue.
@@ -3489,10 +3543,8 @@ impl Remote {
             self.out(Out::send(link, Outgoing { to: Some(to.clone()), body: Some(command), ..Default::default() }));
         }
         self.player.apply(Op::Pause);
-        self.set_active(Some(to.clone()), true);
-        if let Some(m) = self.inner.lock().mirror.as_mut().filter(|m| m.id == to) {
-            m.handed(handed, self.now());
-        }
+        self.set_active(Some(to), Becomes::HandedAs { id, state: Box::new(handed), at: self.now() });
+        self.end_foresight();
         self.shown.changed();
         self.publish();
     }
@@ -3930,7 +3982,7 @@ mod tests {
         let before = DeviceState { seq: 5, index: Some(0), len: 4, entries: (0..4).map(entry).collect(), ..Default::default() };
         let handed = DeviceState { seq: 9, index: Some(2), position_ms: 40_000, playing: true, ..before.clone() };
         let mut m = Mirrored { handed_at: Some((before.instance, before.seq)), ..Mirrored::new("desk".into(), clock::now_us()) };
-        m.handed(handed, clock::now_us());
+        m.handed(1, Box::new(handed), clock::now_us());
         assert!(!m.heard(&before, 0, "me"), "its state from before the hand-off is old news");
         let shown = m.shown.as_ref().unwrap();
         assert_eq!((shown.index, shown.playing, shown.position_ms), (Some(2), true, 40_000));
