@@ -2,7 +2,15 @@
 
 Internal planning note, not published. Written 2026-10-24 against `master` at `2413016a`; updated
 2026-10-27 at `29bc5e0e` with what each feature nori removed needs to come back as a plugin, and what
-the plugin system may cost with no plugin. Nothing here is built yet.
+the plugin system may cost with no plugin.
+
+Built (2026-10-27, the `plugins` branch; docs/developers/plugins.md): the whole API in `wit/`; the SDK
+(traits written from the WIT, the manifest in the wasm's custom section, not a `plugin.toml`); the host
+with `log`, `store`, `http`, `settings`, `rows` and `notices`; overrides (settings by name, and the
+tunables speed, pitch, skip silence, previous always skips); master-slot sound stages; plugins'
+providers (YouTube Music moved out of nori into one); rows and the Plugins page in each client but
+the iPod and the web. Not yet: the song slot, song preparation, AutoMix seams, deciders, hooks' events,
+slots, device control, casting, repos and signatures, backups, safe mode, the web host.
 
 ## Owner decisions so far (2026-10-24)
 

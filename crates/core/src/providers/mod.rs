@@ -269,16 +269,6 @@ impl Kinds {
 }
 
 impl Kinds {
-    /// The open profile's transport, which plugins' HTTP goes through.
-    pub fn set_transport(&self, transport: Arc<dyn Transport>) {
-        #[cfg(feature = "plugins")]
-        if let Some(p) = &self.plugins {
-            p.set_transport(Some(transport));
-        }
-        #[cfg(not(feature = "plugins"))]
-        let _ = transport;
-    }
-
     /// A provider for `kind`; None for a plugin not installed and enabled here.
     pub(crate) fn provider(&self, kind: &ServerKind) -> Option<Arc<dyn Provider>> {
         match kind {
@@ -312,6 +302,16 @@ impl Kinds {
     #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn builtin() -> Arc<Kinds> {
         Arc::default()
+    }
+
+    /// The open profile's transport, which plugins' HTTP goes through.
+    pub fn set_transport(&self, transport: Arc<dyn Transport>) {
+        #[cfg(feature = "plugins")]
+        if let Some(p) = &self.plugins {
+            p.set_transport(Some(transport));
+        }
+        #[cfg(not(feature = "plugins"))]
+        let _ = transport;
     }
 
     /// The kinds of profile that can be added, in the order they are offered.

@@ -213,6 +213,20 @@ impl settings::Host for Host {
 }
 
 impl rows::Host for Host {
+    fn get(&mut self, row: String) -> Option<types::Value> {
+        let stored = self.store.get(&format!("{}{row}", crate::ROWS)).and_then(|b| Value::decode(&b));
+        let default = || {
+            let r = self.manifest.rows.iter().find(|r| r.id == row)?;
+            let d = r.default?;
+            Some(match r.kind {
+                crate::RowKind::Switch => Value::Switch(d != 0.0),
+                crate::RowKind::Choice => Value::Choice(d as u32),
+                _ => Value::Level(d),
+            })
+        };
+        stored.or_else(default).map(Into::into)
+    }
+
     fn set_status(&mut self, row: String, words: String, args: Vec<String>) {
         self.side.status(&self.id, &row, &words, &args);
     }

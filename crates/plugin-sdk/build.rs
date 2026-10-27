@@ -61,7 +61,7 @@ fn main() {
     writeln!(out, "/// Exports `$plugin` for the extension points named after it ({}); the others answer as nori would.", names.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")).unwrap();
     writeln!(out, "#[macro_export]\nmacro_rules! plugin {{\n    ($plugin:ty, $manifest:expr $(, $point:ident)* $(,)?) => {{").unwrap();
     writeln!(out, "        const __NORI_LEN: usize = $crate::manifest::encoded_len(&$manifest, env!(\"CARGO_PKG_VERSION\"));").unwrap();
-    writeln!(out, "        #[cfg(target_arch = \"wasm32\")]\n        #[unsafe(link_section = \"nori:plugin\")]\n        #[used]\n        static __NORI_MANIFEST: [u8; __NORI_LEN] = $crate::manifest::encode::<__NORI_LEN>(&$manifest, env!(\"CARGO_PKG_VERSION\"), 0 $(| $crate::__point_bit!($point))*);").unwrap();
+    writeln!(out, "        #[cfg_attr(target_arch = \"wasm32\", unsafe(link_section = \"nori:plugin\"))]\n        #[used]\n        static __NORI_MANIFEST: [u8; __NORI_LEN] = $crate::manifest::encode::<__NORI_LEN>(&$manifest, env!(\"CARGO_PKG_VERSION\"), 0 $(| $crate::__point_bit!($point))*);").unwrap();
     writeln!(out, "        type __NoriPlugin = $crate::Shim<").unwrap();
     for n in &names {
         writeln!(out, "            $crate::__pick!({n}, $plugin, [$($point)*]),").unwrap();

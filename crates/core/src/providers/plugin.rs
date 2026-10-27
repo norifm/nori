@@ -86,6 +86,8 @@ fn rules(said: Option<w::ProfileRules>, signs_in: bool, guest: bool) -> ProfileR
     let sections = r.sections.iter().filter_map(|s| match s {
         w::LibrarySection::Songs => Some(LibrarySection::Songs),
         w::LibrarySection::Albums => Some(LibrarySection::Albums),
+        w::LibrarySection::Favorites => Some(LibrarySection::Favourites),
+        w::LibrarySection::History => Some(LibrarySection::History),
         w::LibrarySection::Artists => Some(LibrarySection::Artists),
         w::LibrarySection::Playlists => Some(LibrarySection::Playlists),
         w::LibrarySection::Genres => Some(LibrarySection::Genres),
@@ -322,15 +324,17 @@ impl Provider for PluginProvider {
         Ok(())
     }
 
-    async fn read(&self, _client: &Client, read: Read) -> NetResult<Option<Answer>> {
+    async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Answer>> {
         let Some(asked) = request(&read) else { return Ok(None) };
-        let said = self.worker.call(move |s, x| x.nori_plugin_provider().call_read(s, &asked)).await.ok_or_else(stopped)?.map_err(net_error)?;
+        let said = self.worker.call(move |s, x| x.nori_plugin_provider().call_read(s, &asked)).await.ok_or_else(stopped)?;
+        let said = self.heard(client, said)?;
         Ok(page(&read, said).map(|p| Answer::Page(Box::new(p))))
     }
 
-    async fn write(&self, _client: &Client, c: Write) -> NetResult<()> {
+    async fn write(&self, client: &Client, c: Write) -> NetResult<()> {
         let Some(c) = change(c) else { return Err(super::nowhere("place for this change")) };
-        self.worker.call(move |s, x| x.nori_plugin_provider().call_write(s, &c)).await.ok_or_else(stopped)?.map_err(net_error)
+        let said = self.worker.call(move |s, x| x.nori_plugin_provider().call_write(s, &c)).await.ok_or_else(stopped)?;
+        self.heard(client, said)
     }
 
     /// The plugin resolves its songs where they open; the bytes are kept by song.
@@ -348,7 +352,7 @@ impl Provider for PluginProvider {
     }
 
     fn resolver(&self, _client: &Arc<Client>) -> Option<Arc<dyn ResolveStream>> {
-        Some(Arc::new(Resolver { worker: self.worker.clone() }))
+        Some(Arc::new(Resolver { worker: self.worker.clone(), parts: Default::default() }))
     }
 
     fn sign_in_done(&self, address: &str, cookies: &str) -> bool {
@@ -383,9 +387,28 @@ impl Provider for PluginProvider {
             Some(w::AccountState::SignedOut) | None => AccountState::SignedOut,
         }
     }
+
+    fn reminds_to_sign_in(&self, _client: &Client) -> bool {
+        self.now(|s, x| x.nori_plugin_provider().call_reminds(s)).unwrap_or(false)
+    }
+
+    fn stop_reminding(&self, _client: &Client) {
+        self.worker.post(|s, x| x.nori_plugin_provider().call_stop_reminding(s));
+    }
 }
 
 impl PluginProvider {
+    /// `said`'s answer as nori's; an account the source refused may have ended, so its rules are asked
+    /// anew (the library and likes go while signed out).
+    fn heard<T>(&self, client: &Client, said: Result<T, t::Error>) -> NetResult<T> {
+        said.map_err(|e| {
+            if e.kind == t::ErrorKind::Unauthorized {
+                client.core.set_rules(self.ask_rules(&self.open.read().clone(), false));
+            }
+            net_error(e)
+        })
+    }
+
     fn ask_info(&self) -> ProviderInfo {
         let said = self.now(|s, x| x.nori_plugin_provider().call_info(s)).flatten();
         let said = said.unwrap_or(w::ProviderInfo { fields: Vec::new(), sign_in: Vec::new() });
@@ -412,13 +435,38 @@ impl PluginProvider {
 /// Opens a plugin's stream addresses at the URLs the plugin says, on a loader's thread.
 struct Resolver {
     worker: Worker,
+    /// How the last stream resolved is asked for, by address ([`ResolveStream::parts`]).
+    parts: parking_lot::Mutex<std::collections::HashMap<String, super::StreamParts>>,
+}
+
+impl Resolver {
+    fn source(&self, address: &str, used: w::StreamUse) -> Option<NetResult<String>> {
+        let id = address.strip_prefix(ADDRESS)?.to_string();
+        let said = block_on(self.worker.call(move |s, x| x.nori_plugin_provider().call_source(s, &id, 0, used)));
+        let src = match said.ok_or_else(stopped).and_then(|r| r.map_err(net_error)) {
+            Ok(src) => src,
+            Err(e) => return Some(Err(e)),
+        };
+        let mut parts = self.parts.lock();
+        match src.length.zip(src.part) {
+            Some((len, most)) => parts.insert(address.to_string(), super::StreamParts { len, most }),
+            None => parts.remove(address),
+        };
+        Some(Ok(src.url))
+    }
 }
 
 impl ResolveStream for Resolver {
     fn resolve(&self, address: &str) -> Option<NetResult<String>> {
-        let id = address.strip_prefix(ADDRESS)?.to_string();
-        let said = block_on(self.worker.call(move |s, x| x.nori_plugin_provider().call_source(s, &id, 0)));
-        Some(said.ok_or_else(stopped).and_then(|r| r.map(|src| src.url).map_err(net_error)))
+        self.source(address, w::StreamUse::Playback)
+    }
+
+    fn resolve_rest(&self, address: &str, from: u64) -> Option<NetResult<String>> {
+        self.source(address, w::StreamUse::Download(from))
+    }
+
+    fn parts(&self, address: &str) -> Option<super::StreamParts> {
+        self.parts.lock().get(address).copied()
     }
 
     fn refused(&self, address: &str) {

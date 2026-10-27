@@ -12,7 +12,7 @@ service, the screens and a force stop.
 
 | Tier | Covers | Who runs it |
 | --- | --- | --- |
-| `cargo test -j4 --workspace` | every Rust test, doctests included | every change |
+| `cargo test -j4 --workspace` | every Rust test, doctests included; the plugin host's build a plugin to wasm (`rustup target add wasm32-wasip2` once) | every change |
 | `./gradlew :core:testDebugUnitTest :app:testDebugUnitTest` | the Kotlin unit tests, no device | changes to Kotlin |
 | `tools/smoke.sh` | launch, play, controls, a queue edit, an AutoMix transition, the equalizer, offload, the notification, offline playback, crashes; about two minutes | every change that reaches Android |
 | `tools/audio-e2e.sh --only …`, `tools/feature-e2e.sh --only …` | the sections a change touches | the change's author |

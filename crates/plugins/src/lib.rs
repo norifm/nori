@@ -243,4 +243,4 @@ impl Plugins {
 }
 
 /// Where a plugin's row values are kept in its store.
-const ROWS: &str = "nori/row/";
+pub(crate) const ROWS: &str = "nori/row/";

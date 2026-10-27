@@ -3,6 +3,10 @@ package nori:plugin@1.0.0;
 /// The plugin's page. Its rows are declared in its manifest, so nori draws them while it is not
 /// running; values are kept by nori in the plugin's store.
 interface rows {
+    use types.{value};
+
+    /// One of its rows' values as the user set it, else its default.
+    get: func(row: string) -> option<value>;
     /// A status row's live line, from the plugin's strings ("ANC: on"); redrawn only while visible.
     set-status: func(row: string, words: string, args: list<string>);
     /// Hides or greys a row (on top of its manifest's own conditions).
@@ -118,16 +122,18 @@ interface provider {
     enum library-section {
         songs,
         albums,
+        favorites,
         artists,
         playlists,
         genres,
         folders,
         radio,
         downloads,
+        history,
     }
 
     record profile-rules {
-        /// Shows the account's library (signed in).
+        /// The account is signed in: its library, likes and mixes are offered.
         account: bool,
         downloads: bool,
         radio: bool,
@@ -202,6 +208,18 @@ interface provider {
     record stream-source {
         url: string,
         headers: list<header>,
+        /// Its length in bytes, when known.
+        length: option<u64>,
+        /// The most bytes one request may ask for, for a source that throttles long ranges; none
+        /// for no limit.
+        part: option<u64>,
+    }
+
+    /// What a stream's URL is for.
+    variant stream-use {
+        playback,
+        /// Fetched from this byte to its end in one request, by the platform's download worker.
+        download(u64),
     }
 
     variant sign-in-result {
@@ -225,8 +243,9 @@ interface provider {
     open: func(profile: profile);
     read: func(request: request) -> result<page, error>;
     write: func(change: change) -> result<_, error>;
-    /// Where song `id` streams from at `max-kbps` (0: as it is); the engine fetches, caches and decodes.
-    source: func(id: string, max-kbps: u32) -> result<stream-source, error>;
+    /// Where song `id` streams from at `max-kbps` (0: as it is), for `use`; the engine fetches, caches
+    /// and decodes.
+    source: func(id: string, max-kbps: u32, %use: stream-use) -> result<stream-source, error>;
     /// The stream refused its last URL: the next `source` resolves it anew.
     refused: func(id: string);
     cover: func(id: string, size: u32) -> option<string>;
@@ -234,6 +253,10 @@ interface provider {
     sign-in: func(answer: string) -> option<sign-in-result>;
     sign-out: func();
     account: func() -> option<account-state>;
+    /// Whether the client reminds the user to sign in again at start (the session ended).
+    reminds: func() -> bool;
+    /// No reminder until the account is signed in, and its session ends, again.
+    stop-reminding: func();
 }
 
 /// A stage in nori's sound chain. Its instance is its own: every import traps there, so it can never

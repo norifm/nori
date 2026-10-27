@@ -23,7 +23,7 @@ there. The clients draw, hold the words and wire the operating system.
 |---|---|
 | domain crates | one area each: decoding and the sound chain (`player`), the library and its pages (`library`), the queue and autofill (`queue`), lyrics, settings, outputs and AutoEQ (`devices`), remote control and jams (`remote`), covers, colors from covers (`look`), and more |
 | `nori-tasks`, `nori-time` | where async work runs and the one clock the core reads, natively and in a browser |
-| `nori-core` | a `Core` per profile, the `Client`, and the [providers](providers.md) a profile plays from (a Subsonic server, YouTube Music). Re-exports every domain crate, so a client can link it alone |
+| `nori-core` | a `Core` per profile, the `Client`, and the [providers](providers.md) a profile plays from (a Subsonic server, or a plugin's: [plugins](plugins.md)). Re-exports every domain crate, so a client can link it alone |
 | `nori-engine` | the whole player on its own thread: it loads in bursts, decodes, runs the sound chain and transitions, and sleeps in between. Every client plays through it |
 | `nori-host` | the session the desktop, terminal, iPod and web clients share: the engine, queue saving, remote control and jams, the offline index, media controls. Android does not use it yet |
 
