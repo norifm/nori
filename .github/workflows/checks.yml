@@ -24,8 +24,10 @@ jobs:
         run: |
           rustup update stable --no-self-update
           rustup default stable
+      # Shared with the release workflow's tests, which only read it.
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: workspace-test
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - uses: taiki-e/install-action@v2
         with:

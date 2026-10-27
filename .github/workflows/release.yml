@@ -41,8 +41,33 @@ jobs:
     with:
       source: ${{ needs.resolve.outputs.sha }}
       macos_on_linux: ${{ inputs.macos_on_linux }}
-  android:
+  # The core for each ABI on its own runner, side by side: each is a whole-program optimized build of its own.
+  android-rust:
     needs: resolve
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        abi: [arm64-v8a, x86_64]
+    env:
+      RUSTC_WRAPPER: ''
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-release-${{ matrix.abi }}
+      - uses: ./.github/actions/android-toolchain
+      - run: ./gradlew :core:cargoNdkBuild -PrustTargets=${{ matrix.abi }} -PrustProfile=dist -q
+      - uses: actions/upload-artifact@v7
+        with:
+          name: jni-${{ matrix.abi }}
+          overwrite: true
+          path: core/build/rust/jniLibs/
+          if-no-files-found: error
+  android:
+    needs: [resolve, android-rust]
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -66,11 +91,16 @@ jobs:
           properties: ${{ secrets.NORI_KEYSTORE_PROPERTIES }}
           directory: source
       - uses: ./release-tooling/.github/actions/android-toolchain
+      - uses: actions/download-artifact@v8
+        with:
+          path: jniLibs
+          pattern: jni-*
+          merge-multiple: true
       - name: Build signed APK
         env:
           NORI_RELEASE_WORKSPACE: ${{ github.workspace }}/source
         run: |
-          ../release-tooling/tools/with-resource.py build ../release-tooling/tools/release.sh --build --no-hosts --no-ipod --no-test
+          ../release-tooling/tools/with-resource.py build ../release-tooling/tools/release.sh --build --no-hosts --no-ipod --no-test --jni-libs ../jniLibs
           mkdir -p ../android-release
           cp build/release-*/*.apk build/release-*/SHA256SUMS ../android-release/
       - uses: actions/upload-artifact@v7
@@ -125,6 +155,9 @@ jobs:
           rustup update stable --no-self-update
           rustup default stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: workspace-test
+          save-if: false
       - run: tools/with-resource.py build cargo test -j4 --workspace
   release:
     name: Assemble release
