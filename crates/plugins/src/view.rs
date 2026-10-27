@@ -17,6 +17,10 @@ pub struct PluginCard {
     /// Its `about` string, if it has one.
     pub about: Option<String>,
     pub enabled: bool,
+    /// The repo it came from (it updates from there alone); None when installed from a file.
+    pub repo: Option<String>,
+    /// Kept at its version.
+    pub held: bool,
     /// The extension points it fills (`wit/`'s names).
     pub points: Vec<String>,
     /// The nori values it overrides.
@@ -79,6 +83,8 @@ impl Plugins {
                     name: said("name").unwrap_or_else(|| m.id.clone()),
                     about: said("about"),
                     enabled: i.enabled,
+                    repo: i.repo.clone(),
+                    held: i.held,
                     points: m.points.iter().map(|p| p.to_string()).collect(),
                     overrides: m.overrides.clone(),
                     net: m.net.clone(),

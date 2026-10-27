@@ -1,18 +1,22 @@
 //! Plugin repos: static `index.json` files anyone can host. nori's own is always there; the user adds
 //! others by URL (a client warns first: nori vouches only for its own). An index lists each plugin's
-//! id, name, version, plugin API version, package URL and the package's sha256, which an install
-//! checks before anything else.
+//! id, name, about and source, and every version it published: its plugin API version, the day it was
+//! released, its package's URL and the package's sha256, which an install checks before anything else.
+//! Old versions stay listed, so a plugin can be taken back to one.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::{Plugins, Refusal, API};
 
-/// nori's own repo.
-pub const OFFICIAL: &str = "https://raw.githubusercontent.com/norifm/nori-plugins/main/dist/index.json";
+/// nori's own repo: nori-plugins' index (its packages are that repository's releases).
+pub const OFFICIAL: &str = "https://raw.githubusercontent.com/norifm/nori-plugins/main/index.json";
+
+/// How often updates are looked for, at most: once a day, when a client asks.
+const UPDATE_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// A repo the plugins come from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Repo {
     pub url: String,
@@ -20,23 +24,31 @@ pub struct Repo {
     pub official: bool,
 }
 
-/// One plugin as an index lists it.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Deserialize)]
+struct Index {
+    plugins: Vec<Listed>,
+}
+
+#[derive(Debug, Deserialize)]
 struct Listed {
     id: String,
     name: String,
     #[serde(default)]
     about: Option<String>,
-    version: String,
-    api: u32,
-    /// Absolute, or relative to the index.
-    url: String,
-    sha256: String,
+    #[serde(default)]
+    source: Option<String>,
+    versions: Vec<Release>,
 }
 
 #[derive(Debug, Deserialize)]
-struct Index {
-    plugins: Vec<Listed>,
+struct Release {
+    version: String,
+    api: u32,
+    #[serde(default)]
+    released: Option<String>,
+    /// Absolute, or relative to the index.
+    url: String,
+    sha256: String,
 }
 
 /// A plugin a repo offers.
@@ -47,12 +59,34 @@ pub struct Offer {
     pub id: String,
     pub name: String,
     pub about: Option<String>,
-    pub version: String,
+    /// Where its code is, when its repo says.
+    pub source: Option<String>,
+    /// The versions this nori runs, newest first.
+    pub versions: Vec<Version>,
     /// The version installed here, if it is.
     pub installed: Option<String>,
-    /// Package URL and its sha256.
-    url: String,
-    sha256: String,
+}
+
+/// One published version of a plugin.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct Version {
+    /// The repo that lists it.
+    pub repo: String,
+    pub version: String,
+    /// The day it was released (YYYY-MM-DD), when its repo says.
+    pub released: Option<String>,
+    pub url: String,
+    pub sha256: String,
+}
+
+/// A plugin updated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct Updated {
+    pub id: String,
+    pub from: String,
+    pub to: String,
 }
 
 /// Why a repo couldn't be read.
@@ -80,19 +114,33 @@ fn resolved(index: &str, url: &str) -> String {
     format!("{base}/{}", url.trim_start_matches("./"))
 }
 
-/// The offers of `index`'s text, from `repo`, that this host can run.
+/// `a` < `b` as dotted versions, number by number.
+fn older(a: &str, b: &str) -> bool {
+    let parts = |v: &str| v.split(['.', '-']).map(|p| p.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
+    parts(a) < parts(b)
+}
+
+/// The plugins in `index`'s text, from `repo`, with the versions this host runs; one with none is left out.
 fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
     let index: Index = serde_json::from_slice(text).map_err(|e| format!("not an index: {e}"))?;
     Ok(index
         .plugins
         .into_iter()
-        .filter(|l| l.api == API || l.api + 1 == API)
-        .map(|l| Offer { repo: repo.clone(), url: resolved(&repo.url, &l.url), id: l.id, name: l.name, about: l.about, version: l.version, installed: None, sha256: l.sha256.to_ascii_lowercase() })
+        .filter_map(|l| {
+            let mut versions: Vec<Version> = l
+                .versions
+                .into_iter()
+                .filter(|r| r.api == API || r.api + 1 == API)
+                .map(|r| Version { repo: repo.url.clone(), url: resolved(&repo.url, &r.url), version: r.version, released: r.released, sha256: r.sha256.to_ascii_lowercase() })
+                .collect();
+            versions.sort_by(|a, b| if older(&a.version, &b.version) { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less });
+            (!versions.is_empty()).then(|| Offer { repo: repo.clone(), id: l.id, name: l.name, about: l.about, source: l.source, versions, installed: None })
+        })
         .collect())
 }
 
 impl Plugins {
-    pub(crate) fn transport_now(&self) -> Result<std::sync::Arc<dyn nori_net::transport::Transport>, String> {
+    fn transport_now(&self) -> Result<std::sync::Arc<dyn nori_net::transport::Transport>, String> {
         self.transport.lock().expect("not poisoned").clone().ok_or_else(|| "no connection yet".to_string())
     }
 }
@@ -146,23 +194,50 @@ impl Plugins {
         out
     }
 
-    /// Fetches and installs `offer` (an update keeps the plugin's store and its being on); its id.
-    pub async fn install_offer(&self, offer: Offer) -> Result<String, Refusal> {
+    /// Fetches and installs `version` of a plugin a repo offers, newer or older than the one here (its
+    /// store and its being on are kept); its id.
+    pub async fn install_version(&self, version: Version) -> Result<String, Refusal> {
         let unreadable = |e: String| Refusal::Unreadable(e);
         let t = self.transport_now().map_err(unreadable)?;
-        let r = t.get(offer.url.clone(), 0).await.map_err(|e| unreadable(e.to_string()))?;
+        let r = t.get(version.url.clone(), 0).await.map_err(|e| unreadable(e.to_string()))?;
         if !(200..=299).contains(&r.status) {
             return Err(unreadable(format!("HTTP {}", r.status)));
         }
         let hash: String = Sha256::digest(&r.body).iter().map(|b| format!("{b:02x}")).collect();
-        if hash != offer.sha256 {
+        if hash != version.sha256 {
             return Err(unreadable("the package isn't the one its repo lists".into()));
         }
-        let file = self.dir.join(format!(".{}.noriplugin", offer.id));
+        let file = self.dir.join(".download.noriplugin");
         std::fs::create_dir_all(&self.dir).and_then(|_| std::fs::write(&file, &r.body)).map_err(|e| unreadable(e.to_string()))?;
-        let installed = self.install(&file).map(|m| m.id.clone());
+        let installed = self.install_as(&file, Some(version.repo.clone())).map(|m| m.id.clone());
         let _ = std::fs::remove_file(&file);
         installed
+    }
+
+    /// Whether a day has passed since updates were last looked for, at `now_ms` (device ms).
+    pub fn updates_due(&self, now_ms: i64) -> bool {
+        now_ms - self.checked_ms() >= UPDATE_EVERY_MS || now_ms < self.checked_ms()
+    }
+
+    /// Updates each plugin not held to the newest version its own repo offers; what was updated.
+    pub async fn update(&self, now_ms: i64) -> Vec<Updated> {
+        let offers = self.offers().await;
+        self.keep_checked(now_ms);
+        let mut done = Vec::new();
+        for i in self.installed().into_iter().filter(|i| !i.held) {
+            let Some(repo) = &i.repo else { continue };
+            let newest = offers.offers.iter().find(|o| o.id == i.manifest.id && o.repo.url == *repo).and_then(|o| o.versions.first());
+            let Some(v) = newest.filter(|v| older(&i.manifest.version, &v.version)) else { continue };
+            if self.install_version(v.clone()).await.is_ok() {
+                done.push(Updated { id: i.manifest.id.clone(), from: i.manifest.version.clone(), to: v.version.clone() });
+            }
+        }
+        done
+    }
+
+    /// Keeps plugin `id` at its version (`held`), or lets it update again.
+    pub fn hold_at(&self, id: String, held: bool) {
+        self.hold(&id, held)
     }
 }
 
@@ -171,15 +246,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_index_offers_what_this_host_runs_at_its_urls() {
+    fn an_index_offers_the_versions_this_host_runs_newest_first() {
         let repo = Repo { url: "https://example.com/nori/index.json".into(), official: false };
         let text = br#"{"plugins": [
-            {"id": "a.b", "name": "A", "version": "1.0.0", "api": 1, "url": "a.noriplugin", "sha256": "AB"},
-            {"id": "c.d", "name": "C", "version": "2.0.0", "api": 1, "url": "https://cdn.example/c.noriplugin", "sha256": "cd"},
-            {"id": "e.f", "name": "E", "version": "1.0.0", "api": 9, "url": "e.noriplugin", "sha256": "ef"}
+            {"id": "a.b", "name": "A", "source": "https://git.example/a", "versions": [
+                {"version": "0.9.0", "api": 1, "url": "a-0.9.0.noriplugin", "sha256": "AB"},
+                {"version": "0.10.0", "api": 1, "url": "https://cdn.example/a-0.10.0.noriplugin", "sha256": "cd", "released": "2026-11-02"},
+                {"version": "2.0.0", "api": 9, "url": "a-2.0.0.noriplugin", "sha256": "ef"}
+            ]},
+            {"id": "c.d", "name": "C", "versions": [{"version": "1.0.0", "api": 9, "url": "c.noriplugin", "sha256": "00"}]}
         ]}"#;
         let o = offers(&repo, text).unwrap();
-        assert_eq!(o.iter().map(|o| (o.id.as_str(), o.url.as_str(), o.sha256.as_str())).collect::<Vec<_>>(), vec![("a.b", "https://example.com/nori/a.noriplugin", "ab"), ("c.d", "https://cdn.example/c.noriplugin", "cd")], "another API's plugin isn't offered");
+        assert_eq!(o.len(), 1, "a plugin with no version this host runs isn't offered");
+        let v: Vec<(&str, &str, &str)> = o[0].versions.iter().map(|v| (v.version.as_str(), v.url.as_str(), v.sha256.as_str())).collect();
+        assert_eq!(v, vec![("0.10.0", "https://cdn.example/a-0.10.0.noriplugin", "cd"), ("0.9.0", "https://example.com/nori/a-0.9.0.noriplugin", "ab")], "newest first, as numbers; another API's left out");
+        assert_eq!(o[0].source.as_deref(), Some("https://git.example/a"));
         assert!(offers(&repo, b"<html>").is_err());
     }
 }

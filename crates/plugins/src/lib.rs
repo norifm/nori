@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub use app::{open, open_plugins, Client};
-pub use repo::{Offer, Offers, Repo, RepoFailure, OFFICIAL};
+pub use repo::{Offer, Offers, Repo, RepoFailure, Version, OFFICIAL};
 pub use view::{PluginCard, PluginRow};
 pub use host::{Side, Value};
 pub use manifest::{Manifest, Refusal, RowKind, RowSpec, Slot, API, POINTS};
@@ -47,6 +47,10 @@ use serde::{Deserialize, Serialize};
 pub struct Installed {
     pub manifest: Arc<Manifest>,
     pub enabled: bool,
+    /// The repo it came from, which alone updates it; None when installed from a file.
+    pub repo: Option<String>,
+    /// Kept at its version: not updated.
+    pub held: bool,
 }
 
 /// The open profile's transport, which plugins' HTTP goes through; None before one is open.
@@ -63,12 +67,19 @@ struct Index {
     /// Repos the user added (nori's own is always there).
     #[serde(default)]
     repos: Vec<String>,
+    /// When updates were last looked for, device ms.
+    #[serde(default)]
+    checked_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct IndexEntry {
     id: String,
     enabled: bool,
+    #[serde(default)]
+    repo: Option<String>,
+    #[serde(default)]
+    held: bool,
 }
 
 #[cfg_attr(feature = "ffi", derive(uniffi::Object))]
@@ -83,6 +94,8 @@ pub struct Plugins {
     pub(crate) transport: Transported,
     /// The repos the user added, as the index keeps them.
     repos: Mutex<Vec<String>>,
+    /// When updates were last looked for, device ms.
+    checked_ms: Mutex<i64>,
 }
 
 impl Plugins {
@@ -95,10 +108,10 @@ impl Plugins {
             .filter_map(|e| {
                 let wasm = std::fs::read(dir.join(&e.id).join("plugin.wasm")).ok()?;
                 let manifest = Manifest::of_wasm(&wasm).ok().filter(|m| m.id == e.id)?;
-                Some(Installed { manifest: Arc::new(manifest), enabled: e.enabled })
+                Some(Installed { manifest: Arc::new(manifest), enabled: e.enabled, repo: e.repo.clone(), held: e.held })
             })
             .collect();
-        Plugins { dir, side, installed: Mutex::new(installed), stages: Mutex::new(None), workers: Mutex::new(BTreeMap::new()), transport: Arc::default(), repos: Mutex::new(index.repos) }
+        Plugins { dir, side, installed: Mutex::new(installed), stages: Mutex::new(None), workers: Mutex::new(BTreeMap::new()), transport: Arc::default(), repos: Mutex::new(index.repos), checked_ms: Mutex::new(index.checked_ms) }
     }
 
     /// The open profile's transport, for plugins' HTTP.
@@ -114,17 +127,38 @@ impl Plugins {
         self.dir.join(id)
     }
 
-    /// Installs (or updates) the `.noriplugin` package or plugin folder at `from`, disabled.
+    /// Installs (or updates) the `.noriplugin` package or plugin folder at `from`, off when new.
     pub fn install(&self, from: &Path) -> Result<Arc<Manifest>, Refusal> {
+        self.install_as(from, None)
+    }
+
+    /// [`Plugins::install`] of a package from `repo`, which it is updated from from now on. An
+    /// update keeps its place, its being on and its being held.
+    pub(crate) fn install_as(&self, from: &Path, repo: Option<String>) -> Result<Arc<Manifest>, Refusal> {
         let manifest = Arc::new(package::install(from, &self.dir)?);
         let mut list = self.installed.lock().expect("not poisoned");
-        let enabled = list.iter().find(|i| i.manifest.id == manifest.id).is_some_and(|i| i.enabled);
-        list.retain(|i| i.manifest.id != manifest.id);
-        list.push(Installed { manifest: manifest.clone(), enabled });
+        match list.iter_mut().find(|i| i.manifest.id == manifest.id) {
+            Some(i) => (i.manifest, i.repo) = (manifest.clone(), repo),
+            None => list.push(Installed { manifest: manifest.clone(), enabled: false, repo, held: false }),
+        }
         self.keep(&list);
+        let on = list.iter().any(|i| i.manifest.id == manifest.id && i.enabled);
         drop(list);
         *self.stages.lock().expect("not poisoned") = None;
+        self.workers.lock().expect("not poisoned").remove(&manifest.id);
+        if on {
+            self.side.laid(&manifest.id);
+        }
         Ok(manifest)
+    }
+
+    /// Keeps plugin `id` at its version, or lets it update again.
+    pub fn hold(&self, id: &str, held: bool) {
+        let mut list = self.installed.lock().expect("not poisoned");
+        if let Some(i) = list.iter_mut().find(|i| i.manifest.id == id) {
+            i.held = held;
+        }
+        self.keep(&list);
     }
 
     pub fn remove(&self, id: &str) {
@@ -173,8 +207,18 @@ impl Plugins {
         self.keep(&self.installed());
     }
 
+    pub(crate) fn checked_ms(&self) -> i64 {
+        *self.checked_ms.lock().expect("not poisoned")
+    }
+
+    pub(crate) fn keep_checked(&self, ms: i64) {
+        *self.checked_ms.lock().expect("not poisoned") = ms;
+        self.keep(&self.installed());
+    }
+
     fn keep(&self, list: &[Installed]) {
-        let index = Index { plugin: list.iter().map(|i| IndexEntry { id: i.manifest.id.clone(), enabled: i.enabled }).collect(), repos: self.added_repos() };
+        let plugin = list.iter().map(|i| IndexEntry { id: i.manifest.id.clone(), enabled: i.enabled, repo: i.repo.clone(), held: i.held }).collect();
+        let index = Index { plugin, repos: self.added_repos(), checked_ms: self.checked_ms() };
         let _ = std::fs::create_dir_all(&self.dir);
         let _ = std::fs::write(self.dir.join("index.toml"), toml::to_string(&index).unwrap_or_default());
     }

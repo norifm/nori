@@ -195,7 +195,7 @@ fn package() -> Vec<u8> {
 }
 
 #[test]
-fn a_repo_offers_and_installs_what_it_lists() {
+fn a_repo_offers_and_installs_the_version_asked() {
     use sha2::Digest;
     let dir = nori_testdir::TempDir::new("plugins-repo");
     let session = Arc::new(Session::default());
@@ -206,20 +206,68 @@ fn a_repo_offers_and_installs_what_it_lists() {
     assert_eq!(plugins.repos().iter().map(|r| (r.url.as_str(), r.official)).collect::<Vec<_>>(), vec![(nori_plugins::OFFICIAL, true), (repo, false)]);
     let pkg = package();
     let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
-    let index = |sha: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "version": "1.0.0", "api": 1, "url": "test.noriplugin", "sha256": "{sha}"}}]}}"#);
-    let serve = |index: String| *session.web.serves.lock().unwrap() = vec![(repo.into(), index.into_bytes()), ("https://friend.example/nori/test.noriplugin".into(), pkg.clone())];
-    serve(index(&"0".repeat(64)));
+    // Two versions: the newer one's package is not the one listed.
+    let index = format!(
+        r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [
+            {{"version": "0.2.0", "api": 1, "url": "test-0.2.0.noriplugin", "sha256": "{}"}},
+            {{"version": "0.1.0", "api": 1, "url": "test-0.1.0.noriplugin", "sha256": "{sha}"}}]}}]}}"#,
+        "0".repeat(64)
+    );
+    *session.web.serves.lock().unwrap() = vec![(repo.into(), index.into_bytes()), ("https://friend.example/nori/test-0.2.0.noriplugin".into(), pkg.clone()), ("https://friend.example/nori/test-0.1.0.noriplugin".into(), pkg)];
     let got = nori_tasks::block_on(plugins.offers());
     assert_eq!(got.failed.len(), 1, "nori's own answers no index here: {:?}", got.failed);
     let offer = got.offers.into_iter().find(|o| o.id == ID).unwrap();
-    assert_eq!((offer.installed.as_deref(), offer.repo.official), (None, false));
-    assert!(matches!(nori_tasks::block_on(plugins.install_offer(offer)), Err(Refusal::Unreadable(_))), "a package that isn't the one listed");
+    assert_eq!((offer.installed.as_deref(), offer.versions.iter().map(|v| v.version.as_str()).collect::<Vec<_>>()), (None, vec!["0.2.0", "0.1.0"]));
+    assert!(matches!(nori_tasks::block_on(plugins.install_version(offer.versions[0].clone())), Err(Refusal::Unreadable(_))), "a package that isn't the one listed");
     assert!(plugins.installed().is_empty());
-    serve(index(&sha));
-    let offer = nori_tasks::block_on(plugins.offers()).offers.into_iter().find(|o| o.id == ID).unwrap();
-    assert_eq!(nori_tasks::block_on(plugins.install_offer(offer)), Ok(ID.to_string()));
+    assert_eq!(nori_tasks::block_on(plugins.install_version(offer.versions[1].clone())), Ok(ID.to_string()), "an older version");
     let again = nori_tasks::block_on(plugins.offers()).offers.into_iter().find(|o| o.id == ID).unwrap();
     assert_eq!(again.installed.as_deref(), Some("0.1.0"), "listed with what is installed");
     plugins.remove_repo(repo.into());
     assert_eq!(Plugins::open(dir.path().to_path_buf(), session).repos().len(), 1, "kept in the index");
+}
+
+#[test]
+fn updates_come_daily_from_a_plugins_own_repo_unless_held() {
+    use sha2::Digest;
+    let dir = nori_testdir::TempDir::new("plugins-update");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.set_transport(Some(session.web.clone()));
+    let (own, other) = ("https://own.example/index.json", "https://other.example/index.json");
+    plugins.add_repo(own.into());
+    plugins.add_repo(other.into());
+    let pkg = package();
+    let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
+    let index = |versions: &[&str]| {
+        let v: Vec<String> = versions.iter().map(|v| format!(r#"{{"version": "{v}", "api": 1, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}"#)).collect();
+        format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [{}]}}]}}"#, v.join(",")).into_bytes()
+    };
+    let serve = |own_versions: &[&str]| {
+        let mut s = vec![(own.to_string(), index(own_versions)), (other.to_string(), index(&["9.0.0"]))];
+        for (host, v) in own_versions.iter().map(|v| ("own", *v)).chain([("other", "9.0.0")]) {
+            s.push((format!("https://{host}.example/t-{v}.noriplugin"), pkg.clone()));
+        }
+        *session.web.serves.lock().unwrap() = s;
+    };
+    serve(&["0.1.0"]);
+    let from_own = nori_tasks::block_on(plugins.offers()).offers.into_iter().find(|o| o.repo.url == own).unwrap();
+    nori_tasks::block_on(plugins.install_version(from_own.versions[0].clone())).unwrap();
+    assert_eq!(plugins.installed()[0].repo.as_deref(), Some(own));
+
+    let day = 24 * 60 * 60 * 1000;
+    assert!(plugins.updates_due(day), "never looked");
+    assert!(nori_tasks::block_on(plugins.update(day)).is_empty(), "nothing newer from its own repo; the other's 9.0.0 is not its");
+    assert!(!plugins.updates_due(day + day / 2), "looked within the day");
+    assert!(plugins.updates_due(2 * day));
+
+    serve(&["0.3.0", "0.1.0"]);
+    plugins.hold(ID, true);
+    assert!(nori_tasks::block_on(plugins.update(2 * day)).is_empty(), "held");
+    plugins.hold(ID, false);
+    session.web.asked.lock().unwrap().clear();
+    let done = nori_tasks::block_on(plugins.update(3 * day));
+    assert_eq!(done.iter().map(|u| (u.from.as_str(), u.to.as_str())).collect::<Vec<_>>(), vec![("0.1.0", "0.3.0")]);
+    let asked = session.web.asked.lock().unwrap().clone();
+    assert!(asked.contains(&"https://own.example/t-0.3.0.noriplugin".to_string()) && !asked.iter().any(|u| u.contains("other.example/t-")), "{asked:?}");
 }
