@@ -12,7 +12,8 @@ if adb -s "$serial" get-state >/dev/null 2>&1; then
   echo "$serial is already running"
   exit 0
 fi
-sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}"
+# The SDK Gradle builds with (local.properties), unless the environment names one.
+sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$(sed -n 's/^sdk\.dir=//p' "$here/../local.properties")}}"
 mkdir -p "$here/../build/emulators"
 nohup "$sdk/emulator/emulator" \
   -avd "$avd" -port "$port" -gpu host -cores 4 -no-window -no-audio -no-boot-anim \
