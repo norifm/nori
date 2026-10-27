@@ -12,6 +12,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.system.Os
+import android.system.OsConstants
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.media3.common.util.UnstableApi
@@ -45,6 +47,8 @@ import dev.nori.music.settings.Settings
 import dev.nori.music.text.Fmt
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import java.io.File
+import java.io.RandomAccessFile
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
@@ -447,24 +451,25 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     private fun request(id: String): DownloadRequest =
         DownloadRequest.Builder(id, Uri.parse(sources.downloadUrl(id))).setCustomCacheKey(sources.downloadKey(id)).build()
 
+    /**
+     * Removes downloads. The index entry goes at once as well as through media3's callback: a song media3
+     * has no download for (left pending by an earlier session, or finished just before a power cut rolled
+     * media3's own record back) gets no callback, and would otherwise stay for ever.
+     */
     fun remove(ids: List<String>) {
         if (ids.isEmpty()) return
         runCatching {
             DownloadService.start(context, DownloadWorker::class.java)
             for (id in ids) manager.removeDownload(id)
         }.onFailure { Log.w(TAG, "could not remove ${ids.size} downloads", it) }
+        for (id in ids) settle(id, false)
     }
 
-    /**
-     * Stops downloads that have not finished and forgets them. The index entry goes at once as well as
-     * through media3's callback: a song left pending by an earlier session may have no media3 download
-     * to remove, and would otherwise sit in the queue for ever.
-     */
+    /** Stops downloads that have not finished and forgets them. */
     fun cancel(ids: List<String>) {
         if (ids.isEmpty()) return
         unmark(ids)
         remove(ids)
-        for (id in ids) settle(id, false)
     }
 
     /**
@@ -691,10 +696,27 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
                         val f = DownloadsJni.note(DownloadsJni.h, slot, length, bytes, SystemClock.elapsedRealtime())
                         if (!f.isNaN()) flow.value = f
                     }
+                    // Returning is what has media3 and the core write the song down as downloaded, both durably;
+                    // its bytes must be on the disk first, or a phone dying now keeps a song that is empty files.
+                    syncToDisk(request.customCacheKey ?: sources.downloadKey(request.id))
                 }
                 override fun cancel() = downloader.cancel()
                 override fun remove() = downloader.remove()
             }
+        }
+    }
+
+    /** Writes a downloaded song's files, and the folders listing them, through to the disk. */
+    private fun syncToDisk(key: String) {
+        val dirs = HashSet<File>()
+        for (span in sources.downloadCache.getCachedSpans(key)) {
+            val file = span.file ?: continue
+            RandomAccessFile(file, "r").use { it.fd.sync() }
+            file.parentFile?.let(dirs::add)
+        }
+        for (dir in dirs) {
+            val fd = Os.open(dir.path, OsConstants.O_RDONLY, 0)
+            try { Os.fsync(fd) } finally { Os.close(fd) }
         }
     }
 

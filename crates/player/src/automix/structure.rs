@@ -188,7 +188,7 @@ pub fn cues(t: &Tempo, db: &Downbeat, f: &Features, music: (f64, f64), grid_ok: 
         }
     }
     // 0.5 s blocks, dB; "loud" is within 3 dB of the median of the audible part.
-    let bl: Vec<f64> = f.blocks_raw.chunks(5).map(|c| mean_db(c)).collect();
+    let bl: Vec<f64> = f.blocks_raw.chunks(5).map(mean_db).collect();
     let (a, b) = ((music.0 / 0.5) as usize, ((music.1 / 0.5).ceil() as usize).min(bl.len()));
     if b <= a {
         return (music.0, music.1);
@@ -303,7 +303,7 @@ struct Bars {
 }
 
 fn bar_lines(t: &Tempo, db: &Downbeat, music: (f64, f64)) -> Option<Bars> {
-    if !(t.period_s > 0.0) {
+    if t.period_s.is_nan() || t.period_s <= 0.0 {
         return None;
     }
     let bpb = if db.beats_per_bar == 3 { 3 } else { 4 };

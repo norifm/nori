@@ -1177,7 +1177,7 @@ fn offload_sleep_timer() {
     rig.engine.queue_changed();
     rig.run(100);
     let written = fake.written();
-    fake.advance(written as u64);
+    fake.advance(written);
     assert!(rig.wait(5, |r| r.events.lock().iter().any(|e| matches!(e, Event::Stopped { .. }))), "{:?}", rig.events.lock());
     assert_eq!(fake.written(), written, "nothing after a: {:?}", fake.calls());
     rig.engine.stop();
@@ -1507,7 +1507,8 @@ fn repeat_one_reports_loops() {
 fn cpu_song_reports_why_not_offloaded() {
     let Some(d) = encoder() else { return };
     let (lame, fl) = (mp3(&d, "lame", 10, 440), flac(&d, "fl", 10, 550));
-    let cases: [(&[u8], &str, &[(Coding, Support)], Settings, &str); 3] = [
+    type Case<'a> = (&'a [u8], &'a str, &'a [(Coding, Support)], Settings, &'a str);
+    let cases: [Case; 3] = [
         (&fl, "flac", MP3_ONLY, offload(), "FLAC is not a compression the output decodes"),
         (&lame, "mp3", &[], offload(), "the output does not decode MP3 at 44100 Hz x2"),
         (&lame, "mp3", MP3_ONLY, Settings::default(), "offload is off in the settings"),

@@ -2,7 +2,7 @@
 //! download entry offer; the client draws and words each action.
 
 use nori_model::model::ArtistRef;
-use nori_model::{DownloadPhase, Song};
+use nori_model::{is_provider_id, DownloadPhase, Playlist, Song};
 use nori_settings::settings::SwipeAction;
 
 /// Something the song menu can do.
@@ -356,6 +356,12 @@ pub fn page_actions(kind: PageKind, songs: u32, missing: u32, downloads: bool) -
     out
 }
 
+/// Whether the profile, signed in as `user`, may change `playlist`: add songs to it, remove them, rename
+/// and delete it. Only an account's own playlists: not a provider's, nor one another user shares.
+pub fn playlist_editable(playlist: &Playlist, user: &str, account: bool) -> bool {
+    account && !is_provider_id(&playlist.id) && playlist.owner.as_deref().is_none_or(|o| o.eq_ignore_ascii_case(user))
+}
+
 /// What a mix is called as a playlist saved to the server: "nori discover", then "nori discover 2" and on
 /// while `existing` (the account's playlist names) has the one before.
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -420,6 +426,23 @@ mod tests {
         ];
         for (kind, songs, missing, downloads, want) in cases {
             assert_eq!(page_actions(kind, songs, missing, downloads), want, "{kind:?}, {songs} songs, {missing} missing, downloads {downloads}");
+        }
+    }
+
+    #[test]
+    fn only_the_accounts_own_playlists_change() {
+        let list = |id: &str, owner: Option<&str>| Playlist { id: id.into(), owner: owner.map(str::to_string), ..Playlist::default() };
+        let cases = [
+            (list("1", Some("ana")), "ana", true, true),
+            (list("1", Some("Ana")), "ana", true, true),
+            (list("1", None), "ana", true, true),
+            (list("1", Some("ben")), "ana", true, false),
+            (list("ext-deezer-playlist-9", None), "ana", true, false),
+            (list("pl-9", Some("ana")), "ana", true, false),
+            (list("1", Some("ana")), "ana", false, false),
+        ];
+        for (p, user, account, want) in cases {
+            assert_eq!(playlist_editable(&p, user, account), want, "{p:?} as {user}, account {account}");
         }
     }
 

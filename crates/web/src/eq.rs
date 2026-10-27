@@ -3,7 +3,7 @@
 
 use nori_core::dsp::{eq_drawing, eq_presets, graphic_bands, graphic_layouts, CURVE_DB};
 use nori_core::numbers::{self, POINT};
-use nori_core::settings::{eq_bypass, EqMode, StoredPrefs, EQ_RANGES};
+use nori_core::settings::{eq_bypass, BandField, EqMode, StoredPrefs, EQ_RANGES};
 use nori_core::settings_store::{BandPoint, SoundTool};
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
@@ -78,6 +78,20 @@ impl Nori {
     /// band keeps its own), its gain, Q, and kind and channel ordinals.
     pub fn eq_band(&self, i: u32, pos: f32, gain: f32, q: f32, kind: i32, channel: i32) -> String {
         if let Some(effect) = self.app.settings.edit_point(i, BandPoint { pos, gain_db: gain, q, kind, channel }) {
+            self.sound_applied(effect);
+        }
+        self.equalizer()
+    }
+
+    /// What was typed for `field` ("freq", "gain" or "q") of band `i` (`settings::band_typed`); the page
+    /// unchanged when it reads as nothing.
+    pub fn eq_typed(&self, i: u32, field: String, text: String) -> String {
+        let field = match field.as_str() {
+            "freq" => BandField::Frequency,
+            "gain" => BandField::Gain,
+            _ => BandField::Q,
+        };
+        if let Some(effect) = self.app.settings.edit_typed(i, field, &text) {
             self.sound_applied(effect);
         }
         self.equalizer()

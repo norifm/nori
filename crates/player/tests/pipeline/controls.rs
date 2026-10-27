@@ -25,7 +25,7 @@ fn next_previous_start_at_first_sample() {
     p.play_from(0);
     p.run_for(2_000);
     let at = p.sink.heard_frames;
-    assert!(p.next());
+    assert!(p.next_song());
     assert_eq!(p.current(), Some(1));
     p.run_for(2_000);
     let heard = heard_from(&p, at);
@@ -35,8 +35,8 @@ fn next_previous_start_at_first_sample() {
     assert_eq!(p.current(), Some(0));
     p.run_for(2_000);
     assert!(heard_from(&p, at)[..frames(1.9) * 2] == s[0][..frames(1.9) * 2], "previous goes back to the start of the song before");
-    assert!(p.next() && p.next());
-    assert!(!p.next(), "nothing after the last song with repeat off");
+    assert!(p.next_song() && p.next_song());
+    assert!(!p.next_song(), "nothing after the last song with repeat off");
     assert!(p.run_to_end(15_000));
     assert!(p.sink.gaps.is_empty() && p.sink.timestamp_jumps == 0);
 }
@@ -49,7 +49,7 @@ fn next_mid_crossfade_cuts_cleanly() {
     assert!(p.run_until(60_000, |p| p.mixing()));
     p.run_for(3_000);
     let at = p.sink.heard_frames;
-    assert!(p.next());
+    assert!(p.next_song());
     p.run_for(2_000);
     assert_eq!(p.current(), Some(2));
     assert!(heard_from(&p, at)[..frames(1.9) * 2] == s[2][..frames(1.9) * 2], "the song after, from its start, with no mix left over");
@@ -266,7 +266,7 @@ fn shuffle_keeps_current_and_next() {
     p.queue_changed();
     let order: Vec<&str> = p.queue.live.play_order().map(|i| p.queue.live.ids()[i].as_str()).collect();
     assert_eq!(&order[..2], &["s2", "x"], "{order:?}");
-    assert!(p.next());
+    assert!(p.next_song());
     assert_eq!(p.current_id().as_deref(), Some("x"), "play next is next, shuffle or not");
 }
 
@@ -298,7 +298,7 @@ fn the_next_song_is_fetched_once_the_one_started_has_its_bytes() {
     assert_eq!(p.tracks.ahead, ["s2"]);
     // Skipped to, s2 opens slowly too.
     p.tracks.slow.push("s2".into());
-    assert!(p.next());
+    assert!(p.next_song());
     assert_eq!(p.tracks.ahead, ["s2"]);
     p.run_for(100);
     assert_eq!(p.tracks.ahead, ["s2", "s3"]);

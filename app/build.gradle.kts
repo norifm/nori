@@ -84,13 +84,13 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += "release"
         }
-        // A release build to try a change on a phone beside the real app: its own id and name, so nothing
-        // of the installed app is touched.
-        create("preview") {
+        // "nori nightly", built from master each night: a release build beside the real app, its own id and
+        // name, so nothing of the installed app is touched. Signed as a release, so each night's updates it
+        // in place.
+        create("nightly") {
             initWith(getByName("release"))
-            applicationIdSuffix = ".preview"
+            applicationIdSuffix = ".nightly"
             isDebuggable = false
-            signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += "release"
         }
     }
@@ -104,7 +104,7 @@ android {
         // drives the app by itself and needs none of the bridge.
         getByName("release").kotlin.srcDir("src/noTest/kotlin")
         getByName("perf").kotlin.srcDir("src/noTest/kotlin")
-        getByName("preview").kotlin.srcDir("src/noTest/kotlin")
+        getByName("nightly").kotlin.srcDir("src/noTest/kotlin")
         // The self test's plain logic (no Android in it): built into the perf build, and tested on the JVM
         // with the unit tests, which AGP runs for the debug build only.
         getByName("perf").kotlin.srcDir("src/perf/logic")

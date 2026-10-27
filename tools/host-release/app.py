@@ -89,7 +89,7 @@ def bundle(binary, directory, version):
         "CFBundleIdentifier": "dev.nori.desktop", "CFBundleExecutable": "nori",
         "CFBundleIconFile": "nori", "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": version.split("-", 1)[0],
-        "CFBundleVersion": version.replace("-beta.", "b"), "LSMinimumSystemVersion": "11.0",
+        "CFBundleVersion": version.replace("-beta.", "b").replace("-nightly.", "d"), "LSMinimumSystemVersion": "11.0",
         "LSApplicationCategoryType": "public.app-category.music", "NSHighResolutionCapable": True,
     }
     (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))

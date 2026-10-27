@@ -215,6 +215,8 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
 fun SmartList(vm: SmartViewModel = viewModel()) {
     val saved by vm.saved.collectAsStateWithLifecycle()
     val nav = LocalNav.current
+    var deleting by remember { mutableStateOf<dev.nori.music.ffi.model.SmartPlaylist?>(null) }
+    DeleteQuestion(deleting, { say.smartName(it) }, { vm.delete(it.id) }, { deleting = null })
     LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
         item { ActionRow(say.newSmartPlaylist, Iconoir.Plus, { nav.smartEdit("") }) }
         items(saved, key = { it.id }) { p ->
@@ -222,7 +224,7 @@ fun SmartList(vm: SmartViewModel = viewModel()) {
                 remember(p) { say.smartName(p) }, { nav.smart(p.id) },
                 action = {
                     TextAction(say.edit, { nav.smartEdit(p.id) })
-                    IconButton({ vm.delete(p.id) }, Modifier.size(40.dp)) { Icon(Iconoir.Xmark, say.delete, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    IconButton({ deleting = p }, Modifier.size(40.dp)) { Icon(Iconoir.Xmark, say.delete, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                 },
             )
         }

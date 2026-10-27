@@ -150,7 +150,8 @@ fn each_setting_change_is_planned_with() {
     rig.engine.play_at(0, 0);
     assert!(rig.until(20, |r| r.engine.status().index == Some(0) && r.engine.status().position_ms > 2_000));
     // Each early in a song: the plan out of it uses the new value.
-    let cases: [(&str, &str, fn(&nori_core::automix::planner::TransitionNote) -> bool); 3] = [
+    type Case = (&'static str, &'static str, fn(&nori_core::automix::planner::TransitionNote) -> bool);
+    let cases: [Case; 3] = [
         ("crossfadeSec", "3", |n| n.duration_ms > 0 && n.duration_ms <= 3_000),
         ("crossfadeSec", "5", |n| n.duration_ms > 3_000 && n.duration_ms <= 5_000),
         ("autoMix", "true", |n| n.kind != nori_player::types::TransitionKind::Gapless),
@@ -209,4 +210,23 @@ fn measure_again_plans_the_ending_again() {
     rig.relay(m.effect);
     rig.until(5, |r| r.engine.status().index != Some(0) || asked.load(Ordering::Relaxed) > 0);
     assert!(asked.load(Ordering::Relaxed) > 0, "f1's ending planned again before it plays: {:?}", rig.engine.status());
+}
+
+/// A queue handed over in the middle of a mix: the song mixed out of starts where its ending was, and the
+/// rest of the transition plays by the plan it came with, although nothing here would mix.
+#[test]
+fn a_handed_mix_plays_on() {
+    let rig = Rig::new("replan-handed", &["g1", "g2"], false);
+    rig.set("autoMix", "false");
+    let t = nori_player::automix::plan::plan(None, None, SECS as i64 * 1000, SECS as i64 * 1000, &Default::default());
+    assert!(t.duration_ms >= 2_000, "a crossfade to hand over: {t:?}");
+    rig.core.session.planner.handed("g1", "g2", &t);
+    rig.engine.play_at(0, t.out_start_ms + t.duration_ms / 2);
+    let mut from_the_ending = false;
+    assert!(rig.until(10, |r| {
+        let s = r.engine.status();
+        from_the_ending |= s.mixing && s.mix_from == Some(0);
+        s.index == Some(1)
+    }), "the second song comes: {:?}", rig.engine.status());
+    assert!(from_the_ending, "the first song's ending mixed into it");
 }

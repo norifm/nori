@@ -161,7 +161,8 @@ impl ByteSource for Server {
             Some((_, d)) if !first => Some(d),
             _ => self.slow.lock().iter().find(|(u, _)| u == url).map(|s| s.1),
         };
-        if let (Some(d), Some(clock)) = (slow, self.clock.lock().clone()) {
+        let clock = self.clock.lock().clone();
+        if let (Some(d), Some(clock)) = (slow, clock) {
             clock.wait_until(clock.now_ns() + d.as_nanos() as i64);
         }
         if let Some((id, secs)) = url.split_once("&timeOffset=").filter(|(id, _)| self.transcodes.lock().iter().any(|t| t == id)) {
@@ -780,6 +781,48 @@ fn slow_link_seek_ahead_asks_from_there() {
     assert!(rig.wait_for(10, |r| r.heard.lock().windows(256).any(|w| w == &a[from..from + 256])));
     assert!(rig.now_ms() - at < 2_500, "heard from 20 s after {} ms", rig.now_ms() - at);
     assert!(rig.server.requests.lock().iter().any(|(u, f)| u == "a" && *f > 500_000), "{:?}", rig.server.requests.lock());
+}
+
+/// A constant-bitrate MP3 of the test tone's frames `copies` times over (about a second each), its LAME
+/// Info header made to say the new length, as an encoder writes it.
+fn long_mp3(copies: usize) -> Vec<u8> {
+    let tone = include_bytes!("../../player/testdata/tone440.mp3");
+    let (head, frames) = tone.split_at(417);
+    let mut head = head.to_vec();
+    let at = head.windows(4).position(|w| w == b"Info").expect("an Info header") + 8;
+    let count = u32::from_be_bytes(head[at..at + 4].try_into().unwrap()) as usize * copies;
+    let len = head.len() + frames.len() * copies;
+    head[at..at + 4].copy_from_slice(&(count as u32).to_be_bytes());
+    head[at + 4..at + 8].copy_from_slice(&(len as u32).to_be_bytes());
+    for (k, b) in head[at + 8..at + 108].iter_mut().enumerate() {
+        *b = (k * 256 / 100) as u8;
+    }
+    let mut mp3 = head;
+    for _ in 0..copies {
+        mp3.extend_from_slice(frames);
+    }
+    mp3
+}
+
+/// An MP3 not here yet, started mid-way (music handed over from another device, or a seek past what
+/// came): its bytes are asked for from about there, not read from the start up to there.
+#[test]
+fn mp3_opened_mid_way_streams_from_there() {
+    let mp3 = long_mp3(30);
+    for cached in [false, true] {
+        let dir = nori_testdir::TempDir::new("mp3-mid-way");
+        let store = cached.then(|| Store::open(dir.path(), 64 << 20).unwrap());
+        let extra = Extra { hint: Some("mp3"), store, ..Extra::default() };
+        // 128 kbps on a link six times as fast: the 20 s before the place would take 3.2 s to come.
+        extra.server.paced.lock().push(("a".into(), vec![(0, 100_000)]));
+        let rig = Rig::build(vec![("a".into(), mp3.clone(), 31_000)], sim::App::new(), Settings::default(), extra);
+        rig.engine.play_at(0, 20_000);
+        assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize), "heard (stream cache: {cached})");
+        assert!(rig.now_ms() < 2_000, "heard {} ms after the press (stream cache: {cached})", rig.now_ms());
+        let s = rig.engine.status();
+        assert!((20_000..22_000).contains(&s.position_ms), "plays from about 20 s: {s:?}");
+        assert!(rig.server.requests.lock().iter().any(|(_, f)| *f > 250_000), "asked from about there: {:?}", rig.server.requests.lock());
+    }
 }
 
 #[test]

@@ -78,7 +78,7 @@ pub struct Grid {
 
 /// The beat grid of `[from_s, to_s)` alone, its offset in track time.
 pub(crate) fn window_grid(f: &Features, from_s: f64, to_s: f64, meter: i64) -> Grid {
-    if !(f.fps > 0.0) || to_s - from_s < GRID_WINDOW_S / 2.0 {
+    if f.fps.is_nan() || f.fps <= 0.0 || to_s - from_s < GRID_WINDOW_S / 2.0 {
         return Grid::default();
     }
     let a = (((from_s - f.t0) * f.fps).round().max(0.0) as usize).min(f.onset.len());
@@ -237,14 +237,14 @@ pub fn analyse_bytes(song_id: &str, pcm: &[u8], sample_rate: i32, channels: i32,
         let part = &part[..part.len() / (ch * width) * (ch * width)];
         if encoding == crate::pcm::Encoding::Float {
             let mut s = [0f32; 1024 * 8];
-            for (d, b) in s.iter_mut().zip(part.chunks_exact(4)) {
-                *d = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+            for (d, b) in s.iter_mut().zip(part.as_chunks::<4>().0) {
+                *d = f32::from_le_bytes(*b);
             }
             a.feed_interleaved(&s[..part.len() / 4], ch, |v| v);
         } else {
             let mut s = [0i16; 1024 * 8];
-            for (d, b) in s.iter_mut().zip(part.chunks_exact(2)) {
-                *d = i16::from_le_bytes([b[0], b[1]]);
+            for (d, b) in s.iter_mut().zip(part.as_chunks::<2>().0) {
+                *d = i16::from_le_bytes(*b);
             }
             a.feed_interleaved(&s[..part.len() / 2], ch, |v| v as f32 / 32768.0);
         }

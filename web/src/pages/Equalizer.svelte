@@ -1,7 +1,7 @@
 <script lang="ts">
   // The equalizer, as the desktop's: the curve it plays with a point for each band (drag one, or click it
-  // to edit it below; clicking elsewhere adds a parametric band), then presets, pre-amp and the output's
-  // balance, mono and limiter. What it draws comes from the core (crates/web/src/eq.rs); every edit
+  // to edit it below: its values typed, or slid; clicking elsewhere adds a parametric band), then presets,
+  // pre-amp and the output's balance, mono and limiter. What it draws comes from the core (crates/web/src/eq.rs); every edit
   // answers with the page as it is then.
   import { ask } from "../rpc";
   import { route } from "../state/route.svelte";
@@ -106,6 +106,15 @@
     held = -1;
   }
 
+  /** What was typed for `field` of the chosen band, read by the core (`settings::band_typed`). */
+  let typedRev = $state(0);
+  async function typed(field: "freq" | "gain" | "q", text: string) {
+    const i = chosen;
+    await send(() => ask<string>("eq_typed", i, field, text));
+    // Words the core could not read show the value again.
+    typedRev++;
+  }
+
   function chooseKind(e: MouseEvent) {
     if (!band) return;
     ui.drop(e, W.eq.kinds.map((k, i) => ({ label: k, chosen: i === band.kind, run: () => place(chosen, band.x, band.gain, band.q, i) })));
@@ -168,9 +177,10 @@
             <button class="glyph quiet" aria-label={W.eq.lower} onclick={() => place(chosen, band.x, band.gain - 0.5)}><Icon name="minus-circle" /></button>
             <button class="glyph quiet" aria-label={W.eq.raise} onclick={() => place(chosen, band.x, band.gain + 0.5)}><Icon name="plus-circle" /></button>
           </div>
-          {@render level(W.eq.gain, W.eq.db(band.value), band.gain, eq.ranges.gain, 0.5, (v) => place(chosen, band.x, v))}
+          {@render level(W.eq.gain, band.value, band.gain, eq.ranges.gain, 0.5, (v) => place(chosen, band.x, v), "gain")}
         </div>
       {:else if eq.on && band}
+        {@const width = band.kind === 8 || band.kind === 9 ? W.eq.slope : W.eq.q}
         <div class="editor">
           <div class="tools">
             <button class="chip on" onclick={chooseKind}>{W.eq.kinds[band.kind]}<Icon name="nav-arrow-down" /></button>
@@ -181,9 +191,9 @@
             <span class="fill"></span>
             <button class="glyph quiet" aria-label={W.eq.remove} title={W.eq.remove} onclick={() => { const i = chosen; chosen = -1; void send(() => ask<string>("eq_tool", "remove", i)); }}><Icon name="trash" /></button>
           </div>
-          {@render level(W.eq.frequency, band.freq, band.x, [0, 1], 0.001, (v) => place(chosen, v, band.gain))}
-          {#if band.usesGain}{@render level(W.eq.gain, W.eq.db(band.value), band.gain, eq.ranges.gain, 0.5, (v) => place(chosen, band.x, v))}{/if}
-          {@render level(band.kind === 8 || band.kind === 9 ? W.eq.slope : W.eq.q, band.shape, band.q, eq.ranges.q, 0.01, (v) => place(chosen, band.x, band.gain, v))}
+          {@render level(W.eq.frequency, band.freq, band.x, [0, 1], 0.001, (v) => place(chosen, v, band.gain), "freq")}
+          {#if band.usesGain}{@render level(W.eq.gain, band.value, band.gain, eq.ranges.gain, 0.5, (v) => place(chosen, band.x, v), "gain")}{/if}
+          {@render level(width, band.shape, band.q, eq.ranges.q, 0.01, (v) => place(chosen, band.x, band.gain, v), "q")}
         </div>
       {/if}
       <div class="chips-line"><button class="chip" onclick={() => { chosen = -1; void send(() => ask<string>("eq_tool", "reset", 0)); }}>{W.eq.reset}</button></div>
@@ -212,7 +222,34 @@
   {/if}
 </Page>
 
-{#snippet level(name: string, shown: string, value: number, range: [number, number], by: number, moved: (v: number) => void)}
+<!-- A band's value at its row's end, typed: Enter or leaving it hands it to the core, Escape puts it back. -->
+{#snippet number(name: string, shown: string, key: "freq" | "gain" | "q")}
+  <label class="typed">
+    {#key typedRev}
+      <input
+        value={shown}
+        inputmode="decimal"
+        enterkeyhint="done"
+        spellcheck="false"
+        autocomplete="off"
+        disabled={!eq?.on}
+        aria-label={name}
+        onfocus={(e) => e.currentTarget.select()}
+        onkeydown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          else if (e.key === "Escape") {
+            e.currentTarget.value = shown;
+            e.currentTarget.blur();
+          }
+        }}
+        onchange={(e) => void typed(key, e.currentTarget.value)}
+      />
+    {/key}
+  </label>
+{/snippet}
+
+<!-- A value's row: its name, a slider, and its value at the end (typed there, for a band's `key`). -->
+{#snippet level(name: string, shown: string, value: number, range: [number, number], by: number, moved: (v: number) => void, key?: "freq" | "gain" | "q")}
   <div class="level">
     <span class="name">{name}</span>
     <input
@@ -226,7 +263,7 @@
       aria-label={name}
       oninput={(e) => moved(Number(e.currentTarget.value))}
     />
-    <span class="value">{shown}</span>
+    {#if key}{@render number(name, shown, key)}{:else}<span class="value">{shown}</span>{/if}
   </div>
 {/snippet}
 
@@ -369,6 +406,30 @@
     display: flex;
     align-items: center;
     gap: 6px;
+  }
+  .typed {
+    display: flex;
+    padding: 4px 8px;
+    border-radius: 8px;
+    background: var(--page);
+    border: var(--hairline) solid var(--hair);
+    cursor: text;
+  }
+  .typed:focus-within {
+    border-color: var(--accent);
+  }
+  .typed input {
+    font: 500 13px/20px var(--font);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    height: 20px;
+    color: var(--ink);
+    background: none;
+    border: 0;
+    padding: 0;
+    outline: none;
+    width: 100%;
+    min-width: 0;
   }
   .level {
     display: grid;

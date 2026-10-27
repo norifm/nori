@@ -39,7 +39,7 @@ struct Sent {
     at: usize,
     stop: usize,
     dropped: bool,
-    paced: Option<(Virtual, i64, usize)>,
+    paced: Option<(common::Delivery, i64, usize)>,
 }
 
 impl Read for Sent {
@@ -48,8 +48,8 @@ impl Read for Sent {
             return if self.dropped { Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "unexpected end of stream")) } else { Ok(0) };
         }
         let n = buf.len().min(self.stop - self.at).min(COPY);
-        if let Some((clock, t0, rate)) = &self.paced {
-            clock.wait_until(t0 + ((self.at + n) as u128 * 1_000_000_000 / *rate as u128) as i64);
+        if let Some((delivery, t0, rate)) = &mut self.paced {
+            delivery.at(*t0 + ((self.at + n) as u128 * 1_000_000_000 / *rate as u128) as i64);
         }
         buf[..n].copy_from_slice(&self.song[self.at..self.at + n]);
         self.at += n;
@@ -79,7 +79,7 @@ impl ByteSource for Navidrome {
         } else {
             (None, real, false)
         };
-        let paced = self.pace.clone().map(|(clock, rate)| (clock.clone(), clock.now_ns(), rate));
+        let paced = self.pace.as_ref().map(|(clock, rate)| (clock.delivery(), clock.now_ns(), *rate));
         Ok(Body { start: 0, len, reader: Box::new(Sent { song, at: 0, stop, dropped, paced }) })
     }
 }

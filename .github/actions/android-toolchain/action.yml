@@ -1,0 +1,22 @@
+name: Android toolchain
+description: JDK, the Android SDK and NDK, Gradle, and Rust for the Android targets with cargo-ndk.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v6
+      with:
+        distribution: temurin
+        java-version: '21'
+    - uses: android-actions/setup-android@v4
+      with:
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: false
+    - uses: gradle/actions/setup-gradle@v6
+    - shell: bash
+      run: |
+        sdkmanager 'ndk;28.2.13676358'
+        echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+        rustup update stable --no-self-update
+        rustup default stable
+        rustup target add aarch64-linux-android x86_64-linux-android
+        cargo install --locked cargo-ndk --version 4.1.2

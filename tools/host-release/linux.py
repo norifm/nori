@@ -101,8 +101,8 @@ def flatpak(binaries, output, version, arch, work, icon, desktop):
     shutil.copy2(ROOT / "LICENSE", licenses / "LICENSE")
     run("flatpak", "build-finish", "--command=nori-desktop", "--share=network", "--share=ipc", "--socket=wayland", "--socket=fallback-x11", "--socket=pulseaudio", "--device=dri", "--own-name=org.mpris.MediaPlayer2.nori.*", bundle)
     repo = work / "repo"
-    run("flatpak", "build-export", f"--arch={arch}", repo, bundle, "beta" if "-beta." in version else "stable")
-    branch = "beta" if "-beta." in version else "stable"
+    branch = next((kind for kind in ("beta", "nightly") if f"-{kind}." in version), "stable")
+    run("flatpak", "build-export", f"--arch={arch}", repo, bundle, branch)
     artifact = output / f"nori-desktop-{version}-linux-{arch}.flatpak"
     run("flatpak", "build-bundle", f"--arch={arch}", "--runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo", repo, artifact, APP_ID, branch)
     run("flatpak", "install", "--user", "--noninteractive", artifact)
