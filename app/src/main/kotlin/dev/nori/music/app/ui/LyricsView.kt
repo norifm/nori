@@ -359,7 +359,9 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
     if (following) androidx.compose.runtime.SideEffect { anchor.song = song; anchor.lyrics = lyrics; anchor.list = list; anchor.lit = lit }
     // Whether the song is a duet at all: only then does either side keep a lane clear.
     val duet = remember(lyrics) { lyrics.lines.any { it.voice.toInt() == 1 } }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    // In an island of its own: a glide from line to line moves every line, and drawn in the window each of
+    // its frames was a frame of the whole screen; apart, it is a frame of the lyrics alone.
+    IslandContent(Modifier.fillMaxSize()) { BoxWithConstraints(Modifier.fillMaxSize()) {
         val third = with(LocalDensity.current) { (maxHeight / 3).roundToPx() }
         // The line being sung rests a third of the way down, and the list glides there with a measured
         // ease, slow enough to follow with the eye, the way Apple's lyrics move: animateScrollToItem's
@@ -537,7 +539,7 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
                 }
             }
         }
-    }
+    } }
 }
 
 /**
