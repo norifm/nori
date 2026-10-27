@@ -31,7 +31,6 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.constrainWidth
-import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.fillMaxSize
@@ -284,6 +283,9 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         var playerWasOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
         val sheet = remember { PlayerSheet(sheetScope, startOpen = playerWasOpen) }
         sheet.plain = reduceMotion()
+        // The player on its way up or down, or a cover in flight between panels, moves what islands draw.
+        val sheetMoving by remember(sheet) { androidx.compose.runtime.derivedStateOf { sheet.progress.value > 0f && sheet.progress.value < 1f || sheet.panelFlight } }
+        HoldIslands(sheetMoving)
         LaunchedEffect(sheet) {
             androidx.compose.runtime.snapshotFlow { sheet.isOpen }.collect { playerWasOpen = it }
         }
@@ -580,21 +582,21 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                 }
                 // A newer release, and its download and install once asked for; under the player, so the
                 // player covers it. See UpdateBanner.
-                UpdateBanner(settings, Modifier.align(Alignment.TopCenter).padding(start = pageStart, end = pageEnd))
+                UpdateBanner(settings, Modifier.align(Alignment.TopCenter).padding(start = pageStart, end = pageEnd).coversPage())
                 ChangelogDialog(settings)
               }
               }
               // Upright, what runs on under the bar fades into the page's colour across the bar's room, as a row on its
               // side does under the strip the chrome stands in (bleedsToEdges); the page's colour is the chrome's look's.
               if (!wide) Box(
-                  Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(chromeHeight + EDGE_REACH).drawBehind {
+                  Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(chromeHeight + EDGE_REACH).coversPage().drawBehind {
                       val reach = EDGE_REACH.toPx()
                       val fade = edgeFade(chromeLook.color(CoverLook.CHROME_PAGE), size.height - reach, reach)
                       drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(*fade, startY = 0f, endY = size.height))
                   },
               )
               Box(
-                  Modifier.align(Alignment.BottomCenter).padding(start = pageStart, end = pageEnd)
+                  Modifier.align(Alignment.BottomCenter).padding(start = pageStart, end = pageEnd).coversPage()
                       .onGloballyPositioned { chromeHeight = with(density) { it.size.height.toDp() } }
                       .then(if (wide) Modifier else Modifier.keepsTouches()),
               ) {
@@ -608,7 +610,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
               if (wide) CompositionLocalProvider(LocalStarMarks provides marks, LocalGlyphTurn provides { turn.value }) {
                   SideChrome(
                       player, actions, nav::player, tabRoute, tabs, nav::tab, chromeLook, chromeLeft,
-                      Modifier.align(if (chromeLeft) Alignment.CenterStart else Alignment.CenterEnd)
+                      Modifier.align(if (chromeLeft) Alignment.CenterStart else Alignment.CenterEnd).coversPage()
                           .onGloballyPositioned { sideRoom = with(density) { it.size.width.toDp() } }.keepsTouches(),
                   )
               }
@@ -619,7 +621,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
               // Top: less in the way of the now-playing bar; swipe or the X dismisses.
               SnackbarHost(
                   snackbar,
-                  Modifier.align(Alignment.TopCenter).windowInsetsPadding(statusBarRoom).padding(top = 8.dp, start = 12.dp, end = 12.dp),
+                  Modifier.align(Alignment.TopCenter).windowInsetsPadding(statusBarRoom).padding(top = 8.dp, start = 12.dp, end = 12.dp).coversPage(),
               ) { data ->
                   val dismiss = androidx.compose.material3.rememberSwipeToDismissBoxState(
                       confirmValueChange = {
@@ -852,6 +854,7 @@ private fun androidx.compose.animation.AnimatedVisibilityScope.Page(entry: andro
     }
     androidx.compose.runtime.DisposableEffect(entry.id) { onDispose { swipe.left(entry.id) } }
     val swiped = swipe.moving == entry.id
+    HoldIslands(moving || swiped)
     val onTop = swiped || moving && !plain && when (PageMotion.pop) {
         true -> transition.targetState == androidx.compose.animation.EnterExitState.PostExit
         false -> transition.targetState == androidx.compose.animation.EnterExitState.Visible
@@ -867,7 +870,7 @@ private fun androidx.compose.animation.AnimatedVisibilityScope.Page(entry: andro
     var at by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     Box(
         Modifier.fillMaxSize()
-            .onGloballyPositioned { at = it.positionInRoot().x }
+            .onGloballyPositioned { at = it.placeInRoot().x }
             .graphicsLayer { translationX = if (swiped) swipe.offset else 0f }
             .drawBehind {
                 if (!moving && !swiped) return@drawBehind

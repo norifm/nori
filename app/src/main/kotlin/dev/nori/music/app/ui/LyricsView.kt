@@ -40,6 +40,7 @@ import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -294,6 +295,8 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
     // its words still move, and only then reads [shownMs] and is redrawn as it changes.
     val lastMs = remember(clock) { longArrayOf(clock.shownMs()) }
     var backingSung by remember(clock) { mutableFloatStateOf(0f) }
+    // The sung line's islands (SungText), drawn again each time the loop writes what is sung.
+    val pokes = remember(clock) { LinePokes() }
     val hasBacking = remember(lyrics) { lyrics.lines.any { it.backing.isNotEmpty() } }
     // Words rise and glow as they are sung unless movement is reduced; then there is only the fill.
     val lively = !reduceMotion()
@@ -331,6 +334,7 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
                 shownMs = clock.atShownMs
                 lastMs[0] = shownMs
                 if (hasBacking) backingSung = clock.atBackingSung
+                pokes.poke()
             }
         }
     }
@@ -407,10 +411,18 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
         // any colour laid on top to hide the words ends on one flat value, and where that flat value
         // meets the blur below it there is a dead straight line - measured on a phone at the exact
         // bottom edge of this panel. A mask paints nothing, so there is nothing to meet anything.
+        // Where the mask leaves the words whole, in the window: only there may the sung line be drawn apart.
+        val unmasked = remember { android.graphics.Rect() }
         LazyColumn(
             state = list,
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = maxHeight / 2),
             modifier = Modifier
+                .onGloballyPositioned { c ->
+                    val b = c.boundsInWindow()
+                    val whole = stage.lyricsMask.filter { it.alpha >= 1f }
+                    if (whole.isEmpty()) unmasked.setEmpty()
+                    else unmasked.set(b.left.toInt(), (b.top + b.height * whole.first().at).toInt(), b.right.toInt(), (b.top + b.height * whole.last().at).toInt())
+                }
                 .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
                 .drawWithCache {
                   // Gone by the source label at the bottom, so the two never sit on each other. The
@@ -483,6 +495,9 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
                             }
                         }
                     }
+                    // The line being sung, standing where it rests and as bright as it will be, is drawn by
+                    // an island of its own (SungText): its sweep repaints the line, not the screen.
+                    val apart = sungNow && !list.isScrollInProgress && !strength.isRunning
                     when {
                         !lyrics.synced -> LookText(line.text, bright, style = style, textAlign = align)
                         else -> SungText(
@@ -493,7 +508,7 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
                                 // Timed by the line only: the line lit is lit whole.
                                 else -> WHOLE
                             },
-                            moment, peek,
+                            moment, peek, apart = apart, pokes = pokes, within = unmasked,
                         )
                     }
                     // Backing vocals sung over the line: smaller, under it, lit as they are sung, the way Apple
@@ -508,7 +523,7 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
                                     sweep -> { { rest[1].value.takeIf { it >= 0f } ?: held[1] } }
                                     else -> WHOLE
                                 },
-                                moment, peek, Modifier.padding(top = 2.dp),
+                                moment, peek, Modifier.padding(top = 2.dp), apart = apart, pokes = pokes, within = unmasked,
                             )
                         } else {
                             LookText(line.backing, translated, style = backingStyle, textAlign = align, modifier = Modifier.padding(top = 2.dp))
@@ -673,81 +688,122 @@ private class Brushes(private val feather: Float, private val blur: Float) {
 private fun SungText(
     text: String, words: List<LyricWord>, style: TextStyle, bright: ColorProducer, align: TextAlign,
     lively: Boolean, level: () -> Float, sung: () -> Float, ms: () -> Long, peek: () -> Long, modifier: Modifier = Modifier,
+    apart: Boolean = false, pokes: LinePokes? = null, within: android.graphics.Rect? = null,
 ) {
-    var laid by remember(text, words) { mutableStateOf<Laid?>(null) }
     val density = LocalDensity.current
-    val rise = with(density) { RISE.toPx() }
-    val spread = with(density) { GLOW_SPREAD.toPx() }
-    val blur = with(density) { SUNG_GLOW.toPx() }
-    val brushes = remember(density) { Brushes(with(density) { FEATHER.toPx() }, blur) }
-    // The pieces moving on this frame, gathered into one outline the rest of the text is drawn around.
-    val moving = remember { Path() }
+    val direction = androidx.compose.ui.platform.LocalLayoutDirection.current
+    val d = remember(text, words, density) {
+        SungDraw(words, Brushes(with(density) { FEATHER.toPx() }, with(density) { SUNG_GLOW.toPx() }), with(density) { RISE.toPx() }, with(density) { GLOW_SPREAD.toPx() })
+    }
+    d.bright = bright; d.level = level; d.sung = sung; d.ms = ms; d.peek = peek; d.lively = lively
+    // Apart, the same drawing on the island's own canvas, through Compose's: the same pixels, and nothing
+    // the loop writes is read here, so Compose repaints nothing as the line is sung.
+    val drawing = remember(d) {
+        IslandDrawing { canvas, w, h ->
+            androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(density, direction, androidx.compose.ui.graphics.Canvas(canvas), androidx.compose.ui.geometry.Size(w.toFloat(), h.toFloat())) { drawSungText(d) }
+            -1L
+        }
+    }
+    val margin = with(density) { (GLOW_SPREAD + RISE + 4.dp).roundToPx() }
+    val slot = rememberIsland(drawing, wanted = apart, overPage = false, margin = margin, within = within)
+    if (pokes != null) DisposableEffect(pokes, slot) { pokes.add(slot); onDispose { pokes.remove(slot) } }
     LookText(
         text, bright, style = style, textAlign = align,
         onTextLayout = { l ->
             val n = text.length
-            laid = Laid(l, Array(words.size) { k -> l.getPathForRange(words[k].start.toInt().coerceIn(0, n), words[k].end.toInt().coerceIn(0, n)) })
+            d.laid = Laid(l, Array(words.size) { k -> l.getPathForRange(words[k].start.toInt().coerceIn(0, n), words[k].end.toInt().coerceIn(0, n)) })
+            slot.poke()
         },
-        modifier = modifier.drawWithContent {
-            // Laid out before it is drawn; nothing is drawn in the colour the plain text would have.
-            val d = laid ?: return@drawWithContent
-            val l = d.layout
-            val colour = bright()
-            val s = level()
-            // Unsung words at the lower of the line's strength and the core's; sung ones drawn over them,
-            // as much as it takes for the two together to come to the line's strength.
-            val low = minOf(s, stage.lyricsUnsung)
-            val over = if (s > low) (s - low) / (1f - low) else 0f
-            val base = colour.copy(alpha = colour.alpha * low)
-            val lit = colour.copy(alpha = colour.alpha * over)
-            // Only a line lit above its unsung words asks how far it is sung.
-            val at = if (over > 0f) sung() else 0f
-            val shine = if (over > 0f) brushes.glow(colour.copy(alpha = colour.alpha * SUNG_GLOW_ALPHA * over)) else null
-            if (!lively || words.isEmpty() || !stirring(words, peek())) {
-                drawSung(d, at, base, lit, shine, spread, brushes)
-                return@drawWithContent
-            }
-            val now = ms()
-            moving.reset()
-            var k = 0
-            while (k < words.size) {
-                if (lift(words[k], now) > 0f || glow(words[k], now) > 0f) moving.addPath(d.pieces[k])
-                k++
-            }
-            // The glow first, for the whole line and unclipped: the pieces are boxes, not the letters'
-            // outlines (getPathForRange gives boxes), and a glow clipped to them stopped in a straight
-            // edge round every word that moved. A shadow colour that is not opaque keeps its own alpha,
-            // so it is drawn on its own, from text set outside the layer with its shadow set back. Still
-            // one blurred draw a frame.
-            // The letters after it say Shadow.None, not null: null keeps the text paint's last shadow,
-            // which is how the box-clipped copies of the glow came to be drawn at all.
-            if (over > 0f) {
-                val away = size.width + spread * 4f
-                drawSung(d, at, Color.Transparent, lit, brushes.glowAway(colour.copy(alpha = colour.alpha * SUNG_GLOW_ALPHA * over), away), spread, brushes, away)
-            }
-            clipPath(moving, ClipOp.Difference) { drawSung(d, at, base, lit, Shadow.None, spread, brushes) }
-            // Each moving piece on its own, moved as it is sung, clipped to the piece in its own moved
-            // space, so it carries its letters and nothing of its neighbours'.
-            k = 0
-            while (k < words.size) {
-                val w = words[k]
-                val up = lift(w, now)
-                val g = glow(w, now)
-                if (up > 0f || g > 0f) {
-                    val piece = d.pieces[k]
-                    val box = d.boxes[k]
-                    withTransform({
-                        translate(0f, -up * rise)
-                        if (g > 0f) scale(1f + SWELL * g, 1f + SWELL * g, box.center)
-                    }) {
-                        if (g > 0f) halo(box, g, lit, spread, brushes)
-                        clipPath(piece) { drawSung(d, at, base, lit, Shadow.None, spread, brushes) }
-                    }
-                }
-                k++
-            }
+        modifier = modifier.island(slot).drawWithContent {
+            if (slot.handOff()) return@drawWithContent
+            drawSungText(d)
         },
     )
+}
+
+/** What a [SungText] is drawn from, wherever it is drawn: its layout, its words, and what it reads as it draws. */
+private class SungDraw(val words: List<LyricWord>, val brushes: Brushes, val rise: Float, val spread: Float) {
+    var laid: Laid? = null
+    var bright: ColorProducer = ColorProducer { Color.Unspecified }
+    var level: () -> Float = { 0f }
+    var sung: () -> Float = { 0f }
+    var ms: () -> Long = { 0L }
+    var peek: () -> Long = { 0L }
+    var lively = false
+    /** The pieces moving on this frame, gathered into one outline the rest of the text is drawn around. */
+    val moving = Path()
+}
+
+/** The lyric lines' islands, drawn again together each time what is sung moves on. */
+private class LinePokes {
+    private val slots = ArrayList<IslandSlot>(2)
+    fun add(slot: IslandSlot) { slots.add(slot) }
+    fun remove(slot: IslandSlot) { slots.remove(slot) }
+    fun poke() { for (i in slots.indices) slots[i].poke() }
+}
+
+/** One frame of a [SungText]; see there. */
+private fun DrawScope.drawSungText(t: SungDraw) {
+    // Laid out before it is drawn; nothing is drawn in the colour the plain text would have.
+    val d = t.laid ?: return
+    val words = t.words
+    val brushes = t.brushes
+    val spread = t.spread
+    val colour = t.bright()
+    val s = t.level()
+    // Unsung words at the lower of the line's strength and the core's; sung ones drawn over them,
+    // as much as it takes for the two together to come to the line's strength.
+    val low = minOf(s, stage.lyricsUnsung)
+    val over = if (s > low) (s - low) / (1f - low) else 0f
+    val base = colour.copy(alpha = colour.alpha * low)
+    val lit = colour.copy(alpha = colour.alpha * over)
+    // Only a line lit above its unsung words asks how far it is sung.
+    val at = if (over > 0f) t.sung() else 0f
+    val shine = if (over > 0f) brushes.glow(colour.copy(alpha = colour.alpha * SUNG_GLOW_ALPHA * over)) else null
+    if (!t.lively || words.isEmpty() || !stirring(words, t.peek())) {
+        drawSung(d, at, base, lit, shine, spread, brushes)
+        return
+    }
+    val now = t.ms()
+    val moving = t.moving
+    moving.reset()
+    var k = 0
+    while (k < words.size) {
+        if (lift(words[k], now) > 0f || glow(words[k], now) > 0f) moving.addPath(d.pieces[k])
+        k++
+    }
+    // The glow first, for the whole line and unclipped: the pieces are boxes, not the letters'
+    // outlines (getPathForRange gives boxes), and a glow clipped to them stopped in a straight
+    // edge round every word that moved. A shadow colour that is not opaque keeps its own alpha,
+    // so it is drawn on its own, from text set outside the layer with its shadow set back. Still
+    // one blurred draw a frame.
+    // The letters after it say Shadow.None, not null: null keeps the text paint's last shadow,
+    // which is how the box-clipped copies of the glow came to be drawn at all.
+    if (over > 0f) {
+        val away = size.width + spread * 4f
+        drawSung(d, at, Color.Transparent, lit, brushes.glowAway(colour.copy(alpha = colour.alpha * SUNG_GLOW_ALPHA * over), away), spread, brushes, away)
+    }
+    clipPath(moving, ClipOp.Difference) { drawSung(d, at, base, lit, Shadow.None, spread, brushes) }
+    // Each moving piece on its own, moved as it is sung, clipped to the piece in its own moved
+    // space, so it carries its letters and nothing of its neighbours'.
+    k = 0
+    while (k < words.size) {
+        val w = words[k]
+        val up = lift(w, now)
+        val g = glow(w, now)
+        if (up > 0f || g > 0f) {
+            val piece = d.pieces[k]
+            val box = d.boxes[k]
+            withTransform({
+                translate(0f, -up * t.rise)
+                if (g > 0f) scale(1f + SWELL * g, 1f + SWELL * g, box.center)
+            }) {
+                if (g > 0f) halo(box, g, lit, spread, brushes)
+                clipPath(piece) { drawSung(d, at, base, lit, Shadow.None, spread, brushes) }
+            }
+        }
+        k++
+    }
 }
 
 /** Whether any of [words] rises, settles or glows at [ms]. */
