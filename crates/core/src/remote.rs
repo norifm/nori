@@ -988,6 +988,9 @@ struct Inner {
     playing_at: Option<i64>,
     /// The device this one last handed its playback to, until it plays again or a queue is sent here.
     handed_to: Option<String>,
+    /// The device that last handed its playback here, with its state (instance, seq) then: in that state
+    /// or an older one it played before the hand-off, and is not found as the active device.
+    handed_by: Option<(String, (Option<u64>, u64))>,
     /// The last command carried out from each controller, as published states say it.
     obeyed: Vec<Obeyed>,
     /// The account's active device, while it is another one.
@@ -1032,6 +1035,11 @@ impl Peer {
 }
 
 impl Inner {
+    /// Whether `s`, device `id`'s state, was said before it handed its playback here.
+    fn before_handing_here(&self, id: &str, s: &DeviceState) -> bool {
+        self.handed_by.as_ref().is_some_and(|(by, at)| by == id && (s.instance, s.seq) <= *at)
+    }
+
     fn browsing(&self) -> bool {
         self.watching || self.discovering || (self.serving && self.sight == Sight::Screen && !self.stopped)
     }
@@ -3245,7 +3253,7 @@ impl Remote {
             let mut i = self.inner.lock();
             let to = if i.discovering && i.mirror.is_none() && i.taking.is_none() && !i.playing.playing && !i.jams() {
                 i.peers.iter().map(|p| &p.member).chain(i.rooms.iter().filter(|r| !r.jam && !i.relay_down).flat_map(|r| &r.members))
-                    .find(|m| i.state_of(&m.id).is_some_and(|(s, _)| s.playing && s.index.is_some()))
+                    .find(|m| i.state_of(&m.id).is_some_and(|(s, _)| s.playing && s.index.is_some() && !i.before_handing_here(&m.id, s)))
                     .map(|m| m.id.clone())
             } else {
                 None
@@ -3444,7 +3452,10 @@ impl Remote {
                         }
                     }
                     self.client.core.session.receive_listen(listen.clone());
-                    self.inner.lock().handed_to = None;
+                    let mut i = self.inner.lock();
+                    i.handed_to = None;
+                    i.handed_by = i.state_of(from).map(|(s, _)| (from.to_string(), (s.instance, s.seq)));
+                    drop(i);
                     self.set_active(None, Becomes::Followed);
                 }
                 self.player.apply(op)

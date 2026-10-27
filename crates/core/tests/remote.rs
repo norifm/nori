@@ -3104,3 +3104,29 @@ fn a_hand_over_reaches_the_device_without_waiting() {
         relay.close();
     }
 }
+
+#[test]
+fn a_device_handed_the_queue_does_not_follow_the_one_that_handed_it() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["s1", "s2"], 1);
+    desk.queued(&["d1"]);
+    for d in [&phone, &desk] {
+        d.remote.clone().serve(true);
+        d.remote.clone().watch(true);
+    }
+    let (phone_id, desk_id) = (phone.remote.id(), desk.remote.id());
+    desk.remote.clone().discover_active(true);
+    desk.until("the desk follows the phone", |r| r.active().filter(|m| m.id == phone_id));
+    phone.until("the phone sees the desk", |r| r.devices().into_iter().find(|d| d.id == desk_id && d.state.is_some()));
+    phone.remote.clone().pick(Some(desk_id.clone()));
+    assert!(matches!(desk.told(), Op::Replace { play: true, .. }));
+    assert_eq!(phone.told(), Op::Pause);
+    // The desk's song is still loading, and the phone's pause has not been heard yet, when the desk's
+    // window comes into sight again.
+    desk.remote.clone().discover_active(true);
+    relay.sim.pass(Duration::from_secs(5));
+    assert!(desk.remote.active().is_none(), "the desk plays the queue handed to it");
+    relay.close();
+}
