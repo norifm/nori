@@ -106,7 +106,7 @@ impl Read for Sent {
         if self.hold.is_some_and(|h| self.at >= h) {
             // Hold until the reader looks further on, or HOLD passes.
             let probed = self.probed.clone();
-            self.clock.hang_while(|| !probed.load(Ordering::Acquire), HOLD);
+            self.clock.hang_while(move || !probed.load(Ordering::Acquire), HOLD);
             self.hold = None;
         }
         // Wait until the transcode has come as far as a read takes.

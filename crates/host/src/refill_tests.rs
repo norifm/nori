@@ -202,7 +202,8 @@ fn a_radio_from_the_song_playing_keeps_it_playing() {
     assert!(time.until(Duration::from_secs(5), || card.secs() >= 2.0), "a plays");
     s.play_later(Fetch::Radio("a".into()), false);
     // The answer comes on the network's own time, with the card's clock held.
-    assert!(!time.clock.hang_while(|| s.core.session.playlist(|p| p.len()) != 3, Duration::from_secs(10)), "the radio is queued");
+    let core = s.core.clone();
+    assert!(!time.clock.hang_while(move || core.session.playlist(|p| p.len()) != 3, Duration::from_secs(10)).held(), "the radio is queued");
     assert!(time.until(Duration::from_secs(10), || (card.last_second_hz() - 440.0).abs() <= 1.0), "b follows a");
     let heard = card.secs();
     s.close();

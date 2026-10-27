@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use parking_lot::{Condvar, Mutex};
 
-pub use nori_engine::testing::{Delivery, Device, Stepper, Virtual};
+pub use nori_engine::testing::{Delivery, Device, Hang, Stepper, Virtual};
 
 /// An engine stopped when dropped.
 pub struct Running(pub nori_engine::Engine);
