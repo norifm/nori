@@ -88,12 +88,15 @@ struct Sent {
     probed: Arc<AtomicBool>,
     cut: Option<usize>,
     ends: Ends,
-    /// First bytes at once, the rest at a rate from this clock time.
-    arrives: Option<(usize, u64, i64, Virtual)>,
+    /// First bytes at once, the rest at a rate from this clock time, handed over on the clock.
+    arrives: Option<(usize, u64, i64, common::Delivery)>,
     /// Set once the whole transcode was sent.
     made: Arc<AtomicBool>,
     clock: Virtual,
 }
+
+/// Bytes a read of an arriving transcode waits for.
+const ARRIVING_READ: usize = 16 * 1024;
 
 /// Real time a held body waits for the reader to look past it.
 const HOLD: Duration = Duration::from_millis(300);
@@ -103,16 +106,16 @@ impl Read for Sent {
         if self.hold.is_some_and(|h| self.at >= h) {
             // Hold until the reader looks further on, or HOLD passes.
             let probed = self.probed.clone();
-            self.clock.hang_while(|| !probed.load(Ordering::Acquire), HOLD);
+            self.clock.hang_while(move || !probed.load(Ordering::Acquire), HOLD);
             self.hold = None;
         }
-        // Wait until the transcode has come this far.
-        let made = self.arrives.as_ref().filter(|_| self.at < self.file.len()).map_or(usize::MAX, |(first, rate, t0, clock)| {
-            let by = |ns: i64| first + ((ns - t0).max(0) as u128 * *rate as u128 / 1_000_000_000) as usize;
-            if by(clock.now_ns()) <= self.at {
-                clock.wait_until(t0 +((self.at + 1 - first) as u128 * 1_000_000_000 / *rate as u128) as i64 + 1);
+        // Wait until the transcode has come as far as a read takes.
+        let made = self.arrives.as_mut().filter(|_| self.at < self.file.len()).map_or(usize::MAX, |(first, rate, t0, delivery)| {
+            let want = (self.at + buf.len().min(ARRIVING_READ)).min(self.file.len());
+            if want > *first {
+                delivery.at(*t0 + ((want - *first) as u128 * 1_000_000_000 / *rate as u128) as i64);
             }
-            by(clock.now_ns())
+            want
         });
         let stop = self.cut.unwrap_or(self.file.len()).min(self.hold.unwrap_or(usize::MAX)).min(made);
         if self.at >= self.file.len() {
@@ -150,7 +153,7 @@ impl ByteSource for Transcoder {
             return Err(OpenError::PastEnd { len: self.says.then_some(real) });
         }
         let hold = (from == 0).then_some(self.hold);
-        let arrives = self.arrives.filter(|_| from == 0 && !made.load(Ordering::Acquire)).map(|(first, rate)| (first, rate, self.clock.now_ns(), self.clock.clone()));
+        let arrives = self.arrives.filter(|_| from == 0 && !made.load(Ordering::Acquire)).map(|(first, rate)| (first, rate, self.clock.now_ns(), self.clock.delivery()));
         let mut cut = self.cut.lock();
         let cut = if from == 0 && cut.as_ref().is_some_and(|c| c.0 == url) { cut.take().map(|c| c.1) } else { None };
         let sent = Sent { file, at: from as usize, hold, probed, cut, ends: self.ends, arrives, made, clock: self.clock.clone() };

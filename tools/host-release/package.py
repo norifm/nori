@@ -42,7 +42,7 @@ def package(binaries, output, version, system, arch):
             artifacts.append(archive)
             if system == "linux" and (Path("/etc/debian_version").exists()):
                 deb_arch = {"x86_64": "amd64", "aarch64": "arm64"}[arch]
-                deb_version = version.replace("-beta.", "~beta.")
+                deb_version = version.replace("-", "~", 1)
                 deb = work / f"deb-{client}"
                 (deb / "usr/bin").mkdir(parents=True)
                 (deb / "DEBIAN").mkdir()

@@ -401,6 +401,7 @@ impl Writer {
         if self.at != len || f.flush().is_err() || f.seek(SeekFrom::End(0)).map_or(true, |e| e != len) {
             return false;
         }
+        #[allow(clippy::drop_non_drop, reason = "closes the file before it is moved; wasm's File has no Drop")]
         drop(f);
         let Some(part) = self.part.take() else { return false };
         self.store.finished(&self.key, &part, len)

@@ -19,12 +19,12 @@ pub trait Clock: Clone + Send + 'static {
     fn sleep(&self, ms: Option<u64>, waiting: impl FnOnce() -> bool);
     /// The thread woke and is about to take its commands.
     fn woke(&self) {}
-    /// Wakes `engine` for a command; called on the sender's thread.
+    /// Wakes `engine` for a command or a song's bytes; called on the waker's thread.
     fn wake(&self, engine: &Thread) {
         engine.unpark();
     }
-    /// A loader's thread starts (true) or stops (false) taking a song's bytes in; called on any thread. A
-    /// test clock stands still while one does, as if the network were instant.
+    /// A loader's or an opening's thread starts (true) or stops (false) taking a song's bytes in; called on
+    /// any thread. A test clock stands still while one does, as if the network were instant.
     fn loading(&self, _working: bool) {}
     /// The engine is about to look at what its loaders hold. A test clock first lets those taking bytes
     /// in finish, so what the engine finds does not depend on how threads were scheduled.

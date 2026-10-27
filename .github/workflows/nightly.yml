@@ -1,0 +1,116 @@
+name: Nightly
+# Each night master has moved, one rolling prerelease tagged `nightly` is replaced: the "nori nightly" APK
+# (beside the real app; it updates itself from here), the desktop and terminal packages and the iPod app.
+# Its title carries the version nori nightly's updater compares (crates/core/src/update.rs).
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+concurrency: nightly
+permissions:
+  contents: read
+jobs:
+  stamp:
+    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.stamp.outputs.version }}
+      changed: ${{ steps.stamp.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: stamp
+        name: Version, and whether master moved since the last nightly
+        run: |
+          base=$(sed -n 's/^ *versionName = "\([0-9.]*\).*"$/\1/p' app/build.gradle.kts | head -1)
+          at=$(TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%d%H%M HEAD)
+          echo "version=$base-nightly.$at" >> "$GITHUB_OUTPUT"
+          last=$(git ls-remote origin refs/tags/nightly | cut -f1)
+          echo "changed=$([ "$last" != "$GITHUB_SHA" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+  hosts:
+    needs: stamp
+    if: needs.stamp.outputs.changed == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/host-release.yml
+    with:
+      source: ${{ github.sha }}
+      version: ${{ needs.stamp.outputs.version }}
+  android:
+    timeout-minutes: 60
+    needs: stamp
+    if: needs.stamp.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      RUSTC_WRAPPER: ''
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/release-key
+        with:
+          keystore: ${{ secrets.NORI_RELEASE_KEYSTORE_BASE64 }}
+          properties: ${{ secrets.NORI_KEYSTORE_PROPERTIES }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-nightly
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - uses: ./.github/actions/android-toolchain
+      - name: Build the nightly APK
+        env:
+          VERSION: ${{ needs.stamp.outputs.version }}
+        run: |
+          tools/bump-version.sh "$VERSION"
+          ./gradlew :app:assembleNightly -q
+          mkdir -p nightly
+          cp app/build/outputs/apk/nightly/app-nightly.apk "nightly/nori-nightly-$VERSION.apk"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android
+          path: nightly/*.apk
+          if-no-files-found: error
+  ipod:
+    timeout-minutes: 40
+    needs: stamp
+    if: needs.stamp.outputs.changed == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: tools/bump-version.sh "${{ needs.stamp.outputs.version }}"
+      - run: tools/with-resource.py build tools/ipod.sh build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ipod
+          path: build/ios/*.ipa
+          if-no-files-found: error
+  publish:
+    timeout-minutes: 15
+    needs: [stamp, hosts, android, ipod]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          path: packages
+          pattern: '{android,ipod,host-*}'
+          merge-multiple: true
+      - name: Replace the nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.stamp.outputs.version }}
+        run: |
+          (cd packages && rm -f SHA256SUMS* && sha256sum -- * > SHA256SUMS)
+          {
+            echo "Built from $GITHUB_SHA. Untested: for trying what is on master. The APK is \"nori nightly\", installed beside nori, and updates itself to the next nightly."
+            if git rev-parse -q --verify refs/tags/nightly >/dev/null; then
+              echo
+              echo "Since the last nightly:"
+              git log --format='- %s' --no-merges -50 nightly..HEAD
+            fi
+          } > notes.md
+          gh release delete nightly --cleanup-tag --yes || true
+          gh release create nightly packages/* --prerelease --target "$GITHUB_SHA" --title "nori $VERSION" --notes-file notes.md

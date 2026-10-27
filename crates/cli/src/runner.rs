@@ -620,7 +620,7 @@ impl Runner {
             Cmd::Login(draft) => {
                 let (http, tx) = (self.http.clone(), self.tx.clone());
                 std::thread::spawn(move || {
-                    let _ = tx.send(Msg::LoggedIn(crate::backend::check_login(http, draft)));
+                    let _ = tx.send(Msg::LoggedIn(crate::backend::check_login(http, *draft)));
                 });
                 return;
             }

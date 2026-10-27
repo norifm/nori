@@ -206,6 +206,20 @@ fun <T : Any> NoriDialog(
     }
 }
 
+
+/** Asks before deleting what [named] is called (shown while it is not null): it can't be undone. */
+@Composable
+fun <T : Any> DeleteQuestion(named: T?, name: (T) -> String, onDelete: (T) -> Unit, onDismiss: () -> Unit) {
+    NoriDialog(named, onDismiss) { it ->
+        AlertCard(
+            title = { androidx.compose.material3.Text(say.deleteQuestion(name(it))) },
+            text = { androidx.compose.material3.Text(say.cannotBeUndone) },
+            confirmButton = { TextAction(say.delete, { onDelete(it); onDismiss() }, destructive = true) },
+            dismissButton = { TextAction(say.cancel, onDismiss) },
+        )
+    }
+}
+
 /**
  * The card of an alert dialog, drawn in place inside a [NoriDialog] rather than in a window of its own:
  * raised on the surface with a hairline edge and the sheet's corners, no shadow. Material's measures: 280

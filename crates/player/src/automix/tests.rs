@@ -213,7 +213,7 @@ fn input_form_changes_nothing() {
     let t = analyse_bytes("t", &mono, 48000, 1, Encoding::Float).track;
     assert_eq!(TrackAnalysis { analysed_ms: 0, ..t }, TrackAnalysis { analysed_ms: 0, ..reference });
     // Garbage in: no panic.
-    let t = analyse_bytes("t", &vec![1, 2, 3], 0, 0, Encoding::Pcm16).track;
+    let t = analyse_bytes("t", &[1, 2, 3], 0, 0, Encoding::Pcm16).track;
     assert!(t.bpm == 0.0 && t.duration_ms <= 1, "{t:?}");
 }
 

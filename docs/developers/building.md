@@ -29,7 +29,7 @@ sets `jobs = 4` and `gradle.properties` sets four Gradle workers.
 | --- | --- | --- |
 | `dev` | `cargo test`, `cargo build` | Line tables only for the workspace, no debug info for dependencies. Test builds compile nori-player, nori-engine, nori-android, nori-ios and every dependency at opt-level 2, with debug assertions on. nori-stretch is always at opt-level 3 |
 | `release` | `cargo run --release`, debug APKs | Optimized and incremental: an edit rebuilds in seconds |
-| `dist` | release, perf and preview APKs, desktop packages, the iPod app | Fat LTO, one codegen unit, stripped, `panic = "unwind"`. Takes minutes to link |
+| `dist` | release, perf and nightly APKs, desktop packages, the iPod app | Fat LTO, one codegen unit, stripped, `panic = "unwind"`. Takes minutes to link |
 | `web` | `web/build.sh` | `dist` with `opt-level = "s"` and `panic = "abort"` |
 
 Set `CARGO_PROFILE_DEV_DEBUG=true` for a session that needs a debugger's variables. Keep debug APKs
@@ -39,8 +39,8 @@ Gradle properties for the Android build:
 
 | Property | Default | Effect |
 | --- | --- | --- |
-| `-PrustTargets=arm64-v8a` | debug: the host's emulator ABI; release, perf, preview: `arm64-v8a` | The ABIs the Rust core is built for |
-| `-PrustProfile=dist` | debug: `release`; release, perf, preview: `dist` | The Cargo profile of the native library |
+| `-PrustTargets=arm64-v8a` | debug: the host's emulator ABI; release, perf, nightly: `arm64-v8a` | The ABIs the Rust core is built for |
+| `-PrustProfile=dist` | debug: `release`; release, perf, nightly: `dist` | The Cargo profile of the native library |
 | `-PrustFeatures=` | `neural-beats` | Cargo features of the core. Empty leaves out tract and the "Better beat detection" setting |
 | `-PpretendVersion=0.3.9` | none | Builds the app as an older version, for testing the updater |
 
@@ -169,9 +169,10 @@ adb install -r app/build/outputs/apk/perf/app-perf.apk
 The APK is signed with the Android debug key. It can also be sent to the phone and opened there. The
 recorder starts with the app. Its page is Settings > Performance.
 
-`./gradlew :app:assemblePreview -PrustTargets=arm64-v8a` builds "nori preview"
-(`dev.nori.music.preview`), a release build without the recorder, for trying a change beside the real
-app.
+`./gradlew :app:assembleNightly -PrustTargets=arm64-v8a` builds "nori nightly"
+(`dev.nori.music.nightly`), a release build without the recorder, installed beside the real app; CI
+publishes one each night (Workflows, below). It is signed with the release key when there is one, so
+each night's build updates it in place.
 
 ### Stretches
 
@@ -329,10 +330,17 @@ uses. After using a new glyph, run `python3 tools/glyphs.py <iconoir>/icons` aga
 
 ### Deploying
 
-`web/dist` is static. Serve it from the same origin as the Subsonic API; the page signs its own
-requests, so no CORS headers are needed. Serve `.wasm` as `application/wasm`, precompressed with
+`web/dist` is static. Served from the same origin as a Subsonic API (its `/rest/ping` answers), the
+page signs in to that server only and asks for no address. Served anywhere else, it asks for the
+server's address, and that server must answer CORS preflights (Navidrome does; octo-fiesta does from
+`fbe3dc1`). A page over https cannot reach a server over plain http. The page needs a secure context
+(https, or localhost) for its databases. Serve `.wasm` as `application/wasm`, precompressed with
 brotli in production. A service worker keeps the shell and modules of one build. A new build installs
 beside the running one and takes over at the next load, which reloads the page once.
+
+Every push to master that touches the web client builds it into `ghcr.io/norifm/nori-web`
+(`.github/workflows/web.yml`): an image of just `web/dist` at its root, for a server's image to copy
+(`web/Dockerfile`). navi-fiesta (norifm/bento) serves it at `/`.
 
 To check that it compiles without building it:
 
@@ -402,9 +410,15 @@ volumes.
 | Workflow | Does |
 | --- | --- |
 | Full release (`release.yml`) | Android, iPod, all four desktop platforms and the workspace tests from a chosen revision; uploads a `release` artifact, or publishes with `publish` (and `draft` off for a public one). Signing needs the secrets `NORI_RELEASE_KEYSTORE_BASE64` and `NORI_KEYSTORE_PROPERTIES` |
+| Checks (`checks.yml`) | on every push, to any branch: clippy with warnings as errors (the workspace, and the web crate for wasm), the workspace tests, the web client's build (wasm, svelte-check, Vite) and the Android Kotlin compile |
+| Nightly (`nightly.yml`) | at 02:00 UTC when master moved since the last one (or by hand): replaces the one prerelease tagged `nightly` with the "nori nightly" APK, the desktop and terminal packages and the iPod app. It is signed with the release key, and every package is built as `<x.y.z>-nightly.<commit time>` (`tools/bump-version.sh`, uncommitted): its files are named for it, the apps report it, and it is the release's title, which nori nightly's updater reads to offer the next night's build (`update.rs`, its nightly channel). Stable and beta builds never see it |
 | Desktop and CLI release (`host-release.yml`) | the desktop and terminal packages; uploads to a release when given its tag. Also callable from other workflows |
 | macOS rendering checks (`macos-render.yml`) | the desktop's Metal pixel tests on a Mac runner |
 | Backfill Linux bundles, Backfill macOS disk images | add bundles or DMGs to an older release from its archives, without rebuilding |
+
+The workflows cache Rust dependencies (`Swatinem/rust-cache`, one key per job and platform), Gradle and
+npm. Caches are saved from master only and read by every branch, so branch pushes don't evict them from
+GitHub's 10 GB. The release link (fat LTO) is never cached.
 
 Mac builds in the workflows run on Apple Silicon; the Intel package is checked under Rosetta. The
 `macos_on_linux` input builds them on Linux instead and skips running them.

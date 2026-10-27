@@ -85,14 +85,14 @@ fn late_autofill_respects_playback_and_new_queues() {
         if action == "replaced" {
             let before = card.heard.lock().len();
             crate::remote::HostPlayer((*s).clone()).apply(nori_remote::wire::Op::Replace {
-                songs: vec![songs[3].clone()], index: 0, position_ms: 0, play: true, order: None, shuffle: false, repeat: 0, transfer: None, listen: None,
+                songs: vec![songs[3].clone()], index: 0, position_ms: 0, play: true, order: None, shuffle: false, repeat: 0, transfer: None, listen: None, mix: None,
             });
             assert!(time.until(Duration::from_secs(3), || card.heard.lock().len() >= before + 88_200), "a remote play starts without local playback");
             assert!((card.last_second_hz() - 880.0).abs() <= 1.0);
         }
         if action == "stale_resume" {
             crate::remote::HostPlayer((*s).clone()).apply(nori_remote::wire::Op::Replace {
-                songs: vec![songs[3].clone(), songs[1].clone()], index: 0, position_ms: 0, play: true, order: None, shuffle: false, repeat: 0, transfer: None, listen: None,
+                songs: vec![songs[3].clone(), songs[1].clone()], index: 0, position_ms: 0, play: true, order: None, shuffle: false, repeat: 0, transfer: None, listen: None, mix: None,
             });
             assert!(time.until(Duration::from_secs(2), || s.engine.status().state == State::Playing));
             assert!(time.until(Duration::from_secs(5), || s.engine.status().state == State::Ended));
@@ -202,7 +202,8 @@ fn a_radio_from_the_song_playing_keeps_it_playing() {
     assert!(time.until(Duration::from_secs(5), || card.secs() >= 2.0), "a plays");
     s.play_later(Fetch::Radio("a".into()), false);
     // The answer comes on the network's own time, with the card's clock held.
-    assert!(!time.clock.hang_while(|| s.core.session.playlist(|p| p.len()) != 3, Duration::from_secs(10)), "the radio is queued");
+    let core = s.core.clone();
+    assert!(!time.clock.hang_while(move || core.session.playlist(|p| p.len()) != 3, Duration::from_secs(10)).held(), "the radio is queued");
     assert!(time.until(Duration::from_secs(10), || (card.last_second_hz() - 440.0).abs() <= 1.0), "b follows a");
     let heard = card.secs();
     s.close();

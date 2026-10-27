@@ -33,6 +33,19 @@ pub fn provider(kind: ServerKind) -> ProviderWords {
 }
 
 pub const SHOW_ALL: &str = "Show all";
+
+/// A group's head in the search field's preview.
+pub fn preview_group(kind: nori_core::search::PreviewKind) -> &'static str {
+    use nori_core::search::PreviewKind;
+    match kind {
+        PreviewKind::Artists => "ARTISTS",
+        PreviewKind::Albums => "ALBUMS",
+        PreviewKind::Playlists => "PLAYLISTS",
+        PreviewKind::Songs => "SONGS",
+    }
+}
+
+pub const ALL_RESULTS: &str = "All results";
 /// Home's title.
 pub const LISTEN_NOW: &str = "Listen now";
 pub const MIXING: &str = "MIXING";
@@ -242,6 +255,20 @@ pub fn added_to_playlist(name: &str) -> String {
 pub fn playlist_created(name: &str) -> String {
     format!("Made {name}")
 }
+
+pub fn removed_from_playlist(name: &str) -> String {
+    format!("Removed from {name}")
+}
+
+pub fn playlist_renamed(name: &str) -> String {
+    format!("Renamed to {name}")
+}
+
+pub fn playlist_deleted(name: &str) -> String {
+    format!("Deleted {name}")
+}
+
+pub const REMOVE_FROM_PLAYLIST: &str = "Remove from playlist";
 
 pub fn playlist_failed(e: &str) -> String {
     format!("The playlist could not be changed: {e}")

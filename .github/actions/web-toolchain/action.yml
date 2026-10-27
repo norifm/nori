@@ -1,0 +1,22 @@
+name: Web toolchain
+description: What web/build.sh needs - the wasm target, wasm-bindgen-cli at Cargo.lock's version, binaryen, brotli, a wasm32 clang and node.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: web/package-lock.json
+    - shell: bash
+      env:
+        BINARYEN: version_133
+      run: |
+        sudo apt-get update && sudo apt-get install -y clang llvm brotli
+        echo "CC_wasm32_unknown_unknown=clang" >> "$GITHUB_ENV"
+        echo "AR_wasm32_unknown_unknown=llvm-ar" >> "$GITHUB_ENV"
+        rustup target add wasm32-unknown-unknown
+        curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/$BINARYEN/binaryen-$BINARYEN-x86_64-linux.tar.gz" | tar xz -C "$RUNNER_TEMP"
+        echo "$RUNNER_TEMP/binaryen-$BINARYEN/bin" >> "$GITHUB_PATH"
+        version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
+        cargo install wasm-bindgen-cli --locked --version "$version"

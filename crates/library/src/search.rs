@@ -202,6 +202,49 @@ impl Session {
     }
 }
 
+/// A line of the search field's preview, the list under the field as it is typed in: a group's head, a
+/// result by its place in the answer, or the way to the whole search page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "line", rename_all = "camelCase")]
+pub enum PreviewLine {
+    Head { kind: PreviewKind },
+    Artist { at: u32 },
+    Album { at: u32 },
+    Playlist { at: u32 },
+    Song { at: u32 },
+    All,
+}
+
+/// A group of the preview; the client names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PreviewKind {
+    Artists,
+    Albums,
+    Playlists,
+    Songs,
+}
+
+/// The preview of answer `r` (ranked already): the best few of each kind, grouped in the search screen's
+/// order, then the way to everything; nothing when it found nothing.
+pub fn search_preview(r: &SearchResult) -> Vec<PreviewLine> {
+    let mut lines = Vec::new();
+    let mut group = |kind, found: usize, most: usize, line: fn(u32) -> PreviewLine| {
+        if found > 0 {
+            lines.push(PreviewLine::Head { kind });
+            lines.extend((0..found.min(most) as u32).map(line));
+        }
+    };
+    group(PreviewKind::Artists, r.artists.len(), 2, |at| PreviewLine::Artist { at });
+    group(PreviewKind::Albums, r.albums.len(), 3, |at| PreviewLine::Album { at });
+    group(PreviewKind::Playlists, r.playlists.len(), 2, |at| PreviewLine::Playlist { at });
+    group(PreviewKind::Songs, r.songs.len(), 3, |at| PreviewLine::Song { at });
+    if !lines.is_empty() {
+        lines.push(PreviewLine::All);
+    }
+    lines
+}
+
 /// Shorter than this, a query is a keystroke on the way to one, not one worth remembering.
 pub const REMEMBER_MIN_UTF16: usize = 2;
 
@@ -232,6 +275,27 @@ pub fn kotlin_whitespace(c: char) -> bool {
 mod tests {
     use super::*;
     use nori_model::{Artist, Playlist};
+
+    #[test]
+    fn preview_takes_the_best_few_of_each_kind_in_order() {
+        let r = SearchResult {
+            artists: (0..5).map(|i| Artist { id: format!("ar{i}"), ..Default::default() }).collect(),
+            albums: vec![Album::default()],
+            songs: (0..9).map(|i| Song { id: format!("s{i}"), ..Default::default() }).collect(),
+            playlists: Vec::new(),
+        };
+        use PreviewLine as L;
+        assert_eq!(
+            search_preview(&r),
+            [
+                L::Head { kind: PreviewKind::Artists }, L::Artist { at: 0 }, L::Artist { at: 1 },
+                L::Head { kind: PreviewKind::Albums }, L::Album { at: 0 },
+                L::Head { kind: PreviewKind::Songs }, L::Song { at: 0 }, L::Song { at: 1 }, L::Song { at: 2 },
+                L::All,
+            ]
+        );
+        assert!(search_preview(&SearchResult::default()).is_empty());
+    }
 
     fn result() -> SearchResult {
         let s = |id: &str, ext: bool| Song { id: id.into(), is_external: ext, ..Default::default() };

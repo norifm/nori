@@ -26,7 +26,7 @@ use symphonia::core::codecs::audio::well_known::*;
 use symphonia::core::codecs::audio::AudioCodecId;
 use symphonia::core::errors::{Error as SymphoniaError, SeekErrorKind};
 use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::well_known::{FORMAT_ID_OGG, FORMAT_ID_WAVE};
+use symphonia::core::formats::well_known::{FORMAT_ID_MP1, FORMAT_ID_MP2, FORMAT_ID_MP3, FORMAT_ID_OGG, FORMAT_ID_WAVE};
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream, MediaSourceStreamOptions, ReadBytes};
 use symphonia::core::meta::MetadataOptions;
@@ -665,6 +665,10 @@ impl Stream {
         };
         let max_frames = codec.map_or(8192, Codec::max_frames);
         let (id, stated_frames) = (track.id, track.num_frames);
+        // An MPEG stream still arriving is entered where its bitrate puts the place (exact at a constant
+        // one), not read frame by frame from its start up to there, which waits for every byte before it.
+        let mpeg = [FORMAT_ID_MP1, FORMAT_ID_MP2, FORMAT_ID_MP3].contains(&reader.format_info().format);
+        let seek_mode = if !whole && mpeg && stated_frames.is_some() && byte_len.is_some() { SeekMode::Coarse } else { SeekMode::Accurate };
         // A live MP3 station (no length or duration, from the start) is read frame by frame by `mpeg.rs`
         // so it plays through noise and format changes. A transcode without a length is not live.
         let live = byte_len.is_none() && duration_ms.is_none() && from_ms == 0;
@@ -703,7 +707,7 @@ impl Stream {
         };
         match landed {
             Some(ts) => (d.skip_to, d.frame) = (ts as i64, None),
-            None if from_ms > 0 => d.seek(from_ms)?,
+            None if from_ms > 0 => d.seek(from_ms, seek_mode)?,
             None => {}
         }
         if packets {
@@ -728,7 +732,7 @@ impl Stream {
         Ok(d)
     }
 
-    fn seek(&mut self, ms: i64) -> Result<(), String> {
+    fn seek(&mut self, ms: i64, mode: SeekMode) -> Result<(), String> {
         if let Packets::Wav(w) = &mut self.reader {
             let frame = ms * self.format.rate as i64 / 1000;
             // Past the end: ended, as if played through.
@@ -742,7 +746,7 @@ impl Stream {
             Some((delay, _)) => SeekTo::Timestamp { ts: Timestamp::new((ms * self.format.rate as i64 / 1000 + delay - AAC_WARM_UP).max(0)), track_id: self.track },
             None => SeekTo::Time { time: Time::from_millis(ms), track_id: Some(self.track) },
         };
-        let seeked = match self.reader.container().ok_or("a live stream is not seeked")?.seek(SeekMode::Accurate, to) {
+        let seeked = match self.reader.container().ok_or("a live stream is not seeked")?.seek(mode, to) {
             Ok(s) => s,
             // Past the end (the stated length was longer than the music): ended, as if played through.
             Err(e) if ms > 0 && past_end(&e) => {
@@ -1390,6 +1394,7 @@ impl Demuxed {
         let (o, l, hint) = (opening.clone(), loader.clone(), hint.map(str::to_string));
         // What the opening reads stays at hand wherever it reads next (an MP4's index at its end).
         loader.opening(true);
+        let opener = loader.opener();
         let spawned = std::thread::Builder::new().name("nori-open".into()).spawn(move || {
             // An MP4 transcode's length is an estimate, so its index at the end is not asked for: the
             // whole song first, mostly one burst.
@@ -1416,8 +1421,12 @@ impl Demuxed {
             let mut done = o.done.lock();
             done.opened = Some(opened);
             if let Some(t) = done.waiter.take() {
-                t.unpark();
+                l.wake(&t);
             }
+            drop(done);
+            // Letting go of the song calls off its request; the clock waits for that too.
+            drop(l);
+            drop(opener);
         });
         let state = match spawned {
             Ok(_) => State::Opening(opening),
