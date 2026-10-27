@@ -53,8 +53,9 @@ def run(*args: str) -> str:
 
 def last_tag() -> str | None:
     try:
-        # A beta's tag is passed over: a release's notes cover everything since the last release.
-        return run("describe", "--tags", "--abbrev=0", "--exclude", "*-*").strip() or None
+        # A beta's tag is passed over: a release's notes cover everything since the last release. Only
+        # version tags count, not the rolling nightly.
+        return run("describe", "--tags", "--abbrev=0", "--match", "v*", "--exclude", "*-*").strip() or None
     except subprocess.CalledProcessError:
         pass
     # No tags yet: the last release commit is where the previous release was cut, so the range starts
@@ -66,7 +67,7 @@ def last_tag() -> str | None:
 def previous_tag(version: str) -> str | None:
     """The newest tag before this version's own, beta or not."""
     try:
-        return run("describe", "--tags", "--abbrev=0", "--exclude", f"v{version}").strip() or None
+        return run("describe", "--tags", "--abbrev=0", "--match", "v*", "--exclude", f"v{version}").strip() or None
     except subprocess.CalledProcessError:
         return None
 
