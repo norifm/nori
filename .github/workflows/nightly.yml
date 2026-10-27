@@ -9,6 +9,8 @@ on:
 concurrency: nightly
 permissions:
   contents: read
+env:
+  RUSTC_WRAPPER: ''
 jobs:
   stamp:
     timeout-minutes: 5
@@ -41,7 +43,6 @@ jobs:
     if: needs.stamp.outputs.changed == 'true'
     runs-on: ubuntu-24.04
     env:
-      RUSTC_WRAPPER: ''
       CARGO_BUILD_JOBS: '2'
     steps:
       - uses: actions/checkout@v7
