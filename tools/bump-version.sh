@@ -3,7 +3,8 @@
 #   tools/bump-version.sh 0.3.2
 #   tools/bump-version.sh 0.5.2-beta.1      a beta of 0.5.2 (tools/release.sh publishes it as a prerelease)
 #   tools/bump-version.sh 0.5.2-nightly.202610270200   a nightly (.github/workflows/nightly.yml), uncommitted;
-#                                           it keeps the versionCode, so each nightly installs over the last
+#                                           its versionCode is its stamp in minutes since 1970 (UTC), so each
+#                                           nightly installs over the last
 #
 #   app/build.gradle.kts   versionName, and versionCode as major*1000000 + minor*10000 + patch*100 + beta,
 #                          beta being the beta's number, 99 for the release itself (0.5.2-beta.3 -> 50203,
@@ -20,7 +21,7 @@ beta=${BASH_REMATCH[5]:-99}
 [ "$beta" -le 98 ] || [ -z "${BASH_REMATCH[5]}" ] || { echo "a beta number goes up to 98" >&2; exit 2; }
 old=$(grep -oE 'versionName = "[^"]+"' "$root/app/build.gradle.kts" | head -1 | cut -d'"' -f2)
 if [[ "$new" == *-nightly.* ]]; then
-  code=$(grep -oE 'versionCode = [0-9]+' "$root/app/build.gradle.kts" | head -1 | cut -d' ' -f3)
+  code=$(python3 -c 'import datetime, sys; print(int(datetime.datetime.strptime(sys.argv[1], "%Y%m%d%H%M").replace(tzinfo=datetime.timezone.utc).timestamp()) // 60)' "${new##*-nightly.}")
 else
   code=$(( BASH_REMATCH[1] * 1000000 + BASH_REMATCH[2] * 10000 + BASH_REMATCH[3] * 100 + beta ))
 fi
