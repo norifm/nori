@@ -304,6 +304,7 @@ private fun pageFacts(res: Resources, f: SettingsFacts, parts: List<SettingsPart
     storageBusy = f.storage.busy,
     unsentWaiting = f.storage.unsentWaiting.toUInt(),
     unsentDropped = f.storage.unsentDropped.toUInt(),
+    nightly = dev.nori.music.app.BuildConfig.BUILD_TYPE == "nightly",
 )
 
 /**
