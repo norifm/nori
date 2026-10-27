@@ -1613,6 +1613,66 @@ pub const EQ_RANGES: EqRanges = EqRanges {
     freq: Span { min: 20.0, max: 20_000.0 },
 };
 
+/// A band's value that can be typed in its editor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum BandField {
+    Frequency,
+    Gain,
+    /// The width, or a shelf's slope.
+    Q,
+}
+
+/// What was typed for a band's `field` ("1.2k", "1200 Hz", "1,2 kHz", "-3", "+3 dB", "0.7"), held in its
+/// range and rounded as it is shown: whole hertz (four digits from 1 kHz), tenths of a decibel, hundredths
+/// of Q. None when it reads as no number, or carries another field's unit.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn band_typed(field: BandField, text: String) -> Option<f32> {
+    let t: String = text
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| match c {
+            ',' => '.',
+            '−' => '-',
+            c => c,
+        })
+        .collect();
+    let (number, scale) = match field {
+        BandField::Frequency => {
+            let t = t.strip_suffix("hz").unwrap_or(&t);
+            t.strip_suffix('k').map_or((t, 1.0), |n| (n, 1000.0))
+        }
+        BandField::Gain => (t.strip_suffix("db").unwrap_or(&t), 1.0),
+        BandField::Q => (t.as_str(), 1.0),
+    };
+    // Rust also reads "inf", "nan" and exponents; only a plain decimal number is a value here.
+    if !number.chars().any(|c| c.is_ascii_digit()) || !number.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | '+' | '-')) {
+        return None;
+    }
+    let v = number.parse::<f64>().ok()? * scale;
+    let r = EQ_RANGES;
+    Some(match field {
+        BandField::Frequency => {
+            let f = r.freq.hold(v as f32) as f64;
+            let step = if f < 1000.0 { 1.0 } else { 10f64.powi(f.log10().floor() as i32 - 3) };
+            r.freq.hold(((f / step).round() * step) as f32)
+        }
+        BandField::Gain => r.gain.hold(((v * 10.0).round() / 10.0) as f32),
+        BandField::Q => r.q.hold(((v * 100.0).round() / 100.0) as f32),
+    })
+}
+
+/// Band `b` with `field` set to `value`.
+pub fn band_with(b: SoundBand, field: BandField, value: f32) -> SoundBand {
+    match field {
+        BandField::Frequency => SoundBand { freq: value, ..b },
+        BandField::Gain => SoundBand { gain_db: value, ..b },
+        BandField::Q => SoundBand { q: value, ..b },
+    }
+}
+
 /// Editor facts about one `EqKind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -1959,6 +2019,37 @@ pub fn parse_eq_preset(text: String) -> EqPreset {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_band_values_read_and_held() {
+        use BandField::*;
+        for (field, text, want) in [
+            (Frequency, "1200", Some(1200.0)),
+            (Frequency, "1.2k", Some(1200.0)),
+            (Frequency, " 1,2 kHz ", Some(1200.0)),
+            (Frequency, "1200 Hz", Some(1200.0)),
+            (Frequency, "632.5", Some(633.0)),
+            (Frequency, "12345", Some(12350.0)),
+            (Frequency, "5", Some(20.0)),
+            (Frequency, "40k", Some(20_000.0)),
+            (Frequency, "3 dB", None),
+            (Gain, "-3", Some(-3.0)),
+            (Gain, "+3 dB", Some(3.0)),
+            (Gain, "−2,25dB", Some(-2.3)),
+            (Gain, "30", Some(12.0)),
+            (Gain, "1k", None),
+            (Q, "0.7", Some(0.7)),
+            (Q, "0,707", Some(0.71)),
+            (Q, "100", Some(8.0)),
+            (Q, "", None),
+            (Q, "-", None),
+            (Q, "inf", None),
+            (Q, "1e3", None),
+            (Gain, "abc", None),
+        ] {
+            assert_eq!(band_typed(field, text.into()), want, "{field:?} {text:?}");
+        }
+    }
 
     fn raw(entries: &[(&str, PrefValue)]) -> HashMap<String, PrefValue> {
         entries.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
