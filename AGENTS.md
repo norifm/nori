@@ -16,7 +16,7 @@ python3 tools/rust.py test -p nori-player            # Bazel tests for one crate
 python3 tools/rust.py build -p nori-desktop          # optional Bazel native desktop build
 python3 tools/rust.py run -p nori-cli                # optional Bazel terminal client
 cargo test -p nori-player --test pipeline    # player end to end on a virtual clock
-cargo clippy -j4 --workspace --all-targets          # no new warnings
+cargo clippy -j4 --workspace --all-targets -- -D warnings  # none; CI fails on any
 ./gradlew :app:compileDebugKotlin -PrustTargets=arm64-v8a    # Kotlin compiles (this Mac's emulator is arm64)
 ./gradlew :app:assembleDebug -PrustTargets=arm64-v8a         # debug APK for the emulator
 tools/dev-server.sh                                 # local Navidrome, admin/admin, http://10.0.2.2:4533 from the emulator
@@ -185,6 +185,8 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
   path, prove it with a failing test), then fix it there. No band-aids that cost code quality: no flags
   steering other code, no retry loops or sleeps, no special cases, no safeguards for states that
   shouldn't arise. If the cause can't be found, say so instead of patching around it.
+- Once the cause is found, look for it everywhere else: every other use of the same API, pattern or
+  assumption, in every client. Fix those in the same change, or list the ones left and why.
 - Entries and streams are identified by index or sequence, not by content ids.
 - No abstraction with one implementation or caller, no dead code, no unused `pub`, no copied blocks.
 - Touch only what the task needs; prefer the change that removes code while keeping the behaviour.
@@ -230,8 +232,8 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
 
 - `tools/apk.sh [x86_64] [--install]`: release APK into `build/`. `./gradlew :app:assemblePerf
   -PrustTargets=arm64-v8a`: perf build ("nori dev"), see docs/developers/building.md.
-- `./gradlew :app:assemblePreview -PrustTargets=arm64-v8a`: a release build named "nori preview" (id
-  `dev.nori.music.preview`) that installs beside the real app, for trying a change on a phone.
+- `./gradlew :app:assembleNightly -PrustTargets=arm64-v8a`: a release build named "nori nightly" (id
+  `dev.nori.music.nightly`) that installs beside the real app; CI publishes one each night (nightly.yml).
 - `tools/app.sh` drives a debug build over adb (`open`, `play`, `do`, `set`, `state`).
 - `tools/release.sh` is the whole release, step by step. The changelog comes from `feat`/`fix`/`perf`
   commit subjects, so write those for users. Signing key `nori-release.jks` +

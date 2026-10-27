@@ -93,7 +93,7 @@ pub fn capped_rate(rate: u32, max: u32) -> u32 {
         return rate;
     }
     let mut r = rate;
-    while r > max && r % 2 == 0 && r / 2 >= 44_100 {
+    while r > max && r.is_multiple_of(2) && r / 2 >= 44_100 {
         r /= 2;
     }
     r.min(max)

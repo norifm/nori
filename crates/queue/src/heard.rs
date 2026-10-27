@@ -131,7 +131,8 @@ mod tests {
 
     #[test]
     fn shown_rows() {
-        let cases: [(&str, Option<usize>, &[&str], &[&str], Option<&str>, Option<usize>); 10] = [
+        type Case = (&'static str, Option<usize>, &'static [&'static str], &'static [&'static str], Option<&'static str>, Option<usize>);
+        let cases: [Case; 10] = [
             ("the tracker's row", Some(3), Q, Q, Some("d"), Some(3)),
             ("the tracker's row, another song playing", Some(1), Q, Q, Some("c"), Some(1)),
             ("nothing heard", None, Q, Q, Some("a"), None),

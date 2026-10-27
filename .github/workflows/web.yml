@@ -18,30 +18,19 @@ permissions:
   packages: write
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/nori-web
-  BINARYEN: version_133
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     env:
       RUSTC_WRAPPER: ''
-      CC_wasm32_unknown_unknown: clang
-      AR_wasm32_unknown_unknown: llvm-ar
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-targets: true
-      - name: Toolchain
-        run: |
-          sudo apt-get update && sudo apt-get install -y clang llvm brotli
-          rustup target add wasm32-unknown-unknown
-          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/$BINARYEN/binaryen-$BINARYEN-x86_64-linux.tar.gz" | tar xz -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/binaryen-$BINARYEN/bin" >> "$GITHUB_PATH"
-          version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
-          cargo install wasm-bindgen-cli --locked --version "$version"
+          key: web
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - uses: ./.github/actions/web-toolchain
       - run: web/build.sh
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3

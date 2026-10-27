@@ -253,6 +253,7 @@ trait Told: Send + Sync {
     fn now_us(&self) -> i64;
     fn loading(&self, working: bool);
     fn let_loaders_run(&self);
+    fn wake(&self, engine: &Thread);
 }
 
 impl<C: Clock + Sync> Told for C {
@@ -266,6 +267,10 @@ impl<C: Clock + Sync> Told for C {
 
     fn let_loaders_run(&self) {
         Clock::let_loaders_run(self)
+    }
+
+    fn wake(&self, engine: &Thread) {
+        Clock::wake(self, engine)
     }
 }
 
@@ -311,6 +316,14 @@ impl Fetching {
     fn look(&self) {
         if let Some((_, c)) = &self.clock {
             c.let_loaders_run();
+        }
+    }
+
+    /// Wakes the engine through its clock, which a test's clock waits on.
+    fn wake(&self, engine: &Thread) {
+        match &self.clock {
+            Some((_, c)) => c.wake(engine),
+            None => engine.unpark(),
         }
     }
 
@@ -614,6 +627,9 @@ struct State {
     settle_waiter: Option<Thread>,
     /// Readers blocked in a read. A count: one giving up must not leave another unwoken.
     blocked: u32,
+    /// Of them, openings' threads ([`Loader::opener`]) the clock was told are not working, by what they
+    /// await.
+    openings_blocked: [u32; 3],
     /// Connections opened: one per burst.
     bursts: u32,
     window: Option<Window>,
@@ -724,7 +740,13 @@ impl State {
     fn ready_from(&self, at: u64, now: Instant) -> bool {
         let (end, window) = self.held_run(at);
         let held = end - at;
-        self.error.is_some() || self.closed || held >= READY || self.len.is_some_and(|l| end >= l) || (held > 0 && window && (self.done || self.in_time(held, now)))
+        self.error.is_some() || self.closed || held >= self.ready_bytes() || self.len.is_some_and(|l| end >= l) || (held > 0 && window && (self.done || self.in_time(held, now)))
+    }
+
+    /// Bytes ahead that make a read ready: [`READY`], or the window's high mark when that is less (no
+    /// more is fetched ahead).
+    fn ready_bytes(&self) -> u64 {
+        self.window.map_or(READY, |w| self.within_budget(w).high.clamp(1, READY))
     }
 
     fn in_window(&self, at: u64) -> bool {
@@ -770,6 +792,20 @@ impl State {
         self.at_end() || self.error.is_some() || self.closed || self.window.is_some_and(|w| self.ahead() >= self.within_budget(w).high)
     }
 
+    /// The first answer said the song's length ([`Loader::wait_sized`]); None until it came.
+    fn sized(&self) -> Option<bool> {
+        self.first_sized.or((self.error.is_some() || self.closed || self.done).then_some(false))
+    }
+
+    /// Whether an opening blocked on `a` goes on; one awaiting bytes looks again at every change.
+    fn goes_on(&self, a: Awaits) -> bool {
+        match a {
+            Awaits::Whole => self.whole().is_some(),
+            Awaits::Sized => self.sized().is_some(),
+            Awaits::Bytes => true,
+        }
+    }
+
     /// Whether the whole song is in memory: None while it may yet be; false when it never will be
     /// (failed, or larger than one burst).
     fn whole(&self) -> Option<bool> {
@@ -790,7 +826,7 @@ impl State {
         if let Some(at) = self.in_piece {
             return self.ready_from(at, now);
         }
-        self.at_end() || self.error.is_some() || self.ahead() >= if self.live { LIVE_READY } else { READY } || self.in_time(self.ahead(), now)
+        self.at_end() || self.error.is_some() || self.ahead() >= if self.live { LIVE_READY } else { self.ready_bytes() } || self.in_time(self.ahead(), now)
     }
 
     /// The running burst's rate, bytes per ms, once it ran for [`RATE_MS`].
@@ -989,6 +1025,23 @@ impl Filling {
     }
 }
 
+/// An opening's thread as the clock counts it ([`Loader::opener`]).
+pub(crate) struct Opener(Arc<Fetching>);
+
+impl Drop for Opener {
+    fn drop(&mut self) {
+        self.0.loading(false);
+    }
+}
+
+/// What an opening's thread blocks on.
+#[derive(Clone, Copy)]
+enum Awaits {
+    Whole,
+    Sized,
+    Bytes,
+}
+
 /// One song's bytes, shared by its loader thread and readers.
 struct Loaded {
     state: Mutex<State>,
@@ -1150,8 +1203,20 @@ impl Loader {
         s.base == 0 && s.at_end() && s.error.is_none()
     }
 
-    /// Blocks until the whole song is in memory. False when it never will be (failed, or larger than
-    /// one burst).
+    /// An opening's thread starts: the clock counts it as taking bytes in while it is not blocked on them,
+    /// until the [`Opener`] is dropped.
+    pub(crate) fn opener(&self) -> Opener {
+        self.0.fetching.loading(true);
+        Opener(self.0.fetching.clone())
+    }
+
+    /// Wakes `engine` through the clock.
+    pub(crate) fn wake(&self, engine: &Thread) {
+        self.0.fetching.wake(engine);
+    }
+
+    /// Blocks an opening's thread until the whole song is in memory. False when it never will be
+    /// (failed, or larger than one burst).
     pub(crate) fn wait_whole(&self) -> bool {
         let l = &*self.0;
         let mut s = l.state.lock();
@@ -1159,27 +1224,20 @@ impl Loader {
             if let Some(whole) = s.whole() {
                 return whole;
             }
-            s.blocked += 1;
-            l.cv.wait(&mut s);
-            s.blocked -= 1;
+            l.wait_reader(&mut s, None, Some(Awaits::Whole));
         }
     }
 
-    /// Blocks until the first answer; whether it said the song's length (a whole file, where a transcode
-    /// made as it is sent says none).
+    /// Blocks an opening's thread until the first answer; whether it said the song's length (a whole
+    /// file, where a transcode made as it is sent says none).
     pub(crate) fn wait_sized(&self) -> bool {
         let l = &*self.0;
         let mut s = l.state.lock();
         loop {
-            if let Some(sized) = s.first_sized {
+            if let Some(sized) = s.sized() {
                 return sized;
             }
-            if s.error.is_some() || s.closed || s.done {
-                return false;
-            }
-            s.blocked += 1;
-            l.cv.wait(&mut s);
-            s.blocked -= 1;
+            l.wait_reader(&mut s, None, Some(Awaits::Sized));
         }
     }
 
@@ -1307,15 +1365,15 @@ impl Loader {
         LoadedReader { loader: self.clone(), pos: 0, stop: None, trying: Some(tried) }
     }
 
-    /// A reader that fails once `stop` is set, for an opening nobody wants any more (it would otherwise
-    /// keep moving the fetch against the wanted reader).
+    /// An opening's reader ([`Loader::opener`]), which fails once `stop` is set, for an opening nobody
+    /// wants any more (it would otherwise keep moving the fetch against the wanted reader).
     pub(crate) fn reader_until(self: &Arc<Self>, stop: Arc<AtomicBool>) -> LoadedReader {
         LoadedReader { loader: self.clone(), pos: 0, stop: Some(stop), trying: None }
     }
 
     /// Wakes blocked readers to check `stop`.
     pub(crate) fn nudge(&self) {
-        self.0.cv.notify_all();
+        self.0.notify(&mut self.0.state.lock());
     }
 
     /// Blocks until `n` readers wait for bytes (a reader that blocks signals the loader's condvar).
@@ -1364,7 +1422,7 @@ impl Loaded {
     /// Something that moves the fetching changed: wakes the loader's thread, or the platform pushing.
     fn stir(&self, s: &mut State) {
         self.working(s);
-        self.cv.notify_all();
+        self.notify(s);
         if let Some(w) = s.pusher.take() {
             w.wake();
         }
@@ -1376,6 +1434,43 @@ impl Loaded {
         if std::mem::take(&mut s.idle) {
             self.fetching.loading(true);
         }
+    }
+
+    /// Wakes every thread waiting on the song; the clock is first told of the openings among them that
+    /// go on.
+    fn notify(&self, s: &mut State) {
+        for a in [Awaits::Whole, Awaits::Sized, Awaits::Bytes] {
+            if s.goes_on(a) {
+                for _ in 0..std::mem::take(&mut s.openings_blocked[a as usize]) {
+                    self.fetching.loading(true);
+                }
+            }
+        }
+        self.cv.notify_all();
+    }
+
+    /// Blocks a reader on the song, at most `limit`; whether that ran out. An opening's thread, blocked on
+    /// what it `awaits`, is not counted by the clock meanwhile.
+    fn wait_reader(&self, s: &mut parking_lot::MutexGuard<State>, limit: Option<Duration>, awaits: Option<Awaits>) -> bool {
+        s.blocked += 1;
+        if let Some(a) = awaits {
+            s.openings_blocked[a as usize] += 1;
+            self.fetching.loading(false);
+        }
+        let timed_out = match limit {
+            Some(d) => self.cv.wait_for(s, d).timed_out(),
+            None => {
+                self.cv.wait(s);
+                false
+            }
+        };
+        // Woken without being counted (the limit, or a change it does not await): counted again here.
+        if let Some(a) = awaits.filter(|&a| s.openings_blocked[a as usize] > 0) {
+            s.openings_blocked[a as usize] -= 1;
+            self.fetching.loading(true);
+        }
+        s.blocked -= 1;
+        timed_out
     }
 
     /// The loader's thread waits for the reader.
@@ -1757,23 +1852,23 @@ impl Loaded {
         }
         s.done = true;
         s.restart = None;
-        self.cv.notify_all();
+        self.notify(&mut s);
         self.wake(&mut s);
     }
 
     /// Wakes blocked readers, and the waiting engine once ready.
     fn wake(&self, s: &mut State) {
         if s.blocked > 0 {
-            self.cv.notify_all();
+            self.notify(s);
         }
         if s.ready(self.now()) {
             if let Some(t) = s.waiter.take() {
-                t.unpark();
+                self.fetching.wake(&t);
             }
         }
         if s.settle_waiter.is_some() && s.settled() {
             if let Some(t) = s.settle_waiter.take() {
-                t.unpark();
+                self.fetching.wake(&t);
             }
         }
     }
@@ -1783,7 +1878,7 @@ impl Loaded {
 pub struct LoadedReader {
     loader: Arc<Loader>,
     pos: u64,
-    /// Set once nobody wants this read ([`Loader::reader_until`]).
+    /// Set once nobody wants this read: an opening's reader ([`Loader::reader_until`]).
     stop: Option<Arc<AtomicBool>>,
     trying: Option<Arc<Mutex<Tried>>>,
 }
@@ -1887,10 +1982,7 @@ impl Read for LoadedReader {
                 }
                 return Err(io::ErrorKind::WouldBlock.into());
             }
-            s.blocked += 1;
-            let timed_out = l.cv.wait_for(&mut s, READ_TIMEOUT).timed_out();
-            s.blocked -= 1;
-            if timed_out {
+            if l.wait_reader(&mut s, Some(READ_TIMEOUT), self.stop.is_some().then_some(Awaits::Bytes)) {
                 return Err(io::Error::new(io::ErrorKind::TimedOut, "the song's bytes did not come"));
             }
         }

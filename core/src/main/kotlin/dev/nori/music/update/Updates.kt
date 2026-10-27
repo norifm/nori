@@ -43,8 +43,9 @@ import kotlin.coroutines.resumeWithException
  * app's: [State] only says where things stand.
  *
  * Asked when the app starts (the core does nothing unless a day has passed and the switch is on) and from
- * About's button; nothing polls. Only a release build installs ([installs]): a debug or perf build is signed
- * or named differently, so it says a newer version is out and offers the release's page instead.
+ * About's button; nothing polls. Only a release or nightly build installs ([installs]): a debug or perf build
+ * is signed or named differently, so it says a newer version is out and offers the release's page instead.
+ * A nightly build is offered the next nightly, never a release (the core's channel).
  */
 class Updates(private val context: Context, private val http: () -> Http, private val client: () -> Client) {
     sealed interface State {

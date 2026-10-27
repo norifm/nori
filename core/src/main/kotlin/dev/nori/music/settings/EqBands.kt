@@ -21,6 +21,9 @@ object EqBands {
 
     /** The frequency at a place on that scale, rounded as the core rounds it (`dsp::band_freq_at`). */
     @JvmStatic @CriticalNative external fun freqAt(position: Float): Float
+
+    /** A band at [freq] dragged to [position]: [freq] itself while it rounds the same there (`dsp::band_moved`). */
+    @JvmStatic @CriticalNative external fun moved(freq: Float, position: Float): Float
 }
 
 /**

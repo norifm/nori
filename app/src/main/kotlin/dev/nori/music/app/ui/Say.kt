@@ -827,7 +827,10 @@ class Say(private val r: Resources) {
     /** The band dialog's title: "63 Hz", "1k Hz". */
     fun hzTitle(freq: Float): String = r.getString(R.string.eq_hz_title, Fmt.hz(freq))
     /** "Slope 0.71" for a shelf given by its slope, "Q 1.41" for the rest. */
-    fun shape(slope: Boolean, q: Float): String = r.getString(if (slope) R.string.eq_slope else R.string.eq_q, Fmt.fixed(q.toDouble(), 2))
+    /** What a band's width is called in its editor: a shelf's slope, or Q. */
+    fun widthName(slope: Boolean): String = if (slope) slopeName else qName
+    private val slopeName: String = r.getString(R.string.eq_slope_name)
+    private val qName: String = r.getString(R.string.eq_q_name)
     /** A band's label: its frequency and a mark for its channel or kind (the core's `band_mark`). */
     fun band(freq: Float, mark: BandMark): String {
         val hz = Fmt.hz(freq)

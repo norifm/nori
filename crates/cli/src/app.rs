@@ -161,7 +161,7 @@ pub enum Cmd {
     Lyrics(String),
     /// The playing song cover by id, and the colors the player wears from it.
     Cover(String),
-    Login(SavedServer),
+    Login(Box<SavedServer>),
     SwitchServer(String),
     /// Moves the music to this device, or here (None).
     Pick(Option<String>),
@@ -1938,7 +1938,7 @@ impl App {
         l.error = None;
         l.busy = true;
         let draft = SavedServer { id: nori_core::settings::new_server_id(), name: name.trim().to_string(), url, user: user.trim().to_string(), password, ..Default::default() };
-        self.cmds.push(Cmd::Login(draft));
+        self.cmds.push(Cmd::Login(Box::new(draft)));
     }
 
     fn overlay_key(&mut self, k: KeyEvent) {

@@ -271,6 +271,7 @@ impl Core {
 
     /// A sorted, filtered page of indexed songs. `sort`: title, artist, album, year, duration, created,
     /// playCount or userRating; anything else is index order.
+    #[allow(clippy::too_many_arguments, reason = "uniffi export: a query's parts cross the FFI as flat arguments")]
     pub fn browse_songs(&self, sort: String, descending: bool, starred_only: bool, year_from: u32, year_to: u32, offset: u32, limit: u32) -> Result<Vec<Song>> {
         let sql = browse::songs_sql(&sort, descending, starred_only, year_to > 0);
         let c = self.db.lock();

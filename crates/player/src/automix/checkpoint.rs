@@ -463,7 +463,7 @@ mod tests {
     }
 
     fn unicode(s: &str) -> Vec<u8> {
-        [&[b'X'][..], &(s.len() as u32).to_le_bytes(), s.as_bytes()].concat()
+        [&b"X"[..], &(s.len() as u32).to_le_bytes(), s.as_bytes()].concat()
     }
 
     /// `_rebuild_tensor_v2` of storage `key` (float32 unless `long`), as torch pickles it.

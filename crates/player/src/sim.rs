@@ -41,8 +41,8 @@ pub fn samples(bytes: &[u8]) -> Vec<i16> {
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.as_mut_ptr().cast::<u8>(), out.len() * 2) };
         return out;
     }
-    for (o, c) in out.iter_mut().zip(bytes.chunks_exact(2)) {
-        *o = i16::from_le_bytes([c[0], c[1]]);
+    for (o, c) in out.iter_mut().zip(bytes.as_chunks::<2>().0) {
+        *o = i16::from_le_bytes(*c);
     }
     out
 }
@@ -497,7 +497,7 @@ impl AudioTrack {
 
     /// `heard` as float samples.
     pub fn heard_floats(&self) -> Vec<f32> {
-        self.heard.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
+        self.heard.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect()
     }
 
     /// Plays `us` of the clock; running dry records a gap unless `quiet` (the music is over).
