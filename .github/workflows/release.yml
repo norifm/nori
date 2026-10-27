@@ -21,14 +21,28 @@ on:
 permissions:
   contents: read
 jobs:
+  # The source as one commit, so every job builds, and the tag lands on, the same one while a branch moves.
+  resolve:
+    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source }}
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
   hosts:
+    needs: resolve
     permissions:
       contents: write
     uses: ./.github/workflows/host-release.yml
     with:
-      source: ${{ inputs.source }}
+      source: ${{ needs.resolve.outputs.sha }}
       macos_on_linux: ${{ inputs.macos_on_linux }}
   android:
+    needs: resolve
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -39,7 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.source }}
+          ref: ${{ needs.resolve.outputs.sha }}
           fetch-depth: 0
           path: source
       - uses: actions/checkout@v7
@@ -68,11 +82,12 @@ jobs:
             android-release/SHA256SUMS
           if-no-files-found: error
   ipod:
+    needs: resolve
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.source }}
+          ref: ${{ needs.resolve.outputs.sha }}
       - name: Build iPod app
         run: |
           tools/with-resource.py build tools/ipod.sh build
@@ -86,6 +101,7 @@ jobs:
             build/ios/SHA256SUMS-ipod
           if-no-files-found: error
   test:
+    needs: resolve
     runs-on: ubuntu-26.04
     env:
       RUSTC_WRAPPER: ''
@@ -94,7 +110,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.source }}
+          ref: ${{ needs.resolve.outputs.sha }}
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.workflow_sha }}
@@ -112,7 +128,7 @@ jobs:
       - run: tools/with-resource.py build cargo test -j4 --workspace
   release:
     name: Assemble release
-    needs: [hosts, android, ipod, test]
+    needs: [resolve, hosts, android, ipod, test]
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -122,7 +138,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.source }}
+          ref: ${{ needs.resolve.outputs.sha }}
           fetch-depth: 0
           path: source
       - uses: actions/checkout@v7
