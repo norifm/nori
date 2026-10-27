@@ -832,7 +832,9 @@ fn returning_here_does_not_wait_for_a_dead_device() {
         desk.remote.clone().pick(Some(phone.remote.id()));
         assert!(desk.remote.active().is_some());
         desk.remote.clone().pick(None);
-        assert!(desk.remote.active().is_none(), "choosing this computer releases remote controls immediately");
+        let picked_at = relay.sim.now_us();
+        desk.until("the controls here", |r| r.active().is_none().then_some(()));
+        assert!(relay.sim.now_us() - picked_at <= 3_000_000, "a dead device holds the controls no longer than a command shows");
         assert_eq!(desk.core.session.playlist(|p| p.ids().to_vec()), ["local"], "the stored local queue remains usable");
         let request = || relay.hub.lock().rooms["u:ann"].events.iter().find_map(|(_, from, _, body)| match body {
             Body::Command { id, op } if from == &desk.remote.id() && matches!(op.as_ref(), Op::Transfer { to, .. } if to == &desk.remote.id()) => Some(*id),
@@ -1938,6 +1940,30 @@ fn a_handed_device_shows_the_handed_song_until_its_player_has_it() {
     desk.remote.clone().volume_changed(Some(34));
     phone.until("the desk playing it", |r| r.active().filter(|m| m.volume == Some(34)));
     assert_eq!(song(&phone.remote).as_deref(), Some("p2"));
+    relay.close();
+}
+
+/// Playback taken back here goes on showing the device it comes from until its queue is here, never
+/// this device's own queue from before.
+#[test]
+fn playback_taken_back_shows_where_it_was_until_the_queue_is_here() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["p1", "p2"], 1);
+    desk.queued(&["d1", "d2"]);
+    phone.remote.clone().serve(true);
+    let phone_id = phone.remote.id();
+    desk.remote.clone().watch(true);
+    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.state.is_some()));
+    desk.remote.clone().pick(Some(phone_id.clone()));
+    desk.until("the phone mirrored", |r| r.active().filter(|m| m.at.is_some()));
+
+    desk.remote.clone().pick(None);
+    let song = desk.remote.active().and_then(|m| m.at.and_then(|a| m.rows.get(a as usize)).map(|row| row.song.id.clone()));
+    assert_eq!(song.as_deref(), Some("p2"), "the phone's song until its queue is here");
+    assert!(matches!(desk.told(), Op::Replace { .. }));
+    assert!(desk.remote.active().is_none(), "here once the queue is");
     relay.close();
 }
 
