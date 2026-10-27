@@ -272,6 +272,7 @@ struct Mix {
 
 impl Mix {
     /// A pitched note from `table`: `env(tau)` shapes it, `vib` = (rate Hz, depth cents) wobbles it after 150 ms.
+    #[allow(clippy::too_many_arguments, reason = "a note's every parameter, spelled out at each call")]
     fn tone(&mut self, at: f64, len: f64, freq: f64, table: &Table, amp: f64, env: impl Fn(f64) -> f64, vib: Option<(f64, f64)>) {
         let s = (at * self.rate).round().max(0.0) as usize;
         let n = (len * self.rate) as usize;

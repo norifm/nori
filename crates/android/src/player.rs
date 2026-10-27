@@ -1277,11 +1277,13 @@ impl Library for AndroidLibrary {
 
 // ---- player ----
 
+/// (kind, index, entry, text, jumps): jumps is `Song`/`Looped`/`Position`'s `jumps`, or `Stopped`/`Bridge`'s `plays`.
+type QueuedEvent = (i32, i32, Option<u64>, String, u64);
+
 /// Engine events queued for Kotlin, which is signalled once per batch.
 struct Events {
     bridge: Bridge,
-    /// (kind, index, entry, text, jumps): jumps is `Song`/`Looped`/`Position`'s `jumps`, or `Stopped`/`Bridge`'s `plays`.
-    queue: Mutex<VecDeque<(i32, i32, Option<u64>, String, u64)>>,
+    queue: Mutex<VecDeque<QueuedEvent>>,
     signalled: AtomicBool,
     /// Text and jumps of the event [`event`] last returned.
     text: Mutex<String>,

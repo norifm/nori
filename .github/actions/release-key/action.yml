@@ -1,0 +1,33 @@
+name: Release key
+description: Writes the release signing key and keystore.properties into a checkout, for Gradle's release signing.
+inputs:
+  keystore:
+    description: The keystore, base64 (secrets.NORI_RELEASE_KEYSTORE_BASE64)
+    required: true
+  properties:
+    description: keystore.properties (secrets.NORI_KEYSTORE_PROPERTIES)
+    required: true
+  directory:
+    description: The checkout to write them into
+    default: .
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ inputs.directory }}
+      env:
+        NORI_RELEASE_KEYSTORE_BASE64: ${{ inputs.keystore }}
+        NORI_KEYSTORE_PROPERTIES: ${{ inputs.properties }}
+      run: |
+        python3 - <<'PY'
+        import base64, os, pathlib, re
+        key = os.environ['NORI_RELEASE_KEYSTORE_BASE64']
+        properties = os.environ['NORI_KEYSTORE_PROPERTIES']
+        if not key or not properties:
+            raise SystemExit('Set NORI_RELEASE_KEYSTORE_BASE64 and NORI_KEYSTORE_PROPERTIES to the existing release key before using this workflow')
+        properties = re.sub(r'^storeFile=.*$', 'storeFile=nori-release.jks', properties, flags=re.M)
+        for name, contents in [('nori-release.jks', base64.b64decode(key, validate=True)), ('keystore.properties', properties.encode())]:
+            path = pathlib.Path(name)
+            path.write_bytes(contents)
+            path.chmod(0o600)
+        PY

@@ -1203,8 +1203,7 @@ mod tests {
         let rows = every_row(&prefs);
         assert!(rows.len() > 40, "rows: {}", rows.len());
         for (group, row) in &rows {
-            let mut v = SettingsView::default();
-            v.pages = Some(vec![Page { title: group.to_string(), summary: String::new(), sections: vec![Section { title: String::new(), rows: vec![row.clone()] }] }]);
+            let mut v = SettingsView { pages: Some(vec![Page { title: group.to_string(), summary: String::new(), sections: vec![Section { title: String::new(), rows: vec![row.clone()] }] }]), ..Default::default() };
             v.row.at = 1;
             match row {
                 Row::Toggle { switch: Switch::Setting(name), enabled: true, .. } => {

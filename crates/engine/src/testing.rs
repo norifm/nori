@@ -52,9 +52,10 @@ impl State {
         self.loading > self.time_waiters && self.loads_gave_up != self.loads
     }
 
-    /// Real time to wait for bytes or loaders that do not move on.
+    /// Real time to wait for bytes or loaders that do not move on: a loader taking bytes in works in real
+    /// time, while the bytes the engine awaits may wait for a server waiting for this clock.
     fn hold(&self) -> Duration {
-        if self.time_waiters > 0 { TIME_WAIT } else { BYTES_WAIT }
+        if self.time_waiters > 0 && !self.loaders_busy() { TIME_WAIT } else { BYTES_WAIT }
     }
 }
 
@@ -369,6 +370,13 @@ impl<D: Device> Stepper<D> {
             }
             self.step();
         }
+    }
+}
+
+/// The test is over: servers still waiting for its clock run on, so their threads end.
+impl<D: Device> Drop for Stepper<D> {
+    fn drop(&mut self) {
+        self.clock.move_to(i64::MAX);
     }
 }
 
