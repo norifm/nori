@@ -7,6 +7,7 @@
 #   tools/release.sh --live             with --publish: published rather than a draft
 #   tools/release.sh --from DIR         publish verified artifacts built by release workers
 #   tools/release.sh --abi arm64-v8a    phones only: about half the size
+#   tools/release.sh --jni-libs DIR     the APK around a core already built, DIR/<abi>/ (the release workflow)
 #   tools/release.sh --no-test          skip cargo test first
 #   tools/release.sh --no-hosts        build no desktop and CLI packages (those built already still go)
 #   tools/release.sh --allow-untested-macos  acknowledge skipped Mac execution checks on Linux
@@ -66,10 +67,12 @@ GUIDED=1
 DRAFT=--draft
 BETA=0
 FROM=""
+JNI_LIBS=()
 HOST_FLAGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --abi) ABI="$2"; shift ;;
+    --jni-libs) JNI_LIBS=(-PrustJniLibs="$(cd "$2" && pwd)"); shift ;;
     --no-test) RUN_TESTS=0; HOST_FLAGS+=(--no-test) ;;
     --no-ipod) IPOD=0 ;;
     --no-hosts) HOSTS=0 ;;
@@ -332,7 +335,7 @@ run_tests() {
   tools/check.sh rust --workspace --cargo-quiet --status-level fail && tools/check.sh rust-doc -q --workspace
 }
 build_apk() {
-  ./gradlew :app:assembleRelease -PrustTargets="$ABI" -q && cp app/build/outputs/apk/release/app-release.apk "$out/$name"
+  ./gradlew :app:assembleRelease -PrustTargets="$ABI" ${JNI_LIBS[@]+"${JNI_LIBS[@]}"} -q && cp app/build/outputs/apk/release/app-release.apk "$out/$name"
 }
 build_ipod() {
   ./tools/ipod.sh build && cp "build/ios/$ipa" "$out/$ipa"

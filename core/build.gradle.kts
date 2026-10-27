@@ -34,6 +34,9 @@ val rustProfile = project.findProperty("rustProfile") as String? ?: if (shipping
 // bigger (the library 9.6 to 25.3 MB). `-PrustFeatures=` (empty) leaves it out of any build: no tract in the
 // library, and no setting shown.
 val rustFeatures = project.findProperty("rustFeatures") as String? ?: "neural-beats"
+// `-PrustJniLibs=<dir>`: the core already built, one directory per ABI (the release workflow builds each ABI on its
+// own runner); cargo is not run.
+val prebuiltJniLibs = project.findProperty("rustJniLibs") as String?
 val cargoRoot = rootProject.projectDir
 val ndkDirPath: String = System.getenv("ANDROID_NDK_HOME")
     ?: file("${System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT") ?: "${System.getProperty("user.home")}/Android/Sdk"}/ndk").listFiles()
@@ -157,7 +160,8 @@ val uniffiBindgen = tasks.register<UniffiBindgenTask>("uniffiBindgen") {
 androidComponents {
     onVariants { variant ->
         variant.sources.java?.addGeneratedSourceDirectory(uniffiBindgen, UniffiBindgenTask::outputDir)
-        variant.sources.jniLibs?.addGeneratedSourceDirectory(cargoNdkBuild, CargoNdkTask::outputDir)
+        if (prebuiltJniLibs != null) variant.sources.jniLibs?.addStaticSourceDirectory(prebuiltJniLibs)
+        else variant.sources.jniLibs?.addGeneratedSourceDirectory(cargoNdkBuild, CargoNdkTask::outputDir)
     }
 }
 
