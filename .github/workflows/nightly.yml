@@ -29,6 +29,8 @@ jobs:
   hosts:
     needs: stamp
     if: needs.stamp.outputs.changed == 'true'
+    permissions:
+      contents: write
     uses: ./.github/workflows/host-release.yml
     with:
       source: ${{ github.sha }}
