@@ -25,9 +25,6 @@ android {
             versionName = v
             versionCode = major * 1000000 + minor * 10000 + patch * 100 + beta
         }
-        // The nightly build's version, `-Pnightly=0.7.2-nightly.202610270200`, which its updater compares with
-        // the next night's (.github/workflows/nightly.yml).
-        (project.findProperty("nightly") as String?)?.let { versionName = it }
         ndk { abiFilters += (project.findProperty("rustTargets") as String? ?: "arm64-v8a,x86_64").split(",") }
         // What About can say about this build beyond a version number: the commit it was cut from, and
         // the versions of what it is built on - the Rust crates read from Cargo.lock, the Android ones
