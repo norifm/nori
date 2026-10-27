@@ -1035,6 +1035,11 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.setting(&name, &value);
         a.tune();
     });
+    on!(ui.on_eq_typed, h, |a, i, field, text| {
+        use nori_core::settings::BandField;
+        let field = [BandField::Frequency, BandField::Gain, BandField::Q][field.clamp(0, 2) as usize];
+        a.eq_typed(i.max(0) as u32, field, &text)
+    });
     on!(ui.on_eq_band, h, |a, i, pos, gain, q, kind, channel, last| a.eq_band(i.max(0) as u32, nori_core::settings_store::BandPoint { pos, gain_db: gain, q, kind, channel }, last));
     on!(ui.on_eq_add, h, |a, pos, gain| a.eq_add(pos, gain));
     on!(ui.on_eq_tool, h, |a, name, i| a.eq_tool(&name, i.max(0) as usize));
@@ -3102,6 +3107,16 @@ impl App {
         } else if let Some(p) = settings.current() {
             crate::eq::curve_only(&self.ui(), &p);
         }
+    }
+
+    /// What was typed for `field` of band `i` (`settings::band_typed`); the page shows the band as kept, or
+    /// as it was when the words read as nothing.
+    fn eq_typed(&mut self, i: u32, field: nori_core::settings::BandField, text: &str) {
+        if let Some(effect) = crate::session::app().settings.edit_typed(i, field, text) {
+            self.on_session(|s| s.applied(effect));
+            self.tune();
+        }
+        self.settings_shown();
     }
 
     /// Adds a parametric band where the curve was clicked.

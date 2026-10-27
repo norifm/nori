@@ -11,7 +11,7 @@ use crate::{native, Class};
 
 pub(crate) static EQ_BANDS: Class = Class {
     name: c"dev/nori/music/settings/EqBands",
-    methods: &[native!(c"mark", c"(II)I", band_mark), native!(c"position", c"(F)F", band_position), native!(c"freqAt", c"(F)F", band_freq_at)],
+    methods: &[native!(c"mark", c"(II)I", band_mark), native!(c"position", c"(F)F", band_position), native!(c"freqAt", c"(F)F", band_freq_at), native!(c"moved", c"(FF)F", band_moved)],
 };
 
 pub(crate) static SOUND_EDIT: Class = Class {
@@ -39,6 +39,11 @@ extern "system" fn band_position(freq: jfloat) -> jfloat {
 /// `dsp::band_freq_at`.
 extern "system" fn band_freq_at(position: jfloat) -> jfloat {
     nori_core::dsp::band_freq_at(position)
+}
+
+/// `dsp::band_moved`.
+extern "system" fn band_moved(freq: jfloat, position: jfloat) -> jfloat {
+    nori_core::dsp::band_moved(freq, position)
 }
 
 /// `settings_store::edit_band`: `band` is `[kind, freq, gain, q, channel]` in, the stored band out.

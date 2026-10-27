@@ -12,7 +12,7 @@ use parking_lot::{Mutex, RwLock};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 
-use crate::settings::{load, save, set_band, set_by_name, set_level, EqLevel, PrefValue, SettingChange, SoundBand, SoundError, SoundSettings, StoredPrefs};
+use crate::settings::{band_typed, band_with, load, save, set_band, BandField, set_by_name, set_level, EqLevel, PrefValue, SettingChange, SoundBand, SoundError, SoundSettings, StoredPrefs};
 
 // Effect bits: what a settings change asks the player (or client) to apply again.
 /// Which parts of the output chain may run, speed and pitch.
@@ -198,6 +198,15 @@ impl SettingsStore {
         self.edit_band(index, crate::settings::band_from(point.kind, freq, point.gain_db, point.q, point.channel)).map(|e| e.0)
     }
 
+    fn edit_typed(&mut self, index: u32, field: BandField, text: &str) -> Option<u32> {
+        let v = band_typed(field, text.to_string())?;
+        if self.prefs.eq_mode == crate::settings::EqMode::Graphic {
+            return (field == BandField::Gain).then(|| self.edit_graphic(index, v)).flatten().map(|e| e.0);
+        }
+        let b = *self.prefs.eq_bands.get(index as usize)?;
+        self.edit_band(index, band_with(b, field, v)).map(|e| e.0)
+    }
+
     fn edit_level(&mut self, level: EqLevel, value: f32) -> Option<(u32, f32)> {
         let s = set_level(self.prefs.sound(), level, value);
         let kept = match level {
@@ -328,6 +337,12 @@ impl Settings {
     /// effect bits; None when nothing changed.
     pub fn edit_point(&self, index: u32, point: BandPoint) -> Option<u32> {
         self.with_store(|s| s.edit_point(index, point))
+    }
+
+    /// What was typed for `field` of band `index` (`settings::band_typed`), in the mode the equalizer is in
+    /// (a graphic band has only its gain): the effect bits; None when it reads as nothing or changed nothing.
+    pub fn edit_typed(&self, index: u32, field: BandField, text: &str) -> Option<u32> {
+        self.with_store(|s| s.edit_typed(index, field, text))
     }
 
     /// A level slider changed (`settings::set_level`): the effect bits and the value as kept (held in
@@ -494,6 +509,25 @@ mod tests {
         assert_eq!(s.prefs.eq_graphic[3], 4.0);
         assert_eq!(s.edit_point(0, point(at(b.freq), -3.0)), None, "nothing changed");
         assert_eq!(s.edit_point(5, point(0.5, 0.0)), None, "no such band");
+    }
+
+    #[test]
+    fn a_typed_value_sets_that_field_of_the_band_in_the_mode_the_equalizer_is_in() {
+        let dir = nori_testdir::TempDir::new("settings-typed");
+        let mut s = open(&dir);
+        s.sound_tool(SoundTool::AddBand { freq: 1000.0, gain_db: 0.0 }).unwrap();
+        // Graphic: a gain, nothing else.
+        assert!(s.edit_typed(2, BandField::Gain, "-4.5 dB").is_some());
+        assert_eq!(s.prefs.eq_graphic[2], -4.5);
+        assert_eq!(s.edit_typed(2, BandField::Frequency, "2k"), None, "a graphic band keeps its frequency");
+        // Parametric: the typed field alone, exactly as typed.
+        s.edit_by_name(EQ_MODE_KEY, "PARAMETRIC").unwrap();
+        assert!(s.edit_typed(0, BandField::Frequency, "1234 Hz").is_some());
+        assert!(s.edit_typed(0, BandField::Q, "2,5").is_some());
+        let b = s.prefs.eq_bands[0];
+        assert_eq!((b.freq, b.gain_db, b.q), (1234.0, 0.0, 2.5));
+        assert_eq!(s.edit_typed(0, BandField::Gain, "loud"), None, "unreadable");
+        assert_eq!(s.edit_typed(4, BandField::Gain, "3"), None, "no such band");
     }
 
     #[test]

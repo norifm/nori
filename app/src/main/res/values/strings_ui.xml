@@ -399,8 +399,8 @@
     <string name="eq_compressing">Compressing: −%1$s dB</string>
     <string name="eq_not_compressing">Not compressing now</string>
     <string name="eq_hz_title">%1$s Hz</string>
-    <string name="eq_slope">Slope %1$s</string>
-    <string name="eq_q">Q %1$s</string>
+    <string name="eq_q_name">Q</string>
+    <string name="eq_slope_name">Slope</string>
     <string name="eq_band_left">%1$s L</string>
     <string name="eq_band_right">%1$s R</string>
 
