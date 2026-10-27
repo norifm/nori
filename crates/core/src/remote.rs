@@ -3587,26 +3587,33 @@ impl Remote {
     fn read_queue_at(&self, i: &Inner, span: impl FnOnce(Option<usize>, usize) -> Range<usize>) -> QueueRead {
         let session = &self.client.core.session;
         let heard = i.playing.index.map(|i| i as usize);
-        let (picked, index, rev, len, shuffle, repeat) = session.playlist(|p| {
-            let current = heard.filter(|&i| i < p.len()).or(p.current());
-            let order: Vec<usize> = p.play_order().collect();
-            let at = current.and_then(|c| order.iter().position(|&o| o == c));
-            let r = span(at, order.len());
-            let picked: Vec<(u32, u32, String)> = order[r.clone()].iter().zip(r.start..).map(|(&i, turn)| (i as u32, turn as u32, p.ids()[i].clone())).collect();
-            (picked, current.map(|c| c as u32), p.rev(), p.len() as u32, p.lit(), p.repeat())
-        });
         let jam = i.hosted.as_ref().map(|h| &h.jam);
+        let (mut entries, index, rev, len, shuffle, repeat) = session.playlist(|p| {
+            let current = heard.filter(|&i| i < p.len()).or(p.current());
+            let at = current.and_then(|c| p.play_order().position(|o| o == c));
+            let r = span(at, p.play_order().count());
+            let entries: Vec<Entry> = session.store(|s| {
+                p.play_order()
+                    .skip(r.start)
+                    .take(r.len())
+                    .zip(r.start..)
+                    .map(|(i, turn)| {
+                        let id = &p.ids()[i];
+                        let by = jam.and_then(|j| j.added_by(id));
+                        match s.songs.get(id) {
+                            Some((song, _)) => Entry::of(i as u32, turn as u32, song, by),
+                            None => Entry::of(i as u32, turn as u32, &Song::only_id(id.clone()), by),
+                        }
+                    })
+                    .collect()
+            });
+            (entries, current.map(|c| c as u32), p.rev(), p.len() as u32, p.lit(), p.repeat())
+        });
         // Hearts as this device shows them: pressed here or by another device since the song was read.
         let stars = self.client.core.stars.lock();
-        let entries = picked
-            .into_iter()
-            .map(|(index, turn, id)| {
-                let by = jam.and_then(|j| j.added_by(&id));
-                let mut song = session.song(&id).unwrap_or_else(|| Song::only_id(id));
-                song.starred = stars.starred(crate::client::Starrable::Song, &song.id, song.starred);
-                Entry::of(index, turn, &song, by)
-            })
-            .collect();
+        for e in &mut entries {
+            e.starred = stars.starred(crate::client::Starrable::Song, &e.id, e.starred);
+        }
         QueueRead { entries, index, rev, len, shuffle, repeat }
     }
 
@@ -3779,31 +3786,53 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
         (Some(a), Some(b)) => (a - b).abs() <= SERVER_SLACK_US,
         (a, b) => a == b,
     };
-    let mut adjusted= DeviceState { position_ms: now.position_ms, seq: now.seq, at_us: now.at_us, server_us: now.server_us, ..last.clone() } ;
-    if let (Some(a), Some(b)) = (
-        adjusted
-            .jam
-            .as_mut()
-            .and_then(|j| j.along.as_mut())
-            .and_then(|a| a.mix.as_mut()),
-        now.jam
-            .as_ref()
-            .and_then(|j| j.along.as_ref())
-            .and_then(|a| a.mix.as_ref()),
-    ) {
-        if let (Some(a_ms), Some(b_ms)) = (a.position_ms.as_mut(), b.position_ms) {
-            let ran = if last.playing && !last.buffering {
-                (elapsed_ms as f64 * a.rate.unwrap_or(1.0) as f64) as i64
-            } else {
-                0
+    // Each field named, so a new one is compared too.
+    let DeviceState { instance, seq: _, listen_handoff, playing, buffering, mixing, position_ms: _, at_us: _, server_us: _, rate, index, rev, len, entries, volume, shuffle, repeat, jam, handed_to, obeyed } = last;
+    let ran = |rate: Option<f32>| if *playing && !*buffering { (elapsed_ms as f64 * rate.unwrap_or(1.0) as f64) as i64 } else { 0 };
+    let jam_same = match (jam, &now.jam) {
+        (Some(a), Some(b)) => jam_same_but_time(a, b, ran),
+        (a, b) => a == b,
+    };
+    (expected - now.position_ms).abs() <= POSITION_SLACK_MS
+        && server_same
+        && jam_same
+        && *instance == now.instance
+        && *listen_handoff == now.listen_handoff
+        && *playing == now.playing
+        && *buffering == now.buffering
+        && *mixing == now.mixing
+        && *rate == now.rate
+        && *index == now.index
+        && *rev == now.rev
+        && *len == now.len
+        && *volume == now.volume
+        && *shuffle == now.shuffle
+        && *repeat == now.repeat
+        && *handed_to == now.handed_to
+        && *obeyed == now.obeyed
+        && *entries == now.entries
+}
+
+/// Whether jam state `now` is `last` with only its mix's position run on, `ran(rate)` ms at the mix's rate.
+fn jam_same_but_time(last: &JamState, now: &JamState, ran: impl Fn(Option<f32>) -> i64) -> bool {
+    let JamState { remote_songs, members, pending, along, lyrics } = last;
+    let along_same = match (along, &now.along) {
+        (Some(Along { speed, pitch, mix }), Some(b)) => {
+            let mix_same = match (mix, &b.mix) {
+                (Some(Mix { from, into, plan, position_ms, rate }), Some(m)) => {
+                    let at_same = match (position_ms, m.position_ms) {
+                        (Some(a), Some(b)) => (a + ran(*rate) - b).abs() <= POSITION_SLACK_MS,
+                        (a, b) => *a == b,
+                    };
+                    at_same && *from == m.from && *into == m.into && *plan == m.plan && *rate == m.rate
+                }
+                (a, b) => a == b,
             };
-            if (*a_ms + ran - b_ms).abs() > POSITION_SLACK_MS {
-                return false;
-            }
-            *a_ms = b_ms;
+            mix_same && *speed == b.speed && *pitch == b.pitch
         }
-    }
-    (expected - now.position_ms).abs() <= POSITION_SLACK_MS && server_same && adjusted == *now
+        (a, b) => a == b,
+    };
+    along_same && *remote_songs == now.remote_songs && *members == now.members && *pending == now.pending && *lyrics == now.lyrics
 }
 
 #[cfg(test)]
