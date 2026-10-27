@@ -48,11 +48,11 @@ class Release(unittest.TestCase):
         self.assertFalse((self.root / "nori-release.jks").exists())
         self.assertFalse((self.root / "keystore.properties").exists())
 
-    def test_reject_missing_host_worker(self):
+    def test_missing_host_worker_is_left_out(self):
         result = self.stage(hosts=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("missing desktop/CLI packages for macos-aarch64", result.stderr)
-        self.assertFalse((self.output / "RELEASE.txt").exists())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("missing desktop/CLI packages for: macos-aarch64 macos-x86_64 linux-aarch64 linux-x86_64", result.stderr)
+        self.assertTrue((self.output / "RELEASE.txt").exists())
 
     def test_reject_corrupted_worker_download(self):
         digest = hashlib.sha256(self.apk.read_bytes()).hexdigest()
