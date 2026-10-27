@@ -3224,6 +3224,8 @@ component QueueView inherits Rectangle {
     in property <string> undo-text;
     pure callback art(string, int, int) -> image;
     callback jump(int);
+    // A right press on a row, where in the window it was.
+    callback menu(SongRow, length, length);
     callback clear;
     // A row's song taken out, by its list index.
     callback remove(int);
@@ -3377,6 +3379,9 @@ component QueueView inherits Rectangle {
                     qt := TouchArea {
                         double-clicked => { root.jump(s.index); }
                         pointer-event(e) => {
+                            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
+                                root.menu(s, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                            }
                             if e.button != PointerEventButton.left {
                                 return;
                             }
@@ -5464,6 +5469,32 @@ export component AppWindow inherits Window {
         root.pop-from(x, y);
         artist-pop.show();
     }
+    // A song row's menu where it has none of its own (the queue's, the search preview's): song `i` of
+    // `list` (as `song` takes it), its title, line and artwork, opened by a right press at `x`, `y`.
+    property <int> row-list;
+    property <int> row-index;
+    property <string> row-title;
+    property <string> row-line;
+    property <string> row-art;
+    property <[SongGo]> row-lines;
+    function row-menu-at(list: int, i: int, title: string, line: string, art: string, x: length, y: length) {
+        root.row-list = list;
+        root.row-index = i;
+        root.row-title = title;
+        root.row-line = line;
+        root.row-art = art;
+        root.row-lines = root.song-menu(list, i);
+        root.pop-from(x, y);
+        row-pop.show();
+    }
+    // An album's, artist's or playlist's menu where it has none of its own (the search preview, the
+    // artists list), opened by a right press at `x`, `y`.
+    property <Card> menu-card;
+    function card-menu-at(c: Card, x: length, y: length) {
+        root.menu-card = c;
+        root.pop-from(x, y);
+        card-pop.show();
+    }
     // The sleep timer's choices, "Off" first while one runs, and one chosen.
     in property <[string]> sleep-choices;
     callback sleep(int);
@@ -5547,8 +5578,8 @@ export component AppWindow inherits Window {
     callback shelf-song(int, string);
     callback play-album(string);
     callback play-playlist(string);
-    // A song of a list: 0 the page, 1 the songs, 2 search. `how`: -1 play, else a line of its menu
-    // (`SongGo::kind`), whose lines `song-menu` gives.
+    // A song of a list: 0 the page, 1 the songs, 2 search, 3 the queue (by list index), 4 a line of the
+    // search's preview. `how`: -1 play, else a line of its menu (`SongGo::kind`), whose lines `song-menu` gives.
     callback song(int, int, int);
     callback song-menu(int, int) -> [SongGo];
     callback play-page(bool);
@@ -6306,6 +6337,11 @@ export component AppWindow inherits Window {
                                     ar := TouchArea {
                                         clicked => { root.choose-artist(a.id); }
                                         double-clicked => { root.open-artist(a.id); }
+                                        pointer-event(e) => {
+                                            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
+                                                root.card-menu-at(a, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -7080,6 +7116,7 @@ export component AppWindow inherits Window {
                     undo-text: root.queue-undo;
                     art(a, s, r) => { return root.art(a, s, r); }
                     jump(i) => { root.jump(i); }
+                    menu(s, x, y) => { root.row-menu-at(3, s.index, s.title, s.album != "" ? s.artist + " · " + s.album : s.artist, s.art, x, y); }
                     clear => { root.clear-queue(); }
                     remove(i) => { root.remove-queued(i); }
                     move(f, t) => { root.move-queued(f, t); }
@@ -7132,6 +7169,58 @@ export component AppWindow inherits Window {
             play => { root.play-artist(root.menu-artist); }
             queue(next) => { root.queue-card(1, root.menu-artist, next); }
             jam => { root.jam-play(1, root.menu-artist); }
+        }
+        row-pop := PopupWindow {
+            x: root.pop-x;
+            y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
+            width: MenuShape.width;
+            close-policy: close-on-click-outside;
+            SongMenuBody {
+                picture: root.art(root.row-art, 0, root.covers-rev);
+                title: root.row-title;
+                line: root.row-line;
+                lines: root.row-lines;
+                playable: !Jam.guest;
+                play => {
+                    root.search-preview-open = false;
+                    root.song(root.row-list, root.row-index, -1);
+                    row-pop.close();
+                }
+                chosen(m) => {
+                    root.search-preview-open = false;
+                    if m.kind == 1 {
+                        Go.album(m.id);
+                    } else if m.kind == 2 {
+                        Go.artist(m.id);
+                    } else {
+                        root.song(root.row-list, root.row-index, m.kind);
+                    }
+                    row-pop.close();
+                }
+            }
+        }
+        card-pop := CollectionMenu {
+            x: root.pop-x;
+            y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
+            picture: root.art(root.menu-card.art, 0, root.covers-rev);
+            round: root.menu-card.kind == 1;
+            title: root.menu-card.title;
+            line: root.menu-card.sub;
+            play => {
+                root.search-preview-open = false;
+                if root.menu-card.kind == 0 {
+                    root.play-album(root.menu-card.id);
+                } else if root.menu-card.kind == 1 {
+                    root.play-artist(root.menu-card.id);
+                } else {
+                    root.play-playlist(root.menu-card.id);
+                }
+            }
+            queue(next) => { root.queue-card(root.menu-card.kind, root.menu-card.id, next); }
+            jam => {
+                root.search-preview-open = false;
+                root.jam-play(root.menu-card.kind, root.menu-card.id);
+            }
         }
         sleep-pop := PopupWindow {
             x: Chrome.player-x + Chrome.player-w - 12px - self.width;
@@ -7730,6 +7819,7 @@ export component AppWindow inherits Window {
                 undo-text: root.queue-undo;
                 art(a, s, r) => { return root.art(a, s, r); }
                 jump(i) => { root.jump(i); }
+                menu(s, x, y) => { root.row-menu-at(3, s.index, s.title, s.album != "" ? s.artist + " · " + s.album : s.artist, s.art, x, y); }
                 clear => { root.clear-queue(); }
                 remove(i) => { root.remove-queued(i); }
                 move(f, t) => { root.move-queued(f, t); }
@@ -8430,6 +8520,15 @@ export component AppWindow inherits Window {
                                     }
                                 }
                                 clicked => { root.search-preview-pick(i); }
+                                pointer-event(e) => {
+                                    if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
+                                        if c.kind == 3 {
+                                            root.row-menu-at(4, i, c.title, c.sub, c.art, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                        } else if c.kind <= 2 {
+                                            root.card-menu-at(c, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
