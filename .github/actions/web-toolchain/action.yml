@@ -8,11 +8,13 @@ runs:
         node-version: 22
         cache: npm
         cache-dependency-path: web/package-lock.json
+    - uses: ./.github/actions/apt
+      with:
+        packages: clang llvm brotli
     - shell: bash
       env:
         BINARYEN: version_133
       run: |
-        sudo apt-get update && sudo apt-get install -y clang llvm brotli
         echo "CC_wasm32_unknown_unknown=clang" >> "$GITHUB_ENV"
         echo "AR_wasm32_unknown_unknown=llvm-ar" >> "$GITHUB_ENV"
         rustup target add wasm32-unknown-unknown

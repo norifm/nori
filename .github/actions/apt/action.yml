@@ -1,0 +1,49 @@
+name: Apt packages
+description: Installs Debian packages with their .debs cached per OS and package list, so apt downloads only what changed; downloads retry and fall back to the main Ubuntu archive.
+inputs:
+  packages:
+    required: true
+runs:
+  using: composite
+  steps:
+    - id: key
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: echo "prefix=apt-$ImageOS-$RUNNER_ARCH-$(echo "$PACKAGES" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+    - id: cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/apt-debs/*.deb
+        key: ${{ steps.key.outputs.prefix }}
+        restore-keys: ${{ steps.key.outputs.prefix }}-
+    - id: install
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+        PREFIX: ${{ steps.key.outputs.prefix }}
+      run: |
+        # man-db rebuilds its index after every install, which takes minutes on a runner.
+        sudo rm -f /var/lib/man-db/auto-update
+        sources=(/etc/apt/sources.list.d)
+        [ -f /etc/apt/sources.list ] && sources+=(/etc/apt/sources.list)
+        mirror=$(grep -rhoE 'https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu/?|https?://ports\.ubuntu\.com/ubuntu-ports/?' "${sources[@]}" | head -1 || true)
+        if [ -n "$mirror" ]; then
+          fallback=http://archive.ubuntu.com/ubuntu/
+          case "$mirror" in *ports*) fallback=http://ports.ubuntu.com/ubuntu-ports/ ;; esac
+          printf '%s\n%s\n' "${mirror%/}/" "$fallback" | sudo tee /etc/apt/mirrors.txt >/dev/null
+          grep -rlF "$mirror" "${sources[@]}" | xargs -r sudo sed -i "s|${mirror%/}/\?|mirror+file:/etc/apt/mirrors.txt|g"
+        fi
+        debs="$HOME/apt-debs"
+        mkdir -p "$debs/partial"
+        apt=(sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Dir::Cache::Archives="$debs")
+        "${apt[@]}" update
+        "${apt[@]}" install -y --no-install-recommends $PACKAGES
+        "${apt[@]}" autoclean
+        sudo find "$debs" -maxdepth 1 -name '*.deb' -exec chmod a+r {} +
+        echo "key=$PREFIX-$(ls "$debs" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+    - if: steps.install.outputs.key != steps.cache.outputs.cache-matched-key
+      uses: actions/cache/save@v4
+      with:
+        path: ~/apt-debs/*.deb
+        key: ${{ steps.install.outputs.key }}
