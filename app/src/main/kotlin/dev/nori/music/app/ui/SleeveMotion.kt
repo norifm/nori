@@ -64,6 +64,9 @@ internal class SleeveMotion(
     /** The loop whose layer is on screen; the stills and fades belong to it. */
     var shown: String? = null
 
+    /** The song [shown] is the loop of: the layer lies on that song's record and on no other. */
+    var shownSong by mutableStateOf<String?>(null)
+
     /** The layer is on screen: this song has a loop, or one is still fading out. */
     var present by mutableStateOf(false)
 
@@ -120,7 +123,7 @@ private const val MOTION_SETTLE_MS = 350L
  * out and lets its frame go.
  */
 @Composable
-internal fun MotionDirector(vm: PlayerViewModel, motion: SleeveMotion, loop: String?, sheet: PlayerSheet, onArtwork: Boolean) {
+internal fun MotionDirector(vm: PlayerViewModel, motion: SleeveMotion, loop: String?, song: String?, sheet: PlayerSheet, onArtwork: Boolean) {
     val poster = motion.poster
     val shown = LocalPlayerShown.current
     var resumed by remember { mutableStateOf(false) }
@@ -149,6 +152,7 @@ internal fun MotionDirector(vm: PlayerViewModel, motion: SleeveMotion, loop: Str
             motion.playing = null
             motion.present = false
             motion.shown = loop
+            motion.shownSong = song
         }
         if (loop == null || still) return@LaunchedEffect
         motion.present = true

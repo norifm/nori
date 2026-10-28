@@ -233,7 +233,15 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
         val poster = rememberCover(artwork?.takeIf { it.looping }?.poster?.replace("{size}", CoverSize.FULL.toString()), CoverSize.FULL)
         androidx.compose.runtime.SideEffect { motion.poster = poster.takeIf { it.url != null } }
     }
-    if (motion != null) MotionDirector(vm, motion, loop, sheet, onArtwork = panel == Panel.ART && showing == Panel.ART && !flying)
+    // The next song's sleeve is asked for and warmed while the player is in view and the app in front,
+    // so its poster and loop are there when it comes; never further ahead, and nothing while hidden.
+    val ahead = state.queue.getOrNull(state.nextIndex)
+    val inView = LocalPlayerShown.current
+    androidx.lifecycle.compose.LifecycleResumeEffect(inView, ahead?.id) {
+        val job = if (inView && ahead != null) vm.warmArtwork(ahead, CoverSize.FULL) else null
+        onPauseOrDispose { job?.cancel() }
+    }
+    if (motion != null) MotionDirector(vm, motion, loop, state.current?.id, sheet, onArtwork = panel == Panel.ART && showing == Panel.ART && !flying)
     // The player wears the cover's colours except in Midnight (the core's rule).
     val tinted = LocalPapers.current.coversTint
     // A provider's song wears its cover too (it is on screen); only its neighbours' are never measured ahead.
@@ -1908,7 +1916,10 @@ private fun SleeveCarousel(
             // vanishing on the slide's first frame and leaving the still cover in its place.
             // Composed here, after the records, whatever happens to them, so its surface is never made
             // again in the middle of a move.
-            if (!blurred && motion != null && motion.present && landedUrl == null) Box(
+            // Only over its own song's record: once a slide has brought another record to the middle (the
+            // player asked for that song and not there yet, or there), the loop's still is not this record's.
+            val loopRecord = motion != null && (naturalHere || motion.shownSong == songs.current && (askedId == null || askedId == songs.current))
+            if (!blurred && motion != null && motion.present && landedUrl == null && loopRecord) Box(
                 Modifier.fillMaxSize().record(
                     { o, span -> if (naturalHere) o - naturalGo * span else o },
                     { o, f ->
@@ -2271,7 +2282,15 @@ private fun OutputRow(vm: PlayerViewModel) {
     }
 }
 
-/** The lines plugins say under the output row, asked when the player comes into view and when the song changes; they come in, never pop. */
+/** How far the status lines sit up into the output row's touch target, which is taller than its name. */
+private val STATUS_TUCK = 10.dp
+
+/**
+ * The lines plugins say under the output row, asked when the player comes into view and when the song
+ * changes. They hang below the row in the room under it and take none of the column's height: the
+ * portrait player has no height to spare, and taking some pushed them off the screen's foot. They fade
+ * in and out where they are, so nothing else moves.
+ */
 @Composable
 private fun PluginStatus(vm: PlayerViewModel, songId: String?) {
     val shown = LocalPlayerShown.current
@@ -2280,8 +2299,13 @@ private fun PluginStatus(vm: PlayerViewModel, songId: String?) {
     val ms = if (reduceMotion()) 0 else 220
     androidx.compose.animation.AnimatedVisibility(
         lines.isNotEmpty(),
-        enter = if (ms == 0) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(ms)) + androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(ms)),
-        exit = if (ms == 0) androidx.compose.animation.ExitTransition.None else androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(ms)) + androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(ms)),
+        Modifier.layout { measurable, constraints ->
+            val p = measurable.measure(constraints.copy(minHeight = 0, maxHeight = androidx.compose.ui.unit.Constraints.Infinity))
+            // Into the output row's own room below its name, clear of the gesture bar.
+            layout(p.width, 0) { p.place(0, -STATUS_TUCK.roundToPx()) }
+        },
+        enter = if (ms == 0) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(ms)),
+        exit = if (ms == 0) androidx.compose.animation.ExitTransition.None else androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(ms)),
     ) {
         val look = LocalLook.current
         Column(Modifier.fillMaxWidth().padding(horizontal = PLAYER_GUTTER), horizontalAlignment = Alignment.CenterHorizontally) {

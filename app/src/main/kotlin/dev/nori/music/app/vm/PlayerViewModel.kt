@@ -139,10 +139,34 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     val artwork: StateFlow<dev.nori.music.ffi.plugins.Artwork?> = state.map { it.current }.distinctUntilChanged { a, b -> a?.id == b?.id }
         .flatMapLatest { song ->
             kotlinx.coroutines.flow.flow<dev.nori.music.ffi.plugins.Artwork?> {
-                emit(null)
-                if (song != null) emit(runCatching { nori.plugins.artwork(song) }.getOrNull())
+                // The answer [warmArtwork] already had for it comes at once, without asking again.
+                val warmed = warm?.takeIf { it.song == song?.id }
+                if (warmed != null) emit(warmed.artwork)
+                else {
+                    emit(null)
+                    if (song != null) emit(runCatching { nori.plugins.artwork(song) }.getOrNull())
+                }
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** The next song's sleeve, asked ahead; only ever one. */
+    private class Warmed(val song: String, val artwork: dev.nori.music.ffi.plugins.Artwork?)
+    @Volatile private var warm: Warmed? = null
+
+    /**
+     * Asks the plugins for [song]'s sleeve before it plays (the next one, while the player is in view) and
+     * warms what they answer: a loop's poster into the cover cache and the start of the loop into the
+     * loop's cache, so both are there the moment the song comes. Covers, not the song: its source is never asked.
+     */
+    fun warmArtwork(song: dev.nori.music.ffi.model.Song, posterSize: Int): kotlinx.coroutines.Job = viewModelScope.launch {
+        if (warm?.song == song.id) return@launch
+        val art = runCatching { nori.plugins.artwork(song) }.getOrNull()
+        warm = Warmed(song.id, art)
+        val shown = art ?: return@launch
+        val picture = if (shown.looping) shown.poster?.replace("{size}", posterSize.toString()) else shown.url
+        picture?.let { dev.nori.music.data.CoverLoader.get(getApplication()).prefetch(it) }
+        if (shown.looping) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { motion.warm(shown.url) }
+    }
 
     /**
      * The player behind a looping sleeve. The object is only made when the screen first hands it a

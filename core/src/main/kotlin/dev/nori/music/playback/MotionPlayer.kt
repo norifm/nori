@@ -73,6 +73,64 @@ class MotionPlayer(
     }
     private val bytes = DataSource.Factory { cached.createDataSource() }
 
+    /**
+     * Reads the start of the loop at [url] into the loop cache, so it plays at once when its song comes:
+     * a single file's first [WARM_BYTES], or an HLS loop's playlists, init section and first segment of
+     * the rendition this player picks (the largest within [MAX_SIDE] this phone decodes). Nothing is
+     * decoded. Blocking: off the main thread.
+     */
+    fun warm(url: String) {
+        if (!url.substringBefore('?').endsWith(".m3u8")) {
+            read(url, WARM_BYTES)
+            return
+        }
+        val master = text(url) ?: return
+        val media = if ("#EXT-X-STREAM-INF" in master) rendition(url, master) ?: return else url
+        val playlist = if (media == url) master else text(media) ?: return
+        INIT.find(playlist)?.groupValues?.get(1)?.let { read(resolve(media, it), C.LENGTH_UNSET.toLong()) }
+        playlist.lineSequence().map(String::trim).firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+            ?.let { read(resolve(media, it), C.LENGTH_UNSET.toLong()) }
+    }
+
+    /** The variant of [master] this player would pick: the highest bandwidth within [MAX_SIDE] in a codec this phone decodes. */
+    private fun rendition(base: String, master: String): String? {
+        val lines = master.lines()
+        return lines.indices.filter { lines[it].startsWith("#EXT-X-STREAM-INF") }.mapNotNull { i ->
+            val tag = lines[i]
+            val uri = lines.drop(i + 1).firstOrNull { it.isNotBlank() && !it.startsWith("#") }?.trim() ?: return@mapNotNull null
+            val side = RESOLUTION.find(tag)?.destructured?.let { (w, h) -> maxOf(w.toInt(), h.toInt()) } ?: 0
+            val bandwidth = BANDWIDTH.find(tag)?.groupValues?.get(1)?.toLong() ?: 0
+            val codecs = CODECS.find(tag)?.groupValues?.get(1).orEmpty()
+            Triple(uri, side, bandwidth).takeIf { side <= MAX_SIDE && decodes(codecs) }
+        }.maxByOrNull { it.third }?.let { resolve(base, it.first) }
+    }
+
+    /** Whether this phone has a decoder for the video codec named in an HLS CODECS list. */
+    private fun decodes(codecs: String): Boolean {
+        val video = codecs.split(',').map(String::trim).firstOrNull { it.startsWith("avc") || it.startsWith("hvc") || it.startsWith("hev") || it.startsWith("dvh") } ?: return true
+        val mime = androidx.media3.common.MimeTypes.getMediaMimeType(video) ?: return false
+        return android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { !it.isEncoder && mime in it.supportedTypes.map(String::lowercase) }
+    }
+
+    private fun resolve(base: String, ref: String): String = java.net.URI(base).resolve(ref).toString()
+
+    private fun text(url: String): String? = runCatching { String(readAll(url)) }.getOrNull()
+
+    /** Reads [length] bytes of [url] through the loop cache, which keeps them. */
+    private fun read(url: String, length: Long) {
+        runCatching { readAll(url, length) }.onFailure { dev.nori.music.NoriLog.w("motion warm: ${it.message}") }
+    }
+
+    private fun readAll(url: String, length: Long = C.LENGTH_UNSET.toLong()): ByteArray {
+        val source = cached.createDataSource()
+        return try {
+            source.open(androidx.media3.datasource.DataSpec.Builder().setUri(url).setLength(length).build())
+            androidx.media3.datasource.DataSourceUtil.readToEnd(source)
+        } finally {
+            source.close()
+        }
+    }
+
     private val listener = object : Player.Listener {
         override fun onRenderedFirstFrame() {
             _ready.value = loaded
@@ -170,6 +228,12 @@ class MotionPlayer(
 
     companion object {
         private const val MAX_SIDE = 1080
+        /** How much of a single-file loop [warm] reads ahead. */
+        private const val WARM_BYTES = 1024L * 1024
+        private val INIT = Regex("#EXT-X-MAP:URI=\"([^\"]+)\"")
+        private val RESOLUTION = Regex("RESOLUTION=(\\d+)x(\\d+)")
+        private val BANDWIDTH = Regex("[^-]BANDWIDTH=(\\d+)")
+        private val CODECS = Regex("CODECS=\"([^\"]+)\"")
 
         /** How many of these players exist, for the test bridge: nought whenever no loop shows. */
         @Volatile var live = 0
