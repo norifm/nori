@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use crate::manifest::{Manifest, Refusal};
 use crate::runtime;
 
+/// The manifest kept beside an installed plugin.
+pub(crate) const MANIFEST: &str = "manifest.bin";
+
 /// The files a package may hold.
 fn kept(name: &str) -> bool {
     matches!(name, "plugin.wasm" | "icon.svg") || (name.starts_with("strings/") && name.ends_with(".toml") && !name[8..].contains('/'))
@@ -53,7 +56,13 @@ pub(crate) fn install(from: &Path, root: &Path) -> Result<Manifest, Refusal> {
     let files = files(from)?;
     let get = |n: &str| files.iter().find(|(name, _)| name == n).map(|(_, b)| b);
     let wasm = get("plugin.wasm").ok_or_else(|| Refusal::Unreadable("no plugin.wasm".into()))?;
-    let manifest = Manifest::of_wasm(wasm)?;
+    let section = Manifest::section(wasm)?;
+    let manifest = Manifest::of_section(&section)?;
+    match (manifest.extends("sound-stage"), manifest.stage) {
+        (true, None) => return Err(Refusal::Unreadable("a sound stage without its slot".into())),
+        (true, Some(crate::Slot::Song)) => return Err(Refusal::Needs(vec!["sound-stage song slot".into()])),
+        _ => {}
+    }
     // Written beside the old version first, and checked there.
     let staging: PathBuf = root.join(format!(".{}.new", manifest.id));
     let _ = fs::remove_dir_all(&staging);
@@ -62,6 +71,8 @@ pub(crate) fn install(from: &Path, root: &Path) -> Result<Manifest, Refusal> {
     for (name, bytes) in &files {
         fs::write(staging.join(name), bytes).map_err(unwritable)?;
     }
+    // Read at every start in place of the wasm.
+    fs::write(staging.join(MANIFEST), &section).map_err(unwritable)?;
     let component = runtime::component(&staging).inspect_err(|_| {
         let _ = fs::remove_dir_all(&staging);
     })?;

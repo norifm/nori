@@ -35,10 +35,14 @@ impl Worker {
         std::thread::Builder::new()
             .name(name)
             .spawn(move || {
+                // A fresh instance (the first, or one after a call failed), started when it has a lifecycle.
                 let make = || -> wasmtime::Result<Running> {
                     let mut store = runtime::store(manifest.clone(), &dir, side.clone(), transport.clone());
                     store.set_fuel(runtime::CALL_FUEL)?;
                     let plugin = Plugin::instantiate(&mut store, &component, &linker)?;
+                    if manifest.extends("lifecycle") {
+                        plugin.nori_plugin_lifecycle().call_start(&mut store)?;
+                    }
                     Ok(Running { store, plugin })
                 };
                 let mut running: Option<Running> = None;
@@ -58,18 +62,13 @@ impl Worker {
 
     /// Runs `f` on the plugin's thread without waiting for it.
     pub fn post(&self, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<()> + Send + 'static) {
-        let job: Job = Box::new(move |running| {
-            let Some(r) = running.as_mut() else { return };
-            if let Err(e) = f(&mut r.store, &r.plugin) {
-                nori_model::alog::info(&format!("plugin {}: a call failed: {e}", r.store.data().id));
-                *running = None;
-            }
-        });
-        let _ = self.jobs.send(job);
+        let _ = self.jobs.send(Box::new(move |running| {
+            attempt(running, f);
+        }));
     }
 
     /// Runs `f` on the plugin's thread; None when it isn't running or its call failed (a trap, its
-    /// budget spent), after which the next call starts a fresh instance.
+    /// budget spent).
     pub async fn call<R: Send + 'static>(&self, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<R> + Send + 'static) -> Option<R> {
         let (tx, rx) = futures_channel::oneshot::channel();
         let job: Job = Box::new(move |running| {
@@ -77,18 +76,24 @@ impl Worker {
             if tx.is_canceled() {
                 return;
             }
-            let Some(r) = running.as_mut() else { return };
-            match f(&mut r.store, &r.plugin) {
-                Ok(v) => {
-                    let _ = tx.send(v);
-                }
-                Err(e) => {
-                    nori_model::alog::info(&format!("plugin {}: a call failed: {e}", r.store.data().id));
-                    *running = None;
-                }
+            if let Some(v) = attempt(running, f) {
+                let _ = tx.send(v);
             }
         });
         self.jobs.send(job).ok()?;
         rx.await.ok()
+    }
+}
+
+/// `f` on the running instance; a failed call lets it go, and the next job starts a fresh one.
+fn attempt<R>(running: &mut Option<Running>, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<R>) -> Option<R> {
+    let r = running.as_mut()?;
+    match f(&mut r.store, &r.plugin) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            nori_model::alog::info(&format!("plugin {}: a call failed: {e}", r.store.data().id));
+            *running = None;
+            None
+        }
     }
 }

@@ -39,21 +39,21 @@ pub(crate) fn engine() -> &'static Engine {
     })
 }
 
-/// The plugin at `dir` (its `plugin.wasm`), compiled once and kept as `compiled.cwasm` under a key of
-/// the wasm's hash and this engine's.
+/// The plugin at `dir` (its `plugin.wasm`), compiled once and kept as `compiled.cwasm` for this
+/// engine. Installing replaces the folder, compiled code and all, so a load reads only the compiled
+/// code and the engine it was made by, never the wasm.
 pub(crate) fn component(dir: &Path) -> Result<Component, Refusal> {
-    let wasm = std::fs::read(dir.join("plugin.wasm")).map_err(|e| Refusal::Unreadable(e.to_string()))?;
     let mut hash = Sha256::new();
-    hash.update(&wasm);
     std::hash::Hash::hash(&engine().precompile_compatibility_hash(), &mut HashInto(&mut hash));
     let key: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
     let (compiled, key_file) = (dir.join("compiled.cwasm"), dir.join("compiled.key"));
     if std::fs::read_to_string(&key_file).is_ok_and(|k| k == key) {
-        // SAFETY: written by this host's `precompile_component` for the same engine (the key says so).
+        // SAFETY: written by this host's `precompile_component` for an engine like this one (the key says so).
         if let Ok(c) = unsafe { Component::deserialize_file(engine(), &compiled) } {
             return Ok(c);
         }
     }
+    let wasm = std::fs::read(dir.join("plugin.wasm")).map_err(|e| Refusal::Unreadable(e.to_string()))?;
     let bytes = engine().precompile_component(&wasm).map_err(|e| Refusal::Unreadable(e.to_string()))?;
     let _ = std::fs::write(&compiled, &bytes).and_then(|_| std::fs::write(&key_file, &key));
     // SAFETY: just made by this engine.

@@ -195,8 +195,17 @@ impl<'a> In<'a> {
 impl Manifest {
     /// The manifest in `wasm`'s `nori:plugin` section.
     pub fn of_wasm(wasm: &[u8]) -> Result<Manifest, Refusal> {
-        let section = custom_section(wasm, "nori:plugin").ok_or_else(|| Refusal::Unreadable("no nori:plugin section (built without the SDK's plugin!)".into()))?;
-        let m = Manifest::decode(&section).ok_or_else(|| Refusal::Unreadable("its manifest section can't be read".into()))?;
+        Manifest::of_section(&Manifest::section(wasm)?)
+    }
+
+    /// `wasm`'s `nori:plugin` section, as installing keeps it beside the plugin (`manifest.bin`).
+    pub(crate) fn section(wasm: &[u8]) -> Result<Vec<u8>, Refusal> {
+        custom_section(wasm, "nori:plugin").ok_or_else(|| Refusal::Unreadable("no nori:plugin section (built without the SDK's plugin!)".into()))
+    }
+
+    /// The manifest in a `nori:plugin` section's bytes.
+    pub(crate) fn of_section(section: &[u8]) -> Result<Manifest, Refusal> {
+        let m = Manifest::decode(section).ok_or_else(|| Refusal::Unreadable("its manifest section can't be read".into()))?;
         if m.api != API && m.api + 1 != API {
             return Err(Refusal::Api(m.api));
         }

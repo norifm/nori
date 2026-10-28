@@ -1,6 +1,7 @@
 //! The plugin host. Plugins are WebAssembly components (`wit/`, the `nori:plugin` package), installed
 //! under one folder, each in its own: its manifest, its wasm, its strings, its store and its compiled
-//! code. With none enabled nothing here runs: no engine is made, no file is read past the index.
+//! code. With none enabled nothing here runs: no engine is made, and no file is read but the index
+//! and each installed plugin's manifest.
 
 #[cfg(feature = "ffi")]
 uniffi::setup_scaffolding!();
@@ -111,8 +112,8 @@ impl Plugins {
             .plugin
             .iter()
             .filter_map(|e| {
-                let wasm = std::fs::read(dir.join(&e.id).join("plugin.wasm")).ok()?;
-                let manifest = Manifest::of_wasm(&wasm).ok().filter(|m| m.id == e.id)?;
+                let section = std::fs::read(dir.join(&e.id).join(package::MANIFEST)).ok()?;
+                let manifest = Manifest::of_section(&section).ok().filter(|m| m.id == e.id)?;
                 Some(Installed { manifest: Arc::new(manifest), enabled: e.enabled, repo: e.repo.clone(), held: e.held })
             })
             .collect();
@@ -177,10 +178,13 @@ impl Plugins {
         self.side.laid(id);
     }
 
+    /// Turns plugin `id` on or off. On, one with a lifecycle starts at once (what it sets, it sets
+    /// now); off, its instance goes.
     pub fn set_enabled(&self, id: &str, on: bool) {
         let mut list = self.installed.lock().expect("not poisoned");
         let Some(i) = list.iter_mut().find(|i| i.manifest.id == id) else { return };
         i.enabled = on;
+        let starts = on && i.manifest.extends("lifecycle");
         self.keep(&list);
         drop(list);
         if !on {
@@ -188,6 +192,9 @@ impl Plugins {
         }
         *self.stages.lock().expect("not poisoned") = None;
         self.side.laid(id);
+        if starts {
+            self.worker(id);
+        }
     }
 
     /// Moves plugin `id` to `index` in the order they apply in.
@@ -234,11 +241,14 @@ impl Plugins {
         s.keys(ROWS).into_iter().filter_map(|k| Some((k[ROWS.len()..].to_string(), Value::decode(&s.get(&k)?)?))).collect()
     }
 
-    /// Sets one of plugin `id`'s rows; a plugin with a lifecycle hears of it.
+    /// Sets one of plugin `id`'s rows: a sound stage takes it as an input, a lifecycle hears of it.
     pub fn set_row(&self, id: &str, row: &str, value: Value) {
         store::Store::new(self.folder(id).join("store")).set(&format!("{ROWS}{row}"), &value.encode());
-        self.side.laid(id);
-        if self.installed().iter().any(|i| i.enabled && i.manifest.id == id && i.manifest.extends("lifecycle")) {
+        let Some(i) = self.installed().into_iter().find(|i| i.enabled && i.manifest.id == id) else { return };
+        if i.manifest.extends("sound-stage") {
+            self.side.laid(id);
+        }
+        if i.manifest.extends("lifecycle") {
             if let Some(w) = self.worker(id) {
                 let (row, value) = (row.to_string(), value.into());
                 w.post(move |store, p| p.nori_plugin_lifecycle().call_changed(store, &row, &value));
@@ -246,7 +256,7 @@ impl Plugins {
         }
     }
 
-    /// Enabled plugin `id`'s own instance, started (and told so, with a lifecycle) at the first call.
+    /// Enabled plugin `id`'s own instance.
     pub fn worker(&self, id: &str) -> Option<Worker> {
         let mut workers = self.workers.lock().expect("not poisoned");
         if let Some(w) = workers.get(id) {
@@ -256,9 +266,8 @@ impl Plugins {
         let folder = self.folder(id);
         let component = runtime::component(&folder).map_err(|e| nori_model::alog::info(&format!("plugin {id}: {e:?}"))).ok()?;
         let w = Worker::start(i.manifest.clone(), folder, component, self.side.clone(), self.transport.clone()).ok()?;
-        if i.manifest.extends("lifecycle") {
-            w.post(|store, p| p.nori_plugin_lifecycle().call_start(store));
-        }
+        // Started at once, so its overrides are in effect without waiting for a first call.
+        w.post(|_, _| Ok(()));
         workers.insert(id.to_string(), w.clone());
         Some(w)
     }

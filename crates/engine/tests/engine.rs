@@ -3419,6 +3419,7 @@ fn seek_after_queue_edit() {
 }
 
 include!("perf_bench.rs");
+include!("perf_stage.rs");
 
 /// Songs never heard before, the equalizer on: the ending is held for a blind fade, and the songs'
 /// analyses come in while it is held (the playing song's from its own tap, the next measured as it is

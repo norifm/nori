@@ -167,17 +167,18 @@ impl SoundStage for Stage {
 
     fn restore(&mut self, from: &[u8]) {
         let Some((inputs, state)) = saved(from) else { return };
-        // The inputs as they were then; the same ones change nothing.
-        if inputs.len() == self.inputs.len() && inputs.iter().zip(&self.inputs).any(|(a, b)| a != b) {
-            self.inputs(&inputs);
+        // The inputs as they were then; the same ones (the usual case) are compared in place.
+        let same = inputs.len() == self.inputs.len() * 8 && inputs.as_chunks::<8>().0.iter().zip(&self.inputs).all(|(b, v)| f64::from_le_bytes(*b) == *v);
+        if !same {
+            let was: Vec<f64> = inputs.as_chunks::<8>().0.iter().map(|b| f64::from_le_bytes(*b)).collect();
+            self.inputs(&was);
         }
         self.guarded(|l| call::<_, ()>(&mut l.store, l.restore, (state,)));
     }
 }
 
-/// What [`Stage::save`] wrote: its inputs, and the plugin's state.
-fn saved(from: &[u8]) -> Option<(Vec<f64>, &[u8])> {
+/// What [`Stage::save`] wrote: its inputs' bytes, and the plugin's state.
+fn saved(from: &[u8]) -> Option<(&[u8], &[u8])> {
     let n = u32::from_le_bytes(from.get(..4)?.try_into().ok()?) as usize;
-    let values = from.get(4..4 + n * 8)?;
-    Some((values.as_chunks::<8>().0.iter().map(|b| f64::from_le_bytes(*b)).collect(), &from[4 + n * 8..]))
+    Some((from.get(4..4 + n * 8)?, &from[4 + n * 8..]))
 }

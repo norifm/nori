@@ -4912,6 +4912,7 @@ dependencies = [
  "nori-engine",
  "nori-look",
  "nori-player",
+ "nori-plugins",
  "nori-remote",
  "nori-testdir",
  "nori-time",
