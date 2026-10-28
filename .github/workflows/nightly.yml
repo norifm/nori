@@ -1,11 +1,14 @@
 name: Nightly
 # Each night master has moved, one rolling prerelease tagged `nightly` is replaced: the "nori nightly" APK
 # (beside the real app; it updates itself from here), the desktop and terminal packages and the iPod app.
-# Its title carries the version nori nightly's updater compares (crates/core/src/update.rs).
+# Its title carries the version nori nightly's updater compares (crates/core/src/update.rs). It stays the
+# first release listed: once another is published, it is made again over the same commit and files.
 on:
   schedule:
     - cron: '0 2 * * *'
   workflow_dispatch:
+  release:
+    types: [published]
 concurrency: nightly
 permissions:
   contents: read
@@ -18,16 +21,21 @@ jobs:
     outputs:
       version: ${{ steps.stamp.outputs.version }}
       changed: ${{ steps.stamp.outputs.changed }}
+      buried: ${{ steps.stamp.outputs.buried }}
     steps:
       - uses: actions/checkout@v7
       - id: stamp
-        name: Version, and whether master moved since the last nightly
+        name: Version, whether master moved since the last nightly, and whether another release is listed above it
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           base=$(sed -n 's/^ *versionName = "\([0-9.]*\).*"$/\1/p' app/build.gradle.kts | head -1)
           at=$(TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%d%H%M HEAD)
           echo "version=$base-nightly.$at" >> "$GITHUB_OUTPUT"
           last=$(git ls-remote origin refs/tags/nightly | cut -f1)
           echo "changed=$([ "$last" != "$GITHUB_SHA" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          first=$(gh release list --limit 1 --exclude-drafts --json tagName --jq '.[0].tagName')
+          echo "buried=$([ -n "$last" ] && [ "$first" != nightly ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
   hosts:
     needs: stamp
     if: needs.stamp.outputs.changed == 'true'
@@ -105,13 +113,25 @@ jobs:
           VERSION: ${{ needs.stamp.outputs.version }}
         run: |
           (cd packages && rm -f SHA256SUMS* && sha256sum -- * > SHA256SUMS)
-          {
-            echo "Built from $GITHUB_SHA. Untested: for trying what is on master. The APK is \"nori nightly\", installed beside nori, and updates itself to the next nightly."
-            if git rev-parse -q --verify refs/tags/nightly >/dev/null; then
-              echo
-              echo "Since the last nightly:"
-              git log --format='- %s' --no-merges -50 nightly..HEAD
-            fi
-          } > notes.md
           gh release delete nightly --cleanup-tag --yes || true
-          gh release create nightly packages/* --prerelease --target "$GITHUB_SHA" --title "nori $VERSION" --notes-file notes.md
+          gh release create nightly packages/* --prerelease --target "$GITHUB_SHA" --title "nori $VERSION" \
+            --notes "Master at ${GITHUB_SHA::7}, untested. The APK installs beside nori as \"nori nightly\"."
+  first:
+    timeout-minutes: 10
+    needs: stamp
+    if: needs.stamp.outputs.changed != 'true' && needs.stamp.outputs.buried == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Make the nightly again, over the same commit and files, above the release published since
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          sha=$(gh api "repos/$GH_REPO/git/ref/tags/nightly" --jq .object.sha)
+          title=$(gh release view nightly --json name --jq .name)
+          notes=$(gh release view nightly --json body --jq .body)
+          gh release download nightly --dir packages
+          gh release delete nightly --cleanup-tag --yes
+          gh release create nightly packages/* --prerelease --target "$sha" --title "$title" --notes "$notes"
