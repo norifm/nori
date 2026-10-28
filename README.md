@@ -14,9 +14,8 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/quick-picks.png" width="28%" alt="Quick picks">&nbsp;
-  <img src="docs/screenshots/album.png" width="28%" alt="An album">&nbsp;
-  <img src="docs/screenshots/lyrics-synced.png" width="28%" alt="Lyrics">
+  <img src="docs/screenshots/casiopea-album.png" width="40%" alt="Casiopea's album playing Space Road">&nbsp;
+  <img src="docs/screenshots/casiopea-player.png" width="40%" alt="The full player halfway through Space Road">
 </p>
 
 > nori is in active development: screens and settings change between versions. Bugs and ideas are
