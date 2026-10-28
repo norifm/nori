@@ -455,8 +455,6 @@ pub struct App {
     plugged: crate::settings::Plugged,
     /// The plugin its install sheet shows.
     preview: Option<nori_plugins::PluginPreview>,
-    /// What the jam whose plugin that sheet installs is joined with.
-    jam_pass: Option<nori_core::remote::JamPass>,
     /// The plugins' menu actions by `Card::kind` ([`MENU_KINDS`]).
     plugin_menus: [Vec<nori_plugins::MenuEntry>; 4],
     /// The song whose details are shown, for the plugins' lines that come after.
@@ -694,7 +692,6 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             facts: crate::settings::Facts::default(),
             plugged: Default::default(),
             preview: None,
-            jam_pass: None,
             plugin_menus: Default::default(),
             details_song: None,
             sleeve: None,
@@ -2769,7 +2766,7 @@ impl App {
                 nori_host::spawn("nori-plugin-get", move || tx.send(Msg::PluginPreview(nori_core::transport::block_on(host.preview_version(v, "en".into())))));
                 return;
             }
-            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::TrustRepo(_) | PluginAct::InstallPreview | PluginAct::JamInstall => return,
+            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::TrustRepo(_) | PluginAct::InstallPreview => return,
         }
         self.plugins_read();
     }
@@ -2790,15 +2787,6 @@ impl App {
                 let Some(p) = self.preview.take() else { return };
                 let tx = self.tx.clone();
                 nori_host::spawn("nori-plugin-install", move || tx.send(Msg::PluginInstalled(host.install_preview(p))));
-                return;
-            }
-            PluginAct::JamInstall => {
-                let (Some(p), Some(pass)) = (self.preview.take(), self.jam_pass.take()) else { return };
-                let tx = self.tx.clone();
-                nori_host::spawn("nori-jam-plugin", move || {
-                    let installed = nori_host::desktop::install_jam_plugin(&host, p);
-                    tx.send(Msg::Joined(installed.map(|_| pass).map_err(|_| words::JAM_NEEDS_PLUGIN.to_string())))
-                });
                 return;
             }
             PluginAct::AddRepo if !text.trim().is_empty() => {
@@ -2899,16 +2887,8 @@ impl App {
         ui.set_join_busy(true);
         ui.set_join_error("".into());
         let (http, tx, remote) = (self.http.clone(), self.tx.clone(), self.session.as_ref().and_then(|s| s.remote()));
-        let plugged = nori_host::desktop::plugins(&self.data);
-        let (kinds, host) = (plugged.kinds.clone(), plugged.host.clone());
         nori_host::spawn("nori-jam-join", move || {
-            let joined = nori_host::jam_join(http, &session::app().settings, kinds, link, &nori_host::device_name(), remote);
-            // A jam playing from a plugin this computer lacks offers nori's own version of it.
-            if let Err(nori_host::JoinError::NeedsPlugin { id, pass }) = &joined {
-                if let Some(p) = nori_host::desktop::jam_plugin(&host, id) {
-                    return tx.send(Msg::JamPlugin(Box::new((p, pass.clone()))));
-                }
-            }
+            let joined = nori_host::jam_join(http, &session::app().settings, link, &nori_host::device_name(), remote);
             tx.send(Msg::Joined(joined.map_err(|e| words::jam_join_failed(&e))))
         });
     }
@@ -2921,8 +2901,6 @@ impl App {
         ui.set_join_link("".into());
         let guest = nori_host::jam_joined(&session::app().settings, pass, words::JAM_GUEST);
         self.open(guest);
-        // The plugin it plays from may have been installed for it.
-        self.plugins_read();
     }
 
     /// Leaves the jam this guest is in, at once; the relay is told on the way.
@@ -3022,20 +3000,10 @@ impl App {
             }
             Msg::Jam(Err(e)) => self.say(&format!("{} ({e})", words::JAM_FAILED), true),
             Msg::Joined(Ok(pass)) => self.joined(pass),
-            // Said on the join sheet, or once it gave way to the plugin's.
-            Msg::Joined(Err(e)) if !self.ui().get_join_open() => self.say(&e, true),
             Msg::Joined(Err(e)) => {
                 let ui = self.ui();
                 ui.set_join_busy(false);
                 ui.set_join_error(e.into());
-            }
-            Msg::JamPlugin(p) => {
-                let (p, pass) = *p;
-                let ui = self.ui();
-                ui.set_join_busy(false);
-                ui.set_join_open(false);
-                self.confirm(&words::install_version(&p.card.name, &p.card.version), &words::jam_plugin_note(&p).join("\n\n"), words::INSTALL_AND_JOIN, crate::settings::PluginAct::JamInstall);
-                (self.preview, self.jam_pass) = (Some(p), Some(pass));
             }
             Msg::JamEnded(host) => self.left(&words::jam_ended(host.as_deref())),
             Msg::Starred => {

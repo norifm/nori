@@ -17,7 +17,7 @@
     try {
       const r = await remote.join(link, "");
       if (r === "joined") close();
-      else said = r === "own" ? W.jamOwn : r === "plugin" ? W.jamNeedsPlugin : W.jamEnded;
+      else said = r === "own" ? W.jamOwn : W.jamEnded;
     } catch (err) {
       said = W.failed(String((err as Error).message ?? err));
     }

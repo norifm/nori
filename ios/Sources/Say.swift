@@ -474,7 +474,6 @@ enum Say {
     static let notAnInvite = "That is not a jam invite. Paste the whole link the host sent you."
     static let ownJam = "That's your own jam"
     static let jamInviteEnded = "This jam has ended"
-    static let jamNeedsPlugin = "This jam plays from a plugin. Join it from nori on a phone or computer."
     static func jamJoinFailed(_ why: String) -> String { "Couldn't join the jam (\(why))" }
     static let leaveJam = "Leave"
     static let jamLeft = "You left the jam"
@@ -501,6 +500,7 @@ enum Say {
         switch code {
         case 2: return "The host doesn't let guests listen along right now. You can still ask for songs."
         case 3: return "This server doesn't let guests listen along. You can still ask for songs."
+        case 4: return "The host's songs don't play on this device: it's on another network. You can still ask for songs."
         default: return nil
         }
     }

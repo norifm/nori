@@ -71,9 +71,6 @@ pub enum Msg {
     Jam(Result<(), String>),
     /// Someone's jam joined (what the guest profile signs in with), or why not.
     Joined(Result<nori_core::remote::JamPass, String>),
-    /// The plugin someone's jam plays from, as nori's repo offers it, and what the guest profile signs
-    /// in with once it is installed and on.
-    JamPlugin(Box<(nori_plugins::PluginPreview, nori_core::remote::JamPass)>),
     /// The jam this guest is in ended (its host's name, if seen).
     JamEnded(Option<String>),
     /// Another device set the volume (0 to 1).

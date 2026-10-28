@@ -434,6 +434,46 @@ pub struct Mix {
     pub rate: Option<f32>,
 }
 
+/// What a LAN jam's guest reads through its host's provider (a door's `noriRemote.read`, as its body).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HostRead {
+    Search { query: String, songs: u32, albums: u32, artists: u32 },
+    Album { id: String },
+    Artist { id: String },
+    Playlist { id: String },
+    Song { id: String },
+}
+
+/// The host's answer to a [`HostRead`], as its provider gave it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HostPage {
+    Found { songs: Vec<Song>, albums: Vec<nori_model::Album>, artists: Vec<nori_model::Artist>, playlists: Vec<nori_model::Playlist> },
+    Album { album: Box<nori_model::Album>, songs: Vec<Song> },
+    Artist { artist: nori_model::Artist, albums: Vec<nori_model::Album>, top_songs: Vec<Song> },
+    Playlist { playlist: nori_model::Playlist, songs: Vec<Song> },
+    Song { song: Option<Box<Song>> },
+}
+
+/// Where a song of a LAN jam streams from, as its host's provider resolved it (a door's
+/// `noriRemote.source`): the guest fetches it itself.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostSource {
+    pub url: String,
+    /// How it is asked for in parts; None when one request may ask for the rest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parts: Option<SourceParts>,
+}
+
+/// A stream asked for in parts: its length in bytes, and the most one request asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceParts {
+    pub len: u64,
+    pub most: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

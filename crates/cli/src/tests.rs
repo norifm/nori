@@ -2283,43 +2283,6 @@ fn a_plugin_says_what_it_is_before_it_is_installed() {
     assert!(matches!(&a.note, Some((t, false, _)) if t == "Plugin installed"), "{:?}", a.note);
 }
 
-/// A jam playing from a plugin this device lacks offers nori's version of it; installing it turns it
-/// on and joins with the pass the host gave.
-#[test]
-fn a_jam_from_a_plugin_offers_to_install_it() {
-    let dir = nori_testdir::TempDir::new("cli-jam-plugin");
-    let plugins = nori_plugins::open(dir.join("plugins"), nori_core::settings_store::Settings::new(), std::sync::Arc::new(Heard::default()));
-    let mut preview = plugins.preview_file(nori_plugins::testing::fixture("").to_string_lossy().into_owned(), "en".into()).unwrap();
-    preview.repo = Some(nori_plugins::OFFICIAL.into());
-    let pass = nori_core::remote::JamPass { url: "https://octo.example".into(), api_key: "guest".into(), kind: nori_core::settings::ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() } };
-    let mut a = app();
-    a.handle(Msg::JamPlugin(Box::new((preview.clone(), pass.clone()))));
-    let s = draw(&mut a, 140, 40);
-    dump("jam-plugin", &s);
-    assert!(s.contains(&format!("Install Test {}?", preview.card.version)) && s.contains("enter install and join · esc cancel"), "{s}");
-    let Some(Overlay::Confirm { lines, .. }) = &a.overlay else { panic!("no sheet") };
-    assert_eq!(lines.first().map(String::as_str), Some(crate::text::JAM_PLUGIN));
-    assert!(lines.iter().any(|l| l == "From nori's own repo, which keeps it up to date.") && lines.last().map(String::as_str) == Some(crate::text::JAM_PLUGIN_ON), "{lines:?}");
-    key(&mut a, KeyCode::Enter);
-    let Some(Cmd::Plugin(crate::app::PluginCmd::JoinWith(with))) = a.cmds.pop() else { panic!("not offered") };
-    let (p, joins_with) = *with;
-    assert_eq!(joins_with, pass);
-    nori_host::desktop::install_jam_plugin(&plugins, p).unwrap();
-    assert!(plugins.installed().iter().all(|i| i.enabled) && plugins.installed().len() == 1, "installed and on");
-}
-
-/// A jam playing from a plugin nori's repo doesn't have says so where the link was pasted.
-#[test]
-fn a_jam_from_a_plugin_this_device_cannot_get_says_so() {
-    let mut a = app();
-    a.overlay = Some(Overlay::Join { text: "https://octo.example/nori/jam#k=1".into(), error: None, busy: true });
-    let pass = nori_core::remote::JamPass { url: "https://octo.example".into(), api_key: "guest".into(), kind: nori_core::settings::ServerKind::Plugin { id: "fm.nori.none".into() } };
-    a.handle(Msg::Joined(Err(crate::text::jam_join_failed(&nori_host::JoinError::NeedsPlugin { id: "fm.nori.none".into(), pass }))));
-    let s = draw(&mut a, 120, 30);
-    dump("jam-plugin-missing", &s);
-    assert!(s.contains("This jam plays from a plugin this device doesn't have") && !s.contains(crate::text::JOINING), "{s}");
-}
-
 /// A plugin's action comes after nori's own in a song's menu, and runs on that song.
 #[test]
 fn a_plugins_action_ends_a_songs_menu() {

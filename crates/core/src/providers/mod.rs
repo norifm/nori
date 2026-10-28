@@ -6,6 +6,7 @@
 pub(crate) mod subsonic;
 #[cfg(feature = "plugins")]
 mod plugin;
+pub(crate) mod hosted;
 #[cfg(test)]
 mod fake;
 #[cfg(test)]
@@ -285,11 +286,6 @@ impl Kinds {
         self.provider(kind).unwrap_or_else(|| Arc::new(subsonic::Subsonic))
     }
 
-    /// Whether a profile of `kind` opens here (a plugin's: installed and on).
-    pub(crate) fn has(&self, kind: &ServerKind) -> bool {
-        self.kinds().contains(kind)
-    }
-
     /// The kinds a profile can be of here, a Subsonic server's first.
     fn kinds(&self) -> Vec<ServerKind> {
         #[cfg(feature = "plugins")]
@@ -415,15 +411,34 @@ pub(crate) fn nowhere(what: &str) -> NetError {
     NetError::Api { code: 0, reason: format!("this profile has no {what}") }
 }
 
+/// A cover's URL at `size` px (`{size}` in it filled in).
+pub(crate) fn sized(cover: &str, size: u32) -> String {
+    crate::covers::own_address(cover, size).unwrap_or_else(|| cover.to_string())
+}
+
+/// Where song `id` of a provider whose songs resolve where they open streams from at quality `q`: an
+/// address of `scheme`, its bit rate and the song; the bytes are kept by song and bit rate.
+pub(crate) fn resolved_stream(scheme: &str, id: &str, q: &StreamQuality) -> StreamTarget {
+    StreamTarget { url: format!("{scheme}{}/{id}", q.bit_rate), key: format!("{id}:{}", q.bit_rate) }
+}
+
+/// The bit rate (0: as it is) and song of a [`resolved_stream`] address of `scheme`.
+pub(crate) fn resolved_song(scheme: &str, address: &str) -> Option<(u32, String)> {
+    let (kbps, id) = address.strip_prefix(scheme)?.split_once('/')?;
+    Some((kbps.parse().ok()?, id.to_string()))
+}
+
 /// The provider a core has, and the kind it was made for.
 pub(crate) struct Installed {
     pub(crate) kind: ServerKind,
     pub(crate) provider: Arc<dyn Provider>,
+    /// It is a LAN jam host's, answering for `kind` ([`hosted::HostedProvider`]).
+    hosted: bool,
 }
 
 impl Default for Installed {
     fn default() -> Self {
-        Installed { kind: ServerKind::Subsonic, provider: Arc::new(subsonic::Subsonic) }
+        Installed { kind: ServerKind::Subsonic, provider: Arc::new(subsonic::Subsonic), hosted: false }
     }
 }
 
@@ -441,13 +456,14 @@ impl Core {
 
     /// Makes `provider` the profile's, for `kind`.
     pub(crate) fn install(&self, kind: ServerKind, provider: Arc<dyn Provider>) {
-        *self.provider.write() = Installed { kind, provider };
+        *self.provider.write() = Installed { kind, provider, hosted: false };
     }
 
     /// Makes `kind`'s provider the profile's, unless it is already: its state (a session, streams
     /// resolved) lasts as long as the profile.
     pub(crate) fn install_kind(&self, kind: ServerKind) -> nori_model::Result<Arc<dyn Provider>> {
-        if self.kind() != kind {
+        let installed = { let i = self.provider.read(); i.kind == kind && !i.hosted };
+        if !installed {
             let p = self.kinds.read().provider(&kind).ok_or_else(|| crate::CoreError::Api { code: 0, reason: format!("no provider here for {}", kind.id()) })?;
             self.install(kind, p);
         }
@@ -457,11 +473,21 @@ impl Core {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
-    /// Points the core at saved `profile` through its kind's provider. Clears the library when the
-    /// profile now names another server, user or kind.
+    /// Points the core at saved `profile` through its kind's provider; a LAN jam's guest profile, of
+    /// whatever kind, through its host ([`hosted::HostedProvider`]). Clears the library when the profile
+    /// now names another server, user or kind.
     pub fn configure_profile(&self, profile: SavedServer) -> nori_model::Result<()> {
-        *self.lan_jam.write() = nori_remote::lan::guest_secret(&profile.api_key).map(|secret| (profile.url.clone(), secret.into()));
-        self.install_kind(profile.kind.clone())?.configure(self, &profile)
+        let lan_jam = nori_remote::lan::guest_secret(&profile.api_key).map(|secret| (profile.url.clone(), secret.to_string()));
+        let hosted = lan_jam.is_some();
+        *self.lan_jam.write() = lan_jam;
+        let provider = if hosted {
+            let provider: Arc<dyn Provider> = Arc::new(hosted::HostedProvider { kind: profile.kind.clone() });
+            *self.provider.write() = Installed { kind: profile.kind.clone(), provider: provider.clone(), hosted: true };
+            provider
+        } else {
+            self.install_kind(profile.kind.clone())?
+        };
+        provider.configure(self, &profile)
     }
 
     /// What the profile plays from.
@@ -530,6 +556,16 @@ impl Client {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_resolved_stream_address_keeps_bit_rate_and_song() {
+        for (kbps, id) in [(0, "abc"), (320, "a/b:c")] {
+            let q = StreamQuality { bit_rate: kbps, format: String::new() };
+            assert_eq!(resolved_song("x-song:", &resolved_stream("x-song:", id, &q).url), Some((kbps, id.to_string())));
+        }
+        assert_eq!(resolved_song("x-song:", "https://example.com/a"), None);
+        assert_eq!(resolved_song("x-song:", "y-song:0/a"), None);
+    }
+
     fn saved(id: &str, kind: ServerKind, url: &str, user: &str) -> SavedServer {
         SavedServer { id: id.into(), kind, url: url.into(), user: user.into(), ..Default::default() }
     }
@@ -595,5 +631,20 @@ mod tests {
         let core = Core::new(String::new(), "k".into(), Default::default()).unwrap();
         assert!(core.configure_profile(saved("p", missing, "https://x", "u")).is_err());
         assert!(core.configure_profile(saved("p", ServerKind::Subsonic, "https://x", "u")).is_ok());
+    }
+
+    /// A LAN jam's guest profile plays through its host, keeping the host's kind, even one not here; the
+    /// next profile of that kind has its own provider again.
+    #[test]
+    fn a_lan_guest_plays_through_its_host_whatever_its_kind() {
+        let core = Core::new(String::new(), "k".into(), Default::default()).unwrap();
+        for kind in [ServerKind::Plugin { id: "fm.nori.youtube-music".into() }, ServerKind::Subsonic] {
+            let guest = SavedServer { api_key: nori_remote::guest_key("lan-secret"), ..saved("g", kind.clone(), "http://10.0.0.2:4000", "") };
+            core.configure_profile(guest).unwrap();
+            assert_eq!(core.kind(), kind);
+            assert!(core.serverless() && core.lan_jam.read().is_some(), "{kind:?} through the host");
+        }
+        core.configure_profile(saved("p", ServerKind::Subsonic, "https://x", "u")).unwrap();
+        assert!(!core.serverless() && core.lan_jam.read().is_none(), "a server's own provider");
     }
 }

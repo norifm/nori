@@ -43,7 +43,7 @@ pub fn parse_pairing(link: &str) -> Option<String> {
 #[cfg(not(target_arch = "wasm32"))]
 mod door;
 #[cfg(not(target_arch = "wasm32"))]
-pub use door::{Door, Handler};
+pub use door::{Ask, Asker, Door, Handler, Told, Unanswered};
 
 /// The mDNS service type a door is announced as.
 pub const SERVICE: &str = "_nori._tcp";
