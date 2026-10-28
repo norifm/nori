@@ -146,7 +146,7 @@ impl Rig {
         };
         let card = Card::new();
         let clock = Virtual::default();
-        let engine = common::Running(Engine::start_on(library, app, CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 256, settings: settings(&prefs), ..Config::default() }, clock.clone(), |_| {}));
+        let engine = common::Running(Engine::start_on(library, app, CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 256, settings: settings(&prefs, Default::default()), ..Config::default() }, clock.clone(), |_| {}));
         engine.queue_changed();
         Rig { engine, time: Stepper::new(clock, card.pull.clone()), card, core, store, analyses, measurer, songs: made, _dir: dir }
     }
@@ -155,7 +155,7 @@ impl Rig {
     fn set(&self, name: &str, value: &str) {
         let effect = self.core.session.settings.edit_by_name(name, value).unwrap_or_else(|| panic!("{name} is a setting")).effect;
         if effect & APPLY_AUDIO != 0 {
-            self.engine.set_settings(settings(&self.core.session.settings.current().unwrap()));
+            self.engine.set_settings(settings(&self.core.session.settings.current().unwrap(), Default::default()));
         }
         if effect & REPLAN != 0 {
             self.engine.replan();

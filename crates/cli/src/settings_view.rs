@@ -7,16 +7,20 @@ use nori_core::settings::{season_follow_value, EqLevel, EqMode, SoundBand, Store
 use nori_core::settings_model::{self, BeatModel, EqStatus, KeyAction, LyricsSource, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsPart};
 use nori_core::numbers::{self, POINT};
+use nori_core::providers::Kinds;
 use nori_core::MusicFolder;
+use nori_host::desktop::{offer_state, OfferState};
+use nori_plugins::{Offers, PluginCard, PluginRow, Repo, RowKind, Value};
 
-use crate::app::{Cmd, Overlay, Sel, SoundToolCmd, Target, View};
+use crate::app::{Cmd, Overlay, PluginCmd, Sel, SoundToolCmd, Target, View};
 use crate::art::Day;
 
-/// A group of the page: the terminal's own, one of the core's pages, or About.
+/// A group of the page: the terminal's own, one of the core's pages, the plugins, or About.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gid {
     Own,
     Core(SettingsPage),
+    Plugins,
     About,
 }
 
@@ -40,6 +44,10 @@ pub enum Switch {
     Images,
     /// The terminal's own background instead of the season's page.
     Transparent,
+    /// A plugin's switch row.
+    Plugin { plugin: String, row: String },
+    /// Keeps a plugin at its version: no automatic updates.
+    Hold(String),
 }
 
 /// A settings group: a headed part of the page, and what it holds in a few words.
@@ -51,7 +59,7 @@ pub struct Group {
 }
 
 /// The groups in page order: the core's pages in its order, the terminal's own after the look.
-pub const GROUPS: [Group; 9] = [
+pub const GROUPS: [Group; 10] = [
     Group { id: Gid::Core(SettingsPage::Servers), title: "Servers", summary: "Accounts and music folder" },
     Group { id: Gid::Core(SettingsPage::Playing), title: "Playback", summary: "Crossfade, AutoMix, queue" },
     Group { id: Gid::Core(SettingsPage::Sound), title: "Sound", summary: "Equalizer, volume, output" },
@@ -60,11 +68,12 @@ pub const GROUPS: [Group; 9] = [
     Group { id: Gid::Core(SettingsPage::Lyrics), title: "Lyrics", summary: "Display and sources" },
     Group { id: Gid::Core(SettingsPage::Library), title: "Library", summary: "Lists, search, history" },
     Group { id: Gid::Core(SettingsPage::Data), title: "Downloads and storage", summary: "Quality, downloads, space" },
+    Group { id: Gid::Plugins, title: "Plugins", summary: "Installed plugins and their settings" },
     Group { id: Gid::About, title: "About", summary: "Version, licenses" },
 ];
 
 /// What a link or button does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Act {
     Equalizer,
     Downloads,
@@ -73,6 +82,16 @@ pub enum Act {
     /// The invite link of someone's jam, to join it.
     JoinJam,
     Chore(Chore),
+    /// Asks for a plugin's file or folder to install.
+    InstallPlugin,
+    /// A plugin's action row.
+    PluginAction { plugin: String, row: String },
+    /// Asks the repos what they offer.
+    LookForPlugins,
+    /// Installs version `version` (newest first) of the offer at place `offer` in those last read.
+    GetPlugin { offer: u32, version: u32 },
+    /// Asks for a repo's address to add.
+    AddRepo,
 }
 
 pub use nori_host::session::Chore;
@@ -93,8 +112,14 @@ pub enum Row {
     /// Text with a button at the end.
     Action { title: String, detail: String, button: String, enabled: bool, action: Act },
     Info { title: String, detail: String },
-    /// With `level`, changed through `edit_level` instead of by `name`.
-    Slider { name: String, label: String, value: f32, min: f32, max: f32, centred: bool, level: Option<EqLevel> },
+    /// ← → move it by `step`.
+    Slider { target: Target, label: String, value: f32, min: f32, max: f32, step: f32, centred: bool },
+    /// A line of text: enter asks for a new one. A secret's is never shown.
+    Text { title: String, shown: String, secret: bool, target: Target },
+    /// An installed plugin, `index` of `count` in their order: enter switches it, K J move it, d removes it.
+    Plugin { id: String, title: String, detail: String, on: bool, index: u32, count: u32 },
+    /// A plugin repo; d removes one the user added.
+    Repo { url: String, title: String, detail: String, removable: bool },
     Server { id: String, label: String, detail: String, active: bool },
     Button { title: String, action: Act },
     /// A lyrics service in the ranked list: enter switches it, ← → move it, `key` adds or changes its key.
@@ -116,10 +141,10 @@ pub struct Page {
 }
 
 /// The profile whose rows are kept under `profile` (`server_db`), as the server list names it.
-fn profile_name(p: &StoredPrefs, profile: &str) -> String {
+fn profile_name(p: &StoredPrefs, kinds: &Kinds, profile: &str) -> String {
     p.servers.iter().find(|sv| nori_core::settings::server_db_id(&sv.id) == profile).map_or_else(
         || "a removed profile".into(),
-        |sv| Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| text::provider(sv.kind).name.into()),
+        |sv| Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| text::provider_of(kinds, &sv.kind).name),
     )
 }
 
@@ -174,8 +199,12 @@ pub struct SettingsView {
     pub facts_asked: bool,
     /// State shown by the terminal's own rows.
     pub own: Own,
+    /// Only the plugins' group, opened from the login before any profile.
+    pub alone: bool,
 }
 
+/// What the page shows beyond the settings: the terminal's own state, the kinds of profile and the
+/// plugins.
 #[derive(Default, Clone)]
 pub struct Own {
     pub mouse: bool,
@@ -188,6 +217,22 @@ pub struct Own {
     pub device: String,
     /// The interface is dark: the seasons show their dark colors.
     pub dark: bool,
+    /// What names a plugin's kind of profile.
+    pub kinds: std::sync::Arc<Kinds>,
+    /// The installed plugins, as last read.
+    pub plugins: Vec<PluginCard>,
+    /// The plugin repos: nori's own first.
+    pub repos: Vec<Repo>,
+    pub shelf: Shelf,
+}
+
+/// What the plugin repos offer, as far as they were asked.
+#[derive(Default, Clone)]
+pub enum Shelf {
+    #[default]
+    Unasked,
+    Asking,
+    Read(Offers),
 }
 
 impl SettingsView {
@@ -205,7 +250,8 @@ impl SettingsView {
         if self.pages.is_none() {
             let state = settings_model::state(prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
             let today = Day::now();
-            self.pages = Some(GROUPS.iter().map(|g| page(g.id, prefs, &state, &self.facts, &self.own, today)).collect());
+            let alone = self.alone;
+            self.pages = Some(GROUPS.iter().filter(|g| !alone || g.id == Gid::Plugins).map(|g| page(g.id, prefs, &state, &self.facts, &self.own, today)).collect());
         }
         self.pages.as_deref().expect("made above")
     }
@@ -258,42 +304,17 @@ impl SettingsView {
 
     /// Whether a single click activates the row rather than only selecting it.
     pub fn clicks_open(&self) -> bool {
-        matches!(self.selected(), Some(Row::Toggle { .. } | Row::Button { .. } | Row::Link { .. } | Row::Action { .. } | Row::Server { .. } | Row::Ranked { .. } | Row::Season { .. }))
+        matches!(self.selected(), Some(Row::Toggle { .. } | Row::Button { .. } | Row::Link { .. } | Row::Action { .. } | Row::Server { .. } | Row::Ranked { .. } | Row::Season { .. } | Row::Text { .. } | Row::Plugin { .. }))
     }
 
     /// Enter on the selection.
-    pub fn open(&mut self) -> Option<Opened> {
-        let row = self.selected()?.clone();
-        Some(match row {
-            Row::Toggle { switch: Switch::Setting(name), on, enabled, .. } => {
-                if !enabled {
-                    return None;
-                }
-                Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())])
-            }
-            Row::Toggle { switch: Switch::Stores(name, value), .. } => Opened::Cmds(vec![Cmd::Setting(name, value)]),
-            Row::Toggle { switch, .. } => Opened::Own(switch),
-            Row::Choice { target, title, options, shown, enabled: true, .. } => {
-                let at = options.iter().position(|o| o.0 == shown).unwrap_or(0);
-                Opened::Overlay(Overlay::Picker { title, options, sel: Sel { at, ..Sel::default() }, target })
-            }
-            Row::Link { action, .. } | Row::Action { action, enabled: true, .. } | Row::Button { action, .. } => match action {
-                Act::Equalizer => Opened::View(View::Equalizer),
-                Act::Downloads => Opened::View(View::Downloads),
-                Act::AddServer => Opened::Login,
-                Act::JoinJam => Opened::Overlay(Overlay::Join { text: String::new(), error: None, busy: false }),
-                Act::Chore(c) => Opened::Cmds(vec![Cmd::Action(c)]),
-            },
-            // The profile in use: its account, where its provider signs in to one.
-            Row::Server { active: true, .. } => Opened::Cmds(vec![Cmd::OfferSignIn]),
-            Row::Server { id, .. } => Opened::Cmds(vec![Cmd::SwitchServer(id)]),
-            Row::Ranked { enabled: false, .. } => return None,
-            Row::Ranked { id, title, asks_key: true, on: false, .. } => key_input(&id, &title),
-            Row::Ranked { name, on, .. } => Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())]),
-            // Picking the season worn while following stops following it.
-            Row::Season { value, picked: false, enabled: true, .. } => Opened::Cmds(vec![Cmd::Setting("season".into(), value)]),
-            _ => return None,
-        })
+    pub fn open(&self) -> Option<Opened> {
+        open_row(self.selected()?.clone())
+    }
+
+    /// ← or → on the selection: previous or next option, off or on, a slider step.
+    pub fn step(&self, up: bool) -> Vec<Cmd> {
+        self.selected().cloned().map_or_else(Vec::new, |row| step_row(row, up))
     }
 
     /// The selected lyrics service's key, to add or change.
@@ -307,45 +328,23 @@ impl SettingsView {
         }
     }
 
-    /// ← or → on the selection: previous or next option, off or on, a slider step.
-    pub fn step(&mut self, up: bool) -> Vec<Cmd> {
-        let Some(row) = self.selected().cloned() else { return Vec::new() };
-        match row {
-            Row::Choice { target, options, shown, enabled: true, .. } => {
-                let at = options.iter().position(|o| o.0 == shown);
-                let to = match at {
-                    Some(i) if up => (i + 1).min(options.len() - 1),
-                    Some(i) => i.saturating_sub(1),
-                    None => 0,
-                };
-                if Some(to) == at || options.is_empty() {
-                    return Vec::new();
-                }
-                target.cmd(options[to].1.clone()).into_iter().collect()
+    /// K or J on a plugin's row: moves it up or down the order.
+    pub fn plugin_move(&self, up: bool) -> Option<Cmd> {
+        let Some(Row::Plugin { id, index, count, .. }) = self.selected() else { return None };
+        let to = if up { index.checked_sub(1)? } else { Some(index + 1).filter(|to| to < count)? };
+        Some(Cmd::Plugin(PluginCmd::Place(id.clone(), to)))
+    }
+
+    /// d on a plugin's row, or a repo the user added: asks before removing it.
+    pub fn plugin_key(&self, _: crate::keys::Action) -> Option<Overlay> {
+        let confirm = |title: String, lines: Vec<String>, cmd| Overlay::Confirm { title, lines, yes: text::REMOVE.into(), cmd: Box::new(Cmd::Plugin(cmd)) };
+        match self.selected()? {
+            Row::Plugin { id, .. } => {
+                let name = self.own.plugins.iter().find(|c| c.id == *id).map_or(id.as_str(), |c| c.name.as_str());
+                Some(confirm(text::remove_plugin(name), vec![text::REMOVE_PLUGIN_NOTE.into()], PluginCmd::Uninstall(id.clone())))
             }
-            Row::Toggle { switch, on, enabled, .. } => {
-                if on == up {
-                    return Vec::new();
-                }
-                match switch {
-                    Switch::Setting(name) if enabled => vec![Cmd::Setting(name, up.to_string())],
-                    Switch::Stores(name, value) if enabled => vec![Cmd::Setting(name, value)],
-                    Switch::Setting(_) | Switch::Stores(..) => Vec::new(),
-                    Switch::Mouse => vec![Cmd::Mouse(up)],
-                    Switch::Images => vec![Cmd::Images(up)],
-                    Switch::Transparent => vec![Cmd::Paint(!up)],
-                }
-            }
-            Row::Slider { name, value, min, max, level, .. } => {
-                let step = slider_step(min, max);
-                let v = (value + if up { step } else { -step }).clamp(min, max);
-                match level {
-                    Some(l) => vec![Cmd::Level(l, v)],
-                    None => vec![Cmd::Setting(name, v.to_string())],
-                }
-            }
-            Row::Ranked { id, enabled: true, .. } => vec![Cmd::Setting("lyricsMove".into(), format!("{id}:{}", if up { 1 } else { -1 }))],
-            _ => Vec::new(),
+            Row::Repo { url, title, removable: true, .. } => Some(confirm(text::remove_plugin(title), vec![url.clone()], PluginCmd::RemoveRepo(url.clone()))),
+            _ => None,
         }
     }
 
@@ -404,6 +403,8 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own, t
     let sections = match id {
         Gid::Own if !f.rules.settings.contains(&SettingsPart::Look) => Vec::new(),
         Gid::Own => own_page(own, f),
+        Gid::Plugins if !f.rules.settings.contains(&SettingsPart::Look) => Vec::new(),
+        Gid::Plugins => plugins_page(&own.plugins, &own.repos, &own.shelf),
         Gid::About if !f.rules.settings.contains(&SettingsPart::About) => Vec::new(),
         Gid::About => about(own),
         Gid::Core(page) => {
@@ -417,7 +418,7 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own, t
                         sections.push(section(SEASON, seasons));
                         continue;
                     }
-                    rows.extend(flag_rows(&r, p, s).unwrap_or_else(|| row_of(r, p, s, f).into_iter().collect()));
+                    rows.extend(flag_rows(&r, p, s).unwrap_or_else(|| row_of(r, p, s, f, &own.kinds).into_iter().collect()));
                 }
                 sections.push(section(section_title(sec.id), rows));
             }
@@ -445,6 +446,220 @@ fn own_page(o: &Own, f: &Facts) -> Vec<Section> {
         Row::Note { text: "The device is opened at start; --device overrides it for one run.".into() },
     ];
     vec![section("", rows)]
+}
+
+/// The plugins, each a section of its own row and its page's rows; installing one from a file or a
+/// repo; the repos.
+fn plugins_page(cards: &[PluginCard], repos: &[Repo], shelf: &Shelf) -> Vec<Section> {
+    let mut sections = Vec::new();
+    for (i, c) in cards.iter().enumerate() {
+        let mut detail: Vec<String> = c.about.iter().cloned().collect();
+        detail.extend([text::plugin_is(&c.points, !c.overrides.is_empty()), text::plugin_reach(&c.net, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
+        let own = Row::Plugin { id: c.id.clone(), title: format!("{} {}", text::PLUGIN_VERSION, c.version), detail: detail.join(" · "), on: c.enabled, index: i as u32, count: cards.len() as u32 };
+        let (mut title, mut rows) = (c.name.clone(), vec![own]);
+        if c.repo.is_some() {
+            rows.push(Row::Toggle { switch: Switch::Hold(c.id.clone()), title: text::KEEP_VERSION.into(), detail: String::new(), on: c.held, enabled: true });
+        }
+        for r in &c.rows {
+            match r.kind {
+                RowKind::Section => sections.push(Section { title: std::mem::replace(&mut title, r.label.clone()), rows: std::mem::take(&mut rows) }),
+                _ => rows.extend(plugin_rows(&c.id, r)),
+            }
+        }
+        sections.push(Section { title, rows });
+        if let Shelf::Read(offers) = shelf {
+            sections.extend(versions(c, offers));
+        }
+    }
+    let mut install = Vec::new();
+    if cards.is_empty() {
+        install.push(Row::Note { text: text::NO_PLUGINS.into() });
+    }
+    install.push(Row::Button { title: text::INSTALL_PLUGIN.into(), action: Act::InstallPlugin });
+    sections.push(section("", install));
+    let mut get = Vec::new();
+    match shelf {
+        Shelf::Unasked => get.push(Row::Button { title: text::LOOK_FOR_PLUGINS.into(), action: Act::LookForPlugins }),
+        Shelf::Asking => get.push(Row::Note { text: text::LOOKING.into() }),
+        Shelf::Read(Offers { offers, failed }) => {
+            for (at, o) in offers.iter().enumerate() {
+                // What is installed at its newest is not offered again.
+                let Some((newest, state)) = offer_state(o).filter(|(_, s)| *s != OfferState::Installed) else { continue };
+                let mut detail: Vec<String> = o.about.iter().cloned().collect();
+                detail.push(format!("{} {}", text::PLUGIN_VERSION, newest.version));
+                detail.push(text::repo_name(&o.repo));
+                let button = if state == OfferState::Update { text::UPDATE } else { text::INSTALL };
+                get.push(Row::Action { title: o.name.clone(), detail: detail.join(" · "), button: button.into(), enabled: true, action: Act::GetPlugin { offer: at as u32, version: 0 } });
+            }
+            if get.is_empty() && failed.is_empty() {
+                get.push(Row::Note { text: text::NOTHING_OFFERED.into() });
+            }
+            get.extend(failed.iter().map(|f| Row::Note { text: text::repo_failed(&f.repo) }));
+            get.push(Row::Button { title: text::LOOK_AGAIN.into(), action: Act::LookForPlugins });
+        }
+    }
+    sections.push(section(text::GET_PLUGINS, get));
+    let mut rows: Vec<Row> = repos.iter().map(|r| Row::Repo { url: r.url.clone(), title: text::repo_name(r), detail: if r.official { String::new() } else { r.url.clone() }, removable: !r.official }).collect();
+    rows.push(Row::Button { title: text::ADD_REPO.into(), action: Act::AddRepo });
+    sections.push(section(text::REPOS, rows));
+    sections
+}
+
+/// The warning before adding the repo at `url`, which isn't nori's.
+pub fn trust_repo(url: &str) -> Overlay {
+    Overlay::Confirm { title: text::ADD_REPO.into(), lines: vec![text::TRUST_REPO.into(), url.into()], yes: text::ADD.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::AddRepo(url.into()))) }
+}
+
+/// What plugin `c`'s repo offers of it: where its code is, and its versions to install one of.
+fn versions(c: &PluginCard, offers: &Offers) -> Vec<Section> {
+    let mine = |o: &&nori_plugins::Offer| o.id == c.id && c.repo.as_ref().is_none_or(|r| *r == o.repo.url);
+    let Some((at, o)) = offers.offers.iter().enumerate().find(|(_, o)| mine(o)) else { return Vec::new() };
+    let mut rows: Vec<Row> = o.source.iter().map(|url| info(text::SOURCE, url.clone())).collect();
+    rows.extend(o.versions.iter().enumerate().map(|(i, v)| {
+        let here = v.version == c.version;
+        Row::Action {
+            title: v.version.clone(),
+            detail: v.released.clone().unwrap_or_default(),
+            button: (if here { text::INSTALLED } else { text::INSTALL }).into(),
+            enabled: !here,
+            action: Act::GetPlugin { offer: at as u32, version: i as u32 },
+        }
+    }));
+    vec![section(text::VERSIONS, rows)]
+}
+
+/// Enter on `row`.
+pub fn open_row(row: Row) -> Option<Opened> {
+    Some(match row {
+        Row::Toggle { switch: Switch::Setting(name), on, enabled, .. } => {
+            if !enabled {
+                return None;
+            }
+            Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())])
+        }
+        Row::Toggle { switch: Switch::Stores(name, value), .. } => Opened::Cmds(vec![Cmd::Setting(name, value)]),
+        Row::Toggle { switch: Switch::Plugin { plugin, row }, on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(!on)))]),
+        Row::Toggle { switch: Switch::Hold(plugin), on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Hold(plugin, !on))]),
+        Row::Toggle { switch, .. } => Opened::Own(switch),
+        Row::Choice { target, title, options, shown, enabled: true, .. } => {
+            let at = options.iter().position(|o| o.0 == shown).unwrap_or(0);
+            Opened::Overlay(Overlay::Picker { title, options, sel: Sel { at, ..Sel::default() }, target })
+        }
+        Row::Link { action, .. } | Row::Action { action, enabled: true, .. } | Row::Button { action, .. } => match action {
+            Act::Equalizer => Opened::View(View::Equalizer),
+            Act::Downloads => Opened::View(View::Downloads),
+            Act::AddServer => Opened::Login,
+            Act::JoinJam => Opened::Overlay(Overlay::Join { text: String::new(), error: None, busy: false }),
+            Act::Chore(c) => Opened::Cmds(vec![Cmd::Action(c)]),
+            Act::InstallPlugin => Opened::Overlay(Overlay::Input { title: text::PLUGIN_PATH.into(), text: String::new(), secret: false, target: Target::Install }),
+            Act::PluginAction { plugin, row } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Act(plugin, row))]),
+            Act::LookForPlugins => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Look)]),
+            Act::GetPlugin { offer, version } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Get(offer, version))]),
+            Act::AddRepo => Opened::Overlay(Overlay::Input { title: text::REPO_ADDRESS.into(), text: String::new(), secret: false, target: Target::AddRepo }),
+        },
+        Row::Text { title, secret, target, .. } => Opened::Overlay(Overlay::Input { title, text: String::new(), secret, target }),
+        Row::Plugin { id, on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Turn(id, !on))]),
+        // The profile in use: its account, where its provider signs in to one.
+        Row::Server { active: true, .. } => Opened::Cmds(vec![Cmd::OfferSignIn]),
+        Row::Server { id, .. } => Opened::Cmds(vec![Cmd::SwitchServer(id)]),
+        Row::Ranked { enabled: false, .. } => return None,
+        Row::Ranked { id, title, asks_key: true, on: false, .. } => key_input(&id, &title),
+        Row::Ranked { name, on, .. } => Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())]),
+        // Picking the season worn while following stops following it.
+        Row::Season { value, picked: false, enabled: true, .. } => Opened::Cmds(vec![Cmd::Setting("season".into(), value)]),
+        _ => return None,
+    })
+}
+
+/// ← or → on `row`: previous or next option, off or on, a slider step.
+pub fn step_row(row: Row, up: bool) -> Vec<Cmd> {
+    match row {
+        Row::Choice { target, options, shown, enabled: true, .. } => {
+            let at = options.iter().position(|o| o.0 == shown);
+            let to = match at {
+                Some(i) if up => (i + 1).min(options.len() - 1),
+                Some(i) => i.saturating_sub(1),
+                None => 0,
+            };
+            if Some(to) == at || options.is_empty() {
+                return Vec::new();
+            }
+            target.cmd(options[to].1.clone()).into_iter().collect()
+        }
+        Row::Toggle { switch, on, enabled, .. } => {
+            if on == up {
+                return Vec::new();
+            }
+            match switch {
+                Switch::Setting(name) if enabled => vec![Cmd::Setting(name, up.to_string())],
+                Switch::Stores(name, value) if enabled => vec![Cmd::Setting(name, value)],
+                Switch::Setting(_) | Switch::Stores(..) => Vec::new(),
+                Switch::Plugin { plugin, row } => vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(up)))],
+                Switch::Hold(plugin) => vec![Cmd::Plugin(PluginCmd::Hold(plugin, up))],
+                Switch::Mouse => vec![Cmd::Mouse(up)],
+                Switch::Images => vec![Cmd::Images(up)],
+                Switch::Transparent => vec![Cmd::Paint(!up)],
+            }
+        }
+        Row::Slider { target, value, min, max, step, .. } => {
+            let v = (value + if up { step } else { -step }).clamp(min, max);
+            target.cmd(v.to_string()).into_iter().collect()
+        }
+        Row::Plugin { id, on, .. } if on != up => vec![Cmd::Plugin(PluginCmd::Turn(id, up))],
+        Row::Ranked { id, enabled: true, .. } => vec![Cmd::Setting("lyricsMove".into(), format!("{id}:{}", if up { 1 } else { -1 }))],
+        _ => Vec::new(),
+    }
+}
+
+/// One row of plugin `plugin`'s page, then its hint.
+fn plugin_rows(plugin: &str, r: &PluginRow) -> Vec<Row> {
+    let hint = r.hint.clone().map(|text| Row::Note { text });
+    std::iter::once(plugin_row(plugin, r)).chain(hint).collect()
+}
+
+/// One row of plugin `plugin`'s page, drawn as the settings' own rows are.
+pub fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
+    let target = Target::Plugin { plugin: plugin.into(), row: r.id.clone(), kind: r.kind };
+    let title = r.label.clone();
+    match r.kind {
+        RowKind::Switch => Row::Toggle { switch: Switch::Plugin { plugin: plugin.into(), row: r.id.clone() }, title, detail: String::new(), on: r.value == Some(Value::Switch(true)), enabled: true },
+        RowKind::Choice => {
+            let options: Vec<(String, String)> = r.options.iter().enumerate().map(|(i, o)| (o.clone(), i.to_string())).collect();
+            let at = match r.value {
+                Some(Value::Choice(i)) => i as usize,
+                _ => 0,
+            };
+            let shown = options.get(at).map(|o| o.0.clone()).unwrap_or_default();
+            Row::Choice { target, title, chips: options.len() <= 4, options, shown, enabled: true }
+        }
+        RowKind::Level => {
+            let (min, max) = (r.min.unwrap_or(0.0) as f32, r.max.unwrap_or(1.0) as f32);
+            let step = r.step.map_or_else(|| slider_step(min, max), |s| s as f32);
+            let value = match r.value {
+                Some(Value::Level(v)) => v,
+                _ => min as f64,
+            };
+            Row::Slider { target, label: format!("{title}: {}", text::level(value, r.decimals, r.unit.as_deref())), value: value as f32, min, max, step, centred: min < 0.0 && max > 0.0 }
+        }
+        RowKind::Text | RowKind::Secret => {
+            let typed = match &r.value {
+                Some(Value::Text(t)) if !t.is_empty() => Some(t.clone()),
+                _ => None,
+            };
+            let secret = r.kind == RowKind::Secret;
+            let shown = match typed {
+                Some(_) if secret => text::SECRET_SET.into(),
+                Some(t) => t,
+                None => text::NOT_SET.into(),
+            };
+            Row::Text { title, shown, secret, target }
+        }
+        RowKind::Action => Row::Button { title, action: Act::PluginAction { plugin: plugin.into(), row: r.id.clone() } },
+        RowKind::Status => Row::Info { title, detail: r.value.as_ref().map(|v| text::plugin_value(v, r)).unwrap_or_default() },
+        // A link shows where it goes: the terminal opens no pages.
+        RowKind::Link => Row::Info { title, detail: r.url.clone().unwrap_or_default() },
+        RowKind::Note | RowKind::Section => Row::Note { text: title },
+    }
 }
 
 fn section(title: &str, rows: Vec<Row>) -> Section {
@@ -543,7 +758,7 @@ fn setting_words(name: &str, p: &StoredPrefs, s: &SettingsState) -> (String, Str
 
 /// Asks for lyrics service `id`'s key (empty: none).
 fn key_input(id: &str, title: &str) -> Opened {
-    Opened::Overlay(Overlay::Input { title: format!("{title} key (empty: none)"), text: String::new(), secret: true, name: format!("lyricsKey:{id}") })
+    Opened::Overlay(Overlay::Input { title: format!("{title} key (empty: none)"), text: String::new(), secret: true, target: Target::Setting(format!("lyricsKey:{id}")) })
 }
 
 /// A setting value in words.
@@ -647,7 +862,7 @@ fn counted(n: u32, one: &str, many: &str) -> String {
 }
 
 /// The terminal's row for one of the core's, or None for one it does not draw.
-fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Option<Row> {
+fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: &Kinds) -> Option<Row> {
     let indent = if r.depth > 0 { "  " } else { "" };
     let enabled = r.enabled;
     Some(match r.item {
@@ -663,9 +878,9 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
                 }
                 SettingKind::Level => {
                     let v: f32 = value.parse().unwrap_or(spec.min);
-                    let level = (spec.name == "volumeBoostDb").then_some(EqLevel::VolumeBoost);
+                    let target = if spec.name == "volumeBoostDb" { Target::Level(EqLevel::VolumeBoost) } else { Target::Setting(spec.name) };
                     let label = format!("{title}: {}", if v > 0.0 { format!("{} dB", numbers::signed_db(v, POINT)) } else { "Off".into() });
-                    Row::Slider { name: spec.name, label, value: v, min: spec.min, max: spec.max, centred: false, level }
+                    Row::Slider { target, label, value: v, min: spec.min, max: spec.max, step: slider_step(spec.min, spec.max), centred: false }
                 }
                 // Drawn by `flag_rows`.
                 SettingKind::Flags => return None,
@@ -724,7 +939,7 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             let mut detail = parts.join(" · ");
             // The downloads by profile, when more than one has any.
             if st.download_profiles.len() > 1 {
-                let each: Vec<String> = st.download_profiles.iter().map(|(profile, b)| format!("{} {}", profile_name(p, profile), numbers::bytes(*b, POINT))).collect();
+                let each: Vec<String> = st.download_profiles.iter().map(|(profile, b)| format!("{} {}", profile_name(p, kinds, profile), numbers::bytes(*b, POINT))).collect();
                 detail.push_str(&format!(" (downloads: {})", each.join(", ")));
             }
             info(&format!("Stored on this device  {}", numbers::bytes(total, POINT)), detail)
@@ -736,7 +951,7 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
         RowItem::Server { index } => {
             let sv = p.servers.get(index as usize)?;
             let active = sv.id == p.active_server_id;
-            let words = text::provider(sv.kind);
+            let words = text::provider_of(kinds, &sv.kind);
             let who = if sv.user.is_empty() { words.no_user } else { sv.user.as_str() };
             let mut parts = vec![who, if active { "in use" } else { "not in use" }];
             if sv.wifi_only {
@@ -745,7 +960,7 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             if !sv.alt_url.trim().is_empty() {
                 parts.push("second address");
             }
-            let label = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.into());
+            let label = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or(words.name);
             Row::Server { id: sv.id.clone(), label, detail: parts.join(" · "), active }
         }
         RowItem::MusicFolder { index, on, tapped } => {
@@ -815,6 +1030,7 @@ pub fn row_value(row: &Row) -> String {
         Row::Link { status, .. } => format!("{status} ›"),
         Row::Action { button, .. } => format!("[ {button} ]"),
         Row::Button { title, .. } => format!("[ {title} ]"),
+        Row::Text { shown, .. } => format!("{shown} ›"),
         _ => String::new(),
     }
 }
@@ -823,7 +1039,8 @@ pub fn row_value(row: &Row) -> String {
 pub fn row_words(row: &Row) -> (String, String) {
     match row {
         Row::Toggle { title, detail, .. } | Row::Ranked { title, detail, .. } | Row::Info { title, detail, .. } => (title.clone(), detail.clone()),
-        Row::Choice { title, .. } | Row::Link { title, .. } => (title.clone(), String::new()),
+        Row::Choice { title, .. } | Row::Link { title, .. } | Row::Text { title, .. } => (title.clone(), String::new()),
+        Row::Plugin { title, detail, .. } | Row::Repo { title, detail, .. } => (title.clone(), detail.clone()),
         Row::Note { text } => (String::new(), text.clone()),
         Row::Action { title, detail, .. } => (title.clone(), detail.clone()),
         Row::Slider { label, .. } => (label.clone(), String::new()),
@@ -1220,9 +1437,14 @@ mod tests {
                         assert!(nori_core::settings::set_by_name(&prefs, name, value).is_some(), "{name} = {value}");
                     }
                 }
-                Row::Slider { name, level, .. } => {
+                Row::Slider { target, label, .. } => {
                     let c = v.step(true);
-                    assert!(matches!(&c[..], [Cmd::Level(l, _)] if Some(*l) == *level) || matches!(&c[..], [Cmd::Setting(n, _)] if n == name), "{name}");
+                    let sent = match (&c[..], target) {
+                        ([Cmd::Level(l, _)], Target::Level(to)) => l == to,
+                        ([Cmd::Setting(n, _)], Target::Setting(name)) => n == name,
+                        _ => false,
+                    };
+                    assert!(sent, "{label}");
                 }
                 _ => {}
             }
@@ -1293,13 +1515,13 @@ mod tests {
         // A service that needs a key asks for it when switched on.
         let keyed = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { asks_key: true, on: false, .. }))).unwrap();
         v.row.at = keyed;
-        let Some(Opened::Overlay(Overlay::Input { name, secret: true, .. })) = v.open() else { panic!("no key asked") };
+        let Some(Opened::Overlay(Overlay::Input { target: Target::Setting(name), secret: true, .. })) = v.open() else { panic!("no key asked") };
         assert!(name.starts_with("lyricsKey:"), "{name}");
         // One whose key is optional switches on without a prompt; its key is added on its own key.
         let optional = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { key: KeyAction::Add, on: false, .. }))).unwrap();
         v.row.at = optional;
         assert!(matches!(v.open(), Some(Opened::Cmds(c)) if matches!(&c[..], [Cmd::Setting(n, on)] if n.starts_with("lyricsService:") && on == "true")));
-        assert!(matches!(v.key(), Some(Overlay::Input { name, .. }) if name.starts_with("lyricsKey:")));
+        assert!(matches!(v.key(), Some(Overlay::Input { target: Target::Setting(name), .. }) if name.starts_with("lyricsKey:")));
         v.row.at = off;
         assert!(v.key().is_none(), "a service without a key has none to add");
         // Third-party lookups off: the sources stay listed, grayed, and take no keys.

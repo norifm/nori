@@ -1,0 +1,571 @@
+package nori:plugin@1.0.0;
+
+/// The plugin's page. Its rows are declared in its manifest, so nori draws them while it is not
+/// running; values are kept by nori in the plugin's store.
+interface rows {
+    use types.{value};
+
+    /// One of its rows' values as the user set it, else its default.
+    get: func(row: string) -> option<value>;
+    /// A status row's live line, from the plugin's strings ("ANC: on"); redrawn only while visible.
+    set-status: func(row: string, words: string, args: list<string>);
+    /// Hides or greys a row (on top of its manifest's own conditions).
+    set-shown: func(row: string, shown: bool, enabled: bool);
+}
+
+/// What every plugin exports. Only the calls its manifest's `extends` name are ever made. Every
+/// export a plugin may decline answers `none` for "nori's own answer".
+interface lifecycle {
+    use types.{value};
+
+    /// The plugin is enabled and its first call is due. Nothing is called before it.
+    start: func();
+    /// The user changed one of its rows.
+    changed: func(row: string, value: value);
+    /// An action row or command ran.
+    action: func(id: string);
+}
+
+/// Answers to nori's events; each is built only when an enabled plugin subscribed to it.
+interface hooks {
+    use types.{song, route, value, service};
+
+    variant event {
+        playback-started,
+        playback-paused,
+        song-changed(option<song>),
+        queue-changed,
+        favorite-changed(tuple<string, bool>),
+        profile-opened(string),
+        route-changed(route),
+        device-connected(string),
+        device-disconnected(string),
+        setting-changed(tuple<string, value>),
+        media-button(string),
+        /// A lyric line was reached (its index and text); a subscription needs a wake per line.
+        lyric-line(tuple<u32, string>),
+        /// A timer of `timers` fired.
+        timer(u32),
+        /// An asset of the manifest is in.
+        asset-ready(string),
+        /// A service was found while browsing.
+        discovered(service),
+        /// A characteristic the plugin asked to be notified of changed: device, characteristic, bytes.
+        notified(tuple<string, string, list<u8>>),
+        /// A wake event started nori while it was closed.
+        woke(string),
+    }
+
+    record served-request {
+        method: string,
+        /// After `/p/<plugin>`.
+        path: string,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    record served-response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    on: func(event: event);
+    /// A request under the LAN door's `/p/<plugin>/`.
+    served: func(request: served-request) -> option<served-response>;
+}
+
+/// A music source: a provider kind of its own, with its add form, reads, writes, streams and account.
+interface provider {
+    use types.{song, album, artist, playlist, album-page, artist-page, artist-about, playlist-page, found, shelf, header, error};
+
+    /// A field of the add form.
+    enum field {
+        name,
+        address,
+        user,
+        password,
+        second-address,
+        api-key,
+        headers,
+    }
+
+    record field-spec {
+        field: field,
+        /// Folded under the form's advanced part.
+        advanced: bool,
+    }
+
+    variant sign-in-way {
+        /// A visible page at the URL; its cookies for the plugin's `signin:` domains go to `sign-in`
+        /// once `sign-in-done` says so.
+        web-page(string),
+        /// Text the user pastes.
+        paste,
+    }
+
+    record provider-info {
+        fields: list<field-spec>,
+        sign-in: list<sign-in-way>,
+    }
+
+    /// What the add form filled in.
+    record profile {
+        id: string,
+        name: string,
+        address: string,
+        user: string,
+        password: string,
+        api-key: string,
+    }
+
+    enum library-section {
+        songs,
+        albums,
+        favorites,
+        artists,
+        playlists,
+        genres,
+        folders,
+        radio,
+        downloads,
+        history,
+    }
+
+    record profile-rules {
+        /// The account is signed in: its library, likes and mixes are offered.
+        account: bool,
+        downloads: bool,
+        radio: bool,
+        /// Has a Home feed of its own (`read(home-feed)`).
+        feed: bool,
+        stars: bool,
+        scrobbles: bool,
+        sections: list<library-section>,
+        /// Songs measured for AutoMix as they play.
+        measures: bool,
+        /// How many songs past the next one may be fetched ahead; none for the settings' count.
+        ahead: option<u32>,
+    }
+
+    enum album-sort {
+        newest,
+        recent,
+        frequent,
+        random,
+        alphabetical,
+        starred,
+    }
+
+    variant request {
+        search(tuple<string, u32, u32, u32>),
+        album(string),
+        artist(string),
+        artist-about(string),
+        playlist(string),
+        playlists,
+        /// Sort, count, offset.
+        albums(tuple<album-sort, u32, u32>),
+        starred,
+        similar-songs(tuple<string, u32>),
+        song(string),
+        home-feed,
+    }
+
+    variant page {
+        songs(list<song>),
+        one-song(option<song>),
+        albums(list<album>),
+        artists(list<artist>),
+        playlists(list<playlist>),
+        album(album-page),
+        artist(artist-page),
+        about(artist-about),
+        playlist(playlist-page),
+        found(found),
+        feed(list<shelf>),
+        /// Nothing for such a read: the empty page.
+        none,
+    }
+
+    enum star-kind {
+        song,
+        album,
+        artist,
+    }
+
+    variant change {
+        star(tuple<star-kind, string, bool>),
+        create-playlist(tuple<string, list<string>>),
+        add-to-playlist(tuple<string, list<string>>),
+        remove-from-playlist(tuple<string, u32>),
+        rename-playlist(tuple<string, string>),
+        delete-playlist(string),
+        /// Song, whether the play counts (false: now playing), when.
+        scrobble(tuple<string, bool, option<s64>>),
+    }
+
+    record stream-source {
+        /// Fetched as it is, with no headers of the plugin's.
+        url: string,
+        /// Its length in bytes, when known.
+        length: option<u64>,
+        /// The most bytes one request may ask for, for a source that throttles long ranges; none
+        /// for no limit.
+        part: option<u64>,
+    }
+
+    /// What a stream's URL is for.
+    variant stream-use {
+        playback,
+        /// Fetched from this byte to its end in one request, by the platform's download worker.
+        download(u64),
+    }
+
+    variant sign-in-result {
+        signed-in(string),
+        no-session,
+        refused,
+        unreachable(string),
+    }
+
+    enum account-state {
+        signed-out,
+        signed-in,
+        ended,
+    }
+
+    info: func() -> option<provider-info>;
+    ready: func(profile: profile) -> bool;
+    check: func(profile: profile) -> result<profile, error>;
+    rules: func(profile: profile, guest: bool) -> option<profile-rules>;
+    /// The profile opened; the reads and writes after it are its own.
+    open: func(profile: profile);
+    read: func(request: request) -> result<page, error>;
+    write: func(change: change) -> result<_, error>;
+    /// Where song `id` streams from at most `max-kbps` (none: as it is), for `use`; the engine
+    /// fetches, caches and decodes.
+    source: func(id: string, max-kbps: option<u32>, %use: stream-use) -> result<stream-source, error>;
+    /// The stream refused its last URL: the next `source` resolves it anew.
+    refused: func(id: string);
+    sign-in-done: func(address: string, cookies: string) -> bool;
+    sign-in: func(answer: string) -> option<sign-in-result>;
+    sign-out: func();
+    account: func() -> option<account-state>;
+    /// Whether the client reminds the user to sign in again at start (the session ended).
+    reminds: func() -> bool;
+    /// No reminder until the account is signed in, and its session ends, again.
+    stop-reminding: func();
+}
+
+/// A stage in nori's sound chain. Its instance is its own: every import traps there, so it can never
+/// block the audio. All its state lives where `save` reaches it, so nori can go back to any frame
+/// it still holds.
+interface sound-stage {
+    use types.{route};
+
+    enum slot {
+        /// Before transitions: one song at a time.
+        song,
+        /// After the equalizer and effects, before nori's safety ceiling.
+        master,
+    }
+
+    record format {
+        rate: u32,
+        channels: u8,
+    }
+
+    /// What the stage reads beyond samples; a change is spliced in like a sound change.
+    record inputs {
+        /// Its rows' values in manifest order, as numbers (switches 0 or 1, choices their index).
+        rows: list<f64>,
+        volume-db: f32,
+        route: route,
+        /// The song's gain and measured loudness, when known.
+        gain-db: option<f32>,
+        loudness-lufs: option<f32>,
+        /// Its prepared data for the song playing, from `preparation`, when in.
+        prepared: option<list<u8>>,
+    }
+
+    configure: func(format: format, inputs: inputs);
+    /// Samples channel after channel (`frames` per channel), changed in place and handed back.
+    process: func(samples: list<f32>) -> list<f32>;
+    /// Frames it delays the sound by, and the frames of tail it makes after its input ends.
+    latency: func() -> tuple<u32, u32>;
+    reset: func();
+    /// Everything that changes what it makes next, as bytes.
+    save: func() -> list<u8>;
+    restore: func(state: list<u8>);
+}
+
+/// Per-song data made from the decoded samples ahead of playback (a vocal mask), on a low-priority
+/// thread, for the plugin's sound stage.
+interface preparation {
+    use types.{song};
+
+    /// A song's samples will come; true when the plugin wants them.
+    begin: func(song: song, rate: u32, channels: u8) -> bool;
+    /// The next samples of the song, interleaved; a gap means the host dropped some.
+    feed: func(samples: list<f32>, at-frame: u64);
+    /// The song's samples are all in; its data, or none.
+    finish: func() -> option<list<u8>>;
+}
+
+/// AutoMix: its own analysis in nori's one pass, and plans for transitions.
+interface automix {
+    use types.{song};
+
+    record analysis {
+        bpm: f32,
+        bpm-confidence: f32,
+        /// Camelot key, 0 when unknown.
+        key: u8,
+        intro-end-ms: u32,
+        outro-start-ms: u32,
+        /// Beat times, ms.
+        beats: list<u32>,
+        loudness-lufs: f32,
+    }
+
+    enum transition-kind {
+        gapless,
+        crossfade,
+        beat-matched,
+        echo-out,
+        cut,
+    }
+
+    record transition {
+        kind: transition-kind,
+        /// Where in the outgoing song it starts, ms.
+        out-start-ms: u32,
+        duration-ms: u32,
+        /// Where in the incoming song it enters, ms.
+        in-start-ms: u32,
+        tempo-ratio: f32,
+        bass-swap: bool,
+        /// A low-pass sweep over the outgoing song.
+        filter: bool,
+    }
+
+    begin-analysis: func(song: song, rate: u32) -> bool;
+    feed-analysis: func(samples: list<f32>);
+    /// Its data for the song, kept under its analysis version.
+    finish-analysis: func() -> option<list<u8>>;
+    /// Refines nori's analysis of a song.
+    refine: func(song: song, analysis: analysis, data: option<list<u8>>) -> option<analysis>;
+    /// A plan out of `outgoing` into `incoming`, given nori's: none keeps nori's. Nori checks it.
+    plan: func(outgoing: song, incoming: song, out: option<analysis>, in: option<analysis>, nori: transition) -> option<transition>;
+}
+
+/// The places nori picks something: each gets the inputs and nori's answer and returns its own or
+/// none (nori's stands). A call past its budget keeps nori's.
+interface deciders {
+    use types.{song, route};
+
+    /// Songs to add when autofill runs, given nori's picks; ids.
+    autofill: func(queue-tail: list<song>, nori: list<string>, count: u32) -> option<list<string>>;
+    /// The play order when shuffling starts, as queue indexes.
+    shuffle: func(songs: list<song>, nori: list<u32>) -> option<list<u32>>;
+    /// What plays when the queue ends; ids.
+    queue-ended: func(last: option<song>) -> option<list<string>>;
+    /// Leveling gain for the song, dB.
+    leveling: func(song: song, nori-db: f32) -> option<f32>;
+    /// The sound profile for an output, by name.
+    sound-profile: func(route: route, output: string, nori: string) -> option<string>;
+
+    record shown {
+        title: string,
+        artist: string,
+        album: string,
+    }
+
+    /// What the notification, lock screen, media controls and Bluetooth show for the song.
+    now-playing: func(song: song, nori: shown) -> option<shown>;
+
+    enum press {
+        play-pause,
+        next,
+        previous,
+        double,
+        triple,
+        long,
+    }
+
+    enum button-act {
+        play-pause,
+        next,
+        previous,
+        nothing,
+        /// The plugin's own `action`.
+        plugin,
+    }
+
+    media-button: func(press: press, nori: button-act) -> option<button-act>;
+
+    enum focus {
+        lost,
+        lost-transient,
+        duck,
+        gained,
+    }
+
+    enum focus-act {
+        pause,
+        duck,
+        keep-playing,
+        resume,
+        nothing,
+    }
+
+    audio-focus: func(focus: focus, nori: focus-act) -> option<focus-act>;
+
+    /// A season of the plugin's own: page, surface, ink, accent, on as 0xRRGGBB. Nori checks contrast.
+    record palette {
+        page: u32,
+        surface: u32,
+        ink: u32,
+        accent: u32,
+        on: u32,
+    }
+
+    look: func(cover-dominant: option<u32>, night: bool, nori: palette) -> option<palette>;
+    /// Whether two songs mix at all (nori's same-album rule).
+    mixes: func(outgoing: song, incoming: song, nori: bool) -> option<bool>;
+}
+
+/// Places in nori's own screens, drawn by nori from the plugin's data.
+interface slots {
+    use types.{song, item, item-kind};
+
+    /// A muted looping video.
+    record motion {
+        /// Its URL (HLS or MP4).
+        video: string,
+        /// Its first frame: an image URL with `{size}` where the pixels go, shown before the video plays.
+        poster: option<string>,
+    }
+
+    variant sleeve {
+        /// An image URL.
+        still(string),
+        loop(motion),
+    }
+
+    /// The player's sleeve for the song playing; none keeps nori's cover.
+    artwork: func(song: song) -> option<sleeve>;
+    /// A loop it gave answered an HTTP error.
+    artwork-failed: func(song: song, status: u16);
+    /// A menu action ran on items.
+    menu: func(action: string, items: list<item>);
+    /// A shelf on Home, by its manifest id.
+    shelf: func(id: string) -> list<item>;
+    /// A page reached from Library, by its manifest id.
+    page: func(id: string) -> list<item>;
+
+    record info-line {
+        words: string,
+        link: option<string>,
+    }
+
+    /// Lines in a song's info.
+    song-info: func(song: song) -> list<info-line>;
+    /// A group of search results.
+    search: func(query: string) -> list<item>;
+    /// One line under the player's output row while its session is active.
+    player-status: func() -> option<string>;
+}
+
+/// Headphones and other devices over Bluetooth.
+interface device-control {
+    enum noise {
+        off,
+        canceling,
+        transparency,
+        adaptive,
+    }
+
+    record battery {
+        left: option<u8>,
+        right: option<u8>,
+        case: option<u8>,
+        single: option<u8>,
+    }
+
+    record device-state {
+        battery: battery,
+        noise: option<noise>,
+        /// The modes the device offers.
+        noise-modes: list<noise>,
+    }
+
+    /// A device connected that the manifest's filter matched: whether the plugin controls it.
+    handles: func(device: string) -> bool;
+    state: func(device: string) -> option<device-state>;
+    set-noise: func(device: string, noise: noise);
+    gone: func(device: string);
+}
+
+/// A lyrics service in nori's race.
+interface lyrics {
+    use types.{song};
+
+    record line {
+        start-ms: u32,
+        words: string,
+    }
+
+    record found {
+        synced: bool,
+        lines: list<line>,
+    }
+
+    lookup: func(song: song) -> option<found>;
+}
+
+/// Where scrobbles go, beside the Subsonic scrobble.
+interface scrobbler {
+    use types.{song};
+
+    now-playing: func(song: song);
+    scrobble: func(song: song, at-ms: s64);
+}
+
+/// What every plugin is: every host interface it may import and every extension point it may
+/// export. The SDK answers each export it doesn't implement with nori's own answer.
+world plugin {
+    import log;
+    import store;
+    import cache;
+    import assets;
+    import http;
+    import notices;
+    import settings;
+    import session;
+    import subsonic;
+    import timers;
+    import sign-in;
+    import wake;
+    import rows;
+    import sockets;
+    import discovery;
+    import lan-serve;
+    import audio-out;
+    import media;
+    import cast;
+    import bluetooth;
+
+    export lifecycle;
+    export hooks;
+    export provider;
+    export sound-stage;
+    export preparation;
+    export automix;
+    export deciders;
+    export slots;
+    export device-control;
+    export lyrics;
+    export scrobbler;
+}

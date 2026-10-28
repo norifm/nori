@@ -4,8 +4,8 @@
 //! Not octo-fiesta's provider items (`ext-` ids), which are a Subsonic server's.
 
 pub(crate) mod subsonic;
-#[cfg(feature = "youtube")]
-mod youtube;
+#[cfg(feature = "plugins")]
+mod plugin;
 #[cfg(test)]
 mod fake;
 #[cfg(test)]
@@ -248,53 +248,119 @@ pub enum SignInResult {
     Unreachable { reason: String },
 }
 
-/// A provider for each kind this build has.
-fn provider(kind: ServerKind) -> Option<Arc<dyn Provider>> {
-    match kind {
-        ServerKind::Subsonic => Some(Arc::new(subsonic::Subsonic)),
-        #[cfg(feature = "youtube")]
-        ServerKind::YouTubeMusic => Some(Arc::new(youtube::YouTube::default())),
-        #[allow(unreachable_patterns)]
-        _ => None,
+/// The kinds of profile this app opens: a Subsonic server's, and the providers of its enabled plugins.
+/// A client makes one ([`Kinds::builtin`] where it has no plugins) and asks it about profiles to add;
+/// each [`Core`] it opens uses it.
+#[derive(Default)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Object))]
+pub struct Kinds {
+    #[cfg(feature = "plugins")]
+    plugins: Option<Arc<nori_plugins::Plugins>>,
+}
+
+#[cfg(feature = "plugins")]
+#[cfg_attr(feature = "ffi", uniffi::export)]
+impl Kinds {
+    /// nori's own kinds and those of `plugins`' enabled providers.
+    #[cfg_attr(feature = "ffi", uniffi::constructor)]
+    pub fn with_plugins(plugins: Arc<nori_plugins::Plugins>) -> Arc<Kinds> {
+        Arc::new(Kinds { plugins: Some(plugins) })
     }
 }
 
-/// `kind`'s provider; a kind this build lacks reads as a Subsonic server.
-fn or_subsonic(kind: ServerKind) -> Arc<dyn Provider> {
-    provider(kind).unwrap_or_else(|| Arc::new(subsonic::Subsonic))
+impl Kinds {
+    /// A provider for `kind`; None for a plugin not installed and enabled here.
+    pub(crate) fn provider(&self, kind: &ServerKind) -> Option<Arc<dyn Provider>> {
+        match kind {
+            ServerKind::Subsonic => Some(Arc::new(subsonic::Subsonic)),
+            #[cfg(feature = "plugins")]
+            ServerKind::Plugin { id } => Some(Arc::new(plugin::PluginProvider::new(id, self.plugins.clone()?)?)),
+            #[cfg(not(feature = "plugins"))]
+            ServerKind::Plugin { .. } => None,
+        }
+    }
+
+    /// `kind`'s provider; a kind missing here reads as a Subsonic server.
+    fn or_subsonic(&self, kind: &ServerKind) -> Arc<dyn Provider> {
+        self.provider(kind).unwrap_or_else(|| Arc::new(subsonic::Subsonic))
+    }
+
+    /// Whether a profile of `kind` opens here (a plugin's: installed and on).
+    pub(crate) fn has(&self, kind: &ServerKind) -> bool {
+        self.kinds().contains(kind)
+    }
+
+    /// The kinds a profile can be of here, a Subsonic server's first.
+    fn kinds(&self) -> Vec<ServerKind> {
+        #[cfg(feature = "plugins")]
+        let plugins: Vec<ServerKind> = self.plugins.iter().flat_map(|p| p.installed()).filter(|i| i.enabled && i.manifest.extends("provider")).map(|i| ServerKind::Plugin { id: i.manifest.id.clone() }).collect();
+        #[cfg(not(feature = "plugins"))]
+        let plugins = Vec::new();
+        std::iter::once(ServerKind::Subsonic).chain(plugins).collect()
+    }
 }
 
-/// The kinds of profile this build can add, in the order they are offered.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn providers() -> Vec<ProviderInfo> {
-    ServerKind::ALL.iter().filter_map(|k| provider(*k)).map(|p| p.info()).collect()
-}
+impl Kinds {
+    /// nori's own kinds alone: for a client without plugins.
+    #[cfg_attr(feature = "ffi", uniffi::constructor)]
+    pub fn builtin() -> Arc<Kinds> {
+        Arc::default()
+    }
 
-/// What the app offers over saved `profile`; `guest` when it is a jam guest's.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn rules_of(profile: SavedServer, guest: bool) -> ProfileRules {
-    or_subsonic(profile.kind).rules(&profile, guest)
-}
+    /// The open profile's transport, which plugins' HTTP goes through.
+    pub fn set_transport(&self, transport: Arc<dyn Transport>) {
+        #[cfg(feature = "plugins")]
+        if let Some(p) = &self.plugins {
+            p.set_transport(Some(transport));
+        }
+        #[cfg(not(feature = "plugins"))]
+        let _ = transport;
+    }
 
-/// Whether the add form can be sent.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn server_ready(profile: SavedServer) -> bool {
-    provider(profile.kind).is_some_and(|p| p.ready(&profile))
-}
+    /// The kinds of profile that can be added, in the order they are offered.
+    pub fn providers(&self) -> Vec<ProviderInfo> {
+        self.kinds().iter().filter_map(|k| self.provider(k)).map(|p| p.info()).collect()
+    }
 
-/// Whether a `kind` sign-in page showing `address`, holding `cookies` for it, is done.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn sign_in_done(kind: ServerKind, address: String, cookies: String) -> bool {
-    provider(kind).is_some_and(|p| p.sign_in_done(&address, &cookies))
-}
+    /// What the app offers over saved `profile`; `guest` when it is a jam guest's.
+    pub fn rules_of(&self, profile: SavedServer, guest: bool) -> ProfileRules {
+        self.or_subsonic(&profile.kind).rules(&profile, guest)
+    }
 
-/// Checks `profile` before it is kept (a server is asked, through its second address too); the profile
-/// to keep.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub async fn check_profile(transport: Arc<dyn Transport>, profile: SavedServer) -> NetResult<SavedServer> {
-    match provider(profile.kind) {
-        Some(p) => p.check(transport, profile).await,
-        None => Err(nowhere("provider for this kind")),
+    /// Whether the add form can be sent.
+    pub fn server_ready(&self, profile: SavedServer) -> bool {
+        self.provider(&profile.kind).is_some_and(|p| p.ready(&profile))
+    }
+
+    /// Whether a `kind` sign-in page showing `address`, holding `cookies` for it, is done.
+    pub fn sign_in_done(&self, kind: ServerKind, address: String, cookies: String) -> bool {
+        self.provider(&kind).is_some_and(|p| p.sign_in_done(&address, &cookies))
+    }
+
+    /// A plugin kind's name in `lang`, from the plugin's words; None for nori's own kinds, which each
+    /// client words itself.
+    pub fn plugin_name(&self, kind: ServerKind, lang: String) -> Option<String> {
+        #[cfg(feature = "plugins")]
+        if let (ServerKind::Plugin { id }, Some(p)) = (&kind, &self.plugins) {
+            return Some(p.word(id.clone(), "name".into(), lang).unwrap_or_else(|| id.clone()));
+        }
+        let _ = (kind, lang);
+        None
+    }
+
+    /// Checks `profile` before it is kept (a server is asked, through its second address too); the
+    /// profile to keep.
+    pub async fn check_profile(&self, transport: Arc<dyn Transport>, profile: SavedServer) -> NetResult<SavedServer> {
+        match self.provider(&profile.kind) {
+            Some(p) => p.check(transport, profile).await,
+            None => Err(nowhere("provider for this kind")),
+        }
+    }
+
+    /// The profile a login saves ([`server_for_login`]).
+    pub fn login_profile(&self, list: ServerList, profile: SavedServer) -> SavedServer {
+        server_for_login(&self.or_subsonic(&profile.kind).info(), list, profile)
     }
 }
 
@@ -303,12 +369,10 @@ pub async fn check_profile(transport: Arc<dyn Transport>, profile: SavedServer) 
 /// does not ask (a signed-in account's name) stays the saved one's. A profile is the saved one of its
 /// kind with the same address and user; without an address in the form, the kind's saved one. A
 /// profile already saved is returned as it is.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn server_for_login(list: ServerList, profile: SavedServer) -> SavedServer {
+fn server_for_login(info: &ProviderInfo, list: ServerList, profile: SavedServer) -> SavedServer {
     if list.servers.iter().any(|s| s.id == profile.id) {
         return profile;
     }
-    let info = or_subsonic(profile.kind).info();
     let address = |url: &str| url.trim().trim_end_matches('/').to_ascii_lowercase();
     let same = |s: &&SavedServer| {
         s.kind == profile.kind && (!info.asks(FormField::Address) || (address(&s.url) == address(&profile.url) && s.user.trim().eq_ignore_ascii_case(profile.user.trim())))
@@ -327,10 +391,11 @@ pub fn server_for_login(list: ServerList, profile: SavedServer) -> SavedServer {
 }
 
 /// Logs `form` in and keeps it as the active profile of `settings`: the profile saved already for it
-/// takes it in ([`server_for_login`]), and its provider checks it ([`check_profile`]). The profile kept.
-pub async fn log_in(transport: Arc<dyn Transport>, settings: &crate::settings_store::Settings, form: SavedServer) -> NetResult<SavedServer> {
-    let draft = settings.prefs(|p| server_for_login(ServerList { servers: p.servers.clone(), active_server_id: p.active_server_id.clone() }, form));
-    let profile = check_profile(transport, draft).await?;
+/// takes it in ([`server_for_login`]), and its provider checks it ([`Kinds::check_profile`]). The
+/// profile kept.
+pub async fn log_in(kinds: &Kinds, transport: Arc<dyn Transport>, settings: &crate::settings_store::Settings, form: SavedServer) -> NetResult<SavedServer> {
+    let draft = settings.prefs(|p| kinds.login_profile(ServerList { servers: p.servers.clone(), active_server_id: p.active_server_id.clone() }, form));
+    let profile = kinds.check_profile(transport, draft).await?;
     settings.put(profile_activated(settings.current().unwrap_or_default(), profile.clone()));
     Ok(profile)
 }
@@ -363,6 +428,12 @@ impl Default for Installed {
 }
 
 impl Core {
+    /// The profile has no Subsonic server ([`Provider::subsonic_api`]): remote control and jams go
+    /// over the LAN.
+    pub(crate) fn serverless(&self) -> bool {
+        !self.provider().subsonic_api()
+    }
+
     /// The provider of the profile in use.
     pub(crate) fn provider(&self) -> Arc<dyn Provider> {
         self.provider.read().provider.clone()
@@ -377,7 +448,7 @@ impl Core {
     /// resolved) lasts as long as the profile.
     pub(crate) fn install_kind(&self, kind: ServerKind) -> nori_model::Result<Arc<dyn Provider>> {
         if self.kind() != kind {
-            let p = provider(kind).ok_or_else(|| crate::CoreError::Api { code: 0, reason: format!("this build has no provider for {kind:?}") })?;
+            let p = self.kinds.read().provider(&kind).ok_or_else(|| crate::CoreError::Api { code: 0, reason: format!("no provider here for {}", kind.id()) })?;
             self.install(kind, p);
         }
         Ok(self.provider())
@@ -390,12 +461,17 @@ impl Core {
     /// profile now names another server, user or kind.
     pub fn configure_profile(&self, profile: SavedServer) -> nori_model::Result<()> {
         *self.lan_jam.write() = nori_remote::lan::guest_secret(&profile.api_key).map(|secret| (profile.url.clone(), secret.into()));
-        self.install_kind(profile.kind)?.configure(self, &profile)
+        self.install_kind(profile.kind.clone())?.configure(self, &profile)
     }
 
     /// What the profile plays from.
     pub fn kind(&self) -> ServerKind {
-        self.provider.read().kind
+        self.provider.read().kind.clone()
+    }
+
+    /// The kinds of profile it opens: [`Kinds::builtin`] until a client with plugins gives it its own.
+    pub fn use_kinds(&self, kinds: Arc<Kinds>) {
+        *self.kinds.write() = kinds;
     }
 
     /// What every cover address of the profile starts with, the cover's id and size appended
@@ -465,14 +541,15 @@ mod tests {
         let kept = SavedServer { name: "Home".into(), music_folder_ids: vec!["3".into()], alt_max_bit_rate: 96, ..saved("a1", ServerKind::Subsonic, "https://music.example.com", "ann") };
         let list = ServerList { servers: vec![kept.clone()], active_server_id: "a1".into() };
         let form = saved("new", ServerKind::Subsonic, "HTTPS://music.example.com/ ", "Ann");
-        let login = server_for_login(list.clone(), form.clone());
+        let k = Kinds::builtin();
+        let login = k.login_profile(list.clone(), form.clone());
         assert_eq!((login.id.as_str(), login.name.as_str(), login.music_folder_ids.as_slice(), login.alt_max_bit_rate, login.user.as_str()), ("a1", "Home", &["3".to_string()][..], 96, "Ann"));
         let stranger = saved("s", ServerKind::Subsonic, "https://music.example.com", "bob");
-        assert_eq!(server_for_login(list.clone(), stranger.clone()), stranger);
+        assert_eq!(k.login_profile(list.clone(), stranger.clone()), stranger);
         let elsewhere = saved("e", ServerKind::Subsonic, "https://other.example.com", "ann");
-        assert_eq!(server_for_login(list.clone(), elsewhere.clone()), elsewhere);
+        assert_eq!(k.login_profile(list.clone(), elsewhere.clone()), elsewhere);
         let edited = SavedServer { url: "https://moved.example.com".into(), ..kept };
-        assert_eq!(server_for_login(list, edited.clone()), edited);
+        assert_eq!(k.login_profile(list, edited.clone()), edited);
     }
 
     /// A login to a saved server keeps that profile's library, music folder and bitrate cap, and makes it
@@ -490,7 +567,7 @@ mod tests {
             fake.answer(r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome"}}"#);
         }
         let form = SavedServer { password: "pw".into(), ..saved("new", ServerKind::Subsonic, "https://music.example.com", "ann") };
-        let p = crate::client::tests::block(log_in(fake, &settings, form)).unwrap();
+        let p = crate::client::tests::block(log_in(&Kinds::builtin(), fake, &settings, form)).unwrap();
         assert_eq!((p.id.as_str(), p.music_folder_ids.as_slice(), p.alt_max_bit_rate, p.password.as_str()), ("a1", &["3".to_string()][..], 96, "pw"));
         let prefs = settings.current().unwrap();
         let ids: Vec<&str> = prefs.servers.iter().map(|s| s.id.as_str()).collect();
@@ -500,23 +577,23 @@ mod tests {
     /// A server's form needs an address, and a user or an API key.
     #[test]
     fn a_server_form_is_ready_with_an_address_and_a_user_or_key() {
-        let p = saved("p", ServerKind::Subsonic, "https://x", "");
-        assert!(!server_ready(p.clone()), "a user or a key");
-        assert!(server_ready(SavedServer { user: "u".into(), ..p.clone() }));
-        assert!(server_ready(SavedServer { api_key: "k".into(), ..p.clone() }));
-        assert!(!server_ready(SavedServer { url: "  ".into(), user: "u".into(), ..p }));
+        let (k, p) = (Kinds::builtin(), saved("p", ServerKind::Subsonic, "https://x", ""));
+        assert!(!k.server_ready(p.clone()), "a user or a key");
+        assert!(k.server_ready(SavedServer { user: "u".into(), ..p.clone() }));
+        assert!(k.server_ready(SavedServer { api_key: "k".into(), ..p.clone() }));
+        assert!(!k.server_ready(SavedServer { url: "  ".into(), user: "u".into(), ..p }));
     }
 
-    /// A kind this build lacks has no provider: it is not offered, its form is never ready, and a
-    /// profile saved with it does not open.
+    /// A plugin's kind without the plugin has no provider: it is not offered, its form is never
+    /// ready, and a profile saved with it does not open.
     #[test]
-    fn every_kind_offered_has_a_provider() {
-        let offered: Vec<ServerKind> = providers().into_iter().map(|p| p.kind).collect();
-        assert_eq!(offered[0], ServerKind::Subsonic);
-        for kind in ServerKind::ALL {
-            assert_eq!(offered.contains(&kind), provider(kind).is_some(), "{kind:?}");
-            let core = Core::new(String::new(), "k".into(), Default::default()).unwrap();
-            assert_eq!(core.configure_profile(saved("p", kind, "https://x", "u")).is_ok(), provider(kind).is_some(), "{kind:?}");
-        }
+    fn a_kind_without_its_plugin_has_no_provider() {
+        let k = Kinds::builtin();
+        assert_eq!(k.providers().into_iter().map(|p| p.kind).collect::<Vec<_>>(), vec![ServerKind::Subsonic]);
+        let missing = ServerKind::Plugin { id: "fm.nori.youtube-music".into() };
+        assert!(!k.server_ready(saved("p", missing.clone(), "", "")));
+        let core = Core::new(String::new(), "k".into(), Default::default()).unwrap();
+        assert!(core.configure_profile(saved("p", missing, "https://x", "u")).is_err());
+        assert!(core.configure_profile(saved("p", ServerKind::Subsonic, "https://x", "u")).is_ok());
     }
 }

@@ -917,6 +917,11 @@ impl Player {
         self.set_chain(c);
     }
 
+    pub fn set_stages(&mut self, stages: Vec<crate::stage::StageSpec>) {
+        let c = pipeline::ChainSettings { stages, ..self.sink.settings().clone() };
+        self.set_chain(c);
+    }
+
     pub fn set_skip_silence(&mut self, on: bool) {
         let c = pipeline::ChainSettings { skip_silence: on, ..self.sink.settings().clone() };
         self.set_chain(c);

@@ -14,6 +14,7 @@ use crate::pcm::{Encoding, Format};
 use crate::silence::SilenceSkipper;
 use crate::policy::sound_on;
 use crate::speed::{speed_active, SpeedPitch};
+use crate::stage::{Saved, StageSpec, Stages};
 
 /// A buffer this far from its expected timestamp resyncs the clock (media3).
 const PTS_TOLERANCE_US: i64 = 200_000;
@@ -97,17 +98,20 @@ pub struct ChainSettings {
     pub skip_silence: bool,
     /// The equalizer is in the chain even while flat (all but bit-perfect output).
     pub keep_eq: bool,
+    /// Plugins' stages after the equalizer, in order.
+    pub stages: Vec<StageSpec>,
 }
 
 impl Default for ChainSettings {
     fn default() -> Self {
-        ChainSettings { sound: Sound::default(), speed: 1.0, pitch: 1.0, skip_silence: false, keep_eq: false }
+        ChainSettings { sound: Sound::default(), speed: 1.0, pitch: 1.0, skip_silence: false, keep_eq: false, stages: Vec::new() }
     }
 }
 
 impl ChainSettings {
+    /// With stages the equalizer stays in too: it applies the song's gain.
     fn eq_in(&self) -> bool {
-        self.keep_eq || self.sound.on()
+        self.keep_eq || self.sound.on() || !self.stages.is_empty()
     }
 }
 
@@ -161,6 +165,9 @@ pub trait Track {
 #[derive(Default)]
 struct Runner {
     chain: Processors,
+    stages: Stages,
+    /// The stages' state while a cut is tried, put back if it does not happen.
+    held: Saved,
     /// The last run's output.
     out: Vec<u8>,
     scratch: Vec<u8>,
@@ -171,13 +178,13 @@ struct Runner {
 impl Runner {
     /// Whether input at `gain` changes on its way.
     fn processing(&self, gain: f32) -> bool {
-        self.chain.eq.as_ref().is_some_and(|e| gain != 1.0 || !e.is_identity()) || self.chain.silence.is_some() || self.chain.speed.is_some()
+        self.chain.eq.as_ref().is_some_and(|e| gain != 1.0 || !e.is_identity()) || self.stages.any_on() || self.chain.silence.is_some() || self.chain.speed.is_some()
     }
 
-    /// Runs `input` through equalizer, silence skipping and speed (media3's order) into `self.out`, each
-    /// stage reading the last one's output (or `input`) and writing its own. The equalizer scales the
-    /// input by `gain` (there is one whenever it is not 1).
-    fn run(&mut self, input: &[u8], float: bool, gain: f32) {
+    /// Runs `input` (frames of `channels`) through equalizer, plugins' stages, silence skipping and
+    /// speed into `self.out`, each stage reading the last one's output (or `input`) and writing its own.
+    /// The equalizer scales the input by `gain` (there is one whenever it is not 1).
+    fn run(&mut self, input: &[u8], float: bool, gain: f32, channels: usize) {
         let (mut out, mut spare) = (std::mem::take(&mut self.out), std::mem::take(&mut self.scratch));
         let mut made = false;
         self.meter_db = 0.0;
@@ -187,6 +194,14 @@ impl Runner {
             eq.process_bytes(input, &mut out, float, gain);
             self.meter_db = eq.gain_reduction_db();
             made = true;
+        }
+        if self.stages.any_on() {
+            if !made {
+                out.clear();
+                out.extend_from_slice(input);
+                made = true;
+            }
+            self.stages.run(&mut out, float, channels);
         }
         let mut stage = |process: &mut dyn FnMut(&[u8], &mut Vec<u8>)| {
             spare.clear();
@@ -408,6 +423,7 @@ impl<T: Track> Sink<T> {
                 sp
             }),
         };
+        self.runner.stages.build(&s.stages, f.rate, f.channels);
     }
 
     /// Whether the equalizer is in the chain.
@@ -435,7 +451,7 @@ impl<T: Track> Sink<T> {
         self.apply(to);
         // A later change made again from here runs the new settings, not those before.
         if at.is_some() {
-            self.kept.mark_changed(self.run, self.made, self.run_media, &self.runner.chain);
+            self.kept.mark_changed(self.run, self.made, self.run_media, &self.runner.chain, &mut self.runner.stages);
         }
         at
     }
@@ -504,6 +520,7 @@ impl<T: Track> Sink<T> {
             }
             _ => {}
         }
+        self.runner.stages.apply(&to.stages, f.rate, f.channels);
         self.settings = to;
     }
 
@@ -536,11 +553,13 @@ impl<T: Track> Sink<T> {
             let Some(k) = self.kept.mark_where(|m| m.frame <= at) else { return false };
             let from = self.track.freeze(Remake::Ending).min(written);
             let keep = self.runner.chain.clone();
+            self.runner.stages.save(&mut self.runner.held);
             // No further than what was written: input before the cut not written yet is run by `fill`.
             let back = self.run_again(k, at, written);
             if back.1 < from {
                 // Already played, or about to be.
                 self.runner.chain = keep;
+                self.runner.stages.restore(&self.runner.held);
                 self.track.cut(written);
                 return false;
             }
@@ -548,7 +567,7 @@ impl<T: Track> Sink<T> {
             // The kept state may be from before the settings last changed: they are applied from here, and a later
             // change made again from here runs them.
             self.apply(self.settings.clone());
-            self.kept.mark_changed(self.run, self.made, self.run_media, &self.runner.chain);
+            self.kept.mark_changed(self.run, self.made, self.run_media, &self.runner.chain, &mut self.runner.stages);
         }
         self.submitted_frames -= self.kept.media_from(at);
         while self.paces.back().is_some_and(|p| p.0 > self.submitted_frames) {
@@ -578,11 +597,12 @@ impl<T: Track> Sink<T> {
         let m = self.kept.mark_at(k);
         let (mut frame, mut out, mut media) = (m.frame, m.out, m.media);
         self.runner.chain.clone_from(&self.kept.mark_at(k).chain);
+        self.runner.stages.restore(&self.kept.mark_at(k).stages);
         self.runner.out.clear();
         while frame < until && out < reach {
             let Some((piece, end)) = self.kept.piece(frame) else { break };
             let to = end.min(until).min(frame + REPLAY_FRAMES);
-            self.runner.run(self.kept.frames(frame, to), float, piece.gain);
+            self.runner.run(self.kept.frames(frame, to), float, piece.gain, f.channels);
             out += (self.runner.out.len() / fb) as u64;
             media += (to - frame) as f64 * piece.pace;
             frame = to;
@@ -637,7 +657,7 @@ impl<T: Track> Sink<T> {
             let media = (end - self.run) as f64 * piece.pace;
             self.carry += media;
             let skipped = self.runner.skipped();
-            self.runner.run(self.kept.frames(self.run, end), float, piece.gain);
+            self.runner.run(self.kept.frames(self.run, end), float, piece.gain, f.channels);
             self.run_media += media;
             self.run = end;
             // What a stage holds back (speed's input, silence it is still judging) is song time not
@@ -651,7 +671,7 @@ impl<T: Track> Sink<T> {
     /// Keeps the chain's state before the next input, now and then, and lets go of what has played.
     fn mark(&mut self) {
         let Some(f) = self.format else { return };
-        if self.kept.mark(self.run, self.made, self.run_media, &self.runner.chain) {
+        if self.kept.mark(self.run, self.made, self.run_media, &self.runner.chain, &mut self.runner.stages) {
             let behind = (f.rate as i64 * KEPT_BEHIND_US / 1_000_000) as u64;
             self.kept.trim(self.track.played().saturating_sub(behind));
         }
@@ -756,10 +776,11 @@ impl<T: Track> Sink<T> {
         // Processors that stayed in after being turned off go now.
         let s = &self.settings;
         let chain = &mut self.runner.chain;
-        if (chain.eq.is_some(), chain.silence.is_some(), chain.speed.is_some()) != (s.eq_in(), s.skip_silence, speed_active(s.speed, s.pitch)) {
+        if (chain.eq.is_some(), chain.silence.is_some(), chain.speed.is_some()) != (s.eq_in(), s.skip_silence, speed_active(s.speed, s.pitch)) || !self.runner.stages.are(&s.stages) {
             self.build_chain();
             return;
         }
+        self.runner.stages.reset();
         if let Some(eq) = chain.eq.as_mut() {
             eq.reset();
         }
@@ -797,7 +818,7 @@ impl<T: Track> Sink<T> {
         let Some(f) = self.format else { return };
         let held = self.runner.chain.eq.as_ref().filter(|e| !e.is_identity()).map_or(0, Equalizer::delay_frames);
         if held > 0 {
-            self.runner.run(&vec![0u8; held * f.frame_bytes()], f.encoding == Encoding::Float, 1.0);
+            self.runner.run(&vec![0u8; held * f.frame_bytes()], f.encoding == Encoding::Float, 1.0, f.channels);
             self.made_output(0.0, None);
         }
         self.runner.drain_stages(true);

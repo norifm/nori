@@ -21,7 +21,7 @@ import dev.nori.music.ffi.settings.SettingsNote
 import dev.nori.music.ffi.settings.SettingsPart
 import dev.nori.music.ffi.settings.SettingsState
 import dev.nori.music.ffi.settings.SettingSpec
-import dev.nori.music.app.ui.providerStrings
+import dev.nori.music.app.ui.providerWords
 import dev.nori.music.playback.DacState
 import dev.nori.music.ffi.settings.StoredPrefs
 import dev.nori.music.settings.label
@@ -119,6 +119,8 @@ data class SettingsFacts(
     /** Where the app's own update stands, and whether this build installs one. */
     val update: Updates.State = Updates.State.Idle,
     val installsUpdates: Boolean = false,
+    /** Installed plugins' names by id, which name their kinds of profile. */
+    val pluginNames: Map<String, String> = emptyMap(),
 )
 
 /** A row's key: its title, lowercased, with every run of anything but a-z and 0-9 made one '-'. Search lands on a row by it. */
@@ -707,11 +709,13 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
     }
 
     /** A profile without a name or an address is called by its kind. */
-    private fun serverLabel(sv: SavedServer): String = sv.label.ifBlank { str(providerStrings(sv.kind).name) }
+    private fun serverLabel(sv: SavedServer): String = sv.label.ifBlank { words(sv).name }
+
+    private fun words(sv: SavedServer) = providerWords(res, sv.kind, (sv.kind as? dev.nori.music.ffi.settings.ServerKind.Plugin)?.let { f.pluginNames[it.id] })
 
     /** The line under a saved server: who signs in, whether it is in use, and what is special about it. */
     private fun serverDetail(sv: SavedServer, active: Boolean): String {
-        val who = sv.user.ifEmpty { str(providerStrings(sv.kind).noUser) }
+        val who = sv.user.ifEmpty { words(sv).noUser }
         val parts = mutableListOf(who, str(if (active) R.string.settings_server_in_use else R.string.settings_server_not_in_use))
         if (sv.wifiOnly) parts += str(R.string.settings_server_wifi_only)
         if (sv.altUrl.isNotBlank()) parts += str(R.string.settings_server_second_address)

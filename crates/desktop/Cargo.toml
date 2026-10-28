@@ -15,9 +15,11 @@ test-control = ["dep:serde", "dep:serde_json"]
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
-# The providers this client offers: a Subsonic server's and YouTube Music.
-nori-core = { path = "../core", default-features = false, features = ["youtube"] }
+# The providers this client offers: a Subsonic server's and its plugins'.
+nori-core = { path = "../core", default-features = false, features = ["plugins"] }
 nori-engine = { path = "../engine", features = ["core"] }
+# Settings › Plugins: the plugin host's cards, rows and repos.
+nori-plugins = { path = "../plugins" }
 nori-output-cpal = { path = "../output-cpal" }
 nori-http = { path = "../http" }
 nori-mpris = { path = "../mpris" }
@@ -60,4 +62,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
 
 [dev-dependencies]
+# The test plugin, for its menu actions and device rows.
+nori-plugins = { path = "../plugins", features = ["testing"] }
+nori-testdir = { path = "../testdir" }
 i-slint-backend-testing = { version = "=1.18.1", features = ["renderer-skia"] }

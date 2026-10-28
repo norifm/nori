@@ -53,8 +53,10 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
         TestHooks.play = { what -> TestActions.playByRef(context, actions, what) }
         TestHooks.login = { spec ->
             val (url, user, pass) = spec.split("|").let { Triple(it[0], it.getOrElse(1) { "" }, it.getOrElse(2) { "" }) }
-            // "kind:<KIND>" adds a profile of that kind (a ServerKind's name) with nothing typed in.
-            val kind = spec.removePrefix("kind:").takeIf { it != spec }?.let { k -> dev.nori.music.ffi.settings.ServerKind.entries.first { it.name == k } }
+            // "kind:subsonic" or "kind:plugin:<id>" adds a profile of that kind (as [kindTag] says it) with nothing typed in.
+            val kind = spec.removePrefix("kind:").takeIf { it != spec }?.let { k ->
+                if (k.startsWith("plugin:")) dev.nori.music.ffi.settings.ServerKind.Plugin(k.removePrefix("plugin:")) else dev.nori.music.ffi.settings.ServerKind.Subsonic
+            }
             val profile = if (kind != null) settings.newProfile().copy(kind = kind)
                 else settings.newProfile().copy(url = url, user = user, password = pass)
             // Logins come back to back (the app's start, then a section's): one still busy would drop the next.
@@ -88,6 +90,8 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 } +
                 """"downloaded":${actions.downloads.value.doneCount},"downloading":${actions.downloads.value.pendingCount},"dlActive":${actions.downloadMarks.value.values.count { it.phase == dev.nori.music.downloads.DownloadPhase.DOWNLOADING }},"dlProgress":"${actions.downloadMarks.value.values.filter { it.phase == dev.nori.music.downloads.DownloadPhase.DOWNLOADING }.joinToString(" ") { "%.2f".format(it.progress.value) }}","dlSpeed":${dev.nori.music.Nori.get(context).core.downloadSpeedEta()[0]},"dlEta":${dev.nori.music.Nori.get(context).core.downloadSpeedEta()[1]},""" +
                 """"sinkBytes":${dev.nori.music.playback.PlaybackService.rustPlayer?.bytesWritten ?: 0},""" +
+                // A plugin's sleeve: how many loop players exist (nought without a loop on screen) and the artwork asked for this song.
+                """"motionPlayers":${dev.nori.music.playback.MotionPlayer.live},"motionAt":${player2.motionAtMs},"artwork":"${player2.artwork.value?.url.orEmpty()}","artworkLoops":${player2.artwork.value?.looping ?: false},""" +
                 // The song's cover as the notification and the lock screen open it, and how many covers were drawn for them.
                 """"cover":"${st.current?.coverArt.orEmpty()}","coversDrawn":${dev.nori.music.app.car.CarArtProvider.coversDrawn},""" +
                 // Everything the app's Java side has allocated since it started, for allocation checks.
@@ -115,7 +119,7 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 settings.update.value.let { u ->
                     """"update":"${u::class.simpleName}","updateLine":"${dev.nori.music.app.vm.updateWords(context.resources, u, BuildConfig.VERSION_NAME, settings.installsUpdates).replace("\"", "'")}","""
                 } +
-                """"loggedIn":${p.loggedIn},"server":"${p.server?.url.orEmpty()}","kind":"${p.server?.kind ?: ""}","signInOffer":${settings.account.value.offer},"signInPage":${settings.account.value.page},"loginError":"${settings.login.value.error.orEmpty().replace("\"", "'")}"}"""
+                """"loggedIn":${p.loggedIn},"server":"${p.server?.url.orEmpty()}","kind":"${p.server?.kind?.let { dev.nori.music.app.ui.kindTag(it) }.orEmpty()}","signInOffer":${settings.account.value.offer},"signInPage":${settings.account.value.page},"loginError":"${settings.login.value.error.orEmpty().replace("\"", "'")}"}"""
         }
         // An app crossfading out (a jam joined or left) goes after the one coming in took the hooks over.
         onDispose {

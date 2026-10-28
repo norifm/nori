@@ -295,9 +295,11 @@ fun SettingsScreen(vm: SettingsViewModel) {
             item(key = "groups") {
                 GroupCard {
                     groups.forEachIndexed { i, g ->
-                        // Only the perf build has a recorder, and with it the last row (docs/developers/building.md).
                         GroupRow(g.title, { nav.settingsGroup(g.id) }, subtitle = g.summary, icon = groupIcon(g.id), chevron = true, divider = i < groups.lastIndex || perf)
+                        // Plugins go before About, the last group.
+                        if (i == groups.lastIndex - 1) GroupRow(say.plugins, nav::plugins, subtitle = say.pluginsSummary, icon = Iconoir.Sparks, chevron = true)
                     }
+                    // Only the perf build has a recorder, and with it the last row (docs/developers/building.md).
                     if (perf) GroupRow(say.performance, { nav.go("perf") }, subtitle = say.performanceDetail, icon = Iconoir.DashboardSpeed, chevron = true, divider = false)
                 }
             }

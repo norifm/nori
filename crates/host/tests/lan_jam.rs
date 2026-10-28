@@ -24,8 +24,28 @@ fn wait(changed: &mpsc::Receiver<()>, ready: impl Fn() -> bool) {
     let until = Instant::now() + Duration::from_secs(5);
     while !ready() { changed.recv_timeout(until.saturating_duration_since(Instant::now())).expect("LAN state changed before deadline"); }
 }
+/// A provider without a Subsonic server, whose jams are hosted on the LAN: the test plugin's.
+fn music_plugin() -> ServerKind {
+    ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() }
+}
+struct Quiet;
+impl nori_plugins::Client for Quiet {
+    fn layer_changed(&self, _: u32) {}
+    fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
+    fn shown(&self, _: String, _: String, _: bool, _: bool) {}
+    fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}
+}
+/// The kinds a device opens: nori's own and the test plugin's, installed under `dir`.
+fn kinds(dir: &std::path::Path, settings: Arc<Settings>) -> Arc<nori_core::providers::Kinds> {
+    let plugins = nori_plugins::open(dir.join("plugins"), settings, Arc::new(Quiet));
+    plugins.install(&nori_plugins::testing::fixture("")).unwrap();
+    plugins.turn(nori_plugins::testing::FIXTURE.into(), true);
+    nori_core::providers::Kinds::with_plugins(plugins)
+}
 fn client(path: String, profile: SavedServer, settings: Arc<Settings>) -> Arc<Client> {
-    let core = Core::new(path, profile.id.clone(), Arc::new(nori_core::queue::Session::new(settings))).unwrap();
+    let dir = std::path::Path::new(&path).parent().unwrap().join(format!("device-{}", profile.id));
+    let core = Core::new(path, profile.id.clone(), Arc::new(nori_core::queue::Session::new(settings.clone()))).unwrap();
+    core.use_kinds(kinds(&dir, settings));
     core.configure_profile(profile.clone()).unwrap();
     let client = Client::new(core, nori_http::Http::new(), Default::default());
     client.set_profile(nori_core::net_profile(&profile));
@@ -39,7 +59,7 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     let host_settings = Settings::new();
     let host_path = nori_host::db_path(host_dir.path());
     host_settings.open(&host_path).unwrap();
-    let profile = SavedServer { id: "host".into(), kind: ServerKind::YouTubeMusic, user: "private-account".into(), password: "private-cookie".into(), ..Default::default() };
+    let profile = SavedServer { id: "host".into(), kind: music_plugin(), user: "private-account".into(), password: "private-cookie".into(), ..Default::default() };
     let host_client = client(host_path, profile, host_settings.clone());
     let (ops, received) = mpsc::channel();
     let (changes, host_changed) = mpsc::channel();
@@ -57,9 +77,12 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     let guest_settings = Settings::new();
     let guest_path = nori_host::db_path(guest_dir.path());
     guest_settings.open(&guest_path).unwrap();
-    let JamJoin::Joined { pass } = block_on(remote::jam_join(nori_http::Http::new(), guest_settings.clone(), None, link.clone(), "Guest".into())).unwrap() else { panic!("guest joined") };
+    // Without the host's plugin, the guest is told which it needs; the pass it holds already lets it in.
+    let joined = block_on(remote::jam_join(nori_http::Http::new(), guest_settings.clone(), None, nori_core::providers::Kinds::builtin(), link.clone(), "Guest".into())).unwrap();
+    let JamJoin::NeedsPlugin { id, pass } = joined else { panic!("the guest needs the host's plugin: {joined:?}") };
+    assert_eq!(id, nori_plugins::testing::FIXTURE);
     let guest_profile = remote::jam_profile(pass, "guest".into(), "Jam".into());
-    assert_eq!(guest_profile.kind, ServerKind::YouTubeMusic);
+    assert_eq!(guest_profile.kind, music_plugin());
     assert!(guest_profile.user.is_empty() && guest_profile.password.is_empty());
     let guest_client = client(guest_path, guest_profile, guest_settings.clone());
     let (ops, _) = mpsc::channel();
@@ -81,7 +104,7 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     assert!(host.jam_view().is_some(), "forgetting paired devices preserves a separate jam");
     host.clone().jam_close();
     wait(&guest_changed, || *guest_shown.1.lock().unwrap());
-    assert!(matches!(block_on(remote::jam_join(nori_http::Http::new(), guest_settings, None, link, "Later".into())).unwrap(), JamJoin::Ended));
+    assert!(matches!(block_on(remote::jam_join(nori_http::Http::new(), guest_settings, None, nori_core::providers::Kinds::builtin(), link, "Later".into())).unwrap(), JamJoin::Ended));
     guest.stop();
     host.stop();
 }
@@ -94,14 +117,14 @@ impl remote::Discovery for Discovery {
 }
 
 #[test]
-fn paired_youtube_devices_control_each_other_and_can_be_forgotten() {
+fn paired_devices_control_each_other_and_can_be_forgotten() {
     let a_dir = nori_testdir::TempDir::new("lan-pair-a");
     let b_dir = nori_testdir::TempDir::new("lan-pair-b");
     let make = |dir: &nori_testdir::TempDir, id: &str| {
         let settings = Settings::new();
         let path = nori_host::db_path(dir.path());
         settings.open(&path).unwrap();
-        client(path, SavedServer { id: id.into(), kind: ServerKind::YouTubeMusic, ..Default::default() }, settings)
+        client(path, SavedServer { id: id.into(), kind: music_plugin(), ..Default::default() }, settings)
     };
     let (a_ops, a_commands) = mpsc::channel();
     let (a_changed, _) = mpsc::channel();
@@ -187,7 +210,7 @@ fn scanning_a_code_pairs_both_devices() {
                 let settings = Settings::new();
                 let path = nori_host::db_path(dirs[i].path());
                 settings.open(&path).unwrap();
-                let client = client(path, SavedServer { id: name.into(), kind: ServerKind::YouTubeMusic, ..Default::default() }, settings);
+                let client = client(path, SavedServer { id: name.into(), kind: music_plugin(), ..Default::default() }, settings);
                 lan.0.lock().unwrap().push(Seat::default());
                 let (ops, _) = mpsc::channel();
                 let (changes, changed) = mpsc::channel();

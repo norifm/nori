@@ -1,0 +1,23 @@
+# The plugin nori's tests install, built to wasm by them (src/testing.rs). Not in the workspace:
+# it builds for wasm32-wasip2 only.
+[package]
+name = "nori-test-plugin"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# Imports `timers`, which this host doesn't link: the plugin can't be installed.
+timers = []
+
+[dependencies]
+nori-plugin-sdk = { path = "../../plugin-sdk" }
+
+[profile.release]
+opt-level = 1
+panic = "abort"
+
+[workspace]

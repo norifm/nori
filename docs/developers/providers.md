@@ -1,17 +1,22 @@
 # Providers
 
-Applies to nori 0.7, every client. The web client builds only the Subsonic provider.
+Applies to nori 0.7, every client. The web client and the iPod build only the Subsonic provider.
 
-A profile plays from a **provider**: a Subsonic server (Navidrome, octo-fiesta) or YouTube Music. Each
-provider is one implementation of the `Provider` trait in `crates/core/src/providers/`. Nothing else in
-the core, the engine or a client names one: they ask the profile's provider and draw what it describes.
+A profile plays from a **provider**: a Subsonic server (Navidrome, octo-fiesta), or a plugin's (YouTube
+Music is one: [Plugins](plugins.md)). Each provider is one implementation of the `Provider` trait in
+`crates/core/src/providers/`. Nothing else in the core, the engine or a client names one: they ask the
+profile's provider and draw what it describes.
 
 This is not octo-fiesta's provider items (the `ext-` songs a Subsonic server fetches from elsewhere).
 
 | provider | module | built by |
 |---|---|---|
 | Subsonic | `providers/subsonic/` | every client |
-| YouTube Music | `providers/youtube.rs`, `providers/youtube/`; wire format in [innertube-music](https://github.com/filipton/innertube-music) | nori-core's `youtube` feature: Android, desktop, terminal, iPod |
+| a plugin's | `providers/plugin.rs`: the trait answered by the plugin's `provider` export (`wit/plugin.wit`) | nori-core's `plugins` feature: Android, desktop, terminal |
+
+The kinds a client offers are a `Kinds`' (`Kinds::builtin`, or `Kinds::with_plugins` over the plugin
+host): Subsonic first, then each enabled plugin with a provider, named by the plugin's own `name`
+string (`Kinds::plugin_name`). A profile of a plugin kind whose plugin is missing doesn't open.
 
 ## What a provider answers
 
@@ -59,11 +64,11 @@ A client asks the core and draws:
 
 | step | the core's calls |
 |---|---|
-| the kinds offered | `providers()`, in order; offer a choice only when there are several |
-| the add form | the chosen kind's `ProviderInfo` fields, advanced ones folded away; `server_ready` says whether it can be sent |
-| logging in | `log_in`: `server_for_login`, then `check_profile`; keeps the profile as the active one |
+| the kinds offered | `Kinds::providers`, in order; offer a choice only when there are several |
+| the add form | the chosen kind's `ProviderInfo` fields, advanced ones folded away; `Kinds::server_ready` says whether it can be sent |
+| logging in | `log_in`: `Kinds::login_profile`, then `Kinds::check_profile`; keeps the profile as the active one |
 | opening a profile | `Core::configure_profile`; the engine's byte source wrapped by `nori_engine::core::resolving` |
-| signing in | for a `SignIn::WebPage`, a page of the app's own at `start_url` whose address and cookies go to `sign_in_done` until it says done, then to `Client::sign_in`; for `SignIn::Paste`, a box to paste into. `Client::account` says where it stands |
+| signing in | for a `SignIn::WebPage`, a page of the app's own at `start_url` whose address and cookies go to `Kinds::sign_in_done` until it says done, then to `Client::sign_in`; for `SignIn::Paste`, a box to paste into. `Client::account` says where it stands |
 | covers | `Core::cover_prefix` (the id and size appended), or `Core::cover_address` without one |
 
 A client's only per-provider code is its words, one entry per kind:
@@ -77,11 +82,14 @@ A client's only per-provider code is its words, one entry per kind:
 
 ## Adding a provider
 
+A provider of a service nori doesn't ship is a plugin (its `provider` export; [Plugins](plugins.md)).
+One built into nori:
+
 1. Add a `ServerKind` variant in `crates/settings`, with the name its profiles are stored under
-   (`ServerKind::id`) and its place in `ServerKind::ALL`.
+   (`ServerKind::id`, `ServerKind::from_id`).
 2. Write its `Provider` as one module under `crates/core/src/providers/` and add its line to
-   `providers::provider`. Put a wire format in a crate of its own with no nori dependencies, as
-   innertube-music is. Put it behind a nori-core feature when not every client builds it.
+   `Kinds::provider` and `Kinds::kinds`. Put a wire format in a crate of its own with no nori
+   dependencies. Put it behind a nori-core feature when not every client builds it.
 3. Add its words to each client's table above.
 
 Nothing else changes: the forms, sign-in, pages, playback and rules follow from what it answers.

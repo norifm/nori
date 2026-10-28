@@ -51,9 +51,9 @@ via nori-core):
 
 | crate | what |
 |---|---|
-| player | decoding, sound chain (EQ, compressor, speed, silence skip), AutoMix analysis/planning/mixing, transition engine, queue list and order, audio policy. No I/O. `pipeline.rs` + `sim.rs` run it on a simulated output |
+| player | decoding, sound chain (EQ, compressor, speed, silence skip, plugins' stages in `stage.rs`), AutoMix analysis/planning/mixing, transition engine, queue list and order, audio policy. No I/O. `pipeline.rs` + `sim.rs` run it on a simulated output |
 | engine | the whole player on its own thread: sources, demux, offload, output ring, stream cache, the core's queue (`core` feature). Android and desktop both play through it |
-| core | `Core` per server profile and the Subsonic `Client`; one file per domain with its `impl Core` blocks; re-exports every domain crate |
+| core | `Core` per server profile and the Subsonic `Client`; one file per domain with its `impl Core` blocks; the providers a profile plays from (`Kinds`: Subsonic and plugins'); re-exports every domain crate |
 | model | shared records, `CoreError`, the log (alog.rs) |
 | db | the SQLite/FTS5 database, background writer |
 | net | request signing, `Transport` trait, stream cache keys |
@@ -68,6 +68,8 @@ via nori-core):
 | covers | fetch, disk/memory cache, decode (JPEG/PNG/WebP/GIF) for every client |
 | look | colours from covers (AndroidX Palette port), themes, seek bar and lyric pacing |
 | perf | perf recorder bookkeeping and report (tooling, English) |
+| plugins | the plugin host: installing, compiling (wasmtime, Cranelift) and running plugins, their stores, overrides laid over the settings, sound stages, and the page a client draws (docs/developers/plugins.md) |
+| plugin-sdk | for plugin authors: `wit/` as Rust, a trait per extension point (build.rs writes them), the manifest kept in the wasm, `plugin!` |
 | android | Android only: the `norimusic` cdylib, uniffi scaffolding, JNI doors, AudioTrack writer (track.rs), playback path (player.rs) |
 | http, output-cpal, mpris | desktop: ureq transport, cpal output, Linux media controls |
 | cli, desktop | terminal (ratatui) and desktop (Slint) clients |

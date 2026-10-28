@@ -5,7 +5,9 @@ use nori_core::client::Starrable;
 use nori_core::menus::{JamOffer, PageAction, SongAction, SongDownload};
 use nori_core::Song;
 
-use crate::app::{App, Cmd, Item, Load, Overlay, Page, Panel, Sel, Target};
+use nori_plugins::{ItemKind, Items};
+
+use crate::app::{App, Cmd, Item, Load, Overlay, Page, Panel, PluginCmd, Sel, Target};
 use crate::backend::Fetch;
 
 /// A line of a menu.
@@ -31,6 +33,8 @@ pub enum MenuAct {
     ShufflePage,
     SaveMix,
     Page(PageAction),
+    /// A plugin's, on the item.
+    Plugin(nori_plugins::MenuEntry),
 }
 
 /// Song actions this client has no screen or work for: they are not listed.
@@ -48,21 +52,22 @@ impl App {
                 let song = songs[at].clone();
                 let mut lines = self.song_lines(&song, from_player);
                 let folded = split_more(&mut lines);
+                lines.extend(self.plugin_lines(ItemKind::Song));
                 if !from_player {
                     lines.extend(self.page_lines());
                 }
                 Some(Overlay::Menu { title: song.title.clone(), item: Box::new(Item::Song(vec![song], 0)), lines, folded, sel: Sel::default() })
             }
             Some(item @ (Item::Album(_) | Item::Playlist(_) | Item::Artist(_))) => {
-                let title = match &item {
-                    Item::Album(a) => a.name.clone(),
-                    Item::Playlist(p) => p.name.clone(),
-                    Item::Artist(a) => a.name.clone(),
-                    _ => String::new(),
+                let (title, kind) = match &item {
+                    Item::Album(a) => (a.name.clone(), ItemKind::Album),
+                    Item::Playlist(p) => (p.name.clone(), ItemKind::Playlist),
+                    Item::Artist(a) => (a.name.clone(), ItemKind::Artist),
+                    _ => unreachable!("an album, playlist or artist"),
                 };
                 // A jam guest only asks for songs.
                 let play = (!self.guest()).then_some(MenuLine::Act(MenuAct::Play));
-                let lines = play.into_iter().chain([MenuLine::Act(MenuAct::PlayNext), MenuLine::Act(MenuAct::AddToQueue)]).collect();
+                let lines = play.into_iter().chain([MenuLine::Act(MenuAct::PlayNext), MenuLine::Act(MenuAct::AddToQueue)]).chain(self.plugin_lines(kind)).collect();
                 Some(Overlay::Menu { title, item: Box::new(item), lines, folded: Vec::new(), sel: Sel::default() })
             }
             _ => None,
@@ -91,6 +96,11 @@ impl App {
             lines.push(MenuLine::Act(MenuAct::Song(i.action)));
         }
         lines
+    }
+
+    /// The actions plugins add to the menus of `kind`.
+    fn plugin_lines(&self, kind: ItemKind) -> Vec<MenuLine> {
+        self.slots.menu_of(kind).cloned().map(|e| MenuLine::Act(MenuAct::Plugin(e))).collect()
     }
 
     /// The page's own actions, under its name: Play, Shuffle, a mix's Save as playlist, then its head's.
@@ -132,6 +142,16 @@ impl App {
             (MenuAct::ShufflePage, _) => self.play_page(true),
             (MenuAct::SaveMix, _) => self.save_mix(),
             (MenuAct::Page(a), _) => self.page_act(a),
+            (MenuAct::Plugin(e), _) => {
+                let items = match item {
+                    Item::Song(mut songs, at) if at < songs.len() => Some(Items::Songs(vec![songs.swap_remove(at)])),
+                    Item::Album(a) => Some(Items::Albums(vec![a])),
+                    Item::Artist(a) => Some(Items::Artists(vec![a])),
+                    Item::Playlist(p) => Some(Items::Playlists(vec![p])),
+                    _ => None,
+                };
+                self.cmds.extend(items.map(|items| Cmd::Plugin(PluginCmd::Menu(e, items))));
+            }
             (MenuAct::Song(_), None) => {}
             (MenuAct::Song(a), Some(s)) => self.song_act(a, s),
         }

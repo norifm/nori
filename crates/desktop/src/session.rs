@@ -71,6 +71,9 @@ pub enum Msg {
     Jam(Result<(), String>),
     /// Someone's jam joined (what the guest profile signs in with), or why not.
     Joined(Result<nori_core::remote::JamPass, String>),
+    /// The plugin someone's jam plays from, as nori's repo offers it, and what the guest profile signs
+    /// in with once it is installed and on.
+    JamPlugin(Box<(nori_plugins::PluginPreview, nori_core::remote::JamPass)>),
     /// The jam this guest is in ended (its host's name, if seen).
     JamEnded(Option<String>),
     /// Another device set the volume (0 to 1).
@@ -81,6 +84,22 @@ pub enum Msg {
     Shared(Option<String>),
     /// A queue another device or app left on the server, worth offering here, or none.
     Offer(Option<nori_core::library::QueueOffer>),
+    /// A plugin installed (its id), or why not.
+    PluginInstalled(Result<String, nori_plugins::Refusal>),
+    /// A plugin's install sheet, or why it can't be installed.
+    PluginPreview(Result<nori_plugins::PluginPreview, nori_plugins::Refusal>),
+    /// The plugins' lines in song `song`'s details.
+    SongInfo { song: String, groups: Vec<nori_plugins::InfoGroup> },
+    /// The plugins' lines under the player's output, asked for song `song`.
+    PlayerStatus { song: Option<String>, lines: Vec<String> },
+    /// A plugin's still sleeve's address for song `song`, to fetch.
+    Artwork { song: String, url: String },
+    /// A plugin's still sleeve for song `song`, drawn as its cover in Now Playing.
+    Sleeve { song: String, image: Arc<Image> },
+    /// What the plugin repos offer.
+    PluginOffers(nori_plugins::Offers),
+    /// Plugins updated on their own: each one's id and new version.
+    PluginsUpdated(Vec<(String, String)>),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }
@@ -136,8 +155,8 @@ pub mod own {
 }
 
 /// Logs `draft` in and keeps it as the active profile (blocking).
-pub fn check_login(http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
-    nori_host::desktop::log_in(http, draft).map_err(|e| net_error(&e))
+pub fn check_login(data: &std::path::Path, http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
+    nori_host::desktop::log_in(data, http, draft).map_err(|e| net_error(&e))
 }
 
 /// One open server profile; its messages come tagged with its id.

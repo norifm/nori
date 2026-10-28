@@ -19,14 +19,16 @@ sign-in-window = ["dep:nori-sign-in-window"]
 neural-beats = ["nori-engine/neural-beats"]
 
 [dependencies]
-# The providers this client offers: a Subsonic server's and YouTube Music.
-nori-core = { path = "../core", default-features = false, features = ["youtube"] }
+# The providers this client offers: a Subsonic server's and its plugins'.
+nori-core = { path = "../core", default-features = false, features = ["plugins"] }
 nori-sign-in-window = { path = "../sign-in-window", optional = true }
 nori-engine = { path = "../engine", features = ["core"] }
 nori-output-cpal = { path = "../output-cpal" }
 nori-http = { path = "../http" }
 nori-mpris = { path = "../mpris" }
 nori-host = { path = "../host" }
+# Settings › Plugins: the plugin host's cards and rows.
+nori-plugins = { path = "../plugins" }
 nori-covers = { path = "../covers" }
 nori-look = { path = "../look" }
 parking_lot = "0.12"
@@ -44,6 +46,8 @@ unicode-width = "0.2"
 
 [dev-dependencies]
 nori-testdir = { path = "../testdir" }
+# The test plugin (a music source), for the login's kinds.
+nori-plugins = { path = "../plugins", features = ["testing"] }
 # tests/beat_model.rs loads the model it made.
 nori-player = { path = "../player" }
 # The jam invite's QR code, read back from the drawn screen. MIT or Apache-2.0, and ISC.

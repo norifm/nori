@@ -4,8 +4,8 @@
 //! ```text
 //! nori-cli --script --url http://localhost:4533 --user admin --password admin --play "noise" --crossfade 6
 //! nori-cli --script ... --search "noise" --songs 2 --start 570 --crossfade 6 --mix-albums --wav out.wav
-//! nori-cli --script --provider youtubeMusic --play "daft punk" --songs 1 --wav out.wav
-//! nori-cli --script --provider youtubeMusic --sign-in cookies.txt --home
+//! nori-cli --script --provider dev.example.music --play "daft punk" --songs 1 --wav out.wav
+//! nori-cli --script --provider dev.example.music --sign-in cookies.txt --home
 //! ```
 //!
 //! Without `--wav` it plays on the sound card and reads commands from stdin (see `HELP`). With `--wav`
@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::{Client, NetProfile};
+use nori_core::overrides::Layer;
 use nori_core::settings::{GainMode, SavedServer, ServerKind, StoredPrefs};
 use nori_core::settings_store::{APPLY_AUDIO, APPLY_GAIN, REPLAN, SOUND};
 use nori_core::{Core, Song};
@@ -73,7 +74,7 @@ fn usage() -> ! {
          \x20      nori-cli --script --provider KIND [the same, without the server] [--sign-in FILE] [--home]\n\
          \x20               [--data DIR]\n\
          The url, user and password may also come from NORI_URL, NORI_USER and NORI_PASSWORD.\n\
-         KIND is a profile kind as the settings store it (youtubeMusic)."
+         KIND is a profile kind as the settings store it (a plugin's id)."
     );
     std::process::exit(2)
 }
@@ -141,7 +142,7 @@ fn args(argv: Vec<String>) -> Args {
             _ => usage(),
         }
     }
-    if !nori_core::providers::server_ready(a.profile()) {
+    if !nori_host::desktop::plugins(&a.data).kinds.server_ready(a.profile()) {
         usage();
     }
     a
@@ -150,7 +151,7 @@ fn args(argv: Vec<String>) -> Args {
 impl Args {
     /// The profile the options name.
     fn profile(&self) -> SavedServer {
-        SavedServer { kind: self.kind, url: self.url.clone(), user: self.user.clone(), password: self.password.clone(), ..Default::default() }
+        SavedServer { kind: self.kind.clone(), url: self.url.clone(), user: self.user.clone(), password: self.password.clone(), ..Default::default() }
     }
 }
 
@@ -248,7 +249,7 @@ impl Cli {
     fn apply(&mut self, effect: u32) {
         self.prefs = self.kept();
         if effect & (APPLY_AUDIO | SOUND) != 0 {
-            self.engine.set_settings(settings(&self.prefs));
+            self.engine.set_settings(settings(&self.prefs, Layer::default()));
         }
         if effect & APPLY_GAIN != 0 {
             self.engine.gain_changed();
@@ -275,9 +276,12 @@ pub fn main(argv: Vec<String>) {
     let db = a.data.join("nori.db").to_string_lossy().into_owned();
     let core = Core::new(db.clone(), "cli".into(), crate::backend::app().clone()).unwrap_or_else(|e| panic!("the database: {e}"));
     let http = Http::new();
+    let kinds = nori_host::desktop::plugins(&a.data).kinds.clone();
+    kinds.set_transport(http.clone());
+    core.use_kinds(kinds.clone());
     let profile = match a.offline {
         true => a.profile(),
-        false => block_on(nori_core::providers::check_profile(http.clone(), a.profile())).unwrap_or_else(|e| {
+        false => block_on(kinds.check_profile(http.clone(), a.profile())).unwrap_or_else(|e| {
             eprintln!("login failed: {e}");
             std::process::exit(1)
         }),
@@ -287,7 +291,7 @@ pub fn main(argv: Vec<String>) {
     client.set_profile(NetProfile { url: a.url.clone(), ..Default::default() });
     if let Some(path) = &a.sign_in {
         let answer = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        println!("{}", crate::text::sign_in(a.kind, &block_on(client.sign_in(answer))));
+        println!("{}", crate::text::sign_in(&crate::text::provider_of(&kinds, &a.kind).name, &block_on(client.sign_in(answer))));
     }
     if a.home {
         match block_on(client.read_now(Read::HomeFeed)) {
@@ -321,12 +325,12 @@ pub fn main(argv: Vec<String>) {
     let downloader = Downloader::new(client.clone(), bytes.clone(), store.clone(), analyses.clone());
     let app = CoreApp::new(core.session.clone()).measuring(Measurer::new(analyses.clone(), store.clone())).per_device(core.clone());
     let library = CoreLibrary { client: client.clone(), bytes, store: Some(store), analyses };
-    let engine = Engine::start(library, app, CoreQueue(core.session.clone()), output, None, Config { memory_mb: 256, settings: settings(&prefs), ..Config::default() }, move |e| {
+    let engine = Engine::start(library, app, CoreQueue(core.session.clone()), output, None, Config { memory_mb: 256, settings: settings(&prefs, Layer::default()), ..Config::default() }, move |e| {
         let _ = tx.send(e);
     });
     let mut cli = Cli { core, client, prefs, engine: Arc::new(engine), songs: Arc::default(), downloader };
     let how = if a.offline { "offline" } else { "logged in" };
-    let to = if a.url.is_empty() { crate::text::provider(a.kind).name.to_string() } else { format!("{} as {}", a.url, a.user) };
+    let to = if a.url.is_empty() { crate::text::provider_of(&kinds, &a.kind).name } else { format!("{} as {}", a.url, a.user) };
     println!("{how} to {to}; crossfade {} s, AutoMix {}", cli.prefs.crossfade_sec, if cli.prefs.auto_mix { "on" } else { "off" });
 
     let found = match (&a.search, a.offline) {

@@ -46,7 +46,7 @@ pub use nori_lyrics::{formats, look, lrclib, lyrics, services};
 pub use nori_net::{api, transport};
 pub use nori_perf::perf_log;
 pub use nori_queue::{heard, rules, scrobble};
-pub use nori_settings::{credits, dsp, lyrics_sources, settings, settings_model, settings_pages, settings_store};
+pub use nori_settings::{credits, dsp, lyrics_sources, overrides, settings, settings_model, settings_pages, settings_store};
 pub use nori_settings::settings::parse_eq_preset;
 pub use nori_model::model::*;
 pub use nori_library::pages::{AlbumDetail, ArtistDetail, PlaylistDetail, Starred};
@@ -116,6 +116,8 @@ pub struct Core {
     rules_shown: RwLock<Option<Arc<dyn browse::RulesShown>>>,
     /// What the profile plays from (providers/).
     provider: RwLock<providers::Installed>,
+    /// The kinds of profile it opens ([`providers::Kinds`]).
+    kinds: RwLock<Arc<providers::Kinds>>,
     /// What the stored queue's songs were saved from (queue.rs).
     saved_queue: Mutex<Option<queue::SavedQueue>>,
     /// The server starts a transcode at the second asked for (Navidrome's `timeOffset`), as its answers
@@ -228,6 +230,7 @@ impl Core {
             rules: RwLock::new(browse::profile_rules(false)),
             rules_shown: RwLock::new(None),
             provider: RwLock::default(),
+            kinds: RwLock::new(providers::Kinds::builtin()),
             saved_queue: Mutex::new(None),
             starts_transcodes: std::sync::atomic::AtomicBool::new(false),
         });

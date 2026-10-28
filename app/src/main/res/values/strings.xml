@@ -431,7 +431,7 @@
     <string name="pair_confirm">Pair this device?</string>
     <string name="pair_action">Pair</string>
     <string name="pair_done">Devices paired</string>
-    <string name="pair_failed">Could not pair. Open a YouTube Music profile and turn on device control in Settings.</string>
+    <string name="pair_failed">Could not pair. Open a profile from a plugin and turn on device control in Settings.</string>
     <string name="pair_reset">Reset pairing</string>
     <string name="pair_reset_hint">Previously paired devices will lose access. Pair them again to reconnect.</string>
 </resources>

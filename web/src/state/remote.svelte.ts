@@ -46,7 +46,7 @@ class Remote {
     await player.refresh();
   }
 
-  /** Joins the jam `link` invites to: "joined" (the guest's profile is open), "own" or "ended". */
+  /** Joins the jam `link` invites to: "joined" (the guest's profile is open), "own", "ended" or "plugin". */
   async join(link: string, name: string): Promise<string> {
     const said = await ask<string>("jam_join", link.trim(), name.trim() || W.jamGuestName);
     if (said === "joined") this.switched();
