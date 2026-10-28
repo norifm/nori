@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use nori_net::transport::{Exchange, FailureKind, TransportError};
+use std::sync::Arc;
+
+use nori_net::transport::{Exchange, FailureKind, Transport, TransportError};
 
 use crate::runtime::nori::plugin::{http, log, notices, rows, settings, store};
 use crate::runtime::{types, Host};
@@ -151,8 +153,32 @@ fn host_of(url: &str) -> Option<&str> {
     Some(host.split(':').next().unwrap_or(host))
 }
 
-impl http::Host for Host {
-    fn fetch(&mut self, request: http::Request) -> Result<http::Response, types::Error> {
+/// An answer to a plugin's request.
+type Answered = Result<http::Response, types::Error>;
+
+/// The most requests a plugin may have on their way at once.
+const STARTED_MAX: usize = 16;
+
+/// The requests a plugin started and has not taken the answers of: each runs on a thread of its own,
+/// so those started together are on their way at once.
+pub(crate) struct Started {
+    next: u64,
+    /// By id: its answer, or none while it is on its way.
+    answers: HashMap<u64, Option<Answered>>,
+    sent: std::sync::mpsc::Sender<(u64, Answered)>,
+    came: std::sync::mpsc::Receiver<(u64, Answered)>,
+}
+
+impl Default for Started {
+    fn default() -> Self {
+        let (sent, came) = std::sync::mpsc::channel();
+        Started { next: 0, answers: HashMap::new(), sent, came }
+    }
+}
+
+impl Host {
+    /// `request` as the transport sends it, once the manifest allows its host.
+    fn exchange(&self, request: http::Request) -> Result<(Arc<dyn Transport>, Exchange), types::Error> {
         let host = host_of(&request.url).ok_or_else(|| error(types::ErrorKind::Refused, "not an http(s) URL"))?;
         if !self.manifest.reaches(host) {
             return Err(error(types::ErrorKind::Refused, format!("{host} is not among its net hosts")));
@@ -169,15 +195,73 @@ impl http::Host for Host {
             (m, _) => return Err(error(types::ErrorKind::Unsupported, format!("{m:?} is not sent yet"))),
         };
         headers.retain(|k, _| !k.eq_ignore_ascii_case("content-type"));
-        let exchange = Exchange { url: request.url, headers, json, form, timeout_ms: request.timeout_ms.unwrap_or(0) };
-        match nori_tasks::block_on(transport.send(exchange)) {
-            Ok(r) => Ok(http::Response {
-                status: r.status,
-                headers: r.set_cookies.into_iter().map(|v| types::Header { name: "set-cookie".into(), value: v }).collect(),
-                body: r.body,
-            }),
-            Err(TransportError::Failed { kind: FailureKind::Timeout, .. }) => Err(error(types::ErrorKind::Timeout, "timed out")),
-            Err(e) => Err(error(types::ErrorKind::Network, e.to_string())),
+        Ok((transport, Exchange { url: request.url, headers, json, form, timeout_ms: request.timeout_ms.unwrap_or(0) }))
+    }
+}
+
+/// `exchange` sent through `transport`, waited for.
+fn sent(transport: &dyn Transport, exchange: Exchange) -> Answered {
+    match nori_tasks::block_on(transport.send(exchange)) {
+        Ok(r) => Ok(http::Response {
+            status: r.status,
+            headers: r.set_cookies.into_iter().map(|v| types::Header { name: "set-cookie".into(), value: v }).collect(),
+            body: r.body,
+        }),
+        Err(TransportError::Failed { kind: FailureKind::Timeout, .. }) => Err(error(types::ErrorKind::Timeout, "timed out")),
+        Err(e) => Err(error(types::ErrorKind::Network, e.to_string())),
+    }
+}
+
+impl http::Host for Host {
+    fn fetch(&mut self, request: http::Request) -> Answered {
+        let (transport, exchange) = self.exchange(request)?;
+        sent(&*transport, exchange)
+    }
+
+    fn start(&mut self, request: http::Request) -> Result<u64, types::Error> {
+        if self.started.answers.len() >= STARTED_MAX {
+            return Err(error(types::ErrorKind::Refused, format!("more than {STARTED_MAX} requests on their way")));
+        }
+        let (transport, exchange) = self.exchange(request)?;
+        let s = &mut self.started;
+        let id = s.next;
+        s.next += 1;
+        s.answers.insert(id, None);
+        let to = s.sent.clone();
+        std::thread::Builder::new()
+            .name(format!("plugin {} http", self.id))
+            .spawn(move || {
+                let _ = to.send((id, sent(&*transport, exchange)));
+            })
+            .map_err(|e| error(types::ErrorKind::Network, e.to_string()))?;
+        Ok(id)
+    }
+
+    /// An id never started (or already taken) counts as answered: [`http::Host::take`] says so.
+    fn wait(&mut self, ids: Vec<u64>) -> u64 {
+        let s = &mut self.started;
+        loop {
+            if let Some(&id) = ids.iter().find(|id| !matches!(s.answers.get(id), Some(None))) {
+                return id;
+            }
+            let Ok((id, answer)) = s.came.recv() else { return ids.first().copied().unwrap_or_default() };
+            if let Some(slot) = s.answers.get_mut(&id) {
+                *slot = Some(answer);
+            }
+        }
+    }
+
+    fn take(&mut self, id: u64) -> Option<Answered> {
+        let s = &mut self.started;
+        while let Ok((done, answer)) = s.came.try_recv() {
+            if let Some(slot) = s.answers.get_mut(&done) {
+                *slot = Some(answer);
+            }
+        }
+        match s.answers.get(&id) {
+            None => Some(Err(error(types::ErrorKind::Refused, format!("no request {id} on its way")))),
+            Some(None) => None,
+            Some(Some(_)) => s.answers.remove(&id).flatten(),
         }
     }
 }

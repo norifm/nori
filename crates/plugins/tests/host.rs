@@ -41,17 +41,29 @@ fn allocations(f: impl FnOnce()) -> u64 {
     ALLOCATIONS.with(Cell::get)
 }
 
-/// Answers each URL it serves with its body, any other with 200 "ok", noting each URL.
+/// Answers each URL it serves with its body, any other with 200 "ok", noting each URL. A `/together/`
+/// URL is answered only once two are asked at the same time (else 504 after 5 s).
 #[derive(Default)]
 struct Web {
     asked: Mutex<Vec<String>>,
     serves: Mutex<Vec<(String, Vec<u8>)>>,
+    together: (Mutex<u32>, std::sync::Condvar),
 }
 
 #[async_trait::async_trait]
 impl Transport for Web {
     async fn get(&self, url: String, _: u32) -> Result<TransportResponse, TransportError> {
         self.asked.lock().unwrap().push(url.clone());
+        if let Some(name) = url.split("/together/").nth(1) {
+            let (waiting, both) = &self.together;
+            let mut n = waiting.lock().unwrap();
+            *n += 1;
+            both.notify_all();
+            let (n, timeout) = both.wait_timeout_while(n, std::time::Duration::from_secs(5), |n| *n < 2).unwrap();
+            drop(n);
+            let status = if timeout.timed_out() { 504 } else { 200 };
+            return Ok(TransportResponse { status, body: name.as_bytes().to_vec(), set_cookies: Vec::new() });
+        }
         let body = self.serves.lock().unwrap().iter().find(|(u, _)| *u == url).map_or(b"ok".to_vec(), |(_, b)| b.clone());
         Ok(TransportResponse { status: 200, body, set_cookies: Vec::new() })
     }
@@ -134,6 +146,21 @@ fn a_stage_runs_and_its_state_is_kept() {
         stage.process(&mut b);
         stage.save(&mut kept);
     }), 0);
+}
+
+#[test]
+fn requests_started_together_are_on_their_way_at_once() {
+    let dir = nori_testdir::TempDir::new("plugins-together");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.set_transport(Some(session.web.clone()));
+    plugins.install(&fixture("")).unwrap();
+    plugins.turn(ID.into(), true);
+    plugins.act(ID.into(), "together".into());
+    let w = plugins.worker(ID).unwrap();
+    assert_eq!(nori_tasks::block_on(w.call(|_, _| Ok(1))), Some(1));
+    let said = session.notices.lock().unwrap().iter().find(|(w, _)| w == "together").map(|(_, a)| a.clone());
+    assert_eq!(said, Some(vec!["200 one|200 two".to_string()]), "each answered, in order, neither waiting on the other");
 }
 
 #[test]

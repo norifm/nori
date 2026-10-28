@@ -96,6 +96,8 @@ pub struct Host {
     pub(crate) side: Arc<dyn Side>,
     /// The open profile's transport, shared with the plugin host.
     pub(crate) transport: crate::Transported,
+    /// Its requests on their way.
+    pub(crate) started: crate::host::Started,
 }
 
 /// A store for a plugin instance whose imports reach the host, with its memory capped.
@@ -107,6 +109,7 @@ pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>, tr
         manifest,
         side,
         transport,
+        started: Default::default(),
     };
     let mut s = Store::new(engine(), host);
     s.limiter(|h| &mut h.limits);

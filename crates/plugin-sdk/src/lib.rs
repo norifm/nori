@@ -135,3 +135,72 @@ pub mod state {
         }
     }
 }
+
+/// HTTP requests on their way side by side: [`send`] in async code, [`run`] to wait for it. Requests
+/// polled together (`join_all` and the like) are started together and waited for as one.
+pub mod fetching {
+    use std::cell::RefCell;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::{Context, Poll, Waker};
+
+    use crate::{http, types};
+
+    thread_local! {
+        /// The requests started and not answered yet.
+        static ON_THEIR_WAY: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// `request`'s answer, once polled: it is started at the first poll.
+    pub fn send(request: http::Request) -> Fetch {
+        Fetch { request: Some(request), id: None }
+    }
+
+    pub struct Fetch {
+        request: Option<http::Request>,
+        id: Option<u64>,
+    }
+
+    impl Future for Fetch {
+        type Output = Result<http::Response, types::Error>;
+
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+            if let Some(r) = self.request.take() {
+                match http::start(&r) {
+                    Ok(id) => {
+                        self.id = Some(id);
+                        ON_THEIR_WAY.with(|w| w.borrow_mut().push(id));
+                    }
+                    Err(e) => return Poll::Ready(Err(e)),
+                }
+            }
+            let Some(id) = self.id else { return Poll::Pending };
+            match http::take(id) {
+                Some(answer) => {
+                    ON_THEIR_WAY.with(|w| w.borrow_mut().retain(|&i| i != id));
+                    self.id = None;
+                    Poll::Ready(answer)
+                }
+                None => {
+                    // Polled again once any request comes back.
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            }
+        }
+    }
+
+    /// `f`'s answer, its requests waited for together.
+    pub fn run<F: Future>(f: F) -> F::Output {
+        let mut f = std::pin::pin!(f);
+        let mut cx = Context::from_waker(Waker::noop());
+        loop {
+            if let Poll::Ready(v) = f.as_mut().poll(&mut cx) {
+                return v;
+            }
+            let ids = ON_THEIR_WAY.with(|w| w.borrow().clone());
+            assert!(!ids.is_empty(), "a plugin's future waits on nothing but nori's requests");
+            http::wait(&ids);
+        }
+    }
+}

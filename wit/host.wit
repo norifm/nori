@@ -82,6 +82,12 @@ interface http {
     }
 
     fetch: func(request: request) -> result<response, error>;
+    /// Sends `request` without waiting: requests started together run at once. Its answer is `take`n.
+    start: func(request: request) -> result<u64, error>;
+    /// Waits until one of the started requests `ids` has its answer; that one's id.
+    wait: func(ids: list<u64>) -> u64;
+    /// The answer of started request `id`, once it has come; none while it is on its way.
+    take: func(id: u64) -> option<result<response, error>>;
 }
 
 /// A line shown to the user: short and plain, from the plugin's own strings.

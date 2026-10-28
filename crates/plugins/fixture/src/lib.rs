@@ -22,7 +22,42 @@ fn fetch(url: &str) -> String {
     }
 }
 
+/// Two requests on their way together, their answers in order.
+fn fetch_together(a: &str, b: &str) -> String {
+    use std::future::Future;
+    use std::task::Poll;
+    let get = |url: &str| nori_plugin_sdk::fetching::send(Request { method: Method::Get, url: url.into(), headers: Vec::new(), body: None, timeout_ms: None });
+    let (mut x, mut y) = (Box::pin(get(a)), Box::pin(get(b)));
+    let (mut ax, mut ay) = (None, None);
+    nori_plugin_sdk::fetching::run(std::future::poll_fn(|cx| {
+        if ax.is_none() {
+            if let Poll::Ready(v) = x.as_mut().poll(cx) {
+                ax = Some(v);
+            }
+        }
+        if ay.is_none() {
+            if let Poll::Ready(v) = y.as_mut().poll(cx) {
+                ay = Some(v);
+            }
+        }
+        if ax.is_some() && ay.is_some() { Poll::Ready(()) } else { Poll::Pending }
+    }));
+    let said = |r: Option<Result<nori_plugin_sdk::http::Response, nori_plugin_sdk::types::Error>>| match r {
+        Some(Ok(r)) => format!("{} {}", r.status, String::from_utf8_lossy(&r.body)),
+        Some(Err(e)) => format!("{:?}", e.kind),
+        None => "none".into(),
+    };
+    format!("{}|{}", said(ax), said(ay))
+}
+
 impl Lifecycle for Test {
+    fn action(&mut self, id: String) {
+        if id == "together" {
+            let heard = fetch_together("https://allowed.example/together/one", "https://allowed.example/together/two");
+            nori_plugin_sdk::notices::show(nori_plugin_sdk::notices::Tone::Info, "together", &[heard]);
+        }
+    }
+
     fn start(&mut self) {
         settings::override_(&[("playback.speed".into(), Value::Level(1.25))]).unwrap();
         let _ = settings::override_(&[("playback.pitch".into(), Value::Level(2.0))]).map(|_| panic!("not its key"));

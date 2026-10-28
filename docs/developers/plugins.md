@@ -75,6 +75,9 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
   its calls may block (its HTTP waits on the core's transport there), and the core's executors never
   wait on one. A call whose caller has gone (a search typed over) is skipped. Each call has a fuel
   budget; a trap or a spent budget fails that call, and the next starts a fresh instance (started again).
+- **Requests side by side.** `http.fetch` waits for its answer; `http.start`, `wait` and `take` put up to
+  16 requests on their way at once, each on a thread of its own. The SDK's `fetching::send` and
+  `fetching::run` drive them from async code, so a `join_all` of requests takes as long as the slowest.
 - **WASI, the little std needs.** A Rust plugin's std imports WASI; the host answers randomness, the
   clocks and an empty environment, at whatever versions the plugin imports, and links the rest (files,
   sockets, stdio) to traps. A plugin writes through `log`.
