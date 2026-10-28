@@ -3,6 +3,7 @@ package dev.nori.music.app.widget
 import android.content.Context
 import android.graphics.RectF
 import android.view.KeyEvent
+import android.view.View
 import android.widget.RemoteViews
 import dev.nori.music.app.R
 import dev.nori.music.app.widget.Widgets.tint
@@ -32,6 +33,19 @@ enum class Face {
             else -> TALL
         }
     }
+}
+
+/** What the one-row player has room for: its cover's side in dp, the song's words, and Next. */
+data class MiniFit(val coverDp: Int, val words: Boolean, val next: Boolean)
+
+/** Play always fits beside the cover; the words come before Next (widget_player.xml's measures). */
+fun miniFit(wDp: Int, hDp: Int): MiniFit {
+    val edges = 8 + 4
+    val button = 48
+    val words = 24 + 48
+    val cover = minOf(hDp - 2 * 8, wDp - edges - button)
+    val withWords = edges + cover + words + button
+    return MiniFit(cover, withWords <= wDp, withWords + button <= wDp)
 }
 
 /** The song playing as a widget shows it, in each [Face]: the player widget's and the cover widget's. */
@@ -64,9 +78,13 @@ object NowFaces {
             ink = look[CoverLook.CHROME_CONTENT]
             quiet = look[CoverLook.CHROME_CONTENT_65]
             v.tint(R.id.widget_back, look[CoverLook.CHROME_SLAB])
-            val side = Widgets.px(context, hDp - 2 * MINI_INSET)
+            val fit = miniFit(wDp, hDp)
+            val side = Widgets.px(context, fit.coverDp.toFloat())
             val radius = maxOf(MINI_RADIUS * density, Widgets.radiusPx(context) - MINI_INSET * density)
             v.setImageViewBitmap(R.id.widget_cover, Painter.cover(context, Widgets.picture(context, p.cover, side), side, side, radius, look))
+            v.setInt(R.id.widget_cover, "setMaxWidth", side)
+            v.setViewVisibility(R.id.widget_words, if (fit.words) View.VISIBLE else View.GONE)
+            v.setViewVisibility(R.id.widget_next, if (fit.next) View.VISIBLE else View.GONE)
         } else {
             ink = look[CoverLook.ON]
             quiet = look[CoverLook.ON_VARIANT]

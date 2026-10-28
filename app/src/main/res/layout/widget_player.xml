@@ -11,8 +11,8 @@
         <ImageView android:id="@+id/widget_cover" android:layout_width="wrap_content" android:layout_height="match_parent"
             android:adjustViewBounds="true" android:scaleType="fitCenter"
             android:importantForAccessibility="no" />
-        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-            android:orientation="vertical" android:paddingHorizontal="12dp">
+        <LinearLayout android:id="@+id/widget_words" android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:orientation="vertical" android:paddingHorizontal="12dp">
             <TextView android:id="@+id/widget_title" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:ellipsize="end" android:maxLines="1" android:fontFamily="@font/inter" android:textFontWeight="400"
             android:textSize="16sp" android:textColor="#FFFFFFFF" android:text="@string/widget_idle"/>
