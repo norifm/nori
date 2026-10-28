@@ -15,7 +15,7 @@ use crate::client::{Client, NetResult, Write};
 use crate::settings::{SavedServer, ServerKind};
 use crate::stream::{StreamQuality, StreamTarget};
 use crate::transport::{block_on, Exchange, NetError, Transport, TransportResponse};
-use crate::{Album, AlbumDetail, Artist, ArtistDetail, Core, PlaylistDetail, SearchResult, Song};
+use crate::{AlbumDetail, ArtistDetail, Core, PlaylistDetail, SearchResult};
 
 /// What a guest's stream addresses start with; the bit rate and song follow ([`resolved_stream`]).
 const ADDRESS: &str = "jam-song:";
@@ -174,6 +174,7 @@ pub(crate) async fn answer_read(client: &Client, read: HostRead) -> NetResult<Ho
         HostRead::Playlist { id } => Read::PlaylistById { id },
         HostRead::Song { id } => Read::SongById { id },
     };
+    use crate::{Album, Artist, Song};
     // The host's favorites are its own: a guest sees none of them.
     let songs = |v: Vec<Song>| v.into_iter().map(|s| Song { starred: false, ..s }).collect::<Vec<_>>();
     let albums = |v: Vec<Album>| v.into_iter().map(|a| Album { starred: false, ..a }).collect::<Vec<_>>();
