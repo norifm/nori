@@ -167,6 +167,9 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
 
     fun motionPlay(url: String) = motion.play(url)
 
+    /** Where the loop is (ms), -1 before one was made; for the test bridge. */
+    val motionAtMs: Long get() = if (motionLazy.isInitialized()) motion.position else -1
+
     fun motionPause() {
         if (motionLazy.isInitialized()) motion.pause()
     }

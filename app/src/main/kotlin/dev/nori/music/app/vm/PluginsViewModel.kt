@@ -57,7 +57,7 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { refusing { host.installPreview(p) }; loadOffers() }
     }
 
-    /** Device rows and slots' plugins, for the devices page. */
+    /** The plugins whose rows show on the devices sheet too. */
     val deviceCards = host.deviceCards
 
     /** Rows set in the order they were set: a slider's steps must not land out of order. */

@@ -2245,7 +2245,7 @@ fn a_repo_plugins_page_holds_and_lists_its_versions() {
 #[derive(Default)]
 struct Heard(std::sync::Mutex<Vec<(String, Vec<String>)>>);
 impl nori_plugins::Client for Heard {
-    fn layer_changed(&self) {}
+    fn layer_changed(&self, _: u32) {}
     fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
     fn shown(&self, _: String, _: String, _: bool, _: bool) {}
     fn notice(&self, _: String, _: bool, words: String, args: Vec<String>) {
@@ -2393,7 +2393,7 @@ fn the_login_opens_the_plugins() {
 
 struct Quiet;
 impl nori_plugins::Client for Quiet {
-    fn layer_changed(&self) {}
+    fn layer_changed(&self, _: u32) {}
     fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
     fn shown(&self, _: String, _: String, _: bool, _: bool) {}
     fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}

@@ -131,7 +131,7 @@ client from what the plugin answers (`crates/plugins/src/slots.rs`); one not nam
 | song info | `song-info(song)`: lines, with a link each | shows them under the plugin's name |
 | artwork | `artwork(song)`: a still image or a muted loop, or none (nori's cover) | plays the loop in the player's sleeve (Moving covers' rules) |
 | player status | `player-status()`: one line | shows it under the output row |
-| devices | nothing: its rows | shows its page's rows on the devices page too |
+| devices | nothing: its rows | shows its page's rows on the devices sheet ("Playing on") too, after nori's own entries |
 
 ## Covers
 

@@ -222,10 +222,12 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   check "its lines join the song's info" scrolled_to 'Search the web'
   adb exec-out screencap -p > "$shots/song-info.png"
   tapnode text Close
-  "$app" open equalizer >/dev/null
-  check "its rows show on the devices page under its name" scrolled_to 'text="SHOWCASE · CONTROLS"'
+  # Its rows join the devices sheet ("Playing on") after nori's own, remote control on or not.
+  "$app" open devices >/dev/null
+  check "its rows show on the devices sheet under its name" scrolled_to 'text="SHOWCASE · CONTROLS"'
   check "with a level's hint" scrolled_to 'Two decimals'
   adb exec-out screencap -p > "$shots/devices.png"
+  adb shell input keyevent 4
   "$app" open plugins >/dev/null
   tapnode text Showcase
   check "its page shows a level's value with its unit" wait_until 10 on_screen 'Level · 0.00 dB'

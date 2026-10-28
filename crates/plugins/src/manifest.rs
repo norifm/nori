@@ -71,7 +71,7 @@ pub enum Place {
     Artwork,
     SongInfo,
     PlayerStatus,
-    /// Its rows, on the devices page too.
+    /// Its rows, on the devices sheet ("Playing on") too.
     Devices,
 }
 

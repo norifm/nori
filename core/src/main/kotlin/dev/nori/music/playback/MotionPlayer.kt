@@ -45,6 +45,17 @@ class MotionPlayer(
     private var view: TextureView? = null
     private var loaded: String? = null
 
+    /** Where each loop was when it last stopped, so it goes on from there rather than from its start. Memory only. */
+    private val positions = HashMap<String, Long>()
+
+    /** Where the loaded loop is now, or where it stopped (ms); for the test bridge. */
+    val position: Long get() = player?.currentPosition ?: loaded?.let { positions[it] } ?: 0
+
+    /** Keeps where the loaded loop is. */
+    private fun keepPosition(p: ExoPlayer) {
+        loaded?.let { positions[it] = p.currentPosition }
+    }
+
     private val _ready = MutableStateFlow<String?>(null)
 
     /** The video whose first frame is on the surface now, or null. The screen fades in only after this. */
@@ -94,13 +105,16 @@ class MotionPlayer(
         _ready.value = null
     }
 
-    /** Plays [url] (HLS or a single file) on a loop, from where it was if it is the one already loaded. */
+    /** Plays [url] (HLS or a single file) on a loop, from where it last stopped, also after a [release]. */
     fun play(url: String) {
         val p = player ?: build().also { player = it }
         if (url != loaded || p.mediaItemCount == 0) {
+            keepPosition(p)
             loaded = url
             _ready.value = null
             p.setMediaSource(DefaultMediaSourceFactory(bytes).createMediaSource(MediaItem.fromUri(url)))
+            // Before its first frame, so that frame is the one it stopped on.
+            positions[url]?.let(p::seekTo)
             p.prepare()
         } else if (p.playbackState == Player.STATE_IDLE) {
             // Rested (see [rest]) or failed: the same video again from the frame it stopped on.
@@ -111,12 +125,15 @@ class MotionPlayer(
 
     /** Holds the frame on screen; nothing decodes while paused. */
     fun pause() {
-        player?.pause()
+        val p = player ?: return
+        p.pause()
+        keepPosition(p)
     }
 
     /** Lets the ExoPlayer and its decoder go. The next [play] builds a new one. */
     fun release() {
         val p = player ?: return
+        keepPosition(p)
         p.removeListener(listener)
         p.release()
         player = null

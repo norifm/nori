@@ -1,6 +1,6 @@
 //! The places in nori's screens plugins fill, as a client asks for them: the actions a plugin adds to
 //! its menus, lines in a song's info, the player's sleeve, a line under the player's output, and the
-//! rows it shows on the devices page. nori draws them all; a plugin only answers. Each asks only the
+//! rows it shows on the devices sheet ("Playing on"). nori draws them all; a plugin only answers. Each asks only the
 //! enabled plugins whose manifest names that place, in their order, and never makes one's instance
 //! before a screen asks.
 
@@ -59,6 +59,8 @@ pub struct Artwork {
     /// A muted looping video (HLS or MP4) when true, else a still image.
     pub looping: bool,
     pub url: String,
+    /// A loop's first frame: an image URL with `{size}` where the pixels go.
+    pub poster: Option<String>,
 }
 
 impl Plugins {
@@ -120,11 +122,10 @@ impl Plugins {
             let Some(w) = self.worker(&id) else { continue };
             let s = song_out(&song);
             if let Some(sleeve) = w.call(move |st, p| p.nori_plugin_slots().call_artwork(st, &s)).await.flatten() {
-                let (looping, url) = match sleeve {
-                    w::Sleeve::Still(u) => (false, u),
-                    w::Sleeve::Loop(u) => (true, u),
-                };
-                return Some(Artwork { plugin: id, looping, url });
+                return Some(match sleeve {
+                    w::Sleeve::Still(url) => Artwork { plugin: id, looping: false, url, poster: None },
+                    w::Sleeve::Loop(m) => Artwork { plugin: id, looping: true, url: m.video, poster: m.poster },
+                });
             }
         }
         None
@@ -148,7 +149,7 @@ impl Plugins {
         out
     }
 
-    /// The plugins whose rows show on the devices page too, in `lang`.
+    /// The plugins whose rows show on the devices sheet ("Playing on") too, in `lang`.
     pub fn device_cards(&self, lang: String) -> Vec<PluginCard> {
         let shown = self.filling(Place::Devices);
         self.cards(lang).into_iter().filter(|c| shown.contains(&c.id)).collect()

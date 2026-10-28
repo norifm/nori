@@ -157,7 +157,8 @@ impl Watched {
 }
 
 impl nori_plugins::Client for Watched {
-    fn layer_changed(&self) {
+    /// The engine takes all of its settings again, whatever `effect` says.
+    fn layer_changed(&self, _effect: u32) {
         let engine = self.engine.lock().expect("not poisoned").as_ref().and_then(std::sync::Weak::upgrade);
         if let (Some(engine), Some(prefs)) = (engine, app().settings.current()) {
             engine.set_settings(nori_engine::core::settings(&prefs, app().settings.layer()));

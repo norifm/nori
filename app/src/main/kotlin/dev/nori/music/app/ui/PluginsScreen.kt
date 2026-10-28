@@ -34,6 +34,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.PluginsViewModel
+import dev.nori.music.app.vm.SettingsViewModel
+import androidx.lifecycle.compose.LifecycleStartEffect
 import dev.nori.music.ffi.plugins.Offer
 import dev.nori.music.ffi.plugins.PluginCard
 import dev.nori.music.ffi.plugins.PluginRow
@@ -70,6 +72,7 @@ fun PluginsPages(vm: PluginsViewModel, close: () -> Unit) {
  */
 @Composable
 fun PluginsScreen(vm: PluginsViewModel, back: () -> Unit, open: (String) -> Unit) {
+    SoundPage()
     val cards by vm.cards.collectAsStateWithLifecycle()
     val repos by vm.repos.collectAsStateWithLifecycle()
     val offers by vm.offers.collectAsStateWithLifecycle()
@@ -237,6 +240,7 @@ private fun RemoveSheet(card: PluginCard?, close: () -> Unit, remove: (PluginCar
  */
 @Composable
 fun PluginPage(vm: PluginsViewModel, id: String, back: () -> Unit) {
+    SoundPage()
     val cards by vm.cards.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val offers by vm.offers.collectAsStateWithLifecycle()
@@ -283,7 +287,17 @@ fun PluginPage(vm: PluginsViewModel, id: String, back: () -> Unit) {
     RemoveSheet(removing, { removing = null }) { c -> vm.uninstall(c.id); removing = null; back() }
 }
 
-/** The rows of the plugins that show on the devices page too, each under its name; read before the page opened. */
+/**
+ * A plugin turned on or a row changed is heard at once while this page is in sight: it is a sound page
+ * tuned from its first look, so even the first change does not wait for the deep buffer to drain.
+ */
+@Composable
+private fun SoundPage() {
+    val sound: SettingsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    LifecycleStartEffect(sound) { sound.soundPageShown(true, tuned = true); onStopOrDispose { sound.soundPageShown(false) } }
+}
+
+/** The rows of the plugins that show on the devices sheet too, each under its name; read before the sheet opened. */
 @Composable
 fun PluginDeviceSections(vm: PluginsViewModel) {
     val cards by vm.deviceCards.collectAsStateWithLifecycle()

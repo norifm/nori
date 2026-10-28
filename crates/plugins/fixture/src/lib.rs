@@ -3,7 +3,7 @@
 use nori_plugin_sdk::http::{Method, Request};
 use nori_plugin_sdk::sound_stage::{Format, Inputs};
 use nori_plugin_sdk::types::Value;
-use nori_plugin_sdk::slots::{InfoLine, Sleeve};
+use nori_plugin_sdk::slots::{InfoLine, Motion, Sleeve};
 use nori_plugin_sdk::types::{Item, Song};
 use nori_plugin_sdk::{settings, state, store, Glyph, ItemKind, Lifecycle, Manifest, MenuAction, Place, Provider, Row, Slot, Slots, SoundStage};
 
@@ -64,9 +64,9 @@ impl SoundStage for Test {
 impl Provider for Test {}
 
 impl Slots for Test {
-    /// The song titled "loop" plays a loop; any other keeps nori's cover.
+    /// The song titled "loop" plays a loop with a poster; any other keeps nori's cover.
     fn artwork(&mut self, song: Song) -> Option<Sleeve> {
-        (song.title == "loop").then(|| Sleeve::Loop("https://allowed.example/loop.m3u8".into()))
+        (song.title == "loop").then(|| Sleeve::Loop(Motion { video: "https://allowed.example/loop.m3u8".into(), poster: Some("https://allowed.example/first/{size}.jpg".into()) }))
     }
 
     /// Says what it ran on.

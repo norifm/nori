@@ -84,6 +84,8 @@ class TestBridge : BroadcastReceiver() {
                         when (arg) {
                             "install" -> host.installPreview(host.previewFile(value))
                             "turn" -> value.split(" ").let { (id, on) -> host.turn(id, on == "on"); "ok" }
+                            // A level row: '<id> <row> <number>'.
+                            "level" -> value.split(" ").let { (id, row, v) -> host.set(id, row, dev.nori.music.ffi.plugins.Value.Level(v.toDouble())); "ok" }
                             // Every plugin and added repo gone, for a check that starts afresh.
                             "reset" -> {
                                 host.refresh()

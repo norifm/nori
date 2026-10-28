@@ -215,9 +215,10 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
 
     val settingsVm: SettingsViewModel = viewModel()
     val prefs by settingsVm.prefs.collectAsStateWithLifecycle()
-    // A plugin's sleeve for the song (the artwork slot), asked only while the player is in view: a still
-    // picture takes the cover's place, a loop plays over it while the sleeve is at rest (SleeveMotion.kt).
-    val artwork = if (LocalPlayerShown.current) vm.artwork.collectAsStateWithLifecycle().value else null
+    // A plugin's sleeve for the song (the artwork slot), asked once per song while the app is in front: a
+    // still picture takes the cover's place, a loop plays over it while the sleeve is at rest (SleeveMotion.kt).
+    // Kept while the player is put away, so a loop coming back goes on from its last frame.
+    val artwork = vm.artwork.collectAsStateWithLifecycle().value
     val coverUrl = artwork?.takeIf { !it.looping }?.url ?: vm.cover(state.current?.coverArt, CoverSize.FULL)
     // One picture for the sleeve and for the cover in flight (see SleeveArt).
     val sleeveArt = rememberSleeveArt(coverUrl)
@@ -227,6 +228,11 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     var looped by remember { mutableStateOf(false) }
     if (loop != null) looped = true
     val motion = if (looped) remember { SleeveMotion(vm::motionView) } else null
+    // The loop's first frame, if its plugin gives one: drawn under it before it plays.
+    if (motion != null) {
+        val poster = rememberCover(artwork?.takeIf { it.looping }?.poster?.replace("{size}", CoverSize.FULL.toString()), CoverSize.FULL)
+        androidx.compose.runtime.SideEffect { motion.poster = poster.takeIf { it.url != null } }
+    }
     if (motion != null) MotionDirector(vm, motion, loop, sheet, onArtwork = panel == Panel.ART && showing == Panel.ART && !flying)
     // The player wears the cover's colours except in Midnight (the core's rule).
     val tinted = LocalPapers.current.coversTint
@@ -435,12 +441,12 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
             )
             // On its side the sleeve is the left half and not the screen's width that these flights grow to
             // and from; there the sheet brings the sleeve up with it instead.
-            if (panel == Panel.ART && !across) FlyingCover(sheet, vm.cover(state.current?.coverArt, CoverSize.ROW), sleeveArt, sleeveHeight > 0f)
+            if (panel == Panel.ART && !across) FlyingCover(sheet, vm.cover(state.current?.coverArt, CoverSize.ROW), sleeveArt, sleeveHeight > 0f, motion)
             // Put away from the lyrics, the cover still travels - from the header's thumbnail to the one
             // in the now playing bar. Without it the lyrics simply went down behind the bar and a cover
             // appeared there out of nothing.
             else if (panel == Panel.LYRICS && !across) FlyingThumb(sheet, vm.cover(state.current?.coverArt, CoverSize.ROW))
-            if (flying && !across) PanelFlight(sleeveArt, thumb, sleeveBottom, sleeveHeight, toThumb = panel == Panel.LYRICS) { arrival.value }
+            if (flying && !across) PanelFlight(sleeveArt, thumb, sleeveBottom, sleeveHeight, toThumb = panel == Panel.LYRICS, motion) { arrival.value }
             // Artwork, lyrics and queue dissolve into each other rather than cutting. The fade is on the
             // panel itself and not on the whole screen: the transport is the same in all three and is
             // shared across the change, and fading the content it sits in dimmed it half-way. Fading only
@@ -821,10 +827,11 @@ internal fun OutputButton(
         dev.nori.music.ffi.devices.OutputGlyph.CAST -> Iconoir.Airplay
     }
     val description = remember(o, otherName) { otherName?.let(say::devicePlayingOn) ?: say.outputDescription(o.port, o.name) }
-    // With remote control or jams on, the button opens nori's own devices first (RemoteScreens); this
-    // phone's outputs are one row of it.
+    // With remote control or jams on, or a plugin's rows to show, the button opens nori's own devices
+    // first (RemoteScreens); this phone's outputs are one row of it.
     val prefs by settings.prefs.collectAsStateWithLifecycle()
-    val devices = prefs.remoteControl && LocalRules.current.remote
+    val pluginDevices by settings.pluginDevices.collectAsStateWithLifecycle()
+    val devices = prefs.remoteControl && LocalRules.current.remote || pluginDevices.isNotEmpty()
     val openDevices = LocalDevices.current
     val tell = LocalMessages.current
     val open = { if (devices) openDevices() else openOutputPicker(context, output, tell) }
@@ -1035,7 +1042,7 @@ private fun FlyingThumb(sheet: PlayerSheet, url: String?) {
 @Composable
 private fun PanelFlight(
     art: SleeveArt, thumb: Rect, sleeveBottom: Float, sleeveHeight: Float, toThumb: Boolean,
-    progress: FloatReader,
+    motion: SleeveMotion?, progress: FloatReader,
 ) {
     val density = androidx.compose.ui.platform.LocalDensity.current
     val side = with(density) { sleeveHeight.toDp() }
@@ -1079,6 +1086,8 @@ private fun PanelFlight(
                     },
             ) {
                 SleeveImage(art, Modifier.fillMaxSize())
+                // The loop's still leaves the sleeve with it and comes back as it lands.
+                motion?.let { MotionStill(it, dressed::read) }
                 SleeveShade(dressed)
             }
         }
@@ -1237,7 +1246,7 @@ private fun smooth(x: Float, from: Float, to: Float): Float {
  * flight shows the picture even before the large one has come out of the cache.
  */
 @Composable
-private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, measured: Boolean) {
+private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, measured: Boolean, motion: SleeveMotion?) {
     val flying by remember { androidx.compose.runtime.derivedStateOf { sheet.progress.value < 1f } }
     if (!flying || !measured || sheet.miniCover == Rect.Zero) return
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -1309,6 +1318,8 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
                 Box(Modifier.fillMaxSize().drawBehind { drawRect(art.plate) })
                 if (art.current == null) Cover(rowUrl, 0.dp, Modifier.fillMaxSize(), radius = 0.dp, plate = false)
                 SleeveImage(art, Modifier.fillMaxSize(), plate = false)
+                // A loop's still fades in on the way, as the sleeve's dressing does, so it lands on the sleeve's picture.
+                motion?.let { MotionStill(it, dressed::read) }
                 SleeveShade(dressed)
             }
         }

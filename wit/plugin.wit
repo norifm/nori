@@ -440,11 +440,18 @@ interface deciders {
 interface slots {
     use types.{song, item, item-kind};
 
+    /// A muted looping video.
+    record motion {
+        /// Its URL (HLS or MP4).
+        video: string,
+        /// Its first frame: an image URL with `{size}` where the pixels go, shown before the video plays.
+        poster: option<string>,
+    }
+
     variant sleeve {
         /// An image URL.
         still(string),
-        /// A muted looping video (HLS or MP4) URL.
-        loop(string),
+        loop(motion),
     }
 
     /// The player's sleeve for the song playing; none keeps nori's cover.

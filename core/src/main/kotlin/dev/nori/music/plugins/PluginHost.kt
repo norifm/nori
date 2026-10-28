@@ -66,7 +66,7 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
     val menus: StateFlow<Map<ItemKind, List<MenuEntry>>> = _menus
 
     private val _deviceCards = MutableStateFlow<List<PluginCard>>(emptyList())
-    /** The plugins whose rows show on the devices page too. */
+    /** The plugins whose rows show on the devices sheet too. */
     val deviceCards: StateFlow<List<PluginCard>> = _deviceCards
 
     private val _notices = MutableSharedFlow<PluginNotice>(extraBufferCapacity = 8)
@@ -91,13 +91,12 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
         openPlugins(dir.path, settings.core, client).also { p ->
             // The transport is the plugins' own, whichever Kinds over them sets it.
             Kinds.withPlugins(p).setTransport(transport())
-            settings.asked(VALUES)
         }
     }
 
     private val client = object : Client {
-        // A plugin's overrides or rows changed what it lays over the settings: the player takes the values in.
-        override fun layerChanged() = settings.asked(VALUES)
+        // A plugin's overrides or rows changed what it lays over the settings: the player applies what that asks.
+        override fun layerChanged(effect: UInt) = settings.asked(effect)
         override fun status(id: String, row: String, words: String, args: List<String>) {
             val line = said(id, words, args)
             _status.update { it + (RowRef(id, row) to line) }
@@ -193,9 +192,4 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
 
     /** The lines plugins say under the player's output row. */
     suspend fun playerStatus(): List<String> = withContext(Dispatchers.IO) { plugins.playerStatus() }
-
-    private companion object {
-        /** What a new layer asks of the player (settings_store.rs): the gain (2), the plan (4), the sound (8) again. */
-        const val VALUES = 14u
-    }
 }

@@ -84,11 +84,12 @@ internal fun refusal(r: Refusal): String = words(
 private enum class RoomPage { MAIN, INVITE, SETTINGS, PAIR }
 
 @Composable
-fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jams: Boolean) {
+fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jams: Boolean, remote: Boolean) {
     val vm: RemoteViewModel = viewModel()
     val nav = LocalNav.current
     NoriSheet(open, onDismiss) {
-        LifecycleResumeEffect(Unit) { vm.watch(true); onPauseOrDispose { vm.watch(false) } }
+        // Other devices are looked for only with remote control on; a plugin's rows alone need none of it.
+        if (remote) LifecycleResumeEffect(Unit) { vm.watch(true); onPauseOrDispose { vm.watch(false) } }
         val devices by vm.devices.collectAsStateWithLifecycle()
         val names by vm.names.collectAsStateWithLifecycle()
         val jam by vm.jam.collectAsStateWithLifecycle()
@@ -153,6 +154,8 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                 AnimatedVisibility(jams && hosted != null, enter = fadeIn(tween(ms)) + expandVertically(tween(ms)), exit = fadeOut(tween(ms)) + shrinkVertically(tween(ms))) {
                     hosted?.let { JamControls(it, { page = RoomPage.INVITE }, { page = RoomPage.SETTINGS }) }
                 }
+                // Plugins' rows for this phone's devices, after nori's own.
+                PluginDeviceSections(viewModel())
             }
         }
     }
@@ -207,7 +210,9 @@ fun DevicesHost(open: Boolean, onDismiss: () -> Unit) {
     val output by settings.currentOutput.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val tell = LocalMessages.current
-    if (prefs.remoteControl && LocalRules.current.remote) DevicesSheet(open, onDismiss, { onDismiss(); openOutputPicker(context, output, tell) }, prefs.remoteControl)
+    val pluginDevices by settings.pluginDevices.collectAsStateWithLifecycle()
+    val remote = prefs.remoteControl && LocalRules.current.remote
+    if (remote || pluginDevices.isNotEmpty()) DevicesSheet(open, onDismiss, { onDismiss(); openOutputPicker(context, output, tell) }, prefs.remoteControl, remote)
 }
 
 /** The jam this phone hosts, as the devices list it: a tap opens its queue, End ends it. */

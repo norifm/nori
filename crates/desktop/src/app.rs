@@ -2665,7 +2665,7 @@ impl App {
     }
 
     /// Asks the plugins for `song`'s sleeve, off this thread; a still one is fetched and drawn as its
-    /// cover in Now Playing, a loop keeps the cover (Slint draws no video).
+    /// cover in Now Playing, and so is a loop's first frame (Slint draws no video).
     fn ask_sleeve(&mut self, song: Song) {
         self.sleeve = None;
         self.ui().set_sleeved(false);
@@ -2674,8 +2674,12 @@ impl App {
         }
         let (host, tx) = (self.plugin_host().clone(), self.tx.clone());
         nori_host::spawn("nori-plugin-artwork", move || {
-            if let Some(a) = nori_core::transport::block_on(host.artwork(song.clone())).filter(|a| !a.looping) {
-                tx.send(Msg::Artwork { song: song.id, url: a.url });
+            let picture = nori_core::transport::block_on(host.artwork(song.clone())).and_then(|a| match a.looping {
+                false => Some(a.url),
+                true => a.poster.map(|p| p.replace("{size}", &cover_px(CoverSize::Large).to_string())),
+            });
+            if let Some(url) = picture {
+                tx.send(Msg::Artwork { song: song.id, url });
             }
         });
     }

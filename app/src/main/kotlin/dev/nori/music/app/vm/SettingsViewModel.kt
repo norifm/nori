@@ -36,6 +36,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
@@ -325,6 +327,9 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     /** Installed plugins' names by id, which name their kinds of profile. */
     val pluginNames: StateFlow<Map<String, String>> = nori.plugins.names
 
+    /** The plugins whose rows show on the devices sheet too: with any, the output button opens that sheet. */
+    val pluginDevices = nori.plugins.deviceCards
+
     /** The installed plugins, for a plugin kind's about. */
     val pluginCards = nori.plugins.cards
 
@@ -503,17 +508,17 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     private var touchWatch: Job? = null
 
     /**
-     * A sound page (the equalizer, AutoEQ, the sound settings) came in sight ([on]) or left it. A setting
-     * changed while one is trades the deep buffer for one heard at once until the last leaves
-     * (`rules::sound_tuning`).
+     * A sound page (the equalizer, AutoEQ, the sound settings, a plugin's) came in sight ([on]) or left it.
+     * A setting or a plugin's layer changed while one is, or a page [tuned] from its first look (a
+     * plugin's), trades the deep buffer for one heard at once until the last leaves (`rules::sound_tuning`).
      */
-    fun soundPageShown(on: Boolean) {
+    fun soundPageShown(on: Boolean, tuned: Boolean = false) {
         soundPages += if (on) 1 else -1
         if (soundPages == 0) {
             touchWatch?.cancel(); touchWatch = null
             nori.player.tuning(false)
         } else if (touchWatch == null) touchWatch = viewModelScope.launch {
-            prefs.drop(1).first()
+            if (!tuned) merge(prefs.drop(1).map { }, nori.settings.effects.map { }).first()
             nori.player.tuning(dev.nori.music.ffi.queue.soundTuning(true, true))
         }
     }

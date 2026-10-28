@@ -91,7 +91,7 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 """"downloaded":${actions.downloads.value.doneCount},"downloading":${actions.downloads.value.pendingCount},"dlActive":${actions.downloadMarks.value.values.count { it.phase == dev.nori.music.downloads.DownloadPhase.DOWNLOADING }},"dlProgress":"${actions.downloadMarks.value.values.filter { it.phase == dev.nori.music.downloads.DownloadPhase.DOWNLOADING }.joinToString(" ") { "%.2f".format(it.progress.value) }}","dlSpeed":${dev.nori.music.Nori.get(context).core.downloadSpeedEta()[0]},"dlEta":${dev.nori.music.Nori.get(context).core.downloadSpeedEta()[1]},""" +
                 """"sinkBytes":${dev.nori.music.playback.PlaybackService.rustPlayer?.bytesWritten ?: 0},""" +
                 // A plugin's sleeve: how many loop players exist (nought without a loop on screen) and the artwork asked for this song.
-                """"motionPlayers":${dev.nori.music.playback.MotionPlayer.live},"artwork":"${player2.artwork.value?.url.orEmpty()}","artworkLoops":${player2.artwork.value?.looping ?: false},""" +
+                """"motionPlayers":${dev.nori.music.playback.MotionPlayer.live},"motionAt":${player2.motionAtMs},"artwork":"${player2.artwork.value?.url.orEmpty()}","artworkLoops":${player2.artwork.value?.looping ?: false},""" +
                 // The song's cover as the notification and the lock screen open it, and how many covers were drawn for them.
                 """"cover":"${st.current?.coverArt.orEmpty()}","coversDrawn":${dev.nori.music.app.car.CarArtProvider.coversDrawn},""" +
                 // Everything the app's Java side has allocated since it started, for allocation checks.

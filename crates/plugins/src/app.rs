@@ -13,8 +13,9 @@ use crate::Plugins;
 /// What a client does with what plugins say.
 #[cfg_attr(feature = "ffi", uniffi::export(with_foreign))]
 pub trait Client: Send + Sync {
-    /// The settings' layer changed: the client derives the engine's settings again.
-    fn layer_changed(&self);
+    /// The settings' layer changed: the client applies `effect` again (the settings' effect bits) and
+    /// derives the engine's settings with it.
+    fn layer_changed(&self, effect: u32);
     /// A status row's line, from plugin `id`'s strings.
     fn status(&self, id: String, row: String, words: String, args: Vec<String>);
     fn shown(&self, id: String, row: String, shown: bool, enabled: bool);
@@ -48,8 +49,10 @@ impl Side for App {
 
     fn laid(&self, _id: &str) {
         let Some(plugins) = self.plugins.get().and_then(Weak::upgrade) else { return };
-        self.settings.set_layer(plugins.layer());
-        self.client.layer_changed();
+        let effect = self.settings.set_layer(plugins.layer());
+        if effect != 0 {
+            self.client.layer_changed(effect);
+        }
     }
 
     fn status(&self, id: &str, row: &str, words: &str, args: &[String]) {
@@ -78,7 +81,7 @@ pub fn open(dir: PathBuf, settings: Arc<Settings>, client: Arc<dyn Client>) -> A
     let plugins = Arc::new(Plugins::open(dir, app.clone()));
     let _ = app.plugins.set(Arc::downgrade(&plugins));
     if plugins.installed().iter().any(|i| i.enabled) {
-        app.settings.set_layer(plugins.layer());
+        app.laid("");
     }
     plugins
 }

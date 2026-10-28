@@ -330,6 +330,7 @@ fn slots_ask_the_plugins_that_fill_them() {
 
     let art = nori_tasks::block_on(plugins.artwork(song("loop"))).unwrap();
     assert_eq!((art.plugin.as_str(), art.looping, art.url.as_str()), (ID, true, "https://allowed.example/loop.m3u8"));
+    assert_eq!(art.poster.as_deref(), Some("https://allowed.example/first/{size}.jpg"), "a loop carries its first frame");
     assert_eq!(nori_tasks::block_on(plugins.artwork(song("still"))), None, "none: nori's cover");
     let info = nori_tasks::block_on(plugins.song_info(song("four"), "en".into()));
     assert_eq!((info[0].name.as_str(), info[0].lines[0].words.as_str()), ("Test", "4 letters"));

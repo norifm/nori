@@ -134,7 +134,7 @@ pub enum Place {
     SongInfo,
     /// One line under the player's output row (`slots.player-status`).
     PlayerStatus,
-    /// Its rows, on the devices page too.
+    /// Its rows, on the devices sheet ("Playing on") too.
     Devices,
 }
 

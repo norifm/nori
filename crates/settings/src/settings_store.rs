@@ -256,9 +256,17 @@ impl Settings {
         self.layer.lock().clone()
     }
 
-    /// The plugin host's new layer; whoever derives settings from it is told by the host.
-    pub fn set_layer(&self, layer: crate::overrides::Layer) {
-        *self.layer.lock() = layer;
+    /// The plugin host's new layer; what it asks the player to apply again, as a settings change's effect.
+    pub fn set_layer(&self, layer: crate::overrides::Layer) -> u32 {
+        use crate::overrides::{effective, Tunables};
+        let mut held = self.layer.lock();
+        if *held == layer {
+            return 0;
+        }
+        let audio = if held.stages != layer.stages || Tunables::with(&held.overrides) != Tunables::with(&layer.overrides) { APPLY_AUDIO } else { 0 };
+        let settings = self.with_prefs(|p| effects(&effective(p, &held.overrides), &effective(p, &layer.overrides))).unwrap_or(0);
+        *held = layer;
+        audio | settings
     }
 }
 
@@ -628,6 +636,19 @@ mod tests {
         let s = open(&dir);
         assert_eq!(s.prefs.eq_mode, EqMode::Graphic);
         assert!(read(&s.db.lock()).unwrap().contains_key(EQ_MODE_KEY), "a new install writes the mode");
+    }
+
+    #[test]
+    fn a_layer_asks_what_its_values_change() {
+        use crate::overrides::Layer;
+        let dir = nori_testdir::TempDir::new("settings-layer");
+        let s = Settings::new();
+        s.open(dir.path().join("app.db").to_str().unwrap()).unwrap();
+        let laid = |pairs: &[(&str, &str)]| Layer { overrides: pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), stages: Vec::new() };
+        assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25")])), APPLY_AUDIO, "a tunable");
+        assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25")])), 0, "the same layer");
+        assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25"), ("crossfadeSec", "6")])), APPLY_AUDIO | REPLAN, "a setting's own effect");
+        assert_eq!(s.set_layer(Layer::default()), APPLY_AUDIO | REPLAN, "turned off, both go back");
     }
 
     #[test]
