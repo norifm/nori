@@ -113,7 +113,7 @@ void nori_ios_lan_lost(const char *service);
 void nori_ios_remote_watch(int32_t on);
 /// Where the music can play, as JSON to free; NULL while remote control is off:
 /// {here, devices: [{id, name, active, playing, title, artist, refused}]}. `refused`: 0 none, 1 the
-/// queue changed there, 2 not allowed, 3 gone, 4 too many.
+/// queue changed there, 2 not allowed, 3 gone, 4 too many, 5 another source.
 char *nori_ios_remote_devices(void);
 /// Moves the music to device `id`, or here (empty).
 char *nori_ios_pairing(void);
@@ -392,8 +392,8 @@ char *nori_ios_rules(void);
 /// lets no guest}. Its asks are its own requests the host has yet to take.
 char *nori_ios_jam(void);
 /// Joins the jam invite `link` is to, its guest profile named `name`. NORI_JOIN_STARTED: report 20 says
-/// how it went (flag 1 joined: open the active profile; flag 2: the jam has ended; flag 0: index a
-/// NORI_LOGIN_* code, text its detail).
+/// how it went (flag 1 joined: open the active profile; flag 2: the jam has ended; flag 3: it plays from
+/// a plugin; flag 0: index a NORI_LOGIN_* code, text its detail).
 int32_t nori_ios_jam_join(const char *link, const char *name);
 #define NORI_JOIN_STARTED 0
 #define NORI_JOIN_NOT_AN_INVITE 1

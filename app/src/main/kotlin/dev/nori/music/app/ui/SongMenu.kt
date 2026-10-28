@@ -7,6 +7,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.draw.alpha
@@ -76,7 +77,7 @@ fun SongMenu(
     var timing by remember(open) { mutableStateOf(false) }
     NoriSheet(player?.takeIf { open && sleeping }, onDismiss) { p -> SleepChoices(p, onDismiss) }
     NoriSheet(player?.takeIf { open && timing }?.let { p -> song?.let { p to it.id } }, onDismiss) { (p, id) -> LyricsSheet(p, id) }
-    NoriDialog(song?.takeIf { details }, onDismiss) { s -> TrackInfo(s, onDismiss) }
+    NoriDialog(song?.takeIf { details }, onDismiss) { s -> TrackInfo(s, actions, onDismiss) }
     NoriDialog(song?.takeIf { picking }, onDismiss) { s -> PlaylistPicker(listOf(s), actions, onDismiss) }
 
     // A sheet with a half-open stage swallows the first back gesture to collapse itself, which reads
@@ -165,6 +166,7 @@ fun SongMenu(
                         Column { folded.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < folded.lastIndex) } }
                     }
                 }
+                PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.SONG, dev.nori.music.ffi.plugins.Items.Songs(listOf(song)), onDismiss)
             }
         }
     }
@@ -185,9 +187,40 @@ fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) 
                 if (!LocalRules.current.asks) Item(say.play, Iconoir.Play) { actions.play(card); onDismiss() }
                 Item(say.menuPlayNext, Iconoir.PlaylistPlay) { actions.queue(card, next = true); onDismiss() }
                 Item(say.addToQueue, Iconoir.Playlist, divider = false) { actions.queue(card, next = false); onDismiss() }
+                when (card) {
+                    is CardItem.OfAlbum -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.ALBUM, dev.nori.music.ffi.plugins.Items.Albums(listOf(card.album)), onDismiss)
+                    is CardItem.OfPlaylist -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.PLAYLIST, dev.nori.music.ffi.plugins.Items.Playlists(listOf(card.playlist)), onDismiss)
+                    is CardItem.OfArtist -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.ARTIST, dev.nori.music.ffi.plugins.Items.Artists(listOf(card.artist)), onDismiss)
+                }
             }
         }
     }
+}
+
+/** The actions plugins add to [kind]'s menu, after nori's own, each run on [items]; read before the menu opened. */
+@Composable
+private fun PluginItems(actions: ActionsViewModel, kind: dev.nori.music.ffi.plugins.ItemKind, items: dev.nori.music.ffi.plugins.Items, onDismiss: () -> Unit) {
+    val menus by actions.pluginMenus.collectAsState()
+    val entries = menus[kind].orEmpty()
+    if (entries.isNotEmpty()) Hairline(startIndent = GROUP_INSET)
+    entries.forEachIndexed { i, e ->
+        Item(e.label, glyphIcon(e.glyph), divider = i < entries.lastIndex) { actions.runPluginMenu(e, items); onDismiss() }
+    }
+}
+
+/** A plugin's glyph as the app's own icon. */
+@Composable
+private fun glyphIcon(g: dev.nori.music.ffi.plugins.Glyph): ImageVector = when (g) {
+    dev.nori.music.ffi.plugins.Glyph.SPARKLE -> Iconoir.Sparks
+    dev.nori.music.ffi.plugins.Glyph.INFO -> Iconoir.InfoCircle
+    dev.nori.music.ffi.plugins.Glyph.SHARE -> Iconoir.ShareIos
+    dev.nori.music.ffi.plugins.Glyph.LINK -> Iconoir.ShareAndroid
+    dev.nori.music.ffi.plugins.Glyph.SEARCH -> Iconoir.Search
+    dev.nori.music.ffi.plugins.Glyph.HEART -> Kanji.Seal
+    dev.nori.music.ffi.plugins.Glyph.DOWNLOAD -> Iconoir.Download
+    dev.nori.music.ffi.plugins.Glyph.ADD -> Iconoir.PlusCircle
+    dev.nori.music.ffi.plugins.Glyph.PLAY -> Iconoir.Play
+    dev.nori.music.ffi.plugins.Glyph.TUNE -> Iconoir.ControlSlider
 }
 
 /**
@@ -306,14 +339,35 @@ fun PlaylistPicker(songs: List<Song>, actions: ActionsViewModel, onDone: () -> U
     )
 }
 
-/** Everything the server said about one file. */
+/** Everything the server said about one file, then what plugins add, each under its name, a line with a link opening it. */
 @Composable
-fun TrackInfo(song: Song, onDone: () -> Unit) {
+fun TrackInfo(song: Song, actions: ActionsViewModel, onDone: () -> Unit) {
     // Which rows there are, in what order and how each reads is nori-core's (`fmt::track_info`).
     val rows = remember(song) { say.trackInfo(song) }
+    val groups by androidx.compose.runtime.produceState(emptyList<dev.nori.music.ffi.plugins.InfoGroup>(), song) { value = actions.pluginSongInfo(song) }
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    val ms = if (reduceMotion()) 0 else 220
     AlertCard(
         title = { Text(say.details) },
-        text = { Column(Modifier.verticalScroll(rememberScrollState())) { rows.forEach { (label, value) -> Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, Modifier.padding(bottom = 8.dp)) } } },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                rows.forEach { (label, value) -> Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, Modifier.padding(bottom = 8.dp)) }
+                // Asked as the sheet opens: the plugins' lines come in under nori's own, never in place of them.
+                AnimatedVisibility(groups.isNotEmpty(), enter = if (ms == 0) EnterTransition.None else fadeIn(tween(ms)) + androidx.compose.animation.expandVertically(tween(ms)), exit = ExitTransition.None) {
+                    Column {
+                        groups.forEach { g ->
+                            Text(g.name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            g.lines.forEach { l ->
+                                val link = l.link
+                                if (link == null) Text(l.words, Modifier.padding(bottom = 4.dp))
+                                else Text(l.words, Modifier.padding(bottom = 4.dp).clickable { runCatching { uri.openUri(link) } }, textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline)
+                            }
+                            androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
+                        }
+                    }
+                }
+            }
+        },
         confirmButton = { TextAction(say.close, onDone) },
     )
 }

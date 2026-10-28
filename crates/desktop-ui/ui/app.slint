@@ -111,10 +111,11 @@ export struct SongGo {
     filled: bool,
 }
 
-// One line of a song's details: what it is, and the server's value.
+// One line of a song's details: what it is, and the server's value (or a plugin's, with its link).
 export struct Detail {
     label: string,
     value: string,
+    link: string,
 }
 
 export struct SongRow {
@@ -163,6 +164,8 @@ export struct SettingRow {
     shares: [float],
     // A usage row's downloads, a line per profile, drawn under its downloads part.
     breakdown: [string],
+    // A buttons row's names, one per option: a button sends its own.
+    names: [string],
 }
 
 // A line with a quieter one under it: an AutoEQ curve, a saved sound profile.
@@ -1126,7 +1129,19 @@ component MenuLine inherits Rectangle {
 // What a right press on an album, artist, playlist, song card or mix offers, as Android's card menu: what it
 // is at the head, then play it, play it next, add it to the queue, and start a jam with it while one can
 // start. A guest's songs go to the host, so it has no Play.
+// The actions plugins add to the menus of albums, artists and playlists (`CollectionMenu::kind`), and one run
+// on item `id` (titled `title`).
+export global PluginMenus {
+    in property <[string]> album;
+    in property <[string]> artist;
+    in property <[string]> playlist;
+    callback run(int, int, string, string);
+}
+
 component CollectionMenu inherits PopupWindow {
+    // What it is (`Card::kind`), for the plugins' lines; -1 for none.
+    in property <int> kind: -1;
+    in property <string> id;
     in property <image> picture;
     in property <bool> pictured: true;
     in property <bool> round;
@@ -1136,6 +1151,7 @@ component CollectionMenu inherits PopupWindow {
     callback queue(bool);
     callback jam;
     property <bool> jams: Jam.on && !Jam.hosting && !Jam.guest;
+    property <[string]> extra: root.kind == 0 ? PluginMenus.album : root.kind == 1 ? PluginMenus.artist : root.kind == 2 ? PluginMenus.playlist : [];
     width: MenuShape.width;
     close-policy: close-on-click-outside;
     Popover {
@@ -1162,14 +1178,23 @@ component CollectionMenu inherits PopupWindow {
                 MenuLine {
                     icon: Icons.playlist;
                     text: "Add to queue";
-                    divider: root.jams;
+                    divider: root.jams || root.extra.length > 0;
                     clicked => { root.queue(false); root.close(); }
                 }
                 if root.jams: MenuLine {
                     icon: Icons.community;
                     text: "Start a jam";
-                    divider: false;
+                    divider: root.extra.length > 0;
                     clicked => { root.jam(); root.close(); }
+                }
+                for label[i] in root.extra: MenuLine {
+                    icon: Icons.info-circle;
+                    text: label;
+                    divider: i < root.extra.length - 1;
+                    clicked => {
+                        PluginMenus.run(root.kind, i, root.id, root.title);
+                        root.close();
+                    }
                 }
             }
         }
@@ -1242,6 +1267,8 @@ component CardView inherits Rectangle {
     card-menu := CollectionMenu {
         x: root.menu-x;
         y: root.menu-y - Chrome.menu-lift(root.menu-at, self.height);
+        kind: root.card.kind;
+        id: root.card.id;
         picture: root.picture;
         round: root.round;
         title: root.card.title;
@@ -2691,6 +2718,8 @@ component DevicesView inherits Rectangle {
                 line: root.pairing-link != "" ? "With an invite link or a pairing code" : "With the invite link someone sent you";
                 clicked => { root.join-jam(); }
             }
+            // The plugins' rows that show here too.
+            @children
         }
     }
 }
@@ -3946,6 +3975,14 @@ component SettingLine inherits VerticalLayout {
                     text: root.item.button;
                     enabled: root.item.enabled;
                     clicked => { root.action(root.item.name); }
+                }
+                if root.item.kind == 16: HorizontalLayout {
+                    spacing: 6px;
+                    for o[i] in root.item.options: SmallButton {
+                        y: (parent.height - self.height) / 2;
+                        text: o;
+                        clicked => { root.action(root.item.names[i]); }
+                    }
                 }
                 if root.item.kind == 8 && root.item.button != "": SmallButton {
                     y: (parent.height - self.height) / 2;
@@ -5422,6 +5459,16 @@ export component AppWindow inherits Window {
     // A lyrics service dragged some places (down +), and the sheet its key is typed in.
     callback source-moved(string, int);
     in-out property <bool> key-open;
+    // A line asked for (a plugin's text, a file or a repo's address), or a warning to confirm: what is
+    // typed goes to `setting-typed(ask-name, …)`.
+    in-out property <bool> ask-open;
+    in property <string> ask-title;
+    in property <string> ask-note;
+    in property <string> ask-name;
+    in property <string> ask-button;
+    in property <bool> ask-field;
+    in property <bool> ask-secret;
+    in-out property <string> ask-text;
     in-out property <string> key-service;
     in-out property <string> key-title;
     in-out property <string> key-text;
@@ -5510,6 +5557,12 @@ export component AppWindow inherits Window {
     // A song's details, in a sheet.
     in-out property <bool> details-open;
     in property <[Detail]> details;
+    // What plugins say under the player's output, and a plugin's still drawn as Now Playing's cover.
+    in property <[string]> plugin-status;
+    in property <image> sleeve;
+    in property <bool> sleeved;
+    // The plugins' rows the devices panel shows too.
+    in property <[SettingRow]> device-plugin-rows;
     // Adding a song to a playlist: the sheet open, the playlists offered, whether a new one is being named,
     // and its name.
     in-out property <bool> picker-open;
@@ -5528,7 +5581,7 @@ export component AppWindow inherits Window {
     callback delete-playlist();
     // "Join a Jam": the sheet open, its link, why it failed, and joining under way.
     in-out property <bool> join-open;
-    // Signing the profile's account in with cookies pasted from a browser (YouTube Music).
+    // Signing the profile's account in with cookies pasted from a browser.
     in-out property <bool> signin-open;
     in-out property <string> signin-text;
     in property <bool> signin-busy;
@@ -5537,6 +5590,8 @@ export component AppWindow inherits Window {
     callback open-sign-in-page();
     // The account sheet: who is signed in (empty: no one), and pasting unfolded under Sign in.
     in property <string> signin-user;
+    // What the profile in use signs in to, by name.
+    in property <string> signin-service;
     in-out property <bool> signin-pasting;
     callback sign-in-window();
     callback sign-out();
@@ -5630,6 +5685,10 @@ export component AppWindow inherits Window {
     callback cycle-repeat();
     callback jump(int);
     callback login();
+    // Settings › Plugins in a sheet, from the login.
+    callback open-plugins();
+    in-out property <bool> plugins-open;
+    in property <[SettingRow]> plugin-rows;
     callback cancel-login();
     callback setting-toggled(string, bool);
     callback setting-chosen(string, int);
@@ -5765,6 +5824,15 @@ export component AppWindow inherits Window {
                                         root.login();
                                     }
                                 }
+                            }
+                        }
+                        // Plugins can add kinds of profile, so they are reached before any profile.
+                        HorizontalLayout {
+                            alignment: center;
+                            ShowAllLink {
+                                text: "Plugins";
+                                font-size: 12px;
+                                clicked => { root.open-plugins(); }
                             }
                         }
                     }
@@ -7104,6 +7172,14 @@ export component AppWindow inherits Window {
                     open-jam => { root.inspector = 1; }
                     join-jam => { root.join-open = true; }
                     show-pairing => { root.pairing-open = true; }
+                    for r in root.device-plugin-rows: SettingLine {
+                        item: r;
+                        toggled(name, on) => { root.setting-toggled(name, on); }
+                        chosen(name, i) => { root.setting-chosen(name, i); }
+                        action(name) => { root.setting-action(name); }
+                        slid(name, v, last) => { root.setting-slid(name, v, last); }
+                        typed(name, text) => { root.setting-typed(name, text); }
+                    }
                 }
                 if root.shown-panel == 1 && root.panel-in > 0: QueueView {
                     y: 56px;
@@ -7152,6 +7228,8 @@ export component AppWindow inherits Window {
             }
         }
         album-pop := CollectionMenu {
+            kind: 0;
+            id: root.now-album-id;
             x: root.pop-x;
             y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
             picture: root.art(root.now-art, 0, root.covers-rev);
@@ -7162,6 +7240,8 @@ export component AppWindow inherits Window {
             jam => { root.jam-play(0, root.now-album-id); }
         }
         artist-pop := CollectionMenu {
+            kind: 1;
+            id: root.menu-artist;
             x: root.pop-x;
             y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
             pictured: false;
@@ -7200,6 +7280,8 @@ export component AppWindow inherits Window {
             }
         }
         card-pop := CollectionMenu {
+            kind: root.menu-card.kind;
+            id: root.menu-card.id;
             x: root.pop-x;
             y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
             picture: root.art(root.menu-card.art, 0, root.covers-rev);
@@ -7429,7 +7511,7 @@ export component AppWindow inherits Window {
                     width: parent.width;
                     height: self.width;
                     border-radius: 8px;
-                    source: root.art(root.now-art, 1, root.covers-rev);
+                    source: root.sleeved ? root.sleeve : root.art(root.now-art, 1, root.covers-rev);
                     transform-scale: root.playing ? 1 : 0.9;
                     animate transform-scale { duration: Motion.reduced ? 0ms : 500ms; easing: cubic-bezier(0.3, 1.35, 0.6, 1); }
                     RightPress {
@@ -7509,6 +7591,12 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+                        }
+                        for line in root.plugin-status: Text {
+                            text: line;
+                            color: Theme.text.with-alpha(0.45);
+                            font-size: 12px;
+                            overflow: elide;
                         }
                     }
                     if !Jam.guest: Seal {
@@ -7846,12 +7934,121 @@ export component AppWindow inherits Window {
                 open-jam => { root.full-panel = 1; }
                 join-jam => { root.join-open = true; }
                 show-pairing => { root.pairing-open = true; }
+                for r in root.device-plugin-rows: SettingLine {
+                    item: r;
+                    toggled(name, on) => { root.setting-toggled(name, on); }
+                    chosen(name, i) => { root.setting-chosen(name, i); }
+                    action(name) => { root.setting-action(name); }
+                    slid(name, v, last) => { root.setting-slid(name, v, last); }
+                    typed(name, text) => { root.setting-typed(name, text); }
+                }
             }
         }
 
         // Join a Jam: a sheet over the window, as the Mac's sheets come down from its top.
         // A lyrics service's key: typed, it is kept and the service switched on; removed, every service that
         // needs it is switched off.
+        if root.plugins-open: Rectangle {
+            background: Theme.ground.with-alpha(0.6);
+            TouchArea {
+                clicked => { root.plugins-open = false; }
+            }
+            MenuSheet {
+                x: (parent.width - self.width) / 2;
+                y: 40px;
+                width: min(560px, parent.width - 32px);
+                height: parent.height - 80px;
+                TouchArea {}
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        Text {
+                            text: "Plugins";
+                            color: Theme.text;
+                            font-size: 17px;
+                            font-weight: 700;
+                            horizontal-stretch: 1;
+                        }
+                        SmallButton {
+                            text: "Done";
+                            clicked => { root.plugins-open = false; }
+                        }
+                    }
+                    Flickable {
+                        content-height: plugin-list.preferred-height;
+                        plugin-list := VerticalLayout {
+                            for r in root.plugin-rows: SettingLine {
+                                item: r;
+                                toggled(name, on) => { root.setting-toggled(name, on); }
+                                chosen(name, i) => { root.setting-chosen(name, i); }
+                                action(name) => { root.setting-action(name); }
+                                slid(name, v, last) => { root.setting-slid(name, v, last); }
+                                typed(name, text) => { root.setting-typed(name, text); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.ask-open: Rectangle {
+            background: Theme.ground.with-alpha(0.6);
+            TouchArea {
+                clicked => { root.ask-open = false; }
+            }
+            MenuSheet {
+                x: (parent.width - self.width) / 2;
+                y: 80px;
+                width: 420px;
+                height: ask-sheet.preferred-height;
+                TouchArea {}
+                ask-sheet := VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+                    Text {
+                        text: root.ask-title;
+                        color: Theme.text;
+                        font-size: 17px;
+                        font-weight: 700;
+                    }
+                    if root.ask-note != "": Text {
+                        text: root.ask-note;
+                        color: Theme.dim;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                    }
+                    if root.ask-field: Field {
+                        height: 34px;
+                        border-radius: 8px;
+                        clip: true;
+                        secret: root.ask-secret;
+                        text <=> root.ask-text;
+                        accepted => {
+                            root.ask-open = false;
+                            root.setting-typed(root.ask-name, root.ask-text);
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle { horizontal-stretch: 1; }
+                        SmallButton {
+                            y: (parent.height - self.height) / 2;
+                            text: "Cancel";
+                            clicked => { root.ask-open = false; }
+                        }
+                        Capsule {
+                            text: root.ask-button;
+                            clicked => {
+                                root.ask-open = false;
+                                root.setting-typed(root.ask-name, root.ask-text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if root.key-open: Rectangle {
             background: Theme.ground.with-alpha(0.6);
             TouchArea {
@@ -8021,9 +8218,13 @@ export component AppWindow inherits Window {
                                 }
                                 Text {
                                     text: d.value;
-                                    color: Theme.text;
+                                    color: d.link != "" ? Theme.accent : Theme.text;
                                     font-size: 13px;
                                     wrap: word-wrap;
+                                    if d.link != "": TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.setting-action("plugin-open:" + d.link); }
+                                    }
                                 }
                             }
                         }
@@ -8300,7 +8501,7 @@ export component AppWindow inherits Window {
                     padding: 16px;
                     spacing: 12px;
                     Text {
-                        text: root.signin-user != "" ? "YouTube Music" : "Sign in to YouTube Music";
+                        text: root.signin-user != "" ? root.signin-service : "Sign in to " + root.signin-service;
                         color: Theme.text;
                         font-size: 17px;
                         font-weight: 700;
@@ -8323,7 +8524,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.signin-user == "": Text {
-                        text: root.signin-busy ? "Finish signing in in the window that opened." : root.signin-ended ? "YouTube signed you out. Sign in again to see your library and likes." : "See your own Home, your library and your likes. Music plays without it too.";
+                        text: root.signin-busy ? "Finish signing in in the window that opened." : root.signin-ended ? root.signin-service + " signed you out. Sign in again to see your library and likes." : "See your own Home, your library and your likes. Music plays without it too.";
                         color: Theme.dim;
                         font-size: 13px;
                         wrap: word-wrap;
@@ -8332,7 +8533,7 @@ export component AppWindow inherits Window {
                     if root.signin-user == "": HorizontalLayout {
                         alignment: center;
                         Capsule {
-                            text: root.signin-busy ? "Signing in…" : "Sign in with Google";
+                            text: root.signin-busy ? "Signing in…" : "Sign in";
                             icon: Icons.user;
                             clicked => { root.sign-in-window(); }
                         }
@@ -8354,7 +8555,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.signin-user == "" && root.signin-pasting: Text {
-                        text: "Sign in to music.youtube.com in a private browser window, copy the Cookie header of any request it makes from the developer tools, and paste it here.";
+                        text: "Sign in in a private browser window, copy the Cookie header of any request the page makes from the developer tools, and paste it here.";
                         color: Theme.dim;
                         font-size: 12px;
                         wrap: word-wrap;
@@ -8370,7 +8571,7 @@ export component AppWindow inherits Window {
                         }
                         SmallButton {
                             y: (parent.height - self.height) / 2;
-                            text: "Open YouTube Music";
+                            text: "Open the sign-in page";
                             clicked => { root.open-sign-in-page(); }
                         }
                         SmallButton {
@@ -8379,13 +8580,6 @@ export component AppWindow inherits Window {
                             enabled: root.signin-text != "";
                             clicked => { root.sign-in(root.signin-text); }
                         }
-                    }
-                    Text {
-                        text: "Unofficial apps are against YouTube’s terms, and YouTube may flag an account that uses one.";
-                        color: Theme.faint;
-                        font-size: 11px;
-                        wrap: word-wrap;
-                        horizontal-alignment: center;
                     }
                     HorizontalLayout {
                         alignment: end;

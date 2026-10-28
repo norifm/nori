@@ -100,7 +100,8 @@ pub extern "C" fn nori_ios_remote_watch(on: i32) {
     }
 }
 
-/// A refusal as the app words it: 0 none, 1 the queue changed there, 2 not allowed, 3 gone, 4 too many.
+/// A refusal as the app words it: 0 none, 1 the queue changed there, 2 not allowed, 3 gone, 4 too many,
+/// 5 another source.
 fn refusal_code(r: Option<Refusal>) -> u8 {
     match r {
         None => 0,
@@ -108,6 +109,7 @@ fn refusal_code(r: Option<Refusal>) -> u8 {
         Some(Refusal::NotAllowed) => 2,
         Some(Refusal::Unknown) => 3,
         Some(Refusal::TooMany) => 4,
+        Some(Refusal::OtherSource) => 5,
     }
 }
 

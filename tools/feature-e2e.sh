@@ -8,7 +8,7 @@
 #   tools/feature-e2e.sh [--only <section>,...] [--list]     NORI_E2E_SERVER=local for tools/dev-server.sh
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="lyrics notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel remote jam"
+SECTIONS="plugins lyrics notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel remote jam"
 OPT_IN="lyrics-services scrobble download-albums youtube-music"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
@@ -122,6 +122,133 @@ if want scrobble; then section scrobble
   "$app" do pause >/dev/null
 fi
 
+# The packed plugins (nori-plugins' tools/pack.py, dist/<name>-<version>.noriplugin).
+plugins_dist=${NORI_PLUGINS_DIST:-$here/../../nori-plugins/dist}
+plugin_package() { ls "$plugins_dist/$1"-[0-9]*.noriplugin 2>/dev/null | sort -V | tail -1; }
+# Orbit's package as a repo of this computer's, over HTTP the emulator reaches: its index.json beside it.
+serve_plugins() {
+  local repo; repo=$(mktemp -d)
+  cp "$(plugin_package orbit)" "$repo/" || return 1
+  python3 - "$repo" <<'INDEX' || return 1
+import hashlib, json, pathlib, sys
+repo = pathlib.Path(sys.argv[1]); pkg = next(repo.glob("orbit-*.noriplugin"))
+version = pkg.stem.removeprefix("orbit-")
+(repo / "index.json").write_text(json.dumps({"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "versions": [
+    {"version": version, "api": 1, "url": pkg.name, "sha256": hashlib.sha256(pkg.read_bytes()).hexdigest()}]}]}))
+INDEX
+  plugins_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+  python3 -m http.server "$plugins_port" --bind 127.0.0.1 --directory "$repo" >/dev/null 2>&1 &
+  plugins_server=$!
+  wait_until 10 curl -sf "http://127.0.0.1:$plugins_port/index.json" -o /dev/null
+}
+plugin_is() { "$app" plugin cards | grep -q "$1"; }
+# $1 on screen, scrolling down to it: a page's rows below the fold aren't in the tree.
+scrolled_to() {
+  local size w h
+  size=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); w=${size%x*}; h=${size#*x}
+  for _ in 1 2 3 4 5 6 7 8; do wait_until 3 on_screen "$1" && return 0; adb shell input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 3)) 300; done
+  on_screen "$1"
+}
+# Installs and turns on plugin $1's newest package, pushed into the app's cache: the id.
+plugin_from_file() {
+  adb exec-in run-as "$pkg" sh -c "cat > cache/$1.noriplugin" < "$(plugin_package "$1")" || return 1
+  local id; id=$("$app" plugin install "/data/data/$pkg/cache/$1.noriplugin")
+  [[ "$id" == *.* && "$id" != *failed* ]] || return 1
+  "$app" plugin turn "$id on" >/dev/null && echo "$id"
+}
+
+if want plugins; then section "plugins: a repo added, orbit installed from it, turned on and off, removed; the showcase's slots and rows; music sounding"
+  # The plugin host's runtime on the device's ABI, the Plugins page and its sheets, a repo fetched through
+  # OkHttp, and a plugin's sound stage reaching the AudioTrack player at once; what plugins may do is Rust's.
+  check "orbit is packed" test -n "$(plugin_package orbit)"
+  check "its repo is served" serve_plugins
+  "$app" plugin reset >/dev/null
+  "$app" play "$SONG" >/dev/null
+  check "music sounds before any plugin" sounds 20
+  "$app" open plugins >/dev/null
+  check "the Plugins page opens, empty" wait_until 10 on_screen 'Plugins add music sources'
+  shots="$here/../build/e2e/$ANDROID_SERIAL/plugins"; mkdir -p "$shots"
+  adb exec-out screencap -p > "$shots/plugins-empty.png"
+  tapnode text "Add repo"
+  check "adding a repo warns first" wait_until 10 on_screen 'Add it only if you trust it'
+  tapnode text "Repo address"
+  adb shell input text "http://10.0.2.2:$plugins_port/index.json"
+  tapnode text Add
+  check "the repo offers orbit" wait_until 30 on_screen 'text="Orbit"'
+  tapnode text Orbit
+  check "before installing, its sheet says what it may do" wait_until 30 on_screen 'Change the sound'
+  check "and nothing is installed yet" plugin_is none
+  adb exec-out screencap -p > "$shots/install-sheet.png"
+  tapnode text Install
+  check "orbit installs from the repo, off" wait_until 30 plugin_is 'fm.nori.orbit:off'
+  watch_from_now
+  "$app" plugin turn "fm.nori.orbit on" >/dev/null
+  check "orbit turns on" wait_until 10 plugin_is 'fm.nori.orbit:on'
+  check "the player takes its stage in at once" waitfor_log 'the chain changes' 10
+  check "installed, it leaves Get plugins" wait_until 10 off_screen 'text="Install"'
+  check "music sounds with orbit's stage in the chain" sounds 10
+  adb exec-out screencap -p > "$shots/plugins.png"
+  watch_from_now
+  "$app" plugin turn "fm.nori.orbit off" >/dev/null
+  check "turned off, the player lets its stage go at once" waitfor_log 'the chain changes' 10
+  watch_from_now
+  "$app" plugin turn "fm.nori.orbit on" >/dev/null
+  check "and takes it in again" waitfor_log 'the chain changes' 10
+  tapnode text Orbit
+  check "its page shows each level's value" wait_until 10 on_screen 'Width · 0.80'
+  adb exec-out screencap -p > "$shots/orbit.png"
+  "$app" play "$SONG" >/dev/null
+  check "a song started with orbit on sounds" sounds 10
+  check "and plays on" wait_for positionMs '>3000' 15
+  tapnode text Remove
+  check "Remove asks first" wait_until 10 on_screen 'Its own settings go with it'
+  watch_from_now
+  tapnode text Remove
+  check "removed, it is gone" wait_until 10 plugin_is none
+  check "and so is its stage" waitfor_log 'the chain changes' 10
+  check "the page goes back to the list" wait_until 10 on_screen 'Plugins add music sources'
+  # The showcase fills every slot and kind of row; installed from its package file.
+  check "the showcase installs from its file and turns on" test -n "$(plugin_from_file showcase)"
+  "$app" open player >/dev/null
+  check "its line shows under the player's output" wait_until 15 on_screen 'Showcase is on'
+  tapnode content-desc More
+  check "its action joins the song's menu after nori's own" wait_until 10 on_screen 'text="Show song facts"'
+  adb exec-out screencap -p > "$shots/menu.png"
+  tapnode text "Show song facts"
+  check "its action runs and its notice shows as the app's message" wait_until 10 on_screen 'Long Track 07 by'
+  tapnode content-desc More
+  tapnode text More
+  tapnode text Details
+  check "its lines join the song's info" scrolled_to 'Search the web'
+  adb exec-out screencap -p > "$shots/song-info.png"
+  tapnode text Close
+  # Its rows join the devices sheet ("Playing on") after nori's own, remote control on or not.
+  "$app" open devices >/dev/null
+  check "its rows show on the devices sheet under its name" scrolled_to 'text="SHOWCASE · CONTROLS"'
+  check "with a level's hint" scrolled_to 'Two decimals'
+  adb exec-out screencap -p > "$shots/devices.png"
+  adb shell input keyevent 4
+  "$app" open plugins >/dev/null
+  tapnode text Showcase
+  check "its page shows a level's value with its unit" wait_until 10 on_screen 'Level · 0.00 dB'
+  check "and a hint under it" on_screen 'Two decimals'
+  adb exec-out screencap -p > "$shots/showcase.png"
+  check "and its link row" scrolled_to 'website'
+  adb exec-out screencap -p > "$shots/showcase-links.png"
+  # The artwork slot: moving-covers has no loop for the fixture's album, so the cover stays and no loop
+  # player is made. (A loop playing, fading in and letting go with the screen off was checked by hand.)
+  check "moving-covers installs from its file and turns on" test -n "$(plugin_from_file moving-covers)"
+  "$app" play "$SONG" >/dev/null
+  "$app" open player >/dev/null
+  check "a song without a loop keeps its cover" wait_for artworkLoops False 15
+  check "and no loop player is made" wait_for motionPlayers 0 5
+  check "and it plays" sounds 15
+  "$app" do pause >/dev/null
+  "$app" plugin reset >/dev/null
+  kill "$plugins_server" 2>/dev/null
+  "$app" open settings >/dev/null
+fi
+
 if want lyrics; then section lyrics
   # Which answer wins, word timing, the lookups switch and every service's format are the lyrics crate's
   # (crates/lyrics tests, over recorded answers). Here: that an answer comes back through the platform.
@@ -196,8 +323,11 @@ if want youtube-music; then section "a YouTube Music profile, then the server's 
   # from googlevideo: the glue Rust's tests stand in for. Opt-in, since YouTube may refuse on any day.
   server_widget_albums=$(widget_albums)
   check "the album widget has server albums before switching" test -n "$server_widget_albums"
-  "$app" login kind:YOU_TUBE_MUSIC >/dev/null
-  check "the YouTube Music profile opens" wait_for kind YOU_TUBE_MUSIC 20
+  # YouTube Music is a plugin: installed from its package and turned on, its kind is offered.
+  ytid=$(plugin_from_file youtube-music)
+  check "the YouTube Music plugin installs and turns on" test -n "$ytid"
+  "$app" login "kind:plugin:$ytid" >/dev/null
+  check "the YouTube Music profile opens" wait_for kind "plugin:$ytid" 20
   yt_widget_albums=$(widget_albums)
   check "the album widget replaces the server's albums with YouTube albums" python3 - "$yt_widget_albums" <<'WIDGET'
 import sys
@@ -208,7 +338,7 @@ WIDGET
   # Rust's (the provider's sign_in_done, auth::signed_in_at).
   # That it opens, and that Cancel leaves the WebView no cookies, only a device can say.
   if [ "$(field signInOffer)" = True ]; then
-    check "the profile just added offers Google's sign-in" tapnode text "Sign in with Google"
+    check "the profile just added offers Google's sign-in" tapnode text "Sign in to YouTube Music"
   else
     "$app" open sign-in >/dev/null
   fi
@@ -304,7 +434,14 @@ with sqlite3.connect(sys.argv[1]) as db:
     db.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID")
     db.execute("INSERT OR REPLACE INTO settings VALUES('remoteControl', '{\"b\":true}')")
 PY
-  tmux new-session -d -s "$ytpeer" -x 160 -y 45 "$here/../target/debug/nori-cli --data $ytdata --provider youtubeMusic --no-images --no-mpris"
+  # The peer plays from the same plugin, installed in its own data folder and on.
+  python3 - "$(plugin_package youtube-music)" "$ytdata/plugins" <<'PY'
+import pathlib, sys, zipfile
+root = pathlib.Path(sys.argv[2]); folder = root / "fm.nori.youtube-music"
+zipfile.ZipFile(sys.argv[1]).extractall(folder)
+(root / "index.json").write_text('{"plugin": [{"id": "fm.nori.youtube-music", "enabled": true}]}')
+PY
+  tmux new-session -d -s "$ytpeer" -x 160 -y 45 "$here/../target/debug/nori-cli --data $ytdata --provider fm.nori.youtube-music --no-images --no-mpris"
   for _ in $(seq 16); do tmux send-keys -t "$ytpeer" -- -; done
   yt_secret() { python3 -c 'import sqlite3,sys; r=sqlite3.connect(sys.argv[1]).execute("select value from app_kv where key=?",("remoteLanSecret",)).fetchone(); print(r[0]) if r else sys.exit(1)' "$ytdata/nori.db" 2>/dev/null; }
   check "the YouTube terminal peer makes its pairing secret" wait_until 20 yt_secret
@@ -337,6 +474,7 @@ PY
   check "the server's profile opens again" wait_for server "$APP_URL" 30
   "$app" play "$SONG" >/dev/null
   check "and its songs play" sounds 20
+  "$app" plugin reset >/dev/null
 fi
 
 if want notification; then section "the notification's seal and shuffle"

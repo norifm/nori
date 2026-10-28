@@ -56,7 +56,19 @@ pub struct CoverRules {
     pub disk_bytes: u64,
     /// Share of that memory kept while the app is not visible.
     pub hidden_share: f64,
+    /// A cover id holding this is an address already (a plugin's), whatever the profile's provider:
+    /// [`CoverRules::size_hole`] in it takes the size.
+    pub address_mark: String,
+    pub size_hole: String,
 }
+
+/// `cover` with its size filled in, when it is an address already ([`CoverRules::address_mark`]).
+pub(crate) fn own_address(cover: &str, size: u32) -> Option<String> {
+    cover.contains(ADDRESS_MARK).then(|| cover.replace(SIZE_HOLE, &size.to_string()))
+}
+
+const ADDRESS_MARK: &str = "://";
+const SIZE_HOLE: &str = "{size}";
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn cover_rules() -> CoverRules {
@@ -69,6 +81,8 @@ pub fn cover_rules() -> CoverRules {
         memory_share: 0.15,
         disk_bytes: 256 * 1024 * 1024,
         hidden_share: 0.25,
+        address_mark: ADDRESS_MARK.into(),
+        size_hole: SIZE_HOLE.into(),
     }
 }
 
@@ -103,12 +117,17 @@ impl Core {
     /// Cover URLs to warm for songs being downloaded, so they have artwork offline ([`cover_wants`]).
     pub fn download_cover_urls(&self, arts: Vec<String>) -> Vec<String> {
         let provider = self.provider();
-        cover_wants(arts, DOWNLOAD_COVERS).into_iter().map(|w| provider.cover_address(self, &w.id, w.size)).collect()
+        let mut urls: Vec<String> = cover_wants(arts, DOWNLOAD_COVERS).into_iter().map(|w| own_address(&w.id, w.size).unwrap_or_else(|| provider.cover_address(self, &w.id, w.size))).collect();
+        // An address with no size in it is the same at every size.
+        urls.dedup();
+        urls
     }
 
-    /// The URL of cover `id` at `size` px, as the profile's provider makes it.
+    /// The URL of cover `id` at `size` px: its own when it is an address already (a plugin's song
+    /// played elsewhere, in a jam or on a device this one controls), else as the profile's provider
+    /// makes it.
     pub fn cover_address(&self, id: String, size: u32) -> String {
-        self.provider().cover_address(self, &id, size)
+        own_address(&id, size).unwrap_or_else(|| self.provider().cover_address(self, &id, size))
     }
 }
 
@@ -331,6 +350,9 @@ mod tests {
         let prefix = core.url_prefix("getCoverArt");
         assert_eq!(urls, [format!("{prefix}&id=al%201&size=320"), format!("{prefix}&id=al%201&size=800")]);
         assert_eq!(core.cover_address("al 1".into(), 320), urls[0]);
+        // A plugin's cover is its own address on any profile (a YouTube song on a device this one controls).
+        assert_eq!(core.cover_address("https://yt.example/c=w{size}-h{size}".into(), 320), "https://yt.example/c=w320-h320");
+        assert_eq!(core.download_cover_urls(vec!["https://yt.example/plain.jpg".into()]), ["https://yt.example/plain.jpg"], "one address, whatever the size");
 
         // Cover key ignores signature and address.
         let core = crate::Core::new(String::new(), "t".into(), Default::default()).unwrap();

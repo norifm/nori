@@ -9,6 +9,10 @@ use slint::{ModelRc, SharedString, VecModel};
 
 use nori_look::theme;
 
+use nori_core::providers::Kinds;
+use nori_host::desktop::OfferState;
+use nori_plugins::{Offers, PluginCard, PluginRow, Repo, RowKind, Value};
+
 use crate::look::Today;
 use crate::{words, SettingRow};
 
@@ -30,6 +34,8 @@ const SEASONS: i32 = 13;
 const APPEARANCE_ROW: i32 = 14;
 /// What is stored, as a bar of its parts.
 const USAGE: i32 = 15;
+/// A row of buttons, each sending its own name (`names`).
+const BUTTONS: i32 = 16;
 
 /// The appearance row's name: the theme setting, offered as segments.
 pub const APPEARANCE: &str = "appearance";
@@ -199,13 +205,17 @@ struct Row {
     shares: Vec<f32>,
     /// A usage row's downloads by profile, worded.
     breakdown: Vec<String>,
+    /// The option picked, where no setting holds it (a plugin's row).
+    chosen: Option<i32>,
+    /// A buttons row's names, in `options`' order.
+    names: Vec<String>,
 }
 
 /// The profile whose rows are kept under `profile` (`server_db`), as the server list names it.
-fn profile_name(p: &StoredPrefs, profile: &str) -> String {
+fn profile_name(p: &StoredPrefs, kinds: &Kinds, profile: &str) -> String {
     p.servers.iter().find(|sv| nori_core::settings::server_db_id(&sv.id) == profile).map_or_else(
         || "A removed profile".into(),
-        |sv| Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| crate::words::provider(sv.kind).name.into()),
+        |sv| Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| crate::words::provider_of(kinds, &sv.kind).name),
     )
 }
 
@@ -413,7 +423,7 @@ fn flag_rows(r: &SettingsRow, s: &SettingsState) -> Option<Vec<Row>> {
 }
 
 /// The desktop's row for one of the core's, or None for one it does not draw.
-fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Option<Row> {
+fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: &Kinds) -> Option<Row> {
     let enabled = r.enabled;
     Some(match r.item {
         RowItem::Setting { spec, value, .. } => {
@@ -455,7 +465,7 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
                 options: parts.iter().map(|(name, b)| (format!("{name} · {}", bytes(*b)), String::new())).collect(),
                 shares: parts.iter().map(|p| p.1 as f32 / total.max(1) as f32).collect(),
                 breakdown: if f.download_profiles.len() > 1 {
-                    f.download_profiles.iter().map(|(profile, b)| format!("{} · {}", profile_name(p, profile), bytes(*b))).collect()
+                    f.download_profiles.iter().map(|(profile, b)| format!("{} · {}", profile_name(p, kinds, profile), bytes(*b))).collect()
                 } else {
                     Vec::new()
                 },
@@ -494,13 +504,13 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
         RowItem::Server { index } => {
             let sv = p.servers.get(index as usize)?;
             let active = sv.id == p.active_server_id;
-            let words = crate::words::provider(sv.kind);
+            let words = crate::words::provider_of(kinds, &sv.kind);
             let who = if sv.user.is_empty() { words.no_user } else { sv.user.as_str() };
             let mut detail = format!("{who} · {}", if active { "in use" } else { "not in use" });
             if !sv.alt_url.trim().is_empty() {
                 detail.push_str(" · second address");
             }
-            let title = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.into());
+            let title = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or(words.name);
             // A jam guest switches between the profiles; changing them is not its to do.
             let edits = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
             Row { kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, button: if edits { "Edit".into() } else { "".into() }, ..Default::default() }
@@ -542,7 +552,7 @@ fn service(id: &str) -> Option<(&'static str, &'static str)> {
 
 /// The groups of settings tab `tab`: each section's title and rows. Tab 0 adds the desktop's own:
 /// the output device and the version.
-fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static str, Vec<Row>)> {
+fn groups(p: &StoredPrefs, f: &Facts, kinds: &Kinds, tab: i32, today: Today) -> Vec<(String, Vec<Row>)> {
     let s = settings_model::state(p, settings_model::Output::default(), &crate::session::app().settings.model);
     let facts = PageFacts {
         parts: f.rules.settings.clone(),
@@ -558,10 +568,10 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static s
         unsent_dropped: f.unsent.1,
         ..PageFacts::default()
     };
-    let mut groups: Vec<(&'static str, Vec<Row>)> = Vec::new();
+    let mut groups: Vec<(String, Vec<Row>)> = Vec::new();
     let page = tab_page(f, tab);
     for sec in settings_pages::page(page, SettingsClient::Desktop, p, &s, &facts) {
-        let rows: Vec<Row> = sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, &s).unwrap_or_else(|| row_of(r, p, &s, f).into_iter().collect())).flat_map(|r| {
+        let rows: Vec<Row> = sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, &s).unwrap_or_else(|| row_of(r, p, &s, f, kinds).into_iter().collect())).flat_map(|r| {
             if r.kind != SEASONS {
                 return vec![r];
             }
@@ -583,14 +593,14 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static s
             None => (Vec::new(), rows),
         };
         if !season.is_empty() {
-            groups.push(("Season", season));
+            groups.push(("Season".into(), season));
         }
         let title = section_title(sec.id);
         // Sections that share a title are one group here.
         match groups.last_mut() {
-            Some((t, g)) if *t == title => g.extend(rows),
+            Some((t, g)) if t == title => g.extend(rows),
             _ if rows.is_empty() => {}
-            _ => groups.push((title, rows)),
+            _ => groups.push((title.into(), rows)),
         }
     }
     if page == SettingsPage::Look {
@@ -600,16 +610,21 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static s
             Row { kind: CHOICE, name: DEVICE.into(), title: "Play through".into(), options: devices, enabled: true, ..Default::default() },
             note("A new device is used from the next start of nori."),
         ];
-        groups.push(("Output device", output));
-        groups.push(("About", vec![info("nori", format!("Version {}", env!("CARGO_PKG_VERSION")))]));
+        groups.push(("Output device".into(), output));
+        groups.push(("About".into(), vec![info("nori", format!("Version {}", env!("CARGO_PKG_VERSION")))]));
     }
     groups
 }
 
 /// Rows of settings tab `tab`: each group's heading, then its rows with first and last marked.
-pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> ModelRc<SettingRow> {
+pub fn rows(p: &StoredPrefs, f: &Facts, kinds: &Kinds, tab: i32, today: Today) -> ModelRc<SettingRow> {
+    model(groups(p, f, kinds, tab, today), p, f, today)
+}
+
+/// `groups` as the page draws them: each heading, then its rows with first and last marked.
+fn model(groups: Vec<(String, Vec<Row>)>, p: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
     let mut out = Vec::new();
-    for (title, rows) in groups(p, f, tab, today) {
+    for (title, rows) in groups {
         out.push(SettingRow { kind: HEADING, title: title.to_uppercase().into(), ..Default::default() });
         // Rows on a plate share it; the plate's corners round where a row without one (a note, the tiles,
         // the appearance) or the group's end meets it.
@@ -620,7 +635,9 @@ pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> ModelRc<Setti
                 Target::Device => f.device.clone(),
                 Target::Setting(name) => settings_model::value_of(p, name).unwrap_or_default(),
             };
-            let chosen = if r.kind == APPEARANCE_ROW {
+            let chosen = if let Some(c) = r.chosen {
+                c
+            } else if r.kind == APPEARANCE_ROW {
                 appearance_pick(p)
             } else if r.kind == SEASONS {
                 seasons(p, today).worn
@@ -644,12 +661,277 @@ pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> ModelRc<Setti
                 keyed: r.keyed,
                 shares: ModelRc::new(VecModel::from(r.shares)),
                 breakdown: ModelRc::new(VecModel::from(r.breakdown.into_iter().map(SharedString::from).collect::<Vec<_>>())),
+                names: ModelRc::new(VecModel::from(r.names.into_iter().map(SharedString::from).collect::<Vec<_>>())),
                 first: i == 0 || !plated[i - 1],
                 last: i + 1 == n || !plated[i + 1],
             });
         }
     }
     ModelRc::new(VecModel::from(out))
+}
+
+/// The plugins as Settings › Plugins shows them: installed, offered by the repos, and the repos.
+#[derive(Default)]
+pub struct Plugged {
+    pub cards: Vec<PluginCard>,
+    pub repos: Vec<Repo>,
+    pub shelf: Shelf,
+}
+
+/// What the plugin repos offer, as far as they were asked.
+#[derive(Default)]
+pub enum Shelf {
+    #[default]
+    Unasked,
+    Asking,
+    Read(Offers),
+}
+
+/// What a row of Settings › Plugins does, by its name.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PluginAct {
+    /// Switches the plugin on or off.
+    Turn(String),
+    /// Keeps the plugin at its version, or lets it update.
+    Hold(String),
+    /// A row of the plugin's page, by its id.
+    Row(String, String),
+    /// Moves the plugin up (-1) or down (+1) the order.
+    Move(String, i32),
+    Remove(String),
+    /// Asks for a file or folder to install.
+    Install,
+    /// Installs the plugin its sheet shows.
+    InstallPreview,
+    /// Installs and turns on the plugin a jam plays from, as its sheet shows it, then joins the jam.
+    JamInstall,
+    Look,
+    /// Installs version `.1` (newest first) of offer `.0`.
+    Get(u32, u32),
+    /// The page at this address, in the browser.
+    Open(String),
+    /// Asks for a repo's address.
+    AddRepo,
+    /// The repo at this address, once trusted.
+    TrustRepo(String),
+    RemoveRepo(String),
+}
+
+impl PluginAct {
+    /// Parses a row name of Settings › Plugins; None for any other.
+    pub fn of(name: &str) -> Option<PluginAct> {
+        let (what, rest) = name.split_once(':').unwrap_or((name, ""));
+        let id = || rest.to_string();
+        Some(match what {
+            "plugin-on" => PluginAct::Turn(id()),
+            "plugin-hold" => PluginAct::Hold(id()),
+            "plugin-row" => {
+                let (plugin, row) = rest.split_once(':')?;
+                PluginAct::Row(plugin.into(), row.into())
+            }
+            "plugin-up" => PluginAct::Move(id(), -1),
+            "plugin-down" => PluginAct::Move(id(), 1),
+            "plugin-remove" => PluginAct::Remove(id()),
+            "plugin-install" => PluginAct::Install,
+            "plugin-install-preview" => PluginAct::InstallPreview,
+            "plugin-jam-install" => PluginAct::JamInstall,
+            "plugin-look" => PluginAct::Look,
+            "plugin-get" => {
+                let (offer, version) = rest.split_once(':')?;
+                PluginAct::Get(offer.parse().ok()?, version.parse().ok()?)
+            }
+            "plugin-open" => PluginAct::Open(id()),
+            "repo-add" => PluginAct::AddRepo,
+            "repo-trust" => PluginAct::TrustRepo(id()),
+            "repo-remove" => PluginAct::RemoveRepo(id()),
+            _ => return None,
+        })
+    }
+
+    /// The row name that parses as `self`.
+    pub fn name(&self) -> String {
+        match self {
+            PluginAct::Turn(id) => format!("plugin-on:{id}"),
+            PluginAct::Hold(id) => format!("plugin-hold:{id}"),
+            PluginAct::Row(id, row) => format!("plugin-row:{id}:{row}"),
+            PluginAct::Move(id, by) => format!("{}:{id}", if *by < 0 { "plugin-up" } else { "plugin-down" }),
+            PluginAct::Remove(id) => format!("plugin-remove:{id}"),
+            PluginAct::Install => "plugin-install".into(),
+            PluginAct::InstallPreview => "plugin-install-preview".into(),
+            PluginAct::JamInstall => "plugin-jam-install".into(),
+            PluginAct::Look => "plugin-look".into(),
+            PluginAct::Get(offer, version) => format!("plugin-get:{offer}:{version}"),
+            PluginAct::Open(url) => format!("plugin-open:{url}"),
+            PluginAct::AddRepo => "repo-add".into(),
+            PluginAct::TrustRepo(url) => format!("repo-trust:{url}"),
+            PluginAct::RemoveRepo(url) => format!("repo-remove:{url}"),
+        }
+    }
+}
+
+/// Settings › Plugins: each plugin's group of its own rows and its page's; installing one from a file
+/// or a repo; the repos.
+pub fn plugin_rows(p: &Plugged, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    model(plugin_groups(p), prefs, f, today)
+}
+
+fn plugin_groups(p: &Plugged) -> Vec<(String, Vec<Row>)> {
+    let mut groups = Vec::new();
+    let count = p.cards.len();
+    for (i, c) in p.cards.iter().enumerate() {
+        let mut detail: Vec<String> = c.about.iter().cloned().collect();
+        detail.extend([words::plugin_is(&c.points, !c.overrides.is_empty()), words::plugin_reach(&c.net, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
+        let mut rows = vec![Row { kind: TOGGLE, name: PluginAct::Turn(c.id.clone()).name(), title: format!("{} {}", words::PLUGIN_VERSION, c.version), detail: detail.join(" · "), on: c.enabled, enabled: true, ..Default::default() }];
+        if c.repo.is_some() {
+            rows.push(Row { kind: TOGGLE, name: PluginAct::Hold(c.id.clone()).name(), title: words::KEEP_VERSION.into(), on: c.held, enabled: true, ..Default::default() });
+        }
+        let mut order: Vec<(String, PluginAct)> = Vec::new();
+        if i > 0 {
+            order.push((words::MOVE_UP.into(), PluginAct::Move(c.id.clone(), -1)));
+        }
+        if i + 1 < count {
+            order.push((words::MOVE_DOWN.into(), PluginAct::Move(c.id.clone(), 1)));
+        }
+        order.push((words::REMOVE.into(), PluginAct::Remove(c.id.clone())));
+        rows.push(Row {
+            kind: BUTTONS,
+            title: words::PLUGIN_ORDER.into(),
+            enabled: true,
+            names: order.iter().map(|(_, a)| a.name()).collect(),
+            options: order.into_iter().map(|(label, _)| (label.clone(), label)).collect(),
+            ..Default::default()
+        });
+        groups.extend(card_groups(c, rows));
+        if let Shelf::Read(offers) = &p.shelf {
+            groups.extend(versions(c, offers));
+        }
+    }
+    let mut install = Vec::new();
+    if p.cards.is_empty() {
+        install.push(note(words::NO_PLUGINS));
+    }
+    install.push(Row { kind: BUTTON, name: PluginAct::Install.name(), title: words::INSTALL_PLUGIN.into(), enabled: true, ..Default::default() });
+    groups.push((words::INSTALL_FROM_FILE.into(), install));
+    let look = |title: &str| Row { kind: BUTTON, name: PluginAct::Look.name(), title: title.into(), enabled: true, ..Default::default() };
+    let get = match &p.shelf {
+        Shelf::Unasked => vec![look(words::LOOK_FOR_PLUGINS)],
+        Shelf::Asking => vec![note(words::LOOKING)],
+        Shelf::Read(Offers { offers, failed }) => {
+            let mut rows = Vec::new();
+            for (at, o) in offers.iter().enumerate() {
+                // What is installed at its newest is not offered again.
+                let Some((newest, state)) = nori_host::desktop::offer_state(o).filter(|(_, s)| *s != OfferState::Installed) else { continue };
+                let mut detail: Vec<String> = o.about.iter().cloned().collect();
+                detail.push(format!("{} {}", words::PLUGIN_VERSION, newest.version));
+                detail.push(words::repo_name(&o.repo));
+                let button = if state == OfferState::Update { words::UPDATE } else { words::INSTALL };
+                rows.push(Row { kind: ACTION, name: PluginAct::Get(at as u32, 0).name(), title: o.name.clone(), detail: detail.join(" · "), button: button.into(), enabled: true, ..Default::default() });
+            }
+            if rows.is_empty() && failed.is_empty() {
+                rows.push(note(words::NOTHING_OFFERED));
+            }
+            rows.extend(failed.iter().map(|f| note(&words::repo_failed(&f.repo))));
+            rows.push(look(words::LOOK_AGAIN));
+            rows
+        }
+    };
+    groups.push((words::GET_PLUGINS.into(), get));
+    let mut repos: Vec<Row> = p
+        .repos
+        .iter()
+        .map(|r| match r.official {
+            true => info(&words::repo_name(r), String::new()),
+            false => Row { kind: ACTION, name: PluginAct::RemoveRepo(r.url.clone()).name(), title: words::repo_name(r), detail: r.url.clone(), button: words::REMOVE.into(), enabled: true, ..Default::default() },
+        })
+        .collect();
+    repos.push(Row { kind: BUTTON, name: PluginAct::AddRepo.name(), title: words::ADD_REPO.into(), enabled: true, ..Default::default() });
+    groups.push((words::REPOS.into(), repos));
+    groups
+}
+
+/// What plugin `c`'s repo offers of it: where its code is, and its versions to install one of.
+fn versions(c: &PluginCard, offers: &Offers) -> Option<(String, Vec<Row>)> {
+    let (at, o) = offers.offers.iter().enumerate().find(|(_, o)| o.id == c.id && c.repo.as_ref().is_none_or(|r| *r == o.repo.url))?;
+    let mut rows: Vec<Row> = o.source.iter().map(|url| Row { kind: LINK, name: PluginAct::Open(url.clone()).name(), title: words::SOURCE.into(), detail: url.clone(), enabled: true, ..Default::default() }).collect();
+    rows.extend(o.versions.iter().enumerate().map(|(i, v)| {
+        let here = v.version == c.version;
+        Row {
+            kind: ACTION,
+            name: PluginAct::Get(at as u32, i as u32).name(),
+            title: v.version.clone(),
+            detail: v.released.clone().unwrap_or_default(),
+            button: (if here { words::INSTALLED } else { words::INSTALL }).into(),
+            enabled: !here,
+            ..Default::default()
+        }
+    }));
+    Some((format!("{} · {}", c.name, words::VERSIONS), rows))
+}
+
+/// One row of plugin `plugin`'s page, drawn as the settings' own rows are; its hint is the quiet line
+/// under it.
+fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
+    let name = PluginAct::Row(plugin.into(), r.id.clone()).name();
+    let hint = r.hint.clone().unwrap_or_default();
+    let base = Row { name, title: r.label.clone(), detail: hint.clone(), enabled: true, ..Default::default() };
+    // A value said on the quiet line, the hint after it.
+    let said = |value: String| [value, hint.clone()].into_iter().filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" · ");
+    match r.kind {
+        RowKind::Switch => Row { kind: TOGGLE, on: r.value == Some(Value::Switch(true)), ..base },
+        RowKind::Choice => {
+            let chosen = match r.value {
+                Some(Value::Choice(i)) => i as i32,
+                _ => 0,
+            };
+            Row { kind: CHOICE, options: r.options.iter().map(|o| (o.clone(), o.clone())).collect(), chosen: Some(chosen), ..base }
+        }
+        RowKind::Level => {
+            let (min, max) = (r.min.unwrap_or(0.0), r.max.unwrap_or(1.0));
+            let value = match r.value {
+                Some(Value::Level(v)) => v,
+                _ => min,
+            };
+            Row { kind: SLIDER, title: format!("{}: {}", r.label, words::plugin_level(value, r.decimals, r.unit.as_deref())), value: value as f32, min: min as f32, max: max as f32, ..base }
+        }
+        RowKind::Text | RowKind::Secret => {
+            let typed = match &r.value {
+                Some(Value::Text(t)) if !t.is_empty() => Some(t.clone()),
+                _ => None,
+            };
+            let detail = match typed {
+                Some(_) if r.kind == RowKind::Secret => words::SECRET_SET.into(),
+                Some(t) => t,
+                None => words::NOT_SET.into(),
+            };
+            Row { kind: ACTION, detail: said(detail), button: words::CHANGE.into(), ..base }
+        }
+        RowKind::Action => Row { kind: BUTTON, ..base },
+        RowKind::Status => Row { kind: INFO, detail: said(r.value.as_ref().map(|v| words::plugin_value(v, &r.options)).unwrap_or_default()), ..base },
+        RowKind::Link => match &r.url {
+            Some(url) => Row { kind: LINK, name: PluginAct::Open(url.clone()).name(), ..base },
+            None => Row { kind: INFO, ..base },
+        },
+        RowKind::Note | RowKind::Section => note(&r.label),
+    }
+}
+
+/// Card `c`'s page as groups: its rows under its name (after `head`), each section under its own.
+fn card_groups(c: &PluginCard, head: Vec<Row>) -> Vec<(String, Vec<Row>)> {
+    let mut groups = Vec::new();
+    let (mut title, mut rows) = (c.name.clone(), head);
+    for r in &c.rows {
+        match r.kind {
+            RowKind::Section => groups.push((std::mem::replace(&mut title, r.label.clone()), std::mem::take(&mut rows))),
+            _ => rows.push(plugin_row(&c.id, r)),
+        }
+    }
+    groups.push((title, rows));
+    groups
+}
+
+/// The rows the plugins `cards` show on the devices panel, as on their pages.
+pub fn device_rows(cards: &[PluginCard], prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    model(cards.iter().flat_map(|c| card_groups(c, Vec::new())).filter(|(_, rows)| !rows.is_empty()).collect(), prefs, f, today)
 }
 
 /// The value of option `index` of `target`.
@@ -688,7 +970,7 @@ mod tests {
         let tab = tabs(&facts.rules.settings).iter().position(|p| *p == SettingsPage::Lyrics).unwrap() as i32;
         let today = Today { month: 10, day: 19, southern: false };
         let source = |p: &StoredPrefs, id: &str| {
-            let rows = rows(p, &facts, tab, today);
+            let rows = rows(p, &facts, &Kinds::builtin(), tab, today);
             let r = slint::Model::iter(&rows).find(|r| r.kind == RANKED && r.name == id).unwrap();
             (r.button.to_string(), r.keyed)
         };
@@ -713,7 +995,7 @@ mod tests {
         };
         let p = StoredPrefs { servers: vec![SavedServer { id: "a".into(), name: "Home".into(), ..Default::default() }], active_server_id: "a".into(), ..Default::default() };
         let today = Today { month: 10, day: 19, southern: false };
-        let usage = |f: &Facts| (0..8).flat_map(|tab| groups(&p, f, tab, today)).flat_map(|(_, rows)| rows).find(|r| r.kind == USAGE).unwrap();
+        let usage = |f: &Facts| (0..8).flat_map(|tab| groups(&p, f, &Kinds::builtin(), tab, today)).flat_map(|(_, rows)| rows).find(|r| r.kind == USAGE).unwrap();
         let both = usage(&facts(vec![("a".into(), 2 << 20), ("gone".into(), 1 << 20)]));
         assert_eq!(both.options[1].0, "5 downloads · 3.0 MB");
         assert_eq!(both.breakdown, ["Home · 2.0 MB", "A removed profile · 1.0 MB"]);
@@ -722,11 +1004,9 @@ mod tests {
 
     #[test]
     fn tabs_are_the_pages_the_profile_opens() {
-        use nori_core::settings::{SavedServer, ServerKind};
-        let rules = |kind| nori_core::providers::rules_of(SavedServer { kind, ..Default::default() }, false).settings;
-        let names = |kind| tabs(&rules(kind)).into_iter().map(tab_name).collect::<Vec<_>>();
-        assert_eq!(names(ServerKind::Subsonic), ["Servers", "Playback", "Sound", "Appearance", "Lyrics", "Library", "Downloads and storage"]);
-        assert!(!names(ServerKind::YouTubeMusic).contains(&"Library"), "no library settings to show");
+        let names = |guest| tabs(&nori_core::browse::profile_rules(guest).settings).into_iter().map(tab_name).collect::<Vec<_>>();
+        assert_eq!(names(false), ["Servers", "Playback", "Sound", "Appearance", "Lyrics", "Library", "Downloads and storage"]);
+        assert!(!names(true).contains(&"Library"), "a jam guest has no library settings to show");
     }
 
     #[test]
@@ -744,7 +1024,7 @@ mod tests {
         use slint::Model;
         let facts = Facts::default();
         let look = tabs(&facts.rules.settings).iter().position(|p| *p == SettingsPage::Look).map_or(0, |i| i as i32);
-        let rows = rows(&StoredPrefs::default(), &facts, look, OCTOBER);
+        let rows = rows(&StoredPrefs::default(), &facts, &Kinds::builtin(), look, OCTOBER);
         let kinds: Vec<_> = rows.iter().map(|r| r.kind).collect();
         let at = kinds.iter().position(|k| *k == SEASONS).expect("a season row");
         assert_eq!(kinds[at - 1..at + 4], [HEADING, SEASONS, TOGGLE, HEADING, APPEARANCE_ROW], "the season under its heading, then the theme's");
@@ -772,7 +1052,7 @@ mod tests {
         let f = Facts::default();
         let specs: Vec<String> = settings_model::specs().into_iter().map(|s| s.name).collect();
         for tab in 0..7 {
-            for (_, rows) in groups(&p, &f, tab, OCTOBER) {
+            for (_, rows) in groups(&p, &f, &Kinds::builtin(), tab, OCTOBER) {
                 for r in rows.iter().filter(|r| matches!(r.kind, TOGGLE | CHOICE) && r.name != DEVICE) {
                     let name = toggled(&r.name, r.on).0;
                     assert!(specs.iter().any(|s| s == name), "{name} is not a core setting");
@@ -790,5 +1070,70 @@ mod tests {
         assert_eq!(Act::of(ADD_SERVER), Some(Act::AddServer));
         assert_eq!(Act::of("server:7"), Some(Act::Server("7".into())));
         assert_eq!(Act::of("edit:7"), Some(Act::Edit("7".into())));
+    }
+
+    /// A plugin's page draws each kind of row with the settings' own, each named so it parses back to
+    /// the plugin and row it sets; the repos' offers say whether to install, update or not.
+    #[test]
+    fn plugins_are_drawn_with_the_settings_rows() {
+        use nori_plugins::{Offer, Offers, PluginCard, PluginRow, Repo, RowKind, Value, Version};
+        let row = |id: &str, kind, value| PluginRow { id: id.into(), kind, label: id.into(), options: vec!["a".into(), "b".into()], min: Some(0.0), max: Some(2.0), step: Some(0.5), value, hint: None, unit: None, decimals: 1, url: None };
+        let card = |id: &str, rows| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: Some(nori_plugins::OFFICIAL.into()), held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), rows };
+        let rows = vec![
+            row("on", RowKind::Switch, Some(Value::Switch(true))),
+            row("pick", RowKind::Choice, Some(Value::Choice(1))),
+            row("gain", RowKind::Level, Some(Value::Level(1.5))),
+            row("key", RowKind::Secret, Some(Value::Text("hunter2".into()))),
+            row("go", RowKind::Action, None),
+            row("more", RowKind::Section, None),
+            row("state", RowKind::Status, Some(Value::Text("Fine".into()))),
+        ];
+        let official = Repo { url: nori_plugins::OFFICIAL.into(), official: true };
+        let version = |v: &str| Version { repo: official.url.clone(), version: v.into(), released: None, url: String::new(), sha256: String::new() };
+        let offer = Offer { repo: official.clone(), id: "a.one".into(), name: "One".into(), about: None, source: Some("https://code.example".into()), versions: vec![version("2.0.0"), version("1.0.0")], installed: Some("1.0.0".into()) };
+        let p = Plugged { cards: vec![card("a.one", rows), card("a.two", Vec::new())], repos: vec![official], shelf: Shelf::Read(Offers { offers: vec![offer], failed: Vec::new() }) };
+        let groups = plugin_groups(&p);
+        let titles: Vec<&str> = groups.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(titles, ["a.one", "more", "a.one · Versions", "a.two", "From a file", "Get plugins", "Repos"]);
+        let one: Vec<(i32, &str)> = groups[0].1.iter().map(|r| (r.kind, r.name.as_str())).collect();
+        assert_eq!(one, [(TOGGLE, "plugin-on:a.one"), (TOGGLE, "plugin-hold:a.one"), (BUTTONS, ""), (TOGGLE, "plugin-row:a.one:on"), (CHOICE, "plugin-row:a.one:pick"), (SLIDER, "plugin-row:a.one:gain"), (ACTION, "plugin-row:a.one:key"), (BUTTON, "plugin-row:a.one:go")]);
+        assert_eq!(groups[0].1[4].chosen, Some(1));
+        assert_eq!(groups[0].1[6].detail, "Set", "a secret stays hidden");
+        assert_eq!(groups[0].1[2].names, ["plugin-down:a.one", "plugin-remove:a.one"], "the first can't move up");
+        assert_eq!((groups[1].1[0].kind, groups[1].1[0].detail.as_str()), (INFO, "Fine"));
+        let versions: Vec<(&str, &str, bool)> = groups[2].1.iter().map(|r| (r.title.as_str(), r.button.as_str(), r.enabled)).collect();
+        assert_eq!(versions, [("Source", "", true), ("2.0.0", "Install", true), ("1.0.0", "Installed", false)]);
+        let get = &groups[5].1[0];
+        assert_eq!((get.title.as_str(), get.button.as_str(), PluginAct::of(&get.name)), ("One", "Update", Some(PluginAct::Get(0, 0))));
+        for r in groups.iter().flat_map(|(_, rows)| rows).filter(|r| !r.name.is_empty()) {
+            assert_eq!(PluginAct::of(&r.name).map(|a| a.name()), Some(r.name.clone()), "{} parses back", r.name);
+        }
+        assert_eq!(PluginAct::of("repo-trust:https://x.example/index.json"), Some(PluginAct::TrustRepo("https://x.example/index.json".into())));
+    }
+
+    /// A level says its value with its digits and unit, a hint is the quiet line, and a link opens its page.
+    #[test]
+    fn a_plugin_row_says_its_hint_unit_and_link() {
+        use nori_plugins::{PluginRow, RowKind, Value};
+        let row = |kind, value, hint: Option<&str>, unit: Option<&str>, url: Option<&str>| PluginRow {
+            id: "r".into(),
+            kind,
+            label: "Gain".into(),
+            options: Vec::new(),
+            min: Some(0.0),
+            max: Some(10.0),
+            step: None,
+            value,
+            hint: hint.map(Into::into),
+            unit: unit.map(Into::into),
+            decimals: 2,
+            url: url.map(Into::into),
+        };
+        let level = plugin_row("p", &row(RowKind::Level, Some(Value::Level(1.5)), Some("Before the limiter"), Some("dB"), None));
+        assert_eq!((level.title.as_str(), level.detail.as_str()), ("Gain: 1.50 dB", "Before the limiter"));
+        let status = plugin_row("p", &row(RowKind::Status, Some(Value::Text("Fine".into())), Some("Checked hourly"), None, None));
+        assert_eq!(status.detail, "Fine · Checked hourly");
+        let link = plugin_row("p", &row(RowKind::Link, None, None, None, Some("https://x.example/help")));
+        assert_eq!((link.kind, PluginAct::of(&link.name)), (LINK, Some(PluginAct::Open("https://x.example/help".into()))));
     }
 }

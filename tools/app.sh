@@ -45,9 +45,9 @@ case "${1:-}" in
       sleep 0.5
     done
     send state ;;
-  open|play|state|set|login|do|remote|queuesaved|webcookies) send "$@" ;;
+  open|play|state|set|login|do|remote|plugin|queuesaved|webcookies) send "$@" ;;
   # Back once the screen is on, 5 s at most.
   wake) adb shell input keyevent 224 >/dev/null; adb shell wm dismiss-keyguard >/dev/null 2>&1
     for _ in $(seq 25); do adb shell dumpsys power | grep -q 'mWakefulness=Awake' && break; sleep 0.2; done ;;
-  *) echo "usage: app.sh launch|open <route>|play <ref>|do <action>|login <url|user|pass>|login kind:<KIND>|set <name> <value>|state|queuesaved|webcookies|wake" >&2; exit 2 ;;
+  *) echo "usage: app.sh launch|open <route>|play <ref>|do <action>|login <url|user|pass>|login kind:subsonic|login kind:plugin:<id>|plugin install <path>|plugin turn '<id> on'|plugin level '<id> <row> <number>'|plugin cards|plugin reset|set <name> <value>|state|queuesaved|webcookies|wake" >&2; exit 2 ;;
 esac

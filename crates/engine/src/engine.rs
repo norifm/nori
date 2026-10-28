@@ -60,11 +60,13 @@ pub struct Settings {
     pub gain_boost_db: f32,
     /// Previous goes to the song before even well into this one (`nori_player::queue::previous_restarts`).
     pub previous_always_skips: bool,
+    /// Plugins' sound stages, in order: they touch the samples, so songs stay off offload.
+    pub stages: Vec<nori_player::stage::StageSpec>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { sound: Sound::default(), speed: 1.0, pitch: 1.0, skip_silence: false, fade_ms: 0, hi_res: false, max_rate: 0, offload: false, crossfade_s: 0, auto_mix: false, gain_boost_db: 0.0, previous_always_skips: false }
+        Settings { sound: Sound::default(), speed: 1.0, pitch: 1.0, skip_silence: false, fade_ms: 0, hi_res: false, max_rate: 0, offload: false, crossfade_s: 0, auto_mix: false, gain_boost_db: 0.0, previous_always_skips: false, stages: Vec::new() }
     }
 }
 
@@ -1768,7 +1770,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             None => (s.speed, s.pitch, s.skip_silence),
         };
         let offload = s.offload && self.off.is_some() && self.following.is_none();
-        let prefs = AudioPrefs { dsp: s.sound.on(), skip_silence, offload, crossfade_s: s.crossfade_s, auto_mix: s.auto_mix, speed, pitch };
+        let prefs = AudioPrefs { dsp: s.sound.on() || !s.stages.is_empty(), skip_silence, offload, crossfade_s: s.crossfade_s, auto_mix: s.auto_mix, speed, pitch };
         let state = OutputState { hi_res, bit_perfect, usb: self.facts.usb, offload_refused: self.h.refused };
         let policy = audio_policy(&prefs, &state);
         let blocked = if self.off.is_some() { offload_blocked(&prefs, &state) } else { Some("the output does not decode songs itself") };
@@ -1798,7 +1800,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             self.gain_changed |= was.bit_perfect != now.bit_perfect;
         }
         // The equalizer stays in (flat) but for bit-perfect output.
-        self.chain_wanted = Some(ChainSettings { sound, speed, pitch, skip_silence: policy.skip_silence, keep_eq: !policy.untouched });
+        let stages = if policy.untouched { Vec::new() } else { s.stages.clone() };
+        self.chain_wanted = Some(ChainSettings { sound, speed, pitch, skip_silence: policy.skip_silence, keep_eq: !policy.untouched, stages });
         // The plan out of the current song was made under the old transition settings.
         let replan = first || was.untouched != now.untouched || (self.settings.crossfade_s, self.settings.auto_mix) != (s.crossfade_s, s.auto_mix);
         self.applied = Some(now);

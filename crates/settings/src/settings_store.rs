@@ -246,6 +246,28 @@ impl SettingsStore {
 pub struct Settings {
     kept: RwLock<Option<SettingsStore>>,
     pub model: nori_automix::beat_model::ModelFile,
+    /// What enabled plugins lay over the settings; never stored.
+    layer: Mutex<crate::overrides::Layer>,
+}
+
+impl Settings {
+    /// What enabled plugins lay over the settings now.
+    pub fn layer(&self) -> crate::overrides::Layer {
+        self.layer.lock().clone()
+    }
+
+    /// The plugin host's new layer; what it asks the player to apply again, as a settings change's effect.
+    pub fn set_layer(&self, layer: crate::overrides::Layer) -> u32 {
+        use crate::overrides::{effective, Tunables};
+        let mut held = self.layer.lock();
+        if *held == layer {
+            return 0;
+        }
+        let audio = if held.stages != layer.stages || Tunables::with(&held.overrides) != Tunables::with(&layer.overrides) { APPLY_AUDIO } else { 0 };
+        let settings = self.with_prefs(|p| effects(&effective(p, &held.overrides), &effective(p, &layer.overrides))).unwrap_or(0);
+        *held = layer;
+        audio | settings
+    }
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -617,6 +639,19 @@ mod tests {
     }
 
     #[test]
+    fn a_layer_asks_what_its_values_change() {
+        use crate::overrides::Layer;
+        let dir = nori_testdir::TempDir::new("settings-layer");
+        let s = Settings::new();
+        s.open(dir.path().join("app.db").to_str().unwrap()).unwrap();
+        let laid = |pairs: &[(&str, &str)]| Layer { overrides: pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), stages: Vec::new() };
+        assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25")])), APPLY_AUDIO, "a tunable");
+        assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25")])), 0, "the same layer");
+        assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25"), ("crossfadeSec", "6")])), APPLY_AUDIO | REPLAN, "a setting's own effect");
+        assert_eq!(s.set_layer(Layer::default()), APPLY_AUDIO | REPLAN, "turned off, both go back");
+    }
+
+    #[test]
     fn edit_by_name_and_sound_tools() {
         let dir = nori_testdir::TempDir::new("settings-by-name");
         let mut s = open(&dir);
@@ -724,7 +759,7 @@ mod tests {
             assert_eq!(stored, save(&prefs));
         }
         let (prefs, _) = open_old("old-changed", &stored_062(true));
-        assert_eq!((prefs.servers.len(), prefs.theme, prefs.cache_mb, prefs.crossfade_keep_albums), (1, ThemeMode::Midnight, 4096, false), "the rest as it was, pure black with dark becoming Midnight");
+        assert_eq!((prefs.servers.len(), prefs.theme, prefs.cache_mb, prefs.crossfade_keep_albums), (0, ThemeMode::Midnight, 4096, false), "its built-in YouTube Music profile gone, the rest as it was, pure black with dark becoming Midnight");
     }
 
     #[test]

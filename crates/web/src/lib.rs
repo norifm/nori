@@ -97,7 +97,7 @@ impl Nori {
     /// Signs in to `url` and keeps the profile, the active one from now on (`providers::log_in`).
     pub async fn login(&self, url: String, user: String, password: String) -> Result<(), JsValue> {
         let form = SavedServer { id: nori_core::settings::new_server_id(), name: user.clone(), url, user, password, ..Default::default() };
-        let profile = nori_core::providers::log_in(Arc::new(Fetch(())), &self.app.settings, form).await.map_err(error)?;
+        let profile = nori_core::providers::log_in(&nori_core::providers::Kinds::builtin(), Arc::new(Fetch(())), &self.app.settings, form).await.map_err(error)?;
         self.enter(profile)
     }
 

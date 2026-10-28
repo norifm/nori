@@ -78,3 +78,98 @@ fn silence_skipping() {
     assert!(p.sink.heard_samples() == song, "50 ms of quiet is music");
 }
 
+
+/// A plugin's stage stand-in: a tremolo whose phase is all its state, and its input the depth.
+struct Tremolo {
+    rate: f64,
+    depth: f64,
+    phase: f64,
+}
+
+impl nori_player::stage::SoundStage for Tremolo {
+    fn inputs(&mut self, inputs: &[f64]) {
+        self.depth = inputs[0];
+    }
+    fn process(&mut self, planar: &mut [f32]) {
+        let frames = planar.len() / 2;
+        for k in 0..frames {
+            let g = (1.0 - self.depth * (0.5 + 0.5 * (self.phase * std::f64::consts::TAU).sin())) as f32;
+            planar[k] *= g;
+            planar[frames + k] *= g;
+            self.phase = (self.phase + 3.0 / self.rate).fract();
+        }
+    }
+    fn reset(&mut self) {
+        self.phase = 0.0;
+    }
+    fn save(&mut self, into: &mut Vec<u8>) {
+        into.clear();
+        into.extend_from_slice(&self.phase.to_le_bytes());
+        into.extend_from_slice(&self.depth.to_le_bytes());
+    }
+    fn restore(&mut self, from: &[u8]) {
+        self.phase = f64::from_le_bytes(from[..8].try_into().unwrap());
+        self.depth = f64::from_le_bytes(from[8..16].try_into().unwrap());
+    }
+}
+
+struct MakesTremolo;
+
+impl nori_player::stage::StageMaker for MakesTremolo {
+    fn make(&self, rate: u32, _channels: usize, inputs: &[f64]) -> Option<Box<dyn nori_player::stage::SoundStage>> {
+        Some(Box::new(Tremolo { rate: rate as f64, depth: inputs[0], phase: 0.0 }))
+    }
+}
+
+fn tremolo(maker: &std::sync::Arc<MakesTremolo>, depth: f64) -> nori_player::stage::StageSpec {
+    nori_player::stage::StageSpec { maker: maker.clone(), inputs: vec![depth] }
+}
+
+/// What a song sounds like through a tremolo stage, made again from what the output still holds at
+/// `remade_ms` if given.
+fn through_tremolo(song: &[i16], remade_ms: Option<i64>) -> Vec<i16> {
+    let maker = std::sync::Arc::new(MakesTremolo);
+    let mut p = Player::new(vec![track("a", song)]);
+    p.set_stages(vec![tremolo(&maker, 0.8)]);
+    p.play_from(0);
+    if let Some(ms) = remade_ms {
+        p.run_for(ms);
+        p.remake();
+    }
+    assert!(p.run_to_end(60_000));
+    p.sink.heard_samples()
+}
+
+#[test]
+fn a_stage_made_again_mid_song_sounds_the_same() {
+    let song = centred(440.0, 0.4, 20.0);
+    let straight = through_tremolo(&song, None);
+    let heard = left(&straight);
+    let (quiet, loud) = (rms(&heard[frames(5.0)..frames(5.0) + 400]), rms(&heard));
+    assert!(quiet != loud, "the stage changes the sound");
+    assert_eq!(through_tremolo(&song, Some(7_300)), straight, "its state is kept where the output is made again");
+}
+
+#[test]
+fn a_stage_joins_and_leaves_where_the_output_can_change() {
+    let maker = std::sync::Arc::new(MakesTremolo);
+    let song = centred(440.0, 0.4, 30.0);
+    let mut p = Player::new(vec![track("a", &song)]);
+    p.play_from(0);
+    p.run_for(4_000);
+    p.set_stages(vec![tremolo(&maker, 1.0)]);
+    p.run_for(14_000);
+    p.set_stages(Vec::new());
+    assert!(p.run_to_end(60_000));
+    assert!(p.sink.gaps.is_empty(), "{:?}", p.sink.gaps);
+    let heard = left(&p.sink.heard_samples());
+    // The level over a tenth of a second swings with the 3 Hz tremolo while the stage is in.
+    let swing = |from: f64| rms(&heard[frames(from)..frames(from + 0.1)]);
+    let swings = |from: f64| (0..5).map(|k| swing(from + k as f64 * 0.1)).fold((f64::MAX, 0f64), |(lo, hi), v| (lo.min(v), hi.max(v)));
+    let (lo, hi) = swings(1.0);
+    assert!(hi - lo < 0.01, "before: steady ({lo:.3}..{hi:.3})");
+    let (lo, hi) = swings(10.0);
+    assert!(hi - lo > 0.1, "with the stage: it swings ({lo:.3}..{hi:.3})");
+    let (lo, hi) = swings(26.0);
+    assert!(hi - lo < 0.01, "after: steady again ({lo:.3}..{hi:.3})");
+}

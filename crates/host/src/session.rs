@@ -257,6 +257,8 @@ pub struct Open<'a> {
     /// The platform's own decoders, preferred to those here.
     pub decoders: nori_engine::Platform,
     pub out: Out,
+    /// The kinds of profile it opens: nori's own, and its plugins' where the client has them.
+    pub kinds: Arc<nori_core::providers::Kinds>,
 }
 
 #[cfg(feature = "desktop")]
@@ -354,8 +356,10 @@ impl Session {
     fn open_with(o: Open, turns: bool, start: impl FnOnce(CoreLibrary, CoreApp, CoreQueue, Box<dyn AudioOutput>, Config, Events) -> Engine) -> Result<Session, String> {
         let db = db_path(o.data);
         let core = Core::new(db.clone(), nori_core::settings::server_db_id(&o.profile.id), o.queue.clone()).map_err(|e| format!("the database: {e}"))?;
-        core.configure_profile(o.profile.clone()).map_err(|e| format!("the server: {e}"))?;
+        core.use_kinds(o.kinds.clone());
         let transport: Arc<dyn Transport> = if o.offline { Arc::new(Offline) } else { o.http.clone() };
+        o.kinds.set_transport(transport.clone());
+        core.configure_profile(o.profile.clone()).map_err(|e| format!("the server: {e}"))?;
         let cover_net = CoverNet::over(o.http.clone());
         let client = Client::new(core.clone(), transport, cover_net.clone());
         client.set_profile(net(&o.profile));
@@ -380,7 +384,7 @@ impl Session {
             _ => app,
         };
         let library = CoreLibrary { client: client.clone(), bytes: audio, store: store.clone(), analyses };
-        let config = Config { memory_mb: o.memory_mb, settings: settings(&prefs), platform: o.decoders, ..Config::default() };
+        let config = Config { memory_mb: o.memory_mb, settings: settings(&prefs, core.session.settings.layer()), platform: o.decoders, ..Config::default() };
         // Each event is the session's first (among its tasks, off the engine's thread), then the client's.
         let heard: Arc<std::sync::OnceLock<std::sync::Weak<Parts>>> = Arc::default();
         let (to, out, tasks) = (heard.clone(), o.out.clone(), o.tasks.clone());
@@ -909,7 +913,7 @@ impl Handle {
     /// Applies a settings change's `effect` bits to the engine.
     pub fn apply(&self, effect: u32, prefs: &StoredPrefs) {
         if effect & (APPLY_AUDIO | SOUND | PLAYER) != 0 {
-            self.engine.set_settings(settings(prefs));
+            self.engine.set_settings(settings(prefs, self.core.session.settings.layer()));
         }
         if effect & APPLY_GAIN != 0 {
             self.engine.gain_changed();
@@ -1531,6 +1535,7 @@ fn test_open<'a>(queue: Arc<nori_core::queue::Session>, data: &'a Path, profile:
         data,
         http: nori_http::Http::new(),
         profile,
+        kinds: nori_core::providers::Kinds::builtin(),
         output,
         volume: Level::new(1.0, None),
         memory_mb: 16,
@@ -1574,43 +1579,6 @@ mod tests {
     }
 
     #[test]
-    fn provider_song_hearts_reach_the_client() {
-        let dir = nori_testdir::TempDir::new("host-provider-heart");
-        let settings = nori_core::settings_store::Settings::new();
-        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
-        prefs.remote_control = false;
-        settings.put(prefs);
-        let queue = Arc::new(nori_core::queue::Session::new(settings));
-        let profile = SavedServer { id: "yt".into(), kind: nori_core::settings::ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() };
-        let (sent, shown) = std::sync::mpsc::channel();
-        let out = Arc::new(move |said| {
-            if let Said::Starred(marks) = said { let _ = sent.send(marks); }
-        });
-        let s = Session::open(Open { offline: true, out, ..test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
-        s.star_song("yt-song".into(), true, None);
-        let marked = shown.recv_timeout(Duration::from_secs(2)).expect("the provider's heart is shown before its write");
-        assert_eq!(marked.songs.get("yt-song"), Some(&true));
-        let restored = shown.recv_timeout(Duration::from_secs(2)).expect("the unavailable account restores the heart");
-        assert!(!restored.songs.contains_key("yt-song"));
-        s.close();
-    }
-
-    /// A source's own Home answers "For you" first, as any Home, so no client waits on it.
-    #[test]
-    fn a_feed_home_answers_for_you_first() {
-        let dir = nori_testdir::TempDir::new("host-feed-mixes");
-        let queue = Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new()));
-        let profile = SavedServer { id: "yt".into(), kind: nori_core::settings::ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() };
-        let s = Session::open(Open { offline: true, ..test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
-        let (sent, parts) = std::sync::mpsc::channel();
-        s.read_home(Vec::new(), true, move |r| {
-            let _ = sent.send(matches!(r, Ok(crate::pages::HomePart::Mixes(_))));
-        });
-        assert!(parts.recv_timeout(Duration::from_secs(5)).unwrap(), "the first part is \"For you\"");
-        s.close();
-    }
-
-    #[test]
     fn a_page_shuffle_turns_its_own_queue_off_and_on() {
         let dir = nori_testdir::TempDir::new("host-page-shuffle");
         let settings = nori_core::settings_store::Settings::new();
@@ -1633,65 +1601,6 @@ mod tests {
         assert!(s.shuffle_page(&album));
         assert!(s.core.session.shuffle_shown());
         assert_eq!(playing(), started);
-        s.close();
-    }
-
-    struct NoDiscovery;
-    impl nori_core::remote::Discovery for NoDiscovery {
-        fn announce(&self, _: Option<nori_core::remote::Announcement>) {}
-        fn browse(&self, _: bool) {}
-    }
-
-    #[test]
-    fn a_jam_started_on_a_song_plays_it_and_opens() {
-        let dir = nori_testdir::TempDir::new("host-start-jam");
-        let settings = nori_core::settings_store::Settings::new();
-        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
-        prefs.remote_control = true;
-        settings.put(prefs);
-        let queue = Arc::new(nori_core::queue::Session::new(settings));
-        // A YouTube Music profile hosts its jam on this computer, so no relay is needed.
-        let profile = SavedServer { id: "yt".into(), kind: nori_core::settings::ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() };
-        let discovery: Option<Arc<dyn nori_core::remote::Discovery>> = Some(Arc::new(NoDiscovery));
-        let s = Session::open(Open { discovery, ..test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
-        let songs: Vec<Song> = ["a", "b"].map(|id| Song { id: id.into(), ..Default::default() }).into();
-        let link = block_on(s.start_jam(songs, 1, None)).expect("remote control is on").expect("the jam opens");
-        assert!(link.is_some(), "an invite link");
-        assert_eq!(s.core.session.playlist(|p| p.current_id().map(str::to_string)).as_deref(), Some("b"));
-        assert!(s.remote().and_then(|r| r.jam_view()).is_some_and(|v| v.hosting));
-        s.close();
-    }
-
-    /// Signing out takes the account's name off the saved profile, so it opens signed out.
-    #[test]
-    fn signing_out_forgets_the_account() {
-        let dir = nori_testdir::TempDir::new("host-sign-out");
-        let settings = nori_core::settings_store::Settings::new();
-        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
-        let profile = SavedServer { id: "yt".into(), kind: nori_core::settings::ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() };
-        prefs.servers.push(profile.clone());
-        prefs.active_server_id = "yt".into();
-        prefs.remote_control = false;
-        settings.put(prefs);
-        let queue = Arc::new(nori_core::queue::Session::new(settings.clone()));
-        let s = Session::open(Open { offline: true, ..test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
-        s.sign_out();
-        assert_eq!(settings.current().unwrap().active_server().map(|p| p.user.clone()), Some(String::new()));
-        s.close();
-    }
-
-    /// An account the core signed out under the session is taken up once, with the core's rules.
-    #[test]
-    fn an_account_signed_out_underneath_is_noticed_once() {
-        let dir = nori_testdir::TempDir::new("host-account-changed");
-        let queue = Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new()));
-        let profile = SavedServer { id: "yt".into(), kind: nori_core::settings::ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() };
-        let s = Session::open(Open { offline: true, ..test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
-        assert_eq!(s.account_changed(), None);
-        s.client.sign_out();
-        assert_eq!(s.account_changed(), Some(nori_core::providers::AccountState::SignedOut));
-        assert!(!s.rules().stars && s.rules().stars_after_sign_in);
-        assert_eq!(s.account_changed(), None);
         s.close();
     }
 
@@ -1732,14 +1641,15 @@ mod tests {
         let settings = nori_core::settings_store::Settings::new();
         settings.open(&db_path(dir.path())).unwrap();
         let queue = Arc::new(nori_core::queue::Session::new(settings.clone()));
-        for kind in nori_core::providers::providers().into_iter().map(|p| p.kind) {
+        let kinds = nori_core::providers::Kinds::builtin();
+        for kind in kinds.providers().into_iter().map(|p| p.kind) {
             for on in [false, true] {
                 let mut prefs = settings.current().unwrap();
                 prefs.remote_control = on;
                 settings.put(prefs);
-                let profile = SavedServer { id: "own".into(), kind, url: "http://127.0.0.1:9".into(), user: "ann".into(), ..Default::default() };
+                let profile = SavedServer { id: "own".into(), kind: kind.clone(), url: "http://127.0.0.1:9".into(), user: "ann".into(), ..Default::default() };
                 let s = Session::open(test_open(queue.clone(), dir.path(), profile.clone(), Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)))).unwrap();
-                assert_eq!(s.rules(), nori_core::providers::rules_of(profile, false));
+                assert_eq!(s.rules(), kinds.rules_of(profile, false));
                 assert_eq!(s.remote().is_some(), on && s.rules().remote);
                 s.close();
             }

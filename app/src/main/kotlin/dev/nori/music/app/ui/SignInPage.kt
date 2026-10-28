@@ -38,6 +38,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.SettingsViewModel
 import dev.nori.music.ffi.SignIn
+import kotlinx.coroutines.launch
 import dev.nori.music.ffi.settings.ServerKind
 
 /**
@@ -48,22 +49,23 @@ import dev.nori.music.ffi.settings.ServerKind
 @Composable
 fun SignInFlow(vm: SettingsViewModel, kind: ServerKind) {
     val ui by vm.account.collectAsStateWithLifecycle()
-    val start = vm.provider(kind)?.signIn?.firstNotNullOfOrNull { (it as? SignIn.WebPage)?.startUrl } ?: return
-    val words = providerStrings(kind).account ?: return
+    val providers by vm.providers.collectAsStateWithLifecycle()
+    val words = providerWords(vm, kind).account
+    val start = providers.firstOrNull { it.kind == kind }?.signIn?.firstNotNullOfOrNull { (it as? SignIn.WebPage)?.startUrl } ?: return
     NoriDialog(ui.offer, vm::skipSignIn) {
         AlertCard(
-            confirmButton = { TextAction(say.word(words.pageButton), vm::openSignInPage, Modifier.testTag("offer-sign-in")) },
+            confirmButton = { TextAction(words.pageButton, vm::openSignInPage, Modifier.testTag("offer-sign-in")) },
             dismissButton = {
                 Row {
                     if (ui.ended) TextAction(say.word(R.string.dont_show_again), vm::stopReminding, Modifier.testTag("offer-quiet"))
                     TextAction(say.notNow, vm::skipSignIn, Modifier.testTag("offer-skip"))
                 }
             },
-            title = { Text(say.word(words.offerTitle)) },
+            title = { Text(words.offerTitle) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(say.word(if (ui.ended) words.signedOutAgain else words.offerText))
-                    Text(say.word(words.risk), style = MaterialTheme.typography.bodySmall)
+                    Text(if (ui.ended) words.signedOutAgain else words.offerText)
+                    Text(words.risk, style = MaterialTheme.typography.bodySmall)
                 }
             },
         )
@@ -73,7 +75,7 @@ fun SignInFlow(vm: SettingsViewModel, kind: ServerKind) {
 
 /** The sign-in page as a sheet: Cancel and the title over the provider's page, then the core's answer. */
 @Composable
-private fun SignInSheet(vm: SettingsViewModel, kind: ServerKind, start: String, words: AccountStrings) {
+private fun SignInSheet(vm: SettingsViewModel, kind: ServerKind, start: String, words: AccountWords) {
     val ui by vm.account.collectAsStateWithLifecycle()
     var loading by remember { mutableStateOf(true) }
     Surface(Modifier.fillMaxSize()) {
@@ -81,7 +83,7 @@ private fun SignInSheet(vm: SettingsViewModel, kind: ServerKind, start: String, 
             Box(Modifier.fillMaxWidth().height(52.dp)) {
                 TextAction(say.cancel, vm::closeSignInPage, Modifier.align(Alignment.CenterStart).padding(start = 4.dp).testTag("sign-in-cancel"))
                 Text(
-                    say.word(words.pageTitle), Modifier.align(Alignment.Center),
+                    words.pageTitle, Modifier.align(Alignment.Center),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), maxLines = 1,
                 )
                 if (loading && !ui.busy && ui.failed == null) LoadingDots(Modifier.align(Alignment.CenterEnd).padding(end = Space.gutter), dot = 5.dp)
@@ -94,10 +96,10 @@ private fun SignInSheet(vm: SettingsViewModel, kind: ServerKind, start: String, 
                     Text(say.signingIn, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 failed != null -> Centered {
-                    Text(say.signInPage(kind, failed), textAlign = TextAlign.Center, modifier = Modifier.testTag("page-failed"))
+                    Text(say.signInPage(words, failed), textAlign = TextAlign.Center, modifier = Modifier.testTag("page-failed"))
                     PillButton(say.tryAgain, null, vm::retrySignIn, prominent = true)
                 }
-                else -> WebSignIn(kind, start, { loading = it }, vm::signIn, Modifier.weight(1f).fillMaxWidth())
+                else -> WebSignIn({ url, cookies -> vm.signInDone(kind, url, cookies) }, start, { loading = it }, vm::signIn, Modifier.weight(1f).fillMaxWidth())
             }
         }
     }
@@ -121,9 +123,11 @@ private fun ColumnScope.Centered(content: @Composable ColumnScope.() -> Unit) {
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun WebSignIn(kind: ServerKind, start: String, loading: (Boolean) -> Unit, signedIn: (String) -> Unit, modifier: Modifier) {
+private fun WebSignIn(done: suspend (String, String) -> Boolean, start: String, loading: (Boolean) -> Unit, signedIn: (String) -> Unit, modifier: Modifier) {
     val onLoading by rememberUpdatedState(loading)
     val onSignedIn by rememberUpdatedState(signedIn)
+    val isDone by rememberUpdatedState(done)
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     DisposableEffect(Unit) { onDispose { forgetWebSession() } }
     AndroidView(
         factory = { context ->
@@ -149,14 +153,17 @@ private fun WebSignIn(kind: ServerKind, start: String, loading: (Boolean) -> Uni
 
                     override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) = look(view, url)
 
+                    // The provider answers off the main thread; the page goes on meanwhile.
                     fun look(view: WebView, url: String) {
                         if (taken) return
                         val cookies = CookieManager.getInstance().getCookie(url) ?: return
-                        if (!dev.nori.music.ffi.signInDone(kind, url, cookies)) return
-                        taken = true
-                        view.stopLoading()
-                        forgetWebSession()
-                        onSignedIn(cookies)
+                        scope.launch {
+                            if (taken || !isDone(url, cookies)) return@launch
+                            taken = true
+                            view.stopLoading()
+                            forgetWebSession()
+                            onSignedIn(cookies)
+                        }
                     }
                 }
                 forgetWebSession { loadUrl(start) }

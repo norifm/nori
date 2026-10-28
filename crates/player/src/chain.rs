@@ -9,6 +9,7 @@ use crate::dsp::Equalizer;
 use crate::pcm::Encoding;
 use crate::silence::SilenceSkipper;
 use crate::speed::SpeedPitch;
+use crate::stage::{Saved, Stages};
 
 /// Input frames between kept states: the most that is run again to reach a splice.
 pub(crate) const MARK_FRAMES: u64 = 8192;
@@ -51,13 +52,14 @@ impl Piece {
     }
 }
 
-/// The processors' state before input frame `frame`, when they had made `out` frames of output from
-/// `media` song frames of input.
+/// The processors' and stages' state before input frame `frame`, when they had made `out` frames of
+/// output from `media` song frames of input.
 pub struct Mark {
     pub frame: u64,
     pub out: u64,
     pub media: f64,
     pub chain: Processors,
+    pub(crate) stages: Saved,
 }
 
 /// Input kept since the flush, from the oldest mark the track may still need.
@@ -71,7 +73,7 @@ pub struct Kept {
     pieces: VecDeque<Piece>,
     marks: VecDeque<Mark>,
     /// Marks let go, reused so keeping one does not allocate.
-    spare: Vec<Processors>,
+    spare: Vec<(Processors, Saved)>,
 }
 
 impl Kept {
@@ -84,7 +86,7 @@ impl Kept {
         self.frame_bytes = frame_bytes.max(1);
         self.pieces.clear();
         while let Some(m) = self.marks.pop_front() {
-            self.spare.push(m.chain);
+            self.spare.push((m.chain, m.stages));
         }
         self.bytes.reserve(frames as usize * self.frame_bytes);
         let marks = (frames / MARK_FRAMES) as usize + 2;
@@ -104,36 +106,38 @@ impl Kept {
         self.bytes.extend_from_slice(input);
     }
 
-    /// Keeps `chain`'s state before `frame` if the last mark is [`MARK_FRAMES`] back (or there is none);
-    /// returns whether it did.
-    pub fn mark(&mut self, frame: u64, out: u64, media: f64, chain: &Processors) -> bool {
+    /// Keeps `chain`'s and `stages`' state before `frame` if the last mark is [`MARK_FRAMES`] back (or
+    /// there is none); returns whether it did.
+    pub(crate) fn mark(&mut self, frame: u64, out: u64, media: f64, chain: &Processors, stages: &mut Stages) -> bool {
         if self.marks.back().is_some_and(|m| frame < m.frame + MARK_FRAMES) {
             return false;
         }
-        self.push_mark(frame, out, media, chain);
+        self.push_mark(frame, out, media, chain, stages);
         true
     }
 
-    /// Keeps `chain`'s state before `frame` as it changed there, in place of any mark from `frame` on.
-    pub fn mark_changed(&mut self, frame: u64, out: u64, media: f64, chain: &Processors) {
+    /// Keeps `chain`'s and `stages`' state before `frame` as it changed there, in place of any mark from
+    /// `frame` on.
+    pub(crate) fn mark_changed(&mut self, frame: u64, out: u64, media: f64, chain: &Processors, stages: &mut Stages) {
         while self.marks.back().is_some_and(|m| m.frame >= frame) {
             let m = self.marks.pop_back().expect("checked");
-            self.spare.push(m.chain);
+            self.spare.push((m.chain, m.stages));
         }
-        self.push_mark(frame, out, media, chain);
+        self.push_mark(frame, out, media, chain, stages);
     }
 
-    fn push_mark(&mut self, frame: u64, out: u64, media: f64, chain: &Processors) {
-        let mut kept = self.spare.pop().unwrap_or_default();
+    fn push_mark(&mut self, frame: u64, out: u64, media: f64, chain: &Processors, stages: &mut Stages) {
+        let (mut kept, mut saved) = self.spare.pop().unwrap_or_default();
         kept.clone_from(chain);
-        self.marks.push_back(Mark { frame, out, media, chain: kept });
+        stages.save(&mut saved);
+        self.marks.push_back(Mark { frame, out, media, chain: kept, stages: saved });
     }
 
     /// Lets go of what comes before the last mark at or before output frame `out`.
     pub fn trim(&mut self, out: u64) {
         while self.marks.len() >= 2 && self.marks[1].out <= out {
             let m = self.marks.pop_front().expect("two marks");
-            self.spare.push(m.chain);
+            self.spare.push((m.chain, m.stages));
         }
         let Some(from) = self.marks.front().map(|m| m.frame) else { return };
         if from > self.first {
@@ -167,7 +171,7 @@ impl Kept {
     pub fn forget_after(&mut self, frame: u64) {
         while self.marks.back().is_some_and(|m| m.frame > frame) {
             let m = self.marks.pop_back().expect("checked");
-            self.spare.push(m.chain);
+            self.spare.push((m.chain, m.stages));
         }
     }
 
@@ -253,9 +257,9 @@ mod tests {
     fn trimmed_to_mark_before_played() {
         let mut k = Kept::default();
         k.restart(0, 4, 0);
-        let chain = Processors::default();
+        let (chain, mut stages) = (Processors::default(), Stages::default());
         for i in 0..4u64 {
-            k.mark(i * MARK_FRAMES, i * MARK_FRAMES, 0.0, &chain);
+            k.mark(i * MARK_FRAMES, i * MARK_FRAMES, 0.0, &chain, &mut stages);
             k.keep(&frames(MARK_FRAMES, i as u8), 1.0, i as i64 * 1000, 1.0);
         }
         k.trim(2 * MARK_FRAMES + 5);

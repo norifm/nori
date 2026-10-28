@@ -2107,7 +2107,7 @@ fn automix_switched_on() {
 
 /// The chain the engine builds from `s` (not bit-perfect, no turned-up gain).
 fn chain_of(s: &Settings) -> ChainSettings {
-    ChainSettings { sound: s.sound.clone(), speed: s.speed, pitch: s.pitch, skip_silence: s.skip_silence, keep_eq: true }
+    ChainSettings { sound: s.sound.clone(), speed: s.speed, pitch: s.pitch, skip_silence: s.skip_silence, keep_eq: true, stages: s.stages.clone() }
 }
 
 /// Plays `raw` as the one song (or the songs `songs` whose chain input `raw` is), changing the settings
@@ -3419,6 +3419,7 @@ fn seek_after_queue_edit() {
 }
 
 include!("perf_bench.rs");
+include!("perf_stage.rs");
 
 /// Songs never heard before, the equalizer on: the ending is held for a blind fade, and the songs'
 /// analyses come in while it is held (the playing song's from its own tap, the next measured as it is

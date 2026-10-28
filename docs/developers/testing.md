@@ -12,7 +12,7 @@ service, the screens and a force stop.
 
 | Tier | Covers | Who runs it |
 | --- | --- | --- |
-| `cargo test -j4 --workspace` | every Rust test, doctests included | every change |
+| `cargo test -j4 --workspace` | every Rust test, doctests included; the plugin host's build a plugin to wasm (`rustup target add wasm32-wasip2` once) | every change |
 | `./gradlew :core:testDebugUnitTest :app:testDebugUnitTest` | the Kotlin unit tests, no device | changes to Kotlin |
 | `tools/smoke.sh` | launch, play, controls, a queue edit, an AutoMix transition, the equalizer, offload, the notification, offline playback, crashes; about two minutes | every change that reaches Android |
 | `tools/audio-e2e.sh --only …`, `tools/feature-e2e.sh --only …` | the sections a change touches | the change's author |
@@ -223,9 +223,10 @@ A new device check needs a line here saying why Rust cannot test it.
 | `queue-panel` | tapping the playing song in the queue returns to the player without restarting it | Compose taps and the panel switch |
 | `remote` | the terminal client on this computer as the other device (local server): picking it, mirroring, volume, the system's output picker transferring back, a force stop rediscovering the peer, the peer's mix shown here | NsdManager, the remote media session (notification, volume keys), MediaRouter2 |
 | `jam` | a jam hosted on the emulator against the octo-fiesta relay with two guests (`tools/jam-guest.py`), requests decided by tapping, ended and new invites; then the emulator as a guest of `tools/jam-host.py`: listening along with the screen off, a guest's pause, an admin's controls (`NORI_JAM_ADMINS=1`), and the guest timeline without a seek to zero | the playback service, the invite intent, media3's timeline |
+| `plugins` | a repo served from this computer (orbit's package from `nori-plugins/dist`, `NORI_PLUGINS_DIST`) is added under its warning; orbit's install sheet says what it may do before anything is installed, its stage joins and leaves the chain at once as it is turned on, off and removed (asked first); the showcase plugin's menu action and notice, song info lines, player status line and rows on the devices sheet, and its page's hint, unit and link rows; moving-covers keeps the cover and makes no loop player for a song without a loop; music sounds throughout | the plugin runtime on the device's ABI, the Plugins page and its sheets, the repo fetched through OkHttp, the Android lifecycle opening the host, the stage reaching the AudioTrack player, the slots in the app's own sheets and player |
 | `scrobble` (opt-in, local) | a qualifying listen counts once; an early skip and a pause don't | media3's track callbacks and the write queue |
 | `download-albums` (opt-in, local) | downloaded albums on the phone and through Android Auto's media browser; emptying an open album page | media3's browser callbacks, Compose navigation, offline playback |
-| `youtube-music` (opt-in) | a YouTube Music profile searches, plays, mixes, aligns lyrics, downloads and plays offline, shows in the car's browser and widgets, moves its queue to the terminal and back; Google's sign-in page opens and Cancel leaves no cookies | the resolved stream through media3 and OkHttp, widgets, the WebView and its CookieManager. Opt-in because YouTube can refuse on any day |
+| `youtube-music` (opt-in) | the YouTube Music plugin (`nori-plugins/dist`) installed and turned on; its profile searches, plays, mixes, aligns lyrics, downloads and plays offline, shows in the car's browser and widgets, moves its queue to the terminal and back; Google's sign-in page opens and Cancel leaves no cookies | the resolved stream through media3 and OkHttp, widgets, the WebView and its CookieManager. Opt-in because YouTube can refuse on any day |
 | `lyrics-services` (opt-in) | each lyrics service answers: a report, not a check | the services' health, not the app's |
 
 `NORI_E2E_SERVER=local tools/library-sync-e2e.sh` checks that a favorite changed over the LAN reaches the
@@ -244,6 +245,10 @@ app's listener, then restores adb's previous state.
   `"car play <id>"` and `"car voice <words>[|artist|album|playlist|genre|song]"`, logging each row under
   the tag `noricar`. `adb shell content read --uri content://dev.nori.music.carart/c/<cover id>` reads a
   picture. Android Auto itself is checked on a phone with the Desktop Head Unit.
+- **A jam that needs a plugin**: whether a guest may join, and which plugin the host plays from, is the
+  core's (`jam_join`, `JamJoin::NeedsPlugin`, tested in Rust). The sheet that offers the plugin from
+  nori's own repo needs a host on another device and a published official repo, which one emulator
+  can't stand in for. Checked with two phones: open the host's invite on a phone without the plugin.
 
 ## Desktop
 

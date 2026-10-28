@@ -320,6 +320,7 @@ export const W = {
   jamUnavailable: "Jams need the relay on your server (octo-fiesta in front of it).",
   jamOwn: "That is your own Jam.",
   jamEnded: "That Jam has ended.",
+  jamNeedsPlugin: "This Jam plays from a plugin. Join it from nori on a phone or computer.",
   jamInvite: "Invite",
   jamInviteTitle: "Invite to your Jam",
   jamInviteHint: "Others join by scanning this code with nori, or by opening the link.",
@@ -346,6 +347,14 @@ export const W = {
   playingOn: (device: string) => `Playing on ${device}`,
   thisBrowser: "This browser",
   devicePlaying: "Playing",
+  /** A device's answer to the last thing asked of it, by `Refusal`. */
+  refused: {
+    stale: "The queue changed there. Try again.",
+    notAllowed: "That device said no.",
+    unknown: "That is no longer there.",
+    tooMany: "Too many songs waiting.",
+    otherSource: "That device plays from another source.",
+  } as Record<string, string>,
   devicesNone: "No other device of yours is on.",
   devicesOff: "Remote control is off in Settings.",
   kinds: { phone: "phone", desktop: "computer", terminal: "terminal", guest: "guest" },

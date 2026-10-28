@@ -269,7 +269,7 @@ Nori Seasons, with Android as the reference; the layouts are the iPod's own.
   reading the core's `settings_pages`; there is no `SettingsClient` for it.
 - **Motion setting**: the iPod follows the system's Reduce Motion, not nori's `motion` (Full, Reduced,
   E-ink).
-- **Profiles**: no YouTube Music sign-in, custom headers, self-signed certificates or client
+- **Profiles**: no plugins (so no YouTube Music, which is one), custom headers, self-signed certificates or client
   certificates (`nori-http` applies none of them).
 - **Jams**: the iPod cannot host one.
 - **Background downloads**: none while the app is suspended (no `NSURLSession` background session).

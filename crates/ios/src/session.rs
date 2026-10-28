@@ -480,6 +480,7 @@ fn start_queue(
         data: dir,
         http: Http::new(),
         profile,
+        kinds: nori_core::providers::Kinds::builtin(),
         output,
         volume,
         memory_mb: MEMORY_MB,
@@ -1173,7 +1174,7 @@ mod tests {
         prefs.servers = vec![profile()];
         prefs.active_server_id = "test".into();
         queue.settings.put(prefs);
-        let pass = nori_core::remote::JamPass { url: "http://127.0.0.1:9".into(), api_key: nori_remote::guest_key("k") };
+        let pass = nori_core::remote::JamPass { url: "http://127.0.0.1:9".into(), api_key: nori_remote::guest_key("k"), kind: Default::default() };
         let guest = nori_host::jam_joined(&queue.settings, pass, "Jam");
         nori_core::background::flush();
         super::start_queue(dir.path(), queue.clone(), guest, Box::new(WavOutput::new(dir.path().join("heard.wav"), 2.0)), true, None).unwrap();

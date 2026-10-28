@@ -1,0 +1,53 @@
+[package]
+name = "nori-plugins"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The plugin host: loading and compiling plugins (WebAssembly components), their permissions, stores and overrides, and their sound stages"
+publish = false
+
+[lib]
+name = "nori_plugins"
+
+[features]
+# The test plugin, built for other crates' tests (testing.rs).
+testing = []
+# The uniffi exports the Android app's Kotlin bindings are generated from (view.rs).
+ffi = ["dep:uniffi", "nori-model/ffi", "nori-settings/ffi", "nori-net/ffi"]
+
+[dependencies]
+uniffi = { workspace = true, optional = true }
+nori-model = { path = "../model" }
+# The clock a plugin's WASI monotonic clock reads.
+nori-time = { path = "../time" }
+nori-net = { path = "../net" }
+nori-player = { path = "../player" }
+nori-settings = { path = "../settings" }
+nori-tasks = { path = "../tasks" }
+# The runtime: components compiled by Cranelift once at install (never downloaded as native code),
+# fuel for every call's budget.
+wasmtime = { version = "50", default-features = false, features = ["cranelift", "runtime", "component-model", "std", "parallel-compilation"] }
+# index.json (the plugins' order).
+serde = { version = "1", features = ["derive"] }
+# The manifest, in the wasm's `nori:plugin` custom section; wasmtime's own parser.
+wasmparser = "0.261"
+# A compiled plugin's cache key (the hash of its wasm), and a repo package's check.
+sha2 = "0.10"
+# index.json and a repo's index.json.
+serde_json = "1"
+# A `.noriplugin` package.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# What a provider plugin's async calls wait on while its thread works.
+futures-channel = "0.3"
+
+[dev-dependencies]
+nori-plugins = { path = ".", features = ["testing"] }
+nori-testdir = { path = "../testdir" }
+async-trait = "0.1"
+# Manifests written as the SDK writes them.
+nori-plugin-sdk = { path = "../plugin-sdk" }
+# The extension points' order, read from wit/.
+wit-parser = "0.239"
+# A package served by a test's repo.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sha2 = "0.10"

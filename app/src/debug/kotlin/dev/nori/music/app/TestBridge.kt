@@ -74,6 +74,33 @@ class TestBridge : BroadcastReceiver() {
             Thread({ answer(runCatching { remoteCheck(nori, arg, value, context) }.getOrElse { "remote failed: ${it.javaClass.simpleName}" }) }, "remotecheck").start()
             return
         }
+        // The plugin host, as the plugin checks drive it: "install <path>" (answers the id), "turn <id> on|off",
+        // "cards" (each installed plugin's id and whether it is on), "reset". Off the main thread, as the app calls it.
+        if (cmd == "plugin") {
+            val host = dev.nori.music.Nori.get(context).plugins
+            Thread({
+                answer(runCatching {
+                    kotlinx.coroutines.runBlocking {
+                        when (arg) {
+                            "install" -> host.installPreview(host.previewFile(value))
+                            "turn" -> value.split(" ").let { (id, on) -> host.turn(id, on == "on"); "ok" }
+                            // A level row: '<id> <row> <number>'.
+                            "level" -> value.split(" ").let { (id, row, v) -> host.set(id, row, dev.nori.music.ffi.plugins.Value.Level(v.toDouble())); "ok" }
+                            // Every plugin and added repo gone, for a check that starts afresh.
+                            "reset" -> {
+                                host.refresh()
+                                host.cards.value.forEach { host.uninstall(it.id) }
+                                host.repos.value.filter { !it.official }.forEach { host.removeRepo(it.url) }
+                                "ok"
+                            }
+                            "cards" -> { host.refresh(); host.cards.value.joinToString(" ") { "${it.id}:${if (it.enabled) "on" else "off"}" }.ifEmpty { "none" } }
+                            else -> "unknown plugin check $arg"
+                        }
+                    }
+                }.getOrElse { "plugin failed: ${it.javaClass.simpleName} ${(it as? dev.nori.music.ffi.plugins.Refusal.Unreadable)?.v1.orEmpty()}" })
+            }, "plugincheck").start()
+            return
+        }
         Handler(Looper.getMainLooper()).post {
             val reply = when (cmd) {
                 "open" -> TestHooks.open?.let { it(arg); "ok" } ?: "no ui"
@@ -131,8 +158,9 @@ private fun remoteCheck(nori: dev.nori.music.Nori, arg: String, value: String, c
         "ask" -> kotlinx.coroutines.runBlocking { nori.library.search(value).songs.firstOrNull() }?.let { s ->
             r()?.jamAct(dev.nori.music.ffi.remote.Op.Request(s)); "asked for ${s.title}"
         } ?: "nothing found"
-        "join" -> when (kotlinx.coroutines.runBlocking { nori.joinJam(value) }) {
+        "join" -> when (val joined = kotlinx.coroutines.runBlocking { nori.joinJam(value) }) {
             is dev.nori.music.ffi.JamJoin.Joined -> "joined"
+            is dev.nori.music.ffi.JamJoin.NeedsPlugin -> "needs plugin ${joined.id}"
             dev.nori.music.ffi.JamJoin.Own -> "own"
             dev.nori.music.ffi.JamJoin.Ended -> "ended"
         }

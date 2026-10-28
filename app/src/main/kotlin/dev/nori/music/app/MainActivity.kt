@@ -77,6 +77,8 @@ class MainActivity : ComponentActivity() {
                 {
                     when (it) {
                         is dev.nori.music.ffi.JamJoin.Joined -> null
+                        // The host plays from a plugin this phone lacks: installing it is offered, if nori has it.
+                        is dev.nori.music.ffi.JamJoin.NeedsPlugin -> if (remote.askJamPlugin(it.id, it.pass)) null else R.string.jam_needs_plugin
                         dev.nori.music.ffi.JamJoin.Own -> R.string.jam_own
                         dev.nori.music.ffi.JamJoin.Ended -> R.string.jam_invite_ended
                     }
@@ -107,12 +109,15 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         Nori.get(this).remotes.appShown(true)
         // Binding starts the playback service, which builds a player on this thread. Let the first frame out first.
-        window.decorView.post { Looper.myQueue().addIdleHandler { if (started && Nori.get(this).settings.value.loggedIn) { Nori.get(this).player.connect(); pickAddress() }; false } }
+        window.decorView.post { Looper.myQueue().addIdleHandler { if (started && Nori.get(this).settings.value.loggedIn) { Nori.get(this).player.connect(); pickAddress(); updatePlugins() }; false } }
         started = true
     }
 
     /** Coming to the foreground is when the network may have changed (home Wi-Fi vs. outside). */
     private fun pickAddress() = lifecycleScope.launch { runCatching { Nori.get(this@MainActivity).chooseAddress() } }
+
+    /** Plugins update from their repos when the app comes to the front, if it is time to ask: never on a timer. */
+    private fun updatePlugins() = lifecycleScope.launch { runCatching { Nori.get(this@MainActivity).plugins.updateIfDue() } }
 
     override fun onStop() {
         super.onStop()

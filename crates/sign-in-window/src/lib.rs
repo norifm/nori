@@ -5,8 +5,9 @@
 
 use std::io::BufRead;
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 
-use nori_core::providers::SignIn;
+use nori_core::providers::{Kinds, SignIn};
 use nori_core::settings::ServerKind;
 
 mod window;
@@ -28,11 +29,11 @@ pub fn serve_if_asked() {
 pub struct SignInWindow(Child);
 
 impl SignInWindow {
-    /// Opens `kind`'s sign-in page titled `title`; `done` gets the window's [`SignInWindow::id`] and the
-    /// signed-in session's cookies (a `Cookie` header's value), on a thread of its own. None where the
-    /// provider has no page or no window can start.
-    pub fn open(kind: ServerKind, title: String, done: impl FnOnce(u32, String) + Send + 'static) -> Option<SignInWindow> {
-        let start = nori_core::providers::providers().into_iter().find(|i| i.kind == kind)?.sign_in.into_iter().find_map(|s| match s {
+    /// Opens `kind`'s sign-in page (one of `kinds`) titled `title`; `done` gets the window's
+    /// [`SignInWindow::id`] and the signed-in session's cookies (a `Cookie` header's value), on a thread
+    /// of its own. None where the provider has no page or no window can start.
+    pub fn open(kinds: Arc<Kinds>, kind: ServerKind, title: String, done: impl FnOnce(u32, String) + Send + 'static) -> Option<SignInWindow> {
+        let start = kinds.providers().into_iter().find(|i| i.kind == kind)?.sign_in.into_iter().find_map(|s| match s {
             SignIn::WebPage { start_url } => Some(start_url),
             SignIn::Paste => None,
         })?;
@@ -42,7 +43,7 @@ impl SignInWindow {
         let watch = std::thread::Builder::new().name("nori-sign-in-window".into()).spawn(move || {
             for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
                 let Some((address, cookies)) = line.split_once('\t') else { continue };
-                if nori_core::providers::sign_in_done(kind, address.to_string(), cookies.to_string()) {
+                if kinds.sign_in_done(kind.clone(), address.to_string(), cookies.to_string()) {
                     return done(id, cookies.to_string());
                 }
             }

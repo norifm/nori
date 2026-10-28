@@ -24,6 +24,8 @@ jobs:
         run: |
           rustup update stable --no-self-update
           rustup default stable
+          # The plugin host's tests build their fixture plugin (crates/plugins/fixture).
+          rustup target add wasm32-wasip2
       # Shared with the release workflow's tests, which only read it.
       - uses: Swatinem/rust-cache@v2
         with:
@@ -47,6 +49,8 @@ jobs:
         run: |
           rustup update stable --no-self-update
           rustup default stable
+          # The plugin host's tests build their fixture plugin (crates/plugins/fixture).
+          rustup target add wasm32-wasip2
       - uses: Swatinem/rust-cache@v2
         with:
           key: clippy

@@ -737,7 +737,7 @@ fn opened(d: &Device) -> String {
 /// Joins the jam `link` invites to from a device of no account, as `name`; its pass.
 fn joined(relay: &Arc<Relay>, link: String, name: String) -> nori_core::remote::JamPass {
     let settings = nori_core::settings_store::Settings::new();
-    match relay.sim.run("joined", jam_join(relay.clone(), settings, None, link, name)).unwrap() {
+    match relay.sim.run("joined", jam_join(relay.clone(), settings, None, nori_core::providers::Kinds::builtin(), link, name)).unwrap() {
         JamJoin::Joined { pass } => pass,
         other => panic!("not joined: {other:?}"),
     }
@@ -2571,7 +2571,7 @@ fn a_device_knows_its_own_jams_invites_and_ended_ones() {
     let relay = Relay::new();
     let host = Device::kept(&relay, &dir, DeviceKind::Phone, "Host");
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
-    let join = |d: &Device, link: &str| relay.sim.run("a request", jam_join(relay.clone(), d.core.session.settings.clone(), Some(d.remote.clone()), link.into(), "Me".into())).unwrap();
+    let join = |d: &Device, link: &str| relay.sim.run("a request", jam_join(relay.clone(), d.core.session.settings.clone(), Some(d.remote.clone()), nori_core::providers::Kinds::builtin(), link.into(), "Me".into())).unwrap();
     let link = opened(&host);
     let app_link = link.replacen("http://octo:5274/nori/jam#", "nori://jam?", 1);
     assert_eq!((join(&host, &link), join(&host, &app_link)), (JamJoin::Own, JamJoin::Own));

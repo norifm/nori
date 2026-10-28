@@ -212,6 +212,9 @@ pub enum Refusal {
     Unknown,
     /// The sender already has as many requests waiting as a jam allows.
     TooMany,
+    /// The songs are another source's than the device plays from (a Subsonic server's to a YouTube
+    /// Music profile): they would not play there.
+    OtherSource,
 }
 
 /// A song as a controller lists it.
@@ -326,6 +329,9 @@ pub struct DeviceState {
     /// The last command this device carried out from each controller: a controller's foresight of it
     /// holds until a state says it was carried out.
     pub obeyed: Vec<Obeyed>,
+    /// Where its songs come from: its profile's kind (`ServerKind::id`); None from an older device.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// Command `id` of controller `from`, carried out.

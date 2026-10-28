@@ -16,7 +16,7 @@ fn sample() -> StoredPrefs {
     StoredPrefs {
         servers: vec![SavedServer {
             id: "a1".into(),
-            kind: ServerKind::YouTubeMusic,
+            kind: ServerKind::Plugin { id: "fm.nori.youtube-music".into() },
             name: "Home".into(),
             url: "https://music.example.com".into(),
             alt_url: "http://10.0.0.2:4533".into(),

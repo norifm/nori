@@ -1,0 +1,25 @@
+# Generated from Cargo manifests by tools/bazel/generate.py.
+load("//tools/bazel:workspace.bzl", "workspace_crate")
+
+workspace_crate({'name': 'nori-plugin-sdk',
+ 'edition': '2021',
+ 'version': '0.7.1',
+ 'targets': [{'name': 'nori_plugin_sdk', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True},
+             {'name': 'build-script-build',
+              'kind': 'custom-build',
+              'root': 'build.rs',
+              'test': False}],
+ 'features': {'tests': [], 'desktop': [], 'desktop-tests': []},
+ 'local': [],
+ 'registry': [{'label': '@crates//:wit-bindgen-0.46.0',
+               'kind': 'normal',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests', 'desktop-tests']},
+              {'label': '@crates//:wit-parser-0.239.0',
+               'kind': 'build',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests', 'desktop-tests']}],
+ 'resources': [],
+ 'aliases': {}})

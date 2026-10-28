@@ -276,13 +276,9 @@ enum Say {
         switch kind {
         case "subsonic":
             return ProviderWords(name: "Your server", note: "Navidrome, octo-fiesta or any Subsonic server", add: connect)
-        case "youtubeMusic":
-            return ProviderWords(
-                name: "YouTube Music",
-                note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Sign in for your library and likes. Songs, albums and playlists can be downloaded for offline playback. Devices on your network can be paired for remote control and jams. Scrobbling is off.",
-                add: "Add YouTube Music")
         default:
-            return ProviderWords(name: kind, note: "", add: connect)
+            // A plugin's kind, which the iPod never offers.
+            return ProviderWords(name: "Plugin", note: "", add: connect)
         }
     }
     static let serverUrl = "Server URL"
@@ -478,6 +474,7 @@ enum Say {
     static let notAnInvite = "That is not a jam invite. Paste the whole link the host sent you."
     static let ownJam = "That's your own jam"
     static let jamInviteEnded = "This jam has ended"
+    static let jamNeedsPlugin = "This jam plays from a plugin. Join it from nori on a phone or computer."
     static func jamJoinFailed(_ why: String) -> String { "Couldn't join the jam (\(why))" }
     static let leaveJam = "Leave"
     static let jamLeft = "You left the jam"
@@ -515,6 +512,7 @@ enum Say {
         case 2: return "That device said no."
         case 3: return "That is no longer there."
         case 4: return "Too many songs waiting."
+        case 5: return "That device plays from another source."
         default: return nil
         }
     }

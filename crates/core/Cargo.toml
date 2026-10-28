@@ -17,13 +17,13 @@ name = "core"
 path = "tests/main.rs"
 
 [features]
-default = ["ffi", "youtube"]
-# The YouTube Music provider (innertube-music). Off in the web client, which has none.
-youtube = ["dep:innertube-music"]
+default = ["ffi", "plugins"]
+# Plugins' providers (crates/plugins): every client but the web and the iPod.
+plugins = ["dep:nori-plugins"]
 # The optional neural beat tracker and its model download (enabled by nori-engine's `neural-beats`).
 neural-beats = ["nori-player/neural-beats", "dep:sha2"]
 # uniffi exports for the Kotlin bindings.
-ffi = ["dep:uniffi", "nori-model/ffi", "nori-db/ffi", "nori-net/ffi", "nori-library/ffi", "nori-automix/ffi", "nori-settings/ffi", "nori-lyrics/ffi", "nori-devices/ffi", "nori-queue/ffi", "nori-transfers/ffi", "nori-perf/ffi", "nori-remote/ffi", "nori-look/ffi"]
+ffi = ["dep:uniffi", "nori-plugins?/ffi", "nori-model/ffi", "nori-db/ffi", "nori-net/ffi", "nori-library/ffi", "nori-automix/ffi", "nori-settings/ffi", "nori-lyrics/ffi", "nori-devices/ffi", "nori-queue/ffi", "nori-transfers/ffi", "nori-perf/ffi", "nori-remote/ffi", "nori-look/ffi"]
 
 [dependencies]
 # Time, read the same way natively and in a browser.
@@ -52,8 +52,8 @@ nori-perf = { path = "../perf" }
 nori-remote = { path = "../remote" }
 # Where the remote's polls, time keeper and sends run.
 nori-tasks = { path = "../tasks" }
-# The YouTube Music provider's reads and streams, a crate of its own (github.com/filipton/innertube-music).
-innertube-music = { git = "https://github.com/filipton/innertube-music", optional = true }
+# The plugin host, for plugins' providers.
+nori-plugins = { path = "../plugins", optional = true }
 # The beat model's file is checked against its pinned SHA-256.
 sha2 = { version = "0.11", optional = true }
 # The cover loader's net forwards the async Transport trait.
@@ -64,4 +64,3 @@ nori-player = { path = "../player", features = ["synth"] }
 # A test's own directory, for a settings database.
 nori-testdir = { path = "../testdir" }
 # The YouTube Music provider's tests answer with the crate's own trimmed real answers.
-innertube-music = { git = "https://github.com/filipton/innertube-music", features = ["fixtures"] }

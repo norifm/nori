@@ -3,7 +3,7 @@
 use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
 
-use nori_core::providers::{log_in, profile_activated, providers, server_ready, FormField};
+use nori_core::providers::{log_in, profile_activated, FormField, Kinds};
 use nori_core::settings::{servers_removed, SavedServer, ServerKind, ServerList, StoredPrefs};
 use nori_core::settings_store::Settings;
 use nori_core::transport::{block_on, FailureKind, NetError};
@@ -73,7 +73,7 @@ fn label(s: &SavedServer) -> String {
 pub(crate) fn active(dir: &Path) -> Result<Option<(String, ServerKind)>, String> {
     let (_, prefs) = opened(dir)?;
     let server = prefs.active_server().or_else(|| prefs.servers.first());
-    Ok(server.map(|s| (label(s), s.kind)))
+    Ok(server.map(|s| (label(s), s.kind.clone())))
 }
 
 fn list_of(prefs: &mut StoredPrefs) -> ServerList {
@@ -173,12 +173,13 @@ impl Form {
 /// The profile `form` asks for, of the fields its kind asks; None when the form cannot be sent yet
 /// (a server's lacks an address, or both a user and an API key).
 fn draft(form: &Form) -> Option<SavedServer> {
-    let info = providers().into_iter().find(|p| p.kind == form.kind)?;
+    let kinds = Kinds::builtin();
+    let info = kinds.providers().into_iter().find(|p| p.kind == form.kind)?;
     let asks = |what| info.fields.iter().any(|f| f.what == what);
     let typed = |what, text: &str| if asks(what) { text.trim().to_string() } else { String::new() };
     let profile = SavedServer {
         id: nori_core::settings::new_server_id(),
-        kind: form.kind,
+        kind: form.kind.clone(),
         name: typed(FormField::Name, &form.name),
         url: address(&typed(FormField::Address, &form.url)),
         alt_url: address(&typed(FormField::SecondAddress, &form.alt)),
@@ -187,7 +188,7 @@ fn draft(form: &Form) -> Option<SavedServer> {
         api_key: typed(FormField::ApiKey, &form.key),
         ..SavedServer::default()
     };
-    server_ready(profile.clone()).then_some(profile)
+    kinds.server_ready(profile.clone()).then_some(profile)
 }
 
 /// The kinds of profile the login page offers, as JSON to free: `[{kind, fields: [{what, advanced}]}]`,
@@ -195,7 +196,8 @@ fn draft(form: &Form) -> Option<SavedServer> {
 /// `password`, `alt`, `key`); fields the page has no box for are left out.
 #[no_mangle]
 pub extern "C" fn nori_ios_providers() -> *mut c_char {
-    let rows: Vec<serde_json::Value> = providers()
+    let rows: Vec<serde_json::Value> = Kinds::builtin()
+        .providers()
         .into_iter()
         .map(|p| {
             let fields: Vec<serde_json::Value> = p
@@ -230,7 +232,7 @@ pub(crate) fn login(dir: &Path, form: &Form) -> (i32, Option<String>) {
         Ok(v) => v,
         Err(e) => return (LOGIN_DATABASE, Some(e)),
     };
-    match block_on(log_in(Http::new(), &settings, draft)) {
+    match block_on(log_in(&Kinds::builtin(), Http::new(), &settings, draft)) {
         Ok(_) => {
             nori_core::background::flush();
             (LOGIN_OK, None)
@@ -394,22 +396,6 @@ mod tests {
         assert!(draft(&Form { key: String::new(), ..form }).is_none(), "neither a user nor a key");
         let parsed = Form::parse(r#"{"url":"u","user":"ada","alt":"a"}"#);
         assert_eq!((parsed.user.as_str(), parsed.alt.as_str(), parsed.key.as_str()), ("ada", "a", ""));
-    }
-
-    /// A kind whose form asks no address saves without asking a server, of only the fields it asks,
-    /// and added again is the same profile.
-    #[test]
-    fn a_profile_without_a_server_is_saved_as_its_form_asks() {
-        let dir = nori_testdir::TempDir::new("ios-no-server");
-        let info = providers().into_iter().find(|p| !p.fields.iter().any(|f| f.what == FormField::Address)).expect("a kind without a server");
-        let form = Form::parse(&serde_json::json!({ "kind": info.kind.id(), "url": "http://127.0.0.1:1", "user": "ada" }).to_string());
-        assert_eq!(login(dir.path(), &form).0, LOGIN_OK);
-        assert_eq!(active(dir.path()).unwrap(), Some((String::new(), info.kind)), "no address or user kept");
-        assert_eq!(login(dir.path(), &form).0, LOGIN_OK);
-        assert_eq!(servers(dir.path()).unwrap().len(), 1, "added again, the same profile");
-        let offered: serde_json::Value = serde_json::from_str(&text(nori_ios_providers())).unwrap();
-        assert_eq!(offered[0]["kind"], "subsonic");
-        assert!(offered.as_array().unwrap().iter().any(|p| p["kind"] == info.kind.id()));
     }
 
     #[test]

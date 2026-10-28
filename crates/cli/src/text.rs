@@ -15,44 +15,195 @@ use nori_core::{AlbumDetail, Playlist, PlaylistDetail, PresetKind, Song};
 /// needs here.
 pub struct ProviderWords {
     /// What a profile of the kind is called without a name of its own.
-    pub name: &'static str,
+    pub name: String,
     /// Under a profile that names no user.
     pub no_user: &'static str,
-    /// A sign-in's answer held no signed-in session.
-    pub no_session: &'static str,
-    /// The source did not take the sign-in.
-    pub refused: &'static str,
-    /// The source could not be asked.
-    pub unreachable: &'static str,
 }
 
-pub fn provider(kind: ServerKind) -> ProviderWords {
+/// The words of `kind`; `plugin_name` is a plugin kind's name in its own words.
+pub fn provider(kind: &ServerKind, plugin_name: Option<String>) -> ProviderWords {
     match kind {
-        ServerKind::Subsonic => ProviderWords {
-            name: "Your server",
-            no_user: "API key",
-            no_session: "That isn't a signed-in session",
-            refused: "The server didn't accept this sign-in",
-            unreachable: "Couldn't reach the server",
-        },
-        ServerKind::YouTubeMusic => ProviderWords {
-            name: "YouTube Music",
-            no_user: "best effort",
-            no_session: "These aren't a signed-in session's cookies: copy them from music.youtube.com while signed in",
-            refused: "YouTube didn't accept these cookies: sign in again in a private window and copy them anew",
-            unreachable: "Couldn't reach YouTube",
-        },
+        ServerKind::Subsonic => ProviderWords { name: "Your server".into(), no_user: "API key" },
+        ServerKind::Plugin { id } => ProviderWords { name: plugin_name.unwrap_or_else(|| id.clone()), no_user: "no account" },
     }
 }
 
-/// How a sign-in to a `kind` profile went.
-pub fn sign_in(kind: ServerKind, r: &SignInResult) -> String {
-    let w = provider(kind);
+/// The words of `kind`, a plugin's named in its own words.
+pub fn provider_of(kinds: &nori_core::providers::Kinds, kind: &ServerKind) -> ProviderWords {
+    provider(kind, kinds.plugin_name(kind.clone(), "en".into()))
+}
+
+/// How a sign-in to a profile of the kind called `name` went.
+pub fn sign_in(name: &str, r: &SignInResult) -> String {
     match r {
-        SignInResult::SignedIn { name } => format!("Signed in to {} as {name}", w.name),
-        SignInResult::NoSession => w.no_session.into(),
-        SignInResult::Refused => w.refused.into(),
-        SignInResult::Unreachable { reason } => format!("{} ({reason}); nothing changed", w.unreachable),
+        SignInResult::SignedIn { name: user } => format!("Signed in to {name} as {user}"),
+        SignInResult::NoSession => "That isn't a signed-in session".into(),
+        SignInResult::Refused => format!("{name} didn't accept this sign-in"),
+        SignInResult::Unreachable { reason } => format!("Couldn't reach {name} ({reason}); nothing changed"),
+    }
+}
+
+pub const INSTALL_PLUGIN: &str = "Install a plugin";
+pub const LOGIN_MISSING: &str = "Fill in what's asked first";
+pub const LOGIN_KEYS: &str = "tab next field · enter connect · ctrl p plugins · esc back";
+pub const LOGIN_KIND_KEYS: &str = "← → kind · tab next field · enter connect · ctrl p plugins · esc back";
+pub const PLUGINS: &str = "Plugins";
+pub const LOGIN_KIND: &str = "Kind";
+pub const FROM_A_PLUGIN: &str = "From a plugin";
+pub const PLUGIN_PATH: &str = "A .noriplugin file or a plugin folder";
+pub const NO_PLUGINS: &str = "No plugins installed.";
+pub const PLUGIN_VERSION: &str = "Version";
+pub const SECRET_SET: &str = "Set";
+pub const PLUGIN_INSTALLED: &str = "Plugin installed";
+pub const GET_PLUGINS: &str = "Get plugins";
+pub const LOOK_FOR_PLUGINS: &str = "Look for plugins";
+pub const LOOK_AGAIN: &str = "Look again";
+pub const LOOKING: &str = "Looking…";
+pub const NOTHING_OFFERED: &str = "No plugins offered.";
+pub const INSTALL: &str = "Install";
+pub const UPDATE: &str = "Update";
+pub const INSTALLED: &str = "Installed";
+pub const REPOS: &str = "Repos";
+pub const KEEP_VERSION: &str = "Keep this version";
+pub const VERSIONS: &str = "Versions";
+pub const SOURCE: &str = "Source";
+
+/// Plugins updated on their own: each one's name and new version.
+pub fn plugins_updated(updated: &[(String, String)]) -> String {
+    let each: Vec<String> = updated.iter().map(|(name, to)| format!("{name} to {to}")).collect();
+    format!("Updated {}", each.join(", "))
+}
+pub const ADD_REPO: &str = "Add repo";
+pub const REPO_ADDRESS: &str = "Repo address (its index.json)";
+pub const TRUST_REPO: &str = "This repo isn't nori's. Its plugins can do what their pages say; add it only if you trust it.";
+
+/// A question's keys: enter does `yes`.
+pub fn confirm_keys(yes: &str) -> String {
+    format!("enter {} · esc cancel", yes.to_lowercase())
+}
+
+pub const ADD: &str = "Add";
+pub const REMOVE: &str = "Remove";
+
+/// Asks before removing plugin `name`.
+pub fn remove_plugin(name: &str) -> String {
+    format!("Remove {name}?")
+}
+pub const REMOVE_PLUGIN_NOTE: &str = "Its settings go with it.";
+
+/// Asks before installing `name` at `version`.
+pub fn install_version(name: &str, version: &str) -> String {
+    format!("Install {name} {version}?")
+}
+
+/// A line plugin `name` adds to a song's info, with where its link goes.
+pub fn info_line(name: &str, l: &nori_plugins::InfoLine) -> String {
+    match &l.link {
+        Some(url) => format!("{name} · {} · {url}", l.words),
+        None => format!("{name} · {}", l.words),
+    }
+}
+
+/// Where a plugin to install comes from: the repo at `url`, which will update it.
+pub fn from_repo(url: &str) -> String {
+    if url == nori_plugins::OFFICIAL {
+        return "From nori's own repo, which keeps it up to date.".into();
+    }
+    format!("From {}, which keeps it up to date.", host(url))
+}
+pub const INSTALLED_OFF: &str = "It stays off until you turn it on.";
+
+/// What a plugin is, from the extension points it fills and whether it overrides nori's values.
+pub fn plugin_is(points: &[String], overrides: bool) -> String {
+    let mut is: Vec<&str> = Vec::new();
+    for p in points {
+        let word = match p.as_str() {
+            "provider" => "a music source",
+            "sound-stage" => "a sound effect",
+            "automix" => "a mixer",
+            "lyrics" => "a lyrics source",
+            "scrobbler" => "a scrobbler",
+            "device-control" => "a device control",
+            "hooks" | "deciders" | "slots" | "preparation" => "a playback helper",
+            _ => continue,
+        };
+        if !is.contains(&word) {
+            is.push(word);
+        }
+    }
+    let mut said = match is.len() {
+        0 => String::new(),
+        _ => format!("It's {}.", is.join(", ")),
+    };
+    if overrides {
+        said.push_str(if said.is_empty() { "It changes playback values." } else { " It changes playback values." });
+    }
+    said
+}
+
+/// What a plugin may reach: the hosts it sends to and nori's values it changes.
+pub fn plugin_reach(net: &[String], overrides: &[String]) -> String {
+    let mut said = Vec::new();
+    if !net.is_empty() {
+        said.push(format!("Connects to {}.", net.join(", ")));
+    }
+    if !overrides.is_empty() {
+        said.push(format!("Changes {}.", overrides.join(", ")));
+    }
+    if said.is_empty() { "Connects to nothing.".into() } else { said.join(" ") }
+}
+
+/// A repo by its host; nori's own by name.
+pub fn repo_name(r: &nori_plugins::Repo) -> String {
+    if r.official {
+        return "nori's own".into();
+    }
+    host(&r.url).to_string()
+}
+
+/// The host in `url`.
+fn host(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    rest.split('/').next().unwrap_or(rest)
+}
+
+/// A repo that couldn't be read.
+pub fn repo_failed(r: &nori_plugins::Repo) -> String {
+    format!("Couldn't reach {}", host(&r.url))
+}
+pub const NOT_SET: &str = "Not set";
+
+/// Why a plugin wasn't installed.
+pub fn plugin_refused(r: &nori_plugins::Refusal) -> String {
+    use nori_plugins::Refusal;
+    let why = match r {
+        Refusal::Unreadable(what) => format!("can't be read ({what})"),
+        Refusal::Api(v) => format!("made for plugin API {v}"),
+        Refusal::Needs(what) => format!("needs: {}", what.join(", ")),
+        Refusal::Id => "its id isn't a reverse domain name".into(),
+        Refusal::UnknownKey(key) => format!("changes {key}, which nori doesn't have"),
+    };
+    format!("Not installed: {why}")
+}
+
+/// A plugin's level with `decimals` digits, its unit after it.
+pub fn level(v: f64, decimals: u8, unit: Option<&str>) -> String {
+    let places = decimals as usize;
+    match unit {
+        Some(u) => format!("{v:.places$} {u}"),
+        None => format!("{v:.places$}"),
+    }
+}
+
+/// A plugin's status row's value.
+pub fn plugin_value(v: &nori_plugins::Value, r: &nori_plugins::PluginRow) -> String {
+    use nori_plugins::Value;
+    match v {
+        Value::Switch(on) => on_off(*on).into(),
+        Value::Choice(i) => r.options.get(*i as usize).cloned().unwrap_or_default(),
+        Value::Flags(f) => format!("{f:#x}"),
+        Value::Level(l) => level(*l, r.decimals, r.unit.as_deref()),
+        Value::Text(t) => t.clone(),
     }
 }
 
@@ -424,6 +575,7 @@ pub fn menu_act(a: &crate::menu::MenuAct, missing: usize) -> String {
         MenuAct::ShufflePage => SHUFFLE.into(),
         MenuAct::SaveMix => SAVE_AS_PLAYLIST.into(),
         MenuAct::Page(p) => page_action(*p, missing),
+        MenuAct::Plugin(e) => e.label.clone(),
     }
 }
 
@@ -565,15 +717,17 @@ pub fn output_name(output: &str) -> String {
     }
 }
 
-pub const SIGNED_OUT_AGAIN: &str = "YouTube signed you out. Sign in again to see your library and likes.";
+/// The account's session ended at the source called `name`.
+pub fn signed_out_again(name: &str) -> String {
+    format!("{name} signed you out. Sign in again to see your library and likes.")
+}
 pub const SIGN_IN_WHY: &str = "See your own Home, your library and your likes. Music plays without it too.";
-pub const SIGN_IN_KEYS: &str = "enter sign in with Google · p paste cookies · esc close";
-pub const SIGN_IN_KEYS_ENDED: &str = "enter sign in with Google · p paste cookies · d don't show again · esc close";
+pub const SIGN_IN_KEYS: &str = "enter sign in · p paste cookies · esc close";
+pub const SIGN_IN_KEYS_ENDED: &str = "enter sign in · p paste cookies · d don't show again · esc close";
 pub const SIGNED_IN_KEYS: &str = "enter sign out · esc close";
 pub const SIGNING_IN: &str = "Finish signing in in the window that opened.";
-pub const PASTE_COOKIES: &str = "Sign in to music.youtube.com in a private browser window, copy the Cookie header of any request it makes from the developer tools, and paste it here. enter signs in · esc back";
+pub const PASTE_COOKIES: &str = "Sign in in a private browser window, copy the Cookie header of any request the page makes from the developer tools, and paste it here. enter signs in · esc back";
 pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window couldn't open here. Paste cookies from a browser instead.";
-pub const RISK: &str = "Unofficial apps are against YouTube's terms, and YouTube may flag an account that uses one.";
 pub const THIS_COMPUTER: &str = "This computer";
 pub const REMOTE_OFF: &str = "Remote control and jams are off: switch them on in Settings, under Other devices";
 
@@ -604,6 +758,7 @@ pub fn device_line(d: &RemoteDevice) -> String {
         Some(Refusal::NotAllowed) => "That device said no.",
         Some(Refusal::Unknown) => "That is no longer there.",
         Some(Refusal::TooMany) => "Too many songs waiting.",
+        Some(Refusal::OtherSource) => "That device plays from another source.",
         None => "",
     };
     if !refused.is_empty() {
@@ -663,12 +818,18 @@ pub const JAM_PAUSED_HERE: &str = "Paused here · Jam still playing";
 
 pub const JAM_OWN: &str = "That's your own jam";
 pub const JAM_INVITE_ENDED: &str = "This jam has ended";
+pub const JAM_NEEDS_PLUGIN: &str = "This jam plays from a plugin this device doesn't have";
+/// Atop the sheet installing the plugin a jam plays from.
+pub const JAM_PLUGIN: &str = "This jam plays from this plugin.";
+pub const JAM_PLUGIN_ON: &str = "It turns on, then you join the jam.";
+pub const INSTALL_AND_JOIN: &str = "Install and join";
 
 /// Why a jam was not joined.
 pub fn jam_join_failed(e: &nori_host::JoinError) -> String {
     match e {
         nori_host::JoinError::Own => JAM_OWN.into(),
         nori_host::JoinError::Ended => JAM_INVITE_ENDED.into(),
+        nori_host::JoinError::NeedsPlugin { .. } => JAM_NEEDS_PLUGIN.into(),
         nori_host::JoinError::Failed(e) => format!("Couldn't join the jam ({})", net_error(e)),
     }
 }
@@ -775,6 +936,8 @@ mod tests {
         d.now = wish;
         d.refused = Some(Refusal::Stale);
         assert_eq!(device_line(&d), "The queue changed there. Try again.", "a refusal over what it plays");
+        d.refused = Some(Refusal::OtherSource);
+        assert_eq!(device_line(&d), "That device plays from another source.");
 
         // Lyrics credit says untimed.
         assert_eq!(lyrics_credit(LyricsOrigin::Lrclib, true), "LRCLIB");

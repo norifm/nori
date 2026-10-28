@@ -1086,8 +1086,8 @@ fn curve(f: &mut Frame, area: Rect, rows: &[EqRow], bands: &[usize], p: &nori_co
 
 fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let prefs = app.prefs.clone();
-    let own = &app.settings.own;
-    app.settings.own = settings_view::Own { mouse: app.mouse, images: app.images, paint: app.paint, protocol: app.protocol.to_string(), data: own.data.clone(), device: own.device.clone(), dark: app.dark };
+    let own = app.settings.own.clone();
+    app.settings.own = settings_view::Own { mouse: app.mouse, images: app.images, paint: app.paint, protocol: app.protocol.to_string(), dark: app.dark, ..own };
     let body = heading(f, area, View::Settings.name(), "", t);
     let App { settings: v, hits, .. } = app;
     let pages = v.pages(&prefs).to_vec();
@@ -1097,7 +1097,7 @@ fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) 
         v.skip_titles(true);
     }
     // The groups down the left when wide enough.
-    let body = if body.width >= 96 {
+    let body = if body.width >= 96 && !v.alone {
         let at = v.group_at();
         for (g, group) in settings_view::GROUPS.iter().enumerate() {
             let r = Rect { x: body.x, y: body.y + g as u16, width: 18, height: 1 };
@@ -1165,14 +1165,14 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
         return Line::from(Span::styled(fit(&format!("    {detail}"), w).into_owned(), t.dim().add_modifier(Modifier::ITALIC)));
     }
     let value = match row {
-        settings_view::Row::Toggle { on, .. } | settings_view::Row::Ranked { on, .. } => crate::text::on_off(*on).to_string(),
+        settings_view::Row::Toggle { on, .. } | settings_view::Row::Ranked { on, .. } | settings_view::Row::Plugin { on, .. } => crate::text::on_off(*on).to_string(),
         _ => settings_view::row_value(row),
     };
     let mut left = vec![Span::styled(format!("    {title}"), text_style)];
     if !detail.is_empty() {
         left.push(Span::styled(format!("  {detail}"), t.dim()));
     }
-    let switched = matches!(row, settings_view::Row::Toggle { on: true, .. } | settings_view::Row::Ranked { on: true, .. });
+    let switched = matches!(row, settings_view::Row::Toggle { on: true, .. } | settings_view::Row::Ranked { on: true, .. } | settings_view::Row::Plugin { on: true, .. });
     let value_style = if !live { t.dim() } else if switched { Style::default().fg(t.on) } else { Style::default().fg(t.ink) };
     spread(left, Span::styled(value + " ", value_style), w)
 }
@@ -1205,6 +1205,9 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
         DeviceRow::Join => Line::from(vec![Span::raw("  "), Span::styled(crate::text::JAM_JOIN, Style::default().fg(t.ink))]),
         DeviceRow::Pair => Line::from(format!("  {}", crate::text::PAIR_DEVICES)),
         DeviceRow::ResetPairing => Line::from(format!("  {}", crate::text::FORGET_DEVICES)),
+        DeviceRow::PluginName(c) => Line::from(Span::styled(format!("  {}", d.plugins[c].name.to_uppercase()), t.dim())),
+        DeviceRow::Plugin(c, r) => d.plugin_row(c, r).map_or_else(Line::default, |row| setting_line(&SLine::Row(&row), w, t)),
+        DeviceRow::PluginHint(c, r) => Line::from(Span::styled(fit(&format!("    {}", d.plugins[c].rows[r].hint.as_deref().unwrap_or_default()), w).into_owned(), t.dim().add_modifier(Modifier::ITALIC))),
     });
     devices.sel = sel;
     let mut y = body.y + body.height + 1;
@@ -1509,7 +1512,10 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
         text(f, area, "Nothing playing · esc goes back", t.dim());
         return 1;
     };
-    let cover_rows = if app.images && art.is_some() { area.height.saturating_sub(SONG_BELOW).min(area.width / 2).min(22) } else { 0 };
+    let info: Vec<String> = app.slots.info_of(&song.id).iter().flat_map(|g| g.lines.iter().map(|l| crate::text::info_line(&g.name, l))).collect();
+    let status = app.slots.status.clone();
+    let below = SONG_BELOW + (info.len() + status.len()) as u16;
+    let cover_rows = if app.images && art.is_some() { area.height.saturating_sub(below).min(area.width / 2).min(22) } else { 0 };
     let mut y = area.y;
     if cover_rows >= 6 {
         cover(f, Rect { x: area.x, y, width: cover_rows * 2, height: cover_rows }, art, song.cover_art.as_deref());
@@ -1535,6 +1541,10 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
         text(f, row(y), &q, t.dim());
         y += 1;
     }
+    for l in &info {
+        text(f, row(y), l, t.dim());
+        y += 1;
+    }
     y += 1;
     let time = 5;
     let track_w = w.saturating_sub(2 * (time + 1)).min(60);
@@ -1551,6 +1561,10 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
     y += 2;
     output_line(f, row(y), app, t);
     y += 1;
+    for l in &status {
+        text(f, row(y), l, t.dim());
+        y += 1;
+    }
     volume_line(f, Rect { width: 16.min(w), ..row(y) }, app, t);
     y += 2;
     // The mix being heard or planned, where there is room.
@@ -1568,7 +1582,7 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
 /// play; on the right, the way back.
 fn panel_tabs(f: &mut Frame, app: &mut App, t: &Theme, r: Rect) {
     let mut x = r.x;
-    for (which, name) in PANELS.iter().filter(|(p, _)| *p != Panel::Devices || app.devices.on) {
+    for (which, name) in PANELS.iter().filter(|(p, _)| *p != Panel::Devices || app.devices.shown()) {
         let w = name.width() as u16;
         if x + w > r.x + r.width {
             break;
@@ -1594,7 +1608,7 @@ fn output_line(f: &mut Frame, r: Rect, app: &mut App, t: &Theme) {
         None => (crate::text::output_name(&app.output), false),
     };
     text(f, r, &name, if lit { bold().fg(t.ink) } else { t.dim() });
-    if app.devices.on {
+    if app.devices.shown() {
         app.hits.push((Rect { width: (name.width() as u16).min(r.width), ..r }, Hit::Button(Button::Panel(Panel::Devices))));
     }
 }
@@ -1736,18 +1750,34 @@ fn track_bar(f: &mut Frame, r: Rect, share: f32, t: &Theme) {
 
 fn login(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let servers = app.prefs.servers.len() as u16;
-    let h = 17 + if servers > 0 { servers + 2 } else { 0 };
+    let kinds = app.login_kinds();
+    let fields = app.login_fields();
+    let info = kinds.get(app.login.kind).or(kinds.first());
+    let words = info.map(|i| app.provider_words(&i.kind));
+    let choosing = kinds.len() > 1;
+    let h = 11 + 2 * fields.len() as u16 + if choosing { 2 } else { 0 } + if servers > 0 { servers + 2 } else { 0 };
     let r = centred(area, 64, h);
-    let inner = popup(f, r, Span::styled(" nori · connect to a server ", bold().fg(t.ink)), t);
+    let inner = popup(f, r, Span::styled(" nori · add a profile ", bold().fg(t.ink)), t);
     let l = &app.login;
     let bottom = inner.y + inner.height;
     let mut y = inner.y + 1;
-    text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: 1 }, "Navidrome, octo-fiesta or any Subsonic server", t.dim());
+    if choosing {
+        let name = words.as_ref().map_or(String::new(), |w| w.name.clone());
+        let line = Line::from(vec![Span::styled(format!("  {:<16}", crate::text::LOGIN_KIND), t.dim()), Span::styled(format!("‹ {name} ›"), bold().fg(t.ink))]);
+        put(f, Paragraph::new(line), Rect { x: inner.x, y, width: inner.width, height: 1 });
+        y += 2;
+    }
+    let about = match info.map(|i| &i.kind) {
+        Some(nori_core::settings::ServerKind::Plugin { .. }) => crate::text::FROM_A_PLUGIN,
+        _ => "Navidrome, octo-fiesta or any Subsonic server",
+    };
+    text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: 1 }, about, t.dim());
     y += 2;
-    for (i, label) in LOGIN_FIELDS.iter().enumerate() {
+    for &i in &fields {
         if y >= bottom {
             break;
         }
+        let label = LOGIN_FIELDS[i];
         let focused = l.focus == i && !l.on_list;
         let value = if i == 3 { "•".repeat(l.fields[i].chars().count()) } else { l.fields[i].clone() };
         let cursor = if focused { "▏" } else { "" };
@@ -1764,10 +1794,14 @@ fn login(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let br = Rect { x: inner.x + 18, y, width: button.width() as u16, height: 1 };
     put(f, Paragraph::new(Span::styled(button, t.select(true))), br);
     app.hits.push((br, Hit::Button(Button::Connect)));
+    let plugins = format!(" {} › ", crate::text::PLUGINS);
+    let pr = Rect { x: br.x + br.width + 2, y, width: plugins.width() as u16, height: 1 };
+    put(f, Paragraph::new(Span::styled(plugins, t.dim())), pr);
+    app.hits.push((pr, Hit::Button(Button::LoginPlugins)));
     y += 2;
     let msg = match &l.error {
         Some(e) => Span::styled(format!("  {e}"), Style::default().fg(Color::LightRed)),
-        None => Span::styled("  tab next field · enter connect · esc back", t.dim()),
+        None => Span::styled(format!("  {}", if choosing { crate::text::LOGIN_KIND_KEYS } else { crate::text::LOGIN_KEYS }), t.dim()),
     };
     put(f, Paragraph::new(msg).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x, y, width: inner.width, height: 2.min(bottom.saturating_sub(y)) });
     y += 3;
@@ -1800,7 +1834,8 @@ fn qr_lines(code: &nori_core::remote::QrCode) -> Vec<Line<'static>> {
 
 fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let missing = app.page_missing();
-    let App { overlay, hits, devices, .. } = app;
+    let App { overlay, hits, devices, settings, .. } = app;
+    let kinds = &*settings.own.kinds;
     let Some(o) = overlay else { return };
     match o {
         Overlay::Help { scroll } => {
@@ -1881,7 +1916,7 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         Overlay::Account { kind, user, ended, pasting, text: typed, error, busy } => {
             let w = 76.min(area.width);
             let iw = w.saturating_sub(4).max(1) as usize;
-            let name = crate::text::provider(*kind).name;
+            let name = crate::text::provider_of(kinds, kind).name;
             let title = if user.is_empty() { format!(" Sign in to {name} ") } else { format!(" {name} ") };
             let mut said: Vec<(String, Style)> = Vec::new();
             if !user.is_empty() {
@@ -1893,14 +1928,13 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
                 let dots = "•".repeat(typed.chars().count().min(iw.saturating_sub(1)));
                 said.push((format!("{dots}▏"), Style::default().fg(t.ink)));
             } else {
-                let why = if *busy { crate::text::SIGNING_IN } else if *ended { crate::text::SIGNED_OUT_AGAIN } else { crate::text::SIGN_IN_WHY };
-                said.push((why.into(), Style::default().fg(t.ink)));
+                let why = if *busy { crate::text::SIGNING_IN.into() } else if *ended { crate::text::signed_out_again(&name) } else { crate::text::SIGN_IN_WHY.into() };
+                said.push((why, Style::default().fg(t.ink)));
                 said.push(((if *ended { crate::text::SIGN_IN_KEYS_ENDED } else { crate::text::SIGN_IN_KEYS }).into(), t.dim()));
             }
             if let Some(e) = error {
                 said.push((e.clone(), Style::default().fg(Color::LightRed)));
             }
-            said.push((crate::text::RISK.into(), t.dim()));
             let rows: usize = said.iter().map(|(l, _)| l.chars().count().div_ceil(iw).max(1)).sum::<usize>() + said.len() - 1;
             let r = centred(area, w, rows as u16 + 3);
             let inner = popup(f, r, Span::styled(title, bold().fg(t.ink)), t);
@@ -1940,6 +1974,20 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             let inner = popup(f, r, Span::styled(format!(" {title} · enter keeps, esc drops "), bold().fg(t.ink)), t);
             let shown = if *secret { "•".repeat(typed.chars().count()) } else { typed.clone() };
             put(f, Paragraph::new(format!(" {shown}▏")), inner);
+        }
+        Overlay::Confirm { title, lines: said, yes, .. } => {
+            let w = 64.min(area.width);
+            let iw = w.saturating_sub(4).max(1) as usize;
+            let mut lines = Vec::new();
+            for (i, l) in said.iter().enumerate() {
+                lines.push(Line::from(Span::styled(l.clone(), if i == 0 { Style::default().fg(t.ink) } else { t.dim() })));
+                lines.push(Line::from(""));
+            }
+            lines.push(Line::from(Span::styled(crate::text::confirm_keys(yes), t.dim())));
+            let rows: usize = said.iter().map(|l| l.chars().count().div_ceil(iw).max(1) + 1).sum::<usize>() + 1;
+            let r = centred(area, w, rows as u16 + 2);
+            let inner = popup(f, r, Span::styled(format!(" {title} "), bold().fg(t.ink)), t);
+            put(f, Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner });
         }
     }
 }

@@ -29,8 +29,10 @@ class Release(unittest.TestCase):
         (self.root / "gradlew").chmod(0o755)
         self.output = self.root / "artifacts"
         self.output.mkdir()
-        self.apk = self.output / f"nori-music-{VERSION}.apk"
-        self.apk.write_bytes(b"the worker's signed APK")
+        self.apks = [self.output / f"nori-music-{VERSION}-{abi}.apk" for abi in ("arm64-v8a", "x86_64")]
+        for apk in self.apks:
+            apk.write_bytes(f"the worker's signed APK for {apk.name}".encode())
+        self.apk = self.apks[0]
         self.environment = dict(os.environ, ANDROID_HOME=str(self.root / "sdk"))
         self.environment.pop("NORI_RELEASE_WORKSPACE", None)
 
@@ -42,9 +44,8 @@ class Release(unittest.TestCase):
     def test_stage_worker_artifacts_without_building(self):
         result = self.stage()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        digest, name = (self.output / "SHA256SUMS").read_text().strip().split("  ")
-        self.assertEqual(name, self.apk.name)
-        self.assertEqual(digest, hashlib.sha256(self.apk.read_bytes()).hexdigest())
+        sums = [line.split("  ") for line in (self.output / "SHA256SUMS").read_text().strip().splitlines()]
+        self.assertEqual(sums, [[hashlib.sha256(apk.read_bytes()).hexdigest(), apk.name] for apk in self.apks], "one APK per ABI")
         self.assertFalse((self.root / "nori-release.jks").exists())
         self.assertFalse((self.root / "keystore.properties").exists())
 

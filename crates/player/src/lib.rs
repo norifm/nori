@@ -28,6 +28,7 @@ pub mod sim;
 pub mod sonic;
 pub mod spatial;
 pub mod speed;
+pub mod stage;
 pub mod transitions;
 pub mod transport;
 pub mod types;

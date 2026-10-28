@@ -78,7 +78,7 @@ re-exports every domain crate by module name (`nori_core::playlist` is `nori_que
 
 | Area | Crate and modules |
 |---|---|
-| Where music comes from: a Subsonic server or YouTube Music, each a provider with its own form and sign-in ([Providers](providers.md)) | `nori-core::providers` |
+| Where music comes from: a Subsonic server or a plugin's provider, each with its own form and sign-in ([Providers](providers.md)) | `nori-core::providers::Kinds` |
 | The server API, request signing, the `Transport` trait, stream cache keys | `nori-net`: `api`, `transport`, `requests`, `stream` |
 | The one app database and its background writer | `nori-db` |
 | Records, `CoreError`, the log, numbers for display | `nori-model`: `model`, `alog`, `numbers`, `lines` |
@@ -244,7 +244,7 @@ core first and applies the `QueueEdit` it answers).
 ## Calling the core cheaply
 
 - **Rust clients** call the crates directly. Depend on `nori-core` with `default-features = false` and no
-  uniffi is built (add the `youtube` feature for the YouTube Music provider); each domain crate's `ffi`
+  uniffi is built (add the `plugins` feature for plugins' providers); each domain crate's `ffi`
   feature is off by default.
 - **Android** uses uniffi's JNI generator (`uniffi-bindgen-kotlin-jni`), not JNA, which costs far more
   per call and leaves garbage. `crates/android/build.rs` generates the scaffolding, and

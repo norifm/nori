@@ -63,10 +63,23 @@ pub enum Msg {
     Jam(Result<(), String>),
     /// Someone's jam joined (what the guest profile signs in with), or why not.
     Joined(Result<nori_core::remote::JamPass, String>),
+    /// The plugin someone's jam plays from, as nori's repo offers it, and what the guest profile signs
+    /// in with once it is installed and on.
+    JamPlugin(Box<(nori_plugins::PluginPreview, nori_core::remote::JamPass)>),
     /// This guest left its jam, or the jam ended: what to say.
     Left(String),
     /// How signing the account in went.
     SignedIn(nori_core::providers::SignInResult),
+    /// A plugin installed (its id), or why not.
+    Installed(Result<String, nori_plugins::Refusal>),
+    /// A plugin to install, as its sheet shows it, or why it can't be.
+    Preview(Result<nori_plugins::PluginPreview, nori_plugins::Refusal>),
+    /// The plugins' lines in `song`'s info and under the player's output.
+    Slots { song: String, info: Vec<nori_plugins::InfoGroup>, status: Vec<String> },
+    /// What the plugin repos offer.
+    Offers(nori_plugins::Offers),
+    /// Plugins updated on their own: each one's id and new version.
+    Updated(Vec<(String, String)>),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }
@@ -95,8 +108,14 @@ impl Msg {
             Msg::Remote => "remote".into(),
             Msg::Jam(r) => format!("jam opened: {}", r.is_ok()),
             Msg::Joined(r) => format!("jam joined: {}", r.is_ok()),
+            Msg::JamPlugin(p) => format!("jam plays from plugin {}", p.0.card.id),
             Msg::Left(said) => format!("jam left: {said}"),
             Msg::SignedIn(r) => format!("signed in: {}", matches!(r, nori_core::providers::SignInResult::SignedIn { .. })),
+            Msg::Installed(r) => format!("plugin installed: {r:?}"),
+            Msg::Preview(r) => format!("plugin preview: {:?}", r.as_ref().map(|p| &p.card.id)),
+            Msg::Slots { song, info, status } => format!("plugins on {song}: {} info groups, {} status lines", info.len(), status.len()),
+            Msg::Updated(u) => format!("{} plugins updated", u.len()),
+            Msg::Offers(o) => format!("{} plugins offered, {} repos unread", o.offers.len(), o.failed.len()),
             Msg::From(id, m) => format!("session {id}: {}", m.brief()),
         }
     }
@@ -169,8 +188,8 @@ pub struct Downloads {
 
 /// Logs `draft` in and keeps it as the active profile (blocking): the core checks it with its provider
 /// (a server is tried through its second address, then with legacy auth, which the profile then keeps).
-pub fn check_login(http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
-    nori_host::desktop::log_in(http, draft).map_err(|e| match net_error(&e) {
+pub fn check_login(data: &Path, http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
+    nori_host::desktop::log_in(data, http, draft).map_err(|e| match net_error(&e) {
         e if e.is_empty() => "the server did not answer".to_string(),
         e => e,
     })

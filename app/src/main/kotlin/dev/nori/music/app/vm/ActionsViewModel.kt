@@ -50,6 +50,23 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     // A process started in the background could not restart the download service; with a screen up it can.
     init { nori.downloads.resume() }
 
+    // What plugins show while they run, said as the app's own messages are.
+    init { viewModelScope.launch { nori.plugins.notices.collect { _messages.trySend(it.line) } } }
+
+    /** The actions plugins add to each kind of item's menu, read before any menu opens. */
+    val pluginMenus = nori.plugins.menus
+
+    /** Runs a plugin's menu action on [items]. */
+    fun runPluginMenu(entry: dev.nori.music.ffi.plugins.MenuEntry, items: dev.nori.music.ffi.plugins.Items) {
+        viewModelScope.launch { runCatching { nori.plugins.runMenu(entry, items) }.onFailure { dev.nori.music.NoriLog.w("plugin menu ${entry.plugin}: ${it.message}") } }
+    }
+
+    /** The lines plugins add to [song]'s info; none when they could not be asked. */
+    suspend fun pluginSongInfo(song: Song): List<dev.nori.music.ffi.plugins.InfoGroup> = runCatching { nori.plugins.songInfo(song) }.getOrDefault(emptyList())
+
+    // Plugins updated from their repos as the app came to the front, said quietly.
+    init { viewModelScope.launch { nori.plugins.updated.collect { done -> done.forEach { (name, u) -> _messages.trySend(say.pluginUpdated(name, u.to)) } } } }
+
     internal fun attempt(done: String?, block: suspend () -> Unit) = viewModelScope.launch {
         try { block(); done?.let { _messages.send(it) } } catch (e: Exception) { _messages.send(e.said ?: say.saidFailed) }
     }

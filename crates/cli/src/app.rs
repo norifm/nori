@@ -186,7 +186,41 @@ pub enum Cmd {
     Listen(bool),
     JamAlong(bool),
     JamRemoteSongs(bool),
+    Plugin(PluginCmd),
     Quit,
+}
+
+/// What the runner does with the plugins (Settings › Plugins); each reads them again after.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PluginCmd {
+    Read,
+    /// Shows the `.noriplugin` or plugin folder at this path before it is installed.
+    Install(String),
+    /// Installs what the sheet showed.
+    InstallPreview(Box<nori_plugins::PluginPreview>),
+    /// Installs and turns on the plugin a jam plays from, then joins it with this pass.
+    JoinWith(Box<(nori_plugins::PluginPreview, nori_core::remote::JamPass)>),
+    Turn(String, bool),
+    /// Moves the plugin to this place in the order.
+    Place(String, u32),
+    Uninstall(String),
+    /// A row of a plugin, its new value.
+    Set(String, String, nori_plugins::Value),
+    /// Runs a plugin's action row.
+    Act(String, String),
+    /// Asks the repos what they offer.
+    Look,
+    /// Shows a version (newest first) of the offer at this place in those last read, before it is
+    /// installed.
+    Get(u32, u32),
+    /// Runs a plugin's menu action on these items.
+    Menu(nori_plugins::MenuEntry, nori_plugins::Items),
+    /// Asks the plugins for this song's info lines and the player's status.
+    Ask(Box<Song>),
+    /// Keeps a plugin at its version, or lets it update.
+    Hold(String, bool),
+    AddRepo(String),
+    RemoveRepo(String),
 }
 
 impl Cmd {
@@ -232,6 +266,9 @@ impl Cmd {
             Cmd::JamRemoteSongs(on) => format!("room remote songs {on}"),
             Cmd::Listen(on) => format!("listen along {on}"),
             Cmd::Quit => "quit".into(),
+            Cmd::Plugin(PluginCmd::Set(id, row, _)) => format!("plugin {id} row {row}"),
+            Cmd::Plugin(PluginCmd::JoinWith(p)) => format!("plugin {} for a jam", p.0.card.id),
+            Cmd::Plugin(c) => format!("plugin {c:?}"),
             _ => "an edit".into(),
         }
     }
@@ -356,8 +393,8 @@ impl Page {
         }
     }
 
-    /// The page's songs: an album's, a playlist's, a mix's, and an artist's that lists no albums (a YouTube
-    /// Music profile's videos); an artist with albums lists those.
+    /// The page's songs: an album's, a playlist's, a mix's, and an artist's that lists no albums (a provider's
+    /// songs); an artist with albums lists those.
     pub fn songs(&self) -> Option<&[Song]> {
         match self {
             Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
@@ -649,9 +686,16 @@ pub struct Login {
     pub sel: Sel,
     /// Whether the saved servers list has the keys.
     pub on_list: bool,
+    /// The kind of profile added, of those offered ([`App::login_kinds`]).
+    pub kind: usize,
 }
 
 pub const LOGIN_FIELDS: [&str; 4] = ["Name (optional)", "Server address", "User", "Password"];
+/// What each of `LOGIN_FIELDS` fills in.
+const LOGIN_ASKS: [nori_core::providers::FormField; 4] = {
+    use nori_core::providers::FormField::*;
+    [Name, Address, User, Password]
+};
 
 /// Playback state for drawing; position extrapolated from `at`.
 #[derive(Debug, Clone, Copy)]
@@ -702,6 +746,61 @@ pub struct Devices {
     pub added: HashMap<String, String>,
     /// A jam guest's controls by its role: what its keys reach, and what the player says.
     pub controls: Option<JamControls>,
+    /// The plugins whose rows show here too.
+    pub plugins: Vec<nori_plugins::PluginCard>,
+}
+
+/// What the plugin `p` shows is, what it may reach and where it comes from, as its install sheet says.
+fn preview_lines(p: &nori_plugins::PluginPreview) -> Vec<String> {
+    let c = &p.card;
+    let mut lines: Vec<String> = c.about.iter().cloned().collect();
+    lines.extend([crate::text::plugin_is(&c.points, !c.overrides.is_empty()), crate::text::plugin_reach(&c.net, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
+    lines.extend(p.repo.as_deref().map(crate::text::from_repo));
+    lines
+}
+
+/// The sheet before installing what `p` shows.
+fn preview_sheet(p: nori_plugins::PluginPreview) -> Overlay {
+    let mut lines = preview_lines(&p);
+    lines.push(crate::text::INSTALLED_OFF.into());
+    Overlay::Confirm { title: crate::text::install_version(&p.card.name, &p.card.version), lines, yes: crate::text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::InstallPreview(Box::new(p)))) }
+}
+
+/// The sheet offering to install the plugin `p` a jam plays from, then join it with `pass`.
+fn jam_plugin_sheet(p: nori_plugins::PluginPreview, pass: nori_core::remote::JamPass) -> Overlay {
+    let mut lines = vec![crate::text::JAM_PLUGIN.to_string()];
+    lines.extend(preview_lines(&p));
+    lines.push(crate::text::JAM_PLUGIN_ON.into());
+    let title = crate::text::install_version(&p.card.name, &p.card.version);
+    Overlay::Confirm { title, lines, yes: crate::text::INSTALL_AND_JOIN.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::JoinWith(Box::new((p, pass))))) }
+}
+
+/// What the enabled plugins add to the screens, as last read.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Slots {
+    /// Some plugin fills a place: the song's info and the player's status are asked for.
+    pub asked: bool,
+    /// The actions plugins add to the menus, each with the kind of item it is for.
+    pub menu: Vec<(nori_plugins::ItemKind, nori_plugins::MenuEntry)>,
+    /// The playing song's id and the plugins' lines in its info.
+    pub info: Option<(String, Vec<nori_plugins::InfoGroup>)>,
+    /// The plugins' lines under the output row.
+    pub status: Vec<String>,
+}
+
+impl Slots {
+    /// The menu actions plugins add for items of `kind`.
+    pub fn menu_of(&self, kind: nori_plugins::ItemKind) -> impl Iterator<Item = &nori_plugins::MenuEntry> {
+        self.menu.iter().filter(move |(k, _)| *k == kind).map(|(_, e)| e)
+    }
+
+    /// The playing song's info lines, read for `song`.
+    pub fn info_of(&self, song: &str) -> &[nori_plugins::InfoGroup] {
+        match &self.info {
+            Some((id, groups)) if id == song => groups,
+            _ => &[],
+        }
+    }
 }
 
 /// A row of the devices panel.
@@ -717,27 +816,63 @@ pub enum DeviceRow {
     Join,
     Pair,
     ResetPairing,
+    /// A plugin's name over its rows: index into [`Devices::plugins`].
+    PluginName(usize),
+    /// Row `.1` of plugin `.0`, then its hint.
+    Plugin(usize, usize),
+    PluginHint(usize, usize),
 }
 
 impl Devices {
+    /// The panel's rows, the plugins' last.
     pub fn rows(&self) -> Vec<DeviceRow> {
-        let mut rows = vec![DeviceRow::Here];
-        rows.extend((0..self.list.len()).flat_map(|i| [DeviceRow::Device(i), DeviceRow::Playing(i)]));
-        if self.jams || self.jam.is_some() {
-            rows.push(DeviceRow::Jam);
+        let mut rows = if self.on { vec![DeviceRow::Here] } else { Vec::new() };
+        if self.on {
+            rows.extend((0..self.list.len()).flat_map(|i| [DeviceRow::Device(i), DeviceRow::Playing(i)]));
+            if self.jams || self.jam.is_some() {
+                rows.push(DeviceRow::Jam);
+            }
+            rows.push(DeviceRow::Join);
+            if self.pairing.is_some() {
+                rows.extend([DeviceRow::Pair, DeviceRow::ResetPairing]);
+            }
         }
-        rows.push(DeviceRow::Join);
-        if self.pairing.is_some() { rows.extend([DeviceRow::Pair, DeviceRow::ResetPairing]); }
+        for (c, card) in self.plugins.iter().enumerate() {
+            rows.push(DeviceRow::PluginName(c));
+            for (r, row) in card.rows.iter().enumerate() {
+                rows.push(DeviceRow::Plugin(c, r));
+                if row.hint.is_some() {
+                    rows.push(DeviceRow::PluginHint(c, r));
+                }
+            }
+        }
         rows
     }
 
-    /// Moves the selection off a line of what a device plays, in direction `down`.
+    /// Moves the selection off a line that only says something (what a device plays, a plugin's name
+    /// or hint), in direction `down`.
     fn settle(&mut self, down: bool) {
         let rows = self.rows();
-        if let Some(DeviceRow::Playing(i)) = rows.get(self.sel.at) {
-            let past = self.sel.at + 1;
-            self.sel.at = if down && past < rows.len() { past } else { rows.iter().position(|r| *r == DeviceRow::Device(*i)).unwrap_or(0) };
+        let picks = |at: &usize| !matches!(rows[*at], DeviceRow::Playing(_) | DeviceRow::PluginName(_) | DeviceRow::PluginHint(..));
+        if self.sel.at >= rows.len() || picks(&self.sel.at) {
+            return;
         }
+        let after = (self.sel.at + 1..rows.len()).find(picks);
+        let before = (0..self.sel.at).rev().find(picks);
+        if let Some(at) = if down { after.or(before) } else { before.or(after) } {
+            self.sel.at = at;
+        }
+    }
+
+    /// Row `r` of plugin `c` as the settings draw it.
+    pub fn plugin_row(&self, c: usize, r: usize) -> Option<crate::settings_view::Row> {
+        let card = self.plugins.get(c)?;
+        Some(crate::settings_view::plugin_row(&card.id, card.rows.get(r)?))
+    }
+
+    /// The panel shows: other devices or jams are on, or a plugin has rows here.
+    pub fn shown(&self) -> bool {
+        self.on || !self.plugins.is_empty()
     }
 
     /// The jam's guests, the host left out.
@@ -813,8 +948,10 @@ pub enum Overlay {
     Help { scroll: usize },
     /// A choice list; `target` receives the value picked.
     Picker { title: String, options: Vec<(String, String)>, sel: Sel, target: Target },
-    /// A text field for setting `name`.
-    Input { title: String, text: String, secret: bool, name: String },
+    /// A text field whose text goes to `target`.
+    Input { title: String, text: String, secret: bool, target: Target },
+    /// A question before `cmd` is carried out: what it is about, and the word for going ahead.
+    Confirm { title: String, lines: Vec<String>, yes: String, cmd: Box<Cmd> },
     /// What the selection's menu offers, the song's less used actions `folded` under More until it opens.
     Menu { title: String, item: Box<Item>, lines: Vec<crate::menu::MenuLine>, folded: Vec<crate::menu::MenuLine>, sel: Sel },
     /// A new playlist's name, for `songs`.
@@ -837,6 +974,14 @@ pub enum Target {
     Preset,
     /// The playlist these songs go to (empty: a new one).
     Playlist(Vec<String>),
+    /// A sound level the equalizer's tools set.
+    Level(EqLevel),
+    /// A row of plugin `plugin`, of `kind`.
+    Plugin { plugin: String, row: String, kind: nori_plugins::RowKind },
+    /// The plugin file or folder to install.
+    Install,
+    /// The repo to add, once the user trusts it.
+    AddRepo,
 }
 
 impl Target {
@@ -847,6 +992,20 @@ impl Target {
             Target::Device => Some(Cmd::Device(value)),
             Target::Preset => value.parse().ok().map(|i| Cmd::Sound(SoundToolCmd::Preset(i))),
             Target::Playlist(songs) => Some(Cmd::AddToPlaylist { id: value, songs }),
+            Target::Level(l) => value.parse().ok().map(|v| Cmd::Level(l, v)),
+            Target::Plugin { plugin, row, kind } => {
+                use nori_plugins::{RowKind, Value};
+                let v = match kind {
+                    RowKind::Switch => Value::Switch(value.parse().ok()?),
+                    RowKind::Choice => Value::Choice(value.parse().ok()?),
+                    RowKind::Level => Value::Level(value.parse().ok()?),
+                    RowKind::Text | RowKind::Secret => Value::Text(value),
+                    RowKind::Action | RowKind::Status | RowKind::Section | RowKind::Note | RowKind::Link => return None,
+                };
+                Some(Cmd::Plugin(PluginCmd::Set(plugin, row, v)))
+            }
+            Target::Install => Some(Cmd::Plugin(PluginCmd::Install(value.trim().to_string()))),
+            Target::AddRepo => Some(Cmd::Plugin(PluginCmd::AddRepo(value.trim().to_string()))),
         }
     }
 }
@@ -930,6 +1089,8 @@ pub enum Button {
     StarSong,
     Help,
     Connect,
+    /// The login's way to Settings › Plugins.
+    LoginPlugins,
     /// Plays the queue offered on Home, or turns it down.
     Resume,
     Dismiss,
@@ -1000,6 +1161,8 @@ pub struct App {
     /// This session's star marks, drawn over the records' flags.
     pub marks: StarMarks,
     pub devices: Devices,
+    /// What the plugins add to the screens.
+    pub slots: Slots,
     /// What the open profile offers (a jam guest's: the host's library, its picks asked of the host).
     pub rules: ProfileRules,
     /// The planned transition out of `song`.
@@ -1078,6 +1241,11 @@ impl App {
     pub fn themed(mut self) -> App {
         self.retheme();
         self
+    }
+
+    /// What the terminal calls profile kind `kind`.
+    pub fn provider_words(&self, kind: &nori_core::settings::ServerKind) -> crate::text::ProviderWords {
+        crate::text::provider_of(&self.settings.own.kinds, kind)
     }
 
     pub fn say(&mut self, text: impl Into<String>, error: bool) {
@@ -1301,6 +1469,7 @@ impl App {
             View::Settings if !self.settings.facts_asked => {
                 self.settings.facts_asked = true;
                 self.cmds.push(Cmd::Load(Req::Facts));
+                self.cmds.push(Cmd::Plugin(PluginCmd::Read));
             }
             View::Search if self.search.view.is_none() => self.search.editing = true,
             _ => {}
@@ -1342,7 +1511,7 @@ impl App {
         if self.full && self.panel == p {
             return self.close_full();
         }
-        if p == Panel::Devices && !self.devices.on {
+        if p == Panel::Devices && !self.devices.shown() {
             return self.say(crate::text::REMOTE_OFF, false);
         }
         self.panel = p;
@@ -1360,6 +1529,7 @@ impl App {
                 let d = &mut self.devices;
                 let active = d.active.as_ref().and_then(|(id, _)| d.list.iter().position(|x| &x.id == id));
                 d.sel.at = active.map_or(0, |i| d.rows().iter().position(|r| *r == DeviceRow::Device(i)).unwrap_or(0));
+                d.settle(true);
             }
             Panel::Lyrics => self.want_lyrics(),
             Panel::Playing => {}
@@ -1367,6 +1537,9 @@ impl App {
     }
 
     fn open_full(&mut self) {
+        if !self.full {
+            self.ask_slots();
+        }
         self.full = true;
         self.focus = Focus::Panel;
         if self.panel == Panel::Lyrics {
@@ -1392,7 +1565,7 @@ impl App {
         if !self.full {
             return self.dirty = false;
         }
-        let shown: Vec<Panel> = PANELS.iter().map(|p| p.0).filter(|p| *p != Panel::Devices || self.devices.on).collect();
+        let shown: Vec<Panel> = PANELS.iter().map(|p| p.0).filter(|p| *p != Panel::Devices || self.devices.shown()).collect();
         let at = shown.iter().position(|p| *p == self.panel).unwrap_or(0);
         let n = shown.len();
         let to = shown[if forward { (at + 1) % n } else { (at + n - 1) % n }];
@@ -1502,14 +1675,36 @@ impl App {
             },
             // The runner opens these, and the profiles a jam is joined and left with.
             Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { .. }) => self.overlay = None,
-            Msg::SignedIn(r) => match &mut self.overlay {
-                Some(Overlay::Account { kind, error, busy, .. }) => {
-                    *error = Some(crate::text::sign_in(*kind, &r));
-                    *busy = false;
+            Msg::SignedIn(r) => {
+                let kind = self.prefs.active_server().map(|p| p.kind.clone()).unwrap_or_default();
+                let said = crate::text::sign_in(&self.provider_words(&kind).name, &r);
+                match &mut self.overlay {
+                    Some(Overlay::Account { error, busy, .. }) => {
+                        *error = Some(said);
+                        *busy = false;
+                    }
+                    _ => self.say(said, true),
                 }
-                _ => self.say(crate::text::sign_in(nori_core::settings::ServerKind::YouTubeMusic, &r), true),
-            },
-            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) => {}
+            }
+            Msg::Preview(Ok(p)) => self.overlay = Some(preview_sheet(p)),
+            Msg::JamPlugin(p) => {
+                let (p, pass) = *p;
+                self.overlay = Some(jam_plugin_sheet(p, pass));
+            }
+            Msg::Installed(Ok(_)) => self.say(crate::text::PLUGIN_INSTALLED, false),
+            Msg::Installed(Err(e)) | Msg::Preview(Err(e)) => self.say(crate::text::plugin_refused(&e), true),
+            Msg::Slots { song, info, status } => {
+                if self.song.as_ref().is_some_and(|s| s.id == song) {
+                    self.slots.info = Some((song, info));
+                    self.slots.status = status;
+                }
+            }
+            Msg::Updated(updated) => {
+                let named: Vec<(String, String)> = updated.into_iter().map(|(id, to)| (self.settings.own.plugins.iter().find(|c| c.id == id).map_or(id, |c| c.name.clone()), to)).collect();
+                self.say(crate::text::plugins_updated(&named), false);
+                self.cmds.push(Cmd::Plugin(PluginCmd::Read));
+            }
+            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) => {}
         }
     }
 
@@ -1549,6 +1744,13 @@ impl App {
         }
     }
 
+    /// Asks the plugins that fill a place for the playing song's info and the player's status.
+    fn ask_slots(&mut self) {
+        if let Some(song) = self.song.clone().filter(|_| self.slots.asked) {
+            self.cmds.push(Cmd::Plugin(PluginCmd::Ask(Box::new(song))));
+        }
+    }
+
     /// The audible song, as read from the engine; on a change, cover and lyrics follow.
     pub fn heard(&mut self, song: Option<Song>) {
         let changed = self.song.as_ref().map(|s| &s.id) != song.as_ref().map(|s| &s.id);
@@ -1559,6 +1761,7 @@ impl App {
             return;
         }
         self.transition = None;
+        self.ask_slots();
         let art = self.song.as_ref().and_then(|s| s.cover_art.clone());
         if art != self.cover_art {
             self.colours = None;
@@ -1785,6 +1988,8 @@ impl App {
         }
         match self.focus {
             Focus::Panel if self.panel == Panel::Queue => &[Scope::Edit, Scope::List, Scope::Global],
+            // A plugin's row changes its value as a setting does.
+            Focus::Panel if self.plugin_device_row().is_some() => &[Scope::Values, Scope::List, Scope::Global],
             Focus::Panel => &[Scope::List, Scope::Global],
             Focus::Main if self.page().is_some() => &[Scope::List, Scope::Global],
             Focus::Main => match self.view {
@@ -1882,7 +2087,41 @@ impl App {
         }
     }
 
+    /// The kinds of profile the login adds: a Subsonic server's, and the enabled plugins' sources.
+    pub fn login_kinds(&self) -> Vec<nori_core::providers::ProviderInfo> {
+        self.settings.own.kinds.providers()
+    }
+
+    /// Which of `LOGIN_FIELDS` the kind chosen asks.
+    pub fn login_fields(&self) -> Vec<usize> {
+        let kinds = self.login_kinds();
+        let Some(info) = kinds.get(self.login.kind).or(kinds.first()) else { return (0..4).collect() };
+        (0..4).filter(|&i| info.fields.iter().any(|f| f.what == LOGIN_ASKS[i])).collect()
+    }
+
+    /// Settings › Plugins on its own, from the login: no profile is needed to add one.
+    fn plugins_alone(&mut self) {
+        self.settings.alone = true;
+        self.settings.row = Sel::default();
+        self.settings.invalidate();
+        self.view = View::Settings;
+        self.focus = Focus::Main;
+        self.cmds.push(Cmd::Plugin(PluginCmd::Read));
+    }
+
     fn login_key(&mut self, k: KeyEvent) {
+        if k.code == KeyCode::Char('p') && k.modifiers.contains(KeyModifiers::CONTROL) {
+            return self.plugins_alone();
+        }
+        let kinds = self.login_kinds().len();
+        // Another kind, where there is more than one: its fields from the first.
+        if matches!(k.code, KeyCode::Left | KeyCode::Right) && kinds > 1 && !self.login.on_list {
+            self.login.kind = (self.login.kind + if k.code == KeyCode::Right { 1 } else { kinds - 1 }) % kinds;
+            self.login.focus = self.login_fields().first().copied().unwrap_or(0);
+            self.login.error = None;
+            return;
+        }
+        let fields = self.login_fields();
         let l = &mut self.login;
         let profiles = self.prefs.servers.len();
         if l.on_list {
@@ -1900,16 +2139,22 @@ impl App {
             }
             return;
         }
+        let at = fields.iter().position(|&f| f == l.focus);
+        let last = at.is_none_or(|i| i + 1 == fields.len());
         match k.code {
             KeyCode::Tab | KeyCode::Down => {
-                if l.focus == 3 && profiles > 0 && k.code == KeyCode::Tab {
+                if last && profiles > 0 && k.code == KeyCode::Tab {
                     l.on_list = true;
-                } else {
-                    l.focus = (l.focus + 1) % 4;
+                } else if let Some(i) = at {
+                    l.focus = fields[(i + 1) % fields.len()];
                 }
             }
-            KeyCode::BackTab | KeyCode::Up => l.focus = (l.focus + 3) % 4,
-            KeyCode::Enter if l.focus < 3 => l.focus += 1,
+            KeyCode::BackTab | KeyCode::Up => {
+                if let Some(i) = at {
+                    l.focus = fields[(i + fields.len() - 1) % fields.len()];
+                }
+            }
+            KeyCode::Enter if !last => l.focus = fields[at.map_or(0, |i| i + 1)],
             KeyCode::Enter => self.connect(),
             KeyCode::Esc => {
                 if !self.prefs.servers.is_empty() {
@@ -1918,26 +2163,29 @@ impl App {
                     self.quit = true;
                 }
             }
-            KeyCode::Backspace => {
+            KeyCode::Backspace if at.is_some() => {
                 l.fields[l.focus].pop();
             }
-            KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => l.fields[l.focus].push(c),
+            KeyCode::Char(c) if at.is_some() && !k.modifiers.contains(KeyModifiers::CONTROL) => l.fields[l.focus].push(c),
             _ => {}
         }
     }
 
     fn connect(&mut self) {
+        let kinds = self.login_kinds();
+        let Some(info) = kinds.get(self.login.kind).or(kinds.first()) else { return };
+        let asked = self.login_fields();
         let l = &mut self.login;
-        let [name, url, user, password] = l.fields.clone();
-        let url = url.trim().trim_end_matches('/').to_string();
-        if url.is_empty() || user.trim().is_empty() {
-            l.error = Some("An address and a user are needed".into());
+        let typed = |i: usize| if asked.contains(&i) { l.fields[i].clone() } else { String::new() };
+        let url = typed(1).trim().trim_end_matches('/').to_string();
+        let url = if url.is_empty() || url.contains("://") { url } else { format!("https://{url}") };
+        let draft = SavedServer { id: nori_core::settings::new_server_id(), kind: info.kind.clone(), name: typed(0).trim().to_string(), url, user: typed(2).trim().to_string(), password: typed(3), ..Default::default() };
+        if !self.settings.own.kinds.server_ready(draft.clone()) {
+            l.error = Some(crate::text::LOGIN_MISSING.into());
             return;
         }
-        let url = if url.contains("://") { url } else { format!("https://{url}") };
         l.error = None;
         l.busy = true;
-        let draft = SavedServer { id: nori_core::settings::new_server_id(), name: name.trim().to_string(), url, user: user.trim().to_string(), password, ..Default::default() };
         self.cmds.push(Cmd::Login(Box::new(draft)));
     }
 
@@ -2081,11 +2329,24 @@ impl App {
                 KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
                 _ => {}
             },
-            Overlay::Input { text, name, .. } => match k.code {
+            Overlay::Confirm { cmd, .. } => match k.code {
                 KeyCode::Enter => {
-                    let (name, value) = (name.clone(), text.clone());
+                    self.cmds.push((**cmd).clone());
                     self.overlay = None;
-                    self.cmds.push(Cmd::Setting(name, value));
+                }
+                KeyCode::Esc => self.overlay = None,
+                _ => self.dirty = false,
+            },
+            Overlay::Input { text, target, .. } => match k.code {
+                KeyCode::Enter => {
+                    let (target, typed) = (target.clone(), text.clone());
+                    self.overlay = None;
+                    match target {
+                        // A repo that isn't nori's is added only once the user says they trust it.
+                        Target::AddRepo if !typed.trim().is_empty() => self.overlay = Some(crate::settings_view::trust_repo(typed.trim())),
+                        Target::AddRepo => {}
+                        t => self.cmds.extend(t.cmd(typed)),
+                    }
                 }
                 KeyCode::Esc => self.overlay = None,
                 KeyCode::Backspace => {
@@ -2208,6 +2469,9 @@ impl App {
             },
             Action::Decrease | Action::Increase => {
                 let up = a == Action::Increase;
+                if let Some(row) = self.plugin_device_row() {
+                    return self.cmds.extend(crate::settings_view::step_row(row, up));
+                }
                 match self.view {
                     View::Equalizer => self.eq_step(up),
                     View::Settings => {
@@ -2234,6 +2498,10 @@ impl App {
                     None => self.dirty = false,
                 }
             }
+            Action::Remove if self.focus == Focus::Main && self.view == View::Settings => match self.settings.plugin_key(a) {
+                Some(o) => self.overlay = Some(o),
+                None => self.dirty = false,
+            },
             Action::Remove if self.focus == Focus::Main && self.view == View::Downloads => {
                 if let Some(Item::Song(songs, i)) = self.selected() {
                     self.cmds.push(Cmd::DownloadRemove(songs[i].id.clone()));
@@ -2263,6 +2531,10 @@ impl App {
                 None => self.say("Nothing to put back", false),
             },
             Action::Undo => self.dirty = false,
+            Action::MoveUp | Action::MoveDown if self.view == View::Settings && !self.queue_in_focus() => match self.settings.plugin_move(a == Action::MoveUp) {
+                Some(c) => self.cmds.push(c),
+                None => self.dirty = false,
+            },
             Action::MoveUp | Action::MoveDown if !self.queue_in_focus() => self.dirty = false,
             Action::MoveUp | Action::MoveDown => self.queue_move(a == Action::MoveDown),
             _ => self.list_action(a),
@@ -2322,6 +2594,12 @@ impl App {
             } else {
                 self.close_full();
             }
+            return;
+        }
+        if self.view == View::Settings && self.settings.alone {
+            self.settings.alone = false;
+            self.settings.invalidate();
+            self.view = View::Login;
             return;
         }
         if self.pages.pop().is_none() {
@@ -2404,6 +2682,17 @@ impl App {
             }
             View::Login => return None,
         })
+    }
+
+    /// The plugin's row selected in the devices panel, while it has the keys.
+    fn plugin_device_row(&self) -> Option<crate::settings_view::Row> {
+        if self.focus != Focus::Panel || self.panel != Panel::Devices {
+            return None;
+        }
+        match self.devices.rows().get(self.devices.sel.at) {
+            Some(DeviceRow::Plugin(c, r)) => self.devices.plugin_row(*c, *r),
+            _ => None,
+        }
     }
 
     fn list_action(&mut self, a: Action) {
@@ -3017,7 +3306,12 @@ impl App {
             Some(DeviceRow::Join) => self.join(),
             Some(DeviceRow::Pair) => { if let Some(link) = d.pairing.clone() { self.overlay = Some(Overlay::Invite { link }); } }
             Some(DeviceRow::ResetPairing) => self.cmds.push(Cmd::ResetPairing),
-            None => self.dirty = false,
+            Some(DeviceRow::Plugin(c, r)) => match self.devices.plugin_row(c, r).and_then(crate::settings_view::open_row) {
+                Some(Opened::Cmds(c)) => self.cmds.extend(c),
+                Some(Opened::Overlay(o)) => self.overlay = Some(o),
+                _ => self.dirty = false,
+            },
+            Some(DeviceRow::PluginName(_) | DeviceRow::PluginHint(..)) | None => self.dirty = false,
         }
     }
 
@@ -3108,7 +3402,7 @@ impl App {
             Switch::Mouse => self.do_action(Action::Mouse),
             Switch::Images => self.do_action(Action::Images),
             Switch::Transparent => self.cmds.push(Cmd::Paint(!self.paint)),
-            Switch::Setting(_) | Switch::Stores(..) => {}
+            Switch::Setting(_) | Switch::Stores(..) | Switch::Plugin { .. } | Switch::Hold(_) => {}
         }
         self.settings.invalidate();
     }
@@ -3357,6 +3651,7 @@ impl App {
             }
             Button::Help => self.do_action(Action::Help),
             Button::Connect => self.connect(),
+            Button::LoginPlugins => self.plugins_alone(),
             Button::Resume => self.take_offer(true),
             Button::Dismiss => self.take_offer(false),
         }

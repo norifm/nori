@@ -6,6 +6,7 @@ mod codec;
 pub mod credits;
 pub mod dsp;
 pub mod lyrics_sources;
+pub mod overrides;
 pub mod settings_model;
 pub mod settings_pages;
 pub mod settings;

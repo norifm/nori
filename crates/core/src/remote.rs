@@ -429,6 +429,8 @@ pub trait Follower: Send + Sync {
 pub struct JamPass {
     pub url: String,
     pub api_key: String,
+    /// What the host plays from: a LAN jam's guest plays the same provider's songs itself.
+    pub kind: crate::settings::ServerKind,
 }
 
 /// Whether a link is a device pairing code, separate from a jam invite.
@@ -438,8 +440,7 @@ pub fn pairing_valid(link: String) -> bool { lan::parse_pairing(&link).is_some()
 /// The temporary guest profile contains only a scoped room credential.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn jam_profile(pass: JamPass, id: String, name: String) -> crate::settings::SavedServer {
-    let kind = if lan::guest_secret(&pass.api_key).is_some() { crate::settings::ServerKind::YouTubeMusic } else { crate::settings::ServerKind::Subsonic };
-    crate::settings::SavedServer { id, name, kind, url: pass.url, api_key: pass.api_key, ..Default::default() }
+    crate::settings::SavedServer { id, name, kind: pass.kind, url: pass.url, api_key: pass.api_key, ..Default::default() }
 }
 
 /// The profile open before a jam was joined, opened again on leaving it (an app value).
@@ -1374,7 +1375,7 @@ impl Remote {
 
     /// The QR/code used to pair this device's YouTube profiles with its other devices.
     pub fn pairing_link(&self) -> Option<String> {
-        if self.me.kind == DeviceKind::Guest || self.client.core.kind() != crate::settings::ServerKind::YouTubeMusic { return None; }
+        if self.me.kind == DeviceKind::Guest || !self.client.core.serverless() { return None; }
         lan_secret(&self.client).map(|secret| lan::pairing_link(&secret))
     }
 
@@ -1761,7 +1762,7 @@ impl Remote {
             invite: String,
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if self.client.core.kind() == crate::settings::ServerKind::YouTubeMusic { return self.open_lan_jam(); }
+        if self.client.core.serverless() { return self.open_lan_jam(); }
         if self.relay() == RelaySupport::Unsupported {
             return Err(NetError::Http { status: 404 });
         }
@@ -1948,7 +1949,7 @@ impl Remote {
             JamStart::Starting
         } else if !on || self.me.kind == DeviceKind::Guest {
             JamStart::Unavailable
-        } else if i.relay == RelaySupport::Unsupported && self.client.core.kind() != crate::settings::ServerKind::YouTubeMusic {
+        } else if i.relay == RelaySupport::Unsupported && !self.client.core.serverless() {
             JamStart::Unsupported
         } else {
             JamStart::Offered
@@ -2100,6 +2101,9 @@ pub enum JamJoin {
     Own,
     /// The jam has ended: nothing changes.
     Ended,
+    /// The jam plays from plugin `id`'s provider, which this device has not installed and on: once it
+    /// has, [`jam_profile`] signs in with `pass` (the host already took the guest in).
+    NeedsPlugin { id: String, pass: JamPass },
 }
 
 /// The app's key for the invites of the jams this device opened, newest last, one a line.
@@ -2139,7 +2143,7 @@ pub fn own_invite(settings: Arc<Settings>, remote: Option<Arc<Remote>>, link: St
 /// Joins the jam `link` invites to as `name`, unless it is this device's own ([`own_invite`]) or the
 /// server no longer knows the invite.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, remote: Option<Arc<Remote>>, link: String, name: String) -> Result<JamJoin, NetError> {
+pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, remote: Option<Arc<Remote>>, kinds: Arc<crate::providers::Kinds>, link: String, name: String) -> Result<JamJoin, NetError> {
     #[derive(Deserialize)]
     struct Joined {
         key: String,
@@ -2153,8 +2157,10 @@ pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, re
     #[cfg(not(target_arch = "wasm32"))]
     let nonce = if local.is_some() { lan::new_secret().map_err(|e| NetError::Parse { reason: e.to_string() })? } else { String::new() };
     #[cfg(target_arch = "wasm32")]
-    let nonce = if local.is_some() { return Err(NetError::Parse { reason: "LAN YouTube jams require a native client".into() }); } else { String::new() };
-    if let Some(secret) = local {
+    let nonce = if local.is_some() { return Err(NetError::Parse { reason: "LAN jams need a native client".into() }); } else { String::new() };
+    if let Some(local) = local {
+        // The host's kind rides after the secret ([`Remote::open_lan_jam`]); the door knows the secret alone.
+        let (secret, kind) = local.split_once('~').map_or((local, None), |(s, k)| (s, crate::settings::ServerKind::from_id(k)));
         let url = format!("{}{}", server.trim_end_matches('/'), lan::signed(secret, "GET", &lan::target("noriRemote.join", &[("name".into(), name), ("nonce".into(), nonce.clone())]), b"", db::now_ms()));
         // A door refuses with 401 and a JSON body, which `transport::get` would take for an answer.
         match transport.get(url, 0).await?.status {
@@ -2163,7 +2169,11 @@ pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, re
             status => return Err(NetError::Http { status }),
         }
         let key = format!("lan-{}", lan::member_secret(secret, &nonce));
-        return Ok(JamJoin::Joined { pass: JamPass { url: server, api_key: nori_remote::guest_key(&key) } });
+        let pass = JamPass { url: server, api_key: nori_remote::guest_key(&key), kind: kind.unwrap_or_default() };
+        return Ok(match &pass.kind {
+            crate::settings::ServerKind::Plugin { id } if !kinds.has(&pass.kind) => JamJoin::NeedsPlugin { id: id.clone(), pass },
+            _ => JamJoin::Joined { pass },
+        });
     }
     let url = api::Server::with(&server, api::Auth::ApiKey(&nori_remote::guest_key(&invite))).url("noriRemote.join", &[("name".into(), name)]);
     let body = match transport::get(&*transport, url, 0).await {
@@ -2175,7 +2185,7 @@ pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, re
         return Ok(JamJoin::Ended);
     }
     let joined: Joined = serde_json::from_slice(&body).map_err(|e| NetError::Parse { reason: e.to_string() })?;
-    Ok(JamJoin::Joined { pass: JamPass { url: server, api_key: nori_remote::guest_key(&joined.key) } })
+    Ok(JamJoin::Joined { pass: JamPass { url: server, api_key: nori_remote::guest_key(&joined.key), kind: crate::settings::ServerKind::Subsonic } })
 }
 
 /// What a client calls each kind of device, for [`device_names`].
@@ -2396,7 +2406,7 @@ impl Remote {
         let remote = Arc::new(Remote { client, id, id_lock: Mutex::new(id_lock), instance, me, player, shown, discovery, inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), running: Arc::default(), follower: Mutex::default() });
         remote.tasks.spawn(Box::pin(send_all(sends, remote.client.clone(), remote.who())));
         *remote.client.core.remote.lock() = Arc::downgrade(&remote);
-        if remote.client.core.kind() == crate::settings::ServerKind::YouTubeMusic && remote.client.core.lan_jam.read().is_none() {
+        if remote.client.core.serverless() && remote.client.core.lan_jam.read().is_none() {
             remote.inner.lock().relay = RelaySupport::Unsupported;
         } else { remote.probe(); }
         remote
@@ -2710,7 +2720,8 @@ impl Remote {
             if i.hosted.is_some() || self.me.kind == DeviceKind::Guest { return Ok(None); }
             if i.door.is_none() { i.door = self.open_door(); }
             let door = i.door.as_ref().ok_or_else(|| NetError::Parse { reason: "LAN listener unavailable".into() })?;
-            let invite = format!("lan-{secret}");
+            // The host's kind rides in the invite: its guests play from the same provider.
+            let invite = format!("lan-{secret}~{}", self.client.core.kind().id());
             let link = nori_remote::app_invite_link(&format!("http://{ip}:{}", door.port()), &invite);
             let weak = Arc::downgrade(self);
             let members = weak.clone();
@@ -2754,7 +2765,7 @@ impl Remote {
     /// Asks whether the server relays: the relay poller's first poll, which is not held. Polls side by
     /// side could reach the relay out of order, a late one saying this device does not serve.
     fn probe(self: &Arc<Self>) {
-        if self.client.core.kind() == crate::settings::ServerKind::YouTubeMusic && self.client.core.lan_jam.read().is_none() { return; }
+        if self.client.core.serverless() && self.client.core.lan_jam.read().is_none() { return; }
         let generation = {
             let mut i = self.inner.lock();
             i.probes_asked += 1;
@@ -3467,6 +3478,9 @@ impl Remote {
 
     /// Sends `op` to device `device` as command `id`.
     fn command(self: Arc<Self>, id: u64, device: String, op: Op) {
+        if matches!(op, Op::Add { .. } | Op::Replace { .. }) && self.refuse_other_source(&device) {
+            return;
+        }
         let mut foreseen = false;
         let link = {
             let mut i = self.inner.lock();
@@ -3498,7 +3512,24 @@ impl Remote {
 
     /// Takes the playback back here: the previous device goes on being shown until it answers with its
     /// queue, for [`FORESEEN_US`] at most, so one that is gone holds the controls no longer than that.
+    /// Whether device `id` plays from another source than this one (as its last state says): songs
+    /// handed either way would not play, so it is refused here, as the device would.
+    fn refuse_other_source(&self, id: &str) -> bool {
+        let kind = self.client.core.kind();
+        let mut i = self.inner.lock();
+        let other = i.state_of(id).and_then(|(s, _)| s.source.as_deref()).is_some_and(|s| s != kind.id());
+        if other {
+            i.refused.insert(id.to_string(), Refusal::OtherSource);
+            drop(i);
+            self.shown.changed();
+        }
+        other
+    }
+
     fn pull(self: &Arc<Self>, from: String) {
+        if self.refuse_other_source(&from) {
+            return;
+        }
         let id = self.next_id();
         let rev = self.client.core.session.playlist(|p| p.rev());
         let link = {
@@ -3646,6 +3677,7 @@ impl Remote {
             at_us: None,
             server_us: None,
             rate: Some(p.rate),
+            source: Some(self.client.core.kind().id().to_string()),
         };
         let now = self.now();
         st.position_ms = i.position_at_of(&st, now);
@@ -3787,7 +3819,7 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
         (a, b) => a == b,
     };
     // Each field named, so a new one is compared too.
-    let DeviceState { instance, seq: _, listen_handoff, playing, buffering, mixing, position_ms: _, at_us: _, server_us: _, rate, index, rev, len, entries, volume, shuffle, repeat, jam, handed_to, obeyed } = last;
+    let DeviceState { instance, seq: _, listen_handoff, playing, buffering, mixing, position_ms: _, at_us: _, server_us: _, rate, index, rev, len, entries, volume, shuffle, repeat, jam, handed_to, obeyed, source } = last;
     let ran = |rate: Option<f32>| if *playing && !*buffering { (elapsed_ms as f64 * rate.unwrap_or(1.0) as f64) as i64 } else { 0 };
     let jam_same = match (jam, &now.jam) {
         (Some(a), Some(b)) => jam_same_but_time(a, b, ran),
@@ -3810,6 +3842,7 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
         && *repeat == now.repeat
         && *handed_to == now.handed_to
         && *obeyed == now.obeyed
+        && *source == now.source
         && *entries == now.entries
 }
 
@@ -3856,7 +3889,7 @@ mod tests {
         let settings = crate::settings_store::Settings::new();
         let mut prefs = settings.open(&dir.path().join(crate::db::DB_FILE).to_string_lossy()).unwrap();
         let own = |id: &str| SavedServer { id: id.into(), url: format!("http://{id}"), ..Default::default() };
-        let guest = jam_profile(JamPass { url: "http://friend".into(), api_key: nori_remote::guest_key("k") }, "guest".into(), "Jam".into());
+        let guest = jam_profile(JamPass { url: "http://friend".into(), api_key: nori_remote::guest_key("k"), kind: crate::settings::ServerKind::Subsonic }, "guest".into(), "Jam".into());
         prefs.servers = vec![own("navidrome"), own("youtube")];
         prefs.active_server_id = "navidrome".into();
         settings.put(prefs);
@@ -3912,6 +3945,21 @@ mod tests {
         for (at, rows, len, repeat, next, previous) in table {
             assert_eq!(skips(at, rows, len, repeat), (next, previous), "at {at:?} of {rows}/{len}, repeat {repeat}");
         }
+    }
+
+    #[test]
+    fn songs_go_only_to_a_device_of_the_same_source() {
+        let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
+        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
+        let device = |id: &str, source: Option<&str>| Member { id: id.into(), name: id.into(), kind: DeviceKind::Phone, state: Some(DeviceState { source: source.map(Into::into), ..Default::default() }) };
+        remote.inner.lock().rooms = vec![Room { room: "u".into(), jam: false, members: vec![device("youtube", Some("fm.nori.youtube-music")), device("same", Some("subsonic")), device("older", None)] }];
+        let add = || Op::Add { songs: vec![Song { id: "s".into(), ..Default::default() }], next: false };
+        for (id, refused) in [("youtube", Some(Refusal::OtherSource)), ("same", None), ("older", None)] {
+            remote.clone().command(1, id.into(), add());
+            assert_eq!(remote.inner.lock().refused.get(id).copied(), refused, "{id}");
+        }
+        remote.pull("youtube".into());
+        assert_eq!(remote.inner.lock().refused.get("youtube").copied(), Some(Refusal::OtherSource), "nor are its songs taken here");
     }
 
     #[test]
