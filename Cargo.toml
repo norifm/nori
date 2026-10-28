@@ -56,6 +56,7 @@ incremental = true
 # to link.
 [profile.dist]
 inherits = "release"
+opt-level = "s"
 lto = "fat"
 codegen-units = 1
 incremental = false
@@ -69,35 +70,109 @@ strip = true
 i-slint-renderer-skia = { path = "vendor/i-slint-renderer-skia" }
 
 # The web client's wasm (web/build.sh): small over fast, and a panic ends the worker (wasm has no unwinding).
-# The plugin compiler (Cranelift and what reads wasm for it) runs only when a plugin is installed or
-# updated, never while music plays: small rather than fast. wasmtime itself, which every plugin call
-# and sound stage block goes through, stays as fast as the rest.
-[profile.dist.package.cranelift-codegen]
-opt-level = "s"
+# What ships is small by default: most of the code runs on a tap (pages, the database, remote control,
+# lyrics, settings, the bindings), where its size costs more than its speed saves. The code the music,
+# its analysis and the covers run through stays fast: the player, the engine and the stretcher,
+# Android's AudioTrack writer, the decoders, the FFT and loudness, image decoding, and wasmtime's calls
+# into plugins (their sound stages). The plugin compiler (Cranelift) runs only at install, so it is small too.
+[profile.dist.package.nori-player]
+opt-level = 3
 
-[profile.dist.package.cranelift-assembler-x64]
-opt-level = "s"
+[profile.dist.package.nori-android]
+opt-level = 3
 
-[profile.dist.package.cranelift-frontend]
-opt-level = "s"
+[profile.dist.package.nori-stretch]
+opt-level = 3
 
-[profile.dist.package.regalloc2]
-opt-level = "s"
+[profile.dist.package.nori-engine]
+opt-level = 3
 
-[profile.dist.package.wasmparser]
-opt-level = "s"
+[profile.dist.package.nori-automix]
+opt-level = 3
 
-[profile.dist.package.wasmprinter]
-opt-level = "s"
+[profile.dist.package.nori-covers]
+opt-level = 3
 
-[profile.dist.package.wasmtime-environ]
-opt-level = "s"
+[profile.dist.package.nori-look]
+opt-level = 3
 
-[profile.dist.package.wasmtime-internal-cranelift]
-opt-level = "s"
+[profile.dist.package.symphonia]
+opt-level = 3
 
-[profile.dist.package.gimli]
-opt-level = "s"
+[profile.dist.package.symphonia-bundle-flac]
+opt-level = 3
+
+[profile.dist.package.symphonia-bundle-mp3]
+opt-level = 3
+
+[profile.dist.package.symphonia-codec-aac]
+opt-level = 3
+
+[profile.dist.package.symphonia-codec-alac]
+opt-level = 3
+
+[profile.dist.package.symphonia-codec-pcm]
+opt-level = 3
+
+[profile.dist.package.symphonia-codec-vorbis]
+opt-level = 3
+
+[profile.dist.package.symphonia-common]
+opt-level = 3
+
+[profile.dist.package.symphonia-core]
+opt-level = 3
+
+[profile.dist.package.symphonia-format-isomp4]
+opt-level = 3
+
+[profile.dist.package.symphonia-format-mkv]
+opt-level = 3
+
+[profile.dist.package.symphonia-format-ogg]
+opt-level = 3
+
+[profile.dist.package.symphonia-format-riff]
+opt-level = 3
+
+[profile.dist.package.symphonia-metadata]
+opt-level = 3
+
+[profile.dist.package.opus-rs]
+opt-level = 3
+
+[profile.dist.package.rustfft]
+opt-level = 3
+
+[profile.dist.package.primal-check]
+opt-level = 3
+
+[profile.dist.package.strength_reduce]
+opt-level = 3
+
+[profile.dist.package.transpose]
+opt-level = 3
+
+[profile.dist.package.ebur128]
+opt-level = 3
+
+[profile.dist.package.image-webp]
+opt-level = 3
+
+[profile.dist.package.jpeg-decoder]
+opt-level = 3
+
+[profile.dist.package.png]
+opt-level = 3
+
+[profile.dist.package.zune-core]
+opt-level = 3
+
+[profile.dist.package.zune-jpeg]
+opt-level = 3
+
+[profile.dist.package.wasmtime]
+opt-level = 3
 
 [profile.web]
 inherits = "dist"
