@@ -116,15 +116,21 @@ pub mod stage_abi {
 /// A sound stage's state as bytes, for a plain `Copy` struct holding all of it.
 pub mod state {
     /// `state`'s bytes.
-    pub fn save<T: Copy>(state: &T) -> Vec<u8> {
-        // SAFETY: `T` is `Copy`, so it has no drop glue or owned pointers; its bytes are all of it.
+    ///
+    /// # Safety
+    /// `T` has no padding: every byte of it is a field's.
+    pub unsafe fn save<T: Copy>(state: &T) -> Vec<u8> {
+        // SAFETY: `T` is `Copy` (no drop glue or owned pointers) and, as the caller says, all its bytes are initialized.
         unsafe { std::slice::from_raw_parts((state as *const T).cast::<u8>(), std::mem::size_of::<T>()) }.to_vec()
     }
 
     /// Puts `bytes` from [`save`] back into `state`; other bytes (another version's) leave it as it is.
-    pub fn restore<T: Copy>(state: &mut T, bytes: &[u8]) {
+    ///
+    /// # Safety
+    /// Any bytes are a valid `T` (numbers and arrays of them; no `bool`, `char`, enum or reference).
+    pub unsafe fn restore<T: Copy>(state: &mut T, bytes: &[u8]) {
         if bytes.len() == std::mem::size_of::<T>() {
-            // SAFETY: as long as `T`, and made by `save` from a `T`.
+            // SAFETY: as long as `T`, and any bytes are a `T`, as the caller says.
             unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), (state as *mut T).cast::<u8>(), bytes.len()) }
         }
     }

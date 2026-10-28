@@ -17,6 +17,13 @@ import dev.nori.music.ffi.plugins.Version
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import dev.nori.music.ffi.plugins.Offers
+import dev.nori.music.ffi.plugins.InfoGroup
+import dev.nori.music.ffi.plugins.Artwork
+import dev.nori.music.ffi.plugins.ItemKind
+import dev.nori.music.ffi.plugins.Items
+import dev.nori.music.ffi.plugins.MenuEntry
+import dev.nori.music.ffi.plugins.PluginPreview
+import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.plugins.Repo
 import dev.nori.music.ffi.plugins.Value
 import dev.nori.music.ffi.plugins.openPlugins
@@ -54,6 +61,18 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
     /** Where plugins are offered from, nori's own first. */
     val repos: StateFlow<List<Repo>> = _repos
 
+    private val _menus = MutableStateFlow<Map<ItemKind, List<MenuEntry>>>(emptyMap())
+    /** The actions plugins add to the menus of each item kind, read with the cards so a menu has them as it opens. */
+    val menus: StateFlow<Map<ItemKind, List<MenuEntry>>> = _menus
+
+    private val _deviceCards = MutableStateFlow<List<PluginCard>>(emptyList())
+    /** The plugins whose rows show on the devices page too. */
+    val deviceCards: StateFlow<List<PluginCard>> = _deviceCards
+
+    private val _notices = MutableSharedFlow<PluginNotice>(extraBufferCapacity = 8)
+    /** Each line a plugin shows, as it shows it. */
+    val notices: SharedFlow<PluginNotice> = _notices
+
     private val _status = MutableStateFlow<Map<RowRef, String>>(emptyMap())
     /** Status rows' lines, as their plugins last set them. */
     val status: StateFlow<Map<RowRef, String>> = _status
@@ -89,7 +108,7 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
         override fun notice(id: String, problem: Boolean, words: String, args: List<String>) {
             val line = said(id, words, args)
             NoriLog.i("plugin $id: $line")
-            _notice.value = PluginNotice(id, problem, line)
+            PluginNotice(id, problem, line).let { _notice.value = it; _notices.tryEmit(it) }
         }
     }
 
@@ -106,11 +125,19 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
         _repos.value = plugins.repos()
         _providers.value = kinds.providers()
         _names.value = _cards.value.associate { c -> c.id to (kinds.pluginName(ServerKind.Plugin(c.id), lang) ?: c.id) }
+        _menus.value = ItemKind.entries.associateWith { plugins.menuEntries(it, lang) }
+        _deviceCards.value = plugins.deviceCards(lang)
     }
 
 
-    /** Installs the package at [path], off; its id. Throws [dev.nori.music.ffi.plugins.Refusal]. */
-    suspend fun install(path: String): String = withContext(Dispatchers.IO) { plugins.installFrom(path).also { refresh() } }
+    /** The package at [path] as its install sheet shows it; nothing is installed. Throws [dev.nori.music.ffi.plugins.Refusal]. */
+    suspend fun previewFile(path: String): PluginPreview = withContext(Dispatchers.IO) { plugins.previewFile(path, lang) }
+
+    /** [version] of an offer, fetched and checked, as its install sheet shows it. Throws [dev.nori.music.ffi.plugins.Refusal]. */
+    suspend fun previewVersion(version: Version): PluginPreview = withContext(Dispatchers.IO) { plugins.previewVersion(version, lang) }
+
+    /** Installs what [preview] showed, off when new; its id. Throws [dev.nori.music.ffi.plugins.Refusal]. */
+    suspend fun installPreview(preview: PluginPreview): String = withContext(Dispatchers.IO) { plugins.installPreview(preview).also { refresh() } }
 
     suspend fun turn(id: String, on: Boolean) = withContext(Dispatchers.IO) { plugins.turn(id, on); refresh() }
 
@@ -121,7 +148,9 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
     /** Sets row [row] of plugin [id]; the card takes the value without reading every card again. */
     suspend fun set(id: String, row: String, value: Value) = withContext(Dispatchers.IO) {
         plugins.set(id, row, value)
-        _cards.update { cards -> cards.map { c -> if (c.id != id) c else c.copy(rows = c.rows.map { r -> if (r.id == row) r.copy(value = value) else r }) } }
+        val laid = { cards: List<PluginCard> -> cards.map { c -> if (c.id != id) c else c.copy(rows = c.rows.map { r -> if (r.id == row) r.copy(value = value) else r }) } }
+        _cards.update(laid)
+        _deviceCards.update(laid)
     }
 
     suspend fun addRepo(url: String) = withContext(Dispatchers.IO) { plugins.addRepo(url); _repos.value = plugins.repos() }
@@ -131,11 +160,8 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
     /** What the repos offer, and those that couldn't be read. Asks each repo. */
     suspend fun offers(): Offers = withContext(Dispatchers.IO) { plugins.offers() }
 
-    /** Installs [version] of an offer, newer or older than the one here; its id. Throws [dev.nori.music.ffi.plugins.Refusal]. */
-    suspend fun installVersion(version: Version): String = withContext(Dispatchers.IO) { plugins.installVersion(version).also { refresh() } }
-
     /** Plugin [id] keeps the version it has ([held]) or updates from its repo. */
-    suspend fun hold(id: String, held: Boolean) = withContext(Dispatchers.IO) { plugins.holdAt(id, held); refresh() }
+    suspend fun hold(id: String, held: Boolean) = withContext(Dispatchers.IO) { plugins.hold(id, held); refresh() }
 
     private val _updated = MutableSharedFlow<List<Pair<String, Updated>>>(extraBufferCapacity = 1)
     /** Plugins updated from their repos, each with its name. */
@@ -152,6 +178,21 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
     }
 
     suspend fun act(id: String, row: String) = withContext(Dispatchers.IO) { plugins.act(id, row) }
+
+    /** Runs a plugin's menu action on [items]. */
+    suspend fun runMenu(entry: MenuEntry, items: Items) = withContext(Dispatchers.IO) { plugins.runMenu(entry, items) }
+
+    /** The lines plugins add to [song]'s info. */
+    suspend fun songInfo(song: Song): List<InfoGroup> = withContext(Dispatchers.IO) { plugins.songInfo(song, lang) }
+
+    /** The sleeve a plugin gives [song], or null for nori's own cover. */
+    suspend fun artwork(song: Song): Artwork? = withContext(Dispatchers.IO) { plugins.artwork(song) }
+
+    /** [artwork]'s address answered HTTP [status]: its plugin may look it up again. */
+    suspend fun artworkFailed(artwork: Artwork, song: Song, status: Int) = withContext(Dispatchers.IO) { plugins.artworkFailed(artwork, song, status.toUShort()) }
+
+    /** The lines plugins say under the player's output row. */
+    suspend fun playerStatus(): List<String> = withContext(Dispatchers.IO) { plugins.playerStatus() }
 
     private companion object {
         /** What a new layer asks of the player (settings_store.rs): the gain (2), the plan (4), the sound (8) again. */

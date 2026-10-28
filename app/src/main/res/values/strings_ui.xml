@@ -736,9 +736,6 @@
     <string name="plugins_add_repo">Add repo</string>
     <string name="plugins_repo_url">Repo address</string>
     <string name="plugins_repo_warning">This repo isn’t nori’s. Its plugins can do what their pages say. Add it only if you trust it.</string>
-    <string name="plugins_install_note">What it may do is shown before it’s turned on.</string>
-    <string name="plugins_turn_on_title">Turn on %1$s?</string>
-    <string name="plugins_turn_on">Turn on</string>
     <string name="plugins_may">It may:</string>
     <string name="plugins_may_reach">Reach %1$s</string>
     <string name="plugins_may_reach_nothing">Reach nothing outside this phone</string>
@@ -748,6 +745,8 @@
     <string name="plugins_remove_title">Remove %1$s?</string>
     <string name="plugins_remove_text">Its own settings go with it.</string>
     <string name="plugins_level">%1$s · %2$s</string>
+    <string name="plugins_unit">%1$s %2$s</string>
+    <string name="plugins_section">%1$s · %2$s</string>
     <string name="plugins_updated">Updated %1$s to %2$s</string>
     <string name="plugins_versions">Versions</string>
     <string name="plugins_keep_version">Keep this version</string>

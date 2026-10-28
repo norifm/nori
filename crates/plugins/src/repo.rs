@@ -114,10 +114,13 @@ fn resolved(index: &str, url: &str) -> String {
     format!("{base}/{}", url.trim_start_matches("./"))
 }
 
-/// `a` < `b` as dotted versions, number by number.
+/// A dotted version's numbers, which order versions.
+fn numbers(v: &str) -> Vec<u64> {
+    v.split(['.', '-']).map(|p| p.parse::<u64>().unwrap_or(0)).collect()
+}
+
 fn older(a: &str, b: &str) -> bool {
-    let parts = |v: &str| v.split(['.', '-']).map(|p| p.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
-    parts(a) < parts(b)
+    numbers(a) < numbers(b)
 }
 
 /// The plugins in `index`'s text, from `repo`, with the versions this host runs; one with none is left out.
@@ -133,7 +136,7 @@ fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
                 .filter(|r| r.api == API || r.api + 1 == API)
                 .map(|r| Version { repo: repo.url.clone(), url: resolved(&repo.url, &r.url), version: r.version, released: r.released, sha256: r.sha256.to_ascii_lowercase() })
                 .collect();
-            versions.sort_by(|a, b| if older(&a.version, &b.version) { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less });
+            versions.sort_by_cached_key(|v| std::cmp::Reverse(numbers(&v.version)));
             (!versions.is_empty()).then(|| Offer { repo: repo.clone(), id: l.id, name: l.name, about: l.about, source: l.source, versions, installed: None })
         })
         .collect())
@@ -239,11 +242,6 @@ impl Plugins {
             }
         }
         done
-    }
-
-    /// Keeps plugin `id` at its version (`held`), or lets it update again.
-    pub fn hold_at(&self, id: String, held: bool) {
-        self.hold(&id, held)
     }
 }
 

@@ -30,8 +30,15 @@ impl Default for Tunables {
     }
 }
 
-/// Each tunable's key and the range a value is held to (0 or 1 for a switch).
-const TUNABLES: [(&str, f64, f64); 4] = [("playback.speed", 0.5, 2.0), ("playback.pitch", 0.5, 2.0), ("silence.skip", 0.0, 1.0), ("queue.previousAlwaysSkips", 0.0, 1.0)];
+/// A tunable's key, the range a value is held to (0 or 1 for a switch), and where it goes.
+type Tunable = (&'static str, f64, f64, fn(&mut Tunables, f64));
+
+const TUNABLES: [Tunable; 4] = [
+    ("playback.speed", 0.5, 2.0, |t, v| t.speed = v as f32),
+    ("playback.pitch", 0.5, 2.0, |t, v| t.pitch = v as f32),
+    ("silence.skip", 0.0, 1.0, |t, v| t.skip_silence = v >= 0.5),
+    ("queue.previousAlwaysSkips", 0.0, 1.0, |t, v| t.previous_always_skips = v >= 0.5),
+];
 
 /// A value as text: a number, or `true`/`false`.
 fn number(text: &str) -> Option<f64> {
@@ -48,14 +55,8 @@ impl Tunables {
     pub fn with(overrides: &[(String, String)]) -> Tunables {
         let mut t = Tunables::default();
         for (key, text) in overrides {
-            let (Some(&(_, lo, hi)), Some(v)) = (TUNABLES.iter().find(|(k, _, _)| k == key), number(text)) else { continue };
-            let v = v.clamp(lo, hi);
-            match key.as_str() {
-                "playback.speed" => t.speed = v as f32,
-                "playback.pitch" => t.pitch = v as f32,
-                "silence.skip" => t.skip_silence = v >= 0.5,
-                _ => t.previous_always_skips = v >= 0.5,
-            }
+            let (Some((_, lo, hi, set)), Some(v)) = (TUNABLES.iter().find(|(k, ..)| k == key), number(text)) else { continue };
+            set(&mut t, v.clamp(*lo, *hi));
         }
         t
     }
@@ -63,7 +64,7 @@ impl Tunables {
 
 /// Whether a plugin may name `key` among its overrides.
 pub fn overridable(key: &str) -> bool {
-    TUNABLES.iter().any(|(k, _, _)| *k == key) || crate::settings::row(key).is_some()
+    TUNABLES.iter().any(|(k, ..)| *k == key) || crate::settings::row(key).is_some()
 }
 
 /// `stored` with the overrides of settings applied in order, each through its setting's own codec and

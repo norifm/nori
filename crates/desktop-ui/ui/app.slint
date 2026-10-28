@@ -111,10 +111,11 @@ export struct SongGo {
     filled: bool,
 }
 
-// One line of a song's details: what it is, and the server's value.
+// One line of a song's details: what it is, and the server's value (or a plugin's, with its link).
 export struct Detail {
     label: string,
     value: string,
+    link: string,
 }
 
 export struct SongRow {
@@ -1128,7 +1129,19 @@ component MenuLine inherits Rectangle {
 // What a right press on an album, artist, playlist, song card or mix offers, as Android's card menu: what it
 // is at the head, then play it, play it next, add it to the queue, and start a jam with it while one can
 // start. A guest's songs go to the host, so it has no Play.
+// The actions plugins add to the menus of albums, artists and playlists (`CollectionMenu::kind`), and one run
+// on item `id` (titled `title`).
+export global PluginMenus {
+    in property <[string]> album;
+    in property <[string]> artist;
+    in property <[string]> playlist;
+    callback run(int, int, string, string);
+}
+
 component CollectionMenu inherits PopupWindow {
+    // What it is (`Card::kind`), for the plugins' lines; -1 for none.
+    in property <int> kind: -1;
+    in property <string> id;
     in property <image> picture;
     in property <bool> pictured: true;
     in property <bool> round;
@@ -1138,6 +1151,7 @@ component CollectionMenu inherits PopupWindow {
     callback queue(bool);
     callback jam;
     property <bool> jams: Jam.on && !Jam.hosting && !Jam.guest;
+    property <[string]> extra: root.kind == 0 ? PluginMenus.album : root.kind == 1 ? PluginMenus.artist : root.kind == 2 ? PluginMenus.playlist : [];
     width: MenuShape.width;
     close-policy: close-on-click-outside;
     Popover {
@@ -1164,14 +1178,23 @@ component CollectionMenu inherits PopupWindow {
                 MenuLine {
                     icon: Icons.playlist;
                     text: "Add to queue";
-                    divider: root.jams;
+                    divider: root.jams || root.extra.length > 0;
                     clicked => { root.queue(false); root.close(); }
                 }
                 if root.jams: MenuLine {
                     icon: Icons.community;
                     text: "Start a jam";
-                    divider: false;
+                    divider: root.extra.length > 0;
                     clicked => { root.jam(); root.close(); }
+                }
+                for label[i] in root.extra: MenuLine {
+                    icon: Icons.info-circle;
+                    text: label;
+                    divider: i < root.extra.length - 1;
+                    clicked => {
+                        PluginMenus.run(root.kind, i, root.id, root.title);
+                        root.close();
+                    }
                 }
             }
         }
@@ -1244,6 +1267,8 @@ component CardView inherits Rectangle {
     card-menu := CollectionMenu {
         x: root.menu-x;
         y: root.menu-y - Chrome.menu-lift(root.menu-at, self.height);
+        kind: root.card.kind;
+        id: root.card.id;
         picture: root.picture;
         round: root.round;
         title: root.card.title;
@@ -2693,6 +2718,8 @@ component DevicesView inherits Rectangle {
                 line: root.pairing-link != "" ? "With an invite link or a pairing code" : "With the invite link someone sent you";
                 clicked => { root.join-jam(); }
             }
+            // The plugins' rows that show here too.
+            @children
         }
     }
 }
@@ -5530,6 +5557,12 @@ export component AppWindow inherits Window {
     // A song's details, in a sheet.
     in-out property <bool> details-open;
     in property <[Detail]> details;
+    // What plugins say under the player's output, and a plugin's still drawn as Now Playing's cover.
+    in property <[string]> plugin-status;
+    in property <image> sleeve;
+    in property <bool> sleeved;
+    // The plugins' rows the devices panel shows too.
+    in property <[SettingRow]> device-plugin-rows;
     // Adding a song to a playlist: the sheet open, the playlists offered, whether a new one is being named,
     // and its name.
     in-out property <bool> picker-open;
@@ -7139,6 +7172,14 @@ export component AppWindow inherits Window {
                     open-jam => { root.inspector = 1; }
                     join-jam => { root.join-open = true; }
                     show-pairing => { root.pairing-open = true; }
+                    for r in root.device-plugin-rows: SettingLine {
+                        item: r;
+                        toggled(name, on) => { root.setting-toggled(name, on); }
+                        chosen(name, i) => { root.setting-chosen(name, i); }
+                        action(name) => { root.setting-action(name); }
+                        slid(name, v, last) => { root.setting-slid(name, v, last); }
+                        typed(name, text) => { root.setting-typed(name, text); }
+                    }
                 }
                 if root.shown-panel == 1 && root.panel-in > 0: QueueView {
                     y: 56px;
@@ -7187,6 +7228,8 @@ export component AppWindow inherits Window {
             }
         }
         album-pop := CollectionMenu {
+            kind: 0;
+            id: root.now-album-id;
             x: root.pop-x;
             y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
             picture: root.art(root.now-art, 0, root.covers-rev);
@@ -7197,6 +7240,8 @@ export component AppWindow inherits Window {
             jam => { root.jam-play(0, root.now-album-id); }
         }
         artist-pop := CollectionMenu {
+            kind: 1;
+            id: root.menu-artist;
             x: root.pop-x;
             y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
             pictured: false;
@@ -7235,6 +7280,8 @@ export component AppWindow inherits Window {
             }
         }
         card-pop := CollectionMenu {
+            kind: root.menu-card.kind;
+            id: root.menu-card.id;
             x: root.pop-x;
             y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
             picture: root.art(root.menu-card.art, 0, root.covers-rev);
@@ -7464,7 +7511,7 @@ export component AppWindow inherits Window {
                     width: parent.width;
                     height: self.width;
                     border-radius: 8px;
-                    source: root.art(root.now-art, 1, root.covers-rev);
+                    source: root.sleeved ? root.sleeve : root.art(root.now-art, 1, root.covers-rev);
                     transform-scale: root.playing ? 1 : 0.9;
                     animate transform-scale { duration: Motion.reduced ? 0ms : 500ms; easing: cubic-bezier(0.3, 1.35, 0.6, 1); }
                     RightPress {
@@ -7544,6 +7591,12 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+                        }
+                        for line in root.plugin-status: Text {
+                            text: line;
+                            color: Theme.text.with-alpha(0.45);
+                            font-size: 12px;
+                            overflow: elide;
                         }
                     }
                     if !Jam.guest: Seal {
@@ -7881,6 +7934,14 @@ export component AppWindow inherits Window {
                 open-jam => { root.full-panel = 1; }
                 join-jam => { root.join-open = true; }
                 show-pairing => { root.pairing-open = true; }
+                for r in root.device-plugin-rows: SettingLine {
+                    item: r;
+                    toggled(name, on) => { root.setting-toggled(name, on); }
+                    chosen(name, i) => { root.setting-chosen(name, i); }
+                    action(name) => { root.setting-action(name); }
+                    slid(name, v, last) => { root.setting-slid(name, v, last); }
+                    typed(name, text) => { root.setting-typed(name, text); }
+                }
             }
         }
 
@@ -8157,9 +8218,13 @@ export component AppWindow inherits Window {
                                 }
                                 Text {
                                     text: d.value;
-                                    color: Theme.text;
+                                    color: d.link != "" ? Theme.accent : Theme.text;
                                     font-size: 13px;
                                     wrap: word-wrap;
+                                    if d.link != "": TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.setting-action("plugin-open:" + d.link); }
+                                    }
                                 }
                             }
                         }

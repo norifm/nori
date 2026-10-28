@@ -9,6 +9,7 @@ import dev.nori.music.net.said
 import dev.nori.music.playback.PlayerState
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.SharingStarted
@@ -24,6 +25,13 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
 
     /** A mix is being heard (see [dev.nori.music.playback.PlayerConnection.mixing]): the seek row says so. */
     val mixing: StateFlow<Boolean> = player.mixing
+
+    private val _pluginStatus = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
+    /** The lines plugins say under the output row, as last asked. */
+    val pluginStatus: StateFlow<List<String>> = _pluginStatus
+
+    /** Asks the plugins for their lines under the output row: when the player opens and when the song changes, never on a timer. */
+    fun askPluginStatus() = viewModelScope.launch { _pluginStatus.value = runCatching { nori.plugins.playerStatus() }.getOrDefault(emptyList()) }
 
     /** Just the id, so a list can highlight its playing row without observing the whole player. */
     val currentId: StateFlow<String?> = state.map { it.current?.id }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -121,6 +129,56 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
             answers = lyricsKept,
             keep = { it is Load.Ready && it.data.lyrics.lines.isNotEmpty() },
         ) { song -> (dev.nori.music.app.testLyrics(song) ?: nori.library.lyricsFor(song)).map<FoundLyrics, Load<FoundLyrics>> { Load.Ready(it) } }
+
+    /**
+     * The sleeve a plugin gives the song playing (the artwork slot), or null for nori's own cover. Asked
+     * only while the player collects this, which is while it is open, once per song; a new song starts
+     * from null, so the last one's loop steps back at once rather than playing on under the new cover.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val artwork: StateFlow<dev.nori.music.ffi.plugins.Artwork?> = state.map { it.current }.distinctUntilChanged { a, b -> a?.id == b?.id }
+        .flatMapLatest { song ->
+            kotlinx.coroutines.flow.flow<dev.nori.music.ffi.plugins.Artwork?> {
+                emit(null)
+                if (song != null) emit(runCatching { nori.plugins.artwork(song) }.getOrNull())
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * The player behind a looping sleeve. The object is only made when the screen first hands it a
+     * surface, and its ExoPlayer only when it first plays; without a loop neither ever is.
+     */
+    private val motionLazy = lazy {
+        nori.motionPlayer { status ->
+            val shown = artwork.value ?: return@motionPlayer
+            val song = state.value.current ?: return@motionPlayer
+            viewModelScope.launch { nori.plugins.artworkFailed(shown, song, status) }
+        }
+    }
+    private val motion by motionLazy
+
+    /** The loop whose first frame is on its surface; the screen fades it in after this. */
+    val motionReady: StateFlow<String?> get() = motion.ready
+
+    /** The loop's surface arrived on screen ([shown]) or left it. */
+    fun motionView(view: android.view.TextureView, shown: Boolean) {
+        if (shown) motion.show(view) else if (motionLazy.isInitialized()) motion.hide(view)
+    }
+
+    fun motionPlay(url: String) = motion.play(url)
+
+    fun motionPause() {
+        if (motionLazy.isInitialized()) motion.pause()
+    }
+
+    fun motionRelease() {
+        if (motionLazy.isInitialized()) motion.release()
+    }
+
+    override fun onCleared() {
+        motionRelease()
+        super.onCleared()
+    }
 
     private val _coversNear = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
     /** The playing song's cover and those a skip either way lands on, for the bar to work their colours out ahead. */

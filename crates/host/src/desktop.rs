@@ -75,6 +75,7 @@ pub fn plugins(data: &Path) -> &'static Plugged {
     PLUGINS.get_or_init(|| {
         let watched = Arc::new(Watched::default());
         let host = nori_plugins::open(data.join("plugins"), app().settings.clone(), watched.clone());
+        let _ = watched.plugins.set(Arc::downgrade(&host));
         Plugged { kinds: nori_core::providers::Kinds::with_plugins(host.clone()), host, watched }
     })
 }
@@ -122,11 +123,37 @@ pub struct Plugged {
     pub watched: Arc<Watched>,
 }
 
+/// A plugin's notice, in its words.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Notice {
+    pub plugin: String,
+    pub problem: bool,
+    pub words: String,
+}
+
+/// Where a client takes the plugins' notices.
+type Hears = Box<dyn Fn(Notice) + Send + Sync>;
+
 /// What a desktop client does with what plugins say: the open session takes the settings laid anew;
-/// lines and notices go to the log until the client shows them.
+/// notices go to the client that hears them ([`Watched::hear`]); status lines go to the log.
 #[derive(Default)]
 pub struct Watched {
     engine: std::sync::Mutex<Option<std::sync::Weak<nori_engine::Engine>>>,
+    plugins: std::sync::OnceLock<std::sync::Weak<nori_plugins::Plugins>>,
+    heard: std::sync::Mutex<Option<Hears>>,
+}
+
+impl Watched {
+    /// Sends the plugins' notices to `to`, from whatever thread a plugin runs on.
+    pub fn hear(&self, to: impl Fn(Notice) + Send + Sync + 'static) {
+        *self.heard.lock().expect("not poisoned") = Some(Box::new(to));
+    }
+
+    /// Plugin `id`'s word `key` with `args` in its `{0}`, `{1}`…; the key itself where it has no such word.
+    fn said(&self, id: &str, key: String, args: &[String]) -> String {
+        let word = self.plugins.get().and_then(std::sync::Weak::upgrade).and_then(|p| p.word(id.into(), key.clone(), "en".into()));
+        args.iter().enumerate().fold(word.unwrap_or(key), |line, (i, a)| line.replace(&format!("{{{i}}}"), a))
+    }
 }
 
 impl nori_plugins::Client for Watched {
@@ -141,7 +168,11 @@ impl nori_plugins::Client for Watched {
     }
     fn shown(&self, _: String, _: String, _: bool, _: bool) {}
     fn notice(&self, id: String, problem: bool, words: String, args: Vec<String>) {
-        nori_core::alog::info(&format!("plugin {id} says{}: {words} {args:?}", if problem { " (a problem)" } else { "" }));
+        let words = self.said(&id, words, &args);
+        nori_core::alog::info(&format!("plugin {id} says{}: {words}", if problem { " (a problem)" } else { "" }));
+        if let Some(to) = self.heard.lock().expect("not poisoned").as_ref() {
+            to(Notice { plugin: id, problem, words });
+        }
     }
 }
 
@@ -216,5 +247,22 @@ mod tests {
         assert_eq!(zone(Some(":Europe/Berlin".into()), link()).as_deref(), Some("Europe/Berlin"));
         assert_eq!(zone(Some(String::new()), link()).as_deref(), Some("Australia/Sydney"), "an empty TZ is unset");
         assert_eq!(zone(None, Some("/etc/UTC".into())), None);
+    }
+
+    #[test]
+    fn a_plugins_notice_reaches_the_client_in_its_words() {
+        let dir = nori_testdir::TempDir::new("host-plugin-notice");
+        let watched = Arc::new(Watched::default());
+        let host = nori_plugins::open(dir.path().join("plugins"), nori_core::settings_store::Settings::new(), watched.clone());
+        let _ = watched.plugins.set(Arc::downgrade(&host));
+        let id = host.install_from(nori_plugins::testing::fixture("").to_string_lossy().into_owned()).unwrap();
+        host.turn(id, true);
+        let heard = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let into = heard.clone();
+        watched.hear(move |n| into.lock().unwrap().push(n));
+        let entry = host.menu_entries(nori_plugins::ItemKind::Song, "en".into()).remove(0);
+        let song = nori_core::Song { title: "Blue".into(), ..Default::default() };
+        block_on(host.run_menu(entry, nori_plugins::Items::Songs(vec![song])));
+        assert_eq!(*heard.lock().unwrap(), [Notice { plugin: nori_plugins::testing::FIXTURE.into(), problem: false, words: "Count letters".into() }]);
     }
 }

@@ -145,7 +145,7 @@ impl Stages {
         }
     }
 
-    /// Runs `data` (interleaved frames of `channels` in `encoding`) through the stages that are on, in place.
+    /// Runs `data` (interleaved frames of `channels`, float or 16-bit) through the stages that are on, in place.
     pub(crate) fn run(&mut self, data: &mut [u8], float: bool, channels: usize) {
         let width = if float { 4 } else { 2 };
         let channels = channels.max(1);

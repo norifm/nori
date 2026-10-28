@@ -105,6 +105,18 @@ pub struct RowSpec {
     pub url: Option<String>,
 }
 
+impl RowSpec {
+    /// Its default as a value of its kind.
+    pub(crate) fn initial(&self) -> Option<crate::Value> {
+        let d = self.default?;
+        Some(match self.kind {
+            RowKind::Switch => crate::Value::Switch(d != 0.0),
+            RowKind::Choice => crate::Value::Choice(d as u32),
+            _ => crate::Value::Level(d),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum RowKind {

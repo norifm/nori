@@ -28,8 +28,9 @@ impl StageMaker for Maker {
 /// An instance and the calls made per block.
 struct Live {
     store: Store<()>,
-    instance: Instance,
+    configure: Func,
     process: Func,
+    reset: Func,
     save: Func,
     restore: Func,
 }
@@ -78,11 +79,12 @@ impl Stage {
         let configure = func(&mut store, &instance, "configure")?;
         call::<_, ()>(&mut store, configure, (self.format(), &self.inputs_record()))?;
         Ok(Live {
+            configure,
             process: func(&mut store, &instance, "process")?,
+            reset: func(&mut store, &instance, "reset")?,
             save: func(&mut store, &instance, "save")?,
             restore: func(&mut store, &instance, "restore")?,
             store,
-            instance,
         })
     }
 
@@ -120,10 +122,7 @@ impl SoundStage for Stage {
         self.inputs.clear();
         self.inputs.extend_from_slice(inputs);
         let (format, record) = (self.format(), self.inputs_record());
-        self.guarded(|l| {
-            let configure = func(&mut l.store, &l.instance, "configure")?;
-            call::<_, ()>(&mut l.store, configure, (format, &record))
-        });
+        self.guarded(|l| call::<_, ()>(&mut l.store, l.configure, (format, &record)));
     }
 
     fn process(&mut self, planar: &mut [f32]) {
@@ -145,10 +144,7 @@ impl SoundStage for Stage {
             self.start();
             return;
         }
-        self.guarded(|l| {
-            let reset = func(&mut l.store, &l.instance, "reset")?;
-            call::<_, ()>(&mut l.store, reset, ())
-        });
+        self.guarded(|l| call::<_, ()>(&mut l.store, l.reset, ()));
     }
 
     /// Its inputs' count and values, then the plugin's own state.

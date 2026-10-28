@@ -127,6 +127,15 @@ class MediaSources(context: Context, private val clientOf: () -> Client, private
     val streamCache = SimpleCache(File(context.cacheDir, "stream"), streamEvictor, database)
     val downloadCache = SimpleCache(File(context.getExternalFilesDir(null) ?: context.filesDir, "downloads"), Arrivals(::added), database)
 
+    private val motionDir = File(context.cacheDir, "motion")
+
+    /**
+     * Looping sleeves (MotionPlayer): each loop is played from here after its first pass, so the video is
+     * fetched once rather than once a loop. Built the first time one plays, and least recently played
+     * first out past 64 MB, a dozen or so albums.
+     */
+    val motionCache: Cache by lazy { SimpleCache(motionDir, androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(64L * 1024 * 1024), database) }
+
     /**
      * Told when a song has become whole in either cache, on the thread that wrote its last piece (AutoMix's
      * measuring ahead, which only measures a song once it is all on the device). Null while nobody asks.

@@ -62,4 +62,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
 
 [dev-dependencies]
+# The test plugin, for its menu actions and device rows.
+nori-plugins = { path = "../plugins", features = ["testing"] }
+nori-testdir = { path = "../testdir" }
 i-slint-backend-testing = { version = "=1.18.1", features = ["renderer-skia"] }

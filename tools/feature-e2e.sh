@@ -142,6 +142,13 @@ INDEX
   wait_until 10 curl -sf "http://127.0.0.1:$plugins_port/index.json" -o /dev/null
 }
 plugin_is() { "$app" plugin cards | grep -q "$1"; }
+# $1 on screen, scrolling down to it: a page's rows below the fold aren't in the tree.
+scrolled_to() {
+  local size w h
+  size=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); w=${size%x*}; h=${size#*x}
+  for _ in 1 2 3 4 5 6 7 8; do wait_until 3 on_screen "$1" && return 0; adb shell input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 3)) 300; done
+  on_screen "$1"
+}
 # Installs and turns on plugin $1's newest package, pushed into the app's cache: the id.
 plugin_from_file() {
   adb exec-in run-as "$pkg" sh -c "cat > cache/$1.noriplugin" < "$(plugin_package "$1")" || return 1
@@ -150,7 +157,7 @@ plugin_from_file() {
   "$app" plugin turn "$id on" >/dev/null && echo "$id"
 }
 
-if want plugins; then section "plugins: a repo added, orbit installed from it, turned on and off, its rows, removed; music sounding"
+if want plugins; then section "plugins: a repo added, orbit installed from it, turned on and off, removed; the showcase's slots and rows; music sounding"
   # The plugin host's runtime on the device's ABI, the Plugins page and its sheets, a repo fetched through
   # OkHttp, and a plugin's sound stage reaching the AudioTrack player at once; what plugins may do is Rust's.
   check "orbit is packed" test -n "$(plugin_package orbit)"
@@ -169,14 +176,13 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   tapnode text Add
   check "the repo offers orbit" wait_until 30 on_screen 'text="Orbit"'
   tapnode text Orbit
-  check "installing shows what the repo says first" wait_until 10 on_screen 'shown before it’s turned on'
+  check "before installing, its sheet says what it may do" wait_until 30 on_screen 'Change the sound'
+  check "and nothing is installed yet" plugin_is none
   adb exec-out screencap -p > "$shots/install-sheet.png"
   tapnode text Install
   check "orbit installs from the repo, off" wait_until 30 plugin_is 'fm.nori.orbit:off'
-  check "and asks to turn it on, saying what it may do" wait_until 10 on_screen 'Change the sound'
-  adb exec-out screencap -p > "$shots/turn-on-sheet.png"
   watch_from_now
-  tapnode text "Turn on"
+  "$app" plugin turn "fm.nori.orbit on" >/dev/null
   check "orbit turns on" wait_until 10 plugin_is 'fm.nori.orbit:on'
   check "the player takes its stage in at once" waitfor_log 'the chain changes' 10
   check "installed, it leaves Get plugins" wait_until 10 off_screen 'text="Install"'
@@ -189,7 +195,7 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   "$app" plugin turn "fm.nori.orbit on" >/dev/null
   check "and takes it in again" waitfor_log 'the chain changes' 10
   tapnode text Orbit
-  check "its page shows each level's value" wait_until 10 on_screen 'Turns per second · 0.12'
+  check "its page shows each level's value" wait_until 10 on_screen 'Width · 0.80'
   adb exec-out screencap -p > "$shots/orbit.png"
   "$app" play "$SONG" >/dev/null
   check "a song started with orbit on sounds" sounds 10
@@ -201,6 +207,40 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   check "removed, it is gone" wait_until 10 plugin_is none
   check "and so is its stage" waitfor_log 'the chain changes' 10
   check "the page goes back to the list" wait_until 10 on_screen 'Plugins add music sources'
+  # The showcase fills every slot and kind of row; installed from its package file.
+  check "the showcase installs from its file and turns on" test -n "$(plugin_from_file showcase)"
+  "$app" open player >/dev/null
+  check "its line shows under the player's output" wait_until 15 on_screen 'Showcase is on'
+  tapnode content-desc More
+  check "its action joins the song's menu after nori's own" wait_until 10 on_screen 'text="Show song facts"'
+  adb exec-out screencap -p > "$shots/menu.png"
+  tapnode text "Show song facts"
+  check "its action runs and its notice shows as the app's message" wait_until 10 on_screen 'Long Track 07 by'
+  tapnode content-desc More
+  tapnode text More
+  tapnode text Details
+  check "its lines join the song's info" scrolled_to 'Search the web'
+  adb exec-out screencap -p > "$shots/song-info.png"
+  tapnode text Close
+  "$app" open equalizer >/dev/null
+  check "its rows show on the devices page under its name" scrolled_to 'text="SHOWCASE · CONTROLS"'
+  check "with a level's hint" scrolled_to 'Two decimals'
+  adb exec-out screencap -p > "$shots/devices.png"
+  "$app" open plugins >/dev/null
+  tapnode text Showcase
+  check "its page shows a level's value with its unit" wait_until 10 on_screen 'Level · 0.00 dB'
+  check "and a hint under it" on_screen 'Two decimals'
+  adb exec-out screencap -p > "$shots/showcase.png"
+  check "and its link row" scrolled_to 'website'
+  adb exec-out screencap -p > "$shots/showcase-links.png"
+  # The artwork slot: moving-covers has no loop for the fixture's album, so the cover stays and no loop
+  # player is made. (A loop playing, fading in and letting go with the screen off was checked by hand.)
+  check "moving-covers installs from its file and turns on" test -n "$(plugin_from_file moving-covers)"
+  "$app" play "$SONG" >/dev/null
+  "$app" open player >/dev/null
+  check "a song without a loop keeps its cover" wait_for artworkLoops False 15
+  check "and no loop player is made" wait_for motionPlayers 0 5
+  check "and it plays" sounds 15
   "$app" do pause >/dev/null
   "$app" plugin reset >/dev/null
   kill "$plugins_server" 2>/dev/null

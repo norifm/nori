@@ -158,58 +158,6 @@ impl Plugins {
         Ok(manifest)
     }
 
-    /// Keeps plugin `id` at its version, or lets it update again.
-    pub fn hold(&self, id: &str, held: bool) {
-        let mut list = self.installed.lock().expect("not poisoned");
-        if let Some(i) = list.iter_mut().find(|i| i.manifest.id == id) {
-            i.held = held;
-        }
-        self.keep(&list);
-    }
-
-    pub fn remove(&self, id: &str) {
-        let mut list = self.installed.lock().expect("not poisoned");
-        list.retain(|i| i.manifest.id != id);
-        self.keep(&list);
-        drop(list);
-        self.workers.lock().expect("not poisoned").remove(id);
-        let _ = std::fs::remove_dir_all(self.folder(id));
-        *self.stages.lock().expect("not poisoned") = None;
-        self.side.laid(id);
-    }
-
-    /// Turns plugin `id` on or off. On, one with a lifecycle starts at once (what it sets, it sets
-    /// now); off, its instance goes.
-    pub fn set_enabled(&self, id: &str, on: bool) {
-        let mut list = self.installed.lock().expect("not poisoned");
-        let Some(i) = list.iter_mut().find(|i| i.manifest.id == id) else { return };
-        i.enabled = on;
-        let starts = on && i.manifest.extends("lifecycle");
-        self.keep(&list);
-        drop(list);
-        if !on {
-            self.workers.lock().expect("not poisoned").remove(id);
-        }
-        *self.stages.lock().expect("not poisoned") = None;
-        self.side.laid(id);
-        if starts {
-            self.worker(id);
-        }
-    }
-
-    /// Moves plugin `id` to `index` in the order they apply in.
-    pub fn move_to(&self, id: &str, index: usize) {
-        let mut list = self.installed.lock().expect("not poisoned");
-        let Some(at) = list.iter().position(|i| i.manifest.id == id) else { return };
-        let p = list.remove(at);
-        let index = index.min(list.len());
-        list.insert(index, p);
-        self.keep(&list);
-        drop(list);
-        *self.stages.lock().expect("not poisoned") = None;
-        self.side.laid(id);
-    }
-
     pub(crate) fn added_repos(&self) -> Vec<String> {
         self.repos.lock().expect("not poisoned").clone()
     }
@@ -239,21 +187,6 @@ impl Plugins {
     pub fn rows(&self, id: &str) -> BTreeMap<String, Value> {
         let s = store::Store::new(self.folder(id).join("store"));
         s.keys(ROWS).into_iter().filter_map(|k| Some((k[ROWS.len()..].to_string(), Value::decode(&s.get(&k)?)?))).collect()
-    }
-
-    /// Sets one of plugin `id`'s rows: a sound stage takes it as an input, a lifecycle hears of it.
-    pub fn set_row(&self, id: &str, row: &str, value: Value) {
-        store::Store::new(self.folder(id).join("store")).set(&format!("{ROWS}{row}"), &value.encode());
-        let Some(i) = self.installed().into_iter().find(|i| i.enabled && i.manifest.id == id) else { return };
-        if i.manifest.extends("sound-stage") {
-            self.side.laid(id);
-        }
-        if i.manifest.extends("lifecycle") {
-            if let Some(w) = self.worker(id) {
-                let (row, value) = (row.to_string(), value.into());
-                w.post(move |store, p| p.nori_plugin_lifecycle().call_changed(store, &row, &value));
-            }
-        }
     }
 
     /// Enabled plugin `id`'s own instance.
@@ -314,7 +247,86 @@ impl Plugins {
             })
             .collect()
     }
+
+    /// What the enabled plugins lay over the settings.
+    pub(crate) fn layer(&self) -> nori_settings::overrides::Layer {
+        nori_settings::overrides::Layer { overrides: self.overrides(), stages: self.stages() }
+    }
 }
 
 /// Where a plugin's row values are kept in its store.
 pub(crate) const ROWS: &str = "nori/row/";
+
+#[cfg_attr(feature = "ffi", uniffi::export)]
+impl Plugins {
+    /// Keeps plugin `id` at its version, or lets it update again.
+    pub fn hold(&self, id: String, held: bool) {
+        let mut list = self.installed.lock().expect("not poisoned");
+        if let Some(i) = list.iter_mut().find(|i| i.manifest.id == *id) {
+            i.held = held;
+        }
+        self.keep(&list);
+    }
+
+    /// Turns plugin `id` on or off. On, one with a lifecycle starts at once (what it sets, it sets
+    /// now); off, its instance goes.
+    pub fn turn(&self, id: String, on: bool) {
+        let id = id.as_str();
+        let mut list = self.installed.lock().expect("not poisoned");
+        let Some(i) = list.iter_mut().find(|i| i.manifest.id == id) else { return };
+        i.enabled = on;
+        let starts = on && i.manifest.extends("lifecycle");
+        self.keep(&list);
+        drop(list);
+        if !on {
+            self.workers.lock().expect("not poisoned").remove(id);
+        }
+        *self.stages.lock().expect("not poisoned") = None;
+        self.side.laid(id);
+        if starts {
+            self.worker(id);
+        }
+    }
+
+    /// Moves plugin `id` to `index` in the order they apply in.
+    pub fn place(&self, id: String, index: u32) {
+        let id = id.as_str();
+        let mut list = self.installed.lock().expect("not poisoned");
+        let Some(at) = list.iter().position(|i| i.manifest.id == id) else { return };
+        let p = list.remove(at);
+        let index = (index as usize).min(list.len());
+        list.insert(index, p);
+        self.keep(&list);
+        drop(list);
+        *self.stages.lock().expect("not poisoned") = None;
+        self.side.laid(id);
+    }
+
+    /// Sets one of plugin `id`'s rows: a sound stage takes it as an input, a lifecycle hears of it.
+    pub fn set(&self, id: String, row: String, value: Value) {
+        let id = id.as_str();
+        store::Store::new(self.folder(id).join("store")).set(&format!("{ROWS}{row}"), &value.encode());
+        let Some(i) = self.installed().into_iter().find(|i| i.enabled && i.manifest.id == id) else { return };
+        if i.manifest.extends("sound-stage") {
+            self.side.laid(id);
+        }
+        if i.manifest.extends("lifecycle") {
+            if let Some(w) = self.worker(id) {
+                let value = value.into();
+                w.post(move |store, p| p.nori_plugin_lifecycle().call_changed(store, &row, &value));
+            }
+        }
+    }
+
+    pub fn uninstall(&self, id: String) {
+        let id = id.as_str();
+        let mut list = self.installed.lock().expect("not poisoned");
+        list.retain(|i| i.manifest.id != id);
+        self.keep(&list);
+        drop(list);
+        self.workers.lock().expect("not poisoned").remove(id);
+        let _ = std::fs::remove_dir_all(self.folder(id));
+        *self.stages.lock().expect("not poisoned") = None;
+        self.side.laid(id);
+    }
+}

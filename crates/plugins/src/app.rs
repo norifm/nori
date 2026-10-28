@@ -4,7 +4,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, Weak};
 
-use nori_settings::overrides::Layer;
 use nori_settings::settings_model::value_of;
 use nori_settings::settings_store::Settings;
 
@@ -49,7 +48,7 @@ impl Side for App {
 
     fn laid(&self, _id: &str) {
         let Some(plugins) = self.plugins.get().and_then(Weak::upgrade) else { return };
-        self.settings.set_layer(Layer { overrides: plugins.overrides(), stages: plugins.stages() });
+        self.settings.set_layer(plugins.layer());
         self.client.layer_changed();
     }
 
@@ -79,7 +78,7 @@ pub fn open(dir: PathBuf, settings: Arc<Settings>, client: Arc<dyn Client>) -> A
     let plugins = Arc::new(Plugins::open(dir, app.clone()));
     let _ = app.plugins.set(Arc::downgrade(&plugins));
     if plugins.installed().iter().any(|i| i.enabled) {
-        app.settings.set_layer(Layer { overrides: plugins.overrides(), stages: plugins.stages() });
+        app.settings.set_layer(plugins.layer());
     }
     plugins
 }

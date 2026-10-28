@@ -75,9 +75,8 @@ fun PluginsScreen(vm: PluginsViewModel, back: () -> Unit, open: (String) -> Unit
     val offers by vm.offers.collectAsStateWithLifecycle()
     val refused by vm.refused.collectAsStateWithLifecycle()
     var adding by remember { mutableStateOf(false) }
-    var installing by remember { mutableStateOf<Offer?>(null) }
     var removing by remember { mutableStateOf<PluginCard?>(null) }
-    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.installFile(uri) }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.previewFile(uri) }
     LaunchedEffect(Unit) { vm.loadOffers() }
     // Offered and not here, or here in an older version.
     val wanted = offers.offers.filter { o -> o.installed == null || o.installed != o.versions.firstOrNull()?.version }
@@ -109,7 +108,7 @@ fun PluginsScreen(vm: PluginsViewModel, back: () -> Unit, open: (String) -> Unit
             GroupCard {
                 if (wanted.isEmpty()) GroupRow(say.pluginsAsking, divider = false)
                 wanted.forEachIndexed { i, o ->
-                    OfferRow(o, i < wanted.lastIndex) { if (o.installed == null) installing = o else vm.installOffer(o) }
+                    OfferRow(o, i < wanted.lastIndex) { vm.previewOffer(o) }
                 }
             }
         }
@@ -130,8 +129,7 @@ fun PluginsScreen(vm: PluginsViewModel, back: () -> Unit, open: (String) -> Unit
         Spacer(Modifier.height(Space.section + LocalChromeInset.current))
     }
     AddRepoSheet(adding, { adding = false }) { url -> vm.addRepo(url); adding = false }
-    InstallSheet(installing, { installing = null }) { o -> vm.installOffer(o); installing = null }
-    TurnOnSheet(vm)
+    InstallSheet(vm)
     RemoveSheet(removing, { removing = null }) { c -> vm.uninstall(c.id); removing = null }
 }
 
@@ -201,33 +199,21 @@ private fun AddRepoSheet(visible: Boolean, close: () -> Unit, add: (String) -> U
     }
 }
 
-/** A repo's plugin before it is installed: what the repo says of it. What it may do is asked once it is here. */
+/**
+ * A plugin read but not installed, from a file or a repo: what it is and everything it may reach, before
+ * Install. A new install lands off; turning it on is one tap on its row.
+ */
 @Composable
-private fun InstallSheet(offer: Offer?, close: () -> Unit, install: (Offer) -> Unit) {
-    NoriSheet(offer, close) { o ->
-        SheetPage(o.name, {
-            TextAction(say.cancel, close)
-            TextAction(say.pluginInstall, { install(o) }, Modifier.testTag("install-confirm"))
-        }) {
-            o.about?.let { Text(it) }
-            Quiet(listOfNotNull(o.versions.firstOrNull()?.let { say.pluginOfferLine(it.version, repoName(o.repo.url, o.repo.official)) }).joinToString())
-            Quiet(say.pluginInstallNote)
-        }
-    }
-}
-
-/** What a plugin just installed may do, every permission at once, before it is turned on. */
-@Composable
-private fun TurnOnSheet(vm: PluginsViewModel) {
-    val asking by vm.asking.collectAsStateWithLifecycle()
-    val cards by vm.cards.collectAsStateWithLifecycle()
-    NoriSheet(cards.firstOrNull { it.id == asking }, vm::stopAsking) { c ->
-        SheetPage(say.pluginTurnOnTitle(c.name), {
-            TextAction(say.notNow, vm::stopAsking)
-            TextAction(say.pluginTurnOn, { vm.turn(c.id, true); vm.stopAsking() }, Modifier.testTag("turn-on-confirm"))
+private fun InstallSheet(vm: PluginsViewModel) {
+    val preview by vm.preview.collectAsStateWithLifecycle()
+    NoriSheet(preview, vm::dropPreview) { p ->
+        val c = p.card
+        SheetPage(c.name, {
+            TextAction(say.cancel, vm::dropPreview)
+            TextAction(say.pluginInstall, vm::installPreview, Modifier.testTag("install-confirm"))
         }) {
             c.about?.let { Text(it) }
-            Quiet(listOf(say.pluginVersion(c.version), c.kinds()).filter { it.isNotEmpty() }.joinToString(" · "))
+            Quiet(listOfNotNull(say.pluginVersion(c.version), c.kinds().takeIf { it.isNotEmpty() }, p.repo?.let { android.net.Uri.parse(it).host }).joinToString(" · "))
             Text(say.pluginMayTitle, style = MaterialTheme.typography.titleSmall)
             say.pluginMay(c.points, c.net, c.overrides).forEach { Text("· $it") }
         }
@@ -252,8 +238,6 @@ private fun RemoveSheet(card: PluginCard?, close: () -> Unit, remove: (PluginCar
 @Composable
 fun PluginPage(vm: PluginsViewModel, id: String, back: () -> Unit) {
     val cards by vm.cards.collectAsStateWithLifecycle()
-    val status by vm.status.collectAsStateWithLifecycle()
-    val shown by vm.shown.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val offers by vm.offers.collectAsStateWithLifecycle()
     var removing by remember { mutableStateOf<PluginCard?>(null) }
@@ -275,20 +259,7 @@ fun PluginPage(vm: PluginsViewModel, id: String, back: () -> Unit) {
             Toggle(say.pluginOn, "", card.enabled, key = "plugin-on", divider = card.repo != null) { on -> vm.turn(id, on) }
             if (card.repo != null) Toggle(say.pluginKeepVersion, "", card.held, divider = false) { held -> vm.hold(id, held) }
         }
-        // The rows in cards, each section row the label of the card after it.
-        val groups = mutableListOf<Pair<String?, MutableList<PluginRow>>>(null to mutableListOf())
-        card.rows.filter { shown[RowRef(id, it.id)]?.shown != false }.forEach { r ->
-            if (r.kind == RowKind.SECTION) groups += r.label to mutableListOf() else groups.last().second += r
-        }
-        groups.filter { it.second.isNotEmpty() }.forEach { (title, rows) ->
-            if (title != null) GroupLabel(title) else Spacer(Modifier.height(Space.section))
-            GroupCard {
-                rows.forEachIndexed { i, r ->
-                    val enabled = shown[RowRef(id, r.id)]?.enabled != false
-                    PluginRowView(card, r, status[RowRef(id, r.id)], enabled, i < rows.lastIndex, vm)
-                }
-            }
-        }
+        PluginRows(vm, card, null)
         if (offer != null) {
             val uri = androidx.compose.ui.platform.LocalUriHandler.current
             GroupLabel(say.pluginVersions)
@@ -297,7 +268,7 @@ fun PluginPage(vm: PluginsViewModel, id: String, back: () -> Unit) {
                     GroupRow(
                         v.version, minHeight = 44.dp, value = v.released, divider = i < offer.versions.lastIndex || offer.source != null,
                         trailing = {
-                            if (v.version != card.version) TextAction(say.pluginInstall, { vm.installVersion(v) }, Modifier.padding(start = 8.dp))
+                            if (v.version != card.version) TextAction(say.pluginInstall, { vm.previewVersion(v) }, Modifier.padding(start = 8.dp))
                         },
                     )
                 }
@@ -312,22 +283,47 @@ fun PluginPage(vm: PluginsViewModel, id: String, back: () -> Unit) {
     RemoveSheet(removing, { removing = null }) { c -> vm.uninstall(c.id); removing = null; back() }
 }
 
-/** Decimal places that show a level moving by [step]. */
-private fun places(step: Double?): Int {
-    val s = step?.takeIf { it > 0 } ?: return 2
-    return (0..4).firstOrNull { p -> val x = s * Math.pow(10.0, p.toDouble()); kotlin.math.abs(x - kotlin.math.round(x)) < 1e-9 } ?: 4
+/** The rows of the plugins that show on the devices page too, each under its name; read before the page opened. */
+@Composable
+fun PluginDeviceSections(vm: PluginsViewModel) {
+    val cards by vm.deviceCards.collectAsStateWithLifecycle()
+    cards.forEach { c -> PluginRows(vm, c, c.name) }
+}
+
+/**
+ * [card]'s rows in cards as nori's own settings pages draw theirs: each section row the label over the card
+ * after it. With [title] (a page of nori's own showing them), every label starts with it and the rows before
+ * the first section are under it alone; without, those rows are under a gap. Rows its plugin hides are left out.
+ */
+@Composable
+fun PluginRows(vm: PluginsViewModel, card: PluginCard, title: String?) {
+    val status by vm.status.collectAsStateWithLifecycle()
+    val shown by vm.shown.collectAsStateWithLifecycle()
+    val groups = mutableListOf<Pair<String?, MutableList<PluginRow>>>(title to mutableListOf())
+    card.rows.filter { shown[RowRef(card.id, it.id)]?.shown != false }.forEach { r ->
+        if (r.kind == RowKind.SECTION) groups += (title?.let { say.pluginSection(it, r.label) } ?: r.label) to mutableListOf() else groups.last().second += r
+    }
+    groups.filter { it.second.isNotEmpty() }.forEach { (label, rows) ->
+        if (label != null) GroupLabel(label) else Spacer(Modifier.height(Space.section))
+        GroupCard {
+            rows.forEachIndexed { i, r ->
+                val enabled = shown[RowRef(card.id, r.id)]?.enabled != false
+                PluginRowView(card, r, status[RowRef(card.id, r.id)], enabled, i < rows.lastIndex, vm)
+            }
+        }
+    }
 }
 
 @Composable
 private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabled: Boolean, divider: Boolean, vm: PluginsViewModel) {
     val dim = Modifier.alpha(if (enabled) 1f else DIMMED)
     when (r.kind) {
-        RowKind.SWITCH -> Toggle(r.label, "", (r.value as? Value.Switch)?.v1 == true, enabled = enabled, divider = divider) { vm.set(card.id, r.id, Value.Switch(it)) }
+        RowKind.SWITCH -> Toggle(r.label, r.hint.orEmpty(), (r.value as? Value.Switch)?.v1 == true, enabled = enabled, divider = divider) { vm.set(card.id, r.id, Value.Switch(it)) }
         RowKind.CHOICE -> {
             var open by remember { mutableStateOf(false) }
             val chosen = (r.value as? Value.Choice)?.v1?.toInt()
             GroupRow(
-                r.label, if (enabled) ({ open = true }) else null, dim, value = chosen?.let(r.options::getOrNull), chevron = true, divider = divider,
+                r.label, if (enabled) ({ open = true }) else null, dim, subtitle = r.hint, value = chosen?.let(r.options::getOrNull), chevron = true, divider = divider,
                 trailing = {
                     NoriPopover(open, { open = false }) {
                         r.options.forEachIndexed { i, o -> PopoverItem(o, chosen = i == chosen) { vm.set(card.id, r.id, Value.Choice(i.toUInt())); open = false } }
@@ -340,10 +336,9 @@ private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabl
             val max = (r.max ?: 1.0).toFloat()
             val step = r.step?.toFloat()?.takeIf { it > 0f }
             val value = ((r.value as? Value.Level)?.v1 ?: r.min ?: 0.0).toFloat()
-            Text(
-                say.pluginLevel(r.label, Fmt.fixed(value.toDouble(), places(r.step))),
-                dim.padding(start = GROUP_INSET, end = GROUP_INSET, top = 10.dp), style = MaterialTheme.typography.bodySmall,
-            )
+            val shownValue = Fmt.fixed(value.toDouble(), r.decimals.toInt()).let { v -> r.unit?.let { say.pluginUnit(v, it) } ?: v }
+            Text(say.pluginLevel(r.label, shownValue), dim.padding(start = GROUP_INSET, end = GROUP_INSET, top = 10.dp), style = MaterialTheme.typography.bodySmall)
+            r.hint?.let { Quiet(it, dim.padding(horizontal = GROUP_INSET)) }
             NoriSlider(value, min..max, { v ->
                 val snapped = step?.let { s -> (min + kotlin.math.round((v - min) / s) * s).coerceIn(min, max) } ?: v
                 if (snapped != value) vm.set(card.id, r.id, Value.Level(snapped.toDouble()))
@@ -355,24 +350,25 @@ private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabl
             var text by remember(stored) { mutableStateOf(stored) }
             Column(dim.padding(horizontal = GROUP_INSET, vertical = 8.dp)) {
                 FormField(
-                    text, { text = it }, Modifier.fillMaxWidth(), label = { Text(r.label) }, singleLine = true,
+                    text, { text = it }, Modifier.fillMaxWidth(), label = { Text(r.label) }, singleLine = true, supportingText = r.hint?.let { h -> { Text(h) } },
                     visualTransformation = if (r.kind == RowKind.SECRET) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
                 )
                 if (text != stored) TextAction(say.save, { vm.set(card.id, r.id, Value.Text(text)) }, enabled = enabled)
             }
             if (divider) Hairline(startIndent = GROUP_INSET)
         }
-        RowKind.ACTION -> GroupRow(r.label, if (enabled) ({ vm.act(card.id, r.id) }) else null, dim, divider = divider)
-        RowKind.STATUS -> GroupRow(r.label, modifier = dim, value = status, divider = divider)
+        RowKind.ACTION -> GroupRow(r.label, if (enabled) ({ vm.act(card.id, r.id) }) else null, dim, subtitle = r.hint, divider = divider)
+        RowKind.STATUS -> GroupRow(r.label, modifier = dim, subtitle = r.hint, value = status, divider = divider)
         RowKind.NOTE -> {
             Text(r.label, Modifier.padding(horizontal = GROUP_INSET, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (divider) Hairline(startIndent = GROUP_INSET)
         }
-        // Its address as the card carries it (a text value).
         RowKind.LINK -> {
             val uri = androidx.compose.ui.platform.LocalUriHandler.current
-            val url = (r.value as? Value.Text)?.v1
-            GroupRow(r.label, url?.takeIf { enabled }?.let { u -> { runCatching { uri.openUri(u) } } }, dim, chevron = true, divider = divider)
+            GroupRow(
+                r.label, r.url?.takeIf { enabled }?.let { u -> { runCatching { uri.openUri(u) } } }, dim,
+                subtitle = r.hint, value = r.url?.let { android.net.Uri.parse(it).host }, chevron = true, divider = divider,
+            )
         }
         RowKind.SECTION -> {}
     }

@@ -1205,6 +1205,9 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
         DeviceRow::Join => Line::from(vec![Span::raw("  "), Span::styled(crate::text::JAM_JOIN, Style::default().fg(t.ink))]),
         DeviceRow::Pair => Line::from(format!("  {}", crate::text::PAIR_DEVICES)),
         DeviceRow::ResetPairing => Line::from(format!("  {}", crate::text::FORGET_DEVICES)),
+        DeviceRow::PluginName(c) => Line::from(Span::styled(format!("  {}", d.plugins[c].name.to_uppercase()), t.dim())),
+        DeviceRow::Plugin(c, r) => d.plugin_row(c, r).map_or_else(Line::default, |row| setting_line(&SLine::Row(&row), w, t)),
+        DeviceRow::PluginHint(c, r) => Line::from(Span::styled(fit(&format!("    {}", d.plugins[c].rows[r].hint.as_deref().unwrap_or_default()), w).into_owned(), t.dim().add_modifier(Modifier::ITALIC))),
     });
     devices.sel = sel;
     let mut y = body.y + body.height + 1;
@@ -1509,7 +1512,10 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
         text(f, area, "Nothing playing · esc goes back", t.dim());
         return 1;
     };
-    let cover_rows = if app.images && art.is_some() { area.height.saturating_sub(SONG_BELOW).min(area.width / 2).min(22) } else { 0 };
+    let info: Vec<String> = app.slots.info_of(&song.id).iter().flat_map(|g| g.lines.iter().map(|l| crate::text::info_line(&g.name, l))).collect();
+    let status = app.slots.status.clone();
+    let below = SONG_BELOW + (info.len() + status.len()) as u16;
+    let cover_rows = if app.images && art.is_some() { area.height.saturating_sub(below).min(area.width / 2).min(22) } else { 0 };
     let mut y = area.y;
     if cover_rows >= 6 {
         cover(f, Rect { x: area.x, y, width: cover_rows * 2, height: cover_rows }, art, song.cover_art.as_deref());
@@ -1535,6 +1541,10 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
         text(f, row(y), &q, t.dim());
         y += 1;
     }
+    for l in &info {
+        text(f, row(y), l, t.dim());
+        y += 1;
+    }
     y += 1;
     let time = 5;
     let track_w = w.saturating_sub(2 * (time + 1)).min(60);
@@ -1551,6 +1561,10 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
     y += 2;
     output_line(f, row(y), app, t);
     y += 1;
+    for l in &status {
+        text(f, row(y), l, t.dim());
+        y += 1;
+    }
     volume_line(f, Rect { width: 16.min(w), ..row(y) }, app, t);
     y += 2;
     // The mix being heard or planned, where there is room.
@@ -1568,7 +1582,7 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
 /// play; on the right, the way back.
 fn panel_tabs(f: &mut Frame, app: &mut App, t: &Theme, r: Rect) {
     let mut x = r.x;
-    for (which, name) in PANELS.iter().filter(|(p, _)| *p != Panel::Devices || app.devices.on) {
+    for (which, name) in PANELS.iter().filter(|(p, _)| *p != Panel::Devices || app.devices.shown()) {
         let w = name.width() as u16;
         if x + w > r.x + r.width {
             break;
@@ -1594,7 +1608,7 @@ fn output_line(f: &mut Frame, r: Rect, app: &mut App, t: &Theme) {
         None => (crate::text::output_name(&app.output), false),
     };
     text(f, r, &name, if lit { bold().fg(t.ink) } else { t.dim() });
-    if app.devices.on {
+    if app.devices.shown() {
         app.hits.push((Rect { width: (name.width() as u16).min(r.width), ..r }, Hit::Button(Button::Panel(Panel::Devices))));
     }
 }

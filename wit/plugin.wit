@@ -206,8 +206,8 @@ interface provider {
     }
 
     record stream-source {
+        /// Fetched as it is, with no headers of the plugin's.
         url: string,
-        headers: list<header>,
         /// Its length in bytes, when known.
         length: option<u64>,
         /// The most bytes one request may ask for, for a source that throttles long ranges; none
@@ -243,9 +243,9 @@ interface provider {
     open: func(profile: profile);
     read: func(request: request) -> result<page, error>;
     write: func(change: change) -> result<_, error>;
-    /// Where song `id` streams from at `max-kbps` (0: as it is), for `use`; the engine fetches, caches
-    /// and decodes.
-    source: func(id: string, max-kbps: u32, %use: stream-use) -> result<stream-source, error>;
+    /// Where song `id` streams from at most `max-kbps` (none: as it is), for `use`; the engine
+    /// fetches, caches and decodes.
+    source: func(id: string, max-kbps: option<u32>, %use: stream-use) -> result<stream-source, error>;
     /// The stream refused its last URL: the next `source` resolves it anew.
     refused: func(id: string);
     sign-in-done: func(address: string, cookies: string) -> bool;

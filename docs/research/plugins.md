@@ -556,7 +556,7 @@ changes (docs/developers/providers.md).
 - Its add form is its own: `info` returns the fields adding a profile asks for (`FormField`: address,
   user, key; plain or advanced) and how it signs in, and every client draws that form as it does for
   the built-in providers.
-- The plugin resolves where a song streams from (URL and headers); the engine fetches, caches and
+- The plugin resolves where a song streams from (a URL, fetched as it is); the engine fetches, caches and
   decodes the bytes natively, as now.
 - HTTP only to the manifest's domains, through `Transport`.
 - Sign-in: a "sign-in page" capability. The client opens its visible sign-in WebView at the plugin's

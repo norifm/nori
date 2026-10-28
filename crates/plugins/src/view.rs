@@ -113,16 +113,6 @@ fn flat(text: &str) -> BTreeMap<String, String> {
     out
 }
 
-/// A row's default as a value of its kind.
-fn default(kind: RowKind, d: Option<f64>) -> Option<Value> {
-    let d = d?;
-    Some(match kind {
-        RowKind::Switch => Value::Switch(d != 0.0),
-        RowKind::Choice => Value::Choice(d as u32),
-        _ => Value::Level(d),
-    })
-}
-
 /// What a client shows of a plugin of manifest `m`, in its words `w`, with its rows' `stored` values.
 fn card(m: &Manifest, w: &BTreeMap<String, String>, stored: &BTreeMap<String, Value>, enabled: bool, repo: Option<String>, held: bool) -> PluginCard {
     let said = |k: &str| w.get(k).cloned();
@@ -148,7 +138,7 @@ fn card(m: &Manifest, w: &BTreeMap<String, String>, stored: &BTreeMap<String, Va
                 min: r.min,
                 max: r.max,
                 step: r.step,
-                value: stored.get(&r.id).cloned().or_else(|| default(r.kind, r.default)),
+                value: stored.get(&r.id).cloned().or_else(|| r.initial()),
                 hint: r.hint.as_deref().and_then(said),
                 unit: r.unit.as_deref().and_then(said),
                 decimals: r.decimals,
@@ -197,22 +187,6 @@ impl Plugins {
     /// Installs the `.noriplugin` or plugin folder at `path`, off; its id.
     pub fn install_from(&self, path: String) -> Result<String, Refusal> {
         self.install(std::path::Path::new(&path)).map(|m| m.id.clone())
-    }
-
-    pub fn turn(&self, id: String, on: bool) {
-        self.set_enabled(&id, on)
-    }
-
-    pub fn place(&self, id: String, index: u32) {
-        self.move_to(&id, index as usize)
-    }
-
-    pub fn uninstall(&self, id: String) {
-        self.remove(&id)
-    }
-
-    pub fn set(&self, id: String, row: String, value: Value) {
-        self.set_row(&id, &row, value)
     }
 
     /// Runs action row `row` of plugin `id`.

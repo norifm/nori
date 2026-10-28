@@ -4864,6 +4864,7 @@ dependencies = [
  "nori-output-cpal",
  "nori-plugins",
  "nori-sign-in-window",
+ "nori-testdir",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",

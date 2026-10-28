@@ -83,7 +83,8 @@ fn sized(cover: &str, size: u32) -> String {
 
 fn net_error(e: t::Error) -> NetError {
     match e.kind {
-        t::ErrorKind::Network | t::ErrorKind::Timeout => NetError::Transport { kind: crate::transport::FailureKind::Connect, detail: Some(e.detail) },
+        t::ErrorKind::Network => NetError::Transport { kind: crate::transport::FailureKind::Connect, detail: Some(e.detail) },
+        t::ErrorKind::Timeout => NetError::Transport { kind: crate::transport::FailureKind::Timeout, detail: Some(e.detail) },
         t::ErrorKind::Unauthorized => NetError::Http { status: 401 },
         t::ErrorKind::NotFound => NetError::Http { status: 404 },
         t::ErrorKind::Parse => NetError::Parse { reason: e.detail },
@@ -288,9 +289,9 @@ impl Provider for PluginProvider {
         self.heard(client, said)
     }
 
-    /// The plugin resolves its songs where they open; the bytes are kept by song.
-    fn stream(&self, _: &Client, id: String, _: StreamQuality) -> StreamTarget {
-        StreamTarget { url: format!("{ADDRESS}{id}"), key: format!("{id}:0") }
+    /// The plugin resolves its songs where they open; the bytes are kept by song and bit rate.
+    fn stream(&self, _: &Client, id: String, q: StreamQuality) -> StreamTarget {
+        StreamTarget { url: format!("{ADDRESS}{}/{id}", q.bit_rate), key: format!("{id}:{}", q.bit_rate) }
     }
 
     fn ahead(&self) -> Option<usize> {
@@ -379,6 +380,12 @@ impl PluginProvider {
     }
 }
 
+/// The bit rate (0: as it is) and song of a stream address of [`PluginProvider::stream`]'s.
+fn song_of(address: &str) -> Option<(u32, String)> {
+    let (kbps, id) = address.strip_prefix(ADDRESS)?.split_once('/')?;
+    Some((kbps.parse().ok()?, id.to_string()))
+}
+
 /// Opens a plugin's stream addresses at the URLs the plugin says, on a loader's thread.
 struct Resolver {
     worker: Worker,
@@ -388,8 +395,9 @@ struct Resolver {
 
 impl Resolver {
     fn source(&self, address: &str, used: w::StreamUse) -> Option<NetResult<String>> {
-        let id = address.strip_prefix(ADDRESS)?.to_string();
-        let said = block_on(self.worker.call(move |s, x| x.nori_plugin_provider().call_source(s, &id, 0, used)));
+        let (kbps, id) = song_of(address)?;
+        let kbps = (kbps > 0).then_some(kbps);
+        let said = block_on(self.worker.call(move |s, x| x.nori_plugin_provider().call_source(s, &id, kbps, used)));
         let src = match said.ok_or_else(stopped).and_then(|r| r.map_err(net_error)) {
             Ok(src) => src,
             Err(e) => return Some(Err(e)),
@@ -417,8 +425,21 @@ impl ResolveStream for Resolver {
     }
 
     fn refused(&self, address: &str) {
-        if let Some(id) = address.strip_prefix(ADDRESS).map(str::to_string) {
+        if let Some((_, id)) = song_of(address) {
             self.worker.post(move |s, x| x.nori_plugin_provider().call_refused(s, &id));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_address_keeps_bit_rate_and_song() {
+        for (kbps, id) in [(0, "abc"), (320, "a/b:c")] {
+            assert_eq!(song_of(&format!("{ADDRESS}{kbps}/{id}")), Some((kbps, id.to_string())));
+        }
+        assert_eq!(song_of("https://example.com/a"), None);
     }
 }

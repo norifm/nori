@@ -215,9 +215,19 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
 
     val settingsVm: SettingsViewModel = viewModel()
     val prefs by settingsVm.prefs.collectAsStateWithLifecycle()
-    val coverUrl = vm.cover(state.current?.coverArt, CoverSize.FULL)
+    // A plugin's sleeve for the song (the artwork slot), asked only while the player is in view: a still
+    // picture takes the cover's place, a loop plays over it while the sleeve is at rest (SleeveMotion.kt).
+    val artwork = if (LocalPlayerShown.current) vm.artwork.collectAsStateWithLifecycle().value else null
+    val coverUrl = artwork?.takeIf { !it.looping }?.url ?: vm.cover(state.current?.coverArt, CoverSize.FULL)
     // One picture for the sleeve and for the cover in flight (see SleeveArt).
     val sleeveArt = rememberSleeveArt(coverUrl)
+    // Nothing of the loop exists until a song has had one: no player, no surface, no touch watcher. Once
+    // made it stays, so a loop leaving with its song fades out rather than vanishing.
+    val loop = artwork?.takeIf { it.looping }?.url
+    var looped by remember { mutableStateOf(false) }
+    if (loop != null) looped = true
+    val motion = if (looped) remember { SleeveMotion(vm::motionView) } else null
+    if (motion != null) MotionDirector(vm, motion, loop, sheet, onArtwork = panel == Panel.ART && showing == Panel.ART && !flying)
     // The player wears the cover's colours except in Midnight (the core's rule).
     val tinted = LocalPapers.current.coversTint
     // A provider's song wears its cover too (it is on screen); only its neighbours' are never measured ahead.
@@ -383,6 +393,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
             // the lyrics and queue need a vertical drag to scroll, so there only the handle does. On its side
             // a drag towards the mini player's edge anywhere does it (what scrolls or slides takes its own first).
             Modifier.fillMaxSize().onGloballyPositioned { player[0] = it }
+                .then(if (motion != null) Modifier.watchTouches(motion) else Modifier)
                 .dragsSheet(sheet, enabled = panel == Panel.ART || LocalWide.current),
         ) {
             // The page is the cover itself, enlarged and smoothed, lined up with the sleeve. No seam
@@ -546,7 +557,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             nextSong?.let { vm.cover(it.coverArt, CoverSize.FULL) },
                             previousTintUrl, nextTintUrl,
                             Songs(state.current?.id, previousSong?.id, nextSong?.id),
-                            slide, shift,
+                            slide, shift, motion,
                         )
                     }
                 } else {
@@ -912,6 +923,8 @@ private fun Artwork(
     previousTint: String?, nextTint: String?,
     songs: Songs,
     slide: SleeveSlide, shift: PageShift,
+    /** A plugin's looping sleeve, or null when the song has none. */
+    motion: SleeveMotion?,
 ) {
     Box(Modifier.fillMaxWidth(), Alignment.TopCenter) {
         Box(
@@ -923,7 +936,7 @@ private fun Artwork(
         ) {
             SleeveCarousel(
                 art, currentUrl, previousUrl, nextUrl, previousTint, nextTint, songs,
-                onPrevious = vm::previousItem, onNext = vm::next, slide = slide, shift = shift,
+                onPrevious = vm::previousItem, onNext = vm::next, slide = slide, shift = shift, motion = motion,
             )
             // Just enough shade under the status bar for its icons to read on a pale cover; the same
             // amount the album page uses, and invisible against anything darker.
@@ -1406,6 +1419,7 @@ private fun SleeveCarousel(
     art: SleeveArt, currentUrl: String?, previousUrl: String?, nextUrl: String?,
     previousTint: String?, nextTint: String?, songs: Songs,
     onPrevious: () -> Unit, onNext: () -> Unit, slide: SleeveSlide, shift: PageShift,
+    motion: SleeveMotion?,
 ) {
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
@@ -1509,6 +1523,8 @@ private fun SleeveCarousel(
     val natural = remember(songs.current) { Animatable(go.toFloat()) }
     val naturalUrl = remember(songs.current) { currentUrl.takeIf { go != 0 } }
     val naturalPicture = remember(songs.current) { incoming.takeIf { go != 0 } }
+    /** Which side the record left goes out to: the `go` this song's slide started with. */
+    val naturalGo = remember(songs.current) { go }
     androidx.compose.runtime.SideEffect {
         if (passing.id != songs.current) { passing.id = songs.current; askedId = null }
     }
@@ -1529,6 +1545,11 @@ private fun SleeveCarousel(
         lift.animateTo(0f, spring(dampingRatio = 1f, stiffness = 600f, visibilityThreshold = 0.001f))
     }
 
+    // The loop plays only on a record at rest: none held, lifted, sliding (a skip or a song changing by itself) or waiting to land.
+    if (motion != null) LaunchedEffect(motion) {
+        androidx.compose.runtime.snapshotFlow { !holding && offset == 0f && lift.value == 0f && landedUrl == null && !naturalHere }
+            .collect { motion.resting = it }
+    }
     // The plate a record waits on: the same placeholder as the sleeve's, the theme's own surface, not
     // the page's, which is the colour of the song being left.
     val plate = Modifier.drawBehind { drawRect(art.plate) }
@@ -1868,6 +1889,26 @@ private fun SleeveCarousel(
                 PlateSheen(art, !beforeHere && beforeShown)
                 before.painter?.let { androidx.compose.foundation.Image(it, null, Modifier.fillMaxSize().graphicsLayer { alpha = beforeFade.value }, contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
             }
+            // The loop, in the same square as the still one and cropped by the same edges, so the
+            // fade between them shows no shift; it moves with the record, too. The sharp copy only: a
+            // surface is drawn once, so the blurred band at the sleeve's foot stays the still cover's, which
+            // is also what the page's wash is made of. When the song changes by itself it goes out with the
+            // record it was playing on, fading as it goes (that record is the neighbour by then) rather than
+            // vanishing on the slide's first frame and leaving the still cover in its place.
+            // Composed here, after the records, whatever happens to them, so its surface is never made
+            // again in the middle of a move.
+            if (!blurred && motion != null && motion.present && landedUrl == null) Box(
+                Modifier.fillMaxSize().record(
+                    { o, span -> if (naturalHere) o - naturalGo * span else o },
+                    { o, f ->
+                        when {
+                            !naturalHere -> 1f - 0.35f * f
+                            naturalGo > 0 -> if (o > 0f) 0.55f + 0.45f * f else 0f
+                            else -> if (o < 0f) 0.55f + 0.45f * f else 0f
+                        }
+                    },
+                ),
+            ) { MotionCover(motion) }
             // It is the record that is showing, so it moves with the record: held still in the middle it
             // covered the next change from on top, which is the "cover stuck over the animation".
             if (landedUrl != null) Box(Modifier.fillMaxSize().record({ o, _ -> o }, { _, f -> 1f - 0.35f * f }).then(plate)) {
@@ -2205,6 +2246,7 @@ private fun OutputRow(vm: PlayerViewModel) {
     val look = LocalLook.current
     val state by vm.state.collectAsStateWithLifecycle()
     val jam by vm.jamStrip.collectAsStateWithLifecycle()
+    Column {
     Row(Modifier.fillMaxWidth().padding(horizontal = PLAYER_GUTTER, vertical = 2.dp), Arrangement.Center, Alignment.CenterVertically) {
         val jamOn = jam
         if (jamOn != null) JamButton(jamOn, 20.dp, idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ACCENT) })
@@ -2213,6 +2255,29 @@ private fun OutputRow(vm: PlayerViewModel) {
             idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ON) },
             named = true,
         )
+    }
+    PluginStatus(vm, state.current?.id)
+    }
+}
+
+/** The lines plugins say under the output row, asked when the player comes into view and when the song changes; they come in, never pop. */
+@Composable
+private fun PluginStatus(vm: PlayerViewModel, songId: String?) {
+    val shown = LocalPlayerShown.current
+    LaunchedEffect(shown, songId) { if (shown) vm.askPluginStatus() }
+    val lines by vm.pluginStatus.collectAsStateWithLifecycle()
+    val ms = if (reduceMotion()) 0 else 220
+    androidx.compose.animation.AnimatedVisibility(
+        lines.isNotEmpty(),
+        enter = if (ms == 0) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(ms)) + androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(ms)),
+        exit = if (ms == 0) androidx.compose.animation.ExitTransition.None else androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(ms)) + androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(ms)),
+    ) {
+        val look = LocalLook.current
+        Column(Modifier.fillMaxWidth().padding(horizontal = PLAYER_GUTTER), horizontalAlignment = Alignment.CenterHorizontally) {
+            lines.forEach { l ->
+                LookText(l, { look.color(CoverLook.ON_VARIANT) }, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            }
+        }
     }
 }
 

@@ -82,7 +82,7 @@ class TestBridge : BroadcastReceiver() {
                 answer(runCatching {
                     kotlinx.coroutines.runBlocking {
                         when (arg) {
-                            "install" -> host.install(value)
+                            "install" -> host.installPreview(host.previewFile(value))
                             "turn" -> value.split(" ").let { (id, on) -> host.turn(id, on == "on"); "ok" }
                             // Every plugin and added repo gone, for a check that starts afresh.
                             "reset" -> {

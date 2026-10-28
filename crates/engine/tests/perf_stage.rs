@@ -27,9 +27,9 @@ fn perf_stage() {
     let dir = nori_testdir::TempDir::new("perf-stage");
     let plugins = nori_plugins::Plugins::open(dir.path().to_path_buf(), std::sync::Arc::new(Unheard));
     plugins.install(&nori_plugins::testing::fixture("")).unwrap();
-    plugins.set_enabled(nori_plugins::testing::FIXTURE, true);
+    plugins.turn(nori_plugins::testing::FIXTURE.into(), true);
     // Its gain grows with each block; held at a quiet one, the music stays in range.
-    plugins.set_row(nori_plugins::testing::FIXTURE, "gain", nori_plugins::Value::Level(0.0));
+    plugins.set(nori_plugins::testing::FIXTURE.into(), "gain".into(), nori_plugins::Value::Level(0.0));
     let stages = plugins.stages();
     let long = music(300.0, 91);
     let one = [("a", &long[..])];

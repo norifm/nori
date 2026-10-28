@@ -100,8 +100,8 @@ fn a_stage_runs_and_its_state_is_kept() {
     let plugins = Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()));
     plugins.install(&fixture("")).unwrap();
     assert!(plugins.stages().is_empty(), "installed off");
-    plugins.set_enabled(ID, true);
-    plugins.set_row(ID, "gain", Value::Level(0.25));
+    plugins.turn(ID.into(), true);
+    plugins.set(ID.into(), "gain".into(), Value::Level(0.25));
     let specs = plugins.stages();
     assert_eq!(specs.len(), 1);
     assert_eq!(specs[0].inputs, vec![0.25], "its rows are its inputs");
@@ -144,13 +144,13 @@ fn its_lifecycle_overrides_and_reaches_only_its_hosts() {
     plugins.set_transport(Some(session.web.clone()));
     plugins.install(&fixture("")).unwrap();
     assert!(plugins.overrides().is_empty());
-    plugins.set_enabled(ID, true);
+    plugins.turn(ID.into(), true);
     let w = plugins.worker(ID).unwrap();
     // Calls run in order: once this one answers, `start` has run.
     assert_eq!(nori_tasks::block_on(w.call(|_, _| Ok(1))), Some(1));
     assert_eq!(plugins.overrides(), vec![("playback.speed".to_string(), "1.25".to_string())], "only the key it may override");
     assert_eq!(*session.web.asked.lock().unwrap(), vec!["https://allowed.example/a".to_string()], "the other host is refused before any request");
-    plugins.set_enabled(ID, false);
+    plugins.turn(ID.into(), false);
     assert!(plugins.overrides().is_empty(), "off, it overrides nothing");
     assert!(session.laid.lock().unwrap().len() >= 2, "each change is laid over the settings again");
 
@@ -247,9 +247,9 @@ fn updates_come_daily_from_a_plugins_own_repo_unless_held() {
     assert!(plugins.updates_due(2 * day));
 
     serve(&["0.3.0", "0.1.0"]);
-    plugins.hold(ID, true);
+    plugins.hold(ID.into(), true);
     assert!(nori_tasks::block_on(plugins.update(2 * day)).is_empty(), "held");
-    plugins.hold(ID, false);
+    plugins.hold(ID.into(), false);
     session.web.asked.lock().unwrap().clear();
     let done = nori_tasks::block_on(plugins.update(3 * day));
     assert_eq!(done.iter().map(|u| (u.from.as_str(), u.to.as_str())).collect::<Vec<_>>(), vec![("0.1.0", "0.3.0")]);
@@ -264,7 +264,7 @@ fn a_call_no_one_waits_for_is_skipped() {
     let session = Arc::new(Session::default());
     let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
     plugins.install(&fixture("")).unwrap();
-    plugins.set_enabled(ID, true);
+    plugins.turn(ID.into(), true);
     let w = plugins.worker(ID).unwrap();
     let ran = Arc::new(Mutex::new(Vec::new()));
     let (go, held) = std::sync::mpsc::channel::<()>();
@@ -320,7 +320,7 @@ fn slots_ask_the_plugins_that_fill_them() {
     let song = |title: &str| nori_model::Song { id: "s".into(), title: title.into(), ..Default::default() };
     assert!(plugins.menu_entries(ItemKind::Song, "en".into()).is_empty(), "off, it fills nothing");
     assert_eq!(nori_tasks::block_on(plugins.artwork(song("loop"))), None);
-    plugins.set_enabled(ID, true);
+    plugins.turn(ID.into(), true);
 
     let entries = plugins.menu_entries(ItemKind::Song, "en".into());
     assert_eq!(entries, vec![MenuEntry { plugin: ID.into(), action: "count".into(), label: "Count letters".into(), glyph: nori_plugins::Glyph::Info }]);

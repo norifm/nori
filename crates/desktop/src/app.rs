@@ -154,6 +154,11 @@ macro_rules! on {
     }};
 }
 
+/// The kinds of item plugins add menu actions to, by `Card::kind`.
+const MENU_KINDS: [nori_plugins::ItemKind; 4] = [nori_plugins::ItemKind::Album, nori_plugins::ItemKind::Artist, nori_plugins::ItemKind::Playlist, nori_plugins::ItemKind::Song];
+/// A song menu line's kind (`SongGo::kind`) for plugin action 0; the next ones follow.
+const PLUGIN_MENU: i32 = 100;
+
 /// Library lists as loaded, before the find filter.
 #[derive(Default)]
 struct Lists {
@@ -448,6 +453,16 @@ pub struct App {
     facts: crate::settings::Facts,
     /// Settings › Plugins as last read.
     plugged: crate::settings::Plugged,
+    /// The plugin its install sheet shows.
+    preview: Option<nori_plugins::PluginPreview>,
+    /// The plugins' menu actions by `Card::kind` ([`MENU_KINDS`]).
+    plugin_menus: [Vec<nori_plugins::MenuEntry>; 4],
+    /// The song whose details are shown, for the plugins' lines that come after.
+    details_song: Option<String>,
+    /// The plugin's still sleeve being fetched for the song playing.
+    sleeve: Option<Ticket>,
+    /// Now Playing was open when last seen: its opening asks the plugins' status lines.
+    full_seen: bool,
     /// The engine is in its shallow equalizer-tuning buffer.
     tuning: bool,
     lyrics: Option<crate::lyrics::SongLyrics>,
@@ -676,6 +691,11 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             lyrics_viewed: false,
             facts: crate::settings::Facts::default(),
             plugged: Default::default(),
+            preview: None,
+            plugin_menus: Default::default(),
+            details_song: None,
+            sleeve: None,
+            full_seen: false,
             lists: Lists::default(),
             find: String::new(),
             tuning: false,
@@ -751,6 +771,8 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         a.compositor.set_focus_source(move || lyrics_focus(&weak.upgrade()?));
         // Plugins reach the web before any profile opens; a session's own transport takes over.
         a.kinds().set_transport(a.http.clone());
+        let tx = a.tx.clone();
+        nori_host::desktop::plugins(&a.data).watched.hear(move |n| tx.send(Msg::Note { text: n.words, error: n.problem }));
         a.plugins_read();
         let wake = a.me.clone();
         a.compositor.on_wake(move || wake.with(|a| a.repaint()));
@@ -862,6 +884,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_play_playlist, h, |a, id| a.play_fetch(Fetch::Playlist(id.into())));
     on!(ui.on_play_mix, h, |a, id| a.play_fetch(Fetch::Mix(id.into())));
     on!(ui.on_queue_card, h, |a, kind, id, next| a.queue_card(kind, id.into(), next));
+    let plugin_menus = ui.global::<crate::PluginMenus>();
+    on!(plugin_menus.on_run, h, |a, kind, i, id, title| a.plugin_card_menu(kind, i as usize, id.into(), title.into()));
     on!(ui.on_song, h, |a, list, i, how| a.song(list, i as usize, how));
     let menu = h.clone();
     ui.on_song_menu(move |list, i| {
@@ -945,6 +969,11 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.mirror();
         a.place_player();
         a.devices_watched();
+        let full = a.ui().get_full_player();
+        if full && !a.full_seen {
+            a.ask_player_status();
+        }
+        a.full_seen = full;
     });
     on!(ui.on_pick_device, h, |a, id| a.pick_device(id.to_string()));
     let go = ui.global::<crate::Go>();
@@ -2156,7 +2185,8 @@ impl App {
             let filled = matches!(m.action, A::Favourite { on: false });
             SongGo { title: words::song_action(&m.action).into(), kind, id: id.into(), more: m.more, enabled: m.enabled, filled }
         });
-        lines.collect()
+        let plugins = self.plugin_menus[3].iter().enumerate().map(|(i, e)| SongGo { title: e.label.as_str().into(), kind: PLUGIN_MENU + i as i32, id: SharedString::default(), more: false, enabled: true, filled: false });
+        lines.chain(plugins).collect()
     }
 
     /// Plays song `i` of `list` (`how` -1), or does its menu's line `how` (`SongGo::kind`).
@@ -2230,10 +2260,16 @@ impl App {
             13 => self.share(one.id),
             14 => {
                 let ui = self.ui();
-                let rows = words::details(&one).into_iter().map(|(label, value)| Detail { label: label.into(), value: value.into() });
+                let rows = words::details(&one).into_iter().map(|(label, value)| Detail { label: label.into(), value: value.into(), link: SharedString::default() });
                 ui.set_details(ModelRc::new(VecModel::from(rows.collect::<Vec<_>>())));
                 ui.set_details_open(true);
+                self.details_song = Some(one.id.clone());
+                if self.plugins_fill(nori_plugins::Place::SongInfo) {
+                    let (host, tx) = (self.plugin_host().clone(), self.tx.clone());
+                    nori_host::spawn("nori-plugin-info", move || tx.send(Msg::SongInfo { song: one.id.clone(), groups: nori_core::transport::block_on(host.song_info(one, "en".into())) }));
+                }
             }
+            k if k >= PLUGIN_MENU => self.plugin_menu_run(3, (k - PLUGIN_MENU) as usize, nori_plugins::Items::Songs(vec![one])),
             _ => {}
         }
     }
@@ -2576,11 +2612,72 @@ impl App {
         }
         self.plugged.cards = cards;
         self.plugged.repos = host.repos();
+        self.plugin_menus = MENU_KINDS.map(|k| host.menu_entries(k, "en".into()));
         let ui = self.ui();
         ui.set_login_kinds(login_kinds(self.kinds()));
         let prefs = crate::session::app().settings.current().unwrap_or_default();
-        ui.set_plugin_rows(crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, crate::look::Today::now()));
+        let today = crate::look::Today::now();
+        ui.set_plugin_rows(crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, today));
+        ui.set_device_plugin_rows(crate::settings::device_rows(&host.device_cards("en".into()), &prefs, &self.facts, today));
+        let menus = ui.global::<crate::PluginMenus>();
+        let labels = |k: usize| ModelRc::new(VecModel::from(self.plugin_menus[k].iter().map(|e| SharedString::from(e.label.as_str())).collect::<Vec<_>>()));
+        menus.set_album(labels(0));
+        menus.set_artist(labels(1));
+        menus.set_playlist(labels(2));
+        self.devices_shown();
         self.settings_shown();
+    }
+
+    /// Whether an enabled plugin fills `place`: only then are the plugins asked for it.
+    fn plugins_fill(&self, place: nori_plugins::Place) -> bool {
+        self.plugin_host().installed().iter().any(|i| i.enabled && i.manifest.places.contains(&place))
+    }
+
+    /// Runs plugin menu action `i` of the menus of `Card::kind` `kind` on `items`, off this thread; what
+    /// it says arrives as a notice.
+    fn plugin_menu_run(&self, kind: usize, i: usize, items: nori_plugins::Items) {
+        let Some(entry) = self.plugin_menus.get(kind).and_then(|m| m.get(i)).cloned() else { return };
+        let host = self.plugin_host().clone();
+        nori_host::spawn("nori-plugin-menu", move || nori_core::transport::block_on(host.run_menu(entry, items)));
+    }
+
+    /// Runs plugin menu action `i` of an album's, artist's or playlist's menu (`Card::kind` `kind`) on
+    /// item `id` named `name`.
+    fn plugin_card_menu(&self, kind: i32, i: usize, id: String, name: String) {
+        use nori_plugins::Items;
+        let items = match kind {
+            0 => Items::Albums(vec![self.lists.albums.iter().find(|a| a.id == id).cloned().unwrap_or(nori_core::Album { id, name, ..Default::default() })]),
+            1 => Items::Artists(vec![nori_core::Artist { id, name, ..Default::default() }]),
+            2 => Items::Playlists(vec![self.lists.playlists.iter().find(|p| p.id == id).cloned().unwrap_or(nori_core::Playlist { id, name, ..Default::default() })]),
+            _ => return,
+        };
+        self.plugin_menu_run(kind as usize, i, items);
+    }
+
+    /// Asks the plugins for their lines under the player's output, off this thread: on a new song, and as
+    /// Now Playing opens.
+    fn ask_player_status(&self) {
+        if !self.plugins_fill(nori_plugins::Place::PlayerStatus) {
+            return self.ui().set_plugin_status(ModelRc::default());
+        }
+        let (host, tx, song) = (self.plugin_host().clone(), self.tx.clone(), self.heard.clone());
+        nori_host::spawn("nori-plugin-status", move || tx.send(Msg::PlayerStatus { song, lines: nori_core::transport::block_on(host.player_status()) }));
+    }
+
+    /// Asks the plugins for `song`'s sleeve, off this thread; a still one is fetched and drawn as its
+    /// cover in Now Playing, a loop keeps the cover (Slint draws no video).
+    fn ask_sleeve(&mut self, song: Song) {
+        self.sleeve = None;
+        self.ui().set_sleeved(false);
+        if !self.plugins_fill(nori_plugins::Place::Artwork) {
+            return;
+        }
+        let (host, tx) = (self.plugin_host().clone(), self.tx.clone());
+        nori_host::spawn("nori-plugin-artwork", move || {
+            if let Some(a) = nori_core::transport::block_on(host.artwork(song.clone())).filter(|a| !a.looping) {
+                tx.send(Msg::Artwork { song: song.id, url: a.url });
+            }
+        });
     }
 
     /// Asks before `act` is done: the sheet's button sends it back to [`App::plugin_typed`].
@@ -2611,7 +2708,7 @@ impl App {
         let host = self.plugin_host();
         match (act, v) {
             (PluginAct::Turn(id), nori_plugins::Value::Switch(on)) => host.turn(id, on),
-            (PluginAct::Hold(id), nori_plugins::Value::Switch(on)) => host.hold_at(id, on),
+            (PluginAct::Hold(id), nori_plugins::Value::Switch(on)) => host.hold(id, on),
             (PluginAct::Row(id, row), v) => host.set(id, row, v),
             _ => return,
         }
@@ -2660,12 +2757,12 @@ impl App {
             }
             PluginAct::Get(offer, version) => {
                 let crate::settings::Shelf::Read(offers) = &self.plugged.shelf else { return };
-                let Some(o) = offers.offers.get(offer as usize) else { return };
-                let Some(v) = o.versions.get(version as usize) else { return };
-                let note: Vec<String> = o.about.iter().cloned().chain([format!("{} · {}", words::repo_name(&o.repo), v.released.as_deref().unwrap_or(&v.version))]).collect();
-                return self.confirm(&words::install_version(&o.name, &v.version), &note.join("\n\n"), words::INSTALL, PluginAct::Get(offer, version));
+                let Some(v) = offers.offers.get(offer as usize).and_then(|o| o.versions.get(version as usize)).cloned() else { return };
+                let tx = self.tx.clone();
+                nori_host::spawn("nori-plugin-get", move || tx.send(Msg::PluginPreview(nori_core::transport::block_on(host.preview_version(v, "en".into())))));
+                return;
             }
-            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::TrustRepo(_) => return,
+            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::TrustRepo(_) | PluginAct::InstallPreview => return,
         }
         self.plugins_read();
     }
@@ -2679,7 +2776,13 @@ impl App {
             PluginAct::Row(id, row) => host.set(id, row, nori_plugins::Value::Text(text)),
             PluginAct::Install => {
                 let (tx, path) = (self.tx.clone(), text.trim().to_string());
-                nori_host::spawn("nori-plugin-install", move || tx.send(Msg::PluginInstalled(host.install_from(path))));
+                nori_host::spawn("nori-plugin-preview", move || tx.send(Msg::PluginPreview(host.preview_file(path, "en".into()))));
+                return;
+            }
+            PluginAct::InstallPreview => {
+                let Some(p) = self.preview.take() else { return };
+                let tx = self.tx.clone();
+                nori_host::spawn("nori-plugin-install", move || tx.send(Msg::PluginInstalled(host.install_preview(p))));
                 return;
             }
             PluginAct::AddRepo if !text.trim().is_empty() => {
@@ -2701,14 +2804,6 @@ impl App {
             // What the sheets asked, answered.
             PluginAct::Remove(id) => host.uninstall(id),
             PluginAct::RemoveRepo(url) => host.remove_repo(url),
-            PluginAct::Turn(id) => host.turn(id, true),
-            PluginAct::Get(offer, version) => {
-                let crate::settings::Shelf::Read(offers) = &self.plugged.shelf else { return };
-                let Some(v) = offers.offers.get(offer as usize).and_then(|o| o.versions.get(version as usize)).cloned() else { return };
-                let tx = self.tx.clone();
-                nori_host::spawn("nori-plugin-get", move || tx.send(Msg::PluginInstalled(nori_core::transport::block_on(host.install_version(v)))));
-                return;
-            }
             _ => return,
         }
         self.plugins_read();
@@ -2960,16 +3055,49 @@ impl App {
             }
             Msg::PluginInstalled(r) => {
                 self.plugins_read();
-                match r.map(|id| self.plugged.cards.iter().find(|c| c.id == id).cloned()) {
-                    // Installed off: what it is and reaches, before it is turned on.
-                    Ok(Some(c)) if !c.enabled => {
-                        let note: Vec<String> = c.about.iter().cloned().chain([words::plugin_is(&c.points, !c.overrides.is_empty()), words::plugin_reach(&c.net, &c.overrides), words::INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect();
-                        self.confirm(&words::installed_off(&c.name), &note.join("\n\n"), words::TURN_ON, crate::settings::PluginAct::Turn(c.id));
-                    }
+                match r {
                     Ok(_) => self.say(words::PLUGIN_INSTALLED, false),
                     Err(e) => self.say(&words::plugin_refused(&e), true),
                 }
             }
+            // What it is and may reach, before it is installed.
+            Msg::PluginPreview(Ok(p)) => {
+                self.confirm(&words::install_version(&p.card.name, &p.card.version), &words::preview_note(&p).join("\n\n"), words::INSTALL, crate::settings::PluginAct::InstallPreview);
+                self.preview = Some(p);
+            }
+            Msg::PluginPreview(Err(e)) => self.say(&words::plugin_refused(&e), true),
+            Msg::SongInfo { song, groups } => {
+                let ui = self.ui();
+                if !ui.get_details_open() || self.details_song.as_ref() != Some(&song) {
+                    return;
+                }
+                let mut rows: Vec<Detail> = ui.get_details().iter().collect();
+                rows.extend(groups.into_iter().flat_map(|g| {
+                    let name = SharedString::from(g.name);
+                    g.lines.into_iter().map(move |l| Detail { label: name.clone(), value: l.words.into(), link: l.link.unwrap_or_default().into() })
+                }));
+                ui.set_details(ModelRc::new(VecModel::from(rows)));
+            }
+            Msg::PlayerStatus { song, lines } if song == self.heard => {
+                self.ui().set_plugin_status(ModelRc::new(VecModel::from(lines.into_iter().map(SharedString::from).collect::<Vec<_>>())));
+            }
+            Msg::PlayerStatus { .. } => {}
+            Msg::Artwork { song, url } if Some(&song) == self.heard.as_ref() => {
+                let Some(covers) = self.session.as_ref().and_then(|s| s.covers.clone()) else { return };
+                let (tx, px) = (self.tx.clone(), cover_px(CoverSize::Large));
+                self.sleeve = Some(covers.request(&url, px, px, move |r| {
+                    if let Ok(image) = r {
+                        tx.send(Msg::Sleeve { song, image });
+                    }
+                }));
+            }
+            Msg::Artwork { .. } => {}
+            Msg::Sleeve { song, image } if Some(&song) == self.heard.as_ref() => {
+                let ui = self.ui();
+                ui.set_sleeve(self.compositor.picture(&image.pixels, image.width, image.height));
+                ui.set_sleeved(true);
+            }
+            Msg::Sleeve { .. } => {}
             Msg::PluginOffers(o) => {
                 self.plugged.shelf = crate::settings::Shelf::Read(o);
                 self.plugins_read();
@@ -3257,7 +3385,7 @@ impl App {
         let ui = self.ui();
         let remote = self.session.as_ref().and_then(|s| s.remote());
         // A jam guest's music is the jam's; it moves to no other device.
-        ui.set_devices_on(remote.is_some() && !self.guest());
+        ui.set_devices_on((remote.is_some() || ui.get_device_plugin_rows().row_count() > 0) && !self.guest());
         let Some(r) = remote.filter(|_| devices_open(&ui)) else { return };
         let active = self.there().map(|e| e.mirror.id.as_str());
         let here = std::iter::once(words::device_row(None, active.is_none()));
@@ -3680,8 +3808,19 @@ impl App {
     /// Shows `song` as the one playing, and asks for its lyrics.
     fn song_shown(&mut self, song: Option<Song>) {
         let ui = self.ui();
+        let changed = self.heard != song.as_ref().map(|s| s.id.clone());
         self.heard = song.as_ref().map(|s| s.id.clone());
         self.song = song;
+        if changed {
+            self.ask_player_status();
+            match self.song.clone() {
+                Some(one) => self.ask_sleeve(one),
+                None => {
+                    self.sleeve = None;
+                    ui.set_sleeved(false);
+                }
+            }
+        }
         let song = self.song.clone().unwrap_or_default();
         ui.set_has_song(self.song.is_some());
         ui.set_now_title(words::title(&song.title).into());
@@ -4000,6 +4139,20 @@ fn devices_set(ui: &AppWindow, rows: Vec<crate::DeviceRow>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The test plugin's song action is on the songs' menus alone, and its page's rows on the devices panel.
+    #[test]
+    fn a_plugins_menu_actions_and_device_rows_come_from_its_manifest() {
+        let dir = nori_testdir::TempDir::new("desktop-plugin-slots");
+        let host = nori_plugins::open(dir.path().join("plugins"), nori_core::settings_store::Settings::new(), Arc::new(nori_host::desktop::Watched::default()));
+        let id = host.install_from(nori_plugins::testing::fixture("").to_string_lossy().into_owned()).unwrap();
+        host.turn(id, true);
+        let labels: Vec<Vec<String>> = MENU_KINDS.iter().map(|k| host.menu_entries(*k, "en".into()).into_iter().map(|e| e.label).collect()).collect();
+        assert_eq!(labels, [vec![], vec![], vec![], vec!["Count letters".to_string()]]);
+        let rows = crate::settings::device_rows(&host.device_cards("en".into()), &Default::default(), &Default::default(), crate::look::Today { month: 10, day: 19, southern: false });
+        let titles: Vec<String> = rows.iter().map(|r| r.title.to_string()).collect();
+        assert_eq!(titles, ["TEST", "Gain: 0.5"]);
+    }
 
     fn dressed() -> crate::look::Look {
         crate::look::plain(&nori_core::settings::StoredPrefs::default(), true, crate::look::Today { month: 10, day: 19, southern: false })
@@ -4625,6 +4778,10 @@ mod tests {
         let did = Rc::new(RefCell::new(Vec::new()));
         let seen = did.clone();
         ui.on_queue_card(move |kind, id, next| seen.borrow_mut().push(format!("card {kind} {id} {next}")));
+        let plugins = ui.global::<crate::PluginMenus>();
+        plugins.set_album(ModelRc::new(VecModel::from(vec![SharedString::from("Count tracks")])));
+        let seen = did.clone();
+        plugins.on_run(move |kind, i, id, title| seen.borrow_mut().push(format!("plugin {kind} {i} {id} {title}")));
         let menu = vec![crate::SongGo { kind: 6, title: "Add to queue".into(), enabled: true, ..Default::default() }];
         ui.on_song_menu(move |_, _| ModelRc::new(VecModel::from(menu.clone())));
         let seen = did.clone();
@@ -4645,11 +4802,16 @@ mod tests {
         settle();
         press(ui.window(), x + 60.0, entry(album, 1.0), Left);
         settle();
+        // A plugin's action follows the album's own lines.
+        press(ui.window(), x, album, Right);
+        settle();
+        press(ui.window(), x + 60.0, entry(album, 3.0), Left);
+        settle();
         press(ui.window(), x, song, Right);
         settle();
         press(ui.window(), x + 60.0, entry(song, 1.0), Left);
         settle();
-        assert_eq!(*did.borrow(), ["card 0 al1 true", "song 4 2 6"]);
+        assert_eq!(*did.borrow(), ["card 0 al1 true", "plugin 0 0 al1 al1", "song 4 2 6"]);
     }
 
     /// A queue song dragged two rows down glides into its slot, then is moved once; on the frame the list

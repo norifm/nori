@@ -114,10 +114,9 @@ fn error(kind: types::ErrorKind, detail: impl Into<String>) -> types::Error {
 impl types::Host for Host {}
 
 impl log::Host for Host {
-    fn write(&mut self, level: log::Level, line: String) {
-        let line = format!("plugin {}: {line}", self.id);
-        let _ = level;
-        nori_model::alog::info(&line);
+    /// nori's log has one level.
+    fn write(&mut self, _level: log::Level, line: String) {
+        nori_model::alog::info(&format!("plugin {}: {line}", self.id));
     }
 }
 
@@ -215,16 +214,7 @@ impl settings::Host for Host {
 impl rows::Host for Host {
     fn get(&mut self, row: String) -> Option<types::Value> {
         let stored = self.store.get(&format!("{}{row}", crate::ROWS)).and_then(|b| Value::decode(&b));
-        let default = || {
-            let r = self.manifest.rows.iter().find(|r| r.id == row)?;
-            let d = r.default?;
-            Some(match r.kind {
-                crate::RowKind::Switch => Value::Switch(d != 0.0),
-                crate::RowKind::Choice => Value::Choice(d as u32),
-                _ => Value::Level(d),
-            })
-        };
-        stored.or_else(default).map(Into::into)
+        stored.or_else(|| self.manifest.rows.iter().find(|r| r.id == row)?.initial()).map(Into::into)
     }
 
     fn set_status(&mut self, row: String, words: String, args: Vec<String>) {

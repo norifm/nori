@@ -142,6 +142,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
         }
 
         DevicesSection(vm)
+        PluginDeviceSections(androidx.lifecycle.viewmodel.compose.viewModel())
 
         GroupLabel(say.profiles)
         val profiles by vm.profiles.collectAsStateWithLifecycle()

@@ -11,6 +11,7 @@ use nori_core::settings::SavedServer;
 use nori_host::player::{Playback, QueueShown};
 use nori_host::remote::Elsewhere;
 use nori_http::Http;
+use nori_plugins::ItemKind;
 use ratatui::crossterm::event::{self, Event as TermEvent};
 use ratatui_image::picker::Picker;
 
@@ -202,6 +203,10 @@ pub fn run(o: Options) -> Result<(), String> {
     let mut r = Runner { http: Http::new(), tx, session: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
     // Plugins reach the web before any profile opens; a session's own transport takes over.
     app.settings.own.kinds.set_transport(r.http.clone());
+    let notices = r.tx.clone();
+    nori_host::desktop::plugins(&r.o.data).watched.hear(move |n| {
+        let _ = notices.send(Msg::Note { text: n.words, error: n.problem });
+    });
     match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => {
@@ -260,6 +265,7 @@ impl Runner {
                 self.remote_read(app);
                 self.follow(app);
                 self.update_plugins();
+                self.plugin(app, crate::app::PluginCmd::Read);
             }
             Err(e) => {
                 app.session_ended();
@@ -355,9 +361,22 @@ impl Runner {
         let tx = self.tx.clone();
         match c {
             PluginCmd::Read => {}
-            PluginCmd::Install(path) => nori_host::spawn("nori-plugin-install", move || {
-                let _ = tx.send(Msg::Installed(host.install_from(path)));
+            PluginCmd::Install(path) => nori_host::spawn("nori-plugin-preview", move || {
+                let _ = tx.send(Msg::Preview(host.preview_file(path, "en".into())));
             }),
+            PluginCmd::InstallPreview(p) => nori_host::spawn("nori-plugin-install", move || {
+                let _ = tx.send(Msg::Installed(host.install_preview(*p)));
+            }),
+            PluginCmd::Menu(entry, items) => {
+                return nori_host::spawn("nori-plugin-menu", move || block_on(host.run_menu(entry, items)));
+            }
+            PluginCmd::Ask(song) => {
+                return nori_host::spawn("nori-plugin-slots", move || {
+                    let info = block_on(host.song_info((*song).clone(), "en".into()));
+                    let status = block_on(host.player_status());
+                    let _ = tx.send(Msg::Slots { song: song.id, info, status });
+                });
+            }
             PluginCmd::Turn(id, on) => host.turn(id, on),
             PluginCmd::Place(id, at) => host.place(id, at),
             PluginCmd::Uninstall(id) => host.uninstall(id),
@@ -373,10 +392,10 @@ impl Runner {
                 let crate::settings_view::Shelf::Read(offers) = &app.settings.own.shelf else { return };
                 let Some(v) = offers.offers.get(offer as usize).and_then(|o| o.versions.get(version as usize)).cloned() else { return };
                 nori_host::spawn("nori-plugin-get", move || {
-                    let _ = tx.send(Msg::Installed(block_on(host.install_version(v))));
+                    let _ = tx.send(Msg::Preview(block_on(host.preview_version(v, "en".into()))));
                 });
             }
-            PluginCmd::Hold(id, held) => host.hold_at(id, held),
+            PluginCmd::Hold(id, held) => host.hold(id, held),
             PluginCmd::AddRepo(url) => {
                 host.add_repo(url);
                 return self.plugin(app, PluginCmd::Look);
@@ -392,8 +411,11 @@ impl Runner {
                 o.installed = cards.iter().find(|c| c.id == o.id).map(|c| c.version.clone());
             }
         }
+        app.slots.asked = cards.iter().any(|c| c.enabled && c.points.iter().any(|p| p == "slots"));
         own.plugins = cards;
         own.repos = host.repos();
+        app.slots.menu = [ItemKind::Song, ItemKind::Album, ItemKind::Artist, ItemKind::Playlist].into_iter().flat_map(|k| host.menu_entries(k, "en".into()).into_iter().map(move |e| (k, e))).collect();
+        app.devices.plugins = host.device_cards("en".into());
         app.settings.invalidate();
         app.dirty = true;
     }

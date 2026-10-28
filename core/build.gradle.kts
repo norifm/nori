@@ -169,6 +169,8 @@ dependencies {
     api(libs.media3.exoplayer)
     api(libs.media3.session)
     implementation(libs.media3.datasource.okhttp)
+    // A plugin's looping sleeve may be HLS (MotionPlayer); nothing of it is loaded until one plays.
+    implementation(libs.media3.exoplayer.hls)
     api(libs.okhttp)
     api(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.guava)

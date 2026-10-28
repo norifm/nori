@@ -10,6 +10,7 @@ import dev.nori.music.ffi.plugins.Offer
 import dev.nori.music.ffi.plugins.Refusal
 import dev.nori.music.ffi.plugins.RepoFailure
 import dev.nori.music.ffi.plugins.Value
+import dev.nori.music.ffi.plugins.PluginPreview
 import dev.nori.music.ffi.plugins.Version
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,11 +43,22 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     /** Why the last install was refused, in words. */
     val refused: StateFlow<String?> = _refused
 
-    private val _asking = MutableStateFlow<String?>(null)
-    /** A plugin just installed and still off, whose permissions are shown before it is turned on. */
-    val asking: StateFlow<String?> = _asking
+    private val _preview = MutableStateFlow<PluginPreview?>(null)
+    /** A package read but not installed: its install sheet shows what it is and may reach. */
+    val preview: StateFlow<PluginPreview?> = _preview
 
-    fun stopAsking() { _asking.value = null }
+    /** The sheet put away: nothing is installed. */
+    fun dropPreview() { _preview.value = null }
+
+    /** Installs what the sheet showed, off when new. */
+    fun installPreview() {
+        val p = _preview.value ?: return
+        _preview.value = null
+        viewModelScope.launch { refusing { host.installPreview(p) }; loadOffers() }
+    }
+
+    /** Device rows and slots' plugins, for the devices page. */
+    val deviceCards = host.deviceCards
 
     /** Rows set in the order they were set: a slider's steps must not land out of order. */
     private val writes = Dispatchers.IO.limitedParallelism(1)
@@ -61,39 +73,40 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { _offers.value = host.offers().let { OffersUi(false, it.offers, it.failed) } }
     }
 
-    /** Copies the picked package to the cache and installs it from there. */
-    fun installFile(uri: Uri) = viewModelScope.launch {
+    /** Copies the picked package to the cache and shows its install sheet from there. */
+    fun previewFile(uri: Uri) = viewModelScope.launch {
         val file = java.io.File(getApplication<Application>().cacheDir, "picked.noriplugin")
         val copied = withContext(Dispatchers.IO) {
             runCatching { getApplication<Application>().contentResolver.openInputStream(uri)?.use { i -> file.outputStream().use { i.copyTo(it) } } }.getOrNull() != null
         }
         if (!copied) { _refused.value = res.getString(R.string.plugins_refused_unreadable); return@launch }
-        installing { host.install(file.path) }
-        withContext(Dispatchers.IO) { file.delete() }
+        previewing { host.previewFile(file.path) }
     }
 
-    /** Installs [offer]'s newest version. */
-    fun installOffer(offer: Offer) = offer.versions.firstOrNull()?.let(::installVersion)
+    /** Shows the install sheet of [offer]'s newest version. */
+    fun previewOffer(offer: Offer) = offer.versions.firstOrNull()?.let(::previewVersion)
 
-    /** Installs [version], newer or older than the one here. */
-    fun installVersion(version: Version) = viewModelScope.launch {
-        installing { host.installVersion(version) }
-        loadOffers()
+    /** Shows the install sheet of [version], newer or older than the one here. */
+    fun previewVersion(version: Version) = viewModelScope.launch { previewing { host.previewVersion(version) } }
+
+    private suspend fun previewing(read: suspend () -> PluginPreview) {
+        _preview.value = refusing(read)
     }
 
     fun hold(id: String, held: Boolean) = viewModelScope.launch { host.hold(id, held) }
 
-    /** Installs, then asks to turn on a plugin that is off; a refusal is said instead. */
-    private suspend fun installing(install: suspend () -> String) {
+    /** [step]'s answer; a refusal is said instead, and null. */
+    private suspend fun <T> refusing(step: suspend () -> T): T? {
         _refused.value = null
-        try {
-            val id = install()
-            if (cards.value.firstOrNull { it.id == id }?.enabled == false) _asking.value = id
+        return try {
+            step()
         } catch (e: Refusal) {
             _refused.value = refusalWords(e)
+            null
         } catch (e: Exception) {
             dev.nori.music.NoriLog.w("plugin install: ${e.message}")
             _refused.value = res.getString(R.string.plugins_refused_other)
+            null
         }
     }
 

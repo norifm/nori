@@ -39,7 +39,7 @@ impl nori_plugins::Client for Quiet {
 fn kinds(dir: &std::path::Path, settings: Arc<Settings>) -> Arc<nori_core::providers::Kinds> {
     let plugins = nori_plugins::open(dir.join("plugins"), settings, Arc::new(Quiet));
     plugins.install(&nori_plugins::testing::fixture("")).unwrap();
-    plugins.set_enabled(nori_plugins::testing::FIXTURE, true);
+    plugins.turn(nori_plugins::testing::FIXTURE.into(), true);
     nori_core::providers::Kinds::with_plugins(plugins)
 }
 fn client(path: String, profile: SavedServer, settings: Arc<Settings>) -> Arc<Client> {

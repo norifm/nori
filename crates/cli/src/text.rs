@@ -84,7 +84,6 @@ pub fn confirm_keys(yes: &str) -> String {
 
 pub const ADD: &str = "Add";
 pub const REMOVE: &str = "Remove";
-pub const TURN_ON: &str = "Turn on";
 
 /// Asks before removing plugin `name`.
 pub fn remove_plugin(name: &str) -> String {
@@ -97,9 +96,20 @@ pub fn install_version(name: &str, version: &str) -> String {
     format!("Install {name} {version}?")
 }
 
-/// Says plugin `name` was installed, off.
-pub fn installed_off(name: &str) -> String {
-    format!("{name} is installed")
+/// A line plugin `name` adds to a song's info, with where its link goes.
+pub fn info_line(name: &str, l: &nori_plugins::InfoLine) -> String {
+    match &l.link {
+        Some(url) => format!("{name} · {} · {url}", l.words),
+        None => format!("{name} · {}", l.words),
+    }
+}
+
+/// Where a plugin to install comes from: the repo at `url`, which will update it.
+pub fn from_repo(url: &str) -> String {
+    if url == nori_plugins::OFFICIAL {
+        return "From nori's own repo, which keeps it up to date.".into();
+    }
+    format!("From {}, which keeps it up to date.", host(url))
 }
 pub const INSTALLED_OFF: &str = "It stays off until you turn it on.";
 
@@ -176,20 +186,23 @@ pub fn plugin_refused(r: &nori_plugins::Refusal) -> String {
     format!("Not installed: {why}")
 }
 
-/// A plugin's level at its step: whole numbers for whole steps.
-pub fn level(v: f32, step: f32) -> String {
-    let places = if step >= 1.0 { 0 } else { (-step.log10()).ceil().clamp(1.0, 3.0) as usize };
-    format!("{v:.places$}")
+/// A plugin's level with `decimals` digits, its unit after it.
+pub fn level(v: f64, decimals: u8, unit: Option<&str>) -> String {
+    let places = decimals as usize;
+    match unit {
+        Some(u) => format!("{v:.places$} {u}"),
+        None => format!("{v:.places$}"),
+    }
 }
 
-/// A plugin's status row's value; `options` name a choice's.
-pub fn plugin_value(v: &nori_plugins::Value, options: &[String]) -> String {
+/// A plugin's status row's value.
+pub fn plugin_value(v: &nori_plugins::Value, r: &nori_plugins::PluginRow) -> String {
     use nori_plugins::Value;
     match v {
         Value::Switch(on) => on_off(*on).into(),
-        Value::Choice(i) => options.get(*i as usize).cloned().unwrap_or_default(),
+        Value::Choice(i) => r.options.get(*i as usize).cloned().unwrap_or_default(),
         Value::Flags(f) => format!("{f:#x}"),
-        Value::Level(l) => level(*l as f32, 0.01),
+        Value::Level(l) => level(*l, r.decimals, r.unit.as_deref()),
         Value::Text(t) => t.clone(),
     }
 }
@@ -562,6 +575,7 @@ pub fn menu_act(a: &crate::menu::MenuAct, missing: usize) -> String {
         MenuAct::ShufflePage => SHUFFLE.into(),
         MenuAct::SaveMix => SAVE_AS_PLAYLIST.into(),
         MenuAct::Page(p) => page_action(*p, missing),
+        MenuAct::Plugin(e) => e.label.clone(),
     }
 }
 

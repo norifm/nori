@@ -308,47 +308,13 @@ impl SettingsView {
     }
 
     /// Enter on the selection.
-    pub fn open(&mut self) -> Option<Opened> {
-        let row = self.selected()?.clone();
-        Some(match row {
-            Row::Toggle { switch: Switch::Setting(name), on, enabled, .. } => {
-                if !enabled {
-                    return None;
-                }
-                Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())])
-            }
-            Row::Toggle { switch: Switch::Stores(name, value), .. } => Opened::Cmds(vec![Cmd::Setting(name, value)]),
-            Row::Toggle { switch: Switch::Plugin { plugin, row }, on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(!on)))]),
-            Row::Toggle { switch: Switch::Hold(plugin), on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Hold(plugin, !on))]),
-            Row::Toggle { switch, .. } => Opened::Own(switch),
-            Row::Choice { target, title, options, shown, enabled: true, .. } => {
-                let at = options.iter().position(|o| o.0 == shown).unwrap_or(0);
-                Opened::Overlay(Overlay::Picker { title, options, sel: Sel { at, ..Sel::default() }, target })
-            }
-            Row::Link { action, .. } | Row::Action { action, enabled: true, .. } | Row::Button { action, .. } => match action {
-                Act::Equalizer => Opened::View(View::Equalizer),
-                Act::Downloads => Opened::View(View::Downloads),
-                Act::AddServer => Opened::Login,
-                Act::JoinJam => Opened::Overlay(Overlay::Join { text: String::new(), error: None, busy: false }),
-                Act::Chore(c) => Opened::Cmds(vec![Cmd::Action(c)]),
-                Act::InstallPlugin => Opened::Overlay(Overlay::Input { title: text::PLUGIN_PATH.into(), text: String::new(), secret: false, target: Target::Install }),
-                Act::PluginAction { plugin, row } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Act(plugin, row))]),
-                Act::LookForPlugins => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Look)]),
-                Act::GetPlugin { offer, version } => Opened::Overlay(self.get_plugin(offer, version)?),
-                Act::AddRepo => Opened::Overlay(Overlay::Input { title: text::REPO_ADDRESS.into(), text: String::new(), secret: false, target: Target::AddRepo }),
-            },
-            Row::Text { title, secret, target, .. } => Opened::Overlay(Overlay::Input { title, text: String::new(), secret, target }),
-            Row::Plugin { id, on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Turn(id, !on))]),
-            // The profile in use: its account, where its provider signs in to one.
-            Row::Server { active: true, .. } => Opened::Cmds(vec![Cmd::OfferSignIn]),
-            Row::Server { id, .. } => Opened::Cmds(vec![Cmd::SwitchServer(id)]),
-            Row::Ranked { enabled: false, .. } => return None,
-            Row::Ranked { id, title, asks_key: true, on: false, .. } => key_input(&id, &title),
-            Row::Ranked { name, on, .. } => Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())]),
-            // Picking the season worn while following stops following it.
-            Row::Season { value, picked: false, enabled: true, .. } => Opened::Cmds(vec![Cmd::Setting("season".into(), value)]),
-            _ => return None,
-        })
+    pub fn open(&self) -> Option<Opened> {
+        open_row(self.selected()?.clone())
+    }
+
+    /// ← or → on the selection: previous or next option, off or on, a slider step.
+    pub fn step(&self, up: bool) -> Vec<Cmd> {
+        self.selected().cloned().map_or_else(Vec::new, |row| step_row(row, up))
     }
 
     /// The selected lyrics service's key, to add or change.
@@ -359,47 +325,6 @@ impl SettingsView {
                 _ => None,
             },
             _ => None,
-        }
-    }
-
-    /// ← or → on the selection: previous or next option, off or on, a slider step.
-    pub fn step(&mut self, up: bool) -> Vec<Cmd> {
-        let Some(row) = self.selected().cloned() else { return Vec::new() };
-        match row {
-            Row::Choice { target, options, shown, enabled: true, .. } => {
-                let at = options.iter().position(|o| o.0 == shown);
-                let to = match at {
-                    Some(i) if up => (i + 1).min(options.len() - 1),
-                    Some(i) => i.saturating_sub(1),
-                    None => 0,
-                };
-                if Some(to) == at || options.is_empty() {
-                    return Vec::new();
-                }
-                target.cmd(options[to].1.clone()).into_iter().collect()
-            }
-            Row::Toggle { switch, on, enabled, .. } => {
-                if on == up {
-                    return Vec::new();
-                }
-                match switch {
-                    Switch::Setting(name) if enabled => vec![Cmd::Setting(name, up.to_string())],
-                    Switch::Stores(name, value) if enabled => vec![Cmd::Setting(name, value)],
-                    Switch::Setting(_) | Switch::Stores(..) => Vec::new(),
-                    Switch::Plugin { plugin, row } => vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(up)))],
-                    Switch::Hold(plugin) => vec![Cmd::Plugin(PluginCmd::Hold(plugin, up))],
-                    Switch::Mouse => vec![Cmd::Mouse(up)],
-                    Switch::Images => vec![Cmd::Images(up)],
-                    Switch::Transparent => vec![Cmd::Paint(!up)],
-                }
-            }
-            Row::Slider { target, value, min, max, step, .. } => {
-                let v = (value + if up { step } else { -step }).clamp(min, max);
-                target.cmd(v.to_string()).into_iter().collect()
-            }
-            Row::Plugin { id, on, .. } if on != up => vec![Cmd::Plugin(PluginCmd::Turn(id, up))],
-            Row::Ranked { id, enabled: true, .. } => vec![Cmd::Setting("lyricsMove".into(), format!("{id}:{}", if up { 1 } else { -1 }))],
-            _ => Vec::new(),
         }
     }
 
@@ -421,16 +346,6 @@ impl SettingsView {
             Row::Repo { url, title, removable: true, .. } => Some(confirm(text::remove_plugin(title), vec![url.clone()], PluginCmd::RemoveRepo(url.clone()))),
             _ => None,
         }
-    }
-
-    /// The question before installing version `version` of offer `offer`: what the repo says of it.
-    fn get_plugin(&self, offer: u32, version: u32) -> Option<Overlay> {
-        let Shelf::Read(offers) = &self.own.shelf else { return None };
-        let o = offers.offers.get(offer as usize)?;
-        let v = o.versions.get(version as usize)?;
-        let mut lines: Vec<String> = o.about.iter().cloned().collect();
-        lines.push(format!("{} · {}", text::repo_name(&o.repo), v.released.as_deref().unwrap_or(&v.version)));
-        Some(Overlay::Confirm { title: text::install_version(&o.name, &v.version), lines, yes: text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::Get(offer, version))) })
     }
 
     /// Moves the selection off a heading onto a row, preferring direction `down`.
@@ -548,7 +463,7 @@ fn plugins_page(cards: &[PluginCard], repos: &[Repo], shelf: &Shelf) -> Vec<Sect
         for r in &c.rows {
             match r.kind {
                 RowKind::Section => sections.push(Section { title: std::mem::replace(&mut title, r.label.clone()), rows: std::mem::take(&mut rows) }),
-                _ => rows.push(plugin_row(&c.id, r)),
+                _ => rows.extend(plugin_rows(&c.id, r)),
             }
         }
         sections.push(Section { title, rows });
@@ -613,8 +528,97 @@ fn versions(c: &PluginCard, offers: &Offers) -> Vec<Section> {
     vec![section(text::VERSIONS, rows)]
 }
 
+/// Enter on `row`.
+pub fn open_row(row: Row) -> Option<Opened> {
+    Some(match row {
+        Row::Toggle { switch: Switch::Setting(name), on, enabled, .. } => {
+            if !enabled {
+                return None;
+            }
+            Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())])
+        }
+        Row::Toggle { switch: Switch::Stores(name, value), .. } => Opened::Cmds(vec![Cmd::Setting(name, value)]),
+        Row::Toggle { switch: Switch::Plugin { plugin, row }, on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(!on)))]),
+        Row::Toggle { switch: Switch::Hold(plugin), on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Hold(plugin, !on))]),
+        Row::Toggle { switch, .. } => Opened::Own(switch),
+        Row::Choice { target, title, options, shown, enabled: true, .. } => {
+            let at = options.iter().position(|o| o.0 == shown).unwrap_or(0);
+            Opened::Overlay(Overlay::Picker { title, options, sel: Sel { at, ..Sel::default() }, target })
+        }
+        Row::Link { action, .. } | Row::Action { action, enabled: true, .. } | Row::Button { action, .. } => match action {
+            Act::Equalizer => Opened::View(View::Equalizer),
+            Act::Downloads => Opened::View(View::Downloads),
+            Act::AddServer => Opened::Login,
+            Act::JoinJam => Opened::Overlay(Overlay::Join { text: String::new(), error: None, busy: false }),
+            Act::Chore(c) => Opened::Cmds(vec![Cmd::Action(c)]),
+            Act::InstallPlugin => Opened::Overlay(Overlay::Input { title: text::PLUGIN_PATH.into(), text: String::new(), secret: false, target: Target::Install }),
+            Act::PluginAction { plugin, row } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Act(plugin, row))]),
+            Act::LookForPlugins => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Look)]),
+            Act::GetPlugin { offer, version } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Get(offer, version))]),
+            Act::AddRepo => Opened::Overlay(Overlay::Input { title: text::REPO_ADDRESS.into(), text: String::new(), secret: false, target: Target::AddRepo }),
+        },
+        Row::Text { title, secret, target, .. } => Opened::Overlay(Overlay::Input { title, text: String::new(), secret, target }),
+        Row::Plugin { id, on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Turn(id, !on))]),
+        // The profile in use: its account, where its provider signs in to one.
+        Row::Server { active: true, .. } => Opened::Cmds(vec![Cmd::OfferSignIn]),
+        Row::Server { id, .. } => Opened::Cmds(vec![Cmd::SwitchServer(id)]),
+        Row::Ranked { enabled: false, .. } => return None,
+        Row::Ranked { id, title, asks_key: true, on: false, .. } => key_input(&id, &title),
+        Row::Ranked { name, on, .. } => Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())]),
+        // Picking the season worn while following stops following it.
+        Row::Season { value, picked: false, enabled: true, .. } => Opened::Cmds(vec![Cmd::Setting("season".into(), value)]),
+        _ => return None,
+    })
+}
+
+/// ← or → on `row`: previous or next option, off or on, a slider step.
+pub fn step_row(row: Row, up: bool) -> Vec<Cmd> {
+    match row {
+        Row::Choice { target, options, shown, enabled: true, .. } => {
+            let at = options.iter().position(|o| o.0 == shown);
+            let to = match at {
+                Some(i) if up => (i + 1).min(options.len() - 1),
+                Some(i) => i.saturating_sub(1),
+                None => 0,
+            };
+            if Some(to) == at || options.is_empty() {
+                return Vec::new();
+            }
+            target.cmd(options[to].1.clone()).into_iter().collect()
+        }
+        Row::Toggle { switch, on, enabled, .. } => {
+            if on == up {
+                return Vec::new();
+            }
+            match switch {
+                Switch::Setting(name) if enabled => vec![Cmd::Setting(name, up.to_string())],
+                Switch::Stores(name, value) if enabled => vec![Cmd::Setting(name, value)],
+                Switch::Setting(_) | Switch::Stores(..) => Vec::new(),
+                Switch::Plugin { plugin, row } => vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(up)))],
+                Switch::Hold(plugin) => vec![Cmd::Plugin(PluginCmd::Hold(plugin, up))],
+                Switch::Mouse => vec![Cmd::Mouse(up)],
+                Switch::Images => vec![Cmd::Images(up)],
+                Switch::Transparent => vec![Cmd::Paint(!up)],
+            }
+        }
+        Row::Slider { target, value, min, max, step, .. } => {
+            let v = (value + if up { step } else { -step }).clamp(min, max);
+            target.cmd(v.to_string()).into_iter().collect()
+        }
+        Row::Plugin { id, on, .. } if on != up => vec![Cmd::Plugin(PluginCmd::Turn(id, up))],
+        Row::Ranked { id, enabled: true, .. } => vec![Cmd::Setting("lyricsMove".into(), format!("{id}:{}", if up { 1 } else { -1 }))],
+        _ => Vec::new(),
+    }
+}
+
+/// One row of plugin `plugin`'s page, then its hint.
+fn plugin_rows(plugin: &str, r: &PluginRow) -> Vec<Row> {
+    let hint = r.hint.clone().map(|text| Row::Note { text });
+    std::iter::once(plugin_row(plugin, r)).chain(hint).collect()
+}
+
 /// One row of plugin `plugin`'s page, drawn as the settings' own rows are.
-fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
+pub fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
     let target = Target::Plugin { plugin: plugin.into(), row: r.id.clone(), kind: r.kind };
     let title = r.label.clone();
     match r.kind {
@@ -632,10 +636,10 @@ fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
             let (min, max) = (r.min.unwrap_or(0.0) as f32, r.max.unwrap_or(1.0) as f32);
             let step = r.step.map_or_else(|| slider_step(min, max), |s| s as f32);
             let value = match r.value {
-                Some(Value::Level(v)) => v as f32,
-                _ => min,
+                Some(Value::Level(v)) => v,
+                _ => min as f64,
             };
-            Row::Slider { target, label: format!("{title}: {}", text::level(value, step)), value, min, max, step, centred: min < 0.0 && max > 0.0 }
+            Row::Slider { target, label: format!("{title}: {}", text::level(value, r.decimals, r.unit.as_deref())), value: value as f32, min, max, step, centred: min < 0.0 && max > 0.0 }
         }
         RowKind::Text | RowKind::Secret => {
             let typed = match &r.value {
@@ -651,8 +655,9 @@ fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
             Row::Text { title, shown, secret, target }
         }
         RowKind::Action => Row::Button { title, action: Act::PluginAction { plugin: plugin.into(), row: r.id.clone() } },
+        RowKind::Status => Row::Info { title, detail: r.value.as_ref().map(|v| text::plugin_value(v, r)).unwrap_or_default() },
         // A link shows where it goes: the terminal opens no pages.
-        RowKind::Status | RowKind::Link => Row::Info { title, detail: r.value.as_ref().map(|v| text::plugin_value(v, &r.options)).unwrap_or_default() },
+        RowKind::Link => Row::Info { title, detail: r.url.clone().unwrap_or_default() },
         RowKind::Note | RowKind::Section => Row::Note { text: title },
     }
 }

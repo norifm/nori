@@ -50,11 +50,13 @@ impl SoundStage for Test {
     }
 
     fn save(&mut self) -> Vec<u8> {
-        state::save(&self.blocks)
+        // SAFETY: a number.
+        unsafe { state::save(&self.blocks) }
     }
 
     fn restore(&mut self, bytes: Vec<u8>) {
-        state::restore(&mut self.blocks, &bytes)
+        // SAFETY: a number.
+        unsafe { state::restore(&mut self.blocks, &bytes) }
     }
 }
 

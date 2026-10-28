@@ -83,6 +83,16 @@ pub enum Msg {
     Offer(Option<nori_core::library::QueueOffer>),
     /// A plugin installed (its id), or why not.
     PluginInstalled(Result<String, nori_plugins::Refusal>),
+    /// A plugin's install sheet, or why it can't be installed.
+    PluginPreview(Result<nori_plugins::PluginPreview, nori_plugins::Refusal>),
+    /// The plugins' lines in song `song`'s details.
+    SongInfo { song: String, groups: Vec<nori_plugins::InfoGroup> },
+    /// The plugins' lines under the player's output, asked for song `song`.
+    PlayerStatus { song: Option<String>, lines: Vec<String> },
+    /// A plugin's still sleeve's address for song `song`, to fetch.
+    Artwork { song: String, url: String },
+    /// A plugin's still sleeve for song `song`, drawn as its cover in Now Playing.
+    Sleeve { song: String, image: Arc<Image> },
     /// What the plugin repos offer.
     PluginOffers(nori_plugins::Offers),
     /// Plugins updated on their own: each one's id and new version.

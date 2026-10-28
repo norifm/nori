@@ -70,7 +70,6 @@ pub const ADD: &str = "Add";
 pub const REPO_ADDRESS: &str = "Repo address (its index.json)";
 pub const TRUST_REPO: &str = "This repo isn’t nori’s. Its plugins can do what their pages say; add it only if you trust it.";
 
-pub const TURN_ON: &str = "Turn on";
 pub const REMOVE_PLUGIN_NOTE: &str = "Its settings go with it.";
 pub const INSTALLED_OFF: &str = "It stays off until you turn it on.";
 
@@ -84,9 +83,12 @@ pub fn install_version(name: &str, version: &str) -> String {
     format!("Install {name} {version}?")
 }
 
-/// Says plugin `name` was installed, off.
-pub fn installed_off(name: &str) -> String {
-    format!("{name} is installed")
+/// The install sheet's lines for `p`: what it says of itself, what it is and may reach, where it comes
+/// from, and that it installs off.
+pub fn preview_note(p: &nori_plugins::PluginPreview) -> Vec<String> {
+    let c = &p.card;
+    let from = p.repo.as_ref().map(|url| format!("From {}", repo_name(&nori_plugins::Repo { url: url.clone(), official: url == nori_plugins::OFFICIAL })));
+    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(&c.net, &c.overrides)]).chain(from).chain([INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect()
 }
 
 /// What a plugin is, from the extension points it fills and whether it overrides nori's values.
@@ -149,6 +151,15 @@ pub fn plugins_updated(updated: &[(String, String)]) -> String {
 pub fn level(v: f32, step: f32) -> String {
     let places = if step >= 1.0 { 0 } else { (-step.log10()).ceil().clamp(1.0, 3.0) as usize };
     format!("{v:.places$}")
+}
+
+/// A plugin's level with `decimals` digits, then its unit.
+pub fn plugin_level(v: f64, decimals: u8, unit: Option<&str>) -> String {
+    let d = decimals as usize;
+    match unit {
+        Some(u) => format!("{v:.d$} {u}"),
+        None => format!("{v:.d$}"),
+    }
 }
 
 /// A plugin's status row's value; `options` name a choice's.
@@ -710,6 +721,25 @@ mod tests {
         assert_eq!(lines(p(ServerKind::Subsonic, "", "https://music.example.com/x", "ann")), ("ann".into(), "music.example.com".into()));
         assert_eq!(lines(p(ServerKind::Plugin { id: "dev.example.music".into() }, "", "", "")), ("dev.example.music".into(), "".into()), "a plugin's not here is named by its id");
         assert_eq!(lines(p(ServerKind::Subsonic, "Home", "http://h", "")), ("Home".into(), "".into()));
+    }
+
+    #[test]
+    fn the_install_sheet_says_what_a_plugin_is_and_may_reach() {
+        let card = nori_plugins::PluginCard {
+            id: "a.one".into(),
+            version: "1.0.0".into(),
+            name: "One".into(),
+            about: Some("Counts letters".into()),
+            enabled: false,
+            repo: None,
+            held: false,
+            points: vec!["slots".into()],
+            overrides: Vec::new(),
+            net: vec!["a.example".into()],
+            rows: Vec::new(),
+        };
+        let p = nori_plugins::PluginPreview { card, file: String::new(), repo: Some(nori_plugins::OFFICIAL.into()) };
+        assert_eq!(preview_note(&p), ["Counts letters", "It’s a playback helper.", "Connects to a.example.", "From nori’s own", "It stays off until you turn it on."]);
     }
 
     #[test]

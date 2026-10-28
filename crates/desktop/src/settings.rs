@@ -701,6 +701,8 @@ pub enum PluginAct {
     Remove(String),
     /// Asks for a file or folder to install.
     Install,
+    /// Installs the plugin its sheet shows.
+    InstallPreview,
     Look,
     /// Installs version `.1` (newest first) of offer `.0`.
     Get(u32, u32),
@@ -729,6 +731,7 @@ impl PluginAct {
             "plugin-down" => PluginAct::Move(id(), 1),
             "plugin-remove" => PluginAct::Remove(id()),
             "plugin-install" => PluginAct::Install,
+            "plugin-install-preview" => PluginAct::InstallPreview,
             "plugin-look" => PluginAct::Look,
             "plugin-get" => {
                 let (offer, version) = rest.split_once(':')?;
@@ -751,6 +754,7 @@ impl PluginAct {
             PluginAct::Move(id, by) => format!("{}:{id}", if *by < 0 { "plugin-up" } else { "plugin-down" }),
             PluginAct::Remove(id) => format!("plugin-remove:{id}"),
             PluginAct::Install => "plugin-install".into(),
+            PluginAct::InstallPreview => "plugin-install-preview".into(),
             PluginAct::Look => "plugin-look".into(),
             PluginAct::Get(offer, version) => format!("plugin-get:{offer}:{version}"),
             PluginAct::Open(url) => format!("plugin-open:{url}"),
@@ -793,14 +797,7 @@ fn plugin_groups(p: &Plugged) -> Vec<(String, Vec<Row>)> {
             options: order.into_iter().map(|(label, _)| (label.clone(), label)).collect(),
             ..Default::default()
         });
-        let mut title = c.name.clone();
-        for r in &c.rows {
-            match r.kind {
-                RowKind::Section => groups.push((std::mem::replace(&mut title, r.label.clone()), std::mem::take(&mut rows))),
-                _ => rows.push(plugin_row(&c.id, r)),
-            }
-        }
-        groups.push((title, rows));
+        groups.extend(card_groups(c, rows));
         if let Shelf::Read(offers) = &p.shelf {
             groups.extend(versions(c, offers));
         }
@@ -867,10 +864,14 @@ fn versions(c: &PluginCard, offers: &Offers) -> Option<(String, Vec<Row>)> {
     Some((format!("{} · {}", c.name, words::VERSIONS), rows))
 }
 
-/// One row of plugin `plugin`'s page, drawn as the settings' own rows are.
+/// One row of plugin `plugin`'s page, drawn as the settings' own rows are; its hint is the quiet line
+/// under it.
 fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
     let name = PluginAct::Row(plugin.into(), r.id.clone()).name();
-    let base = Row { name, title: r.label.clone(), enabled: true, ..Default::default() };
+    let hint = r.hint.clone().unwrap_or_default();
+    let base = Row { name, title: r.label.clone(), detail: hint.clone(), enabled: true, ..Default::default() };
+    // A value said on the quiet line, the hint after it.
+    let said = |value: String| [value, hint.clone()].into_iter().filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" · ");
     match r.kind {
         RowKind::Switch => Row { kind: TOGGLE, on: r.value == Some(Value::Switch(true)), ..base },
         RowKind::Choice => {
@@ -881,12 +882,12 @@ fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
             Row { kind: CHOICE, options: r.options.iter().map(|o| (o.clone(), o.clone())).collect(), chosen: Some(chosen), ..base }
         }
         RowKind::Level => {
-            let (min, max) = (r.min.unwrap_or(0.0) as f32, r.max.unwrap_or(1.0) as f32);
+            let (min, max) = (r.min.unwrap_or(0.0), r.max.unwrap_or(1.0));
             let value = match r.value {
-                Some(Value::Level(v)) => v as f32,
+                Some(Value::Level(v)) => v,
                 _ => min,
             };
-            Row { kind: SLIDER, title: format!("{}: {}", r.label, words::level(value, r.step.map_or(0.01, |s| s as f32))), value, min, max, ..base }
+            Row { kind: SLIDER, title: format!("{}: {}", r.label, words::plugin_level(value, r.decimals, r.unit.as_deref())), value: value as f32, min: min as f32, max: max as f32, ..base }
         }
         RowKind::Text | RowKind::Secret => {
             let typed = match &r.value {
@@ -898,12 +899,35 @@ fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
                 Some(t) => t,
                 None => words::NOT_SET.into(),
             };
-            Row { kind: ACTION, detail, button: words::CHANGE.into(), ..base }
+            Row { kind: ACTION, detail: said(detail), button: words::CHANGE.into(), ..base }
         }
         RowKind::Action => Row { kind: BUTTON, ..base },
-        RowKind::Status | RowKind::Link => Row { kind: INFO, detail: r.value.as_ref().map(|v| words::plugin_value(v, &r.options)).unwrap_or_default(), ..base },
+        RowKind::Status => Row { kind: INFO, detail: said(r.value.as_ref().map(|v| words::plugin_value(v, &r.options)).unwrap_or_default()), ..base },
+        RowKind::Link => match &r.url {
+            Some(url) => Row { kind: LINK, name: PluginAct::Open(url.clone()).name(), ..base },
+            None => Row { kind: INFO, ..base },
+        },
         RowKind::Note | RowKind::Section => note(&r.label),
     }
+}
+
+/// Card `c`'s page as groups: its rows under its name (after `head`), each section under its own.
+fn card_groups(c: &PluginCard, head: Vec<Row>) -> Vec<(String, Vec<Row>)> {
+    let mut groups = Vec::new();
+    let (mut title, mut rows) = (c.name.clone(), head);
+    for r in &c.rows {
+        match r.kind {
+            RowKind::Section => groups.push((std::mem::replace(&mut title, r.label.clone()), std::mem::take(&mut rows))),
+            _ => rows.push(plugin_row(&c.id, r)),
+        }
+    }
+    groups.push((title, rows));
+    groups
+}
+
+/// The rows the plugins `cards` show on the devices panel, as on their pages.
+pub fn device_rows(cards: &[PluginCard], prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    model(cards.iter().flat_map(|c| card_groups(c, Vec::new())).filter(|(_, rows)| !rows.is_empty()).collect(), prefs, f, today)
 }
 
 /// The value of option `index` of `target`.
@@ -1081,5 +1105,31 @@ mod tests {
             assert_eq!(PluginAct::of(&r.name).map(|a| a.name()), Some(r.name.clone()), "{} parses back", r.name);
         }
         assert_eq!(PluginAct::of("repo-trust:https://x.example/index.json"), Some(PluginAct::TrustRepo("https://x.example/index.json".into())));
+    }
+
+    /// A level says its value with its digits and unit, a hint is the quiet line, and a link opens its page.
+    #[test]
+    fn a_plugin_row_says_its_hint_unit_and_link() {
+        use nori_plugins::{PluginRow, RowKind, Value};
+        let row = |kind, value, hint: Option<&str>, unit: Option<&str>, url: Option<&str>| PluginRow {
+            id: "r".into(),
+            kind,
+            label: "Gain".into(),
+            options: Vec::new(),
+            min: Some(0.0),
+            max: Some(10.0),
+            step: None,
+            value,
+            hint: hint.map(Into::into),
+            unit: unit.map(Into::into),
+            decimals: 2,
+            url: url.map(Into::into),
+        };
+        let level = plugin_row("p", &row(RowKind::Level, Some(Value::Level(1.5)), Some("Before the limiter"), Some("dB"), None));
+        assert_eq!((level.title.as_str(), level.detail.as_str()), ("Gain: 1.50 dB", "Before the limiter"));
+        let status = plugin_row("p", &row(RowKind::Status, Some(Value::Text("Fine".into())), Some("Checked hourly"), None, None));
+        assert_eq!(status.detail, "Fine · Checked hourly");
+        let link = plugin_row("p", &row(RowKind::Link, None, None, None, Some("https://x.example/help")));
+        assert_eq!((link.kind, PluginAct::of(&link.name)), (LINK, Some(PluginAct::Open("https://x.example/help".into()))));
     }
 }

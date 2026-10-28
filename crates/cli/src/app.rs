@@ -194,8 +194,10 @@ pub enum Cmd {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PluginCmd {
     Read,
-    /// Installs the `.noriplugin` or plugin folder at this path.
+    /// Shows the `.noriplugin` or plugin folder at this path before it is installed.
     Install(String),
+    /// Installs what the sheet showed.
+    InstallPreview(Box<nori_plugins::PluginPreview>),
     Turn(String, bool),
     /// Moves the plugin to this place in the order.
     Place(String, u32),
@@ -206,8 +208,13 @@ pub enum PluginCmd {
     Act(String, String),
     /// Asks the repos what they offer.
     Look,
-    /// Installs a version (newest first) of the offer at this place in those last read.
+    /// Shows a version (newest first) of the offer at this place in those last read, before it is
+    /// installed.
     Get(u32, u32),
+    /// Runs a plugin's menu action on these items.
+    Menu(nori_plugins::MenuEntry, nori_plugins::Items),
+    /// Asks the plugins for this song's info lines and the player's status.
+    Ask(Box<Song>),
     /// Keeps a plugin at its version, or lets it update.
     Hold(String, bool),
     AddRepo(String),
@@ -736,6 +743,46 @@ pub struct Devices {
     pub added: HashMap<String, String>,
     /// A jam guest's controls by its role: what its keys reach, and what the player says.
     pub controls: Option<JamControls>,
+    /// The plugins whose rows show here too.
+    pub plugins: Vec<nori_plugins::PluginCard>,
+}
+
+/// The sheet before installing what `p` shows: what it is, what it may reach, where it comes from.
+fn preview_sheet(p: nori_plugins::PluginPreview) -> Overlay {
+    let c = &p.card;
+    let mut lines: Vec<String> = c.about.iter().cloned().collect();
+    lines.extend([crate::text::plugin_is(&c.points, !c.overrides.is_empty()), crate::text::plugin_reach(&c.net, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
+    lines.extend(p.repo.as_deref().map(crate::text::from_repo));
+    lines.push(crate::text::INSTALLED_OFF.into());
+    Overlay::Confirm { title: crate::text::install_version(&c.name, &c.version), lines, yes: crate::text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::InstallPreview(Box::new(p)))) }
+}
+
+/// What the enabled plugins add to the screens, as last read.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Slots {
+    /// Some plugin fills a place: the song's info and the player's status are asked for.
+    pub asked: bool,
+    /// The actions plugins add to the menus, each with the kind of item it is for.
+    pub menu: Vec<(nori_plugins::ItemKind, nori_plugins::MenuEntry)>,
+    /// The playing song's id and the plugins' lines in its info.
+    pub info: Option<(String, Vec<nori_plugins::InfoGroup>)>,
+    /// The plugins' lines under the output row.
+    pub status: Vec<String>,
+}
+
+impl Slots {
+    /// The menu actions plugins add for items of `kind`.
+    pub fn menu_of(&self, kind: nori_plugins::ItemKind) -> impl Iterator<Item = &nori_plugins::MenuEntry> {
+        self.menu.iter().filter(move |(k, _)| *k == kind).map(|(_, e)| e)
+    }
+
+    /// The playing song's info lines, read for `song`.
+    pub fn info_of(&self, song: &str) -> &[nori_plugins::InfoGroup] {
+        match &self.info {
+            Some((id, groups)) if id == song => groups,
+            _ => &[],
+        }
+    }
 }
 
 /// A row of the devices panel.
@@ -751,27 +798,63 @@ pub enum DeviceRow {
     Join,
     Pair,
     ResetPairing,
+    /// A plugin's name over its rows: index into [`Devices::plugins`].
+    PluginName(usize),
+    /// Row `.1` of plugin `.0`, then its hint.
+    Plugin(usize, usize),
+    PluginHint(usize, usize),
 }
 
 impl Devices {
+    /// The panel's rows, the plugins' last.
     pub fn rows(&self) -> Vec<DeviceRow> {
-        let mut rows = vec![DeviceRow::Here];
-        rows.extend((0..self.list.len()).flat_map(|i| [DeviceRow::Device(i), DeviceRow::Playing(i)]));
-        if self.jams || self.jam.is_some() {
-            rows.push(DeviceRow::Jam);
+        let mut rows = if self.on { vec![DeviceRow::Here] } else { Vec::new() };
+        if self.on {
+            rows.extend((0..self.list.len()).flat_map(|i| [DeviceRow::Device(i), DeviceRow::Playing(i)]));
+            if self.jams || self.jam.is_some() {
+                rows.push(DeviceRow::Jam);
+            }
+            rows.push(DeviceRow::Join);
+            if self.pairing.is_some() {
+                rows.extend([DeviceRow::Pair, DeviceRow::ResetPairing]);
+            }
         }
-        rows.push(DeviceRow::Join);
-        if self.pairing.is_some() { rows.extend([DeviceRow::Pair, DeviceRow::ResetPairing]); }
+        for (c, card) in self.plugins.iter().enumerate() {
+            rows.push(DeviceRow::PluginName(c));
+            for (r, row) in card.rows.iter().enumerate() {
+                rows.push(DeviceRow::Plugin(c, r));
+                if row.hint.is_some() {
+                    rows.push(DeviceRow::PluginHint(c, r));
+                }
+            }
+        }
         rows
     }
 
-    /// Moves the selection off a line of what a device plays, in direction `down`.
+    /// Moves the selection off a line that only says something (what a device plays, a plugin's name
+    /// or hint), in direction `down`.
     fn settle(&mut self, down: bool) {
         let rows = self.rows();
-        if let Some(DeviceRow::Playing(i)) = rows.get(self.sel.at) {
-            let past = self.sel.at + 1;
-            self.sel.at = if down && past < rows.len() { past } else { rows.iter().position(|r| *r == DeviceRow::Device(*i)).unwrap_or(0) };
+        let picks = |at: &usize| !matches!(rows[*at], DeviceRow::Playing(_) | DeviceRow::PluginName(_) | DeviceRow::PluginHint(..));
+        if self.sel.at >= rows.len() || picks(&self.sel.at) {
+            return;
         }
+        let after = (self.sel.at + 1..rows.len()).find(picks);
+        let before = (0..self.sel.at).rev().find(picks);
+        if let Some(at) = if down { after.or(before) } else { before.or(after) } {
+            self.sel.at = at;
+        }
+    }
+
+    /// Row `r` of plugin `c` as the settings draw it.
+    pub fn plugin_row(&self, c: usize, r: usize) -> Option<crate::settings_view::Row> {
+        let card = self.plugins.get(c)?;
+        Some(crate::settings_view::plugin_row(&card.id, card.rows.get(r)?))
+    }
+
+    /// The panel shows: other devices or jams are on, or a plugin has rows here.
+    pub fn shown(&self) -> bool {
+        self.on || !self.plugins.is_empty()
     }
 
     /// The jam's guests, the host left out.
@@ -1060,6 +1143,8 @@ pub struct App {
     /// This session's star marks, drawn over the records' flags.
     pub marks: StarMarks,
     pub devices: Devices,
+    /// What the plugins add to the screens.
+    pub slots: Slots,
     /// What the open profile offers (a jam guest's: the host's library, its picks asked of the host).
     pub rules: ProfileRules,
     /// The planned transition out of `song`.
@@ -1408,7 +1493,7 @@ impl App {
         if self.full && self.panel == p {
             return self.close_full();
         }
-        if p == Panel::Devices && !self.devices.on {
+        if p == Panel::Devices && !self.devices.shown() {
             return self.say(crate::text::REMOTE_OFF, false);
         }
         self.panel = p;
@@ -1426,6 +1511,7 @@ impl App {
                 let d = &mut self.devices;
                 let active = d.active.as_ref().and_then(|(id, _)| d.list.iter().position(|x| &x.id == id));
                 d.sel.at = active.map_or(0, |i| d.rows().iter().position(|r| *r == DeviceRow::Device(i)).unwrap_or(0));
+                d.settle(true);
             }
             Panel::Lyrics => self.want_lyrics(),
             Panel::Playing => {}
@@ -1433,6 +1519,9 @@ impl App {
     }
 
     fn open_full(&mut self) {
+        if !self.full {
+            self.ask_slots();
+        }
         self.full = true;
         self.focus = Focus::Panel;
         if self.panel == Panel::Lyrics {
@@ -1458,7 +1547,7 @@ impl App {
         if !self.full {
             return self.dirty = false;
         }
-        let shown: Vec<Panel> = PANELS.iter().map(|p| p.0).filter(|p| *p != Panel::Devices || self.devices.on).collect();
+        let shown: Vec<Panel> = PANELS.iter().map(|p| p.0).filter(|p| *p != Panel::Devices || self.devices.shown()).collect();
         let at = shown.iter().position(|p| *p == self.panel).unwrap_or(0);
         let n = shown.len();
         let to = shown[if forward { (at + 1) % n } else { (at + n - 1) % n }];
@@ -1579,16 +1668,15 @@ impl App {
                     _ => self.say(said, true),
                 }
             }
-            Msg::Installed(Ok(id)) => match self.settings.own.plugins.iter().find(|c| c.id == id) {
-                Some(c) if !c.enabled => {
-                    let mut lines: Vec<String> = c.about.iter().cloned().collect();
-                    lines.extend([crate::text::plugin_is(&c.points, !c.overrides.is_empty()), crate::text::plugin_reach(&c.net, &c.overrides), crate::text::INSTALLED_OFF.into()].into_iter().filter(|l| !l.is_empty()));
-                    let cmd = Box::new(Cmd::Plugin(PluginCmd::Turn(id, true)));
-                    self.overlay = Some(Overlay::Confirm { title: crate::text::installed_off(&c.name), lines, yes: crate::text::TURN_ON.into(), cmd });
+            Msg::Preview(Ok(p)) => self.overlay = Some(preview_sheet(p)),
+            Msg::Installed(Ok(_)) => self.say(crate::text::PLUGIN_INSTALLED, false),
+            Msg::Installed(Err(e)) | Msg::Preview(Err(e)) => self.say(crate::text::plugin_refused(&e), true),
+            Msg::Slots { song, info, status } => {
+                if self.song.as_ref().is_some_and(|s| s.id == song) {
+                    self.slots.info = Some((song, info));
+                    self.slots.status = status;
                 }
-                _ => self.say(crate::text::PLUGIN_INSTALLED, false),
-            },
-            Msg::Installed(Err(e)) => self.say(crate::text::plugin_refused(&e), true),
+            }
             Msg::Updated(updated) => {
                 let named: Vec<(String, String)> = updated.into_iter().map(|(id, to)| (self.settings.own.plugins.iter().find(|c| c.id == id).map_or(id, |c| c.name.clone()), to)).collect();
                 self.say(crate::text::plugins_updated(&named), false);
@@ -1634,6 +1722,13 @@ impl App {
         }
     }
 
+    /// Asks the plugins that fill a place for the playing song's info and the player's status.
+    fn ask_slots(&mut self) {
+        if let Some(song) = self.song.clone().filter(|_| self.slots.asked) {
+            self.cmds.push(Cmd::Plugin(PluginCmd::Ask(Box::new(song))));
+        }
+    }
+
     /// The audible song, as read from the engine; on a change, cover and lyrics follow.
     pub fn heard(&mut self, song: Option<Song>) {
         let changed = self.song.as_ref().map(|s| &s.id) != song.as_ref().map(|s| &s.id);
@@ -1644,6 +1739,7 @@ impl App {
             return;
         }
         self.transition = None;
+        self.ask_slots();
         let art = self.song.as_ref().and_then(|s| s.cover_art.clone());
         if art != self.cover_art {
             self.colours = None;
@@ -1870,6 +1966,8 @@ impl App {
         }
         match self.focus {
             Focus::Panel if self.panel == Panel::Queue => &[Scope::Edit, Scope::List, Scope::Global],
+            // A plugin's row changes its value as a setting does.
+            Focus::Panel if self.plugin_device_row().is_some() => &[Scope::Values, Scope::List, Scope::Global],
             Focus::Panel => &[Scope::List, Scope::Global],
             Focus::Main if self.page().is_some() => &[Scope::List, Scope::Global],
             Focus::Main => match self.view {
@@ -2349,6 +2447,9 @@ impl App {
             },
             Action::Decrease | Action::Increase => {
                 let up = a == Action::Increase;
+                if let Some(row) = self.plugin_device_row() {
+                    return self.cmds.extend(crate::settings_view::step_row(row, up));
+                }
                 match self.view {
                     View::Equalizer => self.eq_step(up),
                     View::Settings => {
@@ -2559,6 +2660,17 @@ impl App {
             }
             View::Login => return None,
         })
+    }
+
+    /// The plugin's row selected in the devices panel, while it has the keys.
+    fn plugin_device_row(&self) -> Option<crate::settings_view::Row> {
+        if self.focus != Focus::Panel || self.panel != Panel::Devices {
+            return None;
+        }
+        match self.devices.rows().get(self.devices.sel.at) {
+            Some(DeviceRow::Plugin(c, r)) => self.devices.plugin_row(*c, *r),
+            _ => None,
+        }
     }
 
     fn list_action(&mut self, a: Action) {
@@ -3172,7 +3284,12 @@ impl App {
             Some(DeviceRow::Join) => self.join(),
             Some(DeviceRow::Pair) => { if let Some(link) = d.pairing.clone() { self.overlay = Some(Overlay::Invite { link }); } }
             Some(DeviceRow::ResetPairing) => self.cmds.push(Cmd::ResetPairing),
-            None => self.dirty = false,
+            Some(DeviceRow::Plugin(c, r)) => match self.devices.plugin_row(c, r).and_then(crate::settings_view::open_row) {
+                Some(Opened::Cmds(c)) => self.cmds.extend(c),
+                Some(Opened::Overlay(o)) => self.overlay = Some(o),
+                _ => self.dirty = false,
+            },
+            Some(DeviceRow::PluginName(_) | DeviceRow::PluginHint(..)) | None => self.dirty = false,
         }
     }
 
