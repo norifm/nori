@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
+use std::thread;
 use std::time::Duration;
 
 use nori_covers::{header, Alpha, Config, DecodeError, Decoder, Error, Image, Key, Loader, Paint};
@@ -552,6 +553,26 @@ fn three_at_once(loader: &Loader<Threads>, server: &Server) {
         rx.recv_timeout(Duration::from_secs(10)).expect("an answer").unwrap();
     }
     drop(tickets);
+}
+
+#[test]
+fn a_worker_handing_over_a_cover_takes_the_next_one() {
+    let server = Server::new(200);
+    let loader = Loader::with_paint(Config { memory_bytes: 0, ..config(None, 3) }, CoverNet::over(server.clone()), Threads { alive: Arc::default(), rests: Arc::default() });
+    let (handing, handed) = (mpsc::channel(), mpsc::channel::<()>());
+    let (in_callback, release) = (handing.0, handed.1);
+    let _first = loader.request("http://s/first", 8, 8, move |_| {
+        in_callback.send(thread::current().id()).unwrap();
+        release.recv().unwrap();
+    });
+    let first = handing.1.recv().unwrap();
+    let (tx, rx) = mpsc::channel();
+    let _next = loader.request("http://s/next", 8, 8, move |_| tx.send(thread::current().id()).unwrap());
+    // A second worker would answer while the first is still in its callback.
+    let early = rx.recv_timeout(Duration::from_millis(200)).ok();
+    handed.0.send(()).unwrap();
+    let next = early.unwrap_or_else(|| rx.recv_timeout(Duration::from_secs(10)).expect("an answer"));
+    assert_eq!(next, first);
 }
 
 #[test]

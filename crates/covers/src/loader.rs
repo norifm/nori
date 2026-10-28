@@ -177,9 +177,11 @@ struct Jobs<P> {
     flights: HashMap<Job, Flight<P>>,
     /// Unstarted flights, newest last. Cancelled ones stay until a worker skips them.
     queue: Vec<Job>,
-    /// Running worker threads, and how many of them are waiting.
+    /// Running worker threads, how many of them are waiting, and how many are handing a cover to its
+    /// callbacks (free for the next job as soon as they return).
     workers: usize,
     idle: usize,
+    delivering: usize,
     /// Bumped on each rest; workers from an older generation exit when out of work.
     generation: u64,
     /// Workers of the current generation (counted against the limit).
@@ -192,7 +194,7 @@ struct Jobs<P> {
 
 impl<P> Default for Jobs<P> {
     fn default() -> Jobs<P> {
-        Jobs { flights: HashMap::new(), queue: Vec::new(), workers: 0, idle: 0, generation: 0, current: 0, hidden: false, next_id: 0, closed: false }
+        Jobs { flights: HashMap::new(), queue: Vec::new(), workers: 0, idle: 0, delivering: 0, generation: 0, current: 0, hidden: false, next_id: 0, closed: false }
     }
 }
 
@@ -504,7 +506,7 @@ impl<P: Paint> Inner<P> {
         } else {
             jobs.queue.insert(0, job);
         }
-        if jobs.idle == 0 && jobs.current < self.workers {
+        if jobs.idle == 0 && jobs.delivering == 0 && jobs.current < self.workers {
             jobs.workers += 1;
             jobs.current += 1;
             let (inner, generation) = (self.clone(), jobs.generation);
@@ -517,9 +519,13 @@ impl<P: Paint> Inner<P> {
     fn work(self: Arc<Self>, generation: u64) {
         let _leaving = Leaving(&self, generation);
         let mut w = Worker::new();
+        let mut delivered = false;
         loop {
             let (job, url) = {
                 let mut jobs = self.jobs.lock();
+                if std::mem::take(&mut delivered) {
+                    jobs.delivering -= 1;
+                }
                 loop {
                     if jobs.closed {
                         return;
@@ -586,7 +592,12 @@ impl<P: Paint> Inner<P> {
             if let Err(e @ (Error::Status(_) | Error::Decode(decode::Error::Unknown | decode::Error::TooLarge))) = &result {
                 self.failures.lock().insert(job.key(), (Instant::now(), e.clone()));
             }
-            let waiters = self.jobs.lock().flights.remove(&job).map(|f| f.waiters).unwrap_or_default();
+            let waiters = {
+                let mut jobs = self.jobs.lock();
+                jobs.delivering += 1;
+                jobs.flights.remove(&job).map(|f| f.waiters).unwrap_or_default()
+            };
+            delivered = true;
             for (_, done) in waiters {
                 let r = result.clone();
                 // A panicking callback loses its own cover, not the worker.
