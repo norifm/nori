@@ -140,6 +140,23 @@ fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
 }
 
 impl Plugins {
+    /// `version`'s package, fetched into the plugins' folder once its sha256 is the one listed.
+    pub(crate) async fn fetch(&self, version: &Version) -> Result<std::path::PathBuf, Refusal> {
+        let unreadable = |e: String| Refusal::Unreadable(e);
+        let t = self.transport_now().map_err(unreadable)?;
+        let r = t.get(version.url.clone(), 0).await.map_err(|e| unreadable(e.to_string()))?;
+        if !(200..=299).contains(&r.status) {
+            return Err(unreadable(format!("HTTP {}", r.status)));
+        }
+        let hash: String = Sha256::digest(&r.body).iter().map(|b| format!("{b:02x}")).collect();
+        if hash != version.sha256 {
+            return Err(unreadable("the package isn't the one its repo lists".into()));
+        }
+        let file = self.dir.join(format!(".{hash}.noriplugin"));
+        std::fs::create_dir_all(&self.dir).and_then(|_| std::fs::write(&file, &r.body)).map_err(|e| unreadable(e.to_string()))?;
+        Ok(file)
+    }
+
     fn transport_now(&self) -> Result<std::sync::Arc<dyn nori_net::transport::Transport>, String> {
         self.transport.lock().expect("not poisoned").clone().ok_or_else(|| "no connection yet".to_string())
     }
@@ -197,18 +214,7 @@ impl Plugins {
     /// Fetches and installs `version` of a plugin a repo offers, newer or older than the one here (its
     /// store and its being on are kept); its id.
     pub async fn install_version(&self, version: Version) -> Result<String, Refusal> {
-        let unreadable = |e: String| Refusal::Unreadable(e);
-        let t = self.transport_now().map_err(unreadable)?;
-        let r = t.get(version.url.clone(), 0).await.map_err(|e| unreadable(e.to_string()))?;
-        if !(200..=299).contains(&r.status) {
-            return Err(unreadable(format!("HTTP {}", r.status)));
-        }
-        let hash: String = Sha256::digest(&r.body).iter().map(|b| format!("{b:02x}")).collect();
-        if hash != version.sha256 {
-            return Err(unreadable("the package isn't the one its repo lists".into()));
-        }
-        let file = self.dir.join(".download.noriplugin");
-        std::fs::create_dir_all(&self.dir).and_then(|_| std::fs::write(&file, &r.body)).map_err(|e| unreadable(e.to_string()))?;
+        let file = self.fetch(&version).await?;
         let installed = self.install_as(&file, Some(version.repo.clone())).map(|m| m.id.clone());
         let _ = std::fs::remove_file(&file);
         installed

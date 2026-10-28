@@ -5122,14 +5122,13 @@ dependencies = [
  "nori-settings",
  "nori-tasks",
  "nori-testdir",
+ "nori-time",
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "toml 0.8.2",
  "uniffi",
  "wasmparser 0.261.0",
  "wasmtime",
- "wasmtime-wasi",
  "wit-parser 0.239.0",
  "zip",
 ]
@@ -7010,16 +7009,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustix-linux-procfs"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fc84bf7e9aa16c4f2c758f27412dc9841341e16aa682d9c7ac308fe3ee12056"
-dependencies = [
- "once_cell",
- "rustix 1.1.5",
-]
-
-[[package]]
 name = "rustls"
 version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8330,12 +8319,7 @@ version = "1.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
 dependencies = [
- "bytes",
- "libc",
- "mio",
  "pin-project-lite",
- "socket2",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9438,41 +9422,6 @@ dependencies = [
  "indexmap",
  "wit-component 0.261.0",
  "wit-parser 0.261.0",
-]
-
-[[package]]
-name = "wasmtime-wasi"
-version = "50.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed63d0061d45fdf32d8f47913845491395a6918e5b4bee51d1910c3777bcbaca"
-dependencies = [
- "async-trait",
- "bitflags 2.13.2",
- "bytes",
- "futures",
- "rand 0.10.3",
- "rustix 1.1.5",
- "rustix-linux-procfs",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "url",
- "wasmtime",
- "wasmtime-wasi-io",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "wasmtime-wasi-io"
-version = "50.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "273d9f9178b9415fba5a1b84d6634e82a1d95b5a0b657bd12d90a7d1073d27e0"
-dependencies = [
- "async-trait",
- "bytes",
- "futures",
- "tracing",
- "wasmtime",
 ]
 
 [[package]]

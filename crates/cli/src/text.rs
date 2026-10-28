@@ -44,12 +44,17 @@ pub fn sign_in(name: &str, r: &SignInResult) -> String {
 }
 
 pub const INSTALL_PLUGIN: &str = "Install a plugin";
+pub const LOGIN_MISSING: &str = "Fill in what's asked first";
+pub const LOGIN_KEYS: &str = "tab next field · enter connect · ctrl p plugins · esc back";
+pub const LOGIN_KIND_KEYS: &str = "← → kind · tab next field · enter connect · ctrl p plugins · esc back";
+pub const PLUGINS: &str = "Plugins";
+pub const LOGIN_KIND: &str = "Kind";
+pub const FROM_A_PLUGIN: &str = "From a plugin";
 pub const PLUGIN_PATH: &str = "A .noriplugin file or a plugin folder";
 pub const NO_PLUGINS: &str = "No plugins installed.";
 pub const PLUGIN_VERSION: &str = "Version";
-pub const PLUGIN_NET: &str = "Connects to";
 pub const SECRET_SET: &str = "Set";
-pub const PLUGIN_INSTALLED: &str = "Plugin installed. Switch it on in Settings › Plugins.";
+pub const PLUGIN_INSTALLED: &str = "Plugin installed";
 pub const GET_PLUGINS: &str = "Get plugins";
 pub const LOOK_FOR_PLUGINS: &str = "Look for plugins";
 pub const LOOK_AGAIN: &str = "Look again";
@@ -71,7 +76,72 @@ pub fn plugins_updated(updated: &[(String, String)]) -> String {
 pub const ADD_REPO: &str = "Add repo";
 pub const REPO_ADDRESS: &str = "Repo address (its index.json)";
 pub const TRUST_REPO: &str = "This repo isn't nori's. Its plugins can do what their pages say; add it only if you trust it.";
-pub const TRUST_KEYS: &str = "enter add · esc cancel";
+
+/// A question's keys: enter does `yes`.
+pub fn confirm_keys(yes: &str) -> String {
+    format!("enter {} · esc cancel", yes.to_lowercase())
+}
+
+pub const ADD: &str = "Add";
+pub const REMOVE: &str = "Remove";
+pub const TURN_ON: &str = "Turn on";
+
+/// Asks before removing plugin `name`.
+pub fn remove_plugin(name: &str) -> String {
+    format!("Remove {name}?")
+}
+pub const REMOVE_PLUGIN_NOTE: &str = "Its settings go with it.";
+
+/// Asks before installing `name` at `version`.
+pub fn install_version(name: &str, version: &str) -> String {
+    format!("Install {name} {version}?")
+}
+
+/// Says plugin `name` was installed, off.
+pub fn installed_off(name: &str) -> String {
+    format!("{name} is installed")
+}
+pub const INSTALLED_OFF: &str = "It stays off until you turn it on.";
+
+/// What a plugin is, from the extension points it fills and whether it overrides nori's values.
+pub fn plugin_is(points: &[String], overrides: bool) -> String {
+    let mut is: Vec<&str> = Vec::new();
+    for p in points {
+        let word = match p.as_str() {
+            "provider" => "a music source",
+            "sound-stage" => "a sound effect",
+            "automix" => "a mixer",
+            "lyrics" => "a lyrics source",
+            "scrobbler" => "a scrobbler",
+            "device-control" => "a device control",
+            "hooks" | "deciders" | "slots" | "preparation" => "a playback helper",
+            _ => continue,
+        };
+        if !is.contains(&word) {
+            is.push(word);
+        }
+    }
+    let mut said = match is.len() {
+        0 => String::new(),
+        _ => format!("It's {}.", is.join(", ")),
+    };
+    if overrides {
+        said.push_str(if said.is_empty() { "It changes playback values." } else { " It changes playback values." });
+    }
+    said
+}
+
+/// What a plugin may reach: the hosts it sends to and nori's values it changes.
+pub fn plugin_reach(net: &[String], overrides: &[String]) -> String {
+    let mut said = Vec::new();
+    if !net.is_empty() {
+        said.push(format!("Connects to {}.", net.join(", ")));
+    }
+    if !overrides.is_empty() {
+        said.push(format!("Changes {}.", overrides.join(", ")));
+    }
+    if said.is_empty() { "Connects to nothing.".into() } else { said.join(" ") }
+}
 
 /// A repo by its host; nori's own by name.
 pub fn repo_name(r: &nori_plugins::Repo) -> String {

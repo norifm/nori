@@ -749,13 +749,18 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         // Now Playing's lyrics: the line they are scrolled to sharp, the rest blurred by the compositor.
         let weak = ui.as_weak();
         a.compositor.set_focus_source(move || lyrics_focus(&weak.upgrade()?));
+        // Plugins reach the web before any profile opens; a session's own transport takes over.
+        a.kinds().set_transport(a.http.clone());
         a.plugins_read();
         let wake = a.me.clone();
         a.compositor.on_wake(move || wake.with(|a| a.repaint()));
         let prefs = crate::session::app().settings.current().unwrap_or_default();
         match prefs.active_server().cloned() {
             Some(p) => a.open(p),
-            None => ui.set_view(LOGIN),
+            None => {
+                ui.set_view(LOGIN);
+                a.update_plugins();
+            }
         }
     });
     app
@@ -1035,6 +1040,10 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.undo_timer.stop();
         a.ui().set_queue_undo("".into());
         a.follow();
+    });
+    on!(ui.on_open_plugins, h, |a| {
+        a.plugins_read();
+        a.ui().set_plugins_open(true);
     });
     on!(ui.on_settings_tab_chosen, h, |a, t| {
         a.ui().set_settings_tab(t);
@@ -2567,8 +2576,27 @@ impl App {
         }
         self.plugged.cards = cards;
         self.plugged.repos = host.repos();
-        self.ui().set_login_kinds(login_kinds(self.kinds()));
+        let ui = self.ui();
+        ui.set_login_kinds(login_kinds(self.kinds()));
+        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        ui.set_plugin_rows(crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, crate::look::Today::now()));
         self.settings_shown();
+    }
+
+    /// Asks before `act` is done: the sheet's button sends it back to [`App::plugin_typed`].
+    fn confirm(&self, title: &str, note: &str, button: &str, act: crate::settings::PluginAct) {
+        let ui = self.ui();
+        ui.set_ask_title(title.into());
+        ui.set_ask_note(note.into());
+        ui.set_ask_name(act.name().into());
+        ui.set_ask_button(button.into());
+        ui.set_ask_field(false);
+        ui.set_ask_text("".into());
+        ui.set_ask_open(true);
+    }
+
+    fn plugin_name(&self, id: &str) -> String {
+        self.plugged.cards.iter().find(|c| c.id == id).map_or_else(|| id.to_string(), |c| c.name.clone())
     }
 
     /// Updates the plugins once a day, from the open profile's connection.
@@ -2620,10 +2648,10 @@ impl App {
                 let Some(at) = self.plugged.cards.iter().position(|c| c.id == id) else { return };
                 host.place(id, (at as i32 + by).max(0) as u32);
             }
-            PluginAct::Remove(id) => host.uninstall(id),
+            PluginAct::Remove(id) => return self.confirm(&words::remove_plugin(&self.plugin_name(&id)), words::REMOVE_PLUGIN_NOTE, words::REMOVE, PluginAct::Remove(id)),
             PluginAct::Install => return ask(words::PLUGIN_PATH, PluginAct::Install.name(), false),
             PluginAct::AddRepo => return ask(words::REPO_ADDRESS, PluginAct::AddRepo.name(), false),
-            PluginAct::RemoveRepo(url) => host.remove_repo(url),
+            PluginAct::RemoveRepo(url) => return self.confirm(&words::remove_plugin(&url), "", words::REMOVE, PluginAct::RemoveRepo(url)),
             PluginAct::Open(url) => return open_in_browser(&url),
             PluginAct::Look => {
                 self.plugged.shelf = crate::settings::Shelf::Asking;
@@ -2632,9 +2660,10 @@ impl App {
             }
             PluginAct::Get(offer, version) => {
                 let crate::settings::Shelf::Read(offers) = &self.plugged.shelf else { return };
-                let Some(v) = offers.offers.get(offer as usize).and_then(|o| o.versions.get(version as usize)).cloned() else { return };
-                let tx = self.tx.clone();
-                nori_host::spawn("nori-plugin-get", move || tx.send(Msg::PluginInstalled(nori_core::transport::block_on(host.install_version(v)))));
+                let Some(o) = offers.offers.get(offer as usize) else { return };
+                let Some(v) = o.versions.get(version as usize) else { return };
+                let note: Vec<String> = o.about.iter().cloned().chain([format!("{} · {}", words::repo_name(&o.repo), v.released.as_deref().unwrap_or(&v.version))]).collect();
+                return self.confirm(&words::install_version(&o.name, &v.version), &note.join("\n\n"), words::INSTALL, PluginAct::Get(offer, version));
             }
             PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::TrustRepo(_) => return,
         }
@@ -2668,6 +2697,17 @@ impl App {
                 host.add_repo(url);
                 self.plugins_read();
                 return self.plugin_act(PluginAct::Look);
+            }
+            // What the sheets asked, answered.
+            PluginAct::Remove(id) => host.uninstall(id),
+            PluginAct::RemoveRepo(url) => host.remove_repo(url),
+            PluginAct::Turn(id) => host.turn(id, true),
+            PluginAct::Get(offer, version) => {
+                let crate::settings::Shelf::Read(offers) = &self.plugged.shelf else { return };
+                let Some(v) = offers.offers.get(offer as usize).and_then(|o| o.versions.get(version as usize)).cloned() else { return };
+                let tx = self.tx.clone();
+                nori_host::spawn("nori-plugin-get", move || tx.send(Msg::PluginInstalled(nori_core::transport::block_on(host.install_version(v)))));
+                return;
             }
             _ => return,
         }
@@ -2919,11 +2959,16 @@ impl App {
                 self.settings_shown();
             }
             Msg::PluginInstalled(r) => {
-                match r {
+                self.plugins_read();
+                match r.map(|id| self.plugged.cards.iter().find(|c| c.id == id).cloned()) {
+                    // Installed off: what it is and reaches, before it is turned on.
+                    Ok(Some(c)) if !c.enabled => {
+                        let note: Vec<String> = c.about.iter().cloned().chain([words::plugin_is(&c.points, !c.overrides.is_empty()), words::plugin_reach(&c.net, &c.overrides), words::INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect();
+                        self.confirm(&words::installed_off(&c.name), &note.join("\n\n"), words::TURN_ON, crate::settings::PluginAct::Turn(c.id));
+                    }
                     Ok(_) => self.say(words::PLUGIN_INSTALLED, false),
                     Err(e) => self.say(&words::plugin_refused(&e), true),
                 }
-                self.plugins_read();
             }
             Msg::PluginOffers(o) => {
                 self.plugged.shelf = crate::settings::Shelf::Read(o);

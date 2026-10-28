@@ -150,37 +150,59 @@ plugin_from_file() {
   "$app" plugin turn "$id on" >/dev/null && echo "$id"
 }
 
-if want plugins; then section "plugins: a repo added, orbit installed from it and turned on, music still sounding"
-  # The plugin host's runtime on the device's ABI, the Plugins page and its sheet, a repo fetched through
-  # OkHttp, and a plugin's sound stage reaching the AudioTrack player; what plugins may do is Rust's.
+if want plugins; then section "plugins: a repo added, orbit installed from it, turned on and off, its rows, removed; music sounding"
+  # The plugin host's runtime on the device's ABI, the Plugins page and its sheets, a repo fetched through
+  # OkHttp, and a plugin's sound stage reaching the AudioTrack player at once; what plugins may do is Rust's.
   check "orbit is packed" test -n "$(plugin_package orbit)"
-  check "their repo is served" serve_plugins
+  check "its repo is served" serve_plugins
   "$app" plugin reset >/dev/null
+  "$app" play "$SONG" >/dev/null
+  check "music sounds before any plugin" sounds 20
   "$app" open plugins >/dev/null
-  check "the Plugins page opens" wait_until 10 on_screen 'text="Add Repo"'
+  check "the Plugins page opens, empty" wait_until 10 on_screen 'Plugins add music sources'
   shots="$here/../build/e2e/$ANDROID_SERIAL/plugins"; mkdir -p "$shots"
-  tapnode text "Add Repo"
+  adb exec-out screencap -p > "$shots/plugins-empty.png"
+  tapnode text "Add repo"
   check "adding a repo warns first" wait_until 10 on_screen 'Add it only if you trust it'
   tapnode text "Repo address"
   adb shell input text "http://10.0.2.2:$plugins_port/index.json"
   tapnode text Add
   check "the repo offers orbit" wait_until 30 on_screen 'text="Orbit"'
+  tapnode text Orbit
+  check "installing shows what the repo says first" wait_until 10 on_screen 'shown before it’s turned on'
+  adb exec-out screencap -p > "$shots/install-sheet.png"
   tapnode text Install
   check "orbit installs from the repo, off" wait_until 30 plugin_is 'fm.nori.orbit:off'
-  check "the page lists it" wait_until 10 on_screen 'text="Version '
-  "$app" plugin turn "fm.nori.orbit on" >/dev/null
+  check "and asks to turn it on, saying what it may do" wait_until 10 on_screen 'Change the sound'
+  adb exec-out screencap -p > "$shots/turn-on-sheet.png"
+  watch_from_now
+  tapnode text "Turn on"
   check "orbit turns on" wait_until 10 plugin_is 'fm.nori.orbit:on'
+  check "the player takes its stage in at once" waitfor_log 'the chain changes' 10
+  check "installed, it leaves Get plugins" wait_until 10 off_screen 'text="Install"'
+  check "music sounds with orbit's stage in the chain" sounds 10
   adb exec-out screencap -p > "$shots/plugins.png"
+  watch_from_now
+  "$app" plugin turn "fm.nori.orbit off" >/dev/null
+  check "turned off, the player lets its stage go at once" waitfor_log 'the chain changes' 10
+  watch_from_now
+  "$app" plugin turn "fm.nori.orbit on" >/dev/null
+  check "and takes it in again" waitfor_log 'the chain changes' 10
   tapnode text Orbit
-  check "its page draws its rows" wait_until 10 on_screen 'text="Turns per second"'
+  check "its page shows each level's value" wait_until 10 on_screen 'Turns per second · 0.12'
   adb exec-out screencap -p > "$shots/orbit.png"
   "$app" play "$SONG" >/dev/null
-  check "music sounds with orbit's stage in the chain" sounds 20
-  at=$(field positionMs)
-  check "and plays on" wait_for positionMs ">$((at + 3000))" 15
+  check "a song started with orbit on sounds" sounds 10
+  check "and plays on" wait_for positionMs '>3000' 15
+  tapnode text Remove
+  check "Remove asks first" wait_until 10 on_screen 'Its own settings go with it'
+  watch_from_now
+  tapnode text Remove
+  check "removed, it is gone" wait_until 10 plugin_is none
+  check "and so is its stage" waitfor_log 'the chain changes' 10
+  check "the page goes back to the list" wait_until 10 on_screen 'Plugins add music sources'
   "$app" do pause >/dev/null
   "$app" plugin reset >/dev/null
-  check "a reset leaves no plugin" wait_until 10 plugin_is none
   kill "$plugins_server" 2>/dev/null
   "$app" open settings >/dev/null
 fi
@@ -375,7 +397,7 @@ PY
 import pathlib, sys, zipfile
 root = pathlib.Path(sys.argv[2]); folder = root / "fm.nori.youtube-music"
 zipfile.ZipFile(sys.argv[1]).extractall(folder)
-(root / "index.toml").write_text('[[plugin]]\nid = "fm.nori.youtube-music"\nenabled = true\n')
+(root / "index.json").write_text('{"plugin": [{"id": "fm.nori.youtube-music", "enabled": true}]}')
 PY
   tmux new-session -d -s "$ytpeer" -x 160 -y 45 "$here/../target/debug/nori-cli --data $ytdata --provider fm.nori.youtube-music --no-images --no-mpris"
   for _ in $(seq 16); do tmux send-keys -t "$ytpeer" -- -; done

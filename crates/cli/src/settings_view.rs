@@ -199,6 +199,8 @@ pub struct SettingsView {
     pub facts_asked: bool,
     /// State shown by the terminal's own rows.
     pub own: Own,
+    /// Only the plugins' group, opened from the login before any profile.
+    pub alone: bool,
 }
 
 /// What the page shows beyond the settings: the terminal's own state, the kinds of profile and the
@@ -248,7 +250,8 @@ impl SettingsView {
         if self.pages.is_none() {
             let state = settings_model::state(prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
             let today = Day::now();
-            self.pages = Some(GROUPS.iter().map(|g| page(g.id, prefs, &state, &self.facts, &self.own, today)).collect());
+            let alone = self.alone;
+            self.pages = Some(GROUPS.iter().filter(|g| !alone || g.id == Gid::Plugins).map(|g| page(g.id, prefs, &state, &self.facts, &self.own, today)).collect());
         }
         self.pages.as_deref().expect("made above")
     }
@@ -331,7 +334,7 @@ impl SettingsView {
                 Act::InstallPlugin => Opened::Overlay(Overlay::Input { title: text::PLUGIN_PATH.into(), text: String::new(), secret: false, target: Target::Install }),
                 Act::PluginAction { plugin, row } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Act(plugin, row))]),
                 Act::LookForPlugins => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Look)]),
-                Act::GetPlugin { offer, version } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Get(offer, version))]),
+                Act::GetPlugin { offer, version } => Opened::Overlay(self.get_plugin(offer, version)?),
                 Act::AddRepo => Opened::Overlay(Overlay::Input { title: text::REPO_ADDRESS.into(), text: String::new(), secret: false, target: Target::AddRepo }),
             },
             Row::Text { title, secret, target, .. } => Opened::Overlay(Overlay::Input { title, text: String::new(), secret, target }),
@@ -400,17 +403,34 @@ impl SettingsView {
         }
     }
 
-    /// K, J or d on a plugin's row: moves it up or down the order, or removes it; d on a repo the user
-    /// added removes it.
-    pub fn plugin_key(&self, a: crate::keys::Action) -> Option<Cmd> {
-        use crate::keys::Action;
-        Some(Cmd::Plugin(match (self.selected()?, a) {
-            (Row::Plugin { id, index, .. }, Action::MoveUp) if *index > 0 => PluginCmd::Place(id.clone(), index - 1),
-            (Row::Plugin { id, index, count, .. }, Action::MoveDown) if index + 1 < *count => PluginCmd::Place(id.clone(), index + 1),
-            (Row::Plugin { id, .. }, Action::Remove) => PluginCmd::Uninstall(id.clone()),
-            (Row::Repo { url, removable: true, .. }, Action::Remove) => PluginCmd::RemoveRepo(url.clone()),
-            _ => return None,
-        }))
+    /// K or J on a plugin's row: moves it up or down the order.
+    pub fn plugin_move(&self, up: bool) -> Option<Cmd> {
+        let Some(Row::Plugin { id, index, count, .. }) = self.selected() else { return None };
+        let to = if up { index.checked_sub(1)? } else { Some(index + 1).filter(|to| to < count)? };
+        Some(Cmd::Plugin(PluginCmd::Place(id.clone(), to)))
+    }
+
+    /// d on a plugin's row, or a repo the user added: asks before removing it.
+    pub fn plugin_key(&self, _: crate::keys::Action) -> Option<Overlay> {
+        let confirm = |title: String, lines: Vec<String>, cmd| Overlay::Confirm { title, lines, yes: text::REMOVE.into(), cmd: Box::new(Cmd::Plugin(cmd)) };
+        match self.selected()? {
+            Row::Plugin { id, .. } => {
+                let name = self.own.plugins.iter().find(|c| c.id == *id).map_or(id.as_str(), |c| c.name.as_str());
+                Some(confirm(text::remove_plugin(name), vec![text::REMOVE_PLUGIN_NOTE.into()], PluginCmd::Uninstall(id.clone())))
+            }
+            Row::Repo { url, title, removable: true, .. } => Some(confirm(text::remove_plugin(title), vec![url.clone()], PluginCmd::RemoveRepo(url.clone()))),
+            _ => None,
+        }
+    }
+
+    /// The question before installing version `version` of offer `offer`: what the repo says of it.
+    fn get_plugin(&self, offer: u32, version: u32) -> Option<Overlay> {
+        let Shelf::Read(offers) = &self.own.shelf else { return None };
+        let o = offers.offers.get(offer as usize)?;
+        let v = o.versions.get(version as usize)?;
+        let mut lines: Vec<String> = o.about.iter().cloned().collect();
+        lines.push(format!("{} · {}", text::repo_name(&o.repo), v.released.as_deref().unwrap_or(&v.version)));
+        Some(Overlay::Confirm { title: text::install_version(&o.name, &v.version), lines, yes: text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::Get(offer, version))) })
     }
 
     /// Moves the selection off a heading onto a row, preferring direction `down`.
@@ -519,9 +539,7 @@ fn plugins_page(cards: &[PluginCard], repos: &[Repo], shelf: &Shelf) -> Vec<Sect
     let mut sections = Vec::new();
     for (i, c) in cards.iter().enumerate() {
         let mut detail: Vec<String> = c.about.iter().cloned().collect();
-        if !c.net.is_empty() {
-            detail.push(format!("{} {}", text::PLUGIN_NET, c.net.join(", ")));
-        }
+        detail.extend([text::plugin_is(&c.points, !c.overrides.is_empty()), text::plugin_reach(&c.net, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
         let own = Row::Plugin { id: c.id.clone(), title: format!("{} {}", text::PLUGIN_VERSION, c.version), detail: detail.join(" · "), on: c.enabled, index: i as u32, count: cards.len() as u32 };
         let (mut title, mut rows) = (c.name.clone(), vec![own]);
         if c.repo.is_some() {
@@ -550,18 +568,15 @@ fn plugins_page(cards: &[PluginCard], repos: &[Repo], shelf: &Shelf) -> Vec<Sect
         Shelf::Asking => get.push(Row::Note { text: text::LOOKING.into() }),
         Shelf::Read(Offers { offers, failed }) => {
             for (at, o) in offers.iter().enumerate() {
-                let Some((newest, state)) = offer_state(o) else { continue };
+                // What is installed at its newest is not offered again.
+                let Some((newest, state)) = offer_state(o).filter(|(_, s)| *s != OfferState::Installed) else { continue };
                 let mut detail: Vec<String> = o.about.iter().cloned().collect();
                 detail.push(format!("{} {}", text::PLUGIN_VERSION, newest.version));
                 detail.push(text::repo_name(&o.repo));
-                let button = match state {
-                    OfferState::New => text::INSTALL,
-                    OfferState::Update => text::UPDATE,
-                    OfferState::Installed => text::INSTALLED,
-                };
-                get.push(Row::Action { title: o.name.clone(), detail: detail.join(" · "), button: button.into(), enabled: state != OfferState::Installed, action: Act::GetPlugin { offer: at as u32, version: 0 } });
+                let button = if state == OfferState::Update { text::UPDATE } else { text::INSTALL };
+                get.push(Row::Action { title: o.name.clone(), detail: detail.join(" · "), button: button.into(), enabled: true, action: Act::GetPlugin { offer: at as u32, version: 0 } });
             }
-            if offers.is_empty() && failed.is_empty() {
+            if get.is_empty() && failed.is_empty() {
                 get.push(Row::Note { text: text::NOTHING_OFFERED.into() });
             }
             get.extend(failed.iter().map(|f| Row::Note { text: text::repo_failed(&f.repo) }));
@@ -573,6 +588,11 @@ fn plugins_page(cards: &[PluginCard], repos: &[Repo], shelf: &Shelf) -> Vec<Sect
     rows.push(Row::Button { title: text::ADD_REPO.into(), action: Act::AddRepo });
     sections.push(section(text::REPOS, rows));
     sections
+}
+
+/// The warning before adding the repo at `url`, which isn't nori's.
+pub fn trust_repo(url: &str) -> Overlay {
+    Overlay::Confirm { title: text::ADD_REPO.into(), lines: vec![text::TRUST_REPO.into(), url.into()], yes: text::ADD.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::AddRepo(url.into()))) }
 }
 
 /// What plugin `c`'s repo offers of it: where its code is, and its versions to install one of.
@@ -631,7 +651,8 @@ fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
             Row::Text { title, shown, secret, target }
         }
         RowKind::Action => Row::Button { title, action: Act::PluginAction { plugin: plugin.into(), row: r.id.clone() } },
-        RowKind::Status => Row::Info { title, detail: r.value.as_ref().map(|v| text::plugin_value(v, &r.options)).unwrap_or_default() },
+        // A link shows where it goes: the terminal opens no pages.
+        RowKind::Status | RowKind::Link => Row::Info { title, detail: r.value.as_ref().map(|v| text::plugin_value(v, &r.options)).unwrap_or_default() },
         RowKind::Note | RowKind::Section => Row::Note { text: title },
     }
 }

@@ -1097,7 +1097,7 @@ fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) 
         v.skip_titles(true);
     }
     // The groups down the left when wide enough.
-    let body = if body.width >= 96 {
+    let body = if body.width >= 96 && !v.alone {
         let at = v.group_at();
         for (g, group) in settings_view::GROUPS.iter().enumerate() {
             let r = Rect { x: body.x, y: body.y + g as u16, width: 18, height: 1 };
@@ -1736,18 +1736,34 @@ fn track_bar(f: &mut Frame, r: Rect, share: f32, t: &Theme) {
 
 fn login(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let servers = app.prefs.servers.len() as u16;
-    let h = 17 + if servers > 0 { servers + 2 } else { 0 };
+    let kinds = app.login_kinds();
+    let fields = app.login_fields();
+    let info = kinds.get(app.login.kind).or(kinds.first());
+    let words = info.map(|i| app.provider_words(&i.kind));
+    let choosing = kinds.len() > 1;
+    let h = 11 + 2 * fields.len() as u16 + if choosing { 2 } else { 0 } + if servers > 0 { servers + 2 } else { 0 };
     let r = centred(area, 64, h);
-    let inner = popup(f, r, Span::styled(" nori · connect to a server ", bold().fg(t.ink)), t);
+    let inner = popup(f, r, Span::styled(" nori · add a profile ", bold().fg(t.ink)), t);
     let l = &app.login;
     let bottom = inner.y + inner.height;
     let mut y = inner.y + 1;
-    text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: 1 }, "Navidrome, octo-fiesta or any Subsonic server", t.dim());
+    if choosing {
+        let name = words.as_ref().map_or(String::new(), |w| w.name.clone());
+        let line = Line::from(vec![Span::styled(format!("  {:<16}", crate::text::LOGIN_KIND), t.dim()), Span::styled(format!("‹ {name} ›"), bold().fg(t.ink))]);
+        put(f, Paragraph::new(line), Rect { x: inner.x, y, width: inner.width, height: 1 });
+        y += 2;
+    }
+    let about = match info.map(|i| &i.kind) {
+        Some(nori_core::settings::ServerKind::Plugin { .. }) => crate::text::FROM_A_PLUGIN,
+        _ => "Navidrome, octo-fiesta or any Subsonic server",
+    };
+    text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: 1 }, about, t.dim());
     y += 2;
-    for (i, label) in LOGIN_FIELDS.iter().enumerate() {
+    for &i in &fields {
         if y >= bottom {
             break;
         }
+        let label = LOGIN_FIELDS[i];
         let focused = l.focus == i && !l.on_list;
         let value = if i == 3 { "•".repeat(l.fields[i].chars().count()) } else { l.fields[i].clone() };
         let cursor = if focused { "▏" } else { "" };
@@ -1764,10 +1780,14 @@ fn login(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let br = Rect { x: inner.x + 18, y, width: button.width() as u16, height: 1 };
     put(f, Paragraph::new(Span::styled(button, t.select(true))), br);
     app.hits.push((br, Hit::Button(Button::Connect)));
+    let plugins = format!(" {} › ", crate::text::PLUGINS);
+    let pr = Rect { x: br.x + br.width + 2, y, width: plugins.width() as u16, height: 1 };
+    put(f, Paragraph::new(Span::styled(plugins, t.dim())), pr);
+    app.hits.push((pr, Hit::Button(Button::LoginPlugins)));
     y += 2;
     let msg = match &l.error {
         Some(e) => Span::styled(format!("  {e}"), Style::default().fg(Color::LightRed)),
-        None => Span::styled("  tab next field · enter connect · esc back", t.dim()),
+        None => Span::styled(format!("  {}", if choosing { crate::text::LOGIN_KIND_KEYS } else { crate::text::LOGIN_KEYS }), t.dim()),
     };
     put(f, Paragraph::new(msg).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x, y, width: inner.width, height: 2.min(bottom.saturating_sub(y)) });
     y += 3;
@@ -1941,17 +1961,18 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             let shown = if *secret { "•".repeat(typed.chars().count()) } else { typed.clone() };
             put(f, Paragraph::new(format!(" {shown}▏")), inner);
         }
-        Overlay::Trust { url } => {
+        Overlay::Confirm { title, lines: said, yes, .. } => {
             let w = 64.min(area.width);
-            let lines = vec![
-                Line::from(Span::styled(crate::text::TRUST_REPO, Style::default().fg(t.ink))),
-                Line::from(""),
-                Line::from(Span::styled(url.clone(), t.dim())),
-                Line::from(""),
-                Line::from(Span::styled(crate::text::TRUST_KEYS, t.dim())),
-            ];
-            let r = centred(area, w, 8);
-            let inner = popup(f, r, Span::styled(format!(" {} ", crate::text::ADD_REPO), bold().fg(t.ink)), t);
+            let iw = w.saturating_sub(4).max(1) as usize;
+            let mut lines = Vec::new();
+            for (i, l) in said.iter().enumerate() {
+                lines.push(Line::from(Span::styled(l.clone(), if i == 0 { Style::default().fg(t.ink) } else { t.dim() })));
+                lines.push(Line::from(""));
+            }
+            lines.push(Line::from(Span::styled(crate::text::confirm_keys(yes), t.dim())));
+            let rows: usize = said.iter().map(|l| l.chars().count().div_ceil(iw).max(1) + 1).sum::<usize>() + 1;
+            let r = centred(area, w, rows as u16 + 2);
+            let inner = popup(f, r, Span::styled(format!(" {title} "), bold().fg(t.ink)), t);
             put(f, Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner });
         }
     }

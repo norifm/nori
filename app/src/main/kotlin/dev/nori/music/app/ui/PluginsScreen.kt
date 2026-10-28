@@ -1,14 +1,18 @@
 package dev.nori.music.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -20,9 +24,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -34,66 +40,81 @@ import dev.nori.music.ffi.plugins.PluginRow
 import dev.nori.music.ffi.plugins.RowKind
 import dev.nori.music.ffi.plugins.Value
 import dev.nori.music.plugins.RowRef
+import dev.nori.music.text.Fmt
 
 private const val DIMMED = 0.38f
 
 /** A repo as its rows name it: nori's own, else its host. */
 private fun repoName(url: String, official: Boolean): String = if (official) say.pluginRepoOfficial else android.net.Uri.parse(url).host ?: url
 
+/** What a card is, in words: its extension points and whether it changes nori's values. */
+private fun PluginCard.kinds() = say.pluginKinds(points, overrides.isNotEmpty())
+
 /**
- * Settings › Plugins: the installed plugins in their order (on or off, moved, removed, each opening its
- * page), installing one from a file, what the repos offer, and the repos.
+ * Settings › Plugins and its plugins' pages, for where there is no navigation of the app's yet (the first
+ * profile's form): one page at a time, back going from a plugin's page to the list, then [close].
  */
 @Composable
-fun PluginsScreen(vm: PluginsViewModel) {
-    val nav = LocalNav.current
+fun PluginsPages(vm: PluginsViewModel, close: () -> Unit) {
+    var page by remember { mutableStateOf<String?>(null) }
+    BackHandler(page != null) { page = null }
+    when (val id = page) {
+        null -> PluginsScreen(vm, close) { page = it }
+        else -> PluginPage(vm, id) { page = null }
+    }
+}
+
+/**
+ * Settings › Plugins: the installed plugins in their order (on or off, moved, removed, each opening its
+ * page with [open]), installing one from a file, what the repos offer that isn't here, and the repos.
+ */
+@Composable
+fun PluginsScreen(vm: PluginsViewModel, back: () -> Unit, open: (String) -> Unit) {
     val cards by vm.cards.collectAsStateWithLifecycle()
     val repos by vm.repos.collectAsStateWithLifecycle()
     val offers by vm.offers.collectAsStateWithLifecycle()
-    val said by vm.said.collectAsStateWithLifecycle()
+    val refused by vm.refused.collectAsStateWithLifecycle()
     var adding by remember { mutableStateOf(false) }
+    var installing by remember { mutableStateOf<Offer?>(null) }
+    var removing by remember { mutableStateOf<PluginCard?>(null) }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.installFile(uri) }
     LaunchedEffect(Unit) { vm.loadOffers() }
+    // Offered and not here, or here in an older version.
+    val wanted = offers.offers.filter { o -> o.installed == null || o.installed != o.versions.firstOrNull()?.version }
     Column(Modifier.verticalScroll(rememberScrollState())) {
-        BackTitle(say.plugins)
-        GroupLabel(say.pluginsInstalled)
-        GroupCard {
-            if (cards.isEmpty()) GroupRow(say.pluginsNone, divider = false)
-            cards.forEachIndexed { i, c ->
-                GroupRow(
-                    c.name, { nav.plugin(c.id) }, Modifier.testTag("plugin-${c.id}"), subtitle = say.pluginVersion(c.version), divider = i < cards.lastIndex,
-                    trailing = {
-                        MoreButton(listOfNotNull(
+        BackTitle(say.plugins, back)
+        if (cards.isEmpty()) Quiet(say.pluginsEmpty, Modifier.padding(horizontal = Space.gutter, vertical = 8.dp))
+        else {
+            GroupLabel(say.pluginsInstalled)
+            GroupCard {
+                cards.forEachIndexed { i, c ->
+                    InstalledRow(
+                        c, i < cards.lastIndex, { open(c.id) }, { on -> vm.turn(c.id, on) },
+                        listOfNotNull(
                             (say.pluginMoveUp to { vm.move(c.id, -1) }).takeIf { i > 0 },
                             (say.pluginMoveDown to { vm.move(c.id, 1) }).takeIf { i < cards.lastIndex },
-                            say.remove to { vm.uninstall(c.id) },
-                        ))
-                        NoriSwitch(c.enabled, { on -> vm.turn(c.id, on) }, Modifier.testTag("plugin-on-${c.id}"))
-                    },
-                )
+                            say.remove to { removing = c },
+                        ),
+                    )
+                }
             }
         }
         Column(Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             PillButton(say.pluginsInstallFile, null, { pick.launch(arrayOf("*/*")) }, Modifier.fillMaxWidth().testTag("plugin-install-file"))
-            said?.let { (refused, line) ->
-                Text(
-                    line, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("plugin-said"),
-                    color = if (refused) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            refused?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("plugin-refused")) }
         }
 
-        GroupLabel(say.pluginsGet)
-        GroupCard {
-            if (offers.loading && offers.offers.isEmpty()) GroupRow(say.pluginsAsking, divider = false)
-            offers.offers.forEachIndexed { i, o -> OfferRow(o, i < offers.offers.lastIndex) { vm.installOffer(o) } }
+        if (wanted.isNotEmpty() || offers.loading) {
+            GroupLabel(say.pluginsGet)
+            GroupCard {
+                if (wanted.isEmpty()) GroupRow(say.pluginsAsking, divider = false)
+                wanted.forEachIndexed { i, o ->
+                    OfferRow(o, i < wanted.lastIndex) { if (o.installed == null) installing = o else vm.installOffer(o) }
+                }
+            }
         }
         offers.failed.forEach { f ->
-            Text(
-                say.pluginRepoUnreachable(android.net.Uri.parse(f.repo.url).host ?: f.repo.url),
-                Modifier.padding(horizontal = Space.gutter, vertical = 4.dp),
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Quiet(say.pluginRepoUnreachable(android.net.Uri.parse(f.repo.url).host ?: f.repo.url), Modifier.padding(horizontal = Space.gutter, vertical = 4.dp))
         }
 
         GroupLabel(say.pluginRepos)
@@ -109,23 +130,57 @@ fun PluginsScreen(vm: PluginsViewModel) {
         Spacer(Modifier.height(Space.section + LocalChromeInset.current))
     }
     AddRepoSheet(adding, { adding = false }) { url -> vm.addRepo(url); adding = false }
+    InstallSheet(installing, { installing = null }) { o -> vm.installOffer(o); installing = null }
+    TurnOnSheet(vm)
+    RemoveSheet(removing, { removing = null }) { c -> vm.uninstall(c.id); removing = null }
 }
 
-/** An offered plugin: its name and about, its version and repo, and Install, Update or Installed. */
+/** A line in the quiet ink. */
+@Composable
+private fun Quiet(text: String, modifier: Modifier = Modifier, lines: Int = Int.MAX_VALUE) = Text(
+    text, modifier, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    maxLines = lines, overflow = TextOverflow.Ellipsis,
+)
+
+/** An installed plugin: its name, its about on one line, what it is, its menu and its switch; a tap opens its page. */
+@Composable
+private fun InstalledRow(c: PluginCard, divider: Boolean, open: () -> Unit, turn: (Boolean) -> Unit, menu: List<Pair<String, () -> Unit>>) {
+    Column(Modifier.fillMaxWidth().testTag("plugin-${c.id}")) {
+        Row(Modifier.fillMaxWidth().clickable(onClick = open).padding(start = GROUP_INSET, end = GROUP_INSET, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(c.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                c.about?.let { Quiet(it, lines = 1) }
+                c.kinds().takeIf { it.isNotEmpty() }?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            MoreButton(menu)
+            NoriSwitch(c.enabled, turn, Modifier.testTag("plugin-on-${c.id}"))
+        }
+        if (divider) Hairline(startIndent = GROUP_INSET)
+    }
+}
+
+/** An offered plugin: its name, about, version and repo, and Install, or Update for one here in an older version. */
 @Composable
 private fun OfferRow(o: Offer, divider: Boolean, install: () -> Unit) {
     GroupRow(
-        o.name, modifier = Modifier.testTag("offer-${o.id}"),
+        o.name, install, Modifier.testTag("offer-${o.id}"),
         subtitle = listOfNotNull(o.about, o.versions.firstOrNull()?.let { say.pluginOfferLine(it.version, repoName(o.repo.url, o.repo.official)) }).joinToString("\n"),
         divider = divider,
-        trailing = {
-            when (o.installed) {
-                o.versions.firstOrNull()?.version -> Text(say.pluginUpToDate, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                null -> TextAction(say.pluginInstall, install)
-                else -> TextAction(say.pluginUpdate, install)
-            }
-        },
+        trailing = { TextAction(if (o.installed == null) say.pluginInstall else say.pluginUpdate, install) },
     )
+}
+
+/** A sheet's paper: a title, what it says, then its buttons at the end. */
+@Composable
+private fun SheetPage(title: String, buttons: @Composable () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        Modifier.windowInsetsPadding(gestureBarRoom).padding(start = Space.gutter, end = Space.gutter, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(title, style = titled(MaterialTheme.typography.titleLarge))
+        content()
+        Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(8.dp, Alignment.End)) { buttons() }
+    }
 }
 
 /** A repo's address, asked under the warning that it isn't nori's: Add is the user agreeing. */
@@ -133,53 +188,89 @@ private fun OfferRow(o: Offer, divider: Boolean, install: () -> Unit) {
 private fun AddRepoSheet(visible: Boolean, close: () -> Unit, add: (String) -> Unit) {
     NoriSheet(visible, close) {
         var url by remember { mutableStateOf("") }
-        Column(Modifier.padding(horizontal = Space.gutter, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(say.pluginAddRepo, style = MaterialTheme.typography.titleMedium)
-            Text(say.pluginRepoWarning, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SheetPage(say.pluginAddRepo, {
+            TextAction(say.cancel, close)
+            TextAction(say.add, { add(url) }, Modifier.testTag("repo-add"), enabled = url.isNotBlank())
+        }) {
+            Quiet(say.pluginRepoWarning)
             FormField(
                 url, { url = it }, Modifier.fillMaxWidth().testTag("repo-url"), label = { Text(say.pluginRepoUrl) }, singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
             )
-            Row(Modifier.fillMaxWidth(), Arrangement.End) {
-                TextAction(say.cancel, close)
-                TextAction(say.add, { add(url) }, Modifier.testTag("repo-add"), enabled = url.isNotBlank())
-            }
         }
     }
 }
 
+/** A repo's plugin before it is installed: what the repo says of it. What it may do is asked once it is here. */
+@Composable
+private fun InstallSheet(offer: Offer?, close: () -> Unit, install: (Offer) -> Unit) {
+    NoriSheet(offer, close) { o ->
+        SheetPage(o.name, {
+            TextAction(say.cancel, close)
+            TextAction(say.pluginInstall, { install(o) }, Modifier.testTag("install-confirm"))
+        }) {
+            o.about?.let { Text(it) }
+            Quiet(listOfNotNull(o.versions.firstOrNull()?.let { say.pluginOfferLine(it.version, repoName(o.repo.url, o.repo.official)) }).joinToString())
+            Quiet(say.pluginInstallNote)
+        }
+    }
+}
+
+/** What a plugin just installed may do, every permission at once, before it is turned on. */
+@Composable
+private fun TurnOnSheet(vm: PluginsViewModel) {
+    val asking by vm.asking.collectAsStateWithLifecycle()
+    val cards by vm.cards.collectAsStateWithLifecycle()
+    NoriSheet(cards.firstOrNull { it.id == asking }, vm::stopAsking) { c ->
+        SheetPage(say.pluginTurnOnTitle(c.name), {
+            TextAction(say.notNow, vm::stopAsking)
+            TextAction(say.pluginTurnOn, { vm.turn(c.id, true); vm.stopAsking() }, Modifier.testTag("turn-on-confirm"))
+        }) {
+            c.about?.let { Text(it) }
+            Quiet(listOf(say.pluginVersion(c.version), c.kinds()).filter { it.isNotEmpty() }.joinToString(" · "))
+            Text(say.pluginMayTitle, style = MaterialTheme.typography.titleSmall)
+            say.pluginMay(c.points, c.net, c.overrides).forEach { Text("· $it") }
+        }
+    }
+}
+
+/** Removing a plugin, asked first. */
+@Composable
+private fun RemoveSheet(card: PluginCard?, close: () -> Unit, remove: (PluginCard) -> Unit) {
+    NoriSheet(card, close) { c ->
+        SheetPage(say.pluginRemoveTitle(c.name), {
+            TextAction(say.cancel, close)
+            TextAction(say.remove, { remove(c) }, Modifier.testTag("remove-confirm"), destructive = true)
+        }) { Quiet(say.pluginRemoveText) }
+    }
+}
+
 /**
- * A plugin's page: what it is and does, on or off, the last thing it said, and its rows, drawn with the
- * settings' own components; a section row starts a new card.
+ * A plugin's page: what it is, on or off, the last thing it said, its rows drawn with the settings' own
+ * components (a section row starts a new card), the versions its repo offers, and Remove.
  */
 @Composable
-fun PluginPage(vm: PluginsViewModel, id: String) {
-    val nav = LocalNav.current
+fun PluginPage(vm: PluginsViewModel, id: String, back: () -> Unit) {
     val cards by vm.cards.collectAsStateWithLifecycle()
     val status by vm.status.collectAsStateWithLifecycle()
     val shown by vm.shown.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val offers by vm.offers.collectAsStateWithLifecycle()
+    var removing by remember { mutableStateOf<PluginCard?>(null) }
     LaunchedEffect(Unit) { vm.loadOffers() }
     val card = cards.firstOrNull { it.id == id } ?: return
     // What the repo it came from offers of it; a plugin from a file updates from nowhere.
     val offer = offers.offers.firstOrNull { it.id == id && it.repo.url == card.repo }
     Column(Modifier.verticalScroll(rememberScrollState())) {
-        BackTitle(card.name)
-        val facts = listOfNotNull(
-            card.about, say.pluginVersion(card.version), say.pluginFromFile.takeIf { card.repo == null },
-            card.net.takeIf { it.isNotEmpty() }?.let(say::pluginTalksTo), card.overrides.takeIf { it.isNotEmpty() }?.let(say::pluginChanges),
-        )
-        Text(
-            facts.joinToString("\n"), Modifier.padding(horizontal = Space.gutter, vertical = 8.dp),
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        notice?.takeIf { it.plugin == id }?.let { n ->
-            Text(
-                n.line, Modifier.padding(horizontal = Space.gutter, vertical = 4.dp), style = MaterialTheme.typography.bodySmall,
-                color = if (n.problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        BackTitle(card.name, back)
+        Column(Modifier.padding(horizontal = Space.gutter, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            card.about?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+            Quiet(listOfNotNull(say.pluginVersion(card.version), card.kinds().takeIf { it.isNotEmpty() }, say.pluginFromFile.takeIf { card.repo == null }).joinToString(" · "))
+            notice?.takeIf { it.plugin == id }?.let { n ->
+                Text(n.line, style = MaterialTheme.typography.bodySmall, color = if (n.problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
+        Spacer(Modifier.height(8.dp))
         GroupCard {
             Toggle(say.pluginOn, "", card.enabled, key = "plugin-on", divider = card.repo != null) { on -> vm.turn(id, on) }
             if (card.repo != null) Toggle(say.pluginKeepVersion, "", card.held, divider = false) { held -> vm.hold(id, held) }
@@ -189,9 +280,9 @@ fun PluginPage(vm: PluginsViewModel, id: String) {
         card.rows.filter { shown[RowRef(id, it.id)]?.shown != false }.forEach { r ->
             if (r.kind == RowKind.SECTION) groups += r.label to mutableListOf() else groups.last().second += r
         }
-        groups.filter { it.second.isNotEmpty() || it.first != null }.forEach { (title, rows) ->
+        groups.filter { it.second.isNotEmpty() }.forEach { (title, rows) ->
             if (title != null) GroupLabel(title) else Spacer(Modifier.height(Space.section))
-            if (rows.isNotEmpty()) GroupCard {
+            GroupCard {
                 rows.forEachIndexed { i, r ->
                     val enabled = shown[RowRef(id, r.id)]?.enabled != false
                     PluginRowView(card, r, status[RowRef(id, r.id)], enabled, i < rows.lastIndex, vm)
@@ -204,21 +295,27 @@ fun PluginPage(vm: PluginsViewModel, id: String) {
             GroupCard {
                 offer.versions.forEachIndexed { i, v ->
                     GroupRow(
-                        say.pluginVersionLine(v.version, v.released), divider = i < offer.versions.lastIndex || offer.source != null,
+                        v.version, minHeight = 44.dp, value = v.released, divider = i < offer.versions.lastIndex || offer.source != null,
                         trailing = {
-                            if (v.version == card.version) Text(say.pluginUpToDate, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            else TextAction(say.pluginInstall, { vm.installVersion(v) })
+                            if (v.version != card.version) TextAction(say.pluginInstall, { vm.installVersion(v) }, Modifier.padding(start = 8.dp))
                         },
                     )
                 }
-                offer.source?.let { src -> GroupRow(say.pluginSource, { runCatching { uri.openUri(src) } }, value = android.net.Uri.parse(src).host, chevron = true, divider = false) }
+                offer.source?.let { src -> GroupRow(say.pluginSource, { runCatching { uri.openUri(src) } }, minHeight = 44.dp, value = android.net.Uri.parse(src).host, chevron = true, divider = false) }
             }
         }
         Row(Modifier.padding(horizontal = 8.dp, vertical = 12.dp)) {
-            TextAction(say.remove, { vm.uninstall(id); nav.back() }, destructive = true)
+            TextAction(say.remove, { removing = card }, Modifier.testTag("plugin-remove"), destructive = true)
         }
         Spacer(Modifier.height(Space.section + LocalChromeInset.current))
     }
+    RemoveSheet(removing, { removing = null }) { c -> vm.uninstall(c.id); removing = null; back() }
+}
+
+/** Decimal places that show a level moving by [step]. */
+private fun places(step: Double?): Int {
+    val s = step?.takeIf { it > 0 } ?: return 2
+    return (0..4).firstOrNull { p -> val x = s * Math.pow(10.0, p.toDouble()); kotlin.math.abs(x - kotlin.math.round(x)) < 1e-9 } ?: 4
 }
 
 @Composable
@@ -243,7 +340,10 @@ private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabl
             val max = (r.max ?: 1.0).toFloat()
             val step = r.step?.toFloat()?.takeIf { it > 0f }
             val value = ((r.value as? Value.Level)?.v1 ?: r.min ?: 0.0).toFloat()
-            Text(r.label, dim.padding(start = GROUP_INSET, end = GROUP_INSET, top = 10.dp), style = MaterialTheme.typography.bodySmall)
+            Text(
+                say.pluginLevel(r.label, Fmt.fixed(value.toDouble(), places(r.step))),
+                dim.padding(start = GROUP_INSET, end = GROUP_INSET, top = 10.dp), style = MaterialTheme.typography.bodySmall,
+            )
             NoriSlider(value, min..max, { v ->
                 val snapped = step?.let { s -> (min + kotlin.math.round((v - min) / s) * s).coerceIn(min, max) } ?: v
                 if (snapped != value) vm.set(card.id, r.id, Value.Level(snapped.toDouble()))
@@ -267,6 +367,12 @@ private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabl
         RowKind.NOTE -> {
             Text(r.label, Modifier.padding(horizontal = GROUP_INSET, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (divider) Hairline(startIndent = GROUP_INSET)
+        }
+        // Its address as the card carries it (a text value).
+        RowKind.LINK -> {
+            val uri = androidx.compose.ui.platform.LocalUriHandler.current
+            val url = (r.value as? Value.Text)?.v1
+            GroupRow(r.label, url?.takeIf { enabled }?.let { u -> { runCatching { uri.openUri(u) } } }, dim, chevron = true, divider = divider)
         }
         RowKind.SECTION -> {}
     }

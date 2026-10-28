@@ -38,9 +38,15 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     private val _offers = MutableStateFlow(OffersUi())
     val offers: StateFlow<OffersUi> = _offers
 
-    private val _said = MutableStateFlow<Pair<Boolean, String>?>(null)
-    /** The last install's outcome in words; true when it is a refusal. */
-    val said: StateFlow<Pair<Boolean, String>?> = _said
+    private val _refused = MutableStateFlow<String?>(null)
+    /** Why the last install was refused, in words. */
+    val refused: StateFlow<String?> = _refused
+
+    private val _asking = MutableStateFlow<String?>(null)
+    /** A plugin just installed and still off, whose permissions are shown before it is turned on. */
+    val asking: StateFlow<String?> = _asking
+
+    fun stopAsking() { _asking.value = null }
 
     /** Rows set in the order they were set: a slider's steps must not land out of order. */
     private val writes = Dispatchers.IO.limitedParallelism(1)
@@ -61,7 +67,7 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
         val copied = withContext(Dispatchers.IO) {
             runCatching { getApplication<Application>().contentResolver.openInputStream(uri)?.use { i -> file.outputStream().use { i.copyTo(it) } } }.getOrNull() != null
         }
-        if (!copied) { _said.value = true to res.getString(R.string.plugins_refused_unreadable); return@launch }
+        if (!copied) { _refused.value = res.getString(R.string.plugins_refused_unreadable); return@launch }
         installing { host.install(file.path) }
         withContext(Dispatchers.IO) { file.delete() }
     }
@@ -77,15 +83,17 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun hold(id: String, held: Boolean) = viewModelScope.launch { host.hold(id, held) }
 
+    /** Installs, then asks to turn on a plugin that is off; a refusal is said instead. */
     private suspend fun installing(install: suspend () -> String) {
-        _said.value = try {
+        _refused.value = null
+        try {
             val id = install()
-            false to res.getString(R.string.plugins_installed_off, cards.value.firstOrNull { it.id == id }?.name ?: id)
+            if (cards.value.firstOrNull { it.id == id }?.enabled == false) _asking.value = id
         } catch (e: Refusal) {
-            true to refusalWords(e)
+            _refused.value = refusalWords(e)
         } catch (e: Exception) {
             dev.nori.music.NoriLog.w("plugin install: ${e.message}")
-            true to res.getString(R.string.plugins_refused_other)
+            _refused.value = res.getString(R.string.plugins_refused_other)
         }
     }
 

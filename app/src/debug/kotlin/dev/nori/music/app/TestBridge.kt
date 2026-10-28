@@ -95,7 +95,7 @@ class TestBridge : BroadcastReceiver() {
                             else -> "unknown plugin check $arg"
                         }
                     }
-                }.getOrElse { "plugin failed: ${it.javaClass.simpleName}" })
+                }.getOrElse { "plugin failed: ${it.javaClass.simpleName} ${(it as? dev.nori.music.ffi.plugins.Refusal.Unreadable)?.v1.orEmpty()}" })
             }, "plugincheck").start()
             return
         }

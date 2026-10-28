@@ -72,13 +72,13 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
         openPlugins(dir.path, settings.core, client).also { p ->
             // The transport is the plugins' own, whichever Kinds over them sets it.
             Kinds.withPlugins(p).setTransport(transport())
-            settings.asked(LAYER_EFFECT)
+            settings.asked(VALUES)
         }
     }
 
     private val client = object : Client {
-        // A plugin changed what it lays over the settings: the player derives its settings again.
-        override fun layerChanged() = settings.asked(LAYER_EFFECT)
+        // A plugin's overrides or rows changed what it lays over the settings: the player takes the values in.
+        override fun layerChanged() = settings.asked(VALUES)
         override fun status(id: String, row: String, words: String, args: List<String>) {
             val line = said(id, words, args)
             _status.update { it + (RowRef(id, row) to line) }
@@ -107,6 +107,7 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
         _providers.value = kinds.providers()
         _names.value = _cards.value.associate { c -> c.id to (kinds.pluginName(ServerKind.Plugin(c.id), lang) ?: c.id) }
     }
+
 
     /** Installs the package at [path], off; its id. Throws [dev.nori.music.ffi.plugins.Refusal]. */
     suspend fun install(path: String): String = withContext(Dispatchers.IO) { plugins.installFrom(path).also { refresh() } }
@@ -152,9 +153,8 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
 
     suspend fun act(id: String, row: String) = withContext(Dispatchers.IO) { plugins.act(id, row) }
 
-
     private companion object {
-        /** What a new layer asks of the player (settings_store.rs): the chain (1), the gain (2) and the plan (4) again. */
-        const val LAYER_EFFECT = 7u
+        /** What a new layer asks of the player (settings_store.rs): the gain (2), the plan (4), the sound (8) again. */
+        const val VALUES = 14u
     }
 }

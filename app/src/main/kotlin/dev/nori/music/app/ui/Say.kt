@@ -310,15 +310,36 @@ class Say(private val r: Resources) {
     }
     val plugins: String get() = r.getString(R.string.plugins)
     val pluginsSummary: String get() = r.getString(R.string.plugins_summary)
-    val pluginsNone: String get() = r.getString(R.string.plugins_none)
+    val pluginsEmpty: String get() = r.getString(R.string.plugins_empty)
+    val pluginsGetMore: String get() = r.getString(R.string.plugins_get_more)
     val pluginsInstalled: String get() = r.getString(R.string.plugins_installed_list)
     val pluginsInstallFile: String get() = r.getString(R.string.plugins_install_file)
     fun pluginVersion(v: String): String = r.getString(R.string.plugins_version, v)
     val pluginMoveUp: String get() = r.getString(R.string.plugins_move_up)
     val pluginMoveDown: String get() = r.getString(R.string.plugins_move_down)
     val pluginOn: String get() = r.getString(R.string.plugins_on)
-    fun pluginTalksTo(hosts: List<String>): String = r.getString(R.string.plugins_talks_to, hosts.joinToString(", "))
-    fun pluginChanges(keys: List<String>): String = r.getString(R.string.plugins_changes, keys.joinToString(", "))
+    /** What a plugin is, from the extension points it fills and whether it overrides nori's values. */
+    fun pluginKinds(points: List<String>, overrides: Boolean): String = (points.mapNotNull { p ->
+        when (p) {
+            "provider" -> R.string.plugins_kind_provider
+            "sound-stage" -> R.string.plugins_kind_sound
+            "lyrics" -> R.string.plugins_kind_lyrics
+            "automix" -> R.string.plugins_kind_automix
+            "scrobbler" -> R.string.plugins_kind_scrobbler
+            "device-control" -> R.string.plugins_kind_devices
+            "slots" -> R.string.plugins_kind_slots
+            "deciders" -> R.string.plugins_kind_deciders
+            "preparation" -> R.string.plugins_kind_preparation
+            else -> null
+        }
+    } + listOfNotNull(R.string.plugins_kind_overrides.takeIf { overrides })).joinToString(" · ") { r.getString(it) }
+    /** What a plugin may do, one line each: what it reaches, whether it plays music or changes the sound, the values it changes. */
+    fun pluginMay(points: List<String>, net: List<String>, overrides: List<String>): List<String> = listOfNotNull(
+        if (net.isEmpty()) r.getString(R.string.plugins_may_reach_nothing) else r.getString(R.string.plugins_may_reach, net.joinToString(", ")),
+        r.getString(R.string.plugins_may_play).takeIf { "provider" in points },
+        r.getString(R.string.plugins_may_sound).takeIf { "sound-stage" in points },
+        overrides.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_change, it.joinToString(", ")) },
+    )
     val pluginsGet: String get() = r.getString(R.string.plugins_get)
     val pluginsAsking: String get() = r.getString(R.string.plugins_asking)
     fun pluginOfferLine(version: String, repo: String): String = r.getString(R.string.plugins_offer_line, version, repo)
@@ -329,14 +350,20 @@ class Say(private val r: Resources) {
     val pluginRepoOfficial: String get() = r.getString(R.string.plugins_repo_official)
     fun pluginRepoUnreachable(host: String): String = r.getString(R.string.plugins_repo_unreachable, host)
     val pluginAddRepo: String get() = r.getString(R.string.plugins_add_repo)
+    val pluginRepoUrl: String get() = r.getString(R.string.plugins_repo_url)
+    val pluginRepoWarning: String get() = r.getString(R.string.plugins_repo_warning)
+    val pluginInstallNote: String get() = r.getString(R.string.plugins_install_note)
+    fun pluginTurnOnTitle(name: String): String = r.getString(R.string.plugins_turn_on_title, name)
+    val pluginTurnOn: String get() = r.getString(R.string.plugins_turn_on)
+    val pluginMayTitle: String get() = r.getString(R.string.plugins_may)
+    fun pluginRemoveTitle(name: String): String = r.getString(R.string.plugins_remove_title, name)
+    val pluginRemoveText: String get() = r.getString(R.string.plugins_remove_text)
+    fun pluginLevel(label: String, value: String): String = r.getString(R.string.plugins_level, label, value)
     fun pluginUpdated(name: String, to: String): String = r.getString(R.string.plugins_updated, name, to)
     val pluginVersions: String get() = r.getString(R.string.plugins_versions)
     val pluginKeepVersion: String get() = r.getString(R.string.plugins_keep_version)
     val pluginSource: String get() = r.getString(R.string.plugins_source)
     val pluginFromFile: String get() = r.getString(R.string.plugins_from_file)
-    fun pluginVersionLine(version: String, released: String?): String = released?.let { r.getString(R.string.plugins_offer_line, version, it) } ?: version
-    val pluginRepoUrl: String get() = r.getString(R.string.plugins_repo_url)
-    val pluginRepoWarning: String get() = r.getString(R.string.plugins_repo_warning)
     val user: String = r.getString(R.string.user)
     val password: String = r.getString(R.string.password)
     val connecting: String = r.getString(R.string.connecting)

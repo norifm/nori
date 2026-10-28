@@ -57,7 +57,7 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
 
 ## The host
 
-- **Nothing without a plugin.** With none enabled, opening the host reads `plugins/index.toml` and nothing
+- **Nothing without a plugin.** With none enabled, opening the host reads `plugins/index.json` and nothing
   else: no engine, no compiling, no thread. The settings' layer is empty, so the engine's settings are
   nori's own.
 - **One engine, compiled once.** wasmtime with Cranelift, made at the first plugin needed. Each plugin is

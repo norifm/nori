@@ -248,7 +248,6 @@ interface provider {
     source: func(id: string, max-kbps: u32, %use: stream-use) -> result<stream-source, error>;
     /// The stream refused its last URL: the next `source` resolves it anew.
     refused: func(id: string);
-    cover: func(id: string, size: u32) -> option<string>;
     sign-in-done: func(address: string, cookies: string) -> bool;
     sign-in: func(answer: string) -> option<sign-in-result>;
     sign-out: func();

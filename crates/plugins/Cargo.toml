@@ -13,11 +13,13 @@ name = "nori_plugins"
 # The test plugin, built for other crates' tests (testing.rs).
 testing = []
 # The uniffi exports the Android app's Kotlin bindings are generated from (view.rs).
-ffi = ["dep:uniffi", "nori-settings/ffi", "nori-net/ffi"]
+ffi = ["dep:uniffi", "nori-model/ffi", "nori-settings/ffi", "nori-net/ffi"]
 
 [dependencies]
 uniffi = { workspace = true, optional = true }
 nori-model = { path = "../model" }
+# The clock a plugin's WASI monotonic clock reads.
+nori-time = { path = "../time" }
 nori-net = { path = "../net" }
 nori-player = { path = "../player" }
 nori-settings = { path = "../settings" }
@@ -25,17 +27,13 @@ nori-tasks = { path = "../tasks" }
 # The runtime: components compiled by Cranelift once at install (never downloaded as native code),
 # fuel for every call's budget.
 wasmtime = { version = "50", default-features = false, features = ["cranelift", "runtime", "component-model", "std", "parallel-compilation"] }
-# WASI 0.2 for what a Rust plugin's std imports (clocks, randomness, its own stdout); nothing of the
-# device's: no files, environment or sockets.
-wasmtime-wasi = { version = "50", default-features = false, features = ["p2"] }
-# index.toml (the plugins' order) and strings/*.toml.
+# index.json (the plugins' order).
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
 # The manifest, in the wasm's `nori:plugin` custom section; wasmtime's own parser.
 wasmparser = "0.261"
 # A compiled plugin's cache key (the hash of its wasm), and a repo package's check.
 sha2 = "0.10"
-# A repo's index.json.
+# index.json and a repo's index.json.
 serde_json = "1"
 # A `.noriplugin` package.
 zip = { version = "2", default-features = false, features = ["deflate"] }

@@ -26,6 +26,53 @@ pub struct Manifest {
     /// nori's values it overrides, by key ("playback.speed").
     pub overrides: Vec<String>,
     pub rows: Vec<RowSpec>,
+    pub menu: Vec<MenuSpec>,
+    /// The places in nori's screens it fills.
+    pub places: Vec<Place>,
+}
+
+/// An action it adds to nori's menus of `kinds`; `id` is its label's key in its strings.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MenuSpec {
+    pub id: String,
+    pub glyph: Glyph,
+    pub kinds: Vec<ItemKind>,
+}
+
+/// A glyph of nori's own set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Glyph {
+    Sparkle,
+    Info,
+    Share,
+    Link,
+    Search,
+    Heart,
+    Download,
+    Add,
+    Play,
+    Tune,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum ItemKind {
+    Song,
+    Album,
+    Artist,
+    Playlist,
+}
+
+/// A place in nori's screens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Place {
+    Artwork,
+    SongInfo,
+    PlayerStatus,
+    /// Its rows, on the devices page too.
+    Devices,
 }
 
 /// Where a sound stage sits in the chain.
@@ -48,6 +95,14 @@ pub struct RowSpec {
     pub step: Option<f64>,
     /// A switch's 0 or 1, a choice's index, a level's value.
     pub default: Option<f64>,
+    /// A key in its strings: a quiet line under the label.
+    pub hint: Option<String>,
+    /// A key in its strings: a level's unit.
+    pub unit: Option<String>,
+    /// Digits a level's value is shown with.
+    pub decimals: u8,
+    /// A link row's address.
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,10 +118,12 @@ pub enum RowKind {
     Status,
     Section,
     Note,
+    /// Opens its `url`.
+    Link,
 }
 
 impl RowKind {
-    const ALL: [RowKind; 9] = [RowKind::Switch, RowKind::Choice, RowKind::Level, RowKind::Secret, RowKind::Text, RowKind::Action, RowKind::Status, RowKind::Section, RowKind::Note];
+    const ALL: [RowKind; 10] = [RowKind::Switch, RowKind::Choice, RowKind::Level, RowKind::Secret, RowKind::Text, RowKind::Action, RowKind::Status, RowKind::Section, RowKind::Note, RowKind::Link];
 
     /// Whether its value is a number a sound stage reads.
     pub fn numeric(self) -> bool {
@@ -124,6 +181,11 @@ impl<'a> In<'a> {
     fn strs(&mut self) -> Option<Vec<String>> {
         (0..self.u16()?).map(|_| self.str()).collect()
     }
+    /// None for an empty string.
+    fn opt_str(&mut self) -> Option<Option<String>> {
+        self.str().map(|s| (!s.is_empty()).then_some(s))
+    }
+
     fn number(&mut self) -> Option<Option<f64>> {
         let v = f64::from_bits(u64::from_le_bytes(self.take(8)?.try_into().ok()?));
         Some((!v.is_nan()).then_some(v))
@@ -150,7 +212,7 @@ impl Manifest {
 
     fn decode(bytes: &[u8]) -> Option<Manifest> {
         let mut i = In(bytes);
-        (i.byte()? == 1).then_some(())?;
+        (i.byte()? == 2).then_some(())?;
         let (id, version, api, bits) = (i.str()?, i.str()?, i.u32()?, i.u32()?);
         let stage = match i.byte()? {
             0 => None,
@@ -161,11 +223,30 @@ impl Manifest {
         let (net, signin, overrides) = (i.strs()?, i.strs()?, i.strs()?);
         let rows = (0..i.u16()?)
             .map(|_| {
-                Some(RowSpec { id: i.str()?, kind: *RowKind::ALL.get(i.byte()? as usize)?, options: i.strs()?, min: i.number()?, max: i.number()?, step: i.number()?, default: i.number()? })
+                Some(RowSpec {
+                    id: i.str()?,
+                    kind: *RowKind::ALL.get(i.byte()? as usize)?,
+                    options: i.strs()?,
+                    min: i.number()?,
+                    max: i.number()?,
+                    step: i.number()?,
+                    default: i.number()?,
+                    hint: i.opt_str()?,
+                    unit: i.opt_str()?,
+                    decimals: i.byte()?,
+                    url: i.opt_str()?,
+                })
             })
             .collect::<Option<Vec<_>>>()?;
+        const GLYPHS: [Glyph; 10] = [Glyph::Sparkle, Glyph::Info, Glyph::Share, Glyph::Link, Glyph::Search, Glyph::Heart, Glyph::Download, Glyph::Add, Glyph::Play, Glyph::Tune];
+        const KINDS: [ItemKind; 4] = [ItemKind::Song, ItemKind::Album, ItemKind::Artist, ItemKind::Playlist];
+        const PLACES: [Place; 4] = [Place::Artwork, Place::SongInfo, Place::PlayerStatus, Place::Devices];
+        let menu = (0..i.u16()?)
+            .map(|_| Some(MenuSpec { id: i.str()?, glyph: *GLYPHS.get(i.byte()? as usize)?, kinds: (0..i.u16()?).map(|_| KINDS.get(i.byte()? as usize).copied()).collect::<Option<_>>()? }))
+            .collect::<Option<Vec<_>>>()?;
+        let places = (0..i.u16()?).map(|_| PLACES.get(i.byte()? as usize).copied()).collect::<Option<Vec<_>>>()?;
         let points = POINTS.iter().enumerate().filter(|(k, _)| bits & (1 << k) != 0).map(|(_, p)| *p).collect();
-        Some(Manifest { id, version, api, points, stage, net, signin, overrides, rows })
+        Some(Manifest { id, version, api, points, stage, net, signin, overrides, rows, menu, places })
     }
 
     pub fn extends(&self, point: &str) -> bool {
@@ -212,15 +293,19 @@ mod tests {
 
     #[test]
     fn what_the_sdk_writes_reads_back() {
-        const ROWS: [sdk::Row; 2] = [sdk::Row::level("speed", 0.02, 1.0, 0.01, 0.12), sdk::Row::choice("mode", &["a", "b"], 1)];
-        let m = sdk::Manifest { stage: Some(sdk::Slot::Master), net: &["music.youtube.com"], overrides: &["playback.speed"], rows: &ROWS, ..sdk::Manifest::new("fm.nori.orbit") };
+        const ROWS: [sdk::Row; 3] = [sdk::Row::level("speed", 0.02, 1.0, 0.01, 0.12).hint("speed_hint").unit("turns"), sdk::Row::choice("mode", &["a", "b"], 1), sdk::Row::link("site", "https://nori.fm")];
+        const MENU: [sdk::MenuAction; 1] = [sdk::MenuAction { id: "look_up", glyph: sdk::Glyph::Search, kinds: &[sdk::ItemKind::Song, sdk::ItemKind::Album] }];
+        let m = sdk::Manifest { stage: Some(sdk::Slot::Master), net: &["music.youtube.com"], overrides: &["playback.speed"], rows: &ROWS, menu: &MENU, places: &[sdk::Place::Artwork, sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.orbit") };
         let read = written(&m, 1 << 3);
         assert_eq!((read.id.as_str(), read.version.as_str(), read.api, read.stage), ("fm.nori.orbit", "1.2.3", API, Some(Slot::Master)));
         assert_eq!(read.points, vec!["sound-stage"]);
         assert_eq!((&read.net, &read.overrides), (&vec!["music.youtube.com".to_string()], &vec!["playback.speed".to_string()]));
-        assert_eq!(read.rows[0], RowSpec { id: "speed".into(), kind: RowKind::Level, options: Vec::new(), min: Some(0.02), max: Some(1.0), step: Some(0.01), default: Some(0.12) });
+        assert_eq!(read.rows[0], RowSpec { id: "speed".into(), kind: RowKind::Level, options: Vec::new(), min: Some(0.02), max: Some(1.0), step: Some(0.01), default: Some(0.12), hint: Some("speed_hint".into()), unit: Some("turns".into()), decimals: 2, url: None });
         assert_eq!((read.rows[1].kind, read.rows[1].options.len(), read.rows[1].default, read.rows[1].min), (RowKind::Choice, 2, Some(1.0), None));
         assert_eq!(read.row_numbers(&BTreeMap::from([("speed".to_string(), 0.5)])), vec![0.5, 1.0]);
+        assert_eq!((read.rows[2].kind, read.rows[2].url.as_deref()), (RowKind::Link, Some("https://nori.fm")));
+        assert_eq!(read.menu, vec![MenuSpec { id: "look_up".into(), glyph: Glyph::Search, kinds: vec![ItemKind::Song, ItemKind::Album] }]);
+        assert_eq!(read.places, vec![Place::Artwork, Place::Devices]);
     }
 
     #[test]

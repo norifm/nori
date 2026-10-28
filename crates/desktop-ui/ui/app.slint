@@ -5652,6 +5652,10 @@ export component AppWindow inherits Window {
     callback cycle-repeat();
     callback jump(int);
     callback login();
+    // Settings › Plugins in a sheet, from the login.
+    callback open-plugins();
+    in-out property <bool> plugins-open;
+    in property <[SettingRow]> plugin-rows;
     callback cancel-login();
     callback setting-toggled(string, bool);
     callback setting-chosen(string, int);
@@ -5787,6 +5791,15 @@ export component AppWindow inherits Window {
                                         root.login();
                                     }
                                 }
+                            }
+                        }
+                        // Plugins can add kinds of profile, so they are reached before any profile.
+                        HorizontalLayout {
+                            alignment: center;
+                            ShowAllLink {
+                                text: "Plugins";
+                                font-size: 12px;
+                                clicked => { root.open-plugins(); }
                             }
                         }
                     }
@@ -7874,6 +7887,50 @@ export component AppWindow inherits Window {
         // Join a Jam: a sheet over the window, as the Mac's sheets come down from its top.
         // A lyrics service's key: typed, it is kept and the service switched on; removed, every service that
         // needs it is switched off.
+        if root.plugins-open: Rectangle {
+            background: Theme.ground.with-alpha(0.6);
+            TouchArea {
+                clicked => { root.plugins-open = false; }
+            }
+            MenuSheet {
+                x: (parent.width - self.width) / 2;
+                y: 40px;
+                width: min(560px, parent.width - 32px);
+                height: parent.height - 80px;
+                TouchArea {}
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        Text {
+                            text: "Plugins";
+                            color: Theme.text;
+                            font-size: 17px;
+                            font-weight: 700;
+                            horizontal-stretch: 1;
+                        }
+                        SmallButton {
+                            text: "Done";
+                            clicked => { root.plugins-open = false; }
+                        }
+                    }
+                    Flickable {
+                        content-height: plugin-list.preferred-height;
+                        plugin-list := VerticalLayout {
+                            for r in root.plugin-rows: SettingLine {
+                                item: r;
+                                toggled(name, on) => { root.setting-toggled(name, on); }
+                                chosen(name, i) => { root.setting-chosen(name, i); }
+                                action(name) => { root.setting-action(name); }
+                                slid(name, v, last) => { root.setting-slid(name, v, last); }
+                                typed(name, text) => { root.setting-typed(name, text); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if root.ask-open: Rectangle {
             background: Theme.ground.with-alpha(0.6);
             TouchArea {

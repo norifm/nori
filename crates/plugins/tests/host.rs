@@ -70,6 +70,8 @@ impl Transport for Web {
 #[derive(Default)]
 struct Session {
     web: Arc<Web>,
+    /// Notices shown: words and args.
+    notices: Mutex<Vec<(String, Vec<String>)>>,
     laid: Mutex<Vec<String>>,
 }
 
@@ -85,7 +87,9 @@ impl Side for Session {
     }
     fn status(&self, _: &str, _: &str, _: &str, _: &[String]) {}
     fn shown(&self, _: &str, _: &str, _: bool, _: bool) {}
-    fn notice(&self, _: &str, _: bool, _: &str, _: &[String]) {}
+    fn notice(&self, _: &str, _: bool, words: &str, args: &[String]) {
+        self.notices.lock().unwrap().push((words.to_string(), args.to_vec()));
+    }
 }
 
 const ID: &str = FIXTURE;
@@ -251,4 +255,84 @@ fn updates_come_daily_from_a_plugins_own_repo_unless_held() {
     assert_eq!(done.iter().map(|u| (u.from.as_str(), u.to.as_str())).collect::<Vec<_>>(), vec![("0.1.0", "0.3.0")]);
     let asked = session.web.asked.lock().unwrap().clone();
     assert!(asked.contains(&"https://own.example/t-0.3.0.noriplugin".to_string()) && !asked.iter().any(|u| u.contains("other.example/t-")), "{asked:?}");
+}
+
+#[test]
+fn a_call_no_one_waits_for_is_skipped() {
+    use std::future::Future;
+    let dir = nori_testdir::TempDir::new("plugins-skip");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.install(&fixture("")).unwrap();
+    plugins.set_enabled(ID, true);
+    let w = plugins.worker(ID).unwrap();
+    let ran = Arc::new(Mutex::new(Vec::new()));
+    let (go, held) = std::sync::mpsc::channel::<()>();
+    // The first call holds the plugin's thread until the second has been dropped.
+    let first = {
+        let ran = ran.clone();
+        w.call(move |_, _| {
+            held.recv().unwrap();
+            ran.lock().unwrap().push(1);
+            Ok(1)
+        })
+    };
+    let second = {
+        let ran = ran.clone();
+        w.call(move |_, _| {
+            ran.lock().unwrap().push(2);
+            Ok(2)
+        })
+    };
+    // A call's job is queued at its first poll.
+    let (mut first, mut second) = (Box::pin(first), Box::pin(second));
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let _ = first.as_mut().poll(&mut cx);
+    let _ = second.as_mut().poll(&mut cx);
+    drop(second);
+    go.send(()).unwrap();
+    assert_eq!(nori_tasks::block_on(first), Some(1));
+    let third = w.call(|_, _| Ok(3));
+    assert_eq!(nori_tasks::block_on(third), Some(3));
+    assert_eq!(*ran.lock().unwrap(), vec![1], "the dropped call never ran");
+}
+
+#[test]
+fn a_preview_shows_a_plugin_without_installing_it() {
+    let dir = nori_testdir::TempDir::new("plugins-preview");
+    let plugins = Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()));
+    let p = plugins.preview_file(fixture("").to_string_lossy().into_owned(), "en".into()).unwrap();
+    assert_eq!((p.card.id.as_str(), p.card.name.as_str(), p.card.enabled, p.card.net.as_slice()), (ID, "Test", false, &["allowed.example".to_string()][..]));
+    assert_eq!((p.card.rows[0].label.as_str(), p.card.rows[0].value.clone()), ("Gain", Some(Value::Level(0.5))));
+    assert!(plugins.installed().is_empty(), "nothing installed by a preview");
+    assert_eq!(plugins.install_preview(p), Ok(ID.to_string()));
+    assert_eq!(plugins.installed().len(), 1);
+    assert!(matches!(plugins.preview_file("/no/such/plugin".into(), "en".into()), Err(Refusal::Unreadable(_))));
+}
+
+#[test]
+fn slots_ask_the_plugins_that_fill_them() {
+    use nori_plugins::{Items, ItemKind, MenuEntry};
+    let dir = nori_testdir::TempDir::new("plugins-slots");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.install(&fixture("")).unwrap();
+    let song = |title: &str| nori_model::Song { id: "s".into(), title: title.into(), ..Default::default() };
+    assert!(plugins.menu_entries(ItemKind::Song, "en".into()).is_empty(), "off, it fills nothing");
+    assert_eq!(nori_tasks::block_on(plugins.artwork(song("loop"))), None);
+    plugins.set_enabled(ID, true);
+
+    let entries = plugins.menu_entries(ItemKind::Song, "en".into());
+    assert_eq!(entries, vec![MenuEntry { plugin: ID.into(), action: "count".into(), label: "Count letters".into(), glyph: nori_plugins::Glyph::Info }]);
+    assert!(plugins.menu_entries(ItemKind::Album, "en".into()).is_empty(), "only the kinds it names");
+    nori_tasks::block_on(plugins.run_menu(entries[0].clone(), Items::Songs(vec![song("a"), song("bc")])));
+    assert_eq!(*session.notices.lock().unwrap(), vec![("count".to_string(), vec!["a".to_string(), "bc".to_string()])], "it ran on the songs given");
+
+    let art = nori_tasks::block_on(plugins.artwork(song("loop"))).unwrap();
+    assert_eq!((art.plugin.as_str(), art.looping, art.url.as_str()), (ID, true, "https://allowed.example/loop.m3u8"));
+    assert_eq!(nori_tasks::block_on(plugins.artwork(song("still"))), None, "none: nori's cover");
+    let info = nori_tasks::block_on(plugins.song_info(song("four"), "en".into()));
+    assert_eq!((info[0].name.as_str(), info[0].lines[0].words.as_str()), ("Test", "4 letters"));
+    assert_eq!(nori_tasks::block_on(plugins.player_status()), vec!["Testing".to_string()]);
+    assert_eq!(plugins.device_cards("en".into()).iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec![ID]);
 }

@@ -6,12 +6,14 @@
 uniffi::setup_scaffolding!();
 
 mod app;
+pub mod convert;
 mod host;
 mod manifest;
 mod package;
 mod repo;
 pub(crate) mod runtime;
 mod stage;
+mod slots;
 mod store;
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -24,9 +26,10 @@ use std::sync::{Arc, Mutex};
 
 pub use app::{open, open_plugins, Client};
 pub use repo::{Offer, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
-pub use view::{PluginCard, PluginRow};
+pub use slots::{Artwork, InfoGroup, InfoLine, Items, MenuEntry};
+pub use view::{PluginCard, PluginPreview, PluginRow};
 pub use host::{Side, Value};
-pub use manifest::{Manifest, Refusal, RowKind, RowSpec, Slot, API, POINTS};
+pub use manifest::{Glyph, ItemKind, Manifest, MenuSpec, Place, Refusal, RowKind, RowSpec, Slot, API, POINTS};
 pub use runtime::{Host, LINKED};
 pub use worker::Worker;
 
@@ -61,7 +64,7 @@ pub(crate) type Transported = Arc<Mutex<Option<Arc<dyn nori_net::transport::Tran
 /// A plugin's sound stage maker, by its id.
 type Made = (String, Arc<stage::Maker>);
 
-/// `index.toml`: the plugins in the user's order, and which are on.
+/// `index.json`: the plugins in the user's order, and which are on.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Index {
     #[serde(default)]
@@ -103,7 +106,7 @@ pub struct Plugins {
 impl Plugins {
     /// The plugins installed under `dir`, as its index lists them.
     pub fn open(dir: PathBuf, side: Arc<dyn Side>) -> Plugins {
-        let index: Index = std::fs::read_to_string(dir.join("index.toml")).ok().and_then(|t| toml::from_str(&t).ok()).unwrap_or_default();
+        let index: Index = std::fs::read(dir.join("index.json")).ok().and_then(|t| serde_json::from_slice(&t).ok()).unwrap_or_default();
         let installed = index
             .plugin
             .iter()
@@ -222,7 +225,7 @@ impl Plugins {
         let plugin = list.iter().map(|i| IndexEntry { id: i.manifest.id.clone(), enabled: i.enabled, repo: i.repo.clone(), held: i.held }).collect();
         let index = Index { plugin, repos: self.added_repos(), checked_ms: self.checked_ms() };
         let _ = std::fs::create_dir_all(&self.dir);
-        let _ = std::fs::write(self.dir.join("index.toml"), toml::to_string(&index).unwrap_or_default());
+        let _ = std::fs::write(self.dir.join("index.json"), serde_json::to_vec(&index).unwrap_or_default());
     }
 
     /// Plugin `id`'s stored row values.

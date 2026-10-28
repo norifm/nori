@@ -2055,7 +2055,7 @@ fn card(id: &str, name: &str, rows: Vec<nori_plugins::PluginRow>) -> nori_plugin
 }
 
 fn plugin_row(id: &str, kind: nori_plugins::RowKind, value: Option<nori_plugins::Value>) -> nori_plugins::PluginRow {
-    nori_plugins::PluginRow { id: id.into(), kind, label: format!("{kind:?} row"), options: Vec::new(), min: None, max: None, step: None, value }
+    nori_plugins::PluginRow { id: id.into(), kind, label: format!("{kind:?} row"), options: Vec::new(), min: None, max: None, step: None, value, hint: None, unit: None, decimals: 0, url: None }
 }
 
 #[test]
@@ -2116,6 +2116,10 @@ fn a_plugins_page_draws_a_row_of_each_kind() {
     key(&mut a, KeyCode::Char('K'));
     assert!(a.cmds.is_empty(), "the first can't go higher");
     key(&mut a, KeyCode::Char('d'));
+    assert!(a.cmds.is_empty(), "removing asks first");
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("Remove Gain?") && s.contains("enter remove · esc cancel"), "{s}");
+    key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Uninstall("dev.example.gain".into()))));
 
     // Rows set the plugin's values by the plugin's row ids.
@@ -2160,18 +2164,22 @@ fn repos_offer_plugins_and_another_repo_is_added_only_once_trusted() {
     assert!(!s.contains("Runs nowhere"), "an offer with no version this nori runs is left out");
     assert!(line("Lyrics plus").contains("nori's own") && line("Lyrics plus").contains("[ Install ]"), "{s}");
     assert!(line("Gain about").contains("[ Update ]"));
-    assert!(line("Radio about").contains("friend.example") && line("Radio about").contains("[ Installed ]"));
+    assert!(!s.contains("Radio about"), "what is installed at its newest isn't offered");
     assert!(s.contains("Couldn't reach gone.example") && !s.contains("HTTP 404"), "one quiet line:\n{s}");
     assert!(line("https://friend.example/nori/index.json").contains("friend.example"));
 
+    // Installing asks first, with what the repo says of it.
     select_row(&mut a, |r| matches!(r, Row::Action { title, .. } if title == "Gain"));
     key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Get(2, 0))), "its newest, by its place in the offers read");
-    select_row(&mut a, |r| matches!(r, Row::Action { title, .. } if title == "Radio"));
+    let s = draw(&mut a, 140, 40);
+    dump("plugins-install-sheet", &s);
+    assert!(s.contains("Install Gain 2.0.0?") && s.contains("Gain about") && s.contains("nori's own · 2026-10-01") && s.contains("enter install · esc cancel"), "{s}");
+    assert!(a.cmds.is_empty());
     key(&mut a, KeyCode::Enter);
-    assert!(a.cmds.is_empty(), "installed already");
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Get(2, 0))), "its newest, by its place in the offers read");
     select_row(&mut a, |r| matches!(r, Row::Repo { removable: true, .. }));
     key(&mut a, KeyCode::Char('d'));
+    key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::RemoveRepo(friend.url.clone()))));
 
     // Adding a repo warns first: cancelled, nothing is added; confirmed, it is.
@@ -2198,7 +2206,6 @@ fn a_refused_plugin_says_why() {
     let mut a = app();
     a.handle(Msg::Installed(Err(nori_plugins::Refusal::Needs(vec!["timers".into()]))));
     assert!(matches!(&a.note, Some((t, true, _)) if t == "Not installed: needs: timers"), "{:?}", a.note);
-    assert_eq!(a.cmds.last(), Some(&Cmd::Plugin(crate::app::PluginCmd::Read)));
 }
 
 /// A plugin `name` that `repo` offers at 2.0.0 and 1.0.0, installed here at `installed`.
@@ -2234,7 +2241,78 @@ fn a_repo_plugins_page_holds_and_lists_its_versions() {
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Hold("dev.example.gain".into(), false))));
     select_row(&mut a, |r| matches!(r, Row::Action { detail, .. } if detail == "2026-10-01"));
     key(&mut a, KeyCode::Enter);
+    key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Get(0, 0))));
     a.handle(Msg::Updated(vec![("dev.example.gain".into(), "2.0.0".into())]));
     assert!(matches!(&a.note, Some((t, false, _)) if t == "Updated Gain to 2.0.0"), "{:?}", a.note);
+}
+
+/// A plugin just installed is off, and its sheet says what it is and reaches before it is turned on.
+#[test]
+fn an_installed_plugin_says_what_it_is_before_it_turns_on() {
+    let gain = nori_plugins::PluginCard { points: vec!["provider".into(), "sound-stage".into()], overrides: vec!["playback.speed".into()], ..card("dev.example.gain", "Gain", Vec::new()) };
+    let mut a = plugins_app(vec![gain], vec![official()], Default::default());
+    a.handle(Msg::Installed(Ok("dev.example.gain".into())));
+    let s = draw(&mut a, 140, 40);
+    dump("plugins-installed-sheet", &s);
+    assert!(s.contains("Gain is installed") && s.contains("enter turn on · esc cancel"), "{s}");
+    let Some(Overlay::Confirm { lines, .. }) = &a.overlay else { panic!("no sheet") };
+    assert_eq!(lines, &["Gain does things", "It's a music source, a sound effect. It changes playback values.", "Connects to api.example.com. Changes playback.speed.", "It stays off until you turn it on."]);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(crate::app::PluginCmd::Turn("dev.example.gain".into(), true))));
+}
+
+/// The login reaches Settings › Plugins with no profile, and back.
+#[test]
+fn the_login_opens_the_plugins() {
+    let mut a = app();
+    a.view = View::Login;
+    let s = draw(&mut a, 100, 40);
+    dump("login", &s);
+    assert!(s.contains("Plugins ›") && s.contains("ctrl p plugins") && !s.contains("Kind"), "one kind, no choice:\n{s}");
+    let r = hit_rect(&a, Hit::Button(Button::LoginPlugins));
+    a.handle(Msg::Mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: r.x, row: r.y, modifiers: KeyModifiers::NONE }));
+    assert_eq!(a.view, View::Settings);
+    assert!(a.cmds.contains(&Cmd::Plugin(crate::app::PluginCmd::Read)));
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("Install a plugin") && !s.contains("Playback"), "the plugins alone:\n{s}");
+    key(&mut a, KeyCode::Esc);
+    assert_eq!(a.view, View::Login);
+}
+
+struct Quiet;
+impl nori_plugins::Client for Quiet {
+    fn layer_changed(&self) {}
+    fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
+    fn shown(&self, _: String, _: String, _: bool, _: bool) {}
+    fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}
+}
+
+/// With a plugin's music source on, the login offers its kind, and asks only what it asks.
+#[test]
+fn the_login_chooses_a_kind_when_a_plugin_adds_one() {
+    let dir = nori_testdir::TempDir::new("cli-login-kinds");
+    let plugins = nori_plugins::open(dir.join("plugins"), crate::backend::app().settings.clone(), std::sync::Arc::new(Quiet));
+    plugins.install(&nori_plugins::testing::fixture("")).unwrap();
+    plugins.set_enabled(nori_plugins::testing::FIXTURE, true);
+    let mut a = app();
+    a.settings.own.kinds = nori_core::providers::Kinds::with_plugins(plugins);
+    a.view = View::Login;
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains("Kind") && s.contains("‹ Your server ›") && s.contains("Server address") && s.contains("← → kind"), "{s}");
+    key(&mut a, KeyCode::Right);
+    let s = draw(&mut a, 100, 40);
+    dump("login-plugin-kind", &s);
+    assert!(s.contains("‹ Test ›") && s.contains("From a plugin") && !s.contains("Server address"), "{s}");
+    // Its own provider says when its form can be sent; the test plugin's never can.
+    key(&mut a, KeyCode::Enter);
+    assert!(a.cmds.is_empty() && a.login.error.is_some());
+    key(&mut a, KeyCode::Left);
+    key(&mut a, KeyCode::Tab);
+    chars(&mut a, "music.example");
+    key(&mut a, KeyCode::Tab);
+    chars(&mut a, "ann");
+    key(&mut a, KeyCode::Tab);
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.cmds.last(), Some(Cmd::Login(p)) if p.kind == nori_core::settings::ServerKind::Subsonic && p.url == "https://music.example" && p.user == "ann"), "{:?}", a.cmds);
 }

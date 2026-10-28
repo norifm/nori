@@ -29,7 +29,7 @@ pub struct Worker {
 
 impl Worker {
     pub(crate) fn start(manifest: Arc<Manifest>, dir: PathBuf, component: Component, side: Arc<dyn Side>, transport: crate::Transported) -> Result<Worker, Refusal> {
-        let linker = runtime::linker()?;
+        let linker = runtime::linker(&component)?;
         let (jobs, rx) = mpsc::channel::<Job>();
         let name = format!("plugin {}", manifest.id);
         std::thread::Builder::new()
@@ -73,6 +73,10 @@ impl Worker {
     pub async fn call<R: Send + 'static>(&self, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<R> + Send + 'static) -> Option<R> {
         let (tx, rx) = futures_channel::oneshot::channel();
         let job: Job = Box::new(move |running| {
+            // Its caller has gone (a search typed over): the thread goes on to what is still awaited.
+            if tx.is_canceled() {
+                return;
+            }
             let Some(r) = running.as_mut() else { return };
             match f(&mut r.store, &r.plugin) {
                 Ok(v) => {

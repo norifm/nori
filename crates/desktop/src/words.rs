@@ -44,7 +44,6 @@ pub const INSTALL_PLUGIN: &str = "Install a plugin…";
 pub const PLUGIN_PATH: &str = "A .noriplugin file or a plugin folder";
 pub const NO_PLUGINS: &str = "No plugins installed.";
 pub const PLUGIN_VERSION: &str = "Version";
-pub const PLUGIN_NET: &str = "Connects to";
 pub const PLUGIN_ORDER: &str = "Order";
 pub const MOVE_UP: &str = "Move up";
 pub const MOVE_DOWN: &str = "Move down";
@@ -70,6 +69,62 @@ pub const ADD_REPO: &str = "Add repo";
 pub const ADD: &str = "Add";
 pub const REPO_ADDRESS: &str = "Repo address (its index.json)";
 pub const TRUST_REPO: &str = "This repo isn’t nori’s. Its plugins can do what their pages say; add it only if you trust it.";
+
+pub const TURN_ON: &str = "Turn on";
+pub const REMOVE_PLUGIN_NOTE: &str = "Its settings go with it.";
+pub const INSTALLED_OFF: &str = "It stays off until you turn it on.";
+
+/// Asks before removing `name`.
+pub fn remove_plugin(name: &str) -> String {
+    format!("Remove {name}?")
+}
+
+/// Asks before installing `name` at `version`.
+pub fn install_version(name: &str, version: &str) -> String {
+    format!("Install {name} {version}?")
+}
+
+/// Says plugin `name` was installed, off.
+pub fn installed_off(name: &str) -> String {
+    format!("{name} is installed")
+}
+
+/// What a plugin is, from the extension points it fills and whether it overrides nori's values.
+pub fn plugin_is(points: &[String], overrides: bool) -> String {
+    let mut is: Vec<&str> = Vec::new();
+    for p in points {
+        let word = match p.as_str() {
+            "provider" => "a music source",
+            "sound-stage" => "a sound effect",
+            "automix" => "a mixer",
+            "lyrics" => "a lyrics source",
+            "scrobbler" => "a scrobbler",
+            "device-control" => "a device control",
+            "hooks" | "deciders" | "slots" | "preparation" => "a playback helper",
+            _ => continue,
+        };
+        if !is.contains(&word) {
+            is.push(word);
+        }
+    }
+    let mut said = if is.is_empty() { String::new() } else { format!("It’s {}.", is.join(", ")) };
+    if overrides {
+        said.push_str(if said.is_empty() { "It changes playback values." } else { " It changes playback values." });
+    }
+    said
+}
+
+/// What a plugin may reach: the hosts it sends to and nori's values it changes.
+pub fn plugin_reach(net: &[String], overrides: &[String]) -> String {
+    let mut said = Vec::new();
+    if !net.is_empty() {
+        said.push(format!("Connects to {}.", net.join(", ")));
+    }
+    if !overrides.is_empty() {
+        said.push(format!("Changes {}.", overrides.join(", ")));
+    }
+    if said.is_empty() { "Connects to nothing.".into() } else { said.join(" ") }
+}
 
 /// Why a plugin wasn't installed.
 pub fn plugin_refused(r: &nori_plugins::Refusal) -> String {

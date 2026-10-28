@@ -31,7 +31,7 @@ use std::cell::RefCell;
 pub mod manifest;
 
 pub use exports::nori::plugin::*;
-pub use manifest::{Manifest, Row, RowKind, Slot};
+pub use manifest::{Glyph, ItemKind, Manifest, MenuAction, Place, Row, RowKind, Slot};
 pub use nori::plugin::{assets, audio_out, bluetooth, cache, cast, discovery, http, lan_serve, log, media, notices, rows, session, settings, sign_in, sockets, store, subsonic, timers, types, wake};
 
 include!(concat!(env!("OUT_DIR"), "/points.rs"));

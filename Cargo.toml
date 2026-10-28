@@ -69,6 +69,36 @@ strip = true
 i-slint-renderer-skia = { path = "vendor/i-slint-renderer-skia" }
 
 # The web client's wasm (web/build.sh): small over fast, and a panic ends the worker (wasm has no unwinding).
+# The plugin compiler (Cranelift and what reads wasm for it) runs only when a plugin is installed or
+# updated, never while music plays: small rather than fast. wasmtime itself, which every plugin call
+# and sound stage block goes through, stays as fast as the rest.
+[profile.dist.package.cranelift-codegen]
+opt-level = "s"
+
+[profile.dist.package.cranelift-assembler-x64]
+opt-level = "s"
+
+[profile.dist.package.cranelift-frontend]
+opt-level = "s"
+
+[profile.dist.package.regalloc2]
+opt-level = "s"
+
+[profile.dist.package.wasmparser]
+opt-level = "s"
+
+[profile.dist.package.wasmprinter]
+opt-level = "s"
+
+[profile.dist.package.wasmtime-environ]
+opt-level = "s"
+
+[profile.dist.package.wasmtime-internal-cranelift]
+opt-level = "s"
+
+[profile.dist.package.gimli]
+opt-level = "s"
+
 [profile.web]
 inherits = "dist"
 opt-level = "s"

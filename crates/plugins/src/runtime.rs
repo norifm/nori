@@ -5,9 +5,8 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use sha2::{Digest, Sha256};
-use wasmtime::component::{Component, HasSelf, Linker, ResourceTable};
+use wasmtime::component::{Component, ComponentType, HasSelf, Lift, Linker, Lower};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
-use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
 use crate::host::Side;
 use crate::manifest::{Manifest, Refusal};
@@ -90,8 +89,6 @@ pub(crate) fn missing(component: &Component) -> Vec<String> {
 
 /// What a plugin's calls into the host reach.
 pub struct Host {
-    wasi: WasiCtx,
-    table: ResourceTable,
     limits: StoreLimits,
     pub(crate) id: String,
     pub(crate) manifest: Arc<Manifest>,
@@ -101,17 +98,9 @@ pub struct Host {
     pub(crate) transport: crate::Transported,
 }
 
-impl WasiView for Host {
-    fn ctx(&mut self) -> WasiCtxView<'_> {
-        WasiCtxView { ctx: &mut self.wasi, table: &mut self.table }
-    }
-}
-
 /// A store for a plugin instance whose imports reach the host, with its memory capped.
 pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>, transport: crate::Transported) -> Store<Host> {
     let host = Host {
-        wasi: WasiCtx::builder().build(),
-        table: ResourceTable::new(),
         limits: StoreLimitsBuilder::new().memory_size(MEMORY_CAP).instances(16).build(),
         id: manifest.id.clone(),
         store: store::Store::new(dir.join("store")),
@@ -124,11 +113,73 @@ pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>, tr
     s
 }
 
-/// The linker for a plugin's own instance: WASI, and the host interfaces in [`LINKED`].
-pub(crate) fn linker() -> Result<Linker<Host>, Refusal> {
+/// A wall clock's time, as WASI says it.
+#[derive(ComponentType, Lift, Lower, Clone, Copy)]
+#[component(record)]
+struct Datetime {
+    seconds: u64,
+    nanoseconds: u32,
+}
+
+fn random(n: u64) -> Vec<u8> {
+    use std::io::Read;
+    let mut b = vec![0; n.min(1 << 20) as usize];
+    // The system's randomness; a plugin seeding a HashMap needs it, never secrets of nori's.
+    let _ = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut b));
+    b
+}
+
+fn u64_random() -> u64 {
+    u64::from_le_bytes(random(8).try_into().expect("8 bytes"))
+}
+
+/// What a Rust plugin's std takes of WASI, at the versions `component` imports: randomness, the
+/// clocks, an empty environment. Its other WASI imports (files, sockets, stdio) trap: a plugin speaks
+/// through nori's `log` and its other imports.
+fn wasi(l: &mut Linker<Host>, component: &Component) -> wasmtime::Result<()> {
+    let names: Vec<String> = component.component_type().imports(engine()).map(|(n, _)| n.to_string()).filter(|n| n.starts_with("wasi:")).collect();
+    for name in names {
+        let iface = name.split('@').next().unwrap_or_default();
+        let mut i = l.instance(&name)?;
+        match iface {
+            "wasi:random/random" => {
+                i.func_wrap("get-random-bytes", |_, (n,): (u64,)| Ok((random(n),)))?;
+                i.func_wrap("get-random-u64", |_, ()| Ok((u64_random(),)))?;
+            }
+            "wasi:random/insecure" => {
+                i.func_wrap("get-insecure-random-bytes", |_, (n,): (u64,)| Ok((random(n),)))?;
+                i.func_wrap("get-insecure-random-u64", |_, ()| Ok((u64_random(),)))?;
+            }
+            "wasi:random/insecure-seed" => {
+                i.func_wrap("insecure-seed", |_, ()| Ok(((u64_random(), u64_random()),)))?;
+            }
+            "wasi:clocks/monotonic-clock" => {
+                i.func_wrap("now", |_, ()| Ok((nori_time::device_us().max(0) as u64 * 1000,)))?;
+                i.func_wrap("resolution", |_, ()| Ok((1_000u64,)))?;
+            }
+            "wasi:clocks/wall-clock" => {
+                i.func_wrap("now", |_, ()| {
+                    let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                    Ok((Datetime { seconds: d.as_secs(), nanoseconds: d.subsec_nanos() },))
+                })?;
+                i.func_wrap("resolution", |_, ()| Ok((Datetime { seconds: 0, nanoseconds: 1_000 },)))?;
+            }
+            "wasi:cli/environment" => {
+                i.func_wrap("get-environment", |_, ()| Ok((Vec::<(String, String)>::new(),)))?;
+                i.func_wrap("get-arguments", |_, ()| Ok((Vec::<String>::new(),)))?;
+                i.func_wrap("initial-cwd", |_, ()| Ok((None::<String>,)))?;
+            }
+            _ => {}
+        }
+    }
+    l.define_unknown_imports_as_traps(component)
+}
+
+/// The linker for `component`'s own instance: the WASI its std needs, and the host interfaces in
+/// [`LINKED`].
+pub(crate) fn linker(component: &Component) -> Result<Linker<Host>, Refusal> {
     let mut l = Linker::new(engine());
     let err = |e: wasmtime::Error| Refusal::Unreadable(e.to_string());
-    wasmtime_wasi::p2::add_to_linker_sync(&mut l).map_err(err)?;
     nori::plugin::types::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::log::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::store::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
@@ -136,5 +187,6 @@ pub(crate) fn linker() -> Result<Linker<Host>, Refusal> {
     nori::plugin::settings::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::rows::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::notices::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    wasi(&mut l, component).map_err(err)?;
     Ok(l)
 }

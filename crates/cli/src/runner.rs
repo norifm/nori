@@ -200,9 +200,14 @@ pub fn run(o: Options) -> Result<(), String> {
     let art = picker.clone().map(Art::new);
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
     let mut r = Runner { http: Http::new(), tx, session: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
+    // Plugins reach the web before any profile opens; a session's own transport takes over.
+    app.settings.own.kinds.set_transport(r.http.clone());
     match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
-        None => app.view = View::Login,
+        None => {
+            app.view = View::Login;
+            r.update_plugins();
+        }
     }
     if app.view != View::Login {
         app.go(View::Home);
@@ -334,11 +339,8 @@ impl Runner {
         app.dirty = true;
     }
 
-    /// Updates the plugins once a day, from the open profile's connection.
+    /// Updates the plugins once a day.
     fn update_plugins(&self) {
-        if self.session.is_none() {
-            return;
-        }
         let tx = self.tx.clone();
         nori_host::desktop::update_plugins(&self.o.data, move |updated| {
             let _ = tx.send(Msg::Updated(updated));
@@ -426,6 +428,8 @@ impl Runner {
                 }
             }
             Msg::Remote | Msg::Jam(_) => self.remote_read(app),
+            // The plugin installed is shown, and asked to be turned on, from its card.
+            Msg::Installed(_) => self.plugin(app, crate::app::PluginCmd::Read),
             Msg::Offers(o) => {
                 app.settings.own.shelf = crate::settings_view::Shelf::Read(o.clone());
                 return self.plugin(app, crate::app::PluginCmd::Read);

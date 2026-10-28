@@ -772,9 +772,7 @@ fn plugin_groups(p: &Plugged) -> Vec<(String, Vec<Row>)> {
     let count = p.cards.len();
     for (i, c) in p.cards.iter().enumerate() {
         let mut detail: Vec<String> = c.about.iter().cloned().collect();
-        if !c.net.is_empty() {
-            detail.push(format!("{} {}", words::PLUGIN_NET, c.net.join(", ")));
-        }
+        detail.extend([words::plugin_is(&c.points, !c.overrides.is_empty()), words::plugin_reach(&c.net, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
         let mut rows = vec![Row { kind: TOGGLE, name: PluginAct::Turn(c.id.clone()).name(), title: format!("{} {}", words::PLUGIN_VERSION, c.version), detail: detail.join(" · "), on: c.enabled, enabled: true, ..Default::default() }];
         if c.repo.is_some() {
             rows.push(Row { kind: TOGGLE, name: PluginAct::Hold(c.id.clone()).name(), title: words::KEEP_VERSION.into(), on: c.held, enabled: true, ..Default::default() });
@@ -820,18 +818,15 @@ fn plugin_groups(p: &Plugged) -> Vec<(String, Vec<Row>)> {
         Shelf::Read(Offers { offers, failed }) => {
             let mut rows = Vec::new();
             for (at, o) in offers.iter().enumerate() {
-                let Some((newest, state)) = nori_host::desktop::offer_state(o) else { continue };
+                // What is installed at its newest is not offered again.
+                let Some((newest, state)) = nori_host::desktop::offer_state(o).filter(|(_, s)| *s != OfferState::Installed) else { continue };
                 let mut detail: Vec<String> = o.about.iter().cloned().collect();
                 detail.push(format!("{} {}", words::PLUGIN_VERSION, newest.version));
                 detail.push(words::repo_name(&o.repo));
-                let (button, enabled) = match state {
-                    OfferState::New => (words::INSTALL, true),
-                    OfferState::Update => (words::UPDATE, true),
-                    OfferState::Installed => (words::INSTALLED, false),
-                };
-                rows.push(Row { kind: ACTION, name: PluginAct::Get(at as u32, 0).name(), title: o.name.clone(), detail: detail.join(" · "), button: button.into(), enabled, ..Default::default() });
+                let button = if state == OfferState::Update { words::UPDATE } else { words::INSTALL };
+                rows.push(Row { kind: ACTION, name: PluginAct::Get(at as u32, 0).name(), title: o.name.clone(), detail: detail.join(" · "), button: button.into(), enabled: true, ..Default::default() });
             }
-            if offers.is_empty() && failed.is_empty() {
+            if rows.is_empty() && failed.is_empty() {
                 rows.push(note(words::NOTHING_OFFERED));
             }
             rows.extend(failed.iter().map(|f| note(&words::repo_failed(&f.repo))));
@@ -906,7 +901,7 @@ fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
             Row { kind: ACTION, detail, button: words::CHANGE.into(), ..base }
         }
         RowKind::Action => Row { kind: BUTTON, ..base },
-        RowKind::Status => Row { kind: INFO, detail: r.value.as_ref().map(|v| words::plugin_value(v, &r.options)).unwrap_or_default(), ..base },
+        RowKind::Status | RowKind::Link => Row { kind: INFO, detail: r.value.as_ref().map(|v| words::plugin_value(v, &r.options)).unwrap_or_default(), ..base },
         RowKind::Note | RowKind::Section => note(&r.label),
     }
 }
@@ -1054,7 +1049,7 @@ mod tests {
     #[test]
     fn plugins_are_drawn_with_the_settings_rows() {
         use nori_plugins::{Offer, Offers, PluginCard, PluginRow, Repo, RowKind, Value, Version};
-        let row = |id: &str, kind, value| PluginRow { id: id.into(), kind, label: id.into(), options: vec!["a".into(), "b".into()], min: Some(0.0), max: Some(2.0), step: Some(0.5), value };
+        let row = |id: &str, kind, value| PluginRow { id: id.into(), kind, label: id.into(), options: vec!["a".into(), "b".into()], min: Some(0.0), max: Some(2.0), step: Some(0.5), value, hint: None, unit: None, decimals: 1, url: None };
         let card = |id: &str, rows| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: Some(nori_plugins::OFFICIAL.into()), held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), rows };
         let rows = vec![
             row("on", RowKind::Switch, Some(Value::Switch(true))),

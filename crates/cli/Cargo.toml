@@ -46,6 +46,8 @@ unicode-width = "0.2"
 
 [dev-dependencies]
 nori-testdir = { path = "../testdir" }
+# The test plugin (a music source), for the login's kinds.
+nori-plugins = { path = "../plugins", features = ["testing"] }
 # tests/beat_model.rs loads the model it made.
 nori-player = { path = "../player" }
 # The jam invite's QR code, read back from the drawn screen. MIT or Apache-2.0, and ISC.

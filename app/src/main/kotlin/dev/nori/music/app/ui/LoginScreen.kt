@@ -163,6 +163,12 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
         }
     }
 
+    var plugins by remember { mutableStateOf(false) }
+    NoriDialog(plugins, { plugins = false }, DialogStyle.Page) {
+        Surface(Modifier.fillMaxSize()) {
+            Column(Modifier.systemBarsPadding()) { PluginsPages(androidx.lifecycle.viewmodel.compose.viewModel()) { plugins = false } }
+        }
+    }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), Arrangement.spacedBy(12.dp)) {
             Text(
@@ -172,6 +178,8 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
             if (adding && providers.size > 1) androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 providers.forEach { k -> Chip(providerWords(vm, k.kind).name, p.kind == k.kind, Modifier.testTag("kind-${kindTag(k.kind)}")) { p = p.copy(kind = k.kind) } }
             }
+            // A kind a plugin brings can be the first profile: its plugin is got here.
+            if (adding) TextAction(say.pluginsGetMore, { plugins = true }, Modifier.testTag("get-plugins"))
             if (adding && words.hint.isNotEmpty()) Text(words.hint, color = MaterialTheme.colorScheme.onSurfaceVariant)
             info?.fields?.filter { !it.advanced }?.forEach { Ask(it.what) }
             ui.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }

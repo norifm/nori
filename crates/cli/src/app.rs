@@ -676,9 +676,16 @@ pub struct Login {
     pub sel: Sel,
     /// Whether the saved servers list has the keys.
     pub on_list: bool,
+    /// The kind of profile added, of those offered ([`App::login_kinds`]).
+    pub kind: usize,
 }
 
 pub const LOGIN_FIELDS: [&str; 4] = ["Name (optional)", "Server address", "User", "Password"];
+/// What each of `LOGIN_FIELDS` fills in.
+const LOGIN_ASKS: [nori_core::providers::FormField; 4] = {
+    use nori_core::providers::FormField::*;
+    [Name, Address, User, Password]
+};
 
 /// Playback state for drawing; position extrapolated from `at`.
 #[derive(Debug, Clone, Copy)]
@@ -842,8 +849,8 @@ pub enum Overlay {
     Picker { title: String, options: Vec<(String, String)>, sel: Sel, target: Target },
     /// A text field whose text goes to `target`.
     Input { title: String, text: String, secret: bool, target: Target },
-    /// The warning before adding a repo that isn't nori's, at `url`.
-    Trust { url: String },
+    /// A question before `cmd` is carried out: what it is about, and the word for going ahead.
+    Confirm { title: String, lines: Vec<String>, yes: String, cmd: Box<Cmd> },
     /// What the selection's menu offers, the song's less used actions `folded` under More until it opens.
     Menu { title: String, item: Box<Item>, lines: Vec<crate::menu::MenuLine>, folded: Vec<crate::menu::MenuLine>, sel: Sel },
     /// A new playlist's name, for `songs`.
@@ -892,7 +899,7 @@ impl Target {
                     RowKind::Choice => Value::Choice(value.parse().ok()?),
                     RowKind::Level => Value::Level(value.parse().ok()?),
                     RowKind::Text | RowKind::Secret => Value::Text(value),
-                    RowKind::Action | RowKind::Status | RowKind::Section | RowKind::Note => return None,
+                    RowKind::Action | RowKind::Status | RowKind::Section | RowKind::Note | RowKind::Link => return None,
                 };
                 Some(Cmd::Plugin(PluginCmd::Set(plugin, row, v)))
             }
@@ -981,6 +988,8 @@ pub enum Button {
     StarSong,
     Help,
     Connect,
+    /// The login's way to Settings › Plugins.
+    LoginPlugins,
     /// Plays the queue offered on Home, or turns it down.
     Resume,
     Dismiss,
@@ -1570,13 +1579,16 @@ impl App {
                     _ => self.say(said, true),
                 }
             }
-            Msg::Installed(r) => {
-                match r {
-                    Ok(_) => self.say(crate::text::PLUGIN_INSTALLED, false),
-                    Err(e) => self.say(crate::text::plugin_refused(&e), true),
+            Msg::Installed(Ok(id)) => match self.settings.own.plugins.iter().find(|c| c.id == id) {
+                Some(c) if !c.enabled => {
+                    let mut lines: Vec<String> = c.about.iter().cloned().collect();
+                    lines.extend([crate::text::plugin_is(&c.points, !c.overrides.is_empty()), crate::text::plugin_reach(&c.net, &c.overrides), crate::text::INSTALLED_OFF.into()].into_iter().filter(|l| !l.is_empty()));
+                    let cmd = Box::new(Cmd::Plugin(PluginCmd::Turn(id, true)));
+                    self.overlay = Some(Overlay::Confirm { title: crate::text::installed_off(&c.name), lines, yes: crate::text::TURN_ON.into(), cmd });
                 }
-                self.cmds.push(Cmd::Plugin(PluginCmd::Read));
-            }
+                _ => self.say(crate::text::PLUGIN_INSTALLED, false),
+            },
+            Msg::Installed(Err(e)) => self.say(crate::text::plugin_refused(&e), true),
             Msg::Updated(updated) => {
                 let named: Vec<(String, String)> = updated.into_iter().map(|(id, to)| (self.settings.own.plugins.iter().find(|c| c.id == id).map_or(id, |c| c.name.clone()), to)).collect();
                 self.say(crate::text::plugins_updated(&named), false);
@@ -1955,7 +1967,41 @@ impl App {
         }
     }
 
+    /// The kinds of profile the login adds: a Subsonic server's, and the enabled plugins' sources.
+    pub fn login_kinds(&self) -> Vec<nori_core::providers::ProviderInfo> {
+        self.settings.own.kinds.providers()
+    }
+
+    /// Which of `LOGIN_FIELDS` the kind chosen asks.
+    pub fn login_fields(&self) -> Vec<usize> {
+        let kinds = self.login_kinds();
+        let Some(info) = kinds.get(self.login.kind).or(kinds.first()) else { return (0..4).collect() };
+        (0..4).filter(|&i| info.fields.iter().any(|f| f.what == LOGIN_ASKS[i])).collect()
+    }
+
+    /// Settings › Plugins on its own, from the login: no profile is needed to add one.
+    fn plugins_alone(&mut self) {
+        self.settings.alone = true;
+        self.settings.row = Sel::default();
+        self.settings.invalidate();
+        self.view = View::Settings;
+        self.focus = Focus::Main;
+        self.cmds.push(Cmd::Plugin(PluginCmd::Read));
+    }
+
     fn login_key(&mut self, k: KeyEvent) {
+        if k.code == KeyCode::Char('p') && k.modifiers.contains(KeyModifiers::CONTROL) {
+            return self.plugins_alone();
+        }
+        let kinds = self.login_kinds().len();
+        // Another kind, where there is more than one: its fields from the first.
+        if matches!(k.code, KeyCode::Left | KeyCode::Right) && kinds > 1 && !self.login.on_list {
+            self.login.kind = (self.login.kind + if k.code == KeyCode::Right { 1 } else { kinds - 1 }) % kinds;
+            self.login.focus = self.login_fields().first().copied().unwrap_or(0);
+            self.login.error = None;
+            return;
+        }
+        let fields = self.login_fields();
         let l = &mut self.login;
         let profiles = self.prefs.servers.len();
         if l.on_list {
@@ -1973,16 +2019,22 @@ impl App {
             }
             return;
         }
+        let at = fields.iter().position(|&f| f == l.focus);
+        let last = at.is_none_or(|i| i + 1 == fields.len());
         match k.code {
             KeyCode::Tab | KeyCode::Down => {
-                if l.focus == 3 && profiles > 0 && k.code == KeyCode::Tab {
+                if last && profiles > 0 && k.code == KeyCode::Tab {
                     l.on_list = true;
-                } else {
-                    l.focus = (l.focus + 1) % 4;
+                } else if let Some(i) = at {
+                    l.focus = fields[(i + 1) % fields.len()];
                 }
             }
-            KeyCode::BackTab | KeyCode::Up => l.focus = (l.focus + 3) % 4,
-            KeyCode::Enter if l.focus < 3 => l.focus += 1,
+            KeyCode::BackTab | KeyCode::Up => {
+                if let Some(i) = at {
+                    l.focus = fields[(i + fields.len() - 1) % fields.len()];
+                }
+            }
+            KeyCode::Enter if !last => l.focus = fields[at.map_or(0, |i| i + 1)],
             KeyCode::Enter => self.connect(),
             KeyCode::Esc => {
                 if !self.prefs.servers.is_empty() {
@@ -1991,26 +2043,29 @@ impl App {
                     self.quit = true;
                 }
             }
-            KeyCode::Backspace => {
+            KeyCode::Backspace if at.is_some() => {
                 l.fields[l.focus].pop();
             }
-            KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => l.fields[l.focus].push(c),
+            KeyCode::Char(c) if at.is_some() && !k.modifiers.contains(KeyModifiers::CONTROL) => l.fields[l.focus].push(c),
             _ => {}
         }
     }
 
     fn connect(&mut self) {
+        let kinds = self.login_kinds();
+        let Some(info) = kinds.get(self.login.kind).or(kinds.first()) else { return };
+        let asked = self.login_fields();
         let l = &mut self.login;
-        let [name, url, user, password] = l.fields.clone();
-        let url = url.trim().trim_end_matches('/').to_string();
-        if url.is_empty() || user.trim().is_empty() {
-            l.error = Some("An address and a user are needed".into());
+        let typed = |i: usize| if asked.contains(&i) { l.fields[i].clone() } else { String::new() };
+        let url = typed(1).trim().trim_end_matches('/').to_string();
+        let url = if url.is_empty() || url.contains("://") { url } else { format!("https://{url}") };
+        let draft = SavedServer { id: nori_core::settings::new_server_id(), kind: info.kind.clone(), name: typed(0).trim().to_string(), url, user: typed(2).trim().to_string(), password: typed(3), ..Default::default() };
+        if !self.settings.own.kinds.server_ready(draft.clone()) {
+            l.error = Some(crate::text::LOGIN_MISSING.into());
             return;
         }
-        let url = if url.contains("://") { url } else { format!("https://{url}") };
         l.error = None;
         l.busy = true;
-        let draft = SavedServer { id: nori_core::settings::new_server_id(), name: name.trim().to_string(), url, user: user.trim().to_string(), password, ..Default::default() };
         self.cmds.push(Cmd::Login(Box::new(draft)));
     }
 
@@ -2154,9 +2209,9 @@ impl App {
                 KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
                 _ => {}
             },
-            Overlay::Trust { url } => match k.code {
+            Overlay::Confirm { cmd, .. } => match k.code {
                 KeyCode::Enter => {
-                    self.cmds.push(Cmd::Plugin(PluginCmd::AddRepo(url.clone())));
+                    self.cmds.push((**cmd).clone());
                     self.overlay = None;
                 }
                 KeyCode::Esc => self.overlay = None,
@@ -2168,7 +2223,7 @@ impl App {
                     self.overlay = None;
                     match target {
                         // A repo that isn't nori's is added only once the user says they trust it.
-                        Target::AddRepo if !typed.trim().is_empty() => self.overlay = Some(Overlay::Trust { url: typed.trim().to_string() }),
+                        Target::AddRepo if !typed.trim().is_empty() => self.overlay = Some(crate::settings_view::trust_repo(typed.trim())),
                         Target::AddRepo => {}
                         t => self.cmds.extend(t.cmd(typed)),
                     }
@@ -2321,7 +2376,7 @@ impl App {
                 }
             }
             Action::Remove if self.focus == Focus::Main && self.view == View::Settings => match self.settings.plugin_key(a) {
-                Some(c) => self.cmds.push(c),
+                Some(o) => self.overlay = Some(o),
                 None => self.dirty = false,
             },
             Action::Remove if self.focus == Focus::Main && self.view == View::Downloads => {
@@ -2353,7 +2408,7 @@ impl App {
                 None => self.say("Nothing to put back", false),
             },
             Action::Undo => self.dirty = false,
-            Action::MoveUp | Action::MoveDown if self.view == View::Settings && !self.queue_in_focus() => match self.settings.plugin_key(a) {
+            Action::MoveUp | Action::MoveDown if self.view == View::Settings && !self.queue_in_focus() => match self.settings.plugin_move(a == Action::MoveUp) {
                 Some(c) => self.cmds.push(c),
                 None => self.dirty = false,
             },
@@ -2416,6 +2471,12 @@ impl App {
             } else {
                 self.close_full();
             }
+            return;
+        }
+        if self.view == View::Settings && self.settings.alone {
+            self.settings.alone = false;
+            self.settings.invalidate();
+            self.view = View::Login;
             return;
         }
         if self.pages.pop().is_none() {
@@ -3451,6 +3512,7 @@ impl App {
             }
             Button::Help => self.do_action(Action::Help),
             Button::Connect => self.connect(),
+            Button::LoginPlugins => self.plugins_alone(),
             Button::Resume => self.take_offer(true),
             Button::Dismiss => self.take_offer(false),
         }

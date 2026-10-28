@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use nori_plugins::wit::provider as w;
+use nori_plugins::convert::{album_in as album, artist_in as artist, found_in as found, playlist_in as playlist, song_in as song};
 use nori_plugins::wit::types as t;
 use nori_plugins::{CallResult, Plugins, Store, Worker};
 use parking_lot::RwLock;
@@ -17,7 +18,10 @@ use crate::client::{Client, NetResult, Starrable, Write};
 use crate::settings::{SavedServer, ServerKind};
 use crate::stream::{StreamQuality, StreamTarget};
 use crate::transport::{block_on, NetError, Transport};
-use crate::{Album, AlbumDetail, Artist, ArtistDetail, ArtistInfo, ArtistRef, Core, FeedShelf, Playlist, PlaylistDetail, SearchResult, Song, Starred};
+use crate::{Album, AlbumDetail, ArtistDetail, ArtistInfo, Core, FeedShelf, PlaylistDetail, Song, Starred};
+
+/// An artist's picture on its about page, px.
+const ABOUT_PX: u32 = 800;
 
 /// What a plugin's stream addresses start with; the song's id follows.
 const ADDRESS: &str = "plugin-song:";
@@ -32,12 +36,14 @@ pub(crate) struct PluginProvider {
     rules: RwLock<Option<(ProfileRules, Option<usize>)>>,
     /// The profile open, as [`Provider::configure`] was given it.
     open: RwLock<SavedServer>,
+    /// Where its account stands, as it last said (asked with its rules).
+    account: RwLock<AccountState>,
 }
 
 impl PluginProvider {
     pub(crate) fn new(id: &str, plugins: Arc<Plugins>) -> Option<PluginProvider> {
         let worker = plugins.worker(id)?;
-        Some(PluginProvider { id: id.to_string(), plugins, worker, info: std::sync::OnceLock::new(), rules: RwLock::new(None), open: RwLock::default() })
+        Some(PluginProvider { id: id.to_string(), plugins, worker, info: std::sync::OnceLock::new(), rules: RwLock::new(None), open: RwLock::default(), account: RwLock::new(AccountState::SignedOut) })
     }
 
     fn kind(&self) -> ServerKind {
@@ -49,15 +55,30 @@ impl PluginProvider {
         block_on(self.worker.call(f))
     }
 
-    /// Its rules for `profile` asked anew and kept.
+    /// Its rules for `profile`, and where its account stands, asked anew and kept.
     fn ask_rules(&self, profile: &SavedServer, guest: bool) -> ProfileRules {
         let p = profile_of(profile);
-        let said = self.now(move |s, x| x.nori_plugin_provider().call_rules(s, &p, guest)).flatten();
+        let (said, account) = self
+            .now(move |s, x| {
+                let rules = x.nori_plugin_provider().call_rules(&mut *s, &p, guest)?;
+                Ok((rules, x.nori_plugin_provider().call_account(s)?))
+            })
+            .unwrap_or((None, None));
+        *self.account.write() = match account {
+            Some(w::AccountState::SignedIn) => AccountState::SignedIn,
+            Some(w::AccountState::Ended) => AccountState::Ended,
+            Some(w::AccountState::SignedOut) | None => AccountState::SignedOut,
+        };
         let ahead = said.as_ref().and_then(|r| r.ahead).map(|a| a as usize);
         let rules = rules(said, !self.info().sign_in.is_empty(), guest);
         *self.rules.write() = Some((rules.clone(), ahead));
         rules
     }
+}
+
+/// A cover's URL at `size` px (`{size}` in it filled in).
+fn sized(cover: &str, size: u32) -> String {
+    cover.replace("{size}", &size.to_string())
 }
 
 fn net_error(e: t::Error) -> NetError {
@@ -115,75 +136,6 @@ fn rules(said: Option<w::ProfileRules>, signs_in: bool, guest: bool) -> ProfileR
         shown.settings.retain(|p| !matches!(p, ServerOptions | Downloads));
     }
     shown
-}
-
-fn explicit(e: t::Explicit) -> nori_model::ExplicitStatus {
-    match e {
-        t::Explicit::Unknown => nori_model::ExplicitStatus::Unmarked,
-        t::Explicit::Clean => nori_model::ExplicitStatus::Clean,
-        t::Explicit::Explicit => nori_model::ExplicitStatus::Explicit,
-    }
-}
-
-fn song(s: t::Song) -> Song {
-    Song {
-        id: s.id,
-        title: s.title,
-        artist: s.artist,
-        artist_id: s.artist_id,
-        artists: s.artists.into_iter().map(|a| ArtistRef { id: a.id.unwrap_or_default(), name: a.name }).collect(),
-        album: s.album,
-        album_id: s.album_id,
-        cover_art: s.cover,
-        duration: s.duration,
-        track: s.track,
-        disc_number: s.disc,
-        year: s.year,
-        genre: s.genre,
-        starred: s.starred,
-        is_external: s.external,
-        explicit_status: explicit(s.explicit),
-        replay_gain: s.replay_gain.map(|g| crate::ReplayGain { track_gain: g.track_db, album_gain: g.album_db, track_peak: g.track_peak, album_peak: g.album_peak, ..Default::default() }),
-        bpm: s.bpm,
-        user_rating: s.rating,
-        ..Default::default()
-    }
-    .dressed()
-}
-
-fn album(a: t::Album) -> Album {
-    Album {
-        id: a.id,
-        subtitle: nori_model::lines::album_subtitle(&a.artist, a.year),
-        name: a.name,
-        artist: a.artist,
-        artist_id: a.artist_id,
-        cover_art: a.cover,
-        song_count: a.song_count,
-        duration: a.duration,
-        year: a.year,
-        genre: a.genre,
-        starred: a.starred,
-        is_external: a.external,
-        ..Default::default()
-    }
-}
-
-fn artist(a: t::Artist) -> Artist {
-    Artist { id: a.id, name: a.name, cover_art: a.cover, artist_image_url: a.image_url, album_count: a.album_count, starred: a.starred, is_external: a.external }
-}
-
-fn playlist(p: t::Playlist) -> Playlist {
-    Playlist { id: p.id, name: p.name, comment: p.comment, owner: p.owner, public: true, song_count: p.song_count, duration: p.duration, cover_art: p.cover }
-}
-
-fn found(f: t::Found) -> SearchResult {
-    SearchResult {
-        songs: f.songs.into_iter().map(song).collect(),
-        albums: f.albums.into_iter().map(album).collect(),
-        artists: f.artists.into_iter().map(artist).collect(),
-        playlists: f.playlists.into_iter().map(playlist).collect(),
-    }
 }
 
 /// The plugin's request for `read`; None when a provider has nothing for it (the empty page).
@@ -245,7 +197,7 @@ fn page(read: &Read, p: w::Page) -> Option<Page> {
             ar.album_count = Some(albums.len() as u32);
             Page::ArtistPage { v: ArtistDetail::new(ar, albums, a.top_songs.into_iter().map(song).collect()) }
         }
-        (_, w::Page::About(a)) => Page::About { v: ArtistInfo { biography: a.biography, image_url: a.image_url, similar: a.similar.into_iter().map(artist).collect(), ..Default::default() } },
+        (_, w::Page::About(a)) => Page::About { v: ArtistInfo { biography: a.biography, image_url: a.image_url.map(|u| sized(&u, ABOUT_PX)), similar: a.similar.into_iter().map(artist).collect(), ..Default::default() } },
         (_, w::Page::Playlist(l)) => {
             let songs: Vec<Song> = l.songs.into_iter().map(song).collect();
             Page::PlaylistPage { v: PlaylistDetail::new(playlist(l.playlist), songs) }
@@ -345,9 +297,9 @@ impl Provider for PluginProvider {
         self.rules.read().as_ref().and_then(|(_, a)| *a)
     }
 
+    /// A plugin's covers are URLs with their size to fill in: nothing is asked of it per cover.
     fn cover_address(&self, _: &Core, cover: &str, size: u32) -> String {
-        let c = cover.to_string();
-        self.now(move |s, x| x.nori_plugin_provider().call_cover(s, &c, size)).flatten().unwrap_or_else(|| cover.to_string())
+        sized(cover, size)
     }
 
     fn resolver(&self, _client: &Arc<Client>) -> Option<Arc<dyn ResolveStream>> {
@@ -380,11 +332,7 @@ impl Provider for PluginProvider {
     }
 
     fn account(&self, _client: &Client) -> AccountState {
-        match self.now(|s, x| x.nori_plugin_provider().call_account(s)).flatten() {
-            Some(w::AccountState::SignedIn) => AccountState::SignedIn,
-            Some(w::AccountState::Ended) => AccountState::Ended,
-            Some(w::AccountState::SignedOut) | None => AccountState::SignedOut,
-        }
+        *self.account.read()
     }
 
     fn reminds_to_sign_in(&self, _client: &Client) -> bool {

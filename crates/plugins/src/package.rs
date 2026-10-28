@@ -15,7 +15,7 @@ fn kept(name: &str) -> bool {
 }
 
 /// Its files by name.
-fn files(from: &Path) -> Result<Vec<(String, Vec<u8>)>, Refusal> {
+pub(crate) fn files(from: &Path) -> Result<Vec<(String, Vec<u8>)>, Refusal> {
     let unreadable = |e: &dyn std::fmt::Display| Refusal::Unreadable(e.to_string());
     if from.is_dir() {
         let mut out = Vec::new();

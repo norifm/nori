@@ -52,6 +52,7 @@ interface types {
         artists: list<artist-ref>,
         album: string,
         album-id: option<string>,
+        /// A URL; `{size}` in it is replaced by the pixels asked for.
         cover: option<string>,
         /// Seconds; 0 when unknown.
         duration: u32,
@@ -74,6 +75,7 @@ interface types {
         name: string,
         artist: string,
         artist-id: option<string>,
+        /// A URL; `{size}` in it is replaced by the pixels asked for.
         cover: option<string>,
         song-count: u32,
         duration: u32,
@@ -86,7 +88,9 @@ interface types {
     record artist {
         id: string,
         name: string,
+        /// A URL; `{size}` in it is replaced by the pixels asked for.
         cover: option<string>,
+        /// As a cover.
         image-url: option<string>,
         album-count: option<u32>,
         starred: bool,
@@ -100,6 +104,7 @@ interface types {
         owner: option<string>,
         song-count: u32,
         duration: u32,
+        /// A URL; `{size}` in it is replaced by the pixels asked for.
         cover: option<string>,
     }
 
@@ -116,6 +121,7 @@ interface types {
 
     record artist-about {
         biography: option<string>,
+        /// As a cover.
         image-url: option<string>,
         similar: list<artist>,
     }
