@@ -29,6 +29,8 @@
   against the singing, word by word where they have it.
 - **Plays together.** Control one device from another, or host a jam that guests join with a link or
   QR code.
+- **Grows with plugins.** Streaming services, new sounds and more, from nori's own repo or one you
+  trust. Shape playback the way you like it.
 - **One core, every screen.** One Rust core plays, queues and decides; each app only draws. Every app
   wears the same design, Nori Seasons.
 - **Yours.** No nori account and no analytics. Connect your own server, and downloads play offline.
