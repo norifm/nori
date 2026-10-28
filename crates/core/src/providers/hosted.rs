@@ -83,7 +83,7 @@ impl Provider for HostedProvider {
     }
 
     fn resolver(&self, client: &Arc<Client>) -> Option<Arc<dyn ResolveStream>> {
-        Some(Arc::new(HostedResolver { client: client.clone(), parts: Mutex::default(), refused: Mutex::default() }))
+        Some(Arc::new(HostedResolver { client: client.clone(), parts: Mutex::default(), refusals: Mutex::default() }))
     }
 }
 
@@ -125,20 +125,49 @@ fn page_of(read: &Read, page: HostPage) -> Page {
     }
 }
 
+/// Which of a guest's addresses were refused: once, the host resolves it anew; again, fresh, the host's
+/// sources don't open here (this device reaches the source from another public address).
+#[derive(Default)]
+struct Refusals {
+    /// Refused once: the next ask is for a fresh URL.
+    once: HashSet<String>,
+    /// Asked for fresh, and not refused since.
+    fresh: HashSet<String>,
+}
+
+impl Refusals {
+    /// Whether `address`'s next URL is to be fresh.
+    fn ask(&mut self, address: &str) -> bool {
+        let anew = self.once.remove(address);
+        if anew {
+            self.fresh.insert(address.to_string());
+        }
+        anew
+    }
+
+    /// `address`'s URL was refused; whether it was a fresh one.
+    fn refused(&mut self, address: &str) -> bool {
+        if self.fresh.remove(address) {
+            return true;
+        }
+        self.once.insert(address.to_string());
+        false
+    }
+}
+
 /// Opens a guest's stream addresses at the URLs the host's provider resolves, on a loader's thread.
 struct HostedResolver {
     client: Arc<Client>,
     /// How the last stream resolved is asked for, by address ([`ResolveStream::parts`]).
     parts: Mutex<HashMap<String, StreamParts>>,
-    /// Addresses whose last URL was refused: the host resolves them anew.
-    refused: Mutex<HashSet<String>>,
+    refusals: Mutex<Refusals>,
 }
 
 impl ResolveStream for HostedResolver {
     fn resolve(&self, address: &str) -> Option<NetResult<String>> {
         let (kbps, id) = resolved_song(ADDRESS, address)?;
         let mut params = vec![("id".to_string(), id), ("kbps".to_string(), kbps.to_string())];
-        if self.refused.lock().remove(address) {
+        if self.refusals.lock().ask(address) {
             params.push(("anew".into(), "1".into()));
         }
         let asked = door_url(&self.client, "noriRemote.source", &params, "GET", b"").and_then(|url| answered::<HostSource>(block_on(self.client.transport.get(url, SOURCE_TIMEOUT_MS))?));
@@ -155,7 +184,11 @@ impl ResolveStream for HostedResolver {
     }
 
     fn refused(&self, address: &str) {
-        self.refused.lock().insert(address.to_string());
+        if self.refusals.lock().refused(address) {
+            if let Some(remote) = self.client.core.remote.lock().upgrade() {
+                remote.cannot_listen();
+            }
+        }
     }
 
     fn parts(&self, address: &str) -> Option<StreamParts> {
@@ -202,4 +235,19 @@ pub(crate) fn answer_source(client: &Arc<Client>, id: String, kbps: u32, anew: b
     let url = resolver.resolve(&address).ok_or_else(|| nowhere("stream a guest may fetch"))??;
     let parts = resolver.parts(&address).map(|p| nori_remote::wire::SourceParts { len: p.len, most: p.most });
     Ok(HostSource { url, parts })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refused_url_is_asked_anew_and_refused_fresh_means_not_here() {
+        let mut r = Refusals::default();
+        assert!(!r.ask("a"), "a first ask is no fresh one");
+        assert!(!r.refused("a"), "refused once");
+        assert!(r.ask("a"), "then the host resolves it anew");
+        assert!(r.refused("a"), "refused fresh too: not here");
+        assert!(!r.refused("b") && r.ask("b") && !r.ask("b"), "each address on its own, fresh once");
+    }
 }

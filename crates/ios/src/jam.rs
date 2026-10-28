@@ -49,6 +49,7 @@ fn listening_code(l: Listening) -> u8 {
         Listening::Playing => 1,
         Listening::HostOff => 2,
         Listening::ServerOff => 3,
+        Listening::Refused => 4,
     }
 }
 

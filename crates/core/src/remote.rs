@@ -356,6 +356,9 @@ pub enum Listening {
     HostOff,
     /// Asked for, but the server does not let jam guests stream.
     ServerOff,
+    /// Asked for, but the host's songs don't open on this device (it reaches their source from another
+    /// network address than the host): only the jam is shown. Asking again tries again.
+    Refused,
 }
 
 /// Where starting a jam on this device stands ([`Remote::jam_start`]).
@@ -1020,6 +1023,9 @@ struct Inner {
     server_clock: ClockSync,
     /// This guest listens along.
     listen: Option<Listen>,
+    /// The host's songs were refused here, fresh too ([`Listening::Refused`]); until listening is asked
+    /// for again.
+    refused_here: bool,
     /// The name of the host of the jam this guest is in, as last seen.
     jam_host: Option<String>,
     /// This guest's jam ended or was left: the relay is asked nothing more.
@@ -1169,6 +1175,7 @@ impl Inner {
         match &self.listen {
             None => Listening::Watching,
             Some(_) if !self.relay_along => Listening::ServerOff,
+            Some(_) if self.refused_here => Listening::Refused,
             Some(_) if !host_lets => Listening::HostOff,
             Some(_) => Listening::Playing,
         }
@@ -1843,6 +1850,19 @@ impl Remote {
     }
 
     /// Listens along with the jam this guest is in (plays its host's music here, in step), or only shows it.
+    /// The host's songs don't open here: this guest stops playing along and shows only the jam.
+    pub(crate) fn cannot_listen(self: Arc<Self>) {
+        {
+            let mut i = self.inner.lock();
+            if i.listen.is_none() || i.refused_here {
+                return;
+            }
+            i.refused_here = true;
+        }
+        self.follow_lead();
+        self.shown.changed();
+    }
+
     pub fn listen(self: Arc<Self>, on: bool) {
         {
             let mut i = self.inner.lock();
@@ -1850,6 +1870,7 @@ impl Remote {
                 return;
             }
             i.listen = on.then(Listen::default);
+            i.refused_here = false;
         }
         self.retime();
         self.keep_polling();
@@ -3972,6 +3993,26 @@ mod tests {
         for (at, rows, len, repeat, next, previous) in table {
             assert_eq!(skips(at, rows, len, repeat), (next, previous), "at {at:?} of {rows}/{len}, repeat {repeat}");
         }
+    }
+
+    #[test]
+    fn a_guest_whose_songs_are_refused_stops_listening_until_it_asks_again() {
+        let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
+        let remote = Remote::new(client, RemoteMe { name: "Guest".into(), kind: DeviceKind::Guest }, Arc::new(Quiet), Arc::new(Quiet), None);
+        remote.clone().cannot_listen();
+        assert_eq!(remote.inner.lock().listening(), Listening::Watching, "only a guest listening can be refused");
+        {
+            let mut i = remote.inner.lock();
+            i.listen = Some(Listen::default());
+            i.relay_along = true;
+        }
+        remote.clone().cannot_listen();
+        assert_eq!(remote.inner.lock().listening(), Listening::Refused);
+        assert!(remote.inner.lock().lead(0).is_none(), "nothing is followed");
+        remote.clone().listen(false);
+        remote.clone().listen(true);
+        assert_ne!(remote.inner.lock().listening(), Listening::Refused, "asked again, it tries again");
+        remote.stop();
     }
 
     #[test]

@@ -500,6 +500,7 @@ enum Say {
         switch code {
         case 2: return "The host doesn't let guests listen along right now. You can still ask for songs."
         case 3: return "This server doesn't let guests listen along. You can still ask for songs."
+        case 4: return "The host's songs don't play on this device: it's on another network. You can still ask for songs."
         default: return nil
         }
     }

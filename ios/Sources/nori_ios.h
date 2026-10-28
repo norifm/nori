@@ -389,7 +389,7 @@ char *nori_ios_providers(void);
 char *nori_ios_rules(void);
 /// The jam this iPod is a guest in, as JSON to free, NULL in none: {host, listeners: [names], asked: [song
 /// ids], asks: [{t, s, c}], listening: 0 only shown, 1 playing here, 2 the host lets no one, 3 the server
-/// lets no guest}. Its asks are its own requests the host has yet to take.
+/// lets no guest, 4 the host's songs don't play on this device}. Its asks are its own requests the host has yet to take.
 char *nori_ios_jam(void);
 /// Joins the jam invite `link` is to, its guest profile named `name`. NORI_JOIN_STARTED: report 20 says
 /// how it went (flag 1 joined: open the active profile; flag 2: the jam has ended; flag 0: index a

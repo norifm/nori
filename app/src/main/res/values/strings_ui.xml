@@ -690,6 +690,7 @@
     <string name="jam_paused_here">Paused here · Jam still playing</string>
     <string name="jam_along_host_off">The host isn’t letting guests listen along right now. You can still ask for songs.</string>
     <string name="jam_along_server_off">This server doesn’t let guests listen along. You can still ask for songs.</string>
+    <string name="jam_along_refused">The host’s songs don’t play on this device: it’s on another network. You can still ask for songs.</string>
     <string name="jam_let_listen">Let guests listen along</string>
     <string name="jam_let_listen_line">They hear the music on their own phones, in step with yours</string>
     <string name="jam_yours_waiting">You asked for</string>

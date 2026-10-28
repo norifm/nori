@@ -844,6 +844,7 @@ pub fn jam_along(l: Listening) -> &'static str {
         Listening::Watching | Listening::Playing => "",
         Listening::HostOff => "The host doesn't let guests listen along right now. You can still ask for songs.",
         Listening::ServerOff => "This server doesn't let guests listen along. You can still ask for songs.",
+        Listening::Refused => "The host's songs don't play on this device: it's on another network. You can still ask for songs.",
     }
 }
 
