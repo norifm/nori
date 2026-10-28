@@ -11,7 +11,7 @@ use nori_time::{Duration, Instant};
 use parking_lot::{Mutex, MutexGuard};
 
 use super::{signature, ROOM};
-use crate::wire::{Answer, Body, DeviceState, Event, Member, Outgoing, Room, HOLD_MS};
+use crate::wire::{Answer, Body, DeviceState, Event, HostPage, HostRead, HostSource, Member, Outgoing, Room, HOLD_MS};
 
 /// How far a request's time may be from the door's: a captured request cannot be sent again later.
 const SKEW_MS: i64 = 60_000;
@@ -44,6 +44,34 @@ fn now_ms() -> i64 {
 
 /// What a door does with a command that came through it: (the sending device's id, the body).
 pub type Handler = Box<dyn Fn(&str, Body) + Send + Sync>;
+
+/// What a jam's guest asks of its host's provider through the door.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Ask {
+    Read(HostRead),
+    /// Where song `id` streams from at most `kbps` (0: as it is); `anew` when the last URL was refused.
+    Source { id: String, kbps: u32, anew: bool },
+}
+
+/// The host's answer to an [`Ask`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum Told {
+    Page(Box<HostPage>),
+    Source(HostSource),
+}
+
+/// Why the host did not answer an [`Ask`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unanswered {
+    /// A guest may not ask it (a song the jam does not play).
+    NotAllowed,
+    /// The host's provider could not answer.
+    Failed,
+}
+
+/// What a door answers a jam guest's [`Ask`] with; called on the asking connection's thread, so it may
+/// block.
+pub type Asker = Box<dyn Fn(Ask) -> Result<Told, Unanswered> + Send + Sync>;
 
 struct Inside {
     seq: u64,
@@ -84,6 +112,7 @@ struct LanJam {
     members: Vec<(String, Member)>,
     handler: Arc<Handler>,
     changed: Arc<dyn Fn(Vec<Member>) + Send + Sync>,
+    asker: Arc<Asker>,
 }
 
 /// A controllable device's listener. Its thread blocks in `accept` (no wakeups); each connection gets a
@@ -110,9 +139,10 @@ impl Door {
         self.change(|_| {});
     }
 
-    /// Opens a room whose invite and member credentials cannot control paired devices.
-    pub fn open_jam(&self, invite: String, handler: Handler, changed: Box<dyn Fn(Vec<Member>) + Send + Sync>) {
-        *self.shared.jam.lock() = Some(LanJam { invite, revoked: HashSet::new(), members: Vec::new(), handler: Arc::new(handler), changed: Arc::from(changed) });
+    /// Opens a room whose invite and member credentials cannot control paired devices; its members'
+    /// asks of the host's provider go to `asker`.
+    pub fn open_jam(&self, invite: String, handler: Handler, changed: Box<dyn Fn(Vec<Member>) + Send + Sync>, asker: Asker) {
+        *self.shared.jam.lock() = Some(LanJam { invite, revoked: HashSet::new(), members: Vec::new(), handler: Arc::new(handler), changed: Arc::from(changed), asker: Arc::new(asker) });
         self.change(|_| {});
     }
 
@@ -340,7 +370,28 @@ fn answer(s: &Shared, conn: &TcpStream, method: &str, target: &str, body: &[u8],
             let seq = s.inside.lock().seq;
             Some(("200 OK", format!(r#"{{"seq":{seq}}}"#)))
         }
+        "/rest/noriRemote.read" if guest.is_some() && method == "POST" => {
+            let Ok(read) = serde_json::from_slice::<HostRead>(body) else { return Some(("400 Bad Request", "{}".into())) };
+            Some(asked(s, Ask::Read(read)))
+        }
+        "/rest/noriRemote.source" if guest.is_some() => {
+            let Some(id) = query(target, "id").and_then(crate::decode) else { return Some(("400 Bad Request", "{}".into())) };
+            let kbps = query(target, "kbps").and_then(|v| v.parse().ok()).unwrap_or(0);
+            Some(asked(s, Ask::Source { id, kbps, anew: query(target, "anew") == Some("1") }))
+        }
         _ => Some(("404 Not Found", "{}".into())),
+    }
+}
+
+/// The jam's answer to a guest's `ask`, as the door sends it.
+fn asked(s: &Shared, ask: Ask) -> (&'static str, String) {
+    let asker = s.jam.lock().as_ref().map(|jam| jam.asker.clone());
+    let Some(asker) = asker else { return ("401 Unauthorized", "{}".into()) };
+    match asker(ask) {
+        Ok(Told::Page(page)) => ("200 OK", serde_json::to_string(&page).unwrap_or_default()),
+        Ok(Told::Source(source)) => ("200 OK", serde_json::to_string(&source).unwrap_or_default()),
+        Err(Unanswered::NotAllowed) => ("403 Forbidden", "{}".into()),
+        Err(Unanswered::Failed) => ("502 Bad Gateway", "{}".into()),
     }
 }
 
@@ -514,7 +565,7 @@ mod tests {
         for guest in [false, true] {
             let door = Door::open(Member { id: "host".into(), ..Default::default() }, "paired-secret".into(), Box::new(|_, _| {}), Arc::new(nori_tasks::Native::new("door-test").unwrap())).unwrap();
             let secret = if guest {
-                door.open_jam("invite-secret".into(), Box::new(|_, _| {}), Box::new(|_| {}));
+                door.open_jam("invite-secret".into(), Box::new(|_, _| {}), Box::new(|_| {}), Box::new(|_| Err(Unanswered::Failed)));
                 let nonce = "a".repeat(64);
                 let join = format!("/rest/noriRemote.join?name=Guest&nonce={nonce}");
                 assert_eq!(request(door.port(), "invite-secret", "GET", &join, "").0, 200);
@@ -576,7 +627,7 @@ mod tests {
         let door = Door::open(Member { id: "host".into(), ..Default::default() }, "paired-secret".into(), Box::new(move |from, body| got.lock().push((from.to_owned(), body))), Arc::new(nori_tasks::Native::new("door-test").unwrap())).unwrap();
         let got = jam_commands.clone();
         let listed = members.clone();
-        door.open_jam("invite-secret".into(), Box::new(move |from, body| got.lock().push((from.to_owned(), body))), Box::new(move |m| *listed.lock() = m));
+        door.open_jam("invite-secret".into(), Box::new(move |from, body| got.lock().push((from.to_owned(), body))), Box::new(move |m| *listed.lock() = m), Box::new(|_| Err(Unanswered::Failed)));
         let nonce = "a".repeat(64);
         let join = format!("/rest/noriRemote.join?name=Guest&nonce={nonce}");
         assert_eq!(request(door.port(), "wrong", "GET", &join, "").0, 401);
@@ -604,6 +655,42 @@ mod tests {
         assert_eq!(request(door.port(), &secret, "GET", "/rest/noriRemote.poll?dev=guest", "").0, 401);
         assert_eq!(request(door.port(), "invite-secret", "GET", &join, "").0, 401);
         assert_eq!(request(door.port(), "new-paired-secret", "GET", "/rest/noriRemote.poll?dev=own", "").0, 200);
+    }
+
+    #[test]
+    fn only_jam_members_ask_the_hosts_provider() {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let heard = asked.clone();
+        let door = Door::open(Member { id: "host".into(), ..Default::default() }, "paired-secret".into(), Box::new(|_, _| {}), Arc::new(nori_tasks::Native::new("door-test").unwrap())).unwrap();
+        let source = HostSource { url: "https://cdn.example/a".into(), parts: Some(crate::wire::SourceParts { len: 9, most: 4 }) };
+        let told = source.clone();
+        door.open_jam("invite-secret".into(), Box::new(|_, _| {}), Box::new(|_| {}), Box::new(move |ask| {
+            heard.lock().push(ask.clone());
+            match ask {
+                Ask::Read(_) => Ok(Told::Page(Box::new(HostPage::Song { song: None }))),
+                Ask::Source { id, .. } if id == "a b" => Ok(Told::Source(told.clone())),
+                Ask::Source { .. } => Err(Unanswered::NotAllowed),
+            }
+        }));
+        let port = door.port();
+        let nonce = "b".repeat(64);
+        assert_eq!(request(port, "invite-secret", "GET", &format!("/rest/noriRemote.join?name=Guest&nonce={nonce}"), "").0, 200);
+        let member = super::super::member_secret("invite-secret", &nonce);
+        let read = serde_json::to_string(&HostRead::Song { id: "s".into() }).unwrap();
+        let of = |id: &str| super::super::target("noriRemote.source", &[("id".into(), id.into()), ("kbps".into(), "160".into())]);
+        for outsider in ["invite-secret", "paired-secret", "wrong"] {
+            assert_ne!(request(port, outsider, "POST", "/rest/noriRemote.read?dev=host", &read).0, 200, "{outsider} reads");
+            assert_ne!(request(port, outsider, "GET", &format!("{}&dev=host", of("a b")), "").0, 200, "{outsider} asks for a source");
+        }
+        assert!(asked.lock().is_empty(), "only members reach the host's provider");
+        let (status, page) = request(port, &member, "POST", "/rest/noriRemote.read", &read);
+        assert_eq!((status, serde_json::from_str::<HostPage>(&page).unwrap()), (200, HostPage::Song { song: None }));
+        let (status, got) = request(port, &member, "GET", &of("a b"), "");
+        assert_eq!((status, serde_json::from_str::<HostSource>(&got).unwrap()), (200, source));
+        assert_eq!(request(port, &member, "GET", &of("elsewhere"), "").0, 403, "the host's refusal");
+        assert_eq!(asked.lock()[..2], [Ask::Read(HostRead::Song { id: "s".into() }), Ask::Source { id: "a b".into(), kbps: 160, anew: false }]);
+        door.close_jam();
+        assert_eq!(request(port, &member, "POST", "/rest/noriRemote.read", &read).0, 401, "the jam is over");
     }
 
     #[test]

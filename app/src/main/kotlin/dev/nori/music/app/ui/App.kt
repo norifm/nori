@@ -404,7 +404,6 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             LocalHiddenBars provides hiddenBars,
         ) {
             PairingRequest()
-            JamPluginRequest()
             MobileDownloadQuestion(actions)
             val route = controller.currentBackStackEntryAsState().value?.destination?.route
             // The tab the page on screen belongs to, which is the one that stays lit, as Apple's does: a

@@ -86,24 +86,9 @@ pub fn install_version(name: &str, version: &str) -> String {
 /// The install sheet's lines for `p`: what it says of itself, what it is and may reach, where it comes
 /// from, and that it installs off.
 pub fn preview_note(p: &nori_plugins::PluginPreview) -> Vec<String> {
-    let mut note = plugin_lines(p);
-    note.push(INSTALLED_OFF.into());
-    note
-}
-
-/// The sheet offering to install the plugin `p` a jam plays from, then join it.
-pub fn jam_plugin_note(p: &nori_plugins::PluginPreview) -> Vec<String> {
-    let mut note = vec![JAM_PLUGIN.to_string()];
-    note.extend(plugin_lines(p));
-    note.push(JAM_PLUGIN_ON.into());
-    note
-}
-
-/// What plugin `p` is, may reach and comes from.
-fn plugin_lines(p: &nori_plugins::PluginPreview) -> Vec<String> {
     let c = &p.card;
     let from = p.repo.as_ref().map(|url| format!("From {}", repo_name(&nori_plugins::Repo { url: url.clone(), official: url == nori_plugins::OFFICIAL })));
-    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(&c.net, &c.overrides)]).chain(from).filter(|l| !l.is_empty()).collect()
+    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(&c.net, &c.overrides)]).chain(from).chain([INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect()
 }
 
 /// What a plugin is, from the extension points it fills and whether it overrides nori's values.
@@ -610,17 +595,12 @@ pub fn jam_ended(host: Option<&str>) -> String {
 
 pub const JAM_OWN: &str = "That's your own jam";
 pub const JAM_INVITE_ENDED: &str = "This jam has ended";
-pub const JAM_NEEDS_PLUGIN: &str = "This jam plays from a plugin this computer doesn’t have";
-const JAM_PLUGIN: &str = "This jam plays from this plugin.";
-const JAM_PLUGIN_ON: &str = "It turns on, then you join the jam.";
-pub const INSTALL_AND_JOIN: &str = "Install and Join";
 
 /// Why a jam was not joined.
 pub fn jam_join_failed(e: &nori_host::JoinError) -> String {
     match e {
         nori_host::JoinError::Own => JAM_OWN.into(),
         nori_host::JoinError::Ended => JAM_INVITE_ENDED.into(),
-        nori_host::JoinError::NeedsPlugin { .. } => JAM_NEEDS_PLUGIN.into(),
         nori_host::JoinError::Failed(e) => format!("Couldn't join the jam ({})", net_error(e)),
     }
 }
@@ -761,7 +741,6 @@ mod tests {
         };
         let p = nori_plugins::PluginPreview { card, file: String::new(), repo: Some(nori_plugins::OFFICIAL.into()) };
         assert_eq!(preview_note(&p), ["Counts letters", "It’s a playback helper.", "Connects to a.example.", "From nori’s own", "It stays off until you turn it on."]);
-        assert_eq!(jam_plugin_note(&p), ["This jam plays from this plugin.", "Counts letters", "It’s a playback helper.", "Connects to a.example.", "From nori’s own", "It turns on, then you join the jam."]);
     }
 
     #[test]

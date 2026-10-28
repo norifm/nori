@@ -429,7 +429,7 @@ pub trait Follower: Send + Sync {
 pub struct JamPass {
     pub url: String,
     pub api_key: String,
-    /// What the host plays from: a LAN jam's guest plays the same provider's songs itself.
+    /// What the host plays from: a LAN jam's guest plays the same provider's songs, through the host.
     pub kind: crate::settings::ServerKind,
 }
 
@@ -2101,9 +2101,6 @@ pub enum JamJoin {
     Own,
     /// The jam has ended: nothing changes.
     Ended,
-    /// The jam plays from plugin `id`'s provider, which this device has not installed and on: once it
-    /// has, [`jam_profile`] signs in with `pass` (the host already took the guest in).
-    NeedsPlugin { id: String, pass: JamPass },
 }
 
 /// The app's key for the invites of the jams this device opened, newest last, one a line.
@@ -2143,7 +2140,7 @@ pub fn own_invite(settings: Arc<Settings>, remote: Option<Arc<Remote>>, link: St
 /// Joins the jam `link` invites to as `name`, unless it is this device's own ([`own_invite`]) or the
 /// server no longer knows the invite.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, remote: Option<Arc<Remote>>, kinds: Arc<crate::providers::Kinds>, link: String, name: String) -> Result<JamJoin, NetError> {
+pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, remote: Option<Arc<Remote>>, link: String, name: String) -> Result<JamJoin, NetError> {
     #[derive(Deserialize)]
     struct Joined {
         key: String,
@@ -2169,11 +2166,7 @@ pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, re
             status => return Err(NetError::Http { status }),
         }
         let key = format!("lan-{}", lan::member_secret(secret, &nonce));
-        let pass = JamPass { url: server, api_key: nori_remote::guest_key(&key), kind: kind.unwrap_or_default() };
-        return Ok(match &pass.kind {
-            crate::settings::ServerKind::Plugin { id } if !kinds.has(&pass.kind) => JamJoin::NeedsPlugin { id: id.clone(), pass },
-            _ => JamJoin::Joined { pass },
-        });
+        return Ok(JamJoin::Joined { pass: JamPass { url: server, api_key: nori_remote::guest_key(&key), kind: kind.unwrap_or_default() } });
     }
     let url = api::Server::with(&server, api::Auth::ApiKey(&nori_remote::guest_key(&invite))).url("noriRemote.join", &[("name".into(), name)]);
     let body = match transport::get(&*transport, url, 0).await {
@@ -2345,11 +2338,16 @@ fn lan_secret(client: &Client) -> Option<String> {
     None
 }
 
+/// `endpoint` with `params` at the door of the LAN jam this guest profile is in, signed with its member
+/// key; None for any other profile.
+pub(crate) fn lan_jam_url(core: &crate::Core, endpoint: &str, params: &[(String, String)], method: &str, body: &[u8]) -> Option<String> {
+    let jam = core.lan_jam.read();
+    let (base, secret) = jam.as_ref()?;
+    Some(format!("{}{}", base.trim_end_matches('/'), lan::signed(secret, method, &lan::target(endpoint, params), body, db::now_ms())))
+}
+
 fn remote_url(client: &Client, endpoint: &str, params: &[(String, String)], method: &str, body: &[u8]) -> String {
-    if let Some((base, secret)) = client.core.lan_jam.read().as_ref() {
-        return format!("{}{}", base.trim_end_matches('/'), lan::signed(secret, method, &lan::target(endpoint, params), body, db::now_ms()));
-    }
-    client.core.server.read().url(endpoint, params)
+    lan_jam_url(&client.core, endpoint, params, method, body).unwrap_or_else(|| client.core.server.read().url(endpoint, params))
 }
 
 /// Sends `o`; `who` is this device's [`Remote::who`].
@@ -2725,6 +2723,7 @@ impl Remote {
             let link = nori_remote::app_invite_link(&format!("http://{ip}:{}", door.port()), &invite);
             let weak = Arc::downgrade(self);
             let members = weak.clone();
+            let asks = weak.clone();
             door.open_jam(secret, Box::new(move |from, body| {
                 if let (Some(remote), Body::Command { id, op }) = (weak.upgrade(), body) { remote.obey(Via::LanJam, from.into(), id, *op, remote.now()); }
             }), Box::new(move |listed| {
@@ -2732,7 +2731,7 @@ impl Remote {
                     if let Some(hosted) = remote.inner.lock().hosted.as_mut() { hosted.jam.present(&listed); }
                     remote.publish();
                 }
-            }));
+            }), Box::new(move |ask| asks.upgrade().ok_or(lan::Unanswered::Failed)?.answer_guest(ask)));
             remember_hosted(&self.client.core.session.settings, &invite);
             i.hosted = Some(Hosted { jam: Jam::new("lan-jam".into(), invite, self.id.clone(), self.me.name.clone()), link: link.clone(), along: true });
             i.published = None;
@@ -2742,6 +2741,34 @@ impl Remote {
         self.publish();
         self.hear_plans();
         Ok(Some(link))
+    }
+
+    /// A LAN jam guest's ask of this host's provider, carried out here (blocking): its reads, and the
+    /// sources of the songs its queue holds while guests may listen along.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn answer_guest(&self, ask: lan::Ask) -> Result<lan::Told, lan::Unanswered> {
+        use crate::providers::hosted;
+        let failed = |e: NetError| {
+            crate::alog::info(&format!("remote: a guest's ask failed: {e}"));
+            lan::Unanswered::Failed
+        };
+        match ask {
+            lan::Ask::Read(read) => {
+                let mut page = None;
+                {
+                    let mut asked = std::pin::pin!(async { page = Some(hosted::answer_read(&self.client, read).await) });
+                    self.tasks.block_on(asked.as_mut());
+                }
+                page.ok_or(lan::Unanswered::Failed)?.map(|p| lan::Told::Page(Box::new(p))).map_err(failed)
+            }
+            lan::Ask::Source { id, kbps, anew } => {
+                let plays = self.inner.lock().hosts_along() && self.client.core.session.playlist(|p| p.ids().contains(&id));
+                if !plays {
+                    return Err(lan::Unanswered::NotAllowed);
+                }
+                hosted::answer_source(&self.client, id, kbps, anew).map(lan::Told::Source).map_err(failed)
+            }
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

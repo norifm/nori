@@ -1,8 +1,9 @@
 # LAN jams served by the host
 
-A LAN jam's guest today plays the host's songs through its own copy of the host's provider: a YouTube
-Music host's guest needs the YouTube Music plugin (`JamJoin::NeedsPlugin`). This plan makes the host
-serve what a guest needs, so any native device joins any LAN jam with no plugin and no account.
+A LAN jam's guest used to play the host's songs through its own copy of the host's provider: a YouTube
+Music host's guest needed the YouTube Music plugin (`JamJoin::NeedsPlugin`). This plan makes the host
+serve what a guest needs, so any native device joins any LAN jam with no plugin and no account. It is
+built; "As built" below says where the build differs from the plan.
 
 ## Where things stand
 
@@ -70,6 +71,30 @@ What the guest fetches is the same file the host plays (the same URL), which lis
 - Rust: a LAN jam (host/tests/lan_jam.rs) whose guest has no plugin searches, requests a song the host
   accepts, and resolves its source through the door; the fixture plugin's provider answers on the host.
 - Device: the jam section with a guest on the desktop (the e2e peer) and no plugin.
+
+## As built
+
+- The door (`crates/remote/src/lan/door.rs`) takes a third callback with a jam, `Asker`: a guest's `Ask`
+  (`Read(HostRead)` or `Source { id, kbps, anew }`) answered with a `Told` or `Unanswered`, on the
+  asking connection's thread. Only members' keys reach it; paired devices and the invite don't.
+  - `POST noriRemote.read`, body a `HostRead` (search, album, artist, playlist, song), answers a
+    `HostPage`; both are wire types (`wire.rs`) over nori-model's records, since `Read` and `Page` are
+    not serde.
+  - `GET noriRemote.source?id=&kbps=[&anew=1]` answers a `HostSource` (`url`, `parts: { len, most }`).
+    `anew` is a guest whose last URL was refused: the host's resolver hears `refused` first.
+  - A refusal is a status: 403 for what a guest may not ask, 502 when the host's provider failed.
+- The host's guest rules (`Remote::answer_guest`): a read is any of the five, through the host's page
+  store (`cached_or_fetched`); a source only for a song in the host's queue while guests may listen
+  along, the rule the relay keeps for a Subsonic jam. A provider that doesn't resolve its addresses
+  hands none out (they could carry the account).
+- The guest's provider is `providers/hosted.rs`'s `HostedProvider`, installed by `configure_profile`
+  whenever the profile carries a LAN jam key. The profile keeps the host's kind (no `jam-host` kind is
+  stored), so `DeviceState.source` and `Refusal::OtherSource` hold. Its stream addresses are
+  `jam-song:{kbps}/{id}`, kept under the key the host's plugin keeps them under (`{id}:{kbps}`). Its
+  rules are a guest's with no library sections; it fetches only the next song ahead (each one is an ask
+  of the host).
+- `JamJoin::NeedsPlugin`, `JoinError::NeedsPlugin`, the plugin offer and `jam_join`'s `kinds` are gone:
+  no join needs a plugin.
 
 ## Open questions
 

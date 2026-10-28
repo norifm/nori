@@ -158,9 +158,8 @@ private fun remoteCheck(nori: dev.nori.music.Nori, arg: String, value: String, c
         "ask" -> kotlinx.coroutines.runBlocking { nori.library.search(value).songs.firstOrNull() }?.let { s ->
             r()?.jamAct(dev.nori.music.ffi.remote.Op.Request(s)); "asked for ${s.title}"
         } ?: "nothing found"
-        "join" -> when (val joined = kotlinx.coroutines.runBlocking { nori.joinJam(value) }) {
+        "join" -> when (kotlinx.coroutines.runBlocking { nori.joinJam(value) }) {
             is dev.nori.music.ffi.JamJoin.Joined -> "joined"
-            is dev.nori.music.ffi.JamJoin.NeedsPlugin -> "needs plugin ${joined.id}"
             dev.nori.music.ffi.JamJoin.Own -> "own"
             dev.nori.music.ffi.JamJoin.Ended -> "ended"
         }

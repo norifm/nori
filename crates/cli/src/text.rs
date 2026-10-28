@@ -818,18 +818,12 @@ pub const JAM_PAUSED_HERE: &str = "Paused here · Jam still playing";
 
 pub const JAM_OWN: &str = "That's your own jam";
 pub const JAM_INVITE_ENDED: &str = "This jam has ended";
-pub const JAM_NEEDS_PLUGIN: &str = "This jam plays from a plugin this device doesn't have";
-/// Atop the sheet installing the plugin a jam plays from.
-pub const JAM_PLUGIN: &str = "This jam plays from this plugin.";
-pub const JAM_PLUGIN_ON: &str = "It turns on, then you join the jam.";
-pub const INSTALL_AND_JOIN: &str = "Install and join";
 
 /// Why a jam was not joined.
 pub fn jam_join_failed(e: &nori_host::JoinError) -> String {
     match e {
         nori_host::JoinError::Own => JAM_OWN.into(),
         nori_host::JoinError::Ended => JAM_INVITE_ENDED.into(),
-        nori_host::JoinError::NeedsPlugin { .. } => JAM_NEEDS_PLUGIN.into(),
         nori_host::JoinError::Failed(e) => format!("Couldn't join the jam ({})", net_error(e)),
     }
 }

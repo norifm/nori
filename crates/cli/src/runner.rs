@@ -162,6 +162,11 @@ pub fn run(o: Options) -> Result<(), String> {
         prefs.active_server_id = id;
         crate::backend::app().settings.put(prefs.clone());
     }
+    if let Some(file) = &o.install_plugin {
+        let plugins = &nori_host::desktop::plugins(&o.data).host;
+        let installed = plugins.install(file).map_err(|e| format!("{}: {e:?}", file.display()))?;
+        plugins.turn(installed.id.clone(), true);
+    }
     if let Some(kind) = o.provider.clone() {
         let list = nori_core::settings::ServerList { servers: prefs.servers.clone(), active_server_id: prefs.active_server_id.clone() };
         let form = SavedServer { id: nori_core::settings::new_server_id(), kind, ..Default::default() };
@@ -367,11 +372,6 @@ impl Runner {
             PluginCmd::InstallPreview(p) => nori_host::spawn("nori-plugin-install", move || {
                 let _ = tx.send(Msg::Installed(host.install_preview(*p)));
             }),
-            PluginCmd::JoinWith(p) => nori_host::spawn("nori-jam-plugin", move || {
-                let (p, pass) = *p;
-                let joined = nori_host::desktop::install_jam_plugin(&host, p).map(|_| pass).map_err(|_| crate::text::JAM_NEEDS_PLUGIN.to_string());
-                let _ = tx.send(Msg::Joined(joined));
-            }),
             PluginCmd::Menu(entry, items) => {
                 return nori_host::spawn("nori-plugin-menu", move || block_on(host.run_menu(entry, items)));
             }
@@ -475,8 +475,7 @@ impl Runner {
                 prefs_changed(app);
                 self.open(app, guest);
                 app.go(View::Home);
-                // The plugin it plays from may have been installed for it.
-                return self.plugin(app, crate::app::PluginCmd::Read);
+                return;
             }
             Msg::Left(said) => {
                 match nori_host::jam_left(&crate::backend::app().settings) {
@@ -716,17 +715,8 @@ impl Runner {
             }
             Cmd::JoinJam(link) => {
                 let (http, tx, remote) = (self.http.clone(), self.tx.clone(), self.session.as_ref().and_then(|s| s.remote()));
-                let plugged = nori_host::desktop::plugins(&self.o.data);
-                let (kinds, host) = (plugged.kinds.clone(), plugged.host.clone());
                 nori_host::spawn("nori-jam-join", move || {
-                    let joined = nori_host::jam_join(http, &crate::backend::app().settings, kinds, link, &nori_host::device_name(), remote);
-                    // A jam playing from a plugin this device lacks offers nori's own version of it.
-                    if let Err(nori_host::JoinError::NeedsPlugin { id, pass }) = &joined {
-                        if let Some(p) = nori_host::desktop::jam_plugin(&host, id) {
-                            let _ = tx.send(Msg::JamPlugin(Box::new((p, pass.clone()))));
-                            return;
-                        }
-                    }
+                    let joined = nori_host::jam_join(http, &crate::backend::app().settings, link, &nori_host::device_name(), remote);
                     let _ = tx.send(Msg::Joined(joined.map_err(|e| crate::text::jam_join_failed(&e))));
                 });
                 return;

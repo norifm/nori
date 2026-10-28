@@ -676,11 +676,6 @@
     <string name="jam_join_failed">Couldn’t join the Jam</string>
     <string name="jam_own">That’s your own Jam</string>
     <string name="jam_invite_ended">This Jam has ended</string>
-    <string name="jam_needs_plugin">This Jam plays from a plugin this phone doesn’t have</string>
-    <string name="jam_plugin_title">This Jam plays from %1$s</string>
-    <string name="jam_plugin_text">%1$s is a plugin from nori. Install it to join.</string>
-    <string name="jam_plugin_install">Install %1$s</string>
-    <string name="jam_plugin_installing">Installing…</string>
     <string name="jam_starting">Starting the Jam…</string>
     <string name="search_is_the_way_in">Nothing is kept here: search for songs, albums and artists to play.</string>
     <string name="home_closed_to_guests">The host’s server doesn’t share its library with guests yet. Search still works.</string>
