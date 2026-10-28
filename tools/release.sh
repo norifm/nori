@@ -6,7 +6,7 @@
 #   tools/release.sh --publish          build this version and publish it, no questions (for scripts)
 #   tools/release.sh --live             with --publish: published rather than a draft
 #   tools/release.sh --from DIR         publish verified artifacts built by release workers
-#   tools/release.sh --abi arm64-v8a    phones only: about half the size
+#   tools/release.sh --abi arm64-v8a    the phones' APK alone
 #   tools/release.sh --jni-libs DIR     the APK around a core already built, DIR/<abi>/ (the release workflow)
 #   tools/release.sh --no-test          skip cargo test first
 #   tools/release.sh --no-hosts        build no desktop and CLI packages (those built already still go)
@@ -32,13 +32,12 @@
 # release. A release already on GitHub without the iPod app is offered it first,
 # when only build, docs, test or chore commits came since.
 #
-# By default the APK carries the Rust core for both 64-bit ABIs, so nobody has to choose: Android
-# installs the slice that matches. arm64-v8a is every phone of the last decade, x86_64 is emulators
-# and Chromebooks.
+# By default there is one APK per 64-bit ABI, each carrying only its own Rust core (half the size of
+# one carrying both): arm64-v8a is every phone of the last decade, x86_64 is emulators and Chromebooks.
 #
 # Leaves one directory holding everything a release page needs:
 #
-#   nori-music-<version>.apk    (nori-music-<version>-<abi>.apk with --abi)
+#   nori-music-<version>-<abi>.apk   one per ABI (only the --abi one with --abi)
 #   nori-ipod-<version>.ipa     the iPod touch app (docs/developers/ipod-internals.md), fake-signed for AppSync
 #   SHA256SUMS                  one line per file, as `sha256sum -c` wants it
 #   RELEASE.txt                 version, commit, ABIs, size, signing certificate
@@ -259,10 +258,13 @@ write one, or generate it:  tools/changelog.py --update && tools/changelog.py --
 fi
 
 out="${FROM:-build/release-$version}"
-case "$ABI" in
-  *,*) name="nori-music-$version.apk" ;;
-  *) name="nori-music-$version-$ABI.apk" ;;
-esac
+IFS=, read -ra abis <<< "$ABI"
+apks=()
+for abi in "${abis[@]}"; do apks+=("nori-music-$version-$abi.apk"); done
+apks_built() {
+  local apk
+  for apk in "${apks[@]}"; do [ -f "$out/$apk" ] || return 1; done
+}
 ipa=""
 if [ "$IPOD" = 1 ]; then ipa="nori-ipod-$version.ipa"; fi
 HOST_PLATFORMS="macos-aarch64 macos-x86_64 linux-aarch64 linux-x86_64"
@@ -335,7 +337,11 @@ run_tests() {
   tools/check.sh rust --workspace --cargo-quiet --status-level fail && tools/check.sh rust-doc -q --workspace
 }
 build_apk() {
-  ./gradlew :app:assembleRelease -PrustTargets="$ABI" ${JNI_LIBS[@]+"${JNI_LIBS[@]}"} -q && cp app/build/outputs/apk/release/app-release.apk "$out/$name"
+  local abi
+  for abi in "${abis[@]}"; do
+    [ -f "$out/nori-music-$version-$abi.apk" ] && continue
+    ./gradlew :app:assembleRelease -PrustTargets="$abi" ${JNI_LIBS[@]+"${JNI_LIBS[@]}"} -q && cp app/build/outputs/apk/release/app-release.apk "$out/nori-music-$version-$abi.apk" || return 1
+  done
 }
 build_ipod() {
   ./tools/ipod.sh build && cp "build/ios/$ipa" "$out/$ipa"
@@ -358,7 +364,7 @@ lane_android() {
   if [ "$RUN_TESTS" = 1 ] && [ ! -f "$out/.tested" ]; then
     step tests run_tests && touch "$out/.tested"
   fi
-  [ -f "$out/$name" ] || step apk build_apk || true
+  apks_built || step apk build_apk || true
 }
 lane_mac() {
   CARGO_TARGET_DIR="$PWD/target/hosts" build_hosts macos-aarch64 macos-x86_64
@@ -377,7 +383,7 @@ wait $android $mac $docker || true
 if [ "$RUN_TESTS" = 1 ] && [ ! -f "$out/.tested" ]; then die "the tests failed: $logs/tests.log"; fi
 fi
 
-[ -f "$out/$name" ] || die "missing release APK: $out/$name"
+apks_built || die "missing release APKs in $out: ${apks[*]}"
 [ -z "$ipa" ] || [ -f "$out/$ipa" ] || die "missing iPod IPA: $out/$ipa (tools/ipod.sh build, needs Docker; --no-ipod releases the APK alone)"
 hosts_missing=""
 if [ "$HOSTS" = 1 ]; then
@@ -404,7 +410,7 @@ signer() {
 
 
 {
-  echo "$(checksum "$out/$name")  $name"
+  for apk in "${apks[@]}"; do echo "$(checksum "$out/$apk")  $apk"; done
   if [ -n "$ipa" ]; then echo "$(checksum "$out/$ipa")  $ipa"; fi
 } > "$out/SHA256SUMS"
 
@@ -414,11 +420,13 @@ signer() {
   echo "built $(date -u '+%Y-%m-%d %H:%M UTC')"
   echo "minSdk 26 (Android 8.0)"
   echo
-  f="$out/$name"
-  echo "$name"
-  echo "  carries ${ABI//,/ + }"
-  echo "  $(du -h "$f" | cut -f1)  ·  sha256 $(checksum "$f" | cut -c1-16)…"
-  echo "  signing certificate SHA-256: $(signer "$f")"
+  for abi in "${abis[@]}"; do
+    f="$out/nori-music-$version-$abi.apk"
+    echo "${f##*/}"
+    echo "  carries $abi"
+    echo "  $(du -h "$f" | cut -f1)  ·  sha256 $(checksum "$f" | cut -c1-16)…"
+    echo "  signing certificate SHA-256: $(signer "$f")"
+  done
   if [ -n "$ipa" ]; then
     echo
     echo "$ipa"
@@ -462,13 +470,13 @@ host_assets=()
 while IFS= read -r asset; do host_assets+=("$asset"); done < <(find "$out" -type f \( -name 'nori-desktop-*' -o -name 'nori-desktop_*' -o -name 'nori-cli-*' -o -name 'nori-cli_*' -o -name 'SHA256SUMS-macos-*' -o -name 'SHA256SUMS-linux-*' \))
 if [ "$existing" = 1 ]; then
   echo "==> adding the files to the release"
-  gh release upload "v$version" "$out/$name" ${ipa:+"$out/$ipa"} "$out/SHA256SUMS" ${host_assets[@]+"${host_assets[@]}"} --clobber
+  gh release upload "v$version" "${apks[@]/#/$out/}" ${ipa:+"$out/$ipa"} "$out/SHA256SUMS" ${host_assets[@]+"${host_assets[@]}"} --clobber
 else
   echo "==> creating the release${DRAFT:+ (draft)}"
   flags=()
   if [ -n "$DRAFT" ]; then flags+=("$DRAFT"); fi
   if is_beta "$version"; then flags+=(--prerelease); fi
-  gh release create "v$version" "$out/$name" ${ipa:+"$out/$ipa"} "$out/SHA256SUMS" ${host_assets[@]+"${host_assets[@]}"} \
+  gh release create "v$version" "${apks[@]/#/$out/}" ${ipa:+"$out/$ipa"} "$out/SHA256SUMS" ${host_assets[@]+"${host_assets[@]}"} \
     --title "nori $version" --notes-file "$notes" ${flags[@]+"${flags[@]}"}
 fi
 
