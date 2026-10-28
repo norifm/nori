@@ -1850,19 +1850,6 @@ impl Remote {
     }
 
     /// Listens along with the jam this guest is in (plays its host's music here, in step), or only shows it.
-    /// The host's songs don't open here: this guest stops playing along and shows only the jam.
-    pub(crate) fn cannot_listen(self: Arc<Self>) {
-        {
-            let mut i = self.inner.lock();
-            if i.listen.is_none() || i.refused_here {
-                return;
-            }
-            i.refused_here = true;
-        }
-        self.follow_lead();
-        self.shown.changed();
-    }
-
     pub fn listen(self: Arc<Self>, on: bool) {
         {
             let mut i = self.inner.lock();
@@ -3560,6 +3547,19 @@ impl Remote {
 
     /// Takes the playback back here: the previous device goes on being shown until it answers with its
     /// queue, for [`FORESEEN_US`] at most, so one that is gone holds the controls no longer than that.
+    /// The host's songs don't open here: this guest stops playing along and shows only the jam.
+    pub(crate) fn cannot_listen(self: Arc<Self>) {
+        {
+            let mut i = self.inner.lock();
+            if i.listen.is_none() || i.refused_here {
+                return;
+            }
+            i.refused_here = true;
+        }
+        self.follow_lead();
+        self.shown.changed();
+    }
+
     /// Whether device `id` plays from another source than this one (as its last state says): songs
     /// handed either way would not play, so it is refused here, as the device would.
     fn refuse_other_source(&self, id: &str) -> bool {
