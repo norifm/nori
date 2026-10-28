@@ -1,6 +1,6 @@
 # Providers
 
-Applies to nori 0.7, every client. The web client and the iPod build only the Subsonic provider.
+Applies to nori 0.7, every client. The web client and the iPod build no plugin provider.
 
 A profile plays from a **provider**: a Subsonic server (Navidrome, octo-fiesta), or a plugin's (YouTube
 Music is one: [Plugins](plugins.md)). Each provider is one implementation of the `Provider` trait in
@@ -13,10 +13,13 @@ This is not octo-fiesta's provider items (the `ext-` songs a Subsonic server fet
 |---|---|---|
 | Subsonic | `providers/subsonic/` | every client |
 | a plugin's | `providers/plugin.rs`: the trait answered by the plugin's `provider` export (`wit/plugin.wit`) | nori-core's `plugins` feature: Android, desktop, terminal |
+| a LAN jam host's | `providers/hosted.rs`: a guest profile's reads and stream lookups asked of the host's door, which answers them with its own provider | every native client |
 
 The kinds a client offers are a `Kinds`' (`Kinds::builtin`, or `Kinds::with_plugins` over the plugin
 host): Subsonic first, then each enabled plugin with a provider, named by the plugin's own `name`
-string (`Kinds::plugin_name`). A profile of a plugin kind whose plugin is missing doesn't open.
+string (`Kinds::plugin_name`). A profile of a plugin kind whose plugin is missing doesn't open, except a
+LAN jam's guest profile: it keeps the host's kind (its songs are that provider's) and plays through the
+host (`HostedProvider`), so a guest needs neither the plugin nor an account.
 
 ## What a provider answers
 

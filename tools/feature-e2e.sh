@@ -51,13 +51,16 @@ open_invite() {
   [ -n "$link" ] || return 1
   if [ "${2:-}" = app ]; then
     link="nori://jam?${link#*#}"
-    adb shell am start -W -a android.intent.action.VIEW -d "'$link'" >/dev/null 2>&1 || return 1
+    # To this build: another nori on the device (the perf build, nightly) would otherwise make Android ask which.
+    adb shell am start -W -a android.intent.action.VIEW -p "$pkg" -d "'$link'" >/dev/null 2>&1 || return 1
   else
     adb shell am start -W -a android.intent.action.VIEW -p com.android.chrome --ez create_new_tab true -d "'$link'" >/dev/null 2>&1 || return 1
   fi
   invite_opened() {
     local tree; tree=$(ui)
     if [[ "$tree" == *"package=\"$pkg\""* ]]; then return 0; fi
+    # Another nori on the device (the perf build is "nori dev") makes Android ask which: this one, once.
+    if [[ "$tree" == *'text="Just once"'* ]]; then tapnode text nori; tapnode text "Just once"; return 1; fi
     for button in "Use without an account" "Stay signed out" "No thanks" "Got it" "Open in nori"; do
       if [[ "$tree" == *"text=\"$button\""* ]]; then tapnode text "$button"; break; fi
     done
@@ -435,13 +438,7 @@ with sqlite3.connect(sys.argv[1]) as db:
     db.execute("INSERT OR REPLACE INTO settings VALUES('remoteControl', '{\"b\":true}')")
 PY
   # The peer plays from the same plugin, installed in its own data folder and on.
-  python3 - "$(plugin_package youtube-music)" "$ytdata/plugins" <<'PY'
-import pathlib, sys, zipfile
-root = pathlib.Path(sys.argv[2]); folder = root / "fm.nori.youtube-music"
-zipfile.ZipFile(sys.argv[1]).extractall(folder)
-(root / "index.json").write_text('{"plugin": [{"id": "fm.nori.youtube-music", "enabled": true}]}')
-PY
-  tmux new-session -d -s "$ytpeer" -x 160 -y 45 "$here/../target/debug/nori-cli --data $ytdata --provider fm.nori.youtube-music --no-images --no-mpris"
+  tmux new-session -d -s "$ytpeer" -x 160 -y 45 "$here/../target/debug/nori-cli --data $ytdata --install-plugin $(plugin_package youtube-music) --provider fm.nori.youtube-music --no-images --no-mpris"
   for _ in $(seq 16); do tmux send-keys -t "$ytpeer" -- -; done
   yt_secret() { python3 -c 'import sqlite3,sys; r=sqlite3.connect(sys.argv[1]).execute("select value from app_kv where key=?",("remoteLanSecret",)).fetchone(); print(r[0]) if r else sys.exit(1)' "$ytdata/nori.db" 2>/dev/null; }
   check "the YouTube terminal peer makes its pairing secret" wait_until 20 yt_secret

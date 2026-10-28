@@ -11,7 +11,7 @@ use nori_plugins::wit::types as t;
 use nori_plugins::{CallResult, Plugins, Store, Worker};
 use parking_lot::RwLock;
 
-use super::{AccountState, Answer, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
+use super::{resolved_song, resolved_stream, sized, AccountState, Answer, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
 use crate::browse::{AlbumSort, LibrarySection, ProfileRules, SettingsPart};
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
@@ -74,11 +74,6 @@ impl PluginProvider {
         *self.rules.write() = Some((rules.clone(), ahead));
         rules
     }
-}
-
-/// A cover's URL at `size` px (`{size}` in it filled in).
-fn sized(cover: &str, size: u32) -> String {
-    crate::covers::own_address(cover, size).unwrap_or_else(|| cover.to_string())
 }
 
 fn net_error(e: t::Error) -> NetError {
@@ -291,7 +286,7 @@ impl Provider for PluginProvider {
 
     /// The plugin resolves its songs where they open; the bytes are kept by song and bit rate.
     fn stream(&self, _: &Client, id: String, q: StreamQuality) -> StreamTarget {
-        StreamTarget { url: format!("{ADDRESS}{}/{id}", q.bit_rate), key: format!("{id}:{}", q.bit_rate) }
+        resolved_stream(ADDRESS, &id, &q)
     }
 
     fn ahead(&self) -> Option<usize> {
@@ -380,12 +375,6 @@ impl PluginProvider {
     }
 }
 
-/// The bit rate (0: as it is) and song of a stream address of [`PluginProvider::stream`]'s.
-fn song_of(address: &str) -> Option<(u32, String)> {
-    let (kbps, id) = address.strip_prefix(ADDRESS)?.split_once('/')?;
-    Some((kbps.parse().ok()?, id.to_string()))
-}
-
 /// Opens a plugin's stream addresses at the URLs the plugin says, on a loader's thread.
 struct Resolver {
     worker: Worker,
@@ -395,7 +384,7 @@ struct Resolver {
 
 impl Resolver {
     fn source(&self, address: &str, used: w::StreamUse) -> Option<NetResult<String>> {
-        let (kbps, id) = song_of(address)?;
+        let (kbps, id) = resolved_song(ADDRESS, address)?;
         let kbps = (kbps > 0).then_some(kbps);
         let said = block_on(self.worker.call(move |s, x| x.nori_plugin_provider().call_source(s, &id, kbps, used)));
         let src = match said.ok_or_else(stopped).and_then(|r| r.map_err(net_error)) {
@@ -425,21 +414,8 @@ impl ResolveStream for Resolver {
     }
 
     fn refused(&self, address: &str) {
-        if let Some((_, id)) = song_of(address) {
+        if let Some((_, id)) = resolved_song(ADDRESS, address) {
             self.worker.post(move |s, x| x.nori_plugin_provider().call_refused(s, &id));
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stream_address_keeps_bit_rate_and_song() {
-        for (kbps, id) in [(0, "abc"), (320, "a/b:c")] {
-            assert_eq!(song_of(&format!("{ADDRESS}{kbps}/{id}")), Some((kbps, id.to_string())));
-        }
-        assert_eq!(song_of("https://example.com/a"), None);
     }
 }

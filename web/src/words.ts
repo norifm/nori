@@ -320,7 +320,6 @@ export const W = {
   jamUnavailable: "Jams need the relay on your server (octo-fiesta in front of it).",
   jamOwn: "That is your own Jam.",
   jamEnded: "That Jam has ended.",
-  jamNeedsPlugin: "This Jam plays from a plugin. Join it from nori on a phone or computer.",
   jamInvite: "Invite",
   jamInviteTitle: "Invite to your Jam",
   jamInviteHint: "Others join by scanning this code with nori, or by opening the link.",

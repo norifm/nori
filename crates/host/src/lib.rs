@@ -53,22 +53,18 @@ pub enum JoinError {
     Own,
     /// The jam has ended.
     Ended,
-    /// It plays from plugin `id`, which this device has not installed and on; once it has, [`jam_joined`]
-    /// joins with `pass`.
-    NeedsPlugin { id: String, pass: JamPass },
     Failed(NetError),
 }
 
 /// Joins the jam `link` invites to (blocking), named as the active profile's user, else `device`; never
 /// one `remote` (this device's) opened ([`nori_core::remote::jam_join`]).
-pub fn jam_join(transport: Arc<dyn nori_core::transport::Transport>, settings: &Arc<Settings>, kinds: Arc<nori_core::providers::Kinds>, link: String, device: &str, remote: Option<Arc<nori_core::remote::Remote>>) -> Result<JamPass, JoinError> {
+pub fn jam_join(transport: Arc<dyn nori_core::transport::Transport>, settings: &Arc<Settings>, link: String, device: &str, remote: Option<Arc<nori_core::remote::Remote>>) -> Result<JamPass, JoinError> {
     use nori_core::remote::JamJoin;
     let user = settings.prefs(|p| p.active_server().map(|s| s.user.clone()).filter(|u| !u.is_empty()));
-    match block_on(nori_core::remote::jam_join(transport, settings.clone(), remote, kinds, link, user.unwrap_or_else(|| device.into()))) {
+    match block_on(nori_core::remote::jam_join(transport, settings.clone(), remote, link, user.unwrap_or_else(|| device.into()))) {
         Ok(JamJoin::Joined { pass }) => Ok(pass),
         Ok(JamJoin::Own) => Err(JoinError::Own),
         Ok(JamJoin::Ended) => Err(JoinError::Ended),
-        Ok(JamJoin::NeedsPlugin { id, pass }) => Err(JoinError::NeedsPlugin { id, pass }),
         Err(e) => Err(JoinError::Failed(e)),
     }
 }

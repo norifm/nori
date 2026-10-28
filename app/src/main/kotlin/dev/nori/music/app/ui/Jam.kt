@@ -251,6 +251,7 @@ internal fun GuestJamHeader(j: JamView, cover: (String?) -> String?) {
             Listening.WATCHING -> if (j.along) R.string.jam_watching else null
             Listening.HOST_OFF -> R.string.jam_along_host_off
             Listening.SERVER_OFF -> R.string.jam_along_server_off
+            Listening.REFUSED -> R.string.jam_along_refused
             else -> null
         }?.let { LookText(words(it), quiet, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium) }
         j.refused?.let { r ->

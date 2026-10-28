@@ -33,6 +33,8 @@ pub struct Options {
     pub login: Option<(String, String, String)>,
     /// Add (or find) the profile of this kind, which needs no server, and use it.
     pub provider: Option<nori_core::settings::ServerKind>,
+    /// A `.noriplugin` package or plugin folder to install (or update) and turn on before starting.
+    pub install_plugin: Option<PathBuf>,
     /// Plays downloads only; no network requests.
     pub offline: bool,
     /// Serve MPRIS media controls.
@@ -44,11 +46,12 @@ pub struct Options {
 fn usage() -> ! {
     eprintln!(
         "usage: nori-cli [--data DIR] [--device NAME] [--no-images] [--no-mouse] [--no-paint] [--no-mpris] [--offline] [--debug]\n\
-         \x20               [--url URL --user USER --password PASSWORD | --provider KIND]\n\
+         \x20               [--url URL --user USER --password PASSWORD | --provider KIND] [--install-plugin FILE]\n\
          \x20      nori-cli --script ... (the non-interactive player; nori-cli --script --help)\n\
          \x20      nori-cli --devices\n\
          The url, user and password may also come from NORI_URL, NORI_USER and NORI_PASSWORD.\n\
          KIND is a profile kind that needs no server, as the settings store it (a plugin's id).\n\
+         --install-plugin installs (or updates) a .noriplugin package or plugin folder and turns it on.\n\
          --no-paint leaves the terminal's own background and text colors; NO_COLOR shows no colors at all.\n\
          --debug (or NORI_DEBUG=1) writes every event, frame and picture sent to nori.log in the data directory."
     );
@@ -78,7 +81,7 @@ fn main() {
         return;
     }
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    let mut o = Options { data: data_dir(), device: None, images: None, mouse: None, login: None, provider: None, offline: false, mpris: true, paint: None };
+    let mut o = Options { data: data_dir(), device: None, images: None, mouse: None, login: None, provider: None, install_plugin: None, offline: false, mpris: true, paint: None };
     let (mut url, mut user, mut password) = (env("NORI_URL"), env("NORI_USER"), env("NORI_PASSWORD"));
     if env("NORI_DEBUG").is_some_and(|v| v != "0") {
         term::set_debug(true);
@@ -102,6 +105,7 @@ fn main() {
             "--user" => user = Some(v()),
             "--password" => password = Some(v()),
             "--provider" => o.provider = Some(nori_core::settings::ServerKind::from_id(&v()).unwrap_or_else(|| usage())),
+            "--install-plugin" => o.install_plugin = Some(v().into()),
             _ => usage(),
         }
     }

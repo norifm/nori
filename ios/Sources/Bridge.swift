@@ -445,8 +445,6 @@ final class Core {
             NotificationCenter.default.post(name: .noriDevices, object: nil)
         case 20 where flag == 2:
             Toast.show(Say.jamInviteEnded)
-        case 20 where flag == 3:
-            Toast.show(Say.jamNeedsPlugin)
         case 20 where flag != 0:
             switchProfile(nil)
         case 20:

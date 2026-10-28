@@ -2,11 +2,13 @@
 
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
+use nori_core::cache_policy::{Page, Read};
 use nori_core::client::Client;
+use nori_core::providers::StreamParts;
 use nori_core::remote::{self, JamJoin, Remote, RemoteMe, RemotePlayer, RemoteShown};
 use nori_core::settings::{SavedServer, ServerKind};
 use nori_core::settings_store::Settings;
-use nori_core::transport::block_on;
+use nori_core::transport::{block_on, NetError};
 use nori_core::{Core, Song};
 use nori_remote::wire::{DeviceKind, Op};
 
@@ -42,16 +44,22 @@ fn kinds(dir: &std::path::Path, settings: Arc<Settings>) -> Arc<nori_core::provi
     plugins.turn(nori_plugins::testing::FIXTURE.into(), true);
     nori_core::providers::Kinds::with_plugins(plugins)
 }
+/// A device's client of `profile`, with the test plugin.
 fn client(path: String, profile: SavedServer, settings: Arc<Settings>) -> Arc<Client> {
     let dir = std::path::Path::new(&path).parent().unwrap().join(format!("device-{}", profile.id));
+    client_with(kinds(&dir, settings.clone()), path, profile, settings)
+}
+fn client_with(kinds: Arc<nori_core::providers::Kinds>, path: String, profile: SavedServer, settings: Arc<Settings>) -> Arc<Client> {
     let core = Core::new(path, profile.id.clone(), Arc::new(nori_core::queue::Session::new(settings.clone()))).unwrap();
-    core.use_kinds(kinds(&dir, settings));
+    core.use_kinds(kinds);
     core.configure_profile(profile.clone()).unwrap();
     let client = Client::new(core, nori_http::Http::new(), Default::default());
     client.set_profile(nori_core::net_profile(&profile));
     client
 }
 
+/// A guest without the host's plugin plays the host's provider through the host: it searches there,
+/// asks for a song, and streams the songs the jam plays from the URLs the host's plugin gives.
 #[test]
 fn guests_request_over_lan_and_leave_without_an_account() {
     let host_dir = nori_testdir::TempDir::new("lan-jam-host");
@@ -61,9 +69,10 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     host_settings.open(&host_path).unwrap();
     let profile = SavedServer { id: "host".into(), kind: music_plugin(), user: "private-account".into(), password: "private-cookie".into(), ..Default::default() };
     let host_client = client(host_path, profile, host_settings.clone());
+    let host_session = host_client.session().clone();
     let (ops, received) = mpsc::channel();
     let (changes, host_changed) = mpsc::channel();
-    let host = Remote::new(host_client, RemoteMe { name: "Host".into(), kind: DeviceKind::Desktop }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), None);
+    let host = Remote::new(host_client.clone(), RemoteMe { name: "Host".into(), kind: DeviceKind::Desktop }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), None);
     let pairing = host.pairing_link().unwrap();
     let link = block_on(host.clone().jam_open()).unwrap().unwrap();
     assert!(!link.contains("private-account") && !link.contains("private-cookie"));
@@ -77,34 +86,48 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     let guest_settings = Settings::new();
     let guest_path = nori_host::db_path(guest_dir.path());
     guest_settings.open(&guest_path).unwrap();
-    // Without the host's plugin, the guest is told which it needs; the pass it holds already lets it in.
-    let joined = block_on(remote::jam_join(nori_http::Http::new(), guest_settings.clone(), None, nori_core::providers::Kinds::builtin(), link.clone(), "Guest".into())).unwrap();
-    let JamJoin::NeedsPlugin { id, pass } = joined else { panic!("the guest needs the host's plugin: {joined:?}") };
-    assert_eq!(id, nori_plugins::testing::FIXTURE);
+    let joined = block_on(remote::jam_join(nori_http::Http::new(), guest_settings.clone(), None, link.clone(), "Guest".into())).unwrap();
+    let JamJoin::Joined { pass } = joined else { panic!("guest joined: {joined:?}") };
     let guest_profile = remote::jam_profile(pass, "guest".into(), "Jam".into());
-    assert_eq!(guest_profile.kind, music_plugin());
+    assert_eq!(guest_profile.kind, music_plugin(), "the songs are the host's provider's");
     assert!(guest_profile.user.is_empty() && guest_profile.password.is_empty());
-    let guest_client = client(guest_path, guest_profile, guest_settings.clone());
+    let guest_client = client_with(nori_core::providers::Kinds::builtin(), guest_path, guest_profile, guest_settings.clone());
+    assert_eq!(guest_client.core().kind(), music_plugin());
     let (ops, _) = mpsc::channel();
     let (changes, guest_changed) = mpsc::channel();
     let guest_shown = Arc::new(Shown(changes, Mutex::new(false)));
-    let guest = Remote::new(guest_client, RemoteMe { name: "Guest".into(), kind: DeviceKind::Guest }, Arc::new(Player(ops)), guest_shown.clone(), None);
+    let guest = Remote::new(guest_client.clone(), RemoteMe { name: "Guest".into(), kind: DeviceKind::Guest }, Arc::new(Player(ops)), guest_shown.clone(), None);
     guest.clone().watch(true);
     wait(&guest_changed, || guest.jam_view().is_some_and(|v| v.members.len() == 2));
     guest.clone().jam_act(Op::Pause);
     wait(&guest_changed, || guest.jam_view().is_some_and(|v| v.refused.is_some()));
     assert!(received.try_recv().is_err(), "guest cannot pause the host");
-    guest.clone().jam_act(Op::Request { song: Song { id: "yt-song".into(), title: "A song".into(), ..Default::default() } });
+    let found = block_on(guest_client.read_now(Read::Search { query: "blue".into(), songs: 10, albums: 0, artists: 0 })).unwrap();
+    let Page::Found { v } = found else { panic!("a search page: {found:?}") };
+    let song: Song = v.songs.into_iter().next().expect("the host's plugin found it");
+    assert_eq!((song.id.as_str(), song.title.as_str()), ("test-blue", "blue"));
+    assert!(!song.starred, "the host's favorites are its own");
+    let target = guest_client.resolve_now(&song.id);
+    assert_eq!(target.key, host_client.resolve_now(&song.id).key, "its bytes are kept as the host's source keeps them");
+    let resolver = guest_client.stream_resolver().expect("the guest resolves through the host");
+    assert!(matches!(resolver.resolve(&target.url), Some(Err(NetError::Http { status: 403 }))), "a song the jam does not play has no source for guests");
+    guest.clone().jam_act(Op::Request { song: song.clone() });
     wait(&host_changed, || host.jam_view().is_some_and(|v| v.pending.len() == 1));
     let request = host.jam_view().unwrap().pending[0].request;
     host.clone().jam_act(Op::Decide { request, accept: true });
-    assert!(matches!(received.recv_timeout(Duration::from_secs(5)).unwrap(), Op::Add { songs, .. } if songs[0].id == "yt-song"));
+    let Op::Add { songs, .. } = received.recv_timeout(Duration::from_secs(5)).unwrap() else { panic!("the host adds the song") };
+    assert_eq!(songs, std::slice::from_ref(&song));
+    host_session.register(songs);
+    host_session.set(vec![song.id.clone()], Some(0), false, None);
+    let url = resolver.resolve(&target.url).expect("a song of the host's").unwrap();
+    assert_eq!(url, "https://allowed.example/song/test-blue", "the URL the host's plugin gives");
+    assert_eq!(resolver.parts(&target.url), Some(StreamParts { len: 1000, most: 100 }));
     assert!(host.clone().reset_pairing());
     assert_ne!(host.pairing_link(), Some(pairing));
     assert!(host.jam_view().is_some(), "forgetting paired devices preserves a separate jam");
     host.clone().jam_close();
     wait(&guest_changed, || *guest_shown.1.lock().unwrap());
-    assert!(matches!(block_on(remote::jam_join(nori_http::Http::new(), guest_settings, None, nori_core::providers::Kinds::builtin(), link, "Later".into())).unwrap(), JamJoin::Ended));
+    assert!(matches!(block_on(remote::jam_join(nori_http::Http::new(), guest_settings, None, link, "Later".into())).unwrap(), JamJoin::Ended));
     guest.stop();
     host.stop();
 }

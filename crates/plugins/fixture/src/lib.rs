@@ -4,7 +4,8 @@ use nori_plugin_sdk::http::{Method, Request};
 use nori_plugin_sdk::sound_stage::{Format, Inputs};
 use nori_plugin_sdk::types::Value;
 use nori_plugin_sdk::slots::{InfoLine, Motion, Sleeve};
-use nori_plugin_sdk::types::{Item, Song};
+use nori_plugin_sdk::provider;
+use nori_plugin_sdk::types::{Error, Explicit, Found, Item, Song};
 use nori_plugin_sdk::{settings, state, store, Glyph, ItemKind, Lifecycle, Manifest, MenuAction, Place, Provider, Row, Slot, Slots, SoundStage};
 
 #[derive(Default)]
@@ -95,8 +96,40 @@ impl SoundStage for Test {
     }
 }
 
-/// nori's own answers: a profile with no Subsonic server.
-impl Provider for Test {}
+/// A profile with no Subsonic server, whose search finds one song named after what was searched and
+/// whose songs stream from allowed.example in parts.
+impl Provider for Test {
+    fn read(&mut self, request: provider::Request) -> Result<provider::Page, Error> {
+        let provider::Request::Search((query, ..)) = request else { return Ok(provider::Page::None) };
+        let song = Song {
+            id: format!("test-{query}"),
+            title: query,
+            artist: String::new(),
+            artist_id: None,
+            artists: Vec::new(),
+            album: String::new(),
+            album_id: None,
+            cover: None,
+            duration: 0,
+            track: 0,
+            disc: 0,
+            year: 0,
+            genre: None,
+            // The host's own favorite.
+            starred: true,
+            external: false,
+            explicit: Explicit::Unknown,
+            replay_gain: None,
+            bpm: 0,
+            rating: 0,
+        };
+        Ok(provider::Page::Found(Found { songs: vec![song], albums: Vec::new(), artists: Vec::new(), playlists: Vec::new() }))
+    }
+
+    fn source(&mut self, id: String, _: Option<u32>, _: provider::StreamUse) -> Result<provider::StreamSource, Error> {
+        Ok(provider::StreamSource { url: format!("https://allowed.example/song/{id}"), length: Some(1000), part: Some(100) })
+    }
+}
 
 impl Slots for Test {
     /// The song titled "loop" plays a loop with a poster; any other keeps nori's cover.

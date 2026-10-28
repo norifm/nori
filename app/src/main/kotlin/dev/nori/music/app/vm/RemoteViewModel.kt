@@ -42,33 +42,6 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
     private val _pairRequest = MutableStateFlow<String?>(null)
     val pairRequest: StateFlow<String?> = _pairRequest.asStateFlow()
 
-    /** A jam this phone was let into whose host plays from a plugin nori offers, while installing it is asked. */
-    data class JamPlugin(val offer: dev.nori.music.ffi.plugins.Offer, val pass: dev.nori.music.ffi.JamPass, val installing: Boolean = false)
-
-    private val _jamPlugin = MutableStateFlow<JamPlugin?>(null)
-    val jamPlugin: StateFlow<JamPlugin?> = _jamPlugin.asStateFlow()
-
-    /** Asks to install plugin [id] to join the jam [pass] is for; false when nori's repo offers no such plugin. */
-    suspend fun askJamPlugin(id: String, pass: dev.nori.music.ffi.JamPass): Boolean {
-        val offer = runCatching { nori.jamPluginOffer(id) }.getOrNull() ?: return false
-        _jamPlugin.value = JamPlugin(offer, pass)
-        return true
-    }
-
-    fun dismissJamPlugin() { _jamPlugin.value = null }
-
-    /** Installs the plugin, turns it on and joins; [then] is told whether it did. */
-    fun installJamPlugin(then: (Boolean) -> Unit) {
-        val ask = _jamPlugin.value?.takeIf { !it.installing } ?: return
-        _jamPlugin.value = ask.copy(installing = true)
-        viewModelScope.launch {
-            val joined = runCatching { nori.joinJamWithPlugin(ask.offer, ask.pass) }
-                .onFailure { dev.nori.music.NoriLog.w("jam plugin: ${it.javaClass.simpleName}") }.isSuccess
-            _jamPlugin.value = null
-            then(joined)
-        }
-    }
-
     fun offerPairing(link: String) { _pairRequest.value = link }
     fun dismissPairing() { _pairRequest.value = null }
     fun pair(link: String, then: (Boolean) -> Unit) = viewModelScope.launch {

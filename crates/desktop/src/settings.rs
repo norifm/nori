@@ -703,8 +703,6 @@ pub enum PluginAct {
     Install,
     /// Installs the plugin its sheet shows.
     InstallPreview,
-    /// Installs and turns on the plugin a jam plays from, as its sheet shows it, then joins the jam.
-    JamInstall,
     Look,
     /// Installs version `.1` (newest first) of offer `.0`.
     Get(u32, u32),
@@ -734,7 +732,6 @@ impl PluginAct {
             "plugin-remove" => PluginAct::Remove(id()),
             "plugin-install" => PluginAct::Install,
             "plugin-install-preview" => PluginAct::InstallPreview,
-            "plugin-jam-install" => PluginAct::JamInstall,
             "plugin-look" => PluginAct::Look,
             "plugin-get" => {
                 let (offer, version) = rest.split_once(':')?;
@@ -758,7 +755,6 @@ impl PluginAct {
             PluginAct::Remove(id) => format!("plugin-remove:{id}"),
             PluginAct::Install => "plugin-install".into(),
             PluginAct::InstallPreview => "plugin-install-preview".into(),
-            PluginAct::JamInstall => "plugin-jam-install".into(),
             PluginAct::Look => "plugin-look".into(),
             PluginAct::Get(offer, version) => format!("plugin-get:{offer}:{version}"),
             PluginAct::Open(url) => format!("plugin-open:{url}"),

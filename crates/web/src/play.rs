@@ -699,16 +699,15 @@ impl Nori {
     }
 
     /// Joins the jam `link` invites to as `name` and opens its guest profile: "joined", "own" (this
-    /// device's jam), "ended" or "plugin" (it plays from a plugin, which a browser has not).
+    /// device's jam) or "ended".
     pub async fn jam_join(&self, link: String, name: String) -> Result<String, JsValue> {
         use nori_core::remote::JamJoin;
         let remote = self.with(|h| h.remote()).flatten();
         let transport: Arc<dyn nori_core::transport::Transport> = Arc::new(Fetch(()));
-        let pass = match nori_core::remote::jam_join(transport, self.app.settings.clone(), remote, nori_core::providers::Kinds::builtin(), link, name.clone()).await.map_err(error)? {
+        let pass = match nori_core::remote::jam_join(transport, self.app.settings.clone(), remote, link, name.clone()).await.map_err(error)? {
             JamJoin::Joined { pass } => pass,
             JamJoin::Own => return Ok("own".into()),
             JamJoin::Ended => return Ok("ended".into()),
-            JamJoin::NeedsPlugin { .. } => return Ok("plugin".into()),
         };
         let guest = nori_host::jam_joined(&self.app.settings, pass, &name);
         self.enter(guest)?;

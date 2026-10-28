@@ -30,7 +30,7 @@ For the shared queue, nextest, Bazel and running several emulators, see
 | player | the sound chain sample by sample (decoders, ReplayGain, equalizer, compressor, limiter, speed, silence skipping), AutoMix analysis on synthetic songs of known tempo, key and structure, the planner (never panicking over any stored row: `automix/plan_fuzz.rs`), the mixer, and the whole player on a simulated output (`sim`, `tests/pipeline`): gapless joins, crossfades, levels, controls |
 | engine | the player on its own thread, on the virtual clock of `tests/common`: loading, fetching ahead, the stream cache, offload on a simulated chip (`paths.rs`), radio, tempo, stretched mixes (`stretch.rs`), estimated transcode lengths and their 416 (`estimated.rs`, `transcode.rs`), streams that hang (`hung.rs`), never playing silent (`silent.rs`), one fetch per song (`one_fetch.rs`), settings changed while playing (`replan.rs`), albums kept gapless (`album.rs`), jam guests listening along (`along.rs`), pushed and late-decoded songs for the web (`pushed.rs`, `driven.rs`, `later.rs`), the core's queue (`core.rs`) |
 | core | the FFI surface over real SQLite: index and search, smart playlists, mixes, history, lyrics, covers, AutoEQ, the Subsonic client against a fake transport, transfers, the car's tree; whole flows against an in-memory server (`tests/scenario.rs`); remote control and jams over an in-memory relay (`tests/remote.rs`); listens kept by profile (`tests/scrobble.rs`); Kotlin twins (`tests/twins.rs`) |
-| host | the shared session: queue saving, profiles and jam guest profiles, signing out, autofill and radio (`refill_tests.rs`), remote control and volume (`remote.rs`), LAN jams and pairing (`tests/lan_jam.rs`) |
+| host | the shared session: queue saving, profiles and jam guest profiles, signing out, autofill and radio (`refill_tests.rs`), remote control and volume (`remote.rs`), LAN jams and pairing, a guest without the host's plugin searching and streaming through the host (`tests/lan_jam.rs`) |
 | lyrics | every format, the services' answers, trust and fitting, the race between services, sync against synthetic sung songs (`sync.rs`) |
 | covers | decoders against Pillow's output, the scaler, disk and memory caches, the loader |
 | look | colors from covers (the AndroidX Palette port), themes, seek bar and lyric pacing |
@@ -245,10 +245,6 @@ app's listener, then restores adb's previous state.
   `"car play <id>"` and `"car voice <words>[|artist|album|playlist|genre|song]"`, logging each row under
   the tag `noricar`. `adb shell content read --uri content://dev.nori.music.carart/c/<cover id>` reads a
   picture. Android Auto itself is checked on a phone with the Desktop Head Unit.
-- **A jam that needs a plugin**: whether a guest may join, and which plugin the host plays from, is the
-  core's (`jam_join`, `JamJoin::NeedsPlugin`, tested in Rust). The sheet that offers the plugin from
-  nori's own repo needs a host on another device and a published official repo, which one emulator
-  can't stand in for. Checked with two phones: open the host's invite on a phone without the plugin.
 
 ## Desktop
 
