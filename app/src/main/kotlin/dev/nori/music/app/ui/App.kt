@@ -850,7 +850,8 @@ private fun androidx.compose.animation.AnimatedVisibilityScope.Page(entry: andro
     val density = androidx.compose.ui.platform.LocalDensity.current
     val direction = androidx.compose.ui.platform.LocalLayoutDirection.current
     LaunchedEffect(covered) {
-        if (covered) swipe.keep(entry.id, if (dev.nori.music.look.CoverPixels.hardware) layer.toImageBitmap() else drawnOnCpu(layer, density, direction))
+        // A page covered before it was ever drawn (opened with the screen off) has no picture to keep.
+        if (covered && layer.size.width > 0 && layer.size.height > 0) swipe.keep(entry.id, if (dev.nori.music.look.CoverPixels.hardware) layer.toImageBitmap() else drawnOnCpu(layer, density, direction))
     }
     androidx.compose.runtime.DisposableEffect(entry.id) { onDispose { swipe.left(entry.id) } }
     val swiped = swipe.moving == entry.id
