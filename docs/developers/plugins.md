@@ -51,6 +51,8 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
   rows and a stage's slot.
 - Words are files: `strings/<lang>.toml`, key = text, English required: `name`, `about`, each row's id
   and each choice option's key.
+- A plugin depends on the SDK from this repository, `nori-plugin-sdk = { git = "https://github.com/norifm/nori" }`,
+  its commit pinned by the plugin's `Cargo.lock`.
 - Build with `cargo build --release --target wasm32-wasip2`; a `.noriplugin` is a zip of `plugin.wasm`,
   `strings/` and an optional `icon.svg` (`tools/pack.py` in nori-plugins). A plugin's `cdylib` doesn't
   link for the host target (its export names are wasm's); its tests do.
