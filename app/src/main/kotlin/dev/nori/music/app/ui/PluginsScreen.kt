@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.PluginsViewModel
 import dev.nori.music.app.vm.SettingsViewModel
+import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
 import dev.nori.music.ffi.plugins.Offer
 import dev.nori.music.ffi.plugins.PluginCard
@@ -57,12 +58,12 @@ private fun PluginCard.kinds() = say.pluginKinds(points, overrides.isNotEmpty())
  * profile's form): one page at a time, back going from a plugin's page to the list, then [close].
  */
 @Composable
-fun PluginsPages(vm: PluginsViewModel, close: () -> Unit) {
+fun PluginsPages(vm: PluginsViewModel, sound: SettingsViewModel, close: () -> Unit) {
     var page by remember { mutableStateOf<String?>(null) }
     BackHandler(page != null) { page = null }
     when (val id = page) {
-        null -> PluginsScreen(vm, close) { page = it }
-        else -> PluginPage(vm, id) { page = null }
+        null -> PluginsScreen(vm, sound, close) { page = it }
+        else -> PluginPage(vm, sound, id) { page = null }
     }
 }
 
@@ -71,8 +72,8 @@ fun PluginsPages(vm: PluginsViewModel, close: () -> Unit) {
  * page with [open]), installing one from a file, what the repos offer that isn't here, and the repos.
  */
 @Composable
-fun PluginsScreen(vm: PluginsViewModel, back: () -> Unit, open: (String) -> Unit) {
-    SoundPage()
+fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, back: () -> Unit, open: (String) -> Unit) {
+    SoundPage(sound)
     val cards by vm.cards.collectAsStateWithLifecycle()
     val repos by vm.repos.collectAsStateWithLifecycle()
     val offers by vm.offers.collectAsStateWithLifecycle()
@@ -239,8 +240,8 @@ private fun RemoveSheet(card: PluginCard?, close: () -> Unit, remove: (PluginCar
  * components (a section row starts a new card), the versions its repo offers, and Remove.
  */
 @Composable
-fun PluginPage(vm: PluginsViewModel, id: String, back: () -> Unit) {
-    SoundPage()
+fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back: () -> Unit) {
+    SoundPage(sound)
     val cards by vm.cards.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val offers by vm.offers.collectAsStateWithLifecycle()
@@ -289,18 +290,21 @@ fun PluginPage(vm: PluginsViewModel, id: String, back: () -> Unit) {
 
 /**
  * A plugin turned on or a row changed is heard at once while this page is in sight: it is a sound page
- * tuned from its first look, so even the first change does not wait for the deep buffer to drain.
+ * tuned from its first look, so even the first change does not wait for the deep buffer to drain. [sound]
+ * is the app's one SettingsViewModel, which counts every sound page in sight: a page coming in sight
+ * starts before the one it covers stops.
  */
 @Composable
-private fun SoundPage() {
-    val sound: SettingsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+private fun SoundPage(sound: SettingsViewModel) {
     LifecycleStartEffect(sound) { sound.soundPageShown(true, tuned = true); onStopOrDispose { sound.soundPageShown(false) } }
 }
 
 /** The rows of the plugins that show on the devices sheet too, each under its name; read before the sheet opened. */
 @Composable
-fun PluginDeviceSections(vm: PluginsViewModel) {
+fun PluginDeviceSections(vm: PluginsViewModel, sound: SettingsViewModel) {
     val cards by vm.deviceCards.collectAsStateWithLifecycle()
+    // With plugins' rows on it, the sheet is a sound page: what they change is heard at once.
+    if (cards.isNotEmpty()) DisposableEffect(sound) { sound.soundPageShown(true, tuned = true); onDispose { sound.soundPageShown(false) } }
     cards.forEach { c -> PluginRows(vm, c, c.name) }
 }
 

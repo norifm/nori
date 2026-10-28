@@ -77,6 +77,8 @@ class MainActivity : ComponentActivity() {
                 {
                     when (it) {
                         is dev.nori.music.ffi.JamJoin.Joined -> null
+                        // The host plays from a plugin this phone lacks: installing it is offered, if nori has it.
+                        is dev.nori.music.ffi.JamJoin.NeedsPlugin -> if (remote.askJamPlugin(it.id, it.pass)) null else R.string.jam_needs_plugin
                         dev.nori.music.ffi.JamJoin.Own -> R.string.jam_own
                         dev.nori.music.ffi.JamJoin.Ended -> R.string.jam_invite_ended
                     }

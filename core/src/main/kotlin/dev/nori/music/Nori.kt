@@ -142,13 +142,31 @@ class Nori private constructor(private val context: Context) {
      * in use before takes over). What it came to.
      */
     suspend fun joinJam(link: String): dev.nori.music.ffi.JamJoin = withContext(Dispatchers.IO) {
-        val joined = lifted { dev.nori.music.ffi.jamJoin(transport, settings.core, remotes.peek(), link, dev.nori.music.remote.Remotes.deviceName(context)) }
-        if (joined is dev.nori.music.ffi.JamJoin.Joined) {
-            val guest = dev.nori.music.ffi.jamProfile(joined.pass, dev.nori.music.ffi.settings.newServerId(), context.getString(dev.nori.music.core.R.string.jam_profile))
-            dev.nori.music.ffi.jamJoining(settings.core)
-            withContext(Dispatchers.Main) { activate(guest) }
-        }
+        val joined = lifted { dev.nori.music.ffi.jamJoin(transport, settings.core, remotes.peek(), plugins.kinds, link, dev.nori.music.remote.Remotes.deviceName(context)) }
+        if (joined is dev.nori.music.ffi.JamJoin.Joined) joinWith(joined.pass)
         joined
+    }
+
+    /** Opens the guest profile [pass] gives, which the jam's host has let this phone in with. */
+    private suspend fun joinWith(pass: dev.nori.music.ffi.JamPass) {
+        val guest = dev.nori.music.ffi.jamProfile(pass, dev.nori.music.ffi.settings.newServerId(), context.getString(dev.nori.music.core.R.string.jam_profile))
+        dev.nori.music.ffi.jamJoining(settings.core)
+        withContext(Dispatchers.Main) { activate(guest) }
+    }
+
+    /** The offer of plugin [id] in nori's own repo, for a jam whose host plays from it; null when nori offers none. */
+    suspend fun jamPluginOffer(id: String): dev.nori.music.ffi.plugins.Offer? =
+        plugins.offers().offers.firstOrNull { it.repo.official && it.id == id }
+
+    /**
+     * Installs [offer]'s newest version, turns it on and joins the jam whose host plays from it, with the
+     * [pass] the host already let this phone in with. Throws [dev.nori.music.ffi.plugins.Refusal].
+     */
+    suspend fun joinJamWithPlugin(offer: dev.nori.music.ffi.plugins.Offer, pass: dev.nori.music.ffi.JamPass) = withContext(Dispatchers.IO) {
+        val newest = offer.versions.first()
+        plugins.installPreview(plugins.previewVersion(newest))
+        plugins.turn(offer.id, true)
+        joinWith(pass)
     }
 
     /**

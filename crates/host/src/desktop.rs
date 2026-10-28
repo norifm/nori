@@ -116,6 +116,27 @@ pub fn offer_state(offer: &nori_plugins::Offer) -> Option<(&nori_plugins::Versio
     Some((newest, state))
 }
 
+/// The newest version nori's own repo offers of plugin `id`. A jam's invite names the plugin it plays
+/// from; only nori's repo is trusted with that, never one the user added.
+fn official_version<'a>(offers: &'a nori_plugins::Offers, id: &str) -> Option<&'a nori_plugins::Version> {
+    offers.offers.iter().find(|o| o.repo.official && o.id == id).and_then(|o| o.versions.first())
+}
+
+/// Plugin `id` from nori's repo, fetched and shown as its install sheet shows it (blocking); None when
+/// nori's repo has no such plugin, or it can't be fetched.
+pub fn jam_plugin(host: &nori_plugins::Plugins, id: &str) -> Option<nori_plugins::PluginPreview> {
+    let offers = block_on(host.offers());
+    let version = official_version(&offers, id)?.clone();
+    block_on(host.preview_version(version, "en".into())).ok().filter(|p| p.card.id == id)
+}
+
+/// Installs what [`jam_plugin`] showed and turns it on, so a jam's guest profile can play from it.
+pub fn install_jam_plugin(host: &nori_plugins::Plugins, preview: nori_plugins::PluginPreview) -> Result<(), nori_plugins::Refusal> {
+    let id = host.install_preview(preview)?;
+    host.turn(id, true);
+    Ok(())
+}
+
 /// The plugin host, the kinds of profile it adds, and what hears from it.
 pub struct Plugged {
     pub host: Arc<nori_plugins::Plugins>,
@@ -248,6 +269,24 @@ mod tests {
         assert_eq!(zone(Some(":Europe/Berlin".into()), link()).as_deref(), Some("Europe/Berlin"));
         assert_eq!(zone(Some(String::new()), link()).as_deref(), Some("Australia/Sydney"), "an empty TZ is unset");
         assert_eq!(zone(None, Some("/etc/UTC".into())), None);
+    }
+
+    #[test]
+    fn a_jam_takes_its_plugin_only_from_noris_repo() {
+        let version = |v: &str| nori_plugins::Version { repo: String::new(), version: v.into(), released: None, url: String::new(), sha256: String::new() };
+        let offer = |official: bool, id: &str, v: &str| nori_plugins::Offer {
+            repo: nori_plugins::Repo { url: if official { "nori" } else { "added" }.into(), official },
+            id: id.into(),
+            name: id.into(),
+            about: None,
+            source: None,
+            versions: vec![version(v)],
+            installed: None,
+        };
+        let offers = nori_plugins::Offers { offers: vec![offer(false, "fm.a", "9.0"), offer(true, "fm.b", "1.0"), offer(true, "fm.a", "2.0")], failed: Vec::new() };
+        assert_eq!(official_version(&offers, "fm.a").map(|v| v.version.as_str()), Some("2.0"));
+        let only_added = nori_plugins::Offers { offers: vec![offer(false, "fm.a", "9.0")], failed: Vec::new() };
+        assert_eq!(official_version(&only_added, "fm.a"), None);
     }
 
     #[test]

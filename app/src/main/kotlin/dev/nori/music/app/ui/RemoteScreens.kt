@@ -70,6 +70,7 @@ internal fun refusal(r: Refusal): String = words(
         Refusal.NOT_ALLOWED -> R.string.devices_not_allowed
         Refusal.UNKNOWN -> R.string.devices_unknown
         Refusal.TOO_MANY -> R.string.jam_too_many
+        Refusal.OTHER_SOURCE -> R.string.devices_other_source
     },
 )
 
@@ -84,7 +85,7 @@ internal fun refusal(r: Refusal): String = words(
 private enum class RoomPage { MAIN, INVITE, SETTINGS, PAIR }
 
 @Composable
-fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jams: Boolean, remote: Boolean) {
+fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jams: Boolean, remote: Boolean, sound: dev.nori.music.app.vm.SettingsViewModel) {
     val vm: RemoteViewModel = viewModel()
     val nav = LocalNav.current
     NoriSheet(open, onDismiss) {
@@ -155,7 +156,35 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                     hosted?.let { JamControls(it, { page = RoomPage.INVITE }, { page = RoomPage.SETTINGS }) }
                 }
                 // Plugins' rows for this phone's devices, after nori's own.
-                PluginDeviceSections(viewModel())
+                PluginDeviceSections(viewModel(), sound)
+            }
+        }
+    }
+}
+
+/**
+ * A jam this phone was let into plays from a plugin it doesn't have: installing it, from nori's own repo,
+ * is offered with what the plugin is; Install joins once it is on.
+ */
+@Composable
+internal fun JamPluginRequest(vm: RemoteViewModel = viewModel()) {
+    val ask by vm.jamPlugin.collectAsStateWithLifecycle()
+    val tell = LocalMessages.current
+    val missing = words(R.string.jam_needs_plugin)
+    NoriSheet(ask, vm::dismissJamPlugin) { a ->
+        Column(
+            Modifier.windowInsetsPadding(gestureBarRoom).padding(start = Space.gutter, end = Space.gutter, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(words(R.string.jam_plugin_title, a.offer.name), style = titled(MaterialTheme.typography.titleLarge))
+            Text(words(R.string.jam_plugin_text, a.offer.name))
+            a.offer.about?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(8.dp, Alignment.End)) {
+                TextAction(words(R.string.cancel), vm::dismissJamPlugin, enabled = !a.installing)
+                TextAction(
+                    if (a.installing) words(R.string.jam_plugin_installing) else words(R.string.jam_plugin_install, a.offer.name),
+                    { vm.installJamPlugin { ok -> if (!ok) tell(missing) } }, enabled = !a.installing,
+                )
             }
         }
     }
@@ -212,7 +241,7 @@ fun DevicesHost(open: Boolean, onDismiss: () -> Unit) {
     val tell = LocalMessages.current
     val pluginDevices by settings.pluginDevices.collectAsStateWithLifecycle()
     val remote = prefs.remoteControl && LocalRules.current.remote
-    if (remote || pluginDevices.isNotEmpty()) DevicesSheet(open, onDismiss, { onDismiss(); openOutputPicker(context, output, tell) }, prefs.remoteControl, remote)
+    if (remote || pluginDevices.isNotEmpty()) DevicesSheet(open, onDismiss, { onDismiss(); openOutputPicker(context, output, tell) }, prefs.remoteControl, remote, settings)
 }
 
 /** The jam this phone hosts, as the devices list it: a tap opens its queue, End ends it. */

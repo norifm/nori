@@ -77,7 +77,10 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     let guest_settings = Settings::new();
     let guest_path = nori_host::db_path(guest_dir.path());
     guest_settings.open(&guest_path).unwrap();
-    let JamJoin::Joined { pass } = block_on(remote::jam_join(nori_http::Http::new(), guest_settings.clone(), None, link.clone(), "Guest".into())).unwrap() else { panic!("guest joined") };
+    // Without the host's plugin, the guest is told which it needs; the pass it holds already lets it in.
+    let joined = block_on(remote::jam_join(nori_http::Http::new(), guest_settings.clone(), None, nori_core::providers::Kinds::builtin(), link.clone(), "Guest".into())).unwrap();
+    let JamJoin::NeedsPlugin { id, pass } = joined else { panic!("the guest needs the host's plugin: {joined:?}") };
+    assert_eq!(id, nori_plugins::testing::FIXTURE);
     let guest_profile = remote::jam_profile(pass, "guest".into(), "Jam".into());
     assert_eq!(guest_profile.kind, music_plugin());
     assert!(guest_profile.user.is_empty() && guest_profile.password.is_empty());
@@ -101,7 +104,7 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     assert!(host.jam_view().is_some(), "forgetting paired devices preserves a separate jam");
     host.clone().jam_close();
     wait(&guest_changed, || *guest_shown.1.lock().unwrap());
-    assert!(matches!(block_on(remote::jam_join(nori_http::Http::new(), guest_settings, None, link, "Later".into())).unwrap(), JamJoin::Ended));
+    assert!(matches!(block_on(remote::jam_join(nori_http::Http::new(), guest_settings, None, nori_core::providers::Kinds::builtin(), link, "Later".into())).unwrap(), JamJoin::Ended));
     guest.stop();
     host.stop();
 }

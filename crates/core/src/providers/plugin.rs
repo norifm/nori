@@ -78,7 +78,7 @@ impl PluginProvider {
 
 /// A cover's URL at `size` px (`{size}` in it filled in).
 fn sized(cover: &str, size: u32) -> String {
-    cover.replace("{size}", &size.to_string())
+    crate::covers::own_address(cover, size).unwrap_or_else(|| cover.to_string())
 }
 
 fn net_error(e: t::Error) -> NetError {

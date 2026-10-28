@@ -245,6 +245,10 @@ app's listener, then restores adb's previous state.
   `"car play <id>"` and `"car voice <words>[|artist|album|playlist|genre|song]"`, logging each row under
   the tag `noricar`. `adb shell content read --uri content://dev.nori.music.carart/c/<cover id>` reads a
   picture. Android Auto itself is checked on a phone with the Desktop Head Unit.
+- **A jam that needs a plugin**: whether a guest may join, and which plugin the host plays from, is the
+  core's (`jam_join`, `JamJoin::NeedsPlugin`, tested in Rust). The sheet that offers the plugin from
+  nori's own repo needs a host on another device and a published official repo, which one emulator
+  can't stand in for. Checked with two phones: open the host's invite on a phone without the plugin.
 
 ## Desktop
 

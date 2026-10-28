@@ -88,7 +88,8 @@ pub extern "C" fn nori_ios_jam() -> *mut c_char {
 }
 
 /// Joins the jam invite `link` is to, its guest profile named `name`, on a thread of its own: a
-/// [`JOIN_STARTED`] answer comes as a `REPORT_JAM_JOINED`, after which the app opens the active profile.
+/// [`JOIN_STARTED`] answer comes as a `REPORT_JAM_JOINED`: flag 1 joined (the app opens the active
+/// profile), 2 the jam has ended, 3 it plays from a plugin, 0 failed.
 ///
 /// # Safety
 /// Both are NUL-terminated UTF-8, or NULL.
@@ -104,7 +105,7 @@ pub unsafe extern "C" fn nori_ios_jam_join(link: *const c_char, name: *const c_c
         Some(_) => return JOIN_ENDED,
         None => {}
     }
-    nori_host::spawn("nori-ios-jam-join", move || match nori_host::jam_join(nori_http::Http::new(), &app.settings, link, DEVICE_NAME, remote) {
+    nori_host::spawn("nori-ios-jam-join", move || match nori_host::jam_join(nori_http::Http::new(), &app.settings, nori_core::providers::Kinds::builtin(), link, DEVICE_NAME, remote) {
         Ok(pass) => {
             nori_host::jam_joined(&app.settings, pass, &name);
             report(REPORT_JAM_JOINED, 1, 0, "");
@@ -112,6 +113,8 @@ pub unsafe extern "C" fn nori_ios_jam_join(link: *const c_char, name: *const c_c
         // Answered above, before joining started.
         Err(nori_host::JoinError::Own) => {}
         Err(nori_host::JoinError::Ended) => report(REPORT_JAM_JOINED, 2, 0, ""),
+        // The iPod has no plugins.
+        Err(nori_host::JoinError::NeedsPlugin { .. }) => report(REPORT_JAM_JOINED, 3, 0, ""),
         Err(nori_host::JoinError::Failed(e)) => {
             let (code, detail) = crate::account::fail(e);
             report(REPORT_JAM_JOINED, 0, code, &detail.unwrap_or_default());

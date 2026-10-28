@@ -363,6 +363,8 @@ class Library(
      */
     fun coverUrl(id: String?, size: Int): String? {
         if (id == null) return null
+        // A plugin's cover is its own address on any profile (`CoverRules::address_mark`).
+        if (Covers.rules.addressMark in id) return id.replace(Covers.rules.sizeHole, size.toString())
         val form = coverForm ?: core.let { c ->
             CoverForm(c.coverPrefix()?.plus(Covers.rules.idParam))
         }.also { coverForm = it }

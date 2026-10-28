@@ -699,15 +699,16 @@ impl Nori {
     }
 
     /// Joins the jam `link` invites to as `name` and opens its guest profile: "joined", "own" (this
-    /// device's jam) or "ended".
+    /// device's jam), "ended" or "plugin" (it plays from a plugin, which a browser has not).
     pub async fn jam_join(&self, link: String, name: String) -> Result<String, JsValue> {
         use nori_core::remote::JamJoin;
         let remote = self.with(|h| h.remote()).flatten();
         let transport: Arc<dyn nori_core::transport::Transport> = Arc::new(Fetch(()));
-        let pass = match nori_core::remote::jam_join(transport, self.app.settings.clone(), remote, link, name.clone()).await.map_err(error)? {
+        let pass = match nori_core::remote::jam_join(transport, self.app.settings.clone(), remote, nori_core::providers::Kinds::builtin(), link, name.clone()).await.map_err(error)? {
             JamJoin::Joined { pass } => pass,
             JamJoin::Own => return Ok("own".into()),
             JamJoin::Ended => return Ok("ended".into()),
+            JamJoin::NeedsPlugin { .. } => return Ok("plugin".into()),
         };
         let guest = nori_host::jam_joined(&self.app.settings, pass, &name);
         self.enter(guest)?;
@@ -731,9 +732,10 @@ impl Nori {
 /// Moving the music between the account's devices ("Play on"), through the relay.
 #[wasm_bindgen]
 impl Nori {
-    /// The account's other devices: `{ on, me, active, list: [{ id, name, kind, playing, nearby }] }`; `on`
+    /// The account's other devices: `{ on, me, active, list: [{ id, name, kind, playing, nearby, refused }] }`; `on`
     /// while the music can move (remote control on, not a jam guest), `me` this browser's id as the
-    /// others know it, `active` the id of the device playing while it is another one. `kinds` (JSON `{ phone, desktop, terminal, guest }`) words the
+    /// others know it, `active` the id of the device playing while it is another one, `refused` why a device
+    /// did not do the last thing asked of it (a `Refusal`, camelCase) or null. `kinds` (JSON `{ phone, desktop, terminal, guest }`) words the
     /// kinds that tell devices of one name apart.
     pub fn devices(&self, kinds: String) -> String {
         let words: Kinds = serde_json::from_str(&kinds).unwrap_or_default();
@@ -746,7 +748,7 @@ impl Nori {
             let list: Vec<Value> = devices
                 .iter()
                 .zip(names)
-                .map(|(d, name)| json!({ "id": d.id, "name": name, "kind": format!("{:?}", d.kind), "playing": d.state.as_ref().is_some_and(|s| s.playing), "nearby": d.nearby }))
+                .map(|(d, name)| json!({ "id": d.id, "name": name, "kind": format!("{:?}", d.kind), "playing": d.state.as_ref().is_some_and(|s| s.playing), "nearby": d.nearby, "refused": d.refused }))
                 .collect();
             json!({ "on": true, "me": r.id(), "active": h.elsewhere().map(|e| e.mirror.id), "list": list }).to_string()
         })

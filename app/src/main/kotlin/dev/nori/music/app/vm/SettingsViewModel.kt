@@ -517,9 +517,12 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         if (soundPages == 0) {
             touchWatch?.cancel(); touchWatch = null
             nori.player.tuning(false)
-        } else if (touchWatch == null) touchWatch = viewModelScope.launch {
-            if (!tuned) merge(prefs.drop(1).map { }, nori.settings.effects.map { }).first()
-            nori.player.tuning(dev.nori.music.ffi.queue.soundTuning(true, true))
+        } else if (on && (tuned || touchWatch == null)) {
+            touchWatch?.cancel()
+            touchWatch = viewModelScope.launch {
+                if (!tuned) merge(prefs.drop(1).map { }, nori.settings.effects.map { }).first()
+                nori.player.tuning(dev.nori.music.ffi.queue.soundTuning(true, true))
+            }
         }
     }
 

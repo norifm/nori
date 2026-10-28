@@ -63,6 +63,9 @@ pub enum Msg {
     Jam(Result<(), String>),
     /// Someone's jam joined (what the guest profile signs in with), or why not.
     Joined(Result<nori_core::remote::JamPass, String>),
+    /// The plugin someone's jam plays from, as nori's repo offers it, and what the guest profile signs
+    /// in with once it is installed and on.
+    JamPlugin(Box<(nori_plugins::PluginPreview, nori_core::remote::JamPass)>),
     /// This guest left its jam, or the jam ended: what to say.
     Left(String),
     /// How signing the account in went.
@@ -105,6 +108,7 @@ impl Msg {
             Msg::Remote => "remote".into(),
             Msg::Jam(r) => format!("jam opened: {}", r.is_ok()),
             Msg::Joined(r) => format!("jam joined: {}", r.is_ok()),
+            Msg::JamPlugin(p) => format!("jam plays from plugin {}", p.0.card.id),
             Msg::Left(said) => format!("jam left: {said}"),
             Msg::SignedIn(r) => format!("signed in: {}", matches!(r, nori_core::providers::SignInResult::SignedIn { .. })),
             Msg::Installed(r) => format!("plugin installed: {r:?}"),

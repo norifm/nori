@@ -198,6 +198,8 @@ pub enum PluginCmd {
     Install(String),
     /// Installs what the sheet showed.
     InstallPreview(Box<nori_plugins::PluginPreview>),
+    /// Installs and turns on the plugin a jam plays from, then joins it with this pass.
+    JoinWith(Box<(nori_plugins::PluginPreview, nori_core::remote::JamPass)>),
     Turn(String, bool),
     /// Moves the plugin to this place in the order.
     Place(String, u32),
@@ -265,6 +267,7 @@ impl Cmd {
             Cmd::Listen(on) => format!("listen along {on}"),
             Cmd::Quit => "quit".into(),
             Cmd::Plugin(PluginCmd::Set(id, row, _)) => format!("plugin {id} row {row}"),
+            Cmd::Plugin(PluginCmd::JoinWith(p)) => format!("plugin {} for a jam", p.0.card.id),
             Cmd::Plugin(c) => format!("plugin {c:?}"),
             _ => "an edit".into(),
         }
@@ -747,14 +750,29 @@ pub struct Devices {
     pub plugins: Vec<nori_plugins::PluginCard>,
 }
 
-/// The sheet before installing what `p` shows: what it is, what it may reach, where it comes from.
-fn preview_sheet(p: nori_plugins::PluginPreview) -> Overlay {
+/// What the plugin `p` shows is, what it may reach and where it comes from, as its install sheet says.
+fn preview_lines(p: &nori_plugins::PluginPreview) -> Vec<String> {
     let c = &p.card;
     let mut lines: Vec<String> = c.about.iter().cloned().collect();
     lines.extend([crate::text::plugin_is(&c.points, !c.overrides.is_empty()), crate::text::plugin_reach(&c.net, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
     lines.extend(p.repo.as_deref().map(crate::text::from_repo));
+    lines
+}
+
+/// The sheet before installing what `p` shows.
+fn preview_sheet(p: nori_plugins::PluginPreview) -> Overlay {
+    let mut lines = preview_lines(&p);
     lines.push(crate::text::INSTALLED_OFF.into());
-    Overlay::Confirm { title: crate::text::install_version(&c.name, &c.version), lines, yes: crate::text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::InstallPreview(Box::new(p)))) }
+    Overlay::Confirm { title: crate::text::install_version(&p.card.name, &p.card.version), lines, yes: crate::text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::InstallPreview(Box::new(p)))) }
+}
+
+/// The sheet offering to install the plugin `p` a jam plays from, then join it with `pass`.
+fn jam_plugin_sheet(p: nori_plugins::PluginPreview, pass: nori_core::remote::JamPass) -> Overlay {
+    let mut lines = vec![crate::text::JAM_PLUGIN.to_string()];
+    lines.extend(preview_lines(&p));
+    lines.push(crate::text::JAM_PLUGIN_ON.into());
+    let title = crate::text::install_version(&p.card.name, &p.card.version);
+    Overlay::Confirm { title, lines, yes: crate::text::INSTALL_AND_JOIN.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::JoinWith(Box::new((p, pass))))) }
 }
 
 /// What the enabled plugins add to the screens, as last read.
@@ -1669,6 +1687,10 @@ impl App {
                 }
             }
             Msg::Preview(Ok(p)) => self.overlay = Some(preview_sheet(p)),
+            Msg::JamPlugin(p) => {
+                let (p, pass) = *p;
+                self.overlay = Some(jam_plugin_sheet(p, pass));
+            }
             Msg::Installed(Ok(_)) => self.say(crate::text::PLUGIN_INSTALLED, false),
             Msg::Installed(Err(e)) | Msg::Preview(Err(e)) => self.say(crate::text::plugin_refused(&e), true),
             Msg::Slots { song, info, status } => {

@@ -84,7 +84,7 @@ export type Jam = {
   asks: boolean;
 };
 
-export type Devices = { on: boolean; me?: string; active: string | null; list: { id: string; name: string; kind: string; playing: boolean; nearby: boolean }[] };
+export type Devices = { on: boolean; me?: string; active: string | null; list: { id: string; name: string; kind: string; playing: boolean; nearby: boolean; refused: string | null }[] };
 
 export type SettingRow = {
   item: { kind: "setting"; name: string; type: "Switch" | "Choice" | "Level" | "Text" | "Colour"; options: string[]; min: number; max: number; value: string; chips: boolean } | { kind: "note"; note: string } | { kind: "link"; to: string };

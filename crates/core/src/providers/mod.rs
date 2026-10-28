@@ -285,6 +285,11 @@ impl Kinds {
         self.provider(kind).unwrap_or_else(|| Arc::new(subsonic::Subsonic))
     }
 
+    /// Whether a profile of `kind` opens here (a plugin's: installed and on).
+    pub(crate) fn has(&self, kind: &ServerKind) -> bool {
+        self.kinds().contains(kind)
+    }
+
     /// The kinds a profile can be of here, a Subsonic server's first.
     fn kinds(&self) -> Vec<ServerKind> {
         #[cfg(feature = "plugins")]

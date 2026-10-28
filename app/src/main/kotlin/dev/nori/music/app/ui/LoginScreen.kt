@@ -166,7 +166,7 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
     var plugins by remember { mutableStateOf(false) }
     NoriDialog(plugins, { plugins = false }, DialogStyle.Page) {
         Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.systemBarsPadding()) { PluginsPages(androidx.lifecycle.viewmodel.compose.viewModel()) { plugins = false } }
+            Column(Modifier.systemBarsPadding()) { PluginsPages(androidx.lifecycle.viewmodel.compose.viewModel(), vm) { plugins = false } }
         }
     }
     Surface(Modifier.fillMaxSize()) {

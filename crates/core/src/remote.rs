@@ -2101,6 +2101,9 @@ pub enum JamJoin {
     Own,
     /// The jam has ended: nothing changes.
     Ended,
+    /// The jam plays from plugin `id`'s provider, which this device has not installed and on: once it
+    /// has, [`jam_profile`] signs in with `pass` (the host already took the guest in).
+    NeedsPlugin { id: String, pass: JamPass },
 }
 
 /// The app's key for the invites of the jams this device opened, newest last, one a line.
@@ -2140,7 +2143,7 @@ pub fn own_invite(settings: Arc<Settings>, remote: Option<Arc<Remote>>, link: St
 /// Joins the jam `link` invites to as `name`, unless it is this device's own ([`own_invite`]) or the
 /// server no longer knows the invite.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, remote: Option<Arc<Remote>>, link: String, name: String) -> Result<JamJoin, NetError> {
+pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, remote: Option<Arc<Remote>>, kinds: Arc<crate::providers::Kinds>, link: String, name: String) -> Result<JamJoin, NetError> {
     #[derive(Deserialize)]
     struct Joined {
         key: String,
@@ -2166,7 +2169,11 @@ pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, re
             status => return Err(NetError::Http { status }),
         }
         let key = format!("lan-{}", lan::member_secret(secret, &nonce));
-        return Ok(JamJoin::Joined { pass: JamPass { url: server, api_key: nori_remote::guest_key(&key), kind: kind.unwrap_or_default() } });
+        let pass = JamPass { url: server, api_key: nori_remote::guest_key(&key), kind: kind.unwrap_or_default() };
+        return Ok(match &pass.kind {
+            crate::settings::ServerKind::Plugin { id } if !kinds.has(&pass.kind) => JamJoin::NeedsPlugin { id: id.clone(), pass },
+            _ => JamJoin::Joined { pass },
+        });
     }
     let url = api::Server::with(&server, api::Auth::ApiKey(&nori_remote::guest_key(&invite))).url("noriRemote.join", &[("name".into(), name)]);
     let body = match transport::get(&*transport, url, 0).await {
@@ -3471,6 +3478,9 @@ impl Remote {
 
     /// Sends `op` to device `device` as command `id`.
     fn command(self: Arc<Self>, id: u64, device: String, op: Op) {
+        if matches!(op, Op::Add { .. } | Op::Replace { .. }) && self.refuse_other_source(&device) {
+            return;
+        }
         let mut foreseen = false;
         let link = {
             let mut i = self.inner.lock();
@@ -3502,7 +3512,24 @@ impl Remote {
 
     /// Takes the playback back here: the previous device goes on being shown until it answers with its
     /// queue, for [`FORESEEN_US`] at most, so one that is gone holds the controls no longer than that.
+    /// Whether device `id` plays from another source than this one (as its last state says): songs
+    /// handed either way would not play, so it is refused here, as the device would.
+    fn refuse_other_source(&self, id: &str) -> bool {
+        let kind = self.client.core.kind();
+        let mut i = self.inner.lock();
+        let other = i.state_of(id).and_then(|(s, _)| s.source.as_deref()).is_some_and(|s| s != kind.id());
+        if other {
+            i.refused.insert(id.to_string(), Refusal::OtherSource);
+            drop(i);
+            self.shown.changed();
+        }
+        other
+    }
+
     fn pull(self: &Arc<Self>, from: String) {
+        if self.refuse_other_source(&from) {
+            return;
+        }
         let id = self.next_id();
         let rev = self.client.core.session.playlist(|p| p.rev());
         let link = {
@@ -3650,6 +3677,7 @@ impl Remote {
             at_us: None,
             server_us: None,
             rate: Some(p.rate),
+            source: Some(self.client.core.kind().id().to_string()),
         };
         let now = self.now();
         st.position_ms = i.position_at_of(&st, now);
@@ -3791,7 +3819,7 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
         (a, b) => a == b,
     };
     // Each field named, so a new one is compared too.
-    let DeviceState { instance, seq: _, listen_handoff, playing, buffering, mixing, position_ms: _, at_us: _, server_us: _, rate, index, rev, len, entries, volume, shuffle, repeat, jam, handed_to, obeyed } = last;
+    let DeviceState { instance, seq: _, listen_handoff, playing, buffering, mixing, position_ms: _, at_us: _, server_us: _, rate, index, rev, len, entries, volume, shuffle, repeat, jam, handed_to, obeyed, source } = last;
     let ran = |rate: Option<f32>| if *playing && !*buffering { (elapsed_ms as f64 * rate.unwrap_or(1.0) as f64) as i64 } else { 0 };
     let jam_same = match (jam, &now.jam) {
         (Some(a), Some(b)) => jam_same_but_time(a, b, ran),
@@ -3814,6 +3842,7 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
         && *repeat == now.repeat
         && *handed_to == now.handed_to
         && *obeyed == now.obeyed
+        && *source == now.source
         && *entries == now.entries
 }
 
@@ -3916,6 +3945,21 @@ mod tests {
         for (at, rows, len, repeat, next, previous) in table {
             assert_eq!(skips(at, rows, len, repeat), (next, previous), "at {at:?} of {rows}/{len}, repeat {repeat}");
         }
+    }
+
+    #[test]
+    fn songs_go_only_to_a_device_of_the_same_source() {
+        let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
+        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
+        let device = |id: &str, source: Option<&str>| Member { id: id.into(), name: id.into(), kind: DeviceKind::Phone, state: Some(DeviceState { source: source.map(Into::into), ..Default::default() }) };
+        remote.inner.lock().rooms = vec![Room { room: "u".into(), jam: false, members: vec![device("youtube", Some("fm.nori.youtube-music")), device("same", Some("subsonic")), device("older", None)] }];
+        let add = || Op::Add { songs: vec![Song { id: "s".into(), ..Default::default() }], next: false };
+        for (id, refused) in [("youtube", Some(Refusal::OtherSource)), ("same", None), ("older", None)] {
+            remote.clone().command(1, id.into(), add());
+            assert_eq!(remote.inner.lock().refused.get(id).copied(), refused, "{id}");
+        }
+        remote.pull("youtube".into());
+        assert_eq!(remote.inner.lock().refused.get("youtube").copied(), Some(Refusal::OtherSource), "nor are its songs taken here");
     }
 
     #[test]

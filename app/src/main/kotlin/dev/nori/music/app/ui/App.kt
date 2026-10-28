@@ -404,6 +404,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             LocalHiddenBars provides hiddenBars,
         ) {
             PairingRequest()
+            JamPluginRequest()
             MobileDownloadQuestion(actions)
             val route = controller.currentBackStackEntryAsState().value?.destination?.route
             // The tab the page on screen belongs to, which is the one that stays lit, as Apple's does: a
@@ -557,8 +558,8 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                         SettingsGroupScreen(settings, e.arguments!!.getString("id")!!, e.arguments?.getString("key").orEmpty(), actions)
                     }
                     page("equalizer") { EqualizerScreen(settings) }
-                    page("plugins") { val nav = LocalNav.current; PluginsScreen(viewModel(), nav::back, nav::plugin) }
-                    page("plugins/{id}") { PluginPage(viewModel(), it.arguments!!.getString("id")!!, LocalNav.current::back) }
+                    page("plugins") { val nav = LocalNav.current; PluginsScreen(viewModel(), settings, nav::back, nav::plugin) }
+                    page("plugins/{id}") { PluginPage(viewModel(), settings, it.arguments!!.getString("id")!!, LocalNav.current::back) }
                     page("home-rows") { HomeRows(settings) }
                     page("library-sections") { LibrarySections(settings) }
                     page("library/{section}") {
