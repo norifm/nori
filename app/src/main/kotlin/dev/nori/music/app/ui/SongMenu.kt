@@ -174,9 +174,14 @@ fun SongMenu(
     }
 }
 
-/** An album's, playlist's or artist's card menu: play it, play it next, add it to the queue. A jam guest only asks. */
+/**
+ * An album's, playlist's or artist's card menu: play it, play it next, add it to the queue, and delete a
+ * playlist of the account's own. A jam guest only asks.
+ */
 @Composable
 fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) {
+    var deleting by remember { mutableStateOf<dev.nori.music.ffi.model.Playlist?>(null) }
+    DeleteQuestion(deleting, { it.name }, { actions.deletePlaylist(it.id) }, { deleting = null })
     NoriSheet(card, onDismiss) { card ->
         val (title, line, art) = when (card) {
             is CardItem.OfAlbum -> Triple(card.album.name, card.album.subtitle, card.album.coverArt)
@@ -188,7 +193,9 @@ fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) 
             SheetRows(head = true) {
                 if (!LocalRules.current.asks) Item(say.play, Iconoir.Play) { actions.play(card); onDismiss() }
                 Item(say.menuPlayNext, Iconoir.PlaylistPlay) { actions.queue(card, next = true); onDismiss() }
-                Item(say.addToQueue, Iconoir.Playlist, divider = false) { actions.queue(card, next = false); onDismiss() }
+                val deletes = card is CardItem.OfPlaylist && actions.editable(card.playlist)
+                Item(say.addToQueue, Iconoir.Playlist, divider = deletes) { actions.queue(card, next = false); onDismiss() }
+                if (deletes) Item(say.delete, Iconoir.Trash, divider = false) { deleting = (card as CardItem.OfPlaylist).playlist; onDismiss() }
                 when (card) {
                     is CardItem.OfAlbum -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.ALBUM, dev.nori.music.ffi.plugins.Items.Albums(listOf(card.album)), onDismiss)
                     is CardItem.OfPlaylist -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.PLAYLIST, dev.nori.music.ffi.plugins.Items.Playlists(listOf(card.playlist)), onDismiss)

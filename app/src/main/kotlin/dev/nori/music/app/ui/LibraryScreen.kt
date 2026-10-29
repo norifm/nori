@@ -420,8 +420,6 @@ private fun Playlists(actions: ActionsViewModel, header: @Composable () -> Unit 
             actions.importM3u(dev.nori.music.ffi.library.m3uPlaylistName(uri.lastPathSegment), text)
         }
     }
-    var deleting by remember { mutableStateOf<dev.nori.music.ffi.model.Playlist?>(null) }
-    DeleteQuestion(deleting, { it.name }, { vm.delete(it.id) }, { deleting = null })
     NoriDialog(creating, { creating = false }) {
         AlertCard(
             title = { Text(say.newPlaylist) },
@@ -444,11 +442,13 @@ private fun Playlists(actions: ActionsViewModel, header: @Composable () -> Unit 
             }
             if (playlists.isEmpty()) item { EmptyNote(Note.NO_PLAYLISTS) }
             items(playlists, key = { it.id }) { p ->
+                val cardMenu = LocalCardMenu.current
+                val menu = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) }
                 NavRow(
-                    p.name, { nav.playlist(p.id, p) },
+                    p.name, { nav.playlist(p.id, p) }, onLongClick = menu,
                     subtitle = remember(p.songCount, p.duration) { say.listCaption(p.songCount.toInt(), p.duration.toLong(), false) },
                     leading = { Cover(vm.cover(p.coverArt, CoverSize.ROW), 48.dp) },
-                    action = { IconButton({ deleting = p }, Modifier.size(40.dp)) { Icon(Iconoir.Trash, say.delete, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    action = { IconButton(menu, Modifier.size(40.dp)) { Icon(Iconoir.MoreHoriz, say.more, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 )
             }
         }
@@ -528,7 +528,7 @@ private fun Radio(header: @Composable () -> Unit = {}, vm: RadioViewModel = view
                 NavRow(
                     s.name, { vm.play(s) },
                     leading = { Icon(Iconoir.AntennaSignal, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
-                    action = { IconButton({ deleting = s }, Modifier.size(40.dp)) { Icon(Iconoir.Trash, say.delete, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    action = { MoreButton(listOf(say.delete to { deleting = s })) },
                 )
             }
         }

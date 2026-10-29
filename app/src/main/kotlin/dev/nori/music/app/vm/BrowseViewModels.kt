@@ -378,7 +378,6 @@ class PlaylistsViewModel(app: Application) : NoriViewModel(app) {
     val playlists: StateFlow<Load<List<Playlist>>> = nori.library.playlistsVersion.flatMapLatest { nori.library.playlists() }.asLoad()
 
     fun create(name: String) = viewModelScope.launch { runCatching { nori.library.createPlaylist(name, emptyList()) } }
-    fun delete(id: String) = viewModelScope.launch { runCatching { nori.library.deletePlaylist(id) } }
 }
 
 class StarredViewModel(app: Application) : NoriViewModel(app) {
