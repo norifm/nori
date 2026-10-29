@@ -515,6 +515,13 @@ impl Core {
 
     /// The kinds of profile it opens: [`Kinds::builtin`] until a client with plugins gives it its own.
     pub fn use_kinds(&self, kinds: Arc<Kinds>) {
+        #[cfg(feature = "plugins")]
+        if let Some(p) = &kinds.plugins {
+            // What plugins are handed of a song is the profile's record of it.
+            let session = Arc::downgrade(&self.session);
+            p.set_songs(Arc::new(move |id: &str| session.upgrade()?.song(id)));
+            self.session.planner.set_mixing(Some(p.mixing()));
+        }
         *self.kinds.write() = kinds;
     }
 

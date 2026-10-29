@@ -2,7 +2,8 @@
 //! can never wait on anything. Each block gets a fuel budget; a trap or a block over it bypasses the
 //! stage until the next reset (a seek or another song), when a fresh instance is made.
 
-use nori_player::stage::{SoundStage, StageMaker};
+use nori_player::outputs::OutputKind;
+use nori_player::stage::{Inputs, SoundStage, StageMaker};
 use wasmtime::component::{Component, Func, Instance, Linker, TypedFunc, WasmList};
 use wasmtime::Store;
 
@@ -18,8 +19,8 @@ pub struct Maker {
 }
 
 impl StageMaker for Maker {
-    fn make(&self, rate: u32, channels: usize, inputs: &[f64]) -> Option<Box<dyn SoundStage>> {
-        let mut s = Stage { id: self.id.clone(), component: self.component.clone(), live: None, rate, channels, inputs: inputs.to_vec(), bypassed: false };
+    fn make(&self, rate: u32, channels: usize, inputs: &Inputs) -> Option<Box<dyn SoundStage>> {
+        let mut s = Stage { id: self.id.clone(), component: self.component.clone(), live: None, rate, channels, inputs: inputs.clone(), bypassed: false };
         s.start();
         Some(Box::new(s))
     }
@@ -41,7 +42,7 @@ struct Stage {
     live: Option<Live>,
     rate: u32,
     channels: usize,
-    inputs: Vec<f64>,
+    inputs: Inputs,
     /// It trapped or ran over: samples pass as they are until the next reset.
     bypassed: bool,
 }
@@ -92,8 +93,18 @@ impl Stage {
         sound_stage::Format { rate: self.rate, channels: self.channels as u8 }
     }
 
+    /// Its inputs as the WIT has them; its prepared data is copied into the plugin's memory at each
+    /// change (a new song, its data coming), never per block.
     fn inputs_record(&self) -> sound_stage::Inputs {
-        sound_stage::Inputs { rows: self.inputs.clone(), volume_db: 0.0, route: crate::runtime::types::Route::Other, gain_db: None, loudness_lufs: None, prepared: None }
+        let i = &self.inputs;
+        sound_stage::Inputs {
+            rows: i.rows.clone(),
+            volume_db: i.around.volume_db,
+            route: route(i.around.route),
+            gain_db: i.song.gain_db,
+            loudness_lufs: i.song.loudness_lufs,
+            prepared: i.song.prepared_by(&self.id).map(|d| d.to_vec()),
+        }
     }
 
     /// Runs `call` with a block's fuel; a trap or running out bypasses the stage.
@@ -115,12 +126,8 @@ impl Stage {
 }
 
 impl SoundStage for Stage {
-    fn inputs(&mut self, inputs: &[f64]) {
-        if self.inputs == inputs {
-            return;
-        }
-        self.inputs.clear();
-        self.inputs.extend_from_slice(inputs);
+    fn inputs(&mut self, inputs: &Inputs) {
+        self.inputs.clone_from(inputs);
         let (format, record) = (self.format(), self.inputs_record());
         self.guarded(|l| call::<_, ()>(&mut l.store, l.configure, (format, &record)));
     }
@@ -147,13 +154,8 @@ impl SoundStage for Stage {
         self.guarded(|l| call::<_, ()>(&mut l.store, l.reset, ()));
     }
 
-    /// Its inputs' count and values, then the plugin's own state.
     fn save(&mut self, into: &mut Vec<u8>) {
         into.clear();
-        into.extend_from_slice(&(self.inputs.len() as u32).to_le_bytes());
-        for v in &self.inputs {
-            into.extend_from_slice(&v.to_le_bytes());
-        }
         self.guarded(|l| {
             let (state,): (WasmList<u8>,) = call(&mut l.store, l.save, ())?;
             into.extend_from_slice(state.as_le_slice(&l.store));
@@ -162,19 +164,18 @@ impl SoundStage for Stage {
     }
 
     fn restore(&mut self, from: &[u8]) {
-        let Some((inputs, state)) = saved(from) else { return };
-        // The inputs as they were then; the same ones (the usual case) are compared in place.
-        let same = inputs.len() == self.inputs.len() * 8 && inputs.as_chunks::<8>().0.iter().zip(&self.inputs).all(|(b, v)| f64::from_le_bytes(*b) == *v);
-        if !same {
-            let was: Vec<f64> = inputs.as_chunks::<8>().0.iter().map(|b| f64::from_le_bytes(*b)).collect();
-            self.inputs(&was);
-        }
-        self.guarded(|l| call::<_, ()>(&mut l.store, l.restore, (state,)));
+        self.guarded(|l| call::<_, ()>(&mut l.store, l.restore, (from,)));
     }
 }
 
-/// What [`Stage::save`] wrote: its inputs' bytes, and the plugin's state.
-fn saved(from: &[u8]) -> Option<(&[u8], &[u8])> {
-    let n = u32::from_le_bytes(from.get(..4)?.try_into().ok()?) as usize;
-    Some((from.get(4..4 + n * 8)?, &from[4 + n * 8..]))
+/// Where the music plays, as the WIT says it. Nori tells no car or cast route apart from the others.
+fn route(kind: OutputKind) -> crate::runtime::types::Route {
+    use crate::runtime::types::Route;
+    match kind {
+        OutputKind::Speaker => Route::Speaker,
+        OutputKind::Wired => Route::Wired,
+        OutputKind::Bluetooth => Route::Bluetooth,
+        OutputKind::Usb | OutputKind::UsbAccessory => Route::Usb,
+        OutputKind::Line | OutputKind::Other => Route::Other,
+    }
 }

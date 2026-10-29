@@ -62,11 +62,13 @@ pub struct Settings {
     pub previous_always_skips: bool,
     /// Plugins' sound stages, in order: they touch the samples, so songs stay off offload.
     pub stages: Vec<nori_player::stage::StageSpec>,
+    /// What plugins make of songs as they are read (song preparation, AutoMix analysis).
+    pub preparing: Option<nori_player::stage::Prepares>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { sound: Sound::default(), speed: 1.0, pitch: 1.0, skip_silence: false, fade_ms: 0, hi_res: false, max_rate: 0, offload: false, crossfade_s: 0, auto_mix: false, gain_boost_db: 0.0, previous_always_skips: false, stages: Vec::new() }
+        Settings { sound: Sound::default(), speed: 1.0, pitch: 1.0, skip_silence: false, fade_ms: 0, hi_res: false, max_rate: 0, offload: false, crossfade_s: 0, auto_mix: false, gain_boost_db: 0.0, previous_always_skips: false, stages: Vec::new(), preparing: None }
     }
 }
 
@@ -307,6 +309,9 @@ enum Command {
     Seek(i64),
     Settings(Box<Settings>),
     Output(OutputFacts),
+    Volume(f32),
+    /// A plugin's data for a song came.
+    Prepared,
     Replan,
     QueueChanged,
     Refilled(u64),
@@ -543,6 +548,11 @@ impl Engine {
         self.send(Command::Output(facts));
     }
 
+    /// The output's volume, 0 to 1, for the plugins' stages that read it.
+    pub fn set_volume(&self, level: f32) {
+        self.send(Command::Volume(level));
+    }
+
     /// The transition out of the current song is planned again (settings or an analysis changed).
     pub fn replan(&self) {
         self.send(Command::Replan);
@@ -773,6 +783,14 @@ where
     E: FnMut(Event),
     C: Clock,
 {
+    let woken: Arc<dyn Fn() + Send + Sync> = Arc::from(woken);
+    let (told, wake) = (devices.clone(), woken.clone());
+    // Plugins' data comes from their own threads.
+    let prepared: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        if told.send(Command::Prepared).is_ok() {
+            wake();
+        }
+    });
     let mut track = RingTrack::new(output);
     // Device changes arrive on the output's own thread.
     track.watch(Arc::new(move |d| {
@@ -782,7 +800,7 @@ where
     }));
     let songs = Sources::new(library, load_control(config.memory_mb), config.platform, clock.waits(), std::thread::current(), fetching);
     let player = Player::build(songs, queue, app, track);
-    Worker::new(player, offload.map(Offload::new), rx, events, status, config, clock)
+    Worker::new(player, offload.map(Offload::new), rx, events, status, config, clock, prepared)
 }
 
 /// An engine its caller runs ([`Engine::driven`]).
@@ -848,10 +866,15 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     led_speed: (f32, f32),
 
     mix_place: Option<Led>,
+    /// The volume and route plugins' stages read.
+    around: nori_player::stage::Around,
+    /// Sends [`Command::Prepared`], for the plugins' preparation.
+    prepared: Arc<dyn Fn() + Send + Sync>,
 }
 
 impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E, C> {
-    fn new(p: Player<Sources<L>, RingTrack, A, Q>, off: Option<Offload>, rx: Receiver<Command>, events: E, status: Arc<Mutex<Status>>, config: Config, clock: C) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    fn new(p: Player<Sources<L>, RingTrack, A, Q>, off: Option<Offload>, rx: Receiver<Command>, events: E, status: Arc<Mutex<Status>>, config: Config, clock: C, prepared: Arc<dyn Fn() + Send + Sync>) -> Self {
         let seqs = p.queue.read(|q| q.seqs().to_vec());
         let (idle_release_ms, watch) = (config.idle_release_ms, config.watch);
         let mut w = Worker {
@@ -893,6 +916,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             casting: false,
             led_speed: (1.0, 1.0),
             mix_place: None,
+            around: nori_player::stage::Around::default(),
+            prepared,
         };
         w.apply(config.settings);
         w
@@ -1402,9 +1427,18 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         if let Some(off) = self.off.as_mut() {
             off.output_moved();
         }
-        let Some((name, sound)) = self.p.app.output_changed(d.kind, &d.name) else { return };
-        if let Some(sound) = sound {
-            self.apply(Settings { sound, ..self.settings.clone() });
+        let routed = self.around.route != d.kind;
+        self.around.route = d.kind;
+        let Some((name, sound)) = self.p.app.output_changed(d.kind, &d.name) else {
+            if routed && !self.settings.stages.is_empty() {
+                self.apply(self.settings.clone());
+            }
+            return;
+        };
+        match sound {
+            Some(sound) => self.apply(Settings { sound, ..self.settings.clone() }),
+            None if routed && !self.settings.stages.is_empty() => self.apply(self.settings.clone()),
+            None => {}
         }
         (self.events)(Event::Output { name });
     }
@@ -1522,6 +1556,16 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.told.next_position = now;
             }
             Command::Device(d) => self.device(d),
+            Command::Volume(level) => {
+                let db = nori_player::stage::Around::volume_of(level);
+                if self.around.volume_db != db {
+                    self.around.volume_db = db;
+                    if !self.settings.stages.is_empty() {
+                        self.apply(self.settings.clone());
+                    }
+                }
+            }
+            Command::Prepared => self.p.facts_changed(),
             Command::Release => {
                 self.pause(now, 0);
                 self.release();
@@ -1824,8 +1868,16 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             self.gain_changed |= was.bit_perfect != now.bit_perfect;
         }
         // The equalizer stays in (flat) but for bit-perfect output.
-        let stages = if policy.untouched { Vec::new() } else { s.stages.clone() };
-        self.chain_wanted = Some(ChainSettings { sound, speed, pitch, skip_silence: policy.skip_silence, keep_eq: !policy.untouched, stages });
+        let slot = |slot| if policy.untouched { Vec::new() } else { s.stages.iter().filter(|st| st.slot == slot).cloned().collect() };
+        let (stages, song_stages) = (slot(nori_player::stage::Slot::Master), slot(nori_player::stage::Slot::Song));
+        self.chain_wanted = Some(ChainSettings { sound, speed, pitch, skip_silence: policy.skip_silence, keep_eq: !policy.untouched, stages, around: self.around });
+        self.p.set_song_stages(song_stages);
+        if s.preparing != self.settings.preparing || first {
+            if let Some(p) = &s.preparing {
+                p.0.on_prepared(self.prepared.clone());
+            }
+            self.p.set_preparing(s.preparing.as_ref().map(|p| p.0.clone()));
+        }
         // The plan out of the current song was made under the old transition settings.
         let replan = first || was.untouched != now.untouched || (self.settings.crossfade_s, self.settings.auto_mix) != (s.crossfade_s, s.auto_mix);
         self.applied = Some(now);

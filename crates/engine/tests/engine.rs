@@ -2113,7 +2113,7 @@ fn automix_switched_on() {
 
 /// The chain the engine builds from `s` (not bit-perfect, no turned-up gain).
 fn chain_of(s: &Settings) -> ChainSettings {
-    ChainSettings { sound: s.sound.clone(), speed: s.speed, pitch: s.pitch, skip_silence: s.skip_silence, keep_eq: true, stages: s.stages.clone() }
+    ChainSettings { sound: s.sound.clone(), speed: s.speed, pitch: s.pitch, skip_silence: s.skip_silence, keep_eq: true, stages: s.stages.clone(), around: Default::default() }
 }
 
 /// Plays `raw` as the one song (or the songs `songs` whose chain input `raw` is), changing the settings

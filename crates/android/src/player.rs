@@ -49,7 +49,8 @@ pub(crate) static CLASS: Class = Class {
         native!(c"replan", c"(J)V", replan),
         native!(c"gainChanged", c"(J)V", gain_changed),
         native!(c"setShallow", c"(JZ)V", set_shallow),
-        native!(c"applySettings", c"(J)V", apply_settings),
+        native!(c"applySettings", c"(J)Z", apply_settings),
+        native!(c"setVolume", c"(JF)V", set_volume),
         native!(c"positionMs", c"(J)J", position_ms),
         native!(c"shownMs", c"(JI)J", shown_ms),
         native!(c"look", c"(J)V", look),
@@ -1558,10 +1559,20 @@ extern "system" fn set_shallow(h: jlong, on: jboolean) {
     }
 }
 
-extern "system" fn apply_settings(h: jlong) {
-    let Some(p) = player(h) else { return };
-    if let Some(prefs) = p.queue.settings.current() {
-        p.engine.set_settings(settings(&prefs, p.queue.settings.layer()));
+/// Whether a plugin's sound stage reads the volume now: the platform tells it then ([`set_volume`]).
+extern "system" fn apply_settings(h: jlong) -> jboolean {
+    let Some(p) = player(h) else { return 0 };
+    let Some(prefs) = p.queue.settings.current() else { return 0 };
+    let s = settings(&prefs, p.queue.settings.layer());
+    let reads = !s.stages.is_empty();
+    p.engine.set_settings(s);
+    reads as jboolean
+}
+
+/// The media volume, 0 to 1, for plugins' sound stages.
+extern "system" fn set_volume(h: jlong, level: jfloat) {
+    if let Some(p) = player(h) {
+        p.engine.set_volume(level);
     }
 }
 

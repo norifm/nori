@@ -8,6 +8,7 @@ uniffi::setup_scaffolding!();
 
 mod app;
 mod assets;
+mod automix;
 mod bluetooth;
 mod cache;
 mod cast;
@@ -19,6 +20,7 @@ mod host;
 mod lan;
 mod manifest;
 mod package;
+mod prepare;
 mod repo;
 mod sink;
 pub(crate) mod runtime;
@@ -55,6 +57,7 @@ pub use session::{Control, Found, Library, Moment, Profile, Repeat, Route};
 pub use wake::Command;
 pub use runtime::{Host, LINKED};
 pub use worker::Worker;
+pub use prepare::Songs;
 
 /// What a call through a [`Worker`] runs on.
 pub type Store = wasmtime::Store<Host>;
@@ -167,6 +170,10 @@ pub struct Plugins {
     pub(crate) fetches: assets::Fetches,
     /// The wakes and commands the client was last told to keep.
     pub(crate) told: Mutex<(Vec<WakeEvent>, Vec<wake::Command>)>,
+    /// The plugins hearing songs as they are read, made at first need while one is enabled.
+    preparation: Mutex<Option<Arc<prepare::Preparation>>>,
+    /// Finds the open profile's songs by id, for what plugins are handed of a song.
+    songs: Arc<Mutex<Option<prepare::Songs>>>,
 }
 
 impl Plugins {
@@ -208,9 +215,56 @@ impl Plugins {
             tasks: Default::default(),
             fetches: Default::default(),
             told: Default::default(),
+            preparation: Mutex::new(None),
+            songs: Arc::default(),
         });
         plugins.refresh();
         plugins
+    }
+
+    /// What an instance's imports reach beyond its folder.
+    fn shared(&self) -> runtime::Shared {
+        runtime::Shared { side: self.side.clone(), transport: self.transport.clone(), radio: self.radio.clone(), lan: self.lan.clone(), plugins: self.me.clone() }
+    }
+
+    /// How the open profile's songs are found by id.
+    pub fn set_songs(&self, songs: prepare::Songs) {
+        *self.songs.lock().expect("not poisoned") = Some(songs);
+    }
+
+    /// The sound stages and the preparation are made again at their next need: the plugins changed.
+    fn forget_made(&self) {
+        *self.stages.lock().expect("not poisoned") = None;
+        *self.preparation.lock().expect("not poisoned") = None;
+    }
+
+    /// The enabled plugins exporting `preparation` or `automix`, hearing songs as they are read;
+    /// None, with nothing made, while there are none.
+    pub(crate) fn preparation(&self) -> Option<Arc<prepare::Preparation>> {
+        let hearing: Vec<Installed> = self.installed().into_iter().filter(|i| i.enabled && (i.manifest.extends("preparation") || i.manifest.extends("automix"))).collect();
+        if hearing.is_empty() {
+            return None;
+        }
+        let mut made = self.preparation.lock().expect("not poisoned");
+        if made.is_none() {
+            let hearers = hearing
+                .iter()
+                .filter_map(|i| {
+                    let folder = self.folder(&i.manifest.id);
+                    let component = runtime::component(&folder).map_err(|e| nori_model::alog::info(&format!("plugin {}: {e:?}", i.manifest.id))).ok()?;
+                    // An instance of its own: preparing a song takes long, and its other calls go on meanwhile.
+                    let worker = Worker::start(i.manifest.clone(), folder, component, self.shared()).ok()?;
+                    Some(prepare::Hearer { id: i.manifest.id.clone(), worker, prepares: i.manifest.extends("preparation"), analyses: i.manifest.extends("automix") })
+                })
+                .collect();
+            let songs = self.songs.clone();
+            let find: prepare::Songs = Arc::new(move |id: &str| {
+                let found = songs.lock().expect("not poisoned").as_ref().and_then(|f| f(id));
+                Some(found.unwrap_or_else(|| nori_model::Song::only_id(id.to_string())))
+            });
+            *made = Some(prepare::Preparation::start(hearers, find));
+        }
+        made.clone()
     }
 
     /// The open profile's transport, for plugins' HTTP; assets waiting for Wi-Fi try again.
@@ -263,7 +317,7 @@ impl Plugins {
         self.keep(&list);
         let on = list.iter().any(|i| i.manifest.id == manifest.id && i.enabled);
         drop(list);
-        *self.stages.lock().expect("not poisoned") = None;
+        self.forget_made();
         self.workers.lock().expect("not poisoned").remove(&manifest.id);
         self.lan.forget(&manifest.id);
         assets::prune(&self.folder(&manifest.id), &manifest.assets);
@@ -305,6 +359,11 @@ impl Plugins {
         s.keys(ROWS).into_iter().filter_map(|k| Some((k[ROWS.len()..].to_string(), Value::decode(&s.get(&k)?)?))).collect()
     }
 
+    /// The enabled plugins exporting `point`, in their order; no instance is made for it.
+    pub fn extending(&self, point: &str) -> Vec<String> {
+        self.installed.lock().expect("not poisoned").iter().filter(|i| i.enabled && i.manifest.extends(point)).map(|i| i.manifest.id.clone()).collect()
+    }
+
     /// Enabled plugin `id`'s own instance.
     pub fn worker(&self, id: &str) -> Option<Worker> {
         let mut workers = self.workers.lock().expect("not poisoned");
@@ -314,8 +373,7 @@ impl Plugins {
         let i = self.installed().into_iter().find(|i| i.enabled && i.manifest.id == id)?;
         let folder = self.folder(id);
         let component = runtime::component(&folder).map_err(|e| nori_model::alog::info(&format!("plugin {id}: {e:?}"))).ok()?;
-        let shared = runtime::Shared { side: self.side.clone(), transport: self.transport.clone(), radio: self.radio.clone(), lan: self.lan.clone(), plugins: self.me.clone() };
-        let w = Worker::start(i.manifest.clone(), folder, component, shared).ok()?;
+        let w = Worker::start(i.manifest.clone(), folder, component, self.shared()).ok()?;
         // Started at once, so its overrides are in effect without waiting for a first call.
         w.post(|_, _| Ok(()));
         workers.insert(id.to_string(), w.clone());
@@ -360,14 +418,20 @@ impl Plugins {
             .filter_map(|(id, maker)| {
                 let i = wanted.iter().find(|i| &i.manifest.id == id)?;
                 let rows: BTreeMap<String, f64> = self.rows(id).into_iter().filter_map(|(k, v)| Some((k, v.number()?))).collect();
-                Some(StageSpec { maker: maker.clone(), inputs: i.manifest.row_numbers(&rows) })
+                Some(StageSpec { maker: maker.clone(), slot: i.manifest.stage?, rows: i.manifest.row_numbers(&rows) })
             })
             .collect()
     }
 
     /// What the enabled plugins lay over the settings.
     pub(crate) fn layer(&self) -> nori_settings::overrides::Layer {
-        nori_settings::overrides::Layer { overrides: self.overrides(), stages: self.stages() }
+        let preparing = self.preparing().map(nori_player::stage::Prepares);
+        nori_settings::overrides::Layer { overrides: self.overrides(), stages: self.stages(), preparing }
+    }
+
+    /// What the enabled plugins make of songs as the player reads them; None while none hears songs.
+    pub fn preparing(&self) -> Option<Arc<dyn nori_player::stage::Preparing>> {
+        self.preparation().map(|p| p as Arc<dyn nori_player::stage::Preparing>)
     }
 }
 
@@ -399,7 +463,7 @@ impl Plugins {
             self.workers.lock().expect("not poisoned").remove(id);
             self.lan.forget(id);
         }
-        *self.stages.lock().expect("not poisoned") = None;
+        self.forget_made();
         self.side.laid(id);
         self.refresh();
         if starts {
@@ -417,7 +481,7 @@ impl Plugins {
         list.insert(index, p);
         self.keep(&list);
         drop(list);
-        *self.stages.lock().expect("not poisoned") = None;
+        self.forget_made();
         self.side.laid(id);
     }
 
@@ -446,7 +510,7 @@ impl Plugins {
         self.workers.lock().expect("not poisoned").remove(id);
         self.lan.forget(id);
         let _ = std::fs::remove_dir_all(self.folder(id));
-        *self.stages.lock().expect("not poisoned") = None;
+        self.forget_made();
         self.timers.stop_all(id);
         self.side.laid(id);
         self.refresh();

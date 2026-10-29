@@ -405,6 +405,7 @@ impl Session {
             out(Said::Engine(e));
         });
         let engine = Arc::new(start(library, app, CoreQueue(core.session.clone()), output, config, events));
+        engine.set_volume(level.get());
         let covers = o.covers.map(|config| Arc::new(Loader::new(config, cover_net)));
         let remotes = Arc::new(crate::remote::Remotes::new(level.clone()));
         let (saved, playing) = (core.clone(), engine.clone());
@@ -1323,6 +1324,7 @@ impl Handle {
     /// Sets the volume here; the account's other devices see it.
     fn set_level(&self, v: f32) {
         self.level.set(v);
+        self.engine.set_volume(self.level.get());
         self.remotes.played(&self.engine);
     }
 

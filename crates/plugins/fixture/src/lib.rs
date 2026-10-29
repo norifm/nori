@@ -7,7 +7,12 @@
 mod headphones;
 #[cfg(feature = "headphones")]
 nori_plugin_sdk::plugin!(headphones::Headphones, headphones::MANIFEST, device_control, hooks);
+mod automix;
+mod deciders;
 mod lan;
+mod lyrics;
+mod preparation;
+mod scrobbler;
 
 use nori_plugin_sdk::http::{Method, Request};
 use nori_plugin_sdk::sound_stage::{Format, Inputs};
@@ -22,6 +27,14 @@ struct Test {
     gain: f32,
     /// Blocks run: each block's gain grows with it, so a lost state is heard.
     blocks: u32,
+    /// Its stage's other inputs as numbers: volume dB, route, the song's gain dB and loudness (NaN
+    /// unknown), the frames its prepared data counts (-1 without). A gain below 0 writes them over
+    /// a block's first samples instead of scaling it.
+    heard: [f32; 5],
+    /// A song being prepared: frames fed, the frame of the first, channels.
+    prepared: Option<(u64, Option<u64>, u64)>,
+    /// Samples of a song being analysed.
+    analysed: Option<u64>,
 }
 
 fn fetch(url: &str) -> String {
@@ -98,9 +111,16 @@ impl Lifecycle for Test {
 impl SoundStage for Test {
     fn configure(&mut self, _format: Format, inputs: Inputs) {
         self.gain = inputs.rows[0] as f32;
+        let prepared = inputs.prepared.as_ref().and_then(|d| Some(u64::from_le_bytes(d.get(..8)?.try_into().ok()?) as f32)).unwrap_or(-1.0);
+        self.heard = [inputs.volume_db, inputs.route as u8 as f32, inputs.gain_db.unwrap_or(f32::NAN), inputs.loudness_lufs.unwrap_or(f32::NAN), prepared];
     }
 
     fn process(&mut self, mut samples: Vec<f32>) -> Vec<f32> {
+        if self.gain < 0.0 {
+            let n = samples.len().min(5);
+            samples[..n].copy_from_slice(&self.heard[..n]);
+            return samples;
+        }
         self.blocks += 1;
         let g = self.gain * self.blocks as f32;
         samples.iter_mut().for_each(|s| *s *= g);
@@ -198,10 +218,10 @@ impl Hooks for Test {
 }
 
 const MANIFEST: Manifest = Manifest {
-    stage: Some(Slot::Master),
+    stage: Some(if cfg!(feature = "song") { Slot::Song } else { Slot::Master }),
     net: &["allowed.example", "lan"],
     overrides: &["playback.speed"],
-    rows: &[Row::level("gain", 0.0, 2.0, 0.1, 0.5)],
+    rows: &[Row::level("gain", -1.0, 2.0, 0.1, 0.5)],
     menu: &[MenuAction { id: "count", glyph: Glyph::Info, kinds: &[ItemKind::Song] }],
     places: &[Place::Artwork, Place::SongInfo, Place::PlayerStatus, Place::Devices],
     signin: hooked::SIGNIN,
@@ -215,4 +235,4 @@ const MANIFEST: Manifest = Manifest {
 };
 
 #[cfg(not(feature = "headphones"))]
-nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, hooks, sound_stage, provider, slots);
+nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, hooks, sound_stage, provider, slots, preparation, automix, deciders, lyrics, scrobbler);

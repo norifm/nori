@@ -84,6 +84,34 @@ impl Worker {
     }
 }
 
+/// Fuel for a decider's call: well under a call's, a few hundred ms of work.
+pub(crate) const DECIDE_FUEL: u64 = 2_000_000_000;
+
+impl Worker {
+    /// Runs `f` on the plugin's thread with a decider's fuel and waits at most `budget` for it; None
+    /// past it, or when its call failed. An answer that comes later is dropped, and a call whose
+    /// caller has gone by its turn is skipped.
+    pub fn decide<R: Send + 'static>(&self, budget: std::time::Duration, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<R> + Send + 'static) -> Option<R> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let job: Job = Box::new(move |running| {
+            let Some(r) = running.as_mut() else { return };
+            if r.store.set_fuel(DECIDE_FUEL).is_err() {
+                return;
+            }
+            // Its caller has gone (it waited past its budget): the thread goes on to what is still awaited.
+            if tx.send(None).is_err() {
+                return;
+            }
+            let _ = tx.send(attempt(running, f));
+        });
+        self.jobs.send(job).ok()?;
+        let deadline = std::time::Instant::now() + budget;
+        // The first message says the call began, the second is its answer.
+        rx.recv_timeout(budget).ok()?;
+        rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())).ok().flatten()
+    }
+}
+
 /// `f` on the running instance; a failed call lets it go, and the next job starts a fresh one.
 fn attempt<R>(running: &mut Option<Running>, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<R>) -> Option<R> {
     let r = running.as_mut()?;

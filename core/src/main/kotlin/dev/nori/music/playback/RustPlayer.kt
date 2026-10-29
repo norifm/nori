@@ -59,8 +59,10 @@ internal object RustPlayerJni {
     @JvmStatic @CriticalNative external fun replan(h: Long)
     @JvmStatic @CriticalNative external fun gainChanged(h: Long)
     @JvmStatic @CriticalNative external fun setShallow(h: Long, on: Boolean)
-    /** The sound and the controls' fades as the core's settings are now. */
-    @JvmStatic @CriticalNative external fun applySettings(h: Long)
+    /** The sound and the controls' fades as the core's settings are now; whether a plugin's sound stage reads the volume. */
+    @JvmStatic @CriticalNative external fun applySettings(h: Long): Boolean
+    /** The media volume, 0 to 1, for plugins' sound stages. */
+    @JvmStatic @CriticalNative external fun setVolume(h: Long, level: Float)
     /** Where the ear is in it now (the engine's `status().position_now()`), read when asked, never ticked. */
     @JvmStatic @CriticalNative external fun positionMs(h: Long): Long
     /** [positionMs] for the seek bar on screen in queue index [index] (-1: the engine is on another song): see `EnginePlayer.shownMs`. */
@@ -324,7 +326,30 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     // ---- what the service asks of it directly ----
 
     /** The settings changed: the engine takes them from the core. */
-    fun applySettings() = RustPlayerJni.applySettings(h)
+    fun applySettings() = watchVolume(RustPlayerJni.applySettings(h))
+
+    /** The media volume as plugins' sound stages read it, followed only while one does. */
+    private val volume = object : android.database.ContentObserver(main) {
+        override fun onChange(selfChange: Boolean, uri: android.net.Uri?) {
+            if (uri != null && uri.lastPathSegment?.startsWith("volume_") != true) return
+            tellVolume()
+        }
+    }
+    private var volumeWatched = false
+
+    private fun tellVolume() {
+        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        if (max > 0 && h != 0L) RustPlayerJni.setVolume(h, audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max)
+    }
+
+    private fun watchVolume(on: Boolean) = main.post {
+        if (on == volumeWatched) return@post
+        volumeWatched = on
+        if (on) {
+            context.contentResolver.registerContentObserver(android.provider.Settings.System.CONTENT_URI, true, volume)
+            tellVolume()
+        } else context.contentResolver.unregisterContentObserver(volume)
+    }
     fun gainChanged() = RustPlayerJni.gainChanged(h)
     /** A sound page is tuned: the engine trades its deep buffer for a shallow one until it stops. */
     fun setShallow(on: Boolean) = RustPlayerJni.setShallow(h, on)
@@ -555,6 +580,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
 
     override fun handleRelease(): ListenableFuture<*> {
         unwatchNetwork()
+        watchVolume(false)
         unfocus()
         main.removeCallbacks(drain)
         val handle = h

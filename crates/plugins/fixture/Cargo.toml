@@ -15,6 +15,8 @@ crate-type = ["cdylib"]
 unlinked = ["dep:wit-bindgen"]
 # Headphones over Bluetooth instead (src/headphones.rs): device control and its hooks.
 headphones = []
+# Its stage in the song slot.
+song = []
 
 [dependencies]
 nori-plugin-sdk = { path = "../../plugin-sdk" }

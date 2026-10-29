@@ -14,6 +14,7 @@ pub use nori_player::types::TransitionKind;
 use nori_player::types::TransitionPlan;
 use parking_lot::Mutex;
 
+use super::mixing::{adopt, refined, Mixing};
 use super::store::{get, missing};
 
 /// How many recent plans are kept for screens.
@@ -81,6 +82,8 @@ pub struct Planner {
     measures: AtomicBool,
     /// Told when an analysis is stored or forgotten, or the window moves: what [`Planner::may_measure`] reads.
     pub changed: nori_tasks::Notify,
+    /// Where plugins answer for AutoMix; None with none that does.
+    mixing: Mutex<Option<Arc<dyn Mixing>>>,
 }
 
 /// What is told of each plan made (a jam host's guests play its transitions).
@@ -88,7 +91,26 @@ pub type Planned = Box<dyn Fn() + Send + Sync>;
 
 impl Planner {
     pub fn new(db: Arc<nori_db::Profile>, read_settings: ReadSettings) -> Arc<Planner> {
-        Arc::new(Planner { state: Mutex::new(State::new()), db, read_settings, worker: OnceLock::new(), planned: Mutex::new(None), measures: AtomicBool::new(true), changed: Default::default() })
+        Arc::new(Planner { state: Mutex::new(State::new()), db, read_settings, worker: OnceLock::new(), planned: Mutex::new(None), measures: AtomicBool::new(true), changed: Default::default(), mixing: Mutex::new(None) })
+    }
+
+    /// Where plugins answer for AutoMix from now on.
+    pub fn set_mixing(&self, mixing: Option<Arc<dyn Mixing>>) {
+        *self.mixing.lock() = mixing;
+        self.analyses_changed();
+    }
+
+    /// Song `track` as plugins refine nori's analysis of it; as it is when none does, or what one
+    /// gives doesn't hold.
+    pub fn refined(&self, track: nori_player::types::TrackAnalysis) -> nori_player::types::TrackAnalysis {
+        let Some(m) = self.mixing.lock().clone() else { return track };
+        match m.refine(&track.song_id, &track).and_then(|r| refined(&track, &r)) {
+            Some(t) => {
+                alog::info(&format!("analysed {}: refined by a plugin", t.song_id));
+                t
+            }
+            None => track,
+        }
     }
 
     /// Whether the output forbids touching samples (`AudioPolicy::untouched`); set whenever the
@@ -169,6 +191,12 @@ impl Planner {
         };
         let (o, n) = (p.window[chosen.out].clone(), p.window[chosen.next].clone());
         drop(p);
+        let mixing = self.mixing.lock().clone();
+        let mut chosen = chosen;
+        // nori mixes a pair unless they follow on an album in order.
+        if let Some(mixes) = mixing.as_ref().and_then(|m| m.mixes(&o.id, &n.id, !chosen.settings.same_album_in_order)) {
+            chosen.settings.same_album_in_order = !mixes;
+        }
         // Database reads happen without the planner locked.
         let (a, b) = if prefs.auto_mix {
             self.db.get().map_or((None, None), |db| {
@@ -178,7 +206,14 @@ impl Planner {
         } else {
             (None, None)
         };
-        let t = nori_player::automix::plan::plan(a.as_ref(), b.as_ref(), o.duration_ms, n.duration_ms, &chosen.settings);
+        let mut t = nori_player::automix::plan::plan(a.as_ref(), b.as_ref(), o.duration_ms, n.duration_ms, &chosen.settings);
+        let theirs = mixing.as_ref().and_then(|m| m.plan(&o.id, &n.id, a.as_ref(), b.as_ref(), &t));
+        if let Some(p) = theirs {
+            match adopt(&t, p, o.duration_ms, n.duration_ms, prefs.max_tempo_change_pct) {
+                Some(adopted) => t = adopted,
+                None => alog::info(&format!("planFor: a plugin's plan out of {} does not hold: nori's plays", o.title)),
+            }
+        }
         let plan = engine_plan(&t, &n.id);
         let note = TransitionNote::of(&o.id, &n.id, &t, plan.is_some());
         {
@@ -304,6 +339,7 @@ impl Planner {
             return;
         };
         let (track, curve) = super::store::measure(&f.song_id, &features);
+        let track = self.refined(track);
         let stored = super::store::put_finished(&db.lock(), track, &curve);
         let a = match stored {
             Ok(a) => a,

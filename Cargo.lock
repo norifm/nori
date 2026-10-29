@@ -5161,6 +5161,7 @@ version = "0.7.1"
 dependencies = [
  "async-trait",
  "futures-channel",
+ "nori-automix",
  "nori-model",
  "nori-net",
  "nori-player",
