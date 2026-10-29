@@ -79,7 +79,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
                 }
                 if (recent.isNotEmpty()) item {
                     SectionTitle(say.homeRow(dev.nori.music.ffi.settings.HomeRow.RECENT))
-                    LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    LazyRow(Modifier.bleedsToEdges(), rememberShelfState(recent.firstOrNull()?.id), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(recent, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { nav.album(a.id, a) }) }
                     }
                 }
@@ -103,19 +103,19 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         LazyColumn(Modifier.pageToEdges().fadesUnderTitle(list), list, contentPadding = pagePadding(LocalChromeInset.current)) {
             if (r.artists.isNotEmpty()) item(key = "artists") {
                 SectionTitle(say.artists, onMore = { whole = Whole.ARTISTS }.takeIf { r.artists.size > SHELF_SEEN })
-                LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.artists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(r.artists, key = { it.id }) { a -> FoundArtist(a, vm, 96.dp) }
                 }
             }
             if (r.albums.isNotEmpty()) item(key = "albums") {
                 SectionTitle(say.albums, onMore = { whole = Whole.ALBUMS }.takeIf { r.albums.size > SHELF_SEEN })
-                LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.albums.firstOrNull()?.id), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(r.albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { vm.remember(); nav.album(a.id, a) }) }
                 }
             }
             if (r.playlists.isNotEmpty()) item(key = "playlists") {
                 SectionTitle(say.playlists, onMore = { whole = Whole.PLAYLISTS }.takeIf { r.playlists.size > SHELF_SEEN })
-                LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.playlists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(r.playlists, key = { it.id }) { p -> FoundPlaylist(p, vm, Modifier.width(120.dp)) }
                 }
             }
