@@ -36,6 +36,7 @@ import dev.nori.music.ffi.queue.ShufflePlan
 import dev.nori.music.ffi.queue.TapPlan
 import dev.nori.music.ffi.queue.shufflePlan
 import dev.nori.music.app.ui.say
+import dev.nori.music.settings.server
 
 /** Everything that can be done to a song, album or playlist from any screen. One instance per activity. */
 class ActionsViewModel(app: Application) : NoriViewModel(app) {
@@ -287,6 +288,11 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     suspend fun playlists(): List<Playlist> = runCatching { nori.library.playlists().first() }.getOrDefault(emptyList())
     fun addToPlaylist(p: Playlist, songs: List<Song>) = attempt(say.addedToPlaylist(p.name)) { nori.library.addToPlaylist(p.id, songs.map { it.id }) }
     /** Keeps a mix as a playlist on the account, named by the core (`saved_mix_name`) so a second save does not repeat a name. */
+    /** Whether [p] is the account's own, to change or delete (the core's `playlist_editable`). */
+    fun editable(p: Playlist): Boolean = dev.nori.music.ffi.library.playlistEditable(p, nori.settings.value.server?.user.orEmpty(), nori.rules.account)
+
+    fun deletePlaylist(id: String) = viewModelScope.launch { runCatching { nori.library.deletePlaylist(id) } }
+
     fun saveMixAsPlaylist(title: String, songs: List<Song>) = viewModelScope.launch {
         try {
             val name = dev.nori.music.ffi.library.savedMixName(title, playlists().map { it.name })

@@ -361,6 +361,7 @@ pub fn page_actions(kind: PageKind, songs: u32, missing: u32, downloads: bool) -
 
 /// Whether the profile, signed in as `user`, may change `playlist`: add songs to it, remove them, rename
 /// and delete it. Only an account's own playlists: not a provider's, nor one another user shares.
+#[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn playlist_editable(playlist: &Playlist, user: &str, account: bool) -> bool {
     account && !is_provider_id(&playlist.id) && playlist.owner.as_deref().is_none_or(|o| o.eq_ignore_ascii_case(user))
 }
