@@ -1671,7 +1671,8 @@ extern "system" fn cast_to(h: jlong, plugins: jlong) {
         match to {
             nori_plugins::Card::Sink(sink) => p.engine.set_card(Box::new(nori_engine::cast::CastOutput::new(sink)), true),
             nori_plugins::Card::Here => p.engine.set_card(Box::new(TrackOutput::new(Box::new(JavaOpener { bridge: p.bridge.clone(), quiet: p.quiet.clone(), sdk: p.sdk }), p.float, p.shared.clone())), false),
-            nori_plugins::Card::Elsewhere => p.engine.release_now(),
+            nori_plugins::Card::Elsewhere { playing, position_ms } => p.engine.play_elsewhere(playing, position_ms.map(|ms| ms as i64)),
+            nori_plugins::Card::Back => p.engine.come_back(),
         }
     }));
 }

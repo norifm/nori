@@ -325,6 +325,11 @@ enum Command {
     Follow(Option<Box<Leading>>),
     /// Plays through this output from now on, a cast's or not ([`Engine::set_card`]).
     Card(Box<dyn AudioOutput>, bool),
+    /// A cast's device plays the songs ([`Engine::play_elsewhere`]): whether it plays and where, as
+    /// it last said.
+    Elsewhere(Option<bool>, Option<i64>),
+    /// The cast ended ([`Engine::come_back`]).
+    Back,
     /// The device is on a network again.
     NetworkBack,
     Stop,
@@ -509,6 +514,19 @@ impl Engine {
         self.send(Command::Card(card, casting));
     }
 
+    /// A cast's device plays the songs itself: the output here is let go and stays so while the queue
+    /// moves and plays or pauses for the device, never heard here. `playing` and `ms` (in the song the
+    /// queue is at) are what the device last said; None keeps what the engine had.
+    pub fn play_elsewhere(&self, playing: Option<bool>, ms: Option<i64>) {
+        self.send(Command::Elsewhere(playing, ms));
+    }
+
+    /// The cast whose device played the songs ended: the music plays on here from where the device
+    /// was, if it played.
+    pub fn come_back(&self) {
+        self.send(Command::Back);
+    }
+
     /// The device is on a network again: a song waiting for it is tried now.
     pub fn network_back(&self) {
         self.send(Command::NetworkBack);
@@ -648,6 +666,13 @@ struct Parked {
     at: usize,
     ms: i64,
     shown: Option<String>,
+}
+
+/// The music while a cast's device plays the songs: whether it plays there, and when the parked place
+/// was last moved on to where it is there (engine ms).
+struct Away {
+    playing: bool,
+    since: i64,
 }
 
 /// The offloaded song opened on the CPU ahead of the output's decoder, taken over at `from_ms` behind a
@@ -863,6 +888,8 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     following: Option<Following>,
     /// The card is a cast's ([`Engine::set_card`]): the device's chip plays nothing.
     casting: bool,
+    /// A cast's device plays the songs ([`Engine::play_elsewhere`]): the place is the parked one.
+    away: Option<Away>,
     led_speed: (f32, f32),
 
     mix_place: Option<Led>,
@@ -914,6 +941,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             why: String::new(),
             following: None,
             casting: false,
+            away: None,
             led_speed: (1.0, 1.0),
             mix_place: None,
             around: nori_player::stage::Around::default(),
@@ -1481,6 +1509,13 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
     /// Carries out `c` as this engine's own command.
     fn obey(&mut self, c: Command, now: i64) {
+        let c = match self.away.is_some() {
+            true => match self.obey_away(c, now) {
+                Some(c) => c,
+                None => return,
+            },
+            false => c,
+        };
         // A press ends a wait as if paused there: play tries the song now, a seek or a jump plays on.
         let pressed = matches!(c, Command::PlayAt(..) | Command::GoTo(..) | Command::Next | Command::Previous | Command::Seek(_) | Command::Play | Command::Pause(_) | Command::Toggle | Command::Release);
         if pressed && self.end_wait() {
@@ -1587,8 +1622,101 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                     self.try_again();
                 }
             }
-            Command::Look | Command::Stop => {}
+            Command::Elsewhere(playing, ms) => {
+                self.leave(now);
+                self.obey_away(Command::Elsewhere(playing, ms), now);
+            }
+            Command::Back | Command::Look | Command::Stop => {}
         }
+    }
+
+    /// The music goes to a cast's device: the place heard here is parked and the output let go.
+    fn leave(&mut self, now: i64) {
+        let going = self.going();
+        let parked = self.parked.as_ref().map(|p| (p.at, p.ms, p.shown.is_some()));
+        let place = match parked {
+            Some((at, ms, true)) => Some((at, ms)),
+            other => self.shown().or(other.map(|(at, ms, _)| (at, ms))),
+        };
+        self.pause(now, 0);
+        self.release();
+        if let Some((at, ms)) = place {
+            self.parked = Some(Parked { at, ms, shown: Some(self.p.id_at(at)) });
+        }
+        self.away = Some(Away { playing: going, since: now });
+        self.report(now);
+        if going {
+            (self.events)(Event::State(State::Playing));
+        }
+    }
+
+    /// `c` while a cast's device plays the songs: what moves the queue or plays and pauses is kept for
+    /// the device, and none of it is heard here. Returns a command it leaves to the engine as usual.
+    fn obey_away(&mut self, c: Command, now: i64) -> Option<Command> {
+        let Some(a) = self.away.as_mut() else { return Some(c) };
+        // The place moves on as the device plays.
+        if a.playing {
+            if let Some(p) = self.parked.as_mut() {
+                p.ms += now - a.since;
+            }
+        }
+        a.since = now;
+        let was = a.playing;
+        let playing = match c {
+            Command::Elsewhere(playing, ms) => {
+                if let (Some(ms), Some(p)) = (ms, self.parked.as_mut()) {
+                    p.ms = ms.max(0);
+                }
+                playing.unwrap_or(was)
+            }
+            Command::Back => {
+                self.away = None;
+                if was {
+                    self.play();
+                } else {
+                    self.report(now);
+                    (self.events)(Event::State(self.state));
+                }
+                return None;
+            }
+            Command::PlayAt(i, ms) => {
+                self.jumps += 1;
+                self.hold(Switched::To(i, ms));
+                true
+            }
+            Command::GoTo(i, ms, _) => {
+                self.jumps += 1;
+                self.hold(Switched::To(i, ms));
+                was
+            }
+            Command::Next | Command::Previous => {
+                self.jumps += 1;
+                self.hold(if matches!(c, Command::Next) { Switched::Next } else { Switched::Previous });
+                // Paused, a skip also plays.
+                true
+            }
+            Command::Seek(ms) => {
+                self.hold(Switched::Seek(ms));
+                was
+            }
+            Command::Play => true,
+            Command::Pause(_) => false,
+            Command::Toggle => !was,
+            // Nothing here to let go, follow or end a wait for.
+            Command::Release | Command::Follow(_) | Command::NetworkBack | Command::Refilled(_) => was,
+            other => return Some(other),
+        };
+        if let Some(a) = self.away.as_mut() {
+            a.playing = playing;
+        }
+        self.report(now);
+        if playing != was {
+            (self.events)(Event::State(if playing { State::Playing } else { State::Paused }));
+        }
+        if let Some(p) = self.parked.as_ref() {
+            (self.events)(Event::Position { index: p.at, ms: p.ms, jumps: self.jumps });
+        }
+        None
     }
 
     /// The leader's newer word, or none (playing on its own again).
@@ -2547,14 +2675,20 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 s.on_cpu = false;
                 return;
             };
-            // A place chosen while paused is where the player is, to the screen.
+            // A place chosen while paused is where the player is, to the screen; a cast's device's
+            // place runs on as it plays there.
             let other = self.other(i, Some(&id));
             if other {
                 self.told.heard = Some((i, id));
             }
-            self.write_status(i, ms, Instant::now(), |s| {
+            let there = self.away.as_ref().map(|a| (a.playing, ms + if a.playing { now - a.since } else { 0 }));
+            self.write_status(i, there.map_or(ms, |t| t.1), Instant::now(), |s| {
                 s.switching = false;
                 s.on_cpu = false;
+                if let Some((playing, _)) = there {
+                    s.state = if playing { State::Playing } else { State::Paused };
+                    s.buffering = false;
+                }
             });
             if other {
                 self.say_song(i, false);

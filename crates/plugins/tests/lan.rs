@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use nori_net::transport::{Exchange, Network, Transport, TransportError, TransportResponse};
 use nori_plugins::testing::{fixture, FIXTURE as ID};
-use nori_plugins::{Card, Cast, CastButton, CastKind, Media, Plugins, Service, Side, Sink, Value};
+use nori_plugins::{Card, Cast, CastButton, CastKind, Media, Moment, Plugins, Service, Side, Sink, Value};
 
 /// Serves each action's setup at `/lan/<action>`.
 #[derive(Default)]
@@ -261,8 +261,9 @@ fn a_songs_url_reaches_the_lan_through_the_door_when_its_server_is_this_device()
     assert!(answer.starts_with("HTTP/1.1 206") && answer.ends_with("GET /rest/stream?id=s1 HTTP/1.1"), "{answer}");
 }
 
-/// Where the music played, each time it moved: a sink, or "here" or "elsewhere".
-type Played = Arc<Mutex<Vec<Result<Arc<Sink>, &'static str>>>>;
+/// Where the music played, each time it moved: a sink, or "here", "elsewhere" (with what the device
+/// said: "elsewhere true 20000") or "back".
+type Played = Arc<Mutex<Vec<Result<Arc<Sink>, String>>>>;
 
 fn cards(plugins: &Plugins) -> Played {
     let played: Played = Arc::default();
@@ -270,8 +271,10 @@ fn cards(plugins: &Plugins) -> Played {
     plugins.set_cards(Box::new(move |c| {
         to.lock().unwrap().push(match c {
             Card::Sink(s) => Ok(s),
-            Card::Here => Err("here"),
-            Card::Elsewhere => Err("elsewhere"),
+            Card::Here => Err("here".into()),
+            Card::Elsewhere { playing: None, position_ms: None } => Err("elsewhere".into()),
+            Card::Elsewhere { playing, position_ms } => Err(format!("elsewhere {} {}", playing.unwrap_or_default(), position_ms.unwrap_or_default())),
+            Card::Back => Err("back".into()),
         })
     }));
     played
@@ -282,8 +285,8 @@ fn sink(played: &Played) -> Arc<Sink> {
     played.lock().unwrap().last().unwrap().clone().expect("a sink")
 }
 
-fn last(played: &Played) -> Option<&'static str> {
-    played.lock().unwrap().last().and_then(|p| p.as_ref().err().copied())
+fn last(played: &Played) -> Option<String> {
+    played.lock().unwrap().last().and_then(|p| p.as_ref().err().cloned())
 }
 
 #[test]
@@ -307,9 +310,8 @@ fn a_cast_pumps_audio_into_the_plugins_socket_until_the_plugin_stops() {
     assert!(rig.plugins.cast_button(CastButton::VolumeUp));
     rig.settle();
     assert_eq!(rig.said("button"), Some(vec!["volume-up".into()]));
-    assert!(!rig.plugins.cast_button(CastButton::Pause), "the music plays here: nori pauses it itself");
     rig.plugins.turn(ID.into(), false);
-    assert_eq!(last(&sinks), Some("here"), "nori plays on its own output again");
+    assert_eq!(last(&sinks).as_deref(), Some("here"), "nori plays on its own output again");
     assert_eq!(rig.session.casts.lock().unwrap().last(), Some(&None), "the cast ends with the plugin");
     assert_eq!(rig.plugins.cast(), None);
 }
@@ -336,7 +338,7 @@ fn served_audio_reaches_each_device_that_fetches_it() {
     assert!(String::from_utf8_lossy(&got[..n]).contains("Content-Type: audio/flac"));
 
     rig.act("cast-end");
-    assert_eq!(last(&sinks), Some("here"));
+    assert_eq!(last(&sinks).as_deref(), Some("here"));
     assert_eq!(rig.plugins.cast(), None);
 }
 
@@ -347,14 +349,21 @@ fn a_cast_whose_device_plays_the_songs_lets_the_output_here_go() {
     rig.act("cast-target");
     let cast = rig.plugins.cast().unwrap();
     assert_eq!((cast.kind, cast.device.as_str()), (CastKind::Target, "TV"));
-    assert_eq!(last(&played), Some("elsewhere"));
-    for (button, heard) in [(CastButton::Toggle, "play"), (CastButton::Pause, "pause"), (CastButton::Seek { ms: 61_000 }, "seek:61000"), (CastButton::Jump { index: 3 }, "jump:3"), (CastButton::Next, "next")] {
-        assert!(rig.plugins.cast_button(button), "{button:?} goes to the device");
+    assert_eq!(last(&played).as_deref(), Some("elsewhere"));
+    rig.act("cast-report");
+    assert_eq!(last(&played).as_deref(), Some("elsewhere true 20000"), "the player here keeps the device's place");
+    assert!(rig.plugins.follows(), "the client says what plays while the device plays the songs");
+
+    // nori's queue moving, from a press or a plugin's session, as the client says it: the device hears
+    // it; what only repeats what it said, it doesn't.
+    let moment = |index, playing, position_ms| Moment { playing, index: Some(index), song: Some(format!("s{index}")), position_ms, ..Default::default() };
+    for (m, heard) in [(moment(2, true, 20_000), Some("jump:2")), (moment(2, true, 20_000), None), (moment(2, true, 61_000), Some("seek:61000")), (moment(2, false, 61_000), Some("pause")), (moment(3, false, 0), Some("jump:3"))] {
+        rig.session.notices.lock().unwrap().clear();
+        rig.plugins.played(m.clone());
         rig.settle();
-        assert_eq!(rig.said("button"), Some(vec![heard.into()]));
+        assert_eq!(rig.said("button"), heard.map(|h| vec![h.to_string()]), "{m:?}");
     }
     rig.act("cast-end");
-    assert!(!rig.plugins.cast_button(CastButton::Play), "no cast: nori plays itself");
     assert_eq!(rig.session.casts.lock().unwrap().last(), Some(&None));
-    assert_eq!(played.lock().unwrap().len(), 1, "nothing plays here again until asked");
+    assert_eq!(last(&played).as_deref(), Some("back"), "the music plays on here from where the device was");
 }

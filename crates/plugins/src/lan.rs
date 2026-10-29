@@ -65,9 +65,7 @@ pub enum CastKind {
     Target,
 }
 
-/// What nori asks of a cast: the media buttons the plugin hears (`hooks.on(media-button(..))`). The
-/// volume keys and another output picked reach any cast; nori's own transport only one whose device
-/// plays the songs itself, while the player here plays nothing.
+/// What a device asks of a cast: the media buttons the plugin hears (`hooks.on(media-button(..))`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum CastButton {
@@ -75,42 +73,16 @@ pub enum CastButton {
     VolumeDown,
     /// The user picked another output: the plugin ends its cast.
     Stop,
-    Play,
-    Pause,
-    /// Play or pause, as the device last said it plays.
-    Toggle,
-    Next,
-    Previous,
-    Seek { ms: u64 },
-    /// The song at this list index of nori's queue.
-    Jump { index: u32 },
 }
 
 impl CastButton {
-    /// Whether nori's own transport is this button, which only a target cast takes.
-    fn transport(self) -> bool {
-        !matches!(self, CastButton::VolumeUp | CastButton::VolumeDown | CastButton::Stop)
-    }
-
-    /// As the plugin hears it, during `cast`.
-    pub(crate) fn name(self, cast: &Cast) -> String {
+    /// As the plugin hears it.
+    pub(crate) fn name(self) -> &'static str {
         match self {
-            CastButton::VolumeUp => "volume-up".into(),
-            CastButton::VolumeDown => "volume-down".into(),
-            CastButton::Stop => "cast-stop".into(),
-            CastButton::Play => "play".into(),
-            CastButton::Pause => "pause".into(),
-            CastButton::Toggle => (if cast.playing { "pause" } else { "play" }).into(),
-            CastButton::Next => "next".into(),
-            CastButton::Previous => "previous".into(),
-            CastButton::Seek { ms } => format!("seek:{ms}"),
-            CastButton::Jump { index } => format!("jump:{index}"),
+            CastButton::VolumeUp => "volume-up",
+            CastButton::VolumeDown => "volume-down",
+            CastButton::Stop => "cast-stop",
         }
-    }
-
-    /// Whether `cast` takes it.
-    pub(crate) fn taken_by(self, cast: &Cast) -> bool {
-        !self.transport() || cast.kind == CastKind::Target
     }
 }
 
@@ -328,7 +300,7 @@ impl Lan {
         drop(i);
         self.gate.active(id, Active::Cast, true);
         if first && kind == CastKind::Target {
-            self.card(Card::Elsewhere);
+            self.card(Card::Elsewhere { playing: None, position_ms: None });
         }
         self.side.cast(Some(&cast));
     }
@@ -339,15 +311,20 @@ impl Lan {
         (cast.playing, cast.position_ms, cast.volume) = (playing, position_ms, volume);
         let cast = cast.clone();
         drop(i);
+        if cast.kind == CastKind::Target {
+            self.card(Card::Elsewhere { playing: Some(playing), position_ms: Some(position_ms) });
+        }
         self.side.cast(Some(&cast));
     }
 
     pub(crate) fn end_cast(&self, id: &str) {
         let mut i = self.inner();
-        if i.cast.as_ref().is_some_and(|c| c.plugin == id) {
-            i.cast = None;
+        if let Some(c) = i.cast.take_if(|c| c.plugin == id) {
             drop(i);
             self.gate.active(id, Active::Cast, false);
+            if c.kind == CastKind::Target {
+                self.card(Card::Back);
+            }
             self.side.cast(None);
         }
     }

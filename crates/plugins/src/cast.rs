@@ -26,8 +26,12 @@ pub enum Card {
     Sink(Arc<Sink>),
     /// On the device's own output again.
     Here,
-    /// The cast's device plays the songs itself: the player here lets its output go.
-    Elsewhere,
+    /// The cast's device plays the songs itself: the player here lets its output go and keeps the
+    /// queue for it (nori_engine's `play_elsewhere`); whether it plays and where in the song, as it
+    /// last said (None: not said yet).
+    Elsewhere { playing: Option<bool>, position_ms: Option<u64> },
+    /// The cast whose device played the songs ended: the music plays on here from where it was there.
+    Back,
 }
 
 /// What a client does with each [`Card`]: its engine's.
@@ -199,12 +203,11 @@ impl Plugins {
         self.lan.cast()
     }
 
-    /// A key or control for the cast running (the volume keys, another output picked, nori's own
-    /// transport during a target cast): its plugin hears it. Whether the cast took it; a client carries
-    /// out one it didn't as it would without a cast.
+    /// A key or control for the cast running (the volume keys, another output picked): its plugin
+    /// hears it. Whether a cast runs to take it.
     pub fn cast_button(&self, button: CastButton) -> bool {
-        let Some(c) = self.lan.cast().filter(|c| button.taken_by(c)) else { return false };
-        self.tell_one(&c.plugin, Event::MediaButton(button.name(&c)));
+        let Some(c) = self.lan.cast() else { return false };
+        self.tell_one(&c.plugin, Event::MediaButton(button.name().to_string()));
         true
     }
 }

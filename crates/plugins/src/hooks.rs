@@ -176,6 +176,24 @@ impl Plugins {
         self.tasks().spawn(Box::pin(task));
     }
 
+    /// nori's queue moved, played or paused during a cast whose device plays the songs (a press here, a
+    /// plugin's `session`): its plugin hears it as the media buttons `jump:<list index>`,
+    /// `seek:<ms>`, `play` and `pause`; not what only repeats what the device said itself.
+    fn tell_cast(&self, c: &crate::Cast, now: &Moment, was: &Moment, ran: u64) {
+        let mut heard = Vec::new();
+        if now.index != was.index {
+            heard.extend(now.index.map(|i| format!("jump:{i}")));
+        } else if now.position_ms.abs_diff(ran) >= ON_COURSE_MS && now.position_ms.abs_diff(c.position_ms) >= ON_COURSE_MS {
+            heard.push(format!("seek:{}", now.position_ms));
+        }
+        if now.playing != was.playing && now.playing != c.playing {
+            heard.push((if now.playing { "play" } else { "pause" }).to_string());
+        }
+        for h in heard {
+            self.tell_one(&c.plugin, Event::MediaButton(h));
+        }
+    }
+
     /// The moment's position now, as it runs on while playing.
     pub(crate) fn moment(&self) -> (Moment, u64) {
         let (m, at) = self.live.moment.lock().expect("not poisoned").clone();
@@ -192,9 +210,10 @@ impl Plugins {
         self.live.heard.load(Ordering::Relaxed) & bit(hook) != 0
     }
 
-    /// Whether an enabled plugin follows the player: only then does a client say its [`Moment`]s.
+    /// Whether an enabled plugin follows the player, or a cast's device plays the songs: only then does
+    /// a client say its [`Moment`]s.
     pub fn follows(&self) -> bool {
-        self.live.follows.load(Ordering::Relaxed)
+        self.live.follows.load(Ordering::Relaxed) || self.lan.cast().is_some_and(|c| c.kind == crate::CastKind::Target)
     }
 
     /// The player as it is now: playing or paused, the song, the queue, the route; said when any of
@@ -208,6 +227,9 @@ impl Plugins {
             let kept = *self.live.queue_rev.lock().expect("not poisoned");
             !self.hears(Hook::QueueChanged) || (kept.is_some() && kept == self.library().map(|l| l.queue_rev()))
         };
+        if let Some(c) = self.lan.cast().filter(|c| c.kind == crate::CastKind::Target) {
+            self.tell_cast(&c, &moment, &was, ran);
+        }
         if on_course && queue_same() {
             return;
         }

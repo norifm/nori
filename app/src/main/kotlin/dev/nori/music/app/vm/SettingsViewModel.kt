@@ -337,7 +337,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     /** The music comes back to this phone: the plugin casting ends its cast. */
     fun endCast() {
-        viewModelScope.launch { nori.plugins.castButton(dev.nori.music.ffi.plugins.CastButton.Stop) }
+        viewModelScope.launch { nori.plugins.castButton(dev.nori.music.ffi.plugins.CastButton.STOP) }
     }
 
     /** The installed plugins, for a plugin kind's about. */

@@ -428,7 +428,8 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
         match to {
             nori_plugins::Card::Sink(sink) => engine.set_card(Box::new(nori_engine::cast::CastOutput::new(sink)), true),
             nori_plugins::Card::Here => engine.set_card(Box::new(card(device.as_deref()).with_volume(level.clone())), false),
-            nori_plugins::Card::Elsewhere => engine.release_now(),
+            nori_plugins::Card::Elsewhere { playing, position_ms } => engine.play_elsewhere(playing, position_ms.map(|ms| ms as i64)),
+            nori_plugins::Card::Back => engine.come_back(),
         }
     }));
     *plugged.watched.session.lock().expect("not poisoned") = Some(session.weak());
