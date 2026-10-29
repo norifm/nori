@@ -51,6 +51,10 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 webpki-roots = "1"
 # A plugin's UDP socket shares a well-known port (SSDP's) with the system's own listeners.
 socket2 = "0.6"
+# A package's author's signature, checked at install.
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+# Safe mode's marks of the plugin being called: a file a crash leaves as it was.
+memmap2 = "0.9"
 
 [dev-dependencies]
 nori-plugins = { path = ".", features = ["testing"] }

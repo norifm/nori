@@ -215,10 +215,10 @@ impl Plugins {
 
     /// The enabled plugins reaching `device` that extend `point`, in their order.
     fn reaching(&self, device: &BtDevice, point: &str) -> Vec<String> {
-        self.installed().into_iter().filter(|i| i.enabled && i.manifest.extends(point) && i.manifest.reaches_device(device)).map(|i| i.manifest.id.clone()).collect()
+        self.running().into_iter().filter(|i| i.manifest.extends(point) && i.manifest.reaches_device(device)).map(|i| i.manifest.id.clone()).collect()
     }
 
-    fn running(&self, id: &str) -> Option<Worker> {
+    fn live_worker(&self, id: &str) -> Option<Worker> {
         self.workers.lock().expect("not poisoned").get(id).cloned()
     }
 
@@ -226,7 +226,7 @@ impl Plugins {
     /// device that came.
     fn tell_device(&self, device: &BtDevice, came: bool) {
         for id in self.reaching(device, "hooks") {
-            let w = if came { self.worker(&id) } else { self.running(&id) };
+            let w = if came { self.worker(&id) } else { self.live_worker(&id) };
             let event = if came { hooks::Event::DeviceConnected(device.id.clone()) } else { hooks::Event::DeviceDisconnected(device.id.clone()) };
             if let Some(w) = w {
                 w.post(move |s, p| p.nori_plugin_hooks().call_on(s, &event));
@@ -272,7 +272,7 @@ impl Plugins {
     /// plugin controls are offered again, and a plugin turned off lets its devices go.
     pub(crate) fn rewatch(&self) {
         let Some(platform) = self.radio.platform() else { return };
-        let enabled: Vec<String> = self.installed().into_iter().filter(|i| i.enabled && i.manifest.reaches_devices()).map(|i| i.manifest.id.clone()).collect();
+        let enabled: Vec<String> = self.running().into_iter().filter(|i| i.manifest.reaches_devices()).map(|i| i.manifest.id.clone()).collect();
         let want = !enabled.is_empty() || (self.bluetooth_outputs.load(Ordering::Relaxed) && self.hears(Hook::DeviceConnected));
         let was = std::mem::replace(&mut *self.watching.lock().expect("not poisoned"), want);
         if want != was {
@@ -343,7 +343,7 @@ impl Plugins {
             c.iter().position(|c| c.device.id == id).map(|at| c.remove(at))
         };
         if let Some(c) = control {
-            if let Some(w) = self.running(&c.plugin) {
+            if let Some(w) = self.live_worker(&c.plugin) {
                 let device = id.clone();
                 w.post(move |s, p| p.nori_plugin_device_control().call_gone(s, &device));
             }
@@ -364,7 +364,7 @@ impl Plugins {
     /// device's state.
     pub fn bluetooth_heard(&self, link: u64, characteristic: String, bytes: Vec<u8>) {
         let Some(heard) = self.radio.heard(link, &bytes) else { return };
-        let Some(w) = self.running(&heard.plugin) else { return };
+        let Some(w) = self.live_worker(&heard.plugin) else { return };
         let (around, radio) = (self.around(), self.radio.clone());
         w.post(move |s, p| {
             // An RFCOMM channel's bytes a read took already were the answer it waited for.

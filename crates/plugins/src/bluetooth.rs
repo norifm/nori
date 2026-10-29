@@ -301,7 +301,7 @@ impl w::HostRfcomm for Host {
 
     fn read(&mut self, r: Resource<Rfcomm>, max: u32, timeout_ms: u32) -> Result<Vec<u8>, types::Error> {
         let id = self.rfcomm_id(&r)?;
-        self.radio.read(id, max as usize, Duration::from_millis(timeout_ms as u64))
+        self.mark.waiting(|| self.radio.read(id, max as usize, Duration::from_millis(timeout_ms as u64)))
     }
 
     fn write(&mut self, r: Resource<Rfcomm>, bytes: Vec<u8>) -> Result<(), types::Error> {

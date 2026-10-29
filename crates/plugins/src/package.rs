@@ -52,13 +52,14 @@ pub(crate) fn files(from: &Path) -> Result<Vec<(String, Vec<u8>)>, Refusal> {
 }
 
 /// Installs the plugin at `from` into its folder under `root`, replacing an older version but its
-/// store, cache and assets.
-pub(crate) fn install(from: &Path, root: &Path) -> Result<Manifest, Refusal> {
+/// store, cache and assets, once `admits` lets its manifest in.
+pub(crate) fn install(from: &Path, root: &Path, admits: impl FnOnce(&Manifest) -> Result<(), Refusal>) -> Result<Manifest, Refusal> {
     let files = files(from)?;
     let get = |n: &str| files.iter().find(|(name, _)| name == n).map(|(_, b)| b);
     let wasm = get("plugin.wasm").ok_or_else(|| Refusal::Unreadable("no plugin.wasm".into()))?;
     let section = Manifest::section(wasm)?;
     let manifest = Manifest::of_section(&section)?;
+    admits(&manifest)?;
     if manifest.extends("sound-stage") && manifest.stage.is_none() {
         return Err(Refusal::Unreadable("a sound stage without its slot".into()));
     }

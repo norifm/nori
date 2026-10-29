@@ -26,6 +26,9 @@ pub struct KeptPlugin {
     pub enabled: bool,
     #[serde(default)]
     pub held: bool,
+    /// Its author's pinned key (hex): a restore installs only a version signed by it.
+    #[serde(default)]
+    pub key: Option<String>,
     /// Every value in its store, by key, as base64.
     #[serde(default, with = "base64_values")]
     pub store: BTreeMap<String, Vec<u8>>,
@@ -78,16 +81,16 @@ impl Plugins {
                 let id = i.manifest.id.clone();
                 let s = store::Store::new(self.folder(&id).join("store"));
                 let store = s.keys("").into_iter().filter_map(|k| Some((k.clone(), s.get(&k)?))).collect();
-                KeptPlugin { id, version: i.manifest.version.clone(), repo: i.repo, enabled: i.enabled, held: i.held, store }
+                KeptPlugin { id, version: i.manifest.version.clone(), repo: i.repo, enabled: i.enabled, held: i.held, key: i.key, store }
             })
             .collect();
         KeptPlugins { plugins, repos: self.added_repos() }
     }
 
-    /// Puts back the plugins `kept` holds: each fetched from its repo at its version (else the newest
-    /// listed, else the one installed here), its store replaced by the one kept, then the order (theirs
-    /// first, the others after), being on and being held as kept. Plugins installed here and not in
-    /// the backup stay.
+    /// Puts back the plugins `kept` holds: each fetched from its repo at its version signed by the key
+    /// it pinned (else the newest so signed, else the one installed here), its store replaced by the
+    /// one kept, then the order (theirs first, the others after), being on and being held as kept.
+    /// Plugins installed here and not in the backup stay.
     pub async fn restore(&self, kept: KeptPlugins) -> Vec<PluginRestored> {
         for repo in kept.repos {
             self.add_repo(repo);
@@ -97,7 +100,9 @@ impl Plugins {
         for k in &kept.plugins {
             let here = self.installed().into_iter().find(|i| i.manifest.id == k.id).map(|i| i.manifest.version.clone());
             let listed = k.repo.as_ref().and_then(|repo| offers.iter().find(|o| o.id == k.id && o.repo.url == *repo));
-            let wanted = listed.and_then(|o| o.versions.iter().find(|v| v.version == k.version).or(o.versions.first()));
+            // The key pinned when it was backed up still holds: a version signed by another isn't fetched.
+            let signed = |v: &&crate::Version| k.key.is_none() || v.key == k.key;
+            let wanted = listed.and_then(|o| o.versions.iter().filter(signed).find(|v| v.version == k.version).or(o.versions.iter().find(signed)));
             let now = match wanted {
                 _ if here.as_deref() == Some(k.version.as_str()) => here,
                 Some(v) if here.as_deref() == Some(v.version.as_str()) => here,

@@ -2136,6 +2136,10 @@ fn a_plugins_page_draws_a_row_of_each_kind() {
     assert!(line("[ Action row ]").contains("Action row"));
     assert!(line("Status row").contains("All good"));
     assert!(s.contains("GAIN") && s.contains("SECTION ROW") && s.contains("Note row") && s.contains("OTHER"), "{s}");
+    assert!(line("Turn every plugin off").contains("Off"), "{s}");
+    select_row(&mut a, |r| matches!(r, Row::Toggle { switch: Switch::AllOff, .. }));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.split_off(0), vec![Cmd::Setting("pluginsOff".into(), "true".into()), Cmd::Plugin(PluginCmd::Switched)], "the setting, then the plugins told");
 
     // Enter switches the plugin on; J moves it down, K can't move the first up, d removes it.
     select_row(&mut a, |r| matches!(r, Row::Plugin { id, .. } if id == "dev.example.gain"));
@@ -2235,7 +2239,7 @@ fn a_refused_plugin_says_why() {
 
 /// A plugin `name` that `repo` offers at 2.0.0 and 1.0.0, installed here at `installed`.
 fn offer(name: &str, repo: &nori_plugins::Repo, installed: Option<&str>) -> nori_plugins::Offer {
-    let version = |v: &str, day: &str| nori_plugins::Version { repo: repo.url.clone(), version: v.into(), released: Some(day.into()), url: format!("https://pkg.example/{v}"), sha256: String::new() };
+    let version = |v: &str, day: &str| nori_plugins::Version { repo: repo.url.clone(), version: v.into(), released: Some(day.into()), url: format!("https://pkg.example/{v}"), sha256: String::new(), key: None, signature: None };
     nori_plugins::Offer {
         repo: repo.clone(),
         id: format!("dev.example.{}", name.to_lowercase().replace(' ', "-")),
@@ -2316,7 +2320,7 @@ fn a_plugin_says_what_it_is_before_it_is_installed() {
     dump("plugins-preview", &s);
     assert!(s.contains(&format!("Install Test {}?", preview.card.version)) && s.contains("enter install · esc cancel"), "{s}");
     let Some(Overlay::Confirm { lines, .. }) = &a.overlay else { panic!("no sheet") };
-    assert_eq!(lines, &["It's a playback helper, a music source, a sound effect, a mixer, a lyrics source, a scrobbler. It changes playback values.", "Connects to allowed.example and devices on your network. Changes playback.speed. Sees what plays and the queue. Controls playback and the queue. Searches your library. Uses your server's API as you. Wakes at each lyric line while music plays. Starts nori while it is closed (on a phone). Lets other apps run: ping. Keeps up to 1 MB of cache. Downloads 1 MB of files.", "It stays off until you turn it on."]);
+    assert_eq!(lines, &["It's a playback helper, a music source, a sound effect, a mixer, a lyrics source, a scrobbler. It changes playback values.", "Connects to allowed.example and devices on your network. Changes playback.speed. Sees what plays and the queue. Controls playback and the queue. Searches your library. Uses your server's API as you. Wakes at each lyric line while music plays. Starts nori while it is closed (on a phone). Lets other apps run: ping. Keeps up to 1 MB of cache. Downloads 1 MB of files.", "Unsigned", "It stays off until you turn it on."]);
     key(&mut a, KeyCode::Enter);
     let Some(Cmd::Plugin(crate::app::PluginCmd::InstallPreview(p))) = a.cmds.pop() else { panic!("not installed") };
     assert_eq!(plugins.install_preview(*p), Ok(nori_plugins::testing::FIXTURE.into()));

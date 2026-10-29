@@ -331,7 +331,7 @@ impl Kinds {
     /// The kinds a profile can be of here, a Subsonic server's first.
     fn kinds(&self) -> Vec<ServerKind> {
         #[cfg(feature = "plugins")]
-        let plugins: Vec<ServerKind> = self.plugins.iter().flat_map(|p| p.installed()).filter(|i| i.enabled && i.manifest.extends("provider")).map(|i| ServerKind::Plugin { id: i.manifest.id.clone() }).collect();
+        let plugins: Vec<ServerKind> = self.plugins.iter().flat_map(|p| p.running()).filter(|i| i.manifest.extends("provider")).map(|i| ServerKind::Plugin { id: i.manifest.id.clone() }).collect();
         #[cfg(not(feature = "plugins"))]
         let plugins = Vec::new();
         std::iter::once(ServerKind::Subsonic).chain(plugins).collect()

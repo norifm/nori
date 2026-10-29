@@ -260,6 +260,11 @@ pub enum Refusal {
     Id,
     /// It would override a value nori doesn't have.
     UnknownKey(String),
+    /// Its repo lists a signature that isn't its author's key's over this package.
+    Signature,
+    /// It isn't signed by the key the installed plugin was first installed with: it installs only
+    /// once the plugin is removed.
+    OtherKey,
 }
 
 /// For logs (uniffi gives no message).

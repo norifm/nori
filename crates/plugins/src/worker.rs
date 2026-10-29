@@ -11,6 +11,7 @@ use wasmtime::Store;
 
 use crate::manifest::{Manifest, Refusal};
 use crate::runtime::{self, Host, Plugin};
+use crate::safe::Mark;
 
 /// A running instance: its store and its exports.
 pub struct Running {
@@ -27,7 +28,8 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn start(manifest: Arc<Manifest>, dir: PathBuf, component: Component, shared: runtime::Shared) -> Result<Worker, Refusal> {
+    /// Each job on its thread is marked as a call of the plugin's (`mark`), for safe mode.
+    pub(crate) fn start(manifest: Arc<Manifest>, dir: PathBuf, component: Component, shared: runtime::Shared, mark: Mark) -> Result<Worker, Refusal> {
         let linker = runtime::linker(&component)?;
         let (jobs, rx) = mpsc::channel::<Job>();
         let name = format!("plugin {}", manifest.id);
@@ -36,7 +38,7 @@ impl Worker {
             .spawn(move || {
                 // A fresh instance (the first, or one after a call failed), started when it has a lifecycle.
                 let make = || -> wasmtime::Result<Running> {
-                    let mut store = runtime::store(manifest.clone(), &dir, shared.clone());
+                    let mut store = runtime::store(manifest.clone(), &dir, shared.clone(), mark.clone());
                     store.set_fuel(runtime::CALL_FUEL)?;
                     let plugin = Plugin::instantiate(&mut store, &component, &linker)?;
                     if manifest.extends("lifecycle") {
@@ -46,13 +48,15 @@ impl Worker {
                 };
                 let mut running: Option<Running> = None;
                 for job in rx {
-                    if running.is_none() {
-                        running = make().map_err(|e| nori_model::alog::info(&format!("plugin {}: can't start: {e}", manifest.id))).ok();
-                    }
-                    if let Some(r) = running.as_mut() {
-                        let _ = r.store.set_fuel(runtime::CALL_FUEL);
-                    }
-                    job(&mut running);
+                    mark.calling(|| {
+                        if running.is_none() {
+                            running = make().map_err(|e| nori_model::alog::info(&format!("plugin {}: can't start: {e}", manifest.id))).ok();
+                        }
+                        if let Some(r) = running.as_mut() {
+                            let _ = r.store.set_fuel(runtime::CALL_FUEL);
+                        }
+                        job(&mut running);
+                    });
                 }
             })
             .map_err(|e| Refusal::Unreadable(e.to_string()))?;

@@ -1,8 +1,9 @@
 //! Plugin repos: static `index.json` files anyone can host. nori's own is always there; the user adds
 //! others by URL (a client warns first: nori vouches only for its own). An index lists each plugin's
 //! id, name, about and source, and every version it published: its plugin API version, the day it was
-//! released, its package's URL and the package's sha256, which an install checks before anything else.
-//! Old versions stay listed, so a plugin can be taken back to one.
+//! released, its package's URL and the package's sha256, which an install checks before anything else,
+//! and its author's key with the key's ed25519 signature over that sha256 (its 32 bytes). Old versions
+//! stay listed, so a plugin can be taken back to one.
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -49,6 +50,10 @@ struct Release {
     /// Absolute, or relative to the index.
     url: String,
     sha256: String,
+    #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
+    signature: Option<String>,
 }
 
 /// A plugin a repo offers.
@@ -78,6 +83,10 @@ pub struct Version {
     pub released: Option<String>,
     pub url: String,
     pub sha256: String,
+    /// Its author's ed25519 public key (hex), and the key's signature over the package's sha256 (hex):
+    /// both, or neither for an unsigned version.
+    pub key: Option<String>,
+    pub signature: Option<String>,
 }
 
 /// A plugin updated.
@@ -114,6 +123,24 @@ fn resolved(index: &str, url: &str) -> String {
     format!("{base}/{}", url.trim_start_matches("./"))
 }
 
+/// The bytes hex `text` spells; None when it isn't `N` of them.
+fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
+    let mut out = [0; N];
+    if text.len() != 2 * N {
+        return None;
+    }
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = u8::from_str_radix(text.get(2 * i..2 * i + 2)?, 16).ok()?;
+    }
+    Some(out)
+}
+
+/// Whether `signature` (hex) is ed25519 key `key`'s (hex) over `digest`.
+fn signed(key: &str, signature: &str, digest: &[u8]) -> bool {
+    let (Some(key), Some(signature)) = (unhex::<32>(key), unhex::<64>(signature)) else { return false };
+    ed25519_dalek::VerifyingKey::from_bytes(&key).is_ok_and(|k| k.verify_strict(digest, &ed25519_dalek::Signature::from_bytes(&signature)).is_ok())
+}
+
 /// A dotted version's numbers, which order versions.
 fn numbers(v: &str) -> Vec<u64> {
     v.split(['.', '-']).map(|p| p.parse::<u64>().unwrap_or(0)).collect()
@@ -134,7 +161,15 @@ fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
                 .versions
                 .into_iter()
                 .filter(|r| r.api == API || r.api + 1 == API)
-                .map(|r| Version { repo: repo.url.clone(), url: resolved(&repo.url, &r.url), version: r.version, released: r.released, sha256: r.sha256.to_ascii_lowercase() })
+                .map(|r| Version {
+                    repo: repo.url.clone(),
+                    url: resolved(&repo.url, &r.url),
+                    version: r.version,
+                    released: r.released,
+                    sha256: r.sha256.to_ascii_lowercase(),
+                    key: r.key.map(|k| k.to_ascii_lowercase()),
+                    signature: r.signature.map(|s| s.to_ascii_lowercase()),
+                })
                 .collect();
             versions.sort_by_cached_key(|v| std::cmp::Reverse(numbers(&v.version)));
             (!versions.is_empty()).then(|| Offer { repo: repo.clone(), id: l.id, name: l.name, about: l.about, source: l.source, versions, installed: None })
@@ -151,9 +186,15 @@ impl Plugins {
         if !(200..=299).contains(&r.status) {
             return Err(unreadable(format!("HTTP {}", r.status)));
         }
-        let hash: String = Sha256::digest(&r.body).iter().map(|b| format!("{b:02x}")).collect();
+        let digest = Sha256::digest(&r.body);
+        let hash: String = digest.iter().map(|b| format!("{b:02x}")).collect();
         if hash != version.sha256 {
             return Err(unreadable("the package isn't the one its repo lists".into()));
+        }
+        match (&version.key, &version.signature) {
+            (None, None) => {}
+            (Some(key), Some(signature)) if signed(key, signature, &digest) => {}
+            _ => return Err(Refusal::Signature),
         }
         let file = self.dir.join(format!(".{hash}.noriplugin"));
         std::fs::create_dir_all(&self.dir).and_then(|_| std::fs::write(&file, &r.body)).map_err(|e| unreadable(e.to_string()))?;
@@ -218,7 +259,7 @@ impl Plugins {
     /// store and its being on are kept); its id.
     pub async fn install_version(&self, version: Version) -> Result<String, Refusal> {
         let file = self.fetch(&version).await?;
-        let installed = self.install_as(&file, Some(version.repo.clone())).map(|m| m.id.clone());
+        let installed = self.install_as(&file, Some(version.repo.clone()), version.key.clone()).map(|m| m.id.clone());
         let _ = std::fs::remove_file(&file);
         installed
     }
@@ -237,8 +278,9 @@ impl Plugins {
             let Some(repo) = &i.repo else { continue };
             let newest = offers.offers.iter().find(|o| o.id == i.manifest.id && o.repo.url == *repo).and_then(|o| o.versions.first());
             let Some(v) = newest.filter(|v| older(&i.manifest.version, &v.version)) else { continue };
-            if self.install_version(v.clone()).await.is_ok() {
-                done.push(Updated { id: i.manifest.id.clone(), from: i.manifest.version.clone(), to: v.version.clone() });
+            match self.install_version(v.clone()).await {
+                Ok(_) => done.push(Updated { id: i.manifest.id.clone(), from: i.manifest.version.clone(), to: v.version.clone() }),
+                Err(e) => nori_model::alog::info(&format!("plugin {}: not updated to {}: {e}", i.manifest.id, v.version)),
             }
         }
         done

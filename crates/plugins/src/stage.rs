@@ -8,6 +8,7 @@ use wasmtime::component::{Component, Func, Instance, Linker, TypedFunc, WasmList
 use wasmtime::Store;
 
 use crate::runtime::{engine, points::sound_stage};
+use crate::safe::Mark;
 
 /// Fuel for one block (8192 frames or fewer): a few ms of work, well under the block's play time.
 const BLOCK_FUEL: u64 = 400_000_000;
@@ -16,11 +17,13 @@ const BLOCK_FUEL: u64 = 400_000_000;
 pub struct Maker {
     pub(crate) id: String,
     pub(crate) component: Component,
+    /// Its stages' calls, marked for safe mode.
+    pub(crate) mark: Mark,
 }
 
 impl StageMaker for Maker {
     fn make(&self, rate: u32, channels: usize, inputs: &Inputs) -> Option<Box<dyn SoundStage>> {
-        let mut s = Stage { id: self.id.clone(), component: self.component.clone(), live: None, rate, channels, inputs: inputs.clone(), bypassed: false };
+        let mut s = Stage { id: self.id.clone(), component: self.component.clone(), mark: self.mark.clone(), live: None, rate, channels, inputs: inputs.clone(), bypassed: false };
         s.start();
         Some(Box::new(s))
     }
@@ -39,6 +42,7 @@ struct Live {
 struct Stage {
     id: String,
     component: Component,
+    mark: Mark,
     live: Option<Live>,
     rate: u32,
     channels: usize,
@@ -67,7 +71,7 @@ where
 impl Stage {
     /// A fresh instance, configured; bypassed when one can't be made.
     fn start(&mut self) {
-        self.live = self.instantiate().map_err(|e| nori_model::alog::info(&format!("plugin {}: its sound stage can't start: {e}", self.id))).ok();
+        self.live = self.mark.calling(|| self.instantiate()).map_err(|e| nori_model::alog::info(&format!("plugin {}: its sound stage can't start: {e}", self.id))).ok();
         self.bypassed = self.live.is_none();
     }
 
@@ -113,7 +117,7 @@ impl Stage {
             return None;
         }
         let live = self.live.as_mut()?;
-        let r = live.store.set_fuel(BLOCK_FUEL).and_then(|_| call(live));
+        let r = self.mark.calling(|| live.store.set_fuel(BLOCK_FUEL).and_then(|_| call(live)));
         match r {
             Ok(r) => Some(r),
             Err(e) => {

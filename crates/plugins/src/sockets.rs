@@ -102,7 +102,7 @@ impl sockets::HostTcp for Host {
     fn connect(&mut self, host: String, port: u16, timeout_ms: u32) -> Result<Resource<Tcp>, types::Error> {
         let mut last = error(types::ErrorKind::Network, format!("{host} has no address"));
         for address in self.reachable(&host, port)? {
-            match TcpStream::connect_timeout(&address, wait(timeout_ms).expect("some")) {
+            match self.mark.waiting(|| TcpStream::connect_timeout(&address, wait(timeout_ms).expect("some"))) {
                 Ok(stream) => {
                     let _ = stream.set_nodelay(true);
                     return self.table.push(Tcp { stream: Some(Stream::Plain(stream)), peer: address }).map_err(table);
@@ -114,15 +114,17 @@ impl sockets::HostTcp for Host {
     }
 
     fn read(&mut self, s: Resource<Tcp>, max: u32, timeout_ms: u32) -> Result<Vec<u8>, types::Error> {
+        let mark = self.mark.clone();
         let tcp = self.tcp(&s)?;
         tcp.socket().ok_or_else(|| error(types::ErrorKind::Network, "closed"))?.set_read_timeout(wait(timeout_ms)).map_err(failed)?;
         let mut got = vec![0; max.min(READ_MOST) as usize];
-        let n = match tcp.stream.as_mut() {
-            Some(Stream::Plain(s)) => s.read(&mut got),
-            Some(Stream::Tls(t)) => t.read(&mut got),
-            None => Ok(0),
-        }
-        .map_err(failed)?;
+        let n = mark
+            .waiting(|| match tcp.stream.as_mut() {
+                Some(Stream::Plain(s)) => s.read(&mut got),
+                Some(Stream::Tls(t)) => t.read(&mut got),
+                None => Ok(0),
+            })
+            .map_err(failed)?;
         got.truncate(n);
         Ok(got)
     }
@@ -267,7 +269,7 @@ impl sockets::HostUdp for Host {
         let udp = self.table.get(&s).map_err(table)?;
         udp.socket.set_read_timeout(wait(timeout_ms)).map_err(failed)?;
         let mut got = vec![0; READ_MOST as usize];
-        match udp.socket.recv_from(&mut got) {
+        match self.mark.waiting(|| udp.socket.recv_from(&mut got)) {
             Ok((n, from)) => {
                 got.truncate(n);
                 Ok(Some((host_of(from), from.port(), got)))

@@ -115,6 +115,8 @@ pub struct Host {
     pub(crate) cache: crate::cache::Cache,
     /// The host it runs in, for what outlives a call (timers, assets).
     pub(crate) plugins: std::sync::Weak<crate::Plugins>,
+    /// Its calls' mark, lifted while it waits for an answer.
+    pub(crate) mark: crate::safe::Mark,
 }
 
 /// An instance gone (its plugin stopped or turned off, or a call failed) lets go of what it held on
@@ -141,10 +143,12 @@ pub(crate) struct Shared {
     pub(crate) plugins: std::sync::Weak<crate::Plugins>,
 }
 
-/// A store for a plugin instance whose imports reach the host, with its memory capped.
-pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, shared: Shared) -> Store<Host> {
+/// A store for a plugin instance whose imports reach the host, with its memory capped, its calls
+/// marked by `mark`.
+pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, shared: Shared, mark: crate::safe::Mark) -> Store<Host> {
     let Shared { side, transport, radio, lan, plugins } = shared;
     let host = Host {
+        mark,
         limits: StoreLimitsBuilder::new().memory_size(MEMORY_CAP).instances(16).build(),
         id: manifest.id.clone(),
         store: store::Store::new(dir.join("store")),

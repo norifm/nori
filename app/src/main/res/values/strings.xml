@@ -423,6 +423,9 @@
     <string name="settings_section_devices">Other devices</string>
     <string name="settings_remote_control">Remote control and jams</string>
     <string name="settings_hint_remote_control">Remote control, play on another device, Jam, group session, listen together</string>
+    <!-- Settings > Plugins: one switch over every plugin. -->
+    <string name="settings_plugins_off">Turn every plugin off</string>
+    <string name="settings_plugins_off_detail">Each plugin keeps its own switch</string>
     <string name="settings_headphone_sound">Headphone sound</string>
     <string name="settings_headphone_natural">Natural</string>
     <string name="settings_headphone_wide">Wide</string>

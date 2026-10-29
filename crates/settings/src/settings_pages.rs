@@ -592,8 +592,8 @@ mod tests {
         sorted.sort();
         sorted.dedup();
         assert_eq!(sorted.len(), on_pages.len(), "each once");
-        // The equalizer's own screen has these.
-        let elsewhere = ["eq", "eqMode", "eqPreampDb", "limiterThresholdDb", "mono", "limiter", "eqLayout"];
+        // The equalizer's own screen has these, and the Plugins page its switch.
+        let elsewhere = ["eq", "eqMode", "eqPreampDb", "limiterThresholdDb", "mono", "limiter", "eqLayout", "pluginsOff"];
         for s in crate::settings_model::specs() {
             if elsewhere.contains(&s.name.as_str()) || (s.name == "autoMixBetterBeats" && !nori_player::automix::beats::AVAILABLE) {
                 continue;

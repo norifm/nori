@@ -27,6 +27,7 @@ import dev.nori.music.ffi.plugins.MenuEntry
 import dev.nori.music.ffi.plugins.PluginPreview
 import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.plugins.Repo
+import dev.nori.music.ffi.plugins.SafeStart
 import dev.nori.music.ffi.plugins.Value
 import dev.nori.music.ffi.plugins.ControlledDevice
 import dev.nori.music.ffi.plugins.Noise
@@ -296,6 +297,22 @@ class PluginHost(
         refresh()
         _updated.tryEmit(done.map { u -> (_names.value[u.id] ?: u.id) to u })
     }
+
+    /** Why plugins are off at this start, with the names of those that stopped nori; null after the first ask. */
+    suspend fun takeSafeStart(): Pair<SafeStart, List<String>>? = withContext(Dispatchers.IO) {
+        val safe = plugins.takeSafeStart() ?: return@withContext null
+        val names = plugins.cards(lang).associate { it.id to it.name }
+        safe to ((safe as? SafeStart.Crashed)?.plugins.orEmpty().map { names[it] ?: it })
+    }
+
+    /** The app has started (a screen is up, or the player): a crash from now on is no startup crash. */
+    suspend fun started() = withContext(Dispatchers.IO) { plugins.started() }
+
+    /** The switch over every plugin changed: the host reads again what runs, then the cards. */
+    suspend fun switched() = withContext(Dispatchers.IO) { plugins.switched(); refresh() }
+
+    /** The plugins on, and what they override, for a report of a problem (English). */
+    fun report(): String = plugins.report()
 
     suspend fun act(id: String, row: String) = withContext(Dispatchers.IO) { plugins.act(id, row) }
 

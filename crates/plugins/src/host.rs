@@ -131,6 +131,10 @@ pub trait Side: Send + Sync {
     fn asset(&self, _id: &str, _name: &str, _state: crate::AssetState) {}
     /// Say each change of the settings to [`crate::Plugins`] from now on, or stop.
     fn watch_settings(&self, _on: bool) {}
+    /// The user's switch turns every plugin off (their own switches kept).
+    fn all_off(&self) -> bool {
+        false
+    }
 }
 
 /// Where a plugin's overrides are kept in its store.
@@ -245,7 +249,7 @@ fn sent(transport: &dyn Transport, exchange: Exchange) -> Answered {
 impl http::Host for Host {
     fn fetch(&mut self, request: http::Request) -> Answered {
         let (transport, exchange) = self.exchange(request)?;
-        sent(&*transport, exchange)
+        self.mark.waiting(|| sent(&*transport, exchange))
     }
 
     fn start(&mut self, request: http::Request) -> Result<u64, types::Error> {
@@ -274,7 +278,7 @@ impl http::Host for Host {
             if let Some(&id) = ids.iter().find(|id| !matches!(s.answers.get(id), Some(None))) {
                 return id;
             }
-            let Ok((id, answer)) = s.came.recv() else { return ids.first().copied().unwrap_or_default() };
+            let Ok((id, answer)) = self.mark.waiting(|| s.came.recv()) else { return ids.first().copied().unwrap_or_default() };
             if let Some(slot) = s.answers.get_mut(&id) {
                 *slot = Some(answer);
             }

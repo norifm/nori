@@ -162,6 +162,10 @@ impl Side for App {
         });
         self.settings.watch(watch);
     }
+
+    fn all_off(&self) -> bool {
+        self.settings.with_prefs(|p| p.plugins_off).unwrap_or(false)
+    }
 }
 
 /// The plugin host for the app, for a client over uniffi ([`open`]).

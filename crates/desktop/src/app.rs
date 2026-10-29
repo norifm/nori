@@ -779,6 +779,9 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         nori_host::desktop::plugins(&a.data).watched.hear_casts(move |_| tx.send(Msg::Cast));
         let tx = a.tx.clone();
         nori_host::desktop::plugins(&a.data).watched.sign_in_with(move |plugin, url| tx.send(Msg::PluginSignIn { plugin, url }));
+        if let Some((safe, names)) = nori_host::desktop::safe_start(&a.data) {
+            a.say(&words::plugins_safe(&safe, &names), true);
+        }
         a.plugins_read();
         let wake = a.me.clone();
         a.compositor.on_wake(move || wake.with(|a| a.repaint()));
@@ -2644,9 +2647,9 @@ impl App {
         self.settings_shown();
     }
 
-    /// Whether an enabled plugin fills `place`: only then are the plugins asked for it.
+    /// Whether a running plugin fills `place`: only then are the plugins asked for it.
     fn plugins_fill(&self, place: nori_plugins::Place) -> bool {
-        self.plugin_host().installed().iter().any(|i| i.enabled && i.manifest.places.contains(&place))
+        self.plugin_host().running().iter().any(|i| i.manifest.places.contains(&place))
     }
 
     /// Runs plugin menu action `i` of the menus of `Card::kind` `kind` on `items`, off this thread; what
@@ -2745,8 +2748,10 @@ impl App {
         self.plugged.cards.iter().find(|c| c.id == id).map_or_else(|| id.to_string(), |c| c.name.clone())
     }
 
-    /// Updates the plugins once a day, from the open profile's connection.
+    /// Updates the plugins once a day, from the open profile's connection. Called once the window is up
+    /// with its session (or the sign-in), which ends the start for safe mode.
     fn update_plugins(&self) {
+        nori_host::desktop::plugins(&self.data).host.started();
         let tx = self.tx.clone();
         nori_host::desktop::update_plugins(&self.data, move |updated| tx.send(Msg::PluginsUpdated(updated)));
     }
@@ -2754,6 +2759,11 @@ impl App {
     /// Sets a plugin's row, or switches the plugin or its version's hold, to `v`.
     fn plugin_set(&mut self, act: crate::settings::PluginAct, v: nori_plugins::Value) {
         use crate::settings::PluginAct;
+        if let (PluginAct::AllOff, nori_plugins::Value::Switch(off)) = (&act, &v) {
+            self.setting("pluginsOff", &off.to_string());
+            self.plugin_host().switched();
+            return self.plugins_read();
+        }
         let host = self.plugin_host();
         match (act, v) {
             (PluginAct::Turn(id), nori_plugins::Value::Switch(on)) => host.turn(id, on),
@@ -2806,7 +2816,7 @@ impl App {
                 return;
             }
             PluginAct::AllowMobile(id) => host.allow_mobile_assets(id),
-            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::TrustRepo(_) | PluginAct::InstallPreview | PluginAct::Noise(_) => return,
+            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::TrustRepo(_) | PluginAct::InstallPreview | PluginAct::Noise(_) => return,
         }
         self.plugins_read();
     }

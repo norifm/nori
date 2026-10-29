@@ -136,6 +136,20 @@ pub fn restore_backup(data: &Path, path: std::path::PathBuf, password: String, d
     });
 }
 
+/// Why plugins are off at this start, with the names of those nori stopped in; None after the first ask.
+pub fn safe_start(data: &Path) -> Option<(nori_plugins::SafeStart, Vec<String>)> {
+    let host = &plugins(data).host;
+    let safe = host.take_safe_start()?;
+    let names = match &safe {
+        nori_plugins::SafeStart::Crashed { plugins } => {
+            let cards = host.cards("en".into());
+            plugins.iter().map(|id| cards.iter().find(|c| c.id == *id).map_or_else(|| id.clone(), |c| c.name.clone())).collect()
+        }
+        nori_plugins::SafeStart::AllOff => Vec::new(),
+    };
+    Some((safe, names))
+}
+
 /// Where a plugin a repo offers stands here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OfferState {

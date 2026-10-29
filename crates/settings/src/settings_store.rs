@@ -265,8 +265,11 @@ pub struct Settings {
 pub type Watch = Arc<dyn Fn(&StoredPrefs, &StoredPrefs) + Send + Sync>;
 
 impl Settings {
-    /// What enabled plugins lay over the settings now.
+    /// What enabled plugins lay over the settings now: nothing while the switch turns every plugin off.
     pub fn layer(&self) -> crate::overrides::Layer {
+        if self.with_prefs(|p| p.plugins_off) == Some(true) {
+            return crate::overrides::Layer::default();
+        }
         self.layer.lock().clone()
     }
 
@@ -716,6 +719,21 @@ mod tests {
         assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25")])), 0, "the same layer");
         assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25"), ("crossfadeSec", "6")])), APPLY_AUDIO | REPLAN, "a setting's own effect");
         assert_eq!(s.set_layer(Layer::default()), APPLY_AUDIO | REPLAN, "turned off, both go back");
+    }
+
+    #[test]
+    fn the_switch_turning_every_plugin_off_leaves_their_layer_out_until_it_goes_back() {
+        use crate::overrides::Layer;
+        let dir = nori_testdir::TempDir::new("settings-plugins-off");
+        let s = Settings::new();
+        s.open(dir.path().join("app.db").to_str().unwrap()).unwrap();
+        let laid = Layer { overrides: vec![("crossfadeSec".into(), "6".into())], ..Layer::default() };
+        s.set_layer(laid.clone());
+        let off = s.edit_by_name("pluginsOff", "true").unwrap();
+        assert_ne!(off.effect & REPLAN, 0, "what a plugin overrides is applied again");
+        assert_eq!(s.layer(), Layer::default());
+        s.edit_by_name("pluginsOff", "false").unwrap();
+        assert_eq!(s.layer(), laid, "kept while off");
     }
 
     #[test]

@@ -256,8 +256,24 @@ pub fn plugin_refused(r: &nori_plugins::Refusal) -> String {
         Refusal::Needs(what) => format!("needs: {}", what.join(", ")),
         Refusal::Id => "its id isn't a reverse domain name".into(),
         Refusal::UnknownKey(key) => format!("changes {key}, which nori doesn't have"),
+        Refusal::Signature => "its signature doesn't match its author's key".into(),
+        Refusal::OtherKey => "it isn't signed by the author it was installed from (remove the plugin to install it)".into(),
     };
     format!("Not installed: {why}")
+}
+
+pub const EVERY_PLUGIN: &str = "Every plugin";
+pub const PLUGINS_OFF: &str = "Turn every plugin off";
+pub const PLUGINS_OFF_NOTE: &str = "Each plugin keeps its own switch";
+pub const UNSIGNED: &str = "Unsigned";
+
+/// Why plugins are off at this start: the `names` of those nori stopped in, or none for a start that
+/// didn't finish.
+pub fn plugins_safe(safe: &nori_plugins::SafeStart, names: &[String]) -> String {
+    match safe {
+        nori_plugins::SafeStart::Crashed { .. } => format!("nori stopped while {} was running. It's off now.", names.join(", ")),
+        nori_plugins::SafeStart::AllOff => "nori didn't finish starting last time. Plugins are off until it starts again.".into(),
+    }
 }
 
 /// A plugin's level with `decimals` digits, its unit after it.

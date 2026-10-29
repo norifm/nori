@@ -53,6 +53,9 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     // What plugins show while they run, said as the app's own messages are.
     init { viewModelScope.launch { nori.plugins.notices.collect { _messages.trySend(it.line) } } }
 
+    // Plugins off at this start (safe mode), said once a process.
+    init { viewModelScope.launch { nori.plugins.takeSafeStart()?.let { (safe, names) -> _messages.trySend(say.pluginsSafe(safe, names)) } } }
+
     /** The actions plugins add to each kind of item's menu, read before any menu opens. */
     val pluginMenus = nori.plugins.menus
 

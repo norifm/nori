@@ -794,4 +794,9 @@
     <string name="plugins_refused_id">This plugin’s id isn’t valid.</string>
     <string name="plugins_refused_key">This plugin changes a setting nori doesn’t have: %1$s.</string>
     <string name="plugins_refused_other">Couldn’t install it. Nothing changed.</string>
+    <string name="plugins_refused_signature">Its signature doesn’t match its author’s key. Nothing changed.</string>
+    <string name="plugins_refused_other_key">This version isn’t signed by the author it was installed from. Remove the plugin to install it.</string>
+    <string name="plugins_unsigned">Unsigned</string>
+    <string name="plugins_safe_crashed">nori stopped while %1$s was running. It’s off now.</string>
+    <string name="plugins_safe_all_off">nori didn’t finish starting last time. Plugins are off until it starts again.</string>
 </resources>

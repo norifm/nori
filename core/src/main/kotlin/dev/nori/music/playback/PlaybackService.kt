@@ -280,6 +280,8 @@ class PlaybackService : MediaLibraryService() {
         scope.launch { nori.remotes.mirror.collect(::mirrored) }
         scope.launch { nori.plugins.cast.collect(::casted) }
         restoreQueue()
+        // The player is up, with the plugins' layer: a crash from here on is no startup crash for safe mode.
+        scope.launch { nori.plugins.started() }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session

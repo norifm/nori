@@ -143,12 +143,19 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
         is Refusal.Needs -> res.getString(R.string.plugins_refused_needs, e.v1.joinToString(", "))
         is Refusal.Id -> res.getString(R.string.plugins_refused_id)
         is Refusal.UnknownKey -> res.getString(R.string.plugins_refused_key, e.v1)
+        is Refusal.Signature -> res.getString(R.string.plugins_refused_signature)
+        is Refusal.OtherKey -> res.getString(R.string.plugins_refused_other_key)
     }
 
     fun turn(id: String, on: Boolean) = viewModelScope.launch { host.turn(id, on) }
 
     /** The devices sheet shows (true) or went (false). */
     fun outputPicker(open: Boolean) { viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { host.outputPicker(open) } }
+
+    /** The switch over every plugin: the setting, then the plugin host told. */
+    fun allOff(settings: SettingsViewModel, off: Boolean) {
+        if (settings.set("pluginsOff", off.toString())) viewModelScope.launch { host.switched() }
+    }
 
     /** Moves plugin [id] one place [by] (−1 up, 1 down). */
     fun move(id: String, by: Int) {

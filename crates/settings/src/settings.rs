@@ -635,6 +635,10 @@ pub struct StoredPrefs {
     /// Remote playback control and hosting jams, through the relay or the local network.
     #[setting("remoteControl", FLAG, default = true, show = K::Switch)]
     pub remote_control: bool,
+    /// Every plugin off, each one's own switch kept: nothing is laid over the settings and no plugin is
+    /// called, to tell a nori bug from a plugin's. Any value a plugin overrides may change.
+    #[setting("pluginsOff", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO | APPLY_GAIN | REPLAN | SOUND | PLAYER | CACHE_LIMIT)]
+    pub plugins_off: bool,
     /// The home page's rows, in order; unlisted rows are hidden.
     #[setting("homeRows", Picks, default = HomeRow::ALL.to_vec(), hidden)]
     pub home_rows: Vec<HomeRow>,

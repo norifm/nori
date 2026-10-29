@@ -101,6 +101,11 @@ fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, back: () -> Un
                     )
                 }
             }
+            val prefs by sound.prefs.collectAsStateWithLifecycle()
+            Spacer(Modifier.height(8.dp))
+            GroupCard {
+                Toggle(say.pluginsOff, say.pluginsOffDetail, prefs.pluginsOff, key = "pluginsOff", divider = false) { off -> vm.allOff(sound, off) }
+            }
         }
         Column(Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             PillButton(say.pluginsInstallFile, null, { pick.launch(arrayOf("*/*")) }, Modifier.fillMaxWidth().testTag("plugin-install-file"))
@@ -218,7 +223,7 @@ private fun InstallSheet(vm: PluginsViewModel) {
             TextAction(say.pluginInstall, vm::installPreview, Modifier.testTag("install-confirm"))
         }) {
             c.about?.let { Text(it) }
-            Quiet(listOfNotNull(say.pluginVersion(c.version), c.kinds().takeIf { it.isNotEmpty() }, p.repo?.let { android.net.Uri.parse(it).host }).joinToString(" · "))
+            Quiet(listOfNotNull(say.pluginVersion(c.version), c.kinds().takeIf { it.isNotEmpty() }, p.repo?.let { android.net.Uri.parse(it).host }, say.pluginUnsigned.takeIf { p.key == null }).joinToString(" · "))
             Text(say.pluginMayTitle, style = MaterialTheme.typography.titleSmall)
             say.pluginMay(c).forEach { Text("· $it") }
         }

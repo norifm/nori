@@ -13,6 +13,11 @@ pub const FIXTURE: &str = "fm.nori.test";
 /// Its id built with the `second` feature.
 pub const SECOND: &str = "fm.nori.test.second";
 
+/// Marks `plugins` as calling plugin `id` from now on, as when nori stops in one of its calls.
+pub fn stop_in_a_call(plugins: &crate::Plugins, id: &str) {
+    plugins.marks.mark(id, crate::safe::Caller::Worker).set(crate::safe::CALLING, 1);
+}
+
 /// The test plugin built with `features`, in a plugin folder of its own.
 pub fn fixture(features: &str) -> PathBuf {
     static MADE: AtomicU32 = AtomicU32::new(0);

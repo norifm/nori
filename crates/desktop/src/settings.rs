@@ -728,6 +728,8 @@ pub enum PluginAct {
     /// Moves the plugin up (-1) or down (+1) the order.
     Move(String, i32),
     Remove(String),
+    /// The switch over every plugin (the `pluginsOff` setting).
+    AllOff,
     /// Asks for a file or folder to install.
     Install,
     /// Installs the plugin its sheet shows.
@@ -763,6 +765,7 @@ impl PluginAct {
             "plugin-up" => PluginAct::Move(id(), -1),
             "plugin-down" => PluginAct::Move(id(), 1),
             "plugin-remove" => PluginAct::Remove(id()),
+            "plugins-off" => PluginAct::AllOff,
             "plugin-install" => PluginAct::Install,
             "plugin-install-preview" => PluginAct::InstallPreview,
             "plugin-look" => PluginAct::Look,
@@ -788,6 +791,7 @@ impl PluginAct {
             PluginAct::Row(id, row) => format!("plugin-row:{id}:{row}"),
             PluginAct::Move(id, by) => format!("{}:{id}", if *by < 0 { "plugin-up" } else { "plugin-down" }),
             PluginAct::Remove(id) => format!("plugin-remove:{id}"),
+            PluginAct::AllOff => "plugins-off".into(),
             PluginAct::Install => "plugin-install".into(),
             PluginAct::InstallPreview => "plugin-install-preview".into(),
             PluginAct::Look => "plugin-look".into(),
@@ -805,11 +809,15 @@ impl PluginAct {
 /// Settings › Plugins: each plugin's group of its own rows and its page's; installing one from a file
 /// or a repo; the repos.
 pub fn plugin_rows(p: &Plugged, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
-    model(plugin_groups(p), prefs, f, today)
+    model(plugin_groups(p, prefs.plugins_off), prefs, f, today)
 }
 
-fn plugin_groups(p: &Plugged) -> Vec<(String, Vec<Row>)> {
+fn plugin_groups(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
     let mut groups = Vec::new();
+    if !p.cards.is_empty() {
+        let off = Row { kind: TOGGLE, name: PluginAct::AllOff.name(), title: words::PLUGINS_OFF.into(), detail: words::PLUGINS_OFF_NOTE.into(), on: all_off, enabled: true, ..Default::default() };
+        groups.push((words::EVERY_PLUGIN.into(), vec![off]));
+    }
     let count = p.cards.len();
     for (i, c) in p.cards.iter().enumerate() {
         let mut detail: Vec<String> = c.about.iter().cloned().collect();
@@ -1164,7 +1172,7 @@ mod tests {
             row("state", RowKind::Status, Some(Value::Text("Fine".into()))),
         ];
         let official = Repo { url: nori_plugins::OFFICIAL.into(), official: true };
-        let version = |v: &str| Version { repo: official.url.clone(), version: v.into(), released: None, url: String::new(), sha256: String::new() };
+        let version = |v: &str| Version { repo: official.url.clone(), version: v.into(), released: None, url: String::new(), sha256: String::new(), key: None, signature: None };
         let offer = Offer { repo: official.clone(), id: "a.one".into(), name: "One".into(), about: None, source: Some("https://code.example".into()), versions: vec![version("2.0.0"), version("1.0.0")], installed: Some("1.0.0".into()) };
         let buds = nori_plugins::ControlledDevice { id: "AA".into(), name: "Buds".into(), battery: nori_plugins::Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: None, noise_modes: Vec::new(), card: card("a.one", Vec::new()) };
         let p = Plugged {
@@ -1175,7 +1183,9 @@ mod tests {
             repos: vec![official],
             shelf: Shelf::Read(Offers { offers: vec![offer], failed: Vec::new() }),
         };
-        let groups = plugin_groups(&p);
+        let all = plugin_groups(&p, true);
+        assert_eq!((all[0].0.as_str(), all[0].1[0].name.as_str(), all[0].1[0].on), (words::EVERY_PLUGIN, "plugins-off", true), "the switch over every plugin first");
+        let groups = &all[1..];
         let titles: Vec<&str> = groups.iter().map(|(t, _)| t.as_str()).collect();
         assert_eq!(titles, ["a.one", "Buds", "more", "a.one · Files", "a.one · Versions", "a.two", "From a file", "Get plugins", "Repos"]);
         assert_eq!((groups[1].1[0].kind, groups[1].1[0].detail.as_str()), (INFO, "80%"), "the device it controls, with its battery");

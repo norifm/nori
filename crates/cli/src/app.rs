@@ -196,6 +196,8 @@ pub enum Cmd {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PluginCmd {
     Read,
+    /// The switch over every plugin changed.
+    Switched,
     /// Shows the `.noriplugin` or plugin folder at this path before it is installed.
     Install(String),
     /// Installs what the sheet showed.
@@ -768,6 +770,7 @@ fn preview_sheet(p: nori_plugins::PluginPreview) -> Overlay {
         lines.push(crate::text::REACHES_BLUETOOTH.into());
     }
     lines.extend(p.repo.as_deref().map(crate::text::from_repo));
+    lines.extend(p.key.is_none().then(|| crate::text::UNSIGNED.to_string()));
     lines.push(crate::text::INSTALLED_OFF.into());
     Overlay::Confirm { title: crate::text::install_version(&c.name, &c.version), lines, yes: crate::text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::InstallPreview(Box::new(p)))) }
 }
@@ -3447,7 +3450,7 @@ impl App {
             Switch::Mouse => self.do_action(Action::Mouse),
             Switch::Images => self.do_action(Action::Images),
             Switch::Transparent => self.cmds.push(Cmd::Paint(!self.paint)),
-            Switch::Setting(_) | Switch::Stores(..) | Switch::Plugin { .. } | Switch::Hold(_) => {}
+            Switch::Setting(_) | Switch::Stores(..) | Switch::Plugin { .. } | Switch::Hold(_) | Switch::AllOff => {}
         }
         self.settings.invalidate();
     }

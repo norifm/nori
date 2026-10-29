@@ -50,6 +50,8 @@ pub enum Switch {
     Plugin { plugin: String, row: String },
     /// Keeps a plugin at its version: no automatic updates.
     Hold(String),
+    /// Every plugin off (the `pluginsOff` setting), the plugins read again after.
+    AllOff,
 }
 
 /// A settings group: a headed part of the page, and what it holds in a few words.
@@ -416,7 +418,7 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own, t
         Gid::Own if !f.rules.settings.contains(&SettingsPart::Look) => Vec::new(),
         Gid::Own => own_page(own, f),
         Gid::Plugins if !f.rules.settings.contains(&SettingsPart::Look) => Vec::new(),
-        Gid::Plugins => plugins_page(own),
+        Gid::Plugins => plugins_page(own, p.plugins_off),
         Gid::About if !f.rules.settings.contains(&SettingsPart::About) => Vec::new(),
         Gid::About => about(own),
         Gid::Core(page) => {
@@ -462,9 +464,12 @@ fn own_page(o: &Own, f: &Facts) -> Vec<Section> {
 
 /// The plugins, each a section of its own row and its page's rows, the devices it controls and its
 /// assets; installing one from a file or a repo; the repos.
-fn plugins_page(own: &Own) -> Vec<Section> {
+fn plugins_page(own: &Own, all_off: bool) -> Vec<Section> {
     let (cards, repos, shelf) = (&own.plugins, &own.repos, &own.shelf);
     let mut sections = Vec::new();
+    if !cards.is_empty() {
+        sections.push(section(text::EVERY_PLUGIN, vec![Row::Toggle { switch: Switch::AllOff, title: text::PLUGINS_OFF.into(), detail: text::PLUGINS_OFF_NOTE.into(), on: all_off, enabled: true }]));
+    }
     for (i, c) in cards.iter().enumerate() {
         let mut detail: Vec<String> = c.about.iter().cloned().collect();
         detail.extend([text::plugin_is(&c.points, !c.overrides.is_empty()), text::plugin_reach(c)].into_iter().filter(|l| !l.is_empty()));
@@ -554,6 +559,11 @@ fn versions(c: &PluginCard, offers: &Offers) -> Vec<Section> {
     vec![section(text::VERSIONS, rows)]
 }
 
+/// The switch over every plugin set to `off`, then the plugins told and read again.
+fn all_off(off: bool) -> Vec<Cmd> {
+    vec![Cmd::Setting("pluginsOff".into(), off.to_string()), Cmd::Plugin(PluginCmd::Switched)]
+}
+
 /// Enter on `row`.
 pub fn open_row(row: Row) -> Option<Opened> {
     Some(match row {
@@ -566,6 +576,7 @@ pub fn open_row(row: Row) -> Option<Opened> {
         Row::Toggle { switch: Switch::Stores(name, value), .. } => Opened::Cmds(vec![Cmd::Setting(name, value)]),
         Row::Toggle { switch: Switch::Plugin { plugin, row }, on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(!on)))]),
         Row::Toggle { switch: Switch::Hold(plugin), on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Hold(plugin, !on))]),
+        Row::Toggle { switch: Switch::AllOff, on, .. } => Opened::Cmds(all_off(!on)),
         Row::Toggle { switch, .. } => Opened::Own(switch),
         Row::Choice { target, title, options, shown, enabled: true, .. } => {
             let at = options.iter().position(|o| o.0 == shown).unwrap_or(0);
@@ -624,6 +635,7 @@ pub fn step_row(row: Row, up: bool) -> Vec<Cmd> {
                 Switch::Setting(_) | Switch::Stores(..) => Vec::new(),
                 Switch::Plugin { plugin, row } => vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(up)))],
                 Switch::Hold(plugin) => vec![Cmd::Plugin(PluginCmd::Hold(plugin, up))],
+                Switch::AllOff => all_off(up),
                 Switch::Mouse => vec![Cmd::Mouse(up)],
                 Switch::Images => vec![Cmd::Images(up)],
                 Switch::Transparent => vec![Cmd::Paint(!up)],

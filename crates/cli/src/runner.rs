@@ -222,6 +222,9 @@ pub fn run(o: Options) -> Result<(), String> {
     nori_host::desktop::plugins(&r.o.data).watched.sign_in_with(move |plugin, url| {
         let _ = asks.send(Msg::PluginSignIn { plugin, url });
     });
+    if let Some((safe, names)) = nori_host::desktop::safe_start(&r.o.data) {
+        app.say(crate::text::plugins_safe(&safe, &names), true);
+    }
     match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => {
@@ -360,8 +363,10 @@ impl Runner {
         app.dirty = true;
     }
 
-    /// Updates the plugins once a day.
+    /// Updates the plugins once a day. Called once the session (or the sign-in) is up, which ends the
+    /// start for safe mode.
     fn update_plugins(&self) {
+        nori_host::desktop::plugins(&self.o.data).host.started();
         let tx = self.tx.clone();
         nori_host::desktop::update_plugins(&self.o.data, move |updated| {
             let _ = tx.send(Msg::Updated(updated));
@@ -376,6 +381,7 @@ impl Runner {
         let tx = self.tx.clone();
         match c {
             PluginCmd::Read => {}
+            PluginCmd::Switched => host.switched(),
             PluginCmd::Install(path) => nori_host::spawn("nori-plugin-preview", move || {
                 let _ = tx.send(Msg::Preview(host.preview_file(path, "en".into())));
             }),
@@ -432,7 +438,7 @@ impl Runner {
                 o.installed = cards.iter().find(|c| c.id == o.id).map(|c| c.version.clone());
             }
         }
-        app.slots.asked = cards.iter().any(|c| c.enabled && c.points.iter().any(|p| p == "slots"));
+        app.slots.asked = host.running().iter().any(|i| i.manifest.extends("slots"));
         own.off = plugged.watched.as_said(&mut cards);
         own.assets = cards.iter().map(|c| (c.id.clone(), host.assets(c.id.clone()))).filter(|(_, a)| !a.is_empty()).collect();
         own.plugins = cards;

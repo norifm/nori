@@ -82,11 +82,11 @@ impl Plugins {
     /// removed: the hooks' bits, the timers, the wake receivers and commands the client keeps on, and
     /// the Bluetooth watch.
     pub(crate) fn refresh(&self) {
-        let on: Vec<_> = self.installed().into_iter().filter(|i| i.enabled).collect();
+        let on = self.running();
         let heard = on.iter().flat_map(|i| Hook::ALL.into_iter().filter(|h| i.manifest.hears(*h))).fold(0, |b, h| b | bit(h));
         self.live.heard.store(heard, Ordering::Relaxed);
         self.live.follows.store(heard != 0 || on.iter().any(|i| i.manifest.may(Permission::PlaybackRead)), Ordering::Relaxed);
-        for i in self.installed().iter().filter(|i| !i.enabled) {
+        for i in self.installed().iter().filter(|i| !on.iter().any(|o| o.manifest.id == i.manifest.id)) {
             self.timers.stop_all(&i.manifest.id);
             self.gate.idle(&i.manifest.id);
         }
@@ -110,7 +110,7 @@ impl Plugins {
 
     /// Hands `event` to plugin `id`'s hooks, starting its instance if it has none.
     pub(crate) fn tell_one(&self, id: &str, event: Event) {
-        if !self.installed().iter().any(|i| i.enabled && i.manifest.id == id && i.manifest.extends("hooks")) {
+        if !self.running().iter().any(|i| i.manifest.id == id && i.manifest.extends("hooks")) {
             return;
         }
         if let Some(w) = self.worker(id) {
@@ -128,7 +128,7 @@ impl Plugins {
         if !self.hears(hook) {
             return;
         }
-        let hearing: Vec<String> = self.installed().into_iter().filter(|i| i.enabled && i.manifest.hears(hook) && !told.contains(&i.manifest.id)).map(|i| i.manifest.id.clone()).collect();
+        let hearing: Vec<String> = self.running().into_iter().filter(|i| i.manifest.hears(hook) && !told.contains(&i.manifest.id)).map(|i| i.manifest.id.clone()).collect();
         if hearing.is_empty() {
             return;
         }

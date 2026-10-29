@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use nori_net::transport::{Exchange, HttpHeader, HttpMethod, Network, Transport, TransportError, TransportResponse};
 use nori_plugins::testing::{fixture, FIXTURE};
-use nori_plugins::{Plugins, Refusal, Side, Value};
+use nori_plugins::{Plugins, Refusal, SafeStart, Side, Value};
 
 /// Counts this thread's allocations while `COUNTING` is on.
 struct Counting;
@@ -91,6 +91,7 @@ struct Session {
     /// Notices shown: words and args.
     notices: Mutex<Vec<(String, Vec<String>)>>,
     laid: Mutex<Vec<String>>,
+    all_off: Mutex<bool>,
 }
 
 impl Side for Session {
@@ -107,6 +108,9 @@ impl Side for Session {
     fn shown(&self, _: &str, _: &str, _: bool, _: bool) {}
     fn notice(&self, _: &str, _: bool, words: &str, args: &[String]) {
         self.notices.lock().unwrap().push((words.to_string(), args.to_vec()));
+    }
+    fn all_off(&self) -> bool {
+        *self.all_off.lock().unwrap()
     }
 }
 
@@ -388,4 +392,134 @@ fn slots_ask_the_plugins_that_fill_them() {
     assert_eq!((info[0].name.as_str(), info[0].lines[0].words.as_str()), ("Test", "4 letters"));
     assert_eq!(nori_tasks::block_on(plugins.player_status()), vec!["Testing".to_string()]);
     assert_eq!(plugins.device_cards("en".into()).iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec![ID]);
+}
+
+/// `pkg`'s sha256 (hex), the key made from `seed` (hex), and that key's signature over the sha256 (hex).
+fn signed(pkg: &[u8], seed: u8) -> (String, String, String) {
+    use ed25519_dalek::Signer;
+    use sha2::Digest;
+    let hex = |b: &[u8]| b.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let digest = sha2::Sha256::digest(pkg);
+    let key = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+    (hex(&digest), hex(key.verifying_key().as_bytes()), hex(&key.sign(&digest).to_bytes()))
+}
+
+#[test]
+fn the_key_a_plugin_is_first_signed_by_signs_every_update() {
+    let dir = nori_testdir::TempDir::new("plugins-signed");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.set_transport(Some(session.web.clone()));
+    let repo = "https://friend.example/index.json";
+    plugins.add_repo(repo.into());
+    let pkg = package();
+    let ((sha, a, by_a), (_, b, by_b)) = (signed(&pkg, 1), signed(&pkg, 2));
+    let listed = |v: &str, key: &str, signature: &str| format!(r#"{{"version": "{v}", "api": 1, "url": "t-{v}.noriplugin", "sha256": "{sha}", "key": "{key}", "signature": "{signature}"}}"#);
+    let versions = [listed("0.1.0", &a, &by_a), listed("0.2.0", &a, &by_b), listed("0.3.0", &b, &by_b), format!(r#"{{"version": "0.4.0", "api": 1, "url": "t-0.4.0.noriplugin", "sha256": "{sha}"}}"#)];
+    let mut serves = vec![(repo.to_string(), format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [{}]}}]}}"#, versions.join(",")).into_bytes())];
+    serves.extend(["0.1.0", "0.2.0", "0.3.0", "0.4.0"].map(|v| (format!("https://friend.example/t-{v}.noriplugin"), pkg.clone())));
+    *session.web.serves.lock().unwrap() = serves;
+    let offer = nori_tasks::block_on(plugins.offers()).offers.into_iter().find(|o| o.id == ID).unwrap();
+    let version = |v: &str| offer.versions.iter().find(|x| x.version == v).unwrap().clone();
+    let install = |v: &str| nori_tasks::block_on(plugins.install_version(version(v)));
+
+    assert_eq!(install("0.2.0"), Err(Refusal::Signature), "signed by another key than the one listed");
+    let unsigned = nori_tasks::block_on(plugins.preview_version(version("0.4.0"), "en".into())).unwrap();
+    assert_eq!(unsigned.key, None, "the sheet says it is unsigned");
+    assert_eq!(plugins.install_preview(unsigned), Ok(ID.to_string()), "unsigned, while no key is pinned");
+    assert_eq!(install("0.1.0"), Ok(ID.to_string()), "the first signed version");
+    assert_eq!(plugins.installed()[0].key.as_deref(), Some(a.as_str()), "pins its key");
+    assert_eq!(install("0.3.0"), Err(Refusal::OtherKey));
+    assert_eq!(install("0.4.0"), Err(Refusal::OtherKey), "nor unsigned");
+    assert_eq!(plugins.preview_file(fixture("").to_string_lossy().into_owned(), "en".into()).map(|p| p.card.id), Err(Refusal::OtherKey), "nor a file");
+    assert_eq!(plugins.install(&fixture("")).map(|m| m.id.clone()), Err(Refusal::OtherKey));
+    assert_eq!(plugins.installed()[0].manifest.version, "0.1.0", "what was refused left the plugin as it was");
+    assert_eq!(Plugins::open(dir.path().to_path_buf(), session.clone()).installed()[0].key.as_deref(), Some(a.as_str()), "kept in the index");
+
+    // A backup keeps the pin: a restore elsewhere passes over a version signed by another key.
+    let mut kept = plugins.kept();
+    kept.plugins[0].version = "0.3.0".into();
+    let two = format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [{}, {}]}}]}}"#, versions[2], versions[0]);
+    session.web.serves.lock().unwrap()[0].1 = two.into_bytes();
+    let elsewhere = nori_testdir::TempDir::new("plugins-signed-restore");
+    let restored = Plugins::open(elsewhere.path().to_path_buf(), session.clone());
+    restored.set_transport(Some(session.web.clone()));
+    let back = nori_tasks::block_on(restored.restore(kept));
+    assert_eq!(back[0].outcome, nori_plugins::PluginReturn::Other { version: "0.1.0".into() }, "the newest its key signed");
+    assert_eq!(restored.installed()[0].key.as_deref(), Some(a.as_str()));
+
+    plugins.uninstall(ID.into());
+    assert_eq!(install("0.3.0"), Ok(ID.to_string()), "removed, it installs again from another key");
+    assert_eq!(plugins.installed()[0].key.as_deref(), Some(b.as_str()));
+}
+
+/// Turns plugin `id` on in `dir`'s index without starting it, as a run before left it.
+fn left_on(dir: &std::path::Path, id: &str) {
+    let path = dir.join("index.json");
+    let mut index: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    index["plugin"].as_array_mut().unwrap().iter_mut().filter(|p| p["id"] == id).for_each(|p| p["enabled"] = true.into());
+    std::fs::write(path, index.to_string()).unwrap();
+}
+
+#[test]
+fn a_plugin_nori_stopped_in_is_off_at_the_next_start() {
+    let dir = nori_testdir::TempDir::new("plugins-crashed");
+    let open = || Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()));
+    open().install(&fixture("")).unwrap();
+    left_on(dir.path(), ID);
+    let plugins = open();
+    assert_eq!(plugins.take_safe_start(), None);
+    plugins.started();
+    nori_plugins::testing::stop_in_a_call(&plugins, ID);
+    drop(plugins);
+
+    let next = open();
+    assert_eq!(next.take_safe_start(), Some(SafeStart::Crashed { plugins: vec![ID.to_string()] }));
+    assert_eq!(next.take_safe_start(), None, "said once");
+    assert!(!next.installed()[0].enabled && next.running().is_empty());
+    drop(next);
+    let after = open();
+    assert_eq!((after.take_safe_start(), after.installed()[0].enabled), (None, false), "kept off");
+}
+
+#[test]
+fn a_start_that_never_finished_starts_once_with_every_plugin_off() {
+    let dir = nori_testdir::TempDir::new("plugins-start-crashed");
+    let open = || Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()));
+    open().install(&fixture("")).unwrap();
+    left_on(dir.path(), ID);
+    drop(open());
+
+    let safe = open();
+    assert_eq!(safe.take_safe_start(), Some(SafeStart::AllOff));
+    assert!(safe.running().is_empty() && safe.stages().is_empty() && safe.worker(ID).is_none(), "nothing runs");
+    assert!(safe.installed()[0].enabled, "its own switch kept");
+    assert!(safe.report().contains("safe mode"), "{}", safe.report());
+    drop(safe);
+
+    let again = open();
+    assert_eq!(again.take_safe_start(), None, "once");
+    assert_eq!(again.running().len(), 1);
+    again.started();
+    drop(again);
+    assert_eq!(open().take_safe_start(), None, "a start that finished");
+}
+
+#[test]
+fn the_switch_turns_every_plugin_off_and_reports_say_so() {
+    let dir = nori_testdir::TempDir::new("plugins-all-off");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.install(&fixture("")).unwrap();
+    plugins.turn(ID.into(), true);
+    let w = plugins.worker(ID).unwrap();
+    assert_eq!(nori_tasks::block_on(w.call(|_, _| Ok(1))), Some(1));
+    let report = plugins.report();
+    assert!(report.contains(&format!("{ID} 0.1.0, from a file, unsigned")) && report.contains("overrides playback.speed = 1.25"), "{report}");
+    *session.all_off.lock().unwrap() = true;
+    assert!(plugins.running().is_empty() && plugins.worker(ID).is_none() && plugins.menu_entries(nori_plugins::ItemKind::Song, "en".into()).is_empty());
+    assert_eq!(plugins.overrides().len(), 1, "its layer is kept, left out by the settings, for when the switch goes back");
+    assert!(plugins.report().starts_with("every plugin off (the switch)\n"));
+    *session.all_off.lock().unwrap() = false;
+    assert!(plugins.worker(ID).is_some());
 }

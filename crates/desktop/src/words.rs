@@ -49,6 +49,10 @@ pub const MOVE_UP: &str = "Move up";
 pub const MOVE_DOWN: &str = "Move down";
 pub const REMOVE: &str = "Remove";
 pub const KEEP_VERSION: &str = "Keep this version";
+pub const EVERY_PLUGIN: &str = "Every plugin";
+pub const PLUGINS_OFF: &str = "Turn every plugin off";
+pub const PLUGINS_OFF_NOTE: &str = "Each plugin keeps its own switch";
+pub const UNSIGNED: &str = "Unsigned";
 pub const VERSIONS: &str = "Versions";
 pub const SOURCE: &str = "Source";
 pub const SECRET_SET: &str = "Set";
@@ -127,8 +131,9 @@ pub fn install_version(name: &str, version: &str) -> String {
 pub fn preview_note(p: &nori_plugins::PluginPreview) -> Vec<String> {
     let c = &p.card;
     let from = p.repo.as_ref().map(|url| format!("From {}", repo_name(&nori_plugins::Repo { url: url.clone(), official: url == nori_plugins::OFFICIAL })));
+    let unsigned = p.key.is_none().then(|| UNSIGNED.to_string());
     let bluetooth = c.bluetooth.then(|| REACHES_BLUETOOTH.to_string());
-    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(c)]).chain(bluetooth).chain(from).chain([INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect()
+    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(c)]).chain(bluetooth).chain(from).chain(unsigned).chain([INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect()
 }
 
 pub const REACHES_BLUETOOTH: &str = "Reaches Bluetooth devices.";
@@ -252,8 +257,19 @@ pub fn plugin_refused(r: &nori_plugins::Refusal) -> String {
         Refusal::Needs(what) => format!("needs: {}", what.join(", ")),
         Refusal::Id => "its id isn’t a reverse domain name".into(),
         Refusal::UnknownKey(key) => format!("changes {key}, which nori doesn’t have"),
+        Refusal::Signature => "its signature doesn’t match its author’s key".into(),
+        Refusal::OtherKey => "it isn’t signed by the author it was installed from (remove the plugin to install it)".into(),
     };
     format!("Not installed: {why}")
+}
+
+/// Why plugins are off at this start: the `names` of those nori stopped in, or none for a start that
+/// didn't finish.
+pub fn plugins_safe(safe: &nori_plugins::SafeStart, names: &[String]) -> String {
+    match safe {
+        nori_plugins::SafeStart::Crashed { .. } => format!("nori stopped while {} was running. It’s off now.", names.join(", ")),
+        nori_plugins::SafeStart::AllOff => "nori didn’t finish starting last time. Plugins are off until it starts again.".into(),
+    }
 }
 
 /// Plugins updated on their own: each one's name and new version.
@@ -889,8 +905,10 @@ mod tests {
             asset_bytes: 3 << 20,
             rows: Vec::new(),
         };
-        let p = nori_plugins::PluginPreview { card, file: String::new(), repo: Some(nori_plugins::OFFICIAL.into()) };
+        let mut p = nori_plugins::PluginPreview { card, file: String::new(), repo: Some(nori_plugins::OFFICIAL.into()), key: Some("ab".into()) };
         assert_eq!(preview_note(&p), ["Counts letters", "It’s a playback helper.", "Connects to a.example and devices on your network. Wakes at each lyric line while music plays. Downloads 3 MB of files.", "From nori’s own", "It stays off until you turn it on."]);
+        p.key = None;
+        assert!(preview_note(&p).contains(&"Unsigned".to_string()));
     }
 
     #[test]

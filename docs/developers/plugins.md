@@ -346,9 +346,61 @@ A plugin's covers are URLs with `{size}` where the pixels go; the core fills it 
 
 ## Installing
 
-`preview_file(path)` and `preview_version(version)` (fetched and checked against its sha256) read a
-package's manifest and words without installing it, for the sheet that shows what it is and may reach
-before the user installs it (`install_preview`).
+`preview_file(path)` and `preview_version(version)` (fetched and checked against its sha256 and its
+signature) read a package's manifest and words without installing it, for the sheet that shows what it
+is and may reach before the user installs it (`install_preview`).
+
+### Repos and signatures
+
+A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
+
+```json
+{"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "about": "…", "source": "https://github.com/…",
+  "versions": [{"version": "1.2.0", "api": 1, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
+    "sha256": "<hex>", "key": "<hex, 32 bytes>", "signature": "<hex, 64 bytes>"}]}]}
+```
+
+- `key` is the author's ed25519 public key, `signature` that key's signature over the package's SHA-256
+  (the 32 raw bytes, not the hex). Both or neither; one without the other, or a signature that doesn't
+  verify (`verify_strict`), refuses the version (`Refusal::Signature`).
+- The first signed version installed pins its key (`index.json`'s `key` beside the plugin). From then
+  on every version must be signed by that key: another key, an unsigned version, or a file is
+  refused (`Refusal::OtherKey`) until the user removes the plugin and installs it again.
+- Unsigned versions and `.noriplugin` files install while no key is pinned, and the sheet says
+  "Unsigned" (`PluginPreview::key` is None). A package can't carry its own signature (it would sign
+  itself), so a file is always unsigned; once a plugin's key is pinned, only its repo updates it.
+- Updates: each plugin updates from the repo it came from, at most once a day, unless held at its
+  version ("Keep this version"). An update refused for its key is logged and left for the user, who
+  sees the refusal when installing it by hand.
+- Signing, for authors: `cargo run -p nori-plugin-sdk --example sign -- new KEYFILE` makes a key (prints
+  the public key); `cargo run -p nori-plugin-sdk --example sign -- KEYFILE PACKAGE` prints the version's
+  `sha256`, `key` and `signature` fields. Any ed25519 tool signing the digest's bytes does the same.
+
+## Safe mode
+
+`crates/plugins/src/safe.rs`. `plugins/safe` is a small file the host maps into memory once plugins are
+installed, locked while that run has it. Each call into a plugin is marked in its slot (one per plugin
+and caller: its own thread, its preparing instance, its sound stage) with an atomic store as it starts and one as it ends;
+loading its compiled code counts as a call. The kernel keeps the file as it was however nori stops
+(a panic, an abort, a native crash, the system ending it). A panic in a call stays marked even when it
+is caught. A wait inside a call (an HTTP answer, a socket's or a Bluetooth channel's read) is unmarked, so
+Android ending nori while a plugin waits blames no plugin.
+
+- At the next start, a plugin nori stopped in is turned off and logged (the bug report's log carries it);
+  `take_safe_start()` answers `SafeStart::Crashed` once, for the client to say.
+- The header marks a start until the client calls `started()` (Android: the first frame, or the player
+  service up; desktop and terminal: the session or the sign-in up). A start that didn't get there, with
+  no plugin marked, starts the next one with every plugin off (`SafeStart::AllOff`), their own switches
+  kept; the one after runs them again. Turning a plugin on ends it.
+- A second nori over the same folder (the file is locked) reads nothing and marks nothing.
+
+## Every plugin off
+
+The `pluginsOff` setting (each client's Plugins page) turns every plugin off without touching their
+own switches, to tell a nori bug from a plugin's: `Plugins::running()` is empty, so no plugin is
+called, and the settings leave the plugins' layer out (`Settings::layer`), which is kept for when the
+switch goes back. `Plugins::report()` lists the plugins on, signed or not, and what each overrides, in
+English, for Android's bug report and the perf build's self test.
 
 ## Providers
 
@@ -406,7 +458,8 @@ they are fetched again), its smart playlists (a profile's library data, not sett
   `wit/`, the store, and `tests/host.rs` over a real plugin (`fixture/`, built to wasm by the `testing` feature:
   needs `rustup target add wasm32-wasip2`): its stage and kept state, no allocation per block, its
   overrides, its HTTP refused outside its hosts, and a plugin needing an interface this host doesn't
-  link refused (the fixture built with `unlinked`, `fixture/src/unlinked.rs`);
+  link refused (the fixture built with `unlinked`, `fixture/src/unlinked.rs`), signatures and the
+  pinned key, safe mode's two cases and the switch over every plugin;
   `tests/lan.rs` the LAN interfaces over the same plugin: TLS checked each way against a local server,
   UDP to the LAN only over IPv4 and IPv6, which groups it may join and the multicast lock, an IPv6
   link-local group's datagram answered at its sender's zone (it needs an IPv6 interface with

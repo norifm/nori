@@ -135,6 +135,9 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
                     screenOn(this@SelfTest.shown?.get(), false)
                     this@SelfTest.shown = null
                     away.note()?.let { notes += it }
+                    // A plugin can change what is measured: the run names those on and what they override.
+                    withContext(Dispatchers.IO) { runCatching { dev.nori.music.Nori.get(app).plugins.report() }.getOrNull() }
+                        ?.lines()?.filter { it.isNotBlank() }?.forEach { notes += "plugin: ${it.trim()}" }
                     val breaks = dev.nori.music.ffi.perf.perfInvariantBreaks().drop(breaks0)
                     val date = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(wall0))
                     val text = reportText(outcomes, date, SystemClock.elapsedRealtime() - t0, breaks, notes, cancelled)

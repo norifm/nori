@@ -10,9 +10,9 @@ import java.time.format.DateTimeFormatter
 /**
  * What a report of a problem says, for someone to paste into an issue: the app and the phone, the time now
  * (the log's lines carry theirs, so "it stuttered ten minutes ago" can be found), what was playing and to
- * which output, the settings changed from their defaults, and the app's log as kept on the disk for the last
- * day or so (nori-model's alog, [start]). Tooling, so in English. Never the server's address, the user or a
- * typed key: the settings leave text out, and the log says none of them.
+ * which output, the settings changed from their defaults, the plugins on with what they override, and the
+ * app's log as kept on the disk for the last day or so (nori-model's alog, [start]). Tooling, so in English.
+ * Never the server's address, the user or a typed key: the settings leave text out, and the log says none of them.
  */
 object Report {
     /** From now on the app's log is kept on the disk too, under the app's own files. Off the main thread. */
@@ -53,6 +53,9 @@ object Report {
             appendLine()
             appendLine("## Settings changed")
             append(runCatching { nori.settings.core.settingsChanged() }.getOrDefault("(could not be read)\n").ifEmpty { "none\n" })
+            appendLine()
+            appendLine("## Plugins")
+            append(runCatching { nori.plugins.report() }.getOrDefault("(could not be read)\n").ifEmpty { "none\n" })
             appendLine()
             appendLine("## Log")
             append(runCatching { dev.nori.music.ffi.model.alogJournal() }.getOrDefault("").ifEmpty { "(empty)\n" })
