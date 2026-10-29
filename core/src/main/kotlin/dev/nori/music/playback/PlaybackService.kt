@@ -135,7 +135,9 @@ class PlaybackService : MediaLibraryService() {
     private lateinit var controls: Controls
     /** The session's player while another device plays (Remotes.mirror): this phone controls that one. */
     private lateinit var elsewhere: dev.nori.music.remote.RemoteDevicePlayer
-    /** What the session shows: [controls], or [elsewhere] while another device plays. */
+    /** The session's player while a plugin casts (PluginHost.cast): the cast's device controlled through [controls]. Made at the first cast: it follows [controls] from then on. */
+    private var casting: CastPlayer? = null
+    /** What the session shows: [controls], [elsewhere] while another device plays, or [casting] while a plugin casts. */
     private val shown: Player get() = session.player
     private lateinit var scrobbler: Scrobbler
     @Suppress("DEPRECATION")
@@ -274,6 +276,7 @@ class PlaybackService : MediaLibraryService() {
         scope.launch { nori.settings.prefs.map { it.remoteControl }.distinctUntilChanged().collect { nori.remotes.serve(true) } }
         elsewhere = dev.nori.music.remote.RemoteDevicePlayer(this, nori)
         scope.launch { nori.remotes.mirror.collect(::mirrored) }
+        scope.launch { nori.plugins.cast.collect(::casted) }
         restoreQueue()
     }
 
@@ -294,14 +297,30 @@ class PlaybackService : MediaLibraryService() {
             if (session.player !== elsewhere) {
                 dev.nori.music.NoriLog.i("playing on ${m.name}: this phone's player stops")
                 player.letGo()
-                session.player = elsewhere
             }
         } else if (session.player === elsewhere) {
             dev.nori.music.NoriLog.i("playing on this phone again")
-            session.player = controls
         }
+        pickPlayer()
         showRoute()
         refreshButtons()
+    }
+
+    /** A plugin's cast started, its device's state changed, or it ended (null): the session shows its device while it runs. */
+    private fun casted(c: dev.nori.music.ffi.plugins.Cast?) {
+        if (c != null) (casting ?: CastPlayer(controls, nori.plugins).also { casting = it }).show(c)
+        pickPlayer()
+        refreshButtons()
+    }
+
+    /** The session's player: another device's while one plays, else the cast's while a plugin casts, else this phone's. */
+    private fun pickPlayer() {
+        val want = when {
+            nori.remotes.mirror.value != null -> elsewhere
+            nori.plugins.cast.value != null -> casting ?: controls
+            else -> controls
+        }
+        if (session.player !== want) session.player = want
     }
 
     /** Whether media3 keeps the service in the foreground: playing, or paused for less than its idle timeout. */
@@ -472,7 +491,7 @@ class PlaybackService : MediaLibraryService() {
 
     /** As the app's heart has it: this session's mark, else the song as the queue playing it holds it - another device's while it plays. */
     private fun currentStarred(item: MediaItem): Boolean =
-        nori.library.isStarred(StarKind.SONG, item.mediaId, if (shown !== controls) elsewhere.currentStarred else nori.session.queueStarred(item.mediaId))
+        nori.library.isStarred(StarKind.SONG, item.mediaId, if (shown === elsewhere) elsewhere.currentStarred else nori.session.queueStarred(item.mediaId))
 
     /**
      * Heart and shuffle beside previous / play / next, in the secondary slots the way other players put

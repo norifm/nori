@@ -170,11 +170,14 @@ off, removed or updated, or a call fails ([`Lan::forget`](../../crates/plugins/s
 | `lan-serve` | the plugins' door (`door.rs`): plain HTTP on a port the system picks, open while a plugin has `open` or serves audio or a song. `/p/<id>/...` goes to plugin `id`'s `served` hook, its query kept. Its own listener, not remote control's door, which takes only requests signed with the account's secret; a speaker can't sign |
 | `media` | a song's stream URL (its own quality) and cover URL from the open profile's client (`Kinds::open_client`), as they are; a URL on this device (a server on localhost, plain HTTP) is proxied at the door's `/m/<n>`, its range passed on. A provider plugin's songs have none |
 | `audio-out` | `to-socket` (a plain TCP socket the plugin opened, at the rate and channels it asks) or `serve` (at the door's `/a/<encoding>`, nori's rate) make a `Sink`, and the client's engine plays into it (`Plugins::set_cards`, `nori_engine::cast::CastOutput`): pumped in real time half a second ahead, on a thread of its own, 16-bit. PCM is little-endian into a socket and `audio/L16` at the door, WAV has an open length, FLAC has verbatim frames of 4096. While a sink plays, nothing goes to offload; when the plugin stops, the device's own output comes back where the music is (`Engine::set_card`). `set-latency` adds to what the seek bar and lyrics wait for |
-| `cast` | `start` tells the client a cast runs (`Client::cast`), a target cast lets the output here go (`Card::Elsewhere`); `report` passes the device's state; `end` or the plugin's instance going ends it. One plugin casts at a time. The volume keys and picking another output reach the plugin as the media buttons `volume-up`, `volume-down`, `cast-stop` (`Plugins::cast_button`) |
+| `cast` | `start` tells the client a cast runs (`Client::cast`), a target cast lets the output here go (`Card::Elsewhere`); `report` passes the device's state; `end` or the plugin's instance going ends it. One plugin casts at a time. The volume keys and picking another output reach the plugin as the media buttons `volume-up`, `volume-down`, `cast-stop` (`Plugins::cast_button`); during a target cast nori's own transport does too, as `play`, `pause`, `next`, `previous`, `seek:<ms>` and `jump:<list index>`, and the player here plays nothing. A control the cast doesn't take is carried out here |
 
 The clients' output pickers (Android's devices sheet, the desktop's devices panel, the terminal's) list
 the cast's device beside remote control's; picking this device again sends `cast-stop`. Android holds
-a Wi-Fi lock while a sink cast streams.
+a Wi-Fi lock while a sink cast streams, and its media session shows the cast's device while one runs
+(`CastPlayer`): the volume keys reach it as a remote device's, and during a target cast the session
+plays what the device reports, which keeps the service in the foreground while it plays. The desktop
+and terminal hand their transport to the cast from crates/host's `Session` (`cast_button`).
 
 ## Overrides
 

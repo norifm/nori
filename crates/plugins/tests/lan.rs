@@ -304,9 +304,10 @@ fn a_cast_pumps_audio_into_the_plugins_socket_until_the_plugin_stops() {
     let cast = rig.plugins.cast().unwrap();
     assert_eq!((cast.plugin.as_str(), cast.kind, cast.device.as_str()), (ID, CastKind::Sink, "Test speaker"));
 
-    rig.plugins.cast_button(CastButton::VolumeUp);
+    assert!(rig.plugins.cast_button(CastButton::VolumeUp));
     rig.settle();
     assert_eq!(rig.said("button"), Some(vec!["volume-up".into()]));
+    assert!(!rig.plugins.cast_button(CastButton::Pause), "the music plays here: nori pauses it itself");
     rig.plugins.turn(ID.into(), false);
     assert_eq!(last(&sinks), Some("here"), "nori plays on its own output again");
     assert_eq!(rig.session.casts.lock().unwrap().last(), Some(&None), "the cast ends with the plugin");
@@ -347,7 +348,13 @@ fn a_cast_whose_device_plays_the_songs_lets_the_output_here_go() {
     let cast = rig.plugins.cast().unwrap();
     assert_eq!((cast.kind, cast.device.as_str()), (CastKind::Target, "TV"));
     assert_eq!(last(&played), Some("elsewhere"));
+    for (button, heard) in [(CastButton::Toggle, "play"), (CastButton::Pause, "pause"), (CastButton::Seek { ms: 61_000 }, "seek:61000"), (CastButton::Jump { index: 3 }, "jump:3"), (CastButton::Next, "next")] {
+        assert!(rig.plugins.cast_button(button), "{button:?} goes to the device");
+        rig.settle();
+        assert_eq!(rig.said("button"), Some(vec![heard.into()]));
+    }
     rig.act("cast-end");
+    assert!(!rig.plugins.cast_button(CastButton::Play), "no cast: nori plays itself");
     assert_eq!(rig.session.casts.lock().unwrap().last(), Some(&None));
     assert_eq!(played.lock().unwrap().len(), 1, "nothing plays here again until asked");
 }

@@ -718,6 +718,12 @@ impl Handle {
                 None => !matches!(press, Press::Volume { .. }),
             };
         }
+        #[cfg(feature = "desktop")]
+        if let Some(p) = &self.plugins {
+            if p.cast().and_then(|c| cast_button(press, &c)).is_some_and(|b| p.cast_button(b)) {
+                return true;
+            }
+        }
         let Some(e) = self.elsewhere() else { return false };
         if let Some(op) = e.op(press) {
             e.send(op);
@@ -1587,6 +1593,28 @@ use nori_engine::testing::Device;
 #[path = "../../engine/tests/common/card.rs"]
 mod test_card;
 
+/// `press` as a plugin's cast hears it: the volume a step toward the level asked (none where the
+/// device says no volume), the rest as it is; one the cast doesn't take is carried out here.
+#[cfg(feature = "desktop")]
+fn cast_button(press: Press, cast: &nori_plugins::Cast) -> Option<nori_plugins::CastButton> {
+    use nori_plugins::CastButton;
+    Some(match press {
+        Press::Play => CastButton::Play,
+        Press::Pause => CastButton::Pause,
+        Press::Toggle => CastButton::Toggle,
+        Press::Next => CastButton::Next,
+        Press::Previous => CastButton::Previous,
+        Press::Seek { ms } => CastButton::Seek { ms: ms.max(0) as u64 },
+        Press::Jump { index } => CastButton::Jump { index },
+        Press::Volume { level } => match (level * 100.0).round() as i32 - cast.volume? as i32 {
+            0 => return None,
+            up if up > 0 => CastButton::VolumeUp,
+            _ => CastButton::VolumeDown,
+        },
+        Press::Shuffle { .. } | Press::Repeat { .. } | Press::Remove { .. } | Press::Move { .. } | Press::Clear => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Read as _;
@@ -1596,6 +1624,24 @@ mod tests {
     use nori_engine::Loader;
 
     use super::*;
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn a_cast_hears_the_transport_and_a_volume_step_toward_the_level() {
+        use nori_plugins::{Cast, CastButton, CastKind};
+        let cast = |volume| Cast { plugin: "p".into(), kind: CastKind::Target, device: "TV".into(), playing: true, position_ms: 0, volume };
+        for (press, volume, heard) in [
+            (Press::Seek { ms: -5 }, Some(40), Some(CastButton::Seek { ms: 0 })),
+            (Press::Jump { index: 2 }, Some(40), Some(CastButton::Jump { index: 2 })),
+            (Press::Volume { level: 0.6 }, Some(40), Some(CastButton::VolumeUp)),
+            (Press::Volume { level: 0.2 }, Some(40), Some(CastButton::VolumeDown)),
+            (Press::Volume { level: 0.4 }, Some(40), None),
+            (Press::Volume { level: 0.6 }, None, None),
+            (Press::Shuffle { on: true }, Some(40), None),
+        ] {
+            assert_eq!(cast_button(press, &cast(volume)), heard, "{press:?} at {volume:?}");
+        }
+    }
 
     #[test]
     fn downloads_said_are_the_ones_queued() {

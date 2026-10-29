@@ -190,6 +190,9 @@ class PluginHost(
     /** The volume keys or the devices sheet, for the cast running. */
     suspend fun castButton(button: CastButton) = withContext(Dispatchers.IO) { plugins.castButton(button) }
 
+    /** [button] for the cast running, from the session's player: whether the cast took it. It only hands the plugin an event. */
+    fun castTook(button: CastButton): Boolean = opened && plugins.castButton(button)
+
     /** Whether a plugin follows the player: only then does the service say what plays ([played]). Never opens the host. */
     fun follows(): Boolean = opened && plugins.follows()
 

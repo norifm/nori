@@ -65,7 +65,9 @@ pub enum CastKind {
     Target,
 }
 
-/// What a device asks of a cast: the media buttons the plugin hears (`hooks.on(media-button(..))`).
+/// What nori asks of a cast: the media buttons the plugin hears (`hooks.on(media-button(..))`). The
+/// volume keys and another output picked reach any cast; nori's own transport only one whose device
+/// plays the songs itself, while the player here plays nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum CastButton {
@@ -73,16 +75,42 @@ pub enum CastButton {
     VolumeDown,
     /// The user picked another output: the plugin ends its cast.
     Stop,
+    Play,
+    Pause,
+    /// Play or pause, as the device last said it plays.
+    Toggle,
+    Next,
+    Previous,
+    Seek { ms: u64 },
+    /// The song at this list index of nori's queue.
+    Jump { index: u32 },
 }
 
 impl CastButton {
-    /// As the plugin hears it.
-    pub(crate) fn name(self) -> &'static str {
+    /// Whether nori's own transport is this button, which only a target cast takes.
+    fn transport(self) -> bool {
+        !matches!(self, CastButton::VolumeUp | CastButton::VolumeDown | CastButton::Stop)
+    }
+
+    /// As the plugin hears it, during `cast`.
+    pub(crate) fn name(self, cast: &Cast) -> String {
         match self {
-            CastButton::VolumeUp => "volume-up",
-            CastButton::VolumeDown => "volume-down",
-            CastButton::Stop => "cast-stop",
+            CastButton::VolumeUp => "volume-up".into(),
+            CastButton::VolumeDown => "volume-down".into(),
+            CastButton::Stop => "cast-stop".into(),
+            CastButton::Play => "play".into(),
+            CastButton::Pause => "pause".into(),
+            CastButton::Toggle => (if cast.playing { "pause" } else { "play" }).into(),
+            CastButton::Next => "next".into(),
+            CastButton::Previous => "previous".into(),
+            CastButton::Seek { ms } => format!("seek:{ms}"),
+            CastButton::Jump { index } => format!("jump:{index}"),
         }
+    }
+
+    /// Whether `cast` takes it.
+    pub(crate) fn taken_by(self, cast: &Cast) -> bool {
+        !self.transport() || cast.kind == CastKind::Target
     }
 }
 

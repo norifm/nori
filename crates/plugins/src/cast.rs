@@ -199,10 +199,12 @@ impl Plugins {
         self.lan.cast()
     }
 
-    /// A key or control for the cast running (the volume keys, another output picked).
-    pub fn cast_button(&self, button: CastButton) {
-        if let Some(c) = self.lan.cast() {
-            self.tell_one(&c.plugin, Event::MediaButton(button.name().to_string()));
-        }
+    /// A key or control for the cast running (the volume keys, another output picked, nori's own
+    /// transport during a target cast): its plugin hears it. Whether the cast took it; a client carries
+    /// out one it didn't as it would without a cast.
+    pub fn cast_button(&self, button: CastButton) -> bool {
+        let Some(c) = self.lan.cast().filter(|c| button.taken_by(c)) else { return false };
+        self.tell_one(&c.plugin, Event::MediaButton(button.name(&c)));
+        true
     }
 }
