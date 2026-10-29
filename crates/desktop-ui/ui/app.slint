@@ -3522,7 +3522,7 @@ component QueueView inherits Rectangle {
                         }
                         // Out, while hovered; the songs still to come are dragged to another place.
                         edit := Rectangle {
-                            width: root.editable && qrow.hot ? 26px : 0;
+                            width: root.editable && qrow.hot && !s.playing ? 26px : 0;
                             clip: true;
                             animate width { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
                             HorizontalLayout {

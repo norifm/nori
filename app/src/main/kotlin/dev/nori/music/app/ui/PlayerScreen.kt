@@ -3005,7 +3005,9 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                             LookText(s.artist, quiet, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                    if (edits) IconButton({ undo.took(s, i, key, 0f); vm.remove(i) }, Modifier.size(38.dp)) {
+                    // The rows a swipe leaves (the song playing) have no × either; its room stays, so the × line up.
+                    if (edits && i in kept) Spacer(Modifier.size(38.dp))
+                    else if (edits) IconButton({ undo.took(s, i, key, 0f); vm.remove(i) }, Modifier.size(38.dp)) {
                         LookIcon(Iconoir.Xmark, say.remove, Modifier.size(19.dp), quiet)
                     }
                     // The handle's room is kept on every row while the list can be reordered, so every ×
