@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -330,6 +331,8 @@ fun HeroPage(
                 }
             } else {
                 val room = statusBarRoom
+                val pinned = remember { PinnedHead() }
+                androidx.compose.runtime.CompositionLocalProvider(LocalPinnedHead provides pinned) {
                 LazyColumn(state = list) {
                     // The artwork takes up less than it draws: the head below lays its status bar room, and over a
                     // picture its title block, over the artwork's last rows.
@@ -346,7 +349,7 @@ fun HeroPage(
                     stickyHeader(key = "hero-head", contentType = "hero-head") {
                         val look = LocalLook.current
                         Column(
-                            Modifier.drawWithCache {
+                            Modifier.onPlaced { pinned.placed = it }.drawWithCache {
                                 val fade = HEAD_FADE.toPx()
                                 val edge = HEAD_EDGE.toPx()
                                 val page = look.color(CoverLook.BACKGROUND)
@@ -370,6 +373,7 @@ fun HeroPage(
                     }
                     content()
                     item(key = "tail") { Spacer(Modifier.height(Space.section + LocalChromeInset.current)) }
+                }
                 }
             }
             // No back button over the artwork: the back gesture is how these pages are left, and a dimmed disc

@@ -2977,10 +2977,12 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                 // (the × does, on purpose). Leftwards only: rightwards from the edge is the back gesture's.
                 val taken = if (i in kept || !edits) null else take
                 SwipeBackdrop(swipe, null, taken, Modifier.matchParentSize(), swipeColours, reveal = true, inset = 12.dp)
+                val seen = remember { RowPlace() }
                 Row(
                     Modifier.fillMaxWidth()
+                        .touchedInSight(seen, null)
                         .then(if (played) Modifier.graphicsLayer { alpha = QUEUE_PLAYED_ALPHA } else Modifier)
-                        .then(if (edits) Modifier.swipeable(swipe, null, taken, null, gone = true, resist = i in kept).clickable { if (i == state.index) showPlayer() else { tapped = key; vm.skipTo(i) } } else Modifier)
+                        .then(if (edits) Modifier.swipeable(swipe, null, taken, null, gone = true, resist = i in kept, shown = { seen.inSight(null) }).clickable { if (i == state.index) showPlayer() else { tapped = key; vm.skipTo(i) } } else Modifier)
                         .padding(vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
