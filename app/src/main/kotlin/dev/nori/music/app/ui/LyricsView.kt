@@ -99,7 +99,7 @@ private fun glow(w: LyricWord, ms: Long): Float {
 }
 
 @Composable
-fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean) {
+fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean, close: () -> Unit) {
     androidx.lifecycle.compose.LifecycleStartEffect(vm) { vm.lyricsView(true); onStopOrDispose { vm.lyricsView(false) } }
     val loaded by vm.lyrics.collectAsStateWithLifecycle()
     val playerState by vm.state.collectAsStateWithLifecycle()
@@ -123,7 +123,7 @@ fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean)
     Column(Modifier.fillMaxSize()) {
         // On its side the title, the heart and the menu stay in the controls' half, where they are in every
         // panel; a second copy here pushed the words down and moved the controls up when the lyrics opened.
-        if (!LocalWide.current) LyricsHeader(vm, actions, playerState.current)
+        if (!LocalWide.current) LyricsHeader(vm, actions, playerState.current, close)
         // Loading, nothing found, or the words - each fades into the next rather than replacing it, the
         // words included: they rise out of the loader instead of appearing in one frame. A new song goes
         // back through the loader, so the last song's lyrics never sit on screen under the new title.
@@ -547,41 +547,45 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
  * whole middle of the screen instead of fighting the title block for it.
  */
 @Composable
-private fun LyricsHeader(vm: PlayerViewModel, actions: ActionsViewModel, song: dev.nori.music.ffi.model.Song?) {
+private fun LyricsHeader(vm: PlayerViewModel, actions: ActionsViewModel, song: dev.nori.music.ffi.model.Song?, close: () -> Unit) {
     val menu = LocalPlayerMenu.current
     val marks = LocalStarMarks.current
     Row(
         Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
         Arrangement.spacedBy(12.dp), Alignment.CenterVertically,
     ) {
-        // The player is put away from here as well as from the artwork, and the cover has to have
-        // somewhere to fly from: this thumbnail is it. Measured only with the sheet fully open, so the
-        // rectangle is in the sheet's own coordinates and does not move while the sheet does.
-        val sheet = LocalPlayerSheet.current
-        Box(
-            Modifier.onGloballyPositioned { if (sheet.progress.value >= 0.999f) sheet.panelCover = it.boundsInRoot() }
-                // While it is in flight it is the flying copy that is drawn, not this one - whether the
-                // flight is the sheet's, out of the now playing bar, or the panel's, out of the sleeve.
-                .graphicsLayer { alpha = if (!sheet.panelFlight && (sheet.progress.value >= 1f || sheet.miniCover == Rect.Zero)) 1f else 0f },
-        ) {
-            // Another album's cover cross-fades in: one already kept in memory was drawn at once, and one
-            // still to come left the old picture for an empty plate in one frame.
-            FrameCrossfade(song?.coverArt, HEADER_FADE) { art -> Cover(vm.cover(art, CoverSize.ROW), 64.dp, radius = 9.dp) }
-        }
-        androidx.compose.runtime.DisposableEffect(sheet) { onDispose { sheet.panelCover = androidx.compose.ui.geometry.Rect.Zero } }
-        // The title and artist change with the song, cross-faded as the player page's are: swapped in
-        // one frame, the new title sat over the last song's words for the frames before they faded.
-        FrameCrossfade(song, HEADER_FADE, Modifier.weight(1f), key = { it?.id }) { s ->
-            Column(Modifier.fillMaxWidth()) {
-                val look = LocalLook.current
-                LookText(
-                    s?.title ?: "", { look.color(CoverLook.ON) }, Modifier.readable(), style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                )
-                LookText(
-                    s?.artist ?: "", { look.color(CoverLook.ON_60) }, style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                )
+        // The cover and the title go back to the artwork, as the song playing does in the queue; the seal and
+        // the menu beside them are their own buttons.
+        Row(Modifier.weight(1f).clickable(onClick = close), Arrangement.spacedBy(12.dp), Alignment.CenterVertically) {
+            // The player is put away from here as well as from the artwork, and the cover has to have
+            // somewhere to fly from: this thumbnail is it. Measured only with the sheet fully open, so the
+            // rectangle is in the sheet's own coordinates and does not move while the sheet does.
+            val sheet = LocalPlayerSheet.current
+            Box(
+                Modifier.onGloballyPositioned { if (sheet.progress.value >= 0.999f) sheet.panelCover = it.boundsInRoot() }
+                    // While it is in flight it is the flying copy that is drawn, not this one - whether the
+                    // flight is the sheet's, out of the now playing bar, or the panel's, out of the sleeve.
+                    .graphicsLayer { alpha = if (!sheet.panelFlight && (sheet.progress.value >= 1f || sheet.miniCover == Rect.Zero)) 1f else 0f },
+            ) {
+                // Another album's cover cross-fades in: one already kept in memory was drawn at once, and one
+                // still to come left the old picture for an empty plate in one frame.
+                FrameCrossfade(song?.coverArt, HEADER_FADE) { art -> Cover(vm.cover(art, CoverSize.ROW), 64.dp, radius = 9.dp) }
+            }
+            androidx.compose.runtime.DisposableEffect(sheet) { onDispose { sheet.panelCover = androidx.compose.ui.geometry.Rect.Zero } }
+            // The title and artist change with the song, cross-faded as the player page's are: swapped in
+            // one frame, the new title sat over the last song's words for the frames before they faded.
+            FrameCrossfade(song, HEADER_FADE, Modifier.weight(1f), key = { it?.id }) { s ->
+                Column(Modifier.fillMaxWidth()) {
+                    val look = LocalLook.current
+                    LookText(
+                        s?.title ?: "", { look.color(CoverLook.ON) }, Modifier.readable(), style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                    LookText(
+                        s?.artist ?: "", { look.color(CoverLook.ON_60) }, style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
         song?.let { s ->

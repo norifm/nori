@@ -590,7 +590,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             )
                             .then(if (page == Panel.QUEUE) Modifier.padding(horizontal = 26.dp) else Modifier),
                     ) {
-                        if (page == Panel.QUEUE) Queue(vm) { choose(Panel.ART) } else LyricsView(vm, actions, state.advancing)
+                        if (page == Panel.QUEUE) Queue(vm) { choose(Panel.ART) } else LyricsView(vm, actions, state.advancing) { choose(Panel.ART) }
                     }
                 }
 
