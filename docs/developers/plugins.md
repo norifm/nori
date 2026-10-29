@@ -86,8 +86,12 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
 - **Its own store**, capped (1 MB): its keys, and under `nori/` what the host keeps for it (its rows'
   values, its overrides), which it can't write.
 - **HTTP** goes through the open profile's `Transport` (the one connection pool), only to its `net`
-  hosts. The transport sends GET, or POST with a JSON or form body; a response carries its status, body
-  and `set-cookie` values.
+  hosts, with any method, headers and body bytes; a response carries its status, body and headers.
+- **Sockets**: TCP to its `net` hosts, on its own thread (a service's own protocol, such as Spotify's
+  access point).
+- **Encrypted streams**: during `source`, `streams.encrypted(url, key, iv, skip)` says the URL it returns
+  is AES-128-CTR; the engine decrypts as it reads, from any byte, past the `skip` bytes that aren't the
+  song's.
 
 ## Overrides
 

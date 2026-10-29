@@ -5,7 +5,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 
-use nori_net::transport::{Exchange, Network, Transport, TransportError, TransportResponse};
+use nori_net::transport::{Exchange, HttpHeader, HttpMethod, Network, Transport, TransportError, TransportResponse};
 use nori_plugins::testing::{fixture, FIXTURE};
 use nori_plugins::{Plugins, Refusal, Side, Value};
 
@@ -48,6 +48,8 @@ struct Web {
     asked: Mutex<Vec<String>>,
     serves: Mutex<Vec<(String, Vec<u8>)>>,
     together: (Mutex<u32>, std::sync::Condvar),
+    /// The requests sent with a method and body of their own.
+    sent: Mutex<Vec<Exchange>>,
 }
 
 #[async_trait::async_trait]
@@ -62,13 +64,17 @@ impl Transport for Web {
             let (n, timeout) = both.wait_timeout_while(n, std::time::Duration::from_secs(5), |n| *n < 2).unwrap();
             drop(n);
             let status = if timeout.timed_out() { 504 } else { 200 };
-            return Ok(TransportResponse { status, body: name.as_bytes().to_vec(), set_cookies: Vec::new() });
+            return Ok(TransportResponse { status, body: name.as_bytes().to_vec(), headers: Vec::new() });
         }
         let body = self.serves.lock().unwrap().iter().find(|(u, _)| *u == url).map_or(b"ok".to_vec(), |(_, b)| b.clone());
-        Ok(TransportResponse { status: 200, body, set_cookies: Vec::new() })
+        Ok(TransportResponse { status: 200, body, headers: Vec::new() })
     }
 
     async fn send(&self, e: Exchange) -> Result<TransportResponse, TransportError> {
+        if e.url.ends_with("/put") {
+            self.sent.lock().unwrap().push(e);
+            return Ok(TransportResponse { status: 204, body: Vec::new(), headers: vec![HttpHeader { name: "etag".into(), value: "\"7\"".into() }] });
+        }
         self.get(e.url, e.timeout_ms).await
     }
 
@@ -161,6 +167,26 @@ fn requests_started_together_are_on_their_way_at_once() {
     assert_eq!(nori_tasks::block_on(w.call(|_, _| Ok(1))), Some(1));
     let said = session.notices.lock().unwrap().iter().find(|(w, _)| w == "together").map(|(_, a)| a.clone());
     assert_eq!(said, Some(vec!["200 one|200 two".to_string()]), "each answered, in order, neither waiting on the other");
+}
+
+/// A plugin's request goes with its own method, headers and bytes, and its answer's headers come back.
+#[test]
+fn a_request_keeps_its_method_body_and_answers_headers() {
+    let dir = nori_testdir::TempDir::new("plugins-put");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.set_transport(Some(session.web.clone()));
+    plugins.install(&fixture("")).unwrap();
+    plugins.turn(ID.into(), true);
+    plugins.act(ID.into(), "put".into());
+    let w = plugins.worker(ID).unwrap();
+    assert_eq!(nori_tasks::block_on(w.call(|_, _| Ok(1))), Some(1));
+    let sent = session.web.sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1);
+    assert_eq!((sent[0].method(), sent[0].payload()), (HttpMethod::Put, Some((&[0u8, 159, 146, 150][..], None))));
+    assert_eq!(sent[0].headers.get("content-type").map(String::as_str), Some("application/x-protobuf"));
+    let said = session.notices.lock().unwrap().iter().find(|(w, _)| w == "put").map(|(_, a)| a.clone());
+    assert_eq!(said, Some(vec!["etag=\"7\"".to_string()]));
 }
 
 #[test]

@@ -438,7 +438,7 @@ pub(crate) mod tests {
     #[async_trait::async_trait]
     impl nori_core::transport::Transport for Png {
         async fn get(&self, _: String, _: u32) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
-            Ok(nori_core::transport::TransportResponse { status: 200, body: PNG.to_vec(), set_cookies: Vec::new() })
+            Ok(nori_core::transport::TransportResponse { status: 200, body: PNG.to_vec(), headers: Vec::new() })
         }
         async fn send(&self, e: nori_core::transport::Exchange) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
             self.get(e.url, e.timeout_ms).await

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use std::sync::Arc;
 
-use nori_net::transport::{Exchange, FailureKind, Transport, TransportError};
+use nori_net::transport::{Exchange, FailureKind, HttpMethod, Transport, TransportError};
 
 use crate::runtime::nori::plugin::{http, log, notices, rows, settings, store, streams};
 use crate::runtime::{types, Host};
@@ -184,18 +184,17 @@ impl Host {
             return Err(error(types::ErrorKind::Refused, format!("{host} is not among its net hosts")));
         }
         let transport = self.transport.lock().expect("not poisoned").clone().ok_or_else(|| error(types::ErrorKind::Network, "no transport yet"))?;
-        let mut headers: HashMap<String, String> = request.headers.into_iter().map(|h| (h.name, h.value)).collect();
-        // The transport sends a body as JSON or as a form, by its content type.
-        let content = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.to_ascii_lowercase());
-        let body = request.body.map(String::from_utf8).transpose().map_err(|_| error(types::ErrorKind::Unsupported, "a body that isn't text"))?;
-        let (json, form) = match (request.method, body) {
-            (http::Method::Get, None) => (None, None),
-            (http::Method::Post, Some(b)) if content.as_deref().is_some_and(|c| c.contains("form-urlencoded")) => (None, Some(b)),
-            (http::Method::Post, Some(b)) => (Some(b), None),
-            (m, _) => return Err(error(types::ErrorKind::Unsupported, format!("{m:?} is not sent yet"))),
+        let headers: HashMap<String, String> = request.headers.into_iter().map(|h| (h.name, h.value)).collect();
+        let method = match request.method {
+            http::Method::Get => HttpMethod::Get,
+            http::Method::Head => HttpMethod::Head,
+            http::Method::Post => HttpMethod::Post,
+            http::Method::Put => HttpMethod::Put,
+            http::Method::Patch => HttpMethod::Patch,
+            http::Method::Delete => HttpMethod::Delete,
         };
-        headers.retain(|k, _| !k.eq_ignore_ascii_case("content-type"));
-        Ok((transport, Exchange { url: request.url, headers, json, form, timeout_ms: request.timeout_ms.unwrap_or(0) }))
+        let exchange = Exchange { url: request.url, headers, body: request.body, method: Some(method), timeout_ms: request.timeout_ms.unwrap_or(0), ..Default::default() };
+        Ok((transport, exchange))
     }
 }
 
@@ -204,7 +203,7 @@ fn sent(transport: &dyn Transport, exchange: Exchange) -> Answered {
     match nori_tasks::block_on(transport.send(exchange)) {
         Ok(r) => Ok(http::Response {
             status: r.status,
-            headers: r.set_cookies.into_iter().map(|v| types::Header { name: "set-cookie".into(), value: v }).collect(),
+            headers: r.headers.into_iter().map(|h| types::Header { name: h.name, value: h.value }).collect(),
             body: r.body,
         }),
         Err(TransportError::Failed { kind: FailureKind::Timeout, .. }) => Err(error(types::ErrorKind::Timeout, "timed out")),

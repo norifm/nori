@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
-use nori_core::transport::{Exchange, FailureKind, Transport, TransportError, TransportResponse, USER_AGENT};
+use nori_core::transport::{Exchange, FailureKind, HttpHeader, HttpMethod, Transport, TransportError, TransportResponse, USER_AGENT};
 use nori_engine::{Body, ByteSource, Cancel, OpenError};
 use ureq::unversioned::resolver::DefaultResolver;
 use ureq::unversioned::transport::{Buffers, ConnectProxyConnector, ConnectionDetails, Connector, Either, LazyBuffers, NextTimeout, RustlsConnector};
@@ -126,9 +126,9 @@ fn configured<B>(mut req: RequestBuilder<B>, headers: &HashMap<String, String>, 
 fn response(r: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<TransportResponse, TransportError> {
     let r = r.map_err(failure)?;
     let status = r.status().as_u16();
-    let set_cookies = r.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()).map(str::to_string).collect();
+    let headers = r.headers().iter().filter_map(|(name, value)| Some(HttpHeader { name: name.as_str().to_string(), value: value.to_str().ok()?.to_string() })).collect();
     let body = r.into_body().with_config().limit(MAX_ANSWER).read_to_vec().map_err(failure)?;
-    Ok(TransportResponse { status, body, set_cookies })
+    Ok(TransportResponse { status, body, headers })
 }
 
 /// Each request runs on a thread of its own ([`Call`]), so dropping its future ends it.
@@ -142,12 +142,22 @@ impl Transport for Http {
     async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {
         let agent = self.agent.clone();
         Call::run(move || {
-            let (headers, timeout) = (&request.headers, request.timeout_ms);
-            let post = |kind, body: &String| configured(agent.post(&request.url).header("Content-Type", kind), headers, timeout).send(body.as_bytes());
-            response(match (&request.json, &request.form) {
-                (Some(json), _) => post("application/json", json),
-                (None, Some(form)) => post("application/x-www-form-urlencoded", form),
-                (None, None) => configured(agent.get(&request.url), headers, timeout).call(),
+            let (url, headers, timeout) = (&request.url, &request.headers, request.timeout_ms);
+            let (body, kind) = request.payload().unwrap_or((&[], None));
+            let sent = |b: RequestBuilder<ureq::typestate::WithBody>| {
+                let b = configured(b, headers, timeout);
+                match kind {
+                    Some(kind) => b.header("Content-Type", kind).send(body),
+                    None => b.send(body),
+                }
+            };
+            response(match request.method() {
+                HttpMethod::Get => configured(agent.get(url), headers, timeout).call(),
+                HttpMethod::Head => configured(agent.head(url), headers, timeout).call(),
+                HttpMethod::Delete => configured(agent.delete(url), headers, timeout).call(),
+                HttpMethod::Post => sent(agent.post(url)),
+                HttpMethod::Put => sent(agent.put(url)),
+                HttpMethod::Patch => sent(agent.patch(url)),
             })
         })
         .await

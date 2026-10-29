@@ -136,8 +136,8 @@ impl<'a> Ask<'a> {
             url: url.to_string(),
             headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             json,
-            form: None,
             timeout_ms: (request_ms as u64).min(left) as u32,
+            ..Default::default()
         };
         let r = self.transport.send(request).await.map_err(|_| Fail::Unreachable)?;
         Ok((r.status, String::from_utf8_lossy(&r.body).into_owned()))
@@ -733,7 +733,7 @@ pub(crate) mod tests {
             self.sent.lock().push(request.clone());
             let pages = self.pages.lock();
             match pages.iter().find(|(p, _, _)| request.url.starts_with(p.as_str())) {
-                Some((_, status, body)) => Ok(TransportResponse { status: *status, body: body.as_bytes().to_vec(), set_cookies: Vec::new() }),
+                Some((_, status, body)) => Ok(TransportResponse { status: *status, body: body.as_bytes().to_vec(), headers: Vec::new() }),
                 None => Err(TransportError::Failed { kind: nori_net::transport::FailureKind::Connect, detail: None }),
             }
         }

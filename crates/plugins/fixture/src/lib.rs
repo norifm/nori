@@ -53,6 +53,15 @@ fn fetch_together(a: &str, b: &str) -> String {
 
 impl Lifecycle for Test {
     fn action(&mut self, id: String) {
+        if id == "put" {
+            let header = |name: &str, value: &str| nori_plugin_sdk::types::Header { name: name.into(), value: value.into() };
+            let sent = Request { method: Method::Put, url: "https://allowed.example/put".into(), headers: vec![header("content-type", "application/x-protobuf")], body: Some(vec![0, 159, 146, 150]), timeout_ms: None };
+            let heard = match nori_plugin_sdk::http::fetch(&sent) {
+                Ok(r) => r.headers.iter().map(|h| format!("{}={}", h.name, h.value)).collect(),
+                Err(e) => vec![format!("{:?}", e.kind)],
+            };
+            nori_plugin_sdk::notices::show(nori_plugin_sdk::notices::Tone::Info, "put", &heard);
+        }
         if id == "together" {
             let heard = fetch_together("https://allowed.example/together/one", "https://allowed.example/together/two");
             nori_plugin_sdk::notices::show(nori_plugin_sdk::notices::Tone::Info, "together", &[heard]);

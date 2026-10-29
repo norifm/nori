@@ -13,7 +13,7 @@ struct Answer(String);
 #[async_trait::async_trait]
 impl Transport for Answer {
     async fn get(&self, _: String, _: u32) -> Result<TransportResponse, TransportError> {
-        Ok(TransportResponse { status: 200, body: self.0.clone().into_bytes(), set_cookies: Vec::new() })
+        Ok(TransportResponse { status: 200, body: self.0.clone().into_bytes(), headers: Vec::new() })
     }
     async fn send(&self, r: Exchange) -> Result<TransportResponse, TransportError> {
         self.get(r.url, 0).await
