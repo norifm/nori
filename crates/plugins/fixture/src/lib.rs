@@ -1,5 +1,13 @@
 //! Each extension point nori's tests check, in its plainest form (nori_plugins::testing).
 
+// The headphones are a plugin of their own: the test plugin's points go unused.
+#![cfg_attr(feature = "headphones", allow(dead_code))]
+
+#[cfg(feature = "headphones")]
+mod headphones;
+#[cfg(feature = "headphones")]
+nori_plugin_sdk::plugin!(headphones::Headphones, headphones::MANIFEST, device_control, hooks);
+
 use nori_plugin_sdk::http::{Method, Request};
 use nori_plugin_sdk::sound_stage::{Format, Inputs};
 use nori_plugin_sdk::types::Value;
@@ -176,4 +184,5 @@ const MANIFEST: Manifest = Manifest {
     ..Manifest::new("fm.nori.test")
 };
 
+#[cfg(not(feature = "headphones"))]
 nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, sound_stage, provider, slots);

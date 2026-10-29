@@ -2051,7 +2051,7 @@ fn official() -> nori_plugins::Repo {
 }
 
 fn card(id: &str, name: &str, rows: Vec<nori_plugins::PluginRow>) -> nori_plugins::PluginCard {
-    nori_plugins::PluginCard { id: id.into(), version: "1.2.0".into(), name: name.into(), about: Some(format!("{name} does things")), enabled: false, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: vec!["api.example.com".into()], rows }
+    nori_plugins::PluginCard { id: id.into(), version: "1.2.0".into(), name: name.into(), about: Some(format!("{name} does things")), enabled: false, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: vec!["api.example.com".into()], bluetooth: false, rows }
 }
 
 fn plugin_row(id: &str, kind: nori_plugins::RowKind, value: Option<nori_plugins::Value>) -> nori_plugins::PluginRow {
@@ -2246,6 +2246,7 @@ fn a_repo_plugins_page_holds_and_lists_its_versions() {
 struct Heard(std::sync::Mutex<Vec<(String, Vec<String>)>>);
 impl nori_plugins::Client for Heard {
     fn layer_changed(&self, _: u32) {}
+    fn devices_changed(&self) {}
     fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
     fn shown(&self, _: String, _: String, _: bool, _: bool) {}
     fn notice(&self, _: String, _: bool, words: String, args: Vec<String>) {
@@ -2341,6 +2342,36 @@ fn a_plugins_lines_show_in_the_player() {
     assert!(under("This computer").contains("Testing"), "{s}");
 }
 
+/// Headphones a plugin controls: their battery beside the output, and on the devices panel their
+/// batteries and noise control, which Enter moves to the next mode.
+#[test]
+fn a_controlled_device_shows_its_battery_and_sets_its_noise_control() {
+    use nori_plugins::{Battery, ControlledDevice, Noise};
+    let mut a = app();
+    a.song = Some(song("1", "Blue", 200));
+    a.devices.controlled = vec![ControlledDevice {
+        id: "AA".into(),
+        name: "WH-1000XM5".into(),
+        battery: Battery { left: Some(60), right: Some(40), case: Some(90), single: None },
+        level: Some(40),
+        noise: Some(Noise::Canceling),
+        noise_modes: vec![Noise::Off, Noise::Canceling, Noise::Transparency],
+        card: card("dev.example.sony", "Sony", Vec::new()),
+    }];
+    let s = draw(&mut a, 160, 30);
+    dump("player-controlled-device", &s);
+    assert!(s.contains("WH-1000XM5 · 40%") && !s.contains("This computer"), "the default output is the headphones: {s}");
+    key(&mut a, KeyCode::Char('C'));
+    assert_eq!((a.full, a.panel), (true, Panel::Devices), "the panel shows for a controlled device alone");
+    let s = draw(&mut a, 160, 30);
+    dump("devices-controlled", &s);
+    assert!(s.lines().any(|l| l.contains("WH-1000XM5") && l.contains("L 60% · R 40% · Case 90%")), "{s}");
+    assert!(s.lines().any(|l| l.contains("Noise control") && l.contains("Noise canceling")), "{s}");
+    assert_eq!(a.devices.rows()[a.devices.sel.at], crate::app::DeviceRow::Noise(0), "the device's line is passed over");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(crate::app::PluginCmd::Noise("AA".into(), Noise::Transparency))));
+}
+
 /// A row's hint is a quiet line under it, a level shows its unit at its digits, a link where it goes;
 /// the devices panel shows the rows of a plugin that asks to be there, and sets them.
 #[test]
@@ -2394,6 +2425,7 @@ fn the_login_opens_the_plugins() {
 struct Quiet;
 impl nori_plugins::Client for Quiet {
     fn layer_changed(&self, _: u32) {}
+    fn devices_changed(&self) {}
     fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
     fn shown(&self, _: String, _: String, _: bool, _: bool) {}
     fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}

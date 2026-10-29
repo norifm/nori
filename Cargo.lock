@@ -4966,7 +4966,9 @@ dependencies = [
 name = "nori-host"
 version = "0.7.1"
 dependencies = [
+ "async-io",
  "async-trait",
+ "futures-lite",
  "libc",
  "mdns-sd",
  "nori-core",
@@ -4982,6 +4984,8 @@ dependencies = [
  "nori-testdir",
  "nori-time",
  "parking_lot",
+ "serde",
+ "zbus",
 ]
 
 [[package]]

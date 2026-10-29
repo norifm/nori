@@ -334,8 +334,9 @@ class Say(private val r: Resources) {
         }
     } + listOfNotNull(R.string.plugins_kind_overrides.takeIf { overrides })).joinToString(" · ") { r.getString(it) }
     /** What a plugin may do, one line each: what it reaches, whether it plays music or changes the sound, the values it changes. */
-    fun pluginMay(points: List<String>, net: List<String>, overrides: List<String>): List<String> = listOfNotNull(
+    fun pluginMay(points: List<String>, net: List<String>, overrides: List<String>, bluetooth: Boolean): List<String> = listOfNotNull(
         if (net.isEmpty()) r.getString(R.string.plugins_may_reach_nothing) else r.getString(R.string.plugins_may_reach, net.joinToString(", ")),
+        r.getString(R.string.plugins_may_bluetooth).takeIf { bluetooth },
         r.getString(R.string.plugins_may_play).takeIf { "provider" in points },
         r.getString(R.string.plugins_may_sound).takeIf { "sound-stage" in points },
         overrides.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_change, it.joinToString(", ")) },
@@ -807,6 +808,25 @@ class Say(private val r: Resources) {
 
     /** What the output button says while device [name] plays: "Playing on S22". */
     fun devicePlayingOn(name: String): String = r.getString(R.string.devices_playing_on, name)
+    fun noise(n: dev.nori.music.ffi.plugins.Noise): String = r.getString(
+        when (n) {
+            dev.nori.music.ffi.plugins.Noise.OFF -> R.string.device_noise_off
+            dev.nori.music.ffi.plugins.Noise.CANCELING -> R.string.device_noise_canceling
+            dev.nori.music.ffi.plugins.Noise.TRANSPARENCY -> R.string.device_noise_transparency
+            dev.nori.music.ffi.plugins.Noise.ADAPTIVE -> R.string.device_noise_adaptive
+        },
+    )
+    /** Each battery a device has: "80%", or "L 80% · R 70% · Case 50%"; empty when it said none. */
+    fun battery(b: dev.nori.music.ffi.plugins.Battery): String = b.single?.let { r.getString(R.string.device_battery, it.toInt()) }
+        ?: listOfNotNull(
+            b.left?.let { r.getString(R.string.device_battery_left, it.toInt()) },
+            b.right?.let { r.getString(R.string.device_battery_right, it.toInt()) },
+            b.case?.let { r.getString(R.string.device_battery_case, it.toInt()) },
+        ).joinToString(" · ")
+    /** An output's name with its battery: "WH-1000XM5 · 80%". */
+    fun withLevel(name: String, level: UByte): String = r.getString(R.string.device_with_level, name, level.toInt())
+    val deviceSettings: String get() = r.getString(R.string.device_settings)
+    val allowBluetooth: String get() = r.getString(R.string.plugins_allow_bluetooth)
 
     /** The mark on the device playing now, after its kind when it has one. */
     fun devicePlayingNow(afterKind: Boolean): String = r.getString(if (afterKind) R.string.device_playing_now_after else R.string.device_playing_now)

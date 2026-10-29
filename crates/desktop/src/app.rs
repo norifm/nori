@@ -457,6 +457,8 @@ pub struct App {
     preview: Option<nori_plugins::PluginPreview>,
     /// The plugins' menu actions by `Card::kind` ([`MENU_KINDS`]).
     plugin_menus: [Vec<nori_plugins::MenuEntry>; 4],
+    /// The connected devices plugins control.
+    controlled: Vec<nori_plugins::ControlledDevice>,
     /// The song whose details are shown, for the plugins' lines that come after.
     details_song: Option<String>,
     /// The plugin's still sleeve being fetched for the song playing.
@@ -693,6 +695,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             plugged: Default::default(),
             preview: None,
             plugin_menus: Default::default(),
+            controlled: Vec::new(),
             details_song: None,
             sleeve: None,
             full_seen: false,
@@ -773,6 +776,8 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         a.kinds().set_transport(a.http.clone());
         let tx = a.tx.clone();
         nori_host::desktop::plugins(&a.data).watched.hear(move |n| tx.send(Msg::Note { text: n.words, error: n.problem }));
+        let tx = a.tx.clone();
+        nori_host::desktop::plugins(&a.data).watched.on_devices(move || tx.send(Msg::DevicesControlled));
         a.plugins_read();
         let wake = a.me.clone();
         a.compositor.on_wake(move || wake.with(|a| a.repaint()));
@@ -2618,7 +2623,8 @@ impl App {
         let prefs = crate::session::app().settings.current().unwrap_or_default();
         let today = crate::look::Today::now();
         ui.set_plugin_rows(crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, today));
-        ui.set_device_plugin_rows(crate::settings::device_rows(&host.device_cards("en".into()), &prefs, &self.facts, today));
+        self.controlled = host.controlled("en".into());
+        ui.set_device_plugin_rows(crate::settings::device_rows(&host.device_cards("en".into()), &self.controlled, &prefs, &self.facts, today));
         let menus = ui.global::<crate::PluginMenus>();
         let labels = |k: usize| ModelRc::new(VecModel::from(self.plugin_menus[k].iter().map(|e| SharedString::from(e.label.as_str())).collect::<Vec<_>>()));
         menus.set_album(labels(0));
@@ -2714,6 +2720,10 @@ impl App {
             (PluginAct::Turn(id), nori_plugins::Value::Switch(on)) => host.turn(id, on),
             (PluginAct::Hold(id), nori_plugins::Value::Switch(on)) => host.hold(id, on),
             (PluginAct::Row(id, row), v) => host.set(id, row, v),
+            (PluginAct::Noise(device), nori_plugins::Value::Choice(i)) => {
+                let Some(&mode) = self.controlled.iter().find(|d| d.id == device).and_then(|d| d.noise_modes.get(i as usize)) else { return };
+                return host.set_noise(device, mode);
+            }
             _ => return,
         }
         self.plugins_read();
@@ -2766,7 +2776,7 @@ impl App {
                 nori_host::spawn("nori-plugin-get", move || tx.send(Msg::PluginPreview(nori_core::transport::block_on(host.preview_version(v, "en".into())))));
                 return;
             }
-            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::TrustRepo(_) | PluginAct::InstallPreview => return,
+            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::TrustRepo(_) | PluginAct::InstallPreview | PluginAct::Noise(_) => return,
         }
         self.plugins_read();
     }
@@ -3106,6 +3116,10 @@ impl App {
                 self.plugged.shelf = crate::settings::Shelf::Read(o);
                 self.plugins_read();
             }
+            Msg::DevicesControlled => {
+                self.plugins_read();
+                self.output_shown();
+            }
             Msg::PluginsUpdated(updated) => {
                 let named: Vec<(String, String)> = updated.into_iter().map(|(id, to)| (self.plugged.cards.iter().find(|c| c.id == id).map_or(id, |c| c.name.clone()), to)).collect();
                 self.say(&words::plugins_updated(&named), false);
@@ -3400,12 +3414,22 @@ impl App {
         devices_set(&ui, rows);
     }
 
+    /// The controlled device this computer's output plays on.
+    fn output_device(&self) -> Option<&nori_plugins::ControlledDevice> {
+        nori_plugins::output_device(&self.controlled, (!self.output.is_empty()).then_some(self.output.as_str()))
+    }
+
     /// Where the sound goes, for the output buttons: the device playing while it is another one, else this
     /// computer's output as the core's `output_look` reads it (this computer until the first song opens one).
     fn output_shown(&self) {
         use nori_core::outputs::{output_look, OutputGlyph};
         let (elsewhere, glyph, name) = match self.there() {
             Some(e) => (true, words::device_glyph(e.mirror.kind), e.mirror.name.clone()),
+            // Headphones a plugin controls by their own name, with their battery.
+            None if self.output_device().is_some() => {
+                let d = self.output_device().expect("just found");
+                (false, 2, d.level.map_or_else(|| d.name.clone(), |l| words::with_level(&d.name, l)))
+            }
             None if self.output.is_empty() => (false, 0, words::THIS_COMPUTER.to_string()),
             None => {
                 let look = output_look(self.output.clone());
@@ -4153,7 +4177,7 @@ mod tests {
         host.turn(id, true);
         let labels: Vec<Vec<String>> = MENU_KINDS.iter().map(|k| host.menu_entries(*k, "en".into()).into_iter().map(|e| e.label).collect()).collect();
         assert_eq!(labels, [vec![], vec![], vec![], vec!["Count letters".to_string()]]);
-        let rows = crate::settings::device_rows(&host.device_cards("en".into()), &Default::default(), &Default::default(), crate::look::Today { month: 10, day: 19, southern: false });
+        let rows = crate::settings::device_rows(&host.device_cards("en".into()), &[], &Default::default(), &Default::default(), crate::look::Today { month: 10, day: 19, southern: false });
         let titles: Vec<String> = rows.iter().map(|r| r.title.to_string()).collect();
         assert_eq!(titles, ["TEST", "Gain: 0.5"]);
     }

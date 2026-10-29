@@ -1205,6 +1205,14 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
         DeviceRow::Join => Line::from(vec![Span::raw("  "), Span::styled(crate::text::JAM_JOIN, Style::default().fg(t.ink))]),
         DeviceRow::Pair => Line::from(format!("  {}", crate::text::PAIR_DEVICES)),
         DeviceRow::ResetPairing => Line::from(format!("  {}", crate::text::FORGET_DEVICES)),
+        DeviceRow::Controlled(k) => {
+            let x = &d.controlled[k];
+            spread(vec![Span::raw("  "), name(&x.name, false)], Span::styled(crate::text::battery(&x.battery), t.dim()), w)
+        }
+        DeviceRow::Noise(k) => {
+            let x = &d.controlled[k];
+            spread(vec![Span::raw("  "), Span::styled(crate::text::NOISE_CONTROL, Style::default().fg(t.ink))], Span::styled(x.noise.map_or("", crate::text::noise), t.dim()), w)
+        }
         DeviceRow::PluginName(c) => Line::from(Span::styled(format!("  {}", d.plugins[c].name.to_uppercase()), t.dim())),
         DeviceRow::Plugin(c, r) => d.plugin_row(c, r).map_or_else(Line::default, |row| setting_line(&SLine::Row(&row), w, t)),
         DeviceRow::PluginHint(c, r) => Line::from(Span::styled(fit(&format!("    {}", d.plugins[c].rows[r].hint.as_deref().unwrap_or_default()), w).into_owned(), t.dim().add_modifier(Modifier::ITALIC))),
@@ -1605,7 +1613,11 @@ fn panel_tabs(f: &mut Frame, app: &mut App, t: &Theme, r: Rect) {
 fn output_line(f: &mut Frame, r: Rect, app: &mut App, t: &Theme) {
     let (name, lit) = match &app.devices.active {
         Some((_, name)) => (crate::text::playing_on(name), true),
-        None => (crate::text::output_name(&app.output), false),
+        // Headphones a plugin controls by their own name, with their battery.
+        None => match app.devices.output_device(&app.output) {
+            Some(d) => (d.level.map_or_else(|| d.name.clone(), |l| crate::text::with_level(&d.name, l)), false),
+            None => (crate::text::output_name(&app.output), false),
+        },
     };
     text(f, r, &name, if lit { bold().fg(t.ink) } else { t.dim() });
     if app.devices.shown() {

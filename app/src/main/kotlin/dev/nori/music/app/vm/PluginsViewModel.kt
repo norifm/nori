@@ -10,6 +10,7 @@ import dev.nori.music.ffi.plugins.Offer
 import dev.nori.music.ffi.plugins.Refusal
 import dev.nori.music.ffi.plugins.RepoFailure
 import dev.nori.music.ffi.plugins.Value
+import dev.nori.music.ffi.plugins.Noise
 import dev.nori.music.ffi.plugins.PluginPreview
 import dev.nori.music.ffi.plugins.Version
 import kotlinx.coroutines.Dispatchers
@@ -50,11 +51,31 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     /** The sheet put away: nothing is installed. */
     fun dropPreview() { _preview.value = null }
 
-    /** Installs what the sheet showed, off when new. */
+    /** Installs what the sheet showed, off when new; one reaching Bluetooth devices asks for the permission. */
     fun installPreview() {
         val p = _preview.value ?: return
         _preview.value = null
-        viewModelScope.launch { refusing { host.installPreview(p) }; loadOffers() }
+        viewModelScope.launch {
+            if (refusing { host.installPreview(p) } != null && p.card.bluetooth && !bluetoothAllowed()) _askBluetooth.value = true
+            loadOffers()
+        }
+    }
+
+    /** The connected devices plugins control. */
+    val controlled = host.controlled
+
+    fun setNoise(device: String, noise: Noise) = viewModelScope.launch { host.setNoise(device, noise) }
+
+    private val _askBluetooth = MutableStateFlow(false)
+    /** A plugin reaching Bluetooth devices was just installed without the permission: it is asked for. */
+    val askBluetooth: StateFlow<Boolean> = _askBluetooth
+
+    fun bluetoothAllowed(): Boolean = android.os.Build.VERSION.SDK_INT < 31 ||
+        androidx.core.content.ContextCompat.checkSelfPermission(getApplication(), android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    fun bluetoothAnswered(granted: Boolean) {
+        _askBluetooth.value = false
+        if (granted) viewModelScope.launch { host.bluetoothGranted() }
     }
 
     /** The plugins whose rows show on the devices sheet too. */

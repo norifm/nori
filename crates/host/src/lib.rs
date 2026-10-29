@@ -2,6 +2,8 @@
 //! changes, a collection's songs, the offline index, cover colours and the output volume in dB. Media
 //! controls (`desktop` feature) sit over the engine. Each client words what happens itself.
 
+#[cfg(all(feature = "desktop", target_os = "linux"))]
+mod bluez;
 #[cfg(feature = "desktop")]
 pub mod desktop;
 pub mod pages;

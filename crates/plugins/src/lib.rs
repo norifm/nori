@@ -7,7 +7,9 @@
 uniffi::setup_scaffolding!();
 
 mod app;
+mod bluetooth;
 pub mod convert;
+mod devices;
 mod host;
 mod manifest;
 mod package;
@@ -27,11 +29,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub use app::{open, open_plugins, Client};
+pub use bluetooth::{Bluetooth, BtDevice, BtFailure};
+pub use devices::{controlled_output, output_device, Battery, ControlledDevice, Noise};
 pub use repo::{Offer, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
 pub use slots::{Artwork, InfoGroup, InfoLine, Items, MenuEntry};
 pub use view::{PluginCard, PluginPreview, PluginRow};
 pub use host::{Side, Value};
-pub use manifest::{Glyph, ItemKind, Manifest, MenuSpec, Place, Refusal, RowKind, RowSpec, Slot, API, POINTS};
+pub use manifest::{DeviceFilter, Glyph, ItemKind, Manifest, MenuSpec, Place, Refusal, RowKind, RowSpec, Slot, API, POINTS};
 pub use runtime::{Host, LINKED};
 pub use worker::Worker;
 
@@ -121,6 +125,12 @@ pub struct Plugins {
     repos: Mutex<Vec<String>>,
     /// When updates were last looked for, device ms.
     checked_ms: Mutex<i64>,
+    /// The platform's Bluetooth, the devices connected and the links plugins hold.
+    pub(crate) radio: Arc<bluetooth::Radio>,
+    /// Which plugin controls which connected device.
+    pub(crate) controls: Arc<devices::Controls>,
+    /// Whether the platform watches devices connecting (while an enabled plugin reaches devices).
+    pub(crate) watching: Mutex<bool>,
 }
 
 impl Plugins {
@@ -136,7 +146,19 @@ impl Plugins {
                 Some(Installed { manifest: Arc::new(manifest), enabled: e.enabled, repo: e.repo.clone(), held: e.held })
             })
             .collect();
-        Plugins { dir, side, installed: Mutex::new(installed), stages: Mutex::new(None), workers: Mutex::new(BTreeMap::new()), transport: Arc::default(), repos: Mutex::new(index.repos), checked_ms: Mutex::new(index.checked_ms) }
+        Plugins {
+            dir,
+            side,
+            installed: Mutex::new(installed),
+            stages: Mutex::new(None),
+            workers: Mutex::new(BTreeMap::new()),
+            transport: Arc::default(),
+            repos: Mutex::new(index.repos),
+            checked_ms: Mutex::new(index.checked_ms),
+            radio: Arc::default(),
+            controls: Arc::default(),
+            watching: Mutex::new(false),
+        }
     }
 
     /// The open profile's transport, for plugins' HTTP.
@@ -173,6 +195,7 @@ impl Plugins {
         self.workers.lock().expect("not poisoned").remove(&manifest.id);
         if on {
             self.side.laid(&manifest.id);
+            self.rewatch();
         }
         Ok(manifest)
     }
@@ -217,7 +240,7 @@ impl Plugins {
         let i = self.installed().into_iter().find(|i| i.enabled && i.manifest.id == id)?;
         let folder = self.folder(id);
         let component = runtime::component(&folder).map_err(|e| nori_model::alog::info(&format!("plugin {id}: {e:?}"))).ok()?;
-        let w = Worker::start(i.manifest.clone(), folder, component, self.side.clone(), self.transport.clone()).ok()?;
+        let w = Worker::start(i.manifest.clone(), folder, component, self.side.clone(), self.transport.clone(), self.radio.clone()).ok()?;
         // Started at once, so its overrides are in effect without waiting for a first call.
         w.post(|_, _| Ok(()));
         workers.insert(id.to_string(), w.clone());
@@ -305,6 +328,7 @@ impl Plugins {
         if starts {
             self.worker(id);
         }
+        self.rewatch();
     }
 
     /// Moves plugin `id` to `index` in the order they apply in.
@@ -347,5 +371,6 @@ impl Plugins {
         let _ = std::fs::remove_dir_all(self.folder(id));
         *self.stages.lock().expect("not poisoned") = None;
         self.side.laid(id);
+        self.rewatch();
     }
 }

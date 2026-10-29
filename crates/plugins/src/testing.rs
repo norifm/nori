@@ -1,7 +1,8 @@
 //! For tests in nori's crates: the test plugin (fixture/), built to wasm and laid out as a plugin
 //! folder to install. It has a lifecycle that overrides `playback.speed` and fetches over HTTP, a
 //! sound stage whose gain grows each block (its state), and a provider with nori's own answers (a
-//! profile with no Subsonic server). Needs `rustup target add wasm32-wasip2`.
+//! profile with no Subsonic server); with `headphones`, device control instead (fixture/src/headphones.rs).
+//! Needs `rustup target add wasm32-wasip2`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

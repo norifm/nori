@@ -104,6 +104,8 @@ pub trait Side: Send + Sync {
     /// A row is hidden or greyed (on top of its manifest's own conditions).
     fn shown(&self, id: &str, row: &str, shown: bool, enabled: bool);
     fn notice(&self, id: &str, problem: bool, words: &str, args: &[String]);
+    /// The controlled devices or what they report changed ([`crate::Plugins::controlled`]).
+    fn devices_changed(&self) {}
 }
 
 /// Where a plugin's overrides are kept in its store.

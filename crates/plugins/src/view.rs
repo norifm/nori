@@ -27,6 +27,8 @@ pub struct PluginCard {
     pub overrides: Vec<String>,
     /// Hosts it sends HTTP to.
     pub net: Vec<String>,
+    /// It reaches Bluetooth devices (the platform's Bluetooth permission).
+    pub bluetooth: bool,
     pub rows: Vec<PluginRow>,
 }
 
@@ -127,6 +129,7 @@ fn card(m: &Manifest, w: &BTreeMap<String, String>, stored: &BTreeMap<String, Va
         points: m.points.iter().map(|p| p.to_string()).collect(),
         overrides: m.overrides.clone(),
         net: m.net.clone(),
+        bluetooth: m.reaches_devices(),
         rows: m
             .rows
             .iter()

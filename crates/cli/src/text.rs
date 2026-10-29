@@ -729,6 +729,31 @@ pub const SIGNING_IN: &str = "Finish signing in in the window that opened.";
 pub const PASTE_COOKIES: &str = "Sign in in a private browser window, copy the Cookie header of any request the page makes from the developer tools, and paste it here. enter signs in · esc back";
 pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window couldn't open here. Paste cookies from a browser instead.";
 pub const THIS_COMPUTER: &str = "This computer";
+pub const NOISE_CONTROL: &str = "Noise control";
+pub const REACHES_BLUETOOTH: &str = "Reaches Bluetooth devices.";
+
+pub fn noise(n: nori_plugins::Noise) -> &'static str {
+    use nori_plugins::Noise;
+    match n {
+        Noise::Off => "Off",
+        Noise::Canceling => "Noise canceling",
+        Noise::Transparency => "Transparency",
+        Noise::Adaptive => "Adaptive",
+    }
+}
+
+/// A device's name and its battery: "WH-1000XM5 · 80%".
+pub fn with_level(name: &str, level: u8) -> String {
+    format!("{name} · {level}%")
+}
+
+/// Each battery a device has: "80%", or "L 80% · R 70% · Case 50%".
+pub fn battery(b: &nori_plugins::Battery) -> String {
+    if let Some(s) = b.single {
+        return format!("{s}%");
+    }
+    [("L", b.left), ("R", b.right), ("Case", b.case)].iter().filter_map(|(w, v)| v.map(|v| format!("{w} {v}%"))).collect::<Vec<_>>().join(" · ")
+}
 pub const REMOTE_OFF: &str = "Remote control and jams are off: switch them on in Settings, under Other devices";
 
 /// The player bar's line while another device plays: "Playing on Desk".

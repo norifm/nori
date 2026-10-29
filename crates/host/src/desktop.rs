@@ -76,6 +76,9 @@ pub fn plugins(data: &Path) -> &'static Plugged {
         let watched = Arc::new(Watched::default());
         let host = nori_plugins::open(data.join("plugins"), app().settings.clone(), watched.clone());
         let _ = watched.plugins.set(Arc::downgrade(&host));
+        // Watched only while an enabled plugin reaches devices; elsewhere plugins' Bluetooth is unsupported.
+        #[cfg(target_os = "linux")]
+        host.use_bluetooth(Arc::new(crate::bluez::Bluez::new(Arc::downgrade(&host))));
         Plugged { kinds: nori_core::providers::Kinds::with_plugins(host.clone()), host, watched }
     })
 }
@@ -149,12 +152,18 @@ pub struct Watched {
     engine: std::sync::Mutex<Option<std::sync::Weak<nori_engine::Engine>>>,
     plugins: std::sync::OnceLock<std::sync::Weak<nori_plugins::Plugins>>,
     heard: std::sync::Mutex<Option<Hears>>,
+    devices: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 
 impl Watched {
     /// Sends the plugins' notices to `to`, from whatever thread a plugin runs on.
     pub fn hear(&self, to: impl Fn(Notice) + Send + Sync + 'static) {
         *self.heard.lock().expect("not poisoned") = Some(Box::new(to));
+    }
+
+    /// Tells `to` whenever the controlled devices or what they report changed, from whatever thread.
+    pub fn on_devices(&self, to: impl Fn() + Send + Sync + 'static) {
+        *self.devices.lock().expect("not poisoned") = Some(Box::new(to));
     }
 
     /// Plugin `id`'s word `key` with `args` in its `{0}`, `{1}`…; the key itself where it has no such word.
@@ -181,6 +190,11 @@ impl nori_plugins::Client for Watched {
         nori_core::alog::info(&format!("plugin {id} says{}: {words}", if problem { " (a problem)" } else { "" }));
         if let Some(to) = self.heard.lock().expect("not poisoned").as_ref() {
             to(Notice { plugin: id, problem, words });
+        }
+    }
+    fn devices_changed(&self) {
+        if let Some(to) = self.devices.lock().expect("not poisoned").as_ref() {
+            to();
         }
     }
 }

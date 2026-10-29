@@ -107,9 +107,11 @@ interface bluetooth {
         product: option<u16>,
     }
 
+    /// The connected devices the filter matches.
     connected: func() -> list<device>;
 
-    /// An RFCOMM channel by service UUID.
+    /// An RFCOMM channel by service UUID. Bytes that come while no `read` waits come to the `notified`
+    /// hook, with the service UUID as the characteristic.
     resource rfcomm {
         open: static func(device: string, service: string) -> result<rfcomm, error>;
         read: func(max: u32, timeout-ms: u32) -> result<list<u8>, error>;
@@ -120,6 +122,8 @@ interface bluetooth {
     resource gatt {
         open: static func(device: string) -> result<gatt, error>;
         mtu: func() -> u16;
+        /// The UUIDs of the device's GATT services.
+        services: func() -> list<string>;
         read: func(service: string, characteristic: string) -> result<list<u8>, error>;
         write: func(service: string, characteristic: string, bytes: list<u8>, with-response: bool) -> result<_, error>;
         notify: func(service: string, characteristic: string, on: bool) -> result<_, error>;
