@@ -26,8 +26,6 @@ mod webm;
 #[cfg(feature = "core")]
 pub mod core;
 #[cfg(feature = "core")]
-mod cipher;
-#[cfg(feature = "core")]
 mod hls;
 #[cfg(feature = "core")]
 pub mod processing;

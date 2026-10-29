@@ -27,7 +27,7 @@ pub use exports::nori::plugin as points;
 pub use nori::plugin::types;
 
 /// The host interfaces linked for a plugin; a plugin importing another can't be installed here.
-pub const LINKED: [&str; 21] = ["log", "store", "http", "settings", "rows", "notices", "sockets", "streams", "bluetooth", "discovery", "lan-serve", "audio-out", "media", "cast", "session", "subsonic", "timers", "sign-in", "wake", "cache", "assets"];
+pub const LINKED: [&str; 20] = ["log", "store", "http", "settings", "rows", "notices", "sockets", "bluetooth", "discovery", "lan-serve", "audio-out", "media", "cast", "session", "subsonic", "timers", "sign-in", "wake", "cache", "assets"];
 
 /// Fuel for one call that isn't a sound stage's (about a few seconds of work).
 pub(crate) const CALL_FUEL: u64 = 20_000_000_000;
@@ -106,8 +106,6 @@ pub struct Host {
     pub(crate) started: crate::host::Started,
     /// Its sockets.
     pub(crate) table: wasmtime::component::ResourceTable,
-    /// What the last `source` call said of the URL it returned ([`crate::Encrypted`]).
-    pub(crate) encrypted: Option<crate::Encrypted>,
     /// The platform's Bluetooth, shared with the plugin host.
     pub(crate) radio: Arc<crate::bluetooth::Radio>,
     /// What the plugins hold on the LAN.
@@ -156,7 +154,6 @@ pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, shared: Shared) -> Stor
         transport,
         started: Default::default(),
         table: Default::default(),
-        encrypted: None,
         radio,
         lan,
         dir: dir.to_path_buf(),
@@ -242,7 +239,6 @@ pub(crate) fn linker(component: &Component) -> Result<Linker<Host>, Refusal> {
     nori::plugin::rows::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::notices::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::sockets::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
-    nori::plugin::streams::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::bluetooth::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::discovery::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::lan_serve::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;

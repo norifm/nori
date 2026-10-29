@@ -299,7 +299,7 @@ impl Provider for PluginProvider {
     }
 
     fn resolver(&self, _client: &Arc<Client>) -> Option<Arc<dyn ResolveStream>> {
-        Some(Arc::new(Resolver { worker: self.worker.clone(), parts: Default::default(), ciphers: Default::default() }))
+        Some(Arc::new(Resolver { worker: self.worker.clone(), parts: Default::default() }))
     }
 
     fn sign_in_done(&self, address: &str, cookies: &str) -> bool {
@@ -380,27 +380,16 @@ struct Resolver {
     worker: Worker,
     /// How the last stream resolved is asked for, by address ([`ResolveStream::parts`]).
     parts: parking_lot::Mutex<std::collections::HashMap<String, super::StreamParts>>,
-    /// How the last stream resolved is encrypted, by address ([`ResolveStream::cipher`]).
-    ciphers: parking_lot::Mutex<std::collections::HashMap<String, super::StreamCipher>>,
 }
 
 impl Resolver {
     fn source(&self, address: &str, used: w::StreamUse) -> Option<NetResult<String>> {
         let (kbps, id) = resolved_song(ADDRESS, address)?;
         let kbps = (kbps > 0).then_some(kbps);
-        let said = block_on(self.worker.call(move |s, x| {
-            s.data_mut().take_encrypted();
-            let src = x.nori_plugin_provider().call_source(&mut *s, &id, kbps, used)?;
-            Ok((src, s.data_mut().take_encrypted()))
-        }));
-        let (src, encrypted) = match said.ok_or_else(stopped).and_then(|(r, e)| r.map(|src| (src, e)).map_err(net_error)) {
-            Ok(said) => said,
+        let said = block_on(self.worker.call(move |s, x| x.nori_plugin_provider().call_source(s, &id, kbps, used)));
+        let src = match said.ok_or_else(stopped).and_then(|r| r.map_err(net_error)) {
+            Ok(src) => src,
             Err(e) => return Some(Err(e)),
-        };
-        let cipher = encrypted.filter(|e| e.url == src.url).map(|e| super::StreamCipher { key: e.key, iv: e.iv, skip: e.skip });
-        match cipher {
-            Some(c) => self.ciphers.lock().insert(address.to_string(), c),
-            None => self.ciphers.lock().remove(address),
         };
         let mut parts = self.parts.lock();
         match src.length.zip(src.part) {
@@ -422,10 +411,6 @@ impl ResolveStream for Resolver {
 
     fn parts(&self, address: &str) -> Option<super::StreamParts> {
         self.parts.lock().get(address).copied()
-    }
-
-    fn cipher(&self, address: &str) -> Option<super::StreamCipher> {
-        self.ciphers.lock().get(address).copied()
     }
 
     fn refused(&self, address: &str) {

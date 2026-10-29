@@ -314,10 +314,9 @@ impl ByteSource for Resolving {
     fn open_cancellable(&self, url: &str, key: Option<&str>, from: u64, cancel: &crate::source::Cancel) -> Result<crate::source::Body, OpenError> {
         let Some(served) = self.resolver.resolve(url) else { return self.bytes.open_cancellable(url, key, from, cancel) };
         let served = served.map_err(provider_error)?;
-        let opened = match (self.resolver.cipher(url), self.resolver.parts(url).filter(|p| from < p.len)) {
-            (Some(cipher), _) => self.open_encrypted(&served, key, from, cipher, cancel),
-            (None, Some(parts)) => self.open_parts(url, &served, key, from, parts, cancel),
-            (None, None) => self.open_whole(url, &served, key, from, cancel),
+        let opened = match self.resolver.parts(url).filter(|p| from < p.len) {
+            Some(parts) => self.open_parts(url, &served, key, from, parts, cancel),
+            None => self.open_whole(url, &served, key, from, cancel),
         };
         if matches!(opened, Err(OpenError::Status(403))) {
             self.resolver.refused(url);
@@ -389,17 +388,6 @@ impl Resolving {
         kept.drain(..over);
         drop(kept);
         Ok(self.segments(address, playlist, from, cancel))
-    }
-
-    /// The song in the encrypted file at `served` from its byte `from`, decrypted: the file's bytes from
-    /// `from` past those that are not the song's.
-    fn open_encrypted(&self, served: &str, key: Option<&str>, from: u64, cipher: nori_core::providers::StreamCipher, cancel: &crate::source::Cancel) -> Result<crate::source::Body, OpenError> {
-        let body = self.bytes.open_cancellable(served, key, from + cipher.skip, cancel)?;
-        let mut reader: Box<dyn std::io::Read + Send> = Box::new(crate::cipher::Decrypting::new(body.reader, &cipher, body.start));
-        // A server that answered from the file's start: its bytes before the song's go.
-        let before = cipher.skip.saturating_sub(body.start);
-        std::io::copy(&mut reader.by_ref().take(before), &mut std::io::sink()).map_err(|e| OpenError::Failed(e.to_string()))?;
-        Ok(crate::source::Body { start: body.start.max(cipher.skip) - cipher.skip, len: body.len.map(|l| l.saturating_sub(cipher.skip)), reader })
     }
 
     /// `playlist`'s stream from byte `from`. A segment refused on the way forgets the playlist and reports

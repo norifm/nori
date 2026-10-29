@@ -88,11 +88,7 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
   values, its overrides), which it can't write.
 - **HTTP** goes through the open profile's `Transport` (the one connection pool), only to its `net`
   hosts, with any method, headers and body bytes; a response carries its status, body and headers.
-- **Sockets**: TCP to its `net` hosts, on its own thread (a service's own protocol, such as Spotify's
-  access point).
-- **Encrypted streams**: during `source`, `streams.encrypted(url, key, iv, skip)` says the URL it returns
-  is AES-128-CTR; the engine decrypts as it reads, from any byte, past the `skip` bytes that aren't the
-  song's.
+- **Sockets**: TCP to its `net` hosts, on its own thread (a service's own protocol).
 - **Its cache** (`cache`), up to the manifest's `cache_mb`: a file per key in its folder's `cache/`, made
   at the first put; a put over the quota lets the least recently used go. **Its assets** (`assets`): the
   files its manifest names (URL, size, sha256), fetched by nori through the transport in 4 MB range

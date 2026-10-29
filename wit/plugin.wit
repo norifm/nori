@@ -550,7 +550,6 @@ world plugin {
     import timers;
     import sign-in;
     import wake;
-    import streams;
     import rows;
     import sockets;
     import discovery;
