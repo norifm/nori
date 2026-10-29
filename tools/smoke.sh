@@ -86,7 +86,7 @@ if want eq; then section "the equalizer, on and off; the buffer shallow while it
   "$app" open home >/dev/null
   check "off the equalizer page, the deep buffer is back, in place" waitfor_log "deep again in place" 15
   check "still sounding" sounds 5
-  check "the track was not reopened or emptied for it" never "rust AudioTrack: .*(160|80) ms|emptied for the music"
+  check "the track was not reopened for it" never "rust AudioTrack: .*(160|80) ms"
   "$app" set eq false >/dev/null
   check "still sounding with the equalizer off" sounds 5
 fi

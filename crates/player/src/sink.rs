@@ -118,8 +118,10 @@ impl ChainSettings {
 /// Why music is made again from the first frame a track can still replace ([`Track::freeze`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Remake {
-    /// The sound changed: a device holding seconds plays them first.
+    /// The sound changed: heard at once, a device holding seconds drops them.
     Sound,
+    /// The same music made again (a follower's slip): a device holding seconds plays them first.
+    Same,
     /// The ending changed: another song follows, or another mix.
     Ending,
 }
@@ -447,7 +449,7 @@ impl<T: Track> Sink<T> {
         if to == self.settings {
             return None;
         }
-        let at = self.splice();
+        let at = self.splice(Remake::Sound);
         self.apply(to);
         // A later change made again from here runs the new settings, not those before.
         if at.is_some() {
@@ -459,14 +461,14 @@ impl<T: Track> Sink<T> {
     /// Makes the output again, the same, from the first frame the track can still replace: what the
     /// track does to it from there on changed. Returns where it starts, as [`Sink::change`].
     pub fn remake(&mut self) -> Option<(u64, u64)> {
-        self.splice()
+        self.splice(Remake::Same)
     }
 
     /// Scales the input kept in each timeline range by its ratio (ReplayGain changed), heard from the
     /// first frame the track can still replace.
     pub fn rescale(&mut self, ranges: &[(Range<i64>, f32)]) -> Option<(u64, u64)> {
         let f = self.format?;
-        let at = self.splice();
+        let at = self.splice(Remake::Sound);
         for (pts, ratio) in ranges {
             self.kept.rescale(self.run, pts.clone(), *ratio, f.encoding, f.rate);
         }
@@ -527,14 +529,14 @@ impl<T: Track> Sink<T> {
     /// Puts the chain back where the track can still change: at the first frame it can replace, run
     /// again from the kept state before it (the same output). The track drops what it holds from
     /// there; [`Sink::fill`] runs the kept input after it again.
-    fn splice(&mut self) -> Option<(u64, u64)> {
+    fn splice(&mut self, why: Remake) -> Option<(u64, u64)> {
         let written = self.written()?;
         // Nothing kept of this stream yet (its first buffer is still to come): nothing to make again,
         // and the track is left as it is.
         if !self.kept.has_marks() {
             return None;
         }
-        let from = self.track.freeze(Remake::Sound).min(written);
+        let from = self.track.freeze(why).min(written);
         // Kept input starts later than that only if the track reaches back further than it said.
         let k = self.kept.mark_where(|m| m.out <= from).unwrap_or(0);
         let back = self.run_again(k, u64::MAX, from);

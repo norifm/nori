@@ -594,7 +594,7 @@ impl pipeline::Track for AudioTrack {
 
     fn freeze(&mut self, why: Remake) -> u64 {
         match (why, self.format) {
-            (Remake::Sound, Some(f)) if self.deep => self.played + (self.queued_bytes / f.frame_bytes()) as u64,
+            (Remake::Same, Some(f)) if self.deep => self.played + (self.queued_bytes / f.frame_bytes()) as u64,
             _ => self.played,
         }
     }
