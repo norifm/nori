@@ -10,7 +10,8 @@ with `log`, `store`, `http`, `settings`, `rows` and `notices`; overrides (settin
 tunables speed, pitch, skip silence, previous always skips); master-slot sound stages; plugins'
 providers (YouTube Music moved out of nori into one); rows and the Plugins page in each client but
 the iPod and the web. Not yet: the song slot, song preparation, AutoMix seams, deciders, hooks' events,
-slots, device control, casting, repos and signatures, backups, safe mode, the web host.
+slots, device control, casting, repos and signatures, safe mode, the web host. Backups are built
+(crates/backup, docs/developers/plugins.md).
 
 ## Owner decisions so far (2026-10-24)
 

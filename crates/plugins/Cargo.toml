@@ -31,7 +31,7 @@ nori-tasks = { path = "../tasks" }
 # The runtime: components compiled by Cranelift once at install (never downloaded as native code),
 # fuel for every call's budget.
 wasmtime = { version = "50", default-features = false, features = ["cranelift", "runtime", "component-model", "std", "parallel-compilation"] }
-# index.json (the plugins' order).
+# index.json (the plugins' order) and a backup's plugins.
 serde = { version = "1", features = ["derive"] }
 # The manifest, in the wasm's `nori:plugin` custom section; wasmtime's own parser.
 wasmparser = "0.261"
@@ -39,6 +39,8 @@ wasmparser = "0.261"
 sha2 = "0.10"
 # index.json and a repo's index.json.
 serde_json = "1"
+# A plugin's store in a backup (kept.rs).
+base64 = "0.22"
 # A `.noriplugin` package.
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # What a provider plugin's async calls wait on while its thread works.

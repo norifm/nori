@@ -132,6 +132,15 @@ impl<'a> Target<'a> {
 
 const EQUALIZER: &str = "equalizer";
 const ADD_SERVER: &str = "add-server";
+const BACKUP: &str = "backup";
+const RESTORE: &str = "restore";
+const BACKUP_PASSWORD: &str = "backup-password";
+const RESTORE_PASSWORD: &str = "restore-password";
+
+/// The name of the sheet asking for the password of the backup at `path`.
+pub fn backup_password(restore: bool, path: &str) -> String {
+    format!("{}:{path}", if restore { RESTORE_PASSWORD } else { BACKUP_PASSWORD })
+}
 /// A folder's toggle is named `musicFolders=<the value it stores>`.
 const MUSIC_FOLDERS: &str = "musicFolders";
 
@@ -151,6 +160,10 @@ pub enum Act {
     /// Switch to the server with this id.
     Server(String),
     Chore(Chore),
+    /// Asks where to save a backup, or which one to restore.
+    Backup { restore: bool },
+    /// Asks for the password of the backup at `path`.
+    BackupPassword { restore: bool, path: String },
 }
 
 impl Act {
@@ -162,9 +175,14 @@ impl Act {
         if let Some(id) = name.strip_prefix("edit:") {
             return Some(Act::Edit(id.to_string()));
         }
+        if let Some((what, path)) = name.split_once(':').filter(|(what, _)| matches!(*what, BACKUP_PASSWORD | RESTORE_PASSWORD)) {
+            return Some(Act::BackupPassword { restore: what == RESTORE_PASSWORD, path: path.to_string() });
+        }
         match name {
             EQUALIZER => Some(Act::Equalizer),
             ADD_SERVER => Some(Act::AddServer),
+            BACKUP => Some(Act::Backup { restore: false }),
+            RESTORE => Some(Act::Backup { restore: true }),
             _ => CHORES.into_iter().find(|c| chore_name(*c) == name).map(Act::Chore),
         }
     }
@@ -285,6 +303,7 @@ fn section_title(id: SectionId) -> &'static str {
         Streaming => "Streaming",
         Downloads => "Downloads",
         Storage => "Storage",
+        Backup => "Backup",
         Updates => "Updates",
     }
 }
@@ -494,6 +513,8 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
                 SettingsAction::ClearCovers => action("Covers", format!("{}. Fetched again when needed.", bytes(f.cover_bytes)), "Clear", enabled, Chore::ClearCovers),
                 SettingsAction::ClearLyrics => action("Lyrics", format!("{} found online. Looked up again when needed.", bytes(f.lyrics_bytes)), "Clear", enabled, Chore::ClearLyrics),
                 SettingsAction::AddServer => Row { kind: BUTTON, name: ADD_SERVER.into(), title: "Add server".into(), enabled: true, ..Default::default() },
+                SettingsAction::MakeBackup => Row { kind: ACTION, name: BACKUP.into(), title: words::BACK_UP.into(), detail: words::BACK_UP_DETAIL.into(), button: "Save".into(), enabled, ..Default::default() },
+                SettingsAction::RestoreBackup => Row { kind: ACTION, name: RESTORE.into(), title: words::RESTORE.into(), detail: words::RESTORE_DETAIL.into(), button: "Open".into(), enabled, ..Default::default() },
                 SettingsAction::AnalyseDownloads | SettingsAction::JoinJam | SettingsAction::CheckUpdate => return None,
             }
         }
@@ -1122,6 +1143,8 @@ mod tests {
         assert_eq!(Act::of(ADD_SERVER), Some(Act::AddServer));
         assert_eq!(Act::of("server:7"), Some(Act::Server("7".into())));
         assert_eq!(Act::of("edit:7"), Some(Act::Edit("7".into())));
+        assert_eq!(Act::of(&backup_password(true, "C:/b:k.noribackup")), Some(Act::BackupPassword { restore: true, path: "C:/b:k.noribackup".into() }), "a path with colons");
+        assert_eq!(Act::of(&backup_password(false, "/a")), Some(Act::BackupPassword { restore: false, path: "/a".into() }));
     }
 
     /// A plugin's page draws each kind of row with the settings' own, each named so it parses back to

@@ -373,6 +373,33 @@ counts by nori's rule (half the song or 4 minutes), from `nori_queue::Session::s
 (`Scrobbles`, set by `Core::use_kinds`), on its own thread; nothing waits for it. Its account is its own:
 the server's scrobbling switch and the profile's rules (a jam guest's) don't apply to it.
 
+## Backups
+
+A backup (crates/backup) keeps the installed plugins as `Plugins::kept` gives them: in their order,
+each with its id, version, repo, being on and being held, and every value in its store (its rows, its
+overrides, its secrets and its own keys), plus the repos the user added. The file is sealed with the
+password the user sets: Argon2id (64 MiB, 3 passes, one lane, kept in the header) makes a 64-byte
+output whose first half is the XChaCha20-Poly1305 key and whose second half is stored to tell a wrong
+password from a damaged file; the whole header is the cipher's associated data.
+
+`Plugins::restore` adds the repos, fetches each plugin from its own repo at the version backed up, else
+the newest that repo lists, else keeps the one installed here, then writes its store over the one
+there and puts the order (the backup's first, others after), being on and being held back. Each
+plugin's `PluginReturn` says how it came back: `AsKept`, `Other { version }`, `FromFile` (installed
+from a file, which nothing can fetch again) or `Unavailable` (its repo doesn't list it now or couldn't
+be read). Restoring needs no consent sheet: the user allowed each plugin when it was first installed. A
+plugin's `cache/` and `assets/` are not kept: it fills its cache again and its assets are fetched
+again (whether it may fetch them on mobile data is in its store, so that comes back). What the
+platform grants (Android's Bluetooth permission) is asked again when a plugin needs it.
+
+The rest of a backup: every stored setting as the settings table keeps it (read back through `load`,
+so an older backup moves on as an older database does), the server profiles with their passwords among
+them, and the saved sound profiles. A restore keeps the profiles here beside the backup's (one with the
+same id, or the same address and user, stays as it is here) and the profile in use stays in use. Not
+in a backup: each profile's library index, history, downloads and caches (the server has them, or
+they are fetched again), its smart playlists (a profile's library data, not settings), and `app_kv`
+(this device's id, update checks).
+
 ## Tests
 
 - `cargo test -p nori-plugins`: the manifest as the SDK writes it, the extension points' order against
@@ -399,3 +426,8 @@ the server's scrobbling switch and the profile's rules (a jam guest's) don't app
   state, a song's facts from its first frame, prepared data spliced in, the song slot, the tap.
 - `cargo test -p nori-automix mixing`: what nori checks of a plugin's plan and refinement.
 - `cargo test -p nori-settings overrides`: tunables and settings overridden without being written.
+- `cargo test -p nori-backup`: a backup round trip between two devices (settings, sound profiles, and
+  the fixture and its `second` build with their stores, order, being on and held), what a restore does
+  for a version its repo dropped, a file-installed plugin and a plugin its repo no longer lists, the
+  profile in use kept, and wrong passwords, changed bytes and other files refused with nothing
+  changed.

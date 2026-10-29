@@ -17,6 +17,8 @@ unlinked = ["dep:wit-bindgen"]
 headphones = []
 # Its stage in the song slot.
 song = []
+# Another id (`testing::SECOND`): a second plugin beside the first.
+second = []
 
 [dependencies]
 nori-plugin-sdk = { path = "../../plugin-sdk" }

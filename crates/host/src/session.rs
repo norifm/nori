@@ -911,10 +911,22 @@ impl Handle {
     /// Sets a setting by name and applies its effects, as Android's player does. None if no such setting.
     pub fn setting(&self, name: &str, value: &str) -> Option<SettingChange> {
         let change = self.core.session.settings.edit_by_name(name, value)?;
-        self.apply(change.effect, &change.prefs);
+        self.took(&change);
         if matches!(name, "remoteControl" | "jam") {
             self.follow_remote();
         }
+        Some(change)
+    }
+
+    /// Applies the settings a backup restored (`nori_backup::restore`), as [`Session::setting`] does a
+    /// change.
+    pub fn backup_restored(&self, change: &SettingChange) {
+        self.took(change);
+        self.follow_remote();
+    }
+
+    fn took(&self, change: &SettingChange) {
+        self.apply(change.effect, &change.prefs);
         if let Some(store) = self.store.as_ref().filter(|_| change.effect & CACHE_LIMIT != 0) {
             store.set_limit(change.prefs.cache_mb.max(0) as u64 * 1024 * 1024);
         }
@@ -924,7 +936,6 @@ impl Handle {
                 self.client.set_profile(net(s));
             }
         }
-        Some(change)
     }
 
     /// The system moved the volume by itself (its keys, where it keeps the volume), 0 to 1: the

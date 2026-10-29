@@ -171,10 +171,10 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     /** What a settings page depends on besides the settings, from this platform. */
     val settingsFacts: StateFlow<SettingsFacts> by lazy {
-        combine(combine(dac, _sync, _storage, _analysed, _folders, ::factsOf), update, nori.plugins.names) { f, u, names -> f.copy(update = u, installsUpdates = nori.updates.installs, pluginNames = names) }
+        combine(combine(dac, _sync, _storage, _analysed, _folders, ::factsOf), update, nori.plugins.names, _backup) { f, u, names, b -> f.copy(update = u, installsUpdates = nori.updates.installs, pluginNames = names, backup = b) }
             .stateIn(
                 viewModelScope, SharingStarted.WhileSubscribed(5_000),
-                factsOf(dac.value, _sync.value, _storage.value, _analysed.value, _folders.value).copy(update = update.value, installsUpdates = nori.updates.installs, pluginNames = nori.plugins.names.value),
+                factsOf(dac.value, _sync.value, _storage.value, _analysed.value, _folders.value).copy(update = update.value, installsUpdates = nori.updates.installs, pluginNames = nori.plugins.names.value, backup = _backup.value),
             )
     }
 
@@ -210,6 +210,39 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         }
         nori.settings.took(change)
         if ((change.effect and CACHE_LIMIT) != 0u) applyCacheLimit()
+    }
+
+    private val _backup = kotlinx.coroutines.flow.MutableStateFlow<BackupUi>(BackupUi.Idle)
+
+    /** Saves a backup sealed with [password] into the file the user picked at [uri]. */
+    fun makeBackup(uri: android.net.Uri, password: String) = backupStep(false) {
+        val file = nori.plugins.backup(password)
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            getApplication<Application>().contentResolver.openOutputStream(uri, "wt")?.use { it.write(file) } ?: throw java.io.IOException("no stream for $uri")
+        }
+        BackupUi.Saved
+    }
+
+    /** Restores the backup at [uri] with [password], then takes in the settings it brought back. */
+    fun restoreBackup(uri: android.net.Uri, password: String) = backupStep(true) {
+        val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw java.io.IOException("no stream for $uri")
+        }
+        val r = nori.plugins.restore(file, password)
+        apply(r.settings)
+        BackupUi.Restored(r.plugins)
+    }
+
+    private fun backupStep(restore: Boolean, step: suspend () -> BackupUi) = viewModelScope.launch {
+        _backup.value = BackupUi.Working(restore)
+        _backup.value = try {
+            step()
+        } catch (e: dev.nori.music.ffi.backup.BackupException) {
+            BackupUi.Failed(restore, e)
+        } catch (e: java.io.IOException) {
+            dev.nori.music.NoriLog.w("backup: ${e.message}")
+            BackupUi.Failed(restore, null)
+        }
     }
 
     /** A button on a settings row. */

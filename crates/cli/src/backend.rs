@@ -84,6 +84,10 @@ pub enum Msg {
     PluginsChanged,
     /// A provider's plugin asks for its sign-in page at `url`.
     PluginSignIn { plugin: String, url: String },
+    /// A backup saved, or why not.
+    BackedUp(Result<(), nori_host::desktop::BackupFailure>),
+    /// What a backup restored, or why it couldn't.
+    Restored(Result<Box<nori_core::backup::Restored>, nori_host::desktop::BackupFailure>),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }
@@ -121,6 +125,8 @@ impl Msg {
             Msg::Updated(u) => format!("{} plugins updated", u.len()),
             Msg::PluginsChanged => "plugins changed".into(),
             Msg::PluginSignIn { plugin, .. } => format!("plugin {plugin} asks to sign in"),
+            Msg::BackedUp(r) => format!("backed up: {r:?}"),
+            Msg::Restored(r) => format!("restored: {:?}", r.as_ref().map(|r| &r.plugins)),
             Msg::Offers(o) => format!("{} plugins offered, {} repos unread", o.offers.len(), o.failed.len()),
             Msg::From(id, m) => format!("session {id}: {}", m.brief()),
         }

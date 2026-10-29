@@ -44,7 +44,6 @@ CREATE TABLE IF NOT EXISTS downloads(server TEXT NOT NULL, id TEXT NOT NULL, jso
 CREATE TABLE IF NOT EXISTS download_beats(server TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS autoeq(rowid INTEGER PRIMARY KEY, name TEXT NOT NULL, source TEXT NOT NULL, form TEXT NOT NULL, target TEXT NOT NULL, path TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS autoeq_missing(path TEXT PRIMARY KEY) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS profiles(name TEXT PRIMARY KEY, json TEXT NOT NULL, outputs TEXT NOT NULL DEFAULT '') WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS searches(server TEXT NOT NULL, query TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(server, query)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS plays(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, song_id TEXT NOT NULL, started_ms INTEGER NOT NULL, heard_ms INTEGER NOT NULL, duration_ms INTEGER NOT NULL, completed INTEGER NOT NULL, skipped INTEGER NOT NULL, hour INTEGER NOT NULL, day INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS plays_started ON plays(server, started_ms);
@@ -73,6 +72,7 @@ CREATE TABLE IF NOT EXISTS vocal_curve(server TEXT NOT NULL, song_id TEXT NOT NU
 const APP_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS app_kv(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS profiles(name TEXT PRIMARY KEY, json TEXT NOT NULL, outputs TEXT NOT NULL DEFAULT '') WITHOUT ROWID;
 ";
 
 /// Per-server tables, cleared when a profile is removed.
@@ -146,7 +146,7 @@ fn add_pending_tries(c: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Opens the database for app-wide tables only (settings, app_kv).
+/// Opens the database for app-wide tables only (settings, app_kv, sound profiles).
 pub fn open_app(path: &str) -> rusqlite::Result<Connection> {
     let c = connect(path)?;
     c.execute_batch(APP_SCHEMA)?;

@@ -311,6 +311,17 @@ class PluginHost(
     /** [artwork]'s address answered HTTP [status]: its plugin may look it up again. */
     suspend fun artworkFailed(artwork: Artwork, song: Song, status: Int) = withContext(Dispatchers.IO) { plugins.artworkFailed(artwork, song, status.toUShort()) }
 
+    /** A backup of the settings, sound profiles and plugins, sealed with [password] (nori-backup). Throws its `BackupError`. */
+    suspend fun backup(password: String): ByteArray = withContext(Dispatchers.IO) { dev.nori.music.ffi.backup.backupMake(settings.core, plugins, password) }
+
+    /**
+     * Restores the backup [file] with [password]: the settings come back in the core (the caller takes in
+     * the change it returns), the plugins from their repos. Throws its `BackupError`; nothing changes then.
+     */
+    suspend fun restore(file: ByteArray, password: String): dev.nori.music.ffi.backup.Restored = withContext(Dispatchers.IO) {
+        dev.nori.music.ffi.backup.backupRestore(settings.core, plugins, file, password).also { refresh() }
+    }
+
     /** The lines plugins say under the player's output row. */
     suspend fun playerStatus(): List<String> = withContext(Dispatchers.IO) { plugins.playerStatus() }
 }

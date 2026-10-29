@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 /// The test plugin's id.
 pub const FIXTURE: &str = "fm.nori.test";
+/// Its id built with the `second` feature.
+pub const SECOND: &str = "fm.nori.test.second";
 
 /// The test plugin built with `features`, in a plugin folder of its own.
 pub fn fixture(features: &str) -> PathBuf {

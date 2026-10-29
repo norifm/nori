@@ -61,6 +61,7 @@ via nori-core):
 | library | history, mixes, smart playlists, browse/search, page layouts, menus, car tree |
 | automix | analysis store, transition planner, beat model location |
 | stretch | time stretch and pitch shift, a pure Rust port of Signalsmith Stretch (checked against the C++ in its tests) |
+| backup | a backup of the settings, sound profiles and plugins (their stores, order, being on), one file sealed with a password (Argon2id, XChaCha20-Poly1305); restoring reinstalls the plugins from their repos |
 | settings / settings-derive | every setting is one `StoredPrefs` field with a `#[setting(...)]` line; codecs, store, settings model |
 | lyrics | services, formats, scoring, sync against the vocal curve, the lyrics clock |
 | queue | the played queue, controls, autofill, offline bridge, scrobbling |

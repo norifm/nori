@@ -12,7 +12,9 @@ use parking_lot::{Mutex, RwLock};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 
-use crate::settings::{band_typed, band_with, load, save, set_band, BandField, set_by_name, set_level, EqLevel, PrefValue, SettingChange, SoundBand, SoundError, SoundSettings, StoredPrefs};
+use nori_model::SoundProfile;
+
+use crate::settings::{ServerList, band_typed, band_with, load, save, set_band, BandField, set_by_name, set_level, EqLevel, PrefValue, SettingChange, SoundBand, SoundError, SoundSettings, StoredPrefs};
 
 // Effect bits: what a settings change asks the player (or client) to apply again.
 /// Which parts of the output chain may run, speed and pitch.
@@ -39,7 +41,7 @@ struct SettingsStore {
     written: Arc<Mutex<StoredPrefs>>,
 }
 
-fn to_json(v: &PrefValue) -> String {
+fn json_of(v: &PrefValue) -> Value {
     match v {
         PrefValue::Flag { v } => json!({ "b": v }),
         PrefValue::Number { v } => json!({ "i": v }),
@@ -47,11 +49,18 @@ fn to_json(v: &PrefValue) -> String {
         PrefValue::Decimal { v } => json!({ "f": v }),
         PrefValue::Text { v } => json!({ "s": v }),
     }
-    .to_string()
+}
+
+fn to_json(v: &PrefValue) -> String {
+    json_of(v).to_string()
 }
 
 fn from_json(text: &str) -> Option<PrefValue> {
-    let Value::Object(o) = serde_json::from_str(text).ok()? else { return None };
+    value_from(serde_json::from_str(text).ok()?)
+}
+
+fn value_from(v: Value) -> Option<PrefValue> {
+    let Value::Object(o) = v else { return None };
     let (t, v) = o.into_iter().next()?;
     Some(match (t.as_str(), v) {
         ("b", Value::Bool(v)) => PrefValue::Flag { v },
@@ -69,7 +78,7 @@ fn read(c: &Connection) -> rusqlite::Result<HashMap<String, PrefValue>> {
     Ok(rows.filter_map(|r| r.ok()).filter_map(|(k, v)| Some((k, from_json(&v)?))).collect())
 }
 
-/// Whether any saved sound profile has a parametric equalizer; false without a profiles table.
+/// Whether any saved sound profile has a parametric equalizer.
 fn profiles_parametric(c: &Connection) -> bool {
     let Ok(mut st) = c.prepare("SELECT json FROM profiles") else { return false };
     let Ok(rows) = st.query_map([], |r| r.get::<_, String>(0)) else { return false };
@@ -401,6 +410,46 @@ impl Settings {
         })
     }
 
+    /// The settings as a backup keeps them: each stored value as the settings table holds it.
+    pub fn backed_up(&self) -> serde_json::Map<String, Value> {
+        self.prefs(save).iter().map(|(k, v)| (k.clone(), json_of(v))).collect()
+    }
+
+    /// Restores a backup's settings ([`Settings::backed_up`]), read as stored ones are (defaults for what
+    /// it lacks, older forms moved on), the profiles here kept beside the backup's
+    /// (`settings::servers_restored`). `server`: the profile in use changed.
+    pub fn restore(&self, backed: &serde_json::Map<String, Value>) -> SettingChange {
+        let raw: HashMap<String, PrefValue> = backed.iter().filter_map(|(k, v)| Some((k.clone(), value_from(v.clone())?))).collect();
+        let restored = load(&raw);
+        let here = self.prefs(StoredPrefs::clone);
+        let list = crate::settings::servers_restored(ServerList { servers: here.servers, active_server_id: here.active_server_id.clone() }, ServerList { servers: restored.servers.clone(), active_server_id: restored.active_server_id.clone() });
+        let prefs = StoredPrefs { servers: list.servers, active_server_id: list.active_server_id, ..restored };
+        let server = prefs.active_server_id != here.active_server_id;
+        let effect = self.put(prefs.clone());
+        SettingChange { prefs, server, effect }
+    }
+
+    /// The saved sound profiles, by name; none before the settings are open.
+    pub fn sound_profiles(&self) -> nori_model::Result<Vec<SoundProfile>> {
+        let Some(db) = self.app_db() else { return Ok(Vec::new()) };
+        let c = db.lock();
+        let mut st = c.prepare("SELECT name, json, outputs FROM profiles ORDER BY name")?;
+        let rows = st.query_map([], |r| Ok(SoundProfile { name: r.get(0)?, json: r.get(1)?, outputs: r.get::<_, String>(2)?.lines().filter(|l| !l.is_empty()).map(str::to_string).collect() }))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Saves `profiles`, each replacing one of its name.
+    pub fn keep_sound_profiles(&self, profiles: &[SoundProfile]) -> nori_model::Result<()> {
+        let Some(db) = self.app_db() else { return Ok(()) };
+        let mut c = db.lock();
+        let tx = c.transaction()?;
+        for p in profiles {
+            tx.execute("INSERT OR REPLACE INTO profiles(name, json, outputs) VALUES(?1, ?2, ?3)", params![p.name, p.json, p.outputs.join("\n")])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// A copy of the live settings; None before they are open.
     pub fn current(&self) -> Option<StoredPrefs> {
         self.with_prefs(StoredPrefs::clone)
@@ -637,7 +686,6 @@ mod tests {
                 write(&mut c, &StoredPrefs { eq_mode: EqMode::Graphic, ..prefs.clone() }).unwrap();
                 c.execute("DELETE FROM settings WHERE key = ?1", [EQ_MODE_KEY]).unwrap();
                 if let Some(json) = profile {
-                    c.execute_batch("CREATE TABLE profiles(name TEXT PRIMARY KEY, json TEXT NOT NULL, outputs TEXT NOT NULL DEFAULT '') WITHOUT ROWID").unwrap();
                     c.execute("INSERT INTO profiles(name, json) VALUES('Mine', ?1)", [json]).unwrap();
                 }
             }
@@ -905,7 +953,6 @@ mod tests {
             for (k, v) in stored_062(false) {
                 c.execute("INSERT INTO settings(key, value) VALUES(?1, ?2)", params![k, to_json(&v)]).unwrap();
             }
-            c.execute_batch("CREATE TABLE profiles(name TEXT PRIMARY KEY, json TEXT NOT NULL, outputs TEXT NOT NULL DEFAULT '') WITHOUT ROWID").unwrap();
             c.execute("INSERT INTO profiles(name, json) VALUES('Car', ?1)", [profile]).unwrap();
         }
         SettingsStore::open(&path).unwrap();

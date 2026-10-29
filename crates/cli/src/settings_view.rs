@@ -96,6 +96,8 @@ pub enum Act {
     AddRepo,
     /// Lets a plugin fetch its assets on mobile data.
     AllowMobileAssets(String),
+    /// Asks where to save a backup, or which one to restore.
+    Backup { restore: bool },
 }
 
 pub use nori_host::session::Chore;
@@ -581,6 +583,7 @@ pub fn open_row(row: Row) -> Option<Opened> {
             Act::GetPlugin { offer, version } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Get(offer, version))]),
             Act::AddRepo => Opened::Overlay(Overlay::Input { title: text::REPO_ADDRESS.into(), text: String::new(), secret: false, target: Target::AddRepo }),
             Act::AllowMobileAssets(id) => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::AllowMobileAssets(id))]),
+            Act::Backup { restore } => Opened::Overlay(Overlay::Input { title: text::backup_path(restore).into(), text: String::new(), secret: false, target: Target::BackupFile { restore } }),
         },
         Row::Text { title, secret, target, .. } => Opened::Overlay(Overlay::Input { title, text: String::new(), secret, target }),
         Row::Plugin { id, on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Turn(id, !on))]),
@@ -743,6 +746,7 @@ fn section_title(id: SectionId) -> &'static str {
         Streaming => "Streaming",
         Downloads => "Downloads",
         Storage => "Storage",
+        Backup => "Backup",
         Updates => "Updates",
     }
 }
@@ -961,6 +965,8 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
                 SettingsAction::ClearLyrics => chore("Lyrics", format!("{} found online. Looked up again when needed.", numbers::bytes(f.storage.lyrics, POINT)), "Clear", Chore::ClearLyrics),
                 SettingsAction::AddServer => Row::Button { title: "Add server".into(), action: Act::AddServer },
                 SettingsAction::JoinJam => Row::Button { title: text::JAM_JOIN.into(), action: Act::JoinJam },
+                SettingsAction::MakeBackup => Row::Action { title: text::BACK_UP.into(), detail: text::BACK_UP_DETAIL.into(), button: "Save".into(), enabled, action: Act::Backup { restore: false } },
+                SettingsAction::RestoreBackup => Row::Action { title: text::RESTORE.into(), detail: text::RESTORE_DETAIL.into(), button: "Open".into(), enabled, action: Act::Backup { restore: true } },
                 SettingsAction::AnalyseDownloads | SettingsAction::CheckUpdate => return None,
             }
         }

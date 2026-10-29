@@ -103,6 +103,10 @@ pub enum Msg {
     PluginsUpdated(Vec<(String, String)>),
     /// What a plugin's page shows (its rows' lines, its assets), or the devices plugins control, changed.
     PluginsChanged,
+    /// A backup saved, or why not.
+    BackedUp(Result<(), nori_host::desktop::BackupFailure>),
+    /// What a backup restored, or why it couldn't.
+    Restored(Result<Box<nori_core::backup::Restored>, nori_host::desktop::BackupFailure>),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }

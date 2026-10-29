@@ -486,6 +486,17 @@ impl Runner {
             Msg::Remote | Msg::Jam(_) => self.remote_read(app),
             // The plugin installed is shown, and asked to be turned on, from its card.
             Msg::Installed(_) => self.plugin(app, crate::app::PluginCmd::Read),
+            Msg::BackedUp(r) => return app.say(r.as_ref().map_or_else(crate::text::backup_failed, |_| crate::text::BACKUP_SAVED.into()), r.is_err()),
+            Msg::Restored(Ok(r)) => {
+                if let Some(s) = &self.session {
+                    s.backup_restored(&r.settings);
+                }
+                prefs_changed(app);
+                let said = crate::text::restored(r);
+                self.plugin(app, crate::app::PluginCmd::Read);
+                return app.say(said, false);
+            }
+            Msg::Restored(Err(f)) => return app.say(crate::text::backup_failed(f), true),
             Msg::Offers(o) => {
                 app.settings.own.shelf = crate::settings_view::Shelf::Read(o.clone());
                 return self.plugin(app, crate::app::PluginCmd::Read);
@@ -715,6 +726,18 @@ impl Runner {
             }
             Cmd::OfferSignIn => return self.offer_sign_in(app),
             Cmd::Plugin(c) => return self.plugin(app, c),
+            Cmd::Backup { restore: false, path, password } => {
+                let tx = self.tx.clone();
+                return nori_host::desktop::make_backup(&self.o.data, path.into(), password, move |r| {
+                    let _ = tx.send(Msg::BackedUp(r));
+                });
+            }
+            Cmd::Backup { restore: true, path, password } => {
+                let tx = self.tx.clone();
+                return nori_host::desktop::restore_backup(&self.o.data, path.into(), password, move |r| {
+                    let _ = tx.send(Msg::Restored(r.map(Box::new)));
+                });
+            }
             Cmd::SignInWindow => {
                 let (Some(s), Some(crate::app::Overlay::Account { kind, pasting, error, busy, .. })) = (&self.session, &mut app.overlay) else { return };
                 #[cfg(feature = "sign-in-window")]
@@ -985,7 +1008,7 @@ impl Runner {
                     }
                 }
             }
-            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) => {}
+            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
         }
     }
 

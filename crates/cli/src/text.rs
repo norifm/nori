@@ -73,6 +73,46 @@ pub fn plugins_updated(updated: &[(String, String)]) -> String {
     let each: Vec<String> = updated.iter().map(|(name, to)| format!("{name} to {to}")).collect();
     format!("Updated {}", each.join(", "))
 }
+pub const BACK_UP: &str = "Back up";
+pub const BACK_UP_DETAIL: &str = "Settings, sound profiles and plugins, server passwords included, locked with a password.";
+pub const RESTORE: &str = "Restore a backup";
+pub const RESTORE_DETAIL: &str = "Its settings replace these. Your servers stay.";
+pub const BACKUP_SAVED: &str = "Backup saved";
+pub const BACKUP_PASSWORD: &str = "The backup's password";
+
+/// Asks for the file a backup is saved to, or restored from.
+pub fn backup_path(restore: bool) -> &'static str {
+    if restore { "Backup file to restore" } else { "File to save the backup to" }
+}
+
+/// Why a backup couldn't be made or restored.
+pub fn backup_failed(f: &nori_host::desktop::BackupFailure) -> String {
+    use nori_core::backup::BackupError as E;
+    use nori_host::desktop::BackupFailure as F;
+    match f {
+        F::Backup(E::NoPassword) => "Set a password for the backup".into(),
+        F::Backup(E::WrongPassword) => "Wrong password".into(),
+        F::Backup(E::NotABackup) => "That isn't a nori backup".into(),
+        F::Backup(E::Newer) => "Made by a newer nori: update to restore it".into(),
+        F::Backup(E::Damaged) => "The backup is damaged".into(),
+        F::Backup(E::Database) => "The settings couldn't be read or saved".into(),
+        F::File(e) => format!("Couldn't use the file: {e}"),
+    }
+}
+
+/// What a restore brought back, the plugins that didn't come back as they were named.
+pub fn restored(r: &nori_core::backup::Restored) -> String {
+    use nori_plugins::PluginReturn as P;
+    let mut said = vec!["Restored".to_string()];
+    said.extend(r.plugins.iter().filter_map(|p| match &p.outcome {
+        P::AsKept => None,
+        P::Other { version } => Some(format!("{} came back at {version}", p.id)),
+        P::FromFile => Some(format!("{} was installed from a file: install it again", p.id)),
+        P::Unavailable => Some(format!("{} wasn't found in its repo", p.id)),
+    }));
+    said.join(" · ")
+}
+
 pub const ADD_REPO: &str = "Add repo";
 pub const REPO_ADDRESS: &str = "Repo address (its index.json)";
 pub const TRUST_REPO: &str = "This repo isn't nori's. Its plugins can do what their pages say; add it only if you trust it.";

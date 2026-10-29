@@ -735,7 +735,7 @@ pub struct AutoEqEntry {
 }
 
 /// A saved sound setting: the whole chain under a name, optionally bound to output devices.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct SoundProfile {
     pub name: String,

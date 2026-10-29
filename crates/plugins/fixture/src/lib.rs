@@ -232,7 +232,7 @@ const MANIFEST: Manifest = Manifest {
     commands: hooked::COMMANDS,
     cache_mb: hooked::CACHE_MB,
     assets: hooked::ASSETS,
-    ..Manifest::new("fm.nori.test")
+    ..Manifest::new(if cfg!(feature = "second") { "fm.nori.test.second" } else { "fm.nori.test" })
 };
 
 #[cfg(not(feature = "headphones"))]

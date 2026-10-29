@@ -40,6 +40,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import kotlinx.coroutines.launch
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.zIndex
@@ -342,6 +344,23 @@ fun SettingsGroupScreen(vm: SettingsViewModel, id: String, highlight: String = "
     }
 }
 
+/** The password a new backup is locked with ([restore] false), or the one a backup to restore was. */
+@Composable
+private fun BackupPasswordDialog(restore: Boolean, onDismiss: () -> Unit, onDone: (String) -> Unit) {
+    var text by remember { mutableStateOf("") }
+    AlertCard(
+        title = { Text(if (restore) say.backupPassword else say.backupPasswordNew) },
+        text = {
+            Column {
+                if (!restore) Text(say.backupPasswordNewText, Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FormField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+            }
+        },
+        confirmButton = { TextAction(if (restore) say.backupOpen else say.backupSave, { onDone(text) }, enabled = text.isNotEmpty()) },
+        dismissButton = { TextAction(say.cancel, onDismiss) },
+    )
+}
+
 /** A lyrics service's key, asked on its row: saved, the service is on; a cleared PaxSenix key turns off every
  *  service that needs it; cancelled, nothing changes. */
 @Composable
@@ -369,6 +388,16 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     var editing by remember { mutableStateOf<SavedServer?>(null) }
     var asking by remember { mutableStateOf<Pair<String, dev.nori.music.app.vm.ActionAsk>?>(null) }
     NoriDialog(editing, { editing = null }, DialogStyle.Page) { e -> LoginScreen(vm, e) { editing = null } }
+    // A backup's file, picked first; its password is asked next (`restore`: a backup to open).
+    var backupFile by remember { mutableStateOf<Pair<android.net.Uri, Boolean>?>(null) }
+    val saveBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri -> if (uri != null) backupFile = uri to false }
+    val openBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) backupFile = uri to true }
+    NoriDialog(backupFile, { backupFile = null }) { (uri, restore) ->
+        BackupPasswordDialog(restore, { backupFile = null }) { password ->
+            if (restore) vm.restoreBackup(uri, password) else vm.makeBackup(uri, password)
+            backupFile = null
+        }
+    }
     val act: (String) -> Unit = { action ->
         when (action) {
             "equalizer" -> nav.equalizer()
@@ -384,6 +413,8 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
             // Asks first whether the beat model reads them too, as Download does.
             "analyse-downloads" -> actions?.analyseDownloads()
             "add-server" -> editing = vm.newProfile()
+            "backup" -> saveBackup.launch(dev.nori.music.ffi.backup.backupFileName())
+            "restore" -> openBackup.launch(arrayOf("*/*"))
             // A page of its own inside this one (the lyrics sources), as the row names it.
             else -> when {
                 action.startsWith("page:") -> nav.settingsGroup(action.removePrefix("page:"))

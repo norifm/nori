@@ -108,6 +108,34 @@ pub fn update_plugins(data: &Path, done: impl FnOnce(Vec<(String, String)>) + Se
     });
 }
 
+/// Why a backup couldn't be made or restored: the backup's own reason, or its file's (the system's
+/// words).
+#[derive(Debug, Clone, PartialEq)]
+pub enum BackupFailure {
+    Backup(nori_core::backup::BackupError),
+    File(String),
+}
+
+/// Saves a backup of the app's settings and plugins at `path`, sealed with `password`, off this
+/// thread; `done` hears how it went.
+pub fn make_backup(data: &Path, path: std::path::PathBuf, password: String, done: impl FnOnce(Result<(), BackupFailure>) + Send + 'static) {
+    let host = plugins(data).host.clone();
+    crate::spawn("nori-backup", move || {
+        let made = nori_core::backup::make(&app().settings, &host, &password).map_err(BackupFailure::Backup);
+        done(made.and_then(|file| std::fs::write(&path, file).map_err(|e| BackupFailure::File(e.to_string()))));
+    });
+}
+
+/// Restores the backup at `path` with `password`, off this thread; `done` hears what came back, for
+/// the session to apply (`Session::backup_restored`).
+pub fn restore_backup(data: &Path, path: std::path::PathBuf, password: String, done: impl FnOnce(Result<nori_core::backup::Restored, BackupFailure>) + Send + 'static) {
+    let host = plugins(data).host.clone();
+    crate::spawn("nori-restore", move || {
+        let file = std::fs::read(&path).map_err(|e| BackupFailure::File(e.to_string()));
+        done(file.and_then(|f| block_on(nori_core::backup::restore(&app().settings, &host, &f, &password)).map_err(BackupFailure::Backup)));
+    });
+}
+
 /// Where a plugin a repo offers stands here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OfferState {

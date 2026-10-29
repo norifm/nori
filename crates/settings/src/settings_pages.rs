@@ -93,6 +93,8 @@ pub enum SectionId {
     Streaming,
     Downloads,
     Storage,
+    /// Making a backup and restoring one.
+    Backup,
     Updates,
 }
 
@@ -123,6 +125,9 @@ pub enum SettingsAction {
     AddServer,
     JoinJam,
     CheckUpdate,
+    /// Saves the settings, sound profiles and plugins to a file, sealed with a password (nori-backup).
+    MakeBackup,
+    RestoreBackup,
 }
 
 /// A line of explanation among the rows.
@@ -487,7 +492,8 @@ impl Page<'_> {
         if self.phone() {
             storage.push(row(RowItem::Link { to: SettingsLink::Downloads }));
         }
-        vec![(SectionId::Streaming, streaming), (SectionId::Downloads, downloads), (SectionId::Storage, storage)]
+        let backup = vec![row(RowItem::Action { action: SettingsAction::MakeBackup }), row(RowItem::Action { action: SettingsAction::RestoreBackup })];
+        vec![(SectionId::Streaming, streaming), (SectionId::Downloads, downloads), (SectionId::Storage, storage), (SectionId::Backup, backup)]
     }
 
     fn about(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
@@ -509,7 +515,7 @@ fn section_part(page: SettingsPage, id: SectionId) -> SettingsPart {
         (SettingsPage::Servers, SectionId::Accounts) => Profiles,
         (SettingsPage::Servers, _) => ServerOptions,
         (SettingsPage::Data, SectionId::Downloads) => Downloads,
-        (SettingsPage::Data, SectionId::Storage) => Storage,
+        (SettingsPage::Data, SectionId::Storage | SectionId::Backup) => Storage,
         (SettingsPage::Data, _) => Streaming,
         _ => page_parts(page)[0],
     }
@@ -685,7 +691,7 @@ mod tests {
         assert_eq!(servers.iter().map(|s| s.id).collect::<Vec<_>>(), [SectionId::Accounts]);
         assert!(!servers[0].rows.iter().any(|r| matches!(r.item, RowItem::Action { action: SettingsAction::AddServer })));
         let data = page(SettingsPage::Data, SettingsClient::Phone, &d, &s, &guest);
-        assert_eq!(data.iter().map(|s| s.id).collect::<Vec<_>>(), [SectionId::Streaming, SectionId::Storage]);
+        assert_eq!(data.iter().map(|s| s.id).collect::<Vec<_>>(), [SectionId::Streaming, SectionId::Storage, SectionId::Backup]);
     }
 
     #[test]

@@ -1107,9 +1107,10 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         Some(_) => {}
         None => a.slid(&name, v, last),
     });
-    on!(ui.on_setting_typed, h, |a, name, text| match crate::settings::PluginAct::of(&name) {
-        Some(act) => a.plugin_typed(act, text.to_string()),
-        None => a.setting(&name, &text),
+    on!(ui.on_setting_typed, h, |a, name, text| match (crate::settings::PluginAct::of(&name), crate::settings::Act::of(&name)) {
+        (Some(act), _) => a.plugin_typed(act, text.to_string()),
+        (None, Some(act)) => a.backup_typed(act, text.to_string()),
+        (None, None) => a.setting(&name, &text),
     });
     on!(ui.on_source_moved, h, |a, id, by| a.source_moved(&id, by));
     on!(ui.on_eq_set, h, |a, name, value| {
@@ -2699,6 +2700,35 @@ impl App {
         });
     }
 
+    /// Asks for a line of text: the sheet sends it back by `name` (`setting_typed`).
+    fn ask_field(&self, title: &str, name: &str, secret: bool) {
+        let ui = self.ui();
+        ui.set_ask_title(title.into());
+        ui.set_ask_note("".into());
+        ui.set_ask_name(name.into());
+        ui.set_ask_button(words::SAVE.into());
+        ui.set_ask_field(true);
+        ui.set_ask_secret(secret);
+        ui.set_ask_text("".into());
+        ui.set_ask_open(true);
+    }
+
+    /// What the ask sheet took for a backup: its file, then its password, which makes or restores it.
+    fn backup_typed(&mut self, act: Act, text: String) {
+        match act {
+            Act::Backup { restore } if !text.trim().is_empty() => self.ask_field(words::BACKUP_PASSWORD, &crate::settings::backup_password(restore, text.trim()), true),
+            Act::BackupPassword { restore: false, path } => {
+                let tx = self.tx.clone();
+                nori_host::desktop::make_backup(&self.data, path.into(), text, move |r| tx.send(Msg::BackedUp(r)));
+            }
+            Act::BackupPassword { restore: true, path } => {
+                let tx = self.tx.clone();
+                nori_host::desktop::restore_backup(&self.data, path.into(), text, move |r| tx.send(Msg::Restored(r.map(Box::new))));
+            }
+            _ => {}
+        }
+    }
+
     /// Asks before `act` is done: the sheet's button sends it back to [`App::plugin_typed`].
     fn confirm(&self, title: &str, note: &str, button: &str, act: crate::settings::PluginAct) {
         let ui = self.ui();
@@ -2742,17 +2772,7 @@ impl App {
     fn plugin_act(&mut self, act: crate::settings::PluginAct) {
         use crate::settings::PluginAct;
         let host = self.plugin_host().clone();
-        let ui = self.ui();
-        let ask = |title: &str, name: String, secret: bool| {
-            ui.set_ask_title(title.into());
-            ui.set_ask_note("".into());
-            ui.set_ask_name(name.into());
-            ui.set_ask_button(words::SAVE.into());
-            ui.set_ask_field(true);
-            ui.set_ask_secret(secret);
-            ui.set_ask_text("".into());
-            ui.set_ask_open(true);
-        };
+        let ask = |title: &str, name: String, secret: bool| self.ask_field(title, &name, secret);
         match act {
             PluginAct::Row(id, row) => {
                 let Some(r) = self.plugged.cards.iter().find(|c| c.id == id).and_then(|c| c.rows.iter().find(|r| r.id == row)) else { return };
@@ -3141,6 +3161,19 @@ impl App {
                 self.plugins_read();
                 self.output_shown();
             }
+            Msg::BackedUp(r) => match r {
+                Ok(()) => self.say(words::BACKUP_SAVED, false),
+                Err(f) => self.say(&words::backup_failed(&f), true),
+            },
+            Msg::Restored(Ok(r)) => {
+                self.on_session(|s| s.backup_restored(&r.settings));
+                self.tune();
+                self.settings_shown();
+                self.jam_shown();
+                self.plugins_read();
+                self.say(&words::restored(&r), false);
+            }
+            Msg::Restored(Err(f)) => self.say(&words::backup_failed(&f), true),
             Msg::PluginsUpdated(updated) => {
                 let named: Vec<(String, String)> = updated.into_iter().map(|(id, to)| (self.plugged.cards.iter().find(|c| c.id == id).map_or(id, |c| c.name.clone()), to)).collect();
                 self.say(&words::plugins_updated(&named), false);
@@ -3869,6 +3902,8 @@ impl App {
                 self.open(p);
             }
             Some(Act::Edit(id)) => self.edit_profile(id),
+            Some(Act::Backup { restore }) => self.ask_field(words::backup_path(restore), name, false),
+            Some(Act::BackupPassword { .. }) => {}
             Some(Act::Chore(c)) => {
                 self.on_session(|s| s.action(c));
                 self.on_session(|s| s.facts());

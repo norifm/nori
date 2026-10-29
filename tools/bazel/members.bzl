@@ -1,6 +1,7 @@
 # Generated from Cargo manifests by tools/bazel/generate.py.
 MEMBERS = ['crates/android',
  'crates/automix',
+ 'crates/backup',
  'crates/cli',
  'crates/core',
  'crates/covers',

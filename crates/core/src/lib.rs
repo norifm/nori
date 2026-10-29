@@ -39,6 +39,8 @@ use serde::Deserialize;
 
 pub use nori_db::{self as db, background};
 pub use nori_model::{alog, deciders, heap, lines, model, numbers, CoreError, SmartProblem};
+#[cfg(feature = "plugins")]
+pub use nori_backup as backup;
 pub use nori_automix::beat_model;
 pub use nori_devices::{autoeq, outputs};
 pub use nori_library::{menus, pages, rows, stars};

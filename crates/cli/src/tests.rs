@@ -2529,3 +2529,21 @@ fn the_login_chooses_a_kind_when_a_plugin_adds_one() {
     key(&mut a, KeyCode::Enter);
     assert!(matches!(a.cmds.last(), Some(Cmd::Login(p)) if p.kind == nori_core::settings::ServerKind::Subsonic && p.url == "https://music.example" && p.user == "ann"), "{:?}", a.cmds);
 }
+
+#[test]
+fn a_backup_asks_for_its_file_then_its_password() {
+    for (restore, title) in [(false, crate::text::BACK_UP), (true, crate::text::RESTORE)] {
+        let mut a = plugins_app(Vec::new(), vec![official()], Default::default());
+        select_row(&mut a, |r| matches!(r, Row::Action { title: t, .. } if t == title));
+        key(&mut a, KeyCode::Enter);
+        key(&mut a, KeyCode::Enter);
+        assert!(a.overlay.is_none() && a.cmds.is_empty(), "no file, nothing asked or done");
+        key(&mut a, KeyCode::Enter);
+        chars(&mut a, "/tmp/nori.noribackup");
+        key(&mut a, KeyCode::Enter);
+        assert!(matches!(a.overlay, Some(crate::app::Overlay::Input { secret: true, .. })), "the password is hidden");
+        chars(&mut a, "pw");
+        key(&mut a, KeyCode::Enter);
+        assert_eq!(a.cmds.last(), Some(&Cmd::Backup { restore, path: "/tmp/nori.noribackup".into(), password: "pw".into() }));
+    }
+}

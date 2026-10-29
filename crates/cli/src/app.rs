@@ -99,6 +99,8 @@ pub const PANELS: [(Panel, &str); 4] = [(Panel::Playing, "Playing"), (Panel::Que
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cmd {
     Load(Req),
+    /// Saves a backup to `path`, or restores the one there, with `password`.
+    Backup { restore: bool, path: String, password: String },
     /// `from`: the page the songs are the list of (`playlist_set`'s origin).
     Play { songs: Vec<Song>, start: usize, shuffle: bool, from: Option<PageOrigin> },
     PlayFetch(Fetch, bool),
@@ -1002,6 +1004,9 @@ pub enum Target {
     AddRepo,
     /// A controlled device's noise control: an index into its `modes`.
     Noise { device: String, modes: Vec<nori_plugins::Noise> },
+    /// The file to save a backup to or restore one from; its password is asked next.
+    BackupFile { restore: bool },
+    BackupPassword { restore: bool, path: String },
 }
 
 impl Target {
@@ -1027,6 +1032,8 @@ impl Target {
             Target::Install => Some(Cmd::Plugin(PluginCmd::Install(value.trim().to_string()))),
             Target::AddRepo => Some(Cmd::Plugin(PluginCmd::AddRepo(value.trim().to_string()))),
             Target::Noise { device, modes } => value.parse::<usize>().ok().and_then(|i| modes.get(i).copied()).map(|n| Cmd::Plugin(PluginCmd::Noise(device, n))),
+            Target::BackupFile { .. } => None,
+            Target::BackupPassword { restore, path } => Some(Cmd::Backup { restore, path, password: value }),
         }
     }
 }
@@ -1723,7 +1730,7 @@ impl App {
                 self.cmds.push(Cmd::Plugin(PluginCmd::Read));
             }
             Msg::PluginsChanged => self.cmds.push(Cmd::Plugin(PluginCmd::Read)),
-            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) | Msg::PluginSignIn { .. } => {}
+            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) | Msg::PluginSignIn { .. } | Msg::BackedUp(_) | Msg::Restored(_) => {}
         }
     }
 
@@ -2364,6 +2371,10 @@ impl App {
                         // A repo that isn't nori's is added only once the user says they trust it.
                         Target::AddRepo if !typed.trim().is_empty() => self.overlay = Some(crate::settings_view::trust_repo(typed.trim())),
                         Target::AddRepo => {}
+                        Target::BackupFile { restore } if !typed.trim().is_empty() => {
+                            let target = Target::BackupPassword { restore, path: typed.trim().to_string() };
+                            self.overlay = Some(Overlay::Input { title: crate::text::BACKUP_PASSWORD.into(), text: String::new(), secret: true, target });
+                        }
                         t => self.cmds.extend(t.cmd(typed)),
                     }
                 }
