@@ -66,6 +66,8 @@ fun SongMenu(
      * and the bottom of that screen belongs to the output switcher, the way Apple's does.
      */
     player: dev.nori.music.app.vm.PlayerViewModel? = null,
+    /** The album or artist page it was opened on, which it does not offer to go to. */
+    page: dev.nori.music.ffi.model.PageOrigin? = null,
 ) {
     // Which of the menu's stages is up, fresh each time the menu opens. The sheet slides down as the
     // sleep choices, the details or the playlist picker come up over it, and each of those leaves with
@@ -118,7 +120,7 @@ fun SongMenu(
             }
             val rules = LocalRules.current
             val lyrics = player?.let { p -> val l by p.lyrics.collectAsState(); hasWords(l, song.id) } == true
-            val items = remember(song, starred, download, player != null, lyrics, rules, jam) { dev.nori.music.ffi.library.songMenu(song, starred, download, player != null, lyrics, rules.stars, rules.account, rules.downloads, rules.radio, jam) }
+            val items = remember(song, starred, download, player != null, lyrics, rules, jam, page) { dev.nori.music.ffi.library.songMenu(song, starred, download, player != null, lyrics, rules.stars, rules.account, rules.downloads, rules.radio, jam, page) }
             val labels = remember(items) { items.map { say.songAction(it.action) } }
             @Composable fun line(i: dev.nori.music.ffi.library.SongMenuItem, label: String, divider: Boolean) = when (val a = i.action) {
                 is dev.nori.music.ffi.library.SongAction.Favourite -> Item(label, if (a.on) Kanji.Seal else Kanji.Sealed, divider = divider) { actions.star(song, a.on); onDismiss() }

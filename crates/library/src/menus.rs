@@ -2,7 +2,7 @@
 //! download entry offer; the client draws and words each action.
 
 use nori_model::model::ArtistRef;
-use nori_model::{is_provider_id, DownloadPhase, Playlist, Song};
+use nori_model::{is_provider_id, DownloadPhase, OriginKind, PageOrigin, Playlist, Song};
 use nori_settings::settings::SwipeAction;
 
 /// Something the song menu can do.
@@ -71,10 +71,11 @@ pub enum SongDownload {
 /// seal to the player's own. `stars`: songs carry seals ([`crate::browse::ProfileRules::stars`]). `account`: the
 /// profile has an account's playlists, mixes and shares (not a jam guest's, nor a
 /// profile without a Subsonic account). A provider's song has no mix or share actions: those need it
-/// on the server. `jam`: what a jam adds.
+/// on the server. `jam`: what a jam adds. `page`: the page it is opened on, whose own album or artist it
+/// does not offer to go to.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 #[allow(clippy::too_many_arguments)]
-pub fn song_menu(song: Song, starred: bool, download: SongDownload, player: bool, lyrics: bool, stars: bool, account: bool, downloads: bool, radio: bool, jam: Option<JamOffer>) -> Vec<SongMenuItem> {
+pub fn song_menu(song: Song, starred: bool, download: SongDownload, player: bool, lyrics: bool, stars: bool, account: bool, downloads: bool, radio: bool, jam: Option<JamOffer>, page: Option<PageOrigin>) -> Vec<SongMenuItem> {
     let mut out = Vec::with_capacity(16);
     let mut add = |action: SongAction, more: bool, enabled: bool| out.push(SongMenuItem { action, more, enabled });
     if stars && !player {
@@ -92,14 +93,16 @@ pub fn song_menu(song: Song, starred: bool, download: SongDownload, player: bool
             SongDownload::None => add(SongAction::Download, false, true),
         }
     }
-    if let Some(id) = &song.album_id {
+    let here = |kind: &[OriginKind], id: &str| page.as_ref().is_some_and(|p| kind.contains(&p.kind) && p.id == id);
+    if let Some(id) = song.album_id.as_ref().filter(|id| !here(&[OriginKind::Album], id)) {
         add(SongAction::GoToAlbum { id: id.clone() }, false, true);
     }
+    let artist_page = [OriginKind::Artist, OriginKind::ArtistTop];
     if song.artists.len() > 1 {
-        for a in song.artists.iter().filter(|a| !a.id.is_empty()) {
+        for a in song.artists.iter().filter(|a| !a.id.is_empty() && !here(&artist_page, &a.id)) {
             add(SongAction::GoToArtist { id: a.id.clone(), name: a.name.clone(), named: true }, false, true);
         }
-    } else if let Some(id) = &song.artist_id {
+    } else if let Some(id) = song.artist_id.as_ref().filter(|id| !here(&artist_page, id)) {
         add(SongAction::GoToArtist { id: id.clone(), name: song.artist.clone(), named: false }, false, true);
     }
     if jam == Some(JamOffer::Guest) {
@@ -458,7 +461,7 @@ mod tests {
     #[test]
     fn downloads_without_an_account() {
         for (state, action) in [(SongDownload::None, SongAction::Download), (SongDownload::Pending, SongAction::StopDownload), (SongDownload::Done, SongAction::RemoveDownload)] {
-            let menu = actions(&song_menu(Song::default(), false, state, false, false, false, false, true, true, None));
+            let menu = actions(&song_menu(Song::default(), false, state, false, false, false, false, true, true, None, None));
             assert!(menu.contains(&(action, false)));
             assert!(!menu.contains(&(SongAction::AddToPlaylist, false)));
         }
@@ -466,7 +469,7 @@ mod tests {
 
     #[test]
     fn radio_without_an_account() {
-        let menu = actions(&song_menu(Song::default(), false, SongDownload::None, false, false, false, false, false, true, None));
+        let menu = actions(&song_menu(Song::default(), false, SongDownload::None, false, false, false, false, false, true, None, None));
         assert!(menu.contains(&(SongAction::StartRadio, true)));
         assert!(!menu.contains(&(SongAction::InstantMix, true)));
         assert!(!menu.contains(&(SongAction::Share, true)));
@@ -475,26 +478,26 @@ mod tests {
     #[test]
     fn song_menus() {
         let s = Song { id: "1".into(), album_id: Some("al".into()), artist_id: Some("ar".into()), artist: "Björk".into(), ..Default::default() };
-        let m = song_menu(s.clone(), false, SongDownload::None, false, false, true, true, true, true, None);
+        let m = song_menu(s.clone(), false, SongDownload::None, false, false, true, true, true, true, None, None);
         assert_eq!(
-            actions(&song_menu(s.clone(), false, SongDownload::None, true, false, false, false, false, false, Some(JamOffer::Guest))),
+            actions(&song_menu(s.clone(), false, SongDownload::None, true, false, false, false, false, false, Some(JamOffer::Guest), None)),
             [(PlayNext, false), (AddToQueue, false), (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (Details, false)],
             "a jam guest asks for songs and opens what it may read"
         );
-        let starts = song_menu(s.clone(), false, SongDownload::None, false, false, true, true, true, true, Some(JamOffer::Start));
+        let starts = song_menu(s.clone(), false, SongDownload::None, false, false, true, true, true, true, Some(JamOffer::Start), None);
         assert_eq!(actions(&starts).into_iter().filter(|(a, _)| *a == StartJam).collect::<Vec<_>>(), [(StartJam, false)], "a jam starts from the menu's first part");
         use SongAction::*;
         assert_eq!(
-            actions(&song_menu(s.clone(), false, SongDownload::None, true, true, false, false, false, false, None)),
+            actions(&song_menu(s.clone(), false, SongDownload::None, true, true, false, false, false, false, None, None)),
             [(PlayNext, false), (AddToQueue, false), (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (Lyrics, false), (SleepTimer, false), (Details, true)],
             "without an account only the queue, the pages and what plays here"
         );
-        let without = song_menu(s.clone(), false, SongDownload::None, true, false, true, true, true, true, None);
+        let without = song_menu(s.clone(), false, SongDownload::None, true, false, true, true, true, true, None, None);
         assert_eq!(without.iter().find(|i| i.action == Lyrics).map(|i| i.enabled), Some(false), "no lyrics: the line is there, greyed");
         assert!(m.iter().all(|i| i.enabled), "everything else is offered");
-        assert!(!actions(&song_menu(s.clone(), false, SongDownload::None, false, true, true, true, true, true, None)).contains(&(Lyrics, false)), "only the player's menu has it");
+        assert!(!actions(&song_menu(s.clone(), false, SongDownload::None, false, true, true, true, true, true, None, None)).contains(&(Lyrics, false)), "only the player's menu has it");
         assert_eq!(
-            actions(&song_menu(s, true, SongDownload::None, false, false, true, false, false, false, None))[..3],
+            actions(&song_menu(s, true, SongDownload::None, false, false, true, false, false, false, None, None))[..3],
             [(Favourite { on: false }, false), (PlayNext, false), (AddToQueue, false)],
             "seals without an account: still no playlists or downloads"
         );
@@ -514,7 +517,7 @@ mod tests {
             artists: vec![ArtistRef { id: "a".into(), name: "A".into() }, ArtistRef { id: String::new(), name: "Nobody".into() }, ArtistRef { id: "b".into(), name: "B".into() }],
             ..Default::default()
         };
-        let m = song_menu(s, true, SongDownload::Pending, true, false, true, true, true, true, None);
+        let m = song_menu(s, true, SongDownload::Pending, true, false, true, true, true, true, None, None);
         assert_eq!(
             actions(&m),
             // The player's menu: the seal is the player's own.
@@ -525,8 +528,37 @@ mod tests {
                 (StartRadio, true), (Details, true),
             ]
         );
-        let done = song_menu(Song::default(), false, SongDownload::Done, false, false, true, true, true, true, None);
+        let done = song_menu(Song::default(), false, SongDownload::Done, false, false, true, true, true, true, None, None);
         assert_eq!(done[4].action, SongAction::RemoveDownload);
+    }
+
+    #[test]
+    fn a_menu_does_not_offer_the_page_it_is_on() {
+        let r = |id: &str, name: &str| ArtistRef { id: id.into(), name: name.into() };
+        let s = Song { id: "1".into(), album_id: Some("al".into()), artist_id: Some("ar".into()), artist: "A".into(), ..Default::default() };
+        let pair = Song { artists: vec![r("ar", "A"), r("b", "B")], ..s.clone() };
+        let goes = |song: &Song, page: Option<PageOrigin>| -> Vec<String> {
+            song_menu(song.clone(), false, SongDownload::None, false, false, false, false, false, false, None, page)
+                .into_iter()
+                .filter_map(|i| match i.action {
+                    SongAction::GoToAlbum { id } => Some(format!("album {id}")),
+                    SongAction::GoToArtist { id, .. } => Some(format!("artist {id}")),
+                    _ => None,
+                })
+                .collect()
+        };
+        let cases = [
+            (&s, None, vec!["album al", "artist ar"]),
+            (&s, Some(PageOrigin::new(OriginKind::Album, "al")), vec!["artist ar"]),
+            (&s, Some(PageOrigin::new(OriginKind::Album, "other")), vec!["album al", "artist ar"]),
+            (&s, Some(PageOrigin::new(OriginKind::Artist, "ar")), vec!["album al"]),
+            (&s, Some(PageOrigin::new(OriginKind::ArtistTop, "ar")), vec!["album al"]),
+            (&s, Some(PageOrigin::new(OriginKind::Playlist, "al")), vec!["album al", "artist ar"]),
+            (&pair, Some(PageOrigin::new(OriginKind::Artist, "ar")), vec!["album al", "artist b"]),
+        ];
+        for (song, page, want) in cases {
+            assert_eq!(goes(song, page.clone()), want, "{page:?}");
+        }
     }
 
     #[test]

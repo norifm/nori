@@ -371,12 +371,19 @@ impl Nori {
     }
 
     /// Song `song`'s menu (JSON, as a page read it), most used first (`menus::song_menu`): `[{ action, enabled,
-    /// more, on, id, name, named }]`. `player`: opened from the player, showing `lyrics`.
-    pub fn menu(&self, song: String, player: bool, lyrics: bool) -> Result<String, JsValue> {
+    /// more, on, id, name, named }]`. `player`: opened from the player, showing `lyrics`. `page` and `id`: the
+    /// page it is opened on (its address, `album` and its id), whose own album or artist it does not offer.
+    pub fn menu(&self, song: String, player: bool, lyrics: bool, page: String, id: String) -> Result<String, JsValue> {
         use nori_core::menus::{song_menu, SongAction, SongDownload};
+        use nori_core::{OriginKind, PageOrigin};
         let song: nori_core::Song = serde_json::from_str(&song).map_err(error)?;
         let rules = self.rules();
-        let items: Vec<Value> = song_menu(song.clone(), song.starred, SongDownload::None, player, lyrics, rules.stars, rules.account, false, rules.radio, self.jam_offer())
+        let on = match page.as_str() {
+            "album" => Some(PageOrigin::new(OriginKind::Album, id)),
+            "artist" => Some(PageOrigin::new(OriginKind::Artist, id)),
+            _ => None,
+        };
+        let items: Vec<Value> = song_menu(song.clone(), song.starred, SongDownload::None, player, lyrics, rules.stars, rules.account, false, rules.radio, self.jam_offer(), on)
             .into_iter()
             .map(|m| {
                 let mut v = json!({ "more": m.more, "enabled": m.enabled });

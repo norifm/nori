@@ -2137,7 +2137,14 @@ impl App {
     /// to take it out, after Add to playlist.
     fn song_menu(&self, list: i32, i: usize) -> ModelRc<SongGo> {
         let Some(one) = self.list_song(list, i) else { return ModelRc::default() };
-        let mut lines = self.menu_lines(one, false);
+        // The page's own songs are list 0: their menu leaves out the page's album or artist.
+        let ui = self.ui();
+        let page = (list == 0).then(|| ui.get_page_id().to_string()).filter(|id| !id.is_empty()).and_then(|id| match ui.get_page_kind() {
+            0 => Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, id)),
+            1 => Some(nori_core::PageOrigin::new(nori_core::OriginKind::Artist, id)),
+            _ => None,
+        });
+        let mut lines = self.menu_lines(one, false, page);
         if list == 0 && self.page_playlist.is_some() {
             let at = lines.iter().position(|l| l.kind == 7).map_or(lines.len(), |p| p + 1);
             lines.insert(at, SongGo { title: words::REMOVE_FROM_PLAYLIST.into(), kind: 18, id: SharedString::default(), more: false, enabled: true, filled: false });
@@ -2147,11 +2154,12 @@ impl App {
 
     /// The menu of the song playing, with the player's lines.
     fn player_menu(&self) -> ModelRc<SongGo> {
-        self.song.clone().map_or_else(ModelRc::default, |one| ModelRc::new(VecModel::from(self.menu_lines(one, true))))
+        self.song.clone().map_or_else(ModelRc::default, |one| ModelRc::new(VecModel::from(self.menu_lines(one, true, None))))
     }
 
-    /// `one`'s menu as the core lists it (menus.rs's `song_menu`); `player`: opened from the player.
-    fn menu_lines(&self, one: Song, player: bool) -> Vec<SongGo> {
+    /// `one`'s menu as the core lists it (menus.rs's `song_menu`); `player`: opened from the player, `page`
+    /// the album or artist page it is opened on.
+    fn menu_lines(&self, one: Song, player: bool, page: Option<nori_core::PageOrigin>) -> Vec<SongGo> {
         use nori_core::menus::{song_menu, JamOffer, SongAction as A, SongDownload};
         let Some(s) = self.session.as_ref() else { return Vec::new() };
         let ui = self.ui();
@@ -2160,7 +2168,7 @@ impl App {
         let starred = self.heart(&one);
         let download = if s.rules().downloads { s.download_state(&one.id) } else { SongDownload::None };
         let lyrics = player && self.lyrics.as_ref().is_some_and(|l| !l.is_empty());
-        let items = song_menu(one, starred.unwrap_or_default(), download, player, lyrics, starred.is_some(), s.rules().account, s.rules().downloads, s.rules().radio, offer);
+        let items = song_menu(one, starred.unwrap_or_default(), download, player, lyrics, starred.is_some(), s.rules().account, s.rules().downloads, s.rules().radio, offer, page);
         let lines = items.into_iter().map(|m| {
             let (kind, id) = match &m.action {
                 A::Favourite { .. } => (0, String::new()),
