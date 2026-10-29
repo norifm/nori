@@ -91,7 +91,11 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
                 LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(r.artists, key = { it.id }) { a ->
                         val cardMenu = LocalCardMenu.current
-                        ArtistCard(a.name, "", vm.cover(a.coverArt, CoverSize.ROW), 96.dp, onClick = { vm.remember(); nav.artist(a.id, a) }, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) })
+                        // How many albums, and the cloud for a provider's: two artists of one name are told apart.
+                        ArtistCard(
+                            a.name, remember(a.albumCount) { a.albumCount?.takeIf { it > 0u }?.let { say.albums(it.toInt()) }.orEmpty() }, vm.cover(a.coverArt, CoverSize.ROW), 96.dp,
+                            onClick = { vm.remember(); nav.artist(a.id, a) }, remote = a.isExternal, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) },
+                        )
                     }
                 }
             }
