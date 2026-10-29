@@ -300,16 +300,18 @@ private fun ArtistRows(vm: AlbumsViewModel) {
                         .padding(horizontal = Space.gutter).padding(bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        first.artist, Modifier.weight(1f, fill = false),
-                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
-                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        remember(row.size) { say.albums(row.size) }, Modifier.padding(start = 8.dp),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
-                    )
-                    Spacer(Modifier.weight(1f))
+                    // The name and its count share what the chevron leaves, so the chevron keeps to the edge.
+                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            first.artist, Modifier.weight(1f, fill = false),
+                            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
+                            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            remember(row.size) { say.albums(row.size) }, Modifier.padding(start = 8.dp),
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                        )
+                    }
                     if (artist != null) Icon(
                         Iconoir.NavArrowRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
