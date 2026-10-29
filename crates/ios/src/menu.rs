@@ -8,10 +8,10 @@ use nori_core::cache_policy::{Page, Read};
 use nori_core::client::{Starrable, Write};
 use nori_core::menus::{row_swipe, saved_mix_name, sleep_choices, song_menu, JamOffer, RowSwipeAct, SongAction, SongDownload, SongMenuItem};
 use nori_core::browse::ProfileRules;
-use nori_core::Song;
+use nori_core::{PageOrigin, Song};
 use serde_json::{json, Value};
 
-use crate::pages::{keep_list, list_song, owned};
+use crate::pages::{keep_list, list_origin, list_song, owned};
 use crate::session::{c_text, server, with_session};
 
 fn action_code(a: &SongAction) -> i32 {
@@ -69,9 +69,9 @@ fn details_json(s: &Song) -> Value {
 }
 
 /// `rules`: whether the profile has the account's things, and whether its menu asks a jam's host
-/// (`JamOffer::Guest`).
-fn menu_json(song: &Song, starred: bool, download: SongDownload, player: bool, rules: &ProfileRules) -> Value {
-    let items: Vec<Value> = song_menu(song.clone(), starred, download, player, false, rules.stars, rules.account, rules.downloads, rules.radio, rules.asks.then_some(JamOffer::Guest))
+/// (`JamOffer::Guest`). `page`: the page it is opened on, whose own album or artist it leaves out.
+fn menu_json(song: &Song, starred: bool, download: SongDownload, player: bool, rules: &ProfileRules, page: Option<PageOrigin>) -> Value {
+    let items: Vec<Value> = song_menu(song.clone(), starred, download, player, false, rules.stars, rules.account, rules.downloads, rules.radio, rules.asks.then_some(JamOffer::Guest), page)
         .iter()
         // The iPod has no sheet for the lyrics' source and timing.
         .filter(|i| i.action != SongAction::Lyrics)
@@ -130,7 +130,8 @@ pub extern "C" fn nori_ios_song_menu(token: u64, index: i32, starred: i32, playe
     let Some(song) = song_at(token, index) else {
         return std::ptr::null_mut();
     };
-    with_session(|s| owned(&menu_json(&song, starred != 0, s.download_state(&song.id), player != 0, &s.rules())))
+    let page = if player != 0 { None } else { list_origin(token) };
+    with_session(|s| owned(&menu_json(&song, starred != 0, s.download_state(&song.id), player != 0, &s.rules(), page)))
         .unwrap_or(std::ptr::null_mut())
 }
 
@@ -327,7 +328,7 @@ mod tests {
 
     #[test]
     fn the_menu_carries_each_line_by_code_with_what_it_needs() {
-        let v = menu_json(&song(), true, SongDownload::Done, false, &profile_rules(false));
+        let v = menu_json(&song(), true, SongDownload::Done, false, &profile_rules(false), None);
         let items = v["items"].as_array().unwrap();
         assert_eq!((items[0]["a"].as_i64(), items[0]["on"].as_bool()), (Some(0), Some(false)));
         assert!(codes(&v).contains(&4), "a downloaded song offers removing it: {v}");
@@ -336,11 +337,11 @@ mod tests {
         let artist = items.iter().find(|i| i["a"] == 8).unwrap();
         assert_eq!((artist["id"].as_str(), artist["named"].as_bool()), (Some("ar"), Some(false)));
         assert!(!codes(&v).contains(&10), "the sleep timer is the player's");
-        assert!(codes(&menu_json(&song(), false, SongDownload::Pending, true, &profile_rules(false))).contains(&10));
-        assert!(codes(&menu_json(&song(), false, SongDownload::Pending, true, &profile_rules(false))).contains(&5));
+        assert!(codes(&menu_json(&song(), false, SongDownload::Pending, true, &profile_rules(false), None)).contains(&10));
+        assert!(codes(&menu_json(&song(), false, SongDownload::Pending, true, &profile_rules(false), None)).contains(&5));
         assert_eq!(v["details"]["title"], "Blue");
         // A jam guest's asks the host, and has nothing of the account's.
-        assert_eq!(codes(&menu_json(&song(), false, SongDownload::None, true, &profile_rules(true))), [1, 2, 7, 8, 15]);
+        assert_eq!(codes(&menu_json(&song(), false, SongDownload::None, true, &profile_rules(true), None)), [1, 2, 7, 8, 15]);
     }
 
     #[test]

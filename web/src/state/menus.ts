@@ -6,7 +6,7 @@ import { W } from "../words";
 import { library } from "./library.svelte";
 import { player } from "./player.svelte";
 import { remote } from "./remote.svelte";
-import { go } from "./route.svelte";
+import { go, route } from "./route.svelte";
 import { ui, type Anchor, type Head, type Item } from "./ui.svelte";
 import type { MenuAction, Playlist, Song, Whole } from "./types";
 
@@ -99,7 +99,8 @@ function item(a: MenuAction, s: Song): Item | null {
  * opened from the player. */
 export async function songMenu(s: Song, at: Anchor, { play, extra = [], inPlayer = false }: { play?: () => unknown; extra?: Item[]; inPlayer?: boolean } = {}) {
   const lyrics = inPlayer && !!player.shown && player.shown.song === s.id;
-  const actions = JSON.parse(await ask<string>("menu", JSON.stringify(s), inPlayer, lyrics)) as MenuAction[];
+  const page = inPlayer ? "" : route.top;
+  const actions = JSON.parse(await ask<string>("menu", JSON.stringify(s), inPlayer, lyrics, page, route.arg)) as MenuAction[];
   const of = (more: boolean) =>
     actions.flatMap((a): Item[] => {
       const i = !!a.more === more ? item(a, s) : null;
