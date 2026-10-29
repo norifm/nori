@@ -1,5 +1,7 @@
 package dev.nori.music.app.ui
 
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onPlaced
 import dev.nori.music.app.R
 
 import androidx.compose.runtime.mutableStateOf
@@ -200,6 +202,39 @@ class SwipeState {
     var settling: kotlinx.coroutines.Job? = null
 }
 
+/** A head pinned over a list (an album's title and buttons): the rows under it are out of sight. */
+class PinnedHead {
+    var placed: androidx.compose.ui.layout.LayoutCoordinates? = null
+    /** Its bottom edge, px in the window; 0 while it is not laid out. */
+    fun bottom(): Float = placed?.takeIf { it.isAttached }?.let { it.boundsInWindow().bottom } ?: 0f
+}
+
+val LocalPinnedHead = androidx.compose.runtime.staticCompositionLocalOf<PinnedHead?> { null }
+
+/** Where a row of a list is laid out, for whether enough of it is in sight to be touched. */
+class RowPlace {
+    var placed: androidx.compose.ui.layout.LayoutCoordinates? = null
+
+    /** Half the row or more is in sight: inside the list that holds it, and below the [head] pinned over it. */
+    fun inSight(head: PinnedHead?): Boolean {
+        val at = placed?.takeIf { it.isAttached } ?: return false
+        val shown = at.boundsInWindow()
+        return shown.bottom - maxOf(shown.top, head?.bottom() ?: 0f) >= at.size.height / 2f
+    }
+}
+
+/**
+ * A row mostly scrolled under its list's edge or a pinned head: a finger landing on the sliver left does
+ * nothing to it (no tap, hold, press or swipe), and the list still scrolls from there.
+ */
+internal fun Modifier.touchedInSight(place: RowPlace, head: PinnedHead?): Modifier =
+    onPlaced { place.placed = it }.pointerInput(place, head) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+            if (!place.inSight(head)) down.consume()
+        }
+    }
+
 /** How far across the row a drag has to go before letting go acts: the share that turns a record. */
 private const val SWIPE_ARM = TURN
 
@@ -215,6 +250,8 @@ internal fun Modifier.swipeable(
     gone: Boolean = false,
     /** A side with no action still gives a little ([GIVE] of the finger, at most [GIVE_LIMIT] of the width) and comes back: "not this one". */
     resist: Boolean = false,
+    /** Whether the row is in sight enough to be swiped ([RowPlace.inSight]). */
+    shown: () -> Boolean = { true },
 ): Modifier = composed {
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
@@ -222,6 +259,7 @@ internal fun Modifier.swipeable(
     // The gesture outlives recompositions (it is keyed on which sides act, not on the actions), so it
     // reads the actions as they are now: a favourite swiped once must offer "Remove" the second time.
     val acts by rememberUpdatedState(right to left)
+    val inSight by rememberUpdatedState(shown)
     pointerInput(right != null, left != null, resist) {
         var x = 0f
         // The finger's own travel, for a side that only gives.
@@ -238,6 +276,7 @@ internal fun Modifier.swipeable(
             androidx.compose.animation.core.animate(s.offset.floatValue, 0f, animationSpec = back) { v, _ -> s.offset.floatValue = v }
         }
         sidewaysDrag(
+            takes = { inSight() },
             onDragStart = { s.settling?.cancel(); x = s.offset.floatValue; travel = x },
             onDragEnd = {
                 val act = if (s.armed) (if (x > 0f) acts.first else acts.second) else null
@@ -298,9 +337,12 @@ private const val SWIPE_GONE_WAIT_MS = 1_500L
 internal suspend fun androidx.compose.ui.input.pointer.PointerInputScope.sidewaysDrag(
     onDragStart: () -> Unit, onDragEnd: () -> Unit, onDragCancel: () -> Unit,
     slop: Float = 1f, ratio: Float = 2f,
+    /** Asked as the finger lands: false leaves the gesture to whatever else wants it. */
+    takes: () -> Boolean = { true },
     onDrag: (androidx.compose.ui.input.pointer.PointerInputChange, Float) -> Unit,
 ) = awaitEachGesture {
     val down = awaitFirstDown(requireUnconsumed = false)
+    if (!takes()) return@awaitEachGesture
     val decide = viewConfiguration.touchSlop * slop
     var dx = 0f
     var dy = 0f
@@ -389,12 +431,14 @@ fun SongRow(
 ) {
     val scheme = MaterialTheme.colorScheme
     val swipe = if (swipeRight != null || swipeLeft != null) remember { SwipeState() } else null
-    Column(modifier.fillMaxWidth().background(if (selected) scheme.secondaryContainer else Color.Transparent)) {
+    val place = remember { RowPlace() }
+    val head = LocalPinnedHead.current
+    Column(modifier.fillMaxWidth().background(if (selected) scheme.secondaryContainer else Color.Transparent).touchedInSight(place, head)) {
       Box(Modifier.fillMaxWidth()) {
         if (swipe != null) SwipeBackdrop(swipe, swipeRight, swipeLeft, Modifier.matchParentSize())
         Row(
             Modifier.fillMaxWidth()
-                .then(if (swipe != null) Modifier.swipeable(swipe, swipeRight, swipeLeft, if (selected) scheme.secondaryContainer else scheme.background) else Modifier)
+                .then(if (swipe != null) Modifier.swipeable(swipe, swipeRight, swipeLeft, if (selected) scheme.secondaryContainer else scheme.background, shown = { place.inSight(head) }) else Modifier)
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
                 .padding(start = Space.gutter, top = 9.dp, bottom = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
