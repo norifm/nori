@@ -269,6 +269,25 @@ pub fn album_sorts() -> Vec<AlbumSort> {
     ]
 }
 
+/// Which way a list runs in one of its orders, for the client to mark beside the order's name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum SortDirection {
+    Ascending,
+    Descending,
+    Shuffled,
+}
+
+/// The way the album grid runs in `sort`: names from A, counts and dates from the most.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn album_sort_direction(sort: AlbumSort) -> SortDirection {
+    match sort {
+        AlbumSort::ByName | AlbumSort::ByArtist | AlbumSort::ArtistRows | AlbumSort::ByGenre => SortDirection::Ascending,
+        AlbumSort::Newest | AlbumSort::Recent | AlbumSort::Frequent | AlbumSort::Starred | AlbumSort::ByYear => SortDirection::Descending,
+        AlbumSort::Random => SortDirection::Shuffled,
+    }
+}
+
 /// One entry of the list settings (`listPrefs`): which order a long list was left in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -466,6 +485,15 @@ pub fn song_sorts() -> Vec<SongSortOption> {
     SONG_SORTS.iter().map(|(name, key, descending)| SongSortOption { name: (*name).into(), key: (*key).into(), descending: *descending }).collect()
 }
 
+/// The way the songs list runs in the order kept as `name`; an order it does not know runs from A.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn song_sort_direction(name: String) -> SortDirection {
+    match SONG_SORTS.iter().find(|(n, _, _)| *n == name) {
+        Some((_, _, true)) => SortDirection::Descending,
+        _ => SortDirection::Ascending,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct SongsPage {
@@ -562,6 +590,13 @@ pub struct Decade {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn album_orders_run_the_way_the_songs_list_does() {
+        for (album, song) in [(AlbumSort::ByName, "TITLE"), (AlbumSort::ArtistRows, "ARTIST"), (AlbumSort::ByYear, "YEAR"), (AlbumSort::Newest, "ADDED"), (AlbumSort::Frequent, "PLAYS")] {
+            assert_eq!(album_sort_direction(album), song_sort_direction(song.into()), "{album:?}");
+        }
+    }
 
     #[test]
     fn album_pages_go_on_while_full() {

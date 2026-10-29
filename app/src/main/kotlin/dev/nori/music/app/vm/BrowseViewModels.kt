@@ -33,7 +33,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.distinctUntilChanged
 import dev.nori.music.ffi.settings.HomeRow
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -394,14 +393,6 @@ class GenresViewModel(app: Application) : NoriViewModel(app) {
 }
 
 /** The Library page's own: what the downloads weigh, for its row of places. */
-class LibraryHomeViewModel(app: Application) : NoriViewModel(app) {
-    /** This profile's downloaded songs' size, worded (the download cache holds every profile's); null until weighed. */
-    val downloadsSize: StateFlow<String?> = nori.downloads.state
-        .map { dev.nori.music.text.Fmt.bytes(nori.sources.downloadBytes(it.doneIds)) }
-        .flowOn(Dispatchers.IO)
-        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), null)
-}
-
 class RadioViewModel(app: Application) : NoriViewModel(app) {
     private val refresh = MutableStateFlow(0)
     @OptIn(ExperimentalCoroutinesApi::class)
