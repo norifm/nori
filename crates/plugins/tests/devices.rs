@@ -100,6 +100,8 @@ impl Bluetooth for Fake {
 struct Session {
     changes: (Mutex<u32>, Condvar),
     notices: Mutex<HashMap<String, Vec<String>>>,
+    /// Each notice's words, in order.
+    said: Mutex<Vec<String>>,
 }
 
 impl Session {
@@ -136,6 +138,7 @@ impl Side for Session {
     fn shown(&self, _: &str, _: &str, _: bool, _: bool) {}
     fn notice(&self, _: &str, _: bool, words: &str, args: &[String]) {
         self.notices.lock().unwrap().insert(words.into(), args.to_vec());
+        self.said.lock().unwrap().push(words.into());
         self.poke();
     }
     fn devices_changed(&self) {
@@ -270,4 +273,19 @@ fn an_audio_device_connecting_is_an_output_where_bluetooth_tells_of_them() {
         settle();
         assert_eq!(session.notice("heard"), outputs.then(|| vec!["Event::DeviceDisconnected(\"Car\")".to_string()]));
     }
+}
+
+#[test]
+fn a_plugin_reaching_an_audio_device_it_hears_connect_is_told_once() {
+    const A2DP: &str = "0000110b-0000-1000-8000-00805f9b34fb";
+    let (_dir, session, _fake, plugins) = open_hearing("plugins-devices-once", Vec::new(), true);
+    plugins.install(&fixture("headphones")).unwrap();
+    plugins.turn(ID.into(), true);
+    plugins.bluetooth_connected(BtDevice { services: vec![A2DP.into()], ..device("AA", "Test Buds Pro") });
+    plugins.bluetooth_disconnected("AA".into());
+    plugins.bluetooth_connected(BtDevice { services: vec![A2DP.into()], ..device("AA", "Test Buds Pro") });
+    assert_eq!(nori_tasks::block_on(plugins.worker(ID).unwrap().call(|_, _| Ok(1))), Some(1));
+    let said = session.said.lock().unwrap().clone();
+    let count = |w: &str| said.iter().filter(|s| *s == w).count();
+    assert_eq!((count("connected"), count("disconnected")), (2, 1), "by its id, not again as an output: {said:?}");
 }

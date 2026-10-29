@@ -118,12 +118,21 @@ impl Plugins {
 
     /// Hands the event `make` builds to every enabled plugin that hears `hook`; built only then.
     fn tell(&self, hook: Hook, make: impl FnOnce() -> Event) {
+        self.tell_but(hook, &[], make);
+    }
+
+    /// [`Plugins::tell`], but not to the plugins in `told`, which heard of it already.
+    pub(crate) fn tell_but(&self, hook: Hook, told: &[String], make: impl FnOnce() -> Event) {
         if !self.hears(hook) {
             return;
         }
+        let hearing: Vec<String> = self.installed().into_iter().filter(|i| i.enabled && i.manifest.hears(hook) && !told.contains(&i.manifest.id)).map(|i| i.manifest.id.clone()).collect();
+        if hearing.is_empty() {
+            return;
+        }
         let event = make();
-        for i in self.installed().into_iter().filter(|i| i.enabled && i.manifest.hears(hook)) {
-            self.tell_one(&i.manifest.id, event.clone());
+        for id in hearing {
+            self.tell_one(&id, event.clone());
         }
     }
 

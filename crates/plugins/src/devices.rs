@@ -256,11 +256,14 @@ impl Plugins {
     }
 
     /// An audio device connected or went, as the `device-connected` hook hears outputs, where the
-    /// platform's Bluetooth is how this client hears them.
+    /// platform's Bluetooth is how this client hears them; not to the plugins reaching it, which heard of
+    /// it by its id ([`Plugins::tell_device`]).
     fn output_device(&self, device: &BtDevice, connected: bool) {
         let audio = device.services.iter().any(|s| AUDIO.iter().any(|a| s.eq_ignore_ascii_case(a)));
         if audio && self.bluetooth_outputs.load(Ordering::Relaxed) {
-            self.device(device.name.clone(), connected);
+            let told = self.reaching(device, "hooks");
+            let name = device.name.clone();
+            self.tell_but(Hook::DeviceConnected, &told, || if connected { hooks::Event::DeviceConnected(name) } else { hooks::Event::DeviceDisconnected(name) });
         }
     }
 

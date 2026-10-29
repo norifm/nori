@@ -8,7 +8,7 @@ use nori_plugin_sdk::device_control::{Battery, DeviceState, Noise};
 use nori_plugin_sdk::hooks::Event;
 use nori_plugin_sdk::notices::{show, Tone};
 use nori_plugin_sdk::timers::{self, When};
-use nori_plugin_sdk::{DeviceControl, DeviceFilter, Hooks, Manifest};
+use nori_plugin_sdk::{DeviceControl, DeviceFilter, Hook, Hooks, Manifest};
 
 const SPP: &str = "00001101-0000-1000-8000-00805f9b34fb";
 const BATTERY: &str = "0000180f-0000-1000-8000-00805f9b34fb";
@@ -106,4 +106,4 @@ impl Hooks for Headphones {
     }
 }
 
-pub const MANIFEST: Manifest = Manifest { devices: &[DeviceFilter::ANY.name("Test Buds*")], ..Manifest::new("fm.nori.test.headphones") };
+pub const MANIFEST: Manifest = Manifest { devices: &[DeviceFilter::ANY.name("Test Buds*")], hooks: &[Hook::DeviceConnected], ..Manifest::new("fm.nori.test.headphones") };
