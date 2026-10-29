@@ -136,7 +136,8 @@ nothing for a call that answers nothing) and logged.
   on or off; a client checks it (or `follows()`) before it builds an event. The playback, song, queue and
   route events are told apart in Rust from the moments (`hooks.rs`); favorites come from the core's
   `Client::star`, settings from the settings' `watch` (stored) and the layer (in effect), media buttons
-  from MPRIS and the media session, devices from Android's audio device callback.
+  from MPRIS and the media session, devices from Android's audio device callback and, on Linux, an audio
+  device BlueZ sees connect (`use_bluetooth(.., outputs)`).
 - **Lyric lines** wake the host at each synced line of the song playing (its lyrics fetched once per
   song through the core), the screen off too; that wake is the plugin's declared cost, which the install
   sheet says. A pause, seek or song change lets the waiting wake go.

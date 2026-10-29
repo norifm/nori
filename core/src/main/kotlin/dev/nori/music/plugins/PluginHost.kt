@@ -133,7 +133,7 @@ class PluginHost(
         openPlugins(dir.path, settings.core, client).also { p ->
             // The transport is the plugins' own, whichever Kinds over them sets it.
             Kinds.withPlugins(p).setTransport(transport())
-            p.useBluetooth(bluetooth)
+            p.useBluetooth(bluetooth, false)
             opened = true
         }
     }
@@ -240,7 +240,7 @@ class PluginHost(
     suspend fun reachesBluetooth(): Boolean = withContext(Dispatchers.IO) { plugins.reachesBluetooth() }
 
     /** The Bluetooth permission was granted: the devices connected are read again. */
-    suspend fun bluetoothGranted() = withContext(Dispatchers.IO) { plugins.useBluetooth(bluetooth) }
+    suspend fun bluetoothGranted() = withContext(Dispatchers.IO) { plugins.useBluetooth(bluetooth, false) }
 
     suspend fun setNoise(device: String, noise: Noise) = withContext(Dispatchers.IO) { plugins.setNoise(device, noise) }
 

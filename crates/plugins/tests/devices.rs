@@ -144,12 +144,17 @@ impl Side for Session {
 }
 
 fn open(name: &str, devices: Vec<BtDevice>) -> (nori_testdir::TempDir, Arc<Session>, Arc<Fake>, Arc<Plugins>) {
+    open_hearing(name, devices, false)
+}
+
+/// With `outputs`, the fake is how the client hears output devices connect, as BlueZ is on Linux.
+fn open_hearing(name: &str, devices: Vec<BtDevice>, outputs: bool) -> (nori_testdir::TempDir, Arc<Session>, Arc<Fake>, Arc<Plugins>) {
     let dir = nori_testdir::TempDir::new(name);
     let session = Arc::new(Session::default());
     let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
     let fake = Arc::new(Fake { devices, buds: Mutex::new([80, 70, 1]), ..Fake::default() });
     let _ = fake.plugins.set(Arc::downgrade(&plugins));
-    plugins.use_bluetooth(fake.clone());
+    plugins.use_bluetooth(fake.clone(), outputs);
     (dir, session, fake, plugins)
 }
 
@@ -244,4 +249,25 @@ fn its_timers_fire_as_asked_only_while_it_controls_a_device() {
     settle();
     assert_eq!(session.notice("tick"), None, "without the device and without the schedule permission");
     assert!(clock.waits().is_empty(), "its timer waits on no clock");
+}
+
+#[test]
+fn an_audio_device_connecting_is_an_output_where_bluetooth_tells_of_them() {
+    const A2DP: &str = "0000110b-0000-1000-8000-00805f9b34fb";
+    let speaker = |id: &str, name: &str| BtDevice { id: id.into(), name: name.into(), services: vec![A2DP.into()], vendor: None, product: None };
+    for outputs in [false, true] {
+        let (_dir, session, fake, plugins) = open_hearing("plugins-devices-outputs", vec![speaker("OLD", "Kitchen")], outputs);
+        // The test plugin hears devices connect and reaches none.
+        plugins.install(&fixture("")).unwrap();
+        plugins.turn(nori_plugins::testing::FIXTURE.into(), true);
+        assert_eq!(*fake.watching.lock().unwrap(), if outputs { vec![true] } else { Vec::new() }, "watched only where it tells of outputs");
+        plugins.bluetooth_connected(BtDevice { services: vec![SPP.into()], ..device("BUDS", "Not audio") });
+        plugins.bluetooth_connected(speaker("CAR", "Car"));
+        let settle = || assert_eq!(nori_tasks::block_on(plugins.worker(nori_plugins::testing::FIXTURE).unwrap().call(|_, _| Ok(1))), Some(1));
+        settle();
+        assert_eq!(session.notice("heard"), outputs.then(|| vec!["device Car".to_string()]), "only an audio device that came, not one already there");
+        plugins.bluetooth_disconnected("CAR".into());
+        settle();
+        assert_eq!(session.notice("heard"), outputs.then(|| vec!["Event::DeviceDisconnected(\"Car\")".to_string()]));
+    }
 }

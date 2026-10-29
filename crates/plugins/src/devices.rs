@@ -4,14 +4,19 @@
 //! said something or the user changed it: nothing polls. With no such plugin enabled the platform
 //! watches nothing.
 
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use crate::bluetooth::{Bluetooth, BtDevice};
 use crate::host::Side;
+use crate::manifest::Hook;
 use crate::timers::{Active, Gate};
 use crate::runtime::points::{device_control as dc, hooks};
 use crate::view::PluginCard;
 use crate::{Plugins, Store, Worker};
+
+/// The services of a device sound plays on: A2DP's audio sink and hands-free.
+const AUDIO: [&str; 2] = ["0000110b-0000-1000-8000-00805f9b34fb", "0000111e-0000-1000-8000-00805f9b34fb"];
 
 /// A device's noise control.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,13 +243,34 @@ impl Plugins {
         self.around().ask(askers.into_iter(), device);
     }
 
-    /// Watches Bluetooth while an enabled plugin reaches devices, and only then; called whenever the
-    /// enabled plugins change. Devices no plugin controls are offered again, and a plugin turned off
-    /// lets its devices go.
+    /// `device` is connected: the plugins reaching it hear so and it is offered to them; with `came`
+    /// (not one already there when the watch began) it is also an output connecting.
+    fn arrived(&self, device: BtDevice, came: bool) {
+        if self.radio.arrived(device.clone()) {
+            self.tell_device(&device, true);
+            if came {
+                self.output_device(&device, true);
+            }
+        }
+        self.offer(device);
+    }
+
+    /// An audio device connected or went, as the `device-connected` hook hears outputs, where the
+    /// platform's Bluetooth is how this client hears them.
+    fn output_device(&self, device: &BtDevice, connected: bool) {
+        let audio = device.services.iter().any(|s| AUDIO.iter().any(|a| s.eq_ignore_ascii_case(a)));
+        if audio && self.bluetooth_outputs.load(Ordering::Relaxed) {
+            self.device(device.name.clone(), connected);
+        }
+    }
+
+    /// Watches Bluetooth while an enabled plugin reaches devices, or hears outputs connect where
+    /// Bluetooth tells of them, and only then; called whenever the enabled plugins change. Devices no
+    /// plugin controls are offered again, and a plugin turned off lets its devices go.
     pub(crate) fn rewatch(&self) {
         let Some(platform) = self.radio.platform() else { return };
         let enabled: Vec<String> = self.installed().into_iter().filter(|i| i.enabled && i.manifest.reaches_devices()).map(|i| i.manifest.id.clone()).collect();
-        let want = !enabled.is_empty();
+        let want = !enabled.is_empty() || (self.bluetooth_outputs.load(Ordering::Relaxed) && self.hears(Hook::DeviceConnected));
         let was = std::mem::replace(&mut *self.watching.lock().expect("not poisoned"), want);
         if want != was {
             platform.watch(want);
@@ -263,7 +289,7 @@ impl Plugins {
         } else if !was {
             self.radio.set_connected(Vec::new());
             for d in platform.connected() {
-                self.bluetooth_connected(d);
+                self.arrived(d, false);
             }
         } else {
             for d in self.radio.connected() {
@@ -278,9 +304,11 @@ impl Plugins {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Plugins {
-    /// The platform's Bluetooth, which plugins' devices are reached through. Set again (permission
-    /// granted), it is asked for the connected devices anew.
-    pub fn use_bluetooth(&self, platform: Arc<dyn Bluetooth>) {
+    /// The platform's Bluetooth, which plugins' devices are reached through; with `outputs`, it is also
+    /// how this client hears output devices connect (the `device-connected` hook). Set again
+    /// (permission granted), it is asked for the connected devices anew.
+    pub fn use_bluetooth(&self, platform: Arc<dyn Bluetooth>, outputs: bool) {
+        self.bluetooth_outputs.store(outputs, Ordering::Relaxed);
         self.radio.set_platform(platform);
         *self.watching.lock().expect("not poisoned") = false;
         self.rewatch();
@@ -293,13 +321,9 @@ impl Plugins {
 
     /// A device connected (or what it says of itself changed).
     pub fn bluetooth_connected(&self, device: BtDevice) {
-        if !*self.watching.lock().expect("not poisoned") {
-            return;
+        if *self.watching.lock().expect("not poisoned") {
+            self.arrived(device, true);
         }
-        if self.radio.arrived(device.clone()) {
-            self.tell_device(&device, true);
-        }
-        self.offer(device);
     }
 
     pub fn bluetooth_disconnected(&self, id: String) {
@@ -309,6 +333,7 @@ impl Plugins {
         }
         if let Some(d) = &device {
             self.tell_device(d, false);
+            self.output_device(d, false);
         }
         let control = {
             let mut c = self.controls.lock();

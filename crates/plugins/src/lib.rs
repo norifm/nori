@@ -148,8 +148,12 @@ pub struct Plugins {
     pub(crate) radio: Arc<bluetooth::Radio>,
     /// Which plugin controls which connected device.
     pub(crate) controls: Arc<devices::Controls>,
-    /// Whether the platform watches devices connecting (while an enabled plugin reaches devices).
+    /// Whether the platform watches devices connecting (while an enabled plugin reaches devices, or
+    /// hears outputs connect where the platform's Bluetooth tells of them).
     pub(crate) watching: Mutex<bool>,
+    /// Whether the platform's Bluetooth is how this client hears output devices connect (the desktop's
+    /// BlueZ; Android has its audio device callback).
+    pub(crate) bluetooth_outputs: std::sync::atomic::AtomicBool,
     me: std::sync::Weak<Plugins>,
     /// The open profile's queue and library, the core's.
     library: std::sync::RwLock<Option<Arc<dyn Library>>>,
@@ -194,6 +198,7 @@ impl Plugins {
             radio: Arc::default(),
             controls: Arc::default(),
             watching: Mutex::new(false),
+            bluetooth_outputs: Default::default(),
             me: me.clone(),
             library: Default::default(),
             live: Default::default(),
@@ -264,7 +269,6 @@ impl Plugins {
         assets::prune(&self.folder(&manifest.id), &manifest.assets);
         if on {
             self.side.laid(&manifest.id);
-            self.rewatch();
         }
         self.refresh();
         Ok(manifest)
@@ -401,7 +405,6 @@ impl Plugins {
         if starts {
             self.worker(id);
         }
-        self.rewatch();
     }
 
     /// Moves plugin `id` to `index` in the order they apply in.
@@ -447,6 +450,5 @@ impl Plugins {
         self.timers.stop_all(id);
         self.side.laid(id);
         self.refresh();
-        self.rewatch();
     }
 }

@@ -77,7 +77,8 @@ fn bit(h: Hook) -> u32 {
 
 impl Plugins {
     /// Reads again what the enabled plugins hear and want, after one was turned on or off, installed or
-    /// removed: the hooks' bits, the timers, and the wake receivers and commands the client keeps on.
+    /// removed: the hooks' bits, the timers, the wake receivers and commands the client keeps on, and
+    /// the Bluetooth watch.
     pub(crate) fn refresh(&self) {
         let on: Vec<_> = self.installed().into_iter().filter(|i| i.enabled).collect();
         let heard = on.iter().flat_map(|i| Hook::ALL.into_iter().filter(|h| i.manifest.hears(*h))).fold(0, |b, h| b | bit(h));
@@ -94,6 +95,7 @@ impl Plugins {
             self.side.watch_settings(settings);
         }
         self.wake_again();
+        self.rewatch();
     }
 
     /// Tells the client whether a timer needs the screen's state, when that changed.
