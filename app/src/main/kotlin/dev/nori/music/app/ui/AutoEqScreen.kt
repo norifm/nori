@@ -33,7 +33,7 @@ fun AutoEqScreen(vm: SettingsViewModel) {
     LifecycleStartEffect(vm) { vm.soundPageShown(true); onStopOrDispose { vm.soundPageShown(false) } }
     val nav = LocalNav.current
     Column {
-        BackTitle(say.headphonePresets)
+        LargeTitle(say.headphonePresets)
         if (ui.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.onSurface, trackColor = MaterialTheme.colorScheme.outlineVariant)
         ui.error?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
         ui.applied?.let { Text(androidx.compose.runtime.remember(it) { say.autoeqApplied(it) }, Modifier.padding(16.dp)) }

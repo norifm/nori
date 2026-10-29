@@ -276,9 +276,7 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
     val sorts = remember { dev.nori.music.ffi.library.smartEditSchema().sorts }
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = 24.dp + LocalChromeInset.current)) {
-        Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
-            Text(say.smartPlaylist, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+        LargeTitle(say.smartPlaylist) {
             TextAction(say.save, { error = vm.save(draft) { nav.back() } })
         }
         FormField(draft.name, { draft = draft.copy(name = it) }, Modifier.fillMaxWidth().padding(horizontal = Space.gutter), label = { Text(say.name) }, singleLine = true)
@@ -356,12 +354,8 @@ fun StatsScreen(vm: HistoryViewModel = viewModel()) {
     LaunchedEffect(days, source) { vm.loadStats(days, source) }
     val s by vm.stats.collectAsStateWithLifecycle()
     val server by vm.server.collectAsStateWithLifecycle()
-    val nav = LocalNav.current
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = 24.dp + LocalChromeInset.current)) {
-        Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
-            Text(say.listening, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
-        }
+        LargeTitle(say.listening)
         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(sources) { (from, label) -> Chip(label, source == from) { source = from } }
         }

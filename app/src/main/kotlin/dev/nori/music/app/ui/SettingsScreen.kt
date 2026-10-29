@@ -328,7 +328,7 @@ fun SettingsGroupScreen(vm: SettingsViewModel, id: String, highlight: String = "
     LaunchedEffect(target) { if (target >= 0) scroll.animateScrollTo((scroll.value + target - 400).coerceAtLeast(0)) }
     CompositionLocalProvider(LocalSpotlight provides SettingSpotlight(highlight.ifEmpty { null }) { y -> if (target < 0) target = y }) {
         Column(Modifier.verticalScroll(scroll)) {
-            BackTitle(page.title)
+            LargeTitle(page.title)
             when (id) {
                 // The build's facts, then the rows the page builder made for About (the update check).
                 "about" -> AboutContent({ title, content -> Section(title, content) }, { nav.settingsGroup("licences") }, vm::reportProblem) {

@@ -438,7 +438,7 @@ private fun MixesFull(vm: dev.nori.music.app.vm.MixesViewModel = viewModel()) {
     val papers = LocalPapers.current
     val nav = LocalNav.current
     Column {
-        BackTitle(say.forYou)
+        LargeTitle(say.forYou)
         PrintGrid(onEnd = {}) {
             gridItems(cards, key = { it.id }, contentType = { "mix" }) { c ->
                 MixCardView(c, papers, Modifier.fillMaxWidth(), fill = true) { nav.mix(c.id) }
@@ -455,7 +455,7 @@ private fun RowFull(key: String, actions: ActionsViewModel, vm: dev.nori.music.a
     val nav = LocalNav.current
     val title = remember(key, feedTitle) { HomeRow.entries.firstOrNull { it.name == key }?.let(say::homeRow) ?: feedTitle.orEmpty() }
     Column {
-        BackTitle(title)
+        LargeTitle(title)
         when (val e = entries) {
             null -> {}
             is dev.nori.music.app.vm.RowEntries.Albums -> PrintGrid(vm::loadMore) {

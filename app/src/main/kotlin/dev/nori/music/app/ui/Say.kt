@@ -76,7 +76,6 @@ class Say(private val r: Resources) {
     val search: String = r.getString(R.string.search)
     val library: String = r.getString(R.string.library)
     val settings: String = r.getString(R.string.settings)
-    val back: String = r.getString(R.string.back)
     val more: String = r.getString(R.string.more)
     val next: String = r.getString(R.string.next)
     val previous: String = r.getString(R.string.previous)
