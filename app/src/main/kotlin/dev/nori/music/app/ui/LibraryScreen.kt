@@ -114,7 +114,10 @@ fun LibraryScreen(actions: ActionsViewModel, initial: LibrarySection? = null, vm
             LibrarySection.DECADES -> Decades(places)
             LibrarySection.FOLDERS -> Folders(places)
             LibrarySection.RADIO -> Radio(places)
-            null -> LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) { item { places() } }
+            null -> {
+                val scroll = rememberLazyListState()
+                LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) { item { places() } }
+            }
             else -> Unit
         }
     }
@@ -240,7 +243,7 @@ private fun Albums(vm: AlbumsViewModel, places: @Composable () -> Unit = {}) {
         // On its side the cards keep about the size they have upright (a little larger than Home's shelves,
         // which is the point of a grid of covers) and the row takes as many as fit.
         val wide = LocalWide.current
-        LazyVerticalGrid(if (wide) GridCells.Adaptive(GRID_MIN) else GridCells.Fixed(2), state = list, contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, bottom = Space.gutter + LocalChromeInset.current), horizontalArrangement = Arrangement.spacedBy(GRID_GAP), verticalArrangement = Arrangement.spacedBy(GRID_GAP)) {
+        LazyVerticalGrid(if (wide) GridCells.Adaptive(GRID_MIN) else GridCells.Fixed(2), Modifier.fadesUnderTitle(list), state = list, contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, bottom = Space.gutter + LocalChromeInset.current), horizontalArrangement = Arrangement.spacedBy(GRID_GAP), verticalArrangement = Arrangement.spacedBy(GRID_GAP)) {
             item(span = { GridItemSpan(maxLineSpan) }, key = "header") { Column(Modifier.insideGutters()) { header() } }
             items(albums, key = { it.id }, contentType = { "album" }) { a ->
                 AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 132.dp, { nav.album(a.id, a) }, Modifier.fillMaxWidth(), fill = true)
@@ -266,7 +269,7 @@ private fun ArtistRows(vm: AlbumsViewModel, header: @Composable () -> Unit) {
     val nav = LocalNav.current
     val list = rememberLazyListState()
     LaunchedEffect(list, rows.size) { snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= rows.size - 8 }.collect { if (it) vm.loadMore() } }
-    LazyColumn(state = list, contentPadding = PaddingValues(bottom = Space.gutter + LocalChromeInset.current)) {
+    LazyColumn(Modifier.fadesUnderTitle(list), state = list, contentPadding = PaddingValues(bottom = Space.gutter + LocalChromeInset.current)) {
         item(key = "header") { Column(Modifier.padding(bottom = LIST_GAP)) { header() } }
         items(rows, key = { it.first().id }, contentType = { "artist" }) { row ->
             val first = row.first()
@@ -318,7 +321,8 @@ private fun Artists(header: @Composable () -> Unit = {}, vm: ArtistsViewModel = 
         val index = remember(all) { dev.nori.music.ffi.library.TextIndex(all.map { listOf(it.name) }) }
         val artists = remember(index, filter) { index.view(filter).rows.map { all[it.toInt()] } }
         if (all.isEmpty()) return@LoadBox EmptyNote(Note.NO_ARTISTS)
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             item { header() }
             item { SearchField(filter, { filter = it }, say.filterArtists, Modifier.padding(start = Space.gutter, end = Space.gutter, bottom = LIST_GAP)) }
             items(artists, key = { it.id }, contentType = { "artist" }) { a ->
@@ -353,7 +357,7 @@ fun SongsScreen(actions: ActionsViewModel, decade: Int?, header: @Composable () 
     // Ask for the next page a screenful before the end, from a snapshot observer rather than from inside item composition.
     LaunchedEffect(list, songs.size) { snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= songs.size - 40 }.collect { if (it) vm.loadMore() } }
     val indexed = LocalRules.current.indexed
-    LazyColumn(state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+    LazyColumn(Modifier.fadesUnderTitle(list), state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
         item(key = "header") { header() }
         if (decade != null) item(key = "decade") { SectionTitle(remember(decade) { say.decade(decade) }) }
         if (indexed) item(key = "sorts") {
@@ -372,7 +376,8 @@ private fun Decades(header: @Composable () -> Unit = {}, vm: DecadesViewModel = 
     val load by vm.decades.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     LoadBox(load) { decades ->
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             item { header() }
             if (decades.isEmpty()) item { EmptyNote(Note.NO_INDEX) }
             item {
@@ -391,7 +396,8 @@ private fun Folders(header: @Composable () -> Unit = {}, vm: FoldersViewModel = 
     val load by vm.roots.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     LoadBox(load) { roots ->
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             item { header() }
             item {
                 GroupCard {
@@ -425,7 +431,8 @@ private fun Playlists(actions: ActionsViewModel, header: @Composable () -> Unit 
     }
     val smart = LibrarySection.SMART in LocalRules.current.sections
     LoadBox(load) { playlists ->
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             item { header() }
             // Smart playlists are playlists: theirs is a row here, as Apple keeps them among the others.
             if (smart) item {
@@ -452,7 +459,8 @@ private fun Favourites(actions: ActionsViewModel, vm: StarredViewModel = viewMod
     val nav = LocalNav.current
     val list = rememberSongListState(actions)
     LoadBox(load) { s ->
-        LazyColumn(Modifier.pageToEdges(), contentPadding = pagePadding(LocalChromeInset.current)) {
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.pageToEdges().fadesUnderTitle(scroll), scroll, contentPadding = pagePadding(LocalChromeInset.current)) {
             // The songs as one list to play, the page the "Favourites" tile on Home opens too.
             item(key = "all") {
                 NavRow(
@@ -483,7 +491,8 @@ private fun Genres(header: @Composable () -> Unit = {}, vm: GenresViewModel = vi
     val load by vm.genres.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     LoadBox(load) { genres ->
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             item { header() }
             items(genres, key = { it.name }) { g ->
                 NavRow(g.name, { nav.genre(g.name) }, trailing = "${g.songCount}", chevron = true)
@@ -508,7 +517,8 @@ private fun Radio(header: @Composable () -> Unit = {}, vm: RadioViewModel = view
         )
     }
     LoadBox(load) { stations ->
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             item { header() }
             item { ActionRow(say.newStation, Iconoir.Plus, { name = ""; url = ""; adding = true }) }
             if (stations.isEmpty()) item { EmptyNote(Note.NO_STATIONS) }
@@ -535,7 +545,8 @@ private fun Downloads(actions: ActionsViewModel) {
     val list = rememberSongListState(actions)
     val counts by actions.downloadQueueCounts.collectAsStateWithLifecycle()
     val nav = LocalNav.current
-    LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+    val scroll = rememberLazyListState()
+    LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
         // The way to the queue, always there: what is on its way now, or where it went.
         item(key = "queue") {
             // Counted by the core as it splits the queue for the downloads screen: waiting is what is

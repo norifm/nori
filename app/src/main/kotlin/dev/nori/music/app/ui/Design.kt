@@ -594,10 +594,18 @@ internal val HEAD_FADE = 64.dp
 internal val HEAD_EDGE = 18.dp
 
 /**
- * A list under a pinned title: what scrolls up fades out into [page] at the list's top rather than being cut
- * there, coming in over the first [HEAD_FADE] of [scrolled], so a list at rest is untouched.
+ * A list under a pinned title: what scrolls up fades out into the page at the list's top rather than being
+ * cut there, coming in over the list's first [HEAD_FADE] of scroll, so a list at rest is untouched.
  */
-fun Modifier.fadesUnderTitle(page: Color, scrolled: () -> Float) = drawWithCache {
+@Composable
+fun Modifier.fadesUnderTitle(list: androidx.compose.foundation.lazy.LazyListState): Modifier =
+    fadesUnderTitle(MaterialTheme.colorScheme.background) { if (list.firstVisibleItemIndex > 0) Float.MAX_VALUE else list.firstVisibleItemScrollOffset.toFloat() }
+
+@Composable
+fun Modifier.fadesUnderTitle(grid: androidx.compose.foundation.lazy.grid.LazyGridState): Modifier =
+    fadesUnderTitle(MaterialTheme.colorScheme.background) { if (grid.firstVisibleItemIndex > 0) Float.MAX_VALUE else grid.firstVisibleItemScrollOffset.toFloat() }
+
+private fun Modifier.fadesUnderTitle(page: Color, scrolled: () -> Float) = drawWithCache {
     val fade = HEAD_FADE.toPx()
     val edge = HEAD_EDGE.toPx()
     val under = Brush.verticalGradient(0f to page, 1f to Color.Transparent, endY = edge)
