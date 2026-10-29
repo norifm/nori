@@ -49,6 +49,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -778,7 +779,7 @@ fun SystemBarIcons(look: Look) {
 
 /**
  * A search or filter field as a capsule raised on the surface with a hairline edge, outlined in the accent
- * while it has the focus: an icon, and a clear button that only exists when there is something to clear.
+ * while it has the focus (until the keyboard is put away): an icon, and a clear button that only exists when there is something to clear.
  */
 @Composable
 fun SearchField(
@@ -792,6 +793,11 @@ fun SearchField(
     // A focus request needs the field's node attached, which it is once the field is placed.
     var placed by remember { mutableStateOf(false) }
     var focused by remember { mutableStateOf(false) }
+    // The keyboard put away (Back) ends the typing, so the accent edge goes with it.
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    val typing = androidx.compose.foundation.layout.WindowInsets.isImeVisible
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    LaunchedEffect(typing) { if (!typing && focused) focusManager.clearFocus() }
     LaunchedEffect(focus, focusKey, placed) {
         if (focus == null || !placed) return@LaunchedEffect
         focus.requestFocus()
