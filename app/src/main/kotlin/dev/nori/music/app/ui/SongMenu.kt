@@ -3,7 +3,6 @@ package dev.nori.music.app.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.clickable
@@ -33,7 +32,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import dev.nori.music.app.vm.ActionsViewModel
@@ -86,7 +84,6 @@ fun SongMenu(
     // as the menu refusing to close. There is only ever one stage here, so back always dismisses.
     NoriSheet(song?.takeIf { !picking && !details && !sleeping && !timing }, onDismiss) { song ->
         val downloads by actions.downloads.collectAsState()
-        var more by remember { mutableStateOf(false) }
         // No stretch past the ends and no lift, here or in the other sheets: a menu that fits moved under every swipe.
         Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
             // The track leads the sheet, the way the row it came from looked.
@@ -95,7 +92,7 @@ fun SongMenu(
                 remember(song) { say.quality(song) }?.let { Caption(it, caps = false) }
             }
             // What someone opened this menu to do: queue it, keep it, or leave for where it came
-            // from. Everything one reaches for perhaps once a month waits under "More" below.
+            // from. Everything one reaches for perhaps once a month comes after it.
             // The heart comes first because it is the one thing here that is about the song rather than
             // about the queue, and it reads this session's marks rather than the snapshot the song was
             // handed over with: one starred a moment ago from the bar above still says so, without
@@ -152,23 +149,10 @@ fun SongMenu(
             val main = items.indices.filter { !items[it].more }
             val folded = items.indices.filter { items[it].more }
             SheetRows(head = true) {
-                main.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < main.lastIndex || folded.isNotEmpty()) }
-                // A jam guest's menu has nothing under "More".
-                if (folded.isNotEmpty()) {
-                    val ms = if (reduceMotion()) 0 else 220
-                    val turn by animateFloatAsState(if (more) 180f else 0f, animationSpec = tween(ms), label = "more")
-                    GroupRow(
-                        say.more, { more = !more }, icon = Iconoir.MoreHoriz, divider = more, minHeight = SHEET_ROW,
-                        // The chevron turns over rather than swapping for its opposite, so the row says which
-                        // way it is about to move before it moves.
-                        trailing = { Icon(Iconoir.NavArrowDown, null, Modifier.size(22.dp).graphicsLayer { rotationZ = turn }, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                    )
-                    // The lines take their room at once and fade in: growing them while the sheet grows around
-                    // them moved both at once.
-                    AnimatedVisibility(more, enter = if (ms == 0) EnterTransition.None else fadeIn(tween(ms)), exit = ExitTransition.None) {
-                        Column { folded.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < folded.lastIndex) } }
-                    }
-                }
+                main.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < main.lastIndex) }
+                // The rest follows in full after a hairline (a jam guest's menu has none): a menu shows everything.
+                if (folded.isNotEmpty()) Hairline(startIndent = GROUP_INSET)
+                folded.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < folded.lastIndex) }
                 PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.SONG, dev.nori.music.ffi.plugins.Items.Songs(listOf(song)), onDismiss)
             }
         }
