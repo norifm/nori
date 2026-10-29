@@ -161,7 +161,7 @@ off, removed or updated, or a call fails ([`Lan::forget`](../../crates/plugins/s
 
 | interface | what the host does |
 |---|---|
-| `sockets` | TCP connect, read, write; `tls` wraps it in rustls (ring), checked against webpki's roots (`system`), one certificate's DER (`pinned`), or not at all (`none`, only to a private address); UDP bind (address reused, for SSDP's port), send, receive, and `join` an IPv4 group, which holds the platform's multicast lock while any socket is in one |
+| `sockets` | TCP connect, read, write; `tls` wraps it in rustls (ring), checked against webpki's roots (`system`), one certificate's DER (`pinned`), or not at all (`none`, only to a private address); UDP bind (address reused, for SSDP's port; one IPv6 socket that takes IPv4 too, its addresses mapped, or IPv4 alone where the system has no IPv6), send, receive, and `join` a group of the LAN, IPv4 (239/8, 224.0.0/24) or IPv6 of interface-, link- or site-local scope (`ff02::c`, `ff05::c`; `ff02::fb%3` on interface 3, else the system's pick), which holds the platform's multicast lock while any socket is in one. A sender is heard as IPv4 when it is, and a link-local one with its zone (`fe80::1%3`), which `send` and `tcp.connect` take back |
 | `discovery` | `browse(kind)` asks the client to browse mDNS while any plugin browses that kind (Android NSD, mdns-sd on the desktop and terminal); each service found goes to the `discovered` hook of the plugins browsing it (`Plugins::discovered`) |
 | `lan-serve` | the plugins' door (`door.rs`): plain HTTP on a port the system picks, open while a plugin has `open` or serves audio or a song. `/p/<id>/...` goes to plugin `id`'s `served` hook, its query kept. Its own listener, not remote control's door, which takes only requests signed with the account's secret; a speaker can't sign |
 | `media` | a song's stream URL (its own quality) and cover URL from the open profile's client (`Kinds::open_client`), as they are; a URL on this device (a server on localhost, plain HTTP) is proxied at the door's `/m/<n>`, its range passed on. A provider plugin's songs have none |
@@ -354,7 +354,9 @@ transport (`Kinds::set_transport`). See [Providers](providers.md).
   overrides, its HTTP refused outside its hosts, and a plugin needing an interface this host doesn't
   link refused (the fixture built with `unlinked`, `fixture/src/unlinked.rs`);
   `tests/lan.rs` the LAN interfaces over the same plugin: TLS checked each way against a local server,
-  UDP to the LAN only, the multicast lock, browsing, its endpoints at the door, a song's URL proxied, and
+  UDP to the LAN only over IPv4 and IPv6, which groups it may join and the multicast lock, an IPv6
+  link-local group's datagram answered at its sender's zone (it needs an IPv6 interface with
+  multicast, as any Linux with a network has), browsing, its endpoints at the door, a song's URL proxied, and
   casts into a socket, at the door and to a target. `tests/devices.rs` runs device control over a fake
   platform Bluetooth with the fixture built with `headphones` (`fixture/src/headphones.rs`).
   `tests/session.rs` drives the fixture's `hooked` module on a simulated clock: the session's reads and

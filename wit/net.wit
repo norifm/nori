@@ -22,12 +22,15 @@ interface sockets {
         none,
     }
 
+    /// IPv6 and IPv4 both, where the system has IPv6.
     resource udp {
         bind: static func(port: u16) -> result<udp, error>;
-        /// Joins a multicast group; the host holds Android's multicast lock while one is joined.
+        /// Joins a multicast group of the LAN ("239.255.255.250", "ff02::c", "ff02::fb%3" on interface
+        /// 3); the host holds Android's multicast lock while one is joined.
         join: func(group: string) -> result<_, error>;
         send: func(host: string, port: u16, bytes: list<u8>) -> result<_, error>;
-        /// A datagram and who sent it, waiting at most `timeout-ms`; none on timeout.
+        /// A datagram and who sent it, waiting at most `timeout-ms`; none on timeout. A link-local
+        /// IPv6 sender comes with its zone ("fe80::1%3"), which `send` and `tcp.connect` take.
         receive: func(timeout-ms: u32) -> result<option<tuple<string, u16, list<u8>>>, error>;
     }
 }

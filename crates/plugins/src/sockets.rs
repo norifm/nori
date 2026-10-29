@@ -2,7 +2,7 @@
 //! addresses (a speaker's protocol, SSDP's multicast). Blocking, on the plugin's own thread.
 
 use std::io::{ErrorKind, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpStream, ToSocketAddrs, UdpSocket};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +11,7 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, SignatureScheme, StreamOwned};
 use wasmtime::component::Resource;
 
-use crate::lan::{private, private_addresses, Multicast};
+use crate::lan::{host_of, private, private_addresses, zoned, Multicast};
 use crate::runtime::nori::plugin::sockets;
 use crate::runtime::{types, Host};
 
@@ -50,6 +50,8 @@ impl Tcp {
 
 pub struct Udp {
     socket: UdpSocket,
+    /// An IPv6 socket that takes IPv4 too, its addresses mapped; IPv4 alone where the system has no IPv6.
+    dual: bool,
     /// Held while it is in a multicast group.
     _joined: Option<Multicast>,
 }
@@ -206,27 +208,45 @@ impl ServerCertVerifier for Accepts {
     }
 }
 
+/// A UDP socket on `port`, for IPv6 and IPv4 both where the system has IPv6; whether it does.
+fn udp_socket(port: u16) -> std::io::Result<(UdpSocket, bool)> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let dual = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).and_then(|s| s.set_only_v6(false).map(|()| s));
+    let (socket, any) = match dual {
+        Ok(s) => (s, IpAddr::V6(Ipv6Addr::UNSPECIFIED)),
+        Err(_) => (Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?, IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+    };
+    // A well-known port (SSDP's, mDNS's) is shared with the system's own listeners.
+    socket.set_reuse_address(true)?;
+    socket.bind(&SocketAddr::new(any, port).into())?;
+    Ok((socket.into(), any.is_ipv6()))
+}
+
 impl sockets::HostUdp for Host {
     fn bind(&mut self, port: u16) -> Result<Resource<Udp>, types::Error> {
-        use socket2::{Domain, Protocol, Socket, Type};
-        let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).map_err(failed)?;
-        // A well-known port (SSDP's, mDNS's) is shared with the system's own listeners.
-        socket.set_reuse_address(true).map_err(failed)?;
-        socket.bind(&SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)).into()).map_err(failed)?;
-        self.table.push(Udp { socket: socket.into(), _joined: None }).map_err(table)
+        let (socket, dual) = udp_socket(port).map_err(failed)?;
+        self.table.push(Udp { socket, dual, _joined: None }).map_err(table)
     }
 
     fn join(&mut self, s: Resource<Udp>, group: String) -> Result<(), types::Error> {
         if !self.manifest.lan() {
             return Err(error(types::ErrorKind::Refused, "multicast needs lan"));
         }
-        let Ok(IpAddr::V4(g)) = group.parse::<IpAddr>() else { return Err(error(types::ErrorKind::Unsupported, format!("{group} is not an IPv4 group"))) };
-        if !g.is_multicast() || !private(IpAddr::V4(g)) {
+        // An IPv6 group may name the interface it is joined on (`ff02::c%3`); else the system picks.
+        let (ip, interface) = match zoned(&group) {
+            Some((v6, interface)) => (IpAddr::V6(v6), interface),
+            None => (group.parse::<IpAddr>().map_err(|_| error(types::ErrorKind::Refused, format!("{group} is not a group")))?, 0),
+        };
+        if !ip.is_multicast() || !private(ip) {
             return Err(error(types::ErrorKind::Refused, format!("{group} is not a group on the LAN")));
         }
         let lan = self.lan.clone();
         let udp = self.table.get_mut(&s).map_err(table)?;
-        udp.socket.join_multicast_v4(&g, &Ipv4Addr::UNSPECIFIED).map_err(failed)?;
+        match ip {
+            IpAddr::V4(g) => udp.socket.join_multicast_v4(&g, &Ipv4Addr::UNSPECIFIED),
+            IpAddr::V6(g) => udp.socket.join_multicast_v6(&g, interface),
+        }
+        .map_err(failed)?;
         if udp._joined.is_none() {
             udp._joined = Some(lan.multicast());
         }
@@ -235,7 +255,12 @@ impl sockets::HostUdp for Host {
 
     fn send(&mut self, s: Resource<Udp>, host: String, port: u16, bytes: Vec<u8>) -> Result<(), types::Error> {
         let to = *self.reachable(&host, port)?.first().expect("not empty");
-        self.table.get(&s).map_err(table)?.socket.send_to(&bytes, to).map(|_| ()).map_err(failed)
+        let udp = self.table.get(&s).map_err(table)?;
+        let to = match to {
+            SocketAddr::V4(v4) if udp.dual => SocketAddr::V6(SocketAddrV6::new(v4.ip().to_ipv6_mapped(), v4.port(), 0, 0)),
+            to => to,
+        };
+        udp.socket.send_to(&bytes, to).map(|_| ()).map_err(failed)
     }
 
     fn receive(&mut self, s: Resource<Udp>, timeout_ms: u32) -> Result<Option<(String, u16, Vec<u8>)>, types::Error> {
@@ -245,7 +270,7 @@ impl sockets::HostUdp for Host {
         match udp.socket.recv_from(&mut got) {
             Ok((n, from)) => {
                 got.truncate(n);
-                Ok(Some((from.ip().to_string(), from.port(), got)))
+                Ok(Some((host_of(from), from.port(), got)))
             }
             Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => Ok(None),
             Err(e) => Err(failed(e)),

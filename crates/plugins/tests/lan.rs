@@ -168,10 +168,9 @@ fn tls_is_checked_as_the_plugin_asks() {
     }
 }
 
-#[test]
-fn udp_reaches_the_lan_only_and_a_group_holds_the_lock() {
-    let rig = Rig::new("plugins-lan-udp");
-    let echo = UdpSocket::bind("127.0.0.1:0").unwrap();
+/// Answers each datagram to `at` with "hi " and it; its port.
+fn echo(at: &str) -> u16 {
+    let echo = UdpSocket::bind(at).unwrap();
     let port = echo.local_addr().unwrap().port();
     std::thread::spawn(move || {
         let mut b = [0; 64];
@@ -179,15 +178,47 @@ fn udp_reaches_the_lan_only_and_a_group_holds_the_lock() {
             let _ = echo.send_to(&[b"hi ", &b[..n]].concat(), from);
         }
     });
-    rig.web.serve("udp", format!("127.0.0.1:{port}"));
-    assert_eq!(rig.act("udp"), ["127.0.0.1 hi hello"]);
-    rig.web.serve("udp", "8.8.8.8:53");
-    assert_eq!(rig.act("udp"), ["ErrorKind::Refused"], "not on the LAN, not among its hosts");
+    port
+}
 
-    assert_eq!(rig.act("join"), ["joined"]);
-    assert_eq!(*rig.session.multicast.lock().unwrap(), [true]);
+#[test]
+fn udp_reaches_the_lan_only_and_a_group_holds_the_lock() {
+    let rig = Rig::new("plugins-lan-udp");
+    for (setup, heard) in [
+        (format!("127.0.0.1:{}", echo("127.0.0.1:0")), "127.0.0.1 hi hello"),
+        (format!("::1:{}", echo("[::1]:0")), "::1 hi hello"),
+        ("8.8.8.8:53".into(), "ErrorKind::Refused"),
+        ("2001:4860:4860::8888:53".into(), "ErrorKind::Refused"),
+    ] {
+        rig.web.serve("udp", setup.clone());
+        assert_eq!(rig.act("udp"), [heard], "{setup}");
+    }
+
+    for (group, heard) in [("224.1.0.1", "ErrorKind::Refused"), ("ff0e::c", "ErrorKind::Refused"), ("192.168.1.2", "ErrorKind::Refused"), ("239.255.255.250", "joined"), ("ff02::c", "joined"), ("ff05::c", "joined")] {
+        rig.web.serve("join", group);
+        assert_eq!(rig.act("join"), [heard], "{group}");
+    }
+    assert_eq!(*rig.session.multicast.lock().unwrap(), [true], "held while any socket is in a group");
     rig.act("leave");
     assert_eq!(*rig.session.multicast.lock().unwrap(), [true, false], "let go with the last socket in a group");
+}
+
+#[test]
+fn an_ipv6_group_on_the_link_reaches_the_plugin_and_it_answers_the_sender() {
+    let rig = Rig::new("plugins-lan-multicast6");
+    let group = "ff02::4e:4f52";
+    let us = UdpSocket::bind("[::]:0").unwrap();
+    us.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+    rig.web.serve("multicast", format!("{group} ::1:{}", us.local_addr().unwrap().port()));
+    rig.plugins.act(ID.into(), "multicast".into());
+    let mut b = [0; 16];
+    let (n, plugin) = us.recv_from(&mut b).unwrap();
+    assert_eq!(&b[..n], b"ready");
+    us.send_to(b"hello", (group, plugin.port())).unwrap();
+    let (n, _) = us.recv_from(&mut b).unwrap();
+    assert_eq!(&b[..n], b"ack", "answered at its link-local address and zone");
+    rig.settle();
+    assert_eq!(rig.said("multicast"), Some(vec!["hello".into()]));
 }
 
 #[test]

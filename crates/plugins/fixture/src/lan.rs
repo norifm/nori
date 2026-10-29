@@ -71,12 +71,27 @@ fn udp() -> String {
     })
 }
 
+/// Joins the setup's group, tells the setup's address "ready" and answers the first datagram to come,
+/// to its sender, with "ack"; says what came.
+fn multicast() -> String {
+    let setup = String::from_utf8(setup("multicast")).unwrap_or_default();
+    let (group, at) = setup.split_once(' ').unwrap_or_default();
+    let (host, port) = address(at.as_bytes());
+    said(Udp::bind(0), |u| {
+        said(u.join(group).and_then(|()| u.send(&host, port, b"ready")).and_then(|()| u.receive(2000)), |got| match got {
+            Some((from, port, bytes)) => said(u.send(&from, port, b"ack"), |()| String::from_utf8_lossy(&bytes).into_owned()),
+            None => "none".into(),
+        })
+    })
+}
+
 pub fn action(id: &str) {
     let heard = match id {
         "tls" => tls(),
         "udp" => udp(),
+        "multicast" => multicast(),
         "join" => said(Udp::bind(0), |u| {
-            let r = u.join("239.255.255.250");
+            let r = u.join(&String::from_utf8_lossy(&setup("join")));
             JOINED.with(|j| *j.borrow_mut() = Some(u));
             said(r, |()| "joined".into())
         }),
@@ -135,8 +150,7 @@ pub fn action(id: &str) {
 pub fn on(event: Event) {
     match event {
         Event::Discovered(s) => show(Tone::Info, "found", &[s.name, s.host, s.port.to_string()]),
-        Event::MediaButton(b) => show(Tone::Info, "button", &[b]),
-        _ => {}
+        Event::MediaButton(b) => show(Tone::Info, "button", &[b]),        _ => {}
     }
 }
 

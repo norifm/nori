@@ -3,7 +3,7 @@
 //! plugins' door and the cast the host owns. Nothing here exists while no plugin asks for it.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6, ToSocketAddrs};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::cast::{Card, Cards, Media};
@@ -28,10 +28,29 @@ pub(crate) fn private(ip: IpAddr) -> bool {
     }
 }
 
+/// An IPv6 address with its zone, the index of the interface it is on (`fe80::1%3`), as a plugin hears
+/// a link-local sender.
+pub(crate) fn zoned(host: &str) -> Option<(Ipv6Addr, u32)> {
+    let (ip, zone) = host.split_once('%')?;
+    Some((ip.parse().ok()?, zone.parse().ok()?))
+}
+
+/// A sender's address as a plugin hears it: IPv4 as IPv4, not mapped into IPv6; a link-local one with
+/// its zone, so that a reply reaches it.
+pub(crate) fn host_of(from: SocketAddr) -> String {
+    match from {
+        SocketAddr::V6(v6) if v6.scope_id() != 0 => format!("{}%{}", v6.ip(), v6.scope_id()),
+        from => from.ip().to_canonical().to_string(),
+    }
+}
+
 /// `host`:`port`'s addresses, when every one of them is private; None when any is not (a name that
 /// resolves outside the LAN is not the LAN's) or it has none.
 pub(crate) fn private_addresses(host: &str, port: u16) -> Option<Vec<SocketAddr>> {
-    let all: Vec<SocketAddr> = (host, port).to_socket_addrs().ok()?.collect();
+    let all: Vec<SocketAddr> = match zoned(host) {
+        Some((ip, zone)) => vec![SocketAddr::V6(SocketAddrV6::new(ip, port, 0, zone))],
+        None => (host, port).to_socket_addrs().ok()?.collect(),
+    };
     (!all.is_empty() && all.iter().all(|a| private(a.ip()))).then_some(all)
 }
 
@@ -415,5 +434,14 @@ mod tests {
         }
         assert_eq!(private_addresses("127.0.0.1", 80).map(|a| a.len()), Some(1));
         assert_eq!(private_addresses("1.1.1.1", 80), None);
+        assert_eq!(private_addresses("fe80::1%3", 80), Some(vec!["[fe80::1%3]:80".parse().unwrap()]));
+        assert_eq!(private_addresses("2001:db8::1%3", 80), None);
+    }
+
+    #[test]
+    fn a_sender_is_heard_as_a_reply_reaches_it() {
+        for (from, heard) in [("192.168.1.2:9", "192.168.1.2"), ("[::ffff:192.168.1.2]:9", "192.168.1.2"), ("[fe80::1%4]:9", "fe80::1%4"), ("[fd00::2]:9", "fd00::2")] {
+            assert_eq!(host_of(from.parse().unwrap()), heard, "{from}");
+        }
     }
 }
