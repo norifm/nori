@@ -10,8 +10,8 @@ publish = false
 crate-type = ["cdylib"]
 
 [features]
-# Imports `timers`, which this host doesn't link: the plugin can't be installed.
-timers = []
+# Imports `bluetooth`, which this host doesn't link: the plugin can't be installed.
+unlinked = []
 
 [dependencies]
 nori-plugin-sdk = { path = "../../plugin-sdk" }

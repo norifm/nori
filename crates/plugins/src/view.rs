@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{Manifest, Plugins, Refusal, RowKind, Value};
+use crate::{Hook, Manifest, Permission, Plugins, Refusal, RowKind, Value, WakeEvent};
 
 /// A plugin as Settings › Plugins lists it, in the user's plugin order.
 #[derive(Debug, Clone, PartialEq)]
@@ -27,6 +27,17 @@ pub struct PluginCard {
     pub overrides: Vec<String>,
     /// Hosts it sends HTTP to.
     pub net: Vec<String>,
+    pub permissions: Vec<Permission>,
+    /// The events it hears; a lyric line's brings a wake per line while music plays.
+    pub hooks: Vec<Hook>,
+    /// What may start nori for it while it is closed.
+    pub wakes: Vec<WakeEvent>,
+    /// Commands other apps may run.
+    pub commands: Vec<String>,
+    /// Its cache's quota, bytes.
+    pub cache_bytes: u64,
+    /// What its assets download in all, bytes.
+    pub asset_bytes: u64,
     pub rows: Vec<PluginRow>,
 }
 
@@ -127,6 +138,12 @@ fn card(m: &Manifest, w: &BTreeMap<String, String>, stored: &BTreeMap<String, Va
         points: m.points.iter().map(|p| p.to_string()).collect(),
         overrides: m.overrides.clone(),
         net: m.net.clone(),
+        permissions: m.permissions.clone(),
+        hooks: m.hooks.clone(),
+        wakes: m.wake.clone(),
+        commands: m.commands.clone(),
+        cache_bytes: m.cache_bytes,
+        asset_bytes: m.assets.iter().map(|a| a.size).sum(),
         rows: m
             .rows
             .iter()

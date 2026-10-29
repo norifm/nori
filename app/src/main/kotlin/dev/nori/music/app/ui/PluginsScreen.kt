@@ -219,7 +219,7 @@ private fun InstallSheet(vm: PluginsViewModel) {
             c.about?.let { Text(it) }
             Quiet(listOfNotNull(say.pluginVersion(c.version), c.kinds().takeIf { it.isNotEmpty() }, p.repo?.let { android.net.Uri.parse(it).host }).joinToString(" · "))
             Text(say.pluginMayTitle, style = MaterialTheme.typography.titleSmall)
-            say.pluginMay(c.points, c.net, c.overrides).forEach { Text("· $it") }
+            say.pluginMay(c).forEach { Text("· $it") }
         }
     }
 }
@@ -265,6 +265,7 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
             if (card.repo != null) Toggle(say.pluginKeepVersion, "", card.held, divider = false) { held -> vm.hold(id, held) }
         }
         PluginRows(vm, card, null)
+        PluginAssets(vm, id)
         if (offer != null) {
             val uri = androidx.compose.ui.platform.LocalUriHandler.current
             GroupLabel(say.pluginVersions)
@@ -286,6 +287,19 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
         Spacer(Modifier.height(Space.section + LocalChromeInset.current))
     }
     RemoveSheet(removing, { removing = null }) { c -> vm.uninstall(c.id); removing = null; back() }
+}
+
+/** A plugin's assets as status lines, with the way to fetch them on mobile data while one waits for Wi-Fi. */
+@Composable
+private fun PluginAssets(vm: PluginsViewModel, id: String) {
+    val all by vm.assets.collectAsStateWithLifecycle()
+    val assets = all[id].orEmpty()
+    if (assets.isEmpty()) return
+    Spacer(Modifier.height(Space.section))
+    GroupCard {
+        assets.forEachIndexed { i, a -> GroupRow(say.pluginAsset(a), minHeight = 44.dp, divider = i < assets.lastIndex) }
+        if (assets.any { it.state is dev.nori.music.ffi.plugins.AssetState.WaitingForWifi }) GroupRow(say.pluginAssetsOnMobile, { vm.allowMobileAssets(id) }, minHeight = 44.dp, divider = false)
+    }
 }
 
 /**

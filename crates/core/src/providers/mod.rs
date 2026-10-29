@@ -6,6 +6,8 @@
 pub(crate) mod subsonic;
 #[cfg(feature = "plugins")]
 mod plugin;
+#[cfg(feature = "plugins")]
+mod plugged;
 pub(crate) mod hosted;
 #[cfg(test)]
 mod fake;

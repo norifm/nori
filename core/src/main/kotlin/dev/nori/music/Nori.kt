@@ -22,6 +22,7 @@ import dev.nori.music.settings.Settings
 import dev.nori.music.settings.serverList
 import dev.nori.music.settings.withServers
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import dev.nori.music.settings.server
@@ -73,7 +74,7 @@ class Nori private constructor(private val context: Context) {
     val analyses: Long by lazy { dev.nori.music.playback.MeasureJni.analyses(currentClient.uniffiCloneHandle(), sessionHandle) }
 
     /** The plugin host, under `<filesDir>/plugins`: its kinds are every core's. Opened off the main thread ([warmUp]). */
-    val plugins = dev.nori.music.plugins.PluginHost(File(context.filesDir, "plugins"), settings) { transport }
+    val plugins = dev.nori.music.plugins.PluginHost(context, File(context.filesDir, "plugins"), settings, { transport }) { c -> player.plugin(c) }
 
     /** The core's one door to the network; built with [http]. Plugins' HTTP goes through it too. */
     private val transport by lazy { http.transport { library.onServerChanged() }.also { coverNet.setTransport(it) } }
@@ -92,7 +93,7 @@ class Nori private constructor(private val context: Context) {
                 })
                 _reportedRules.value = key to core.rules()
                 dev.nori.music.downloads.DownloadsJni.use(core)
-                Opened(key, id, core, Client(core, transport, coverNet).also { c -> p?.let { c.setProfile(it.net()) }; currentClient.set(c) })
+                Opened(key, id, core, Client(core, transport, coverNet).also { c -> p?.let { c.setProfile(it.net()) }; currentClient.set(c); plugins.openClient(c) })
             }.also { opened = it }
         }
     }
@@ -117,7 +118,8 @@ class Nori private constructor(private val context: Context) {
     val library = Library(::core, ::client)
     val downloads = Downloads(context, ::core, ::client, { analyses }, lazySources, settings)
     val dac = BitPerfect(context)
-    val outputs = Outputs(context, settings.core)
+    private val pluginScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+    val outputs = Outputs(context, settings.core, { name, connected -> pluginScope.launch { plugins.device(name, connected) } }) { plugins.hears(dev.nori.music.ffi.plugins.Hook.DEVICE_CONNECTED) }
     val widgets = dev.nori.music.playback.PlacedWidgets(context)
     /** A player for a plugin's looping sleeve; the screen's view model makes one when it first shows one. [onFailed] gets an HTTP status. */
     fun motionPlayer(onFailed: (Int) -> Unit) = dev.nori.music.playback.MotionPlayer(context, http, sources, onFailed)

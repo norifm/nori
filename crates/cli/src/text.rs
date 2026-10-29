@@ -141,16 +141,47 @@ pub fn plugin_is(points: &[String], overrides: bool) -> String {
     said
 }
 
-/// What a plugin may reach: the hosts it sends to and nori's values it changes.
-pub fn plugin_reach(net: &[String], overrides: &[String]) -> String {
+/// What a plugin may reach and do: the hosts it sends to, nori's values it changes, the session, what
+/// wakes it or nori for it, and the room it takes.
+pub fn plugin_reach(c: &nori_plugins::PluginCard) -> String {
+    use nori_plugins::{Hook, Permission, WakeEvent};
     let mut said = Vec::new();
-    if !net.is_empty() {
-        said.push(format!("Connects to {}.", net.join(", ")));
+    if !c.net.is_empty() {
+        said.push(format!("Connects to {}.", c.net.join(", ")));
     }
-    if !overrides.is_empty() {
-        said.push(format!("Changes {}.", overrides.join(", ")));
+    if !c.overrides.is_empty() {
+        said.push(format!("Changes {}.", c.overrides.join(", ")));
     }
-    if said.is_empty() { "Connects to nothing.".into() } else { said.join(" ") }
+    if said.is_empty() {
+        said.push("Connects to nothing.".into());
+    }
+    for p in &c.permissions {
+        said.push(match p {
+            Permission::PlaybackRead => "Sees what plays and the queue.",
+            Permission::PlaybackControl => "Controls playback and the queue.",
+            Permission::LibraryRead => "Searches your library.",
+            Permission::LibraryWrite => "Changes favorites and playlists.",
+            Permission::Subsonic => "Uses your server's API as you.",
+            Permission::Schedule => "Wakes now and then, never while music plays with the screen off.",
+        }
+        .into());
+    }
+    if c.hooks.contains(&Hook::LyricLine) {
+        said.push("Wakes at each lyric line while music plays.".into());
+    }
+    if c.wakes.contains(&WakeEvent::BluetoothConnected) || c.wakes.contains(&WakeEvent::Boot) {
+        said.push("Starts nori while it is closed (on a phone).".into());
+    }
+    if !c.commands.is_empty() {
+        said.push(format!("Lets other apps run: {}.", c.commands.join(", ")));
+    }
+    if c.cache_bytes > 0 {
+        said.push(format!("Keeps up to {} MB of cache.", c.cache_bytes.div_ceil(1 << 20)));
+    }
+    if c.asset_bytes > 0 {
+        said.push(format!("Downloads {} MB of files.", c.asset_bytes.div_ceil(1 << 20)));
+    }
+    said.join(" ")
 }
 
 /// A repo by its host; nori's own by name.

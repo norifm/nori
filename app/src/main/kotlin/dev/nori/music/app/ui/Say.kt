@@ -334,12 +334,40 @@ class Say(private val r: Resources) {
         }
     } + listOfNotNull(R.string.plugins_kind_overrides.takeIf { overrides })).joinToString(" · ") { r.getString(it) }
     /** What a plugin may do, one line each: what it reaches, whether it plays music or changes the sound, the values it changes. */
-    fun pluginMay(points: List<String>, net: List<String>, overrides: List<String>): List<String> = listOfNotNull(
-        if (net.isEmpty()) r.getString(R.string.plugins_may_reach_nothing) else r.getString(R.string.plugins_may_reach, net.joinToString(", ")),
-        r.getString(R.string.plugins_may_play).takeIf { "provider" in points },
-        r.getString(R.string.plugins_may_sound).takeIf { "sound-stage" in points },
-        overrides.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_change, it.joinToString(", ")) },
+    fun pluginMay(c: dev.nori.music.ffi.plugins.PluginCard): List<String> = listOfNotNull(
+        if (c.net.isEmpty()) r.getString(R.string.plugins_may_reach_nothing) else r.getString(R.string.plugins_may_reach, c.net.joinToString(", ")),
+        r.getString(R.string.plugins_may_play).takeIf { "provider" in c.points },
+        r.getString(R.string.plugins_may_sound).takeIf { "sound-stage" in c.points },
+        c.overrides.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_change, it.joinToString(", ")) },
+    ) + c.permissions.map { p ->
+        r.getString(when (p) {
+            dev.nori.music.ffi.plugins.Permission.PLAYBACK_READ -> R.string.plugins_may_read_playing
+            dev.nori.music.ffi.plugins.Permission.PLAYBACK_CONTROL -> R.string.plugins_may_control
+            dev.nori.music.ffi.plugins.Permission.LIBRARY_READ -> R.string.plugins_may_read_library
+            dev.nori.music.ffi.plugins.Permission.LIBRARY_WRITE -> R.string.plugins_may_write_library
+            dev.nori.music.ffi.plugins.Permission.SUBSONIC -> R.string.plugins_may_subsonic
+            dev.nori.music.ffi.plugins.Permission.SCHEDULE -> R.string.plugins_may_schedule
+        })
+    } + listOfNotNull(
+        r.getString(R.string.plugins_may_lyric_wakes).takeIf { dev.nori.music.ffi.plugins.Hook.LYRIC_LINE in c.hooks },
+        r.getString(R.string.plugins_may_start_at_boot).takeIf { dev.nori.music.ffi.plugins.WakeEvent.BOOT in c.wakes },
+        r.getString(R.string.plugins_may_start_on_bluetooth).takeIf { dev.nori.music.ffi.plugins.WakeEvent.BLUETOOTH_CONNECTED in c.wakes },
+        c.commands.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_commands, it.joinToString(", ")) },
+        c.cacheBytes.takeIf { it > 0uL }?.let { r.getString(R.string.plugins_may_cache, size(it)) },
+        c.assetBytes.takeIf { it > 0uL }?.let { r.getString(R.string.plugins_may_download, size(it)) },
     )
+
+    private fun size(bytes: ULong): String = dev.nori.music.text.Fmt.bytes(bytes.toLong())
+
+    /** An asset's line on its plugin's page. */
+    fun pluginAsset(a: dev.nori.music.ffi.plugins.AssetLine): String = when (val st = a.state) {
+        is dev.nori.music.ffi.plugins.AssetState.Missing -> r.getString(R.string.plugins_asset_missing, a.name, size(a.size))
+        is dev.nori.music.ffi.plugins.AssetState.WaitingForWifi -> r.getString(R.string.plugins_asset_waiting, a.name)
+        is dev.nori.music.ffi.plugins.AssetState.Fetching -> r.getString(R.string.plugins_asset_fetching, a.name, if (st.total > 0uL) (st.done * 100uL / st.total).toInt() else 0)
+        is dev.nori.music.ffi.plugins.AssetState.Ready -> r.getString(R.string.plugins_asset_ready, a.name)
+        is dev.nori.music.ffi.plugins.AssetState.Failed -> r.getString(R.string.plugins_asset_failed, a.name)
+    }
+    val pluginAssetsOnMobile: String get() = r.getString(R.string.plugins_assets_on_mobile)
     val pluginsGet: String get() = r.getString(R.string.plugins_get)
     val pluginsAsking: String get() = r.getString(R.string.plugins_asking)
     fun pluginOfferLine(version: String, repo: String): String = r.getString(R.string.plugins_offer_line, version, repo)

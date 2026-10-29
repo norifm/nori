@@ -228,7 +228,7 @@ class PlaybackService : MediaLibraryService() {
         }
         scope.launch {
             // The device's own sound (a bound profile or AutoEQ curve), or the sound from before it came back.
-            nori.outputs.current.collect { output -> nori.deviceSound.onOutput(output) }
+            nori.outputs.current.collect { output -> nori.deviceSound.onOutput(output); pluginMoment() }
         }
         applyAudio(nori.settings.value)
         scope.launch {
@@ -426,6 +426,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
+                pluginMoment()
                 keepQueue(dev.nori.music.ffi.queue.QueueMoment.EDITED)
                 remoteState()
                 prefetchLyrics()
@@ -559,6 +560,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun announce() {
+        pluginMoment()
         remoteState()
         if (!nori.widgets.any) return
         val m = player.currentMediaItem?.mediaMetadata
@@ -863,7 +865,33 @@ class PlaybackService : MediaLibraryService() {
         observer?.shallow(!was)
     }
 
+    /** What plays now, for the plugins, while one follows the player (crates/plugins hooks.rs tells the events apart). */
+    private fun pluginMoment() {
+        if (!nori.plugins.follows()) return
+        val index = player.currentMediaItemIndex.takeIf { it >= 0 && player.mediaItemCount > 0 }?.toUInt()
+        val moment = dev.nori.music.ffi.plugins.Moment(player.isPlaying, index, player.currentMediaItem?.mediaId, player.currentPosition.coerceAtLeast(0).toULong(), nori.outputs.current.value)
+        scope.launch(Dispatchers.IO) { nori.plugins.played(moment) }
+    }
+
     private inner class Callback : MediaLibrarySession.Callback {
+        /** A media button, told to the plugins that hear them; the session handles it as ever. */
+        override fun onMediaButtonEvent(session: MediaSession, controllerInfo: MediaSession.ControllerInfo, intent: android.content.Intent): Boolean {
+            if (nori.plugins.hears(dev.nori.music.ffi.plugins.Hook.MEDIA_BUTTON)) {
+                val key = androidx.core.content.IntentCompat.getParcelableExtra(intent, android.content.Intent.EXTRA_KEY_EVENT, android.view.KeyEvent::class.java)
+                val press = when (key?.takeIf { it.action == android.view.KeyEvent.ACTION_DOWN && it.repeatCount == 0 }?.keyCode) {
+                    android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, android.view.KeyEvent.KEYCODE_HEADSETHOOK -> dev.nori.music.ffi.plugins.Press.PLAY_PAUSE
+                    android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> dev.nori.music.ffi.plugins.Press.PLAY
+                    android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> dev.nori.music.ffi.plugins.Press.PAUSE
+                    android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> dev.nori.music.ffi.plugins.Press.NEXT
+                    android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> dev.nori.music.ffi.plugins.Press.PREVIOUS
+                    android.view.KeyEvent.KEYCODE_MEDIA_STOP -> dev.nori.music.ffi.plugins.Press.STOP
+                    else -> null
+                }
+                press?.let { scope.launch(Dispatchers.IO) { nori.plugins.mediaButton(it) } }
+            }
+            return super.onMediaButtonEvent(session, controllerInfo, intent)
+        }
+
         override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon().add(SessionCommand(CMD_SLEEP, Bundle.EMPTY)).add(SessionCommand(CMD_TUNING, Bundle.EMPTY))
                 .add(SessionCommand(CMD_FAVOURITE, Bundle.EMPTY)).add(SessionCommand(CMD_UNFAVOURITE, Bundle.EMPTY)).add(SessionCommand(CMD_SHUFFLE, Bundle.EMPTY))

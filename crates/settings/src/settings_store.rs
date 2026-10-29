@@ -248,7 +248,12 @@ pub struct Settings {
     pub model: nori_automix::beat_model::ModelFile,
     /// What enabled plugins lay over the settings; never stored.
     layer: Mutex<crate::overrides::Layer>,
+    /// Told the settings before and after each change, while a plugin hears of them.
+    watch: RwLock<Option<Watch>>,
 }
+
+/// See [`Settings::watch`].
+pub type Watch = Arc<dyn Fn(&StoredPrefs, &StoredPrefs) + Send + Sync>;
 
 impl Settings {
     /// What enabled plugins lay over the settings now.
@@ -302,12 +307,26 @@ impl Settings {
     /// `f` over the open settings, the beat model's file following its switch under the same lock, so
     /// concurrent edits reach it in the order they were kept.
     fn write<R>(&self, f: impl FnOnce(&mut Option<SettingsStore>) -> R) -> R {
+        let watch = self.watch.read().clone();
         let mut k = self.kept.write();
+        let before = watch.as_ref().and_then(|_| Some(k.as_ref()?.prefs.clone()));
         let r = f(&mut k);
         if let Some(s) = k.as_ref() {
             self.model.switched(s.prefs.auto_mix_better_beats);
         }
+        let after = k.as_ref().map(|s| s.prefs.clone());
+        drop(k);
+        if let (Some(watch), Some(before), Some(after)) = (watch, before, after) {
+            if before != after {
+                watch(&before, &after);
+            }
+        }
         r
+    }
+
+    /// Tells `watch` of every change from now on; None stops.
+    pub fn watch(&self, watch: Option<Watch>) {
+        *self.watch.write() = watch;
     }
 
     fn with_store<R>(&self, f: impl FnOnce(&mut SettingsStore) -> Option<R>) -> Option<R> {

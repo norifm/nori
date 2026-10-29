@@ -27,6 +27,14 @@ import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.plugins.Repo
 import dev.nori.music.ffi.plugins.Value
 import dev.nori.music.ffi.plugins.openPlugins
+import dev.nori.music.ffi.plugins.AssetLine
+import dev.nori.music.ffi.plugins.AssetState
+import dev.nori.music.ffi.plugins.Command
+import dev.nori.music.ffi.plugins.Control
+import dev.nori.music.ffi.plugins.Hook
+import dev.nori.music.ffi.plugins.Moment
+import dev.nori.music.ffi.plugins.Press
+import dev.nori.music.ffi.plugins.WakeEvent
 import java.io.File
 import java.util.Locale
 
@@ -44,7 +52,14 @@ data class PluginNotice(val plugin: String, val problem: Boolean, val line: Stri
  * the kinds of profile every core opens ([kinds]), the cards and offers Settings › Plugins draws, and
  * what the plugins say while they run. Plugins' HTTP goes through [transport], the cores' own. Built off the main thread; every call into it is made off it too.
  */
-class PluginHost(private val dir: File, private val settings: Settings, private val transport: () -> dev.nori.music.ffi.net.Transport) {
+class PluginHost(
+    private val context: android.content.Context,
+    private val dir: File,
+    private val settings: Settings,
+    private val transport: () -> dev.nori.music.ffi.net.Transport,
+    /** Does what a plugin asked of the player, as a press of the app's own would (PlayerConnection's). */
+    private val control: (Control) -> Unit,
+) {
     private val _cards = MutableStateFlow<List<PluginCard>>(emptyList())
     /** The installed plugins in their order, in the user's language; empty until [refresh]. */
     val cards: StateFlow<List<PluginCard>> = _cards
@@ -84,14 +99,30 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
     /** The last line a plugin showed. */
     val notice: StateFlow<PluginNotice?> = _notice
 
+    private val _signIns = MutableSharedFlow<Pair<ServerKind, String>>(extraBufferCapacity = 1)
+    /** A provider's plugin asks for its sign-in page: its kind and the page's address. */
+    val signIns: SharedFlow<Pair<ServerKind, String>> = _signIns
+
+    private val _assets = MutableStateFlow<Map<String, List<AssetLine>>>(emptyMap())
+    /** Each plugin's assets and where they stand, by plugin; read with the cards, then as they change. */
+    val assets: StateFlow<Map<String, List<AssetLine>>> = _assets
+
     private val lang get() = Locale.getDefault().language
 
+    @Volatile private var opened = false
+
     // Opened at first use, which is off the main thread: the cheap flows above are read before it is.
-    private val plugins by lazy {
+    private val plugins: dev.nori.music.ffi.plugins.Plugins by lazy {
         openPlugins(dir.path, settings.core, client).also { p ->
             // The transport is the plugins' own, whichever Kinds over them sets it.
             Kinds.withPlugins(p).setTransport(transport())
+            opened = true
         }
+    }
+
+    /** The screen's on and off while a plugin's timer needs them (registered only then). */
+    private val screen = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: android.content.Context, intent: android.content.Intent) = plugins.screen(intent.action == android.content.Intent.ACTION_SCREEN_ON)
     }
 
     private val client = object : Client {
@@ -109,7 +140,50 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
             NoriLog.i("plugin $id: $line")
             PluginNotice(id, problem, line).let { _notice.value = it; _notices.tryEmit(it) }
         }
+        override fun control(control: Control) = this@PluginHost.control(control)
+        override fun signIn(id: String, url: String) { _signIns.tryEmit(ServerKind.Plugin(id) to url) }
+        override fun wake(events: List<WakeEvent>) = PluginReceivers.wake(context, events)
+        override fun commands(commands: List<Command>) = PluginReceivers.commands(context, commands.isNotEmpty())
+        override fun watchScreen(on: Boolean) {
+            if (on) {
+                val filter = android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_ON).apply { addAction(android.content.Intent.ACTION_SCREEN_OFF) }
+                androidx.core.content.ContextCompat.registerReceiver(context, screen, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+                plugins.screen(context.getSystemService(android.os.PowerManager::class.java).isInteractive)
+            } else {
+                runCatching { context.unregisterReceiver(screen) }
+            }
+        }
+        override fun asset(id: String, name: String, state: AssetState) {
+            _assets.update { all -> all + (id to all[id].orEmpty().map { a -> if (a.name == name) a.copy(state = state) else a }) }
+        }
     }
+
+    /** Whether a plugin follows the player: only then does the service say what plays ([played]). Never opens the host. */
+    fun follows(): Boolean = opened && plugins.follows()
+
+    /** Whether a plugin hears [hook]; false while the host isn't open. */
+    fun hears(hook: Hook): Boolean = opened && plugins.hears(hook)
+
+    /** What plays now, while [follows]. */
+    suspend fun played(moment: Moment) = withContext(Dispatchers.IO) { plugins.played(moment) }
+
+    suspend fun mediaButton(press: Press) = withContext(Dispatchers.IO) { plugins.mediaButton(press) }
+
+    /** An output device [name] connected or went, while a plugin [hears] it. */
+    suspend fun device(name: String, connected: Boolean) = withContext(Dispatchers.IO) { plugins.device(name, connected) }
+
+    /** The player screen shows (its seek bar's timer runs) or not; nothing while the host isn't open. */
+    fun playerShown(shown: Boolean) { if (opened) plugins.playerShown(shown) }
+
+    suspend fun woke(event: WakeEvent) = withContext(Dispatchers.IO) { plugins.woke(event) }
+
+    suspend fun command(command: Command) = withContext(Dispatchers.IO) { plugins.command(command) }
+
+    /** The user lets plugin [id] fetch its assets on mobile data. */
+    suspend fun allowMobileAssets(id: String) = withContext(Dispatchers.IO) { plugins.allowMobileAssets(id) }
+
+    /** [client]'s profile is the one open: plugins' sessions reach it. */
+    fun openClient(client: dev.nori.music.ffi.Client) = kinds.openClient(client)
 
     /** nori's own kinds and the enabled plugins' providers, for every core and the add form. */
     val kinds: Kinds by lazy { Kinds.withPlugins(plugins) }
@@ -126,6 +200,7 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
         _names.value = _cards.value.associate { c -> c.id to (kinds.pluginName(ServerKind.Plugin(c.id), lang) ?: c.id) }
         _menus.value = ItemKind.entries.associateWith { plugins.menuEntries(it, lang) }
         _deviceCards.value = plugins.deviceCards(lang)
+        _assets.value = _cards.value.associate { c -> c.id to plugins.assets(c.id) }
     }
 
 

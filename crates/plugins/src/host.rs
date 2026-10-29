@@ -104,6 +104,22 @@ pub trait Side: Send + Sync {
     /// A row is hidden or greyed (on top of its manifest's own conditions).
     fn shown(&self, id: &str, row: &str, shown: bool, enabled: bool);
     fn notice(&self, id: &str, problem: bool, words: &str, args: &[String]);
+    /// A plugin asks the player to do `c` (it may: its manifest says so).
+    fn control(&self, _c: crate::Control) {}
+    /// Opens plugin `id`'s provider's sign-in page at `url`; false where the client has none.
+    fn sign_in(&self, _id: &str, _url: &str) -> bool {
+        false
+    }
+    /// Keep on only these wake receivers.
+    fn wake(&self, _events: &[crate::WakeEvent]) {}
+    /// The commands other apps may run now; none: no receiver.
+    fn commands(&self, _commands: &[crate::Command]) {}
+    /// Say whether the screen is on ([`crate::Plugins::screen`]) from now on, or stop.
+    fn watch_screen(&self, _on: bool) {}
+    /// Plugin `id`'s asset `name` is now at `state`.
+    fn asset(&self, _id: &str, _name: &str, _state: crate::AssetState) {}
+    /// Say each change of the settings to [`crate::Plugins`] from now on, or stop.
+    fn watch_settings(&self, _on: bool) {}
 }
 
 /// Where a plugin's overrides are kept in its store.

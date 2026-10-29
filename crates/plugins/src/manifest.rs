@@ -29,6 +29,78 @@ pub struct Manifest {
     pub menu: Vec<MenuSpec>,
     /// The places in nori's screens it fills.
     pub places: Vec<Place>,
+    pub permissions: Vec<Permission>,
+    /// The events its `hooks` export hears.
+    pub hooks: Vec<Hook>,
+    /// What may start nori while it is closed, for it.
+    pub wake: Vec<WakeEvent>,
+    /// Commands other apps may run, each its `lifecycle.action` id.
+    pub commands: Vec<String>,
+    /// Its cache's quota, bytes.
+    pub cache_bytes: u64,
+    pub assets: Vec<AssetSpec>,
+}
+
+/// What a plugin may do beyond its own data and rows; the install sheet lists them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Permission {
+    PlaybackRead,
+    PlaybackControl,
+    LibraryRead,
+    LibraryWrite,
+    Subsonic,
+    Schedule,
+}
+
+/// An event of nori's a plugin hears.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Hook {
+    PlaybackStarted,
+    PlaybackPaused,
+    SongChanged,
+    QueueChanged,
+    FavoriteChanged,
+    ProfileOpened,
+    RouteChanged,
+    DeviceConnected,
+    SettingChanged,
+    MediaButton,
+    LyricLine,
+}
+
+impl Hook {
+    pub(crate) const ALL: [Hook; 11] = [Hook::PlaybackStarted, Hook::PlaybackPaused, Hook::SongChanged, Hook::QueueChanged, Hook::FavoriteChanged, Hook::ProfileOpened, Hook::RouteChanged, Hook::DeviceConnected, Hook::SettingChanged, Hook::MediaButton, Hook::LyricLine];
+}
+
+/// What starts nori while it is closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum WakeEvent {
+    BluetoothConnected,
+    Boot,
+}
+
+impl WakeEvent {
+    pub(crate) const ALL: [WakeEvent; 2] = [WakeEvent::BluetoothConnected, WakeEvent::Boot];
+
+    /// As `wake.want` and the `woke` hook name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            WakeEvent::BluetoothConnected => "bluetooth-connected",
+            WakeEvent::Boot => "boot",
+        }
+    }
+}
+
+/// A large file its manifest names.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssetSpec {
+    pub name: String,
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
 }
 
 /// An action it adds to nori's menus of `kinds`; `id` is its label's key in its strings.
@@ -228,6 +300,10 @@ impl Manifest {
         if let Some(k) = m.overrides.iter().find(|k| !nori_settings::overrides::overridable(k)) {
             return Err(Refusal::UnknownKey(k.clone()));
         }
+        let hex = |s: &str| s.len() == 64 && s.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c));
+        if let Some(a) = m.assets.iter().find(|a| !hex(&a.sha256) || a.name.is_empty() || !a.name.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) || a.name.starts_with('.')) {
+            return Err(Refusal::Unreadable(format!("asset {:?} needs a plain name and a sha256", a.name)));
+        }
         Ok(m)
     }
 
@@ -267,7 +343,29 @@ impl Manifest {
             .collect::<Option<Vec<_>>>()?;
         let places = (0..i.u16()?).map(|_| PLACES.get(i.byte()? as usize).copied()).collect::<Option<Vec<_>>>()?;
         let points = POINTS.iter().enumerate().filter(|(k, _)| bits & (1 << k) != 0).map(|(_, p)| *p).collect();
-        Some(Manifest { id, version, api, points, stage, net, signin, overrides, rows, menu, places })
+        let mut m = Manifest { id, version, api, points, stage, net, signin, overrides, rows, menu, places, permissions: Vec::new(), hooks: Vec::new(), wake: Vec::new(), commands: Vec::new(), cache_bytes: 0, assets: Vec::new() };
+        // A plugin built before these fields ends here.
+        if i.0.is_empty() {
+            return Some(m);
+        }
+        const PERMISSIONS: [Permission; 6] = [Permission::PlaybackRead, Permission::PlaybackControl, Permission::LibraryRead, Permission::LibraryWrite, Permission::Subsonic, Permission::Schedule];
+        // Kinds a newer SDK adds are skipped.
+        let bytes = |i: &mut In| -> Option<Vec<u8>> { (0..i.u16()?).map(|_| i.byte()).collect() };
+        m.permissions = bytes(&mut i)?.into_iter().filter_map(|b| PERMISSIONS.get(b as usize).copied()).collect();
+        m.hooks = bytes(&mut i)?.into_iter().filter_map(|b| Hook::ALL.get(b as usize).copied()).collect();
+        m.wake = bytes(&mut i)?.into_iter().filter_map(|b| WakeEvent::ALL.get(b as usize).copied()).collect();
+        m.commands = i.strs()?;
+        m.cache_bytes = i.u32()? as u64 * 1024 * 1024;
+        m.assets = (0..i.u16()?).map(|_| Some(AssetSpec { name: i.str()?, url: i.str()?, size: u64::from_le_bytes(i.take(8)?.try_into().ok()?), sha256: i.str()? })).collect::<Option<Vec<_>>>()?;
+        Some(m)
+    }
+
+    pub fn may(&self, p: Permission) -> bool {
+        self.permissions.contains(&p)
+    }
+
+    pub fn hears(&self, h: Hook) -> bool {
+        self.extends("hooks") && self.hooks.contains(&h)
     }
 
     pub fn extends(&self, point: &str) -> bool {
@@ -281,12 +379,23 @@ impl Manifest {
 
     /// Whether HTTP to `host` is allowed.
     pub fn reaches(&self, host: &str) -> bool {
-        let host = host.to_ascii_lowercase();
-        self.net.iter().any(|d| match d.strip_prefix("*.") {
+        among(&self.net, host)
+    }
+
+    /// Whether a sign-in page may start at `host`.
+    pub fn signs_in(&self, host: &str) -> bool {
+        among(&self.signin, host)
+    }
+}
+
+/// Whether `host` is one of `hosts`, where a leading `*.` takes in subdomains.
+fn among(hosts: &[String], host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    !host.is_empty()
+        && hosts.iter().any(|d| match d.strip_prefix("*.") {
             Some(base) => host == base || host.ends_with(&format!(".{base}")),
             None => host == *d,
         })
-    }
 }
 
 /// The first custom section `name` in `wasm`, a component's nested modules included.
@@ -327,6 +436,31 @@ mod tests {
         assert_eq!((read.rows[2].kind, read.rows[2].url.as_deref()), (RowKind::Link, Some("https://nori.fm")));
         assert_eq!(read.menu, vec![MenuSpec { id: "look_up".into(), glyph: Glyph::Search, kinds: vec![ItemKind::Song, ItemKind::Album] }]);
         assert_eq!(read.places, vec![Place::Artwork, Place::Devices]);
+    }
+
+    #[test]
+    fn session_hooks_wakes_and_storage_read_back_and_older_manifests_have_none() {
+        const ASSETS: [sdk::Asset; 1] = [sdk::Asset { name: "model.bin", url: "https://x.example/m", size: 5 << 30, sha256: "ab" }];
+        let m = sdk::Manifest {
+            permissions: &[sdk::Permission::PlaybackControl, sdk::Permission::Schedule],
+            hooks: &[sdk::Hook::SongChanged, sdk::Hook::LyricLine],
+            wake: &[sdk::Wake::Boot],
+            commands: &["toggle"],
+            cache_mb: 3,
+            assets: &ASSETS,
+            ..sdk::Manifest::new("fm.nori.hooked")
+        };
+        let read = written(&m, 1 << 1);
+        assert_eq!((read.permissions.clone(), read.hooks.clone(), read.wake.clone(), read.commands.clone(), read.cache_bytes), (vec![Permission::PlaybackControl, Permission::Schedule], vec![Hook::SongChanged, Hook::LyricLine], vec![WakeEvent::Boot], vec!["toggle".to_string()], 3 << 20));
+        assert_eq!(read.assets.clone(), vec![AssetSpec { name: "model.bin".into(), url: "https://x.example/m".into(), size: 5 << 30, sha256: "ab".into() }]);
+        assert!(read.hears(Hook::LyricLine) && !read.hears(Hook::QueueChanged));
+
+        // As the SDK wrote it before: nothing after the places.
+        let plain = sdk::Manifest::new("fm.nori.old");
+        let bytes: [u8; 256] = sdk::encode::<256>(&plain, "1.0.0", 0);
+        let tail = 2 * 3 + 2 + 4 + 2;
+        let old = Manifest::decode(&bytes[..sdk::encoded_len(&plain, "1.0.0") - tail]).unwrap();
+        assert!(old.permissions.is_empty() && old.hooks.is_empty() && old.assets.is_empty() && old.cache_bytes == 0);
     }
 
     #[test]

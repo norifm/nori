@@ -36,6 +36,12 @@ impl nori_plugins::Client for Quiet {
     fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
     fn shown(&self, _: String, _: String, _: bool, _: bool) {}
     fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}
+    fn control(&self, _: nori_plugins::Control) {}
+    fn sign_in(&self, _: String, _: String) {}
+    fn wake(&self, _: Vec<nori_plugins::WakeEvent>) {}
+    fn commands(&self, _: Vec<nori_plugins::Command>) {}
+    fn watch_screen(&self, _: bool) {}
+    fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {}
 }
 /// The kinds a device opens: nori's own and the test plugin's, installed under `dir`.
 fn kinds(dir: &std::path::Path, settings: Arc<Settings>) -> Arc<nori_core::providers::Kinds> {

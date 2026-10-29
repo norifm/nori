@@ -7,19 +7,25 @@
 uniffi::setup_scaffolding!();
 
 mod app;
+mod assets;
+mod cache;
 pub mod convert;
+mod hooks;
 mod host;
 mod manifest;
 mod package;
 mod repo;
 pub(crate) mod runtime;
+mod session;
 mod stage;
 mod slots;
 mod sockets;
 mod store;
 #[cfg(feature = "testing")]
 pub mod testing;
+mod timers;
 mod view;
+mod wake;
 mod worker;
 
 use std::collections::BTreeMap;
@@ -30,8 +36,12 @@ pub use app::{open, open_plugins, Client};
 pub use repo::{Offer, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
 pub use slots::{Artwork, InfoGroup, InfoLine, Items, MenuEntry};
 pub use view::{PluginCard, PluginPreview, PluginRow};
+pub use assets::{AssetLine, AssetState};
+pub use hooks::Press;
 pub use host::{Side, Value};
-pub use manifest::{Glyph, ItemKind, Manifest, MenuSpec, Place, Refusal, RowKind, RowSpec, Slot, API, POINTS};
+pub use manifest::{AssetSpec, Glyph, Hook, ItemKind, Manifest, MenuSpec, Permission, Place, Refusal, RowKind, RowSpec, Slot, WakeEvent, API, POINTS};
+pub use session::{Control, Found, Library, Moment, Profile, Repeat, Route};
+pub use wake::Command;
 pub use runtime::{Host, LINKED};
 pub use worker::Worker;
 
@@ -121,11 +131,24 @@ pub struct Plugins {
     repos: Mutex<Vec<String>>,
     /// When updates were last looked for, device ms.
     checked_ms: Mutex<i64>,
+    me: std::sync::Weak<Plugins>,
+    /// The open profile's queue and library, the core's.
+    library: std::sync::RwLock<Option<Arc<dyn Library>>>,
+    pub(crate) live: hooks::Live,
+    pub(crate) gate: Arc<timers::Gate>,
+    pub(crate) timers: timers::Timers,
+    /// Told when a lyric line's wake may have to let go.
+    pub(crate) lyrics_changed: Arc<nori_tasks::Notify>,
+    /// Where timers and lyric lines wait: made at the first that needs it.
+    tasks: std::sync::OnceLock<Arc<dyn nori_tasks::Tasks>>,
+    pub(crate) fetches: assets::Fetches,
+    /// The wakes and commands the client was last told to keep.
+    pub(crate) told: Mutex<(Vec<WakeEvent>, Vec<wake::Command>)>,
 }
 
 impl Plugins {
     /// The plugins installed under `dir`, as its index lists them.
-    pub fn open(dir: PathBuf, side: Arc<dyn Side>) -> Plugins {
+    pub fn open(dir: PathBuf, side: Arc<dyn Side>) -> Arc<Plugins> {
         let index: Index = std::fs::read(dir.join("index.json")).ok().and_then(|t| serde_json::from_slice(&t).ok()).unwrap_or_default();
         let installed = index
             .plugin
@@ -136,12 +159,52 @@ impl Plugins {
                 Some(Installed { manifest: Arc::new(manifest), enabled: e.enabled, repo: e.repo.clone(), held: e.held })
             })
             .collect();
-        Plugins { dir, side, installed: Mutex::new(installed), stages: Mutex::new(None), workers: Mutex::new(BTreeMap::new()), transport: Arc::default(), repos: Mutex::new(index.repos), checked_ms: Mutex::new(index.checked_ms) }
+        let plugins = Arc::new_cyclic(|me| Plugins {
+            dir,
+            side,
+            installed: Mutex::new(installed),
+            stages: Mutex::new(None),
+            workers: Mutex::new(BTreeMap::new()),
+            transport: Arc::default(),
+            repos: Mutex::new(index.repos),
+            checked_ms: Mutex::new(index.checked_ms),
+            me: me.clone(),
+            library: Default::default(),
+            live: Default::default(),
+            gate: Default::default(),
+            timers: Default::default(),
+            lyrics_changed: Default::default(),
+            tasks: Default::default(),
+            fetches: Default::default(),
+            told: Default::default(),
+        });
+        plugins.refresh();
+        plugins
     }
 
-    /// The open profile's transport, for plugins' HTTP.
+    /// The open profile's transport, for plugins' HTTP; assets waiting for Wi-Fi try again.
     pub fn set_transport(&self, t: Option<Arc<dyn nori_net::transport::Transport>>) {
         *self.transport.lock().expect("not poisoned") = t;
+        self.fetch_waiting();
+    }
+
+    /// The open profile's queue and library, for plugins' `session` and `subsonic`.
+    pub fn set_library(&self, library: Option<Arc<dyn Library>>) {
+        *self.library.write().expect("not poisoned") = library;
+    }
+
+    pub(crate) fn library(&self) -> Option<Arc<dyn Library>> {
+        self.library.read().expect("not poisoned").clone()
+    }
+
+    /// Where the timers and lyric lines wait: the client's executor, given before the first plugin
+    /// needs one, else one of the host's own.
+    pub fn use_tasks(&self, tasks: Arc<dyn nori_tasks::Tasks>) {
+        let _ = self.tasks.set(tasks);
+    }
+
+    pub(crate) fn tasks(&self) -> Arc<dyn nori_tasks::Tasks> {
+        self.tasks.get_or_init(|| Arc::new(nori_tasks::Native::new("nori-plugin-timers").expect("a thread for the plugins' timers"))).clone()
     }
 
     pub fn installed(&self) -> Vec<Installed> {
@@ -171,9 +234,11 @@ impl Plugins {
         drop(list);
         *self.stages.lock().expect("not poisoned") = None;
         self.workers.lock().expect("not poisoned").remove(&manifest.id);
+        assets::prune(&self.folder(&manifest.id), &manifest.assets);
         if on {
             self.side.laid(&manifest.id);
         }
+        self.refresh();
         Ok(manifest)
     }
 
@@ -217,7 +282,7 @@ impl Plugins {
         let i = self.installed().into_iter().find(|i| i.enabled && i.manifest.id == id)?;
         let folder = self.folder(id);
         let component = runtime::component(&folder).map_err(|e| nori_model::alog::info(&format!("plugin {id}: {e:?}"))).ok()?;
-        let w = Worker::start(i.manifest.clone(), folder, component, self.side.clone(), self.transport.clone()).ok()?;
+        let w = Worker::start(i.manifest.clone(), folder, component, self.side.clone(), self.transport.clone(), self.me.clone()).ok()?;
         // Started at once, so its overrides are in effect without waiting for a first call.
         w.post(|_, _| Ok(()));
         workers.insert(id.to_string(), w.clone());
@@ -302,6 +367,7 @@ impl Plugins {
         }
         *self.stages.lock().expect("not poisoned") = None;
         self.side.laid(id);
+        self.refresh();
         if starts {
             self.worker(id);
         }
@@ -346,6 +412,8 @@ impl Plugins {
         self.workers.lock().expect("not poisoned").remove(id);
         let _ = std::fs::remove_dir_all(self.folder(id));
         *self.stages.lock().expect("not poisoned") = None;
+        self.timers.stop_all(id);
         self.side.laid(id);
+        self.refresh();
     }
 }

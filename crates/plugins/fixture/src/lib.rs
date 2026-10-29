@@ -51,8 +51,13 @@ fn fetch_together(a: &str, b: &str) -> String {
     format!("{}|{}", said(ax), said(ay))
 }
 
+mod hooked;
+
 impl Lifecycle for Test {
     fn action(&mut self, id: String) {
+        if hooked::action(&id) {
+            return;
+        }
         if id == "together" {
             let heard = fetch_together("https://allowed.example/together/one", "https://allowed.example/together/two");
             nori_plugin_sdk::notices::show(nori_plugin_sdk::notices::Tone::Info, "together", &[heard]);
@@ -64,8 +69,8 @@ impl Lifecycle for Test {
         let _ = settings::override_(&[("playback.pitch".into(), Value::Level(2.0))]).map(|_| panic!("not its key"));
         let heard = [fetch("https://allowed.example/a"), fetch("https://elsewhere.example/b")].join("|");
         store::set("heard", heard.as_bytes()).unwrap();
-        #[cfg(feature = "timers")]
-        nori_plugin_sdk::timers::stop(0);
+        #[cfg(feature = "unlinked")]
+        let _ = nori_plugin_sdk::bluetooth::connected();
     }
 }
 
@@ -164,7 +169,14 @@ const MANIFEST: Manifest = Manifest {
     rows: &[Row::level("gain", 0.0, 2.0, 0.1, 0.5)],
     menu: &[MenuAction { id: "count", glyph: Glyph::Info, kinds: &[ItemKind::Song] }],
     places: &[Place::Artwork, Place::SongInfo, Place::PlayerStatus, Place::Devices],
+    signin: hooked::SIGNIN,
+    permissions: hooked::PERMISSIONS,
+    hooks: hooked::HOOKS,
+    wake: hooked::WAKE,
+    commands: hooked::COMMANDS,
+    cache_mb: hooked::CACHE_MB,
+    assets: hooked::ASSETS,
     ..Manifest::new("fm.nori.test")
 };
 
-nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, sound_stage, provider, slots);
+nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, hooks, sound_stage, provider, slots);

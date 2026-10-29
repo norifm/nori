@@ -2051,7 +2051,7 @@ fn official() -> nori_plugins::Repo {
 }
 
 fn card(id: &str, name: &str, rows: Vec<nori_plugins::PluginRow>) -> nori_plugins::PluginCard {
-    nori_plugins::PluginCard { id: id.into(), version: "1.2.0".into(), name: name.into(), about: Some(format!("{name} does things")), enabled: false, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: vec!["api.example.com".into()], rows }
+    nori_plugins::PluginCard { id: id.into(), version: "1.2.0".into(), name: name.into(), about: Some(format!("{name} does things")), enabled: false, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: vec!["api.example.com".into()], permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows }
 }
 
 fn plugin_row(id: &str, kind: nori_plugins::RowKind, value: Option<nori_plugins::Value>) -> nori_plugins::PluginRow {
@@ -2251,6 +2251,12 @@ impl nori_plugins::Client for Heard {
     fn notice(&self, _: String, _: bool, words: String, args: Vec<String>) {
         self.0.lock().unwrap().push((words, args));
     }
+    fn control(&self, _: nori_plugins::Control) {}
+    fn sign_in(&self, _: String, _: String) {}
+    fn wake(&self, _: Vec<nori_plugins::WakeEvent>) {}
+    fn commands(&self, _: Vec<nori_plugins::Command>) {}
+    fn watch_screen(&self, _: bool) {}
+    fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {}
 }
 
 /// The test plugin installed in `dir` and on, over settings of its own.
@@ -2274,7 +2280,7 @@ fn a_plugin_says_what_it_is_before_it_is_installed() {
     dump("plugins-preview", &s);
     assert!(s.contains(&format!("Install Test {}?", preview.card.version)) && s.contains("enter install · esc cancel"), "{s}");
     let Some(Overlay::Confirm { lines, .. }) = &a.overlay else { panic!("no sheet") };
-    assert_eq!(lines, &["It's a music source, a sound effect, a playback helper. It changes playback values.", "Connects to allowed.example. Changes playback.speed.", "It stays off until you turn it on."]);
+    assert_eq!(lines, &["It's a playback helper, a music source, a sound effect. It changes playback values.", "Connects to allowed.example. Changes playback.speed. Sees what plays and the queue. Controls playback and the queue. Searches your library. Uses your server's API as you. Wakes at each lyric line while music plays. Starts nori while it is closed (on a phone). Lets other apps run: ping. Keeps up to 1 MB of cache. Downloads 1 MB of files.", "It stays off until you turn it on."]);
     key(&mut a, KeyCode::Enter);
     let Some(Cmd::Plugin(crate::app::PluginCmd::InstallPreview(p))) = a.cmds.pop() else { panic!("not installed") };
     assert_eq!(plugins.install_preview(*p), Ok(nori_plugins::testing::FIXTURE.into()));
@@ -2397,6 +2403,12 @@ impl nori_plugins::Client for Quiet {
     fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
     fn shown(&self, _: String, _: String, _: bool, _: bool) {}
     fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}
+    fn control(&self, _: nori_plugins::Control) {}
+    fn sign_in(&self, _: String, _: String) {}
+    fn wake(&self, _: Vec<nori_plugins::WakeEvent>) {}
+    fn commands(&self, _: Vec<nori_plugins::Command>) {}
+    fn watch_screen(&self, _: bool) {}
+    fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {}
 }
 
 /// With a plugin's music source on, the login offers its kind, and asks only what it asks.

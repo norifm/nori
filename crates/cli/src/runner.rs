@@ -210,6 +210,10 @@ pub fn run(o: Options) -> Result<(), String> {
     nori_host::desktop::plugins(&r.o.data).watched.hear(move |n| {
         let _ = notices.send(Msg::Note { text: n.words, error: n.problem });
     });
+    let asks = r.tx.clone();
+    nori_host::desktop::plugins(&r.o.data).watched.sign_in_with(move |plugin, url| {
+        let _ = asks.send(Msg::PluginSignIn { plugin, url });
+    });
     match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => {
@@ -458,6 +462,19 @@ impl Runner {
             Msg::Offers(o) => {
                 app.settings.own.shelf = crate::settings_view::Shelf::Read(o.clone());
                 return self.plugin(app, crate::app::PluginCmd::Read);
+            }
+            Msg::PluginSignIn { plugin, url } => {
+                #[cfg(feature = "sign-in-window")]
+                if let Some(s) = &self.session {
+                    let kind = nori_core::settings::ServerKind::Plugin { id: plugin.clone() };
+                    let (h, tx) = ((**s).clone(), self.tx.clone());
+                    let title = format!("Sign in to {}", crate::text::provider_of(&app.settings.own.kinds, &kind).name);
+                    self.sign_in_window = nori_sign_in_window::SignInWindow::open_at(app.settings.own.kinds.clone(), kind, title, url.clone(), move |_, cookies| {
+                        let _ = tx.send(Msg::SignedIn(h.sign_in(cookies)));
+                    });
+                }
+                let _ = (plugin, url);
+                return;
             }
             Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { .. }) => {
                 #[cfg(feature = "sign-in-window")]

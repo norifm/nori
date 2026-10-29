@@ -19,7 +19,13 @@ import kotlinx.coroutines.flow.StateFlow
  * database with the settings; this lists what the audio system has. The callback only fires when something is plugged in or paired, so this costs
  * nothing while music plays.
  */
-class Outputs(context: Context, private val settings: dev.nori.music.ffi.settings.Settings) {
+class Outputs(
+    context: Context,
+    private val settings: dev.nori.music.ffi.settings.Settings,
+    /** An output device connected or went, by its name; told only what a plugin hears ([hears]). */
+    private val heard: (String, Boolean) -> Unit = { _, _ -> },
+    private val hears: () -> Boolean = { false },
+) {
     private val audio = context.getSystemService(AudioManager::class.java)
     private val _current = MutableStateFlow(SPEAKER)
     val current: StateFlow<String> = _current
@@ -44,9 +50,19 @@ class Outputs(context: Context, private val settings: dev.nori.music.ffi.setting
     val usb: StateFlow<Boolean> = _usb
 
     private val callback = object : AudioDeviceCallback() {
-        override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) = refresh()
-        override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) = refresh()
+        override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) { tell(added, true); refresh() }
+        override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) { tell(removed, false); refresh() }
     }
+
+    /** The plugins hear of output devices plugged in or out (not the speaker and earpiece, there all along). */
+    private fun tell(devices: Array<out AudioDeviceInfo>, connected: Boolean) {
+        if (!started || !hears()) return
+        devices.filter { it.isSink && it.type != AudioDeviceInfo.TYPE_BUILTIN_SPEAKER && it.type != AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+            .mapNotNull { it.productName?.toString()?.takeIf(String::isNotBlank) }.distinct().forEach { heard(it, connected) }
+    }
+
+    /** The first report lists what was attached already; it is no connection. */
+    private var started = false
 
     fun start() {
         // registerAudioDeviceCallback reports every device already attached, so this also fills the
@@ -55,6 +71,7 @@ class Outputs(context: Context, private val settings: dev.nori.music.ffi.setting
         // That report arrives a moment later. Until then [current] would say "speaker" with a DAC plugged
         // in, and whatever follows the output would switch the sound away and straight back.
         refresh()
+        Handler(Looper.getMainLooper()).post { started = true }
     }
 
     /**
