@@ -490,9 +490,9 @@ pub fn mix_name(n: nori_core::mixes::board::MixName) -> &'static str {
     }
 }
 
-/// Under a mix's name: what it is made from.
+/// Under a mix's name: what it is made from; nothing under Favorites, whose name says so.
 pub fn mix_caption(favourites: bool) -> &'static str {
-    if favourites { "Your favorites" } else { "Made for you" }
+    if favourites { "" } else { "Made for you" }
 }
 
 

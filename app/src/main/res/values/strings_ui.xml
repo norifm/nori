@@ -707,7 +707,6 @@
     <string name="resume">Resume</string>
     <string name="offer_place">%1$s · %2$d of %3$d</string>
     <string name="mix_line_made">Made for you</string>
-    <string name="mix_line_favourites">Your favorites</string>
     <string name="plugins">Plugins</string>
     <string name="plugins_summary">Music sources, sounds and more</string>
     <string name="plugins_empty">Plugins add music sources, sounds and more.</string>
