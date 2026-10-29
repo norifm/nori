@@ -9,7 +9,6 @@ use std::sync::Arc;
 use wasmtime::component::Component;
 use wasmtime::Store;
 
-use crate::host::Side;
 use crate::manifest::{Manifest, Refusal};
 use crate::runtime::{self, Host, Plugin};
 
@@ -28,7 +27,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn start(manifest: Arc<Manifest>, dir: PathBuf, component: Component, side: Arc<dyn Side>, transport: crate::Transported, radio: Arc<crate::bluetooth::Radio>, lan: Arc<crate::lan::Lan>, plugins: std::sync::Weak<crate::Plugins>) -> Result<Worker, Refusal> {
+    pub(crate) fn start(manifest: Arc<Manifest>, dir: PathBuf, component: Component, shared: runtime::Shared) -> Result<Worker, Refusal> {
         let linker = runtime::linker(&component)?;
         let (jobs, rx) = mpsc::channel::<Job>();
         let name = format!("plugin {}", manifest.id);
@@ -37,7 +36,7 @@ impl Worker {
             .spawn(move || {
                 // A fresh instance (the first, or one after a call failed), started when it has a lifecycle.
                 let make = || -> wasmtime::Result<Running> {
-                    let mut store = runtime::store(manifest.clone(), &dir, side.clone(), transport.clone(), radio.clone(), lan.clone(), plugins.clone());
+                    let mut store = runtime::store(manifest.clone(), &dir, shared.clone());
                     store.set_fuel(runtime::CALL_FUEL)?;
                     let plugin = Plugin::instantiate(&mut store, &component, &linker)?;
                     if manifest.extends("lifecycle") {

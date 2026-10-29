@@ -133,8 +133,19 @@ impl Host {
     }
 }
 
+/// What every instance's imports reach beyond its own folder, shared with the plugin host.
+#[derive(Clone)]
+pub(crate) struct Shared {
+    pub(crate) side: Arc<dyn Side>,
+    pub(crate) transport: crate::Transported,
+    pub(crate) radio: Arc<crate::bluetooth::Radio>,
+    pub(crate) lan: Arc<crate::lan::Lan>,
+    pub(crate) plugins: std::sync::Weak<crate::Plugins>,
+}
+
 /// A store for a plugin instance whose imports reach the host, with its memory capped.
-pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>, transport: crate::Transported, radio: Arc<crate::bluetooth::Radio>, lan: Arc<crate::lan::Lan>, plugins: std::sync::Weak<crate::Plugins>) -> Store<Host> {
+pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, shared: Shared) -> Store<Host> {
+    let Shared { side, transport, radio, lan, plugins } = shared;
     let host = Host {
         limits: StoreLimitsBuilder::new().memory_size(MEMORY_CAP).instances(16).build(),
         id: manifest.id.clone(),

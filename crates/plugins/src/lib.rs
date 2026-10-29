@@ -310,7 +310,8 @@ impl Plugins {
         let i = self.installed().into_iter().find(|i| i.enabled && i.manifest.id == id)?;
         let folder = self.folder(id);
         let component = runtime::component(&folder).map_err(|e| nori_model::alog::info(&format!("plugin {id}: {e:?}"))).ok()?;
-        let w = Worker::start(i.manifest.clone(), folder, component, self.side.clone(), self.transport.clone(), self.radio.clone(), self.lan.clone(), self.me.clone()).ok()?;
+        let shared = runtime::Shared { side: self.side.clone(), transport: self.transport.clone(), radio: self.radio.clone(), lan: self.lan.clone(), plugins: self.me.clone() };
+        let w = Worker::start(i.manifest.clone(), folder, component, shared).ok()?;
         // Started at once, so its overrides are in effect without waiting for a first call.
         w.post(|_, _| Ok(()));
         workers.insert(id.to_string(), w.clone());
