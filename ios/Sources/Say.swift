@@ -215,7 +215,6 @@ enum Say {
         }
     }
     static let mixLineMade = "Made for you"
-    static let mixLineFavourites = "Your favorites"
     static let continueLabel = "Continue"
     static let resume = "Resume"
     /// The offered queue's line: "Artist · 3 of 12".

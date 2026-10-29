@@ -154,8 +154,9 @@ private fun MixCardBody(card: MixCard, papers: Papers, width: androidx.compose.u
                 card.title, style = titled(MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp, fontWeight = FontWeight.SemiBold)),
                 color = ink, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
-            Text(
-                if (card.favourites) say.mixLineFavourites else say.mixLineMade, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+            // Favorites' name says what it is made from.
+            if (!card.favourites) Text(
+                say.mixLineMade, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                 color = ink.copy(alpha = 0.7f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
         }

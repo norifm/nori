@@ -266,7 +266,8 @@ final class MixCard: UIView {
         let name = label(Fonts.title(18, .headline), ink)
         name.text = Say.mix(item.count)
         let line = label(Fonts.font(12, .regular, .caption1), ink.withAlphaComponent(0.7))
-        line.text = item.count == 0 ? Say.mixLineFavourites : Say.mixLineMade
+        // Favorites' name says what it is made from.
+        line.text = item.count == 0 ? "" : Say.mixLineMade
         // The name and its line in the middle of the paper under the covers.
         let (a, b) = (name.sizeThatFits(.zero).height, line.sizeThatFits(.zero).height)
         let top = width + (width * MixCard.tall - width - a - b) / 2
