@@ -96,7 +96,7 @@ final class LibraryPage: UIViewController {
         }
         // The smart playlists are under Playlists.
         if kind == NORI_PAGE_PLAYLISTS && rules.sections.contains(5) {
-            rows.append(GroupRow(Say.smartPlaylists, icon: Glyph.draw(Iconoir.sparks, 20), chevron: true) { [weak self] in
+            rows.append(GroupRow(Say.smartPlaylists, icon: Glyph.draw(Iconoir.magicWand, 20), chevron: true) { [weak self] in
                 self?.navigationController?.pushViewController(PageController(kind: NORI_PAGE_SMARTS, title: Say.smartPlaylists), animated: true)
             })
         }

@@ -170,7 +170,7 @@ private fun sectionIcon(s: LibrarySection): androidx.compose.ui.graphics.vector.
     LibrarySection.ARTISTS -> Iconoir.User
     LibrarySection.SONGS -> Iconoir.MusicNote
     LibrarySection.PLAYLISTS -> Iconoir.Playlist
-    LibrarySection.SMART -> Iconoir.Sparks
+    LibrarySection.SMART -> Iconoir.MagicWand
     LibrarySection.HISTORY -> Iconoir.ClockRotateRight
     LibrarySection.GENRES -> Iconoir.ViewGrid
     LibrarySection.DECADES -> Iconoir.Calendar
@@ -436,7 +436,7 @@ private fun Playlists(actions: ActionsViewModel, header: @Composable () -> Unit 
             item { header() }
             // Smart playlists are playlists: theirs is a row here, as Apple keeps them among the others.
             if (smart) item {
-                NavRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, chevron = true, leading = { Icon(Iconoir.Sparks, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface) })
+                NavRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, chevron = true, leading = { Icon(Iconoir.MagicWand, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface) })
             }
             item { ActionRow(say.newPlaylist, Iconoir.Plus, { name = ""; creating = true }) }
             item { ActionRow(say.importPlaylistFile, Iconoir.Download, { pickM3u.launch(arrayOf("*/*")) }) }
