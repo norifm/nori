@@ -227,6 +227,16 @@ enum Iconoir {
         GlyphPart("M19 10 L19.54 11.46 L21 12 L19.54 12.54 L19 14 L18.46 12.54 L17 12 L18.46 11.46 L19 10 Z", round: false),
     ]
 
+    /// arrow-up
+    static let arrowUp = [
+        GlyphPart("M12 21 L12 3 M12 3 L20.5 11.5 M12 3 L3.5 11.5"),
+    ]
+
+    /// arrow-down
+    static let arrowDown = [
+        GlyphPart("M12 3 L12 21 M12 21 L20.5 12.5 M12 21 L3.5 12.5"),
+    ]
+
     /// prohibition
     static let prohibition = [
         GlyphPart("M19.141 5 C17.326 3.149 14.797 2 12 2 C6.477 2 2 6.477 2 12 C2 14.726 3.09 17.196 4.859 19 M19.141 5 C20.91 6.804 22 9.275 22 12 C22 17.523 17.523 22 12 22 C9.203 22 6.673 20.851 4.859 19 M19.141 5 L4.859 19"),

@@ -51,6 +51,8 @@ GLYPHS = {
     "AntennaSignal": ("antenna-signal", "regular", False),
     "Sparks": ("sparks", "regular", False),
     "MagicWand": ("magic-wand", "regular", False),
+    "ArrowUp": ("arrow-up", "regular", False),
+    "ArrowDown": ("arrow-down", "regular", False),
     "Prohibition": ("prohibition", "regular", False),
     "ShareIos": ("share-ios", "regular", False),
     "InfoCircle": ("info-circle", "regular", False),
