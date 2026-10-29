@@ -1410,7 +1410,7 @@ fn lyrics(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let active = frame.active;
     // After the last line `active` is past the end; stay on the last line.
     let focus = app.lyrics_sel.unwrap_or((active.max(0) as usize).min(l.pick.lyrics.lines.len().saturating_sub(1)));
-    let credit = l.credit();
+    let credit = l.credit(&|id| app.settings.own.plugins.iter().find(|c| c.id == id).map(|c| c.name.clone()));
     let body = if credit.is_some() { Rect { height: area.height.saturating_sub(1), ..area } } else { area };
     let w = body.width as usize;
     // A lyric line's rows: text (0), backing vocals (1), translation (2), each wrapped.

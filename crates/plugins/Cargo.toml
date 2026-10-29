@@ -25,6 +25,8 @@ nori-player = { path = "../player" }
 nori-settings = { path = "../settings" }
 # The AutoMix seams plugins fill (mixing.rs).
 nori-automix = { path = "../automix" }
+# A plugin's lyrics service runs in nori's race.
+nori-lyrics = { path = "../lyrics" }
 nori-tasks = { path = "../tasks" }
 # The runtime: components compiled by Cranelift once at install (never downloaded as native code),
 # fuel for every call's budget.

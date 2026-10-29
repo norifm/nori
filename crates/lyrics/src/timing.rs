@@ -34,7 +34,7 @@ fn automatic(t: LyricsTiming) -> Option<i64> {
 
 /// Where the listener's timing for `lyrics` of song `song_id` from `origin` is kept: another source, or
 /// the same source's words timed anew, is another key.
-pub fn key(song_id: &str, origin: LyricsOrigin, lyrics: &Lyrics) -> String {
+pub fn key(song_id: &str, origin: &LyricsOrigin, lyrics: &Lyrics) -> String {
     // FNV-1a over the source and every line's time and words.
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut eat = |bytes: &[u8]| {
@@ -115,11 +115,11 @@ mod tests {
     fn other_words_are_another_key() {
         let line = |start_ms, text: &str| LyricLine { start_ms, text: text.into(), ..Default::default() };
         let l = Lyrics { synced: true, lines: vec![line(1000, "one"), line(4000, "two")], ..Default::default() };
-        let k = key("s1", LyricsOrigin::Lrclib, &l);
-        assert_eq!(k, key("s1", LyricsOrigin::Lrclib, &Lyrics { timing: LyricsTiming::Automatic { ms: 500 }, ..l.clone() }), "the timing is not the words");
-        assert_ne!(k, key("s1", LyricsOrigin::Netease, &l));
-        assert_ne!(k, key("s2", LyricsOrigin::Lrclib, &l));
-        assert_ne!(k, key("s1", LyricsOrigin::Lrclib, &Lyrics { lines: vec![line(1000, "one"), line(4100, "two")], ..l.clone() }));
+        let k = key("s1", &LyricsOrigin::Lrclib, &l);
+        assert_eq!(k, key("s1", &LyricsOrigin::Lrclib, &Lyrics { timing: LyricsTiming::Automatic { ms: 500 }, ..l.clone() }), "the timing is not the words");
+        assert_ne!(k, key("s1", &LyricsOrigin::Netease, &l));
+        assert_ne!(k, key("s2", &LyricsOrigin::Lrclib, &l));
+        assert_ne!(k, key("s1", &LyricsOrigin::Lrclib, &Lyrics { lines: vec![line(1000, "one"), line(4100, "two")], ..l.clone() }));
     }
 
     fn widget(timing: LyricsTiming, synced: bool, at: i64, speed: f32, lines: &[(i64, &str)]) -> Option<WidgetLines> {

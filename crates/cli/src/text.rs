@@ -432,9 +432,9 @@ pub fn ceiling(db: f32) -> String {
     format!("{} dB", numbers::fixed(db as f64, 1, false, POINT))
 }
 
-/// Where lyrics came from, for the credit line: "your server", "LRCLIB".
-pub fn lyrics_origin(origin: LyricsOrigin) -> &'static str {
-    match origin {
+/// Where lyrics came from, for the credit line: "your server", "LRCLIB"; a plugin by its name.
+pub fn lyrics_origin(origin: &LyricsOrigin, plugin_name: &dyn Fn(&str) -> Option<String>) -> String {
+    let said = match origin {
         LyricsOrigin::Server => "your server",
         LyricsOrigin::Binilyrics => "BiniLyrics",
         LyricsOrigin::BetterLyrics => "BetterLyrics",
@@ -445,13 +445,15 @@ pub fn lyrics_origin(origin: LyricsOrigin) -> &'static str {
         LyricsOrigin::Kugou => "KuGou",
         LyricsOrigin::Lrclib => "LRCLIB",
         LyricsOrigin::YoutubeMusic => "YouTube Music",
-    }
+        LyricsOrigin::Plugin { id } => return plugin_name(id).unwrap_or_else(|| id.clone()),
+    };
+    said.to_string()
 }
 
 /// The credit line for lyrics from a lyrics service: "LRCLIB", "LRCLIB · not timed".
-pub fn lyrics_credit(origin: LyricsOrigin, synced: bool) -> String {
-    let source = lyrics_origin(origin);
-    if synced { source.to_string() } else { format!("{source} · not timed") }
+pub fn lyrics_credit(origin: &LyricsOrigin, synced: bool, plugin_name: &dyn Fn(&str) -> Option<String>) -> String {
+    let source = lyrics_origin(origin, plugin_name);
+    if synced { source } else { format!("{source} · not timed") }
 }
 
 /// A built-in equalizer curve's name.
@@ -1021,8 +1023,11 @@ mod tests {
         assert_eq!(device_line(&d), "That device plays from another source.");
 
         // Lyrics credit says untimed.
-        assert_eq!(lyrics_credit(LyricsOrigin::Lrclib, true), "LRCLIB");
-        assert_eq!(lyrics_credit(LyricsOrigin::Lrclib, false), "LRCLIB · not timed");
+        let named = |id: &str| (id == "fm.nori.test").then(|| "Test".to_string());
+        assert_eq!(lyrics_credit(&LyricsOrigin::Lrclib, true, &named), "LRCLIB");
+        assert_eq!(lyrics_credit(&LyricsOrigin::Lrclib, false, &named), "LRCLIB · not timed");
+        assert_eq!(lyrics_credit(&LyricsOrigin::Plugin { id: "fm.nori.test".into() }, true, &named), "Test", "a plugin by its name");
+        assert_eq!(lyrics_credit(&LyricsOrigin::Plugin { id: "fm.nori.gone".into() }, true, &named), "fm.nori.gone", "or its id");
 
         // The output by what it is, or its own name (`output_look`).
         let outputs = ["", "USB: K3", "USB: ", "Wired headphones", "Bluetooth: Buds", "MacBook Pro Speakers"].map(output_name);

@@ -30,6 +30,9 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     /** The lines plugins say under the output row, as last asked. */
     val pluginStatus: StateFlow<List<String>> = _pluginStatus
 
+    /** Installed plugins' names by id, which credit a plugin's lyrics. */
+    val pluginNames: StateFlow<Map<String, String>> = nori.plugins.names
+
     /** Asks the plugins for their lines under the output row: when the player opens and when the song changes, never on a timer. */
     fun askPluginStatus() = viewModelScope.launch { _pluginStatus.value = runCatching { nori.plugins.playerStatus() }.getOrDefault(emptyList()) }
 
@@ -124,7 +127,7 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
         .followSong(
             id = { it.id },
             loading = Load.Loading,
-            none = { Load.Ready(FoundLyrics(dev.nori.music.ffi.library.lyricsNone(), LyricsOrigin.SERVER)) },
+            none = { Load.Ready(FoundLyrics(dev.nori.music.ffi.library.lyricsNone(), LyricsOrigin.Server)) },
             failed = { Load.Failed(it.said ?: it.javaClass.simpleName) },
             answers = lyricsKept,
             keep = { it is Load.Ready && it.data.lyrics.lines.isNotEmpty() },

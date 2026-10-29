@@ -5129,6 +5129,7 @@ dependencies = [
  "async-trait",
  "futures-channel",
  "nori-automix",
+ "nori-lyrics",
  "nori-model",
  "nori-net",
  "nori-player",

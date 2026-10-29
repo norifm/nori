@@ -272,10 +272,11 @@ private fun LyricsSheet(player: dev.nori.music.app.vm.PlayerViewModel, id: Strin
     val l by player.lyrics.collectAsState()
     val found = (l.of(id, dev.nori.music.app.vm.Load.Loading) as? dev.nori.music.app.vm.Load.Ready)?.data ?: return
     val lyrics = found.lyrics
+    val pluginNames by player.pluginNames.collectAsState()
     Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
         SectionTitle(say.lyrics)
         Text(
-            remember(found.source, lyrics.synced, lyrics.wordTimed) { say.lyricsSource(found.source, lyrics.synced, lyrics.wordTimed) },
+            remember(found.source, lyrics.synced, lyrics.wordTimed, pluginNames) { say.lyricsSource(found.source, lyrics.synced, lyrics.wordTimed, pluginNames) },
             Modifier.padding(horizontal = Space.gutter, vertical = 4.dp), style = MaterialTheme.typography.bodyLarge,
         )
         if (!lyrics.synced) return@Column

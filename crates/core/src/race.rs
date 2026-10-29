@@ -210,10 +210,11 @@ impl Client {
         // A service's words kept from before first: shown after the server's plain ones, those flashed up
         // in between on a song come back to.
         let song = self.stored_song_of(&id);
+        let plugins = self.core.kinds.read().lyrics_services();
         if let Some(song) = &song {
             if let Some(pick) = cached_pick(&*self.core, song,
                 server.as_ref().is_some_and(|v| !v.lines.is_empty()),
-                server.as_ref().is_some_and(|v| v.synced), asked) {
+                server.as_ref().is_some_and(|v| v.synced), asked, &plugins) {
                 screen.show(pick);
             }
         }
@@ -238,7 +239,7 @@ impl Client {
         };
         let services = async {
             let song = match song { Some(song) => song, None => self.song_of(id.clone()).await? };
-            if let Some(line) = lookup(&*self.transport, &*self.core, &song, has_lines, synced, asked, &*screen, &self.lyrics).await {
+            if let Some(line) = lookup(&*self.transport, &*self.core, &song, has_lines, synced, asked, &*screen, &self.lyrics, &plugins).await {
                 nori_perf::perf_log::note_core("lyrics", line.trim_start_matches("lyrics: "));
                 let remote = self.core.remote.lock().upgrade();
                 if let Some(remote) = remote {
@@ -271,7 +272,7 @@ pub(crate) const DOWNLOADED_SERVER_KEPT_MS: i64 = MISS_KEPT_MS;
 impl Core {
     /// The offset the listener gave `pick`'s words of song `song_id`, if they did.
     fn lyrics_yours(&self, song_id: &str, pick: &LyricsPick) -> Option<i64> {
-        let key = nori_lyrics::timing::key(song_id, pick.origin, &pick.lyrics);
+        let key = nori_lyrics::timing::key(song_id, &pick.origin, &pick.lyrics);
         crate::db::kv_get(&self.db.lock(), &key).ok().flatten().and_then(|v| v.parse().ok())
     }
 }
@@ -283,7 +284,7 @@ impl Core {
     /// are shown again.
     pub fn lyrics_nudge(&self, song_id: String, mut pick: LyricsPick, dir: i32) -> LyricsPick {
         pick.lyrics.timing = nori_lyrics::timing::nudged(pick.lyrics.timing, dir);
-        let key = nori_lyrics::timing::key(&song_id, pick.origin, &pick.lyrics);
+        let key = nori_lyrics::timing::key(&song_id, &pick.origin, &pick.lyrics);
         let c = self.db.lock();
         let kept = match pick.lyrics.timing {
             nori_model::LyricsTiming::Yours { ms, .. } => crate::db::kv_put(&c, &key, &ms.to_string()),
@@ -355,7 +356,7 @@ pub(crate) mod tests {
     }
 
     fn lrclib() -> LyricsLookup {
-        LyricsLookup { services: vec![LyricsService::Lrclib], prefer_words: true, paxsenix_key: String::new(), better_lyrics_key: String::new() }
+        LyricsLookup { services: vec![LyricsService::Lrclib], plugins: true, prefer_words: true, paxsenix_key: String::new(), better_lyrics_key: String::new() }
     }
 
     #[derive(Default)]
@@ -369,7 +370,7 @@ pub(crate) mod tests {
 
     fn run(c: &Client, s: &Song, has_lines: bool, synced: bool, asked: &LyricsLookup) -> Vec<LyricsPick> {
         let screen = Screen::default();
-        block(lookup(&*c.transport, &*c.core, s, has_lines, synced, asked, &screen, &c.lyrics));
+        block(lookup(&*c.transport, &*c.core, s, has_lines, synced, asked, &screen, &c.lyrics, &[]));
         screen.0.into_inner()
     }
 
@@ -403,7 +404,7 @@ pub(crate) mod tests {
         let asked = lrclib();
         let mut lookup = Box::pin(c.lyrics_for_with(s.id, &asked, screen.clone()));
         assert!(lookup.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
-        assert_eq!(screen.0.lock().last().map(|p| p.origin), Some(LyricsOrigin::Lrclib));
+        assert_eq!(screen.0.lock().last().map(|p| p.origin.clone()), Some(LyricsOrigin::Lrclib));
     }
 
     #[test]
@@ -549,7 +550,7 @@ pub(crate) mod tests {
         block(c.lyrics_for("lf1".into(), page.clone())).unwrap();
         let got = page.0.lock().clone();
         assert_eq!(got.len(), 1);
-        assert_eq!((got[0].origin, got[0].lyrics.lines[0].text.as_str()), (LyricsOrigin::Server, "timed"));
+        assert_eq!((got[0].origin.clone(), got[0].lyrics.lines[0].text.as_str()), (LyricsOrigin::Server, "timed"));
         assert_eq!(fake.asked().len(), 1, "timed server lyrics: no service asked");
         // Stale, unchanged answer: not shown again.
         c.core.db.lock().execute("UPDATE cache SET ts = 0", []).unwrap();
@@ -626,10 +627,10 @@ pub(crate) mod tests {
         fake.answer(r#"[{"duration":1024,"syncedLyrics":"[00:02.00]line one\n[01:00.00]line two here\n[02:00.00]a third line\n[03:00.00]and the fourth"}]"#);
         let first = Arc::new(Screen::default());
         block(c.lyrics_for_with(s.id.clone(), &lrclib(), first.clone())).unwrap();
-        assert_eq!(first.0.lock().last().map(|p| p.origin), Some(LyricsOrigin::Lrclib));
+        assert_eq!(first.0.lock().last().map(|p| p.origin.clone()), Some(LyricsOrigin::Lrclib));
         let again = Arc::new(Screen::default());
         block(c.lyrics_for_with(s.id, &lrclib(), again.clone())).unwrap();
-        let origins: Vec<_> = again.0.lock().iter().map(|p| p.origin).collect();
+        let origins: Vec<_> = again.0.lock().iter().map(|p| p.origin.clone()).collect();
         assert_eq!(origins, [LyricsOrigin::Lrclib], "the server's plain words must not show first");
     }
 
@@ -668,7 +669,7 @@ pub(crate) mod tests {
         fake.answer(r#"[{"duration":1000,"syncedLyrics":"[00:01.00]far"},{"duration":1026,"plainLyrics":"close plain"},{"duration":1022,"syncedLyrics":"[00:02.00]close synced\n[01:00.00]you gotta be crazy\n[02:00.00]you gotta have a real need\n[03:00.00]you gotta sleep on your toes"}]"#);
         let got = run(&c, &song(), true, false, &lrclib());
         assert_eq!(got.len(), 1);
-        assert_eq!((got[0].origin, got[0].lyrics.lines[0].text.as_str()), (LyricsOrigin::Lrclib, "close synced"));
+        assert_eq!((got[0].origin.clone(), got[0].lyrics.lines[0].text.as_str()), (LyricsOrigin::Lrclib, "close synced"));
         let asked = fake.asked();
         assert!(asked[0].contains("track_name=Dogs&"));
         assert!(asked[1].starts_with("https://lrclib.net/api/search?track_name=Dogs&artist_name=Pink+Floyd"));
@@ -789,7 +790,7 @@ pub(crate) mod tests {
         // Offline from here.
         let asked = fake.asked().len();
         let offline = run(&c, &kept, false, false, &lrclib());
-        assert_eq!((offline[0].origin, offline[0].lyrics.lines[0].text.as_str()), (LyricsOrigin::Lrclib, "a line made up"));
+        assert_eq!((offline[0].origin.clone(), offline[0].lyrics.lines[0].text.as_str()), (LyricsOrigin::Lrclib, "a line made up"));
         assert_eq!(fake.asked().len(), asked);
         assert!(run(&c, &other, false, false, &lrclib())[0].lyrics.lines.is_empty(), "streamed song's cleared");
         c.core.download_remove("dl-lyr".into()).unwrap();

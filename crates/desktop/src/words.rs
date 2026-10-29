@@ -298,9 +298,9 @@ pub fn count(n: impl Into<u64>, one: &str, many: &str) -> String {
 }
 
 /// The lyrics service lyrics came from, by name.
-pub fn lyrics_origin(origin: nori_core::lyrics_sources::LyricsOrigin) -> &'static str {
+pub fn lyrics_origin(origin: &nori_core::lyrics_sources::LyricsOrigin, plugin_name: &dyn Fn(&str) -> String) -> String {
     use nori_core::lyrics_sources::LyricsOrigin;
-    match origin {
+    let said = match origin {
         LyricsOrigin::Server => "your server",
         LyricsOrigin::Binilyrics => "BiniLyrics",
         LyricsOrigin::BetterLyrics => "BetterLyrics",
@@ -311,7 +311,9 @@ pub fn lyrics_origin(origin: nori_core::lyrics_sources::LyricsOrigin) -> &'stati
         LyricsOrigin::Kugou => "KuGou",
         LyricsOrigin::Lrclib => "LRCLIB",
         LyricsOrigin::YoutubeMusic => "YouTube Music",
-    }
+        LyricsOrigin::Plugin { id } => return plugin_name(id),
+    };
+    said.to_string()
 }
 
 /// A Home shelf's title.
@@ -456,9 +458,9 @@ pub fn sleep_choice(c: &nori_core::menus::SleepChoice) -> String {
 }
 
 /// Where lyrics came from and how finely they are timed: "From LRCLIB · timed line by line".
-pub fn lyrics_from(origin: nori_core::lyrics_sources::LyricsOrigin, synced: bool, word_timed: bool) -> String {
+pub fn lyrics_from(origin: &nori_core::lyrics_sources::LyricsOrigin, synced: bool, word_timed: bool, plugin_name: &dyn Fn(&str) -> String) -> String {
     let timed = if !synced { "not timed" } else if word_timed { "timed word by word" } else { "timed line by line" };
-    format!("From {} · {timed}", lyrics_origin(origin))
+    format!("From {} · {timed}", lyrics_origin(origin, plugin_name))
 }
 
 /// Who moved the lyrics' timing, and by how much.
@@ -815,6 +817,14 @@ mod tests {
         assert_eq!(lines(p(ServerKind::Subsonic, "", "https://music.example.com/x", "ann")), ("ann".into(), "music.example.com".into()));
         assert_eq!(lines(p(ServerKind::Plugin { id: "dev.example.music".into() }, "", "", "")), ("dev.example.music".into(), "".into()), "a plugin's not here is named by its id");
         assert_eq!(lines(p(ServerKind::Subsonic, "Home", "http://h", "")), ("Home".into(), "".into()));
+    }
+
+    #[test]
+    fn lyrics_name_their_service() {
+        use nori_core::lyrics_sources::LyricsOrigin;
+        let named = |id: &str| if id == "fm.nori.test" { "Test".to_string() } else { id.to_string() };
+        assert_eq!(lyrics_from(&LyricsOrigin::Lrclib, true, false, &named), "From LRCLIB · timed line by line");
+        assert_eq!(lyrics_from(&LyricsOrigin::Plugin { id: "fm.nori.test".into() }, false, false, &named), "From Test · not timed", "a plugin by its name");
     }
 
     #[test]

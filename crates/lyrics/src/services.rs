@@ -760,7 +760,7 @@ pub(crate) mod tests {
     }
 
     fn keys() -> LyricsLookup {
-        LyricsLookup { services: Vec::new(), prefer_words: true, paxsenix_key: String::new(), better_lyrics_key: String::new() }
+        LyricsLookup { services: Vec::new(), plugins: false, prefer_words: true, paxsenix_key: String::new(), better_lyrics_key: String::new() }
     }
 
     fn asking(web: &Web, service: LyricsService) -> Lookup {

@@ -571,23 +571,24 @@ class Say(private val r: Resources) {
 
     // ---- lyrics ----
 
-    /** A lyrics source's name as the credit gives it: "your server", "LRCLIB". */
-    fun lyricsOrigin(o: LyricsOrigin): String = when (o) {
-        LyricsOrigin.SERVER -> r.getString(R.string.lyrics_your_server)
-        LyricsOrigin.BINILYRICS -> "BiniLyrics"
-        LyricsOrigin.BETTER_LYRICS -> "BetterLyrics"
-        LyricsOrigin.PAXSENIX, LyricsOrigin.PAXSENIX_MUSIXMATCH, LyricsOrigin.PAXSENIX_SPOTIFY -> "PaxSenix"
-        LyricsOrigin.LYRICS_PLUS -> "LyricsPlus"
-        LyricsOrigin.UNISON -> "Unison"
-        LyricsOrigin.NETEASE -> "NetEase"
-        LyricsOrigin.KUGOU -> "KuGou"
-        LyricsOrigin.LRCLIB -> "LRCLIB"
-        LyricsOrigin.YOUTUBE_MUSIC -> "YouTube Music"
+    /** A lyrics source's name as the credit gives it: "your server", "LRCLIB"; a plugin's by its name in [pluginNames]. */
+    fun lyricsOrigin(o: LyricsOrigin, pluginNames: Map<String, String>): String = when (o) {
+        LyricsOrigin.Server -> r.getString(R.string.lyrics_your_server)
+        LyricsOrigin.Binilyrics -> "BiniLyrics"
+        LyricsOrigin.BetterLyrics -> "BetterLyrics"
+        LyricsOrigin.Paxsenix, LyricsOrigin.PaxsenixMusixmatch, LyricsOrigin.PaxsenixSpotify -> "PaxSenix"
+        LyricsOrigin.LyricsPlus -> "LyricsPlus"
+        LyricsOrigin.Unison -> "Unison"
+        LyricsOrigin.Netease -> "NetEase"
+        LyricsOrigin.Kugou -> "KuGou"
+        LyricsOrigin.Lrclib -> "LRCLIB"
+        LyricsOrigin.YoutubeMusic -> "YouTube Music"
+        is LyricsOrigin.Plugin -> pluginNames[o.id] ?: o.id
     }
 
     /** Where lyrics came from and how finely they are timed: "From LRCLIB · timed line by line". */
-    fun lyricsSource(o: LyricsOrigin, synced: Boolean, wordTimed: Boolean): String = r.getString(
-        R.string.lyrics_source, lyricsOrigin(o),
+    fun lyricsSource(o: LyricsOrigin, synced: Boolean, wordTimed: Boolean, pluginNames: Map<String, String>): String = r.getString(
+        R.string.lyrics_source, lyricsOrigin(o, pluginNames),
         r.getString(if (!synced) R.string.lyrics_not_timed else if (wordTimed) R.string.lyrics_timed_words else R.string.lyrics_timed_lines),
     )
 

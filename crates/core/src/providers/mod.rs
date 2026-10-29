@@ -271,7 +271,39 @@ impl Kinds {
     }
 }
 
+/// Plays told to the plugins' scrobblers.
+#[cfg(feature = "plugins")]
+struct PluginScrobbles(Arc<nori_plugins::Plugins>);
+
+#[cfg(feature = "plugins")]
+impl nori_queue::scrobble::Scrobbles for PluginScrobbles {
+    fn now_playing(&self, song: &nori_model::Song) {
+        self.0.scrobblers_now_playing(song);
+    }
+    fn scrobble(&self, song: &nori_model::Song, at_ms: i64) {
+        self.0.scrobblers_scrobble(song, at_ms);
+    }
+}
+
 impl Kinds {
+    /// The enabled plugins' lyrics services; none without plugins.
+    pub(crate) fn lyrics_services(&self) -> Vec<Arc<dyn nori_lyrics::race::PluginLyrics>> {
+        #[cfg(feature = "plugins")]
+        if let Some(p) = &self.plugins {
+            return p.lyrics_services();
+        }
+        Vec::new()
+    }
+
+    /// Where plays go besides the profile's server: the plugins' scrobblers; None without plugins.
+    pub(crate) fn scrobbles(&self) -> Option<Arc<dyn nori_queue::scrobble::Scrobbles>> {
+        #[cfg(feature = "plugins")]
+        if let Some(p) = &self.plugins {
+            return Some(Arc::new(PluginScrobbles(p.clone())));
+        }
+        None
+    }
+
     /// A provider for `kind`; None for a plugin not installed and enabled here.
     pub(crate) fn provider(&self, kind: &ServerKind) -> Option<Arc<dyn Provider>> {
         match kind {
@@ -515,6 +547,7 @@ impl Core {
             self.session.planner.set_mixing(Some(p.mixing()));
         }
         self.session.use_deciders(kinds.deciders());
+        self.session.scrobble_to(kinds.scrobbles());
         *self.kinds.write() = kinds;
     }
 

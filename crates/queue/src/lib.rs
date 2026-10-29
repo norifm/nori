@@ -35,6 +35,8 @@ pub struct Session {
     /// Where plugins decide; None for nori alone.
     deciders: Mutex<Option<Arc<dyn nori_model::deciders::Deciders>>>,
     decided: Mutex<deciders::Decided>,
+    /// Where plays go besides the profile's server; None without plugins.
+    scrobbles: Mutex<Option<Arc<dyn scrobble::Scrobbles>>>,
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -44,7 +46,7 @@ impl Session {
         let db = Arc::new(nori_db::Profile::default());
         let read = settings.clone();
         let planner = Planner::new(db.clone(), Box::new(move || read.with_prefs(nori_settings::settings::StoredPrefs::transition_prefs)));
-        Session { settings, db, planner, queue: Default::default(), store: Default::default(), controls: Default::default(), refill: Default::default(), scrobbler: Default::default(), deciders: Default::default(), decided: Default::default() }
+        Session { settings, db, planner, queue: Default::default(), store: Default::default(), controls: Default::default(), refill: Default::default(), scrobbler: Default::default(), deciders: Default::default(), decided: Default::default(), scrobbles: Default::default() }
     }
 }
 

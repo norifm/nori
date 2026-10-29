@@ -357,6 +357,22 @@ A client asks a `Kinds` (`Kinds::with_plugins`, or `Kinds::builtin` without plug
 offers, their forms and sign-in, and hands it to each `Core` it opens (`Core::use_kinds`) and its
 transport (`Kinds::set_transport`). See [Providers](providers.md).
 
+## Lyrics
+
+A plugin with a `lyrics` export is a lyrics service in nori's race (`nori_lyrics::race`), ranked after
+nori's own services, asked in the first wave and scored and checked against the voice like them
+(`PluginLyrics`, `Plugins::lyrics_services`). It answers lines, timed or not (no word timing), credited
+as `LyricsOrigin::Plugin { id }`, which each client names by the plugin's name. It is asked under the same
+switches as nori's services (online lookups, third-party lookups), not when a jam's host chose one of
+nori's services. A miss is cached like a service's; a failed call is asked again next time.
+
+## Scrobbler
+
+A plugin with a `scrobbler` export is told `now-playing` when a song starts and `scrobble` when a play
+counts by nori's rule (half the song or 4 minutes), from `nori_queue::Session::scrobble_track`
+(`Scrobbles`, set by `Core::use_kinds`), on its own thread; nothing waits for it. Its account is its own:
+the server's scrobbling switch and the profile's rules (a jam guest's) don't apply to it.
+
 ## Tests
 
 - `cargo test -p nori-plugins`: the manifest as the SDK writes it, the extension points' order against
@@ -375,6 +391,7 @@ transport (`Kinds::set_transport`). See [Providers](providers.md).
   gate, the cache's quota, assets on Wi-Fi or mobile data, and wakes and commands kept on only while wanted.
   `tests/preparation.rs`: a stage's inputs, the song slot, song preparation and AutoMix analysis as
   the tap feeds them, refinements and plans.
+  `tests/lyrics.rs` and `tests/scrobbler.rs`: its lyrics service in nori's race and its scrobbles.
 - `cargo test -p nori-plugins --test deciders`: each decider over the test plugin, nori's checks, the budget.
   Their seams with a fake: `cargo test -p nori-queue deciders`, `-p nori-core autofill profiles`.
 - `cargo test -p nori-engine --test engine another_card`: a card swapped mid-song plays on from there.

@@ -2305,7 +2305,7 @@ impl App {
         let Some(l) = &self.lyrics else { return };
         let pick = l.pick();
         let ui = self.ui();
-        ui.set_lyrics_from(words::lyrics_from(pick.origin, pick.lyrics.synced, pick.lyrics.word_timed).into());
+        ui.set_lyrics_from(words::lyrics_from(&pick.origin, pick.lyrics.synced, pick.lyrics.word_timed, &|id| self.plugin_name(id)).into());
         ui.set_lyrics_timing(words::lyrics_timing(pick.lyrics.timing).into());
         ui.set_lyrics_shift(words::lyrics_shift(pick.lyrics.timing.offset_ms()).into());
         ui.set_lyrics_yours(matches!(pick.lyrics.timing, nori_core::LyricsTiming::Yours { .. }));
@@ -2329,7 +2329,7 @@ impl App {
         ui.set_lyrics_lines(l.lines());
         ui.set_lyrics_lane(l.lane());
         ui.set_lyrics_synced(l.synced());
-        ui.set_lyrics_note(if l.is_empty() { "No lyrics for this song".into() } else { l.credit().into() });
+        ui.set_lyrics_note(if l.is_empty() { "No lyrics for this song".into() } else { l.credit(&|id| self.plugin_name(id)).into() });
         ui.set_lyrics_waiting(false);
         self.lyrics = Some(l);
         self.lyrics_step(true);
