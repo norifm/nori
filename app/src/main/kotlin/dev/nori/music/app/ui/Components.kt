@@ -414,18 +414,13 @@ internal fun SwipeBackdrop(
 /** A swipe's strip: plain, and once far enough to act; its words and icon the same. Read in the draw phase. */
 internal class SwipeColours(val fill: () -> Color, val armedFill: () -> Color, val ink: () -> Color, val armedInk: () -> Color)
 
-/**
- * One track. Numbered rows (an album) carry no artwork; everywhere else the cover leads. The row ends
- * in a hairline that starts where the text starts, which is what keeps a long list from reading as a
- * stack of boxes.
- */
+/** One track. Numbered rows (an album) carry no artwork; everywhere else the cover leads. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SongRow(
     song: Song, coverUrl: String?, onClick: () -> Unit, onMenu: () -> Unit, modifier: Modifier = Modifier,
     number: Int? = null, playing: Boolean = false, downloaded: Boolean = false,
     selected: Boolean = false, onLongClick: (() -> Unit)? = null, swipeRight: RowSwipe? = null, swipeLeft: RowSwipe? = null,
-    divider: Boolean = true,
     /** The second line: the song's own (its explicit mark and artist), or what the page makes of it (an album's, without its own artist). */
     line: String = song.line,
 ) {
@@ -484,7 +479,6 @@ fun SongRow(
             IconButton(onMenu, Modifier.size(40.dp)) { Icon(Iconoir.MoreHoriz, say.more, Modifier.size(20.dp), tint) }
         }
       }
-        if (divider) Hairline(startIndent = if (number != null) Space.gutter + 40.dp else Space.gutter + 56.dp)
     }
 }
 
@@ -645,7 +639,6 @@ fun LazyListScope.songRows(
             number = if (numbered) s.track.toInt() else null, playing = s.id == playingId, downloaded = s.id in downloaded,
             selected = s.id in selected, onLongClick = { menu(s) },
             swipeRight = rowSwipe(onRight, s, actions), swipeLeft = rowSwipe(onLeft, s, actions),
-            divider = k < count - 1,
             line = lines?.getOrNull(k) ?: s.line,
         )
     }

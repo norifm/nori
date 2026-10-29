@@ -1,7 +1,7 @@
 import UIKit
 
 /// A list row: the cover (or the track number on an album), title and a quiet line; the hairline under
-/// it starts at the title. The song playing has its title in the accent; a favorite carries the seal.
+/// it starts at the title, except under a song. The song playing has its title in the accent; a favorite carries the seal.
 final class ItemCell: UITableViewCell {
     static let id = "item"
     let cover = CoverView()
@@ -94,6 +94,7 @@ final class ItemCell: UITableViewCell {
         detail.attributedText = remoteText(line, remote: item.external && !line.isEmpty, font: detail.font, colour: look.quiet)
         number.textColor = current ? look.accent : look.quiet
         self.line.backgroundColor = look.hairline
+        self.line.isHidden = item.kind == "song"
         asked.textColor = look.quiet
         asked.isHidden = !Core.shared.isAsked(item)
         mark.tintColor = look.accent
