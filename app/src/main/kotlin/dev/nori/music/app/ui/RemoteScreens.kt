@@ -104,16 +104,13 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         BackHandler(page != RoomPage.MAIN) { page = RoomPage.MAIN }
         Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
             if (page == RoomPage.PAIR && pairing != null) {
-                SheetBack(words(R.string.pair_devices)) { page = RoomPage.MAIN }
+                SheetTitle(words(R.string.pair_devices))
                 PairingBody(pairing!!, vm) { page = RoomPage.MAIN }
             } else if (hosted != null && page != RoomPage.MAIN) {
-                SheetBack(words(if (page == RoomPage.INVITE) R.string.jam_invite_title else R.string.settings)) { page = RoomPage.MAIN }
+                SheetTitle(words(if (page == RoomPage.INVITE) R.string.jam_invite_title else R.string.settings))
                 if (page == RoomPage.INVITE) hosted.link?.let { InviteBody(it) } else JamSettings(hosted)
             } else {
-                Text(
-                    words(R.string.devices_title), Modifier.padding(horizontal = Space.gutter).padding(top = 4.dp, bottom = 12.dp),
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
-                )
+                SheetTitle(words(R.string.devices_title))
                 GroupCard {
                     DeviceRow(words(R.string.devices_this), kindIcon(DeviceKind.PHONE), null, mirror == null, divider = hosted == null && devices.isNotEmpty()) { pick(null) }
                     if (hosted == null) devices.forEachIndexed { k, d ->
@@ -231,14 +228,11 @@ private fun YourJam(listening: Int, onOpen: () -> Unit, onEnd: () -> Unit) {
 @Composable
 private fun SheetRow(name: String, icon: ImageVector, divider: Boolean, onClick: () -> Unit) = GroupRow(name, onClick, icon = icon, divider = divider)
 
-/** A sub-page's head: a bare back glyph and its title. */
 @Composable
-private fun SheetBack(title: String, onBack: () -> Unit) {
-    Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-        GlyphButton(Iconoir.ArrowLeft, words(R.string.back), onClick = onBack)
-        Text(title, Modifier.padding(start = 4.dp), style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-}
+private fun SheetTitle(title: String) = Text(
+    title, Modifier.padding(horizontal = Space.gutter).padding(top = 4.dp, bottom = 12.dp),
+    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis,
+)
 
 /** A place the music can play: the one playing has its name and glyph in the accent, the rest are ink. */
 @Composable

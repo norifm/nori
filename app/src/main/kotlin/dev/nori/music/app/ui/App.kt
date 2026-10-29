@@ -568,7 +568,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                         SettingsGroupScreen(settings, e.arguments!!.getString("id")!!, e.arguments?.getString("key").orEmpty(), actions)
                     }
                     page("equalizer") { EqualizerScreen(settings) }
-                    page("plugins") { val nav = LocalNav.current; PluginsScreen(viewModel(), settings, nav::back, nav::plugin) }
+                    page("plugins") { PluginsScreen(viewModel(), settings, LocalNav.current::plugin) }
                     page("plugins/{id}") { PluginPage(viewModel(), settings, it.arguments!!.getString("id")!!, LocalNav.current::back) }
                     page("home-rows") { HomeRows(settings) }
                     page("library-sections") { LibrarySections(settings) }

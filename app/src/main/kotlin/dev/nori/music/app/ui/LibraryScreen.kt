@@ -181,7 +181,7 @@ private fun sectionIcon(s: LibrarySection): androidx.compose.ui.graphics.vector.
 fun LibrarySectionScreen(section: LibrarySection, actions: ActionsViewModel) {
     val home: LibraryHomeViewModel = viewModel()
     Column {
-        BackTitle(say.librarySection(section))
+        LargeTitle(say.librarySection(section))
         when (section) {
             LibrarySection.ALBUMS -> Albums(viewModel(), { Places(home, favorites = false, shuffle = { actions.shuffleAlbums() }, places = false) })
             LibrarySection.ARTISTS -> Artists()

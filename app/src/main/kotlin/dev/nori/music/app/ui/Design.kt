@@ -605,16 +605,6 @@ fun LargeTitle(text: String, modifier: Modifier = Modifier, trailing: @Composabl
     }
 }
 
-/** A page opened from another: back ([back], else the app's navigation), and its name. */
-@Composable
-fun BackTitle(text: String, back: (() -> Unit)? = null) {
-    val onBack = back ?: LocalNav.current::back
-    Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-        androidx.compose.material3.IconButton(onBack) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
-        Text(text, Modifier.weight(1f), style = titled(MaterialTheme.typography.headlineSmall), maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-}
-
 /** Small grey capitals under a title: "2019 · ALTERNATIVE · LOSSLESS". */
 @Composable
 fun Caption(text: String, modifier: Modifier = Modifier, align: TextAlign = TextAlign.Start, caps: Boolean = true) {

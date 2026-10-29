@@ -76,7 +76,7 @@ private fun <T> RowEditor(
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     Column(Modifier.fillMaxSize()) {
-        BackTitle(title)
+        LargeTitle(title)
         Caption(say.holdARowToMoveIt, Modifier.padding(start = Space.gutter, bottom = 8.dp))
         LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             items(shown, key = key) { row ->
