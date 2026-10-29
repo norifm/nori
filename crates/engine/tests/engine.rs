@@ -3849,7 +3849,7 @@ fn another_card_plays_on_from_where_the_music_was() {
     let next = Recorder { card: rig.card.clone(), opened: Arc::default(), shut: Arc::default(), watch: Arc::default(), flushes: Arc::default(), shallow: Arc::default() };
     let (opened, shut) = (next.opened.clone(), rig.shut.clone());
     let left = rig.heard.lock().len();
-    rig.engine.set_card(Box::new(next));
+    rig.engine.set_card(Box::new(next), false);
     assert!(rig.wait_for(10, |r| r.heard.lock().len() > left + RATE as usize * 4));
     assert_eq!((shut.load(Ordering::Relaxed), opened.load(Ordering::Relaxed)), (1, 1), "the old one closed, the new one opened");
     assert_eq!(rig.engine.status().state, State::Playing);

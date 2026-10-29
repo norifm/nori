@@ -51,6 +51,7 @@ pub(crate) type Answer = Box<dyn Fn(Request, TcpStream) + Send + Sync>;
 pub(crate) struct Door {
     port: u16,
     closed: Arc<AtomicBool>,
+    accepting: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Door {
@@ -59,7 +60,7 @@ impl Door {
         let port = listener.local_addr()?.port();
         let closed = Arc::new(AtomicBool::new(false));
         let (shut, answer, live) = (closed.clone(), Arc::new(answer), Arc::new(AtomicUsize::new(0)));
-        std::thread::Builder::new().name("nori-plugin-door".into()).spawn(move || {
+        let accepting = std::thread::Builder::new().name("nori-plugin-door".into()).spawn(move || {
             for conn in listener.incoming() {
                 if shut.load(Ordering::Acquire) {
                     break;
@@ -79,7 +80,7 @@ impl Door {
                 });
             }
         })?;
-        Ok(Door { port, closed })
+        Ok(Door { port, closed, accepting: Some(accepting) })
     }
 
     pub fn port(&self) -> u16 {
@@ -90,8 +91,11 @@ impl Door {
 impl Drop for Door {
     fn drop(&mut self) {
         self.closed.store(true, Ordering::Release);
-        // Wakes the accepting thread so it sees the door closed.
+        // Wakes the accepting thread so it sees the door closed; the port is closed once it has gone.
         let _ = TcpStream::connect(("127.0.0.1", self.port));
+        if let Some(t) = self.accepting.take() {
+            let _ = t.join();
+        }
     }
 }
 

@@ -409,7 +409,7 @@ impl Discovery for Mdns {
                 let Some(r) = remote.upgrade() else { return };
                 match e {
                     mdns_sd::ServiceEvent::ServiceResolved(s) => {
-                        let Some(ip) = s.addresses.iter().map(|a| a.to_ip_addr()).find(|a| a.is_ipv4()).or_else(|| s.addresses.iter().next().map(|a| a.to_ip_addr())) else { continue };
+                        let Some(ip) = address_of(&s) else { continue };
                         let txt = s.txt_properties.iter().map(|p| nori_core::Param { key: p.key().to_string(), value: p.val_str().to_string() }).collect();
                         r.lan_found(s.fullname.clone(), ip.to_string(), s.port, txt);
                     }
@@ -420,6 +420,12 @@ impl Discovery for Mdns {
             }
         });
     }
+}
+
+/// A resolved service's address: its first IPv4 one, else its first.
+#[cfg(feature = "desktop")]
+pub(crate) fn address_of(s: &mdns_sd::ResolvedService) -> Option<std::net::IpAddr> {
+    s.addresses.iter().map(|a| a.to_ip_addr()).find(|a| a.is_ipv4()).or_else(|| s.addresses.iter().next().map(|a| a.to_ip_addr()))
 }
 
 #[cfg(test)]

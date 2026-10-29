@@ -631,6 +631,9 @@
     <string name="devices_output">Audio output</string>
     <string name="devices_nearby">Nearby</string>
     <string name="devices_idle">Idle</string>
+    <!-- Under a device a plugin casts to: nori's audio streams there, or the device plays the songs itself. -->
+    <string name="devices_casting">Casting</string>
+    <string name="devices_cast_target">Playing there</string>
     <string name="devices_playing_on">Playing on %1$s</string>
     <string name="devices_playing_here">Playing here</string>
     <string name="devices_stale">The queue changed there. Try again.</string>
@@ -741,6 +744,7 @@
     <string name="plugins_may">It may:</string>
     <string name="plugins_may_reach">Reach %1$s</string>
     <string name="plugins_may_reach_nothing">Reach nothing outside this phone</string>
+    <string name="plugins_may_reach_lan">Reach devices on your network</string>
     <string name="plugins_may_play">Play music as a music source</string>
     <string name="plugins_may_sound">Change the sound</string>
     <string name="plugins_may_change">Change settings: %1$s</string>

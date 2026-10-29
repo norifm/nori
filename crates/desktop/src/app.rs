@@ -773,6 +773,8 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         a.kinds().set_transport(a.http.clone());
         let tx = a.tx.clone();
         nori_host::desktop::plugins(&a.data).watched.hear(move |n| tx.send(Msg::Note { text: n.words, error: n.problem }));
+        let tx = a.tx.clone();
+        nori_host::desktop::plugins(&a.data).watched.hear_casts(move |_| tx.send(Msg::Cast));
         a.plugins_read();
         let wake = a.me.clone();
         a.compositor.on_wake(move || wake.with(|a| a.repaint()));
@@ -2986,6 +2988,10 @@ impl App {
             Msg::Ask { text, action } => self.ask(&text, &action),
             Msg::Reachable(Err(e)) => self.say(&e, true),
             Msg::Reachable(Ok(())) | Msg::From(..) => {}
+            Msg::Cast => {
+                self.devices_shown();
+                self.output_shown();
+            }
             Msg::Remote => {
                 self.playback_read();
                 self.devices_shown();
@@ -3388,26 +3394,38 @@ impl App {
     fn devices_shown(&self) {
         let ui = self.ui();
         let remote = self.session.as_ref().and_then(|s| s.remote());
+        let cast = self.cast();
         // A jam guest's music is the jam's; it moves to no other device.
-        ui.set_devices_on((remote.is_some() || ui.get_device_plugin_rows().row_count() > 0) && !self.guest());
-        let Some(r) = remote.filter(|_| devices_open(&ui)) else { return };
+        ui.set_devices_on((remote.is_some() || cast.is_some() || ui.get_device_plugin_rows().row_count() > 0) && !self.guest());
+        if !devices_open(&ui) || (remote.is_none() && cast.is_none()) {
+            return;
+        }
         let active = self.there().map(|e| e.mirror.id.as_str());
-        let here = std::iter::once(words::device_row(None, active.is_none()));
-        let mut devices = r.devices();
-        let names = nori_core::remote::device_names(devices.clone(), r.me(), words::kind_words());
-        devices.iter_mut().zip(names).for_each(|(d, name)| d.name = name);
-        let rows: Vec<crate::DeviceRow> = here.chain(devices.iter().map(|d| words::device_row(Some(d), active == Some(d.id.as_str())))).collect();
+        let mut rows = vec![words::device_row(None, active.is_none() && cast.is_none())];
+        rows.extend(cast.as_ref().map(words::cast_row));
+        if let Some(r) = remote {
+            let mut devices = r.devices();
+            let names = nori_core::remote::device_names(devices.clone(), r.me(), words::kind_words());
+            devices.iter_mut().zip(names).for_each(|(d, name)| d.name = name);
+            rows.extend(devices.iter().map(|d| words::device_row(Some(d), active == Some(d.id.as_str()))));
+        }
         devices_set(&ui, rows);
+    }
+
+    /// A plugin's cast, while one runs.
+    fn cast(&self) -> Option<nori_plugins::Cast> {
+        nori_host::desktop::plugins(&self.data).host.cast()
     }
 
     /// Where the sound goes, for the output buttons: the device playing while it is another one, else this
     /// computer's output as the core's `output_look` reads it (this computer until the first song opens one).
     fn output_shown(&self) {
         use nori_core::outputs::{output_look, OutputGlyph};
-        let (elsewhere, glyph, name) = match self.there() {
-            Some(e) => (true, words::device_glyph(e.mirror.kind), e.mirror.name.clone()),
-            None if self.output.is_empty() => (false, 0, words::THIS_COMPUTER.to_string()),
-            None => {
+        let (elsewhere, glyph, name) = match (self.there(), self.cast()) {
+            (Some(e), _) => (true, words::device_glyph(e.mirror.kind), e.mirror.name.clone()),
+            (None, Some(c)) => (true, 3, c.device),
+            (None, None) if self.output.is_empty() => (false, 0, words::THIS_COMPUTER.to_string()),
+            (None, None) => {
                 let look = output_look(self.output.clone());
                 let glyph = match look.glyph {
                     OutputGlyph::Phone => 0,
@@ -3431,6 +3449,12 @@ impl App {
 
     /// Moves the music to device `id`, or here ("").
     fn pick_device(&self, id: String) {
+        if id == words::CAST_ROW {
+            return;
+        }
+        if id.is_empty() && self.cast().is_some() {
+            nori_host::desktop::plugins(&self.data).host.cast_button(nori_plugins::CastButton::Stop);
+        }
         if let Some(r) = self.session.as_ref().and_then(|s| s.remote()) {
             r.pick((!id.is_empty()).then_some(id));
         }

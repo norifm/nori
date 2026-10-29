@@ -218,6 +218,8 @@ pub enum PluginCmd {
     /// Keeps a plugin at its version, or lets it update.
     Hold(String, bool),
     AddRepo(String),
+    /// Asks the plugin casting to end its cast: the music comes back here.
+    EndCast,
     RemoveRepo(String),
 }
 
@@ -745,13 +747,15 @@ pub struct Devices {
     pub controls: Option<JamControls>,
     /// The plugins whose rows show here too.
     pub plugins: Vec<nori_plugins::PluginCard>,
+    /// A plugin's cast, while one runs.
+    pub cast: Option<nori_plugins::Cast>,
 }
 
 /// The sheet before installing what `p` shows: what it is, what it may reach, where it comes from.
 fn preview_sheet(p: nori_plugins::PluginPreview) -> Overlay {
     let c = &p.card;
     let mut lines: Vec<String> = c.about.iter().cloned().collect();
-    lines.extend([crate::text::plugin_is(&c.points, !c.overrides.is_empty()), crate::text::plugin_reach(&c.net, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
+    lines.extend([crate::text::plugin_is(&c.points, !c.overrides.is_empty()), crate::text::plugin_reach(&c.net, c.lan, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
     lines.extend(p.repo.as_deref().map(crate::text::from_repo));
     lines.push(crate::text::INSTALLED_OFF.into());
     Overlay::Confirm { title: crate::text::install_version(&c.name, &c.version), lines, yes: crate::text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::InstallPreview(Box::new(p)))) }
@@ -789,6 +793,8 @@ impl Slots {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceRow {
     Here,
+    /// The device a plugin casts to.
+    Cast,
     /// Index into [`Devices::list`]: its name, then what it plays.
     Device(usize),
     Playing(usize),
@@ -808,7 +814,10 @@ pub enum DeviceRow {
 impl Devices {
     /// The panel's rows, the plugins' last.
     pub fn rows(&self) -> Vec<DeviceRow> {
-        let mut rows = if self.on { vec![DeviceRow::Here] } else { Vec::new() };
+        let mut rows = if self.on || self.cast.is_some() { vec![DeviceRow::Here] } else { Vec::new() };
+        if self.cast.is_some() {
+            rows.push(DeviceRow::Cast);
+        }
         if self.on {
             rows.extend((0..self.list.len()).flat_map(|i| [DeviceRow::Device(i), DeviceRow::Playing(i)]));
             if self.jams || self.jam.is_some() {
@@ -852,9 +861,9 @@ impl Devices {
         Some(crate::settings_view::plugin_row(&card.id, card.rows.get(r)?))
     }
 
-    /// The panel shows: other devices or jams are on, or a plugin has rows here.
+    /// The panel shows: other devices or jams are on, a plugin has rows here or casts.
     pub fn shown(&self) -> bool {
-        self.on || !self.plugins.is_empty()
+        self.on || !self.plugins.is_empty() || self.cast.is_some()
     }
 
     /// The jam's guests, the host left out.
@@ -1610,6 +1619,7 @@ impl App {
                 }
             }
             Msg::Note { text, error } => self.say(text, error),
+            Msg::Cast(c) => self.devices.cast = c,
             // A page or list on screen, read again.
             Msg::Reload(req) => {
                 let playlists = req == Req::Playlists;
@@ -3273,7 +3283,15 @@ impl App {
     fn device_open(&mut self) {
         let d = &self.devices;
         match d.rows().get(d.sel.at).copied() {
-            Some(DeviceRow::Here) => self.cmds.push(Cmd::Pick(None)),
+            Some(DeviceRow::Here) => {
+                if d.cast.is_some() {
+                    self.cmds.push(Cmd::Plugin(PluginCmd::EndCast));
+                }
+                if d.on {
+                    self.cmds.push(Cmd::Pick(None));
+                }
+            }
+            Some(DeviceRow::Cast) => self.dirty = false,
             Some(DeviceRow::Device(i) | DeviceRow::Playing(i)) => {
                 if let Some(id) = d.list.get(i).map(|x| x.id.clone()) {
                     self.cmds.push(Cmd::Pick(Some(id)));

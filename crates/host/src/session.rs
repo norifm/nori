@@ -363,6 +363,9 @@ impl Session {
         let cover_net = CoverNet::over(o.http.clone());
         let client = Client::new(core.clone(), transport, cover_net.clone());
         client.set_profile(net(&o.profile));
+        // Plugins casting a song ask it for the song's URLs.
+        #[cfg(feature = "desktop")]
+        o.kinds.give_media(client.clone());
         let prefs = core.session.settings.current().unwrap_or_default();
         // Set by the client before the engine starts, so the first chain has the right compensation.
         let level = o.volume;

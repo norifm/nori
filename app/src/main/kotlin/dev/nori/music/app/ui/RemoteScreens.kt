@@ -98,7 +98,12 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         val mirror by vm.mirror.collectAsStateWithLifecycle()
         val pairing by vm.pairingLink.collectAsStateWithLifecycle()
         val unsupported = relay == dev.nori.music.ffi.RelaySupport.UNSUPPORTED
-        val pick = { device: String? -> vm.pick(device); onDismiss() }
+        val cast by sound.pluginCast.collectAsStateWithLifecycle()
+        val pick = { device: String? ->
+            if (device == null && cast != null) sound.endCast()
+            vm.pick(device)
+            onDismiss()
+        }
         val hosted = jam?.takeIf { it.hosting }
         var page by remember(hosted?.link) { mutableStateOf(RoomPage.MAIN) }
         BackHandler(page != RoomPage.MAIN) { page = RoomPage.MAIN }
@@ -115,7 +120,12 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                     style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
                 )
                 GroupCard {
-                    DeviceRow(words(R.string.devices_this), kindIcon(DeviceKind.PHONE), null, mirror == null, divider = hosted == null && devices.isNotEmpty()) { pick(null) }
+                    DeviceRow(words(R.string.devices_this), kindIcon(DeviceKind.PHONE), null, mirror == null && cast == null, divider = cast != null || hosted == null && devices.isNotEmpty()) { pick(null) }
+                    // A plugin's device, playing: picking this phone above ends the cast.
+                    cast?.let { c ->
+                        val what = words(if (c.kind == dev.nori.music.ffi.plugins.CastKind.SINK) R.string.devices_casting else R.string.devices_cast_target)
+                        DeviceRow(c.device, Iconoir.SoundHigh, what, true, divider = hosted == null && devices.isNotEmpty(), trailing = c.volume?.let { "$it %" }) {}
+                    }
                     if (hosted == null) devices.forEachIndexed { k, d ->
                         val now = d.now
                         DeviceRow(
@@ -212,8 +222,9 @@ fun DevicesHost(open: Boolean, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val tell = LocalMessages.current
     val pluginDevices by settings.pluginDevices.collectAsStateWithLifecycle()
+    val cast by settings.pluginCast.collectAsStateWithLifecycle()
     val remote = prefs.remoteControl && LocalRules.current.remote
-    if (remote || pluginDevices.isNotEmpty()) DevicesSheet(open, onDismiss, { onDismiss(); openOutputPicker(context, output, tell) }, prefs.remoteControl, remote, settings)
+    if (remote || pluginDevices.isNotEmpty() || cast != null) DevicesSheet(open, onDismiss, { onDismiss(); openOutputPicker(context, output, tell) }, prefs.remoteControl, remote, settings)
 }
 
 /** The jam this phone hosts, as the devices list it: a tap opens its queue, End ends it. */

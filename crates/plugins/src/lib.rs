@@ -34,7 +34,7 @@ pub use app::{open, open_plugins, Client};
 pub use repo::{Offer, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
 pub use slots::{Artwork, InfoGroup, InfoLine, Items, MenuEntry};
 pub use view::{PluginCard, PluginPreview, PluginRow};
-pub use cast::{Cards, Media, Service, TxtEntry};
+pub use cast::{Card, Cards, Media, Service, TxtEntry};
 pub use host::{Side, Value};
 pub use lan::{Cast, CastButton, CastKind};
 pub use sink::{Encoding, Sink};

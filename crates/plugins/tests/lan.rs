@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use nori_net::transport::{Exchange, Network, Transport, TransportError, TransportResponse};
 use nori_plugins::testing::{fixture, FIXTURE as ID};
-use nori_plugins::{Cast, CastButton, CastKind, Media, Plugins, Service, Side, Sink, Value};
+use nori_plugins::{Card, Cast, CastButton, CastKind, Media, Plugins, Service, Side, Sink, Value};
 
 /// Serves each action's setup at `/lan/<action>`.
 #[derive(Default)]
@@ -261,12 +261,29 @@ fn a_songs_url_reaches_the_lan_through_the_door_when_its_server_is_this_device()
     assert!(answer.starts_with("HTTP/1.1 206") && answer.ends_with("GET /rest/stream?id=s1 HTTP/1.1"), "{answer}");
 }
 
-/// Records where the audio goes.
-fn cards(plugins: &Plugins) -> Arc<Mutex<Vec<Option<Arc<Sink>>>>> {
-    let sinks = Arc::new(Mutex::new(Vec::new()));
-    let to = sinks.clone();
-    plugins.set_cards(Box::new(move |s| to.lock().unwrap().push(s)));
-    sinks
+/// Where the music played, each time it moved: a sink, or "here" or "elsewhere".
+type Played = Arc<Mutex<Vec<Result<Arc<Sink>, &'static str>>>>;
+
+fn cards(plugins: &Plugins) -> Played {
+    let played: Played = Arc::default();
+    let to = played.clone();
+    plugins.set_cards(Box::new(move |c| {
+        to.lock().unwrap().push(match c {
+            Card::Sink(s) => Ok(s),
+            Card::Here => Err("here"),
+            Card::Elsewhere => Err("elsewhere"),
+        })
+    }));
+    played
+}
+
+/// The sink the music last went to.
+fn sink(played: &Played) -> Arc<Sink> {
+    played.lock().unwrap().last().unwrap().clone().expect("a sink")
+}
+
+fn last(played: &Played) -> Option<&'static str> {
+    played.lock().unwrap().last().and_then(|p| p.as_ref().err().copied())
 }
 
 #[test]
@@ -277,7 +294,7 @@ fn a_cast_pumps_audio_into_the_plugins_socket_until_the_plugin_stops() {
     rig.web.serve("cast-socket", format!("127.0.0.1:{}", speaker.local_addr().unwrap().port()));
     assert_eq!(rig.act("cast-socket"), ["casting"]);
     let (mut heard, _) = speaker.accept().unwrap();
-    let sink = sinks.lock().unwrap()[0].clone().expect("a sink");
+    let sink = sink(&sinks);
     assert_eq!(sink.wants, Some((48_000, 2)));
     sink.open(48_000, 2);
     assert!(sink.write(&[1, -1]));
@@ -291,7 +308,7 @@ fn a_cast_pumps_audio_into_the_plugins_socket_until_the_plugin_stops() {
     rig.settle();
     assert_eq!(rig.said("button"), Some(vec!["volume-up".into()]));
     rig.plugins.turn(ID.into(), false);
-    assert!(sinks.lock().unwrap().last().unwrap().is_none(), "nori plays on its own output again");
+    assert_eq!(last(&sinks), Some("here"), "nori plays on its own output again");
     assert_eq!(rig.session.casts.lock().unwrap().last(), Some(&None), "the cast ends with the plugin");
     assert_eq!(rig.plugins.cast(), None);
 }
@@ -302,7 +319,7 @@ fn served_audio_reaches_each_device_that_fetches_it() {
     let sinks = cards(&rig.plugins);
     let url = rig.act("cast-serve").remove(0);
     assert!(url.ends_with("/a/flac"), "{url}");
-    let sink = sinks.lock().unwrap()[0].clone().expect("a sink");
+    let sink = sink(&sinks);
     assert_eq!((sink.wants, sink.latency_us()), (None, 250_000));
     let cast = rig.plugins.cast().unwrap();
     assert_eq!((cast.playing, cast.position_ms, cast.volume), (true, 1500, Some(40)));
@@ -318,6 +335,19 @@ fn served_audio_reaches_each_device_that_fetches_it() {
     assert!(String::from_utf8_lossy(&got[..n]).contains("Content-Type: audio/flac"));
 
     rig.act("cast-end");
-    assert!(sinks.lock().unwrap().last().unwrap().is_none());
+    assert_eq!(last(&sinks), Some("here"));
     assert_eq!(rig.plugins.cast(), None);
+}
+
+#[test]
+fn a_cast_whose_device_plays_the_songs_lets_the_output_here_go() {
+    let rig = Rig::new("plugins-lan-target");
+    let played = cards(&rig.plugins);
+    rig.act("cast-target");
+    let cast = rig.plugins.cast().unwrap();
+    assert_eq!((cast.kind, cast.device.as_str()), (CastKind::Target, "TV"));
+    assert_eq!(last(&played), Some("elsewhere"));
+    rig.act("cast-end");
+    assert_eq!(rig.session.casts.lock().unwrap().last(), Some(&None));
+    assert_eq!(played.lock().unwrap().len(), 1, "nothing plays here again until asked");
 }

@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
+import dev.nori.music.ffi.plugins.Cast
+import dev.nori.music.ffi.plugins.CastButton
 import dev.nori.music.ffi.plugins.Client
 import dev.nori.music.ffi.plugins.PluginCard
 import dev.nori.music.ffi.plugins.Updated
@@ -44,7 +46,7 @@ data class PluginNotice(val plugin: String, val problem: Boolean, val line: Stri
  * the kinds of profile every core opens ([kinds]), the cards and offers Settings › Plugins draws, and
  * what the plugins say while they run. Plugins' HTTP goes through [transport], the cores' own. Built off the main thread; every call into it is made off it too.
  */
-class PluginHost(private val dir: File, private val settings: Settings, private val transport: () -> dev.nori.music.ffi.net.Transport) {
+class PluginHost(context: android.content.Context, private val dir: File, private val settings: Settings, private val transport: () -> dev.nori.music.ffi.net.Transport) {
     private val _cards = MutableStateFlow<List<PluginCard>>(emptyList())
     /** The installed plugins in their order, in the user's language; empty until [refresh]. */
     val cards: StateFlow<List<PluginCard>> = _cards
@@ -86,8 +88,14 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
 
     private val lang get() = Locale.getDefault().language
 
+    private val _cast = MutableStateFlow<Cast?>(null)
+    /** A plugin's cast while one runs: the devices sheet shows it, the playback service plays along. */
+    val cast: StateFlow<Cast?> = _cast
+
+    private val lan: LanGlue = LanGlue(context) { plugins }
+
     // Opened at first use, which is off the main thread: the cheap flows above are read before it is.
-    private val plugins by lazy {
+    private val plugins: dev.nori.music.ffi.plugins.Plugins by lazy {
         openPlugins(dir.path, settings.core, client).also { p ->
             // The transport is the plugins' own, whichever Kinds over them sets it.
             Kinds.withPlugins(p).setTransport(transport())
@@ -109,7 +117,22 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
             NoriLog.i("plugin $id: $line")
             PluginNotice(id, problem, line).let { _notice.value = it; _notices.tryEmit(it) }
         }
+        override fun browse(kind: String, on: Boolean) = lan.browse(kind, on)
+        override fun multicast(on: Boolean) = lan.multicast(on)
+        override fun cast(cast: Cast?) {
+            lan.cast(cast)
+            _cast.value = cast
+        }
     }
+
+    /** The open profile's client makes songs' URLs for a plugin casting them. */
+    fun giveMedia(client: dev.nori.music.ffi.Client) = kinds.giveMedia(client)
+
+    /** A plugin's cast takes [player]'s audio while it runs (crates/android's `castTo`). */
+    internal fun castTo(player: dev.nori.music.playback.EnginePlayer) = player.castTo(plugins)
+
+    /** The volume keys or the devices sheet, for the cast running. */
+    suspend fun castButton(button: CastButton) = withContext(Dispatchers.IO) { plugins.castButton(button) }
 
     /** nori's own kinds and the enabled plugins' providers, for every core and the add form. */
     val kinds: Kinds by lazy { Kinds.withPlugins(plugins) }

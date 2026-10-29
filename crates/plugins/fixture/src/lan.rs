@@ -113,6 +113,10 @@ pub fn action(id: &str) {
             cast::report(true, 1500, Some(40));
             said(r, |u| u)
         }
+        "cast-target" => {
+            cast::start(Kind::Target, "TV");
+            "casting".into()
+        }
         "cast-end" => {
             audio_out::stop();
             cast::end();

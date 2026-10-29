@@ -73,7 +73,7 @@ class Nori private constructor(private val context: Context) {
     val analyses: Long by lazy { dev.nori.music.playback.MeasureJni.analyses(currentClient.uniffiCloneHandle(), sessionHandle) }
 
     /** The plugin host, under `<filesDir>/plugins`: its kinds are every core's. Opened off the main thread ([warmUp]). */
-    val plugins = dev.nori.music.plugins.PluginHost(File(context.filesDir, "plugins"), settings) { transport }
+    val plugins = dev.nori.music.plugins.PluginHost(context, File(context.filesDir, "plugins"), settings) { transport }
 
     /** The core's one door to the network; built with [http]. Plugins' HTTP goes through it too. */
     private val transport by lazy { http.transport { library.onServerChanged() }.also { coverNet.setTransport(it) } }
@@ -92,7 +92,7 @@ class Nori private constructor(private val context: Context) {
                 })
                 _reportedRules.value = key to core.rules()
                 dev.nori.music.downloads.DownloadsJni.use(core)
-                Opened(key, id, core, Client(core, transport, coverNet).also { c -> p?.let { c.setProfile(it.net()) }; currentClient.set(c) })
+                Opened(key, id, core, Client(core, transport, coverNet).also { c -> p?.let { c.setProfile(it.net()) }; currentClient.set(c); plugins.giveMedia(c) })
             }.also { opened = it }
         }
     }

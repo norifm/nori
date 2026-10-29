@@ -67,6 +67,8 @@ pub enum Msg {
     Reachable(Result<(), String>),
     /// The other devices or the jam changed (remote control, jams).
     Remote,
+    /// A plugin's cast started, changed or ended.
+    Cast,
     /// The jam asked for opened, or why not.
     Jam(Result<(), String>),
     /// Someone's jam joined (what the guest profile signs in with), or why not.

@@ -20,9 +20,18 @@ pub trait Media: Send + Sync {
     fn cover_url(&self, id: &str, size: u32) -> Option<String>;
 }
 
-/// Where nori's audio goes while a plugin casts it: `Some(sink)` to pump it there instead of the
-/// device's own output, None to play on the device again.
-pub type Cards = Box<dyn Fn(Option<Arc<Sink>>) + Send + Sync>;
+/// Where nori's music plays while a plugin casts it.
+pub enum Card {
+    /// Its audio is pumped into this sink instead of the device's own output.
+    Sink(Arc<Sink>),
+    /// On the device's own output again.
+    Here,
+    /// The cast's device plays the songs itself: the player here lets its output go.
+    Elsewhere,
+}
+
+/// What a client does with each [`Card`]: its engine's.
+pub type Cards = Box<dyn Fn(Card) + Send + Sync>;
 
 /// A service mDNS found.
 #[derive(Debug, Clone, PartialEq)]

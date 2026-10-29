@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, Mutex, Weak};
 
-use crate::cast::{Cards, Media};
+use crate::cast::{Card, Cards, Media};
 use crate::door::Door;
 use crate::host::Side;
 use crate::sink::Sink;
@@ -156,10 +156,10 @@ impl Lan {
         *self.cards.lock().expect("not poisoned") = Some(cards);
     }
 
-    /// nori's audio goes to `sink`, or to the device's own output again.
-    fn card(&self, sink: Option<Arc<Sink>>) {
+    /// Where nori's music plays from now on.
+    fn card(&self, card: Card) {
         match self.cards.lock().expect("not poisoned").as_ref() {
-            Some(cards) => cards(sink),
+            Some(cards) => cards(card),
             None => nori_model::alog::info("plugins: no engine takes a cast's audio here"),
         }
     }
@@ -255,14 +255,14 @@ impl Lan {
         drop(i);
         let url = self.base().map(|b| format!("{b}/a/{extension}"));
         if url.is_some() {
-            self.card(Some(sink));
+            self.card(Card::Sink(sink));
         }
         url
     }
 
     pub(crate) fn pump_sink(&self, id: &str, sink: Arc<Sink>) {
         self.inner().pumped = Some((id.to_string(), sink.clone()));
-        self.card(Some(sink));
+        self.card(Card::Sink(sink));
     }
 
     pub(crate) fn sink_latency(&self, id: &str, ms: u32) {
@@ -282,7 +282,7 @@ impl Lan {
         self.keep_door(&mut i);
         drop(i);
         if served.or(pumped).is_some() {
-            self.card(None);
+            self.card(Card::Here);
         }
     }
 
@@ -293,8 +293,11 @@ impl Lan {
             nori_model::alog::info(&format!("plugin {id}: another plugin's cast runs"));
             return;
         }
-        i.cast = Some(cast.clone());
+        let first = i.cast.replace(cast.clone()).is_none();
         drop(i);
+        if first && kind == CastKind::Target {
+            self.card(Card::Elsewhere);
+        }
         self.side.cast(Some(&cast));
     }
 

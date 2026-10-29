@@ -329,7 +329,7 @@ fn a_preview_shows_a_plugin_without_installing_it() {
     let dir = nori_testdir::TempDir::new("plugins-preview");
     let plugins = Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()));
     let p = plugins.preview_file(fixture("").to_string_lossy().into_owned(), "en".into()).unwrap();
-    assert_eq!((p.card.id.as_str(), p.card.name.as_str(), p.card.enabled, p.card.net.as_slice()), (ID, "Test", false, &["allowed.example".to_string(), "lan".to_string()][..]));
+    assert_eq!((p.card.id.as_str(), p.card.name.as_str(), p.card.enabled, p.card.net.as_slice(), p.card.lan), (ID, "Test", false, &["allowed.example".to_string()][..], true));
     assert_eq!((p.card.rows[0].label.as_str(), p.card.rows[0].value.clone()), ("Gain", Some(Value::Level(0.5))));
     assert!(plugins.installed().is_empty(), "nothing installed by a preview");
     assert_eq!(plugins.install_preview(p), Ok(ID.to_string()));

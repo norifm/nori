@@ -45,6 +45,8 @@ pub enum Msg {
     Search(SearchView),
     /// A status bar message.
     Note { text: String, error: bool },
+    /// A plugin's cast started, changed or ended (None).
+    Cast(Option<nori_plugins::Cast>),
     /// Read again what `Req` reads, where it is on screen.
     Reload(Req),
     /// The queue another device left on the server, to offer here.
@@ -96,6 +98,7 @@ impl Msg {
             Msg::Lyrics { song, .. } => format!("lyrics for {song}"),
             Msg::Search(v) => format!("search results for {:?}", v.query),
             Msg::Note { text, error } => format!("note {text:?} error={error}"),
+            Msg::Cast(c) => format!("cast {c:?}"),
             Msg::Offer(o) => format!("queue offered: {}", o.is_some()),
             Msg::Reload(r) => format!("read {r:?} again"),
             Msg::LoggedIn(r) => format!("logged in: {}", r.is_ok()),
