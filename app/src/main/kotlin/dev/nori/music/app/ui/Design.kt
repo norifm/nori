@@ -589,6 +589,25 @@ fun GroupRow(
     }
 }
 
+/** How far a list moves under a pinned head before the fade under the head is full, and how tall that fade is. */
+internal val HEAD_FADE = 64.dp
+internal val HEAD_EDGE = 18.dp
+
+/**
+ * A list under a pinned title: what scrolls up fades out into [page] at the list's top rather than being cut
+ * there, coming in over the first [HEAD_FADE] of [scrolled], so a list at rest is untouched.
+ */
+fun Modifier.fadesUnderTitle(page: Color, scrolled: () -> Float) = drawWithCache {
+    val fade = HEAD_FADE.toPx()
+    val edge = HEAD_EDGE.toPx()
+    val under = Brush.verticalGradient(0f to page, 1f to Color.Transparent, endY = edge)
+    onDrawWithContent {
+        drawContent()
+        val shown = (scrolled() / fade).coerceIn(0f, 1f)
+        if (shown > 0f) drawRect(under, size = Size(size.width, edge), alpha = shown)
+    }
+}
+
 /** The name of a whole screen, the size Apple sets it: big, bold, sitting on the gutter. */
 @Composable
 fun LargeTitle(text: String, modifier: Modifier = Modifier, trailing: @Composable (RowScope.() -> Unit)? = null) {

@@ -426,9 +426,5 @@ private fun heroPress(bits: Int) = when (bits and 3) {
 /** The list key of the artwork, which the head measures how far it has to go from. */
 private const val HERO_KEY = "hero"
 
-/** How far below the top the head starts taking on the page's colour, and the fade under it once it has. */
-private val HEAD_FADE = 64.dp
-private val HEAD_EDGE = 18.dp
-
 /** How much taller than square the picture is, with the title block rising by as much: the cover reaches further behind the title. */
 private val HERO_DEEPER = 44.dp
