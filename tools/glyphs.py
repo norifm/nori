@@ -50,6 +50,7 @@ GLYPHS = {
     "HalfMoon": ("half-moon", "regular", False),
     "AntennaSignal": ("antenna-signal", "regular", False),
     "Sparks": ("sparks", "regular", False),
+    "MagicWand": ("magic-wand", "regular", False),
     "Prohibition": ("prohibition", "regular", False),
     "ShareIos": ("share-ios", "regular", False),
     "InfoCircle": ("info-circle", "regular", False),
