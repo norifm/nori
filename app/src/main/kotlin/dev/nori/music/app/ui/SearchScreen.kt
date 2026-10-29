@@ -38,12 +38,15 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
     val nav = LocalNav.current
     val menu = LocalSongMenu.current
     val scopes = remember { dev.nori.music.ffi.library.searchScopes().map { it to say.searchScope(it) } }
+    // Opening the page shows what an empty search offers; Search tapped again, or the field, brings the keyboard.
+    val taps = searchFocusKey()
+    val opened = remember { taps }
     Column {
         LargeTitle(say.search)
         SearchField(
             ui.query, vm::setQuery, say.searchHint,
-            Modifier.padding(horizontal = Space.gutter, vertical = 8.dp), testTag = "search", autofocus = true,
-            focusKey = searchFocusKey(),
+            Modifier.padding(horizontal = Space.gutter, vertical = 8.dp), testTag = "search", autofocus = taps != opened,
+            focusKey = taps,
         )
         // Its room is kept whether or not it shows, so the results do not move as the server answers.
         androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(2.dp)) {
@@ -58,6 +61,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         // A new search starts with its best few songs again.
         var allSongs by androidx.compose.runtime.remember(ui.query) { androidx.compose.runtime.mutableStateOf(false) }
         if (r == null) {
+            val recent by vm.recent.collectAsStateWithLifecycle()
             val scroll = rememberLazyListState()
             LazyColumn(Modifier.pageToEdges().fadesUnderTitle(scroll), scroll, contentPadding = pagePadding(LocalChromeInset.current)) {
                 if (ui.history.isNotEmpty()) item {
@@ -70,6 +74,12 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
                     Row(Modifier.fillMaxWidth().clickable { vm.setQuery(q) }.padding(horizontal = Space.gutter, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
                         androidx.compose.material3.Icon(Iconoir.ClockRotateRight, null, Modifier.padding(end = 14.dp).size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(q, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+                if (recent.isNotEmpty()) item {
+                    SectionTitle(say.homeRow(dev.nori.music.ffi.settings.HomeRow.RECENT))
+                    LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(recent, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { nav.album(a.id, a) }) }
                     }
                 }
             }

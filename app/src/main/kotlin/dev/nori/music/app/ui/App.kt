@@ -170,12 +170,14 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
      */
     fun tab(route: String) {
         if (sheet.isOpen) sheet.close()
-        // Tapping Search is a request for the keyboard, whether or not the screen is already open -
-        // and with launchSingleTop it is not recomposed, so nothing else would notice the tap.
-        if (route == "search") searchTaps.intValue++
         // Already there: nothing to go to. Navigating anyway ran the page's arrival again on every tap,
         // so a tab pressed twice redrew the page it was already on.
-        if (c.currentBackStackEntry?.destination?.route == route) return
+        if (c.currentBackStackEntry?.destination?.route == route) {
+            // Search tapped again on its own page asks for the keyboard; the first tap only shows the page.
+            // With launchSingleTop the page is not recomposed, so nothing else would notice the tap.
+            if (route == "search") searchTaps.intValue++
+            return
+        }
         PageMotion.tabbedTo = route
         swipe.plain()
         c.navigate(route) {
