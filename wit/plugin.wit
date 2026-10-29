@@ -54,6 +54,9 @@ interface hooks {
         notified(tuple<string, string, list<u8>>),
         /// A wake event started nori while it was closed.
         woke(string),
+        /// A client's output picker opened (true) or closed (false): browse for devices only while
+        /// it is open.
+        output-picker(bool),
     }
 
     record served-request {

@@ -70,10 +70,11 @@ pub enum Hook {
     SettingChanged,
     MediaButton,
     LyricLine,
+    OutputPicker,
 }
 
 impl Hook {
-    pub(crate) const ALL: [Hook; 11] = [Hook::PlaybackStarted, Hook::PlaybackPaused, Hook::SongChanged, Hook::QueueChanged, Hook::FavoriteChanged, Hook::ProfileOpened, Hook::RouteChanged, Hook::DeviceConnected, Hook::SettingChanged, Hook::MediaButton, Hook::LyricLine];
+    pub(crate) const ALL: [Hook; 12] = [Hook::PlaybackStarted, Hook::PlaybackPaused, Hook::SongChanged, Hook::QueueChanged, Hook::FavoriteChanged, Hook::ProfileOpened, Hook::RouteChanged, Hook::DeviceConnected, Hook::SettingChanged, Hook::MediaButton, Hook::LyricLine, Hook::OutputPicker];
 }
 
 /// What starts nori while it is closed.

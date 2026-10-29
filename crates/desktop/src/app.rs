@@ -3407,10 +3407,14 @@ impl App {
         self.follow();
     }
 
-    /// Follows the other devices while their panel is open (remote control), and lists them.
+    /// Follows the other devices while their panel is open (remote control, plugins' devices), and
+    /// lists them.
     fn devices_watched(&self) {
         let ui = self.ui();
         let open = devices_open(&ui);
+        if let Some(s) = &self.session {
+            s.output_picker(open);
+        }
         // A jam guest follows its jam all along.
         if let Some(r) = self.session.as_ref().and_then(|s| s.remote()).filter(|_| !self.guest()) {
             r.watch(open);

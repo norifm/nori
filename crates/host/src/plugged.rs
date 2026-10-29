@@ -45,6 +45,13 @@ impl Handle {
         }
     }
 
+    /// The devices panel opened or closed: plugins that hear it look for devices only while it is open.
+    pub fn output_picker(&self, open: bool) {
+        if let Some(p) = &self.plugins {
+            p.output_picker(open);
+        }
+    }
+
     /// Tells the plugins what is playing after engine event `e`, while one follows the player.
     pub(crate) fn plugins_heard(&self, e: &Event) {
         let Some(p) = &self.plugins else { return };

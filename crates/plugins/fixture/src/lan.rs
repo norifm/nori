@@ -150,7 +150,11 @@ pub fn action(id: &str) {
 pub fn on(event: Event) {
     match event {
         Event::Discovered(s) => show(Tone::Info, "found", &[s.name, s.host, s.port.to_string()]),
-        Event::MediaButton(b) => show(Tone::Info, "button", &[b]),        _ => {}
+        Event::MediaButton(b) => show(Tone::Info, "button", &[b]),
+        // Looks for devices only while a picker could list them.
+        Event::OutputPicker(true) => discovery::browse("_picked._tcp"),
+        Event::OutputPicker(false) => discovery::stop("_picked._tcp"),
+        _ => {}
     }
 }
 

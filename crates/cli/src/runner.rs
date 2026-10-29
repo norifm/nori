@@ -605,9 +605,11 @@ impl Runner {
     /// or the jam's, with its queue, copying strings only when the song or the queue changed.
     fn follow(&mut self, app: &mut App) {
         let Some(s) = &self.session else { return };
+        let devices_open = app.full && app.panel == Panel::Devices;
+        s.output_picker(devices_open);
         // A guest follows its jam all along.
         if let Some(r) = s.remote().filter(|_| !s.guest) {
-            r.watch(app.full && app.panel == Panel::Devices);
+            r.watch(devices_open);
         }
         let now = s.now();
         app.follow_now(Now { state: now.state, position_ms: now.position_ms, at: now.at, speed: now.pace, mixing: now.mixing, buffering: now.buffering });

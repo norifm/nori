@@ -208,7 +208,7 @@ impl Hooks for Test {
     fn on(&mut self, event: nori_plugin_sdk::hooks::Event) {
         use nori_plugin_sdk::hooks::Event;
         match event {
-            Event::Discovered(_) | Event::MediaButton(_) => lan::on(event),
+            Event::Discovered(_) | Event::MediaButton(_) | Event::OutputPicker(_) => lan::on(event),
             _ => hooked::on(event),
         }
     }

@@ -9,7 +9,7 @@ use nori_plugin_sdk::{assets, cache, session, sign_in, subsonic, timers, wake, A
 
 pub const SIGNIN: &[&str] = &["accounts.example"];
 pub const PERMISSIONS: &[Permission] = &[Permission::PlaybackRead, Permission::PlaybackControl, Permission::LibraryRead, Permission::Subsonic];
-pub const HOOKS: &[Hook] = &[Hook::PlaybackStarted, Hook::PlaybackPaused, Hook::SongChanged, Hook::QueueChanged, Hook::FavoriteChanged, Hook::LyricLine, Hook::DeviceConnected];
+pub const HOOKS: &[Hook] = &[Hook::PlaybackStarted, Hook::PlaybackPaused, Hook::SongChanged, Hook::QueueChanged, Hook::FavoriteChanged, Hook::LyricLine, Hook::DeviceConnected, Hook::OutputPicker];
 pub const WAKE: &[Wake] = &[Wake::Boot];
 pub const COMMANDS: &[&str] = &["ping"];
 pub const CACHE_MB: u32 = 1;

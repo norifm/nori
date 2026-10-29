@@ -210,6 +210,9 @@ class PluginHost(
     /** The player screen shows (its seek bar's timer runs) or not; nothing while the host isn't open. */
     fun playerShown(shown: Boolean) { if (opened) plugins.playerShown(shown) }
 
+    /** The devices sheet opened or closed: plugins that hear it look for devices only meanwhile. Nothing while the host isn't open. */
+    fun outputPicker(open: Boolean) { if (opened) plugins.outputPicker(open) }
+
     suspend fun woke(event: WakeEvent) = withContext(Dispatchers.IO) { plugins.woke(event) }
 
     suspend fun command(command: Command) = withContext(Dispatchers.IO) { plugins.command(command) }

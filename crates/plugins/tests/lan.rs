@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use nori_net::transport::{Exchange, Network, Transport, TransportError, TransportResponse};
 use nori_plugins::testing::{fixture, FIXTURE as ID};
-use nori_plugins::{Card, Cast, CastButton, CastKind, Media, Moment, Plugins, Service, Side, Sink, Value};
+use nori_plugins::{Card, Cast, CastButton, CastKind, Hook, Media, Moment, Plugins, Service, Side, Sink, Value};
 
 /// Serves each action's setup at `/lan/<action>`.
 #[derive(Default)]
@@ -239,6 +239,27 @@ fn browsing_runs_only_while_asked_and_its_finds_reach_the_plugin() {
     rig.act("browse");
     rig.plugins.turn(ID.into(), false);
     assert_eq!(*rig.session.browsed.lock().unwrap(), [(kind.clone(), true), (kind.clone(), false), (kind.clone(), true), (kind, false)], "turned off, its browsing stops");
+}
+
+#[test]
+fn a_plugin_hears_the_output_picker_open_and_close_and_browses_only_meanwhile() {
+    let rig = Rig::new("plugins-lan-picker");
+    let browsed = || rig.session.browsed.lock().unwrap().clone();
+    let kind = "_picked._tcp".to_string();
+    assert!(rig.plugins.hears(Hook::OutputPicker));
+    rig.plugins.output_picker(true);
+    rig.plugins.output_picker(true);
+    rig.settle();
+    assert_eq!(browsed(), [(kind.clone(), true)], "said again as it is, nothing is told");
+    rig.plugins.output_picker(false);
+    rig.settle();
+    assert_eq!(browsed(), [(kind.clone(), true), (kind.clone(), false)]);
+
+    rig.plugins.turn(ID.into(), false);
+    assert!(!rig.plugins.hears(Hook::OutputPicker), "no plugin on, no one hears it");
+    rig.plugins.output_picker(true);
+    assert!(rig.plugins.worker(ID).is_none(), "nothing starts for it");
+    assert_eq!(browsed().len(), 2);
 }
 
 #[test]

@@ -93,6 +93,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
     NoriSheet(open, onDismiss) {
         // Other devices are looked for only with remote control on; a plugin's rows alone need none of it.
         if (remote) LifecycleResumeEffect(Unit) { vm.watch(true); onPauseOrDispose { vm.watch(false) } }
+        LifecycleResumeEffect(Unit) { plugins.outputPicker(true); onPauseOrDispose { plugins.outputPicker(false) } }
         val devices by vm.devices.collectAsStateWithLifecycle()
         val names by vm.names.collectAsStateWithLifecycle()
         val jam by vm.jam.collectAsStateWithLifecycle()

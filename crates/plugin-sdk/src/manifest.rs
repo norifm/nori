@@ -231,6 +231,8 @@ pub enum Hook {
     MediaButton,
     /// Brings a wake per line while music plays, the screen off too; the install sheet says so.
     LyricLine,
+    /// A client's output picker opened or closed: when to browse for devices.
+    OutputPicker,
 }
 
 /// What starts nori while it is closed, for the plugin's `woke` hook, once `wake.want` asks for it.

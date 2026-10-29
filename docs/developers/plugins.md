@@ -140,6 +140,11 @@ nothing for a call that answers nothing) and logged.
   `Client::star`, settings from the settings' `watch` (stored) and the layer (in effect), media buttons
   from MPRIS and the media session, devices from Android's audio device callback and, on Linux and
   macOS, an audio device BlueZ or IOBluetooth sees connect (`use_bluetooth(.., outputs)`).
+- **The output picker** (`output-picker(open)`): Android's devices sheet while it is resumed, the
+  desktop's devices panel (the full player's or the side sheet's), the terminal's devices panel. Each
+  client says whether its picker is open (`Plugins::output_picker`, crates/host's
+  `Handle::output_picker`) whenever it might have changed; the host tells the plugins only a change, so
+  a plugin that finds devices (`discovery`, SSDP) browses only while the user is picking.
 - **Lyric lines** wake the host at each synced line of the song playing (its lyrics fetched once per
   song through the core), the screen off too; that wake is the plugin's declared cost, which the install
   sheet says. A pause, seek or song change lets the waiting wake go.
@@ -362,7 +367,7 @@ transport (`Kinds::set_transport`). See [Providers](providers.md).
   `tests/lan.rs` the LAN interfaces over the same plugin: TLS checked each way against a local server,
   UDP to the LAN only over IPv4 and IPv6, which groups it may join and the multicast lock, an IPv6
   link-local group's datagram answered at its sender's zone (it needs an IPv6 interface with
-  multicast, as any Linux with a network has), browsing, its endpoints at the door, a song's URL proxied, and
+  multicast, as any Linux with a network has), browsing, browsing while the output picker is open, its endpoints at the door, a song's URL proxied, and
   casts into a socket, at the door and to a target. `tests/devices.rs` runs device control over a fake
   platform Bluetooth with the fixture built with `headphones` (`fixture/src/headphones.rs`).
   `tests/session.rs` drives the fixture's `hooked` module on a simulated clock: the session's reads and

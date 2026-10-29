@@ -147,6 +147,9 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun turn(id: String, on: Boolean) = viewModelScope.launch { host.turn(id, on) }
 
+    /** The devices sheet shows (true) or went (false). */
+    fun outputPicker(open: Boolean) { viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { host.outputPicker(open) } }
+
     /** Moves plugin [id] one place [by] (−1 up, 1 down). */
     fun move(id: String, by: Int) {
         val at = cards.value.indexOfFirst { it.id == id }.takeIf { it >= 0 } ?: return

@@ -56,6 +56,8 @@ pub(crate) struct Live {
     watching_screen: AtomicBool,
     /// The settings' changes were asked of the client.
     watching_settings: AtomicBool,
+    /// A client's output picker is open.
+    picker: AtomicBool,
     lyrics: Mutex<Lyrics>,
     /// Bumped by every moment: a lyric line's wake for an older one lets go.
     lyric_turn: AtomicU64,
@@ -293,6 +295,14 @@ impl Plugins {
     /// An output device (`name`) connected or went.
     pub fn device(&self, name: String, connected: bool) {
         self.tell(Hook::DeviceConnected, || if connected { Event::DeviceConnected(name) } else { Event::DeviceDisconnected(name) });
+    }
+
+    /// The client's output picker (the devices sheet or panel) opened or closed; a client may say it
+    /// again as it is, which tells no one.
+    pub fn output_picker(&self, open: bool) {
+        if self.live.picker.swap(open, Ordering::Relaxed) != open {
+            self.tell(Hook::OutputPicker, || Event::OutputPicker(open));
+        }
     }
 
     /// A media key pressed, told to the plugins that hear them.
