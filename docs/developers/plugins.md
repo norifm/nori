@@ -47,7 +47,7 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
 - The manifest is Rust. `plugin!` encodes it at compile time into the wasm's `nori:plugin` custom
   section, with the crate's version and the points named, and nori reads it before running anything.
   What the plugin calls (HTTP, settings) isn't declared: nori reads it from the component's imports.
-  The manifest says only what code can't: its id, the hosts it may reach, the keys it overrides, its
+  The manifest says only what code can't: its id, the hosts and Bluetooth devices it may reach, the keys it overrides, its
   rows and a stage's slot.
 - Words are files: `strings/<lang>.toml`, key = text, English required: `name`, `about`, each row's id
   and each choice option's key.
@@ -138,6 +138,35 @@ client from what the plugin answers (`crates/plugins/src/slots.rs`); one not nam
 | player status | `player-status()`: one line | shows it under the output row |
 | devices | nothing: its rows | shows its page's rows on the devices sheet ("Playing on") too, after nori's own entries |
 
+## Device control
+
+A plugin names the Bluetooth devices it reaches in its manifest (`devices`: a name pattern with `*`, a
+service UUID, a vendor id; one matches when all it gives matches), and only those: `bluetooth.connected`
+lists them, and a channel opens to no other. The install sheet says it reaches Bluetooth devices.
+
+- **The platform's Bluetooth** is the client's `Bluetooth` (`crates/plugins/src/bluetooth.rs`), given with
+  `Plugins::use_bluetooth`: Android's `BluetoothSocket` and `BluetoothGatt` (`core/.../PluginBluetooth.kt`),
+  BlueZ over the system bus on Linux (`crates/host/src/bluez.rs`, zbus as the media controls; RFCOMM
+  through a client `Profile1`). macOS has none yet: there every Bluetooth call answers `unsupported`.
+- **Watched only while needed.** The platform is told to watch devices connecting only while an enabled
+  plugin reaches devices; with none, no receiver, bus connection or thread exists. On Android the
+  `BLUETOOTH_CONNECT` permission is asked when such a plugin is installed, and on its page while missing.
+- **Links** are numbered by the host. What comes on one the platform hands to `bluetooth_heard`: a GATT
+  notification goes to the plugin's `notified` hook; an RFCOMM channel's bytes wait for its `read`, and
+  those no read took come to `notified` with the service UUID as the characteristic. A link closes when
+  the plugin drops it or its instance goes.
+- **Who controls a device.** A device connecting is offered to the enabled `device-control` plugins
+  reaching it, in their order (`handles`); the first that says yes controls it while it stays connected.
+  nori asks for its `state` then, after each notification and after `set-noise`, never on a timer.
+  Disconnected, the plugin hears `gone`, and an instance there only for devices goes.
+- **What clients draw** comes from `Plugins::controlled`: per device its batteries, the level the output
+  row shows (`Battery::level`: a single battery, else the emptier bud, never the case), its noise
+  control and modes, and the controlling plugin's card. `output_device` picks the one the music plays
+  on (by name or id; the system's default output is the only one connected). Android draws it on the
+  devices sheet (a card for the headphones playing, with a way on to their page), the player's output
+  row (`WH-1000XM5 · 80%`), the equalizer's device page and the plugin's page; the desktop and the
+  terminal on their devices panel and output row.
+
 ## Covers
 
 A plugin's covers are URLs with `{size}` where the pixels go; the core fills it in
@@ -162,5 +191,7 @@ transport (`Kinds::set_transport`). See [Providers](providers.md).
   `wit/`, the store, and `tests/host.rs` over a real plugin (`fixture/`, built to wasm by the `testing` feature:
   needs `rustup target add wasm32-wasip2`): its stage and kept state, no allocation per block, its
   overrides, its HTTP refused outside its hosts, and a plugin needing an unlinked interface refused.
+  `tests/devices.rs` runs device control over a fake platform Bluetooth with the fixture built with
+  `headphones` (`fixture/src/headphones.rs`).
 - `cargo test -p nori-player --test pipeline stage`: stages in the chain on the virtual clock.
 - `cargo test -p nori-settings overrides`: tunables and settings overridden without being written.

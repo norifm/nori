@@ -210,6 +210,10 @@ pub fn run(o: Options) -> Result<(), String> {
     nori_host::desktop::plugins(&r.o.data).watched.hear(move |n| {
         let _ = notices.send(Msg::Note { text: n.words, error: n.problem });
     });
+    let controlled = r.tx.clone();
+    nori_host::desktop::plugins(&r.o.data).watched.on_devices(move || {
+        let _ = controlled.send(Msg::Controlled);
+    });
     match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => {
@@ -404,6 +408,7 @@ impl Runner {
                 return self.plugin(app, PluginCmd::Look);
             }
             PluginCmd::RemoveRepo(url) => host.remove_repo(url),
+            PluginCmd::Noise(device, noise) => return host.set_noise(device, noise),
         }
         let host = &nori_host::desktop::plugins(&self.o.data).host;
         let cards = host.cards("en".into());
@@ -418,7 +423,16 @@ impl Runner {
         own.plugins = cards;
         own.repos = host.repos();
         app.slots.menu = [ItemKind::Song, ItemKind::Album, ItemKind::Artist, ItemKind::Playlist].into_iter().flat_map(|k| host.menu_entries(k, "en".into()).into_iter().map(move |e| (k, e))).collect();
-        app.devices.plugins = host.device_cards("en".into());
+        // A device's page: its known controls, then its plugin's rows.
+        let controlled = host.controlled("en".into());
+        let mut shown = host.device_cards("en".into());
+        for d in &controlled {
+            if !shown.iter().any(|c| c.id == d.card.id) {
+                shown.push(d.card.clone());
+            }
+        }
+        app.devices.plugins = shown;
+        app.devices.controlled = controlled;
         app.settings.invalidate();
         app.dirty = true;
     }

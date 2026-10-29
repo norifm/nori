@@ -11,7 +11,7 @@ use nori_look::theme;
 
 use nori_core::providers::Kinds;
 use nori_host::desktop::OfferState;
-use nori_plugins::{Offers, PluginCard, PluginRow, Repo, RowKind, Value};
+use nori_plugins::{ControlledDevice, Offers, PluginCard, PluginRow, Repo, RowKind, Value};
 
 use crate::look::Today;
 use crate::{words, SettingRow};
@@ -713,6 +713,8 @@ pub enum PluginAct {
     /// The repo at this address, once trusted.
     TrustRepo(String),
     RemoveRepo(String),
+    /// A controlled device's noise control, by the device's id.
+    Noise(String),
 }
 
 impl PluginAct {
@@ -741,6 +743,7 @@ impl PluginAct {
             "repo-add" => PluginAct::AddRepo,
             "repo-trust" => PluginAct::TrustRepo(id()),
             "repo-remove" => PluginAct::RemoveRepo(id()),
+            "device-noise" => PluginAct::Noise(id()),
             _ => return None,
         })
     }
@@ -761,6 +764,7 @@ impl PluginAct {
             PluginAct::AddRepo => "repo-add".into(),
             PluginAct::TrustRepo(url) => format!("repo-trust:{url}"),
             PluginAct::RemoveRepo(url) => format!("repo-remove:{url}"),
+            PluginAct::Noise(device) => format!("device-noise:{device}"),
         }
     }
 }
@@ -925,9 +929,33 @@ fn card_groups(c: &PluginCard, head: Vec<Row>) -> Vec<(String, Vec<Row>)> {
     groups
 }
 
-/// The rows the plugins `cards` show on the devices panel, as on their pages.
-pub fn device_rows(cards: &[PluginCard], prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
-    model(cards.iter().flat_map(|c| card_groups(c, Vec::new())).filter(|(_, rows)| !rows.is_empty()).collect(), prefs, f, today)
+/// The devices panel's plugin rows: each controlled device's page (its batteries and noise control,
+/// then its plugin's rows), then the rows of the plugins `cards` show there, as on their pages.
+pub fn device_rows(cards: &[PluginCard], controlled: &[ControlledDevice], prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    model(device_groups(cards, controlled), prefs, f, today)
+}
+
+fn device_groups(cards: &[PluginCard], controlled: &[ControlledDevice]) -> Vec<(String, Vec<Row>)> {
+    let mut groups = Vec::new();
+    for d in controlled {
+        let mut rows = Vec::new();
+        let battery = words::battery(&d.battery);
+        if !battery.is_empty() {
+            rows.push(info(words::BATTERY, battery));
+        }
+        if !d.noise_modes.is_empty() {
+            let options = d.noise_modes.iter().map(|m| (words::noise(*m).to_string(), String::new())).collect();
+            let chosen = d.noise.and_then(|n| d.noise_modes.iter().position(|m| *m == n)).map_or(-1, |i| i as i32);
+            rows.push(Row { kind: CHOICE, name: PluginAct::Noise(d.id.clone()).name(), title: words::NOISE_CONTROL.into(), options, chosen: Some(chosen), enabled: true, ..Default::default() });
+        }
+        groups.push((d.name.clone(), rows));
+        if !cards.iter().any(|c| c.id == d.card.id) {
+            groups.extend(card_groups(&d.card, Vec::new()));
+        }
+    }
+    groups.extend(cards.iter().flat_map(|c| card_groups(c, Vec::new())));
+    groups.retain(|(_, rows)| !rows.is_empty());
+    groups
 }
 
 /// The value of option `index` of `target`.
@@ -1074,7 +1102,7 @@ mod tests {
     fn plugins_are_drawn_with_the_settings_rows() {
         use nori_plugins::{Offer, Offers, PluginCard, PluginRow, Repo, RowKind, Value, Version};
         let row = |id: &str, kind, value| PluginRow { id: id.into(), kind, label: id.into(), options: vec!["a".into(), "b".into()], min: Some(0.0), max: Some(2.0), step: Some(0.5), value, hint: None, unit: None, decimals: 1, url: None };
-        let card = |id: &str, rows| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: Some(nori_plugins::OFFICIAL.into()), held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), rows };
+        let card = |id: &str, rows| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: Some(nori_plugins::OFFICIAL.into()), held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), bluetooth: false, rows };
         let rows = vec![
             row("on", RowKind::Switch, Some(Value::Switch(true))),
             row("pick", RowKind::Choice, Some(Value::Choice(1))),
@@ -1131,5 +1159,20 @@ mod tests {
         assert_eq!(status.detail, "Fine · Checked hourly");
         let link = plugin_row("p", &row(RowKind::Link, None, None, None, Some("https://x.example/help")));
         assert_eq!((link.kind, PluginAct::of(&link.name)), (LINK, Some(PluginAct::Open("https://x.example/help".into()))));
+    }
+
+    /// A controlled device's page leads the devices panel: its batteries, its noise control (named so
+    /// it parses back to the device), then its plugin's rows, shown once.
+    #[test]
+    fn a_controlled_device_leads_the_devices_panel() {
+        use nori_plugins::{Battery, ControlledDevice, Noise};
+        let card = |id: &str| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), bluetooth: true, rows: vec![PluginRow { id: "wear".into(), kind: RowKind::Switch, label: "Wear detection".into(), options: Vec::new(), min: None, max: None, step: None, value: Some(Value::Switch(true)), hint: None, unit: None, decimals: 0, url: None }] };
+        let d = ControlledDevice { id: "AA".into(), name: "WH-1000XM5".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Canceling), noise_modes: vec![Noise::Off, Noise::Canceling], card: card("dev.sony") };
+        let groups = device_groups(&[card("dev.sony")], std::slice::from_ref(&d));
+        assert_eq!(groups.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["WH-1000XM5", "dev.sony"], "its plugin's rows once");
+        let rows = &groups[0].1;
+        assert_eq!((rows[0].kind, rows[0].detail.as_str()), (INFO, "80%"));
+        assert_eq!((rows[1].kind, rows[1].chosen, PluginAct::of(&rows[1].name)), (CHOICE, Some(1), Some(PluginAct::Noise("AA".into()))));
+        assert_eq!(device_groups(&[], std::slice::from_ref(&d)).len(), 2, "its plugin's rows show though the plugin names no place");
     }
 }

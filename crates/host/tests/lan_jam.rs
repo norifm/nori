@@ -33,6 +33,7 @@ fn music_plugin() -> ServerKind {
 struct Quiet;
 impl nori_plugins::Client for Quiet {
     fn layer_changed(&self, _: u32) {}
+    fn devices_changed(&self) {}
     fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
     fn shown(&self, _: String, _: String, _: bool, _: bool) {}
     fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}

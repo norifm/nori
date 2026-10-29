@@ -20,6 +20,9 @@ pub trait Client: Send + Sync {
     fn status(&self, id: String, row: String, words: String, args: Vec<String>);
     fn shown(&self, id: String, row: String, shown: bool, enabled: bool);
     fn notice(&self, id: String, problem: bool, words: String, args: Vec<String>);
+    /// The controlled devices or what they report changed: the client reads
+    /// [`Plugins::controlled`] again.
+    fn devices_changed(&self);
 }
 
 struct App {
@@ -65,6 +68,10 @@ impl Side for App {
 
     fn notice(&self, id: &str, problem: bool, words: &str, args: &[String]) {
         self.client.notice(id.into(), problem, words.into(), args.to_vec());
+    }
+
+    fn devices_changed(&self) {
+        self.client.devices_changed();
     }
 }
 

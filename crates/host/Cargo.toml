@@ -12,7 +12,7 @@ name = "nori_host"
 default = ["desktop"]
 # MPRIS media controls, the cpal sound card and ureq's HTTP: the terminal and desktop clients. The iOS
 # and web clients leave the default features off.
-desktop = ["dep:nori-mpris", "dep:mdns-sd", "dep:nori-output-cpal", "dep:nori-http", "dep:nori-plugins", "nori-core/plugins"]
+desktop = ["dep:nori-mpris", "dep:mdns-sd", "dep:nori-output-cpal", "dep:nori-http", "dep:nori-plugins", "nori-core/plugins", "dep:zbus", "dep:futures-lite", "dep:async-io", "dep:serde"]
 
 [dependencies]
 # Time, read the same way natively and in a browser.
@@ -35,9 +35,17 @@ nori-tasks = { path = "../tasks" }
 parking_lot = "0.12"
 async-trait = "0.1"
 
-# The computer's name (device_name).
+# The computer's name (device_name); an RFCOMM socket shut down (bluez.rs).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Plugins' Bluetooth on Linux: BlueZ over the system bus, pure Rust D-Bus as the media controls use
+# (bluez.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5.19", default-features = false, features = ["async-io"], optional = true }
+futures-lite = { version = "2.6", optional = true }
+async-io = { version = "2.6", optional = true }
+serde = { version = "1", optional = true }
 
 [dev-dependencies]
 # A profile of a provider without remote control, for the session's tests.

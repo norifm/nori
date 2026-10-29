@@ -88,7 +88,35 @@ pub fn install_version(name: &str, version: &str) -> String {
 pub fn preview_note(p: &nori_plugins::PluginPreview) -> Vec<String> {
     let c = &p.card;
     let from = p.repo.as_ref().map(|url| format!("From {}", repo_name(&nori_plugins::Repo { url: url.clone(), official: url == nori_plugins::OFFICIAL })));
-    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(&c.net, &c.overrides)]).chain(from).chain([INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect()
+    let bluetooth = c.bluetooth.then(|| REACHES_BLUETOOTH.to_string());
+    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(&c.net, &c.overrides)]).chain(bluetooth).chain(from).chain([INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect()
+}
+
+pub const REACHES_BLUETOOTH: &str = "Reaches Bluetooth devices.";
+pub const BATTERY: &str = "Battery";
+pub const NOISE_CONTROL: &str = "Noise control";
+
+pub fn noise(n: nori_plugins::Noise) -> &'static str {
+    use nori_plugins::Noise;
+    match n {
+        Noise::Off => "Off",
+        Noise::Canceling => "Noise canceling",
+        Noise::Transparency => "Transparency",
+        Noise::Adaptive => "Adaptive",
+    }
+}
+
+/// A device's name and its battery: "WH-1000XM5 · 80%".
+pub fn with_level(name: &str, level: u8) -> String {
+    format!("{name} · {level}%")
+}
+
+/// Each battery a device has: "80%", or "Left 80% · Right 70% · Case 50%"; empty when it said none.
+pub fn battery(b: &nori_plugins::Battery) -> String {
+    if let Some(s) = b.single {
+        return format!("{s}%");
+    }
+    [("Left", b.left), ("Right", b.right), ("Case", b.case)].iter().filter_map(|(w, v)| v.map(|v| format!("{w} {v}%"))).collect::<Vec<_>>().join(" · ")
 }
 
 /// What a plugin is, from the extension points it fills and whether it overrides nori's values.
@@ -738,6 +766,7 @@ mod tests {
             points: vec!["slots".into()],
             overrides: Vec::new(),
             net: vec!["a.example".into()],
+            bluetooth: false,
             rows: Vec::new(),
         };
         let p = nori_plugins::PluginPreview { card, file: String::new(), repo: Some(nori_plugins::OFFICIAL.into()) };

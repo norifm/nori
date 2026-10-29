@@ -77,6 +77,8 @@ pub enum Msg {
     Offers(nori_plugins::Offers),
     /// Plugins updated on their own: each one's id and new version.
     Updated(Vec<(String, String)>),
+    /// The devices plugins control, or what they report, changed: read them again.
+    Controlled,
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }
@@ -111,6 +113,7 @@ impl Msg {
             Msg::Preview(r) => format!("plugin preview: {:?}", r.as_ref().map(|p| &p.card.id)),
             Msg::Slots { song, info, status } => format!("plugins on {song}: {} info groups, {} status lines", info.len(), status.len()),
             Msg::Updated(u) => format!("{} plugins updated", u.len()),
+            Msg::Controlled => "controlled devices".into(),
             Msg::Offers(o) => format!("{} plugins offered, {} repos unread", o.offers.len(), o.failed.len()),
             Msg::From(id, m) => format!("session {id}: {}", m.brief()),
         }

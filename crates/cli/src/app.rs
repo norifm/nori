@@ -219,6 +219,8 @@ pub enum PluginCmd {
     Hold(String, bool),
     AddRepo(String),
     RemoveRepo(String),
+    /// Sets a controlled device's noise control.
+    Noise(String, nori_plugins::Noise),
 }
 
 impl Cmd {
@@ -743,8 +745,10 @@ pub struct Devices {
     pub added: HashMap<String, String>,
     /// A jam guest's controls by its role: what its keys reach, and what the player says.
     pub controls: Option<JamControls>,
-    /// The plugins whose rows show here too.
+    /// The plugins whose rows show here too, those controlling a device among them.
     pub plugins: Vec<nori_plugins::PluginCard>,
+    /// The connected devices plugins control.
+    pub controlled: Vec<nori_plugins::ControlledDevice>,
 }
 
 /// The sheet before installing what `p` shows: what it is, what it may reach, where it comes from.
@@ -752,6 +756,9 @@ fn preview_sheet(p: nori_plugins::PluginPreview) -> Overlay {
     let c = &p.card;
     let mut lines: Vec<String> = c.about.iter().cloned().collect();
     lines.extend([crate::text::plugin_is(&c.points, !c.overrides.is_empty()), crate::text::plugin_reach(&c.net, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
+    if c.bluetooth {
+        lines.push(crate::text::REACHES_BLUETOOTH.into());
+    }
     lines.extend(p.repo.as_deref().map(crate::text::from_repo));
     lines.push(crate::text::INSTALLED_OFF.into());
     Overlay::Confirm { title: crate::text::install_version(&c.name, &c.version), lines, yes: crate::text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::InstallPreview(Box::new(p)))) }
@@ -798,6 +805,10 @@ pub enum DeviceRow {
     Join,
     Pair,
     ResetPairing,
+    /// A device a plugin controls, with its battery: index into [`Devices::controlled`].
+    Controlled(usize),
+    /// Its noise control; Enter moves it to the next mode.
+    Noise(usize),
     /// A plugin's name over its rows: index into [`Devices::plugins`].
     PluginName(usize),
     /// Row `.1` of plugin `.0`, then its hint.
@@ -808,8 +819,15 @@ pub enum DeviceRow {
 impl Devices {
     /// The panel's rows, the plugins' last.
     pub fn rows(&self) -> Vec<DeviceRow> {
-        let mut rows = if self.on { vec![DeviceRow::Here] } else { Vec::new() };
+        let mut rows = Vec::new();
+        for (i, d) in self.controlled.iter().enumerate() {
+            rows.push(DeviceRow::Controlled(i));
+            if !d.noise_modes.is_empty() {
+                rows.push(DeviceRow::Noise(i));
+            }
+        }
         if self.on {
+            rows.push(DeviceRow::Here);
             rows.extend((0..self.list.len()).flat_map(|i| [DeviceRow::Device(i), DeviceRow::Playing(i)]));
             if self.jams || self.jam.is_some() {
                 rows.push(DeviceRow::Jam);
@@ -835,7 +853,7 @@ impl Devices {
     /// or hint), in direction `down`.
     fn settle(&mut self, down: bool) {
         let rows = self.rows();
-        let picks = |at: &usize| !matches!(rows[*at], DeviceRow::Playing(_) | DeviceRow::PluginName(_) | DeviceRow::PluginHint(..));
+        let picks = |at: &usize| !matches!(rows[*at], DeviceRow::Playing(_) | DeviceRow::Controlled(_) | DeviceRow::PluginName(_) | DeviceRow::PluginHint(..));
         if self.sel.at >= rows.len() || picks(&self.sel.at) {
             return;
         }
@@ -852,9 +870,14 @@ impl Devices {
         Some(crate::settings_view::plugin_row(&card.id, card.rows.get(r)?))
     }
 
-    /// The panel shows: other devices or jams are on, or a plugin has rows here.
+    /// The panel shows: other devices or jams are on, a plugin has rows here or controls a device.
     pub fn shown(&self) -> bool {
-        self.on || !self.plugins.is_empty()
+        self.on || !self.plugins.is_empty() || !self.controlled.is_empty()
+    }
+
+    /// The controlled device this computer's `output` plays on ("" for the system's default).
+    pub fn output_device(&self, output: &str) -> Option<&nori_plugins::ControlledDevice> {
+        nori_plugins::output_device(&self.controlled, (!output.is_empty()).then_some(output))
     }
 
     /// The jam's guests, the host left out.
@@ -1682,6 +1705,7 @@ impl App {
                 self.say(crate::text::plugins_updated(&named), false);
                 self.cmds.push(Cmd::Plugin(PluginCmd::Read));
             }
+            Msg::Controlled => self.cmds.push(Cmd::Plugin(PluginCmd::Read)),
             Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) => {}
         }
     }
@@ -3289,7 +3313,14 @@ impl App {
                 Some(Opened::Overlay(o)) => self.overlay = Some(o),
                 _ => self.dirty = false,
             },
-            Some(DeviceRow::PluginName(_) | DeviceRow::PluginHint(..)) | None => self.dirty = false,
+            Some(DeviceRow::Noise(i)) => {
+                let Some(c) = d.controlled.get(i) else { return };
+                let at = c.noise.and_then(|n| c.noise_modes.iter().position(|m| *m == n)).map_or(0, |k| (k + 1) % c.noise_modes.len());
+                if let Some(&next) = c.noise_modes.get(at) {
+                    self.cmds.push(Cmd::Plugin(PluginCmd::Noise(c.id.clone(), next)));
+                }
+            }
+            Some(DeviceRow::Controlled(_) | DeviceRow::PluginName(_) | DeviceRow::PluginHint(..)) | None => self.dirty = false,
         }
     }
 

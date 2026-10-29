@@ -29,6 +29,41 @@ pub struct Manifest {
     pub menu: Vec<MenuSpec>,
     /// The places in nori's screens it fills.
     pub places: Vec<Place>,
+    /// The Bluetooth devices it reaches and is offered to control.
+    pub devices: Vec<DeviceFilter>,
+}
+
+/// Bluetooth devices a plugin reaches: one matches when all that is given matches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceFilter {
+    /// `*` for any run of characters, ignoring case.
+    pub name: Option<String>,
+    pub service: Option<String>,
+    pub vendor: Option<u16>,
+}
+
+impl DeviceFilter {
+    pub fn matches(&self, d: &crate::BtDevice) -> bool {
+        self.name.as_deref().is_none_or(|p| glob(&p.to_lowercase(), &d.name.to_lowercase()))
+            && self.service.as_deref().is_none_or(|u| d.services.iter().any(|s| s.eq_ignore_ascii_case(u)))
+            && self.vendor.is_none_or(|v| d.vendor == Some(v))
+    }
+}
+
+/// Whether `text` is `pattern`, where `*` stands for any run of characters.
+fn glob(pattern: &str, text: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let first = parts.next().unwrap_or_default();
+    let Some(mut rest) = text.strip_prefix(first) else { return false };
+    let parts: Vec<&str> = parts.collect();
+    let Some((last, middle)) = parts.split_last() else { return rest.is_empty() };
+    for p in middle {
+        match rest.find(p) {
+            Some(at) => rest = &rest[at + p.len()..],
+            None => return false,
+        }
+    }
+    rest.len() >= last.len() && rest.ends_with(last)
 }
 
 /// An action it adds to nori's menus of `kinds`; `id` is its label's key in its strings.
@@ -266,8 +301,29 @@ impl Manifest {
             .map(|_| Some(MenuSpec { id: i.str()?, glyph: *GLYPHS.get(i.byte()? as usize)?, kinds: (0..i.u16()?).map(|_| KINDS.get(i.byte()? as usize).copied()).collect::<Option<_>>()? }))
             .collect::<Option<Vec<_>>>()?;
         let places = (0..i.u16()?).map(|_| PLACES.get(i.byte()? as usize).copied()).collect::<Option<Vec<_>>>()?;
+        // Absent from a manifest written before it.
+        let devices = if i.0.is_empty() {
+            Vec::new()
+        } else {
+            (0..i.u16()?)
+                .map(|_| {
+                    let (name, service, vendor) = (i.opt_str()?, i.opt_str()?, i.u32()?);
+                    Some(DeviceFilter { name, service, vendor: u16::try_from(vendor).ok() })
+                })
+                .collect::<Option<Vec<_>>>()?
+        };
         let points = POINTS.iter().enumerate().filter(|(k, _)| bits & (1 << k) != 0).map(|(_, p)| *p).collect();
-        Some(Manifest { id, version, api, points, stage, net, signin, overrides, rows, menu, places })
+        Some(Manifest { id, version, api, points, stage, net, signin, overrides, rows, menu, places, devices })
+    }
+
+    /// Whether it reaches Bluetooth devices.
+    pub fn reaches_devices(&self) -> bool {
+        !self.devices.is_empty()
+    }
+
+    /// Whether Bluetooth device `d` is among those it reaches.
+    pub fn reaches_device(&self, d: &crate::BtDevice) -> bool {
+        self.devices.iter().any(|f| f.matches(d))
     }
 
     pub fn extends(&self, point: &str) -> bool {
@@ -343,6 +399,41 @@ mod tests {
             })
             .collect();
         assert_eq!(names, POINTS.to_vec());
+    }
+
+    #[test]
+    fn devices_match_by_name_service_and_vendor() {
+        const FILTERS: [sdk::DeviceFilter; 2] = [sdk::DeviceFilter::ANY.name("WH-1000XM*"), sdk::DeviceFilter::ANY.service("0000fe2c-0000-1000-8000-00805f9b34fb").vendor(0x054c)];
+        let m = written(&sdk::Manifest { devices: &FILTERS, ..sdk::Manifest::new("fm.nori.sony") }, 0);
+        assert_eq!(m.devices[1].vendor, Some(0x054c));
+        let device = |name: &str, services: &[&str], vendor| crate::BtDevice { id: "a".into(), name: name.into(), services: services.iter().map(|s| s.to_string()).collect(), vendor, product: None };
+        for (d, reached) in [
+            (device("WH-1000XM5", &[], None), true),
+            (device("wh-1000xm4 (living room)", &[], None), true),
+            (device("WF-1000XM5", &[], None), false),
+            (device("Headset", &["0000FE2C-0000-1000-8000-00805F9B34FB"], Some(0x054c)), true),
+            (device("Headset", &["0000fe2c-0000-1000-8000-00805f9b34fb"], Some(0x004c)), false),
+        ] {
+            assert_eq!(m.reaches_device(&d), reached, "{}", d.name);
+        }
+        let none = written(&sdk::Manifest::new("fm.nori.none"), 0);
+        assert!(!none.reaches_devices() && !none.reaches_device(&device("WH-1000XM5", &[], None)));
+    }
+
+    #[test]
+    fn a_manifest_written_before_devices_reads_with_none() {
+        let m = sdk::Manifest { places: &[sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.old") };
+        let bytes: [u8; 1024] = sdk::encode::<1024>(&m, "1.0.0", 0);
+        // The two bytes of its (empty) device list are what a manifest of before lacks.
+        let read = Manifest::decode(&bytes[..sdk::encoded_len(&m, "1.0.0") - 2]).unwrap();
+        assert_eq!((read.places, read.devices), (vec![Place::Devices], Vec::new()));
+    }
+
+    #[test]
+    fn globs_take_any_run_for_a_star() {
+        for (p, t, ok) in [("a*c", "abbc", true), ("a*c", "ab", false), ("*", "", true), ("ab", "abc", false), ("*b*", "abc", true), ("a*a", "a", false)] {
+            assert_eq!(glob(p, t), ok, "{p} {t}");
+        }
     }
 
     #[test]

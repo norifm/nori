@@ -138,6 +138,34 @@ pub enum Place {
     Devices,
 }
 
+/// Bluetooth devices it reaches and may control: one matches when all that is given matches.
+#[derive(Clone, Copy)]
+pub struct DeviceFilter {
+    /// Its name, `*` for any run of characters, ignoring case ("WH-1000XM*").
+    pub name: Option<&'static str>,
+    /// A service UUID it offers.
+    pub service: Option<&'static str>,
+    /// Its vendor id (Bluetooth SIG or USB).
+    pub vendor: Option<u16>,
+}
+
+impl DeviceFilter {
+    /// Any device.
+    pub const ANY: DeviceFilter = DeviceFilter { name: None, service: None, vendor: None };
+
+    pub const fn name(self, pattern: &'static str) -> DeviceFilter {
+        DeviceFilter { name: Some(pattern), ..self }
+    }
+
+    pub const fn service(self, uuid: &'static str) -> DeviceFilter {
+        DeviceFilter { service: Some(uuid), ..self }
+    }
+
+    pub const fn vendor(self, id: u16) -> DeviceFilter {
+        DeviceFilter { vendor: Some(id), ..self }
+    }
+}
+
 pub struct Manifest {
     /// Reverse DNS ("fm.nori.orbit").
     pub id: &'static str,
@@ -152,11 +180,13 @@ pub struct Manifest {
     pub rows: &'static [Row],
     pub menu: &'static [MenuAction],
     pub places: &'static [Place],
+    /// The Bluetooth devices it reaches (`bluetooth`) and is offered to control (`device-control`).
+    pub devices: &'static [DeviceFilter],
 }
 
 impl Manifest {
     pub const fn new(id: &'static str) -> Manifest {
-        Manifest { id, stage: None, net: &[], signin: &[], overrides: &[], rows: &[], menu: &[], places: &[] }
+        Manifest { id, stage: None, net: &[], signin: &[], overrides: &[], rows: &[], menu: &[], places: &[], devices: &[] }
     }
 }
 
@@ -264,6 +294,17 @@ const fn write<const N: usize>(m: &Manifest, version: &str, points: u32) -> Out<
     k = 0;
     while k < m.places.len() {
         o = o.byte(m.places[k] as u8);
+        k += 1;
+    }
+    // Last, so a host reading an older manifest finds none.
+    o = o.u16(m.devices.len());
+    k = 0;
+    while k < m.devices.len() {
+        let d = &m.devices[k];
+        o = o.opt_str(d.name).opt_str(d.service).u32(match d.vendor {
+            Some(v) => v as u32,
+            None => u32::MAX,
+        });
         k += 1;
     }
     o
