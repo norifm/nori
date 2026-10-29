@@ -1,5 +1,6 @@
 package dev.nori.music.app.ui
 
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
@@ -292,7 +293,8 @@ fun DownloadsScreen(actions: ActionsViewModel) {
         DownloadsSummary(s, plain)
         // Until the lists are worked out there is nothing to say, not "no downloads" for a frame.
         if (s == null) return@Column
-        LazyColumn(contentPadding = PaddingValues(bottom = Space.section + LocalChromeInset.current)) {
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = Space.section + LocalChromeInset.current)) {
             // Every section's rows come from this one call, so a row moving between sections is the same
             // row: its second line cross-fades rather than being drawn anew.
             fun LazyListScope.section(key: String, title: String, songs: List<Song>, section: DownloadPhase, action: (@Composable RowScope.() -> Unit)? = null) {

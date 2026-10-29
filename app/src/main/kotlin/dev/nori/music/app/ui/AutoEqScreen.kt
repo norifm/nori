@@ -1,5 +1,6 @@
 package dev.nori.music.app.ui
 
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -52,7 +53,8 @@ fun AutoEqScreen(vm: SettingsViewModel) {
             TextAction(say.refreshList, vm::downloadAutoEqIndex, enabled = !ui.busy)
         }
         SearchField(ui.query, vm::searchAutoEq, ui.searchWords, Modifier.padding(horizontal = Space.gutter, vertical = 8.dp))
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             if (ui.hits.isNotEmpty()) item {
                 GroupCard {
                     ui.hits.forEachIndexed { i, e -> GroupRow(e.entry.name, { vm.applyAutoEq(e.entry) }, subtitle = e.caption, divider = i < ui.hits.lastIndex) }

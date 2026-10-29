@@ -423,10 +423,9 @@ internal fun PrintGrid(onEnd: () -> Unit, content: androidx.compose.foundation.l
     LaunchedEffect(list) {
         androidx.compose.runtime.snapshotFlow { list.layoutInfo.let { it.totalItemsCount - (it.visibleItemsInfo.lastOrNull()?.index ?: 0) <= 12 } }.collect { if (it) onEnd() }
     }
-    val page = MaterialTheme.colorScheme.background
     androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
         if (LocalWide.current) androidx.compose.foundation.lazy.grid.GridCells.Adaptive(GRID_MIN) else androidx.compose.foundation.lazy.grid.GridCells.Fixed(2),
-        Modifier.fadesUnderTitle(page) { if (list.firstVisibleItemIndex > 0) Float.MAX_VALUE else list.firstVisibleItemScrollOffset.toFloat() },
+        Modifier.fadesUnderTitle(list),
         state = list,
         contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, top = Space.gutter, bottom = Space.gutter + LocalChromeInset.current),
         horizontalArrangement = Arrangement.spacedBy(GRID_GAP), verticalArrangement = Arrangement.spacedBy(GRID_GAP),
@@ -477,11 +476,7 @@ private fun RowFull(key: String, actions: ActionsViewModel, vm: dev.nori.music.a
                 LaunchedEffect(list, e.songs.size) {
                     androidx.compose.runtime.snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= e.songs.size - 20 }.collect { if (it) vm.loadMore() }
                 }
-                val page = MaterialTheme.colorScheme.background
-                LazyColumn(
-                    Modifier.fadesUnderTitle(page) { if (list.firstVisibleItemIndex > 0) Float.MAX_VALUE else list.firstVisibleItemScrollOffset.toFloat() },
-                    state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current),
-                ) {
+                LazyColumn(Modifier.fadesUnderTitle(list), state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
                     songRows(e.songs, actions, rows, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = e.origin)
                 }
             }

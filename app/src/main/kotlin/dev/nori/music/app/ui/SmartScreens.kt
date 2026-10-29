@@ -219,7 +219,8 @@ fun SmartList(vm: SmartViewModel = viewModel()) {
     val nav = LocalNav.current
     var deleting by remember { mutableStateOf<dev.nori.music.ffi.model.SmartPlaylist?>(null) }
     DeleteQuestion(deleting, { say.smartName(it) }, { vm.delete(it.id) }, { deleting = null })
-    LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+    val scroll = rememberLazyListState()
+    LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
         item { ActionRow(say.newSmartPlaylist, Iconoir.Plus, { nav.smartEdit("") }) }
         items(saved, key = { it.id }) { p ->
             NavRow(
@@ -352,7 +353,7 @@ fun HistoryList(actions: ActionsViewModel, vm: HistoryViewModel = viewModel()) {
     val list = rememberLazyListState()
     LaunchedEffect(list, entries.size) { snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= entries.size - 30 }.collect { if (it) vm.loadMore() } }
     val songs = remember(entries) { entries.map { it.song } }
-    LazyColumn(state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+    LazyColumn(Modifier.fadesUnderTitle(list), state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
         item { Row(Modifier.padding(horizontal = 8.dp)) { TextAction(say.listeningStats, nav::stats); TextAction(say.clearHistory, vm::clear) } }
         if (entries.isEmpty()) item { Text(noteText(Note.NO_HISTORY), Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         songRows(songs, actions, rows, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, keyPrefix = "h")

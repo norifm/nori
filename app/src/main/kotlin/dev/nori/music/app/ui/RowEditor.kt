@@ -1,5 +1,6 @@
 package dev.nori.music.app.ui
 
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -78,7 +79,8 @@ private fun <T> RowEditor(
     Column(Modifier.fillMaxSize()) {
         LargeTitle(title)
         Caption(say.holdARowToMoveIt, Modifier.padding(start = Space.gutter, bottom = 8.dp))
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             items(shown, key = key) { row ->
                 val dragged = held == row
                 Row(

@@ -1,5 +1,6 @@
 package dev.nori.music.app.ui
 
+import androidx.compose.foundation.lazy.rememberLazyListState
 import android.content.Intent
 import android.media.audiofx.AudioEffect
 import androidx.compose.foundation.background
@@ -273,7 +274,8 @@ fun SettingsScreen(vm: SettingsViewModel) {
         SearchField(query, { query = it }, stringResource(R.string.settings_search), Modifier.padding(horizontal = Space.gutter, vertical = 6.dp))
         if (query.isNotBlank()) {
             // A result is the setting itself: tapping opens its page and puts the finger on the row.
-            LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+            val scroll = rememberLazyListState()
+            LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
                 items(hits, key = { it.group + it.title }) { e ->
                     Column(Modifier.clickable { nav.settingsGroup(e.group, e.key) }) {
                         Column(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 11.dp)) {
@@ -291,7 +293,8 @@ fun SettingsScreen(vm: SettingsViewModel) {
             }
             return@Column
         }
-        LazyColumn(contentPadding = PaddingValues(top = 8.dp, bottom = LocalChromeInset.current)) {
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(top = 8.dp, bottom = LocalChromeInset.current)) {
             item(key = "groups") {
                 GroupCard {
                     groups.forEachIndexed { i, g ->
