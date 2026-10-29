@@ -26,6 +26,8 @@ import dev.nori.music.ffi.plugins.PluginPreview
 import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.plugins.Repo
 import dev.nori.music.ffi.plugins.Value
+import dev.nori.music.ffi.plugins.ControlledDevice
+import dev.nori.music.ffi.plugins.Noise
 import dev.nori.music.ffi.plugins.openPlugins
 import java.io.File
 import java.util.Locale
@@ -42,9 +44,11 @@ data class PluginNotice(val plugin: String, val problem: Boolean, val line: Stri
 /**
  * The plugin host (crates/plugins), opened once for the process over the app's settings, under [dir]:
  * the kinds of profile every core opens ([kinds]), the cards and offers Settings › Plugins draws, and
- * what the plugins say while they run. Plugins' HTTP goes through [transport], the cores' own. Built off the main thread; every call into it is made off it too.
+ * what the plugins say while they run. Plugins' HTTP goes through [transport], the cores' own, and their
+ * Bluetooth through [PluginBluetooth], watched only while an enabled plugin reaches devices. Built off the
+ * main thread; every call into it is made off it too.
  */
-class PluginHost(private val dir: File, private val settings: Settings, private val transport: () -> dev.nori.music.ffi.net.Transport) {
+class PluginHost(context: android.content.Context, private val dir: File, private val settings: Settings, private val transport: () -> dev.nori.music.ffi.net.Transport) {
     private val _cards = MutableStateFlow<List<PluginCard>>(emptyList())
     /** The installed plugins in their order, in the user's language; empty until [refresh]. */
     val cards: StateFlow<List<PluginCard>> = _cards
@@ -69,6 +73,12 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
     /** The plugins whose rows show on the devices sheet too. */
     val deviceCards: StateFlow<List<PluginCard>> = _deviceCards
 
+    private val _controlled = MutableStateFlow<List<ControlledDevice>>(emptyList())
+    /** The connected devices plugins control, as they last reported them. */
+    val controlled: StateFlow<List<ControlledDevice>> = _controlled
+
+    private val bluetooth = PluginBluetooth(context.applicationContext) { plugins }
+
     private val _notices = MutableSharedFlow<PluginNotice>(extraBufferCapacity = 8)
     /** Each line a plugin shows, as it shows it. */
     val notices: SharedFlow<PluginNotice> = _notices
@@ -87,10 +97,11 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
     private val lang get() = Locale.getDefault().language
 
     // Opened at first use, which is off the main thread: the cheap flows above are read before it is.
-    private val plugins by lazy {
+    private val plugins: dev.nori.music.ffi.plugins.Plugins by lazy {
         openPlugins(dir.path, settings.core, client).also { p ->
             // The transport is the plugins' own, whichever Kinds over them sets it.
             Kinds.withPlugins(p).setTransport(transport())
+            p.useBluetooth(bluetooth)
         }
     }
 
@@ -109,6 +120,8 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
             NoriLog.i("plugin $id: $line")
             PluginNotice(id, problem, line).let { _notice.value = it; _notices.tryEmit(it) }
         }
+        // On a plugin's own thread, never the main one.
+        override fun devicesChanged() { _controlled.value = plugins.controlled(lang) }
     }
 
     /** nori's own kinds and the enabled plugins' providers, for every core and the add form. */
@@ -126,7 +139,16 @@ class PluginHost(private val dir: File, private val settings: Settings, private 
         _names.value = _cards.value.associate { c -> c.id to (kinds.pluginName(ServerKind.Plugin(c.id), lang) ?: c.id) }
         _menus.value = ItemKind.entries.associateWith { plugins.menuEntries(it, lang) }
         _deviceCards.value = plugins.deviceCards(lang)
+        _controlled.value = plugins.controlled(lang)
     }
+
+    /** Whether an installed plugin reaches Bluetooth devices, so the permission is asked for. */
+    suspend fun reachesBluetooth(): Boolean = withContext(Dispatchers.IO) { plugins.reachesBluetooth() }
+
+    /** The Bluetooth permission was granted: the devices connected are read again. */
+    suspend fun bluetoothGranted() = withContext(Dispatchers.IO) { plugins.useBluetooth(bluetooth) }
+
+    suspend fun setNoise(device: String, noise: Noise) = withContext(Dispatchers.IO) { plugins.setNoise(device, noise) }
 
 
     /** The package at [path] as its install sheet shows it; nothing is installed. Throws [dev.nori.music.ffi.plugins.Refusal]. */

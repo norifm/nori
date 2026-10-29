@@ -835,11 +835,14 @@ internal fun OutputButton(
         dev.nori.music.ffi.devices.OutputGlyph.CAST -> Iconoir.Airplay
     }
     val description = remember(o, otherName) { otherName?.let(say::devicePlayingOn) ?: say.outputDescription(o.port, o.name) }
+    // Headphones a plugin controls: their battery beside their name, and the button opens nori's devices.
+    val controlled by viewModel<dev.nori.music.app.vm.PluginsViewModel>().controlled.collectAsStateWithLifecycle()
+    val here = remember(controlled, o) { if (controlled.isEmpty()) null else dev.nori.music.ffi.plugins.controlledOutput(controlled, o.name) }
     // With remote control or jams on, or a plugin's rows to show, the button opens nori's own devices
     // first (RemoteScreens); this phone's outputs are one row of it.
     val prefs by settings.prefs.collectAsStateWithLifecycle()
     val pluginDevices by settings.pluginDevices.collectAsStateWithLifecycle()
-    val devices = prefs.remoteControl && LocalRules.current.remote || pluginDevices.isNotEmpty()
+    val devices = prefs.remoteControl && LocalRules.current.remote || pluginDevices.isNotEmpty() || here != null
     val openDevices = LocalDevices.current
     val tell = LocalMessages.current
     val open = { if (devices) openDevices() else openOutputPicker(context, output, tell) }
@@ -851,7 +854,7 @@ internal fun OutputButton(
     ) {
         LookIcon(icon, description, Modifier.size(size), color)
         LookText(
-            otherName ?: say.outputName(o.port, o.name), color, Modifier.weight(1f, fill = false),
+            otherName ?: say.outputName(o.port, o.name).let { name -> here?.level?.let { say.withLevel(name, it) } ?: name }, color, Modifier.weight(1f, fill = false),
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )

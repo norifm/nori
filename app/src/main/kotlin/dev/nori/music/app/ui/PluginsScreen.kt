@@ -134,6 +134,7 @@ fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, back: () -> Un
     }
     AddRepoSheet(adding, { adding = false }) { url -> vm.addRepo(url); adding = false }
     InstallSheet(vm)
+    BluetoothAsk(vm, row = false)
     RemoveSheet(removing, { removing = null }) { c -> vm.uninstall(c.id); removing = null }
 }
 
@@ -219,9 +220,23 @@ private fun InstallSheet(vm: PluginsViewModel) {
             c.about?.let { Text(it) }
             Quiet(listOfNotNull(say.pluginVersion(c.version), c.kinds().takeIf { it.isNotEmpty() }, p.repo?.let { android.net.Uri.parse(it).host }).joinToString(" · "))
             Text(say.pluginMayTitle, style = MaterialTheme.typography.titleSmall)
-            say.pluginMay(c.points, c.net, c.overrides).forEach { Text("· $it") }
+            say.pluginMay(c.points, c.net, c.overrides, c.bluetooth).forEach { Text("· $it") }
         }
     }
+}
+
+/**
+ * Asks for the Bluetooth permission a plugin reaching devices needs: at once after installing one (the
+ * view model says so), and as a row on its page while it is missing.
+ */
+@Composable
+private fun BluetoothAsk(vm: PluginsViewModel, modifier: Modifier = Modifier, row: Boolean = true) {
+    if (android.os.Build.VERSION.SDK_INT < 31) return
+    var allowed by remember { mutableStateOf(vm.bluetoothAllowed()) }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> allowed = granted; vm.bluetoothAnswered(granted) }
+    val asked by vm.askBluetooth.collectAsStateWithLifecycle()
+    LaunchedEffect(asked) { if (asked) ask.launch(android.Manifest.permission.BLUETOOTH_CONNECT) }
+    if (row && !allowed) GroupCard(modifier) { GroupRow(say.allowBluetooth, { ask.launch(android.Manifest.permission.BLUETOOTH_CONNECT) }, icon = Iconoir.Bluetooth, chevron = true, divider = false) }
 }
 
 /** Removing a plugin, asked first. */
@@ -264,6 +279,9 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
             Toggle(say.pluginOn, "", card.enabled, key = "plugin-on", divider = card.repo != null) { on -> vm.turn(id, on) }
             if (card.repo != null) Toggle(say.pluginKeepVersion, "", card.held, divider = false) { held -> vm.hold(id, held) }
         }
+        val controlled by vm.controlled.collectAsStateWithLifecycle()
+        controlled.filter { it.card.id == id }.forEach { d -> DeviceControls(vm, d, Modifier.padding(top = Space.section)) }
+        if (card.bluetooth && card.enabled) BluetoothAsk(vm, Modifier.padding(top = Space.section))
         PluginRows(vm, card, null)
         if (offer != null) {
             val uri = androidx.compose.ui.platform.LocalUriHandler.current
