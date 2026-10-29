@@ -696,6 +696,9 @@ fn queue_panel_editing() {
     assert!(s.contains("▶ Song 1") && s.contains("Playing next  5 songs") && s.contains("Shuffle   Repeat"), "{s}");
     dump("queue", &s);
     assert_eq!(a.queue_sel.at, 1, "the queue opens on the song playing");
+    let sent = a.cmds.len();
+    key(&mut a, KeyCode::Char('d'));
+    assert_eq!(a.cmds.len(), sent, "the song playing is not taken out");
     key(&mut a, KeyCode::Char('j'));
     key(&mut a, KeyCode::Char('d'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Remove(2)));
