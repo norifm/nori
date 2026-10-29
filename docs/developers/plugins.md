@@ -70,7 +70,7 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
 - **Install checks first.** A package is unpacked beside the old version and refused when its manifest
   can't be read, its API version is not this host's or the one before, its id isn't reverse DNS, it
   overrides a key nori doesn't have, or it imports calls of an interface this host doesn't link
-  (`runtime::LINKED`; today `log`, `store`, `http`, `settings`, `rows`, `notices`). Its store survives an
+  (`runtime::LINKED`). Its store survives an
   update.
 - **Its own thread.** A plugin's own instance (lifecycle, hooks, provider, slots) runs on a thread made
   when it is turned on (with a lifecycle) or first called ([`Worker`](../../crates/plugins/src/worker.rs)):

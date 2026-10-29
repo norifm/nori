@@ -157,6 +157,22 @@ pub trait ResolveStream: Send + Sync {
     fn parts(&self, _address: &str) -> Option<StreamParts> {
         None
     }
+
+    /// How the bytes at the URL `address` resolved to are encrypted; None when they are in the clear.
+    /// Asked after [`ResolveStream::resolve`], on the same thread.
+    fn cipher(&self, _address: &str) -> Option<StreamCipher> {
+        None
+    }
+}
+
+/// A stream encrypted with AES-128 in counter mode ([`ResolveStream::cipher`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamCipher {
+    pub key: [u8; 16],
+    /// The counter for the file's first byte.
+    pub iv: [u8; 16],
+    /// Bytes at its start, once decrypted, that are not the song's.
+    pub skip: u64,
 }
 
 /// A stream asked for in parts ([`ResolveStream::parts`]).

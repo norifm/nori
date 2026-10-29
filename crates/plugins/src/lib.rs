@@ -15,6 +15,7 @@ mod repo;
 pub(crate) mod runtime;
 mod stage;
 mod slots;
+mod sockets;
 mod store;
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -43,6 +44,24 @@ pub type CallResult<T> = wasmtime::Result<T>;
 pub mod wit {
     pub use crate::runtime::points::{lifecycle, provider};
     pub use crate::runtime::{types, Plugin};
+}
+
+/// A stream URL a provider said is encrypted (the `streams` interface): AES-128 in counter mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Encrypted {
+    pub url: String,
+    pub key: [u8; 16],
+    /// The counter for the file's first byte.
+    pub iv: [u8; 16],
+    /// Bytes at its start, once decrypted, that are not the song's.
+    pub skip: u64,
+}
+
+impl Host {
+    /// What the plugin said during its last call of the URL it returned, taken.
+    pub fn take_encrypted(&mut self) -> Option<Encrypted> {
+        self.encrypted.take()
+    }
 }
 
 use nori_player::stage::StageSpec;

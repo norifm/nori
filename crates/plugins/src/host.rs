@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use nori_net::transport::{Exchange, FailureKind, Transport, TransportError};
 
-use crate::runtime::nori::plugin::{http, log, notices, rows, settings, store};
+use crate::runtime::nori::plugin::{http, log, notices, rows, settings, store, streams};
 use crate::runtime::{types, Host};
 
 /// A value of a plugin's row or one of nori's settings.
@@ -313,6 +313,15 @@ impl rows::Host for Host {
 impl notices::Host for Host {
     fn show(&mut self, tone: notices::Tone, words: String, args: Vec<String>) {
         self.side.notice(&self.id, tone == notices::Tone::Problem, &words, &args);
+    }
+}
+
+impl streams::Host for Host {
+    fn encrypted(&mut self, url: String, key: Vec<u8>, iv: Vec<u8>, skip: u64) {
+        match (key.try_into(), iv.try_into()) {
+            (Ok(key), Ok(iv)) => self.encrypted = Some(crate::Encrypted { url, key, iv, skip }),
+            _ => nori_model::alog::info(&format!("plugin {}: an encrypted stream's key and counter are 16 bytes each", self.id)),
+        }
     }
 }
 

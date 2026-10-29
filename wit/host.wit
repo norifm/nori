@@ -220,3 +220,11 @@ interface wake {
     /// Turns this plugin's wake receivers on or off (they are off while no plugin wants them).
     want: func(events: list<string>);
 }
+
+/// What a provider says of the stream URL its `source` call returns.
+interface streams {
+    /// `url` is encrypted with AES-128 in counter mode: `key`, the counter at `iv` for the file's first
+    /// byte. Its first `skip` bytes once decrypted are not the song's. Said during `source`, before
+    /// returning `url`.
+    encrypted: func(url: string, key: list<u8>, iv: list<u8>, skip: u64);
+}

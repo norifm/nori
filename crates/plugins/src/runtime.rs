@@ -15,13 +15,17 @@ use crate::store;
 wasmtime::component::bindgen!({
     world: "nori:plugin/plugin",
     path: "../../wit",
+    with: {
+        "nori:plugin/sockets.tcp": crate::sockets::Tcp,
+        "nori:plugin/sockets.udp": crate::sockets::Udp,
+    },
 });
 
 pub use exports::nori::plugin as points;
 pub use nori::plugin::types;
 
 /// The host interfaces linked for a plugin; a plugin importing another can't be installed here.
-pub const LINKED: [&str; 6] = ["log", "store", "http", "settings", "rows", "notices"];
+pub const LINKED: [&str; 8] = ["log", "store", "http", "settings", "rows", "notices", "sockets", "streams"];
 
 /// Fuel for one call that isn't a sound stage's (about a few seconds of work).
 pub(crate) const CALL_FUEL: u64 = 20_000_000_000;
@@ -98,6 +102,10 @@ pub struct Host {
     pub(crate) transport: crate::Transported,
     /// Its requests on their way.
     pub(crate) started: crate::host::Started,
+    /// Its sockets.
+    pub(crate) table: wasmtime::component::ResourceTable,
+    /// What the last `source` call said of the URL it returned ([`crate::Encrypted`]).
+    pub(crate) encrypted: Option<crate::Encrypted>,
 }
 
 /// A store for a plugin instance whose imports reach the host, with its memory capped.
@@ -110,6 +118,8 @@ pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>, tr
         side,
         transport,
         started: Default::default(),
+        table: Default::default(),
+        encrypted: None,
     };
     let mut s = Store::new(engine(), host);
     s.limiter(|h| &mut h.limits);
@@ -190,6 +200,8 @@ pub(crate) fn linker(component: &Component) -> Result<Linker<Host>, Refusal> {
     nori::plugin::settings::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::rows::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::notices::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::sockets::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::streams::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     wasi(&mut l, component).map_err(err)?;
     Ok(l)
 }

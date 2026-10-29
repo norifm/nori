@@ -628,6 +628,60 @@ fn addresses_open_at_the_resolved_url() {
     assert_eq!(resolver.refused.lock().len(), 1, "a served URL is not refused");
 }
 
+/// `enc:` addresses resolve to an encrypted file: 100 bytes that are not the song's, then the song.
+struct Encrypted;
+
+const KEY: [u8; 16] = [7; 16];
+const IV: [u8; 16] = [0x72, 0xe0, 0x67, 0xfb, 0xdd, 0xcb, 0xcf, 0x77, 0xeb, 0xe8, 0xbc, 0x64, 0x3f, 0x63, 0x0d, 0x93];
+
+impl nori_core::providers::ResolveStream for Encrypted {
+    fn resolve(&self, address: &str) -> Option<nori_core::client::NetResult<String>> {
+        address.strip_prefix("enc:").map(|name| Ok(format!("https://cdn/{name}")))
+    }
+
+    fn refused(&self, _: &str) {}
+
+    fn cipher(&self, address: &str) -> Option<nori_core::providers::StreamCipher> {
+        address.starts_with("enc:").then_some(nori_core::providers::StreamCipher { key: KEY, iv: IV, skip: 100 })
+    }
+}
+
+/// The song's bytes.
+fn song() -> Vec<u8> {
+    (0..5000u32).map(|i| (i * 7 % 251) as u8).collect()
+}
+
+/// The file served: its header and the song, encrypted. `ranged: false` answers every request from byte 0.
+struct EncryptedFile {
+    ranged: bool,
+}
+
+impl ByteSource for EncryptedFile {
+    fn open(&self, _: &str, from: u64) -> Result<Body, nori_engine::OpenError> {
+        use ctr::cipher::{KeyIvInit, StreamCipher};
+        let mut file = [vec![0xa7; 100], song()].concat();
+        ctr::Ctr128BE::<aes::Aes128>::new(&KEY.into(), &IV.into()).apply_keystream(&mut file);
+        let start = if self.ranged { from } else { 0 };
+        Ok(Body { start, len: Some(file.len() as u64), reader: Box::new(Cursor::new(file[start as usize..].to_vec())) })
+    }
+}
+
+/// An encrypted stream reads as the song, decrypted, from any byte, past the bytes before the song's.
+#[test]
+fn an_encrypted_stream_reads_as_its_song() {
+    for ranged in [true, false] {
+        let resolving = nori_engine::core::Resolving::new(Arc::new(EncryptedFile { ranged }), Arc::new(Encrypted));
+        for from in [0, 1, 17, 4096] {
+            let mut body = resolving.open("enc:song", from).unwrap();
+            let mut got = Vec::new();
+            body.reader.read_to_end(&mut got).unwrap();
+            let start = if ranged { from } else { 0 };
+            assert_eq!((body.start, body.len), (start, Some(5000)), "ranged {ranged}, from {from}");
+            assert!(got == song()[start as usize..], "ranged {ranged}, from {from}: the song's bytes");
+        }
+    }
+}
+
 /// Addresses `fails:<n>` resolve to the provider's failure `n`.
 struct Failing;
 
