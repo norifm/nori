@@ -2274,7 +2274,7 @@ fn a_plugin_says_what_it_is_before_it_is_installed() {
     dump("plugins-preview", &s);
     assert!(s.contains(&format!("Install Test {}?", preview.card.version)) && s.contains("enter install · esc cancel"), "{s}");
     let Some(Overlay::Confirm { lines, .. }) = &a.overlay else { panic!("no sheet") };
-    assert_eq!(lines, &["It's a music source, a sound effect, a playback helper. It changes playback values.", "Connects to allowed.example. Changes playback.speed.", "It stays off until you turn it on."]);
+    assert_eq!(lines, &["It's a music source, a sound effect, a playback helper, a mixer, a lyrics source, a scrobbler. It changes playback values.", "Connects to allowed.example. Changes playback.speed.", "It stays off until you turn it on."]);
     key(&mut a, KeyCode::Enter);
     let Some(Cmd::Plugin(crate::app::PluginCmd::InstallPreview(p))) = a.cmds.pop() else { panic!("not installed") };
     assert_eq!(plugins.install_preview(*p), Ok(nori_plugins::testing::FIXTURE.into()));
