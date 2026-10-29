@@ -1772,7 +1772,6 @@ impl App {
                 };
                 Pick {
                     title: words::mix_name(t.name).into(),
-                    sub: words::mix_caption(t.favourites).into(),
                     covers: ModelRc::new(VecModel::from(t.covers.iter().map(SharedString::from).collect::<Vec<_>>())),
                     seed: colour(mix_tile_colours(t.id.clone())[0]),
                     page: colour(page),

@@ -18,9 +18,7 @@
 
 <Page back ready={page.data !== undefined} error={page.error}>
   {#if mix}
-    <Hero cover={mix.covers[0]} title={W.mixNames[mix.name] ?? mix.name} fallback="sparks" label={songs.length ? W.listCaption(songs.length, mix.seconds) : ""} onplay={(s) => void player.play(songs, 0, s, "Mix", id)}>
-      {#snippet by()}{W.mixCaption(mix.favourites)}{/snippet}
-    </Hero>
+    <Hero cover={mix.covers[0]} title={W.mixNames[mix.name] ?? mix.name} fallback="sparks" label={songs.length ? W.listCaption(songs.length, mix.seconds) : ""} onplay={(s) => void player.play(songs, 0, s, "Mix", id)}></Hero>
     <SongList {songs} kind="Mix" {id} />
   {:else}<p class="empty">{W.empty}</p>{/if}
 </Page>

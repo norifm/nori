@@ -116,12 +116,12 @@ private fun MixArt(card: MixCard, size: androidx.compose.ui.unit.Dp) {
 
 private val MIX_CARD_WIDTH = 150.dp
 private val ART_FADE = androidx.compose.ui.graphics.Brush.verticalGradient(0.45f to androidx.compose.ui.graphics.Color.Black, 1f to androidx.compose.ui.graphics.Color.Transparent)
-private val MIX_CARD_HEIGHT = 206.dp
+private val MIX_CARD_HEIGHT = 186.dp
 
 /**
  * A mix on Home: a portrait card on the season's paper dyed with the mix's colour, its art a square on
- * top running into that paper, the name and a line under it in the card's own ink. [fill]: as wide as
- * the cell it is in, the same proportions.
+ * top running into that paper, and its name low on the paper, over the end of the fade, in the card's
+ * own ink. [fill]: as wide as the cell it is in, the same proportions.
  */
 @Composable
 internal fun MixCardView(card: MixCard, papers: Papers, modifier: Modifier = Modifier, fill: Boolean = false, onClick: () -> Unit) {
@@ -140,7 +140,7 @@ private fun MixCardBody(card: MixCard, papers: Papers, width: androidx.compose.u
     val page = tint?.background ?: androidx.compose.ui.graphics.Color(dyed.page.toInt())
     val ink = tint?.let { androidx.compose.ui.graphics.Color(it.look[dev.nori.music.look.CoverLook.ON]) } ?: androidx.compose.ui.graphics.Color(dyed.ink.toInt())
     val seed = remember(card.id) { tileColours(card.id)[0] }
-    Column(modifier.size(width, width * (MIX_CARD_HEIGHT / MIX_CARD_WIDTH)).clip(TileShape).background(page).clickable(onClick = onClick)) {
+    Box(modifier.size(width, width * (MIX_CARD_HEIGHT / MIX_CARD_WIDTH)).clip(TileShape).background(page).clickable(onClick = onClick)) {
         // The art is rubbed out into the card's paper rather than painted over with it: a painted edge
         // let the covers show through as a light line wherever it fell between pixels (an overscroll stretch).
         Box(
@@ -149,17 +149,11 @@ private fun MixCardBody(card: MixCard, papers: Papers, width: androidx.compose.u
                 .drawWithContent { drawContent(); drawRect(ART_FADE, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn) }
                 .background(seed),
         ) { MixCovers(card.covers, width) }
-        Column(Modifier.fillMaxSize().padding(horizontal = 12.dp), Arrangement.Center) {
-            Text(
-                card.title, style = titled(MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp, fontWeight = FontWeight.SemiBold)),
-                color = ink, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-            )
-            // Favorites' name says what it is made from.
-            if (!card.favourites) Text(
-                say.mixLineMade, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                color = ink.copy(alpha = 0.7f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-            )
-        }
+        Text(
+            card.title, Modifier.align(Alignment.BottomStart).padding(start = 13.dp, end = 13.dp, bottom = 12.dp),
+            style = titled(MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold)),
+            color = ink, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
     }
 }
 

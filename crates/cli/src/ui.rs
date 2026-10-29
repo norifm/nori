@@ -266,7 +266,7 @@ fn item_line(item: &Item, w: usize, t: &Theme, starred: bool, playing: bool) -> 
         Item::Album(a) | Item::DownloadedAlbum(a) => (a.name.as_str(), a.artist.clone(), if a.year > 0 { a.year.to_string() } else { String::new() }),
         Item::Song(songs, at) => (songs[*at].title.as_str(), songs[*at].artist.clone(), clock(songs[*at].duration as i64 * 1000)),
         Item::Playlist(p) => (p.name.as_str(), p.owner.clone().unwrap_or_default(), crate::text::playlist_line(p)),
-        Item::Mix(m) => (crate::text::mix_name(m.name), crate::text::mix_line(m.favourites).to_string(), String::new()),
+        Item::Mix(m) => (crate::text::mix_name(m.name), String::new(), String::new()),
         Item::Artist(a) => (a.name.as_str(), String::new(), a.album_count.map(crate::text::albums).unwrap_or_default()),
     };
     let name_w = (w * 11 / 20).max(12);

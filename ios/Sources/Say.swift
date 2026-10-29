@@ -214,7 +214,6 @@ enum Say {
         default: return download
         }
     }
-    static let mixLineMade = "Made for you"
     static let continueLabel = "Continue"
     static let resume = "Resume"
     /// The offered queue's line: "Artist · 3 of 12".

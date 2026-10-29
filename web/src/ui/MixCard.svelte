@@ -11,7 +11,6 @@
 
   let { mix }: { mix: MixTile } = $props();
   const title = $derived(W.mixNames[mix.name] ?? mix.name);
-  const line = $derived(W.mixCaption(mix.favourites));
   const covers = $derived(mix.covers.length >= 4 ? mix.covers.slice(0, 4) : mix.covers.slice(0, 1));
 </script>
 
@@ -20,14 +19,13 @@
   href={href("mix", mix.id)}
   style:--card={mix.page}
   style:--card-ink={mix.ink}
-  oncontextmenu={(e) => (e.preventDefault(), wholeMenu("mix", mix.id, { title, line, cover: mix.covers[0] }, pointer(e)))}
+  oncontextmenu={(e) => (e.preventDefault(), wholeMenu("mix", mix.id, { title, line: "", cover: mix.covers[0] }, pointer(e)))}
 >
   <span class="art" class:mosaic={covers.length === 4}>
     {#each covers as c (c)}<img src={c} alt="" loading="lazy" decoding="async" />{/each}
   </span>
   <span class="words">
-    <span class="title clip">{title}</span>
-    <span class="line clip">{line}</span>
+    <span class="title">{title}</span>
   </span>
 </a>
 
@@ -36,7 +34,7 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    aspect-ratio: 150 / 206;
+    aspect-ratio: 150 / 186;
     border-radius: 18px;
     overflow: hidden;
     background: var(--card);
@@ -65,21 +63,21 @@
     inset: 0;
     background: linear-gradient(transparent 45%, var(--card));
   }
+  /* The name low on the paper, over the end of the fade. */
   .words {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    min-width: 0;
-    padding: 0 12px;
+    position: absolute;
+    left: 13px;
+    right: 13px;
+    bottom: 12px;
   }
   .title {
-    font: 600 18px/1.25 var(--display);
+    font: 600 20px/22px var(--display);
     letter-spacing: -0.3px;
-  }
-  .line {
-    font-size: 12px;
-    color: color-mix(in srgb, var(--card-ink) 70%, transparent);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
   .mix::after {
     content: "";
