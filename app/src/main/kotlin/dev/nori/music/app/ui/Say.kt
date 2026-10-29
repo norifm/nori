@@ -857,6 +857,9 @@ class Say(private val r: Resources) {
 
     /** Stopping every download: its title, and what it does to [unfinished] songs. */
     val stopAllTitle: String get() = r.getString(R.string.stop_all_title)
+    val discardChanges: String get() = r.getString(R.string.discard_changes)
+    val discard: String get() = r.getString(R.string.discard)
+    val keepEditing: String get() = r.getString(R.string.keep_editing)
     fun stopAllText(unfinished: Int): String = r.getQuantityString(R.plurals.stop_all_text, unfinished, unfinished)
 
     fun note(n: Note): String = r.getString(n.id)

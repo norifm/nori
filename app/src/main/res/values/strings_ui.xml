@@ -357,6 +357,9 @@
 
     <!-- Downloads. -->
     <string name="stop_all_title">Stop all downloads?</string>
+    <string name="discard_changes">Discard changes?</string>
+    <string name="discard">Discard</string>
+    <string name="keep_editing">Keep editing</string>
     <plurals name="stop_all_text">
         <item quantity="one">%d song that has not finished downloading leaves the queue. Songs already downloaded stay.</item>
         <item quantity="other">%d songs that have not finished downloading leave the queue. Songs already downloaded stay.</item>

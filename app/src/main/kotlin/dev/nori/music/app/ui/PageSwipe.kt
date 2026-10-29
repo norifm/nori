@@ -61,6 +61,12 @@ class PageSwipe(private val controller: NavHostController, private val scope: Co
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap>?) = size > KEPT
     }
 
+    /**
+     * The page on top asks before it goes (a form with changes): no swipe or edge gesture takes it back, and
+     * the system's back reaches the page's own handler.
+     */
+    var held by mutableStateOf(false)
+
     /** Changes with [pictures], so whatever asks [canGoBack] in composition asks again when one arrives. */
     private var kept by mutableIntStateOf(0)
 
@@ -74,6 +80,7 @@ class PageSwipe(private val controller: NavHostController, private val scope: Co
      */
     fun canGoBack(edge: Boolean = false): Boolean {
         kept
+        if (held) return false
         val top = controller.currentBackStackEntry ?: return false
         val back = controller.previousBackStackEntry ?: return false
         return (edge || top.destination.route !in ROOTS) && back.id in pictures
