@@ -27,7 +27,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -271,7 +273,21 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
     val saved by vm.saved.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     // What the form opens with, and every change to its rules, are the core's (`smart/draft.rs`).
-    var draft by remember(id, saved.size) { mutableStateOf(dev.nori.music.ffi.library.smartEditOpen(vm.find(id)?.let { it.copy(name = say.smartName(it)) })) }
+    val opened = remember(id, saved.size) { dev.nori.music.ffi.library.smartEditOpen(vm.find(id)?.let { it.copy(name = say.smartName(it)) }) }
+    var draft by remember(opened) { mutableStateOf(opened) }
+    // Changes are not dropped by a stray back: back asks first.
+    val changed = draft != opened
+    val swipe = LocalPageSwipe.current!!
+    DisposableEffect(changed) { swipe.held = changed; onDispose { swipe.held = false } }
+    var asking by remember { mutableStateOf(false) }
+    BackHandler(changed) { asking = true }
+    NoriDialog(asking, { asking = false }) {
+        AlertCard(
+            title = { Text(say.discardChanges) },
+            confirmButton = { TextAction(say.discard, { asking = false; swipe.held = false; nav.back() }, destructive = true) },
+            dismissButton = { TextAction(say.keepEditing, { asking = false }) },
+        )
+    }
     val fields = remember { dev.nori.music.ffi.library.smartEditFields() }
     val sorts = remember { dev.nori.music.ffi.library.smartEditSchema().sorts }
     var error by remember { mutableStateOf<String?>(null) }
