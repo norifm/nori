@@ -318,6 +318,8 @@ enum Command {
     Device(Device),
     Release,
     Follow(Option<Box<Leading>>),
+    /// Plays through this output from now on ([`Engine::set_card`]).
+    Card(Box<dyn AudioOutput>),
     /// The device is on a network again.
     NetworkBack,
     Stop,
@@ -493,6 +495,12 @@ impl Engine {
     /// music moved to another device. Play opens it again where it was.
     pub fn release_now(&self) {
         self.send(Command::Release);
+    }
+
+    /// Plays through `card` from now on, where the music is, closing the output it played through: a
+    /// cast's audio (`cast`), or the device's own output again after one.
+    pub fn set_card(&self, card: Box<dyn AudioOutput>) {
+        self.send(Command::Card(card));
     }
 
     /// The device is on a network again: a song waiting for it is tried now.
@@ -1514,6 +1522,15 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.release();
             }
             Command::Follow(lead) => self.follow(lead),
+            Command::Card(card) => {
+                let going = self.going();
+                self.pause(now, 0);
+                self.release();
+                self.p.sink.track.replace(card);
+                if going {
+                    self.play();
+                }
+            }
             Command::NetworkBack => {
                 if self.retry_at.is_some() {
                     self.try_again();

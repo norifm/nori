@@ -28,7 +28,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn start(manifest: Arc<Manifest>, dir: PathBuf, component: Component, side: Arc<dyn Side>, transport: crate::Transported) -> Result<Worker, Refusal> {
+    pub(crate) fn start(manifest: Arc<Manifest>, dir: PathBuf, component: Component, side: Arc<dyn Side>, transport: crate::Transported, lan: Arc<crate::lan::Lan>) -> Result<Worker, Refusal> {
         let linker = runtime::linker(&component)?;
         let (jobs, rx) = mpsc::channel::<Job>();
         let name = format!("plugin {}", manifest.id);
@@ -37,7 +37,7 @@ impl Worker {
             .spawn(move || {
                 // A fresh instance (the first, or one after a call failed), started when it has a lifecycle.
                 let make = || -> wasmtime::Result<Running> {
-                    let mut store = runtime::store(manifest.clone(), &dir, side.clone(), transport.clone());
+                    let mut store = runtime::store(manifest.clone(), &dir, side.clone(), transport.clone(), lan.clone());
                     store.set_fuel(runtime::CALL_FUEL)?;
                     let plugin = Plugin::instantiate(&mut store, &component, &linker)?;
                     if manifest.extends("lifecycle") {

@@ -1,12 +1,14 @@
 //! Each extension point nori's tests check, in its plainest form (nori_plugins::testing).
 
+mod lan;
+
 use nori_plugin_sdk::http::{Method, Request};
 use nori_plugin_sdk::sound_stage::{Format, Inputs};
 use nori_plugin_sdk::types::Value;
 use nori_plugin_sdk::slots::{InfoLine, Motion, Sleeve};
 use nori_plugin_sdk::provider;
 use nori_plugin_sdk::types::{Error, Explicit, Found, Item, Song};
-use nori_plugin_sdk::{settings, state, store, Glyph, ItemKind, Lifecycle, Manifest, MenuAction, Place, Provider, Row, Slot, Slots, SoundStage};
+use nori_plugin_sdk::{settings, state, store, Glyph, Hooks, ItemKind, Lifecycle, Manifest, MenuAction, Place, Provider, Row, Slot, Slots, SoundStage};
 
 #[derive(Default)]
 struct Test {
@@ -57,6 +59,7 @@ impl Lifecycle for Test {
             let heard = fetch_together("https://allowed.example/together/one", "https://allowed.example/together/two");
             nori_plugin_sdk::notices::show(nori_plugin_sdk::notices::Tone::Info, "together", &[heard]);
         }
+        lan::action(&id);
     }
 
     fn start(&mut self) {
@@ -157,9 +160,19 @@ impl Slots for Test {
     }
 }
 
+impl Hooks for Test {
+    fn on(&mut self, event: nori_plugin_sdk::hooks::Event) {
+        lan::on(event);
+    }
+
+    fn served(&mut self, request: nori_plugin_sdk::hooks::ServedRequest) -> Option<nori_plugin_sdk::hooks::ServedResponse> {
+        lan::served(request)
+    }
+}
+
 const MANIFEST: Manifest = Manifest {
     stage: Some(Slot::Master),
-    net: &["allowed.example"],
+    net: &["allowed.example", "lan"],
     overrides: &["playback.speed"],
     rows: &[Row::level("gain", 0.0, 2.0, 0.1, 0.5)],
     menu: &[MenuAction { id: "count", glyph: Glyph::Info, kinds: &[ItemKind::Song] }],
@@ -167,4 +180,4 @@ const MANIFEST: Manifest = Manifest {
     ..Manifest::new("fm.nori.test")
 };
 
-nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, sound_stage, provider, slots);
+nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, hooks, sound_stage, provider, slots);

@@ -667,6 +667,12 @@ impl RingTrack {
         self.device.is_some()
     }
 
+    /// Takes `output` as the device from now on, the old one released.
+    pub(crate) fn replace(&mut self, output: Box<dyn AudioOutput>) {
+        self.release();
+        self.output = output;
+    }
+
     /// Releases the device; the next stream reopens it.
     pub(crate) fn release(&mut self) {
         if self.device.take().is_some() {

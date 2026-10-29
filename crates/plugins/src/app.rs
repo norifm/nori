@@ -20,6 +20,13 @@ pub trait Client: Send + Sync {
     fn status(&self, id: String, row: String, words: String, args: Vec<String>);
     fn shown(&self, id: String, row: String, shown: bool, enabled: bool);
     fn notice(&self, id: String, problem: bool, words: String, args: Vec<String>);
+    /// Browses mDNS for `kind` while on, handing each service found to [`Plugins::discovered`].
+    fn browse(&self, kind: String, on: bool);
+    /// Holds the multicast lock while on (Android); nothing elsewhere.
+    fn multicast(&self, on: bool);
+    /// The cast running changed: the client shows it and holds what the platform needs for it
+    /// ([`crate::Cast`]); None, it ended.
+    fn cast(&self, cast: Option<crate::Cast>);
 }
 
 struct App {
@@ -65,6 +72,18 @@ impl Side for App {
 
     fn notice(&self, id: &str, problem: bool, words: &str, args: &[String]) {
         self.client.notice(id.into(), problem, words.into(), args.to_vec());
+    }
+
+    fn browse(&self, kind: &str, on: bool) {
+        self.client.browse(kind.into(), on);
+    }
+
+    fn multicast(&self, on: bool) {
+        self.client.multicast(on);
+    }
+
+    fn cast(&self, cast: Option<&crate::Cast>) {
+        self.client.cast(cast.cloned());
     }
 }
 
