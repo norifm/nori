@@ -765,7 +765,7 @@ fn fetching_on<C: Clock + Sync>(clock: &C) -> Fetching {
 /// The engine's worker over `library`, `app` and `queue`, taking commands from `rx`; `woken` wakes it
 /// for a device change sent through `devices`.
 #[allow(clippy::too_many_arguments)]
-fn worker<L, A, Q, E, C>(library: L, app: A, queue: Q, mut output: Box<dyn AudioOutput>, offload: Option<Box<dyn OffloadOutput>>, config: Config, clock: C, rx: Receiver<Command>, devices: Sender<Command>, woken: Box<dyn Fn() + Send + Sync>, events: E, status: Arc<Mutex<Status>>, fetching: Arc<Fetching>) -> Worker<L, A, Q, E, C>
+fn worker<L, A, Q, E, C>(library: L, app: A, queue: Q, output: Box<dyn AudioOutput>, offload: Option<Box<dyn OffloadOutput>>, config: Config, clock: C, rx: Receiver<Command>, devices: Sender<Command>, woken: Box<dyn Fn() + Send + Sync>, events: E, status: Arc<Mutex<Status>>, fetching: Arc<Fetching>) -> Worker<L, A, Q, E, C>
 where
     L: Library,
     A: App,
@@ -773,14 +773,15 @@ where
     E: FnMut(Event),
     C: Clock,
 {
+    let mut track = RingTrack::new(output);
     // Device changes arrive on the output's own thread.
-    output.watch(Box::new(move |d| {
+    track.watch(Arc::new(move |d| {
         if devices.send(Command::Device(d)).is_ok() {
             woken();
         }
     }));
     let songs = Sources::new(library, load_control(config.memory_mb), config.platform, clock.waits(), std::thread::current(), fetching);
-    let player = Player::build(songs, queue, app, RingTrack::new(output));
+    let player = Player::build(songs, queue, app, track);
     Worker::new(player, offload.map(Offload::new), rx, events, status, config, clock)
 }
 

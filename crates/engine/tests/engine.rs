@@ -3847,11 +3847,12 @@ fn another_card_plays_on_from_where_the_music_was() {
     assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 4));
     // The same card's recording, through an output of its own.
     let next = Recorder { card: rig.card.clone(), opened: Arc::default(), shut: Arc::default(), watch: Arc::default(), flushes: Arc::default(), shallow: Arc::default() };
-    let (opened, shut) = (next.opened.clone(), rig.shut.clone());
+    let (opened, shut, watched) = (next.opened.clone(), rig.shut.clone(), next.watch.clone());
     let left = rig.heard.lock().len();
     rig.engine.set_card(Box::new(next), false);
     assert!(rig.wait_for(10, |r| r.heard.lock().len() > left + RATE as usize * 4));
     assert_eq!((shut.load(Ordering::Relaxed), opened.load(Ordering::Relaxed)), (1, 1), "the old one closed, the new one opened");
+    assert!(watched.lock().is_some(), "the new one tells of its device's changes");
     assert_eq!(rig.engine.status().state, State::Playing);
     let heard = rig.heard.lock();
     let at = (0..a.len() - 256).step_by(2).find(|&k| heard[left..left + 256] == a[k..k + 256]).expect("the song, heard on");

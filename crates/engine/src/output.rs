@@ -558,6 +558,8 @@ pub(crate) struct Slipped {
 /// frames and song time.
 pub(crate) struct RingTrack {
     output: Box<dyn AudioOutput>,
+    /// Where the output's device changes go; each output put in tells it too.
+    watch: Option<Arc<dyn Fn(Device) + Send + Sync>>,
     ring: Option<Arc<Ring>>,
     device: Option<OutputFormat>,
     /// What the device was asked for (it may have given something else).
@@ -621,6 +623,7 @@ impl RingTrack {
     pub(crate) fn new(output: Box<dyn AudioOutput>) -> RingTrack {
         RingTrack {
             output,
+            watch: None,
             ring: None,
             device: None,
             asked: None,
@@ -671,6 +674,16 @@ impl RingTrack {
     pub(crate) fn replace(&mut self, output: Box<dyn AudioOutput>) {
         self.release();
         self.output = output;
+        if let Some(changed) = self.watch.clone() {
+            self.output.watch(Box::new(move |d| changed(d)));
+        }
+    }
+
+    /// Sends the output's device changes, and those of each output put in after it, to `changed`.
+    pub(crate) fn watch(&mut self, changed: Arc<dyn Fn(Device) + Send + Sync>) {
+        let to = changed.clone();
+        self.output.watch(Box::new(move |d| to(d)));
+        self.watch = Some(changed);
     }
 
     /// Releases the device; the next stream reopens it.
