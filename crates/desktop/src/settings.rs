@@ -1,6 +1,7 @@
 //! Settings pages: the core's (`settings_pages`, desktop client), worded and drawn. Rows report back the
 //! setting name and the picked value.
 
+use std::collections::{HashMap, HashSet};
 use nori_core::numbers::{self, POINT};
 use nori_core::settings::{season_follow_value, season_of, EqLevel, Level, StoredPrefs, ThemeSeason};
 use nori_core::settings_model::{self, BeatModel, EqStatus, KeyAction, SettingKind, SettingsState};
@@ -11,7 +12,7 @@ use nori_look::theme;
 
 use nori_core::providers::Kinds;
 use nori_host::desktop::OfferState;
-use nori_plugins::{ControlledDevice, Offers, PluginCard, PluginRow, Repo, RowKind, Value};
+use nori_plugins::{AssetLine, AssetState, ControlledDevice, Offers, PluginCard, PluginRow, Repo, RowKind, Value};
 
 use crate::look::Today;
 use crate::{words, SettingRow};
@@ -673,7 +674,14 @@ fn model(groups: Vec<(String, Vec<Row>)>, p: &StoredPrefs, f: &Facts, today: Tod
 /// The plugins as Settings › Plugins shows them: installed, offered by the repos, and the repos.
 #[derive(Default)]
 pub struct Plugged {
+    /// As their plugins said them last (`Watched::as_said`).
     pub cards: Vec<PluginCard>,
+    /// Rows that show but take no input now, by plugin and row.
+    pub off: HashSet<(String, String)>,
+    /// Each plugin's assets, those that have some.
+    pub assets: HashMap<String, Vec<AssetLine>>,
+    /// The connected devices plugins control.
+    pub controlled: Vec<ControlledDevice>,
     pub repos: Vec<Repo>,
     pub shelf: Shelf,
 }
@@ -715,6 +723,8 @@ pub enum PluginAct {
     RemoveRepo(String),
     /// A controlled device's noise control, by the device's id.
     Noise(String),
+    /// Lets a plugin fetch its assets on mobile data.
+    AllowMobile(String),
 }
 
 impl PluginAct {
@@ -744,6 +754,7 @@ impl PluginAct {
             "repo-trust" => PluginAct::TrustRepo(id()),
             "repo-remove" => PluginAct::RemoveRepo(id()),
             "device-noise" => PluginAct::Noise(id()),
+            "plugin-mobile" => PluginAct::AllowMobile(id()),
             _ => return None,
         })
     }
@@ -765,6 +776,7 @@ impl PluginAct {
             PluginAct::TrustRepo(url) => format!("repo-trust:{url}"),
             PluginAct::RemoveRepo(url) => format!("repo-remove:{url}"),
             PluginAct::Noise(device) => format!("device-noise:{device}"),
+            PluginAct::AllowMobile(id) => format!("plugin-mobile:{id}"),
         }
     }
 }
@@ -801,7 +813,17 @@ fn plugin_groups(p: &Plugged) -> Vec<(String, Vec<Row>)> {
             options: order.into_iter().map(|(label, _)| (label.clone(), label)).collect(),
             ..Default::default()
         });
-        groups.extend(card_groups(c, rows));
+        let mut page = card_groups(c, rows, &p.off);
+        let devices = p.controlled.iter().filter(|d| d.card.id == c.id);
+        page.splice(1..1, devices.map(|d| (d.name.clone(), device_controls(d))).filter(|(_, rows)| !rows.is_empty()));
+        groups.extend(page);
+        if let Some(assets) = p.assets.get(&c.id) {
+            let mut rows: Vec<Row> = assets.iter().map(|a| info(&a.name, words::asset_state(a))).collect();
+            if assets.iter().any(|a| a.state == AssetState::WaitingForWifi) {
+                rows.push(Row { kind: BUTTON, name: PluginAct::AllowMobile(c.id.clone()).name(), title: words::ASSETS_ON_MOBILE.into(), enabled: true, ..Default::default() });
+            }
+            groups.push((format!("{} · {}", c.name, words::FILES), rows));
+        }
         if let Shelf::Read(offers) = &p.shelf {
             groups.extend(versions(c, offers));
         }
@@ -869,11 +891,11 @@ fn versions(c: &PluginCard, offers: &Offers) -> Option<(String, Vec<Row>)> {
 }
 
 /// One row of plugin `plugin`'s page, drawn as the settings' own rows are; its hint is the quiet line
-/// under it.
-fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
+/// under it. Off, it shows but takes no input.
+fn plugin_row(plugin: &str, r: &PluginRow, off: bool) -> Row {
     let name = PluginAct::Row(plugin.into(), r.id.clone()).name();
     let hint = r.hint.clone().unwrap_or_default();
-    let base = Row { name, title: r.label.clone(), detail: hint.clone(), enabled: true, ..Default::default() };
+    let base = Row { name, title: r.label.clone(), detail: hint.clone(), enabled: !off, ..Default::default() };
     // A value said on the quiet line, the hint after it.
     let said = |value: String| [value, hint.clone()].into_iter().filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" · ");
     match r.kind {
@@ -915,14 +937,15 @@ fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
     }
 }
 
-/// Card `c`'s page as groups: its rows under its name (after `head`), each section under its own.
-fn card_groups(c: &PluginCard, head: Vec<Row>) -> Vec<(String, Vec<Row>)> {
+/// Card `c`'s page as groups: its rows under its name (after `head`), each section under its own;
+/// those in `off` take no input.
+fn card_groups(c: &PluginCard, head: Vec<Row>, off: &HashSet<(String, String)>) -> Vec<(String, Vec<Row>)> {
     let mut groups = Vec::new();
     let (mut title, mut rows) = (c.name.clone(), head);
     for r in &c.rows {
         match r.kind {
             RowKind::Section => groups.push((std::mem::replace(&mut title, r.label.clone()), std::mem::take(&mut rows))),
-            _ => rows.push(plugin_row(&c.id, r)),
+            _ => rows.push(plugin_row(&c.id, r, off.contains(&(c.id.clone(), r.id.clone())))),
         }
     }
     groups.push((title, rows));
@@ -931,29 +954,34 @@ fn card_groups(c: &PluginCard, head: Vec<Row>) -> Vec<(String, Vec<Row>)> {
 
 /// The devices panel's plugin rows: each controlled device's page (its batteries and noise control,
 /// then its plugin's rows), then the rows of the plugins `cards` show there, as on their pages.
-pub fn device_rows(cards: &[PluginCard], controlled: &[ControlledDevice], prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
-    model(device_groups(cards, controlled), prefs, f, today)
+pub fn device_rows(cards: &[PluginCard], controlled: &[ControlledDevice], off: &HashSet<(String, String)>, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    model(device_groups(cards, controlled, off), prefs, f, today)
 }
 
-fn device_groups(cards: &[PluginCard], controlled: &[ControlledDevice]) -> Vec<(String, Vec<Row>)> {
+/// A controlled device's batteries and noise control.
+fn device_controls(d: &ControlledDevice) -> Vec<Row> {
+    let mut rows = Vec::new();
+    let battery = words::battery(&d.battery);
+    if !battery.is_empty() {
+        rows.push(info(words::BATTERY, battery));
+    }
+    if !d.noise_modes.is_empty() {
+        let options = d.noise_modes.iter().map(|m| (words::noise(*m).to_string(), String::new())).collect();
+        let chosen = d.noise.and_then(|n| d.noise_modes.iter().position(|m| *m == n)).map_or(-1, |i| i as i32);
+        rows.push(Row { kind: CHOICE, name: PluginAct::Noise(d.id.clone()).name(), title: words::NOISE_CONTROL.into(), options, chosen: Some(chosen), enabled: true, ..Default::default() });
+    }
+    rows
+}
+
+fn device_groups(cards: &[PluginCard], controlled: &[ControlledDevice], off: &HashSet<(String, String)>) -> Vec<(String, Vec<Row>)> {
     let mut groups = Vec::new();
     for d in controlled {
-        let mut rows = Vec::new();
-        let battery = words::battery(&d.battery);
-        if !battery.is_empty() {
-            rows.push(info(words::BATTERY, battery));
-        }
-        if !d.noise_modes.is_empty() {
-            let options = d.noise_modes.iter().map(|m| (words::noise(*m).to_string(), String::new())).collect();
-            let chosen = d.noise.and_then(|n| d.noise_modes.iter().position(|m| *m == n)).map_or(-1, |i| i as i32);
-            rows.push(Row { kind: CHOICE, name: PluginAct::Noise(d.id.clone()).name(), title: words::NOISE_CONTROL.into(), options, chosen: Some(chosen), enabled: true, ..Default::default() });
-        }
-        groups.push((d.name.clone(), rows));
+        groups.push((d.name.clone(), device_controls(d)));
         if !cards.iter().any(|c| c.id == d.card.id) {
-            groups.extend(card_groups(&d.card, Vec::new()));
+            groups.extend(card_groups(&d.card, Vec::new(), off));
         }
     }
-    groups.extend(cards.iter().flat_map(|c| card_groups(c, Vec::new())));
+    groups.extend(cards.iter().flat_map(|c| card_groups(c, Vec::new(), off)));
     groups.retain(|(_, rows)| !rows.is_empty());
     groups
 }
@@ -1115,19 +1143,32 @@ mod tests {
         let official = Repo { url: nori_plugins::OFFICIAL.into(), official: true };
         let version = |v: &str| Version { repo: official.url.clone(), version: v.into(), released: None, url: String::new(), sha256: String::new() };
         let offer = Offer { repo: official.clone(), id: "a.one".into(), name: "One".into(), about: None, source: Some("https://code.example".into()), versions: vec![version("2.0.0"), version("1.0.0")], installed: Some("1.0.0".into()) };
-        let p = Plugged { cards: vec![card("a.one", rows), card("a.two", Vec::new())], repos: vec![official], shelf: Shelf::Read(Offers { offers: vec![offer], failed: Vec::new() }) };
+        let buds = nori_plugins::ControlledDevice { id: "AA".into(), name: "Buds".into(), battery: nori_plugins::Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: None, noise_modes: Vec::new(), card: card("a.one", Vec::new()) };
+        let p = Plugged {
+            cards: vec![card("a.one", rows), card("a.two", Vec::new())],
+            off: HashSet::from([("a.one".to_string(), "pick".to_string())]),
+            assets: HashMap::from([("a.one".to_string(), vec![AssetLine { name: "model".into(), size: 3 << 20, state: AssetState::WaitingForWifi }])]),
+            controlled: vec![buds],
+            repos: vec![official],
+            shelf: Shelf::Read(Offers { offers: vec![offer], failed: Vec::new() }),
+        };
         let groups = plugin_groups(&p);
         let titles: Vec<&str> = groups.iter().map(|(t, _)| t.as_str()).collect();
-        assert_eq!(titles, ["a.one", "more", "a.one · Versions", "a.two", "From a file", "Get plugins", "Repos"]);
+        assert_eq!(titles, ["a.one", "Buds", "more", "a.one · Files", "a.one · Versions", "a.two", "From a file", "Get plugins", "Repos"]);
+        assert_eq!((groups[1].1[0].kind, groups[1].1[0].detail.as_str()), (INFO, "80%"), "the device it controls, with its battery");
+        let files: Vec<(i32, &str, &str)> = groups[3].1.iter().map(|r| (r.kind, r.title.as_str(), r.detail.as_str())).collect();
+        assert_eq!(files, [(INFO, "model", "Waiting for Wi-Fi"), (BUTTON, "Download on mobile data", "")]);
+        assert_eq!(PluginAct::of(&groups[3].1[1].name), Some(PluginAct::AllowMobile("a.one".into())));
+        assert!(!groups[0].1[4].enabled, "a row its plugin turned off takes no input");
         let one: Vec<(i32, &str)> = groups[0].1.iter().map(|r| (r.kind, r.name.as_str())).collect();
         assert_eq!(one, [(TOGGLE, "plugin-on:a.one"), (TOGGLE, "plugin-hold:a.one"), (BUTTONS, ""), (TOGGLE, "plugin-row:a.one:on"), (CHOICE, "plugin-row:a.one:pick"), (SLIDER, "plugin-row:a.one:gain"), (ACTION, "plugin-row:a.one:key"), (BUTTON, "plugin-row:a.one:go")]);
         assert_eq!(groups[0].1[4].chosen, Some(1));
         assert_eq!(groups[0].1[6].detail, "Set", "a secret stays hidden");
         assert_eq!(groups[0].1[2].names, ["plugin-down:a.one", "plugin-remove:a.one"], "the first can't move up");
-        assert_eq!((groups[1].1[0].kind, groups[1].1[0].detail.as_str()), (INFO, "Fine"));
-        let versions: Vec<(&str, &str, bool)> = groups[2].1.iter().map(|r| (r.title.as_str(), r.button.as_str(), r.enabled)).collect();
+        assert_eq!((groups[2].1[0].kind, groups[2].1[0].detail.as_str()), (INFO, "Fine"));
+        let versions: Vec<(&str, &str, bool)> = groups[4].1.iter().map(|r| (r.title.as_str(), r.button.as_str(), r.enabled)).collect();
         assert_eq!(versions, [("Source", "", true), ("2.0.0", "Install", true), ("1.0.0", "Installed", false)]);
-        let get = &groups[5].1[0];
+        let get = &groups[7].1[0];
         assert_eq!((get.title.as_str(), get.button.as_str(), PluginAct::of(&get.name)), ("One", "Update", Some(PluginAct::Get(0, 0))));
         for r in groups.iter().flat_map(|(_, rows)| rows).filter(|r| !r.name.is_empty()) {
             assert_eq!(PluginAct::of(&r.name).map(|a| a.name()), Some(r.name.clone()), "{} parses back", r.name);
@@ -1153,11 +1194,11 @@ mod tests {
             decimals: 2,
             url: url.map(Into::into),
         };
-        let level = plugin_row("p", &row(RowKind::Level, Some(Value::Level(1.5)), Some("Before the limiter"), Some("dB"), None));
+        let level = plugin_row("p", &row(RowKind::Level, Some(Value::Level(1.5)), Some("Before the limiter"), Some("dB"), None), false);
         assert_eq!((level.title.as_str(), level.detail.as_str()), ("Gain: 1.50 dB", "Before the limiter"));
-        let status = plugin_row("p", &row(RowKind::Status, Some(Value::Text("Fine".into())), Some("Checked hourly"), None, None));
+        let status = plugin_row("p", &row(RowKind::Status, Some(Value::Text("Fine".into())), Some("Checked hourly"), None, None), false);
         assert_eq!(status.detail, "Fine · Checked hourly");
-        let link = plugin_row("p", &row(RowKind::Link, None, None, None, Some("https://x.example/help")));
+        let link = plugin_row("p", &row(RowKind::Link, None, None, None, Some("https://x.example/help")), false);
         assert_eq!((link.kind, PluginAct::of(&link.name)), (LINK, Some(PluginAct::Open("https://x.example/help".into()))));
     }
 
@@ -1168,11 +1209,11 @@ mod tests {
         use nori_plugins::{Battery, ControlledDevice, Noise};
         let card = |id: &str| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: true, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows: vec![PluginRow { id: "wear".into(), kind: RowKind::Switch, label: "Wear detection".into(), options: Vec::new(), min: None, max: None, step: None, value: Some(Value::Switch(true)), hint: None, unit: None, decimals: 0, url: None }] };
         let d = ControlledDevice { id: "AA".into(), name: "WH-1000XM5".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Canceling), noise_modes: vec![Noise::Off, Noise::Canceling], card: card("dev.sony") };
-        let groups = device_groups(&[card("dev.sony")], std::slice::from_ref(&d));
+        let groups = device_groups(&[card("dev.sony")], std::slice::from_ref(&d), &HashSet::new());
         assert_eq!(groups.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["WH-1000XM5", "dev.sony"], "its plugin's rows once");
         let rows = &groups[0].1;
         assert_eq!((rows[0].kind, rows[0].detail.as_str()), (INFO, "80%"));
         assert_eq!((rows[1].kind, rows[1].chosen, PluginAct::of(&rows[1].name)), (CHOICE, Some(1), Some(PluginAct::Noise("AA".into()))));
-        assert_eq!(device_groups(&[], std::slice::from_ref(&d)).len(), 2, "its plugin's rows show though the plugin names no place");
+        assert_eq!(device_groups(&[], std::slice::from_ref(&d), &HashSet::new()).len(), 2, "its plugin's rows show though the plugin names no place");
     }
 }

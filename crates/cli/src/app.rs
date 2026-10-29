@@ -223,6 +223,8 @@ pub enum PluginCmd {
     RemoveRepo(String),
     /// Sets a controlled device's noise control.
     Noise(String, nori_plugins::Noise),
+    /// Lets a plugin fetch its assets on mobile data.
+    AllowMobileAssets(String),
 }
 
 impl Cmd {
@@ -998,6 +1000,8 @@ pub enum Target {
     Install,
     /// The repo to add, once the user trusts it.
     AddRepo,
+    /// A controlled device's noise control: an index into its `modes`.
+    Noise { device: String, modes: Vec<nori_plugins::Noise> },
 }
 
 impl Target {
@@ -1022,6 +1026,7 @@ impl Target {
             }
             Target::Install => Some(Cmd::Plugin(PluginCmd::Install(value.trim().to_string()))),
             Target::AddRepo => Some(Cmd::Plugin(PluginCmd::AddRepo(value.trim().to_string()))),
+            Target::Noise { device, modes } => value.parse::<usize>().ok().and_then(|i| modes.get(i).copied()).map(|n| Cmd::Plugin(PluginCmd::Noise(device, n))),
         }
     }
 }
@@ -1717,7 +1722,7 @@ impl App {
                 self.say(crate::text::plugins_updated(&named), false);
                 self.cmds.push(Cmd::Plugin(PluginCmd::Read));
             }
-            Msg::Controlled => self.cmds.push(Cmd::Plugin(PluginCmd::Read)),
+            Msg::PluginsChanged => self.cmds.push(Cmd::Plugin(PluginCmd::Read)),
             Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) | Msg::PluginSignIn { .. } => {}
         }
     }

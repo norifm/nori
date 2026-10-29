@@ -210,9 +210,9 @@ pub fn run(o: Options) -> Result<(), String> {
     nori_host::desktop::plugins(&r.o.data).watched.hear(move |n| {
         let _ = notices.send(Msg::Note { text: n.words, error: n.problem });
     });
-    let controlled = r.tx.clone();
-    nori_host::desktop::plugins(&r.o.data).watched.on_devices(move || {
-        let _ = controlled.send(Msg::Controlled);
+    let changed = r.tx.clone();
+    nori_host::desktop::plugins(&r.o.data).watched.on_changed(move || {
+        let _ = changed.send(Msg::PluginsChanged);
     });
     let casts = r.tx.clone();
     nori_host::desktop::plugins(&r.o.data).watched.hear_casts(move |c| {
@@ -418,9 +418,11 @@ impl Runner {
             }
             PluginCmd::RemoveRepo(url) => host.remove_repo(url),
             PluginCmd::Noise(device, noise) => return host.set_noise(device, noise),
+            PluginCmd::AllowMobileAssets(id) => host.allow_mobile_assets(id),
         }
-        let host = &nori_host::desktop::plugins(&self.o.data).host;
-        let cards = host.cards("en".into());
+        let plugged = nori_host::desktop::plugins(&self.o.data);
+        let host = &plugged.host;
+        let mut cards = host.cards("en".into());
         let own = &mut app.settings.own;
         // What was installed since the repos were asked shows as installed.
         if let crate::settings_view::Shelf::Read(offers) = &mut own.shelf {
@@ -429,6 +431,8 @@ impl Runner {
             }
         }
         app.slots.asked = cards.iter().any(|c| c.enabled && c.points.iter().any(|p| p == "slots"));
+        own.off = plugged.watched.as_said(&mut cards);
+        own.assets = cards.iter().map(|c| (c.id.clone(), host.assets(c.id.clone()))).filter(|(_, a)| !a.is_empty()).collect();
         own.plugins = cards;
         own.repos = host.repos();
         app.slots.menu = [ItemKind::Song, ItemKind::Album, ItemKind::Artist, ItemKind::Playlist].into_iter().flat_map(|k| host.menu_entries(k, "en".into()).into_iter().map(move |e| (k, e))).collect();
@@ -440,7 +444,9 @@ impl Runner {
                 shown.push(d.card.clone());
             }
         }
+        own.off.extend(plugged.watched.as_said(&mut shown));
         app.devices.plugins = shown;
+        own.controlled = controlled.clone();
         app.devices.controlled = controlled;
         app.settings.invalidate();
         app.dirty = true;

@@ -764,6 +764,21 @@ pub const PASTE_COOKIES: &str = "Sign in in a private browser window, copy the C
 pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window couldn't open here. Paste cookies from a browser instead.";
 pub const THIS_COMPUTER: &str = "This computer";
 pub const NOISE_CONTROL: &str = "Noise control";
+pub const BATTERY: &str = "Battery";
+pub const FILES: &str = "Files";
+pub const ASSETS_ON_MOBILE: &str = "Download on mobile data";
+
+/// Where a plugin's asset stands: "12 MB, not downloaded", "Downloading, 40%".
+pub fn asset_state(a: &nori_plugins::AssetLine) -> String {
+    use nori_plugins::AssetState;
+    match a.state {
+        AssetState::Missing => format!("{} MB, not downloaded", a.size.div_ceil(1 << 20)),
+        AssetState::WaitingForWifi => "Waiting for Wi-Fi".into(),
+        AssetState::Fetching { done, total } => format!("Downloading, {}%", (done * 100).checked_div(total).unwrap_or(0)),
+        AssetState::Ready => "Downloaded".into(),
+        AssetState::Failed => "Couldn't download".into(),
+    }
+}
 pub const REACHES_BLUETOOTH: &str = "Reaches Bluetooth devices.";
 
 pub fn noise(n: nori_plugins::Noise) -> &'static str {

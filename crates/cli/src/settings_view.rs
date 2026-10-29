@@ -10,7 +10,9 @@ use nori_core::numbers::{self, POINT};
 use nori_core::providers::Kinds;
 use nori_core::MusicFolder;
 use nori_host::desktop::{offer_state, OfferState};
-use nori_plugins::{Offers, PluginCard, PluginRow, Repo, RowKind, Value};
+use std::collections::{HashMap, HashSet};
+
+use nori_plugins::{AssetLine, AssetState, ControlledDevice, Offers, PluginCard, PluginRow, Repo, RowKind, Value};
 
 use crate::app::{Cmd, Overlay, PluginCmd, Sel, SoundToolCmd, Target, View};
 use crate::art::Day;
@@ -92,6 +94,8 @@ pub enum Act {
     GetPlugin { offer: u32, version: u32 },
     /// Asks for a repo's address to add.
     AddRepo,
+    /// Lets a plugin fetch its assets on mobile data.
+    AllowMobileAssets(String),
 }
 
 pub use nori_host::session::Chore;
@@ -219,8 +223,14 @@ pub struct Own {
     pub dark: bool,
     /// What names a plugin's kind of profile.
     pub kinds: std::sync::Arc<Kinds>,
-    /// The installed plugins, as last read.
+    /// The installed plugins, as last read and as their plugins said them (`Watched::as_said`).
     pub plugins: Vec<PluginCard>,
+    /// Rows that show but take no input now, by plugin and row.
+    pub off: HashSet<(String, String)>,
+    /// Each plugin's assets, those that have some.
+    pub assets: HashMap<String, Vec<AssetLine>>,
+    /// The connected devices plugins control.
+    pub controlled: Vec<ControlledDevice>,
     /// The plugin repos: nori's own first.
     pub repos: Vec<Repo>,
     pub shelf: Shelf,
@@ -404,7 +414,7 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own, t
         Gid::Own if !f.rules.settings.contains(&SettingsPart::Look) => Vec::new(),
         Gid::Own => own_page(own, f),
         Gid::Plugins if !f.rules.settings.contains(&SettingsPart::Look) => Vec::new(),
-        Gid::Plugins => plugins_page(&own.plugins, &own.repos, &own.shelf),
+        Gid::Plugins => plugins_page(own),
         Gid::About if !f.rules.settings.contains(&SettingsPart::About) => Vec::new(),
         Gid::About => about(own),
         Gid::Core(page) => {
@@ -448,25 +458,39 @@ fn own_page(o: &Own, f: &Facts) -> Vec<Section> {
     vec![section("", rows)]
 }
 
-/// The plugins, each a section of its own row and its page's rows; installing one from a file or a
-/// repo; the repos.
-fn plugins_page(cards: &[PluginCard], repos: &[Repo], shelf: &Shelf) -> Vec<Section> {
+/// The plugins, each a section of its own row and its page's rows, the devices it controls and its
+/// assets; installing one from a file or a repo; the repos.
+fn plugins_page(own: &Own) -> Vec<Section> {
+    let (cards, repos, shelf) = (&own.plugins, &own.repos, &own.shelf);
     let mut sections = Vec::new();
     for (i, c) in cards.iter().enumerate() {
         let mut detail: Vec<String> = c.about.iter().cloned().collect();
         detail.extend([text::plugin_is(&c.points, !c.overrides.is_empty()), text::plugin_reach(c)].into_iter().filter(|l| !l.is_empty()));
-        let own = Row::Plugin { id: c.id.clone(), title: format!("{} {}", text::PLUGIN_VERSION, c.version), detail: detail.join(" · "), on: c.enabled, index: i as u32, count: cards.len() as u32 };
-        let (mut title, mut rows) = (c.name.clone(), vec![own]);
+        let head = Row::Plugin { id: c.id.clone(), title: format!("{} {}", text::PLUGIN_VERSION, c.version), detail: detail.join(" · "), on: c.enabled, index: i as u32, count: cards.len() as u32 };
+        let (mut title, mut rows) = (c.name.clone(), vec![head]);
         if c.repo.is_some() {
             rows.push(Row::Toggle { switch: Switch::Hold(c.id.clone()), title: text::KEEP_VERSION.into(), detail: String::new(), on: c.held, enabled: true });
         }
+        let devices: Vec<Section> = own.controlled.iter().filter(|d| d.card.id == c.id).map(|d| Section { title: d.name.clone(), rows: device_controls(d) }).filter(|s| !s.rows.is_empty()).collect();
+        let mut devices = Some(devices);
         for r in &c.rows {
             match r.kind {
-                RowKind::Section => sections.push(Section { title: std::mem::replace(&mut title, r.label.clone()), rows: std::mem::take(&mut rows) }),
-                _ => rows.extend(plugin_rows(&c.id, r)),
+                RowKind::Section => {
+                    sections.push(Section { title: std::mem::replace(&mut title, r.label.clone()), rows: std::mem::take(&mut rows) });
+                    sections.extend(devices.take().into_iter().flatten());
+                }
+                _ => rows.extend(plugin_rows(&c.id, r, own.off.contains(&(c.id.clone(), r.id.clone())))),
             }
         }
         sections.push(Section { title, rows });
+        sections.extend(devices.take().into_iter().flatten());
+        if let Some(assets) = own.assets.get(&c.id) {
+            let mut rows: Vec<Row> = assets.iter().map(|a| info(&a.name, text::asset_state(a))).collect();
+            if assets.iter().any(|a| a.state == AssetState::WaitingForWifi) {
+                rows.push(Row::Button { title: text::ASSETS_ON_MOBILE.into(), action: Act::AllowMobileAssets(c.id.clone()) });
+            }
+            sections.push(Section { title: format!("{} · {}", c.name, text::FILES), rows });
+        }
         if let Shelf::Read(offers) = shelf {
             sections.extend(versions(c, offers));
         }
@@ -556,6 +580,7 @@ pub fn open_row(row: Row) -> Option<Opened> {
             Act::LookForPlugins => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Look)]),
             Act::GetPlugin { offer, version } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Get(offer, version))]),
             Act::AddRepo => Opened::Overlay(Overlay::Input { title: text::REPO_ADDRESS.into(), text: String::new(), secret: false, target: Target::AddRepo }),
+            Act::AllowMobileAssets(id) => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::AllowMobileAssets(id))]),
         },
         Row::Text { title, secret, target, .. } => Opened::Overlay(Overlay::Input { title, text: String::new(), secret, target }),
         Row::Plugin { id, on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Turn(id, !on))]),
@@ -611,10 +636,32 @@ pub fn step_row(row: Row, up: bool) -> Vec<Cmd> {
     }
 }
 
-/// One row of plugin `plugin`'s page, then its hint.
-fn plugin_rows(plugin: &str, r: &PluginRow) -> Vec<Row> {
+/// One row of plugin `plugin`'s page, then its hint; `off`, it shows but takes no input.
+fn plugin_rows(plugin: &str, r: &PluginRow, off: bool) -> Vec<Row> {
     let hint = r.hint.clone().map(|text| Row::Note { text });
-    std::iter::once(plugin_row(plugin, r)).chain(hint).collect()
+    let row = if off { Row::Info { title: r.label.clone(), detail: shown_value(r) } } else { plugin_row(plugin, r) };
+    std::iter::once(row).chain(hint).collect()
+}
+
+/// What row `r` says of its value, as a line.
+fn shown_value(r: &PluginRow) -> String {
+    r.value.as_ref().map(|v| text::plugin_value(v, r)).unwrap_or_default()
+}
+
+/// A controlled device's batteries and noise control.
+fn device_controls(d: &ControlledDevice) -> Vec<Row> {
+    let mut rows = Vec::new();
+    let battery = text::battery(&d.battery);
+    if !battery.is_empty() {
+        rows.push(info(text::BATTERY, battery));
+    }
+    if !d.noise_modes.is_empty() {
+        let options: Vec<(String, String)> = d.noise_modes.iter().enumerate().map(|(i, m)| (text::noise(*m).to_string(), i.to_string())).collect();
+        let shown = d.noise.map(|n| text::noise(n).to_string()).unwrap_or_default();
+        let target = Target::Noise { device: d.id.clone(), modes: d.noise_modes.clone() };
+        rows.push(Row::Choice { target, title: text::NOISE_CONTROL.into(), chips: options.len() <= 4, options, shown, enabled: true });
+    }
+    rows
 }
 
 /// One row of plugin `plugin`'s page, drawn as the settings' own rows are.
@@ -655,7 +702,7 @@ pub fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
             Row::Text { title, shown, secret, target }
         }
         RowKind::Action => Row::Button { title, action: Act::PluginAction { plugin: plugin.into(), row: r.id.clone() } },
-        RowKind::Status => Row::Info { title, detail: r.value.as_ref().map(|v| text::plugin_value(v, r)).unwrap_or_default() },
+        RowKind::Status => Row::Info { title, detail: shown_value(r) },
         // A link shows where it goes: the terminal opens no pages.
         RowKind::Link => Row::Info { title, detail: r.url.clone().unwrap_or_default() },
         RowKind::Note | RowKind::Section => Row::Note { text: title },

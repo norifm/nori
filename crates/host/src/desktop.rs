@@ -150,21 +150,32 @@ type SignsIn = Box<dyn Fn(String, String) + Send + Sync>;
 
 /// What a desktop client does with what plugins say: the open session takes the settings laid anew and
 /// the plugins' controls; notices go to the client that hears them ([`Watched::hear`]), sign-in pages
-/// to the one that opens them ([`Watched::sign_in_with`]); status lines and assets go to the log, and
-/// commands to D-Bus on Linux. The desktop has no wake: nothing starts it while it is closed.
+/// to the one that opens them ([`Watched::sign_in_with`]); what they say of their rows is kept for their
+/// pages ([`Watched::as_said`]), and commands go to D-Bus on Linux. The desktop has no wake: nothing starts it while it is closed.
 #[derive(Default)]
 pub struct Watched {
     engine: std::sync::Mutex<Option<std::sync::Weak<nori_engine::Engine>>>,
     session: std::sync::Mutex<Option<std::sync::Weak<crate::session::Parts>>>,
     plugins: std::sync::OnceLock<std::sync::Weak<nori_plugins::Plugins>>,
     heard: std::sync::Mutex<Option<Hears>>,
-    devices: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    /// Told when a plugin's page or the devices plugins control changed ([`Watched::on_changed`]).
+    changed: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    /// What plugins last said of their rows ([`Watched::as_said`]).
+    said: std::sync::Mutex<Said>,
     /// mDNS for the plugins, while one browses.
     browsing: std::sync::Mutex<Option<Browsing>>,
     casts: std::sync::Mutex<Option<CastSeen>>,
     signs_in: std::sync::Mutex<Option<SignsIn>>,
     #[cfg(target_os = "linux")]
     commands: std::sync::Mutex<Option<nori_mpris::Commands>>,
+}
+
+/// What plugins said of their rows, by plugin and row: status rows' lines, and whether each row shows
+/// and takes input.
+#[derive(Default)]
+struct Said {
+    status: std::collections::HashMap<(String, String), String>,
+    shown: std::collections::HashMap<(String, String), (bool, bool)>,
 }
 
 /// Where a client takes the cast's changes.
@@ -182,9 +193,37 @@ impl Watched {
         *self.heard.lock().expect("not poisoned") = Some(Box::new(to));
     }
 
-    /// Tells `to` whenever the controlled devices or what they report changed, from whatever thread.
-    pub fn on_devices(&self, to: impl Fn() + Send + Sync + 'static) {
-        *self.devices.lock().expect("not poisoned") = Some(Box::new(to));
+    /// Tells `to` whenever what a plugin's page shows (its rows' lines, its assets) or the controlled
+    /// devices changed, from whatever thread: the client reads them again.
+    pub fn on_changed(&self, to: impl Fn() + Send + Sync + 'static) {
+        *self.changed.lock().expect("not poisoned") = Some(Box::new(to));
+    }
+
+    fn tell_changed(&self) {
+        if let Some(to) = self.changed.lock().expect("not poisoned").as_ref() {
+            to();
+        }
+    }
+
+    /// `cards` as their pages draw them now: the rows their plugins hide left out, each status row's
+    /// value the line it said last. What it returns are the rows that show but take no input now, by
+    /// plugin and row.
+    pub fn as_said(&self, cards: &mut [nori_plugins::PluginCard]) -> std::collections::HashSet<(String, String)> {
+        let said = self.said.lock().expect("not poisoned");
+        let mut off = std::collections::HashSet::new();
+        for c in cards {
+            let key = |row: &str| (c.id.clone(), row.to_string());
+            c.rows.retain(|r| said.shown.get(&key(&r.id)).is_none_or(|(shown, _)| *shown));
+            for r in &mut c.rows {
+                if let Some(line) = said.status.get(&key(&r.id)) {
+                    r.value = Some(nori_plugins::Value::Text(line.clone()));
+                }
+                if said.shown.get(&key(&r.id)).is_some_and(|(_, enabled)| !enabled) {
+                    off.insert(key(&r.id));
+                }
+            }
+        }
+        off
     }
 
     /// Tells `to` of each change of the cast running (None: it ended), for the output picker.
@@ -217,9 +256,14 @@ impl nori_plugins::Client for Watched {
         }
     }
     fn status(&self, id: String, row: String, words: String, args: Vec<String>) {
-        nori_core::alog::info(&format!("plugin {id}: {row} is {words} {args:?}"));
+        let line = self.said(&id, words, &args);
+        self.said.lock().expect("not poisoned").status.insert((id, row), line);
+        self.tell_changed();
     }
-    fn shown(&self, _: String, _: String, _: bool, _: bool) {}
+    fn shown(&self, id: String, row: String, shown: bool, enabled: bool) {
+        self.said.lock().expect("not poisoned").shown.insert((id, row), (shown, enabled));
+        self.tell_changed();
+    }
     fn notice(&self, id: String, problem: bool, words: String, args: Vec<String>) {
         let words = self.said(&id, words, &args);
         nori_core::alog::info(&format!("plugin {id} says{}: {words}", if problem { " (a problem)" } else { "" }));
@@ -228,9 +272,7 @@ impl nori_plugins::Client for Watched {
         }
     }
     fn devices_changed(&self) {
-        if let Some(to) = self.devices.lock().expect("not poisoned").as_ref() {
-            to();
-        }
+        self.tell_changed();
     }
 
     fn browse(&self, kind: String, on: bool) {
@@ -312,8 +354,9 @@ impl nori_plugins::Client for Watched {
     }
     /// A desktop's screen is on while it runs.
     fn watch_screen(&self, _: bool) {}
-    fn asset(&self, id: String, name: String, state: nori_plugins::AssetState) {
-        nori_core::alog::info(&format!("plugin {id}: asset {name} is {state:?}"));
+    /// Its line is read again with the page ([`nori_plugins::Plugins::assets`]).
+    fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {
+        self.tell_changed();
     }
 }
 
@@ -393,6 +436,21 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_plugins_page_shows_what_it_said_of_its_rows() {
+        use nori_plugins::{Client, PluginCard, PluginRow, RowKind, Value};
+        let w = Watched::default();
+        w.status("p".into(), "state".into(), "Fine {0}".into(), vec!["now".into()]);
+        w.shown("p".into(), "gone".into(), false, true);
+        w.shown("p".into(), "dim".into(), true, false);
+        let row = |id: &str| PluginRow { id: id.into(), kind: RowKind::Status, label: id.into(), options: Vec::new(), min: None, max: None, step: None, value: None, hint: None, unit: None, decimals: 0, url: None };
+        let mut cards = [PluginCard { id: "p".into(), version: "1.0.0".into(), name: "P".into(), about: None, enabled: true, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: false, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows: vec![row("state"), row("gone"), row("dim")] }];
+        let off = w.as_said(&mut cards);
+        let rows: Vec<(&str, Option<&Value>)> = cards[0].rows.iter().map(|r| (r.id.as_str(), r.value.as_ref())).collect();
+        assert_eq!(rows, [("state", Some(&Value::Text("Fine now".into()))), ("dim", None)], "a hidden row is left out");
+        assert_eq!(off, std::collections::HashSet::from([("p".to_string(), "dim".to_string())]));
+    }
 
     #[test]
     fn the_zone_is_tz_else_the_localtime_link() {

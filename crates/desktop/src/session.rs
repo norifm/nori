@@ -101,8 +101,8 @@ pub enum Msg {
     PluginOffers(nori_plugins::Offers),
     /// Plugins updated on their own: each one's id and new version.
     PluginsUpdated(Vec<(String, String)>),
-    /// The devices plugins control, or what they report, changed.
-    DevicesControlled,
+    /// What a plugin's page shows (its rows' lines, its assets), or the devices plugins control, changed.
+    PluginsChanged,
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }

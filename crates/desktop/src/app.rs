@@ -457,8 +457,6 @@ pub struct App {
     preview: Option<nori_plugins::PluginPreview>,
     /// The plugins' menu actions by `Card::kind` ([`MENU_KINDS`]).
     plugin_menus: [Vec<nori_plugins::MenuEntry>; 4],
-    /// The connected devices plugins control.
-    controlled: Vec<nori_plugins::ControlledDevice>,
     /// The song whose details are shown, for the plugins' lines that come after.
     details_song: Option<String>,
     /// The plugin's still sleeve being fetched for the song playing.
@@ -695,7 +693,6 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             plugged: Default::default(),
             preview: None,
             plugin_menus: Default::default(),
-            controlled: Vec::new(),
             details_song: None,
             sleeve: None,
             full_seen: false,
@@ -777,7 +774,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         let tx = a.tx.clone();
         nori_host::desktop::plugins(&a.data).watched.hear(move |n| tx.send(Msg::Note { text: n.words, error: n.problem }));
         let tx = a.tx.clone();
-        nori_host::desktop::plugins(&a.data).watched.on_devices(move || tx.send(Msg::DevicesControlled));
+        nori_host::desktop::plugins(&a.data).watched.on_changed(move || tx.send(Msg::PluginsChanged));
         let tx = a.tx.clone();
         nori_host::desktop::plugins(&a.data).watched.hear_casts(move |_| tx.send(Msg::Cast));
         let tx = a.tx.clone();
@@ -2612,13 +2609,16 @@ impl App {
     /// Reads the plugins and repos again, and the kinds of profile the login page offers with them.
     fn plugins_read(&mut self) {
         let host = self.plugin_host();
-        let cards = host.cards("en".into());
+        let mut cards = host.cards("en".into());
         // What was installed since the repos were asked shows as installed.
         if let crate::settings::Shelf::Read(offers) = &mut self.plugged.shelf {
             for o in &mut offers.offers {
                 o.installed = cards.iter().find(|c| c.id == o.id).map(|c| c.version.clone());
             }
         }
+        let watched = &nori_host::desktop::plugins(&self.data).watched;
+        self.plugged.off = watched.as_said(&mut cards);
+        self.plugged.assets = cards.iter().map(|c| (c.id.clone(), host.assets(c.id.clone()))).filter(|(_, a)| !a.is_empty()).collect();
         self.plugged.cards = cards;
         self.plugged.repos = host.repos();
         self.plugin_menus = MENU_KINDS.map(|k| host.menu_entries(k, "en".into()));
@@ -2626,9 +2626,14 @@ impl App {
         ui.set_login_kinds(login_kinds(self.kinds()));
         let prefs = crate::session::app().settings.current().unwrap_or_default();
         let today = crate::look::Today::now();
+        self.plugged.controlled = host.controlled("en".into());
+        for d in &mut self.plugged.controlled {
+            self.plugged.off.extend(watched.as_said(std::slice::from_mut(&mut d.card)));
+        }
+        let mut shown_here = host.device_cards("en".into());
+        let off = watched.as_said(&mut shown_here);
+        ui.set_device_plugin_rows(crate::settings::device_rows(&shown_here, &self.plugged.controlled, &off, &prefs, &self.facts, today));
         ui.set_plugin_rows(crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, today));
-        self.controlled = host.controlled("en".into());
-        ui.set_device_plugin_rows(crate::settings::device_rows(&host.device_cards("en".into()), &self.controlled, &prefs, &self.facts, today));
         let menus = ui.global::<crate::PluginMenus>();
         let labels = |k: usize| ModelRc::new(VecModel::from(self.plugin_menus[k].iter().map(|e| SharedString::from(e.label.as_str())).collect::<Vec<_>>()));
         menus.set_album(labels(0));
@@ -2725,7 +2730,7 @@ impl App {
             (PluginAct::Hold(id), nori_plugins::Value::Switch(on)) => host.hold(id, on),
             (PluginAct::Row(id, row), v) => host.set(id, row, v),
             (PluginAct::Noise(device), nori_plugins::Value::Choice(i)) => {
-                let Some(&mode) = self.controlled.iter().find(|d| d.id == device).and_then(|d| d.noise_modes.get(i as usize)) else { return };
+                let Some(&mode) = self.plugged.controlled.iter().find(|d| d.id == device).and_then(|d| d.noise_modes.get(i as usize)) else { return };
                 return host.set_noise(device, mode);
             }
             _ => return,
@@ -2780,6 +2785,7 @@ impl App {
                 nori_host::spawn("nori-plugin-get", move || tx.send(Msg::PluginPreview(nori_core::transport::block_on(host.preview_version(v, "en".into())))));
                 return;
             }
+            PluginAct::AllowMobile(id) => host.allow_mobile_assets(id),
             PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::TrustRepo(_) | PluginAct::InstallPreview | PluginAct::Noise(_) => return,
         }
         self.plugins_read();
@@ -3131,7 +3137,7 @@ impl App {
                 self.plugged.shelf = crate::settings::Shelf::Read(o);
                 self.plugins_read();
             }
-            Msg::DevicesControlled => {
+            Msg::PluginsChanged => {
                 self.plugins_read();
                 self.output_shown();
             }
@@ -3438,7 +3444,7 @@ impl App {
 
     /// The controlled device this computer's output plays on.
     fn output_device(&self) -> Option<&nori_plugins::ControlledDevice> {
-        nori_plugins::output_device(&self.controlled, (!self.output.is_empty()).then_some(self.output.as_str()))
+        nori_plugins::output_device(&self.plugged.controlled, (!self.output.is_empty()).then_some(self.output.as_str()))
     }
 
     /// A plugin's cast, while one runs.
@@ -4211,7 +4217,7 @@ mod tests {
         host.turn(id, true);
         let labels: Vec<Vec<String>> = MENU_KINDS.iter().map(|k| host.menu_entries(*k, "en".into()).into_iter().map(|e| e.label).collect()).collect();
         assert_eq!(labels, [vec![], vec![], vec![], vec!["Count letters".to_string()]]);
-        let rows = crate::settings::device_rows(&host.device_cards("en".into()), &[], &Default::default(), &Default::default(), crate::look::Today { month: 10, day: 19, southern: false });
+        let rows = crate::settings::device_rows(&host.device_cards("en".into()), &[], &Default::default(), &Default::default(), &Default::default(), crate::look::Today { month: 10, day: 19, southern: false });
         let titles: Vec<String> = rows.iter().map(|r| r.title.to_string()).collect();
         assert_eq!(titles, ["TEST", "Gain: 0.5"]);
     }

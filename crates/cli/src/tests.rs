@@ -2078,6 +2078,36 @@ fn no_plugins_offers_to_install_and_lists_nori_s_repo() {
     assert!(a.cmds.is_empty());
 }
 
+/// A plugin's page shows the devices it controls with their controls, its assets and the way to
+/// fetch them on mobile data, and a row it turned off as a line that takes no input.
+#[test]
+fn a_plugins_page_shows_its_devices_assets_and_rows_turned_off() {
+    use crate::app::PluginCmd;
+    use nori_plugins::{AssetLine, AssetState, Battery, ControlledDevice, Noise, RowKind, Value};
+    let gain = card("dev.example.gain", "Gain", vec![plugin_row("on", RowKind::Switch, Some(Value::Switch(true)))]);
+    let mut a = plugins_app(vec![gain.clone()], vec![official()], Default::default());
+    a.settings.own.off.insert(("dev.example.gain".into(), "on".into()));
+    a.settings.own.assets.insert("dev.example.gain".into(), vec![AssetLine { name: "model".into(), size: 3 << 20, state: AssetState::WaitingForWifi }]);
+    a.settings.own.controlled = vec![ControlledDevice { id: "AA".into(), name: "Test Buds".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Off), noise_modes: vec![Noise::Off, Noise::Canceling], card: gain }];
+    a.settings.invalidate();
+    let s = draw(&mut a, 140, 300);
+    dump("plugins-page-devices", &s);
+    let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
+    assert!(s.contains("TEST BUDS") && line("Battery").contains("80%"), "{s}");
+    assert!(line("model").contains("Waiting for Wi-Fi") && s.contains("GAIN · FILES"), "{s}");
+    assert!(line("Switch row").contains("On"));
+
+    select_row(&mut a, |r| matches!(r, Row::Info { title, .. } if title == "Switch row"));
+    key(&mut a, KeyCode::Enter);
+    assert!(a.cmds.is_empty(), "a row turned off takes no input");
+    select_row(&mut a, |r| matches!(r, Row::Choice { title, .. } if title == "Noise control"));
+    key(&mut a, KeyCode::Right);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Noise("AA".into(), Noise::Canceling))));
+    select_row(&mut a, |r| matches!(r, Row::Button { title, .. } if title == "Download on mobile data"));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::AllowMobileAssets("dev.example.gain".into()))));
+}
+
 #[test]
 fn a_plugins_page_draws_a_row_of_each_kind() {
     use crate::app::PluginCmd;
