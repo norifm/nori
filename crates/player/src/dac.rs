@@ -1,5 +1,7 @@
 //! Bit-perfect USB DAC output: which DAC mode plays a song untouched, or why none can.
 
+use crate::prelude::*;
+
 /// One of the DAC's modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DacMode {

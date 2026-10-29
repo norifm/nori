@@ -26,14 +26,7 @@ pub fn pairs(p: &[(&str, String)]) -> Vec<(String, String)> {
     p.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum Starrable {
-    Song,
-    Album,
-    Artist,
-}
+pub use nori_model::Starrable;
 
 /// Every change the app asks the server for.
 #[derive(Debug, Clone)]

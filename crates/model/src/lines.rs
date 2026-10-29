@@ -1,5 +1,7 @@
 //! Display lines derived from a record's own fields (no translated words).
 
+use alloc::{format, string::{String, ToString}};
+
 /// Album subtitle: "Artist · 2019", omitting empty parts.
 pub fn album_subtitle(artist: &str, year: u32) -> String {
     match (artist.is_empty(), year > 0) {

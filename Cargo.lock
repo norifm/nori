@@ -5094,6 +5094,7 @@ version = "0.7.1"
 dependencies = [
  "ebur128",
  "libc",
+ "libm",
  "nori-player",
  "nori-stretch",
  "nori-time",
@@ -5169,7 +5170,6 @@ dependencies = [
  "getrandom 0.4.3",
  "libc",
  "nori-model",
- "nori-net",
  "nori-tasks",
  "nori-time",
  "parking_lot",

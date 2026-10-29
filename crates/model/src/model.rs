@@ -1,5 +1,6 @@
 //! Library records: the same structs deserialize Subsonic JSON, cross the FFI and are stored as JSON.
 
+use alloc::{format, string::{String, ToString}, vec::Vec};
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// A listen handed to another device; elapsed time excludes pauses and transfer time.
@@ -120,6 +121,16 @@ pub struct ArtistRef {
     #[serde(deserialize_with = "id_string")]
     pub id: String,
     pub name: String,
+}
+
+/// What a like (the seal) can be put on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Starrable {
+    Song,
+    Album,
+    Artist,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -859,6 +870,7 @@ pub struct ArrivalPlan {
     pub curve: CurveStep,
 }
 
+#[cfg(feature = "std")]
 pub use nori_player::transitions::{TransitionPrefs, WindowSong};
 
 #[cfg(feature = "ffi")]
@@ -926,6 +938,7 @@ pub enum DacBlock {
     Refused,
 }
 
+#[cfg(feature = "std")]
 pub use nori_player::queue::PlaybackError;
 
 #[cfg(feature = "ffi")]

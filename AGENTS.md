@@ -17,6 +17,7 @@ python3 tools/rust.py build -p nori-desktop          # optional Bazel native des
 python3 tools/rust.py run -p nori-cli                # optional Bazel terminal client
 cargo test -p nori-player --test pipeline    # player end to end on a virtual clock
 cargo clippy -j4 --workspace --all-targets -- -D warnings  # none; CI fails on any
+cargo +nightly check -p nori-player -p nori-model -p nori-remote --no-default-features --target riscv32imafc-unknown-none-elf  # still no_std
 ./gradlew :app:compileDebugKotlin -PrustTargets=arm64-v8a    # Kotlin compiles (this Mac's emulator is arm64)
 ./gradlew :app:assembleDebug -PrustTargets=arm64-v8a         # debug APK for the emulator
 tools/dev-server.sh                                 # local Navidrome, admin/admin, http://10.0.2.2:4533 from the emulator

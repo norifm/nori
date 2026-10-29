@@ -40,7 +40,7 @@ plugins = ["dep:nori-plugins"]
 [dependencies]
 # Time, read the same way natively and in a browser.
 nori-time = { path = "../time" }
-nori-player = { path = "../player", default-features = false }
+nori-player = { path = "../player", default-features = false, features = ["std"] }
 parking_lot = "0.12"
 # Containers: the format readers only. Decoding is nori-player's, so every platform hears the same samples.
 symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "aac", "isomp4", "ogg", "mkv", "wav", "pcm"] }
