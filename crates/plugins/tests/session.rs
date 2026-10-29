@@ -300,9 +300,14 @@ fn timers_fire_only_while_their_gate_is_open_and_never_wait_on_the_clock_otherwi
     r.clock.settle();
     assert!(r.clock.waits().is_empty(), "a timer that may not fire sleeps on no clock");
 
-    r.plugins.session_active(ID, true);
+    r.act("cast-target");
+    r.clock.settle();
     r.pass(3500);
-    assert_eq!(r.heard(), ["timer 1", "timer 1", "timer 1"]);
+    assert_eq!(r.heard(), ["timer 1", "timer 1", "timer 1"], "a cast makes its session active");
+    r.act("cast-end");
+    r.clock.settle();
+    r.pass(3000);
+    assert!(r.heard().is_empty(), "the cast ended");
     r.act("stop");
     r.pass(3000);
     assert!(r.heard().is_empty());
@@ -318,7 +323,9 @@ fn timers_fire_only_while_their_gate_is_open_and_never_wait_on_the_clock_otherwi
     r.pass(2000);
     assert!(r.heard().is_empty(), "the screen went off");
 
+    r.act("cast-target");
     r.act("once");
+    r.clock.settle();
     r.pass(2000);
     assert_eq!(r.heard(), ["timer 3"], "a one-shot fires once");
     r.plugins.turn(ID.into(), false);

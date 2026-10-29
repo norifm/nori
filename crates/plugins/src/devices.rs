@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::bluetooth::{Bluetooth, BtDevice};
 use crate::host::Side;
+use crate::timers::{Active, Gate};
 use crate::runtime::points::{device_control as dc, hooks};
 use crate::view::PluginCard;
 use crate::{Plugins, Store, Worker};
@@ -146,6 +147,7 @@ fn reported(s: Option<dc::DeviceState>) -> Reported {
 struct Around {
     controls: Arc<Controls>,
     side: Arc<dyn Side>,
+    gate: Arc<Gate>,
 }
 
 impl Around {
@@ -171,6 +173,7 @@ impl Around {
                 return Ok(());
             }
             if self.controls.take(&device, &id) {
+                self.gate.active(&id, Active::Device, true);
                 self.side.devices_changed();
                 self.refresh(s, p, &device.id)?;
             }
@@ -202,7 +205,7 @@ fn only_for_devices(m: &crate::Manifest) -> bool {
 
 impl Plugins {
     fn around(&self) -> Around {
-        Around { controls: self.controls.clone(), side: self.side.clone() }
+        Around { controls: self.controls.clone(), side: self.side.clone(), gate: self.gate.clone() }
     }
 
     /// The enabled plugins reaching `device` that extend `point`, in their order.
@@ -246,12 +249,15 @@ impl Plugins {
         if want != was {
             platform.watch(want);
         }
-        let let_go = {
+        let let_go: Vec<String> = {
             let mut c = self.controls.lock();
-            let n = c.len();
+            let gone = c.iter().filter(|c| !enabled.contains(&c.plugin)).map(|c| c.plugin.clone()).collect();
             c.retain(|c| enabled.contains(&c.plugin));
-            n != c.len()
+            gone
         };
+        for plugin in &let_go {
+            self.gate.active(plugin, Active::Device, false);
+        }
         if !want {
             self.radio.set_connected(Vec::new());
         } else if !was {
@@ -264,7 +270,7 @@ impl Plugins {
                 self.offer(d);
             }
         }
-        if let_go {
+        if !let_go.is_empty() {
             self.side.devices_changed();
         }
     }
@@ -314,6 +320,9 @@ impl Plugins {
                 w.post(move |s, p| p.nori_plugin_device_control().call_gone(s, &device));
             }
             let keeps = self.controls.lock().iter().any(|o| o.plugin == c.plugin);
+            if !keeps {
+                self.gate.active(&c.plugin, Active::Device, false);
+            }
             let only = self.installed().iter().any(|i| i.manifest.id == c.plugin && only_for_devices(&i.manifest));
             if !keeps && only {
                 self.workers.lock().expect("not poisoned").remove(&c.plugin);

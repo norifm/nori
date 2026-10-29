@@ -85,7 +85,7 @@ impl Plugins {
         self.live.follows.store(heard != 0 || on.iter().any(|i| i.manifest.may(Permission::PlaybackRead)), Ordering::Relaxed);
         for i in self.installed().iter().filter(|i| !i.enabled) {
             self.timers.stop_all(&i.manifest.id);
-            self.gate.active(&i.manifest.id, false);
+            self.gate.idle(&i.manifest.id);
         }
         self.gate.changed.notify();
         self.watch_screen();

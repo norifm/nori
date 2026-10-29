@@ -142,8 +142,8 @@ nothing for a call that answers nothing) and logged.
   sheet says. A pause, seek or song change lets the waiting wake go.
 - **Timers** run on the plugin host's executor (made at the first timer, or the client's,
   `use_tasks`). A `while-visible` one fires only while the player is on screen (`player_shown`); an
-  `always` one as often as it asks while the plugin has an active session (`session_active`, for a cast or
-  a connected device), else only with `Schedule`, at most once per 15 minutes and never while music plays
+  `always` one as often as it asks while the plugin has an active session (it runs the cast, or controls
+  a connected device: the host's own `Gate::active`), else only with `Schedule`, at most once per 15 minutes and never while music plays
   with the screen off. A timer that may not fire waits on the gate, not on a clock: no wake. The client
   watches the screen (`Client::watch_screen`) only while an `always` timer runs.
 - **Wakes and commands.** `wake.want` turns on the wakes the manifest declares (kept in its store); the

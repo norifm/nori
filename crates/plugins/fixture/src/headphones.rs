@@ -1,16 +1,19 @@
 //! Headphones over a made-up protocol, for the device control tests (`--features headphones`). Over
 //! RFCOMM, `?` asks for a frame `[left, right, noise]` and `[N, noise]` sets the noise control; the
-//! device sends frames of its own too. Over GATT, the battery service's level is the case's.
+//! device sends frames of its own too. Over GATT, the battery service's level is the case's. Once it
+//! controls a device it runs an `always` timer, heard as `tick`.
 
 use nori_plugin_sdk::bluetooth::{connected, Gatt, Rfcomm};
 use nori_plugin_sdk::device_control::{Battery, DeviceState, Noise};
 use nori_plugin_sdk::hooks::Event;
 use nori_plugin_sdk::notices::{show, Tone};
+use nori_plugin_sdk::timers::{self, When};
 use nori_plugin_sdk::{DeviceControl, DeviceFilter, Hooks, Manifest};
 
 const SPP: &str = "00001101-0000-1000-8000-00805f9b34fb";
 const BATTERY: &str = "0000180f-0000-1000-8000-00805f9b34fb";
 const LEVEL: &str = "00002a19-0000-1000-8000-00805f9b34fb";
+const TICK: u32 = 7;
 const MODES: [Noise; 3] = [Noise::Off, Noise::Canceling, Noise::Transparency];
 
 struct Buds {
@@ -62,6 +65,7 @@ impl DeviceControl for Headphones {
         let _ = gatt.notify(BATTERY, LEVEL, true);
         said("gatt", &[gatt.mtu().to_string(), gatt.services().join(",")]);
         self.buds.push(Buds { id: device, channel, _gatt: gatt, state });
+        timers::start(TICK, 1000, true, When::Always);
         true
     }
 
@@ -88,6 +92,7 @@ impl Hooks for Headphones {
         match event {
             Event::DeviceConnected(id) => said("connected", &[id]),
             Event::DeviceDisconnected(id) => said("disconnected", &[id]),
+            Event::Timer(id) => said("tick", &[id.to_string()]),
             Event::Notified((device, characteristic, bytes)) => {
                 let Some(b) = self.buds(&device) else { return };
                 if characteristic == SPP {

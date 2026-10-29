@@ -219,3 +219,29 @@ fn a_device_connecting_later_is_offered_and_one_it_declines_is_not_shown() {
     let opened = fake.opened.lock().unwrap().iter().map(|o| o.1.clone()).collect::<Vec<_>>();
     assert!(opened.iter().all(|d| d == "BB"), "nothing was opened to the car: {opened:?}");
 }
+
+#[test]
+fn its_timers_fire_as_asked_only_while_it_controls_a_device() {
+    let (_dir, session, fake, plugins) = open("plugins-devices-timers", vec![device("AA", "Test Buds Pro")]);
+    let clock = Arc::new(nori_tasks::Native::simulated("plugin-clock", 0).unwrap());
+    plugins.use_tasks(clock.clone());
+    plugins.install(&fixture("headphones")).unwrap();
+    plugins.turn(ID.into(), true);
+    session.until("the buds are controlled", || !plugins.controlled("en".into()).is_empty());
+    let settle = || {
+        clock.settle();
+        assert_eq!(nori_tasks::block_on(plugins.worker(ID).unwrap().call(|_, _| Ok(1))), Some(1));
+    };
+    settle();
+    clock.pass(nori_time::Duration::from_millis(3500));
+    settle();
+    assert_eq!(session.notice("tick"), Some(vec!["7".into()]), "a controlled device makes its session active");
+
+    session.notices.lock().unwrap().remove("tick");
+    fake.host().bluetooth_disconnected("AA".into());
+    settle();
+    clock.pass(nori_time::Duration::from_millis(3500));
+    settle();
+    assert_eq!(session.notice("tick"), None, "without the device and without the schedule permission");
+    assert!(clock.waits().is_empty(), "its timer waits on no clock");
+}

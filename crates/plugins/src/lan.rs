@@ -7,6 +7,7 @@ use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::cast::{Card, Cards, Media};
+use crate::timers::{Active, Gate};
 use crate::door::Door;
 use crate::host::Side;
 use crate::sink::Sink;
@@ -115,6 +116,8 @@ impl Inner {
 pub(crate) struct Lan {
     side: Arc<dyn Side>,
     workers: Weak<Workers>,
+    /// Where the cast makes its plugin's session active, for its timers.
+    gate: Arc<Gate>,
     inner: Mutex<Inner>,
     media: Mutex<Option<Weak<dyn Media>>>,
     cards: Mutex<Option<Cards>>,
@@ -136,8 +139,8 @@ impl Drop for Multicast {
 }
 
 impl Lan {
-    pub(crate) fn new(side: Arc<dyn Side>, workers: Weak<Workers>) -> Arc<Lan> {
-        Arc::new_cyclic(|me| Lan { side, workers, inner: Mutex::default(), media: Mutex::new(None), cards: Mutex::new(None), me: me.clone() })
+    pub(crate) fn new(side: Arc<dyn Side>, workers: Weak<Workers>, gate: Arc<Gate>) -> Arc<Lan> {
+        Arc::new_cyclic(|me| Lan { side, workers, gate, inner: Mutex::default(), media: Mutex::new(None), cards: Mutex::new(None), me: me.clone() })
     }
 
     fn inner(&self) -> std::sync::MutexGuard<'_, Inner> {
@@ -295,6 +298,7 @@ impl Lan {
         }
         let first = i.cast.replace(cast.clone()).is_none();
         drop(i);
+        self.gate.active(id, Active::Cast, true);
         if first && kind == CastKind::Target {
             self.card(Card::Elsewhere);
         }
@@ -315,6 +319,7 @@ impl Lan {
         if i.cast.as_ref().is_some_and(|c| c.plugin == id) {
             i.cast = None;
             drop(i);
+            self.gate.active(id, Active::Cast, false);
             self.side.cast(None);
         }
     }

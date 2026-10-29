@@ -179,7 +179,8 @@ impl Plugins {
             })
             .collect();
         let workers: Arc<lan::Workers> = Arc::default();
-        let lan = lan::Lan::new(side.clone(), Arc::downgrade(&workers));
+        let gate: Arc<timers::Gate> = Arc::default();
+        let lan = lan::Lan::new(side.clone(), Arc::downgrade(&workers), gate.clone());
         let plugins = Arc::new_cyclic(|me| Plugins {
             dir,
             side,
@@ -196,7 +197,7 @@ impl Plugins {
             me: me.clone(),
             library: Default::default(),
             live: Default::default(),
-            gate: Default::default(),
+            gate,
             timers: Default::default(),
             lyrics_changed: Default::default(),
             tasks: Default::default(),

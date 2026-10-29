@@ -24,13 +24,22 @@ use crate::Plugins;
 /// The most often a plugin's timers fire without an active session.
 const SCHEDULE_PERIOD: Duration = Duration::from_secs(15 * 60);
 
+/// What makes a plugin's session active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Active {
+    /// It runs the cast.
+    Cast,
+    /// It controls a connected device.
+    Device,
+}
+
 /// What decides whether a timer may fire now, told whenever it changes.
 pub(crate) struct Gate {
     screen_on: AtomicBool,
     player_shown: AtomicBool,
     playing: AtomicBool,
-    /// Plugins with an active session.
-    active: Mutex<BTreeSet<String>>,
+    /// Plugins with an active session, and what makes each one so.
+    active: Mutex<BTreeSet<(String, Active)>>,
     pub(crate) changed: Notify,
 }
 
@@ -59,9 +68,23 @@ impl Gate {
         self.set(&self.playing, playing);
     }
 
-    pub(crate) fn active(&self, plugin: &str, on: bool) {
+    /// `plugin`'s session is active for `why`, or no longer.
+    pub(crate) fn active(&self, plugin: &str, why: Active, on: bool) {
         let mut a = self.active.lock().expect("not poisoned");
-        let changed = if on { a.insert(plugin.to_string()) } else { a.remove(plugin) };
+        let key = (plugin.to_string(), why);
+        let changed = if on { a.insert(key) } else { a.remove(&key) };
+        drop(a);
+        if changed {
+            self.changed.notify();
+        }
+    }
+
+    /// `plugin` has no active session (turned off or removed).
+    pub(crate) fn idle(&self, plugin: &str) {
+        let mut a = self.active.lock().expect("not poisoned");
+        let n = a.len();
+        a.retain(|(p, _)| p != plugin);
+        let changed = a.len() != n;
         drop(a);
         if changed {
             self.changed.notify();
@@ -69,7 +92,7 @@ impl Gate {
     }
 
     fn is_active(&self, plugin: &str) -> bool {
-        self.active.lock().expect("not poisoned").contains(plugin)
+        self.active.lock().expect("not poisoned").iter().any(|(p, _)| p == plugin)
     }
 
     /// Whether `plugin`'s timer of kind `when` may fire now; `schedule`: its manifest grants it.
@@ -175,12 +198,6 @@ impl Plugins {
         self.gate.changed.notify();
         self.watch_screen();
     }
-
-    /// Plugin `id` has an active session (a cast, a connected device) or not: its `always` timers fire
-    /// as often as they ask while it has.
-    pub fn session_active(&self, id: &str, on: bool) {
-        self.gate.active(id, on);
-    }
 }
 
 impl timers::Host for Host {
@@ -218,12 +235,26 @@ mod tests {
         ];
         for (when, active, schedule, playing, screen, shown, allowed) in table {
             let g = Gate::default();
-            g.active("p", active);
+            g.active("p", Active::Cast, active);
             g.playing(playing);
             g.screen(screen);
             g.player_shown(shown);
             assert_eq!(g.allows("p", when, schedule), allowed, "{when:?} active {active} schedule {schedule} playing {playing} screen {screen} shown {shown}");
         }
+    }
+
+    #[test]
+    fn a_session_stays_active_while_anything_makes_it_so() {
+        let g = Gate::default();
+        g.active("p", Active::Cast, true);
+        g.active("p", Active::Device, true);
+        g.active("p", Active::Cast, false);
+        assert!(g.is_active("p"), "it still controls a device");
+        g.active("p", Active::Device, false);
+        assert!(!g.is_active("p"));
+        g.active("p", Active::Cast, true);
+        g.idle("p");
+        assert!(!g.is_active("p"), "turned off");
     }
 }
 
