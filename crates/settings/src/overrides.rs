@@ -3,16 +3,18 @@
 //! nori's own values back. A key is a setting's name (`crossfadeSec`), or a tunable's: a value with no
 //! setting, fixed unless a plugin sets it.
 
-use nori_player::stage::StageSpec;
+use nori_player::stage::{Prepares, StageSpec};
 
 use crate::settings::{set_by_name, StoredPrefs};
 
 /// What the enabled plugins lay over nori's settings: their overrides (key and value as text, in the
-/// plugins' order) and their sound stages. Empty with none enabled.
+/// plugins' order), their sound stages, and what they make of songs as they are read. Empty with
+/// none enabled.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Layer {
     pub overrides: Vec<(String, String)>,
     pub stages: Vec<StageSpec>,
+    pub preparing: Option<Prepares>,
 }
 
 /// The values with no setting, as the engine reads them.

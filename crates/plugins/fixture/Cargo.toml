@@ -12,6 +12,8 @@ crate-type = ["cdylib"]
 [features]
 # Imports `timers`, which this host doesn't link: the plugin can't be installed.
 timers = []
+# Its stage in the song slot.
+song = []
 
 [dependencies]
 nori-plugin-sdk = { path = "../../plugin-sdk" }

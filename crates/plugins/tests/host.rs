@@ -116,8 +116,9 @@ fn a_stage_runs_and_its_state_is_kept() {
     plugins.set(ID.into(), "gain".into(), Value::Level(0.25));
     let specs = plugins.stages();
     assert_eq!(specs.len(), 1);
-    assert_eq!(specs[0].inputs, vec![0.25], "its rows are its inputs");
-    let mut stage = specs[0].maker.make(48_000, 2, &specs[0].inputs).unwrap();
+    assert_eq!(specs[0].rows, vec![0.25], "its rows are its inputs");
+    let inputs = |rows: Vec<f64>| nori_player::stage::Inputs { rows, around: Default::default(), song: nori_player::stage::no_facts() };
+    let mut stage = specs[0].maker.make(48_000, 2, &inputs(specs[0].rows.clone())).unwrap();
     let block = |stage: &mut Box<dyn nori_player::stage::SoundStage>| {
         let mut b = vec![1.0f32; 16];
         stage.process(&mut b);
@@ -130,12 +131,10 @@ fn a_stage_runs_and_its_state_is_kept() {
     assert_eq!(block(&mut stage), 0.75);
     stage.restore(&kept);
     assert_eq!(block(&mut stage), 0.75, "back where it was kept");
-    stage.inputs(&[1.0]);
+    stage.inputs(&inputs(vec![1.0]));
     assert_eq!(block(&mut stage), 4.0, "new inputs, the same state");
-    stage.restore(&kept);
-    assert_eq!(block(&mut stage), 0.75, "the inputs it had then come back with it");
     stage.reset();
-    assert_eq!(block(&mut stage), 0.25);
+    assert_eq!(block(&mut stage), 1.0, "a reset keeps the inputs");
 
     // On the audio path, once its buffers have grown, nothing is allocated.
     let (mut b, mut kept) = (vec![0.1f32; 16_384], Vec::new());

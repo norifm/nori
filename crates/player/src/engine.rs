@@ -14,8 +14,10 @@
 //! reported position runs ahead of what is audible, which is tracked in [`Heard`].
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use crate::automix::analysis::Analyzer;
+use crate::stage::{no_facts, SongFacts};
 use crate::automix::mixer::Mixer;
 use crate::types::TransitionPlan;
 use crate::automix::resample::{Resampler, Tables};
@@ -111,6 +113,8 @@ pub trait Downstream {
     }
     /// The gain still to be applied to what is offered from now on; 1 when it is in the samples.
     fn song_gain(&mut self, _gain: f32) {}
+    /// What the stages read of the song offered from now on (in a mix, the incoming song).
+    fn song_facts(&mut self, _song: &Arc<SongFacts>) {}
     /// Song frames per output frame from now on (not 1 while the incoming song is stretched), so the
     /// output's clock counts song time.
     fn media_pace(&mut self, _pace: f64) {}
@@ -200,6 +204,8 @@ struct Chunk {
     /// The song's gain, still to be applied by the output ([`Downstream::song_gain`]); 1 when the
     /// samples are at it.
     gain: f32,
+    /// What the stages read of its song ([`Downstream::song_facts`]).
+    song: Arc<SongFacts>,
 }
 
 /// A format announced by decode-ahead, armed once its buffers flow.
@@ -320,6 +326,9 @@ pub struct TransitionEngine {
 
     /// Gain of the song whose buffers arrive now (ReplayGain); see [`TransitionEngine::set_gain`].
     gain: f32,
+    /// What the stages read of the song whose buffers arrive now, and of the held one.
+    song: Arc<SongFacts>,
+    held_song: Arc<SongFacts>,
     dither: crate::dither::Dither,
 
     queue: VecDeque<Chunk>,
@@ -391,6 +400,8 @@ impl TransitionEngine {
             lock_rate: true,
             follow_rate: false,
             gain: 1.0,
+            song: no_facts(),
+            held_song: no_facts(),
             dither: crate::dither::Dither::new(),
             queue: VecDeque::new(),
             pool: Vec::new(),
@@ -603,6 +614,23 @@ impl TransitionEngine {
         self.gain = if gain.is_finite() { gain.clamp(0.0, MAX_GAIN) } else { 1.0 };
     }
 
+    /// What the stages read of the song whose buffers come next, from its first sample.
+    pub fn set_song(&mut self, song: Arc<SongFacts>) {
+        self.song = song;
+    }
+
+    /// What is queued of the song `was` tells of is told of by `now` (its prepared data came).
+    pub fn retell(&mut self, was: &Arc<SongFacts>, now: &Arc<SongFacts>) {
+        for c in self.queue.iter_mut().filter(|c| Arc::ptr_eq(&c.song, was)) {
+            c.song = now.clone();
+        }
+        for s in [&mut self.song, &mut self.held_song] {
+            if Arc::ptr_eq(s, was) {
+                *s = now.clone();
+            }
+        }
+    }
+
     /// Scales by `ratio` everything still queued or held of the song at `stream_offset_us` (settings
     /// changed), including the untaken rest of a partly taken chunk. Mixed chunks are left alone.
     /// Allocates nothing.
@@ -790,6 +818,7 @@ impl TransitionEngine {
         let (taken, used) = if direct {
             down.media_pace(1.0);
             down.song_gain(gain);
+            down.song_facts(&self.song);
             down.handle_buffer(buffer, 0, pts_us)
         } else {
             (false, 0)
@@ -864,6 +893,7 @@ impl TransitionEngine {
     fn begin_hold(&mut self, p: &Plan, out: Format) {
         self.flight.held_id = self.playing_id.clone().or_else(|| self.current_id.clone());
         self.held_offset_us = self.offset_us;
+        self.held_song = self.song.clone();
         self.heard.next_rate = if p.stretching() { p.tempo_ratio() } else { 1.0 };
         self.take_over(p);
         let late = self.flight.late_us.clamp(0, p.duration_us());
@@ -1253,6 +1283,9 @@ impl TransitionEngine {
                 let mut c = self.take_pooled(end - from);
                 c.extend_from_slice(&self.tail[from..end]);
                 self.enqueue(c, at, Some(self.held_offset_us), 1.0, 1.0);
+                if let Some(c) = self.queue.back_mut() {
+                    c.song = self.held_song.clone();
+                }
             }
         }
         if self.flight.phase != Phase::Pass {
@@ -1318,7 +1351,7 @@ impl TransitionEngine {
             self.recycle(data);
             return;
         }
-        self.queue.push_back(Chunk { data, pos: 0, pts_us, resync: self.flight.resync_next, measure: self.flight.measure_next, stream_us, pace, gain });
+        self.queue.push_back(Chunk { data, pos: 0, pts_us, resync: self.flight.resync_next, measure: self.flight.measure_next, stream_us, pace, gain, song: self.song.clone() });
         self.flight.resync_next = false;
         self.flight.measure_next = false;
     }
@@ -1356,6 +1389,7 @@ impl TransitionEngine {
             let before = if c.measure { down.position_us(false) } else { None };
             down.media_pace(c.pace);
             down.song_gain(c.gain);
+            down.song_facts(&c.song);
             let (taken, used) = down.handle_buffer(&c.data, c.pos, c.pts_us);
             c.pos += used;
             if c.measure {

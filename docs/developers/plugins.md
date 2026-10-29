@@ -105,9 +105,15 @@ are, and turning the plugin off brings nori's own values back.
 
 ## Sound stages
 
-A stage runs in the chain after the equalizer and before nori's ceiling (a soft limit above -1 dBFS
-that keeps whatever a plugin boosts from clipping), ahead of silence skipping and speed. A stage
-counts as touching samples: songs stay off offload, and bit-perfect output drops it.
+A stage runs in one of two slots (the manifest's `stage`). A stage counts as touching samples: songs
+stay off offload, and bit-perfect output drops it.
+
+- **Master:** in the chain after the equalizer and before nori's ceiling (a soft limit above -1 dBFS
+  that keeps whatever a plugin boosts from clipping), ahead of silence skipping and speed.
+- **Song:** on each song as the player reads it, before transitions, so each side of a mix has its
+  own (`SongStages` in `crates/player/src/stage.rs`). Each decoded buffer goes through it once; a seek
+  or a song made again for a new ending reads from a fresh instance. A change of its rows is heard
+  from the next buffer read, after what the output already holds.
 
 - **Its own instance** on the engine's thread, with every import linked to a trap: it can't wait on
   anything. A block (8192 frames or fewer) goes in as one `list<f32>`, channel after channel, and comes
@@ -117,13 +123,51 @@ counts as touching samples: songs stay off offload, and bit-perfect output drops
   the plugin's state bytes; the SDK's `state` module does it for a plain `Copy` struct) and a splice
   restores it, so the music made again is the same, bit for bit
   (`a_stage_made_again_mid_song_sounds_the_same` in the player's pipeline tests).
-- **Inputs** are its numeric rows, in manifest order; a row changed is a sound change, spliced in. The
-  WIT's other inputs (volume, route, the song's gain and loudness, prepared data) are not given yet:
-  they read 0 dB, `other` and none.
-- **Only the master slot** is built: a plugin asking for the song slot is refused at install, as
-  needing what this host lacks.
+- **Inputs** (`nori_player::stage::Inputs`): its numeric rows in manifest order, the volume (dB, from
+  the media volume: the host session's level on the desktop and terminal, the music stream's on
+  Android, followed only while a stage is on) and the route (speaker, wired, Bluetooth, USB, else
+  other; nori tells no car or cast route apart), and the song's facts: the gain nori levels it by, its
+  measured loudness (once AutoMix measured it) and its plugin's prepared data. A row, volume or
+  route change is a sound change, spliced in. A song's facts ride on the input as it is kept, so in
+  the master slot a new song's facts start at its first frame and a splice runs again with the facts
+  it ran with; in a mix the master slot reads the incoming song's. Prepared data that comes while its
+  song plays is spliced in from the first frame the output can still replace. The inputs are copied
+  into the plugin's memory on a change (prepared data included), never per block. Facts are looked
+  up only while a stage is on.
 - **A trap or a block over its fuel** bypasses the stage until the next reset (a seek, another song),
   which makes a fresh instance. Audio never waits for a plugin.
+
+## Song preparation and AutoMix analysis
+
+The enabled plugins exporting `preparation` or `automix` hear each song as the player reads it (the
+one decode, the song playing and the next): the reader's tap (`nori_player::stage::Tap`) copies the
+decoded samples into a feed made when the song starts and never waits; what the feed can't take is
+dropped, and `feed`'s `at-frame` says where the samples start. A thread of its own
+(`crates/plugins/src/prepare.rs`, `nori-prepare`) with an instance of each such plugin wakes when a
+feed is half full and at the song's end, and sleeps while nothing is read. `begin` (and
+`begin-analysis`, for a song read from its start) says whether the plugin wants the song; if none
+does, the tap copies nothing more. With none enabled no tap, feed or thread exists.
+
+- **Prepared data** (`finish`) is kept in memory for the last four songs and handed to the plugin's
+  stage as the song's facts; data that comes while its song plays wakes the engine, which splices it
+  in. It is not kept across restarts.
+- **AutoMix analysis data** (`finish-analysis`) is kept the same way and handed to `refine` when nori
+  stores its own analysis of the song (waiting a second at most for the plugin's pass to finish).
+
+## AutoMix
+
+The planner (`nori_automix::planner`) asks the plugins through `nori_automix::mixing::Mixing`, where
+nori decides and with a 100 ms budget per call; past it, or with none enabled, nori's answer stands.
+
+- **Whether a pair mixes** (the `deciders` point's `mixes`): given nori's same-album rule; false plays
+  them gapless.
+- **The plan** (`plan`): the first plugin with a plan gives it. nori checks it (`mixing::adopt`):
+  positions inside both songs, a length of 20 ms to 60 s, a tempo change only when beat-matched and
+  within the setting, an echo only where nori planned one; nori's fades, gains and echo are stretched
+  to its length. A plan that doesn't hold is dropped for nori's.
+- **Refining an analysis** (`refine`, with the plugin's analysis data): nori keeps it only when it
+  holds (`mixing::refined`: tempo 40 to 250 BPM or none, key, cues inside the song and in order,
+  loudness), and the beat grid starts at its first beat.
 
 ## Slots
 
@@ -161,6 +205,10 @@ transport (`Kinds::set_transport`). See [Providers](providers.md).
 - `cargo test -p nori-plugins`: the manifest as the SDK writes it, the extension points' order against
   `wit/`, the store, and `tests/host.rs` over a real plugin (`fixture/`, built to wasm by the `testing` feature:
   needs `rustup target add wasm32-wasip2`): its stage and kept state, no allocation per block, its
-  overrides, its HTTP refused outside its hosts, and a plugin needing an unlinked interface refused.
-- `cargo test -p nori-player --test pipeline stage`: stages in the chain on the virtual clock.
+  overrides, its HTTP refused outside its hosts, and a plugin needing an unlinked interface refused;
+  `tests/preparation.rs`: a stage's inputs, the song slot, song preparation and AutoMix analysis as
+  the tap feeds them, refinements and plans.
+- `cargo test -p nori-player --test pipeline stage`: stages in the chain on the virtual clock: kept
+  state, a song's facts from its first frame, prepared data spliced in, the song slot, the tap.
+- `cargo test -p nori-automix mixing`: what nori checks of a plugin's plan and refinement.
 - `cargo test -p nori-settings overrides`: tunables and settings overridden without being written.

@@ -263,7 +263,7 @@ impl Settings {
         if *held == layer {
             return 0;
         }
-        let audio = if held.stages != layer.stages || Tunables::with(&held.overrides) != Tunables::with(&layer.overrides) { APPLY_AUDIO } else { 0 };
+        let audio = if held.stages != layer.stages || held.preparing != layer.preparing || Tunables::with(&held.overrides) != Tunables::with(&layer.overrides) { APPLY_AUDIO } else { 0 };
         let settings = self.with_prefs(|p| effects(&effective(p, &held.overrides), &effective(p, &layer.overrides))).unwrap_or(0);
         *held = layer;
         audio | settings
@@ -644,7 +644,7 @@ mod tests {
         let dir = nori_testdir::TempDir::new("settings-layer");
         let s = Settings::new();
         s.open(dir.path().join("app.db").to_str().unwrap()).unwrap();
-        let laid = |pairs: &[(&str, &str)]| Layer { overrides: pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), stages: Vec::new() };
+        let laid = |pairs: &[(&str, &str)]| Layer { overrides: pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), ..Layer::default() };
         assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25")])), APPLY_AUDIO, "a tunable");
         assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25")])), 0, "the same layer");
         assert_eq!(s.set_layer(laid(&[("playback.speed", "1.25"), ("crossfadeSec", "6")])), APPLY_AUDIO | REPLAN, "a setting's own effect");

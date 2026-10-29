@@ -58,10 +58,8 @@ pub(crate) fn install(from: &Path, root: &Path) -> Result<Manifest, Refusal> {
     let wasm = get("plugin.wasm").ok_or_else(|| Refusal::Unreadable("no plugin.wasm".into()))?;
     let section = Manifest::section(wasm)?;
     let manifest = Manifest::of_section(&section)?;
-    match (manifest.extends("sound-stage"), manifest.stage) {
-        (true, None) => return Err(Refusal::Unreadable("a sound stage without its slot".into())),
-        (true, Some(crate::Slot::Song)) => return Err(Refusal::Needs(vec!["sound-stage song slot".into()])),
-        _ => {}
+    if manifest.extends("sound-stage") && manifest.stage.is_none() {
+        return Err(Refusal::Unreadable("a sound stage without its slot".into()));
     }
     // Written beside the old version first, and checked there.
     let staging: PathBuf = root.join(format!(".{}.new", manifest.id));

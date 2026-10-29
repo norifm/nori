@@ -118,6 +118,12 @@ impl Session {
         song_gain(prefs, &song, run)
     }
 
+    /// Song `id`'s measured integrated loudness (BS.1770, LUFS), once AutoMix measured it.
+    pub fn loudness(&self, id: &str) -> Option<f32> {
+        let channels = self.store(|s| s.songs.get(id).map_or(2, |(song, _)| song.channel_count));
+        measured_lufs(&self.db, id).filter(|l| *l > -70.0).map(|mid| stereo_loudness_of_mid(mid, channels))
+    }
+
     /// Whether registered song `id` is marked explicit; false if unknown.
     pub fn explicit(&self, id: &str) -> bool {
         self.store(|s| s.songs.get(id).is_some_and(|(song, _)| song.explicit_status == nori_model::ExplicitStatus::Explicit))

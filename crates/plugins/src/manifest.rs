@@ -75,12 +75,7 @@ pub enum Place {
     Devices,
 }
 
-/// Where a sound stage sits in the chain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Slot {
-    Song,
-    Master,
-}
+pub use nori_player::stage::Slot;
 
 /// One row of its page, drawn by each client with its own components.
 #[derive(Debug, Clone, PartialEq)]
