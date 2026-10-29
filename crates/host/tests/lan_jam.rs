@@ -41,7 +41,9 @@ impl nori_plugins::Client for Quiet {
     fn multicast(&self, _: bool) {}
     fn cast(&self, _: Option<nori_plugins::Cast>) {}
     fn control(&self, _: nori_plugins::Control) {}
-    fn sign_in(&self, _: String, _: String) {}
+    fn sign_in(&self, _: String, _: String) -> bool {
+        false
+    }
     fn wake(&self, _: Vec<nori_plugins::WakeEvent>) {}
     fn commands(&self, _: Vec<nori_plugins::Command>) {}
     fn watch_screen(&self, _: bool) {}

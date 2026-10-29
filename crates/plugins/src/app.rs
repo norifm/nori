@@ -34,8 +34,8 @@ pub trait Client: Send + Sync {
     fn cast(&self, cast: Option<crate::Cast>);
     /// A plugin asks the player to do `control`, as a press of the client's own would.
     fn control(&self, control: Control);
-    /// Opens the sign-in page of plugin `id`'s provider at `url`.
-    fn sign_in(&self, id: String, url: String);
+    /// Opens the sign-in page of plugin `id`'s provider at `url`; false where the client has none.
+    fn sign_in(&self, id: String, url: String) -> bool;
     /// Keep on only the receivers that start nori for these.
     fn wake(&self, events: Vec<WakeEvent>);
     /// The commands other apps may run now; with none, no receiver or bus name.
@@ -130,8 +130,7 @@ impl Side for App {
     }
 
     fn sign_in(&self, id: &str, url: &str) -> bool {
-        self.client.sign_in(id.into(), url.into());
-        true
+        self.client.sign_in(id.into(), url.into())
     }
 
     fn wake(&self, events: &[WakeEvent]) {

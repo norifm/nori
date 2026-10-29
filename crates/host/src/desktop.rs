@@ -327,10 +327,12 @@ impl nori_plugins::Client for Watched {
             s.plugin_control(control);
         }
     }
-    fn sign_in(&self, id: String, url: String) {
-        if let Some(open) = self.signs_in.lock().expect("not poisoned").as_ref() {
+    fn sign_in(&self, id: String, url: String) -> bool {
+        let opens = self.signs_in.lock().expect("not poisoned");
+        if let Some(open) = opens.as_ref() {
             open(id, url);
         }
+        opens.is_some()
     }
     fn wake(&self, _: Vec<nori_plugins::WakeEvent>) {}
     /// Linux: `fm.nori.Commands` on the session bus while any plugin has commands.

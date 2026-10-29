@@ -167,7 +167,7 @@ class PluginHost(
             _cast.value = cast
         }
         override fun control(control: Control) = this@PluginHost.control(control)
-        override fun signIn(id: String, url: String) { _signIns.tryEmit(ServerKind.Plugin(id) to url) }
+        override fun signIn(id: String, url: String): Boolean = _signIns.tryEmit(ServerKind.Plugin(id) to url)
         override fun wake(events: List<WakeEvent>) = PluginReceivers.wake(context, events)
         override fun commands(commands: List<Command>) = PluginReceivers.commands(context, commands.isNotEmpty())
         override fun watchScreen(on: Boolean) {

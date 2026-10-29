@@ -14,7 +14,7 @@ fn main() {
     let renamed = lines[on_load].replacen("unsafe extern \"system\" fn JNI_OnLoad(", "pub(crate) unsafe extern \"system\" fn uniffi_on_load(", 1);
     lines[on_load] = &renamed;
     lines.remove(on_load - 1);
-    let mut scaffolding = cancellable_calls(&retain_async_objects(&lines.join("\n")));
+    let mut scaffolding = boolean_answers(&cancellable_calls(&retain_async_objects(&lines.join("\n"))));
     // Beside the generator's own allows: it matches every error variant as `{ .. }`, whatever its fields,
     // and a foreign method's `Result` answer with a one-armed `match`.
     let module = scaffolding.find("mod uniffi_bindgen_kotlin_jni_scaffolding {").expect("the generated scaffolding is one module");
@@ -59,6 +59,21 @@ fn cancellable_calls(scaffolding: &str) -> String {
     }).collect::<Vec<_>>().join("#[unsafe(no_mangle)]");
     assert!(freed > 0 && calls > 0, "the generated scaffolding frees futures and makes async Kotlin calls");
     out
+}
+
+// NORI: the generator calls a foreign method answering a bool as one answering a byte (`call_byte`, its
+// `i8` handed to `lift_bool`), which doesn't build; it is called as the boolean method its descriptor says.
+fn boolean_answers(scaffolding: &str) -> String {
+    const DISPATCH: &str = "unsafe fn callback_interface_dispatch_";
+    scaffolding.split(DISPATCH).enumerate().map(|(i, part)| {
+        let end = part.find("\n}\n").unwrap_or(part.len());
+        let (body, rest) = part.split_at(end);
+        if i == 0 || !body.contains(") -> uniffi::Result<::std::primitive::bool> {") {
+            return part.to_string();
+        }
+        assert!(body.contains(")Z\",") && body.contains("METHOD.call_byte(") && body.contains("lift_bool(uniffi_env, uniffi_return)"), "a generated foreign bool answer has the expected shape");
+        body.replacen("METHOD.call_byte(", "METHOD.call_boolean(", 1) + rest
+    }).collect::<Vec<_>>().join(DISPATCH)
 }
 
 // NORI: borrowed JNI objects need owned handles while an async call is outstanding.
