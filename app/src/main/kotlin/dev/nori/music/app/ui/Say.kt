@@ -972,7 +972,6 @@ class Say(private val r: Resources) {
     val continueLabel: String = r.getString(R.string.continue_label)
     val resume: String = r.getString(R.string.resume)
     fun offerPlace(artist: String, at: Int, of: Int): String = r.getString(R.string.offer_place, artist, at, of)
-    val mixLineMade: String = r.getString(R.string.mix_line_made)
 
     companion object {
         /** Counts up to this are made once and kept. */

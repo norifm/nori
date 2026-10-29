@@ -1847,7 +1847,7 @@ fn home_offers_the_queue_left_and_the_mixes() {
     let lines: Vec<&str> = s.lines().map(str::trim).collect();
     let at = lines.iter().position(|l| l.starts_with("Continue")).unwrap_or_else(|| panic!("{s}"));
     assert!(lines[at].contains("Next Up  Artist · 2 of 2") && lines[at].ends_with("Resume   Close"), "{s}");
-    assert!(lines[at + 2] == "For you" && lines[at + 3].starts_with("Favorites") && lines[at + 4].contains("Made for you"), "{s}");
+    assert!(lines[at + 2] == "For you" && lines[at + 3].starts_with("Favorites") && lines[at + 4].starts_with("Quick picks"), "{s}");
     // Enter on it plays the queue where it was left; d closes it; neither comes back.
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);

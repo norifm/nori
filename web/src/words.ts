@@ -43,7 +43,6 @@ export const W = {
   /** The mixes on "For you", by the core's `MixName`. */
   mixNames: { Favourites: "Favorites", QuickPicks: "Quick picks", Discover: "Discover", DiscoverWeekly: "Discover Weekly", ListenAgain: "Listen again", Top: "Your top songs" } as Record<string, string>,
   /** Under a mix's name: what it is made from. */
-  mixCaption: (favourites: boolean) => (favourites ? "" : "Made for you"),
   /** Home's rows, by the core's `HomeRow`. */
   homeRows: {
     Pinned: "Favorite playlists",

@@ -207,7 +207,6 @@ export struct EqBandRow {
 export struct Pick {
     id: string,
     title: string,
-    sub: string,
     covers: [string],
     seed: color,
     page: color,
@@ -1648,7 +1647,7 @@ component PickCard inherits Rectangle {
     callback play;
     callback queue(bool);
     width: floor(root.side / 1phx) * 1phx;
-    height: floor(root.side * 206 / 150 / 1phx) * 1phx;
+    height: floor(root.side * 186 / 150 / 1phx) * 1phx;
     border-radius: 18px;
     clip: true;
     background: root.pick.page;
@@ -1688,25 +1687,20 @@ component PickCard inherits Rectangle {
             background: @linear-gradient(180deg, root.pick.page.with-alpha(0) 45%, root.pick.page 100%);
         }
     }
+    // The name low on the paper, over the end of the fade.
     VerticalLayout {
-        y: root.width;
-        height: root.height - self.y;
-        padding-left: 12px;
-        padding-right: 12px;
-        alignment: center;
+        padding-left: 13px;
+        padding-right: 13px;
+        padding-bottom: 12px;
+        alignment: end;
         Text {
             text: root.pick.title;
             color: root.pick.ink;
             font-family: Type.title;
-            font-size: 18px;
+            font-size: 20px;
             font-weight: 600;
             letter-spacing: -0.3px;
-            overflow: elide;
-        }
-        Text {
-            text: root.pick.sub;
-            color: root.pick.ink.with-alpha(0.7);
-            font-size: 12px;
+            wrap: word-wrap;
             overflow: elide;
         }
     }
@@ -1735,7 +1729,6 @@ component PickCard inherits Rectangle {
         y: root.menu-y - Chrome.menu-lift(root.menu-at, self.height);
         picture: root.picture;
         title: root.pick.title;
-        line: root.pick.sub;
         play => { root.play(); }
         queue(next) => { root.queue(next); }
     }
@@ -6320,9 +6313,9 @@ export component AppWindow inherits Window {
                     picks-grid := Remembered {
                         property <int> columns: max(2, floor((self.width - 64px + 22px) / 222px));
                         property <length> side: (self.width - 64px - (self.columns - 1) * 22px) / self.columns;
-                        content-height: Chrome.top-room + 64px + ceil(root.picks.length / self.columns) * (self.side * 206 / 150 + 22px) + 100px;
-                        property <int> first: max(0, floor((-self.content-y - Chrome.top-room - 64px) / (self.side * 206 / 150 + 22px)) - 1) * self.columns;
-                        property <int> visible-count: max(0, min(root.picks.length - self.first, (ceil(self.height / (self.side * 206 / 150 + 22px)) + 2) * self.columns));
+                        content-height: Chrome.top-room + 64px + ceil(root.picks.length / self.columns) * (self.side * 186 / 150 + 22px) + 100px;
+                        property <int> first: max(0, floor((-self.content-y - Chrome.top-room - 64px) / (self.side * 186 / 150 + 22px)) - 1) * self.columns;
+                        property <int> visible-count: max(0, min(root.picks.length - self.first, (ceil(self.height / (self.side * 186 / 150 + 22px)) + 2) * self.columns));
                         property <int> slots;
                         init => { self.slots = self.visible-count; }
                         changed visible-count => { self.slots = self.visible-count; }
@@ -6340,7 +6333,7 @@ export component AppWindow inherits Window {
                             property <int> i: picks-grid.first + slot;
                             property <Pick> item: root.picks[self.i];
                             x: 32px + mod(self.i, parent.columns) * (parent.side + 22px);
-                            y: Chrome.top-room + 64px + floor(self.i / parent.columns) * (parent.side * 206 / 150 + 22px);
+                            y: Chrome.top-room + 64px + floor(self.i / parent.columns) * (parent.side * 186 / 150 + 22px);
                             side: parent.side;
                             pick: self.item;
                             picture: root.pick-art(self.item.covers, root.covers-rev);

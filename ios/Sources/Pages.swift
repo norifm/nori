@@ -240,11 +240,11 @@ final class Collage: UIView {
 }
 
 /// A mix on Home: a portrait card on the season's paper dyed with the mix's color (the core's
-/// `mix_card_colours`), its covers a square on top running into that paper, its name and a line under it
-/// in the card's own ink.
+/// `mix_card_colours`), its covers a square on top running into that paper, and its name low on the paper,
+/// over the end of the fade, in the card's own ink.
 final class MixCard: UIView {
-    /// The card's height to its width: 206 to 150.
-    static let tall: CGFloat = 206 / 150
+    /// The card's height to its width: 186 to 150.
+    static let tall: CGFloat = 186 / 150
 
     init(_ item: Item, width: CGFloat) {
         super.init(frame: .zero)
@@ -263,17 +263,11 @@ final class MixCard: UIView {
         fade.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
         fade.locations = [0, 0.45, 1]
         art.layer.mask = fade
-        let name = label(Fonts.title(18, .headline), ink)
+        let name = label(Fonts.title(20, .headline), ink, lines: 2)
         name.text = Say.mix(item.count)
-        let line = label(Fonts.font(12, .regular, .caption1), ink.withAlphaComponent(0.7))
-        // Favorites' name says what it is made from.
-        line.text = item.count == 0 ? "" : Say.mixLineMade
-        // The name and its line in the middle of the paper under the covers.
-        let (a, b) = (name.sizeThatFits(.zero).height, line.sizeThatFits(.zero).height)
-        let top = width + (width * MixCard.tall - width - a - b) / 2
-        name.frame = CGRect(x: 12, y: top, width: width - 24, height: a)
-        line.frame = CGRect(x: 12, y: top + a, width: width - 24, height: b)
-        for v in [art, name, line] { addSubview(v) }
+        let high = name.sizeThatFits(CGSize(width: width - 26, height: .greatestFiniteMagnitude)).height
+        name.frame = CGRect(x: 13, y: width * MixCard.tall - 12 - high, width: width - 26, height: high)
+        for v in [art, name] { addSubview(v) }
         isUserInteractionEnabled = false
         isAccessibilityElement = true
         accessibilityLabel = name.text

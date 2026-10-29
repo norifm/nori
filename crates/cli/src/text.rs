@@ -636,10 +636,6 @@ pub fn mix_name(n: nori_core::mixes::board::MixName) -> &'static str {
     }
 }
 
-/// Under a mix's name: what it is made from; nothing under Favorites, whose name says so.
-pub fn mix_line(favourites: bool) -> &'static str {
-    if favourites { "" } else { "Made for you" }
-}
 
 /// One of the albums' orders (`browse::album_sorts`).
 pub fn album_sort(sort: nori_core::browse::AlbumSort) -> &'static str {
