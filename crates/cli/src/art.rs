@@ -152,11 +152,12 @@ impl Default for Theme {
 }
 
 impl Theme {
-    /// The season's palette for the appearance settings on `day`.
+    /// The season's palette for the appearance settings on `day`, or a plugin's season (`Session::look`).
     pub fn season(p: &nori_core::settings::StoredPrefs, day: Day, terminal_dark: bool, painted: bool, colors: Colors) -> Theme {
         use nori_core::settings::ThemeMode;
-        let pal = nori_look::theme::palette(nori_core::settings::season_of(p.season), day.month, day.day, day.southern, p.theme.is_dark(terminal_dark), p.theme == ThemeMode::Midnight);
-        Theme::of(pal, painted, colors)
+        let dark = p.theme.is_dark(terminal_dark);
+        let pal = nori_look::theme::palette(nori_core::settings::season_of(p.season), day.month, day.day, day.southern, dark, p.theme == ThemeMode::Midnight);
+        Theme::of(crate::backend::app().look(pal, None, dark), painted, colors)
     }
 
     /// The roles of `pal`; with an unpainted page the terminal's own ink and background, with no colors

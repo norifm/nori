@@ -115,6 +115,10 @@ data class StorageUi(
 class SettingsViewModel(app: Application) : NoriViewModel(app) {
     val prefs: StateFlow<StoredPrefs> = nori.settings.prefs
 
+    /** The palette worn where the season's is [palette] (at night when [dark]): a plugin's season of its own, or null for the season's. */
+    suspend fun look(palette: dev.nori.music.ffi.look.Palette, dark: Boolean): dev.nori.music.ffi.look.Palette? =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { nori.session.look(palette, null, dark) }.takeIf { it != palette }
+
     /** What the limiter is pulling back now, in dB, read on the meter's beat while collected. */
     val limiterDb = meter { dev.nori.music.playback.Equalizer.meterDb }
 

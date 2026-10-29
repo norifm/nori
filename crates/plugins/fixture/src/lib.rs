@@ -59,6 +59,7 @@ fn fetch_together(a: &str, b: &str) -> String {
 
 impl Lifecycle for Test {
     fn action(&mut self, id: String) {
+        deciders::acted(&id);
         if id == "together" {
             let heard = fetch_together("https://allowed.example/together/one", "https://allowed.example/together/two");
             nori_plugin_sdk::notices::show(nori_plugin_sdk::notices::Tone::Info, "together", &[heard]);

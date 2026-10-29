@@ -19,10 +19,11 @@ import dev.nori.music.ffi.settings.StoredPrefs
 /**
  * The season's theme (nori_look::theme): its palette in light, dark or Midnight black, the calendar's on the
  * day when it follows the seasons. The date is read again each time the app comes back to the front, so a
- * season comes in on its own day without anything waiting for midnight.
+ * season comes in on its own day without anything waiting for midnight. A plugin may give a season of
+ * its own ([look], asked off the main thread; null keeps the season's).
  */
 @Composable
-fun NoriTheme(prefs: StoredPrefs, content: @Composable () -> Unit) {
+fun NoriTheme(prefs: StoredPrefs, look: suspend (Palette, Boolean) -> Palette? = { _, _ -> null }, content: @Composable () -> Unit) {
     val system = isSystemInDarkTheme()
     // Light, dark or the phone's: the core's rule (nori_look::theme::is_dark), the same for every screen.
     val dark = remember(prefs.theme, system) { dev.nori.music.ffi.settings.themeIsDark(prefs.theme, system) }
@@ -31,13 +32,15 @@ fun NoriTheme(prefs: StoredPrefs, content: @Composable () -> Unit) {
         Today.now().let { if (it != today) today = it }
         onPauseOrDispose {}
     }
-    val scheme = remember(dark, prefs.season, prefs.theme, today) { schemeOf(prefs, dark, today) }
+    var worn by remember(dark, prefs.season, prefs.theme, today) { mutableStateOf<Palette?>(null) }
+    androidx.compose.runtime.LaunchedEffect(dark, prefs.season, prefs.theme, today) { worn = look(paletteOf(prefs, dark, today), dark) }
+    val scheme = remember(dark, prefs.season, prefs.theme, today, worn) { schemeOf(prefs, dark, today, worn) }
     val papers = remember(prefs.season, prefs.theme, dark, today) {
         Papers(paletteOf(prefs, false, today), paletteOf(prefs, true, today), dark, dev.nori.music.ffi.settings.coversTintPages(prefs.theme))
     }
     // Everything dressed in the theme's own colors - the plates behind the buttons, the chrome, the
     // status bar - worked out once per scheme in Rust (nori_look::dress) and only looked up after.
-    val look = remember(scheme) { FixedLook(plainLook(scheme)) }
+    val dressed = remember(scheme) { FixedLook(plainLook(scheme)) }
     val systemDensity = androidx.compose.ui.platform.LocalDensity.current
     // The shorter side, not the width: the same in both orientations, so text keeps its size on a turn.
     val widthDp = androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp
@@ -48,10 +51,10 @@ fun NoriTheme(prefs: StoredPrefs, content: @Composable () -> Unit) {
         if (scale == 1f) systemDensity else androidx.compose.ui.unit.Density(systemDensity.density * scale, systemDensity.fontScale)
     }
     androidx.compose.runtime.CompositionLocalProvider(
-        androidx.compose.ui.platform.LocalDensity provides density, LocalLook provides look, LocalPapers provides papers,
+        androidx.compose.ui.platform.LocalDensity provides density, LocalLook provides dressed, LocalPapers provides papers,
     ) {
         // The status bar's icons follow the theme, not the system's dark mode the window was started in.
-        SystemBarIcons(look)
+        SystemBarIcons(dressed)
         MaterialTheme(colorScheme = scheme, typography = NoriTypography, content = content)
     }
 }
@@ -89,9 +92,9 @@ val LocalPapers = staticCompositionLocalOf<Papers> { error("no NoriTheme") }
 fun accentsOf(prefs: StoredPrefs, today: Today = Today.now()): Accents =
     Accents(paletteOf(prefs, false, today).accent.toInt(), paletteOf(prefs, true, today).accent.toInt())
 
-/** The scheme the app wears, from the season's palette. Outside composition too, for the home-screen widgets. */
-fun schemeOf(prefs: StoredPrefs, dark: Boolean, today: Today = Today.now()): ColorScheme {
-    val r = dev.nori.music.ffi.look.roles(paletteOf(prefs, dark, today))
+/** The scheme the app wears, from the season's palette or [worn] in its place. Outside composition too, for the home-screen widgets. */
+fun schemeOf(prefs: StoredPrefs, dark: Boolean, today: Today = Today.now(), worn: Palette? = null): ColorScheme {
+    val r = dev.nori.music.ffi.look.roles(worn ?: paletteOf(prefs, dark, today))
     fun c(v: UInt) = Color(v.toInt())
     val bg = c(r.background)
     val ink = c(r.onBackground)

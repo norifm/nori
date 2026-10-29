@@ -11,6 +11,9 @@ use crate::Song;
 
 pub use nori_queue::autofill::*;
 
+/// The queue's last songs a plugin deciding autofill is shown.
+const TAIL: usize = 10;
+
 /// Songs autofill appends. Handed back to [`Client::autofill_arrived`].
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -195,6 +198,17 @@ fn allowed(s: &Song, remote: bool) -> bool {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
+    /// What a plugin plays when the queue ended (it played out, nothing refilled it): songs to append
+    /// and play, which may be provider songs only as autofill's may. Empty while no plugin decides.
+    pub async fn queue_ended(&self) -> Refill {
+        let Some(d) = self.core.session.deciders() else { return Refill::default() };
+        let last = self.core.session.autofill_seed().and_then(|id| self.core.session.song(&id));
+        let Some(named) = d.queue_ended(last.as_ref()).await else { return Refill::default() };
+        let songs = self.resolved(named, &[], &HashSet::new(), self.settings().prefs(|p| p.auto_fill_remote)).await;
+        self.core.session.register(songs.clone());
+        Refill { songs, after: self.core.session.end_entry(), ..Refill::default() }
+    }
+
     /// What to append after the queue's end, per the autofill settings. Empty on failure or an unknown seed.
     pub async fn autofill(&self) -> Refill {
         let (kind, basis, remote) =
@@ -218,6 +232,7 @@ impl Client {
         let began = nori_time::Instant::now();
         let after = self.core.session.end_entry();
         let fresh = Refill { after, ..self.autofill_from(kind, basis, remote).await };
+        let fresh = self.decided_fill(fresh, remote).await;
         crate::alog::info(&format!("autofill: {} songs in {} ms (kind {kind:?}, basis {basis:?})", fresh.songs.len(), began.elapsed().as_millis()));
         fresh
     }
@@ -257,6 +272,40 @@ impl Client {
             AutoFillKind::Songs => Refill::random(self.random_library_songs(&queued, remote).await),
             AutoFillKind::Albums => Refill::random(self.random_albums(&ids, 1).await),
         }
+    }
+
+    /// `nori`'s refill, or the songs a plugin picks instead: those it names that resolve, aren't queued
+    /// and autofill may queue (`remote`: provider songs too).
+    async fn decided_fill(&self, nori: Refill, remote: bool) -> Refill {
+        let Some(d) = self.core.session.deciders() else { return nori };
+        let (_, ids) = self.core.session.snapshot();
+        let tail: Vec<Song> = ids.iter().rev().take(TAIL).rev().map(|id| self.core.session.song(id).unwrap_or_else(|| Song::only_id(id.clone()))).collect();
+        let picks: Vec<String> = nori.songs.iter().map(|s| s.id.clone()).collect();
+        let Some(named) = d.autofill(&tail, &picks, SONGS as u32).await.filter(|n| *n != picks) else { return nori };
+        let queued: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let songs = self.resolved(named, &nori.songs, &queued, remote).await;
+        if songs.is_empty() {
+            return nori;
+        }
+        self.core.session.register(songs.clone());
+        Refill { songs, picked: None, album: None, after: nori.after }
+    }
+
+    /// The songs `ids` name, from `known` or the queue's songs or the profile, each once, without those
+    /// `queued` and those autofill may not queue.
+    async fn resolved(&self, ids: Vec<String>, known: &[Song], queued: &HashSet<&str>, remote: bool) -> Vec<Song> {
+        let mut out: Vec<Song> = Vec::new();
+        for id in ids.into_iter().take(SONGS) {
+            if queued.contains(id.as_str()) || out.iter().any(|s| s.id == id) {
+                continue;
+            }
+            let song = match known.iter().find(|s| s.id == id).cloned().or_else(|| self.core.session.song(&id)) {
+                Some(s) => Some(s),
+                None => self.songs(Read::SongById { id }).await.ok().and_then(|v| v.into_iter().next()),
+            };
+            out.extend(song.filter(|s| allowed(s, remote)));
+        }
+        out
     }
 
     /// The refill following `seed`.
@@ -299,6 +348,65 @@ pub(crate) mod tests {
     fn album_json(id: &str, songs: &[&str]) -> String {
         let s: Vec<String> = songs.iter().map(|i| format!(r#"{{"id":"{i}","title":"{i}","albumId":"{id}","isDir":false}}"#)).collect();
         format!(r#"{{"subsonic-response":{{"status":"ok","album":{{"id":"{id}","name":"{id}","song":[{}]}}}}}}"#, s.join(","))
+    }
+
+    /// Names `ids` for autofill and for the queue's end, and the first for a sound profile.
+    pub(crate) struct Naming(pub Vec<String>);
+
+    impl nori_model::deciders::Deciders for Naming {
+        fn deciding(&self) -> bool {
+            true
+        }
+        fn shuffle(&self, _: &[Song], _: &[u32], _: &dyn Fn(&[u32]) -> bool) -> Option<Vec<u32>> {
+            None
+        }
+        fn autofill(&self, _: &[Song], _: &[String], _: u32) -> nori_model::deciders::Later<Option<Vec<String>>> {
+            let ids = self.0.clone();
+            Box::pin(async move { Some(ids) })
+        }
+        fn queue_ended(&self, _: Option<&Song>) -> nori_model::deciders::Later<Option<Vec<String>>> {
+            let ids = self.0.clone();
+            Box::pin(async move { Some(ids) })
+        }
+        fn leveling(&self, _: &Song, _: f32, _: &dyn Fn(f32) -> bool) -> Option<f32> {
+            None
+        }
+        fn sound_profile(&self, _: nori_player::outputs::OutputPort, _: &str, _: &str, fits: &dyn Fn(&str) -> bool) -> Option<String> {
+            self.0.first().cloned().filter(|n| fits(n))
+        }
+        fn now_playing(&self, _: &Song, _: &nori_model::deciders::Shown, _: &dyn Fn(&nori_model::deciders::Shown) -> bool) -> Option<nori_model::deciders::Shown> {
+            None
+        }
+        fn media_button(&self, _: nori_model::deciders::Press, _: nori_model::deciders::ButtonAct) -> Option<nori_model::deciders::ButtonAct> {
+            None
+        }
+        fn audio_focus(&self, _: nori_model::deciders::Focus, _: nori_model::deciders::FocusAct) -> Option<nori_model::deciders::FocusAct> {
+            None
+        }
+        fn look(&self, _: Option<u32>, _: bool, _: nori_model::deciders::Roles, _: &dyn Fn(&nori_model::deciders::Roles) -> bool) -> Option<nori_model::deciders::Roles> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_plugins_picks_are_queued_only_where_autofill_may() {
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        c.core.session.register(vec![song("pf-seed", "al0"), song("pf-lib", "al1"), song("ext-pf", "al2")]);
+        fake.answer(&songs_json(&[("pf-nori", "x")]));
+        queued(&c, &["pf-seed"], 0);
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        c.core.session.use_deciders(Some(std::sync::Arc::new(Naming(ids(&["ext-pf", "pf-seed", "pf-lib", "pf-lib"])))));
+        let got = block(c.autofill_as(AutoFillKind::Songs, AutoFillBasis::Similar, false));
+        assert_eq!(got.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["pf-lib"], "no provider song, nothing queued twice");
+        assert_eq!(got.picked, None, "not the rotation's");
+        let got = block(c.queue_ended());
+        assert_eq!(got.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["pf-seed", "pf-lib"]);
+
+        // Only provider songs: nori's own fill stands.
+        fake.answer(&songs_json(&[("pf-nori", "x")]));
+        c.core.session.use_deciders(Some(std::sync::Arc::new(Naming(ids(&["ext-pf"])))));
+        let got = block(c.autofill_as(AutoFillKind::Songs, AutoFillBasis::Similar, false));
+        assert_eq!(got.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["pf-nori"]);
     }
 
     #[test]

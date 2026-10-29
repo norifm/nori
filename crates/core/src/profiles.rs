@@ -230,8 +230,21 @@ impl Core {
         self.arrival_plan(output, bound, now).curve
     }
 
+    /// The profile for `output`: the one bound to it, or one a plugin picks instead (or none).
+    fn profile_decided(&self, output: &str) -> Option<SoundProfile> {
+        let profiles = self.profiles().ok()?;
+        let bound = profiles.iter().find(|p| p.outputs.iter().any(|o| o == output)).cloned();
+        let Some(d) = self.session.deciders() else { return bound };
+        let nori = bound.as_ref().map_or("", |p| p.name.as_str());
+        let fits = |name: &str| name.is_empty() || profiles.iter().any(|p| p.name == name);
+        match d.sound_profile(nori_player::outputs::parts(output).0, output, nori, &fits) {
+            Some(name) => profiles.into_iter().find(|p| p.name == name),
+            None => bound,
+        }
+    }
+
     fn arrive_as(&self, output: String, now: &Now) -> DeviceEffect {
-        let bound = self.profile_for_output(output.clone()).ok().flatten();
+        let bound = self.profile_decided(&output);
         alog::info(&format!("device sound: {output} -> {}", bound.as_ref().map_or("nothing chosen", |p| p.name.as_str())));
         let loose = self.loose();
         let plan = self.arrival_plan(&output, bound.is_some(), now);
@@ -410,6 +423,22 @@ pub(crate) mod tests {
         c.device_forget("Bluetooth: Buds".into());
         assert!(c.device_quiet().is_empty());
         assert_eq!(c.curve_step("Bluetooth: Buds", &now(sound())), CurveStep::Offer);
+    }
+
+    #[test]
+    fn a_plugin_picks_a_profile_that_exists() {
+        use crate::autofill::tests::Naming;
+        let c = core();
+        let warm = SoundSettings { mono: true, ..sound() };
+        c.profile_save(SoundProfile { name: "Warm".into(), json: sound_json(&warm), outputs: Vec::new() }).unwrap();
+        c.session.use_deciders(Some(std::sync::Arc::new(Naming(vec!["Warm".into()]))));
+        assert_eq!(c.arrive_as("USB: K3".into(), &now(sound())).apply, Some(warm.clone()), "bound to nothing, the plugin's");
+        let (gone, alone) = (core(), core());
+        for c in [&gone, &alone] {
+            c.profile_save(SoundProfile { name: "Warm".into(), json: sound_json(&warm), outputs: Vec::new() }).unwrap();
+        }
+        gone.session.use_deciders(Some(std::sync::Arc::new(Naming(vec!["Gone".into()]))));
+        assert_eq!(gone.arrive_as("USB: K4".into(), &now(sound())), alone.arrive_as("USB: K4".into(), &now(sound())), "no such profile: nori's");
     }
 
     #[test]

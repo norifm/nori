@@ -1,7 +1,9 @@
 //! Shared types: library records (model.rs), derived display lines (lines.rs), numbers as every client
-//! writes them (numbers.rs), `CoreError`, the log (alog.rs) and the heap counter (heap.rs).
+//! writes them (numbers.rs), what plugins decide in nori's place (deciders.rs), `CoreError`, the log (alog.rs)
+//! and the heap counter (heap.rs).
 
 pub mod alog;
+pub mod deciders;
 pub mod heap;
 pub mod lines;
 pub mod model;

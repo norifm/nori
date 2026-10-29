@@ -138,6 +138,30 @@ client from what the plugin answers (`crates/plugins/src/slots.rs`); one not nam
 | player status | `player-status()`: one line | shows it under the output row |
 | devices | nothing: its rows | shows its page's rows on the devices sheet ("Playing on") too, after nori's own entries |
 
+## Deciders
+
+A plugin exporting `deciders` may answer where nori picks something (`crates/plugins/src/deciders.rs`,
+`nori_model::deciders::Deciders`). nori works out its own answer first; the enabled plugins exporting the
+point, in their order, each get the inputs and the answer so far and return another or none. nori checks
+each answer before it is used or handed on; a refused answer, a failed call or one past its budget keeps
+the answer so far. The domain crates hold the deciders as a trait object, set by `Core::use_kinds`; while
+no enabled plugin exports the point (`Deciders::deciding`), no input is built and nothing is called.
+
+| decider | runs | budget | nori checks |
+|---|---|---|---|
+| shuffle | shuffle turned on, or a queue set shuffled (`nori_queue` `Session::shuffle`, `set`, `set_shuffled`) | 50 ms | every list index once, starting where nori's order starts (the song playing) |
+| autofill | after nori's refill (`Client::autofill`), async | fuel only | each id resolves to a song, isn't queued, and is a provider song only where "may add provider songs" allows; none left keeps nori's |
+| queue-ended | the queue played out (`Client::queue_ended`; host and Android append and play what it gives) | fuel only | as autofill |
+| leveling | the song's ReplayGain (`Session::queue_gain`), once per song and gain; not while leveling is off | 250 ms | finite, -60 dB to nori's boost ceiling |
+| sound-profile | an output arrives (`Core::device_arrive`) | 250 ms | a saved profile, or none |
+| now-playing | Android's notification and lock screen (as a song starts), MPRIS on the desktop and terminal; once per song | 250 ms | a title |
+| media-button | Android's media buttons (taken from media3 only while a plugin decides), MPRIS play-pause, next and previous | 50 ms | an act of the enum; `plugin` runs its lifecycle `action("media-button")` and the player does nothing |
+| audio-focus | Android's focus changes (`Session::audio_focus`, nori's rule `focus_act`) | 50 ms | an act of the enum |
+| look | the season's palette with no cover: Android's theme, the desktop's plain pages, the terminal's theme | 250 ms | contrast (`nori_look::theme::readable`) |
+
+`mixes` is AutoMix's (AutoMix seams). On Android double and triple presses stay media3's own (it counts
+them); a long press reaches the decider.
+
 ## Covers
 
 A plugin's covers are URLs with `{size}` where the pixels go; the core fills it in
@@ -162,5 +186,7 @@ transport (`Kinds::set_transport`). See [Providers](providers.md).
   `wit/`, the store, and `tests/host.rs` over a real plugin (`fixture/`, built to wasm by the `testing` feature:
   needs `rustup target add wasm32-wasip2`): its stage and kept state, no allocation per block, its
   overrides, its HTTP refused outside its hosts, and a plugin needing an unlinked interface refused.
+- `cargo test -p nori-plugins --test deciders`: each decider over the test plugin, nori's checks, the budget.
+  Their seams with a fake: `cargo test -p nori-queue deciders`, `-p nori-core autofill profiles`.
 - `cargo test -p nori-player --test pipeline stage`: stages in the chain on the virtual clock.
 - `cargo test -p nori-settings overrides`: tunables and settings overridden without being written.

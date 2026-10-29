@@ -8,6 +8,7 @@ uniffi::setup_scaffolding!();
 
 mod app;
 pub mod convert;
+mod deciders;
 mod host;
 mod manifest;
 mod package;

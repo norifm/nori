@@ -115,7 +115,12 @@ impl Session {
             // Outside the store's lock: the database's is never taken inside it.
             song.measured_lufs = measured_lufs(&self.db, &current).map(|mid| stereo_loudness_of_mid(mid, channels));
         }
-        song_gain(prefs, &song, run)
+        let nori = song_gain(prefs, &song, run);
+        // Leveling off stays off.
+        if prefs.mode == PlayerGainMode::Off {
+            return nori;
+        }
+        self.decide_leveling(&current, nori)
     }
 
     /// Whether registered song `id` is marked explicit; false if unknown.
