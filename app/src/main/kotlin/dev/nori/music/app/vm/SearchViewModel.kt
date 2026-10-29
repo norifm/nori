@@ -11,6 +11,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
@@ -42,6 +44,9 @@ data class SearchUi(
  * in the library yet. A newer keystroke cancels the request in flight, socket included. Which answer is
  * still worth showing, and what the screen then says, is the core's [SearchSession].
  */
+/** How many recently played albums an empty search shows: a shelf's worth. */
+private const val RECENT_SHOWN = 12
+
 @OptIn(FlowPreview::class)
 class SearchViewModel(app: Application) : NoriViewModel(app) {
     private val session = SearchSession()
@@ -51,6 +56,11 @@ class SearchViewModel(app: Application) : NoriViewModel(app) {
     private val _ui = MutableStateFlow(SearchUi())
     val ui: StateFlow<SearchUi> = _ui
     private val localLimit by lazy { dev.nori.music.ffi.library.librarySizes().localSearch }
+
+    /** The albums played lately, shown with the recent searches while the field is empty. */
+    val recent: StateFlow<List<dev.nori.music.ffi.model.Album>> = nori.library.albums(dev.nori.music.ffi.library.AlbumSort.RECENT, RECENT_SHOWN)
+        .catch { emit(emptyList()) }
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
         viewModelScope.launch { _ui.update { it.copy(history = nori.library.searchHistory()) } }
