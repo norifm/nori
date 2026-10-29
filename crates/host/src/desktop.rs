@@ -80,6 +80,14 @@ pub fn plugins(data: &Path) -> &'static Plugged {
     })
 }
 
+/// Installs (or updates) the plugin package or folder at `file` and turns it on.
+pub fn install_plugin(data: &Path, file: &Path) -> Result<(), String> {
+    let host = &plugins(data).host;
+    let installed = host.install(file).map_err(|e| format!("{}: {e:?}", file.display()))?;
+    host.turn(installed.id.clone(), true);
+    Ok(())
+}
+
 /// Updates the plugins at most once a day, off this thread, through the open profile's connection;
 /// `done` hears each plugin updated and its new version, when any was.
 pub fn update_plugins(data: &Path, done: impl FnOnce(Vec<(String, String)>) + Send + 'static) {

@@ -49,6 +49,9 @@ pub enum OpenError {
     Status(u16),
     /// Unreachable now (retried).
     Failed(String),
+    /// The provider answered that it will not serve the song, and why: not the network's failure, and
+    /// not retried.
+    Refused(String),
     /// No answer or next byte within [`Waits::stall_ms`]. Fails a song whose first bytes never come;
     /// a body that stalls half way is asked again from where it stopped.
     TimedOut,
@@ -72,7 +75,7 @@ impl std::fmt::Display for OpenError {
             OpenError::PastEnd { len: Some(l) } => write!(f, "past the end, which is at byte {l}"),
             OpenError::PastEnd { len: None } => f.write_str("past the end"),
             OpenError::Status(status) => write!(f, "HTTP {status}"),
-            OpenError::Failed(why) => f.write_str(why),
+            OpenError::Failed(why) | OpenError::Refused(why) => f.write_str(why),
             OpenError::TimedOut => f.write_str("no answer in time"),
         }
     }
@@ -510,6 +513,11 @@ pub trait ByteSource: Send + Sync {
         self.open_cancellable(url, key, from, cancel)
     }
 
+    /// `url` from byte `from`, outside any cache the client keeps (a stream's segment, a URL of its own).
+    fn open_plain(&self, url: &str, from: u64, cancel: &Cancel) -> Result<Body, OpenError> {
+        self.open_cancellable(url, None, from, cancel)
+    }
+
     /// A live stream with `Icy-MetaData: 1`: the body and the answer's `icy-metaint`, if any.
     fn open_live(&self, url: &str) -> Result<(Body, Option<usize>), String> {
         self.open(url, 0).map(|b| (b, None)).map_err(|e| e.to_string())
@@ -611,8 +619,8 @@ struct State {
     /// Loaded to the end.
     done: bool,
     error: Option<String>,
-    /// The server's error status, if it answered.
-    answered: Option<u16>,
+    /// Whether the server answered the last try (an error status or a refusal).
+    answered: bool,
     /// The loader itself died (panicked): the song's failure, not the network's.
     died: bool,
     /// Where the demuxer reads.
@@ -1337,7 +1345,7 @@ impl Loader {
     /// the loader itself died.
     pub fn failed_on_network(&self) -> bool {
         let s = self.0.state.lock();
-        s.error.is_some() && s.answered.is_none() && !s.died
+        s.error.is_some() && !s.answered && !s.died
     }
 
     /// Whether a read would not block; if not, `engine` is woken when it would not.
@@ -1616,11 +1624,11 @@ impl Loaded {
             Err(_) if self.cancel.closed() => None,
             Err(e) => {
                 run.failures += 1;
-                // A timeout fails at once: retrying a server that never answers (octo-fiesta fetching an
-                // unobtainable song) only keeps the player waiting.
-                if run.failures > RETRIES || e == OpenError::TimedOut {
+                // A timeout or a refusal fails at once: retrying a server that never answers (octo-fiesta
+                // fetching an unobtainable song), or one that said no, only keeps the player waiting.
+                if run.failures > RETRIES || matches!(e, OpenError::TimedOut | OpenError::Refused(_)) {
                     let mut s = self.state.lock();
-                    s.answered = if let OpenError::Status(status) = e { Some(status) } else { None };
+                    s.answered = matches!(e, OpenError::Status(_) | OpenError::Refused(_));
                     s.error = Some(e.to_string());
                     s.done = true;
                     self.wake(&mut s);
@@ -2635,6 +2643,23 @@ mod tests {
         assert!(r.read(&mut [0u8; 16]).is_err());
         assert_eq!(l.error(), Some(OpenError::TimedOut.to_string()));
         assert!(l.failed_on_network(), "the network's failure, not the server's");
+        assert_eq!(*s.0.lock(), 1, "asked once");
+    }
+
+    #[test]
+    fn a_refusal_fails_at_once_and_not_on_the_network() {
+        struct No(Mutex<u32>);
+        impl ByteSource for No {
+            fn open(&self, _: &str, _: u64) -> Result<Body, OpenError> {
+                *self.0.lock() += 1;
+                Err(OpenError::Refused("a preview only".into()))
+            }
+        }
+        let s = Arc::new(No(Mutex::new(0)));
+        let l = Loader::start(s.clone(), "addr:1".into(), LOAD, Some(3_000), None);
+        assert!(l.reader().read(&mut [0u8; 16]).is_err());
+        assert_eq!(l.error().as_deref(), Some("a preview only"));
+        assert!(!l.failed_on_network());
         assert_eq!(*s.0.lock(), 1, "asked once");
     }
 
