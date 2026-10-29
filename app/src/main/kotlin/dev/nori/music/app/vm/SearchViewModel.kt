@@ -32,8 +32,10 @@ data class SearchUi(
     val nothingFound: Boolean = false,
     val history: List<String> = emptyList(),
 ) {
+    // Not the view's text: the field is set only as typed ([SearchViewModel.setQuery]), and a view answering
+    // an earlier keystroke would put that keystroke's text back over newer typing.
     internal fun with(v: SearchView) = copy(
-        query = v.text, shown = v.shown, searching = v.searching, error = v.error?.let { dev.nori.music.app.ui.say.searchFallback(it.reason) }, scope = v.scope,
+        shown = v.shown, searching = v.searching, error = v.error?.let { dev.nori.music.app.ui.say.searchFallback(it.reason) }, scope = v.scope,
         scopesOffered = v.scopesOffered, nothingFound = v.nothingFound,
     )
 }
