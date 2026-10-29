@@ -1155,7 +1155,22 @@ internal fun SoftSleeve(
             .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen; if (mirror) scaleX = -1f }
             .rubOutBottom(across) { val (bottom, height) = edge(); (bottom - height * (if (across) stage.acrossMelt else MELT)) to bottom },
     ) {
-        Unturned(mirror) { content(false) }
+        // The sharp picture gives way to the blurred copy by the same mask, so the two always add up to one. Laid
+        // under it instead, the sharp picture showed through wherever the blur is thin: at the edge of a record
+        // shrinking past the title on a pull down, a hard line across the soft band.
+        Box(
+            if (!soft || band == null) Modifier.fillMaxSize() else Modifier.fillMaxSize().drawWithCache {
+                val (bottom, height) = edge()
+                val top = bottom - height
+                val mask = if (across) alphaGradient(stage.acrossSoft, Color.Black, top + height * (1f - stage.acrossMelt), top + height, true)
+                else alphaGradient(stage.soft, Color.Black, top + height * stage.softFrom, top + height * stage.softTo, false)
+                onDrawWithContent {
+                    drawContent()
+                    val shown = blur.read().coerceIn(0f, 1f)
+                    if (shown > 0f) drawRect(mask, alpha = shown, blendMode = androidx.compose.ui.graphics.BlendMode.DstOut)
+                }
+            },
+        ) { Unturned(mirror) { content(false) } }
         if (soft && band != null) Box(
             Modifier.fillMaxSize()
                 .then(if (!cropped) Modifier else Modifier.layout { measurable, constraints ->
@@ -1168,6 +1183,8 @@ internal fun SoftSleeve(
                 .graphicsLayer {
                     compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
                     alpha = blur.read().coerceIn(0f, 1f)
+                    // Added to the sharp picture's share, not laid over it, which would take that share away twice.
+                    blendMode = androidx.compose.ui.graphics.BlendMode.Plus
                 }
                 .drawWithCache {
                     // Where the blurred copy shows: nowhere above the band's upper reach, all of it by the
