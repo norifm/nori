@@ -283,6 +283,14 @@ impl Kinds {
         }
     }
 
+    /// Where its enabled plugins decide in place of nori; None without plugins.
+    pub(crate) fn deciders(&self) -> Option<Arc<dyn nori_model::deciders::Deciders>> {
+        #[cfg(feature = "plugins")]
+        return self.plugins.clone().map(|p| p as Arc<dyn nori_model::deciders::Deciders>);
+        #[cfg(not(feature = "plugins"))]
+        None
+    }
+
     /// `kind`'s provider; a kind missing here reads as a Subsonic server.
     fn or_subsonic(&self, kind: &ServerKind) -> Arc<dyn Provider> {
         self.provider(kind).unwrap_or_else(|| Arc::new(subsonic::Subsonic))
@@ -506,6 +514,7 @@ impl Core {
             p.set_songs(Arc::new(move |id: &str| session.upgrade()?.song(id)));
             self.session.planner.set_mixing(Some(p.mixing()));
         }
+        self.session.use_deciders(kinds.deciders());
         *self.kinds.write() = kinds;
     }
 

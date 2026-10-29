@@ -1221,6 +1221,7 @@ impl Handle {
         }
         match e {
             Event::Song { .. } => self.arrived(),
+            Event::State(State::Ended) => self.ended(),
             Event::State(State::Paused) => self.keep(QueueMoment::Paused),
             Event::Bridge { .. } => self.bridge(),
             Event::Output { name } => self.device_curve(name.clone()),
@@ -1301,6 +1302,41 @@ impl Handle {
             }
             nori_core::autofill::FillNext::Fetch => self.refill(),
             nori_core::autofill::FillNext::Wait => {}
+        }
+    }
+
+    /// The queue played out: a plugin may say what plays now (`Client::queue_ended`).
+    fn ended(&self) {
+        if self.core.session.deciders().is_none() {
+            return;
+        }
+        let me = self.clone();
+        self.run(async move {
+            let fresh = me.client.queue_ended().await;
+            let ids: Vec<String> = fresh.songs.iter().map(|s| s.id.clone()).collect();
+            let q = &me.core.session;
+            let (len, end) = q.playlist(|p| (p.len(), p.play_order().last().map(|at| p.seqs()[at])));
+            // A queue started meanwhile plays instead.
+            if ids.is_empty() || end != fresh.after {
+                return;
+            }
+            let n = ids.len();
+            q.take(len as u32, ids, vec![Hand::No; n]);
+            me.edited();
+            if let Some(end) = end {
+                me.engine.resume_after_refill(end);
+            }
+        });
+    }
+
+    /// A media key or button pressed: what it does is the core's (`Session::media_button`).
+    pub fn pressed(&self, press: nori_core::deciders::Press) {
+        use nori_core::deciders::ButtonAct;
+        match self.core.session.media_button(press) {
+            ButtonAct::PlayPause => self.toggle(),
+            ButtonAct::Next => self.next(),
+            ButtonAct::Previous => self.previous(),
+            ButtonAct::Nothing => {}
         }
     }
 

@@ -7,6 +7,8 @@ import android.content.IntentFilter
 import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
+import dev.nori.music.ffi.model.Focus
+import dev.nori.music.ffi.model.FocusAct
 import android.media.AudioRouting
 import android.media.AudioTrack
 import android.os.Build
@@ -288,6 +290,14 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     private var loops = 0
     /** What the radio station playing announced (ICY), shown as the song's title as ExoPlayer shows it. */
     private var announced: String? = null
+    /** The lines a plugin shows for a song (the core's `Session::now_playing`), by its id. */
+    private var shownAs: Pair<String, dev.nori.music.ffi.model.Shown>? = null
+
+    /** The system's controls show [shown] for song [id] while it plays. */
+    fun showAs(id: String, shown: dev.nori.music.ffi.model.Shown) {
+        shownAs = id to shown
+        invalidateState()
+    }
     /**
      * A song the network would not bring, with the offline bridge's setting on: the service hands it to
      * the bridge, and says whether the music goes on (it jumped somewhere to play) or stops here.
@@ -462,7 +472,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
             // media3 has nothing loading while idle or ended (the engine may be, following a jam's host).
             .setIsLoading(loading > 0 && state != Player.STATE_IDLE && state != Player.STATE_ENDED)
             .setAudioAttributes(ATTRIBUTES)
-            .setPlaylist(timeline(), Tracks.EMPTY, announcement())
+            .setPlaylist(timeline(), Tracks.EMPTY, announcement() ?: decided())
             .setCurrentMediaItemIndex(if (items.isEmpty()) C.INDEX_UNSET else current.coerceIn(0, items.size - 1))
             .setContentPositionMs(position(loops))
         error?.let { b.setPlayerError(it) }
@@ -482,6 +492,13 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         val said = announced ?: return null
         val item = items.getOrNull(current)?.takeIf { it.isRadio } ?: return null
         return item.mediaMetadata.buildUpon().setTitle(said).build()
+    }
+
+    /** The song playing with the lines a plugin gave it; null otherwise. */
+    private fun decided(): androidx.media3.common.MediaMetadata? {
+        val (id, shown) = shownAs ?: return null
+        val item = items.getOrNull(current)?.takeIf { it.mediaId == id } ?: return null
+        return item.mediaMetadata.buildUpon().setTitle(shown.title).setArtist(shown.artist).setAlbumTitle(shown.album).build()
     }
 
     // ---- commands ----
@@ -869,26 +886,44 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         focused = false
     }
 
-    /** A call or another player: paused for good, or until it is over. Ducking the system does itself. */
+    /** Where focus changes are decided (the core's `Session::audio_focus`, which a plugin may answer): off the main thread, in order. */
+    private val focusing by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
+
+    /** A call or another player: what it does is the core's; acted on here. */
     private fun onFocus(change: Int) {
-        dev.nori.music.NoriLog.i("rust player: audio focus $change, wants to play $playWhenReady")
-        when (change) {
-            AudioManager.AUDIOFOCUS_LOSS -> {
-                focused = false
-                if (playWhenReady) {
-                    RustPlayerJni.pause(h)
+        val focus = when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> Focus.LOST
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> Focus.LOST_TRANSIENT
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> Focus.DUCK
+            AudioManager.AUDIOFOCUS_GAIN -> Focus.GAINED
+            else -> return
+        }
+        if (focus == Focus.LOST) focused = false
+        val (wants, held) = playWhenReady to (suppressed != Player.PLAYBACK_SUPPRESSION_REASON_NONE)
+        focusing.execute {
+            val act = nori.session.audioFocus(focus, wants, held)
+            main.post { onFocus(focus, act) }
+        }
+    }
+
+    /** [act] for [focus]: a pause is for good after a loss, until the focus is back otherwise. Ducking the system does itself. */
+    private fun onFocus(focus: Focus, act: FocusAct) {
+        dev.nori.music.NoriLog.i("rust player: audio focus $focus: $act, wants to play $playWhenReady")
+        when (act) {
+            FocusAct.PAUSE -> if (playWhenReady) {
+                RustPlayerJni.pause(h)
+                if (focus == Focus.LOST) {
                     playWhenReady = false
                     whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
+                } else {
+                    suppressed = Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS
                 }
             }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> if (playWhenReady) {
-                RustPlayerJni.pause(h)
-                suppressed = Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS
-            }
-            AudioManager.AUDIOFOCUS_GAIN -> if (suppressed != Player.PLAYBACK_SUPPRESSION_REASON_NONE) {
+            FocusAct.RESUME -> if (suppressed != Player.PLAYBACK_SUPPRESSION_REASON_NONE) {
                 suppressed = Player.PLAYBACK_SUPPRESSION_REASON_NONE
                 if (playWhenReady) start()
             }
+            FocusAct.DUCK, FocusAct.KEEP_PLAYING, FocusAct.NOTHING -> {}
         }
         follow()
         invalidateState()

@@ -250,7 +250,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         AppMotion.reduce = prefs.motion != dev.nori.music.ffi.settings.Motion.FULL
         AppMotion.still = prefs.motion == dev.nori.music.ffi.settings.Motion.EINK
     }
-    NoriTheme(prefs) {
+    NoriTheme(prefs, settings::look) {
         // Sign-in fades to the app: the screens are different enough that a direction would invent a
         // relationship they do not have.
         val plain = reduceMotion()

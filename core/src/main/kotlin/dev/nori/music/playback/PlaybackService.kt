@@ -2,6 +2,8 @@ package dev.nori.music.playback
 
 import dev.nori.music.core.R
 import dev.nori.music.ffi.queue.FillNext
+import dev.nori.music.ffi.model.ButtonAct
+import dev.nori.music.ffi.model.Press
 import dev.nori.music.ffi.queue.Hand
 import android.app.AlarmManager
 import android.app.PendingIntent
@@ -382,6 +384,11 @@ class PlaybackService : MediaLibraryService() {
     private val listener = object : Player.Listener {
         override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
             item?.let { observer?.song(it.mediaId) }
+            item?.mediaId?.let { id ->
+                if (nori.session.deciding()) scope.launch {
+                    withContext(Dispatchers.IO) { nori.session.nowPlaying(id) }?.let { player.showAs(id, it) }
+                }
+            }
             observer?.arrived(player.currentMediaItemIndex, reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO, player.shuffleModeEnabled)
             val looped = reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
             // The player walked the core's queue itself (explicit songs skipped, each song's volume set):
@@ -466,7 +473,10 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onPlaybackStateChanged(state: Int) {
-            if (state == Player.STATE_ENDED) scrobbler.onTrack(null, dev.nori.music.ffi.queue.TrackChange.ENDED, false)
+            if (state == Player.STATE_ENDED) {
+                scrobbler.onTrack(null, dev.nori.music.ffi.queue.TrackChange.ENDED, false)
+                if (nori.session.deciding()) queueEnded()
+            }
         }
     }
 
@@ -798,6 +808,17 @@ class PlaybackService : MediaLibraryService() {
         if (nori.session.autofillLanded()) player.seekToNextMediaItem()
     }
 
+    /** The queue played out: a plugin may say what plays now (the core's `Client::queue_ended`). */
+    private fun queueEnded() = scope.launch {
+        val fresh = runCatching { nori.library.queueEnded() }.getOrNull() ?: return@launch
+        // Something else started meanwhile: that plays.
+        if (fresh.songs.isEmpty() || player.playbackState != Player.STATE_ENDED) return@launch
+        controls.addMediaItems(held(fresh.songs))
+        player.seekToNextMediaItem()
+        player.prepare()
+        player.play()
+    }
+
     /** Next with nothing after: fetch, and take the skip when the songs land (the core remembers the press). */
     private fun fillThenNext() {
         when (nori.session.autofillNext()) {
@@ -893,11 +914,14 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private inner class Callback : MediaLibrarySession.Callback {
-        /** A media button, told to the plugins that hear them; the session handles it as ever. */
+        /**
+         * While a plugin decides, what a media button does is the core's (`Session::media_button`): the
+         * press is taken here and acted on once it answers. Otherwise media3 handles it.
+         */
         override fun onMediaButtonEvent(session: MediaSession, controllerInfo: MediaSession.ControllerInfo, intent: android.content.Intent): Boolean {
-            if (nori.plugins.hears(dev.nori.music.ffi.plugins.Hook.MEDIA_BUTTON)) {
-                val key = androidx.core.content.IntentCompat.getParcelableExtra(intent, android.content.Intent.EXTRA_KEY_EVENT, android.view.KeyEvent::class.java)
-                val press = when (key?.takeIf { it.action == android.view.KeyEvent.ACTION_DOWN && it.repeatCount == 0 }?.keyCode) {
+            val key = androidx.core.content.IntentCompat.getParcelableExtra(intent, android.content.Intent.EXTRA_KEY_EVENT, android.view.KeyEvent::class.java) ?: return false
+            if (nori.plugins.hears(dev.nori.music.ffi.plugins.Hook.MEDIA_BUTTON) && key.action == android.view.KeyEvent.ACTION_DOWN && key.repeatCount == 0) {
+                val heard = when (key.keyCode) {
                     android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, android.view.KeyEvent.KEYCODE_HEADSETHOOK -> dev.nori.music.ffi.plugins.Press.PLAY_PAUSE
                     android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> dev.nori.music.ffi.plugins.Press.PLAY
                     android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> dev.nori.music.ffi.plugins.Press.PAUSE
@@ -906,9 +930,26 @@ class PlaybackService : MediaLibraryService() {
                     android.view.KeyEvent.KEYCODE_MEDIA_STOP -> dev.nori.music.ffi.plugins.Press.STOP
                     else -> null
                 }
-                press?.let { scope.launch(Dispatchers.IO) { nori.plugins.mediaButton(it) } }
+                heard?.let { scope.launch(Dispatchers.IO) { nori.plugins.heardPress(it) } }
             }
-            return super.onMediaButtonEvent(session, controllerInfo, intent)
+            val press = when (key.keyCode) {
+                android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> if (key.isLongPress) Press.LONG else Press.PLAY_PAUSE
+                android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> Press.NEXT
+                android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> Press.PREVIOUS
+                else -> return false
+            }
+            if (!nori.session.deciding()) return false
+            // A key's release and its repeats while held are taken with it; a long press once.
+            if (key.action != android.view.KeyEvent.ACTION_DOWN || (key.repeatCount > 0 && !key.isLongPress)) return true
+            scope.launch {
+                when (withContext(Dispatchers.IO) { nori.session.mediaButton(press) }) {
+                    ButtonAct.PLAY_PAUSE -> if (player.playWhenReady) player.pause() else player.play()
+                    ButtonAct.NEXT -> player.seekToNext()
+                    ButtonAct.PREVIOUS -> player.seekToPrevious()
+                    ButtonAct.NOTHING -> {}
+                }
+            }
+            return true
         }
 
         override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {

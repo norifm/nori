@@ -31,10 +31,10 @@ impl Handle {
         }
     }
 
-    /// A media key or the system's media controls pressed `press`.
-    pub(crate) fn pressed(&self, press: nori_plugins::Press) {
+    /// A media key or the system's media controls pressed `press`, told to the plugins that hear them.
+    pub(crate) fn heard_press(&self, press: nori_plugins::Press) {
         if let Some(p) = &self.plugins {
-            p.media_button(press);
+            p.heard_press(press);
         }
     }
 

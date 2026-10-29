@@ -247,7 +247,7 @@ fn events_are_built_only_for_what_an_enabled_plugin_hears() {
     r.plugins.played(Moment { index: Some(1), ..at("b", false) });
     r.plugins.favorite_changed("b".into(), true);
     r.plugins.device("WH-1000XM5".into(), true);
-    r.plugins.media_button(nori_plugins::Press::Next);
+    r.plugins.heard_press(nori_plugins::Press::Next);
     r.settle();
     assert_eq!(r.heard(), ["queue", "paused", "song B", "favorite b true", "device WH-1000XM5"], "the same moment again is no event; a media button no one hears is none");
 

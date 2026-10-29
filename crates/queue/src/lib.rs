@@ -1,5 +1,5 @@
 //! The queue the app plays: list and order (playlist.rs), songs by id (queue.rs), transport rules
-//! (rules.rs), refilling (autofill.rs), the offline bridge (bridge.rs), the audible song (heard.rs), play
+//! (rules.rs), what plugins decide instead (deciders.rs), refilling (autofill.rs), the offline bridge (bridge.rs), the audible song (heard.rs), play
 //! counting (scrobble.rs) and play actions (actions.rs).
 
 use std::sync::Arc;
@@ -11,6 +11,7 @@ use parking_lot::Mutex;
 pub mod actions;
 pub mod autofill;
 pub mod bridge;
+pub mod deciders;
 pub mod heard;
 pub mod playlist;
 pub mod queue;
@@ -31,6 +32,9 @@ pub struct Session {
     controls: Mutex<rules::Controls>,
     refill: Mutex<nori_player::queue::Refill>,
     scrobbler: Mutex<scrobble::Scrobbler>,
+    /// Where plugins decide; None for nori alone.
+    deciders: Mutex<Option<Arc<dyn nori_model::deciders::Deciders>>>,
+    decided: Mutex<deciders::Decided>,
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -40,7 +44,7 @@ impl Session {
         let db = Arc::new(nori_db::Profile::default());
         let read = settings.clone();
         let planner = Planner::new(db.clone(), Box::new(move || read.with_prefs(nori_settings::settings::StoredPrefs::transition_prefs)));
-        Session { settings, db, planner, queue: Default::default(), store: Default::default(), controls: Default::default(), refill: Default::default(), scrobbler: Default::default() }
+        Session { settings, db, planner, queue: Default::default(), store: Default::default(), controls: Default::default(), refill: Default::default(), scrobbler: Default::default(), deciders: Default::default(), decided: Default::default() }
     }
 }
 

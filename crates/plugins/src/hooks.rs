@@ -295,7 +295,8 @@ impl Plugins {
         self.tell(Hook::DeviceConnected, || if connected { Event::DeviceConnected(name) } else { Event::DeviceDisconnected(name) });
     }
 
-    pub fn media_button(&self, press: Press) {
+    /// A media key pressed, told to the plugins that hear them.
+    pub fn heard_press(&self, press: Press) {
         self.tell(Hook::MediaButton, || Event::MediaButton(press.name().into()));
     }
 }

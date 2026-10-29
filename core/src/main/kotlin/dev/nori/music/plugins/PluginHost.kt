@@ -202,7 +202,7 @@ class PluginHost(
     /** What plays now, while [follows]. */
     suspend fun played(moment: Moment) = withContext(Dispatchers.IO) { plugins.played(moment) }
 
-    suspend fun mediaButton(press: Press) = withContext(Dispatchers.IO) { plugins.mediaButton(press) }
+    suspend fun heardPress(press: Press) = withContext(Dispatchers.IO) { plugins.heardPress(press) }
 
     /** An output device [name] connected or went, while a plugin [hears] it. */
     suspend fun device(name: String, connected: Boolean) = withContext(Dispatchers.IO) { plugins.device(name, connected) }

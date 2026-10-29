@@ -79,6 +79,7 @@ mod unlinked;
 
 impl Lifecycle for Test {
     fn action(&mut self, id: String) {
+        deciders::acted(&id);
         if hooked::action(&id) {
             return;
         }

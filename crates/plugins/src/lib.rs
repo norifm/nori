@@ -13,6 +13,7 @@ mod bluetooth;
 mod cache;
 mod cast;
 pub mod convert;
+mod deciders;
 mod devices;
 mod door;
 mod hooks;

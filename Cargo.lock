@@ -5150,6 +5150,7 @@ dependencies = [
  "nori-automix",
  "nori-db",
  "nori-library",
+ "nori-look",
  "nori-model",
  "nori-net",
  "nori-player",
