@@ -388,6 +388,12 @@ impl Card {
         let Some(feed) = self.feed.as_mut() else { return false };
         let ch = feed.format().channels;
         let mut woke = false;
+        // An empty pull surfaces a flush the device was told of, as Android's writer does on each wake.
+        feed.pull_i16(&mut []);
+        if feed.flushed() {
+            feed.rewind((self.held.len() / ch) as u64);
+            self.held.clear();
+        }
         while self.held.len() / ch < self.hold && feed.available() > 0 {
             let waits = feed.engine_waits();
             self.block.resize(BLOCK * ch, 0);
@@ -2347,10 +2353,10 @@ fn eq_at(db: f64) -> Settings {
 }
 
 /// On a device holding seconds (a phone's AudioTrack, 2 s deep and [`SHALLOW_MS`] shallow here) every
-/// sound change is made in place in the ring, from no sooner than the ear, and heard as the chain renders
-/// it offline, nothing dropped or heard twice: deep, shallow, while it drains from deep to shallow, deep
-/// again, one change after another (each landing in the blend of the one before while the device takes
-/// nothing), in a mix. Shallow, a change is heard within what the device holds.
+/// sound change is heard at once and as the chain renders it offline, nothing heard twice: deep, shallow,
+/// while it drains from deep to shallow, deep again, one change after another (each landing in the blend
+/// of the one before while the device takes nothing), in a mix. A device holding more than a quarter
+/// second drops it and plays on from the ear, blended into the new sound there.
 #[test]
 fn changes_on_a_holding_device() {
     use Step::*;
@@ -2405,13 +2411,12 @@ fn changes_on_a_holding_device() {
         // What was there before the last splice, and where it was: one made at the same place blends
         // from that.
         let mut before = (usize::MAX, want.clone());
-        let shallow = SHALLOW_MS * RATE as usize / 1000;
+        // A device holding more than a quarter second drops it; the change starts up to 100 ms before
+        // the ear, and the device plays on from where it got to.
+        let (soon, early) = (RATE as usize / 4, RATE as usize / 10);
         for ((splice, s), &(ear, held)) in splices.iter().zip(&sounds).zip(&asked) {
             let at = splice.output as usize;
-            assert!(at >= ear && at <= ear + held + 2 * BLOCK, "{what}: made from the ear ({ear}) past what the device held ({held}): {splice:?}");
-            if held <= shallow {
-                assert!(at - ear <= shallow + 2 * BLOCK, "{what}: shallow, heard within what the device holds: {splice:?}");
-            }
+            assert!(at + early >= ear && at <= ear + held.min(soon) + 2 * BLOCK, "{what}: heard at once from the ear ({ear}), the device holding {held}: {splice:?}");
             changes.push((splice.input, chain_of(s)));
             if before.0 != at {
                 before = (at, want);
@@ -2422,7 +2427,8 @@ fn changes_on_a_holding_device() {
         if let Some(at) = reference::first_difference(&heard, &want, 0) {
             panic!("{what}: heard is not what was rendered, {}", reference::describe(&heard, &want, at, RATE));
         }
-        assert_eq!((rig.waits(), rig.flushes.load(Ordering::Relaxed)), (0, 0), "{what}: never ran dry, nothing dropped");
+        let dropped = asked.iter().filter(|&&(_, held)| held > soon).count() as u64;
+        assert_eq!((rig.waits(), rig.flushes.load(Ordering::Relaxed)), (0, dropped), "{what}: never ran dry, dropped only what was held too long");
     }
 }
 

@@ -144,7 +144,7 @@ if want tuning; then section "the buffer is shallow only while a sound page is t
   adb shell input keyevent KEYCODE_HOME
   check "out of sight, the deep buffer is back, in place" waitfor_log "deep again in place" 15
   check "still playing out of sight" sounds 5
-  check "the track was never reopened or emptied for it" never "rust AudioTrack: .*(160|80) ms|emptied for the music"
+  check "the track was never reopened for it" never "rust AudioTrack: .*(160|80) ms"
   "$app" launch >/dev/null
   "$app" open settings/sound >/dev/null
   watch_from_now

@@ -98,8 +98,8 @@ pub trait AudioOutput: Send {
 /// Ring fill at which the engine is woken: a little under the burst's low mark, so the burst's own
 /// count (which includes the device) agrees it is time.
 pub const WAKE_LOW_US: i64 = LOW_US - 250_000;
-/// A device holding more than this takes too long to play out for a new ending to wait: it drops what
-/// it holds and the ending starts where it is.
+/// A device holding more than this takes too long to play out for a new ending or sound to wait: it
+/// drops what it holds and the change starts where it is.
 const HELD_US: i64 = 250_000;
 /// How far before the device's play head such a change starts: what its clock reading may be ahead
 /// of it. The device gives back exactly what it did not play ([`Feed::rewind`]).
@@ -1066,8 +1066,10 @@ impl Track for RingTrack {
         let (Some(r), Some(d)) = (self.ring.clone(), self.device) else { return self.written.sink };
         let (heard, held) = self.heard();
         let mixed = self.output.mixed_us() * d.rate as u64 / 1_000_000;
-        if why == Remake::Ending && held.saturating_sub(mixed) as i64 * 1_000_000 > HELD_US * d.rate as i64 {
-            let early = (REWIND_EARLY_US * d.rate as i64 / 1_000_000) as u64;
+        if why != Remake::Same && held.saturating_sub(mixed) as i64 * 1_000_000 > HELD_US * d.rate as i64 {
+            // An ending may start where the device already is (the music up to it is the same); a sound
+            // starts at the ear and blends in there, the music before it kept for a device behind it.
+            let early = if why == Remake::Ending { (REWIND_EARLY_US * d.rate as i64 / 1_000_000) as u64 } else { 0 };
             return self.at_ring(heard.saturating_sub(early)).sink;
         }
         // `write` lowered past any pull's reach, then checked against a pull that read it before: each
@@ -1118,18 +1120,15 @@ impl Track for RingTrack {
             r.ended.store(false, Ordering::Release);
             r.quiet();
             self.untold = Some(Untold::default());
-            self.blend = None;
-            self.blend_at = None;
-        } else {
-            let n = self.device.map_or(0, |d| d.rate as i64 * nori_player::pipeline::BLEND_US / 1_000_000) as u64;
-            let n = n.min(end.ring - p);
-            if self.blend_at == Some(p) {
-                slots_from(&r, w, &self.blended_from);
-            }
-            slots_into(&r, w, n, &mut self.blended_from);
-            self.blend_at = Some(p);
-            self.blend = (n > 0).then_some((0, n));
         }
+        let n = self.device.map_or(0, |d| d.rate as i64 * nori_player::pipeline::BLEND_US / 1_000_000) as u64;
+        let n = n.min(end.ring - p);
+        if self.blend_at == Some(p) {
+            slots_from(&r, w, &self.blended_from);
+        }
+        slots_into(&r, w, n, &mut self.blended_from);
+        self.blend_at = Some(p);
+        self.blend = (n > 0).then_some((0, n));
         self.restart_resampler();
         cut.media
     }
@@ -1393,7 +1392,12 @@ mod tests {
         assert_eq!(f.pull(&mut out), 200);
         let got: Vec<i32> = out.iter().map(|v| (v * 32768.0).round() as i32).collect();
         assert_eq!(got[..150], (300..450).collect::<Vec<i32>>()[..], "from where it got to, the music up to the cut");
-        assert!(got[150..].iter().all(|&v| v == -16384), "then the new music");
+        let blend = (F.rate as i64 * nori_player::pipeline::BLEND_US / 1_000_000) as usize;
+        for k in 0..blend {
+            let want = nori_player::pipeline::blended((450 + k) as f32 / 32768.0, -0.5, k, blend);
+            assert!((out[150 + k] - want).abs() < 1e-4, "frame {k} of the blend into the new music: {}", out[150 + k]);
+        }
+        assert!(got[150 + blend..].iter().all(|&v| v == -16384), "then the new music");
 
         // A device holding more than a quarter second, most of it mixed already (Bluetooth's way to the
         // ear), changes in place: dropping it would not be heard sooner.
@@ -1405,15 +1409,19 @@ mod tests {
         mixed.store(300_000, Ordering::Relaxed);
         assert_eq!(t.freeze(Remake::Ending), 600, "the first frame no pull took");
 
-        // A sound change on a device holding seconds plays them first, shallow (draining) or not.
+        // On a device holding seconds, shallow (draining) or not, a sound change is heard from about where
+        // it got to; the same music made again plays them first.
         for shallow in [false, true] {
-            let (mut t, mut f, held) = by_hand();
-            t.shallow(shallow);
-            t.write(&pcm(&[16384; 1000]), 1000.0);
-            let mut out = vec![0f32; 600];
-            assert_eq!(f.pull(&mut out), 600);
-            held.store(300_000, Ordering::Relaxed);
-            assert_eq!(t.freeze(Remake::Sound), 600, "shallow {shallow}: the first frame no pull took");
+            for (why, from) in [(Remake::Sound, 150..=300), (Remake::Same, 600..=600)] {
+                let (mut t, mut f, held) = by_hand();
+                t.shallow(shallow);
+                t.write(&pcm(&[16384; 1000]), 1000.0);
+                let mut out = vec![0f32; 600];
+                assert_eq!(f.pull(&mut out), 600);
+                held.store(300_000, Ordering::Relaxed);
+                let at = t.freeze(why);
+                assert!(from.contains(&at), "shallow {shallow}, {why:?}: {at}");
+            }
         }
 
         // Pull after a cut behind waits for music.
