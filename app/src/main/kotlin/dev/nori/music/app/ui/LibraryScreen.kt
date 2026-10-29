@@ -435,11 +435,13 @@ private fun Playlists(actions: ActionsViewModel, header: @Composable () -> Unit 
         LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             item { header() }
             // Smart playlists are playlists: theirs is a row here, as Apple keeps them among the others.
-            if (smart) item {
-                NavRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, chevron = true, leading = { Icon(Iconoir.MagicWand, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface) })
+            item {
+                GroupCard(Modifier.padding(bottom = LIST_GAP)) {
+                    if (smart) GroupRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, icon = Iconoir.MagicWand, chevron = true)
+                    GroupRow(say.newPlaylist, { name = ""; creating = true }, icon = Iconoir.Plus)
+                    GroupRow(say.importPlaylistFile, { pickM3u.launch(arrayOf("*/*")) }, icon = Iconoir.Download, divider = false)
+                }
             }
-            item { ActionRow(say.newPlaylist, Iconoir.Plus, { name = ""; creating = true }) }
-            item { ActionRow(say.importPlaylistFile, Iconoir.Download, { pickM3u.launch(arrayOf("*/*")) }) }
             if (playlists.isEmpty()) item { EmptyNote(Note.NO_PLAYLISTS) }
             items(playlists, key = { it.id }) { p ->
                 NavRow(
