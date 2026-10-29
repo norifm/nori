@@ -91,7 +91,8 @@ fun SongMenu(
         Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
             // The track leads the sheet, the way the row it came from looked.
             SheetHead(actions.cover(song.coverArt, CoverSize.ROW), song.title, remember(song) { say.songLine(song.artist, song.album) }) {
-                if (song.suffix.isNotEmpty()) Caption(remember(song) { say.songFormat(song) })
+                // The album page's way of saying it, in its own case: "FLAC 16/44.1", "MP3 320 kbps".
+                remember(song) { say.quality(song) }?.let { Caption(it, caps = false) }
             }
             // What someone opened this menu to do: queue it, keep it, or leave for where it came
             // from. Everything one reaches for perhaps once a month waits under "More" below.

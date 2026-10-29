@@ -464,16 +464,13 @@ class Say(private val r: Resources) {
     /** The format of a record, from its first song: "FLAC 24/96.0", "MP3 320 kbps". */
     fun quality(s: Song): String? = dev.nori.music.ffi.model.quality(s.suffix, s.bitDepth, s.samplingRate, s.bitRate)
 
-    /** A song's rate, sample rate, depth and (with [channels]) channels as the details say them, each only if known. */
-    private fun qualityParts(s: Song, channels: Boolean): List<String> = listOfNotNull(
+    /** A song's rate, sample rate, depth and channels as the details say them, each only if known. */
+    private fun qualityParts(s: Song): List<String> = listOfNotNull(
         if (s.bitRate > 0u) "${s.bitRate} kbps" else null,
         if (s.samplingRate > 0u) "${Fmt.khz(s.samplingRate.toInt())} kHz" else null,
         if (s.bitDepth > 0u) "${s.bitDepth} bit" else null,
-        if (channels && s.channelCount > 0u) "${s.channelCount} ch" else null,
+        if (s.channelCount > 0u) "${s.channelCount} ch" else null,
     )
-
-    /** The line under a song at the top of its menu: "FLAC · 1411 kbps · 44.1 kHz · 16 bit". */
-    fun songFormat(s: Song): String = (listOf(s.suffix.uppercase()) + qualityParts(s, false)).joinToString(" · ")
 
     /** A song's second line where it is shown on its own (its menu's head): "Artist · Album". */
     fun songLine(artist: String, album: String): String = if (album.isEmpty()) artist else "$artist · $album"
@@ -500,7 +497,7 @@ class Say(private val r: Resources) {
             R.string.info_genre to s.genre,
             R.string.info_duration to Fmt.duration(s.duration.toLong()),
             R.string.info_format to listOfNotNull(s.suffix.ifEmpty { null }?.uppercase(), s.contentType.ifEmpty { null }).joinToString(" · "),
-            R.string.info_quality to qualityParts(s, true).joinToString(" · "),
+            R.string.info_quality to qualityParts(s).joinToString(" · "),
             R.string.info_size to (if (s.size > 0u) Fmt.megabytes(s.size.toLong()) else null),
             R.string.info_replay_gain to gain,
             R.string.info_bpm to (if (s.bpm > 0u) s.bpm.toString() else null),
