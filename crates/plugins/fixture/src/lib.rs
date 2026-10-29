@@ -1,5 +1,11 @@
 //! Each extension point nori's tests check, in its plainest form (nori_plugins::testing).
 
+mod automix;
+mod deciders;
+mod lyrics;
+mod preparation;
+mod scrobbler;
+
 use nori_plugin_sdk::http::{Method, Request};
 use nori_plugin_sdk::sound_stage::{Format, Inputs};
 use nori_plugin_sdk::types::Value;
@@ -167,4 +173,4 @@ const MANIFEST: Manifest = Manifest {
     ..Manifest::new("fm.nori.test")
 };
 
-nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, sound_stage, provider, slots);
+nori_plugin_sdk::plugin!(Test, MANIFEST, lifecycle, sound_stage, provider, slots, preparation, automix, deciders, lyrics, scrobbler);

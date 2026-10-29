@@ -208,6 +208,11 @@ impl Plugins {
         s.keys(ROWS).into_iter().filter_map(|k| Some((k[ROWS.len()..].to_string(), Value::decode(&s.get(&k)?)?))).collect()
     }
 
+    /// The enabled plugins exporting `point`, in their order; no instance is made for it.
+    pub fn extending(&self, point: &str) -> Vec<String> {
+        self.installed.lock().expect("not poisoned").iter().filter(|i| i.enabled && i.manifest.extends(point)).map(|i| i.manifest.id.clone()).collect()
+    }
+
     /// Enabled plugin `id`'s own instance.
     pub fn worker(&self, id: &str) -> Option<Worker> {
         let mut workers = self.workers.lock().expect("not poisoned");
