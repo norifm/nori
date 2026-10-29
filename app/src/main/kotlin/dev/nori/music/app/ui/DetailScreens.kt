@@ -393,7 +393,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                     item(key = "group-$n", contentType = "shelf") {
                         Column(late(arrival)) {
                             SectionTitle(group, onMore = { nav.artistReleases(artist.id, n) })
-                            LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            LazyRow(Modifier.bleedsToEdges(), rememberShelfState(albums.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 items(albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }) }
                             }
                         }
@@ -423,7 +423,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                 if (similar.isNotEmpty()) item(key = "similar", contentType = "similar") {
                     Column(late(arrival)) {
                         SectionTitle(say.similarArtists)
-                        LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        LazyRow(Modifier.bleedsToEdges(), rememberShelfState(similar.firstOrNull()?.id), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             items(similar, key = { it.id }) { a ->
                                 val cardMenu = LocalCardMenu.current
                                 Text(a.name, Modifier.combinedClickable(onClick = { nav.artist(a.id, a) }, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) }).padding(8.dp))
