@@ -158,6 +158,11 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
      * warms what they answer: a loop's poster into the cover cache and the start of the loop into the
      * loop's cache, so both are there the moment the song comes. Covers, not the song: its source is never asked.
      */
+    /** The player is on screen and the app in front, or not: plugins' while-visible timers run only then. */
+    fun playerShown(shown: Boolean) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { nori.plugins.playerShown(shown) }
+    }
+
     fun warmArtwork(song: dev.nori.music.ffi.model.Song, posterSize: Int): kotlinx.coroutines.Job = viewModelScope.launch {
         if (warm?.song == song.id) return@launch
         val art = runCatching { nori.plugins.artwork(song) }.getOrNull()

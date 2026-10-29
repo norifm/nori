@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{Manifest, Plugins, Refusal, RowKind, Value};
+use crate::{Hook, Manifest, Permission, Plugins, Refusal, RowKind, Value, WakeEvent};
 
 /// A plugin as Settings › Plugins lists it, in the user's plugin order.
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +31,17 @@ pub struct PluginCard {
     pub bluetooth: bool,
     /// It reaches devices on the LAN (`lan` among its hosts).
     pub lan: bool,
+    pub permissions: Vec<Permission>,
+    /// The events it hears; a lyric line's brings a wake per line while music plays.
+    pub hooks: Vec<Hook>,
+    /// What may start nori for it while it is closed.
+    pub wakes: Vec<WakeEvent>,
+    /// Commands other apps may run.
+    pub commands: Vec<String>,
+    /// Its cache's quota, bytes.
+    pub cache_bytes: u64,
+    /// What its assets download in all, bytes.
+    pub asset_bytes: u64,
     pub rows: Vec<PluginRow>,
 }
 
@@ -133,6 +144,12 @@ fn card(m: &Manifest, w: &BTreeMap<String, String>, stored: &BTreeMap<String, Va
         net: m.net.iter().filter(|h| *h != crate::lan::LAN).cloned().collect(),
         lan: m.lan(),
         bluetooth: m.reaches_devices(),
+        permissions: m.permissions.clone(),
+        hooks: m.hooks.clone(),
+        wakes: m.wake.clone(),
+        commands: m.commands.clone(),
+        cache_bytes: m.cache_bytes,
+        asset_bytes: m.assets.iter().map(|a| a.size).sum(),
         rows: m
             .rows
             .iter()

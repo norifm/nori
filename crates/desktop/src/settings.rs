@@ -780,7 +780,7 @@ fn plugin_groups(p: &Plugged) -> Vec<(String, Vec<Row>)> {
     let count = p.cards.len();
     for (i, c) in p.cards.iter().enumerate() {
         let mut detail: Vec<String> = c.about.iter().cloned().collect();
-        detail.extend([words::plugin_is(&c.points, !c.overrides.is_empty()), words::plugin_reach(&c.net, c.lan, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
+        detail.extend([words::plugin_is(&c.points, !c.overrides.is_empty()), words::plugin_reach(c)].into_iter().filter(|l| !l.is_empty()));
         let mut rows = vec![Row { kind: TOGGLE, name: PluginAct::Turn(c.id.clone()).name(), title: format!("{} {}", words::PLUGIN_VERSION, c.version), detail: detail.join(" · "), on: c.enabled, enabled: true, ..Default::default() }];
         if c.repo.is_some() {
             rows.push(Row { kind: TOGGLE, name: PluginAct::Hold(c.id.clone()).name(), title: words::KEEP_VERSION.into(), on: c.held, enabled: true, ..Default::default() });
@@ -1102,7 +1102,7 @@ mod tests {
     fn plugins_are_drawn_with_the_settings_rows() {
         use nori_plugins::{Offer, Offers, PluginCard, PluginRow, Repo, RowKind, Value, Version};
         let row = |id: &str, kind, value| PluginRow { id: id.into(), kind, label: id.into(), options: vec!["a".into(), "b".into()], min: Some(0.0), max: Some(2.0), step: Some(0.5), value, hint: None, unit: None, decimals: 1, url: None };
-        let card = |id: &str, rows| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: Some(nori_plugins::OFFICIAL.into()), held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: false, rows };
+        let card = |id: &str, rows| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: Some(nori_plugins::OFFICIAL.into()), held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: false, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows };
         let rows = vec![
             row("on", RowKind::Switch, Some(Value::Switch(true))),
             row("pick", RowKind::Choice, Some(Value::Choice(1))),
@@ -1166,7 +1166,7 @@ mod tests {
     #[test]
     fn a_controlled_device_leads_the_devices_panel() {
         use nori_plugins::{Battery, ControlledDevice, Noise};
-        let card = |id: &str| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: true, rows: vec![PluginRow { id: "wear".into(), kind: RowKind::Switch, label: "Wear detection".into(), options: Vec::new(), min: None, max: None, step: None, value: Some(Value::Switch(true)), hint: None, unit: None, decimals: 0, url: None }] };
+        let card = |id: &str| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: true, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows: vec![PluginRow { id: "wear".into(), kind: RowKind::Switch, label: "Wear detection".into(), options: Vec::new(), min: None, max: None, step: None, value: Some(Value::Switch(true)), hint: None, unit: None, decimals: 0, url: None }] };
         let d = ControlledDevice { id: "AA".into(), name: "WH-1000XM5".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Canceling), noise_modes: vec![Noise::Off, Noise::Canceling], card: card("dev.sony") };
         let groups = device_groups(&[card("dev.sony")], std::slice::from_ref(&d));
         assert_eq!(groups.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["WH-1000XM5", "dev.sony"], "its plugin's rows once");

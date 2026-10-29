@@ -6,6 +6,8 @@
 pub(crate) mod subsonic;
 #[cfg(feature = "plugins")]
 mod plugin;
+#[cfg(feature = "plugins")]
+mod plugged;
 pub(crate) mod hosted;
 #[cfg(test)]
 mod fake;
@@ -282,15 +284,6 @@ impl Kinds {
     #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn with_plugins(plugins: Arc<nori_plugins::Plugins>) -> Arc<Kinds> {
         Arc::new(Kinds { plugins: Some(plugins) })
-    }
-
-    /// The open profile's client, which makes songs' URLs for plugins casting them (`media`); held
-    /// weakly, so the profile closes as it would.
-    pub fn give_media(&self, client: Arc<Client>) {
-        if let Some(p) = &self.plugins {
-            let media: Arc<dyn nori_plugins::Media> = client;
-            p.set_media(Arc::downgrade(&media));
-        }
     }
 }
 

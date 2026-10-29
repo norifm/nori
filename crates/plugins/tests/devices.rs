@@ -146,7 +146,7 @@ impl Side for Session {
 fn open(name: &str, devices: Vec<BtDevice>) -> (nori_testdir::TempDir, Arc<Session>, Arc<Fake>, Arc<Plugins>) {
     let dir = nori_testdir::TempDir::new(name);
     let session = Arc::new(Session::default());
-    let plugins = Arc::new(Plugins::open(dir.path().to_path_buf(), session.clone()));
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
     let fake = Arc::new(Fake { devices, buds: Mutex::new([80, 70, 1]), ..Fake::default() });
     let _ = fake.plugins.set(Arc::downgrade(&plugins));
     plugins.use_bluetooth(fake.clone());

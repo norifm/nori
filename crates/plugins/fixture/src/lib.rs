@@ -60,8 +60,15 @@ fn fetch_together(a: &str, b: &str) -> String {
     format!("{}|{}", said(ax), said(ay))
 }
 
+mod hooked;
+#[cfg(feature = "unlinked")]
+mod unlinked;
+
 impl Lifecycle for Test {
     fn action(&mut self, id: String) {
+        if hooked::action(&id) {
+            return;
+        }
         if id == "put" {
             let header = |name: &str, value: &str| nori_plugin_sdk::types::Header { name: name.into(), value: value.into() };
             let sent = Request { method: Method::Put, url: "https://allowed.example/put".into(), headers: vec![header("content-type", "application/x-protobuf")], body: Some(vec![0, 159, 146, 150]), timeout_ms: None };
@@ -83,8 +90,8 @@ impl Lifecycle for Test {
         let _ = settings::override_(&[("playback.pitch".into(), Value::Level(2.0))]).map(|_| panic!("not its key"));
         let heard = [fetch("https://allowed.example/a"), fetch("https://elsewhere.example/b")].join("|");
         store::set("heard", heard.as_bytes()).unwrap();
-        #[cfg(feature = "timers")]
-        nori_plugin_sdk::timers::stop(0);
+        #[cfg(feature = "unlinked")]
+        unlinked::nori::plugin::made_up::ping();
     }
 }
 
@@ -178,7 +185,11 @@ impl Slots for Test {
 
 impl Hooks for Test {
     fn on(&mut self, event: nori_plugin_sdk::hooks::Event) {
-        lan::on(event);
+        use nori_plugin_sdk::hooks::Event;
+        match event {
+            Event::Discovered(_) | Event::MediaButton(_) => lan::on(event),
+            _ => hooked::on(event),
+        }
     }
 
     fn served(&mut self, request: nori_plugin_sdk::hooks::ServedRequest) -> Option<nori_plugin_sdk::hooks::ServedResponse> {
@@ -193,6 +204,13 @@ const MANIFEST: Manifest = Manifest {
     rows: &[Row::level("gain", 0.0, 2.0, 0.1, 0.5)],
     menu: &[MenuAction { id: "count", glyph: Glyph::Info, kinds: &[ItemKind::Song] }],
     places: &[Place::Artwork, Place::SongInfo, Place::PlayerStatus, Place::Devices],
+    signin: hooked::SIGNIN,
+    permissions: hooked::PERMISSIONS,
+    hooks: hooked::HOOKS,
+    wake: hooked::WAKE,
+    commands: hooked::COMMANDS,
+    cache_mb: hooked::CACHE_MB,
+    assets: hooked::ASSETS,
     ..Manifest::new("fm.nori.test")
 };
 

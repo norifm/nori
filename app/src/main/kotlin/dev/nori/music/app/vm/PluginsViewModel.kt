@@ -34,6 +34,8 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     val cards = host.cards
     val repos = host.repos
     val status = host.status
+    /** Each plugin's assets and where they stand. */
+    val assets = host.assets
     val shown = host.shown
     val notice = host.notice
 
@@ -153,6 +155,8 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     fun set(id: String, row: String, value: Value) = viewModelScope.launch(writes) { host.set(id, row, value) }
 
     fun act(id: String, row: String) = viewModelScope.launch { host.act(id, row) }
+
+    fun allowMobileAssets(id: String) = viewModelScope.launch { host.allowMobileAssets(id) }
 
     fun addRepo(url: String) = viewModelScope.launch { host.addRepo(url.trim()); loadOffers() }
 

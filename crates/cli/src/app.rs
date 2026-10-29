@@ -759,7 +759,7 @@ pub struct Devices {
 fn preview_sheet(p: nori_plugins::PluginPreview) -> Overlay {
     let c = &p.card;
     let mut lines: Vec<String> = c.about.iter().cloned().collect();
-    lines.extend([crate::text::plugin_is(&c.points, !c.overrides.is_empty()), crate::text::plugin_reach(&c.net, c.lan, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
+    lines.extend([crate::text::plugin_is(&c.points, !c.overrides.is_empty()), crate::text::plugin_reach(c)].into_iter().filter(|l| !l.is_empty()));
     if c.bluetooth {
         lines.push(crate::text::REACHES_BLUETOOTH.into());
     }
@@ -1718,7 +1718,7 @@ impl App {
                 self.cmds.push(Cmd::Plugin(PluginCmd::Read));
             }
             Msg::Controlled => self.cmds.push(Cmd::Plugin(PluginCmd::Read)),
-            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) => {}
+            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) | Msg::PluginSignIn { .. } => {}
         }
     }
 

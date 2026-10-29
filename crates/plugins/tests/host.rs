@@ -216,7 +216,7 @@ fn its_lifecycle_overrides_and_reaches_only_its_hosts() {
 fn a_plugin_needing_what_this_host_lacks_is_refused() {
     let dir = nori_testdir::TempDir::new("plugins-refused");
     let plugins = Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()));
-    assert_eq!(plugins.install(&fixture("timers")), Err(Refusal::Needs(vec!["timers".to_string()])));
+    assert_eq!(plugins.install(&fixture("unlinked")), Err(Refusal::Needs(vec!["made-up".to_string()])));
     assert!(plugins.installed().is_empty());
 }
 

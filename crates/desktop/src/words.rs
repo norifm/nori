@@ -89,7 +89,7 @@ pub fn preview_note(p: &nori_plugins::PluginPreview) -> Vec<String> {
     let c = &p.card;
     let from = p.repo.as_ref().map(|url| format!("From {}", repo_name(&nori_plugins::Repo { url: url.clone(), official: url == nori_plugins::OFFICIAL })));
     let bluetooth = c.bluetooth.then(|| REACHES_BLUETOOTH.to_string());
-    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(&c.net, c.lan, &c.overrides)]).chain(bluetooth).chain(from).chain([INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect()
+    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(c)]).chain(bluetooth).chain(from).chain([INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect()
 }
 
 pub const REACHES_BLUETOOTH: &str = "Reaches Bluetooth devices.";
@@ -144,19 +144,50 @@ pub fn plugin_is(points: &[String], overrides: bool) -> String {
     said
 }
 
-/// What a plugin may reach: the hosts it sends to and nori's values it changes.
-pub fn plugin_reach(net: &[String], lan: bool, overrides: &[String]) -> String {
+/// What a plugin may reach and do: the hosts it sends to, nori's values it changes, the session, what
+/// wakes it or nori for it, and the room it takes.
+pub fn plugin_reach(c: &nori_plugins::PluginCard) -> String {
+    use nori_plugins::{Hook, Permission, WakeEvent};
     let mut said = Vec::new();
-    match (net.is_empty(), lan) {
-        (false, false) => said.push(format!("Connects to {}.", net.join(", "))),
-        (false, true) => said.push(format!("Connects to {} and devices on your network.", net.join(", "))),
+    match (c.net.is_empty(), c.lan) {
+        (false, false) => said.push(format!("Connects to {}.", c.net.join(", "))),
+        (false, true) => said.push(format!("Connects to {} and devices on your network.", c.net.join(", "))),
         (true, true) => said.push("Connects to devices on your network.".into()),
         (true, false) => {}
     }
-    if !overrides.is_empty() {
-        said.push(format!("Changes {}.", overrides.join(", ")));
+    if !c.overrides.is_empty() {
+        said.push(format!("Changes {}.", c.overrides.join(", ")));
     }
-    if said.is_empty() { "Connects to nothing.".into() } else { said.join(" ") }
+    if said.is_empty() {
+        said.push("Connects to nothing.".into());
+    }
+    for p in &c.permissions {
+        said.push(match p {
+            Permission::PlaybackRead => "Sees what plays and the queue.",
+            Permission::PlaybackControl => "Controls playback and the queue.",
+            Permission::LibraryRead => "Searches your library.",
+            Permission::LibraryWrite => "Changes favorites and playlists.",
+            Permission::Subsonic => "Uses your server's API as you.",
+            Permission::Schedule => "Wakes now and then, never while music plays with the screen off.",
+        }
+        .into());
+    }
+    if c.hooks.contains(&Hook::LyricLine) {
+        said.push("Wakes at each lyric line while music plays.".into());
+    }
+    if c.wakes.contains(&WakeEvent::BluetoothConnected) || c.wakes.contains(&WakeEvent::Boot) {
+        said.push("Starts nori while it is closed (on a phone).".into());
+    }
+    if !c.commands.is_empty() {
+        said.push(format!("Lets other apps run: {}.", c.commands.join(", ")));
+    }
+    if c.cache_bytes > 0 {
+        said.push(format!("Keeps up to {} MB of cache.", c.cache_bytes.div_ceil(1 << 20)));
+    }
+    if c.asset_bytes > 0 {
+        said.push(format!("Downloads {} MB of files.", c.asset_bytes.div_ceil(1 << 20)));
+    }
+    said.join(" ")
 }
 
 /// Why a plugin wasn't installed.
@@ -787,10 +818,16 @@ mod tests {
             net: vec!["a.example".into()],
             lan: true,
             bluetooth: false,
+            permissions: Vec::new(),
+            hooks: vec![nori_plugins::Hook::LyricLine],
+            wakes: Vec::new(),
+            commands: Vec::new(),
+            cache_bytes: 0,
+            asset_bytes: 3 << 20,
             rows: Vec::new(),
         };
         let p = nori_plugins::PluginPreview { card, file: String::new(), repo: Some(nori_plugins::OFFICIAL.into()) };
-        assert_eq!(preview_note(&p), ["Counts letters", "It’s a playback helper.", "Connects to a.example and devices on your network.", "From nori’s own", "It stays off until you turn it on."]);
+        assert_eq!(preview_note(&p), ["Counts letters", "It’s a playback helper.", "Connects to a.example and devices on your network. Wakes at each lyric line while music plays. Downloads 3 MB of files.", "From nori’s own", "It stays off until you turn it on."]);
     }
 
     #[test]

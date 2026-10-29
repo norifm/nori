@@ -31,6 +31,78 @@ pub struct Manifest {
     pub places: Vec<Place>,
     /// The Bluetooth devices it reaches and is offered to control.
     pub devices: Vec<DeviceFilter>,
+    pub permissions: Vec<Permission>,
+    /// The events its `hooks` export hears.
+    pub hooks: Vec<Hook>,
+    /// What may start nori while it is closed, for it.
+    pub wake: Vec<WakeEvent>,
+    /// Commands other apps may run, each its `lifecycle.action` id.
+    pub commands: Vec<String>,
+    /// Its cache's quota, bytes.
+    pub cache_bytes: u64,
+    pub assets: Vec<AssetSpec>,
+}
+
+/// What a plugin may do beyond its own data and rows; the install sheet lists them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Permission {
+    PlaybackRead,
+    PlaybackControl,
+    LibraryRead,
+    LibraryWrite,
+    Subsonic,
+    Schedule,
+}
+
+/// An event of nori's a plugin hears.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Hook {
+    PlaybackStarted,
+    PlaybackPaused,
+    SongChanged,
+    QueueChanged,
+    FavoriteChanged,
+    ProfileOpened,
+    RouteChanged,
+    DeviceConnected,
+    SettingChanged,
+    MediaButton,
+    LyricLine,
+}
+
+impl Hook {
+    pub(crate) const ALL: [Hook; 11] = [Hook::PlaybackStarted, Hook::PlaybackPaused, Hook::SongChanged, Hook::QueueChanged, Hook::FavoriteChanged, Hook::ProfileOpened, Hook::RouteChanged, Hook::DeviceConnected, Hook::SettingChanged, Hook::MediaButton, Hook::LyricLine];
+}
+
+/// What starts nori while it is closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum WakeEvent {
+    BluetoothConnected,
+    Boot,
+}
+
+impl WakeEvent {
+    pub(crate) const ALL: [WakeEvent; 2] = [WakeEvent::BluetoothConnected, WakeEvent::Boot];
+
+    /// As `wake.want` and the `woke` hook name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            WakeEvent::BluetoothConnected => "bluetooth-connected",
+            WakeEvent::Boot => "boot",
+        }
+    }
+}
+
+/// A large file its manifest names.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssetSpec {
+    pub name: String,
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
 }
 
 /// Bluetooth devices a plugin reaches: one matches when all that is given matches.
@@ -263,6 +335,10 @@ impl Manifest {
         if let Some(k) = m.overrides.iter().find(|k| !nori_settings::overrides::overridable(k)) {
             return Err(Refusal::UnknownKey(k.clone()));
         }
+        let hex = |s: &str| s.len() == 64 && s.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c));
+        if let Some(a) = m.assets.iter().find(|a| !hex(&a.sha256) || a.name.is_empty() || !a.name.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) || a.name.starts_with('.')) {
+            return Err(Refusal::Unreadable(format!("asset {:?} needs a plain name and a sha256", a.name)));
+        }
         Ok(m)
     }
 
@@ -313,7 +389,29 @@ impl Manifest {
                 .collect::<Option<Vec<_>>>()?
         };
         let points = POINTS.iter().enumerate().filter(|(k, _)| bits & (1 << k) != 0).map(|(_, p)| *p).collect();
-        Some(Manifest { id, version, api, points, stage, net, signin, overrides, rows, menu, places, devices })
+        let mut m = Manifest { id, version, api, points, stage, net, signin, overrides, rows, menu, places, devices, permissions: Vec::new(), hooks: Vec::new(), wake: Vec::new(), commands: Vec::new(), cache_bytes: 0, assets: Vec::new() };
+        // A plugin built before these fields ends here.
+        if i.0.is_empty() {
+            return Some(m);
+        }
+        const PERMISSIONS: [Permission; 6] = [Permission::PlaybackRead, Permission::PlaybackControl, Permission::LibraryRead, Permission::LibraryWrite, Permission::Subsonic, Permission::Schedule];
+        // Kinds a newer SDK adds are skipped.
+        let bytes = |i: &mut In| -> Option<Vec<u8>> { (0..i.u16()?).map(|_| i.byte()).collect() };
+        m.permissions = bytes(&mut i)?.into_iter().filter_map(|b| PERMISSIONS.get(b as usize).copied()).collect();
+        m.hooks = bytes(&mut i)?.into_iter().filter_map(|b| Hook::ALL.get(b as usize).copied()).collect();
+        m.wake = bytes(&mut i)?.into_iter().filter_map(|b| WakeEvent::ALL.get(b as usize).copied()).collect();
+        m.commands = i.strs()?;
+        m.cache_bytes = i.u32()? as u64 * 1024 * 1024;
+        m.assets = (0..i.u16()?).map(|_| Some(AssetSpec { name: i.str()?, url: i.str()?, size: u64::from_le_bytes(i.take(8)?.try_into().ok()?), sha256: i.str()? })).collect::<Option<Vec<_>>>()?;
+        Some(m)
+    }
+
+    pub fn may(&self, p: Permission) -> bool {
+        self.permissions.contains(&p)
+    }
+
+    pub fn hears(&self, h: Hook) -> bool {
+        self.extends("hooks") && self.hooks.contains(&h)
     }
 
     /// Whether it reaches Bluetooth devices.
@@ -342,12 +440,23 @@ impl Manifest {
 
     /// Whether HTTP to `host` is allowed by name (`lan` is no host's name).
     pub fn reaches(&self, host: &str) -> bool {
-        let host = host.to_ascii_lowercase();
-        self.net.iter().filter(|d| *d != crate::lan::LAN).any(|d| match d.strip_prefix("*.") {
+        among(self.net.iter().filter(|d| *d != crate::lan::LAN), host)
+    }
+
+    /// Whether a sign-in page may start at `host`.
+    pub fn signs_in(&self, host: &str) -> bool {
+        among(&self.signin, host)
+    }
+}
+
+/// Whether `host` is one of `hosts`, where a leading `*.` takes in subdomains.
+fn among<'a>(hosts: impl IntoIterator<Item = &'a String>, host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    !host.is_empty()
+        && hosts.into_iter().any(|d| match d.strip_prefix("*.") {
             Some(base) => host == base || host.ends_with(&format!(".{base}")),
             None => host == *d,
         })
-    }
 }
 
 /// The first custom section `name` in `wasm`, a component's nested modules included.
@@ -391,6 +500,24 @@ mod tests {
     }
 
     #[test]
+    fn session_hooks_wakes_and_storage_read_back() {
+        const ASSETS: [sdk::Asset; 1] = [sdk::Asset { name: "model.bin", url: "https://x.example/m", size: 5 << 30, sha256: "ab" }];
+        let m = sdk::Manifest {
+            permissions: &[sdk::Permission::PlaybackControl, sdk::Permission::Schedule],
+            hooks: &[sdk::Hook::SongChanged, sdk::Hook::LyricLine],
+            wake: &[sdk::Wake::Boot],
+            commands: &["toggle"],
+            cache_mb: 3,
+            assets: &ASSETS,
+            ..sdk::Manifest::new("fm.nori.hooked")
+        };
+        let read = written(&m, 1 << 1);
+        assert_eq!((read.permissions.clone(), read.hooks.clone(), read.wake.clone(), read.commands.clone(), read.cache_bytes), (vec![Permission::PlaybackControl, Permission::Schedule], vec![Hook::SongChanged, Hook::LyricLine], vec![WakeEvent::Boot], vec!["toggle".to_string()], 3 << 20));
+        assert_eq!(read.assets.clone(), vec![AssetSpec { name: "model.bin".into(), url: "https://x.example/m".into(), size: 5 << 30, sha256: "ab".into() }]);
+        assert!(read.hears(Hook::LyricLine) && !read.hears(Hook::QueueChanged));
+    }
+
+    #[test]
     fn the_points_are_wits_in_its_order() {
         let mut resolve = wit_parser::Resolve::default();
         let (pkg, _) = resolve.push_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../wit")).unwrap();
@@ -426,12 +553,26 @@ mod tests {
     }
 
     #[test]
-    fn a_manifest_written_before_devices_reads_with_none() {
-        let m = sdk::Manifest { places: &[sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.old") };
-        let bytes: [u8; 1024] = sdk::encode::<1024>(&m, "1.0.0", 0);
-        // The two bytes of its (empty) device list are what a manifest of before lacks.
-        let read = Manifest::decode(&bytes[..sdk::encoded_len(&m, "1.0.0") - 2]).unwrap();
-        assert_eq!((read.places, read.devices), (vec![Place::Devices], Vec::new()));
+    fn manifests_of_each_older_sdk_read_with_none_of_what_came_after() {
+        const FILTERS: [sdk::DeviceFilter; 1] = [sdk::DeviceFilter::ANY.name("WH-*")];
+        // The bytes an empty group takes: the devices' count, then the permissions', hooks' and wakes'
+        // counts, the commands' count, the cache quota and the assets' count.
+        let (devices, session) = (2, 2 * 3 + 2 + 4 + 2);
+        let full = sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, hooks: &[sdk::Hook::SongChanged], ..sdk::Manifest::new("fm.nori.new") };
+        for (m, cut, has_devices, has_hooks) in [
+            // Released plugins: nothing after the places.
+            (sdk::Manifest { places: &[sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.old") }, devices + session, false, false),
+            // Built with devices, before the session's fields.
+            (sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, ..sdk::Manifest::new("fm.nori.devices") }, session, true, false),
+            (full, 0, true, true),
+        ] {
+            let bytes: [u8; 1024] = sdk::encode::<1024>(&m, "1.0.0", 1 << 1);
+            let read = Manifest::decode(&bytes[..sdk::encoded_len(&m, "1.0.0") - cut]).unwrap();
+            assert_eq!(read.places, vec![Place::Devices], "{}", m.id);
+            assert_eq!(read.reaches_devices(), has_devices, "{}", m.id);
+            assert_eq!(read.hears(Hook::SongChanged), has_hooks, "{}", m.id);
+            assert!(read.permissions.is_empty() && read.assets.is_empty() && read.cache_bytes == 0, "{}", m.id);
+        }
     }
 
     #[test]

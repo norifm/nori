@@ -74,7 +74,7 @@ impl Side for Session {
 
 struct Rig {
     _dir: nori_testdir::TempDir,
-    plugins: Plugins,
+    plugins: Arc<Plugins>,
     session: Arc<Session>,
     web: Arc<Web>,
 }

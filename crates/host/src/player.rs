@@ -243,18 +243,23 @@ impl Handle {
 #[cfg(feature = "desktop")]
 impl nori_mpris::Controls for Handle {
     fn play(&self) {
+        self.pressed(nori_plugins::Press::Play);
         self.resume();
     }
     fn pause(&self) {
+        self.pressed(nori_plugins::Press::Pause);
         self.halt();
     }
     fn toggle(&self) {
+        self.pressed(nori_plugins::Press::PlayPause);
         Handle::toggle(self);
     }
     fn next(&self) {
+        self.pressed(nori_plugins::Press::Next);
         Handle::next(self);
     }
     fn previous(&self) {
+        self.pressed(nori_plugins::Press::Previous);
         Handle::previous(self);
     }
     fn seek(&self, ms: i64) {

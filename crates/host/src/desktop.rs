@@ -144,17 +144,26 @@ pub struct Notice {
 /// Where a client takes the plugins' notices.
 type Hears = Box<dyn Fn(Notice) + Send + Sync>;
 
-/// What a desktop client does with what plugins say: the open session takes the settings laid anew;
-/// notices go to the client that hears them ([`Watched::hear`]); status lines go to the log.
+/// Where a client opens a plugin's sign-in page: the plugin's id and the page's address.
+type SignsIn = Box<dyn Fn(String, String) + Send + Sync>;
+
+/// What a desktop client does with what plugins say: the open session takes the settings laid anew and
+/// the plugins' controls; notices go to the client that hears them ([`Watched::hear`]), sign-in pages
+/// to the one that opens them ([`Watched::sign_in_with`]); status lines and assets go to the log, and
+/// commands to D-Bus on Linux. The desktop has no wake: nothing starts it while it is closed.
 #[derive(Default)]
 pub struct Watched {
     engine: std::sync::Mutex<Option<std::sync::Weak<nori_engine::Engine>>>,
+    session: std::sync::Mutex<Option<std::sync::Weak<crate::session::Parts>>>,
     plugins: std::sync::OnceLock<std::sync::Weak<nori_plugins::Plugins>>,
     heard: std::sync::Mutex<Option<Hears>>,
     devices: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
     /// mDNS for the plugins, while one browses.
     browsing: std::sync::Mutex<Option<Browsing>>,
     casts: std::sync::Mutex<Option<CastSeen>>,
+    signs_in: std::sync::Mutex<Option<SignsIn>>,
+    #[cfg(target_os = "linux")]
+    commands: std::sync::Mutex<Option<nori_mpris::Commands>>,
 }
 
 /// Where a client takes the cast's changes.
@@ -180,6 +189,15 @@ impl Watched {
     /// Tells `to` of each change of the cast running (None: it ended), for the output picker.
     pub fn hear_casts(&self, to: impl Fn(Option<nori_plugins::Cast>) + Send + Sync + 'static) {
         *self.casts.lock().expect("not poisoned") = Some(Box::new(to));
+    }
+
+    /// Opens plugins' sign-in pages with `open`, from whatever thread a plugin runs on.
+    pub fn sign_in_with(&self, open: impl Fn(String, String) + Send + Sync + 'static) {
+        *self.signs_in.lock().expect("not poisoned") = Some(Box::new(open));
+    }
+
+    fn session(&self) -> Option<crate::session::Handle> {
+        self.session.lock().expect("not poisoned").as_ref().and_then(std::sync::Weak::upgrade).map(crate::session::Handle::of)
     }
 
     /// Plugin `id`'s word `key` with `args` in its `{0}`, `{1}`…; the key itself where it has no such word.
@@ -261,6 +279,41 @@ impl nori_plugins::Client for Watched {
             to(cast);
         }
     }
+    fn control(&self, control: nori_plugins::Control) {
+        if let Some(s) = self.session() {
+            s.plugin_control(control);
+        }
+    }
+    fn sign_in(&self, id: String, url: String) {
+        if let Some(open) = self.signs_in.lock().expect("not poisoned").as_ref() {
+            open(id, url);
+        }
+    }
+    fn wake(&self, _: Vec<nori_plugins::WakeEvent>) {}
+    /// Linux: `fm.nori.Commands` on the session bus while any plugin has commands.
+    fn commands(&self, commands: Vec<nori_plugins::Command>) {
+        #[cfg(target_os = "linux")]
+        {
+            let mut held = self.commands.lock().expect("not poisoned");
+            *held = None;
+            let plugins = self.plugins.get().cloned();
+            if !commands.is_empty() {
+                let run = move |plugin: String, command: String| {
+                    if let Some(p) = plugins.as_ref().and_then(std::sync::Weak::upgrade) {
+                        p.command(nori_plugins::Command { plugin, command });
+                    }
+                };
+                *held = nori_mpris::Commands::start(Box::new(run)).map_err(|e| nori_core::alog::info(&format!("plugin commands: {e}"))).ok();
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = commands;
+    }
+    /// A desktop's screen is on while it runs.
+    fn watch_screen(&self, _: bool) {}
+    fn asset(&self, id: String, name: String, state: nori_plugins::AssetState) {
+        nori_core::alog::info(&format!("plugin {id}: asset {name} is {state:?}"));
+    }
 }
 
 /// Logs `draft` in and keeps it as the active profile, blocking ([`nori_core::providers::log_in`]).
@@ -332,6 +385,7 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
             nori_plugins::Card::Elsewhere => engine.release_now(),
         }
     }));
+    *plugged.watched.session.lock().expect("not poisoned") = Some(session.weak());
     Ok(session)
 }
 

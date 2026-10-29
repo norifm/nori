@@ -47,8 +47,9 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
 - The manifest is Rust. `plugin!` encodes it at compile time into the wasm's `nori:plugin` custom
   section, with the crate's version and the points named, and nori reads it before running anything.
   What the plugin calls (HTTP, settings) isn't declared: nori reads it from the component's imports.
-  The manifest says only what code can't: its id, the hosts and Bluetooth devices it may reach, the keys it overrides, its
-  rows and a stage's slot.
+  The manifest says only what code can't: its id, the hosts and Bluetooth devices it may reach, the
+  keys it overrides, its rows, a stage's slot, and its permissions, hooks, wakes, commands, cache quota
+  and assets.
 - Words are files: `strings/<lang>.toml`, key = text, English required: `name`, `about`, each row's id
   and each choice option's key.
 - A plugin depends on the SDK from this repository, `nori-plugin-sdk = { git = "https://github.com/norifm/nori" }`,
@@ -92,6 +93,66 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
 - **Encrypted streams**: during `source`, `streams.encrypted(url, key, iv, skip)` says the URL it returns
   is AES-128-CTR; the engine decrypts as it reads, from any byte, past the `skip` bytes that aren't the
   song's.
+- **Its cache** (`cache`), up to the manifest's `cache_mb`: a file per key in its folder's `cache/`, made
+  at the first put; a put over the quota lets the least recently used go. **Its assets** (`assets`): the
+  files its manifest names (URL, size, sha256), fetched by nori through the transport in 4 MB range
+  requests, hashed as they come, kept as their sha256 in `assets/`. On a metered network an asset waits
+  until the user allows mobile data for that plugin (`allow_mobile_assets`, a line on its page). The
+  client shows each one's state as a line on the plugin's page (`Plugins::assets`, `Client::asset`). An
+  update keeps the store, cache and assets; removing the plugin removes them.
+
+## Permissions
+
+What a plugin may do beyond its own data is in its manifest, shown on the install sheet
+(`PluginCard`): `permissions` (`PlaybackRead`, `PlaybackControl`, `LibraryRead`, `LibraryWrite`,
+`Subsonic`, `Schedule`), the `hooks` it hears, the `wake` events and `commands` it declares, its cache
+quota and its assets' size. These fields come after the places and the devices in the manifest section, so a plugin
+built before them reads as declaring none. A call without its permission is refused (`refused`, or
+nothing for a call that answers nothing) and logged.
+
+## The session
+
+`session` reaches the session every client shares, without a rule written in a client:
+
+- **What plays** comes from the client's `Moment`s (`Plugins::played`: playing, queue index, song id,
+  position, the output's key), said only while `Plugins::follows()` (an enabled plugin reads the player
+  or hears an event about it). A moment that only runs on as the last one did is no change. The route is
+  read from the output's key (`nori_player::outputs::parts`).
+- **The queue and the library** come from the open profile's core: each client hands the profile's
+  client over with `Kinds::open_client` (crates/core `providers/plugged.rs`), which is also the
+  `profile-opened` event. `subsonic.call` signs the method with the profile's credentials there; the
+  plugin never sees them.
+- **Controls** go to the client's own player (`Client::control`), so the remote, jam and skip rules apply
+  as for a press: crates/host `plugged.rs` on the desktop and terminal, `PlayerConnection.plugin` on
+  Android. `add` resolves ids through the core and refuses a provider song unless autofill may add them
+  (`autoFillRemote`). `clear` drops the songs after the one playing.
+- **`sign-in.open`** is a provider's, for its profile while that is open, at one of its `signin` hosts:
+  the client opens its sign-in page there (Android's WebView sheet, the desktop's and terminal's sign-in
+  window), and the cookies go to the provider's `sign-in-done` as on its own page.
+
+## Hooks, timers and wakes
+
+- **Built only when heard.** `Plugins::hears(hook)` is one load of a bit set made when plugins are turned
+  on or off; a client checks it (or `follows()`) before it builds an event. The playback, song, queue and
+  route events are told apart in Rust from the moments (`hooks.rs`); favorites come from the core's
+  `Client::star`, settings from the settings' `watch` (stored) and the layer (in effect), media buttons
+  from MPRIS and the media session, devices from Android's audio device callback.
+- **Lyric lines** wake the host at each synced line of the song playing (its lyrics fetched once per
+  song through the core), the screen off too; that wake is the plugin's declared cost, which the install
+  sheet says. A pause, seek or song change lets the waiting wake go.
+- **Timers** run on the plugin host's executor (made at the first timer, or the client's,
+  `use_tasks`). A `while-visible` one fires only while the player is on screen (`player_shown`); an
+  `always` one as often as it asks while the plugin has an active session (`session_active`, for a cast or
+  a connected device), else only with `Schedule`, at most once per 15 minutes and never while music plays
+  with the screen off. A timer that may not fire waits on the gate, not on a clock: no wake. The client
+  watches the screen (`Client::watch_screen`) only while an `always` timer runs.
+- **Wakes and commands.** `wake.want` turns on the wakes the manifest declares (kept in its store); the
+  client keeps on only the receivers some enabled plugin wants (`Client::wake`, `Client::commands`). On
+  Android, `PluginBootReceiver`, `PluginBluetoothReceiver` and `PluginCommandReceiver` are declared
+  disabled and enabled only then; another app runs a command with the `dev.nori.music.RUN_COMMAND`
+  broadcast (extras `plugin`, `command`) holding `<applicationId>.permission.RUN_COMMAND`. On Linux, the
+  desktop and terminal own `fm.nori.Commands` on the session bus (`Run(plugin, command)`) only while a
+  plugin has commands. The desktop has no wake. A command reaches the plugin's `lifecycle.action`.
 
 ## The LAN and casting
 
@@ -106,7 +167,7 @@ off, removed or updated, or a call fails ([`Lan::forget`](../../crates/plugins/s
 | `sockets` | TCP connect, read, write; `tls` wraps it in rustls (ring), checked against webpki's roots (`system`), one certificate's DER (`pinned`), or not at all (`none`, only to a private address); UDP bind (address reused, for SSDP's port), send, receive, and `join` an IPv4 group, which holds the platform's multicast lock while any socket is in one |
 | `discovery` | `browse(kind)` asks the client to browse mDNS while any plugin browses that kind (Android NSD, mdns-sd on the desktop and terminal); each service found goes to the `discovered` hook of the plugins browsing it (`Plugins::discovered`) |
 | `lan-serve` | the plugins' door (`door.rs`): plain HTTP on a port the system picks, open while a plugin has `open` or serves audio or a song. `/p/<id>/...` goes to plugin `id`'s `served` hook, its query kept. Its own listener, not remote control's door, which takes only requests signed with the account's secret; a speaker can't sign |
-| `media` | a song's stream URL (its own quality) and cover URL from the open profile's client (`Kinds::give_media`), as they are; a URL on this device (a server on localhost, plain HTTP) is proxied at the door's `/m/<n>`, its range passed on. A provider plugin's songs have none |
+| `media` | a song's stream URL (its own quality) and cover URL from the open profile's client (`Kinds::open_client`), as they are; a URL on this device (a server on localhost, plain HTTP) is proxied at the door's `/m/<n>`, its range passed on. A provider plugin's songs have none |
 | `audio-out` | `to-socket` (a plain TCP socket the plugin opened, at the rate and channels it asks) or `serve` (at the door's `/a/<encoding>`, nori's rate) make a `Sink`, and the client's engine plays into it (`Plugins::set_cards`, `nori_engine::cast::CastOutput`): pumped in real time half a second ahead, on a thread of its own, 16-bit. PCM is little-endian into a socket and `audio/L16` at the door, WAV has an open length, FLAC has verbatim frames of 4096. While a sink plays, nothing goes to offload; when the plugin stops, the device's own output comes back where the music is (`Engine::set_card`). `set-latency` adds to what the seek bar and lyrics wait for |
 | `cast` | `start` tells the client a cast runs (`Client::cast`), a target cast lets the output here go (`Card::Elsewhere`); `report` passes the device's state; `end` or the plugin's instance going ends it. One plugin casts at a time. The volume keys and picking another output reach the plugin as the media buttons `volume-up`, `volume-down`, `cast-stop` (`Plugins::cast_button`) |
 
@@ -215,11 +276,15 @@ transport (`Kinds::set_transport`). See [Providers](providers.md).
 - `cargo test -p nori-plugins`: the manifest as the SDK writes it, the extension points' order against
   `wit/`, the store, and `tests/host.rs` over a real plugin (`fixture/`, built to wasm by the `testing` feature:
   needs `rustup target add wasm32-wasip2`): its stage and kept state, no allocation per block, its
-  overrides, its HTTP refused outside its hosts, and a plugin needing an unlinked interface refused;
+  overrides, its HTTP refused outside its hosts, and a plugin needing an interface this host doesn't
+  link refused (the fixture built with `unlinked`, `fixture/src/unlinked.rs`);
   `tests/lan.rs` the LAN interfaces over the same plugin: TLS checked each way against a local server,
   UDP to the LAN only, the multicast lock, browsing, its endpoints at the door, a song's URL proxied, and
   casts into a socket, at the door and to a target. `tests/devices.rs` runs device control over a fake
   platform Bluetooth with the fixture built with `headphones` (`fixture/src/headphones.rs`).
+  `tests/session.rs` drives the fixture's `hooked` module on a simulated clock: the session's reads and
+  controls and their permissions, events built only when heard, lyric lines' wakes, timers and their
+  gate, the cache's quota, assets on Wi-Fi or mobile data, and wakes and commands kept on only while wanted.
 - `cargo test -p nori-engine --test engine another_card`: a card swapped mid-song plays on from there.
 - `cargo test -p nori-player --test pipeline stage`: stages in the chain on the virtual clock.
 - `cargo test -p nori-settings overrides`: tunables and settings overridden without being written.

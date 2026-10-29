@@ -51,7 +51,8 @@ pub(crate) fn files(from: &Path) -> Result<Vec<(String, Vec<u8>)>, Refusal> {
     Ok(out)
 }
 
-/// Installs the plugin at `from` into its folder under `root`, replacing an older version but its store.
+/// Installs the plugin at `from` into its folder under `root`, replacing an older version but its
+/// store, cache and assets.
 pub(crate) fn install(from: &Path, root: &Path) -> Result<Manifest, Refusal> {
     let files = files(from)?;
     let get = |n: &str| files.iter().find(|(name, _)| name == n).map(|(_, b)| b);
@@ -82,8 +83,10 @@ pub(crate) fn install(from: &Path, root: &Path) -> Result<Manifest, Refusal> {
         return Err(Refusal::Needs(missing));
     }
     let folder = root.join(&manifest.id);
-    if let Ok(store) = fs::metadata(folder.join("store")).map(|_| folder.join("store")) {
-        let _ = fs::rename(store, staging.join("store"));
+    for kept in ["store", "cache", "assets"] {
+        if folder.join(kept).exists() {
+            let _ = fs::rename(folder.join(kept), staging.join(kept));
+        }
     }
     let _ = fs::remove_dir_all(&folder);
     fs::rename(&staging, &folder).map_err(unwritable)?;

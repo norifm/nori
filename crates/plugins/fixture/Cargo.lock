@@ -190,6 +190,7 @@ name = "nori-test-plugin"
 version = "0.1.0"
 dependencies = [
  "nori-plugin-sdk",
+ "wit-bindgen",
 ]
 
 [[package]]

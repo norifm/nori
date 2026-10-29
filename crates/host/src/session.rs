@@ -323,6 +323,12 @@ pub struct Parts {
     curve: parking_lot::Mutex<Option<CurveNotice>>,
     tasks: Arc<dyn Tasks>,
     out: Out,
+    /// The plugin host the session's kinds come with, told what plays.
+    #[cfg(feature = "desktop")]
+    pub(crate) plugins: Option<Arc<nori_plugins::Plugins>>,
+    /// The output the engine last said it plays on, for the plugins.
+    #[cfg(feature = "desktop")]
+    pub(crate) output: parking_lot::Mutex<String>,
 }
 
 impl Session {
@@ -363,9 +369,9 @@ impl Session {
         let cover_net = CoverNet::over(o.http.clone());
         let client = Client::new(core.clone(), transport, cover_net.clone());
         client.set_profile(net(&o.profile));
-        // Plugins casting a song ask it for the song's URLs.
+        // Plugins reach the open profile: its session, its songs' URLs for a cast.
         #[cfg(feature = "desktop")]
-        o.kinds.give_media(client.clone());
+        o.kinds.open_client(client.clone());
         let prefs = core.session.settings.current().unwrap_or_default();
         // Set by the client before the engine starts, so the first chain has the right compensation.
         let level = o.volume;
@@ -429,6 +435,10 @@ impl Session {
             curve: Default::default(),
             tasks: o.tasks,
             out: o.out,
+            #[cfg(feature = "desktop")]
+            plugins: o.kinds.plugins().cloned(),
+            #[cfg(feature = "desktop")]
+            output: Default::default(),
         };
         let h = Handle(Arc::new(parts));
         let _ = heard.set(Arc::downgrade(&h.0));
@@ -437,6 +447,8 @@ impl Session {
             m.mpris.serve(Some(Arc::new(h.clone())));
         }
         h.restore();
+        #[cfg(feature = "desktop")]
+        h.player_shown(true);
         h.follow_remote();
         if !h.offline && h.rules().downloads && h.core.download_counts().pending > 0 {
             h.start_downloads();
@@ -458,6 +470,15 @@ impl Session {
 }
 
 impl Handle {
+    /// The session, held weakly (by what outlives it, a plugin's client).
+    pub fn weak(&self) -> std::sync::Weak<Parts> {
+        Arc::downgrade(&self.0)
+    }
+
+    pub fn of(parts: Arc<Parts>) -> Handle {
+        Handle(parts)
+    }
+
     fn note(&self, n: Note) {
         (self.out)(Said::Note(n));
     }
@@ -471,6 +492,8 @@ impl Handle {
     fn heard(&self, e: &Event) {
         #[cfg(feature = "desktop")]
         self.mpris_heard(e);
+        #[cfg(feature = "desktop")]
+        self.plugins_heard(e);
         self.followed(e);
     }
 
@@ -710,6 +733,9 @@ impl Handle {
     /// The app came into sight or left it: a mirrored device's clock and the search for a playing
     /// device follow only while it is seen.
     pub fn in_sight(&self, seen: bool) {
+        // The player shows on every page of a desktop client while it is seen.
+        #[cfg(feature = "desktop")]
+        self.player_shown(seen);
         let Some(remote) = self.remote() else { return };
         remote.clone().sight(if seen { nori_core::remote::Sight::Screen } else { nori_core::remote::Sight::Nothing });
         if seen {

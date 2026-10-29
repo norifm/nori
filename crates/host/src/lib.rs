@@ -8,6 +8,8 @@ mod bluez;
 pub mod desktop;
 pub mod pages;
 pub mod player;
+#[cfg(feature = "desktop")]
+mod plugged;
 pub mod remote;
 pub mod session;
 

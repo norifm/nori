@@ -81,6 +81,8 @@ pub enum Msg {
     Updated(Vec<(String, String)>),
     /// The devices plugins control, or what they report, changed: read them again.
     Controlled,
+    /// A provider's plugin asks for its sign-in page at `url`.
+    PluginSignIn { plugin: String, url: String },
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }
@@ -117,6 +119,7 @@ impl Msg {
             Msg::Slots { song, info, status } => format!("plugins on {song}: {} info groups, {} status lines", info.len(), status.len()),
             Msg::Updated(u) => format!("{} plugins updated", u.len()),
             Msg::Controlled => "controlled devices".into(),
+            Msg::PluginSignIn { plugin, .. } => format!("plugin {plugin} asks to sign in"),
             Msg::Offers(o) => format!("{} plugins offered, {} repos unread", o.offers.len(), o.failed.len()),
             Msg::From(id, m) => format!("session {id}: {}", m.brief()),
         }

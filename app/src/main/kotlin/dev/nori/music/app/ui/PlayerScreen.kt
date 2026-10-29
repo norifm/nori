@@ -241,6 +241,10 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
         val job = if (inView && ahead != null) vm.warmArtwork(ahead, CoverSize.FULL) else null
         onPauseOrDispose { job?.cancel() }
     }
+    androidx.lifecycle.compose.LifecycleResumeEffect(inView) {
+        vm.playerShown(inView)
+        onPauseOrDispose { vm.playerShown(false) }
+    }
     if (motion != null) MotionDirector(vm, motion, loop, state.current?.id, sheet, onArtwork = panel == Panel.ART && showing == Panel.ART && !flying)
     // The player wears the cover's colours except in Midnight (the core's rule).
     val tinted = LocalPapers.current.coversTint

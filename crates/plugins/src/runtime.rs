@@ -27,7 +27,7 @@ pub use exports::nori::plugin as points;
 pub use nori::plugin::types;
 
 /// The host interfaces linked for a plugin; a plugin importing another can't be installed here.
-pub const LINKED: [&str; 14] = ["log", "store", "http", "settings", "rows", "notices", "sockets", "streams", "bluetooth", "discovery", "lan-serve", "audio-out", "media", "cast"];
+pub const LINKED: [&str; 21] = ["log", "store", "http", "settings", "rows", "notices", "sockets", "streams", "bluetooth", "discovery", "lan-serve", "audio-out", "media", "cast", "session", "subsonic", "timers", "sign-in", "wake", "cache", "assets"];
 
 /// Fuel for one call that isn't a sound stage's (about a few seconds of work).
 pub(crate) const CALL_FUEL: u64 = 20_000_000_000;
@@ -112,6 +112,11 @@ pub struct Host {
     pub(crate) radio: Arc<crate::bluetooth::Radio>,
     /// What the plugins hold on the LAN.
     pub(crate) lan: Arc<crate::lan::Lan>,
+    /// Its folder.
+    pub(crate) dir: std::path::PathBuf,
+    pub(crate) cache: crate::cache::Cache,
+    /// The host it runs in, for what outlives a call (timers, assets).
+    pub(crate) plugins: std::sync::Weak<crate::Plugins>,
 }
 
 /// An instance gone (its plugin stopped or turned off, or a call failed) lets go of what it held on
@@ -122,12 +127,19 @@ impl Drop for Host {
     }
 }
 
+impl Host {
+    pub(crate) fn plugins(&self) -> Option<Arc<crate::Plugins>> {
+        self.plugins.upgrade()
+    }
+}
+
 /// A store for a plugin instance whose imports reach the host, with its memory capped.
-pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>, transport: crate::Transported, radio: Arc<crate::bluetooth::Radio>, lan: Arc<crate::lan::Lan>) -> Store<Host> {
+pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>, transport: crate::Transported, radio: Arc<crate::bluetooth::Radio>, lan: Arc<crate::lan::Lan>, plugins: std::sync::Weak<crate::Plugins>) -> Store<Host> {
     let host = Host {
         limits: StoreLimitsBuilder::new().memory_size(MEMORY_CAP).instances(16).build(),
         id: manifest.id.clone(),
         store: store::Store::new(dir.join("store")),
+        cache: crate::cache::Cache::new(dir, manifest.cache_bytes),
         manifest,
         side,
         transport,
@@ -136,6 +148,8 @@ pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>, tr
         encrypted: None,
         radio,
         lan,
+        dir: dir.to_path_buf(),
+        plugins,
     };
     let mut s = Store::new(engine(), host);
     s.limiter(|h| &mut h.limits);
@@ -224,6 +238,13 @@ pub(crate) fn linker(component: &Component) -> Result<Linker<Host>, Refusal> {
     nori::plugin::audio_out::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::media::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::cast::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::session::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::subsonic::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::timers::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::sign_in::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::wake::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::cache::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::assets::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     wasi(&mut l, component).map_err(err)?;
     Ok(l)
 }

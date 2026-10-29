@@ -70,7 +70,7 @@ fun SignInFlow(vm: SettingsViewModel, kind: ServerKind) {
             },
         )
     }
-    NoriDialog(ui.page, vm::closeSignInPage, DialogStyle.Page) { SignInSheet(vm, kind, start, words) }
+    NoriDialog(ui.page, vm::closeSignInPage, DialogStyle.Page) { SignInSheet(vm, kind, ui.pageStart ?: start, words) }
 }
 
 /** The sign-in page as a sheet: Cancel and the title over the provider's page, then the core's answer. */

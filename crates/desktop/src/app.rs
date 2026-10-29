@@ -780,6 +780,8 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         nori_host::desktop::plugins(&a.data).watched.on_devices(move || tx.send(Msg::DevicesControlled));
         let tx = a.tx.clone();
         nori_host::desktop::plugins(&a.data).watched.hear_casts(move |_| tx.send(Msg::Cast));
+        let tx = a.tx.clone();
+        nori_host::desktop::plugins(&a.data).watched.sign_in_with(move |plugin, url| tx.send(Msg::PluginSignIn { plugin, url }));
         a.plugins_read();
         let wake = a.me.clone();
         a.compositor.on_wake(move || wake.with(|a| a.repaint()));
@@ -2848,16 +2850,23 @@ impl App {
     /// The provider's own sign-in page in a window of its own (this program again, `--sign-in`: the system's
     /// web view); where that cannot start, the sheet unfolds pasting with why.
     fn sign_in_window(&mut self) {
-        let Some(s) = &self.session else { return };
         let Some(kind) = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.kind.clone())) else { return };
+        self.sign_in_page(kind, None);
+    }
+
+    /// Opens `kind`'s sign-in window, at `start` where its plugin asked for that page.
+    fn sign_in_page(&mut self, kind: nori_core::settings::ServerKind, start: Option<String>) {
+        let Some(s) = &self.session else { return };
         if self.sign_in_window.as_mut().is_some_and(|w| w.open_now()) {
             return;
         }
         let (h, tx) = ((***s).clone(), self.tx.clone());
         let title = format!("Sign in to {}", words::provider_of(self.kinds(), &kind).name);
-        let window = nori_sign_in_window::SignInWindow::open(self.kinds().clone(), kind, title, move |id, cookies| {
-            tx.send(Msg::SignInWindowDone(id, h.sign_in(cookies)))
-        });
+        let done = move |id, cookies| tx.send(Msg::SignInWindowDone(id, h.sign_in(cookies)));
+        let window = match start {
+            Some(start) => nori_sign_in_window::SignInWindow::open_at(self.kinds().clone(), kind, title, start, done),
+            None => nori_sign_in_window::SignInWindow::open(self.kinds().clone(), kind, title, done),
+        };
         let ui = self.ui();
         let Some(window) = window else {
             ui.set_signin_pasting(true);
@@ -3131,6 +3140,7 @@ impl App {
                 self.say(&words::plugins_updated(&named), false);
                 self.plugins_read();
             }
+            Msg::PluginSignIn { plugin, url } => self.sign_in_page(nori_core::settings::ServerKind::Plugin { id: plugin }, Some(url)),
             Msg::SignInWindowDone(pid, r) => {
                 self.sign_in_window.take_if(|w| w.id() == pid);
                 let ui = self.ui();

@@ -58,6 +58,8 @@ data class LoginUi(val busy: Boolean = false, val error: String? = null, val don
 data class AccountUi(
     val account: dev.nori.music.ffi.AccountState? = null, val busy: Boolean = false, val failed: dev.nori.music.ffi.SignInResult? = null,
     val page: Boolean = false, val offer: Boolean = false, val ended: Boolean = false,
+    /** Where the page starts when the provider's plugin asked for it there; null: the provider's own start. */
+    val pageStart: String? = null,
 )
 /**
  * The AutoEQ list: how many headphones it holds ([countWords] and [searchWords] say so), the query and
@@ -360,6 +362,13 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     fun rules() = nori.rules
 
+    // A provider's plugin asks for its sign-in page (its `sign-in.open`): the page opens at that address.
+    init {
+        viewModelScope.launch {
+            nori.plugins.signIns.collect { (_, url) -> _account.update { it.copy(page = true, offer = false, failed = null, pageStart = url) } }
+        }
+    }
+
     // Each time the open profile's rules change (it opened, or its account changed under it), a session the
     // provider ended offers to sign in again, until told not to.
     init {
@@ -399,9 +408,9 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     /** Opens the provider's sign-in page, from the account's row or a just-added profile's offer. */
-    fun openSignInPage() = _account.update { it.copy(page = true, offer = false, failed = null) }
+    fun openSignInPage() = _account.update { it.copy(page = true, offer = false, failed = null, pageStart = null) }
 
-    fun closeSignInPage() = _account.update { it.copy(page = false, failed = null) }
+    fun closeSignInPage() = _account.update { it.copy(page = false, failed = null, pageStart = null) }
 
     /** Leaves the sign-in page's failure for a fresh page. */
     fun retrySignIn() = _account.update { it.copy(failed = null) }

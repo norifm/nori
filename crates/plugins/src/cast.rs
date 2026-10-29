@@ -182,14 +182,6 @@ impl Plugins {
     pub fn set_cards(&self, cards: Cards) {
         self.lan.set_cards(cards);
     }
-
-    /// Tells plugin `id` `event`, when it has hooks.
-    fn tell(&self, id: &str, event: Event) {
-        let hooked = self.installed().iter().any(|i| i.enabled && i.manifest.id == id && i.manifest.extends("hooks"));
-        if let Some(w) = hooked.then(|| self.worker(id)).flatten() {
-            w.post(move |s, p| p.nori_plugin_hooks().call_on(s, &event));
-        }
-    }
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -198,7 +190,7 @@ impl Plugins {
     pub fn discovered(&self, kind: String, service: Service) {
         for id in self.lan.browsers(&kind) {
             let s = types::Service { name: service.name.clone(), host: service.host.clone(), port: service.port, txt: service.txt.iter().map(|t| (t.key.clone(), t.value.clone())).collect() };
-            self.tell(&id, Event::Discovered(s));
+            self.tell_one(&id, Event::Discovered(s));
         }
     }
 
@@ -210,7 +202,7 @@ impl Plugins {
     /// A key or control for the cast running (the volume keys, another output picked).
     pub fn cast_button(&self, button: CastButton) {
         if let Some(c) = self.lan.cast() {
-            self.tell(&c.plugin, Event::MediaButton(button.name().to_string()));
+            self.tell_one(&c.plugin, Event::MediaButton(button.name().to_string()));
         }
     }
 }

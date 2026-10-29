@@ -454,7 +454,7 @@ fn plugins_page(cards: &[PluginCard], repos: &[Repo], shelf: &Shelf) -> Vec<Sect
     let mut sections = Vec::new();
     for (i, c) in cards.iter().enumerate() {
         let mut detail: Vec<String> = c.about.iter().cloned().collect();
-        detail.extend([text::plugin_is(&c.points, !c.overrides.is_empty()), text::plugin_reach(&c.net, c.lan, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
+        detail.extend([text::plugin_is(&c.points, !c.overrides.is_empty()), text::plugin_reach(c)].into_iter().filter(|l| !l.is_empty()));
         let own = Row::Plugin { id: c.id.clone(), title: format!("{} {}", text::PLUGIN_VERSION, c.version), detail: detail.join(" · "), on: c.enabled, index: i as u32, count: cards.len() as u32 };
         let (mut title, mut rows) = (c.name.clone(), vec![own]);
         if c.repo.is_some() {

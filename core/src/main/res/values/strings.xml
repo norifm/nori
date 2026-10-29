@@ -127,4 +127,7 @@
     <!-- The name of the profile a jam guest is signed in with. -->
     <string name="jam_profile">Jam</string>
     <string name="remote_this_phone">This phone</string>
+    <!-- The permission another app asks for to run a nori plugin's commands. -->
+    <string name="permission_run_command">run nori plugin commands</string>
+    <string name="permission_run_command_about">Lets the app run commands your nori plugins offer.</string>
 </resources>
