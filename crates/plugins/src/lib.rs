@@ -8,12 +8,16 @@ uniffi::setup_scaffolding!();
 
 mod app;
 mod bluetooth;
+mod cast;
 pub mod convert;
 mod devices;
+mod door;
 mod host;
+mod lan;
 mod manifest;
 mod package;
 mod repo;
+mod sink;
 pub(crate) mod runtime;
 mod stage;
 mod slots;
@@ -34,7 +38,10 @@ pub use devices::{controlled_output, output_device, Battery, ControlledDevice, N
 pub use repo::{Offer, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
 pub use slots::{Artwork, InfoGroup, InfoLine, Items, MenuEntry};
 pub use view::{PluginCard, PluginPreview, PluginRow};
+pub use cast::{Card, Cards, Media, Service, TxtEntry};
 pub use host::{Side, Value};
+pub use lan::{Cast, CastButton, CastKind};
+pub use sink::{Encoding, Sink};
 pub use manifest::{DeviceFilter, Glyph, ItemKind, Manifest, MenuSpec, Place, Refusal, RowKind, RowSpec, Slot, API, POINTS};
 pub use runtime::{Host, LINKED};
 pub use worker::Worker;
@@ -119,7 +126,9 @@ pub struct Plugins {
     /// The enabled sound stages' makers, made at first need and kept while the set is the same.
     stages: Mutex<Option<Vec<Made>>>,
     /// The enabled plugins' own instances, each made at its first call.
-    workers: Mutex<BTreeMap<String, Worker>>,
+    workers: Arc<lan::Workers>,
+    /// What they hold on the LAN.
+    lan: Arc<lan::Lan>,
     pub(crate) transport: Transported,
     /// The repos the user added, as the index keeps them.
     repos: Mutex<Vec<String>>,
@@ -146,12 +155,15 @@ impl Plugins {
                 Some(Installed { manifest: Arc::new(manifest), enabled: e.enabled, repo: e.repo.clone(), held: e.held })
             })
             .collect();
+        let workers: Arc<lan::Workers> = Arc::default();
+        let lan = lan::Lan::new(side.clone(), Arc::downgrade(&workers));
         Plugins {
             dir,
             side,
             installed: Mutex::new(installed),
             stages: Mutex::new(None),
-            workers: Mutex::new(BTreeMap::new()),
+            workers,
+            lan,
             transport: Arc::default(),
             repos: Mutex::new(index.repos),
             checked_ms: Mutex::new(index.checked_ms),
@@ -193,6 +205,7 @@ impl Plugins {
         drop(list);
         *self.stages.lock().expect("not poisoned") = None;
         self.workers.lock().expect("not poisoned").remove(&manifest.id);
+        self.lan.forget(&manifest.id);
         if on {
             self.side.laid(&manifest.id);
             self.rewatch();
@@ -240,7 +253,7 @@ impl Plugins {
         let i = self.installed().into_iter().find(|i| i.enabled && i.manifest.id == id)?;
         let folder = self.folder(id);
         let component = runtime::component(&folder).map_err(|e| nori_model::alog::info(&format!("plugin {id}: {e:?}"))).ok()?;
-        let w = Worker::start(i.manifest.clone(), folder, component, self.side.clone(), self.transport.clone(), self.radio.clone()).ok()?;
+        let w = Worker::start(i.manifest.clone(), folder, component, self.side.clone(), self.transport.clone(), self.radio.clone(), self.lan.clone()).ok()?;
         // Started at once, so its overrides are in effect without waiting for a first call.
         w.post(|_, _| Ok(()));
         workers.insert(id.to_string(), w.clone());
@@ -322,6 +335,7 @@ impl Plugins {
         drop(list);
         if !on {
             self.workers.lock().expect("not poisoned").remove(id);
+            self.lan.forget(id);
         }
         *self.stages.lock().expect("not poisoned") = None;
         self.side.laid(id);
@@ -368,6 +382,7 @@ impl Plugins {
         self.keep(&list);
         drop(list);
         self.workers.lock().expect("not poisoned").remove(id);
+        self.lan.forget(id);
         let _ = std::fs::remove_dir_all(self.folder(id));
         *self.stages.lock().expect("not poisoned") = None;
         self.side.laid(id);

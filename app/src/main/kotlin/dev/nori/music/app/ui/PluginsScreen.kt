@@ -220,7 +220,7 @@ private fun InstallSheet(vm: PluginsViewModel) {
             c.about?.let { Text(it) }
             Quiet(listOfNotNull(say.pluginVersion(c.version), c.kinds().takeIf { it.isNotEmpty() }, p.repo?.let { android.net.Uri.parse(it).host }).joinToString(" · "))
             Text(say.pluginMayTitle, style = MaterialTheme.typography.titleSmall)
-            say.pluginMay(c.points, c.net, c.overrides, c.bluetooth).forEach { Text("· $it") }
+            say.pluginMay(c.points, c.net, c.lan, c.overrides, c.bluetooth).forEach { Text("· $it") }
         }
     }
 }

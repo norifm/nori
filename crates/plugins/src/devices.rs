@@ -216,7 +216,7 @@ impl Plugins {
 
     /// Tells the hook plugins reaching `device` it came or went; one not running is started only for a
     /// device that came.
-    fn tell(&self, device: &BtDevice, came: bool) {
+    fn tell_device(&self, device: &BtDevice, came: bool) {
         for id in self.reaching(device, "hooks") {
             let w = if came { self.worker(&id) } else { self.running(&id) };
             let event = if came { hooks::Event::DeviceConnected(device.id.clone()) } else { hooks::Event::DeviceDisconnected(device.id.clone()) };
@@ -291,7 +291,7 @@ impl Plugins {
             return;
         }
         if self.radio.arrived(device.clone()) {
-            self.tell(&device, true);
+            self.tell_device(&device, true);
         }
         self.offer(device);
     }
@@ -302,7 +302,7 @@ impl Plugins {
             return;
         }
         if let Some(d) = &device {
-            self.tell(d, false);
+            self.tell_device(d, false);
         }
         let control = {
             let mut c = self.controls.lock();

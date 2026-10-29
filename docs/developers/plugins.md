@@ -93,6 +93,27 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
   is AES-128-CTR; the engine decrypts as it reads, from any byte, past the `skip` bytes that aren't the
   song's.
 
+## The LAN and casting
+
+A plugin with `lan` among its manifest's hosts (`net: &["lan"]`) may reach private addresses: RFC 1918
+and RFC 4193 ones, link-local, loopback and the LAN's multicast groups. A host name counts only when
+every address it resolves to is private. Without `lan`, sockets and HTTP reach only its named hosts.
+What it holds here (browsing, endpoints, audio, a cast) is let go when its instance goes: it is turned
+off, removed or updated, or a call fails ([`Lan::forget`](../../crates/plugins/src/lan.rs)).
+
+| interface | what the host does |
+|---|---|
+| `sockets` | TCP connect, read, write; `tls` wraps it in rustls (ring), checked against webpki's roots (`system`), one certificate's DER (`pinned`), or not at all (`none`, only to a private address); UDP bind (address reused, for SSDP's port), send, receive, and `join` an IPv4 group, which holds the platform's multicast lock while any socket is in one |
+| `discovery` | `browse(kind)` asks the client to browse mDNS while any plugin browses that kind (Android NSD, mdns-sd on the desktop and terminal); each service found goes to the `discovered` hook of the plugins browsing it (`Plugins::discovered`) |
+| `lan-serve` | the plugins' door (`door.rs`): plain HTTP on a port the system picks, open while a plugin has `open` or serves audio or a song. `/p/<id>/...` goes to plugin `id`'s `served` hook, its query kept. Its own listener, not remote control's door, which takes only requests signed with the account's secret; a speaker can't sign |
+| `media` | a song's stream URL (its own quality) and cover URL from the open profile's client (`Kinds::give_media`), as they are; a URL on this device (a server on localhost, plain HTTP) is proxied at the door's `/m/<n>`, its range passed on. A provider plugin's songs have none |
+| `audio-out` | `to-socket` (a plain TCP socket the plugin opened, at the rate and channels it asks) or `serve` (at the door's `/a/<encoding>`, nori's rate) make a `Sink`, and the client's engine plays into it (`Plugins::set_cards`, `nori_engine::cast::CastOutput`): pumped in real time half a second ahead, on a thread of its own, 16-bit. PCM is little-endian into a socket and `audio/L16` at the door, WAV has an open length, FLAC has verbatim frames of 4096. While a sink plays, nothing goes to offload; when the plugin stops, the device's own output comes back where the music is (`Engine::set_card`). `set-latency` adds to what the seek bar and lyrics wait for |
+| `cast` | `start` tells the client a cast runs (`Client::cast`), a target cast lets the output here go (`Card::Elsewhere`); `report` passes the device's state; `end` or the plugin's instance going ends it. One plugin casts at a time. The volume keys and picking another output reach the plugin as the media buttons `volume-up`, `volume-down`, `cast-stop` (`Plugins::cast_button`) |
+
+The clients' output pickers (Android's devices sheet, the desktop's devices panel, the terminal's) list
+the cast's device beside remote control's; picking this device again sends `cast-stop`. Android holds
+a Wi-Fi lock while a sink cast streams.
+
 ## Overrides
 
 A plugin changes nori's values by key, never by writing the settings: the user's settings stay as they
@@ -194,8 +215,11 @@ transport (`Kinds::set_transport`). See [Providers](providers.md).
 - `cargo test -p nori-plugins`: the manifest as the SDK writes it, the extension points' order against
   `wit/`, the store, and `tests/host.rs` over a real plugin (`fixture/`, built to wasm by the `testing` feature:
   needs `rustup target add wasm32-wasip2`): its stage and kept state, no allocation per block, its
-  overrides, its HTTP refused outside its hosts, and a plugin needing an unlinked interface refused.
-  `tests/devices.rs` runs device control over a fake platform Bluetooth with the fixture built with
-  `headphones` (`fixture/src/headphones.rs`).
+  overrides, its HTTP refused outside its hosts, and a plugin needing an unlinked interface refused;
+  `tests/lan.rs` the LAN interfaces over the same plugin: TLS checked each way against a local server,
+  UDP to the LAN only, the multicast lock, browsing, its endpoints at the door, a song's URL proxied, and
+  casts into a socket, at the door and to a target. `tests/devices.rs` runs device control over a fake
+  platform Bluetooth with the fixture built with `headphones` (`fixture/src/headphones.rs`).
+- `cargo test -p nori-engine --test engine another_card`: a card swapped mid-song plays on from there.
 - `cargo test -p nori-player --test pipeline stage`: stages in the chain on the virtual clock.
 - `cargo test -p nori-settings overrides`: tunables and settings overridden without being written.

@@ -214,6 +214,10 @@ pub fn run(o: Options) -> Result<(), String> {
     nori_host::desktop::plugins(&r.o.data).watched.on_devices(move || {
         let _ = controlled.send(Msg::Controlled);
     });
+    let casts = r.tx.clone();
+    nori_host::desktop::plugins(&r.o.data).watched.hear_casts(move |c| {
+        let _ = casts.send(Msg::Cast(c));
+    });
     match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => {
@@ -389,6 +393,7 @@ impl Runner {
             PluginCmd::Uninstall(id) => host.uninstall(id),
             PluginCmd::Set(id, row, v) => host.set(id, row, v),
             PluginCmd::Act(id, row) => host.act(id, row),
+            PluginCmd::EndCast => host.cast_button(nori_plugins::CastButton::Stop),
             PluginCmd::Look => {
                 app.settings.own.shelf = crate::settings_view::Shelf::Asking;
                 nori_host::spawn("nori-plugin-offers", move || {

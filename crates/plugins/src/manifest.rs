@@ -335,10 +335,15 @@ impl Manifest {
         self.rows.iter().filter(|r| r.kind.numeric()).map(|r| stored.get(&r.id).copied().or(r.default).unwrap_or(0.0)).collect()
     }
 
-    /// Whether HTTP to `host` is allowed.
+    /// Whether it may reach private addresses: `lan` among its hosts.
+    pub fn lan(&self) -> bool {
+        self.net.iter().any(|d| d == crate::lan::LAN)
+    }
+
+    /// Whether HTTP to `host` is allowed by name (`lan` is no host's name).
     pub fn reaches(&self, host: &str) -> bool {
         let host = host.to_ascii_lowercase();
-        self.net.iter().any(|d| match d.strip_prefix("*.") {
+        self.net.iter().filter(|d| *d != crate::lan::LAN).any(|d| match d.strip_prefix("*.") {
             Some(base) => host == base || host.ends_with(&format!(".{base}")),
             None => host == *d,
         })

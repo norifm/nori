@@ -61,6 +61,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"onCpu", c"(J)Z", on_cpu),
         native!(c"pace", c"(J)F", pace),
         native!(c"follow", c"(JJ)V", follow),
+        native!(c"castTo", c"(JJ)V", cast_to),
         native!(c"gainReductionDb", c"(J)F", gain_reduction_db),
         native!(c"compressionDb", c"(J)F", compression_db),
         native!(c"setQuiet", c"(JF)V", set_quiet),
@@ -1417,6 +1418,9 @@ struct Player {
     analyses: Arc<Analyses>,
     /// The app's queue session, whose settings the engine plays by.
     queue: Arc<nori_core::queue::Session>,
+    /// The API level and high quality output, for a track made again after a cast.
+    sdk: jint,
+    float: bool,
 }
 
 impl Player {
@@ -1465,7 +1469,7 @@ extern "system" fn create(env: JNIEnv, _: JClass, bridge: JObject, current: jlon
     log(&format!("the engine starts: API {sdk}, {} output, {} MB of memory, offload {}", if float != 0 { "float" } else { "16-bit" }, config.memory_mb, if can_offload { "possible" } else { "not on this Android" }));
     let app = CoreApp::new(queue.clone()).bridging();
     let engine = Engine::start(library, app, CoreQueue(queue.clone()), Box::new(output), offloaded, config, move |e| tell.push(e));
-    PLAYERS.add(Arc::new(Player { engine, bridge, shared, events, offload, stations, jumped: Mutex::new(None), looked_ms: AtomicI64::new(i64::MIN / 2), quiet, ahead, analyses, queue }))
+    PLAYERS.add(Arc::new(Player { engine, bridge, shared, events, offload, stations, jumped: Mutex::new(None), looked_ms: AtomicI64::new(i64::MIN / 2), quiet, ahead, analyses, queue, sdk, float: float != 0 }))
 }
 
 /// Unregisters the player and stops it on a thread of its own (stopping joins engine threads, and media3
@@ -1641,6 +1645,24 @@ extern "system" fn follow(h: jlong, remote: jlong) {
     let remote: Arc<nori_core::remote::Remote> = unsafe { crate::uniffi_object(remote) };
     let Some(p) = player(h) else { return };
     remote.follow_with(Some(Arc::new(Along(Arc::downgrade(&p)))));
+}
+
+/// A plugin's cast takes the engine's audio while it runs (`plugins`, a `Plugins.uniffiCloneHandle()`,
+/// taken over): its sink while one runs, then a track of this phone's again; nothing here while its
+/// device plays the songs itself.
+extern "system" fn cast_to(h: jlong, plugins: jlong) {
+    // SAFETY: Kotlin passes `Plugins.uniffiCloneHandle()`, once.
+    let plugins: Arc<nori_plugins::Plugins> = unsafe { crate::uniffi_object(plugins) };
+    let Some(p) = player(h) else { return };
+    let player = Arc::downgrade(&p);
+    plugins.set_cards(Box::new(move |to| {
+        let Some(p) = player.upgrade() else { return };
+        match to {
+            nori_plugins::Card::Sink(sink) => p.engine.set_card(Box::new(nori_engine::cast::CastOutput::new(sink)), true),
+            nori_plugins::Card::Here => p.engine.set_card(Box::new(TrackOutput::new(Box::new(JavaOpener { bridge: p.bridge.clone(), quiet: p.quiet.clone(), sdk: p.sdk }), p.float, p.shared.clone())), false),
+            nori_plugins::Card::Elsewhere => p.engine.release_now(),
+        }
+    }));
 }
 
 /// A player playing along with a jam's host, while it is there.

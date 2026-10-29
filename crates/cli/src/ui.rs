@@ -1190,7 +1190,14 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
     let listeners = d.listeners().len();
     let mut sel = d.sel;
     list(f, body, &mut sel, rows.len(), ListRef::Devices, hits, t, focused, &|i, w| match rows[i] {
-        DeviceRow::Here => Line::from(vec![tick(active.is_none()), name(crate::text::THIS_COMPUTER, active.is_none())]),
+        DeviceRow::Here => {
+            let here = active.is_none() && d.cast.is_none();
+            Line::from(vec![tick(here), name(crate::text::THIS_COMPUTER, here)])
+        }
+        DeviceRow::Cast => {
+            let c = d.cast.as_ref().expect("a cast row has its cast");
+            spread(vec![tick(true), name(&c.device, true)], Span::styled(crate::text::cast_line(c), t.dim()), w)
+        }
         DeviceRow::Device(k) => {
             let x = &d.list[k];
             let on = active == Some(x.id.as_str());

@@ -92,7 +92,7 @@ class Nori private constructor(private val context: Context) {
                 })
                 _reportedRules.value = key to core.rules()
                 dev.nori.music.downloads.DownloadsJni.use(core)
-                Opened(key, id, core, Client(core, transport, coverNet).also { c -> p?.let { c.setProfile(it.net()) }; currentClient.set(c) })
+                Opened(key, id, core, Client(core, transport, coverNet).also { c -> p?.let { c.setProfile(it.net()) }; currentClient.set(c); plugins.giveMedia(c) })
             }.also { opened = it }
         }
     }

@@ -39,6 +39,12 @@ serde_json = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # What a provider plugin's async calls wait on while its thread works.
 futures-channel = "0.3"
+# TLS over a plugin's socket (`sockets.tcp.tls`), ring's crypto as nori-http's ureq has it, and the
+# roots a `system` check trusts.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+# A plugin's UDP socket shares a well-known port (SSDP's) with the system's own listeners.
+socket2 = "0.6"
 
 [dev-dependencies]
 nori-plugins = { path = ".", features = ["testing"] }

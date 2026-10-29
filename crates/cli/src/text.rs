@@ -142,10 +142,13 @@ pub fn plugin_is(points: &[String], overrides: bool) -> String {
 }
 
 /// What a plugin may reach: the hosts it sends to and nori's values it changes.
-pub fn plugin_reach(net: &[String], overrides: &[String]) -> String {
+pub fn plugin_reach(net: &[String], lan: bool, overrides: &[String]) -> String {
     let mut said = Vec::new();
-    if !net.is_empty() {
-        said.push(format!("Connects to {}.", net.join(", ")));
+    match (net.is_empty(), lan) {
+        (false, false) => said.push(format!("Connects to {}.", net.join(", "))),
+        (false, true) => said.push(format!("Connects to {} and devices on your network.", net.join(", "))),
+        (true, true) => said.push("Connects to devices on your network.".into()),
+        (true, false) => {}
     }
     if !overrides.is_empty() {
         said.push(format!("Changes {}.", overrides.join(", ")));
@@ -755,6 +758,18 @@ pub fn battery(b: &nori_plugins::Battery) -> String {
     [("L", b.left), ("R", b.right), ("Case", b.case)].iter().filter_map(|(w, v)| v.map(|v| format!("{w} {v}%"))).collect::<Vec<_>>().join(" · ")
 }
 pub const REMOTE_OFF: &str = "Remote control and jams are off: switch them on in Settings, under Other devices";
+
+/// What a plugin's cast is, beside its device's name.
+pub fn cast_line(c: &nori_plugins::Cast) -> String {
+    let what = match c.kind {
+        nori_plugins::CastKind::Sink => "Casting",
+        nori_plugins::CastKind::Target => "Playing there",
+    };
+    match c.volume {
+        Some(v) => format!("{what} · {v} %"),
+        None => what.to_string(),
+    }
+}
 
 /// The player bar's line while another device plays: "Playing on Desk".
 pub fn playing_on(device: &str) -> String {

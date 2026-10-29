@@ -89,7 +89,7 @@ pub fn preview_note(p: &nori_plugins::PluginPreview) -> Vec<String> {
     let c = &p.card;
     let from = p.repo.as_ref().map(|url| format!("From {}", repo_name(&nori_plugins::Repo { url: url.clone(), official: url == nori_plugins::OFFICIAL })));
     let bluetooth = c.bluetooth.then(|| REACHES_BLUETOOTH.to_string());
-    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(&c.net, &c.overrides)]).chain(bluetooth).chain(from).chain([INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect()
+    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(&c.net, c.lan, &c.overrides)]).chain(bluetooth).chain(from).chain([INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect()
 }
 
 pub const REACHES_BLUETOOTH: &str = "Reaches Bluetooth devices.";
@@ -145,10 +145,13 @@ pub fn plugin_is(points: &[String], overrides: bool) -> String {
 }
 
 /// What a plugin may reach: the hosts it sends to and nori's values it changes.
-pub fn plugin_reach(net: &[String], overrides: &[String]) -> String {
+pub fn plugin_reach(net: &[String], lan: bool, overrides: &[String]) -> String {
     let mut said = Vec::new();
-    if !net.is_empty() {
-        said.push(format!("Connects to {}.", net.join(", ")));
+    match (net.is_empty(), lan) {
+        (false, false) => said.push(format!("Connects to {}.", net.join(", "))),
+        (false, true) => said.push(format!("Connects to {} and devices on your network.", net.join(", "))),
+        (true, true) => said.push("Connects to devices on your network.".into()),
+        (true, false) => {}
     }
     if !overrides.is_empty() {
         said.push(format!("Changes {}.", overrides.join(", ")));
@@ -562,6 +565,22 @@ pub fn output_name(port: nori_core::profiles::OutputPort, name: Option<String>) 
 
 /// A place the music can play, as the devices panel lists it: this computer (`d` None) or a device of the
 /// account with what it plays and its last refusal; ticked while the music plays there.
+/// The id of the devices panel's row for a plugin's cast.
+pub const CAST_ROW: &str = "nori-plugin-cast";
+
+/// A plugin's cast as the devices panel lists it: playing there, its volume when it says.
+pub fn cast_row(c: &nori_plugins::Cast) -> crate::DeviceRow {
+    let what = match c.kind {
+        nori_plugins::CastKind::Sink => "Casting",
+        nori_plugins::CastKind::Target => "Playing there",
+    };
+    let line = match c.volume {
+        Some(v) => format!("{what} · {v} %"),
+        None => what.to_string(),
+    };
+    crate::DeviceRow { id: CAST_ROW.into(), name: c.device.clone().into(), line: line.into(), active: true, ..Default::default() }
+}
+
 pub fn device_row(d: Option<&nori_core::remote::RemoteDevice>, active: bool) -> crate::DeviceRow {
     use nori_core::remote::wire::Refusal;
     let Some(d) = d else {
@@ -766,11 +785,12 @@ mod tests {
             points: vec!["slots".into()],
             overrides: Vec::new(),
             net: vec!["a.example".into()],
+            lan: true,
             bluetooth: false,
             rows: Vec::new(),
         };
         let p = nori_plugins::PluginPreview { card, file: String::new(), repo: Some(nori_plugins::OFFICIAL.into()) };
-        assert_eq!(preview_note(&p), ["Counts letters", "It’s a playback helper.", "Connects to a.example.", "From nori’s own", "It stays off until you turn it on."]);
+        assert_eq!(preview_note(&p), ["Counts letters", "It’s a playback helper.", "Connects to a.example and devices on your network.", "From nori’s own", "It stays off until you turn it on."]);
     }
 
     #[test]

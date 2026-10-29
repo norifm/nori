@@ -8,7 +8,6 @@ use std::sync::Arc;
 use nori_core::remote::wire::DeviceKind;
 use nori_core::settings::SavedServer;
 use nori_core::transport::{block_on, NetError};
-use nori_engine::AudioOutput;
 use nori_http::Http;
 use nori_output_cpal::CpalOutput;
 
@@ -153,6 +152,18 @@ pub struct Watched {
     plugins: std::sync::OnceLock<std::sync::Weak<nori_plugins::Plugins>>,
     heard: std::sync::Mutex<Option<Hears>>,
     devices: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    /// mDNS for the plugins, while one browses.
+    browsing: std::sync::Mutex<Option<Browsing>>,
+    casts: std::sync::Mutex<Option<CastSeen>>,
+}
+
+/// Where a client takes the cast's changes.
+type CastSeen = Box<dyn Fn(Option<nori_plugins::Cast>) + Send + Sync>;
+
+/// mDNS browsing for plugins, over mdns-sd's own thread: the kinds browsed.
+struct Browsing {
+    daemon: mdns_sd::ServiceDaemon,
+    kinds: std::collections::BTreeSet<String>,
 }
 
 impl Watched {
@@ -164,6 +175,11 @@ impl Watched {
     /// Tells `to` whenever the controlled devices or what they report changed, from whatever thread.
     pub fn on_devices(&self, to: impl Fn() + Send + Sync + 'static) {
         *self.devices.lock().expect("not poisoned") = Some(Box::new(to));
+    }
+
+    /// Tells `to` of each change of the cast running (None: it ended), for the output picker.
+    pub fn hear_casts(&self, to: impl Fn(Option<nori_plugins::Cast>) + Send + Sync + 'static) {
+        *self.casts.lock().expect("not poisoned") = Some(Box::new(to));
     }
 
     /// Plugin `id`'s word `key` with `args` in its `{0}`, `{1}`…; the key itself where it has no such word.
@@ -197,6 +213,54 @@ impl nori_plugins::Client for Watched {
             to();
         }
     }
+
+    fn browse(&self, kind: String, on: bool) {
+        let mut b = self.browsing.lock().expect("not poisoned");
+        let ty = format!("{kind}.local.");
+        if !on {
+            if let Some(browsing) = b.as_mut() {
+                let _ = browsing.daemon.stop_browse(&ty);
+                browsing.kinds.remove(&kind);
+                if browsing.kinds.is_empty() {
+                    let _ = browsing.daemon.shutdown();
+                    *b = None;
+                }
+            }
+            return;
+        }
+        if b.is_none() {
+            let Ok(daemon) = mdns_sd::ServiceDaemon::new() else { return };
+            *b = Some(Browsing { daemon, kinds: Default::default() });
+        }
+        let browsing = b.as_mut().expect("made");
+        let (Ok(events), Some(plugins)) = (browsing.daemon.browse(&ty), self.plugins.get().cloned()) else { return };
+        browsing.kinds.insert(kind.clone());
+        crate::spawn("nori-plugin-mdns", move || {
+            while let Ok(e) = events.recv() {
+                let Some(p) = plugins.upgrade() else { return };
+                match e {
+                    mdns_sd::ServiceEvent::ServiceResolved(s) => {
+                        let Some(ip) = crate::remote::address_of(&s) else { continue };
+                        let name = s.fullname.strip_suffix(&format!(".{ty}")).unwrap_or(&s.fullname).to_string();
+                        let txt = s.txt_properties.iter().map(|t| nori_plugins::TxtEntry { key: t.key().to_string(), value: t.val_str().to_string() }).collect();
+                        p.discovered(kind.clone(), nori_plugins::Service { name, host: ip.to_string(), port: s.port, txt });
+                    }
+                    mdns_sd::ServiceEvent::SearchStopped(_) => return,
+                    _ => {}
+                }
+            }
+        });
+    }
+
+    /// The desktop holds no lock for multicast.
+    fn multicast(&self, _: bool) {}
+
+    fn cast(&self, cast: Option<nori_plugins::Cast>) {
+        nori_core::alog::info(&format!("plugins: casting {cast:?}"));
+        if let Some(to) = self.casts.lock().expect("not poisoned").as_ref() {
+            to(cast);
+        }
+    }
 }
 
 /// Logs `draft` in and keeps it as the active profile, blocking ([`nori_core::providers::log_in`]).
@@ -205,13 +269,11 @@ pub fn log_in(data: &Path, http: Arc<Http>, draft: SavedServer) -> Result<SavedS
 }
 
 /// The cpal device named `device` (else the system's default) at `volume` (0 to 1).
-fn sound(device: Option<&str>, volume: f32) -> (Box<dyn AudioOutput>, Arc<Level>) {
-    let card = match device {
+fn card(device: Option<&str>) -> CpalOutput {
+    match device {
         Some(name) => CpalOutput::with_device(name),
         None => CpalOutput::new(),
-    };
-    let level = card.volume();
-    (Box::new(card), Level::new(volume, Some(Box::new(move |v| level.set(v)))))
+    }
 }
 
 /// A desktop session's opening.
@@ -234,14 +296,18 @@ pub struct DesktopOpen<'a> {
 
 /// Opens the profile on the sound card, without touching the network ([`Session::open`]).
 pub fn open(o: DesktopOpen) -> Result<Session, String> {
-    let (output, volume) = sound(o.device.as_deref(), o.volume);
+    let output = card(o.device.as_deref());
+    let level = output.volume();
+    let set = level.clone();
+    let volume = Level::new(o.volume, Some(Box::new(move |v| set.set(v))));
+    let device = o.device.clone();
     let plugged = plugins(o.data);
     let session = Session::open(Open {
         queue: app().clone(),
         data: o.data,
         http: o.http,
         profile: o.profile,
-        output,
+        output: Box::new(output),
         volume,
         memory_mb: 256,
         covers: o.covers,
@@ -256,6 +322,16 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
         kinds: plugged.kinds.clone(),
     })?;
     *plugged.watched.engine.lock().expect("not poisoned") = Some(Arc::downgrade(&session.engine));
+    // A plugin's cast takes the music, and the sound card gets it back, at its volume, when it ends.
+    let engine = Arc::downgrade(&session.engine);
+    plugged.host.set_cards(Box::new(move |to| {
+        let Some(engine) = engine.upgrade() else { return };
+        match to {
+            nori_plugins::Card::Sink(sink) => engine.set_card(Box::new(nori_engine::cast::CastOutput::new(sink)), true),
+            nori_plugins::Card::Here => engine.set_card(Box::new(card(device.as_deref()).with_volume(level.clone())), false),
+            nori_plugins::Card::Elsewhere => engine.release_now(),
+        }
+    }));
     Ok(session)
 }
 

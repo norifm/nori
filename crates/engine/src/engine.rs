@@ -318,6 +318,8 @@ enum Command {
     Device(Device),
     Release,
     Follow(Option<Box<Leading>>),
+    /// Plays through this output from now on, a cast's or not ([`Engine::set_card`]).
+    Card(Box<dyn AudioOutput>, bool),
     /// The device is on a network again.
     NetworkBack,
     Stop,
@@ -493,6 +495,13 @@ impl Engine {
     /// music moved to another device. Play opens it again where it was.
     pub fn release_now(&self) {
         self.send(Command::Release);
+    }
+
+    /// Plays through `card` from now on, where the music is, closing the output it played through: a
+    /// cast's audio (`casting`: nothing is offloaded to the device's own chip meanwhile), or the
+    /// device's own output again after one.
+    pub fn set_card(&self, card: Box<dyn AudioOutput>, casting: bool) {
+        self.send(Command::Card(card, casting));
     }
 
     /// The device is on a network again: a song waiting for it is tried now.
@@ -833,6 +842,8 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     why: String,
     /// Another device's playback followed, and its speed and pitch.
     following: Option<Following>,
+    /// The card is a cast's ([`Engine::set_card`]): the device's chip plays nothing.
+    casting: bool,
     led_speed: (f32, f32),
 
     mix_place: Option<Led>,
@@ -878,6 +889,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             jumping: None,
             why: String::new(),
             following: None,
+            casting: false,
             led_speed: (1.0, 1.0),
             mix_place: None,
         };
@@ -1514,6 +1526,17 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.release();
             }
             Command::Follow(lead) => self.follow(lead),
+            Command::Card(card, casting) => {
+                let going = self.going();
+                self.pause(now, 0);
+                self.release();
+                self.p.sink.track.replace(card);
+                self.casting = casting;
+                self.apply(self.settings.clone());
+                if going {
+                    self.play();
+                }
+            }
             Command::NetworkBack => {
                 if self.retry_at.is_some() {
                     self.try_again();
@@ -1769,7 +1792,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             Some(_) => (self.led_speed.0, self.led_speed.1, false),
             None => (s.speed, s.pitch, s.skip_silence),
         };
-        let offload = s.offload && self.off.is_some() && self.following.is_none();
+        let offload = s.offload && self.off.is_some() && self.following.is_none() && !self.casting;
         let prefs = AudioPrefs { dsp: s.sound.on() || !s.stages.is_empty(), skip_silence, offload, crossfade_s: s.crossfade_s, auto_mix: s.auto_mix, speed, pitch };
         let state = OutputState { hi_res, bit_perfect, usb: self.facts.usb, offload_refused: self.h.refused };
         let policy = audio_policy(&prefs, &state);

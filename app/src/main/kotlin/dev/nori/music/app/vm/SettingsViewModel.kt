@@ -330,6 +330,14 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     /** The plugins whose rows show on the devices sheet too: with any, the output button opens that sheet. */
     val pluginDevices = nori.plugins.deviceCards
 
+    /** A plugin's cast while one runs: the devices sheet lists its device. */
+    val pluginCast = nori.plugins.cast
+
+    /** The music comes back to this phone: the plugin casting ends its cast. */
+    fun endCast() {
+        viewModelScope.launch { nori.plugins.castButton(dev.nori.music.ffi.plugins.CastButton.STOP) }
+    }
+
     /** The installed plugins, for a plugin kind's about. */
     val pluginCards = nori.plugins.cards
 

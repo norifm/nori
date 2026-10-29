@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
+import dev.nori.music.ffi.plugins.Cast
+import dev.nori.music.ffi.plugins.CastButton
 import dev.nori.music.ffi.plugins.Client
 import dev.nori.music.ffi.plugins.PluginCard
 import dev.nori.music.ffi.plugins.Updated
@@ -96,6 +98,12 @@ class PluginHost(context: android.content.Context, private val dir: File, privat
 
     private val lang get() = Locale.getDefault().language
 
+    private val _cast = MutableStateFlow<Cast?>(null)
+    /** A plugin's cast while one runs: the devices sheet shows it, the playback service plays along. */
+    val cast: StateFlow<Cast?> = _cast
+
+    private val lan: LanGlue = LanGlue(context) { plugins }
+
     // Opened at first use, which is off the main thread: the cheap flows above are read before it is.
     private val plugins: dev.nori.music.ffi.plugins.Plugins by lazy {
         openPlugins(dir.path, settings.core, client).also { p ->
@@ -122,7 +130,22 @@ class PluginHost(context: android.content.Context, private val dir: File, privat
         }
         // On a plugin's own thread, never the main one.
         override fun devicesChanged() { _controlled.value = plugins.controlled(lang) }
+        override fun browse(kind: String, on: Boolean) = lan.browse(kind, on)
+        override fun multicast(on: Boolean) = lan.multicast(on)
+        override fun cast(cast: Cast?) {
+            lan.cast(cast)
+            _cast.value = cast
+        }
     }
+
+    /** The open profile's client makes songs' URLs for a plugin casting them. */
+    fun giveMedia(client: dev.nori.music.ffi.Client) = kinds.giveMedia(client)
+
+    /** A plugin's cast takes [player]'s audio while it runs (crates/android's `castTo`). */
+    internal fun castTo(player: dev.nori.music.playback.EnginePlayer) = player.castTo(plugins)
+
+    /** The volume keys or the devices sheet, for the cast running. */
+    suspend fun castButton(button: CastButton) = withContext(Dispatchers.IO) { plugins.castButton(button) }
 
     /** nori's own kinds and the enabled plugins' providers, for every core and the add form. */
     val kinds: Kinds by lazy { Kinds.withPlugins(plugins) }

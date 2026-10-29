@@ -82,6 +82,8 @@ internal object RustPlayerJni {
     @JvmStatic @CriticalNative external fun pace(h: Long): Float
     /** Plays along with the jam whose guest [remote] is (`Remote.uniffiCloneHandle()`, taken over) while it listens along. */
     @JvmStatic @CriticalNative external fun follow(h: Long, remote: Long)
+    /** A plugin's cast takes the engine's audio while it runs ([plugins] `Plugins.uniffiCloneHandle()`, taken over). */
+    @JvmStatic @CriticalNative external fun castTo(h: Long, plugins: Long)
     @JvmStatic @CriticalNative external fun gainReductionDb(h: Long): Float
     @JvmStatic @CriticalNative external fun compressionDb(h: Long): Float
     /** The outputs play at [level] (0 to 1) of their own volume from their next volume or open on ([Quiet]). */
@@ -1091,7 +1093,11 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         )
         if (h == 0L) error = PlaybackException("the Rust player would not start", null, PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK)
         quiet(Quiet.level)
+        nori.plugins.castTo(this)
     }
+
+    /** A plugin's cast takes this engine's audio while it runs. */
+    internal fun castTo(plugins: dev.nori.music.ffi.plugins.Plugins) = RustPlayerJni.castTo(h, plugins.uniffiCloneHandle())
 
     /** Its outputs play at [level] of their own volume ([Quiet]). */
     internal fun quiet(level: Float) = RustPlayerJni.setQuiet(h, level)

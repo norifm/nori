@@ -29,6 +29,8 @@ pub struct PluginCard {
     pub net: Vec<String>,
     /// It reaches Bluetooth devices (the platform's Bluetooth permission).
     pub bluetooth: bool,
+    /// It reaches devices on the LAN (`lan` among its hosts).
+    pub lan: bool,
     pub rows: Vec<PluginRow>,
 }
 
@@ -128,7 +130,8 @@ fn card(m: &Manifest, w: &BTreeMap<String, String>, stored: &BTreeMap<String, Va
         held,
         points: m.points.iter().map(|p| p.to_string()).collect(),
         overrides: m.overrides.clone(),
-        net: m.net.clone(),
+        net: m.net.iter().filter(|h| *h != crate::lan::LAN).cloned().collect(),
+        lan: m.lan(),
         bluetooth: m.reaches_devices(),
         rows: m
             .rows

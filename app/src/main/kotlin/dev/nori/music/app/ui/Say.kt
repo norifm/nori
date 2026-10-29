@@ -334,8 +334,9 @@ class Say(private val r: Resources) {
         }
     } + listOfNotNull(R.string.plugins_kind_overrides.takeIf { overrides })).joinToString(" · ") { r.getString(it) }
     /** What a plugin may do, one line each: what it reaches, whether it plays music or changes the sound, the values it changes. */
-    fun pluginMay(points: List<String>, net: List<String>, overrides: List<String>, bluetooth: Boolean): List<String> = listOfNotNull(
-        if (net.isEmpty()) r.getString(R.string.plugins_may_reach_nothing) else r.getString(R.string.plugins_may_reach, net.joinToString(", ")),
+    fun pluginMay(points: List<String>, net: List<String>, lan: Boolean, overrides: List<String>, bluetooth: Boolean): List<String> = listOfNotNull(
+        if (net.isEmpty() && !lan) r.getString(R.string.plugins_may_reach_nothing) else net.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_reach, it.joinToString(", ")) },
+        r.getString(R.string.plugins_may_reach_lan).takeIf { lan },
         r.getString(R.string.plugins_may_bluetooth).takeIf { bluetooth },
         r.getString(R.string.plugins_may_play).takeIf { "provider" in points },
         r.getString(R.string.plugins_may_sound).takeIf { "sound-stage" in points },

@@ -106,6 +106,15 @@ pub trait Side: Send + Sync {
     fn notice(&self, id: &str, problem: bool, words: &str, args: &[String]);
     /// The controlled devices or what they report changed ([`crate::Plugins::controlled`]).
     fn devices_changed(&self) {}
+    /// Starts or stops browsing mDNS for `kind` ("_googlecast._tcp"); what is found goes to
+    /// [`crate::Plugins::discovered`]. Asked only while a plugin browses it.
+    fn browse(&self, _kind: &str, _on: bool) {}
+    /// Holds the platform's multicast lock (Android's `MulticastLock`) while on: a plugin's socket is in
+    /// a multicast group.
+    fn multicast(&self, _on: bool) {}
+    /// A cast started, changed (its device's state), or ended (None): the client holds what the
+    /// platform needs for it while one runs.
+    fn cast(&self, _cast: Option<&crate::Cast>) {}
 }
 
 /// Where a plugin's overrides are kept in its store.
@@ -148,11 +157,14 @@ impl store::Host for Host {
 }
 
 /// The host of an http(s) URL.
-fn host_of(url: &str) -> Option<&str> {
+pub(crate) fn host_of(url: &str) -> Option<&str> {
     let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
     let authority = rest.split(['/', '?', '#']).next()?;
     let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    Some(host.split(':').next().unwrap_or(host))
+    Some(match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next()?,
+        None => host.split(':').next().unwrap_or(host),
+    })
 }
 
 /// An answer to a plugin's request.
@@ -182,7 +194,8 @@ impl Host {
     /// `request` as the transport sends it, once the manifest allows its host.
     fn exchange(&self, request: http::Request) -> Result<(Arc<dyn Transport>, Exchange), types::Error> {
         let host = host_of(&request.url).ok_or_else(|| error(types::ErrorKind::Refused, "not an http(s) URL"))?;
-        if !self.manifest.reaches(host) {
+        let on_lan = || self.manifest.lan() && crate::lan::private_addresses(host, 0).is_some();
+        if !self.manifest.reaches(host) && !on_lan() {
             return Err(error(types::ErrorKind::Refused, format!("{host} is not among its net hosts")));
         }
         let transport = self.transport.lock().expect("not poisoned").clone().ok_or_else(|| error(types::ErrorKind::Network, "no transport yet"))?;
@@ -336,7 +349,7 @@ mod tests {
             assert_eq!(Value::decode(&v.encode()), Some(v));
         }
         assert_eq!(Value::decode(&[9]), None);
-        for (url, host) in [("https://music.youtube.com/youtubei/v1/browse?k=1", Some("music.youtube.com")), ("http://u:p@10.0.0.2:4533/rest", Some("10.0.0.2")), ("file:///etc", None)] {
+        for (url, host) in [("https://music.youtube.com/youtubei/v1/browse?k=1", Some("music.youtube.com")), ("http://u:p@10.0.0.2:4533/rest", Some("10.0.0.2")), ("http://[::1]:80/", Some("::1")), ("file:///etc", None)] {
             assert_eq!(host_of(url), host, "{url}");
         }
     }

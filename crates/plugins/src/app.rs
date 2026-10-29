@@ -23,6 +23,13 @@ pub trait Client: Send + Sync {
     /// The controlled devices or what they report changed: the client reads
     /// [`Plugins::controlled`] again.
     fn devices_changed(&self);
+    /// Browses mDNS for `kind` while on, handing each service found to [`Plugins::discovered`].
+    fn browse(&self, kind: String, on: bool);
+    /// Holds the multicast lock while on (Android); nothing elsewhere.
+    fn multicast(&self, on: bool);
+    /// The cast running changed: the client shows it and holds what the platform needs for it
+    /// ([`crate::Cast`]); None, it ended.
+    fn cast(&self, cast: Option<crate::Cast>);
 }
 
 struct App {
@@ -72,6 +79,18 @@ impl Side for App {
 
     fn devices_changed(&self) {
         self.client.devices_changed();
+    }
+
+    fn browse(&self, kind: &str, on: bool) {
+        self.client.browse(kind.into(), on);
+    }
+
+    fn multicast(&self, on: bool) {
+        self.client.multicast(on);
+    }
+
+    fn cast(&self, cast: Option<&crate::Cast>) {
+        self.client.cast(cast.cloned());
     }
 }
 

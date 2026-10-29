@@ -27,7 +27,7 @@ pub use exports::nori::plugin as points;
 pub use nori::plugin::types;
 
 /// The host interfaces linked for a plugin; a plugin importing another can't be installed here.
-pub const LINKED: [&str; 9] = ["log", "store", "http", "settings", "rows", "notices", "sockets", "streams", "bluetooth"];
+pub const LINKED: [&str; 14] = ["log", "store", "http", "settings", "rows", "notices", "sockets", "streams", "bluetooth", "discovery", "lan-serve", "audio-out", "media", "cast"];
 
 /// Fuel for one call that isn't a sound stage's (about a few seconds of work).
 pub(crate) const CALL_FUEL: u64 = 20_000_000_000;
@@ -110,10 +110,20 @@ pub struct Host {
     pub(crate) encrypted: Option<crate::Encrypted>,
     /// The platform's Bluetooth, shared with the plugin host.
     pub(crate) radio: Arc<crate::bluetooth::Radio>,
+    /// What the plugins hold on the LAN.
+    pub(crate) lan: Arc<crate::lan::Lan>,
+}
+
+/// An instance gone (its plugin stopped or turned off, or a call failed) lets go of what it held on
+/// the LAN: its browsing, endpoints, audio and cast.
+impl Drop for Host {
+    fn drop(&mut self) {
+        self.lan.forget(&self.id);
+    }
 }
 
 /// A store for a plugin instance whose imports reach the host, with its memory capped.
-pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>, transport: crate::Transported, radio: Arc<crate::bluetooth::Radio>) -> Store<Host> {
+pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>, transport: crate::Transported, radio: Arc<crate::bluetooth::Radio>, lan: Arc<crate::lan::Lan>) -> Store<Host> {
     let host = Host {
         limits: StoreLimitsBuilder::new().memory_size(MEMORY_CAP).instances(16).build(),
         id: manifest.id.clone(),
@@ -125,6 +135,7 @@ pub(crate) fn store(manifest: Arc<Manifest>, dir: &Path, side: Arc<dyn Side>, tr
         table: Default::default(),
         encrypted: None,
         radio,
+        lan,
     };
     let mut s = Store::new(engine(), host);
     s.limiter(|h| &mut h.limits);
@@ -208,6 +219,11 @@ pub(crate) fn linker(component: &Component) -> Result<Linker<Host>, Refusal> {
     nori::plugin::sockets::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::streams::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     nori::plugin::bluetooth::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::discovery::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::lan_serve::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::audio_out::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::media::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
+    nori::plugin::cast::add_to_linker::<Host, HasSelf<Host>>(&mut l, |h| h).map_err(err)?;
     wasi(&mut l, component).map_err(err)?;
     Ok(l)
 }
