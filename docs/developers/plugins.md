@@ -88,7 +88,13 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
   values, its overrides), which it can't write.
 - **HTTP** goes through the open profile's `Transport` (the one connection pool), only to its `net`
   hosts, with any method, headers and body bytes; a response carries its status, body and headers.
-- **Sockets**: TCP to its `net` hosts, on its own thread (a service's own protocol).
+  It goes through the client's proxy as nori's own requests do: on Android OkHttp's, the system's
+  (an HTTP proxy, host and port, or a PAC file: Android has no TLS to a proxy); on the desktop and
+  terminal nori-http's ureq, the proxy `ALL_PROXY`, `HTTPS_PROXY` or `HTTP_PROXY` names (`NO_PROXY`
+  excepted), `http://` or `https://` (TLS to the proxy, then CONNECT, tested against a local HTTPS
+  proxy). SOCKS is not built in: with a `socks5://` one named, requests go direct.
+- **Sockets**: TCP to its `net` hosts, on its own thread (a service's own protocol). Never through a
+  proxy: a socket is mostly for the LAN, and an HTTP proxy carries no UDP.
 - **Its cache** (`cache`), up to the manifest's `cache_mb`: a file per key in its folder's `cache/`, made
   at the first put; a put over the quota lets the least recently used go. **Its assets** (`assets`): the
   files its manifest names (URL, size, sha256), fetched by nori through the transport in 4 MB range

@@ -4960,6 +4960,7 @@ dependencies = [
  "async-trait",
  "nori-core",
  "nori-engine",
+ "rustls",
  "ureq",
 ]
 
