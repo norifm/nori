@@ -16,15 +16,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
-import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.ui.layout.layout
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.wrapContentWidth
-import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -67,6 +64,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
  * one gradient, no blur, no animation, so an open page costs nothing between frames. Scrolling moves
  * the artwork in the draw phase only, so it never recomposes.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun HeroPage(
     coverUrl: String?,
@@ -158,21 +156,9 @@ fun HeroPage(
         // hero stands still in its half and does not move with the songs (see below).
         val wide = LocalWide.current
         val heroScroll: (Float) -> Float = if (wide) { _ -> 0f } else { h -> if (list.firstVisibleItemIndex == 0) list.firstVisibleItemScrollOffset.toFloat() else h }
-        // One block: artwork, then the wash it melts into, carrying the title and the buttons.
-        // [coverSide]: on its side, the cover (or the page's own artwork) at this size, centred in the half,
-        // so the half keeps the width its buttons need however short the screen is. Upright it is null and
-        // the cover takes the full width, as ever.
-        // [showArt] false: the name and buttons alone, for laying over a cover drawn apart (below).
-        val hero: @Composable (coverSide: androidx.compose.ui.unit.Dp?, showArt: Boolean) -> Unit = { coverSide, showArt ->
-        Column(Modifier.fillMaxWidth()) {
-            if (showArt) {
-            // On its side the cover is a card standing in its half, as on a shelf, not a sleeve bleeding to the
-            // screen's edges: nothing for it to dissolve into above or beside it.
-            if (picture != null && coverSide != null) Box(
-                Modifier.fillMaxWidth().windowInsetsPadding(statusBarRoom).padding(top = WIDE_TOP, bottom = 14.dp),
-                Alignment.Center,
-            ) { picture(Modifier.size(coverSide).clip(androidx.compose.foundation.shape.RoundedCornerShape(Radius.card))) }
-            else if (picture != null) Box(
+        // The artwork and the wash it melts into: the cover full width, the page's own artwork, or room for the status bar.
+        val artwork: @Composable () -> Unit = {
+            if (picture != null) Box(
                 Modifier.fillMaxWidth().layout { measurable, constraints ->
                     val side = constraints.maxWidth
                     val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(side, side + HERO_DEEPER.roundToPx()))
@@ -212,26 +198,19 @@ fun HeroPage(
                     },
                 )
             } else if (art != null) Box(
-                Modifier.fillMaxWidth().windowInsetsPadding(statusBarRoom).padding(top = if (coverSide != null) WIDE_TOP else 64.dp, bottom = if (coverSide != null) 14.dp else 18.dp)
-                    // The page's own artwork is drawn at one size; on its side it is scaled to fit its place.
-                    .then(if (coverSide != null) Modifier.height(coverSide) else Modifier),
+                Modifier.fillMaxWidth().windowInsetsPadding(statusBarRoom).padding(top = 64.dp, bottom = 18.dp),
                 Alignment.Center,
-            ) {
-                if (coverSide == null) art()
-                else Box(Modifier.size(coverSide).wrapContentSize(unbounded = true).graphicsLayer {
-                    val k = coverSide.toPx() / MIX_ART.toPx()
-                    scaleX = k; scaleY = k
-                }) { art() }
-            } else Spacer(Modifier.windowInsetsPadding(statusBarRoom).height(72.dp))
-            }
-
-            // Nothing is painted here: the artwork above has already dissolved onto the page
-            // colour, and the page colour is what the root is painted with.
+            ) { art() }
+            else Spacer(Modifier.windowInsetsPadding(statusBarRoom).height(72.dp))
+        }
+        // Upright over a picture the title block rises into the melt, overlapping the picture's last rows.
+        val rise = !wide && picture != null
+        // The title, the artist, the buttons and the list head. Nothing is painted here: the artwork above has
+        // already dissolved onto the page colour, and the page colour is what the root is painted with.
+        val head: @Composable () -> Unit = {
             Column(Modifier.fillMaxWidth()) {
-            // Upright over a picture the title block rises into the melt, overlapping the picture's last rows.
-            val rise = showArt && coverSide == null && picture != null
             Column(
-                Modifier.fillMaxWidth().padding(horizontal = Space.gutter).then(if (rise) Modifier.raised(Space.titleRise + HERO_DEEPER - (if (subtitle.isNullOrEmpty()) ARTIST_LINE else 0.dp)) else Modifier.padding(vertical = 4.dp)),
+                Modifier.fillMaxWidth().padding(horizontal = Space.gutter).then(if (rise) Modifier else Modifier.padding(vertical = 4.dp)),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
@@ -277,7 +256,6 @@ fun HeroPage(
             if (headLabel.isNotEmpty() || headActions != null) ListHead(headLabel, headActions)
             Spacer(Modifier.height(10.dp))
             }
-        }
         }
         // On its side the page's colour runs out under the camera's strip beside it, which it
         // leaves as it goes, rather than the app's own colour there showing the page's edges.
@@ -342,7 +320,7 @@ fun HeroPage(
                         LazyColumn(Modifier.weight(1f).fillMaxHeight(), state = list) {
                             // The first song level with the top of the cover beside it.
                             item(key = "hero-wide-top") { Spacer(Modifier.windowInsetsPadding(statusBarRoom).height(WIDE_TOP)) }
-                            item(key = "hero-wide-head", contentType = "hero") { Column(Modifier.padding(bottom = 8.dp)) { hero(null, false) } }
+                            item(key = "hero-wide-head", contentType = "hero") { Column(Modifier.padding(bottom = 8.dp)) { head() } }
                             content()
                             item(key = "tail") { Spacer(Modifier.height(Space.section + LocalChromeInset.current)) }
                         }
@@ -350,14 +328,49 @@ fun HeroPage(
                     }
                     if (atEnd) { words(); cover() } else { cover(); words() }
                 }
-            } else LazyColumn(state = list) {
-                item(key = "hero", contentType = "hero") {
-                    // One block: artwork, then the wash it melts into, carrying the title and the buttons.
-                    //
-                    hero(null, true)
+            } else {
+                val room = statusBarRoom
+                LazyColumn(state = list) {
+                    // The artwork takes up less than it draws: the head below lays its status bar room, and over a
+                    // picture its title block, over the artwork's last rows.
+                    val tuck = if (rise) Space.titleRise + HERO_DEEPER - (if (subtitle.isNullOrEmpty()) ARTIST_LINE else 0.dp) else 0.dp
+                    item(key = HERO_KEY, contentType = "hero") {
+                        Box(Modifier.layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints)
+                            layout(placeable.width, (placeable.height - tuck.roundToPx() - room.getTop(this)).coerceAtLeast(0)) { placeable.place(0, 0) }
+                        }) { artwork() }
+                    }
+                    // The name, the buttons and the list head stay at the top once they reach it, and the songs go on
+                    // under them. The page's colour comes in behind them over their last stretch up, so the artwork
+                    // still showing there gives way to it rather than being cut, and the songs fade out under them.
+                    stickyHeader(key = "hero-head", contentType = "hero-head") {
+                        val look = LocalLook.current
+                        Column(
+                            Modifier.drawWithCache {
+                                val fade = HEAD_FADE.toPx()
+                                val edge = HEAD_EDGE.toPx()
+                                val page = look.color(CoverLook.BACKGROUND)
+                                val under = Brush.verticalGradient(0f to page, 1f to Color.Transparent, startY = size.height, endY = size.height + edge)
+                                onDrawBehind {
+                                    // Where the head would be if it scrolled on: the artwork's bottom, or past the top.
+                                    val first = list.layoutInfo.visibleItemsInfo.firstOrNull()
+                                    val from = if (first?.key == HERO_KEY) (first.offset + first.size).toFloat() else 0f
+                                    val shown = 1f - (from / fade).coerceIn(0f, 1f)
+                                    if (shown > 0f) {
+                                        // Up to the screen's top edge, so the status bar is not left over bare cover.
+                                        drawRect(page, topLeft = Offset(0f, -from), size = Size(size.width, size.height + from), alpha = shown)
+                                        drawRect(under, topLeft = Offset(0f, size.height), size = Size(size.width, edge), alpha = shown)
+                                    }
+                                }
+                            },
+                        ) {
+                            Spacer(Modifier.windowInsetsPadding(room))
+                            head()
+                        }
+                    }
+                    content()
+                    item(key = "tail") { Spacer(Modifier.height(Space.section + LocalChromeInset.current)) }
                 }
-                content()
-                item(key = "tail") { Spacer(Modifier.height(Space.section + LocalChromeInset.current)) }
             }
             // No back button over the artwork: the back gesture is how these pages are left, and a dimmed disc
             // on the cover only covered part of it.
@@ -399,18 +412,8 @@ private fun ListHead(label: String, actions: (@Composable RowScope.() -> Unit)?)
 /** The room the artist line takes under a title; a page with none lets the title down by it, so the buttons stay where an album's are. */
 private val ARTIST_LINE = 28.dp
 
-/** Placed [by] higher than it is laid out, so what follows moves up with it and the two overlap. */
-private fun Modifier.raised(by: androidx.compose.ui.unit.Dp): Modifier = layout { measurable, constraints ->
-    val placeable = measurable.measure(constraints)
-    val up = by.roundToPx()
-    layout(placeable.width, (placeable.height - up).coerceAtLeast(0)) { placeable.place(0, -up) }
-}
-
-/** On its side: the space above the cover and above the first song, under the status bar. */
+/** On its side: the space above the first song, under the status bar. */
 private val WIDE_TOP = 12.dp
-
-/** The size a page's own artwork (a mix's) is drawn at: MixScreen hands [HeroPage] its art at this size. */
-private val MIX_ART = 236.dp
 
 /** Two bits of `HeroButtons::pack`: what a button presses. */
 private fun heroPress(bits: Int) = when (bits and 3) {
@@ -419,6 +422,13 @@ private fun heroPress(bits: Int) = when (bits and 3) {
     3 -> dev.nori.music.ffi.library.HeroPress.SHUFFLE_ON
     else -> dev.nori.music.ffi.library.HeroPress.START
 }
+
+/** The list key of the artwork, which the head measures how far it has to go from. */
+private const val HERO_KEY = "hero"
+
+/** How far below the top the head starts taking on the page's colour, and the fade under it once it has. */
+private val HEAD_FADE = 64.dp
+private val HEAD_EDGE = 18.dp
 
 /** How much taller than square the picture is, with the title block rising by as much: the cover reaches further behind the title. */
 private val HERO_DEEPER = 44.dp
