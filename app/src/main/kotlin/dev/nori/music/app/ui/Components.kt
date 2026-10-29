@@ -720,19 +720,17 @@ fun RemoteLine(
     }
 }
 
-/** A round portrait, for artists. */
+/** A round portrait, for artists; [remote] leads the line under it with the cloud, as a [CoverCard]'s. */
 @Composable
-fun ArtistCard(name: String, subtitle: String, coverUrl: String?, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null) {
+fun ArtistCard(name: String, subtitle: String, coverUrl: String?, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, remote: Boolean = false, onLongClick: (() -> Unit)? = null) {
     Column(modifier.width(size).combinedClickable(onClick = onClick, onLongClick = onLongClick), horizontalAlignment = Alignment.CenterHorizontally) {
         Cover(coverUrl, size, radius = size / 2)
+        // Two lines: names that start alike ("Aphex Twin", "Aphex Twin & …") are told apart by how they end.
         Text(
-            name, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
+            name, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 7.dp),
         )
-        if (subtitle.isNotEmpty()) Text(
-            subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (subtitle.isNotEmpty() || remote) RemoteLine(subtitle, remote, MaterialTheme.typography.bodySmall)
     }
 }
 
