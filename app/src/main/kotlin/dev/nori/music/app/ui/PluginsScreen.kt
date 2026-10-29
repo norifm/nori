@@ -226,7 +226,7 @@ private fun InstallSheet(vm: PluginsViewModel) {
 }
 
 /**
- * Asks for the Bluetooth permission a plugin reaching devices needs: at once after installing one (the
+ * Asks for the Bluetooth permission a plugin needs ([PluginsViewModel.needsBluetooth]): at once after installing one (the
  * view model says so), and as a row on its page while it is missing.
  */
 @Composable
@@ -281,7 +281,7 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
         }
         val controlled by vm.controlled.collectAsStateWithLifecycle()
         controlled.filter { it.card.id == id }.forEach { d -> DeviceControls(vm, d, Modifier.padding(top = Space.section)) }
-        if (card.bluetooth && card.enabled) BluetoothAsk(vm, Modifier.padding(top = Space.section))
+        if (vm.needsBluetooth(card) && card.enabled) BluetoothAsk(vm, Modifier.padding(top = Space.section))
         PluginRows(vm, card, null)
         PluginAssets(vm, id)
         if (offer != null) {

@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import dev.nori.music.Nori
 import dev.nori.music.app.R
 import dev.nori.music.ffi.plugins.Offer
+import dev.nori.music.ffi.plugins.PluginCard
 import dev.nori.music.ffi.plugins.Refusal
 import dev.nori.music.ffi.plugins.RepoFailure
 import dev.nori.music.ffi.plugins.Value
@@ -53,12 +54,12 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     /** The sheet put away: nothing is installed. */
     fun dropPreview() { _preview.value = null }
 
-    /** Installs what the sheet showed, off when new; one reaching Bluetooth devices asks for the permission. */
+    /** Installs what the sheet showed, off when new; one that [needsBluetooth] asks for the permission. */
     fun installPreview() {
         val p = _preview.value ?: return
         _preview.value = null
         viewModelScope.launch {
-            if (refusing { host.installPreview(p) } != null && p.card.bluetooth && !bluetoothAllowed()) _askBluetooth.value = true
+            if (refusing { host.installPreview(p) } != null && needsBluetooth(p.card) && !bluetoothAllowed()) _askBluetooth.value = true
             loadOffers()
         }
     }
@@ -69,8 +70,11 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     fun setNoise(device: String, noise: Noise) = viewModelScope.launch { host.setNoise(device, noise) }
 
     private val _askBluetooth = MutableStateFlow(false)
-    /** A plugin reaching Bluetooth devices was just installed without the permission: it is asked for. */
+    /** A plugin that [needsBluetooth] was just installed without the permission: it is asked for. */
     val askBluetooth: StateFlow<Boolean> = _askBluetooth
+
+    /** Android's Bluetooth permission is for reaching devices, and for hearing an audio device connect (its wake). */
+    fun needsBluetooth(card: PluginCard): Boolean = card.bluetooth || dev.nori.music.ffi.plugins.WakeEvent.BLUETOOTH_CONNECTED in card.wakes
 
     fun bluetoothAllowed(): Boolean = android.os.Build.VERSION.SDK_INT < 31 ||
         androidx.core.content.ContextCompat.checkSelfPermission(getApplication(), android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED
