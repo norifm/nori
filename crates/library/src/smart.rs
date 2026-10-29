@@ -611,7 +611,7 @@ pub fn run(c: &Connection, def: &Def, downloaded: &[String], offset: usize, limi
             format!("{}, i.rowid", mixes::shuffled_order("i.rowid", cp.args.len() - 1, cp.args.len()))
         }
         Sort::By(f, descending) => {
-            let collate = if f.kind() == Kind::Text { " COLLATE NOCASE" } else { "" };
+            let collate = if f.kind() == Kind::Text { " COLLATE natural_order" } else { "" };
             format!("{}{collate}{}, i.rowid", f.def().2, if descending { " DESC" } else { "" })
         }
     };

@@ -136,14 +136,15 @@ impl Client {
 /// first, most played first, or shuffled.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn favorites_in_order(mut albums: Vec<crate::Album>, sort: AlbumSort) -> Vec<crate::Album> {
-    use std::cmp::Reverse;
-    let name = |a: &crate::Album| a.name.to_lowercase();
+    let name = |a: &crate::Album, b: &crate::Album| db::natural_cmp(&a.name, &b.name);
     match sort {
-        AlbumSort::ByName => albums.sort_by_cached_key(|a| (name(a), a.artist.to_lowercase())),
-        AlbumSort::ByArtist | AlbumSort::ArtistRows => albums.sort_by_cached_key(|a| (a.artist.to_lowercase(), a.artist_id.clone(), a.year, name(a))),
-        AlbumSort::ByYear => albums.sort_by_cached_key(|a| (Reverse(a.year), name(a))),
-        AlbumSort::Newest => albums.sort_by_cached_key(|a| (Reverse(a.created.clone()), name(a))),
-        AlbumSort::Frequent => albums.sort_by_cached_key(|a| (Reverse(a.play_count), name(a))),
+        AlbumSort::ByName => albums.sort_by(|a, b| name(a, b).then_with(|| db::natural_cmp(&a.artist, &b.artist))),
+        AlbumSort::ByArtist | AlbumSort::ArtistRows => {
+            albums.sort_by(|a, b| db::natural_cmp(&a.artist, &b.artist).then_with(|| a.artist_id.cmp(&b.artist_id)).then(a.year.cmp(&b.year)).then_with(|| name(a, b)))
+        }
+        AlbumSort::ByYear => albums.sort_by(|a, b| b.year.cmp(&a.year).then_with(|| name(a, b))),
+        AlbumSort::Newest => albums.sort_by(|a, b| b.created.cmp(&a.created).then_with(|| name(a, b))),
+        AlbumSort::Frequent => albums.sort_by(|a, b| b.play_count.cmp(&a.play_count).then_with(|| name(a, b))),
         AlbumSort::Random => return crate::autofill::shuffled(albums),
         // Not offered on the grid (`album_sorts`): as read.
         AlbumSort::Recent | AlbumSort::ByGenre | AlbumSort::Starred => {}
@@ -154,7 +155,7 @@ pub fn favorites_in_order(mut albums: Vec<crate::Album>, sort: AlbumSort) -> Vec
 /// [`Core::browse_songs`]' query: offset ?1, limit ?2, and with `years` the range ?3..=?4.
 pub(crate) fn songs_sql(sort: &str, descending: bool, starred_only: bool, years: bool) -> String {
     let key = match sort {
-        "title" | "artist" | "album" => format!("json_extract(json, '$.{sort}') COLLATE NOCASE"),
+        "title" | "artist" | "album" => format!("json_extract(json, '$.{sort}') COLLATE natural_order"),
         "year" | "duration" | "created" | "playCount" | "userRating" => format!("json_extract(json, '$.{sort}')"),
         _ => "rowid".to_string(),
     };
@@ -201,6 +202,12 @@ pub(crate) mod tests {
         let last = core.songs_page("TITLE".into(), false, 0, 0, 200).unwrap();
         assert_eq!((last.songs.len(), last.exhausted), (50, true));
         let years = core.songs_page("YEAR".into(), false, 2000, 2009, 0).unwrap();
+        // Numbers in titles in their order, not the characters'.
+        let numbered: Vec<Song> = ["#10", "#2", "#1"].iter().enumerate().map(|(i, t)| song(&format!("n{i}"), t, "A", "B", "", 1990)).collect();
+        let core2 = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        db::index(&mut core2.db.lock(), &[], &[], &numbered).unwrap();
+        let titles: Vec<String> = core2.songs_page("TITLE".into(), false, 0, 0, 0).unwrap().songs.into_iter().map(|s| s.title).collect();
+        assert_eq!(titles, ["#1", "#2", "#10"]);
         assert_eq!(years.songs[0].year, 2009);
         assert!(years.exhausted && years.songs.iter().all(|s| (2000..=2009).contains(&s.year)));
 
