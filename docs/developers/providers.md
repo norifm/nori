@@ -71,7 +71,7 @@ A client asks the core and draws:
 | the add form | the chosen kind's `ProviderInfo` fields, advanced ones folded away; `Kinds::server_ready` says whether it can be sent |
 | logging in | `log_in`: `Kinds::login_profile`, then `Kinds::check_profile`; keeps the profile as the active one |
 | opening a profile | `Core::configure_profile`; the engine's byte source wrapped by `nori_engine::core::resolving` |
-| signing in | for a `SignIn::WebPage`, a page of the app's own at `start_url` whose address and cookies go to `Kinds::sign_in_done` until it says done, then to `Client::sign_in`; for `SignIn::Paste`, a box to paste into. `Client::account` says where it stands |
+| signing in | for a `SignIn::WebPage`, a page of the app's own at `start_url` whose addresses (each page, and each address it refuses to open: an OAuth redirect to an app's own address) and cookies go to `Kinds::sign_in_done` until it says done, then to `Client::sign_in`; for `SignIn::Paste`, a box to paste into. `Client::account` says where it stands |
 | covers | `Core::cover_prefix` (the id and size appended), or `Core::cover_address` without one |
 
 A client's only per-provider code is its words, one entry per kind:
