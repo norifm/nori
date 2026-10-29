@@ -1,6 +1,7 @@
 //! Bluetooth for plugins, only to the devices their manifest's filter matches, over the platform's own
-//! ([`Bluetooth`]: Android's `BluetoothSocket` and `BluetoothGatt`, BlueZ on Linux). Calls block on the
-//! plugin's own thread; what a device sends comes back through [`crate::Plugins::bluetooth_heard`].
+//! ([`Bluetooth`]: Android's `BluetoothSocket` and `BluetoothGatt`, BlueZ on Linux, IOBluetooth and
+//! CoreBluetooth on macOS). Calls block on the plugin's own thread; what a device sends comes back
+//! through [`crate::Plugins::bluetooth_heard`].
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex};

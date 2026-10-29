@@ -4,8 +4,12 @@
 
 #[cfg(all(feature = "desktop", target_os = "linux"))]
 mod bluez;
+#[cfg(all(feature = "desktop", any(test, target_os = "macos")))]
+mod btids;
 #[cfg(feature = "desktop")]
 pub mod desktop;
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+mod macbt;
 pub mod pages;
 pub mod player;
 #[cfg(feature = "desktop")]

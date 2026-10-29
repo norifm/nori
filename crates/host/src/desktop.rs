@@ -75,10 +75,12 @@ pub fn plugins(data: &Path) -> &'static Plugged {
         let watched = Arc::new(Watched::default());
         let host = nori_plugins::open(data.join("plugins"), app().settings.clone(), watched.clone());
         let _ = watched.plugins.set(Arc::downgrade(&host));
-        // Watched only while an enabled plugin reaches devices or hears outputs connect (BlueZ is how the
-        // desktop hears them); elsewhere plugins' Bluetooth is unsupported.
+        // Watched only while an enabled plugin reaches devices or hears outputs connect (BlueZ and
+        // IOBluetooth are how the desktop hears them); elsewhere plugins' Bluetooth is unsupported.
         #[cfg(target_os = "linux")]
         host.use_bluetooth(Arc::new(crate::bluez::Bluez::new(Arc::downgrade(&host))), true);
+        #[cfg(target_os = "macos")]
+        host.use_bluetooth(Arc::new(crate::macbt::MacBluetooth::new(Arc::downgrade(&host))), true);
         Plugged { kinds: nori_core::providers::Kinds::with_plugins(host.clone()), host, watched }
     })
 }

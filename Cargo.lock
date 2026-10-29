@@ -4927,6 +4927,7 @@ version = "0.7.1"
 dependencies = [
  "async-io",
  "async-trait",
+ "dispatch2",
  "futures-lite",
  "libc",
  "mdns-sd",
@@ -4942,6 +4943,11 @@ dependencies = [
  "nori-tasks",
  "nori-testdir",
  "nori-time",
+ "objc2 0.6.4",
+ "objc2-core-bluetooth",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "objc2-io-bluetooth",
  "parking_lot",
  "serde",
  "zbus",
@@ -5530,6 +5536,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-core-bluetooth"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79b30b9eacc37434a61377866f68b27acef9fa5496f25cc9ca8b2549032e0394"
+dependencies = [
+ "bitflags 2.13.2",
+ "dispatch2",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
 name = "objc2-core-data"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5672,6 +5690,17 @@ dependencies = [
  "libc",
  "objc2 0.6.4",
  "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-io-bluetooth"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "558b52e7b77f6a68e1e2cc700ff2266779ede47bacb260a33d363b9a623cc761"
+dependencies = [
+ "objc2 0.6.4",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
 ]
 
 [[package]]

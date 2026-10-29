@@ -132,8 +132,8 @@ nothing for a call that answers nothing) and logged.
   on or off; a client checks it (or `follows()`) before it builds an event. The playback, song, queue and
   route events are told apart in Rust from the moments (`hooks.rs`); favorites come from the core's
   `Client::star`, settings from the settings' `watch` (stored) and the layer (in effect), media buttons
-  from MPRIS and the media session, devices from Android's audio device callback and, on Linux, an audio
-  device BlueZ sees connect (`use_bluetooth(.., outputs)`).
+  from MPRIS and the media session, devices from Android's audio device callback and, on Linux and
+  macOS, an audio device BlueZ or IOBluetooth sees connect (`use_bluetooth(.., outputs)`).
 - **Lyric lines** wake the host at each synced line of the song playing (its lyrics fetched once per
   song through the core), the screen off too; that wake is the plugin's declared cost, which the install
   sheet says. A pause, seek or song change lets the waiting wake go.
@@ -302,7 +302,13 @@ lists them, and a channel opens to no other. The install sheet says it reaches B
 - **The platform's Bluetooth** is the client's `Bluetooth` (`crates/plugins/src/bluetooth.rs`), given with
   `Plugins::use_bluetooth`: Android's `BluetoothSocket` and `BluetoothGatt` (`core/.../PluginBluetooth.kt`),
   BlueZ over the system bus on Linux (`crates/host/src/bluez.rs`, zbus as the media controls; RFCOMM
-  through a client `Profile1`). macOS has none yet: there every Bluetooth call answers `unsupported`.
+  through a client `Profile1`), and on macOS IOBluetooth for classic devices and RFCOMM and CoreBluetooth
+  for GATT (`crates/host/src/macbt/`). There a device is its classic address (a device only on LE, its
+  CoreBluetooth identifier, listed when connected to the system with a common service), and GATT to a
+  classic device goes to the LE peripheral of its name. IOBluetooth runs on a thread of its own whose run
+  loop sleeps between events; CoreBluetooth's delegate on a dispatch queue. Both are made at the first
+  need and let go once nothing is watched or open. The app's `Info.plist` gives
+  `NSBluetoothAlwaysUsageDescription` (`tools/host-release/app.py`).
 - **Watched only while needed.** The platform is told to watch devices connecting only while an enabled
   plugin reaches devices; with none, no receiver, bus connection or thread exists. On Android the
   `BLUETOOTH_CONNECT` permission is asked when such a plugin is installed, and on its page while missing.
