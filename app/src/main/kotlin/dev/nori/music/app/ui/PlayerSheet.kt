@@ -33,8 +33,8 @@ import kotlinx.coroutines.launch
  * edge to the far side of the screen (up from the bottom, or across from the side the mini player stands
  * on, [edge]), and the cover grows from the mini player's thumbnail into the sleeve. A drag
  * sets the number directly, so the whole thing follows the finger and holds wherever it is held; a
- * release carries on at the finger's own speed (AppMotion.moveFrom), and a tap moves it as a page moves
- * (AppMotion.move). Closing is the same path backwards.
+ * release carries on from the finger's own speed on a spring (AppMotion.settle), and a tap moves it from
+ * rest (AppMotion.move). Closing is the same path backwards.
  *
  * Before this the player was a route: a drag on the mini player had to cross a threshold, and then a
  * separate slide played on its own - you pulled, and then something else happened.
@@ -145,8 +145,12 @@ class PlayerSheet(private val scope: CoroutineScope, startOpen: Boolean = false)
     private fun settle(target: Float, speed: Float) {
         isOpen = target == 1f
         scope.launch {
-            val distance = kotlin.math.abs(target - progress.value)
-            progress.animateTo(target, if (speed > 0f) AppMotion.moveFrom(distance, speed) else AppMotion.move())
+            if (speed > 0f) {
+                val towards = if (target > progress.value) speed else -speed
+                progress.animateTo(target, AppMotion.settle(SHEET_REST), initialVelocity = towards)
+            } else {
+                progress.animateTo(target, AppMotion.move())
+            }
         }
     }
 
@@ -221,6 +225,9 @@ internal fun Modifier.dragsSheet(sheet: PlayerSheet, enabled: Boolean = true, on
         }
     }
 }
+
+/** How near its end, in sheets, the spring counts as there: a jump of less than a pixel or two. */
+private const val SHEET_REST = 0.001f
 
 /** How far the back gesture takes the player down before it is let go. */
 private const val BACK_TRAVEL = 0.2f

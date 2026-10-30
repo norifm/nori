@@ -31,7 +31,7 @@ pub struct Stage {
     /// A move from rest: the player opened by a tap, a panel changed.
     pub move_ms: i32,
     /// A move's curve, a cubic Bézier's two control points (x1, y1, x2, y2): most of the way early, a long
-    /// soft landing. A move let go by a finger takes the same curve, shortened to keep the finger's speed.
+    /// soft landing.
     pub move_ease: Vec<f32>,
     /// Something appearing where nothing moved: content arriving, a tab's page, a colour changing.
     pub fade_ms: i32,

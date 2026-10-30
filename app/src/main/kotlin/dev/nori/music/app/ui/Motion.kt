@@ -16,10 +16,9 @@ import androidx.compose.runtime.setValue
  * How everything in the app moves, and how fast. Every animation takes its spec from here:
  *
  * - [move]: a move from rest - the player opened by a tap, a panel changed. One
- *   curve, most of the way early and a long soft landing; [moveFrom] is the same curve shortened to start at
- *   the speed a finger let it go at.
+ *   curve, most of the way early and a long soft landing.
  * - [page]: a change of page, both pages shifting a little and cross-fading.
- * - [settle]: something small a finger let go (a row, a record, a thumb), on a spring from the finger's speed.
+ * - [settle]: something a finger let go (the player, a row, a record, a thumb), on a spring from the finger's speed.
  * - [leave]: something a finger sent away (a row swiped off) leaving the screen, quick and speeding up.
  * - [fadeIn] / [fadeOut]: something appearing or going where nothing moves, going quicker than it came.
  *
@@ -42,23 +41,7 @@ object AppMotion : androidx.compose.ui.MotionDurationScale {
     private val ease = stage.moveEase
     val Ease = CubicBezierEasing(ease[0], ease[1], ease[2], ease[3])
 
-    /** How fast a move starts, in its own length per its own time: the curve's first slope. */
-    private val startSlope = ease[1] / ease[0]
-
-    /** The shortest a move let go by a finger is cut to, ms: a flick still reads as travel, not a jump. */
-    private const val SHORTEST_MS = 120
-
     fun <T> move(): FiniteAnimationSpec<T> = if (reduce) snap() else tween(stage.moveMs, easing = Ease)
-
-    /**
-     * A move over [distance] px let go at [speed] px/s along it: the [move] curve, cut short so that it starts
-     * at the finger's speed, no faster and no slower - a flick goes at once, a slow release takes the whole move.
-     */
-    fun <T> moveFrom(distance: Float, speed: Float): FiniteAnimationSpec<T> {
-        if (reduce) return snap()
-        val ms = if (speed <= 0f) stage.moveMs else (startSlope * distance / speed * 1000f).toInt().coerceIn(SHORTEST_MS, stage.moveMs)
-        return tween(ms, easing = Ease)
-    }
 
     private val pageEase = stage.pageEase.let { CubicBezierEasing(it[0], it[1], it[2], it[3]) }
 

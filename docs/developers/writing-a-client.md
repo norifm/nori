@@ -183,8 +183,8 @@ eviction order) and downloads. A browser keeps none (`keeps_music: false`).
 - **Appearance** (below), and the `motion` setting: Full, Reduced or E-ink. nori's choice wins over the
   system's. Reduced makes every move direct and keeps the fades; E-ink makes everything direct.
 - **Gestures and animation**: their feel is per platform. How long things take and the curve they move
-  on are the core's (`stage`: `move_ms` and `move_ease` for a move from rest, a move let go by a finger
-  cut short to keep its speed, `fade_ms`/`fade_out_ms`, `settle_stiffness`, and the page stack's
+  on are the core's (`stage`: `move_ms` and `move_ease` for a move from rest,
+  `fade_ms`/`fade_out_ms`, `settle_stiffness`, and the page stack's
   `page_ms`, `page_ease` and `page_shift`).
 - **Drawing cost**: redraw only when something visible changes. A paused player draws nothing.
 - Optional: a perf recorder that reads the platform's counters into `nori-perf`
