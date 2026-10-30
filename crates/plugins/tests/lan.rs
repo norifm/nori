@@ -444,7 +444,10 @@ fn a_deep_sink_is_said_hello_and_its_buttons_are_media_buttons() {
     }
     assert_eq!(last(&sinks).as_deref(), Some("here"), "a device lost: the music comes back here");
     assert!(rig.plugins.cast().is_none(), "its cast ended");
-    rig.settle();
+    // Told after the cast ended, on the sink's way out.
+    while rig.said("button").is_none() && gone.elapsed() < std::time::Duration::from_secs(5) {
+        rig.settle();
+    }
     assert_eq!(rig.said("button"), Some(vec!["cast-stop".into()]), "the plugin hears it stop");
 }
 
