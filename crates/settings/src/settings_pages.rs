@@ -387,7 +387,7 @@ impl Page<'_> {
     fn look(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
         let p = self.p;
         let mut theme = vec![self.chips("season")];
-        if self.phone() || self.web() || self.client == SettingsClient::Terminal {
+        if self.phone() || self.client == SettingsClient::Terminal {
             theme.push(self.chips("theme"));
         }
         if self.web() {
@@ -665,10 +665,10 @@ mod tests {
         assert_eq!(pages(SettingsClient::Web, &ALL_PARTS), [SettingsPage::Playing, SettingsPage::Sound, SettingsPage::Look, SettingsPage::Lyrics, SettingsPage::Library]);
         let rows = every_row(SettingsClient::Web, &d, &facts());
         let has = names(&rows, false);
-        for kept in ["autoMix", "crossfadeSec", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season", "theme"] {
+        for kept in ["autoMix", "crossfadeSec", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season"] {
             assert!(has.iter().any(|n| n == kept), "{kept} is on the web's pages");
         }
-        for left in ["bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize"] {
+        for left in ["theme", "bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize"] {
             assert!(!has.iter().any(|n| n == left), "{left} is not offered in a browser");
         }
         let links: Vec<_> = rows.iter().filter_map(|r| match r.item {
