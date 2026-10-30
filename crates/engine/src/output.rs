@@ -903,6 +903,11 @@ impl RingTrack {
         self.output.bursts()
     }
 
+    /// Whether the output takes another format in its stream, with no need to play out first.
+    pub(crate) fn takes_formats(&self) -> bool {
+        self.output.takes_formats()
+    }
+
     /// The engine sleeps until the ring holds `us` or less.
     pub(crate) fn wake_at(&self, us: i64) {
         if let Some(r) = &self.ring {

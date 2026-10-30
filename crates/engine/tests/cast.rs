@@ -601,6 +601,31 @@ fn each_song_reaches_the_device_at_its_own_rate_switching_at_the_boundary() {
 }
 
 #[test]
+fn a_song_longer_than_the_device_holds_goes_into_the_next_without_running_dry() {
+    for (name, crossfade_s, auto_mix) in [("gapless", 0, false), ("crossfade", 5, false), ("automix", 0, true)] {
+        let (a, b) = (music(44_100, 100.0, 21), music(44_100, 100.0, 22));
+        let prefs = TransitionPrefs { crossfade_s, auto_mix, ..prefs_off() };
+        let rig = Rig::new(vec![wav("a", 44_100, &a), wav("b", 44_100, &b)], prefs, Settings::default(), caps(), None);
+        rig.engine.play_at(0, 0);
+        assert!(rig.wait_for(130, |d| d.heard.len() > 44_100 * 115), "{name}: into the next song");
+        let d = rig.dev.lock();
+        assert_eq!(d.dry, 0, "{name}: never ran dry");
+        assert!(!d.did.iter().any(|(_, x)| matches!(x, Did::Flush(_))), "{name}: nothing flushed: {:?}", d.did);
+    }
+}
+
+#[test]
+fn a_song_its_device_could_decode_after_pcm_comes_without_running_dry() {
+    let (a, b) = (music(44_100, 100.0, 23), music(44_100, 100.0, 24));
+    let rig = Rig::new(vec![wav("a", 44_100, &a), flac("b", 44_100, &b)], prefs_off(), Settings::default(), caps(), None);
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(130, |d| d.heard.len() > 44_100 * 115), "into the next song");
+    let d = rig.dev.lock();
+    assert_eq!(d.dry, 0, "never ran dry");
+    assert!(!d.did.iter().any(|(_, x)| matches!(x, Did::Flush(_))), "nothing flushed: {:?}", d.did);
+}
+
+#[test]
 fn a_mix_between_two_rates_switches_after_it() {
     let (a, b) = (music(44_100, 30.0, 8), music(48_000, 30.0, 9));
     let prefs = TransitionPrefs { crossfade_s: 5, ..prefs_off() };

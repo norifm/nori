@@ -27,8 +27,9 @@ use crate::output::{AudioOutput, Feed, Kept, OutputFormat};
 const DEPTH_MS: u32 = 60_000;
 const DEPTH_MIN_MS: u32 = 5_000;
 const DEPTH_MAX_MS: u32 = 120_000;
-/// Depth while a sound page is tuned: a change is heard about this soon.
-const SHALLOW_MS: u32 = 250;
+/// Depth while a sound page is tuned: a change is heard about this soon. Not less: a device on Wi-Fi
+/// runs dry on what a jitter of the network takes.
+const SHALLOW_MS: u32 = 2_000;
 /// Of the device's buffer, what the depth may fill (its own bookkeeping, a packet's overshoot).
 const BUFFER_SHARE: f64 = 0.9;
 /// Frames per audio frame sent.

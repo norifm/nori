@@ -1212,8 +1212,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
     /// Offload wanted while the CPU plays: when the output decodes the next song, the CPU plays the
     /// current one to its end and hands over there (as media3 reconfigures its sink at a boundary).
+    /// A device holding tens of seconds would run dry waiting for that end: it stays on the CPU.
     fn follow_offload_ahead(&mut self) {
-        if !self.offload_wanted() || self.h.at_end.is_some() || !self.p.playing() {
+        if !self.offload_wanted() || self.h.at_end.is_some() || !self.p.playing() || self.p.sink.track.takes_formats() {
             return;
         }
         let Some(cur) = self.p.current() else { return };
