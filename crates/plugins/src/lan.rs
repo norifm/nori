@@ -111,8 +111,19 @@ impl CastButton {
 /// The enabled plugins' instances, by id.
 pub(crate) type Workers = Mutex<BTreeMap<String, Worker>>;
 
+/// A device a plugin can cast to, for a client's devices list.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct CastTarget {
+    pub plugin: String,
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Default)]
 struct Inner {
+    /// What each plugin offers to cast to.
+    targets: BTreeMap<String, Vec<CastTarget>>,
     /// Sockets that joined a multicast group, across all plugins: the lock is held while any is.
     multicast: u32,
     /// mDNS kinds being browsed, and the plugins that asked for each.
@@ -140,6 +151,8 @@ pub(crate) struct Lan {
     workers: Weak<Workers>,
     /// Where the cast makes its plugin's session active, for its timers.
     gate: Arc<Gate>,
+    /// The host, which a lost sink's plugin is told through.
+    plugins: std::sync::OnceLock<Weak<crate::Plugins>>,
     inner: Mutex<Inner>,
     media: Mutex<Option<Weak<dyn Media>>>,
     cards: Mutex<Option<Cards>>,
@@ -162,11 +175,16 @@ impl Drop for Multicast {
 
 impl Lan {
     pub(crate) fn new(side: Arc<dyn Side>, workers: Weak<Workers>, gate: Arc<Gate>) -> Arc<Lan> {
-        Arc::new_cyclic(|me| Lan { side, workers, gate, inner: Mutex::default(), media: Mutex::new(None), cards: Mutex::new(None), me: me.clone() })
+        Arc::new_cyclic(|me| Lan { side, workers, gate, plugins: std::sync::OnceLock::new(), inner: Mutex::default(), media: Mutex::new(None), cards: Mutex::new(None), me: me.clone() })
     }
 
     fn inner(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().expect("not poisoned")
+    }
+
+    /// The host a lost sink's plugin is told through.
+    pub(crate) fn set_plugins(&self, plugins: Weak<crate::Plugins>) {
+        let _ = self.plugins.set(plugins);
     }
 
     pub(crate) fn set_media(&self, media: Option<Weak<dyn Media>>) {
@@ -289,8 +307,14 @@ impl Lan {
         if let Some(deep) = &sink.deep {
             let (me, plugin) = (self.me.clone(), id.to_string());
             deep.controls(Box::new(move |said| {
-                if let (Some(lan), Some(said)) = (me.upgrade(), said) {
-                    lan.device_said(&plugin, said);
+                let Some(lan) = me.upgrade() else { return };
+                match said {
+                    Some(said) => lan.device_said(&plugin, said),
+                    // Off the socket's own thread, which letting the sink go waits for.
+                    None => {
+                        let plugin = plugin.clone();
+                        drop(std::thread::Builder::new().name("nori-cast-lost".into()).spawn(move || lan.sink_lost(&plugin)));
+                    }
                 }
             }));
             let side = self.side.clone();
@@ -298,6 +322,19 @@ impl Lan {
         }
         self.inner().pumped = Some((id.to_string(), sink.clone()));
         self.card(Card::Sink(sink));
+    }
+
+    /// Plugin `id`'s deep sink went away: nori plays on its own output again, and the plugin hears the
+    /// cast stop as if another output were picked. Nothing when the plugin stopped it first.
+    fn sink_lost(&self, id: &str) {
+        if !self.inner().pumped.as_ref().is_some_and(|(by, s)| by == id && s.deep.is_some()) {
+            return;
+        }
+        self.stop_sink(id);
+        self.end_cast(id);
+        if let Some(plugins) = self.plugins.get().and_then(Weak::upgrade) {
+            plugins.tell_one(id, crate::runtime::points::hooks::Event::MediaButton(CastButton::Stop.name().to_string()));
+        }
     }
 
     /// A deep sink's button or knob.
@@ -322,13 +359,12 @@ impl Lan {
         }
     }
 
-    /// The volume keys for a deep sink: its volume moves by `step` (of 100), sent to the device; false
-    /// when no deep sink plays.
-    pub(crate) fn deep_volume(&self, step: i8) -> bool {
+    /// A deep sink's volume is `volume` (of 100) from now on, sent to the device; false when no deep
+    /// sink plays.
+    pub(crate) fn deep_volume(&self, volume: u8) -> bool {
         let mut i = self.inner();
         let Some(deep) = i.pumped.as_ref().and_then(|(_, s)| s.deep.clone()) else { return false };
         let Some(cast) = i.cast.as_mut() else { return false };
-        let volume = (cast.volume.unwrap_or(50) as i16 + step as i16).clamp(0, 100) as u8;
         cast.volume = Some(volume);
         let cast = cast.clone();
         drop(i);
@@ -356,6 +392,20 @@ impl Lan {
         if served.or(pumped).is_some() {
             self.card(Card::Here);
         }
+    }
+
+    /// What plugin `id` can cast to now.
+    pub(crate) fn offer(&self, id: &str, targets: Vec<(String, String)>) {
+        let plugin = id.to_string();
+        self.inner().targets.insert(plugin.clone(), targets.into_iter().map(|(id, name)| CastTarget { plugin: plugin.clone(), id, name }).collect());
+        self.side.devices_changed();
+    }
+
+    /// The devices plugins can cast to, but the one playing.
+    pub(crate) fn targets(&self) -> Vec<CastTarget> {
+        let i = self.inner();
+        let playing = i.cast.as_ref().map(|c| c.device.as_str());
+        i.targets.values().flatten().filter(|t| Some(t.name.as_str()) != playing).cloned().collect()
     }
 
     pub(crate) fn start_cast(&self, id: &str, kind: CastKind, device: String) {
@@ -405,6 +455,7 @@ impl Lan {
 
     /// Lets go of all plugin `id` holds here: it stopped, was turned off or its instance failed.
     pub(crate) fn forget(&self, id: &str) {
+        self.inner().targets.remove(id);
         let kinds: Vec<String> = self.inner().browsing.iter().filter(|(_, by)| by.contains(id)).map(|(k, _)| k.clone()).collect();
         for kind in kinds {
             self.stop_browsing(id, &kind);

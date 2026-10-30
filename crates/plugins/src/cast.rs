@@ -5,13 +5,14 @@ use std::sync::{Arc, Weak};
 
 use wasmtime::component::Resource;
 
-use crate::lan::{Cast, CastButton, CastKind};
+use crate::lan::{Cast, CastButton, CastKind, CastTarget};
 use crate::runtime::nori::plugin::{audio_out, cast, discovery, lan_serve, media};
 use crate::runtime::points::hooks::Event;
 use crate::runtime::{types, Host};
 use crate::deep::Deep;
 use crate::sink::{Encoding, Sink};
 use crate::sockets::{error, Tcp};
+use crate::manifest::Hook;
 use crate::Plugins;
 
 /// What makes a song's URLs for another device: the open profile.
@@ -164,6 +165,10 @@ impl audio_out::Host for Host {
 }
 
 impl cast::Host for Host {
+    fn offer(&mut self, targets: Vec<cast::Target>) {
+        self.lan.offer(&self.id, targets.into_iter().map(|t| (t.id, t.name)).collect());
+    }
+
     fn start(&mut self, kind: cast::Kind, device_name: String) {
         let kind = match kind {
             cast::Kind::Sink => CastKind::Sink,
@@ -218,10 +223,43 @@ impl Plugins {
             CastButton::VolumeDown => -5,
             CastButton::Stop => 0,
         };
-        if step != 0 && self.lan.deep_volume(step) {
+        if step != 0 && self.lan.deep_volume((c.volume.unwrap_or(50) as i16 + step).clamp(0, 100) as u8) {
             return true;
         }
         self.tell_one(&c.plugin, Event::MediaButton(button.name().to_string()));
         true
+    }
+
+    /// The cast's volume, of 100, as a slider sets it: a deep sink takes it as it is, a plugin's own
+    /// device a step toward it. Whether a cast runs to take it.
+    pub fn cast_volume(&self, percent: u8) -> bool {
+        let Some(c) = self.lan.cast() else { return false };
+        let percent = percent.min(100);
+        if self.lan.deep_volume(percent) {
+            return true;
+        }
+        let toward = match c.volume {
+            Some(v) if percent > v => CastButton::VolumeUp,
+            Some(v) if percent < v => CastButton::VolumeDown,
+            _ => return true,
+        };
+        self.tell_one(&c.plugin, Event::MediaButton(toward.name().to_string()));
+        true
+    }
+
+    /// The devices plugins can cast to now, for a client's devices list.
+    pub fn cast_targets(&self) -> Vec<CastTarget> {
+        self.lan.targets()
+    }
+
+    /// Casts to `target`, as the plugin offering it does.
+    pub fn cast_to(&self, target: CastTarget) {
+        self.act(target.plugin, format!("cast:{}", target.id));
+    }
+
+    /// Whether a plugin looks for devices while the devices list is open: it opens even with nothing
+    /// else on it, for what they find.
+    pub fn finds_outputs(&self) -> bool {
+        self.hears(Hook::OutputPicker)
     }
 }

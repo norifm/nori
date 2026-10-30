@@ -415,12 +415,14 @@ class Remotes(private val context: Context, private val nori: Nori) {
 
         private fun audio(context: Context) = context.getSystemService(AudioManager::class.java)
 
-        fun volumePercent(context: Context): Int? = audio(context)?.let { a ->
+        /** What other devices show and set: a plugin's cast's volume while it has one, else the media stream's. */
+        fun volumePercent(context: Context): Int? = Nori.get(context).plugins.cast.value?.volume?.toInt() ?: audio(context)?.let { a ->
             val max = a.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
             if (max <= 0) null else a.getStreamVolume(AudioManager.STREAM_MUSIC) * 100 / max
         }
 
         fun setVolume(context: Context, percent: Int) {
+            if (Nori.get(context).plugins.cast.value?.volume != null && Nori.get(context).plugins.castVolumeTook(percent)) return
             val a = audio(context) ?: return
             val max = a.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
             a.setStreamVolume(AudioManager.STREAM_MUSIC, (percent.coerceIn(0, 100) * max + 50) / 100, 0)

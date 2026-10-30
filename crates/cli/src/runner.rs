@@ -424,6 +424,7 @@ impl Runner {
             }
             PluginCmd::Set(id, row, v) => host.set(id, row, v),
             PluginCmd::Act(id, row) => host.act(id, row),
+            PluginCmd::CastTo(target) => host.cast_to(target),
             PluginCmd::EndCast => {
                 host.cast_button(nori_plugins::CastButton::Stop);
             }
@@ -490,6 +491,8 @@ impl Runner {
         }
         own.off.extend(plugged.watched.as_said(&mut shown));
         app.devices.plugins = shown;
+        app.devices.targets = host.cast_targets();
+        app.devices.finds = host.finds_outputs();
         own.controlled = controlled.clone();
         app.devices.controlled = controlled;
         app.settings.invalidate();

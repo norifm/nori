@@ -372,6 +372,15 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     /** A plugin's cast while one runs: the devices sheet lists its device. */
     val pluginCast = nori.plugins.cast
 
+    /** The devices plugins can cast to now, and whether one looks for them while the sheet is open. */
+    val pluginTargets = nori.plugins.castTargets
+    val pluginsFindOutputs = nori.plugins.findsOutputs
+
+    /** The music goes to [target], from whatever played it. */
+    fun castTo(target: dev.nori.music.ffi.plugins.CastTarget) {
+        viewModelScope.launch { nori.plugins.castTo(target) }
+    }
+
     /** The music comes back to this phone: the plugin casting ends its cast. */
     fun endCast() {
         viewModelScope.launch { nori.plugins.castButton(dev.nori.music.ffi.plugins.CastButton.STOP) }

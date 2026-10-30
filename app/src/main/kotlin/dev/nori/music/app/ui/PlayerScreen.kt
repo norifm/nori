@@ -841,7 +841,8 @@ internal fun OutputButton(
     // first (RemoteScreens); this phone's outputs are one row of it.
     val prefs by settings.prefs.collectAsStateWithLifecycle()
     val pluginDevices by settings.pluginDevices.collectAsStateWithLifecycle()
-    val devices = prefs.remoteControl && LocalRules.current.remote || pluginDevices.isNotEmpty() || here != null
+    val finds by settings.pluginsFindOutputs.collectAsStateWithLifecycle()
+    val devices = prefs.remoteControl && LocalRules.current.remote || pluginDevices.isNotEmpty() || here != null || finds
     val openDevices = LocalDevices.current
     val tell = LocalMessages.current
     val open = { if (devices) openDevices() else openOutputPicker(context, output, tell) }
