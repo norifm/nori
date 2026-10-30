@@ -929,7 +929,7 @@ private const val SLEEVE = 0.56f
 private val PLAYER_RISE = Space.titleRise + 98.dp
 
 /** A soft sleeve's own box as the sleeve: its bottom (its right edge, on its side) and its whole height (width). */
-private val SLEEVE_ALL: androidx.compose.ui.draw.CacheDrawScope.() -> Pair<Float, Float> = { size.height to size.height }
+private val SLEEVE_ALL: (Size) -> Pair<Float, Float> = { it.height to it.height }
 
 /**
  * The artwork full-bleed: edge to edge, square corners, no shadow - the sleeve it is. Its bottom
@@ -1078,7 +1078,7 @@ private fun PanelFlight(
             Modifier.fillMaxWidth().height(with(density) { sleeveBottom.toDp() }),
             // The band ends on the layer's own last row: the sleeve's bottom is fractional and the layer a whole
             // number of rows, and a band ending mid-row left part of that row as a line under the time labels.
-            sleeve = { size.height to sleeveHeight }, blur = dressed,
+            sleeve = { it.height to sleeveHeight }, blur = dressed,
         ) {
             Box(
                 Modifier.requiredSize(side).align(Alignment.TopStart)
@@ -1130,7 +1130,7 @@ private fun PanelFlight(
 @Composable
 internal fun SoftSleeve(
     modifier: Modifier,
-    sleeve: androidx.compose.ui.draw.CacheDrawScope.() -> Pair<Float, Float> = SLEEVE_ALL,
+    sleeve: (Size) -> Pair<Float, Float> = SLEEVE_ALL,
     blur: FloatReader = FloatReader { 1f },
     content: @Composable androidx.compose.foundation.layout.BoxScope.(blurred: Boolean) -> Unit,
 ) {
@@ -1147,7 +1147,7 @@ internal fun SoftSleeve(
     // On its side the sleeve's soft edge is its right one, towards the controls: the same band and blur,
     // turned. [sleeve] is then its right edge and width.
     val across = LocalWide.current
-    val edge: androidx.compose.ui.draw.CacheDrawScope.() -> Pair<Float, Float> = if (across && sleeve === SLEEVE_ALL) { { size.width to size.width } } else sleeve
+    val edge: (Size) -> Pair<Float, Float> = if (across && sleeve === SLEEVE_ALL) { { it.width to it.width } } else sleeve
     // With the cover at the end (a car's driver on the left) the sleeve is turned round whole, soft edge and
     // blur with it, and the picture turned back inside it: the soft edge faces the controls, never the picture.
     val mirror = across && LocalCoverAtEnd.current
@@ -1156,17 +1156,23 @@ internal fun SoftSleeve(
     // over the whole of it on every frame. The rows it leaves out are the ones it shows nothing in.
     val cropped = !across && sleeve === SLEEVE_ALL
     val cut = remember { IntArray(1) }
+    // Midnight has no wash under the sleeve, so the sleeve fades into black itself (DarkFade); upright only.
+    val dark = !across && !LocalPapers.current.coversTint && android.os.Build.VERSION.SDK_INT >= 33
+    val fade = if (dark) remember { DarkFade() } else null
     Box(
         modifier
-            .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen; if (mirror) scaleX = -1f }
-            .rubOutBottom(across) { val (bottom, height) = edge(); (bottom - height * (if (across) stage.acrossMelt else MELT)) to bottom },
+            .graphicsLayer {
+                compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen; if (mirror) scaleX = -1f
+                renderEffect = fade?.let { f -> val (bottom, height) = edge(size); f.effect(bottom - height * stage.darkMelt, bottom) }
+            }
+            .then(if (fade != null) Modifier else Modifier.rubOutBottom(across) { val (bottom, height) = edge(size); (bottom - height * (if (across) stage.acrossMelt else MELT)) to bottom }),
     ) {
         // The sharp picture gives way to the blurred copy by the same mask, so the two always add up to one. Laid
         // under it instead, the sharp picture showed through wherever the blur is thin: at the edge of a record
         // shrinking past the title on a pull down, a hard line across the soft band.
         Box(
             if (!soft || band == null) Modifier.fillMaxSize() else Modifier.fillMaxSize().drawWithCache {
-                val (bottom, height) = edge()
+                val (bottom, height) = edge(size)
                 val top = bottom - height
                 val mask = if (across) alphaGradient(stage.acrossSoft, Color.Black, top + height * (1f - stage.acrossMelt), top + height, true)
                 else alphaGradient(stage.soft, Color.Black, top + height * stage.softFrom, top + height * stage.softTo, false)
@@ -1197,7 +1203,7 @@ internal fun SoftSleeve(
                     // time the rub-out is under way. Eased, so its own start is no line. One brush per
                     // size and place, not one per frame.
                     // Cropped, this box starts `cut` rows down the sleeve.
-                    val (bottom, height) = if (cropped) (size.height + cut[0]).let { (it - cut[0]) to it.toFloat() } else edge()
+                    val (bottom, height) = if (cropped) (size.height + cut[0]).let { (it - cut[0]) to it.toFloat() } else edge(size)
                     val top = bottom - height
                     val mask = if (across) alphaGradient(stage.acrossSoft, Color.Black, top + height * (1f - stage.acrossMelt), top + height, true)
                     else alphaGradient(stage.soft, Color.Black, top + height * stage.softFrom, top + height * stage.softTo, false)
@@ -1217,6 +1223,43 @@ internal fun SoftSleeve(
             }
         }
     }
+}
+
+/**
+ * Midnight's fade of the sleeve into black, from y `top` to `bottom` of its layer: what is kept falls as
+ * nori_look's `dark_keep`, worked out at full precision and dithered once, as it is rounded to the screen's
+ * eight bits. Faded in the layer instead, every level is rounded first, and the last few near black stood
+ * as bands with a line where the last one met black. Black stays black: a pixel is only lit where the
+ * fade leaves something of the picture.
+ */
+@androidx.annotation.RequiresApi(33)
+private class DarkFade {
+    private val shader = android.graphics.RuntimeShader(
+        """
+        uniform shader content;
+        uniform float top;
+        uniform float bottom;
+        uniform float power;
+        half4 main(float2 p) {
+            half4 c = content.eval(p);
+            float t = clamp((p.y - top) / (bottom - top), 0.0, 1.0);
+            c *= pow(1.0 - t, power);
+            float n = fract(sin(dot(floor(p), float2(12.9898, 78.233))) * 43758.5453);
+            c.rgb = max(c.rgb + (n - 0.5) / 255.0, 0.0);
+            c.a = max(c.a, max(c.r, max(c.g, c.b)));
+            return c;
+        }
+        """,
+    ).apply { setFloatUniform("power", stage.darkFadePower) }
+    private var made: Triple<Float, Float, androidx.compose.ui.graphics.RenderEffect>? = null
+
+    /** The effect for a band from [top] to [bottom]; made again only when the band moves. */
+    fun effect(top: Float, bottom: Float): androidx.compose.ui.graphics.RenderEffect =
+        made?.takeIf { it.first == top && it.second == bottom }?.third ?: run {
+            shader.setFloatUniform("top", top)
+            shader.setFloatUniform("bottom", bottom)
+            android.graphics.RenderEffect.createRuntimeShaderEffect(shader, "content").asComposeRenderEffect().also { made = Triple(top, bottom, it) }
+        }
 }
 
 /** The sleeve band's blur, and how many of it reach above the band (past that a blur adds next to nothing). */
