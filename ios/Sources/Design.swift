@@ -294,9 +294,6 @@ final class ChipStrip: UIScrollView {
     private let row = UIStackView()
     private(set) var chips: [Chip] = []
     var picked: ((Int) -> Void)?
-    /// A chip before the others that turns on and off by itself (a filter), and what a tap on it does.
-    private var filter: Chip?
-    var toggled: ((Bool) -> Void)?
 
     init(spacing: CGFloat = 8) {
         super.init(frame: .zero)
@@ -316,15 +313,8 @@ final class ChipStrip: UIScrollView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func set(_ words: [String], chosen: Int, filter: (words: String, on: Bool)? = nil) {
+    func set(_ words: [String], chosen: Int) {
         chips.forEach { $0.removeFromSuperview() }
-        self.filter?.removeFromSuperview()
-        self.filter = filter.map { f in
-            let c = Chip(f.words, chosen: f.on)
-            c.addTarget(self, action: #selector(flip(_:)), for: .touchUpInside)
-            row.addArrangedSubview(c)
-            return c
-        }
         chips = words.enumerated().map { i, w in
             let c = Chip(w, chosen: i == chosen)
             c.tag = i
@@ -338,11 +328,6 @@ final class ChipStrip: UIScrollView {
         guard !c.chosen else { return }
         chips.forEach { $0.chosen = $0 === c }
         picked?(c.tag)
-    }
-
-    @objc private func flip(_ c: Chip) {
-        c.chosen.toggle()
-        toggled?(c.chosen)
     }
 }
 
