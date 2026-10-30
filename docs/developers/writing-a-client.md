@@ -181,8 +181,11 @@ eviction order) and downloads. A browser keeps none (`keeps_music: false`).
   answers is applied to the engine (`Session::setting` does this on the host). Sizes on disk and counts
   are handed in as `PageFacts`.
 - **Appearance** (below), and the `motion` setting: Full, Reduced or E-ink. nori's choice wins over the
-  system's.
-- **Gestures and animation**: their feel is per platform.
+  system's. Reduced makes every move direct and keeps the fades; E-ink makes everything direct.
+- **Gestures and animation**: their feel is per platform. How long things take and the curve they move
+  on are the core's (`stage`: `move_ms` and `move_ease` for a move from rest, a move let go by a finger
+  cut short to keep its speed, `fade_ms`/`fade_out_ms`, `settle_stiffness`, and the page stack's
+  `page_dim` and `page_under`).
 - **Drawing cost**: redraw only when something visible changes. A paused player draws nothing.
 - Optional: a perf recorder that reads the platform's counters into `nori-perf`
   ([the perf build](building.md#the-perf-build)).

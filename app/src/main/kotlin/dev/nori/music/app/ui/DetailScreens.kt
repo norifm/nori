@@ -190,7 +190,7 @@ private fun foldedBiography(
  * come after the page itself): it arrives with the body, and fades in where it joins if it is late.
  */
 private fun LazyItemScope.late(arrival: State<Float>): Modifier =
-    (if (AppMotion.reduce) Modifier.animateItem(null, null, null) else Modifier.animateItem()).arriving(arrival)
+    itemMotion().arriving(arrival)
 
 /** The second line of a song on its artist's page: "Album · 1979", the artist being the page's. */
 private fun albumYear(song: Song): String = listOfNotNull(song.album.takeIf { it.isNotEmpty() }, song.year.takeIf { it > 0u }).joinToString(" · ")
@@ -228,7 +228,7 @@ private fun LoadFailed(message: String) = Text(
 /*
  * Album, artist and playlist pages each have one drawing path, from whatever is known of the page so far.
  * What the row that opened it already knew (Nav's hint: cover, title, counts) is enough for the hero to be
- * there from the first frame of the slide (PageMotion), with Play held in its place and the
+ * there from the first frame of the slide (Pages), with Play held in its place and the
  * songs rising in under it (Arrive) when the server answers. A page
  * opened with no hint (a deep link, "Go to album" from a song) waits behind LoadBox, which fades the same
  * page in over its loader once the detail is there.
