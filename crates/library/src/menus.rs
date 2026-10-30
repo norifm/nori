@@ -268,6 +268,13 @@ pub fn download_glyph(phase: Option<DownloadPhase>, downloaded: bool, pending: b
     if page_whole && glyph == DownloadGlyph::Done { DownloadGlyph::None } else { glyph }
 }
 
+/// The marks of rows whose downloads stand at `states`, where nothing is known of this session's phases.
+/// `page`: the rows are a page's, whose head says when every song is downloaded.
+pub fn download_glyphs(states: &[SongDownload], page: bool) -> Vec<DownloadGlyph> {
+    let whole = page && !states.is_empty() && states.iter().all(|s| *s == SongDownload::Done);
+    states.iter().map(|s| download_glyph(None, *s == SongDownload::Done, *s == SongDownload::Pending, whole)).collect()
+}
+
 /// What a page's download entry does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -625,6 +632,10 @@ mod tests {
         // A page whose head says every song is here: its downloaded rows go unmarked, the rest keep theirs.
         assert_eq!((download_glyph(None, true, false, true), download_glyph(Some(P::Done), true, false, true)), (DownloadGlyph::None, DownloadGlyph::None));
         assert_eq!((download_glyph(Some(P::Downloading), false, false, true), download_glyph(Some(P::Failed), false, false, true)), (DownloadGlyph::Ring, DownloadGlyph::Failed));
+        use SongDownload as D;
+        assert_eq!(download_glyphs(&[D::Done, D::Done], true), [DownloadGlyph::None, DownloadGlyph::None]);
+        assert_eq!(download_glyphs(&[D::Done, D::Done], false), [DownloadGlyph::Done, DownloadGlyph::Done], "a list that is no page keeps them");
+        assert_eq!(download_glyphs(&[D::Done, D::Pending, D::None], true), [DownloadGlyph::Done, DownloadGlyph::Ring, DownloadGlyph::None]);
     }
 
 }

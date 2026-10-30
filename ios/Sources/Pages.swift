@@ -1,13 +1,16 @@
 import UIKit
 
 /// A list row: the cover (or the track number on an album), title and a quiet line; the hairline under
-/// it starts at the title, except under a song. The song playing has its title in the accent; a favorite carries the seal.
+/// it starts at the title, except under a song. The song playing has its title in the accent. A song's marks
+/// sit in columns of their own, as Android's rows: its download, then its seal at the edge, each in its
+/// place whether or not the other is shown.
 final class ItemCell: UITableViewCell {
     static let id = "item"
     let cover = CoverView()
     private let number = label(Fonts.digits(15), Theme.secondary)
     private let title = label(Fonts.font(16), Theme.label)
     private let detail = label(Fonts.font(13, .regular, .footnote), Theme.secondary)
+    private let saved = UIImageView()
     private let mark = UIImageView(image: Glyph.sealedRow)
     /// "Asked": a jam guest's request the host has yet to take.
     private let asked = label(Fonts.font(12, .medium, .caption1), Theme.secondary)
@@ -26,9 +29,9 @@ final class ItemCell: UITableViewCell {
         let text = UIStackView(arrangedSubviews: [title, detail])
         text.axis = .vertical
         text.spacing = 2
-        mark.setContentHuggingPriority(.required, for: .horizontal)
         asked.text = Say.asked
-        let trail = UIStackView(arrangedSubviews: [asked, mark])
+        let trail = UIStackView(arrangedSubviews: [asked, saved, mark])
+        trail.spacing = 8
         trail.setContentHuggingPriority(.required, for: .horizontal)
         trail.setContentCompressionResistancePriority(.required, for: .horizontal)
         for v in [cover, number, text, trail, bar, line] as [UIView] {
@@ -54,6 +57,8 @@ final class ItemCell: UITableViewCell {
             bar.heightAnchor.constraint(equalToConstant: 2),
             trail.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -Space.gutter),
             trail.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            saved.widthAnchor.constraint(equalToConstant: 15),
+            mark.widthAnchor.constraint(equalToConstant: 15),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 60),
             line.leadingAnchor.constraint(equalTo: text.leadingAnchor),
             line.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
@@ -97,8 +102,13 @@ final class ItemCell: UITableViewCell {
         self.line.isHidden = item.kind == "song"
         asked.textColor = look.quiet
         asked.isHidden = !Core.shared.isAsked(item)
+        let song = item.kind == "song"
+        saved.isHidden = !song
+        saved.image = item.download == 2 ? Glyph.downloadedRow : item.download == 1 ? Glyph.downloadingRow : nil
+        saved.tintColor = look.quiet
         mark.tintColor = look.accent
-        mark.isHidden = !(item.kind == "song" && Core.shared.rules.stars && Core.shared.isFavorite(item)) || !asked.isHidden
+        mark.isHidden = !song || !asked.isHidden
+        mark.alpha = Core.shared.rules.stars && Core.shared.isFavorite(item) ? 1 : 0
         bar.progressTintColor = look.ink
         bar.trackTintColor = look.veil(0.12)
         bar.isHidden = (item.progress?.percent ?? -1) < 0

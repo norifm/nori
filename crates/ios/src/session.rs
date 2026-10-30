@@ -975,6 +975,9 @@ mod tests {
         assert_eq!(album["head"]["k"], "downloadedAlbum");
         let ids: Vec<&str> = album["sections"][0]["items"].as_array().unwrap().iter().map(|row| row["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["a", "c"]);
+        assert!(album["sections"][0]["items"].as_array().unwrap().iter().all(|row| row.get("dl").is_none()), "a whole album's rows carry no mark");
+        let stored = downloads["sections"].as_array().unwrap().iter().find(|x| x["key"] == "stored").unwrap();
+        assert!(stored["items"].as_array().unwrap().iter().all(|row| row["dl"] == 2), "{stored}");
         let (sent, received) = std::sync::mpsc::channel();
         *COVERS.lock().unwrap() = Some(sent);
         let cover_id = CString::new("cover").unwrap();
