@@ -17,6 +17,10 @@ pub struct Stage {
     pub across_melt: f32,
     pub across_rub_out: Vec<sleeve::Stop>,
     pub across_soft: Vec<sleeve::Stop>,
+    /// Midnight's band, as a share of the sleeve height, and the power of its ease into black
+    /// (`nori_look::sleeve::dark_keep`).
+    pub dark_melt: f32,
+    pub dark_fade_power: f32,
     pub soft: Vec<sleeve::Stop>,
     pub soft_from: f32,
     pub soft_to: f32,
@@ -77,6 +81,8 @@ pub fn stage() -> Stage {
         across_melt: sleeve::ACROSS_MELT,
         across_rub_out: sleeve::ACROSS_RUB_OUT.to_vec(),
         across_soft: sleeve::ACROSS_SOFT.to_vec(),
+        dark_melt: nori_look::cover::FADE_SHARE * sleeve::DARK_MELT_REACH,
+        dark_fade_power: sleeve::DARK_FADE_POWER,
         soft: sleeve::SOFT.to_vec(),
         soft_from: sleeve::SOFT_FROM,
         soft_to: sleeve::SOFT_TO,
