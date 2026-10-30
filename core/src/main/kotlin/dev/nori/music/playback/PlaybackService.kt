@@ -577,6 +577,9 @@ class PlaybackService : MediaLibraryService() {
                 }
                 is dev.nori.music.ffi.remote.Op.Replace -> controls.handed(op)
                 is dev.nori.music.ffi.remote.Op.Volume -> dev.nori.music.remote.Remotes.setVolume(this@PlaybackService, op.percent.toInt())
+                is dev.nori.music.ffi.remote.Op.CastTo -> scope.launch {
+                    nori.plugins.castTo(dev.nori.music.ffi.plugins.CastTarget(op.output.plugin, op.output.id, op.output.name))
+                }
                 is dev.nori.music.ffi.remote.Op.Shuffle -> controls.shuffleModeEnabled = op.on
                 is dev.nori.music.ffi.remote.Op.Repeat -> controls.repeatMode = op.mode.toInt()
                 is dev.nori.music.ffi.remote.Op.Star -> scope.launch {

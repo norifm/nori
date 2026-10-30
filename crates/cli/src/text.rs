@@ -61,6 +61,11 @@ pub const FROM_A_PLUGIN: &str = "From a plugin";
 pub const PLUGIN_PATH: &str = "A .noriplugin file or a plugin folder";
 pub const NO_PLUGINS: &str = "No plugins installed.";
 pub const SECRET_SET: &str = "Set";
+/// The device a speaker is reached through.
+pub fn through(device: &str) -> String {
+    format!("through {device}")
+}
+
 pub const PLUGIN_INSTALLED: &str = "Plugin installed";
 pub const GET_PLUGINS: &str = "Get plugins";
 pub const SEARCH_PLUGINS: &str = "Search plugins";

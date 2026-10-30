@@ -168,6 +168,8 @@ pub enum Cmd {
     SwitchServer(String),
     /// Moves the music to this device, or here (None).
     Pick(Option<String>),
+    /// The music goes to this speaker, through the device reaching it.
+    CastOn(nori_core::remote::ReachedOutput),
     JamStart,
     JamEnd,
     /// Accepts (true) or refuses a jam request.
@@ -269,6 +271,7 @@ impl Cmd {
             Cmd::Images(on) => format!("images {on}"),
             Cmd::Device(d) => format!("device {d}"),
             Cmd::Pick(d) => format!("play on {d:?}"),
+            Cmd::CastOn(o) => format!("cast on {} through {}", o.output.name, o.via),
             Cmd::JamStart => "start a jam".into(),
             Cmd::JamEnd => "end the jam".into(),
             Cmd::JamDecide(r, yes) => format!("jam request {r} accepted={yes}"),
@@ -793,6 +796,8 @@ pub struct Devices {
     pub targets: Vec<nori_plugins::CastTarget>,
     /// A plugin looks for devices while the panel is open.
     pub finds: bool,
+    /// What other devices can cast to and this one cannot.
+    pub reached: Vec<nori_core::remote::ReachedOutput>,
 }
 
 /// The sheet before installing what `p` shows: what it is, what it may reach, where it comes from.
@@ -845,6 +850,8 @@ pub enum DeviceRow {
     Cast,
     /// Index into [`Devices::targets`]: a device a plugin can cast to.
     Target(usize),
+    /// Index into [`Devices::reached`]: a speaker another device casts to.
+    Reached(usize),
     /// Index into [`Devices::list`]: its name, then what it plays.
     Device(usize),
     Playing(usize),
@@ -884,6 +891,7 @@ impl Devices {
         rows.extend((0..self.targets.len()).map(DeviceRow::Target));
         if self.on {
             rows.extend((0..self.list.len()).flat_map(|i| [DeviceRow::Device(i), DeviceRow::Playing(i)]));
+            rows.extend((0..self.reached.len()).map(DeviceRow::Reached));
             if self.jams || self.jam.is_some() {
                 rows.push(DeviceRow::Jam);
             }
@@ -3508,6 +3516,11 @@ impl App {
                 }
             }
             Some(DeviceRow::Cast) => self.dirty = false,
+            Some(DeviceRow::Reached(i)) => {
+                if let Some(o) = d.reached.get(i).cloned() {
+                    self.cmds.push(Cmd::CastOn(o));
+                }
+            }
             Some(DeviceRow::Target(i)) => {
                 if let Some(t) = d.targets.get(i).cloned() {
                     self.cmds.push(Cmd::Plugin(PluginCmd::CastTo(t)));

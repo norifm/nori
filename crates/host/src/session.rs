@@ -776,6 +776,8 @@ impl Handle {
             }
             self.remotes.set(Some(r.clone()));
             self.remotes.played(&self.engine);
+            #[cfg(feature = "desktop")]
+            self.outputs_changed();
             if prefs.remote_control && !self.guest {
                 r.clone().discover_active(true);
             }
@@ -1388,6 +1390,25 @@ impl Handle {
     #[cfg(feature = "desktop")]
     pub(crate) fn cast_changed(&self, cast: Option<&nori_plugins::Cast>) {
         (self.out)(Said::Volume(shown_level(cast, self.level.get())));
+        self.remotes.cast_volume(cast.and_then(|c| c.volume), &self.engine);
+        self.outputs_changed();
+    }
+
+    /// Other devices see what plugins here can cast to now.
+    #[cfg(feature = "desktop")]
+    pub(crate) fn outputs_changed(&self) {
+        let (Some(p), Some(r)) = (&self.plugins, self.remotes.get()) else { return };
+        r.outputs_changed(p.cast_targets().into_iter().map(|t| nori_remote::wire::CastOutput { plugin: t.plugin, id: t.id, name: t.name }).collect());
+    }
+
+    /// Another device picked `output`, which a plugin here reaches.
+    pub(crate) fn cast_from_afar(&self, output: nori_remote::wire::CastOutput) {
+        #[cfg(feature = "desktop")]
+        if let Some(p) = &self.plugins {
+            p.cast_to(nori_plugins::CastTarget { plugin: output.plugin, id: output.id, name: output.name });
+        }
+        #[cfg(not(feature = "desktop"))]
+        let _ = output;
     }
 
     /// A plugin's cast with a volume of its own takes `level` as that volume.

@@ -26,11 +26,13 @@ pub struct Remotes {
     level: Arc<Level>,
     /// Another device plays, as last seen.
     mirroring: AtomicBool,
+    /// A plugin's cast's volume, which other devices see and set while it has one.
+    cast_volume: Mutex<Option<u8>>,
 }
 
 impl Remotes {
     pub(crate) fn new(level: Arc<Level>) -> Remotes {
-        Remotes { slot: Mutex::default(), level, mirroring: AtomicBool::new(false) }
+        Remotes { slot: Mutex::default(), level, mirroring: AtomicBool::new(false), cast_volume: Mutex::new(None) }
     }
 
     /// The active device while it is another one: the player shows and controls it instead of this one.
@@ -73,7 +75,13 @@ impl Remotes {
 
     /// The playback other devices see, from the engine's status `s`.
     fn playing(&self, s: &Status) -> Playing {
-        nori_engine::core::playing(s, self.level.percent())
+        nori_engine::core::playing(s, self.cast_volume.lock().or(self.level.percent()))
+    }
+
+    /// A plugin's cast has this volume from now on; none, this device's own again.
+    pub(crate) fn cast_volume(&self, volume: Option<u8>, engine: &Engine) {
+        *self.cast_volume.lock() = volume;
+        self.played(engine);
     }
 }
 
@@ -122,6 +130,7 @@ impl RemotePlayer for HostPlayer {
             Op::Shuffle { on } => h.shuffle_here(on),
             Op::Repeat { mode } => h.repeat_here(mode),
             Op::Volume { percent } => return h.volume_from_afar(percent as f32 / 100.0),
+            Op::CastTo { output } => return h.cast_from_afar(output),
             // The devices see it once the core has marked it.
             Op::Star { id, on } => return h.star_from_afar(id, on),
             // The core keeps transfers, pages, time exchanges and jam ops to itself.
@@ -471,6 +480,17 @@ pub(crate) mod tests {
 
         let provider = "http://music.example/rest/getCoverArt?u=ann&t=token123&s=salt456&id=ext-deezer-song-1&size=600";
         assert!(read_cover(&covers, provider).unwrap().path.is_none());
+    }
+
+    #[test]
+    fn other_devices_see_a_casts_volume_while_it_has_one() {
+        let remotes = Remotes::new(Level::new(0.4, Some(Box::new(|_| {}))));
+        let status = Status::default();
+        assert_eq!(remotes.playing(&status).volume, Some(40));
+        *remotes.cast_volume.lock() = Some(85);
+        assert_eq!(remotes.playing(&status).volume, Some(85));
+        *remotes.cast_volume.lock() = None;
+        assert_eq!(remotes.playing(&status).volume, Some(40), "this device's own again");
     }
 
     #[test]
