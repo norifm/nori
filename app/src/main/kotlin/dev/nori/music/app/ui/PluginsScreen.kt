@@ -111,7 +111,7 @@ fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, pages: PluginP
     val offers by vm.offers.collectAsStateWithLifecycle()
     val refused by vm.refused.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.loadOffers() }
-    val updates = offers.offers.filter { o -> o.state == OfferState.UPDATE && cards.any { it.id == o.id && !it.held } }
+    val updates by vm.updates.collectAsStateWithLifecycle()
     Column(Modifier.verticalScroll(rememberScrollState())) {
         LargeTitle(say.plugins, trailing = { GlyphButton(Iconoir.Plus, say.pluginsGet, Modifier.testTag("plugins-browse"), onClick = pages.browser) })
         Refused(refused)
@@ -136,7 +136,7 @@ fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, pages: PluginP
             GroupCard {
                 cards.forEachIndexed { i, c ->
                     val line = listOfNotNull(c.version, c.kinds().takeIf { it.isNotEmpty() }).joinToString(" · ")
-                    PluginLine(vm, c.id, offers.offers.firstOrNull { it.id == c.id && it.repo.url == c.repo }, c.name, c.about, line, i < cards.lastIndex, Modifier.testTag("plugin-${c.id}"), { pages.open(c.id) }) {
+                    PluginLine(vm, c.id, remember(offers, c) { vm.offerOf(c.id, c) }, c.name, c.about, line, i < cards.lastIndex, Modifier.testTag("plugin-${c.id}"), { pages.open(c.id) }) {
                         NoriSwitch(c.enabled, { on -> vm.turn(c.id, on) }, Modifier.testTag("plugin-on-${c.id}"))
                     }
                 }
@@ -370,8 +370,7 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
     LaunchedEffect(Unit) { vm.loadOffers() }
     val at = cards.indexOfFirst { it.id == id }
     val card = cards.getOrNull(at)
-    // What the repo it came from offers of it; a plugin from a file updates from nowhere.
-    val offer = offers.offers.firstOrNull { it.id == id && (card == null || it.repo.url == card.repo) }
+    val offer = remember(offers, card) { vm.offerOf(id, card) }
     val readme by produceState(emptyList<ReadmeBlock>(), id, offer?.readme) { value = vm.readme(id, offer) }
     val newest = offer?.versions?.firstOrNull()
     Column(Modifier.verticalScroll(rememberScrollState())) {

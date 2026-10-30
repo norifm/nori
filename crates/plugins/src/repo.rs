@@ -256,6 +256,18 @@ pub fn updates_waiting<'a>(offers: &'a [Offer], cards: &[PluginCard]) -> Vec<&'a
     offers.iter().filter(|o| o.state == OfferState::Update && cards.iter().any(|c| c.id == o.id && !c.held)).collect()
 }
 
+/// [`offer_of`] without its place, for a client that keeps none.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn offer_for(offers: Vec<Offer>, id: String, card: Option<PluginCard>) -> Option<Offer> {
+    offer_of(&offers, &id, card.as_ref()).map(|(_, o)| o.clone())
+}
+
+/// [`updates_waiting`], owned.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn offers_to_update(offers: Vec<Offer>, cards: Vec<PluginCard>) -> Vec<Offer> {
+    updates_waiting(&offers, &cards).into_iter().cloned().collect()
+}
+
 /// Those of `offers` from `repo` (any, without one) whose name or about holds `query`, by name.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn offers_found(offers: Vec<Offer>, query: String, repo: Option<String>) -> Vec<Offer> {
