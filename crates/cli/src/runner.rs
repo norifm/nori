@@ -163,9 +163,7 @@ pub fn run(o: Options) -> Result<(), String> {
         crate::backend::app().settings.put(prefs.clone());
     }
     if let Some(file) = &o.install_plugin {
-        let plugins = &nori_host::desktop::plugins(&o.data).host;
-        let installed = plugins.install(file).map_err(|e| format!("{}: {e:?}", file.display()))?;
-        plugins.turn(installed.id.clone(), true);
+        nori_host::desktop::install_plugin(&o.data, file)?;
     }
     if let Some(kind) = o.provider.clone() {
         let list = nori_core::settings::ServerList { servers: prefs.servers.clone(), active_server_id: prefs.active_server_id.clone() };

@@ -907,6 +907,11 @@ impl ByteSource for JavaBytes {
         open_java(&self.bridge, url, &self.key, from, Some(end), cancel)
     }
 
+    /// Under no key: Kotlin's network alone.
+    fn open_plain(&self, url: &str, from: u64, cancel: &Cancel) -> Result<Body, OpenError> {
+        open_java(&self.bridge, url, "", from, None, cancel)
+    }
+
     /// A radio stream through `RustBridge.openLive` (uncached, ICY metadata on); also returns `icy-metaint`.
     fn open_live(&self, url: &str) -> Result<(Body, Option<usize>), String> {
         let (java, mut env) = env().ok_or("no JVM")?;
@@ -1016,6 +1021,10 @@ impl ByteSource for AheadBytes {
             Some(key) => open_java(&self.0, url, key, from, Some(end), cancel),
             None => Err("asked without its cache key".into()),
         }
+    }
+
+    fn open_plain(&self, url: &str, from: u64, cancel: &Cancel) -> Result<Body, OpenError> {
+        open_java(&self.0, url, "", from, None, cancel)
     }
 }
 
