@@ -179,7 +179,7 @@
     color: var(--accent);
   }
   .search:focus-within {
-    width: 280px;
+    width: 360px;
     border-color: var(--accent);
   }
   .search :global(.icon) {
@@ -193,7 +193,7 @@
       padding: 0 8px;
     }
     .search:focus-within {
-      width: 220px;
+      width: 300px;
       padding: 0 12px 0 10px;
     }
   }
@@ -213,14 +213,14 @@
   input::-webkit-search-cancel-button {
     display: none;
   }
-  /* A popover, as the menus: under the pill, level with the field's right edge. Its rows' corners are the
-     tile's less the inset; a cover's are the row's less the 6 px it sits in. */
+  /* A popover, as the menus: hanging from the field, as wide as it, as the desktop's. Its rows' corners are
+     the tile's less the inset; a cover's are the row's less the 6 px it sits in. */
   .results {
     --inner-art: calc(var(--inner) - 6px);
     position: absolute;
     top: 46px;
+    left: 0;
     right: 0;
-    width: 380px;
     max-height: calc(100vh - 160px);
     overflow-y: auto;
     z-index: 5;

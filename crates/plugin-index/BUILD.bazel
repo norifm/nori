@@ -1,0 +1,26 @@
+# Generated from Cargo manifests by tools/bazel/generate.py.
+load("//tools/bazel:workspace.bzl", "workspace_crate")
+
+workspace_crate({'name': 'nori-plugin-index',
+ 'edition': '2021',
+ 'version': '0.7.2',
+ 'targets': [{'name': 'nori_plugin_index', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True}],
+ 'features': {'tests': [], 'desktop': [], 'desktop-tests': []},
+ 'local': [],
+ 'registry': [{'label': '@crates//:serde-1.0.229',
+               'kind': 'normal',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests', 'desktop', 'desktop-tests']},
+              {'label': '@crates//:serde_json-1.0.151',
+               'kind': 'normal',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests', 'desktop', 'desktop-tests']},
+              {'label': '@crates//:wasmparser-0.261.0',
+               'kind': 'normal',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests', 'desktop', 'desktop-tests']}],
+ 'resources': [],
+ 'aliases': {}})

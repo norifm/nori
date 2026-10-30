@@ -353,6 +353,18 @@ impl Nori {
         Value::from(pages.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>()).to_string()
     }
 
+    /// The plugins nori's own repo lists, newest version first, each with what stops it in a browser
+    /// (`web_fit`): `[{ id, name, about, icon, version, fit }]`.
+    pub async fn plugin_offers(&self) -> Result<String, JsValue> {
+        let answer = fetch::fetch(nori_core::transport::Exchange { url: nori_plugin_index::OFFICIAL.into(), timeout_ms: 15_000, ..Default::default() }).await.map_err(|e| error(e.to_string()))?;
+        if !(200..=299).contains(&answer.status) {
+            return Err(error(format!("HTTP {}", answer.status)));
+        }
+        let index = nori_plugin_index::parse(&answer.body).map_err(error)?;
+        let offers: Vec<Value> = index.plugins.iter().map(|l| json!({ "id": l.id, "name": l.name, "about": l.about, "icon": l.icon, "version": l.versions.first().map(|v| &v.version), "fit": nori_plugin_index::web_fit(l) })).collect();
+        Ok(Value::from(offers).to_string())
+    }
+
     /// Settings page `name` as a browser draws it: `[{ id, rows: [row] }]`, each row `{ item, shown,
     /// enabled, depth }` with `item` `{ kind: "setting", name, type, options, min, max, value, chips }`
     /// or `{ kind: "note", note }`. Words are the page's.

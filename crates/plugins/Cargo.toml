@@ -23,6 +23,7 @@ nori-sink-protocol = { path = "../sink-protocol" }
 # The clock a plugin's WASI monotonic clock reads.
 nori-time = { path = "../time" }
 nori-net = { path = "../net" }
+nori-plugin-index = { path = "../plugin-index" }
 nori-player = { path = "../player" }
 nori-settings = { path = "../settings" }
 # The AutoMix seams plugins fill (mixing.rs).
