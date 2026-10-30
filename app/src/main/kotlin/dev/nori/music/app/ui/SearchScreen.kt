@@ -3,6 +3,7 @@ package dev.nori.music.app.ui
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -71,14 +72,9 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
             val scroll = rememberLazyListState()
             LazyColumn(Modifier.pageToEdges().fadesUnderTitle(scroll), scroll, contentPadding = pagePadding(LocalChromeInset.current)) {
                 if (ui.history.isNotEmpty()) item(key = "recent") {
-                    SectionHeader(say.recentSearches, action = { TextAction(say.clear, vm::clearHistory) })
+                    SectionHeader(say.recentSearches, action = { TextAction(say.clearAll, vm::clearHistory) })
                 }
-                items(ui.history, key = { "q-$it" }) { q ->
-                    Row(Modifier.fillMaxWidth().clickable { vm.setQuery(q) }.padding(horizontal = Space.gutter, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.Icon(Iconoir.ClockRotateRight, null, Modifier.padding(end = 14.dp).size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(q, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
-                    }
-                }
+                items(ui.history, key = { "q-$it" }) { q -> RecentSearch(q, { vm.setQuery(q) }, { vm.forgetSearch(q) }, Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)) }
                 if (browse.genres.isNotEmpty()) {
                     item(key = "genres") { SectionTitle(say.librarySection(dev.nori.music.ffi.settings.LibrarySection.GENRES), onMore = { nav.librarySection(dev.nori.music.ffi.settings.LibrarySection.GENRES) }) }
                     items(browse.genres.chunked(2), key = { "g-" + it.first().name }) { pair ->
@@ -225,3 +221,21 @@ private fun GenreCard(g: dev.nori.music.ffi.library.GenreTile, cover: String?, o
 
 private val GENRE_TILE = 72.dp
 private val COVER_FADE = androidx.compose.ui.graphics.Brush.horizontalGradient(0f to androidx.compose.ui.graphics.Color.Transparent, 0.75f to androidx.compose.ui.graphics.Color.Black)
+
+/** A recent search: tapped, it searches again; swiped either way, it is forgotten. */
+@Composable
+private fun RecentSearch(query: String, onClick: () -> Unit, onForget: () -> Unit, modifier: Modifier) {
+    val forget = RowSwipe(Iconoir.Xmark, say.remove, onForget)
+    val swipe = remember { SwipeState() }
+    Box(modifier.fillMaxWidth()) {
+        SwipeBackdrop(swipe, forget, forget, Modifier.matchParentSize())
+        Row(
+            Modifier.fillMaxWidth().swipeable(swipe, forget, forget, MaterialTheme.colorScheme.background, gone = true)
+                .clickable(onClick = onClick).padding(horizontal = Space.gutter, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            androidx.compose.material3.Icon(Iconoir.ClockRotateRight, null, Modifier.padding(end = 14.dp).size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(query, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+}

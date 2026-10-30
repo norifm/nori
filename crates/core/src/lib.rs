@@ -331,13 +331,19 @@ impl Core {
 
     pub fn search_history(&self) -> Result<Vec<String>> {
         let c = self.db.lock();
-        let mut st = c.prepare_cached("SELECT query FROM searches WHERE server=sid() ORDER BY ts DESC")?;
-        let rows = st.query_map([], |r| r.get(0))?;
+        let mut st = c.prepare_cached("SELECT query FROM searches WHERE server=sid() ORDER BY ts DESC LIMIT ?1")?;
+        let rows = st.query_map([crate::search::SEARCHES_KEPT], |r| r.get(0))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     pub fn search_forget(&self) -> Result<()> {
         self.db.lock().execute("DELETE FROM searches WHERE server=sid()", [])?;
+        Ok(())
+    }
+
+    /// Forgets one recent search.
+    pub fn search_forget_one(&self, query: String) -> Result<()> {
+        self.db.lock().execute("DELETE FROM searches WHERE server=sid() AND query=?1", [query])?;
         Ok(())
     }
 }
@@ -463,7 +469,7 @@ impl Core {
     pub fn search_remember(&self, query: String) -> Result<()> {
         let c = self.db.lock();
         c.execute("INSERT OR REPLACE INTO searches(server, query, ts) VALUES(sid(), ?1, ?2)", params![query.trim(), db::now_ms()])?;
-        c.execute("DELETE FROM searches WHERE server=sid() AND query NOT IN (SELECT query FROM searches WHERE server=sid() ORDER BY ts DESC LIMIT 20)", [])?;
+        c.execute("DELETE FROM searches WHERE server=sid() AND query NOT IN (SELECT query FROM searches WHERE server=sid() ORDER BY ts DESC LIMIT ?1)", [crate::search::SEARCHES_KEPT])?;
         Ok(())
     }
 }

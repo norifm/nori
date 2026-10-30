@@ -158,4 +158,26 @@ pub(crate) mod tests {
         assert!(history.contains(&"dogs".to_string()));
     }
 
+    #[test]
+    fn recent_searches_keep_the_newest_and_forget_one() {
+        let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        // Older searches, newest last.
+        let older: Vec<String> = (0..SEARCHES_KEPT + 2).map(|i| format!("query {i}")).collect();
+        for (ts, q) in older.iter().enumerate() {
+            core.db.lock().execute("INSERT INTO searches(server, query, ts) VALUES(sid(), ?1, ?2)", rusqlite::params![q, ts as i64]).unwrap();
+        }
+        // A profile that kept more before the cap still reads only the newest.
+        assert_eq!(core.search_history().unwrap().len(), SEARCHES_KEPT as usize);
+        core.search_remember("newest".into()).unwrap();
+        let newest: Vec<String> = std::iter::once("newest".to_string()).chain(older.iter().rev().take(SEARCHES_KEPT as usize - 1).cloned()).collect();
+        assert_eq!(core.search_history().unwrap(), newest);
+        let stored: i64 = core.db.lock().query_row("SELECT COUNT(*) FROM searches", [], |r| r.get(0)).unwrap();
+        assert_eq!(stored, SEARCHES_KEPT as i64);
+
+        core.search_forget_one(newest[1].clone()).unwrap();
+        let after = core.search_history().unwrap();
+        assert_eq!(after.len(), newest.len() - 1);
+        assert!(!after.contains(&newest[1]) && after.contains(&newest[0]));
+    }
+
 }

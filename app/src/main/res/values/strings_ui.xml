@@ -37,6 +37,7 @@
     <string name="report_problem_detail">Shares the app\'s log of the last day, what is playing and the settings you changed, to attach to an issue</string>
     <string name="report_failed">The report could not be written</string>
     <string name="clear">Clear</string>
+    <string name="clear_all">Clear all</string>
     <string name="reset">Reset</string>
     <string name="open">Open</string>
     <string name="import_it">Import</string>
