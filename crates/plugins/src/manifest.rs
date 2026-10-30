@@ -3,8 +3,9 @@
 
 use std::collections::BTreeMap;
 
-/// The plugin API major version this host speaks; it also loads the one before.
-pub const API: u32 = 1;
+/// The plugin API major version this host speaks. A component's types must match exactly, so a plugin
+/// built for another can't run: any change to a type in `wit/` raises it.
+pub const API: u32 = 2;
 
 /// The extension points in the order of `wit/`'s `plugin` world exports: a manifest's bits.
 pub const POINTS: [&str; 11] = ["lifecycle", "hooks", "provider", "sound-stage", "preparation", "automix", "deciders", "slots", "device-control", "lyrics", "scrobbler"];
@@ -29,6 +30,114 @@ pub struct Manifest {
     pub menu: Vec<MenuSpec>,
     /// The places in nori's screens it fills.
     pub places: Vec<Place>,
+    /// The Bluetooth devices it reaches and is offered to control.
+    pub devices: Vec<DeviceFilter>,
+    pub permissions: Vec<Permission>,
+    /// The events its `hooks` export hears.
+    pub hooks: Vec<Hook>,
+    /// What may start nori while it is closed, for it.
+    pub wake: Vec<WakeEvent>,
+    /// Commands other apps may run, each its `lifecycle.action` id.
+    pub commands: Vec<String>,
+    /// Its cache's quota, bytes.
+    pub cache_bytes: u64,
+    pub assets: Vec<AssetSpec>,
+}
+
+/// What a plugin may do beyond its own data and rows; the install sheet lists them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Permission {
+    PlaybackRead,
+    PlaybackControl,
+    LibraryRead,
+    LibraryWrite,
+    Subsonic,
+    Schedule,
+}
+
+/// An event of nori's a plugin hears.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Hook {
+    PlaybackStarted,
+    PlaybackPaused,
+    SongChanged,
+    QueueChanged,
+    FavoriteChanged,
+    ProfileOpened,
+    RouteChanged,
+    DeviceConnected,
+    SettingChanged,
+    MediaButton,
+    LyricLine,
+    OutputPicker,
+}
+
+impl Hook {
+    pub(crate) const ALL: [Hook; 12] = [Hook::PlaybackStarted, Hook::PlaybackPaused, Hook::SongChanged, Hook::QueueChanged, Hook::FavoriteChanged, Hook::ProfileOpened, Hook::RouteChanged, Hook::DeviceConnected, Hook::SettingChanged, Hook::MediaButton, Hook::LyricLine, Hook::OutputPicker];
+}
+
+/// What starts nori while it is closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum WakeEvent {
+    BluetoothConnected,
+    Boot,
+}
+
+impl WakeEvent {
+    pub(crate) const ALL: [WakeEvent; 2] = [WakeEvent::BluetoothConnected, WakeEvent::Boot];
+
+    /// As `wake.want` and the `woke` hook name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            WakeEvent::BluetoothConnected => "bluetooth-connected",
+            WakeEvent::Boot => "boot",
+        }
+    }
+}
+
+/// A large file its manifest names.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssetSpec {
+    pub name: String,
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
+}
+
+/// Bluetooth devices a plugin reaches: one matches when all that is given matches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceFilter {
+    /// `*` for any run of characters, ignoring case.
+    pub name: Option<String>,
+    pub service: Option<String>,
+    pub vendor: Option<u16>,
+}
+
+impl DeviceFilter {
+    pub fn matches(&self, d: &crate::BtDevice) -> bool {
+        self.name.as_deref().is_none_or(|p| glob(&p.to_lowercase(), &d.name.to_lowercase()))
+            && self.service.as_deref().is_none_or(|u| d.services.iter().any(|s| s.eq_ignore_ascii_case(u)))
+            && self.vendor.is_none_or(|v| d.vendor == Some(v))
+    }
+}
+
+/// Whether `text` is `pattern`, where `*` stands for any run of characters.
+fn glob(pattern: &str, text: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let first = parts.next().unwrap_or_default();
+    let Some(mut rest) = text.strip_prefix(first) else { return false };
+    let parts: Vec<&str> = parts.collect();
+    let Some((last, middle)) = parts.split_last() else { return rest.is_empty() };
+    for p in middle {
+        match rest.find(p) {
+            Some(at) => rest = &rest[at + p.len()..],
+            None => return false,
+        }
+    }
+    rest.len() >= last.len() && rest.ends_with(last)
 }
 
 /// An action it adds to nori's menus of `kinds`; `id` is its label's key in its strings.
@@ -75,12 +184,7 @@ pub enum Place {
     Devices,
 }
 
-/// Where a sound stage sits in the chain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Slot {
-    Song,
-    Master,
-}
+pub use nori_player::stage::Slot;
 
 /// One row of its page, drawn by each client with its own components.
 #[derive(Debug, Clone, PartialEq)]
@@ -157,6 +261,11 @@ pub enum Refusal {
     Id,
     /// It would override a value nori doesn't have.
     UnknownKey(String),
+    /// Its repo lists a signature that isn't its author's key's over this package.
+    Signature,
+    /// It isn't signed by the key the installed plugin was first installed with: it installs only
+    /// once the plugin is removed.
+    OtherKey,
 }
 
 /// For logs (uniffi gives no message).
@@ -215,10 +324,16 @@ impl Manifest {
         custom_section(wasm, "nori:plugin").ok_or_else(|| Refusal::Unreadable("no nori:plugin section (built without the SDK's plugin!)".into()))
     }
 
+    /// The manifest kept beside an installed plugin, whatever API it was built for: one left behind by a
+    /// new nori stays listed, with its store, until its update replaces it.
+    pub(crate) fn of_installed(section: &[u8]) -> Option<Manifest> {
+        Manifest::decode(section)
+    }
+
     /// The manifest in a `nori:plugin` section's bytes.
     pub(crate) fn of_section(section: &[u8]) -> Result<Manifest, Refusal> {
         let m = Manifest::decode(section).ok_or_else(|| Refusal::Unreadable("its manifest section can't be read".into()))?;
-        if m.api != API && m.api + 1 != API {
+        if m.api != API {
             return Err(Refusal::Api(m.api));
         }
         let parts: Vec<&str> = m.id.split('.').collect();
@@ -227,6 +342,10 @@ impl Manifest {
         }
         if let Some(k) = m.overrides.iter().find(|k| !nori_settings::overrides::overridable(k)) {
             return Err(Refusal::UnknownKey(k.clone()));
+        }
+        let hex = |s: &str| s.len() == 64 && s.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c));
+        if let Some(a) = m.assets.iter().find(|a| !hex(&a.sha256) || a.name.is_empty() || !a.name.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) || a.name.starts_with('.')) {
+            return Err(Refusal::Unreadable(format!("asset {:?} needs a plain name and a sha256", a.name)));
         }
         Ok(m)
     }
@@ -266,8 +385,51 @@ impl Manifest {
             .map(|_| Some(MenuSpec { id: i.str()?, glyph: *GLYPHS.get(i.byte()? as usize)?, kinds: (0..i.u16()?).map(|_| KINDS.get(i.byte()? as usize).copied()).collect::<Option<_>>()? }))
             .collect::<Option<Vec<_>>>()?;
         let places = (0..i.u16()?).map(|_| PLACES.get(i.byte()? as usize).copied()).collect::<Option<Vec<_>>>()?;
+        // Absent from a manifest written before it.
+        let devices = if i.0.is_empty() {
+            Vec::new()
+        } else {
+            (0..i.u16()?)
+                .map(|_| {
+                    let (name, service, vendor) = (i.opt_str()?, i.opt_str()?, i.u32()?);
+                    Some(DeviceFilter { name, service, vendor: u16::try_from(vendor).ok() })
+                })
+                .collect::<Option<Vec<_>>>()?
+        };
         let points = POINTS.iter().enumerate().filter(|(k, _)| bits & (1 << k) != 0).map(|(_, p)| *p).collect();
-        Some(Manifest { id, version, api, points, stage, net, signin, overrides, rows, menu, places })
+        let mut m = Manifest { id, version, api, points, stage, net, signin, overrides, rows, menu, places, devices, permissions: Vec::new(), hooks: Vec::new(), wake: Vec::new(), commands: Vec::new(), cache_bytes: 0, assets: Vec::new() };
+        // A plugin built before these fields ends here.
+        if i.0.is_empty() {
+            return Some(m);
+        }
+        const PERMISSIONS: [Permission; 6] = [Permission::PlaybackRead, Permission::PlaybackControl, Permission::LibraryRead, Permission::LibraryWrite, Permission::Subsonic, Permission::Schedule];
+        // Kinds a newer SDK adds are skipped.
+        let bytes = |i: &mut In| -> Option<Vec<u8>> { (0..i.u16()?).map(|_| i.byte()).collect() };
+        m.permissions = bytes(&mut i)?.into_iter().filter_map(|b| PERMISSIONS.get(b as usize).copied()).collect();
+        m.hooks = bytes(&mut i)?.into_iter().filter_map(|b| Hook::ALL.get(b as usize).copied()).collect();
+        m.wake = bytes(&mut i)?.into_iter().filter_map(|b| WakeEvent::ALL.get(b as usize).copied()).collect();
+        m.commands = i.strs()?;
+        m.cache_bytes = i.u32()? as u64 * 1024 * 1024;
+        m.assets = (0..i.u16()?).map(|_| Some(AssetSpec { name: i.str()?, url: i.str()?, size: u64::from_le_bytes(i.take(8)?.try_into().ok()?), sha256: i.str()? })).collect::<Option<Vec<_>>>()?;
+        Some(m)
+    }
+
+    pub fn may(&self, p: Permission) -> bool {
+        self.permissions.contains(&p)
+    }
+
+    pub fn hears(&self, h: Hook) -> bool {
+        self.extends("hooks") && self.hooks.contains(&h)
+    }
+
+    /// Whether it reaches Bluetooth devices.
+    pub fn reaches_devices(&self) -> bool {
+        !self.devices.is_empty()
+    }
+
+    /// Whether Bluetooth device `d` is among those it reaches.
+    pub fn reaches_device(&self, d: &crate::BtDevice) -> bool {
+        self.devices.iter().any(|f| f.matches(d))
     }
 
     pub fn extends(&self, point: &str) -> bool {
@@ -279,14 +441,30 @@ impl Manifest {
         self.rows.iter().filter(|r| r.kind.numeric()).map(|r| stored.get(&r.id).copied().or(r.default).unwrap_or(0.0)).collect()
     }
 
-    /// Whether HTTP to `host` is allowed.
+    /// Whether it may reach private addresses: `lan` among its hosts.
+    pub fn lan(&self) -> bool {
+        self.net.iter().any(|d| d == crate::lan::LAN)
+    }
+
+    /// Whether HTTP to `host` is allowed by name (`lan` is no host's name).
     pub fn reaches(&self, host: &str) -> bool {
-        let host = host.to_ascii_lowercase();
-        self.net.iter().any(|d| match d.strip_prefix("*.") {
+        among(self.net.iter().filter(|d| *d != crate::lan::LAN), host)
+    }
+
+    /// Whether a sign-in page may start at `host`.
+    pub fn signs_in(&self, host: &str) -> bool {
+        among(&self.signin, host)
+    }
+}
+
+/// Whether `host` is one of `hosts`, where a leading `*.` takes in subdomains.
+fn among<'a>(hosts: impl IntoIterator<Item = &'a String>, host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    !host.is_empty()
+        && hosts.into_iter().any(|d| match d.strip_prefix("*.") {
             Some(base) => host == base || host.ends_with(&format!(".{base}")),
             None => host == *d,
         })
-    }
 }
 
 /// The first custom section `name` in `wasm`, a component's nested modules included.
@@ -330,6 +508,24 @@ mod tests {
     }
 
     #[test]
+    fn session_hooks_wakes_and_storage_read_back() {
+        const ASSETS: [sdk::Asset; 1] = [sdk::Asset { name: "model.bin", url: "https://x.example/m", size: 5 << 30, sha256: "ab" }];
+        let m = sdk::Manifest {
+            permissions: &[sdk::Permission::PlaybackControl, sdk::Permission::Schedule],
+            hooks: &[sdk::Hook::SongChanged, sdk::Hook::LyricLine],
+            wake: &[sdk::Wake::Boot],
+            commands: &["toggle"],
+            cache_mb: 3,
+            assets: &ASSETS,
+            ..sdk::Manifest::new("fm.nori.hooked")
+        };
+        let read = written(&m, 1 << 1);
+        assert_eq!((read.permissions.clone(), read.hooks.clone(), read.wake.clone(), read.commands.clone(), read.cache_bytes), (vec![Permission::PlaybackControl, Permission::Schedule], vec![Hook::SongChanged, Hook::LyricLine], vec![WakeEvent::Boot], vec!["toggle".to_string()], 3 << 20));
+        assert_eq!(read.assets.clone(), vec![AssetSpec { name: "model.bin".into(), url: "https://x.example/m".into(), size: 5 << 30, sha256: "ab".into() }]);
+        assert!(read.hears(Hook::LyricLine) && !read.hears(Hook::QueueChanged));
+    }
+
+    #[test]
     fn the_points_are_wits_in_its_order() {
         let mut resolve = wit_parser::Resolve::default();
         let (pkg, _) = resolve.push_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../wit")).unwrap();
@@ -343,6 +539,55 @@ mod tests {
             })
             .collect();
         assert_eq!(names, POINTS.to_vec());
+    }
+
+    #[test]
+    fn devices_match_by_name_service_and_vendor() {
+        const FILTERS: [sdk::DeviceFilter; 2] = [sdk::DeviceFilter::ANY.name("WH-1000XM*"), sdk::DeviceFilter::ANY.service("0000fe2c-0000-1000-8000-00805f9b34fb").vendor(0x054c)];
+        let m = written(&sdk::Manifest { devices: &FILTERS, ..sdk::Manifest::new("fm.nori.sony") }, 0);
+        assert_eq!(m.devices[1].vendor, Some(0x054c));
+        let device = |name: &str, services: &[&str], vendor| crate::BtDevice { id: "a".into(), name: name.into(), services: services.iter().map(|s| s.to_string()).collect(), vendor, product: None };
+        for (d, reached) in [
+            (device("WH-1000XM5", &[], None), true),
+            (device("wh-1000xm4 (living room)", &[], None), true),
+            (device("WF-1000XM5", &[], None), false),
+            (device("Headset", &["0000FE2C-0000-1000-8000-00805F9B34FB"], Some(0x054c)), true),
+            (device("Headset", &["0000fe2c-0000-1000-8000-00805f9b34fb"], Some(0x004c)), false),
+        ] {
+            assert_eq!(m.reaches_device(&d), reached, "{}", d.name);
+        }
+        let none = written(&sdk::Manifest::new("fm.nori.none"), 0);
+        assert!(!none.reaches_devices() && !none.reaches_device(&device("WH-1000XM5", &[], None)));
+    }
+
+    #[test]
+    fn manifests_of_each_older_sdk_read_with_none_of_what_came_after() {
+        const FILTERS: [sdk::DeviceFilter; 1] = [sdk::DeviceFilter::ANY.name("WH-*")];
+        // The bytes an empty group takes: the devices' count, then the permissions', hooks' and wakes'
+        // counts, the commands' count, the cache quota and the assets' count.
+        let (devices, session) = (2, 2 * 3 + 2 + 4 + 2);
+        let full = sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, hooks: &[sdk::Hook::SongChanged], ..sdk::Manifest::new("fm.nori.new") };
+        for (m, cut, has_devices, has_hooks) in [
+            // Released plugins: nothing after the places.
+            (sdk::Manifest { places: &[sdk::Place::Devices], ..sdk::Manifest::new("fm.nori.old") }, devices + session, false, false),
+            // Built with devices, before the session's fields.
+            (sdk::Manifest { places: &[sdk::Place::Devices], devices: &FILTERS, ..sdk::Manifest::new("fm.nori.devices") }, session, true, false),
+            (full, 0, true, true),
+        ] {
+            let bytes: [u8; 1024] = sdk::encode::<1024>(&m, "1.0.0", 1 << 1);
+            let read = Manifest::decode(&bytes[..sdk::encoded_len(&m, "1.0.0") - cut]).unwrap();
+            assert_eq!(read.places, vec![Place::Devices], "{}", m.id);
+            assert_eq!(read.reaches_devices(), has_devices, "{}", m.id);
+            assert_eq!(read.hears(Hook::SongChanged), has_hooks, "{}", m.id);
+            assert!(read.permissions.is_empty() && read.assets.is_empty() && read.cache_bytes == 0, "{}", m.id);
+        }
+    }
+
+    #[test]
+    fn globs_take_any_run_for_a_star() {
+        for (p, t, ok) in [("a*c", "abbc", true), ("a*c", "ab", false), ("*", "", true), ("ab", "abc", false), ("*b*", "abc", true), ("a*a", "a", false)] {
+            assert_eq!(glob(p, t), ok, "{p} {t}");
+        }
     }
 
     #[test]

@@ -9,9 +9,9 @@ use std::sync::Arc;
 use wasmtime::component::Component;
 use wasmtime::Store;
 
-use crate::host::Side;
 use crate::manifest::{Manifest, Refusal};
 use crate::runtime::{self, Host, Plugin};
+use crate::safe::Mark;
 
 /// A running instance: its store and its exports.
 pub struct Running {
@@ -28,7 +28,8 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn start(manifest: Arc<Manifest>, dir: PathBuf, component: Component, side: Arc<dyn Side>, transport: crate::Transported) -> Result<Worker, Refusal> {
+    /// Each job on its thread is marked as a call of the plugin's (`mark`), for safe mode.
+    pub(crate) fn start(manifest: Arc<Manifest>, dir: PathBuf, component: Component, shared: runtime::Shared, mark: Mark) -> Result<Worker, Refusal> {
         let linker = runtime::linker(&component)?;
         let (jobs, rx) = mpsc::channel::<Job>();
         let name = format!("plugin {}", manifest.id);
@@ -37,7 +38,7 @@ impl Worker {
             .spawn(move || {
                 // A fresh instance (the first, or one after a call failed), started when it has a lifecycle.
                 let make = || -> wasmtime::Result<Running> {
-                    let mut store = runtime::store(manifest.clone(), &dir, side.clone(), transport.clone());
+                    let mut store = runtime::store(manifest.clone(), &dir, shared.clone(), mark.clone());
                     store.set_fuel(runtime::CALL_FUEL)?;
                     let plugin = Plugin::instantiate(&mut store, &component, &linker)?;
                     if manifest.extends("lifecycle") {
@@ -47,13 +48,15 @@ impl Worker {
                 };
                 let mut running: Option<Running> = None;
                 for job in rx {
-                    if running.is_none() {
-                        running = make().map_err(|e| nori_model::alog::info(&format!("plugin {}: can't start: {e}", manifest.id))).ok();
-                    }
-                    if let Some(r) = running.as_mut() {
-                        let _ = r.store.set_fuel(runtime::CALL_FUEL);
-                    }
-                    job(&mut running);
+                    mark.calling(|| {
+                        if running.is_none() {
+                            running = make().map_err(|e| nori_model::alog::info(&format!("plugin {}: can't start: {e}", manifest.id))).ok();
+                        }
+                        if let Some(r) = running.as_mut() {
+                            let _ = r.store.set_fuel(runtime::CALL_FUEL);
+                        }
+                        job(&mut running);
+                    });
                 }
             })
             .map_err(|e| Refusal::Unreadable(e.to_string()))?;
@@ -82,6 +85,34 @@ impl Worker {
         });
         self.jobs.send(job).ok()?;
         rx.await.ok()
+    }
+}
+
+/// Fuel for a decider's call: well under a call's, a few hundred ms of work.
+pub(crate) const DECIDE_FUEL: u64 = 2_000_000_000;
+
+impl Worker {
+    /// Runs `f` on the plugin's thread with a decider's fuel and waits at most `budget` for it; None
+    /// past it, or when its call failed. An answer that comes later is dropped, and a call whose
+    /// caller has gone by its turn is skipped.
+    pub fn decide<R: Send + 'static>(&self, budget: std::time::Duration, f: impl FnOnce(&mut Store<Host>, &Plugin) -> wasmtime::Result<R> + Send + 'static) -> Option<R> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let job: Job = Box::new(move |running| {
+            let Some(r) = running.as_mut() else { return };
+            if r.store.set_fuel(DECIDE_FUEL).is_err() {
+                return;
+            }
+            // Its caller has gone (it waited past its budget): the thread goes on to what is still awaited.
+            if tx.send(None).is_err() {
+                return;
+            }
+            let _ = tx.send(attempt(running, f));
+        });
+        self.jobs.send(job).ok()?;
+        let deadline = std::time::Instant::now() + budget;
+        // The first message says the call began, the second is its answer.
+        rx.recv_timeout(budget).ok()?;
+        rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())).ok().flatten()
     }
 }
 

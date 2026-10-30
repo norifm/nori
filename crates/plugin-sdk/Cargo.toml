@@ -14,3 +14,8 @@ wit-bindgen = "0.46"
 [build-dependencies]
 # Reads wit/ to write the extension points' traits and their defaults (build.rs); wit-bindgen's own parser.
 wit-parser = "0.239"
+
+[dev-dependencies]
+# examples/sign.rs: an author's key, and a package's signature for its repo's index.
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+sha2 = "0.10"

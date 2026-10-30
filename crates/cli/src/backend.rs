@@ -45,6 +45,8 @@ pub enum Msg {
     Search(SearchView),
     /// A status bar message.
     Note { text: String, error: bool },
+    /// A plugin's cast started, changed or ended (None).
+    Cast(Option<nori_plugins::Cast>),
     /// Read again what `Req` reads, where it is on screen.
     Reload(Req),
     /// The queue another device left on the server, to offer here.
@@ -73,10 +75,21 @@ pub enum Msg {
     Preview(Result<nori_plugins::PluginPreview, nori_plugins::Refusal>),
     /// The plugins' lines in `song`'s info and under the player's output.
     Slots { song: String, info: Vec<nori_plugins::InfoGroup>, status: Vec<String> },
+    /// Plugin `id`'s README.
+    Readme { id: String, blocks: Vec<nori_plugins::ReadmeBlock> },
     /// What the plugin repos offer.
     Offers(nori_plugins::Offers),
     /// Plugins updated on their own: each one's id and new version.
     Updated(Vec<(String, String)>),
+    /// What a plugin's page shows (its rows' lines, its assets), or the devices plugins control,
+    /// changed: read them again.
+    PluginsChanged,
+    /// A provider's plugin asks for its sign-in page at `url`.
+    PluginSignIn { plugin: String, url: String },
+    /// A backup saved, or why not.
+    BackedUp(Result<(), nori_host::desktop::BackupFailure>),
+    /// What a backup restored, or why it couldn't.
+    Restored(Result<Box<nori_core::backup::Restored>, nori_host::desktop::BackupFailure>),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }
@@ -96,6 +109,7 @@ impl Msg {
             Msg::Lyrics { song, .. } => format!("lyrics for {song}"),
             Msg::Search(v) => format!("search results for {:?}", v.query),
             Msg::Note { text, error } => format!("note {text:?} error={error}"),
+            Msg::Cast(c) => format!("cast {c:?}"),
             Msg::Offer(o) => format!("queue offered: {}", o.is_some()),
             Msg::Reload(r) => format!("read {r:?} again"),
             Msg::LoggedIn(r) => format!("logged in: {}", r.is_ok()),
@@ -111,6 +125,11 @@ impl Msg {
             Msg::Preview(r) => format!("plugin preview: {:?}", r.as_ref().map(|p| &p.card.id)),
             Msg::Slots { song, info, status } => format!("plugins on {song}: {} info groups, {} status lines", info.len(), status.len()),
             Msg::Updated(u) => format!("{} plugins updated", u.len()),
+            Msg::PluginsChanged => "plugins changed".into(),
+            Msg::PluginSignIn { plugin, .. } => format!("plugin {plugin} asks to sign in"),
+            Msg::BackedUp(r) => format!("backed up: {r:?}"),
+            Msg::Restored(r) => format!("restored: {:?}", r.as_ref().map(|r| &r.plugins)),
+            Msg::Readme { id, blocks } => format!("{id}'s readme, {} blocks", blocks.len()),
             Msg::Offers(o) => format!("{} plugins offered, {} repos unread", o.offers.len(), o.failed.len()),
             Msg::From(id, m) => format!("session {id}: {}", m.brief()),
         }

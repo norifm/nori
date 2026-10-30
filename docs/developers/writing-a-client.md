@@ -85,6 +85,8 @@ re-exports every domain crate by module name (`nori_core::playlist` is `nori_que
 | The one app database and its background writer | `nori-db` |
 | Records, `CoreError`, the log, numbers for display | `nori-model`: `model`, `alog`, `numbers`, `lines` |
 | Settings: one `StoredPrefs` field per setting, the model, the pages per client | `nori-settings`: `settings`, `settings_store`, `settings_model`, `settings_pages`, `credits` |
+| A backup of the settings, sound profiles and plugins, sealed with a password | `nori-backup` (`nori-core::backup`) |
+| Plugins: what repos offer, search, updates waiting, providers to offer on the first screen, a plugin's README and icon ([Plugins](plugins.md)) | `nori-plugins`: `offers_found`, `updates_waiting`, `provider_offers`, `offer_of`, `Plugins::offers_stand`, `Plugins::readme`, `Plugins::icon` |
 | Library, search, browse, mixes, smart playlists, history, favorites, M3U | `nori-library`: `library`, `search`, `browse`, `mixes`, `smart`, `history`, `stars`, `m3u` |
 | What each page shows, as data: discs, releases by kind, big buttons, row swipes, song menus, the car tree | `nori-library`: `pages`, `rows`, `menus`, `car` |
 | The queue: order, shuffle, autofill, radio, the offline bridge, scrobbling, the rules at each moment | `nori-queue`: `playlist`, `queue`, `autofill`, `bridge`, `scrobble`, `rules` |
@@ -180,6 +182,12 @@ eviction order) and downloads. A browser keeps none (`keeps_music: false`).
   The client words and draws them and changes a setting by name (`setting_set`). The `SettingChange` it
   answers is applied to the engine (`Session::setting` does this on the host). Sizes on disk and counts
   are handed in as `PageFacts`.
+- **Backup**: the Data page's Backup section has two actions, `MakeBackup` and `RestoreBackup`. The
+  client picks the file and asks for the password; `backup_make` gives the sealed bytes to write and
+  `backup_restore` takes them back. A restore answers the `SettingChange` to apply as a setting's is
+  (`Session::backup_restored` on the host) and each plugin's `PluginReturn`; a `BackupError` (wrong password,
+  damaged, not a backup, newer, no password, database) is the client's to word. The desktop and the
+  terminal go through `nori_host::desktop::{make_backup, restore_backup}`.
 - **Appearance** (below), and the `motion` setting: Full, Reduced or E-ink. nori's choice wins over the
   system's. Reduced makes every move direct and keeps the fades; E-ink makes everything direct.
 - **Gestures and animation**: their feel is per platform. How long things take and the curve they move

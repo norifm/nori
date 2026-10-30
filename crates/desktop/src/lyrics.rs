@@ -59,11 +59,11 @@ impl SongLyrics {
         self.pick.lyrics.lines.is_empty()
     }
 
-    /// Source credit; empty for the server's own lyrics.
-    pub fn credit(&self) -> String {
-        match self.pick.origin {
+    /// Source credit, a plugin's service by `plugin_name`; empty for the server's own lyrics.
+    pub fn credit(&self, plugin_name: &dyn Fn(&str) -> String) -> String {
+        match &self.pick.origin {
             LyricsOrigin::Server => String::new(),
-            other => format!("Lyrics from {}", crate::words::lyrics_origin(other)),
+            other => format!("Lyrics from {}", crate::words::lyrics_origin(other, plugin_name)),
         }
     }
 

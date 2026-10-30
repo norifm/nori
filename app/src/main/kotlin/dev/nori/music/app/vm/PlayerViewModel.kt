@@ -30,6 +30,9 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     /** The lines plugins say under the output row, as last asked. */
     val pluginStatus: StateFlow<List<String>> = _pluginStatus
 
+    /** Installed plugins' names by id, which credit a plugin's lyrics. */
+    val pluginNames: StateFlow<Map<String, String>> = nori.plugins.names
+
     /** Asks the plugins for their lines under the output row: when the player opens and when the song changes, never on a timer. */
     fun askPluginStatus() = viewModelScope.launch { _pluginStatus.value = runCatching { nori.plugins.playerStatus() }.getOrDefault(emptyList()) }
 
@@ -124,7 +127,7 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
         .followSong(
             id = { it.id },
             loading = Load.Loading,
-            none = { Load.Ready(FoundLyrics(dev.nori.music.ffi.library.lyricsNone(), LyricsOrigin.SERVER)) },
+            none = { Load.Ready(FoundLyrics(dev.nori.music.ffi.library.lyricsNone(), LyricsOrigin.Server)) },
             failed = { Load.Failed(it.said ?: it.javaClass.simpleName) },
             answers = lyricsKept,
             keep = { it is Load.Ready && it.data.lyrics.lines.isNotEmpty() },
@@ -158,6 +161,11 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
      * warms what they answer: a loop's poster into the cover cache and the start of the loop into the
      * loop's cache, so both are there the moment the song comes. Covers, not the song: its source is never asked.
      */
+    /** The player is on screen and the app in front, or not: plugins' while-visible timers run only then. */
+    fun playerShown(shown: Boolean) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { nori.plugins.playerShown(shown) }
+    }
+
     fun warmArtwork(song: dev.nori.music.ffi.model.Song, posterSize: Int): kotlinx.coroutines.Job = viewModelScope.launch {
         if (warm?.song == song.id) return@launch
         val art = runCatching { nori.plugins.artwork(song) }.getOrNull()

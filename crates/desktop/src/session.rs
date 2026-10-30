@@ -42,6 +42,9 @@ pub struct CoverKey {
 }
 
 /// Messages from other threads to the UI thread.
+/// The side icons are decoded at.
+pub const ICON_SIDE: u32 = 96;
+
 pub enum Msg {
     Engine(Event),
     Data(Req, Result<Data, String>),
@@ -60,6 +63,8 @@ pub enum Msg {
     SignedIn(nori_core::providers::SignInResult),
     /// The sign-in window (its process id) came back on a signed-in page, and the core's answer.
     SignInWindowDone(u32, nori_core::providers::SignInResult),
+    /// A provider's plugin asks for its sign-in page at `url`.
+    PluginSignIn { plugin: String, url: String },
     /// A headphone's AutoEQ curve as preset text (None: AutoEQ has none for it), by the headphone's name.
     AutoEqCurve(String, Result<Option<String>, String>),
     /// The AutoEQ list was fetched again, or could not be.
@@ -67,6 +72,8 @@ pub enum Msg {
     Reachable(Result<(), String>),
     /// The other devices or the jam changed (remote control, jams).
     Remote,
+    /// A plugin's cast started, changed or ended.
+    Cast,
     /// The jam asked for opened, or why not.
     Jam(Result<(), String>),
     /// Someone's jam joined (what the guest profile signs in with), or why not.
@@ -93,10 +100,20 @@ pub enum Msg {
     Artwork { song: String, url: String },
     /// A plugin's still sleeve for song `song`, drawn as its cover in Now Playing.
     Sleeve { song: String, image: Arc<Image> },
+    /// Plugin `id`'s README.
+    PluginReadme { id: String, blocks: Vec<nori_plugins::ReadmeBlock> },
+    /// Plugin `id`'s icon as straight RGBA pixels, `session::ICON_SIDE` square, or that it has none.
+    PluginIcon { id: String, pixels: Option<Vec<u8>> },
     /// What the plugin repos offer.
     PluginOffers(nori_plugins::Offers),
     /// Plugins updated on their own: each one's id and new version.
     PluginsUpdated(Vec<(String, String)>),
+    /// What a plugin's page shows (its rows' lines, its assets), or the devices plugins control, changed.
+    PluginsChanged,
+    /// A backup saved, or why not.
+    BackedUp(Result<(), nori_host::desktop::BackupFailure>),
+    /// What a backup restored, or why it couldn't.
+    Restored(Result<Box<nori_core::backup::Restored>, nori_host::desktop::BackupFailure>),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }

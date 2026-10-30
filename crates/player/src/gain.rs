@@ -8,6 +8,9 @@
 //! applied to float samples with the limiter behind them, so the song cannot be offloaded
 //! ([`offload_allows`]) and never clips.
 
+#[cfg(not(feature = "std"))]
+use crate::math::Float;
+
 pub use crate::policy::{GainMode, GainTags};
 
 /// ReplayGain 2.0 reference, LUFS.

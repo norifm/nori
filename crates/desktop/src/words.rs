@@ -23,7 +23,7 @@ pub struct ProviderWords {
 /// The words of `kind`; `plugin_name` is a plugin kind's name in its own words.
 pub fn provider(kind: &ServerKind, plugin_name: Option<String>) -> ProviderWords {
     match kind {
-        ServerKind::Subsonic => ProviderWords { name: "Your server".into(), note: "Sign in to your Navidrome or Subsonic server.", add: "Sign In".into(), no_user: "API key" },
+        ServerKind::Subsonic => ProviderWords { name: "OpenSubsonic".into(), note: "Sign in to your Navidrome or Subsonic server.", add: "Sign In".into(), no_user: "API key" },
         ServerKind::Plugin { id } => {
             let name = plugin_name.unwrap_or_else(|| id.clone());
             ProviderWords { add: format!("Add {name}"), name, note: "From a plugin.", no_user: "No account" }
@@ -39,31 +39,82 @@ pub fn provider_of(kinds: &nori_core::providers::Kinds, kind: &ServerKind) -> Pr
 pub const SHOW_ALL: &str = "Show all";
 
 pub const PLUGINS: &str = "Plugins";
-pub const INSTALL_FROM_FILE: &str = "From a file";
-pub const INSTALL_PLUGIN: &str = "Install a plugin…";
+pub const FROM_A_FILE: &str = "From a file";
+pub const INSTALL_FROM_FILE: &str = "Install from file";
 pub const PLUGIN_PATH: &str = "A .noriplugin file or a plugin folder";
 pub const NO_PLUGINS: &str = "No plugins installed.";
-pub const PLUGIN_VERSION: &str = "Version";
-pub const PLUGIN_ORDER: &str = "Order";
+pub const UPDATES: &str = "Updates";
+pub const INSTALLED_LIST: &str = "Installed";
+pub const ALL: &str = "All";
+pub const SEARCH_PLUGINS: &str = "Search plugins";
+pub const NONE_FOUND: &str = "No plugins found";
+pub const ABOUT: &str = "About";
+pub const PLUGIN_MAY: &str = "What it may do";
+pub const PLUGIN_ON: &str = "On";
 pub const MOVE_UP: &str = "Move up";
 pub const MOVE_DOWN: &str = "Move down";
 pub const REMOVE: &str = "Remove";
 pub const KEEP_VERSION: &str = "Keep this version";
+pub const UNSIGNED: &str = "Unsigned";
 pub const VERSIONS: &str = "Versions";
 pub const SOURCE: &str = "Source";
 pub const SECRET_SET: &str = "Set";
 pub const NOT_SET: &str = "Not set";
 pub const CHANGE: &str = "Change";
 pub const SAVE: &str = "Save";
+pub const BACK_UP: &str = "Back up";
+pub const BACK_UP_DETAIL: &str = "Settings, sound profiles and plugins, server passwords included, locked with a password.";
+pub const RESTORE: &str = "Restore a backup";
+pub const RESTORE_DETAIL: &str = "Its settings replace these. Your servers stay.";
+pub const BACKUP_SAVED: &str = "Backup saved";
+pub const BACKUP_PASSWORD: &str = "The backup's password";
+
+/// Asks for the file a backup is saved to, or restored from.
+pub fn backup_path(restore: bool) -> &'static str {
+    if restore { "Backup file to restore" } else { "File to save the backup to" }
+}
+
+/// Why a backup couldn't be made or restored.
+pub fn backup_failed(f: &nori_host::desktop::BackupFailure) -> String {
+    use nori_core::backup::BackupError as E;
+    use nori_host::desktop::BackupFailure as F;
+    match f {
+        F::Backup(E::NoPassword) => "Set a password for the backup".into(),
+        F::Backup(E::WrongPassword) => "Wrong password".into(),
+        F::Backup(E::NotABackup) => "That isn't a nori backup".into(),
+        F::Backup(E::Newer) => "Made by a newer nori: update to restore it".into(),
+        F::Backup(E::Damaged) => "The backup is damaged".into(),
+        F::Backup(E::Database) => "The settings couldn't be read or saved".into(),
+        F::File(e) => format!("Couldn't use the file: {e}"),
+    }
+}
+
+/// What a restore brought back, the plugins that didn't come back as they were named.
+pub fn restored(r: &nori_core::backup::Restored) -> String {
+    use nori_plugins::PluginReturn as P;
+    let mut said = vec!["Restored".to_string()];
+    said.extend(r.plugins.iter().filter_map(|p| match &p.outcome {
+        P::AsKept => None,
+        P::Other { version } => Some(format!("{} came back at {version}", p.id)),
+        P::FromFile => Some(format!("{} was installed from a file: install it again", p.id)),
+        P::Unavailable => Some(format!("{} wasn't found in its repo", p.id)),
+    }));
+    said.join(" · ")
+}
 pub const INSTALL: &str = "Install";
 pub const UPDATE: &str = "Update";
 pub const INSTALLED: &str = "Installed";
 pub const PLUGIN_INSTALLED: &str = "Plugin installed. Switch it on in Settings › Plugins.";
 pub const GET_PLUGINS: &str = "Get plugins";
-pub const LOOK_FOR_PLUGINS: &str = "Look for plugins";
+pub const PROVIDER_CHOOSE: &str = "Choose a provider";
+pub const PROVIDER_SUBSONIC_ABOUT: &str = "Navidrome and other servers";
+pub const CONTINUE_AS_GUEST: &str = "Continue as guest";
+/// The button that adds a provider and opens its sign-in.
+pub fn provider_sign_in(name: &str) -> String {
+    format!("Sign in to {name}")
+}
 pub const LOOK_AGAIN: &str = "Look again";
 pub const LOOKING: &str = "Looking…";
-pub const NOTHING_OFFERED: &str = "No plugins offered.";
 pub const REPOS: &str = "Repos";
 pub const ADD_REPO: &str = "Add repo";
 pub const ADD: &str = "Add";
@@ -72,6 +123,7 @@ pub const TRUST_REPO: &str = "This repo isn’t nori’s. Its plugins can do wha
 
 pub const REMOVE_PLUGIN_NOTE: &str = "Its settings go with it.";
 pub const INSTALLED_OFF: &str = "It stays off until you turn it on.";
+pub const INSTALLED_ON: &str = "It turns on once installed.";
 
 /// Asks before removing `name`.
 pub fn remove_plugin(name: &str) -> String {
@@ -85,10 +137,53 @@ pub fn install_version(name: &str, version: &str) -> String {
 
 /// The install sheet's lines for `p`: what it says of itself, what it is and may reach, where it comes
 /// from, and that it installs off.
-pub fn preview_note(p: &nori_plugins::PluginPreview) -> Vec<String> {
+pub fn preview_note(p: &nori_plugins::PluginPreview, turns_on: bool) -> Vec<String> {
     let c = &p.card;
     let from = p.repo.as_ref().map(|url| format!("From {}", repo_name(&nori_plugins::Repo { url: url.clone(), official: url == nori_plugins::OFFICIAL })));
-    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(&c.net, &c.overrides)]).chain(from).chain([INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect()
+    let unsigned = p.key.is_none().then(|| UNSIGNED.to_string());
+    let bluetooth = c.bluetooth.then(|| REACHES_BLUETOOTH.to_string());
+    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(c)]).chain(bluetooth).chain(from).chain(unsigned).chain([if turns_on { INSTALLED_ON } else { INSTALLED_OFF }.into()]).filter(|l| !l.is_empty()).collect()
+}
+
+pub const REACHES_BLUETOOTH: &str = "Reaches Bluetooth devices.";
+pub const FILES: &str = "Files";
+pub const ASSETS_ON_MOBILE: &str = "Download on mobile data";
+
+/// Where a plugin's asset stands: "12 MB, not downloaded", "Downloading, 40%".
+pub fn asset_state(a: &nori_plugins::AssetLine) -> String {
+    use nori_plugins::AssetState;
+    match a.state {
+        AssetState::Missing => format!("{} MB, not downloaded", a.size.div_ceil(1 << 20)),
+        AssetState::WaitingForWifi => "Waiting for Wi-Fi".into(),
+        AssetState::Fetching { done, total } => format!("Downloading, {}%", (done * 100).checked_div(total).unwrap_or(0)),
+        AssetState::Ready => "Downloaded".into(),
+        AssetState::Failed => "Couldn’t download".into(),
+    }
+}
+pub const BATTERY: &str = "Battery";
+pub const NOISE_CONTROL: &str = "Noise control";
+
+pub fn noise(n: nori_plugins::Noise) -> &'static str {
+    use nori_plugins::Noise;
+    match n {
+        Noise::Off => "Off",
+        Noise::Canceling => "Noise canceling",
+        Noise::Transparency => "Transparency",
+        Noise::Adaptive => "Adaptive",
+    }
+}
+
+/// A device's name and its battery: "WH-1000XM5 · 80%".
+pub fn with_level(name: &str, level: u8) -> String {
+    format!("{name} · {level}%")
+}
+
+/// Each battery a device has: "80%", or "Left 80% · Right 70% · Case 50%"; empty when it said none.
+pub fn battery(b: &nori_plugins::Battery) -> String {
+    if let Some(s) = b.single {
+        return format!("{s}%");
+    }
+    [("Left", b.left), ("Right", b.right), ("Case", b.case)].iter().filter_map(|(w, v)| v.map(|v| format!("{w} {v}%"))).collect::<Vec<_>>().join(" · ")
 }
 
 /// What a plugin is, from the extension points it fills and whether it overrides nori's values.
@@ -116,16 +211,64 @@ pub fn plugin_is(points: &[String], overrides: bool) -> String {
     said
 }
 
-/// What a plugin may reach: the hosts it sends to and nori's values it changes.
-pub fn plugin_reach(net: &[String], overrides: &[String]) -> String {
+/// What a plugin may reach and do: the hosts it sends to, nori's values it changes, the session, what
+/// wakes it or nori for it, and the room it takes.
+pub fn update_to(version: &str) -> String {
+    format!("Update to {version}")
+}
+
+pub fn update_line(from: &str, to: &str) -> String {
+    format!("{from} → {to}")
+}
+
+pub fn plugin_count(n: usize) -> String {
+    count(n as u32, "plugin", "plugins")
+}
+
+pub fn plugin_reach(c: &nori_plugins::PluginCard) -> String {
+    plugin_may(c).join(" ")
+}
+
+/// [`plugin_reach`], a line each.
+pub fn plugin_may(c: &nori_plugins::PluginCard) -> Vec<String> {
+    use nori_plugins::{Hook, Permission, WakeEvent};
     let mut said = Vec::new();
-    if !net.is_empty() {
-        said.push(format!("Connects to {}.", net.join(", ")));
+    match (c.net.is_empty(), c.lan) {
+        (false, false) => said.push(format!("Connects to {}.", c.net.join(", "))),
+        (false, true) => said.push(format!("Connects to {} and devices on your network.", c.net.join(", "))),
+        (true, true) => said.push("Connects to devices on your network.".into()),
+        (true, false) => {}
     }
-    if !overrides.is_empty() {
-        said.push(format!("Changes {}.", overrides.join(", ")));
+    if !c.overrides.is_empty() {
+        said.push(format!("Changes {}.", c.overrides.join(", ")));
     }
-    if said.is_empty() { "Connects to nothing.".into() } else { said.join(" ") }
+    for p in &c.permissions {
+        said.push(match p {
+            Permission::PlaybackRead => "Sees what plays and the queue.",
+            Permission::PlaybackControl => "Controls playback and the queue.",
+            Permission::LibraryRead => "Searches your library.",
+            Permission::LibraryWrite => "Changes favorites and playlists.",
+            Permission::Subsonic => "Uses your server's API as you.",
+            Permission::Schedule => "Wakes now and then, never while music plays with the screen off.",
+        }
+        .into());
+    }
+    if c.hooks.contains(&Hook::LyricLine) {
+        said.push("Wakes at each lyric line while music plays.".into());
+    }
+    if c.wakes.contains(&WakeEvent::BluetoothConnected) || c.wakes.contains(&WakeEvent::Boot) {
+        said.push("Starts nori while it is closed (on a phone).".into());
+    }
+    if !c.commands.is_empty() {
+        said.push(format!("Lets other apps run: {}.", c.commands.join(", ")));
+    }
+    if c.cache_bytes > 0 {
+        said.push(format!("Keeps up to {} MB of cache.", c.cache_bytes.div_ceil(1 << 20)));
+    }
+    if c.asset_bytes > 0 {
+        said.push(format!("Downloads {} MB of files.", c.asset_bytes.div_ceil(1 << 20)));
+    }
+    said
 }
 
 /// Why a plugin wasn't installed.
@@ -137,8 +280,19 @@ pub fn plugin_refused(r: &nori_plugins::Refusal) -> String {
         Refusal::Needs(what) => format!("needs: {}", what.join(", ")),
         Refusal::Id => "its id isn’t a reverse domain name".into(),
         Refusal::UnknownKey(key) => format!("changes {key}, which nori doesn’t have"),
+        Refusal::Signature => "its signature doesn’t match its author’s key".into(),
+        Refusal::OtherKey => "it isn’t signed by the author it was installed from (remove the plugin to install it)".into(),
     };
     format!("Not installed: {why}")
+}
+
+/// Why plugins are off at this start: the `names` of those nori stopped in, or none for a start that
+/// didn't finish.
+pub fn plugins_safe(safe: &nori_plugins::SafeStart, names: &[String]) -> String {
+    match safe {
+        nori_plugins::SafeStart::Crashed { .. } => format!("nori stopped while {} was running. It’s off now.", names.join(", ")),
+        nori_plugins::SafeStart::AllOff => "nori didn’t finish starting last time. Plugins are off until it starts again.".into(),
+    }
 }
 
 /// Plugins updated on their own: each one's name and new version.
@@ -182,7 +336,7 @@ pub fn repo_name(r: &nori_plugins::Repo) -> String {
     host(&r.url).to_string()
 }
 
-fn host(url: &str) -> &str {
+pub fn host(url: &str) -> &str {
     let rest = url.split_once("://").map_or(url, |(_, r)| r);
     rest.split('/').next().unwrap_or(rest)
 }
@@ -222,9 +376,9 @@ pub fn count(n: impl Into<u64>, one: &str, many: &str) -> String {
 }
 
 /// The lyrics service lyrics came from, by name.
-pub fn lyrics_origin(origin: nori_core::lyrics_sources::LyricsOrigin) -> &'static str {
+pub fn lyrics_origin(origin: &nori_core::lyrics_sources::LyricsOrigin, plugin_name: &dyn Fn(&str) -> String) -> String {
     use nori_core::lyrics_sources::LyricsOrigin;
-    match origin {
+    let said = match origin {
         LyricsOrigin::Server => "your server",
         LyricsOrigin::Binilyrics => "BiniLyrics",
         LyricsOrigin::BetterLyrics => "BetterLyrics",
@@ -235,7 +389,9 @@ pub fn lyrics_origin(origin: nori_core::lyrics_sources::LyricsOrigin) -> &'stati
         LyricsOrigin::Kugou => "KuGou",
         LyricsOrigin::Lrclib => "LRCLIB",
         LyricsOrigin::YoutubeMusic => "YouTube Music",
-    }
+        LyricsOrigin::Plugin { id } => return plugin_name(id),
+    };
+    said.to_string()
 }
 
 /// A Home shelf's title.
@@ -380,9 +536,9 @@ pub fn sleep_choice(c: &nori_core::menus::SleepChoice) -> String {
 }
 
 /// Where lyrics came from and how finely they are timed: "From LRCLIB · timed line by line".
-pub fn lyrics_from(origin: nori_core::lyrics_sources::LyricsOrigin, synced: bool, word_timed: bool) -> String {
+pub fn lyrics_from(origin: &nori_core::lyrics_sources::LyricsOrigin, synced: bool, word_timed: bool, plugin_name: &dyn Fn(&str) -> String) -> String {
     let timed = if !synced { "not timed" } else if word_timed { "timed word by word" } else { "timed line by line" };
-    format!("From {} · {timed}", lyrics_origin(origin))
+    format!("From {} · {timed}", lyrics_origin(origin, plugin_name))
 }
 
 /// Who moved the lyrics' timing, and by how much.
@@ -530,6 +686,22 @@ pub fn output_name(port: nori_core::profiles::OutputPort, name: Option<String>) 
 
 /// A place the music can play, as the devices panel lists it: this computer (`d` None) or a device of the
 /// account with what it plays and its last refusal; ticked while the music plays there.
+/// The id of the devices panel's row for a plugin's cast.
+pub const CAST_ROW: &str = "nori-plugin-cast";
+
+/// A plugin's cast as the devices panel lists it: playing there, its volume when it says.
+pub fn cast_row(c: &nori_plugins::Cast) -> crate::DeviceRow {
+    let what = match c.kind {
+        nori_plugins::CastKind::Sink => "Casting",
+        nori_plugins::CastKind::Target => "Playing there",
+    };
+    let line = match c.volume {
+        Some(v) => format!("{what} · {v} %"),
+        None => what.to_string(),
+    };
+    crate::DeviceRow { id: CAST_ROW.into(), name: c.device.clone().into(), line: line.into(), active: true, ..Default::default() }
+}
+
 pub fn device_row(d: Option<&nori_core::remote::RemoteDevice>, active: bool) -> crate::DeviceRow {
     use nori_core::remote::wire::Refusal;
     let Some(d) = d else {
@@ -722,6 +894,14 @@ mod tests {
     }
 
     #[test]
+    fn lyrics_name_their_service() {
+        use nori_core::lyrics_sources::LyricsOrigin;
+        let named = |id: &str| if id == "fm.nori.test" { "Test".to_string() } else { id.to_string() };
+        assert_eq!(lyrics_from(&LyricsOrigin::Lrclib, true, false, &named), "From LRCLIB · timed line by line");
+        assert_eq!(lyrics_from(&LyricsOrigin::Plugin { id: "fm.nori.test".into() }, false, false, &named), "From Test · not timed", "a plugin by its name");
+    }
+
+    #[test]
     fn the_install_sheet_says_what_a_plugin_is_and_may_reach() {
         let card = nori_plugins::PluginCard {
             id: "a.one".into(),
@@ -734,10 +914,22 @@ mod tests {
             points: vec!["slots".into()],
             overrides: Vec::new(),
             net: vec!["a.example".into()],
+            lan: true,
+            bluetooth: false,
+            permissions: Vec::new(),
+            hooks: vec![nori_plugins::Hook::LyricLine],
+            wakes: Vec::new(),
+            commands: Vec::new(),
+            cache_bytes: 0,
+            asset_bytes: 3 << 20,
             rows: Vec::new(),
         };
-        let p = nori_plugins::PluginPreview { card, file: String::new(), repo: Some(nori_plugins::OFFICIAL.into()) };
-        assert_eq!(preview_note(&p), ["Counts letters", "It’s a playback helper.", "Connects to a.example.", "From nori’s own", "It stays off until you turn it on."]);
+        let mut p = nori_plugins::PluginPreview { card, file: String::new(), repo: Some(nori_plugins::OFFICIAL.into()), key: Some("ab".into()) };
+        assert_eq!(preview_note(&p, false), ["Counts letters", "It’s a playback helper.", "Connects to a.example and devices on your network. Wakes at each lyric line while music plays. Downloads 3 MB of files.", "From nori’s own", "It stays off until you turn it on."]);
+        p.key = None;
+        assert!(preview_note(&p, false).contains(&"Unsigned".to_string()));
+        let last = |turns_on| preview_note(&p, turns_on).last().cloned();
+        assert_eq!((last(false).as_deref(), last(true).as_deref()), (Some(INSTALLED_OFF), Some(INSTALLED_ON)), "what follows installing");
     }
 
     #[test]

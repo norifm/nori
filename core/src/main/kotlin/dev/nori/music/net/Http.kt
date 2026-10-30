@@ -9,6 +9,8 @@ import dev.nori.music.ffi.net.getFailed
 import dev.nori.music.ffi.net.NetException
 import dev.nori.music.ffi.net.Network
 import dev.nori.music.ffi.net.Exchange
+import dev.nori.music.ffi.net.HttpHeader
+import dev.nori.music.ffi.net.HttpMethod
 import dev.nori.music.ffi.net.RequestPolicy
 import dev.nori.music.ffi.net.ServerHosts
 import dev.nori.music.ffi.net.Transport
@@ -23,6 +25,7 @@ import okhttp3.Callback
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -170,13 +173,18 @@ class Http(private val context: Context) {
     suspend fun exchange(url: String, timeoutMs: Long = 0): TransportResponse = exchange(Request.Builder().url(url).build(), timeoutMs)
 
     /**
-     * [exchange] with a third party's own headers, and a JSON or form body POSTed when there is one: the core's
-     * [Exchange], which says what to send; this only carries the bytes.
+     * [exchange] with a third party's own method, headers and body: the core's [Exchange], which says what to
+     * send; this only carries the bytes.
      */
     suspend fun exchange(e: Exchange): TransportResponse {
         val request = Request.Builder().url(e.url)
         for ((name, value) in e.headers) request.header(name, value)
-        e.json?.let { request.post(it.toRequestBody(JSON)) } ?: e.form?.let { request.post(it.toRequestBody(FORM)) }
+        val type = e.headers.entries.firstOrNull { it.key.equals("Content-Type", ignoreCase = true) }?.value?.toMediaTypeOrNull()
+        val body = e.json?.toRequestBody(JSON) ?: e.form?.toRequestBody(FORM) ?: e.body?.toRequestBody(type)
+        val method = e.method ?: if (body != null) HttpMethod.POST else HttpMethod.GET
+        // OkHttp wants a body, if empty, for the methods that carry one.
+        val carries = method == HttpMethod.POST || method == HttpMethod.PUT || method == HttpMethod.PATCH
+        request.method(method.name, body ?: if (carries) ByteArray(0).toRequestBody(type) else null)
         return exchange(request.build(), e.timeoutMs.toLong())
     }
 
@@ -193,7 +201,8 @@ class Http(private val context: Context) {
             override fun onResponse(call: Call, response: Response) {
                 try {
                     val body = response.use { it.body.bytes() }
-                    cont.resume(TransportResponse(response.code.toUShort(), body, response.headers("Set-Cookie")))
+                    val headers = response.headers.map { (name, value) -> HttpHeader(name.lowercase(), value) }
+                    cont.resume(TransportResponse(response.code.toUShort(), body, headers))
                 } catch (e: IOException) {
                     if (cont.isActive) cont.resumeWithException(e)
                 }

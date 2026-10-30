@@ -16,10 +16,7 @@ import dev.nori.music.ffi.Remote
 class NsdDiscovery(context: Context, private val remote: () -> Remote?) : Discovery {
     private val nsd = context.getSystemService(NsdManager::class.java)
     private var registered: NsdManager.RegistrationListener? = null
-    private var browsing: NsdManager.DiscoveryListener? = null
-    /** Before Android 14 one resolve runs at a time; the others wait here. */
-    private val resolving = ArrayDeque<NsdServiceInfo>()
-    private var busy = false
+    private var browsing: dev.nori.music.net.NsdBrowse? = null
 
     @Synchronized
     override fun announce(door: Announcement?) {
@@ -44,46 +41,10 @@ class NsdDiscovery(context: Context, private val remote: () -> Remote?) : Discov
 
     @Synchronized
     override fun browse(on: Boolean) {
-        browsing?.let { runCatching { nsd.stopServiceDiscovery(it) } }
-        browsing = null
-        if (!on) return
-        val listener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(type: String) {}
-            override fun onDiscoveryStopped(type: String) {}
-            override fun onStartDiscoveryFailed(type: String, error: Int) = dev.nori.music.NoriLog.w("nsd: no discovery ($error)")
-            override fun onStopDiscoveryFailed(type: String, error: Int) {}
-            override fun onServiceFound(info: NsdServiceInfo) = resolve(info)
-            override fun onServiceLost(info: NsdServiceInfo) {
-                remote()?.lanLost(info.serviceName)
-            }
-        }
-        browsing = listener
-        runCatching { nsd.discoverServices(SERVICE, NsdManager.PROTOCOL_DNS_SD, listener) }
-    }
-
-    @Synchronized
-    private fun resolve(info: NsdServiceInfo) {
-        if (busy) { resolving.addLast(info); return }
-        busy = true
-        @Suppress("DEPRECATION")
-        nsd.resolveService(info, object : NsdManager.ResolveListener {
-            override fun onResolveFailed(info: NsdServiceInfo, error: Int) = next()
-            override fun onServiceResolved(info: NsdServiceInfo) {
-                @Suppress("DEPRECATION")
-                val host = info.host?.hostAddress
-                if (host != null) {
-                    val txt = info.attributes.map { (k, v) -> Param(k, v?.toString(Charsets.UTF_8).orEmpty()) }
-                    remote()?.lanFound(info.serviceName, host, info.port.toUShort(), txt)
-                }
-                next()
-            }
-        })
-    }
-
-    @Synchronized
-    private fun next() {
-        busy = false
-        resolving.removeFirstOrNull()?.let(::resolve)
+        browsing?.stop()
+        browsing = if (on) dev.nori.music.net.NsdBrowse(nsd, SERVICE, { f ->
+            remote()?.lanFound(f.name, f.host, f.port.toUShort(), f.txt.map { (k, v) -> Param(k, v) })
+        }, { name -> remote()?.lanLost(name) }) else null
     }
 
     private companion object {

@@ -34,20 +34,25 @@ core = ["dep:nori-core"]
 neural-beats = ["core", "nori-core/neural-beats"]
 # The virtual clock tests run the engine on (`testing`), for this crate's tests and its clients'.
 testing = []
+# An output into a plugin's cast (cast.rs).
+plugins = ["dep:nori-plugins"]
 
 [dependencies]
 # Time, read the same way natively and in a browser.
 nori-time = { path = "../time" }
-nori-player = { path = "../player", default-features = false }
+nori-player = { path = "../player", default-features = false, features = ["std"] }
 parking_lot = "0.12"
 # Containers: the format readers only. Decoding is nori-player's, so every platform hears the same samples.
 symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "aac", "isomp4", "ogg", "mkv", "wav", "pcm"] }
 nori-core = { path = "../core", default-features = false, optional = true }
+nori-plugins = { path = "../plugins", optional = true }
 
 [dev-dependencies]
 # tests/perf_stage.rs: the test plugin's sound stage.
 nori-plugins = { path = "../plugins", features = ["testing"] }
-nori-engine = { path = ".", features = ["testing"] }
+nori-engine = { path = ".", features = ["testing", "plugins"] }
+# tests/cast.rs: the fake deep sink speaks the protocol.
+nori-sink-protocol = { path = "../sink-protocol" }
 nori-testdir = { path = "../testdir" }
 nori-player = { path = "../player", features = ["synth"] }
 # tests/stretch.rs: the lyrics page's clock, read through a stretched mix as a screen reads it.

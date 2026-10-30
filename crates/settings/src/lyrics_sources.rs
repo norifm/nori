@@ -4,8 +4,8 @@
 use crate::codec::Choice;
 use crate::settings::StoredPrefs;
 
-/// Where lyrics came from, for the credit line: the server or a [`LyricsService`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Where lyrics came from, for the credit line: the server, a [`LyricsService`] or a plugin.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum LyricsOrigin {
     Server,
@@ -20,6 +20,8 @@ pub enum LyricsOrigin {
     Lrclib,
     PaxsenixSpotify,
     YoutubeMusic,
+    /// A plugin's lyrics service, by the plugin's id.
+    Plugin { id: String },
 }
 
 /// How finely lyrics are timed, worst to best.
@@ -225,10 +227,13 @@ pub fn placed(p: &StoredPrefs, service: LyricsService, to: usize) -> Vec<LyricsS
     order
 }
 
-/// What one lookup asks: the services in rank order, and the options and keys.
+/// What one lookup asks: the services in rank order, whether plugins' services too, and the options
+/// and keys.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LyricsLookup {
     pub services: Vec<LyricsService>,
+    /// The enabled plugins' services are asked after nori's (under the same switches).
+    pub plugins: bool,
     pub prefer_words: bool,
     pub paxsenix_key: String,
     pub better_lyrics_key: String,
@@ -241,6 +246,7 @@ impl LyricsLookup {
         let usable = |s: &LyricsService| !s.needs_key() || !self.paxsenix_key.is_empty();
         if let Some(s) = LyricsService::named(name).filter(|s| !self.services.is_empty() && usable(s)) {
             self.services = vec![s];
+            self.plugins = false;
         }
         self
     }
@@ -252,7 +258,7 @@ pub fn lyrics_lookup(p: &StoredPrefs) -> LyricsLookup {
     let paxsenix_key = p.paxsenix_key.trim().to_string();
     let better_lyrics_key = p.better_lyrics_key.trim().to_string();
     let services = if p.third_party_lookups && p.lyrics_online { switched_on(p).into_iter().filter(|s| !s.needs_key() || !paxsenix_key.is_empty()).collect() } else { Vec::new() };
-    LyricsLookup { services, prefer_words: p.lyrics_prefer_words, paxsenix_key, better_lyrics_key }
+    LyricsLookup { services, plugins: p.third_party_lookups && p.lyrics_online, prefer_words: p.lyrics_prefer_words, paxsenix_key, better_lyrics_key }
 }
 
 #[cfg(test)]
@@ -289,6 +295,8 @@ mod tests {
     fn a_jam_hosts_service_is_asked_alone_where_it_can_be() {
         let on = lyrics_lookup(&StoredPrefs::default());
         assert_eq!(on.clone().only("UNISON").services, [LyricsService::Unison]);
+        assert!(on.plugins && !on.clone().only("UNISON").plugins, "a jam's choice alone, no plugin's");
+        assert!(on.clone().only("plugin:fm.nori.test").plugins, "a plugin's choice: this member's plugins");
         assert_eq!(on.clone().only("PAXSENIX_SPOTIFY").services, on.services, "no key here for it");
         assert_eq!(on.clone().only("NOPE").services, on.services);
         let off = lyrics_lookup(&StoredPrefs { lyrics_online: false, ..Default::default() });

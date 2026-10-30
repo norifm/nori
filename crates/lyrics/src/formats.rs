@@ -110,6 +110,14 @@ pub fn timing(l: &Lyrics) -> Timing {
     }
 }
 
+/// Lines a plugin gives, each with its start (ms) when `synced`.
+pub fn from_lines(synced: bool, lines: Vec<(i64, String)>) -> Lyrics {
+    if !synced {
+        return plain(&lines.into_iter().map(|(_, t)| t).collect::<Vec<_>>().join("\n"));
+    }
+    finish(lines.into_iter().map(|(start, text)| Timed { start, text, ..Default::default() }).collect())
+}
+
 /// Untimed text, one line per line, blank lines kept between verses.
 pub(crate) fn plain(text: &str) -> Lyrics {
     let lines: Vec<LyricLine> = text.lines().map(|l| LyricLine { start_ms: -1, end_ms: -1, text: l.trim().to_string(), ..Default::default() }).collect();

@@ -1509,7 +1509,7 @@ fn cpu_song_reports_why_not_offloaded() {
     let (lame, fl) = (mp3(&d, "lame", 10, 440), flac(&d, "fl", 10, 550));
     type Case<'a> = (&'a [u8], &'a str, &'a [(Coding, Support)], Settings, &'a str);
     let cases: [Case; 3] = [
-        (&fl, "flac", MP3_ONLY, offload(), "FLAC is not a compression the output decodes"),
+        (&fl, "flac", MP3_ONLY, offload(), "the output does not decode FLAC at 44100 Hz x2"),
         (&lame, "mp3", &[], offload(), "the output does not decode MP3 at 44100 Hz x2"),
         (&lame, "mp3", MP3_ONLY, Settings::default(), "offload is off in the settings"),
     ];

@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{Manifest, Plugins, Refusal, RowKind, Value};
+use crate::{Hook, Manifest, Permission, Plugins, Refusal, RowKind, Value, WakeEvent};
 
 /// A plugin as Settings › Plugins lists it, in the user's plugin order.
 #[derive(Debug, Clone, PartialEq)]
@@ -27,6 +27,21 @@ pub struct PluginCard {
     pub overrides: Vec<String>,
     /// Hosts it sends HTTP to.
     pub net: Vec<String>,
+    /// It reaches Bluetooth devices (the platform's Bluetooth permission).
+    pub bluetooth: bool,
+    /// It reaches devices on the LAN (`lan` among its hosts).
+    pub lan: bool,
+    pub permissions: Vec<Permission>,
+    /// The events it hears; a lyric line's brings a wake per line while music plays.
+    pub hooks: Vec<Hook>,
+    /// What may start nori for it while it is closed.
+    pub wakes: Vec<WakeEvent>,
+    /// Commands other apps may run.
+    pub commands: Vec<String>,
+    /// Its cache's quota, bytes.
+    pub cache_bytes: u64,
+    /// What its assets download in all, bytes.
+    pub asset_bytes: u64,
     pub rows: Vec<PluginRow>,
 }
 
@@ -63,6 +78,9 @@ pub struct PluginPreview {
     pub file: String,
     /// The repo it comes from, which will update it.
     pub repo: Option<String>,
+    /// Its author's key (hex), its signature checked; None for an unsigned package (a file, or a
+    /// version its repo lists unsigned), which the sheet says.
+    pub key: Option<String>,
 }
 
 /// A plugin's words in `lang` (`en` for what that lacks), each language's strings file read by `read`.
@@ -126,7 +144,15 @@ fn card(m: &Manifest, w: &BTreeMap<String, String>, stored: &BTreeMap<String, Va
         held,
         points: m.points.iter().map(|p| p.to_string()).collect(),
         overrides: m.overrides.clone(),
-        net: m.net.clone(),
+        net: m.net.iter().filter(|h| *h != crate::lan::LAN).cloned().collect(),
+        lan: m.lan(),
+        bluetooth: m.reaches_devices(),
+        permissions: m.permissions.clone(),
+        hooks: m.hooks.clone(),
+        wakes: m.wake.clone(),
+        commands: m.commands.clone(),
+        cache_bytes: m.cache_bytes,
+        asset_bytes: m.assets.iter().map(|a| a.size).sum(),
         rows: m
             .rows
             .iter()
@@ -148,6 +174,19 @@ fn card(m: &Manifest, w: &BTreeMap<String, String>, stored: &BTreeMap<String, Va
     }
 }
 
+impl Plugins {
+    /// The package at `path`, from `repo` and signed by `key`, as its install sheet shows it, once
+    /// it may replace the version installed.
+    fn preview(&self, path: String, repo: Option<String>, key: Option<String>, lang: &str) -> Result<PluginPreview, Refusal> {
+        let files = crate::package::files(std::path::Path::new(&path))?;
+        let get = |n: &str| files.iter().find(|(name, _)| name == n).map(|(_, b)| b);
+        let m = Manifest::of_wasm(get("plugin.wasm").ok_or_else(|| Refusal::Unreadable("no plugin.wasm".into()))?)?;
+        self.admits(&m.id, key.as_deref())?;
+        let w = words_by(|l| get(&format!("strings/{l}.toml")).map(|b| String::from_utf8_lossy(b).into_owned()), lang);
+        Ok(PluginPreview { card: card(&m, &w, &BTreeMap::new(), false, None, false), file: path, repo, key })
+    }
+}
+
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Plugins {
     /// The installed plugins in `lang`, in their order.
@@ -156,28 +195,26 @@ impl Plugins {
     }
 
     /// The `.noriplugin` or plugin folder at `path` as its install sheet shows it, in `lang`; nothing is
-    /// installed.
+    /// installed. A file is unsigned, so it is refused over a plugin whose author's key is pinned.
     pub fn preview_file(&self, path: String, lang: String) -> Result<PluginPreview, Refusal> {
-        let files = crate::package::files(std::path::Path::new(&path))?;
-        let get = |n: &str| files.iter().find(|(name, _)| name == n).map(|(_, b)| b);
-        let m = Manifest::of_wasm(get("plugin.wasm").ok_or_else(|| Refusal::Unreadable("no plugin.wasm".into()))?)?;
-        let w = words_by(|l| get(&format!("strings/{l}.toml")).map(|b| String::from_utf8_lossy(b).into_owned()), &lang);
-        Ok(PluginPreview { card: card(&m, &w, &BTreeMap::new(), false, None, false), file: path, repo: None })
+        self.preview(path, None, None, &lang)
     }
 
-    /// `version` of a plugin a repo offers, fetched (and checked against its sha256) and shown as its
-    /// install sheet shows it.
+    /// `version` of a plugin a repo offers, fetched (and checked against its sha256 and signature) and
+    /// shown as its install sheet shows it.
     pub async fn preview_version(&self, version: crate::Version, lang: String) -> Result<PluginPreview, Refusal> {
         let file = self.fetch(&version).await?;
-        let mut p = self.preview_file(file.to_string_lossy().into_owned(), lang)?;
-        p.repo = Some(version.repo);
-        Ok(p)
+        let shown = self.preview(file.to_string_lossy().into_owned(), Some(version.repo), version.key, &lang);
+        if shown.is_err() {
+            let _ = std::fs::remove_file(&file);
+        }
+        shown
     }
 
     /// Installs what `preview` showed, off when new; its id. A package fetched for it is let go.
     pub fn install_preview(&self, preview: PluginPreview) -> Result<String, Refusal> {
         let file = std::path::PathBuf::from(&preview.file);
-        let installed = self.install_as(&file, preview.repo).map(|m| m.id.clone());
+        let installed = self.install_as(&file, preview.repo, preview.key).map(|m| m.id.clone());
         if file.parent() == Some(self.dir.as_path()) {
             let _ = std::fs::remove_file(&file);
         }

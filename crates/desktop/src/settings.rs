@@ -1,6 +1,7 @@
 //! Settings pages: the core's (`settings_pages`, desktop client), worded and drawn. Rows report back the
 //! setting name and the picked value.
 
+use std::collections::{HashMap, HashSet};
 use nori_core::numbers::{self, POINT};
 use nori_core::settings::{season_follow_value, season_of, EqLevel, Level, StoredPrefs, ThemeSeason};
 use nori_core::settings_model::{self, BeatModel, EqStatus, KeyAction, SettingKind, SettingsState};
@@ -10,11 +11,11 @@ use slint::{ModelRc, SharedString, VecModel};
 use nori_look::theme;
 
 use nori_core::providers::Kinds;
-use nori_host::desktop::OfferState;
-use nori_plugins::{Offers, PluginCard, PluginRow, Repo, RowKind, Value};
+use nori_core::settings::ServerKind;
+use nori_plugins::{AssetLine, AssetState, ControlledDevice, Offer, OfferState, Offers, PluginCard, PluginRow, ReadmeBlock, Repo, RowKind, Value};
 
 use crate::look::Today;
-use crate::{words, SettingRow};
+use crate::{words, PluginTool, PluginTop, SettingRow};
 
 // Row kinds, as app.slint numbers them.
 const HEADING: i32 = 0;
@@ -34,8 +35,13 @@ const SEASONS: i32 = 13;
 const APPEARANCE_ROW: i32 = 14;
 /// What is stored, as a bar of its parts.
 const USAGE: i32 = 15;
-/// A row of buttons, each sending its own name (`names`).
-const BUTTONS: i32 = 16;
+/// A plugin in a list: its tile and lines, then a switch or a button (`control`).
+const PLUGIN: i32 = 17;
+/// A plugin's README, block by block.
+const README_HEADING: i32 = 18;
+const README_TEXT: i32 = 19;
+const README_ITEM: i32 = 20;
+const README_CODE: i32 = 21;
 
 /// The appearance row's name: the theme setting, offered as segments.
 pub const APPEARANCE: &str = "appearance";
@@ -131,6 +137,15 @@ impl<'a> Target<'a> {
 
 const EQUALIZER: &str = "equalizer";
 const ADD_SERVER: &str = "add-server";
+const BACKUP: &str = "backup";
+const RESTORE: &str = "restore";
+const BACKUP_PASSWORD: &str = "backup-password";
+const RESTORE_PASSWORD: &str = "restore-password";
+
+/// The name of the sheet asking for the password of the backup at `path`.
+pub fn backup_password(restore: bool, path: &str) -> String {
+    format!("{}:{path}", if restore { RESTORE_PASSWORD } else { BACKUP_PASSWORD })
+}
 /// A folder's toggle is named `musicFolders=<the value it stores>`.
 const MUSIC_FOLDERS: &str = "musicFolders";
 
@@ -150,6 +165,10 @@ pub enum Act {
     /// Switch to the server with this id.
     Server(String),
     Chore(Chore),
+    /// Asks where to save a backup, or which one to restore.
+    Backup { restore: bool },
+    /// Asks for the password of the backup at `path`.
+    BackupPassword { restore: bool, path: String },
 }
 
 impl Act {
@@ -161,9 +180,14 @@ impl Act {
         if let Some(id) = name.strip_prefix("edit:") {
             return Some(Act::Edit(id.to_string()));
         }
+        if let Some((what, path)) = name.split_once(':').filter(|(what, _)| matches!(*what, BACKUP_PASSWORD | RESTORE_PASSWORD)) {
+            return Some(Act::BackupPassword { restore: what == RESTORE_PASSWORD, path: path.to_string() });
+        }
         match name {
             EQUALIZER => Some(Act::Equalizer),
             ADD_SERVER => Some(Act::AddServer),
+            BACKUP => Some(Act::Backup { restore: false }),
+            RESTORE => Some(Act::Backup { restore: true }),
             _ => CHORES.into_iter().find(|c| chore_name(*c) == name).map(Act::Chore),
         }
     }
@@ -207,8 +231,14 @@ struct Row {
     breakdown: Vec<String>,
     /// The option picked, where no setting holds it (a plugin's row).
     chosen: Option<i32>,
-    /// A buttons row's names, in `options`' order.
-    names: Vec<String>,
+    /// A plugin row's third line, and what its switch or button sends.
+    line: String,
+    control: String,
+    /// A plugin row's icon and the letter drawn without one.
+    icon: slint::Image,
+    letter: String,
+    /// The tile holds the server glyph: nori's own provider.
+    server_tile: bool,
 }
 
 /// The profile whose rows are kept under `profile` (`server_db`), as the server list names it.
@@ -284,6 +314,7 @@ fn section_title(id: SectionId) -> &'static str {
         Streaming => "Streaming",
         Downloads => "Downloads",
         Storage => "Storage",
+        Backup => "Backup",
         Updates => "Updates",
     }
 }
@@ -493,6 +524,8 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
                 SettingsAction::ClearCovers => action("Covers", format!("{}. Fetched again when needed.", bytes(f.cover_bytes)), "Clear", enabled, Chore::ClearCovers),
                 SettingsAction::ClearLyrics => action("Lyrics", format!("{} found online. Looked up again when needed.", bytes(f.lyrics_bytes)), "Clear", enabled, Chore::ClearLyrics),
                 SettingsAction::AddServer => Row { kind: BUTTON, name: ADD_SERVER.into(), title: "Add server".into(), enabled: true, ..Default::default() },
+                SettingsAction::MakeBackup => Row { kind: ACTION, name: BACKUP.into(), title: words::BACK_UP.into(), detail: words::BACK_UP_DETAIL.into(), button: "Save".into(), enabled, ..Default::default() },
+                SettingsAction::RestoreBackup => Row { kind: ACTION, name: RESTORE.into(), title: words::RESTORE.into(), detail: words::RESTORE_DETAIL.into(), button: "Open".into(), enabled, ..Default::default() },
                 SettingsAction::AnalyseDownloads | SettingsAction::JoinJam | SettingsAction::CheckUpdate => return None,
             }
         }
@@ -628,7 +661,7 @@ fn model(groups: Vec<(String, Vec<Row>)>, p: &StoredPrefs, f: &Facts, today: Tod
         out.push(SettingRow { kind: HEADING, title: title.to_uppercase().into(), ..Default::default() });
         // Rows on a plate share it; the plate's corners round where a row without one (a note, the tiles,
         // the appearance) or the group's end meets it.
-        let plated: Vec<bool> = rows.iter().map(|r| !matches!(r.kind, NOTE | SEASONS)).collect();
+        let plated: Vec<bool> = rows.iter().map(|r| !matches!(r.kind, NOTE | SEASONS | README_HEADING | README_TEXT | README_ITEM | README_CODE)).collect();
         let n = rows.len();
         for (i, r) in rows.into_iter().enumerate() {
             let v = match Target::of(&r.name) {
@@ -661,7 +694,11 @@ fn model(groups: Vec<(String, Vec<Row>)>, p: &StoredPrefs, f: &Facts, today: Tod
                 keyed: r.keyed,
                 shares: ModelRc::new(VecModel::from(r.shares)),
                 breakdown: ModelRc::new(VecModel::from(r.breakdown.into_iter().map(SharedString::from).collect::<Vec<_>>())),
-                names: ModelRc::new(VecModel::from(r.names.into_iter().map(SharedString::from).collect::<Vec<_>>())),
+                line: r.line.into(),
+                control: r.control.into(),
+                icon: r.icon,
+                server_tile: r.server_tile,
+                letter: r.letter.into(),
                 first: i == 0 || !plated[i - 1],
                 last: i + 1 == n || !plated[i + 1],
             });
@@ -670,12 +707,133 @@ fn model(groups: Vec<(String, Vec<Row>)>, p: &StoredPrefs, f: &Facts, today: Tod
     ModelRc::new(VecModel::from(out))
 }
 
+/// A page over Settings › Plugins.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PluginPage {
+    Browser,
+    Repos,
+    /// A plugin's page, installed or only offered, by its id.
+    Plugin(String),
+}
+
+/// What a plugin's tile shows and what its icon was asked by.
+#[derive(Default)]
+pub struct Icons {
+    /// Each plugin's icon as last heard; None for one that has none.
+    pub read: HashMap<String, Option<slint::Image>>,
+    /// Asked already: the plugin, and the address its offer gave.
+    pub asked: HashSet<(String, Option<String>)>,
+}
+
 /// The plugins as Settings › Plugins shows them: installed, offered by the repos, and the repos.
 #[derive(Default)]
 pub struct Plugged {
+    /// As their plugins said them last (`Watched::as_said`).
     pub cards: Vec<PluginCard>,
+    /// Rows that show but take no input now, by plugin and row.
+    pub off: HashSet<(String, String)>,
+    /// Each plugin's assets, those that have some.
+    pub assets: HashMap<String, Vec<AssetLine>>,
+    /// The connected devices plugins control.
+    pub controlled: Vec<ControlledDevice>,
     pub repos: Vec<Repo>,
     pub shelf: Shelf,
+    /// The pages open over the list.
+    pub stack: Vec<PluginPage>,
+    /// The browser's search, and the repo it is narrowed to.
+    pub query: String,
+    pub repo_shown: Option<String>,
+    /// What the README was last asked for ([`Plugged::readme_wanted`]), and what came.
+    pub readme_asked: Option<(String, Option<String>, Option<String>)>,
+    pub readme: Vec<ReadmeBlock>,
+    pub icons: Icons,
+    /// The first screen shows: its offers' tiles are wanted too.
+    pub choosing: bool,
+    /// The switch over every plugin (the `pluginsOff` setting) is on.
+    pub all_off: bool,
+    /// The plugin whose page the first screen opened; installed, it is turned on and its form opens.
+    pub offered: Option<String>,
+}
+
+impl Plugged {
+    /// What the repos offer, as last read.
+    pub fn offers(&self) -> &[Offer] {
+        match &self.shelf {
+            Shelf::Read(o) => &o.offers,
+            _ => &[],
+        }
+    }
+
+    /// Plugin `id`'s tile: its icon, or the letter of `name` once it is known to have none; neither
+    /// before its icon was heard of.
+    fn tile(&self, id: &str, name: &str) -> (slint::Image, String) {
+        match self.icons.read.get(id) {
+            Some(Some(icon)) => (icon.clone(), String::new()),
+            Some(None) => (slint::Image::default(), name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default()),
+            None => (slint::Image::default(), String::new()),
+        }
+    }
+
+    /// The plugins whose tiles show now and were not asked for yet, each with its offer, marked asked.
+    pub fn icons_wanted(&mut self) -> Vec<(String, Option<Offer>)> {
+        let offers = self.offers();
+        let offer = |id: &str| nori_plugins::offer_of(offers, id, self.cards.iter().find(|c| c.id == id)).map(|(_, o)| o.clone());
+        let shown: Vec<String> = match self.stack.last() {
+            None => {
+                let chosen_from = if self.choosing { nori_plugins::provider_offers(offers.to_vec(), self.cards.clone(), self.all_off) } else { Vec::new() };
+                self.cards.iter().map(|c| c.id.clone()).chain(chosen_from.into_iter().map(|o| o.id)).collect()
+            }
+            Some(PluginPage::Browser) => nori_plugins::offers_found(offers.to_vec(), self.query.clone(), self.repo_shown.clone()).into_iter().map(|o| o.id).collect(),
+            Some(PluginPage::Repos) => Vec::new(),
+            Some(PluginPage::Plugin(id)) => vec![id.clone()],
+        };
+        let wanted: Vec<(String, Option<Offer>)> = shown.into_iter().map(|id| (id.clone(), offer(&id))).collect();
+        let fresh: Vec<_> = wanted.into_iter().filter(|(id, o)| !self.icons.asked.contains(&(id.clone(), o.as_ref().and_then(|o| o.icon.clone())))).collect();
+        self.icons.asked.extend(fresh.iter().map(|(id, o)| (id.clone(), o.as_ref().and_then(|o| o.icon.clone()))));
+        fresh
+    }
+
+    /// What the open plugin page's README has to be asked for: again when the plugin's version or the
+    /// offer's address changed. None when asked already.
+    pub fn readme_wanted(&mut self) -> Option<(String, Option<Offer>)> {
+        let Some(PluginPage::Plugin(id)) = self.stack.last() else { return None };
+        let id = id.clone();
+        let card = self.cards.iter().find(|c| c.id == id);
+        let offer = nori_plugins::offer_of(self.offers(), &id, card).map(|(_, o)| o.clone());
+        let asked = (id.clone(), card.map(|c| c.version.clone()), offer.as_ref().and_then(|o| o.readme.clone()));
+        if self.readme_asked.as_ref() == Some(&asked) {
+            return None;
+        }
+        if self.readme_asked.as_ref().is_none_or(|a| a.0 != id) {
+            self.readme.clear();
+        }
+        self.readme_asked = Some(asked);
+        Some((id, offer))
+    }
+
+    /// Plugin `id`'s README came; the page may have moved on.
+    pub fn readme_came(&mut self, id: &str, blocks: Vec<ReadmeBlock>) {
+        if self.readme_asked.as_ref().is_some_and(|a| a.0 == id) {
+            self.readme = blocks;
+        }
+    }
+
+    /// Back a page; true when that left the plugin offered, whose sheet then closes.
+    pub fn back(&mut self) -> bool {
+        self.stack.pop();
+        self.stack.is_empty() && self.offered.take().is_some()
+    }
+
+    /// What a plugin's kind says of itself; nori's own kinds are worded by the client.
+    pub fn about_of(&self, kind: &ServerKind) -> Option<&str> {
+        let ServerKind::Plugin { id } = kind else { return None };
+        self.cards.iter().find(|c| c.id == *id)?.about.as_deref()
+    }
+
+    /// Closes the pages of a plugin just removed.
+    pub fn gone(&mut self, id: &str) {
+        self.stack.retain(|p| !matches!(p, PluginPage::Plugin(top) if top == id));
+    }
 }
 
 /// What the plugin repos offer, as far as they were asked.
@@ -699,6 +857,8 @@ pub enum PluginAct {
     /// Moves the plugin up (-1) or down (+1) the order.
     Move(String, i32),
     Remove(String),
+    /// The switch over every plugin (the `pluginsOff` setting).
+    AllOff,
     /// Asks for a file or folder to install.
     Install,
     /// Installs the plugin its sheet shows.
@@ -708,11 +868,39 @@ pub enum PluginAct {
     Get(u32, u32),
     /// The page at this address, in the browser.
     Open(String),
+    /// The browser, or the repos, over what shows.
+    Browser,
+    Repos,
+    /// A plugin's page over what shows.
+    Page(String),
+    /// Back to what the page shown covers.
+    Back,
+    /// The browser's search, as typed.
+    Search,
+    /// The browser narrowed to a repo: its chip.
+    Chip,
     /// Asks for a repo's address.
     AddRepo,
     /// The repo at this address, once trusted.
     TrustRepo(String),
     RemoveRepo(String),
+    /// A controlled device's noise control, by the device's id.
+    Noise(String),
+    /// Lets a plugin fetch its assets on mobile data.
+    AllowMobile(String),
+    /// The first screen's choice: this kind's form.
+    Choose(ServerKind),
+    /// The first screen's choice of a plugin installed but off.
+    TurnOn(String),
+    /// The first screen's choice of a plugin not installed: its page.
+    OfferPage(String),
+    /// Every plugin and the repos, over the first screen.
+    Sheet,
+    /// Back from the form to the first screen.
+    ChooseAgain,
+    /// A provider's page: adds it and opens its sign-in, or goes on as a guest.
+    AddSigningIn,
+    AddAsGuest,
 }
 
 impl PluginAct {
@@ -730,6 +918,7 @@ impl PluginAct {
             "plugin-up" => PluginAct::Move(id(), -1),
             "plugin-down" => PluginAct::Move(id(), 1),
             "plugin-remove" => PluginAct::Remove(id()),
+            "plugins-off" => PluginAct::AllOff,
             "plugin-install" => PluginAct::Install,
             "plugin-install-preview" => PluginAct::InstallPreview,
             "plugin-look" => PluginAct::Look,
@@ -738,9 +927,25 @@ impl PluginAct {
                 PluginAct::Get(offer.parse().ok()?, version.parse().ok()?)
             }
             "plugin-open" => PluginAct::Open(id()),
+            "plugin-browser" => PluginAct::Browser,
+            "plugin-repos" => PluginAct::Repos,
+            "plugin-page" => PluginAct::Page(id()),
+            "plugin-back" => PluginAct::Back,
+            "plugin-search" => PluginAct::Search,
+            "plugin-chip" => PluginAct::Chip,
             "repo-add" => PluginAct::AddRepo,
             "repo-trust" => PluginAct::TrustRepo(id()),
             "repo-remove" => PluginAct::RemoveRepo(id()),
+            "device-noise" => PluginAct::Noise(id()),
+            "plugin-mobile" => PluginAct::AllowMobile(id()),
+            "provider-own" => PluginAct::Choose(ServerKind::Subsonic),
+            "provider" => PluginAct::Choose(ServerKind::Plugin { id: id() }),
+            "provider-on" => PluginAct::TurnOn(id()),
+            "provider-offer" => PluginAct::OfferPage(id()),
+            "plugins-sheet" => PluginAct::Sheet,
+            "provider-again" => PluginAct::ChooseAgain,
+            "provider-sign-in" => PluginAct::AddSigningIn,
+            "provider-guest" => PluginAct::AddAsGuest,
             _ => return None,
         })
     }
@@ -753,123 +958,316 @@ impl PluginAct {
             PluginAct::Row(id, row) => format!("plugin-row:{id}:{row}"),
             PluginAct::Move(id, by) => format!("{}:{id}", if *by < 0 { "plugin-up" } else { "plugin-down" }),
             PluginAct::Remove(id) => format!("plugin-remove:{id}"),
+            PluginAct::AllOff => "plugins-off".into(),
             PluginAct::Install => "plugin-install".into(),
             PluginAct::InstallPreview => "plugin-install-preview".into(),
             PluginAct::Look => "plugin-look".into(),
             PluginAct::Get(offer, version) => format!("plugin-get:{offer}:{version}"),
             PluginAct::Open(url) => format!("plugin-open:{url}"),
+            PluginAct::Browser => "plugin-browser".into(),
+            PluginAct::Repos => "plugin-repos".into(),
+            PluginAct::Page(id) => format!("plugin-page:{id}"),
+            PluginAct::Back => "plugin-back".into(),
+            PluginAct::Search => "plugin-search".into(),
+            PluginAct::Chip => "plugin-chip".into(),
             PluginAct::AddRepo => "repo-add".into(),
             PluginAct::TrustRepo(url) => format!("repo-trust:{url}"),
             PluginAct::RemoveRepo(url) => format!("repo-remove:{url}"),
+            PluginAct::Noise(device) => format!("device-noise:{device}"),
+            PluginAct::AllowMobile(id) => format!("plugin-mobile:{id}"),
+            PluginAct::Choose(ServerKind::Subsonic) => "provider-own".into(),
+            PluginAct::Choose(ServerKind::Plugin { id }) => format!("provider:{id}"),
+            PluginAct::TurnOn(id) => format!("provider-on:{id}"),
+            PluginAct::OfferPage(id) => format!("provider-offer:{id}"),
+            PluginAct::Sheet => "plugins-sheet".into(),
+            PluginAct::ChooseAgain => "provider-again".into(),
+            PluginAct::AddSigningIn => "provider-sign-in".into(),
+            PluginAct::AddAsGuest => "provider-guest".into(),
         }
     }
 }
 
-/// Settings › Plugins: each plugin's group of its own rows and its page's; installing one from a file
-/// or a repo; the repos.
+/// Settings › Plugins and the pages it opens, as they draw: the page's rows.
 pub fn plugin_rows(p: &Plugged, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
-    model(plugin_groups(p), prefs, f, today)
+    model(plugin_groups(p, prefs.plugins_off), prefs, f, today)
 }
 
-fn plugin_groups(p: &Plugged) -> Vec<(String, Vec<Row>)> {
-    let mut groups = Vec::new();
-    let count = p.cards.len();
-    for (i, c) in p.cards.iter().enumerate() {
-        let mut detail: Vec<String> = c.about.iter().cloned().collect();
-        detail.extend([words::plugin_is(&c.points, !c.overrides.is_empty()), words::plugin_reach(&c.net, &c.overrides)].into_iter().filter(|l| !l.is_empty()));
-        let mut rows = vec![Row { kind: TOGGLE, name: PluginAct::Turn(c.id.clone()).name(), title: format!("{} {}", words::PLUGIN_VERSION, c.version), detail: detail.join(" · "), on: c.enabled, enabled: true, ..Default::default() }];
-        if c.repo.is_some() {
-            rows.push(Row { kind: TOGGLE, name: PluginAct::Hold(c.id.clone()).name(), title: words::KEEP_VERSION.into(), on: c.held, enabled: true, ..Default::default() });
-        }
-        let mut order: Vec<(String, PluginAct)> = Vec::new();
-        if i > 0 {
-            order.push((words::MOVE_UP.into(), PluginAct::Move(c.id.clone(), -1)));
-        }
-        if i + 1 < count {
-            order.push((words::MOVE_DOWN.into(), PluginAct::Move(c.id.clone(), 1)));
-        }
-        order.push((words::REMOVE.into(), PluginAct::Remove(c.id.clone())));
-        rows.push(Row {
-            kind: BUTTONS,
-            title: words::PLUGIN_ORDER.into(),
-            enabled: true,
-            names: order.iter().map(|(_, a)| a.name()).collect(),
-            options: order.into_iter().map(|(label, _)| (label.clone(), label)).collect(),
-            ..Default::default()
-        });
-        groups.extend(card_groups(c, rows));
-        if let Shelf::Read(offers) = &p.shelf {
-            groups.extend(versions(c, offers));
-        }
+fn plugin_groups(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
+    match p.stack.last() {
+        None => plugin_list(p, all_off),
+        Some(PluginPage::Browser) => browser(p),
+        Some(PluginPage::Repos) => repos_page(p),
+        Some(PluginPage::Plugin(id)) => plugin_page(p, id),
     }
-    let mut install = Vec::new();
+}
+
+/// The first screen as it draws: what a new profile can play from.
+pub fn provider_rows(p: &Plugged, kinds: &Kinds, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    model(vec![(String::new(), provider_choices(p, kinds))], prefs, f, today)
+}
+
+/// The first screen's head: what it asks, and the plus to every plugin and the repos.
+pub fn provider_top() -> PluginTop {
+    PluginTop { title: words::PROVIDER_CHOOSE.into(), tools: tools(&[(TOOL_PLUS, words::GET_PLUGINS, PluginAct::Sheet)]), ..Default::default() }
+}
+
+/// nori's own and the plugins' providers in ink, then, quieter, those a repo offers that aren't on.
+fn provider_choices(p: &Plugged, kinds: &Kinds) -> Vec<Row> {
+    let active = kinds.providers().into_iter().map(|i| {
+        let name = crate::words::provider_of(kinds, &i.kind).name;
+        let act = PluginAct::Choose(i.kind.clone()).name();
+        match &i.kind {
+            ServerKind::Subsonic => Row { kind: PLUGIN, name: act, title: name, detail: words::PROVIDER_SUBSONIC_ABOUT.into(), server_tile: true, enabled: true, ..Default::default() },
+            ServerKind::Plugin { id } => Row { name: act, ..plugin_line(p, id, &name, None, String::new()) },
+        }
+    });
+    let offered = nori_plugins::provider_offers(p.offers().to_vec(), p.cards.clone(), p.all_off).into_iter().map(|o| {
+        // With every plugin off none could run: it leads to the switch.
+        let act = if p.all_off { PluginAct::Sheet } else if p.cards.iter().any(|c| c.id == o.id) { PluginAct::TurnOn(o.id.clone()) } else { PluginAct::OfferPage(o.id.clone()) };
+        Row { name: act.name(), enabled: false, ..plugin_line(p, &o.id, &o.name, None, String::new()) }
+    });
+    active.chain(offered).collect()
+}
+
+/// A plugin in a list: its tile, name, what it is, a quiet `line`; opening it opens its page.
+fn plugin_line(p: &Plugged, id: &str, name: &str, about: Option<&str>, line: String) -> Row {
+    let (icon, letter) = p.tile(id, name);
+    Row { kind: PLUGIN, name: PluginAct::Page(id.into()).name(), title: name.into(), detail: about.unwrap_or_default().into(), line, icon, letter, enabled: true, ..Default::default() }
+}
+
+/// Updates waiting, and the installed plugins in their order, grey while every plugin is off.
+fn plugin_list(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
     if p.cards.is_empty() {
-        install.push(note(words::NO_PLUGINS));
+        let get = Row { kind: BUTTON, name: PluginAct::Browser.name(), title: words::GET_PLUGINS.into(), enabled: true, ..Default::default() };
+        return vec![(String::new(), vec![note(words::NO_PLUGINS), get])];
     }
-    install.push(Row { kind: BUTTON, name: PluginAct::Install.name(), title: words::INSTALL_PLUGIN.into(), enabled: true, ..Default::default() });
-    groups.push((words::INSTALL_FROM_FILE.into(), install));
-    let look = |title: &str| Row { kind: BUTTON, name: PluginAct::Look.name(), title: title.into(), enabled: true, ..Default::default() };
-    let get = match &p.shelf {
-        Shelf::Unasked => vec![look(words::LOOK_FOR_PLUGINS)],
-        Shelf::Asking => vec![note(words::LOOKING)],
-        Shelf::Read(Offers { offers, failed }) => {
-            let mut rows = Vec::new();
-            for (at, o) in offers.iter().enumerate() {
-                // What is installed at its newest is not offered again.
-                let Some((newest, state)) = nori_host::desktop::offer_state(o).filter(|(_, s)| *s != OfferState::Installed) else { continue };
-                let mut detail: Vec<String> = o.about.iter().cloned().collect();
-                detail.push(format!("{} {}", words::PLUGIN_VERSION, newest.version));
-                detail.push(words::repo_name(&o.repo));
-                let button = if state == OfferState::Update { words::UPDATE } else { words::INSTALL };
-                rows.push(Row { kind: ACTION, name: PluginAct::Get(at as u32, 0).name(), title: o.name.clone(), detail: detail.join(" · "), button: button.into(), enabled: true, ..Default::default() });
-            }
-            if rows.is_empty() && failed.is_empty() {
-                rows.push(note(words::NOTHING_OFFERED));
-            }
-            rows.extend(failed.iter().map(|f| note(&words::repo_failed(&f.repo))));
-            rows.push(look(words::LOOK_AGAIN));
-            rows
-        }
-    };
-    groups.push((words::GET_PLUGINS.into(), get));
-    let mut repos: Vec<Row> = p
-        .repos
-        .iter()
-        .map(|r| match r.official {
-            true => info(&words::repo_name(r), String::new()),
-            false => Row { kind: ACTION, name: PluginAct::RemoveRepo(r.url.clone()).name(), title: words::repo_name(r), detail: r.url.clone(), button: words::REMOVE.into(), enabled: true, ..Default::default() },
+    let mut groups = Vec::new();
+    let updates: Vec<Row> = nori_plugins::updates_waiting(p.offers(), &p.cards)
+        .into_iter()
+        .filter_map(|o| {
+            let at = at_of(p.offers(), o);
+            let line = words::update_line(o.installed.as_deref()?, &o.versions.first()?.version);
+            Some(Row { control: PluginAct::Get(at as u32, 0).name(), button: words::UPDATE.into(), ..plugin_line(p, &o.id, &o.name, None, line) })
         })
         .collect();
-    repos.push(Row { kind: BUTTON, name: PluginAct::AddRepo.name(), title: words::ADD_REPO.into(), enabled: true, ..Default::default() });
-    groups.push((words::REPOS.into(), repos));
+    if !updates.is_empty() {
+        groups.push((words::UPDATES.to_string(), updates));
+    }
+    let installed = p.cards.iter().map(|c| {
+        let kinds = words::plugin_is(&c.points, !c.overrides.is_empty());
+        let line = [c.version.clone(), kinds].into_iter().filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" · ");
+        Row { control: PluginAct::Turn(c.id.clone()).name(), on: c.enabled, enabled: !all_off, ..plugin_line(p, &c.id, &c.name, c.about.as_deref(), line) }
+    });
+    groups.push((words::INSTALLED_LIST.to_string(), installed.collect()));
     groups
 }
 
-/// What plugin `c`'s repo offers of it: where its code is, and its versions to install one of.
-fn versions(c: &PluginCard, offers: &Offers) -> Option<(String, Vec<Row>)> {
-    let (at, o) = offers.offers.iter().enumerate().find(|(_, o)| o.id == c.id && c.repo.as_ref().is_none_or(|r| *r == o.repo.url))?;
-    let mut rows: Vec<Row> = o.source.iter().map(|url| Row { kind: LINK, name: PluginAct::Open(url.clone()).name(), title: words::SOURCE.into(), detail: url.clone(), enabled: true, ..Default::default() }).collect();
-    rows.extend(o.versions.iter().enumerate().map(|(i, v)| {
-        let here = v.version == c.version;
-        Row {
-            kind: ACTION,
-            name: PluginAct::Get(at as u32, i as u32).name(),
-            title: v.version.clone(),
-            detail: v.released.clone().unwrap_or_default(),
-            button: (if here { words::INSTALLED } else { words::INSTALL }).into(),
-            enabled: !here,
-            ..Default::default()
+/// `o`'s place among `offers`, which an install asks by.
+fn at_of(offers: &[Offer], o: &Offer) -> usize {
+    offers.iter().position(|x| x.id == o.id && x.repo.url == o.repo.url).unwrap_or(0)
+}
+
+/// What the repos offer, as searched and narrowed.
+fn browser(p: &Plugged) -> Vec<(String, Vec<Row>)> {
+    let mut rows = Vec::new();
+    match &p.shelf {
+        Shelf::Unasked | Shelf::Asking => rows.push(note(words::LOOKING)),
+        Shelf::Read(Offers { offers, failed }) => {
+            rows.extend(failed.iter().map(|f| note(&words::repo_failed(&f.repo))));
+            let found = nori_plugins::offers_found(offers.clone(), p.query.clone(), p.repo_shown.clone());
+            if found.is_empty() {
+                rows.push(note(words::NONE_FOUND));
+            }
+            rows.extend(found.iter().filter_map(|o| {
+                let line = format!("{} · {}", o.versions.first()?.version, words::repo_name(&o.repo));
+                let (button, control) = match o.state {
+                    OfferState::New => (words::INSTALL, PluginAct::Get(at_of(offers, o) as u32, 0).name()),
+                    OfferState::Update => (words::UPDATE, PluginAct::Get(at_of(offers, o) as u32, 0).name()),
+                    OfferState::Installed => (words::INSTALLED, String::new()),
+                };
+                Some(Row { button: button.into(), control, ..plugin_line(p, &o.id, &o.name, o.about.as_deref(), line) })
+            }));
+            rows.push(Row { kind: BUTTON, name: PluginAct::Look.name(), title: words::LOOK_AGAIN.into(), enabled: true, ..Default::default() });
         }
-    }));
-    Some((format!("{} · {}", c.name, words::VERSIONS), rows))
+    }
+    vec![(String::new(), rows)]
+}
+
+/// The repos and what each offers; those added can be removed.
+fn repos_page(p: &Plugged) -> Vec<(String, Vec<Row>)> {
+    let rows = p.repos.iter().map(|r| {
+        let line = match &p.shelf {
+            Shelf::Read(o) if o.failed.iter().any(|f| f.repo.url == r.url) => words::repo_failed(r),
+            Shelf::Read(o) => words::plugin_count(o.offers.iter().filter(|x| x.repo.url == r.url).count()),
+            _ => words::LOOKING.into(),
+        };
+        match r.official {
+            true => info(&words::repo_name(r), line),
+            false => Row { kind: ACTION, name: PluginAct::RemoveRepo(r.url.clone()).name(), title: words::repo_name(r), detail: format!("{} · {line}", r.url), button: words::REMOVE.into(), enabled: true, ..Default::default() },
+        }
+    });
+    vec![(String::new(), rows.collect())]
+}
+
+/// A plugin's page under its head ([`plugin_top`]): its switches and rows, its README, what it may do, its
+/// versions and source.
+fn plugin_page(p: &Plugged, id: &str) -> Vec<(String, Vec<Row>)> {
+    let card = p.cards.iter().find(|c| c.id == id);
+    let found = nori_plugins::offer_of(p.offers(), id, card);
+    let mut groups = Vec::new();
+    if let Some(c) = card {
+        let mut head = vec![Row { kind: TOGGLE, name: PluginAct::Turn(c.id.clone()).name(), title: words::PLUGIN_ON.into(), on: c.enabled, enabled: true, ..Default::default() }];
+        if c.repo.is_some() {
+            head.push(Row { kind: TOGGLE, name: PluginAct::Hold(c.id.clone()).name(), title: words::KEEP_VERSION.into(), on: c.held, enabled: true, ..Default::default() });
+        }
+        let mut page = card_groups(String::new(), c, head, &p.off);
+        let devices = p.controlled.iter().filter(|d| d.card.id == c.id);
+        page.splice(1..1, devices.map(|d| (d.name.clone(), device_controls(d))).filter(|(_, rows)| !rows.is_empty()));
+        groups.extend(page);
+        if let Some(assets) = p.assets.get(&c.id) {
+            let mut rows: Vec<Row> = assets.iter().map(|a| info(&a.name, words::asset_state(a))).collect();
+            if assets.iter().any(|a| a.state == AssetState::WaitingForWifi) {
+                rows.push(Row { kind: BUTTON, name: PluginAct::AllowMobile(c.id.clone()).name(), title: words::ASSETS_ON_MOBILE.into(), enabled: true, ..Default::default() });
+            }
+            groups.push((words::FILES.to_string(), rows));
+        }
+    }
+    groups.push((words::ABOUT.to_string(), p.readme.iter().map(readme_row).collect()));
+    if let Some(c) = card {
+        let may: Vec<Row> = words::plugin_may(c).iter().map(|l| info(l, String::new())).collect();
+        if !may.is_empty() {
+            groups.push((words::PLUGIN_MAY.to_string(), may));
+        }
+    }
+    if let Some((at, o)) = found {
+        groups.push((words::VERSIONS.to_string(), versions(card, at, o)));
+    }
+    groups.retain(|(_, rows)| !rows.is_empty());
+    groups
+}
+
+fn readme_row(b: &ReadmeBlock) -> Row {
+    let (kind, text) = match b {
+        ReadmeBlock::Heading { text, .. } => (README_HEADING, text),
+        ReadmeBlock::Text { text } => (README_TEXT, text),
+        ReadmeBlock::Item { text } => (README_ITEM, text),
+        ReadmeBlock::Code { text } => (README_CODE, text),
+    };
+    Row { kind, title: text.clone(), ..Default::default() }
+}
+
+/// Offer `o`, at place `at` among those read: its versions to install one of, and where its code is.
+fn versions(card: Option<&PluginCard>, at: usize, o: &Offer) -> Vec<Row> {
+    let mut rows: Vec<Row> = o
+        .versions
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let here = card.is_some_and(|c| c.version == v.version);
+            Row {
+                kind: ACTION,
+                name: PluginAct::Get(at as u32, i as u32).name(),
+                title: v.version.clone(),
+                detail: v.released.clone().unwrap_or_default(),
+                button: (if here { words::INSTALLED } else { words::INSTALL }).into(),
+                enabled: !here,
+                ..Default::default()
+            }
+        })
+        .collect();
+    rows.extend(o.source.iter().map(|url| Row { kind: LINK, name: PluginAct::Open(url.clone()).name(), title: words::SOURCE.into(), detail: words::host(url).into(), enabled: true, ..Default::default() }));
+    rows
+}
+
+fn strings(words: Vec<String>) -> ModelRc<SharedString> {
+    ModelRc::new(VecModel::from(words.into_iter().map(SharedString::from).collect::<Vec<_>>()))
+}
+
+/// The tools at the top right of a plugin page, by their glyph (`PluginTool::glyph`).
+const TOOL_PLUS: i32 = 0;
+const TOOL_FOLDER: i32 = 1;
+const TOOL_SERVER: i32 = 2;
+
+fn tools(list: &[(i32, &str, PluginAct)]) -> ModelRc<PluginTool> {
+    ModelRc::new(VecModel::from(list.iter().map(|(glyph, label, act)| PluginTool { glyph: *glyph, label: (*label).into(), name: act.name().into() }).collect::<Vec<_>>()))
+}
+
+/// The head of what shows: its title and tools, and on a plugin's page what it is and the way to get it.
+pub fn plugin_top(p: &Plugged, all_off: bool) -> PluginTop {
+    let back = !p.stack.is_empty();
+    match p.stack.last() {
+        None => PluginTop { title: words::PLUGINS.into(), back, tools: tools(&[(TOOL_PLUS, words::GET_PLUGINS, PluginAct::Browser)]), every: !p.cards.is_empty(), all_on: !all_off, ..Default::default() },
+        Some(PluginPage::Repos) => PluginTop { title: words::REPOS.into(), back, tools: tools(&[(TOOL_PLUS, words::ADD_REPO, PluginAct::AddRepo)]), ..Default::default() },
+        Some(PluginPage::Browser) => {
+            let shown = p.repos.iter().position(|r| p.repo_shown.as_ref() == Some(&r.url)).map_or(0, |i| i as i32 + 1);
+            let chips = if p.repos.len() > 1 { std::iter::once(words::ALL.to_string()).chain(p.repos.iter().map(words::repo_name)).collect() } else { Vec::new() };
+            PluginTop {
+                title: words::GET_PLUGINS.into(),
+                back,
+                tools: tools(&[(TOOL_FOLDER, words::INSTALL_FROM_FILE, PluginAct::Install), (TOOL_SERVER, words::REPOS, PluginAct::Repos)]),
+                search: words::SEARCH_PLUGINS.into(),
+                query: p.query.as_str().into(),
+                chips: strings(chips),
+                chip: shown,
+                ..Default::default()
+            }
+        }
+        Some(PluginPage::Plugin(id)) => {
+            let at = p.cards.iter().position(|c| c.id == *id);
+            let card = at.map(|at| &p.cards[at]);
+            let found = nori_plugins::offer_of(p.offers(), id, card);
+            let offer = found.map(|(_, o)| o);
+            let newest = offer.and_then(|o| o.versions.first());
+            let name = card.map(|c| c.name.as_str()).or(offer.map(|o| o.name.as_str())).unwrap_or(id);
+            let (icon, letter) = p.tile(id, name);
+            let from = match (card, offer) {
+                (Some(c), _) if c.repo.is_none() => Some(words::FROM_A_FILE.to_string()),
+                (_, Some(o)) => Some(words::repo_name(&o.repo)),
+                _ => None,
+            };
+            let kinds = card.map(|c| words::plugin_is(&c.points, !c.overrides.is_empty())).filter(|k| !k.is_empty());
+            let line = card.map(|c| c.version.clone()).or(newest.map(|v| v.version.clone())).into_iter().chain(from).chain(kinds).collect::<Vec<_>>().join(" · ");
+            let about = card.and_then(|c| c.about.as_ref()).or(offer.and_then(|o| o.about.as_ref())).cloned().unwrap_or_default();
+            let get = found.zip(newest).and_then(|((offer_at, o), v)| match (card, o.state) {
+                (None, _) => Some((words::INSTALL.to_string(), offer_at)),
+                (_, OfferState::Update) => Some((words::update_to(&v.version), offer_at)),
+                _ => None,
+            });
+            let mut menu: Vec<(String, PluginAct)> = Vec::new();
+            if let Some(at) = at {
+                if at > 0 {
+                    menu.push((words::MOVE_UP.into(), PluginAct::Move(id.clone(), -1)));
+                }
+                if at + 1 < p.cards.len() {
+                    menu.push((words::MOVE_DOWN.into(), PluginAct::Move(id.clone(), 1)));
+                }
+                menu.push((words::REMOVE.into(), PluginAct::Remove(id.clone())));
+            }
+            let (labels, names): (Vec<String>, Vec<String>) = menu.into_iter().map(|(l, a)| (l, a.name())).unzip();
+            PluginTop {
+                title: name.into(),
+                back,
+                tile: true,
+                icon,
+                letter: letter.into(),
+                line: line.into(),
+                about: about.into(),
+                action: get.as_ref().map(|g| g.0.as_str()).unwrap_or_default().into(),
+                action_name: get.map(|g| PluginAct::Get(g.1 as u32, 0).name()).unwrap_or_default().into(),
+                menu: strings(labels),
+                menu_names: strings(names),
+                ..Default::default()
+            }
+        }
+    }
 }
 
 /// One row of plugin `plugin`'s page, drawn as the settings' own rows are; its hint is the quiet line
-/// under it.
-fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
+/// under it. Off, it shows but takes no input.
+fn plugin_row(plugin: &str, r: &PluginRow, off: bool) -> Row {
     let name = PluginAct::Row(plugin.into(), r.id.clone()).name();
     let hint = r.hint.clone().unwrap_or_default();
-    let base = Row { name, title: r.label.clone(), detail: hint.clone(), enabled: true, ..Default::default() };
+    let base = Row { name, title: r.label.clone(), detail: hint.clone(), enabled: !off, ..Default::default() };
     // A value said on the quiet line, the hint after it.
     let said = |value: String| [value, hint.clone()].into_iter().filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" · ");
     match r.kind {
@@ -911,23 +1309,53 @@ fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
     }
 }
 
-/// Card `c`'s page as groups: its rows under its name (after `head`), each section under its own.
-fn card_groups(c: &PluginCard, head: Vec<Row>) -> Vec<(String, Vec<Row>)> {
+/// Card `c`'s page as groups: its rows under `title` (after `head`), each section under its own; those
+/// in `off` take no input.
+fn card_groups(title: String, c: &PluginCard, head: Vec<Row>, off: &HashSet<(String, String)>) -> Vec<(String, Vec<Row>)> {
     let mut groups = Vec::new();
-    let (mut title, mut rows) = (c.name.clone(), head);
+    let (mut title, mut rows) = (title, head);
     for r in &c.rows {
         match r.kind {
             RowKind::Section => groups.push((std::mem::replace(&mut title, r.label.clone()), std::mem::take(&mut rows))),
-            _ => rows.push(plugin_row(&c.id, r)),
+            _ => rows.push(plugin_row(&c.id, r, off.contains(&(c.id.clone(), r.id.clone())))),
         }
     }
     groups.push((title, rows));
     groups
 }
 
-/// The rows the plugins `cards` show on the devices panel, as on their pages.
-pub fn device_rows(cards: &[PluginCard], prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
-    model(cards.iter().flat_map(|c| card_groups(c, Vec::new())).filter(|(_, rows)| !rows.is_empty()).collect(), prefs, f, today)
+/// The devices panel's plugin rows: each controlled device's page (its batteries and noise control,
+/// then its plugin's rows), then the rows of the plugins `cards` show there, as on their pages.
+pub fn device_rows(cards: &[PluginCard], controlled: &[ControlledDevice], off: &HashSet<(String, String)>, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    model(device_groups(cards, controlled, off), prefs, f, today)
+}
+
+/// A controlled device's batteries and noise control.
+fn device_controls(d: &ControlledDevice) -> Vec<Row> {
+    let mut rows = Vec::new();
+    let battery = words::battery(&d.battery);
+    if !battery.is_empty() {
+        rows.push(info(words::BATTERY, battery));
+    }
+    if !d.noise_modes.is_empty() {
+        let options = d.noise_modes.iter().map(|m| (words::noise(*m).to_string(), String::new())).collect();
+        let chosen = d.noise.and_then(|n| d.noise_modes.iter().position(|m| *m == n)).map_or(-1, |i| i as i32);
+        rows.push(Row { kind: CHOICE, name: PluginAct::Noise(d.id.clone()).name(), title: words::NOISE_CONTROL.into(), options, chosen: Some(chosen), enabled: true, ..Default::default() });
+    }
+    rows
+}
+
+fn device_groups(cards: &[PluginCard], controlled: &[ControlledDevice], off: &HashSet<(String, String)>) -> Vec<(String, Vec<Row>)> {
+    let mut groups = Vec::new();
+    for d in controlled {
+        groups.push((d.name.clone(), device_controls(d)));
+        if !cards.iter().any(|c| c.id == d.card.id) {
+            groups.extend(card_groups(d.card.name.clone(), &d.card, Vec::new(), off));
+        }
+    }
+    groups.extend(cards.iter().flat_map(|c| card_groups(c.name.clone(), c, Vec::new(), off)));
+    groups.retain(|(_, rows)| !rows.is_empty());
+    groups
 }
 
 /// The value of option `index` of `target`.
@@ -1066,15 +1494,117 @@ mod tests {
         assert_eq!(Act::of(ADD_SERVER), Some(Act::AddServer));
         assert_eq!(Act::of("server:7"), Some(Act::Server("7".into())));
         assert_eq!(Act::of("edit:7"), Some(Act::Edit("7".into())));
+        assert_eq!(Act::of(&backup_password(true, "C:/b:k.noribackup")), Some(Act::BackupPassword { restore: true, path: "C:/b:k.noribackup".into() }), "a path with colons");
+        assert_eq!(Act::of(&backup_password(false, "/a")), Some(Act::BackupPassword { restore: false, path: "/a".into() }));
+    }
+
+    use nori_plugins::{Offer, Version};
+
+    fn plugin_card(id: &str, rows: Vec<PluginRow>) -> PluginCard {
+        PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: Some("Does it".into()), enabled: true, repo: Some(nori_plugins::OFFICIAL.into()), held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: false, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows }
+    }
+
+    fn official() -> Repo {
+        Repo { url: nori_plugins::OFFICIAL.into(), official: true }
+    }
+
+    fn offer(id: &str, repo: &Repo, state: OfferState) -> Offer {
+        let version = |v: &str| Version { repo: repo.url.clone(), version: v.into(), released: None, url: String::new(), sha256: String::new(), key: None, signature: None };
+        let installed = (state != OfferState::New).then(|| "1.0.0".to_string());
+        Offer { repo: repo.clone(), id: id.into(), name: id.into(), about: None, source: Some("https://code.example/x".into()), readme: None, icon: Some(format!("https://i.example/{id}.png")), points: Vec::new(), versions: vec![version("2.0.0"), version("1.0.0")], installed, state }
+    }
+
+    fn row(id: &str, kind: RowKind, value: Option<Value>) -> PluginRow {
+        PluginRow { id: id.into(), kind, label: id.into(), options: vec!["a".into(), "b".into()], min: Some(0.0), max: Some(2.0), step: Some(0.5), value, hint: None, unit: None, decimals: 1, url: None }
+    }
+
+    fn read(offers: Vec<Offer>) -> Shelf {
+        Shelf::Read(Offers { offers, failed: Vec::new() })
+    }
+
+    /// The list is a line per plugin, whose control is apart from what opening it does, and updates
+    /// waiting above: not its rows, not what the repos offer.
+    #[test]
+    fn the_plugins_list_is_a_line_per_plugin() {
+        let rows = vec![row("on", RowKind::Switch, Some(Value::Switch(true)))];
+        let held = PluginCard { held: true, ..plugin_card("a.held", Vec::new()) };
+        let official = official();
+        let p = Plugged {
+            cards: vec![plugin_card("a.one", rows), held],
+            shelf: read(vec![offer("a.one", &official, OfferState::Update), offer("a.held", &official, OfferState::Update), offer("b.new", &official, OfferState::New)]),
+            ..Default::default()
+        };
+        let groups = plugin_groups(&p, true);
+        let titles: Vec<&str> = groups.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(titles, [words::UPDATES, words::INSTALLED_LIST]);
+        let update = &groups[0].1;
+        assert_eq!(update.len(), 1, "one kept at its version waits for nothing");
+        assert_eq!((update[0].line.as_str(), PluginAct::of(&update[0].control)), ("1.0.0 → 2.0.0", Some(PluginAct::Get(0, 0))));
+        let one = &groups[1].1[0];
+        assert_eq!((one.kind, PluginAct::of(&one.name), PluginAct::of(&one.control), one.on), (PLUGIN, Some(PluginAct::Page("a.one".into())), Some(PluginAct::Turn("a.one".into())), true));
+        assert!(!one.enabled, "grey while every plugin is off");
+        let top = plugin_top(&p, true);
+        assert!(top.every && !top.all_on, "the switch over every plugin in the head");
+        assert!(!top.back);
+        assert_eq!(PluginAct::of(&slint::Model::row_data(&top.tools, 0).unwrap().name), Some(PluginAct::Browser), "the plus opens the browser");
+    }
+
+    /// The browser searches through the core and shows by name, while a row's Install still names the
+    /// offer by its place among those read.
+    #[test]
+    fn the_browser_shows_what_is_found_and_installs_the_offer_shown() {
+        let friend = Repo { url: "https://friend.example/index.json".into(), official: false };
+        let official = official();
+        let mut p = Plugged {
+            repos: vec![official.clone(), friend.clone()],
+            stack: vec![PluginPage::Browser],
+            shelf: read(vec![offer("z.last", &official, OfferState::New), offer("a.first", &friend, OfferState::Update), offer("m.mid", &official, OfferState::Installed)]),
+            ..Default::default()
+        };
+        let lines = |p: &Plugged| plugin_groups(p, false)[0].1.iter().filter(|r| r.kind == PLUGIN).map(|r| (r.title.clone(), r.button.clone(), r.control.clone())).collect::<Vec<_>>();
+        assert_eq!(
+            lines(&p),
+            [("a.first".into(), "Update".into(), "plugin-get:1:0".into()), ("m.mid".into(), "Installed".into(), String::new()), ("z.last".into(), "Install".into(), "plugin-get:0:0".into())]
+        );
+        let top = plugin_top(&p, false);
+        assert_eq!(slint::Model::row_count(&top.chips), 3, "All and one per repo");
+        p.repo_shown = Some(friend.url.clone());
+        assert_eq!(plugin_top(&p, false).chip, 2);
+        assert_eq!(lines(&p).len(), 1);
+        p.repo_shown = None;
+        p.query = "z.la".into();
+        assert_eq!(lines(&p).len(), 1);
+        p.query = "nothing".into();
+        assert_eq!(plugin_groups(&p, false)[0].1[0].title, words::NONE_FOUND);
+        p.repos.truncate(1);
+        assert_eq!(slint::Model::row_count(&plugin_top(&p, false).chips), 0, "one repo needs no chips");
+    }
+
+    /// Repos say what each offers; only those added can go.
+    #[test]
+    fn the_repos_say_what_they_offer() {
+        let friend = Repo { url: "https://friend.example/index.json".into(), official: false };
+        let official = official();
+        let gone = Repo { url: "https://gone.example/index.json".into(), official: false };
+        let p = Plugged {
+            repos: vec![official.clone(), friend.clone(), gone.clone()],
+            stack: vec![PluginPage::Repos],
+            shelf: Shelf::Read(Offers { offers: vec![offer("a", &official, OfferState::New), offer("b", &official, OfferState::New), offer("c", &friend, OfferState::New)], failed: vec![nori_plugins::RepoFailure { repo: gone, reason: "HTTP 404".into() }] }),
+            ..Default::default()
+        };
+        let groups = plugin_groups(&p, false);
+        let rows = &groups[0].1;
+        assert_eq!((rows[0].kind, rows[0].detail.as_str()), (INFO, "2 plugins"));
+        assert_eq!((rows[1].button.as_str(), PluginAct::of(&rows[1].name)), ("Remove", Some(PluginAct::RemoveRepo(friend.url.clone()))));
+        assert!(rows[1].detail.ends_with("1 plugin"), "{}", rows[1].detail);
+        assert!(rows[2].detail.contains("Couldn’t reach gone.example"), "{}", rows[2].detail);
+        assert_eq!(PluginAct::of(&slint::Model::row_data(&plugin_top(&p, false).tools, 0).unwrap().name), Some(PluginAct::AddRepo));
     }
 
     /// A plugin's page draws each kind of row with the settings' own, each named so it parses back to
-    /// the plugin and row it sets; the repos' offers say whether to install, update or not.
+    /// the plugin and row it sets; then its README, what it may do, its versions and source.
     #[test]
-    fn plugins_are_drawn_with_the_settings_rows() {
-        use nori_plugins::{Offer, Offers, PluginCard, PluginRow, Repo, RowKind, Value, Version};
-        let row = |id: &str, kind, value| PluginRow { id: id.into(), kind, label: id.into(), options: vec!["a".into(), "b".into()], min: Some(0.0), max: Some(2.0), step: Some(0.5), value, hint: None, unit: None, decimals: 1, url: None };
-        let card = |id: &str, rows| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: Some(nori_plugins::OFFICIAL.into()), held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), rows };
+    fn a_plugins_page_has_its_rows_readme_and_versions() {
         let rows = vec![
             row("on", RowKind::Switch, Some(Value::Switch(true))),
             row("pick", RowKind::Choice, Some(Value::Choice(1))),
@@ -1084,33 +1614,188 @@ mod tests {
             row("more", RowKind::Section, None),
             row("state", RowKind::Status, Some(Value::Text("Fine".into()))),
         ];
-        let official = Repo { url: nori_plugins::OFFICIAL.into(), official: true };
-        let version = |v: &str| Version { repo: official.url.clone(), version: v.into(), released: None, url: String::new(), sha256: String::new() };
-        let offer = Offer { repo: official.clone(), id: "a.one".into(), name: "One".into(), about: None, source: Some("https://code.example".into()), versions: vec![version("2.0.0"), version("1.0.0")], installed: Some("1.0.0".into()) };
-        let p = Plugged { cards: vec![card("a.one", rows), card("a.two", Vec::new())], repos: vec![official], shelf: Shelf::Read(Offers { offers: vec![offer], failed: Vec::new() }) };
-        let groups = plugin_groups(&p);
+        let official = official();
+        let buds = ControlledDevice { id: "AA".into(), name: "Buds".into(), battery: nori_plugins::Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: None, noise_modes: Vec::new(), card: plugin_card("a.one", Vec::new()) };
+        let mut p = Plugged {
+            cards: vec![plugin_card("a.one", rows), plugin_card("a.two", Vec::new())],
+            off: HashSet::from([("a.one".to_string(), "pick".to_string())]),
+            assets: HashMap::from([("a.one".to_string(), vec![AssetLine { name: "model".into(), size: 3 << 20, state: AssetState::WaitingForWifi }])]),
+            controlled: vec![buds],
+            repos: vec![official.clone()],
+            shelf: read(vec![offer("a.one", &official, OfferState::Update)]),
+            stack: vec![PluginPage::Plugin("a.one".into())],
+            readme: vec![ReadmeBlock::Heading { level: 2, text: "Use".into() }, ReadmeBlock::Text { text: "Hello".into() }, ReadmeBlock::Item { text: "One".into() }, ReadmeBlock::Code { text: "x".into() }],
+            ..Default::default()
+        };
+        let groups = plugin_groups(&p, false);
         let titles: Vec<&str> = groups.iter().map(|(t, _)| t.as_str()).collect();
-        assert_eq!(titles, ["a.one", "more", "a.one · Versions", "a.two", "From a file", "Get plugins", "Repos"]);
+        assert_eq!(titles, ["", "Buds", "more", "Files", "About", "Versions"], "nothing to say of what it may do, no group");
         let one: Vec<(i32, &str)> = groups[0].1.iter().map(|r| (r.kind, r.name.as_str())).collect();
-        assert_eq!(one, [(TOGGLE, "plugin-on:a.one"), (TOGGLE, "plugin-hold:a.one"), (BUTTONS, ""), (TOGGLE, "plugin-row:a.one:on"), (CHOICE, "plugin-row:a.one:pick"), (SLIDER, "plugin-row:a.one:gain"), (ACTION, "plugin-row:a.one:key"), (BUTTON, "plugin-row:a.one:go")]);
-        assert_eq!(groups[0].1[4].chosen, Some(1));
-        assert_eq!(groups[0].1[6].detail, "Set", "a secret stays hidden");
-        assert_eq!(groups[0].1[2].names, ["plugin-down:a.one", "plugin-remove:a.one"], "the first can't move up");
-        assert_eq!((groups[1].1[0].kind, groups[1].1[0].detail.as_str()), (INFO, "Fine"));
-        let versions: Vec<(&str, &str, bool)> = groups[2].1.iter().map(|r| (r.title.as_str(), r.button.as_str(), r.enabled)).collect();
-        assert_eq!(versions, [("Source", "", true), ("2.0.0", "Install", true), ("1.0.0", "Installed", false)]);
-        let get = &groups[5].1[0];
-        assert_eq!((get.title.as_str(), get.button.as_str(), PluginAct::of(&get.name)), ("One", "Update", Some(PluginAct::Get(0, 0))));
+        assert_eq!(one, [(TOGGLE, "plugin-on:a.one"), (TOGGLE, "plugin-hold:a.one"), (TOGGLE, "plugin-row:a.one:on"), (CHOICE, "plugin-row:a.one:pick"), (SLIDER, "plugin-row:a.one:gain"), (ACTION, "plugin-row:a.one:key"), (BUTTON, "plugin-row:a.one:go")]);
+        assert!(!groups[0].1[3].enabled, "a row its plugin turned off takes no input");
+        assert_eq!(groups[0].1[3].chosen, Some(1));
+        assert_eq!(groups[0].1[5].detail, "Set", "a secret stays hidden");
+        assert_eq!((groups[1].1[0].kind, groups[1].1[0].detail.as_str()), (INFO, "80%"), "the device it controls, with its battery");
+        assert_eq!((groups[2].1[0].kind, groups[2].1[0].detail.as_str()), (INFO, "Fine"));
+        let files: Vec<(i32, &str, &str)> = groups[3].1.iter().map(|r| (r.kind, r.title.as_str(), r.detail.as_str())).collect();
+        assert_eq!(files, [(INFO, "model", "Waiting for Wi-Fi"), (BUTTON, "Download on mobile data", "")]);
+        assert_eq!(PluginAct::of(&groups[3].1[1].name), Some(PluginAct::AllowMobile("a.one".into())));
+        assert_eq!(groups[4].1.iter().map(|r| r.kind).collect::<Vec<_>>(), [README_HEADING, README_TEXT, README_ITEM, README_CODE]);
+        let versions: Vec<(&str, &str, bool)> = groups[5].1.iter().map(|r| (r.title.as_str(), r.button.as_str(), r.enabled)).collect();
+        assert_eq!(versions, [("2.0.0", "Install", true), ("1.0.0", "Installed", false), ("Source", "", true)]);
+        assert_eq!(groups[5].1[2].detail, "code.example");
         for r in groups.iter().flat_map(|(_, rows)| rows).filter(|r| !r.name.is_empty()) {
             assert_eq!(PluginAct::of(&r.name).map(|a| a.name()), Some(r.name.clone()), "{} parses back", r.name);
         }
-        assert_eq!(PluginAct::of("repo-trust:https://x.example/index.json"), Some(PluginAct::TrustRepo("https://x.example/index.json".into())));
+
+        let top = plugin_top(&p, false);
+        assert!(top.back && top.tile);
+        assert_eq!((top.title.as_str(), top.action.as_str(), PluginAct::of(&top.action_name)), ("a.one", "Update to 2.0.0", Some(PluginAct::Get(0, 0))));
+        let menu: Vec<String> = slint::Model::iter(&top.menu_names).map(|n| n.to_string()).collect();
+        assert_eq!(menu, ["plugin-down:a.one", "plugin-remove:a.one"], "the first can't move up");
+
+        // Only offered, it has Install, no menu, no switches.
+        p.cards.clear();
+        p.controlled.clear();
+        p.assets.clear();
+        let top = plugin_top(&p, false);
+        assert_eq!((top.action.as_str(), slint::Model::row_count(&top.menu)), ("Install", 0));
+        let groups = plugin_groups(&p, false);
+        assert_eq!(groups.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["About", "Versions"]);
+        assert_eq!(groups[1].1[1].button, "Install", "no version is the one here");
+    }
+
+    /// A removed plugin's page closes; the browser it was opened from stays.
+    #[test]
+    fn removing_a_plugin_closes_its_page() {
+        let mut p = Plugged { stack: vec![PluginPage::Browser, PluginPage::Plugin("a.one".into())], ..Default::default() };
+        p.gone("a.one");
+        assert_eq!(p.stack, [PluginPage::Browser]);
+    }
+
+    /// A README is asked once per plugin, version and address, and one that comes for a page left since
+    /// is dropped.
+    #[test]
+    fn a_readme_is_asked_when_what_it_shows_changes() {
+        let official = official();
+        let with = |readme: &str| Offer { readme: Some(readme.into()), ..offer("a.one", &official, OfferState::New) };
+        let mut p = Plugged { stack: vec![PluginPage::Plugin("a.one".into())], ..Default::default() };
+        assert_eq!(p.readme_wanted().map(|w| w.0), Some("a.one".to_string()), "its package's, before any offer");
+        assert!(p.readme_wanted().is_none());
+        p.shelf = read(vec![with("https://r.example/a.md")]);
+        assert_eq!(p.readme_wanted().and_then(|w| w.1).and_then(|o| o.readme).as_deref(), Some("https://r.example/a.md"), "once the offer says where");
+        p.readme_came("a.one", vec![ReadmeBlock::Text { text: "Hello".into() }]);
+        assert_eq!(p.readme.len(), 1);
+        p.readme_came("a.other", Vec::new());
+        assert_eq!(p.readme.len(), 1, "another page's");
+        p.cards = vec![PluginCard { version: "3.0.0".into(), ..plugin_card("a.one", Vec::new()) }];
+        assert!(p.readme_wanted().is_some(), "installed, its package's own");
+        assert_eq!(p.readme.len(), 1, "kept until the next comes");
+        p.stack = vec![PluginPage::Plugin("a.two".into())];
+        assert!(p.readme_wanted().is_some());
+        assert!(p.readme.is_empty(), "another plugin's isn't shown");
+    }
+
+    fn provider_offer(id: &str) -> Offer {
+        Offer { points: vec!["provider".into()], ..offer(id, &official(), OfferState::New) }
+    }
+
+    /// With `offers` read and the plugins `cards` installed.
+    fn offering(offers: Vec<Offer>, cards: Vec<PluginCard>) -> Plugged {
+        Plugged { cards, shelf: Shelf::Read(Offers { offers, failed: Vec::new() }), ..Default::default() }
+    }
+
+    /// nori's own provider in ink, on its glyph; an offer quiet, opening its page or, installed, turning on.
+    #[test]
+    fn offers_are_quiet_and_say_what_choosing_does() {
+        let installed = PluginCard { enabled: false, ..plugin_card("b.off", Vec::new()) };
+        let mut plugged = offering(vec![provider_offer("a.new"), provider_offer("b.off"), provider_offer("c.on"), offer("d.sound", &official(), OfferState::New)], vec![installed, plugin_card("c.on", Vec::new())]);
+        let rows = provider_choices(&plugged, &Kinds::builtin());
+        plugged.all_off = true;
+        let off = provider_choices(&plugged, &Kinds::builtin());
+        let acts: Vec<Option<PluginAct>> = off[1..].iter().map(|r| PluginAct::of(&r.name)).collect();
+        assert_eq!(acts, [Some(PluginAct::Sheet), Some(PluginAct::Sheet), Some(PluginAct::Sheet)], "with every plugin off, all three quiet, leading to the switch");
+        assert!(off[1..].iter().all(|r| !r.enabled));
+        let got: Vec<(&str, bool, bool)> = rows.iter().map(|r| (r.title.as_str(), r.enabled, r.server_tile)).collect();
+        assert_eq!(got, [("OpenSubsonic", true, true), ("a.new", false, false), ("b.off", false, false)], "only providers not on");
+        let acts: Vec<_> = rows.iter().map(|r| PluginAct::of(&r.name)).collect();
+        assert_eq!(acts, [Some(PluginAct::Choose(ServerKind::Subsonic)), Some(PluginAct::OfferPage("a.new".into())), Some(PluginAct::TurnOn("b.off".into()))]);
+    }
+
+    /// An active plugin's provider is chosen as its kind, in ink.
+    #[test]
+    fn an_active_provider_chooses_its_kind() {
+        let dir = nori_testdir::TempDir::new("desktop-providers");
+        let host = nori_plugins::open(dir.path().join("plugins"), nori_core::settings_store::Settings::new(), std::sync::Arc::new(nori_host::desktop::Watched::default()));
+        let id = host.install_from(nori_plugins::testing::fixture("").to_string_lossy().into_owned()).unwrap();
+        host.turn(id.clone(), true);
+        let rows = provider_choices(&Plugged::default(), &Kinds::with_plugins(host));
+        assert_eq!((rows.len(), rows[1].enabled, rows[1].server_tile), (2, true, false));
+        assert_eq!(PluginAct::of(&rows[1].name), Some(PluginAct::Choose(ServerKind::Plugin { id })));
+    }
+
+    /// Repos that can't be read, or not read yet, leave the providers there are.
+    #[test]
+    fn providers_show_without_the_repos() {
+        let failed = Plugged { shelf: Shelf::Read(Offers { offers: Vec::new(), failed: vec![nori_plugins::RepoFailure { repo: official(), reason: "offline".into() }] }), ..Default::default() };
+        for p in [failed, Plugged { shelf: Shelf::Asking, ..Default::default() }] {
+            assert_eq!(provider_choices(&p, &Kinds::builtin()).iter().map(|r| r.title.as_str()).collect::<Vec<_>>(), ["OpenSubsonic"]);
+        }
+    }
+
+    /// The first screen's tiles are asked for, and only while it shows.
+    #[test]
+    fn the_first_screen_wants_its_offers_tiles() {
+        let mut p = offering(vec![provider_offer("a.new")], Vec::new());
+        assert!(p.icons_wanted().is_empty());
+        p.choosing = true;
+        assert_eq!(p.icons_wanted().iter().map(|w| w.0.as_str()).collect::<Vec<_>>(), ["a.new"]);
+    }
+
+    /// Back from the page of the plugin offered closes the sheet; back in the sheet's own pages doesn't.
+    #[test]
+    fn back_from_the_offer_closes_its_sheet() {
+        let mut p = Plugged { stack: vec![PluginPage::Plugin("a.new".into())], offered: Some("a.new".into()), ..Default::default() };
+        assert!(p.back());
+        assert_eq!(p.offered, None);
+        let mut p = Plugged { stack: vec![PluginPage::Browser, PluginPage::Plugin("a.new".into())], ..Default::default() };
+        assert!(!p.back() && !p.back(), "the plus's list stays");
+    }
+
+    /// The first screen's row names parse back to what they do.
+    #[test]
+    fn provider_acts_round_trip() {
+        for act in [PluginAct::Choose(ServerKind::Subsonic), PluginAct::Choose(ServerKind::Plugin { id: "a.b".into() }), PluginAct::TurnOn("a.b".into()), PluginAct::OfferPage("a.b".into()), PluginAct::Sheet, PluginAct::ChooseAgain, PluginAct::AddSigningIn, PluginAct::AddAsGuest] {
+            assert_eq!(PluginAct::of(&act.name()), Some(act));
+        }
+    }
+
+    /// A tile is empty until the icon is heard of, then the icon, or the letter for a plugin with none;
+    /// icons are asked for what shows, once per address.
+    #[test]
+    fn a_tile_waits_for_its_icon() {
+        let official = official();
+        let mut p = Plugged { cards: vec![plugin_card("a.one", Vec::new())], ..Default::default() };
+        assert_eq!(p.tile("a.one", "one").1, "");
+        p.icons.read.insert("a.one".into(), None);
+        assert_eq!(p.tile("a.one", "one").1, "O");
+        let image = slint::Image::from_rgba8(slint::SharedPixelBuffer::new(2, 2));
+        p.icons.read.insert("a.one".into(), Some(image));
+        let (icon, letter) = p.tile("a.one", "one");
+        assert_eq!((icon.size().width, letter.as_str()), (2, ""));
+
+        assert_eq!(p.icons_wanted().iter().map(|w| w.0.as_str()).collect::<Vec<_>>(), ["a.one"]);
+        assert!(p.icons_wanted().is_empty(), "asked once");
+        p.shelf = read(vec![offer("a.one", &official, OfferState::Installed), offer("b.new", &official, OfferState::New)]);
+        let wanted = p.icons_wanted();
+        assert_eq!(wanted.iter().map(|w| w.0.as_str()).collect::<Vec<_>>(), ["a.one"], "the offer's address; the list doesn't show what is only offered");
+        p.stack = vec![PluginPage::Browser];
+        assert_eq!(p.icons_wanted().iter().map(|w| w.0.as_str()).collect::<Vec<_>>(), ["b.new"]);
     }
 
     /// A level says its value with its digits and unit, a hint is the quiet line, and a link opens its page.
     #[test]
     fn a_plugin_row_says_its_hint_unit_and_link() {
-        use nori_plugins::{PluginRow, RowKind, Value};
         let row = |kind, value, hint: Option<&str>, unit: Option<&str>, url: Option<&str>| PluginRow {
             id: "r".into(),
             kind,
@@ -1125,11 +1810,26 @@ mod tests {
             decimals: 2,
             url: url.map(Into::into),
         };
-        let level = plugin_row("p", &row(RowKind::Level, Some(Value::Level(1.5)), Some("Before the limiter"), Some("dB"), None));
+        let level = plugin_row("p", &row(RowKind::Level, Some(Value::Level(1.5)), Some("Before the limiter"), Some("dB"), None), false);
         assert_eq!((level.title.as_str(), level.detail.as_str()), ("Gain: 1.50 dB", "Before the limiter"));
-        let status = plugin_row("p", &row(RowKind::Status, Some(Value::Text("Fine".into())), Some("Checked hourly"), None, None));
+        let status = plugin_row("p", &row(RowKind::Status, Some(Value::Text("Fine".into())), Some("Checked hourly"), None, None), false);
         assert_eq!(status.detail, "Fine · Checked hourly");
-        let link = plugin_row("p", &row(RowKind::Link, None, None, None, Some("https://x.example/help")));
+        let link = plugin_row("p", &row(RowKind::Link, None, None, None, Some("https://x.example/help")), false);
         assert_eq!((link.kind, PluginAct::of(&link.name)), (LINK, Some(PluginAct::Open("https://x.example/help".into()))));
+    }
+
+    /// A controlled device's page leads the devices panel: its batteries, its noise control (named so
+    /// it parses back to the device), then its plugin's rows, shown once.
+    #[test]
+    fn a_controlled_device_leads_the_devices_panel() {
+        use nori_plugins::{Battery, Noise};
+        let card = |id: &str| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: true, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows: vec![PluginRow { id: "wear".into(), kind: RowKind::Switch, label: "Wear detection".into(), options: Vec::new(), min: None, max: None, step: None, value: Some(Value::Switch(true)), hint: None, unit: None, decimals: 0, url: None }] };
+        let d = ControlledDevice { id: "AA".into(), name: "WH-1000XM5".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Canceling), noise_modes: vec![Noise::Off, Noise::Canceling], card: card("dev.sony") };
+        let groups = device_groups(&[card("dev.sony")], std::slice::from_ref(&d), &HashSet::new());
+        assert_eq!(groups.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["WH-1000XM5", "dev.sony"], "its plugin's rows once");
+        let rows = &groups[0].1;
+        assert_eq!((rows[0].kind, rows[0].detail.as_str()), (INFO, "80%"));
+        assert_eq!((rows[1].kind, rows[1].chosen, PluginAct::of(&rows[1].name)), (CHOICE, Some(1), Some(PluginAct::Noise("AA".into()))));
+        assert_eq!(device_groups(&[], std::slice::from_ref(&d), &HashSet::new()).len(), 2, "its plugin's rows show though the plugin names no place");
     }
 }

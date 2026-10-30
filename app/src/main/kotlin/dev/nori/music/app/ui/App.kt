@@ -153,6 +153,8 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
     fun equalizer() = go("equalizer")
     fun plugins() = go("plugins")
     fun plugin(id: String) = go("plugins/${Uri.encode(id)}")
+    fun pluginBrowser() = go("plugin-browser")
+    fun pluginRepos() = go("plugin-repos")
     fun homeRows() = go("home-rows")
     /** A section the Library page has a chip for is chosen there; the others are pages of their own. */
     fun librarySection(s: dev.nori.music.ffi.settings.LibrarySection) {
@@ -259,7 +261,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         AppMotion.reduce = prefs.motion != dev.nori.music.ffi.settings.Motion.FULL
         AppMotion.still = prefs.motion == dev.nori.music.ffi.settings.Motion.EINK
     }
-    NoriTheme(prefs) {
+    NoriTheme(prefs, settings::look) {
         // A jam guest's profile is the same app over its host's library, started afresh on joining and on leaving.
         val guest = remember(prefs.activeServerId, prefs.server?.apiKey) { prefs.server?.apiKey?.let { dev.nori.music.ffi.remote.isGuestKey(it) } == true }
         val kind = prefs.server?.kind ?: dev.nori.music.ffi.settings.ServerKind.Subsonic
@@ -551,7 +553,9 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                         SettingsGroupScreen(settings, e.arguments!!.getString("id")!!, e.arguments?.getString("key").orEmpty(), actions)
                     }
                     page("equalizer") { EqualizerScreen(settings) }
-                    page("plugins") { PluginsScreen(viewModel(), settings, LocalNav.current::plugin) }
+                    page("plugins") { PluginsScreen(viewModel(), settings, LocalNav.current.pluginPages()) }
+                    page("plugin-browser") { PluginBrowser(viewModel(), LocalNav.current.pluginPages()) }
+                    page("plugin-repos") { PluginRepos(viewModel()) }
                     page("plugins/{id}") { PluginPage(viewModel(), settings, it.arguments!!.getString("id")!!, LocalNav.current::back) }
                     page("home-rows") { HomeRows(settings) }
                     // The places and smart playlists; a section with a chip is shown on the Library page.

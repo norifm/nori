@@ -1,4 +1,4 @@
-package nori:plugin@1.0.0;
+package nori:plugin@2.0.0;
 
 /// The plugin's line in nori's log. Secrets never go here.
 interface log {
@@ -220,3 +220,4 @@ interface wake {
     /// Turns this plugin's wake receivers on or off (they are off while no plugin wants them).
     want: func(events: list<string>);
 }
+

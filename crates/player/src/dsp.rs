@@ -5,6 +5,8 @@
 //! virtualizer, crossfeed; balance (after crossfeed, which would otherwise leak the louder side back);
 //! volume boost; limiter last, so it sees every boost.
 
+use crate::prelude::*;
+
 use crate::compressor::{Compressor, CompressorSettings};
 use crate::dither::Dither;
 use crate::spatial::Virtualizer;
@@ -20,7 +22,7 @@ const CHAIN: usize = 4;
 /// Attenuation of the quiet side at balance ±1 (then muted); linear in dB in between.
 const BALANCE_RANGE_DB: f64 = 24.0;
 /// Mono sum gain (-3 dB): uncorrelated material keeps its level; centred gains 3 dB for the limiter.
-const MONO_SUM: f64 = std::f64::consts::FRAC_1_SQRT_2;
+const MONO_SUM: f64 = core::f64::consts::FRAC_1_SQRT_2;
 /// The bass boost preset's low shelf: half-gain point and gentle slope (lifts bass, leaves voices).
 const BASS_HZ: f32 = 100.0;
 const BASS_SLOPE: f32 = 0.8;
@@ -110,7 +112,7 @@ impl Biquad {
     #[inline(always)]
     fn run2_chain<const N: usize>(fs: &[Biquad], st: &mut [[[f64; 2]; MAX_CHANNELS]], left: &mut [f64], right: &mut [f64]) {
         let fs: [Biquad; N] = fs[..N].try_into().expect("N filters");
-        let mut s: [[[f64; 2]; 2]; N] = std::array::from_fn(|k| [st[k][0], st[k][1]]);
+        let mut s: [[[f64; 2]; 2]; N] = core::array::from_fn(|k| [st[k][0], st[k][1]]);
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             let (mut i, mut j) = (*l, *r);
             for (f, s) in fs.iter().zip(s.iter_mut()) {
@@ -134,13 +136,13 @@ impl Biquad {
     #[cfg(target_arch = "aarch64")]
     #[inline(always)]
     fn run2_chain<const N: usize>(fs: &[Biquad], st: &mut [[[f64; 2]; MAX_CHANNELS]], left: &mut [f64], right: &mut [f64]) {
-        use std::arch::aarch64::*;
+        use core::arch::aarch64::*;
         // SAFETY: NEON is part of every aarch64 target; the intrinsics only do lane arithmetic.
         unsafe {
             let pair = |l: f64, r: f64| vcombine_f64(vdup_n_f64(l), vdup_n_f64(r));
-            let c: [[float64x2_t; 5]; N] = std::array::from_fn(|k| [fs[k].b0, fs[k].b1, fs[k].b2, fs[k].a1, fs[k].a2].map(|v| vdupq_n_f64(v)));
-            let mut s0: [float64x2_t; N] = std::array::from_fn(|k| pair(st[k][0][0], st[k][1][0]));
-            let mut s1: [float64x2_t; N] = std::array::from_fn(|k| pair(st[k][0][1], st[k][1][1]));
+            let c: [[float64x2_t; 5]; N] = core::array::from_fn(|k| [fs[k].b0, fs[k].b1, fs[k].b2, fs[k].a1, fs[k].a2].map(|v| vdupq_n_f64(v)));
+            let mut s0: [float64x2_t; N] = core::array::from_fn(|k| pair(st[k][0][0], st[k][1][0]));
+            let mut s1: [float64x2_t; N] = core::array::from_fn(|k| pair(st[k][0][1], st[k][1][1]));
             for (l, r) in left.iter_mut().zip(right.iter_mut()) {
                 let mut x = pair(*l, *r);
                 for k in 0..N {
@@ -162,7 +164,7 @@ impl Biquad {
     /// RBJ cookbook filters.
     fn new(rate: f64, band: &Band) -> Self {
         let a = 10f64.powf(band.gain_db / 40.0);
-        let w = 2.0 * std::f64::consts::PI * band.freq / rate;
+        let w = 2.0 * core::f64::consts::PI * band.freq / rate;
         let (sin, cos) = (w.sin(), w.cos());
         let q = band.q.clamp(0.05, 40.0);
         let alpha = sin / (2.0 * q);
@@ -221,7 +223,7 @@ pub(crate) fn band_coefficients(rate: f64, band: &Band) -> [f64; 5] {
 /// The dB gain of `band`'s biquad at `freq` and `rate`.
 pub(crate) fn band_db(rate: f64, band: &Band, freq: f64) -> f64 {
     let c = band_coefficients(rate, band);
-    let w = std::f64::consts::TAU * freq / rate;
+    let w = core::f64::consts::TAU * freq / rate;
     let (c1, s1, c2, s2) = (w.cos(), w.sin(), (2.0 * w).cos(), (2.0 * w).sin());
     let (nr, ni) = (c[0] + c[1] * c1 + c[2] * c2, -(c[1] * s1 + c[2] * s2));
     let (dr, di) = (1.0 + c[3] * c1 + c[4] * c2, -(c[3] * s1 + c[4] * s2));
@@ -259,8 +261,8 @@ impl Crossfeed {
         let g_lo = 10f64.powf(gb_lo / 20.0);
         let g_hi = 1.0 - 10f64.powf(gb_hi / 20.0);
         let cut_hi = cut_hz * 2f64.powf((gb_lo - 20.0 * g_hi.log10()) / 12.0);
-        let x_lo = (-2.0 * std::f64::consts::PI * cut_hz / rate).exp();
-        let x_hi = (-2.0 * std::f64::consts::PI * cut_hi / rate).exp();
+        let x_lo = (-2.0 * core::f64::consts::PI * cut_hz / rate).exp();
+        let x_hi = (-2.0 * core::f64::consts::PI * cut_hi / rate).exp();
         Crossfeed {
             a0_lo: g_lo * (1.0 - x_lo),
             b1_lo: x_lo,
@@ -320,7 +322,7 @@ impl Clone for Limiter {
     }
 
     fn clone_from(&mut self, o: &Self) {
-        let mut delay = std::mem::take(&mut self.delay);
+        let mut delay = core::mem::take(&mut self.delay);
         delay.clone_from(&o.delay);
         *self = Limiter { delay, ..*o };
     }
@@ -437,14 +439,14 @@ impl Limiter {
 
     /// [`Limiter::frame`] over a stereo block, the state in locals.
     fn block2(&mut self, left: &mut [f64], right: &mut [f64]) {
-        let mut delay = std::mem::take(&mut self.delay);
+        let mut delay = core::mem::take(&mut self.delay);
         let (mut pos, mut env, mut hold, mut want, mut gain, mut meter) = (self.pos, self.env, self.hold, self.want, self.gain, self.meter);
         let slots = delay.as_chunks_mut::<2>().0;
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
             self.follow(l.abs().max(r.abs()), &mut env, &mut hold, &mut want, &mut gain);
             let slot = &mut slots[pos];
             let g = self.leaving_gain(slot[0].abs().max(slot[1].abs()), gain);
-            let out = std::mem::replace(slot, [*l, *r]);
+            let out = core::mem::replace(slot, [*l, *r]);
             (*l, *r) = (out[0] * g, out[1] * g);
             pos = if pos + 1 == self.frames { 0 } else { pos + 1 };
             meter = meter.min(gain);
@@ -487,7 +489,7 @@ impl Clone for Stages {
     }
 
     fn clone_from(&mut self, o: &Self) {
-        let (mut filters, mut state, mut virtualizer, mut limiter) = (std::mem::take(&mut self.filters), std::mem::take(&mut self.state), self.virtualizer.take(), self.limiter.take());
+        let (mut filters, mut state, mut virtualizer, mut limiter) = (core::mem::take(&mut self.filters), core::mem::take(&mut self.state), self.virtualizer.take(), self.limiter.take());
         filters.clone_from(&o.filters);
         state.clone_from(&o.state);
         virtualizer.clone_from(&o.virtualizer);
@@ -910,7 +912,7 @@ impl Equalizer {
         }
         if self.fade.is_none() {
             let frames = len / n;
-            let mut planar = std::mem::take(&mut self.planar);
+            let mut planar = core::mem::take(&mut self.planar);
             // Every sample is written over: only a longer buffer grows it.
             if planar.len() < frames * n {
                 planar.resize(frames * n, 0.0);
@@ -957,7 +959,7 @@ impl Equalizer {
                     self.was.frame(&mut old[..n]);
                     self.now.frame(&mut frame[..n]);
                     // Raised cosine.
-                    let g = if at < 0 { 0.0 } else { 0.5 - 0.5 * (std::f64::consts::PI * (at + 1) as f64 / self.fade_len as f64).cos() };
+                    let g = if at < 0 { 0.0 } else { 0.5 - 0.5 * (core::f64::consts::PI * (at + 1) as f64 / self.fade_len as f64).cos() };
                     for (v, o) in frame[..n].iter_mut().zip(&old[..n]) {
                         *v = o + g * (*v - o);
                     }
@@ -1112,7 +1114,7 @@ mod tests {
     }
 
     fn tone_at(freq: f64, amplitude: f64) -> Vec<f32> {
-        (0..48000).map(|i| (amplitude * (2.0 * std::f64::consts::PI * freq * i as f64 / 48000.0).sin()) as f32).collect()
+        (0..48000).map(|i| (amplitude * (2.0 * core::f64::consts::PI * freq * i as f64 / 48000.0).sin()) as f32).collect()
     }
 
     fn b(kind: EqKind, freq: f64, gain_db: f64, q: f64) -> Band {
@@ -1255,7 +1257,7 @@ mod tests {
         let x: Vec<f64> = (0..48000).flat_map(|i| {
             let level = if (i / 6000) % 2 == 0 { 0.9 } else { 0.01 };
             let t = i as f64 / 48000.0;
-            [level * (440.0 * std::f64::consts::TAU * t).sin(), level * (0.7 * (3000.0 * std::f64::consts::TAU * t).sin() + 0.3 * (90.0 * std::f64::consts::TAU * t).sin())]
+            [level * (440.0 * core::f64::consts::TAU * t).sin(), level * (0.7 * (3000.0 * core::f64::consts::TAU * t).sin() + 0.3 * (90.0 * core::f64::consts::TAU * t).sin())]
         }).collect();
         let mut framed = eq.now.clone();
         let want: Vec<f64> = x.as_chunks::<2>().0.iter().flat_map(|&(mut f)| {
@@ -1425,8 +1427,8 @@ mod tests {
         let n = x.len() as f64;
         let (mut re, mut im) = (0.0, 0.0);
         for (i, v) in x.iter().enumerate() {
-            let w = 0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / n).cos();
-            let ph = std::f64::consts::TAU * k as f64 * i as f64 / n;
+            let w = 0.5 - 0.5 * (core::f64::consts::TAU * i as f64 / n).cos();
+            let ph = core::f64::consts::TAU * k as f64 * i as f64 / n;
             re += v * w * ph.cos();
             im += v * w * ph.sin();
         }
@@ -1440,7 +1442,7 @@ mod tests {
         const N: usize = 1 << 16;
         const K: usize = 1000; // 732 Hz at 48 kHz, whole cycles in the window
         // -46 dBFS in, 54 dB off (30 pre-amp, 24 cut).
-        let x: Vec<i16> = (0..N).map(|i| ((std::f64::consts::TAU * K as f64 * i as f64 / N as f64).sin() * 10f64.powf(-46.0 / 20.0) * 32768.0).round() as i16).collect();
+        let x: Vec<i16> = (0..N).map(|i| ((core::f64::consts::TAU * K as f64 * i as f64 / N as f64).sin() * 10f64.powf(-46.0 / 20.0) * 32768.0).round() as i16).collect();
         let chain = || {
             let mut eq = Equalizer::new(48000, 1);
             eq.configure(&[b(EqKind::Peaking, 48000.0 * K as f64 / N as f64, -24.0, 0.3)], -30.0, 0.0);

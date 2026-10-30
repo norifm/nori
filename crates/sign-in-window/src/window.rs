@@ -1,5 +1,6 @@
-//! The sign-in window: a provider's own sign-in page in the system's web view. After every page it writes
-//! the page's address, a tab and its cookies (a `Cookie` header's value) as one line to stdout; the client
+//! The sign-in window: a provider's own sign-in page in the system's web view. After every page, and for
+//! every address it refuses to open, it writes the address, a tab and the cookies (a `Cookie` header's
+//! value) as one line to stdout; the client
 //! decides from those when the account is signed in (`sign_in_done`) and ends this process. A process of
 //! its own: the web view's event loop (tao, GTK on Linux) wants the main thread, as a client's own does.
 //!
@@ -21,11 +22,19 @@ pub(crate) fn run(title: String, start: String) -> ! {
         Err(e) => fail(&format!("no window: {e}")),
     };
     let loaded = event_loop.create_proxy();
+    let refused = event_loop.create_proxy();
     let builder = WebViewBuilder::new()
         .with_url(start)
         .with_incognito(true)
-        // Web pages only: no app links or other schemes.
-        .with_navigation_handler(|address| address.starts_with("https://"))
+        // Web pages only: no app links or other schemes. An address not opened is still written, as a
+        // sign-in may end there (an OAuth redirect to an app's own address carries its code).
+        .with_navigation_handler(move |address| {
+            let https = address.starts_with("https://");
+            if !https {
+                let _ = refused.send_event(address);
+            }
+            https
+        })
         .with_on_page_load_handler(move |event, address| {
             if matches!(event, PageLoadEvent::Finished) {
                 let _ = loaded.send_event(address);

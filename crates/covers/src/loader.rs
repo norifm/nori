@@ -372,6 +372,16 @@ impl<P: Paint> Loader<P> {
         self.inner.bytes(Key::of(&self.inner.net, url), url, out, &waker)
     }
 
+    /// Reads the raw cover file into `out` from disk only, for a thread that must not wait on the
+    /// network; on a miss it is warmed for next time and this returns false.
+    pub fn kept(&self, url: &str, out: &mut Vec<u8>) -> bool {
+        let kept = self.disk().is_some_and(|d| d.read(self.key(url), out));
+        if !kept {
+            self.warm(url);
+        }
+        kept
+    }
+
     pub fn paint(&self) -> &P {
         &self.inner.paint
     }

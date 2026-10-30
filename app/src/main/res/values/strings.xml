@@ -324,6 +324,31 @@
     <string name="settings_downloads_detail">Remove them from the Downloads page.</string>
     <string name="settings_show">Show</string>
     <string name="settings_clear_lyrics_title">Clear the lyrics cache?</string>
+    <!-- A backup: the settings, sound profiles and plugins in one file, locked with a password (nori-backup). -->
+    <string name="settings_section_backup">Backup</string>
+    <string name="settings_back_up">Back up</string>
+    <string name="settings_back_up_detail">Settings, sound profiles and plugins, server passwords included, locked with a password.</string>
+    <string name="settings_restore">Restore a backup</string>
+    <string name="settings_restore_detail">Its settings replace these. Your servers stay.</string>
+    <string name="settings_hint_backup">backup export import restore save file password move phone</string>
+    <string name="settings_backup_save">Save</string>
+    <string name="settings_backup_open">Open</string>
+    <string name="settings_backup_password_new">A password for the backup</string>
+    <string name="settings_backup_password_new_text">Needed to restore it. It can\'t be recovered.</string>
+    <string name="settings_backup_password">The backup\'s password</string>
+    <string name="settings_backup_working">Working…</string>
+    <string name="settings_backup_saved">Backup saved.</string>
+    <string name="settings_backup_restored">Restored.</string>
+    <string name="settings_backup_plugin_other">%1$s came back at %2$s</string>
+    <string name="settings_backup_plugin_file">%1$s was installed from a file: install it again</string>
+    <string name="settings_backup_plugin_gone">%1$s wasn\'t found in its repo</string>
+    <string name="settings_backup_no_password">Set a password for the backup.</string>
+    <string name="settings_backup_wrong_password">Wrong password.</string>
+    <string name="settings_backup_not_backup">That isn\'t a nori backup.</string>
+    <string name="settings_backup_newer">Made by a newer nori: update to restore it.</string>
+    <string name="settings_backup_damaged">The backup is damaged.</string>
+    <string name="settings_backup_database">The settings couldn\'t be read or saved.</string>
+    <string name="settings_backup_file">The file couldn\'t be used.</string>
     <string name="settings_clear_lyrics_text">Lyrics found online (%1$s) are looked up again when needed. Your server\'s lyrics stay.</string>
 
     <!-- Servers. -->
@@ -397,6 +422,7 @@
     <string name="settings_section_devices">Other devices</string>
     <string name="settings_remote_control">Remote control and jams</string>
     <string name="settings_hint_remote_control">Remote control, play on another device, Jam, group session, listen together</string>
+    <!-- Settings > Plugins: one switch over every plugin. -->
     <string name="settings_headphone_sound">Headphone sound</string>
     <string name="settings_headphone_natural">Natural</string>
     <string name="settings_headphone_wide">Wide</string>

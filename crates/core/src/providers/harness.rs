@@ -197,7 +197,7 @@ impl Transport for Server {
         }
         let answers = self.answers.lock();
         let body = answers.get(&asked).or_else(|| answers.get(endpoint)).cloned().unwrap_or_else(|| r#"{"subsonic-response":{"status":"ok","version":"1.16.1"}}"#.into());
-        Ok(TransportResponse { status: 200, body: body.into_bytes(), set_cookies: Vec::new() })
+        Ok(TransportResponse { status: 200, body: body.into_bytes(), headers: Vec::new() })
     }
     async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {
         self.get(request.url, request.timeout_ms).await

@@ -168,8 +168,45 @@ export struct SettingRow {
     shares: [float],
     // A usage row's downloads, a line per profile, drawn under its downloads part.
     breakdown: [string],
-    // A buttons row's names, one per option: a button sends its own.
-    names: [string],
+    // A plugin row's third line, what its switch or button sends, and its tile.
+    line: string,
+    control: string,
+    icon: image,
+    letter: string,
+    // The tile is nori's own provider's.
+    server-tile: bool,
+}
+
+// A tool at the top right of a plugin page: 0 a plus, 1 a folder, 2 the repos.
+export struct PluginTool {
+    glyph: int,
+    label: string,
+    name: string,
+}
+
+// The head of Settings › Plugins and the pages it opens.
+export struct PluginTop {
+    title: string,
+    back: bool,
+    tools: [PluginTool],
+    // The list: the switch over every plugin.
+    every: bool,
+    all-on: bool,
+    // A plugin's page: its tile, what it is, the way to install or update it, and its menu.
+    tile: bool,
+    icon: image,
+    letter: string,
+    line: string,
+    about: string,
+    action: string,
+    action-name: string,
+    menu: [string],
+    menu-names: [string],
+    // The browser.
+    search: string,
+    query: string,
+    chips: [string],
+    chip: int,
 }
 
 // A line with a quieter one under it: an AutoEQ curve, a saved sound profile.
@@ -178,11 +215,14 @@ export struct EqLine {
     detail: string,
 }
 
-// A kind of profile the login page adds (the core's providers): its words, and the fields its form asks.
+// The kind of profile the sign-in form adds (the core's providers): its words, and the fields it asks.
 export struct LoginKind {
     name: string,
     note: string,
     add: string,
+    // A provider with an account and nothing to fill: its sign-in button, and going on without.
+    sign-in: string,
+    guest: string,
     asks-name: bool,
     asks-address: bool,
     asks-user: bool,
@@ -3982,6 +4022,37 @@ component SourceLine inherits Rectangle {
     }
 }
 
+// A plugin's mark on a tile: its icon in ink, or its first letter without one.
+component PluginTile inherits Rectangle {
+    in property <length> side: 44px;
+    in property <image> icon;
+    in property <string> letter;
+    // nori's own provider has no plugin behind it, so the server glyph stands for one.
+    in property <bool> server;
+    width: root.side;
+    height: root.side;
+    border-radius: root.side * 0.22;
+    background: Theme.raised;
+    if root.letter != "": Text {
+        text: root.letter;
+        color: Theme.text;
+        font-size: root.side * 0.42;
+        font-weight: 600;
+    }
+    Image {
+        width: root.side * 0.6;
+        height: root.side * 0.6;
+        source: root.icon;
+        colorize: Theme.text;
+    }
+    if root.server: Icon {
+        glyph: Icons.server;
+        colour: Theme.text;
+        width: root.side * 0.6;
+        height: root.side * 0.6;
+    }
+}
+
 component SettingLine inherits VerticalLayout {
     // Where usage part `i` starts along the bar: the parts before it.
     pure function usage-start(i: int) -> float {
@@ -4038,11 +4109,52 @@ component SettingLine inherits VerticalLayout {
             picked(i) => { root.chosen(root.item.name, i); }
         }
     }
-    if root.item.kind != 0 && root.item.kind != 6 && root.item.kind != 9 && root.item.kind != 13: Plate {
+    // A README's blocks, on the page, not on a plate.
+    if root.item.kind >= 18 && root.item.kind <= 20: HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: root.item.kind == 18 ? 10px : 3px;
+        padding-bottom: 3px;
+        spacing: 8px;
+        if root.item.kind == 20: Text {
+            text: "•";
+            color: Theme.text;
+            font-size: 14px;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.item.title;
+            color: Theme.text;
+            font-size: root.item.kind == 18 ? 15px : 14px;
+            font-weight: root.item.kind == 18 ? 600 : 400;
+            wrap: word-wrap;
+        }
+    }
+    if root.item.kind == 21: VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 3px;
+        padding-bottom: 3px;
+        Rectangle {
+            background: Theme.panel;
+            border-radius: 8px;
+            clip: true;
+            height: code.preferred-height + 20px;
+            code := Text {
+                x: 10px;
+                y: 10px;
+                text: root.item.title;
+                color: Theme.text;
+                font-family: "monospace";
+                font-size: 12px;
+            }
+        }
+    }
+    if root.item.kind != 0 && root.item.kind != 6 && root.item.kind != 9 && root.item.kind != 13 && root.item.kind < 18: Plate {
         first: root.item.first;
         last: root.item.last;
         min-height: 54px;
-        if root.item.kind == 11 || root.item.kind == 12 || (root.item.kind == 8 && !root.item.on): TouchArea {
+        if root.item.kind == 11 || root.item.kind == 12 || root.item.kind == 17 || (root.item.kind == 8 && !root.item.on): TouchArea {
             clicked => { root.action(root.item.kind == 8 ? "server:" + root.item.name : root.item.name); }
         }
         VerticalLayout {
@@ -4053,6 +4165,14 @@ component SettingLine inherits VerticalLayout {
             spacing: 6px;
             HorizontalLayout {
                 spacing: 12px;
+                if root.item.kind == 17: PluginTile {
+                    y: (parent.height - self.height) / 2;
+                    side: 44px;
+                    icon: root.item.icon;
+                    letter: root.item.letter;
+                    server: root.item.server-tile;
+                    opacity: root.item.enabled ? 1 : 0.45;
+                }
                 if root.item.kind == 8: Icon {
                     y: (parent.height - self.height) / 2;
                     glyph: Icons.server;
@@ -4073,8 +4193,16 @@ component SettingLine inherits VerticalLayout {
                     if root.item.detail != "" && root.item.kind != 11: Text {
                         text: root.item.detail;
                         color: Theme.dim;
+                        opacity: root.item.kind != 17 || root.item.enabled ? 1 : 0.45;
                         font-size: 12px;
                         wrap: word-wrap;
+                    }
+                    if root.item.line != "": Text {
+                        text: root.item.line;
+                        color: Theme.dim;
+                        opacity: root.item.kind != 17 || root.item.enabled ? 1 : 0.45;
+                        font-size: 11px;
+                        overflow: elide;
                     }
                 }
                 if root.item.kind == 1: Toggle {
@@ -4096,13 +4224,22 @@ component SettingLine inherits VerticalLayout {
                     enabled: root.item.enabled;
                     clicked => { root.action(root.item.name); }
                 }
-                if root.item.kind == 16: HorizontalLayout {
-                    spacing: 6px;
-                    for o[i] in root.item.options: SmallButton {
-                        y: (parent.height - self.height) / 2;
-                        text: o;
-                        clicked => { root.action(root.item.names[i]); }
-                    }
+                if root.item.kind == 17 && root.item.control != "" && root.item.button == "": Toggle {
+                    y: (parent.height - self.height) / 2;
+                    on: root.item.on;
+                    enabled: root.item.enabled;
+                    toggled(v) => { root.toggled(root.item.control, v); }
+                }
+                if root.item.kind == 17 && root.item.control != "" && root.item.button != "": SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: root.item.button;
+                    clicked => { root.action(root.item.control); }
+                }
+                if root.item.kind == 17 && root.item.control == "": Text {
+                    text: root.item.button;
+                    color: Theme.dim;
+                    font-size: 13px;
+                    vertical-alignment: center;
                 }
                 if root.item.kind == 8 && root.item.button != "": SmallButton {
                     y: (parent.height - self.height) / 2;
@@ -4195,6 +4332,143 @@ component SettingLine inherits VerticalLayout {
             width: parent.width - 16px;
             height: 1px;
             background: Theme.hairline;
+        }
+    }
+}
+
+// The head of Settings › Plugins and of each page it opens: back, the title and tools, and what the page
+// holds above its rows (a plugin's tile, words and Install; the browser's search and chips).
+component PluginHead inherits VerticalLayout {
+    in property <PluginTop> top;
+    callback action(string);
+    callback toggled(string, bool);
+    callback chosen(string, int);
+    callback typed(string, string);
+    spacing: 10px;
+    padding-left: 16px;
+    padding-right: 8px;
+    padding-top: 4px;
+    HorizontalLayout {
+        spacing: 12px;
+        if root.top.back: IconButton {
+            y: (parent.height - self.height) / 2;
+            glyph: Icons.nav-arrow-left;
+            clicked => { root.action("plugin-back"); }
+        }
+        if root.top.tile: PluginTile {
+            y: (parent.height - self.height) / 2;
+            side: 64px;
+            icon: root.top.icon;
+            letter: root.top.letter;
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.top.title;
+                color: Theme.text;
+                font-family: Type.title;
+                font-size: 26px;
+                font-weight: 700;
+                overflow: elide;
+            }
+            if root.top.line != "": Text {
+                text: root.top.line;
+                color: Theme.dim;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+        if root.top.every: Toggle {
+            y: (parent.height - self.height) / 2;
+            on: root.top.all-on;
+            toggled(v) => { root.toggled("plugins-off", !v); }
+        }
+        for t in root.top.tools: IconButton {
+            y: (parent.height - self.height) / 2;
+            glyph: t.glyph == 1 ? Icons.folder-plus : t.glyph == 2 ? Icons.server : Icons.plus;
+            clicked => { root.action(t.name); }
+        }
+        if root.top.menu.length > 0: IconButton {
+            y: (parent.height - self.height) / 2;
+            glyph: Icons.more-horiz;
+            clicked => { more.show(); }
+            more := PopupWindow {
+                x: parent.width - self.width;
+                y: parent.height + 4px;
+                width: 200px;
+                close-policy: close-on-click-outside;
+                Popover {
+                    VerticalLayout {
+                        padding: MenuShape.inset;
+                        for o[i] in root.top.menu: Rectangle {
+                            height: MenuShape.row;
+                            border-radius: MenuShape.inner;
+                            background: ma.has-hover ? Theme.hover : transparent;
+                            Text {
+                                x: 8px;
+                                text: o;
+                                color: Theme.text;
+                                font-size: 13px;
+                            }
+                            ma := TouchArea {
+                                clicked => {
+                                    more.close();
+                                    root.action(root.top.menu-names[i]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if root.top.about != "": HorizontalLayout {
+        padding-right: 8px;
+        Text {
+            text: root.top.about;
+            color: Theme.text;
+            font-size: 14px;
+            wrap: word-wrap;
+        }
+    }
+    if root.top.action != "": HorizontalLayout {
+        padding-right: 8px;
+        Rectangle {
+            height: 38px;
+            border-radius: 19px;
+            background: pa.has-hover ? Theme.chosen : Theme.fill;
+            border-width: 1px;
+            border-color: Theme.hairline;
+            Text {
+                text: root.top.action;
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            pa := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.action(root.top.action-name); }
+            }
+        }
+    }
+    if root.top.search != "": HorizontalLayout {
+        padding-right: 8px;
+        Field {
+            icon: Icons.search;
+            placeholder: root.top.search;
+            text: root.top.query;
+            edited(t) => { root.typed("plugin-search", t); }
+        }
+    }
+    if root.top.chips.length > 0: HorizontalLayout {
+        alignment: start;
+        spacing: 4px;
+        for c[i] in root.top.chips: Chip {
+            text: c;
+            lit: i == root.top.chip;
+            clicked => { root.chosen("plugin-chip", i); }
         }
     }
 }
@@ -5743,8 +6017,13 @@ export component AppWindow inherits Window {
     in property <bool> login-busy;
     in property <bool> can-cancel-login;
     // The kinds of profile offered, and the one being added.
-    in property <[LoginKind]> login-kinds;
-    in-out property <int> login-kind;
+    // The first screen, what a new profile plays from, else the sign-in form of `login-form`.
+    in property <bool> login-choosing;
+    in property <[SettingRow]> provider-rows;
+    in property <PluginTop> provider-top;
+    in property <LoginKind> login-form;
+    // The form adds a profile, so back chooses again; it isn't editing one.
+    in property <bool> login-adding;
 
     callback go(int);
     callback back();
@@ -5807,10 +6086,14 @@ export component AppWindow inherits Window {
     callback cycle-repeat();
     callback jump(int);
     callback login();
-    // Settings › Plugins in a sheet, from the login.
-    callback open-plugins();
-    in-out property <bool> plugins-open;
+    // Settings › Plugins in a sheet, from the first screen.
+    callback close-plugins();
+    in property <bool> plugins-open;
     in property <[SettingRow]> plugin-rows;
+    in property <PluginTop> plugin-top;
+    // The Plugins tab shows, and the times a plugin page changed: each starts from its top.
+    in property <bool> plugins-tab;
+    in property <int> plugin-page-seen;
     callback cancel-login();
     callback setting-toggled(string, bool);
     callback setting-chosen(string, int);
@@ -5854,7 +6137,7 @@ export component AppWindow inherits Window {
             background: Theme.ground;
         }
 
-        if root.view == 7: Rectangle {
+        if root.view == 7 && root.login-choosing: Rectangle {
             TitleStrip {
                 y: 0;
                 drag => { root.drag-window(); }
@@ -5865,29 +6148,71 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     alignment: center;
                     VerticalLayout {
+                        width: 440px;
+                        spacing: 12px;
+                        PluginHead {
+                            top: root.provider-top;
+                            action(name) => { root.setting-action(name); }
+                        }
+                        Flickable {
+                            height: min(provider-list.preferred-height, root.height - 220px);
+                            content-height: provider-list.preferred-height;
+                            provider-list := VerticalLayout {
+                                for r in root.provider-rows: SettingLine {
+                                    item: r;
+                                    action(name) => { root.setting-action(name); }
+                                }
+                            }
+                        }
+                        if root.login-error != "": Text {
+                            text: root.login-error;
+                            color: Theme.danger;
+                            wrap: word-wrap;
+                            horizontal-alignment: center;
+                        }
+                        if root.can-cancel-login: HorizontalLayout {
+                            alignment: center;
+                            Capsule {
+                                text: "Cancel";
+                                ink: Theme.fill;
+                                label: Theme.text;
+                                clicked => { root.cancel-login(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.view == 7 && !root.login-choosing: Rectangle {
+            TitleStrip {
+                y: 0;
+                drag => { root.drag-window(); }
+                zoom => { root.zoom-window(); }
+            }
+            if root.login-adding && !root.login-busy: IconButton {
+                x: 16px;
+                y: 44px;
+                glyph: Icons.nav-arrow-left;
+                clicked => { root.setting-action("provider-again"); }
+            }
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    VerticalLayout {
                         width: 360px;
                         spacing: 12px;
-                        HorizontalLayout {
-                            alignment: center;
-                            padding-bottom: 8px;
-                            Image {
-                                source: @image-url("assets/logo.png");
-                                height: 54px;
-                                image-fit: contain;
-                            }
-                        }
-                        if root.login-kinds.length > 1: HorizontalLayout {
-                            spacing: 10px;
-                            alignment: center;
-                            for k[i] in root.login-kinds: Capsule {
-                                text: k.name;
-                                ink: i == root.login-kind ? Theme.pill : Theme.plate;
-                                label: i == root.login-kind ? Theme.pill-ink : Theme.plate-ink;
-                                clicked => { root.login-kind = i; }
-                            }
+                        Text {
+                            text: root.login-form.name;
+                            color: Theme.text;
+                            font-family: Type.title;
+                            font-size: 26px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
                         }
                         Text {
-                            text: root.login-kinds[root.login-kind].note;
+                            text: root.login-form.note;
                             color: Theme.dim;
                             horizontal-alignment: center;
                             wrap: word-wrap;
@@ -5895,22 +6220,22 @@ export component AppWindow inherits Window {
                         Rectangle {
                             height: 10px;
                         }
-                        if root.login-kinds[root.login-kind].asks-name: Field {
+                        if root.login-form.asks-name: Field {
                             icon: Icons.user;
                             placeholder: "Name (optional)";
                             text <=> root.login-name;
                         }
-                        if root.login-kinds[root.login-kind].asks-address: Field {
+                        if root.login-form.asks-address: Field {
                             icon: Icons.server;
                             placeholder: "Server address";
                             text <=> root.login-url;
                         }
-                        if root.login-kinds[root.login-kind].asks-user: Field {
+                        if root.login-form.asks-user: Field {
                             icon: Icons.user;
                             placeholder: "User name";
                             text <=> root.login-user;
                         }
-                        if root.login-kinds[root.login-kind].asks-password: Field {
+                        if root.login-form.asks-password: Field {
                             icon: Icons.key;
                             placeholder: "Password";
                             secret: true;
@@ -5939,22 +6264,31 @@ export component AppWindow inherits Window {
                                 label: Theme.text;
                                 clicked => { root.cancel-login(); }
                             }
-                            Capsule {
-                                text: root.login-busy ? "Signing in…" : root.login-kinds[root.login-kind].add;
+                            if root.login-form.guest != "": Capsule {
+                                text: root.login-form.guest;
+                                ink: Theme.fill;
+                                label: Theme.text;
+                                clicked => {
+                                    if !root.login-busy {
+                                        root.setting-action("provider-guest");
+                                    }
+                                }
+                            }
+                            if root.login-form.guest != "": Capsule {
+                                text: root.login-busy ? "Signing in…" : root.login-form.sign-in;
+                                clicked => {
+                                    if !root.login-busy {
+                                        root.setting-action("provider-sign-in");
+                                    }
+                                }
+                            }
+                            if root.login-form.guest == "": Capsule {
+                                text: root.login-busy ? "Signing in…" : root.login-form.add;
                                 clicked => {
                                     if !root.login-busy {
                                         root.login();
                                     }
                                 }
-                            }
-                        }
-                        // Plugins can add kinds of profile, so they are reached before any profile.
-                        HorizontalLayout {
-                            alignment: center;
-                            ShowAllLink {
-                                text: "Plugins";
-                                font-size: 12px;
-                                clicked => { root.open-plugins(); }
                             }
                         }
                     }
@@ -6889,11 +7223,17 @@ export component AppWindow inherits Window {
                         // A mouse's press and drag is the lyrics services' handles'; the wheel and touch still scroll.
                         mouse-drag-pan-enabled: false;
                         content-height: prefs.preferred-height;
+                        property <int> page-seen: root.plugin-page-seen;
+                        changed page-seen => { self.content-y = 0; }
                         prefs := VerticalLayout {
                             width: parent.width;
                             padding-bottom: 100px;
+                            // A plugin page takes the whole page: its own head, no tabs.
+                            if root.plugins-tab && root.plugin-top.back: Rectangle {
+                                height: Chrome.top-room + 16px;
+                            }
                             // The title, then the tabs and the column at one reading width under the top pill.
-                            Text {
+                            if !(root.plugins-tab && root.plugin-top.back): Text {
                                 text: "Settings";
                                 color: Theme.text;
                                 font-family: Type.title;
@@ -6904,7 +7244,7 @@ export component AppWindow inherits Window {
                                 height: Chrome.top-room + 52px;
                                 vertical-alignment: bottom;
                             }
-                            HorizontalLayout {
+                            if !(root.plugins-tab && root.plugin-top.back): HorizontalLayout {
                                 padding-left: Chrome.top-x + max(0px, Chrome.top-w - 720px) / 2;
                                 padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w) + max(0px, Chrome.top-w - 720px) / 2;
                                 padding-top: 16px;
@@ -6924,6 +7264,13 @@ export component AppWindow inherits Window {
                                 padding-left: Chrome.top-x + max(0px, Chrome.top-w - 720px) / 2;
                                 padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w) + max(0px, Chrome.top-w - 720px) / 2;
                                 VerticalLayout {
+                                    if root.plugins-tab: PluginHead {
+                                        top: root.plugin-top;
+                                        action(name) => { root.setting-action(name); }
+                                        toggled(name, on) => { root.setting-toggled(name, on); }
+                                        chosen(name, i) => { root.setting-chosen(name, i); }
+                                        typed(name, text) => { root.setting-typed(name, text); }
+                                    }
                                     for r in root.settings: SettingLine {
                                         item: r;
                                         toggled(name, on) => { root.setting-toggled(name, on); }
@@ -8069,7 +8416,7 @@ export component AppWindow inherits Window {
         if root.plugins-open: Rectangle {
             background: Theme.ground.with-alpha(0.6);
             TouchArea {
-                clicked => { root.plugins-open = false; }
+                clicked => { root.close-plugins(); }
             }
             MenuSheet {
                 x: (parent.width - self.width) / 2;
@@ -8081,20 +8428,23 @@ export component AppWindow inherits Window {
                     padding: 16px;
                     spacing: 8px;
                     HorizontalLayout {
-                        Text {
-                            text: "Plugins";
-                            color: Theme.text;
-                            font-size: 17px;
-                            font-weight: 700;
-                            horizontal-stretch: 1;
-                        }
+                        alignment: end;
                         SmallButton {
                             text: "Done";
-                            clicked => { root.plugins-open = false; }
+                            clicked => { root.close-plugins(); }
                         }
+                    }
+                    PluginHead {
+                        top: root.plugin-top;
+                        action(name) => { root.setting-action(name); }
+                        toggled(name, on) => { root.setting-toggled(name, on); }
+                        chosen(name, i) => { root.setting-chosen(name, i); }
+                        typed(name, text) => { root.setting-typed(name, text); }
                     }
                     Flickable {
                         content-height: plugin-list.preferred-height;
+                        property <int> page-seen: root.plugin-page-seen;
+                        changed page-seen => { self.content-y = 0; }
                         plugin-list := VerticalLayout {
                             for r in root.plugin-rows: SettingLine {
                                 item: r;

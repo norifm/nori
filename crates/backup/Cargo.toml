@@ -1,0 +1,38 @@
+[package]
+name = "nori-backup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A backup of nori's settings, sound profiles and plugins, in one file sealed with a password"
+publish = false
+
+[lib]
+name = "nori_backup"
+
+[features]
+# The uniffi exports the Android app's Kotlin bindings are generated from.
+ffi = ["dep:uniffi", "nori-model/ffi", "nori-settings/ffi", "nori-plugins/ffi"]
+
+[dependencies]
+uniffi = { workspace = true, optional = true }
+nori-model = { path = "../model" }
+nori-settings = { path = "../settings" }
+nori-plugins = { path = "../plugins" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+# The key from the password (Argon2id) and the sealed contents (XChaCha20-Poly1305).
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+# A new salt and nonce for each backup.
+getrandom = "0.4"
+
+[dev-dependencies]
+nori-plugins = { path = "../plugins", features = ["testing"] }
+nori-net = { path = "../net" }
+nori-tasks = { path = "../tasks" }
+nori-testdir = { path = "../testdir" }
+async-trait = "0.1"
+# A package served by a test's repo.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sha2 = "0.10"

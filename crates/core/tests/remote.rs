@@ -536,7 +536,7 @@ impl Transport for Relay {
             if delay > 0 {
                 self.sim.sleep(Duration::from_millis(delay)).await;
             }
-            return Ok(TransportResponse { status: 200, body: json(body), set_cookies: Vec::new() });
+            return Ok(TransportResponse { status: 200, body: json(body), headers: Vec::new() });
         }
         let Some(rest) = request.url.strip_prefix(&format!("{SERVER}/rest/")).filter(|_| !self.down.load(Ordering::Relaxed)) else {
             return unreachable();
@@ -600,7 +600,7 @@ impl Transport for Relay {
             "noriRemote.send" => self.lagged(params.get("dev").map_or("", String::as_str), request.json).await,
             _ => request.json,
         };
-        Ok(TransportResponse { status: 200, body: self.answer(endpoint, &params, json.as_deref()), set_cookies: Vec::new() })
+        Ok(TransportResponse { status: 200, body: self.answer(endpoint, &params, json.as_deref()), headers: Vec::new() })
     }
 
     fn address_changed(&self) {}
@@ -672,7 +672,7 @@ impl Relay {
         let mut body = vec![0; length];
         r.read_exact(&mut body).map_err(read)?;
         self.lan.lock().entry(port).or_default().push(r);
-        Ok(TransportResponse { status, body, set_cookies: Vec::new() })
+        Ok(TransportResponse { status, body, headers: Vec::new() })
     }
 }
 

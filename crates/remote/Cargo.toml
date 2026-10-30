@@ -9,27 +9,30 @@ edition.workspace = true
 name = "nori_remote"
 
 [features]
+default = ["std"]
+# The door, the clock, jams and QR codes. Off, the frames (wire.rs), what a device admits (device.rs)
+# and the LAN's proof build on `core` and `alloc`, for microcontrollers.
+std = ["dep:nori-time", "dep:nori-tasks", "dep:parking_lot", "dep:qrcode", "dep:getrandom", "dep:libc", "serde/std", "serde_json/std", "nori-model/std"]
 # The uniffi records the Android app's Kotlin bindings are generated from.
-ffi = ["dep:uniffi", "nori-model/ffi", "nori-net/ffi"]
+ffi = ["std", "dep:uniffi", "nori-model/ffi"]
 
 [dependencies]
 # Time, read the same way natively and in a browser.
-nori-time = { path = "../time" }
-nori-tasks = { path = "../tasks" }
+nori-time = { path = "../time", optional = true }
+nori-tasks = { path = "../tasks", optional = true }
 uniffi = { workspace = true, optional = true }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-parking_lot = "0.12"
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+parking_lot = { version = "0.12", optional = true }
 # HMAC-SHA256 for the LAN's same-account proof.
 sha2 = "0.11"
 # The jam's invite as a QR code: the matrix only, each client draws it.
-qrcode = { version = "0.14", default-features = false }
-nori-model = { path = "../model" }
-nori-net = { path = "../net" }
+qrcode = { version = "0.14", default-features = false, optional = true }
+nori-model = { path = "../model", default-features = false }
 
 # The remote timing clock (clock.rs): CLOCK_BOOTTIME, which std does not read.
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc = { version = "0.2", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-getrandom = "0.4"
+getrandom = { version = "0.4", optional = true }

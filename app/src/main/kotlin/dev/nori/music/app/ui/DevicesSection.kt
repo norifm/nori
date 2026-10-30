@@ -145,6 +145,10 @@ private fun DeviceSheet(vm: SettingsViewModel, d: DeviceRow, onDone: () -> Unit)
     val automatic = remember(p.autoEqAuto) { say.deviceAutomatic(p.autoEqAuto) }
     val curves = if (!eq.tooShort && eq.query == query) eq.hits else suggested
     val pick = { c: DeviceSound.Choice -> vm.assignDevice(d.output, c, onDone) }
+    // While a plugin controls these headphones, all of it under their sound.
+    val plugins: dev.nori.music.app.vm.PluginsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val controlled by plugins.controlled.collectAsStateWithLifecycle()
+    val controls = remember(controlled, d.output) { if (controlled.isEmpty()) null else dev.nori.music.ffi.plugins.controlledOutput(controlled, dev.nori.music.ffi.devices.outputLook(d.output).name) }
 
     LazyColumn(Modifier.windowInsetsPadding(gestureBarRoom)) {
         item("head") {
@@ -167,6 +171,7 @@ private fun DeviceSheet(vm: SettingsViewModel, d: DeviceRow, onDone: () -> Unit)
                 }
             }
         }
+        controls?.let { c -> item("plugin-device") { Column(Modifier.padding(top = 16.dp)) { ControlledDevicePage(plugins, c) } } }
         item("curves") { GroupLabel(say.autoeqCurves) }
         if (eq.count == 0) item("download") {
             Column(Modifier.padding(horizontal = Space.gutter)) {

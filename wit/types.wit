@@ -1,4 +1,4 @@
-package nori:plugin@1.0.0;
+package nori:plugin@2.0.0;
 
 /// What plugins and nori say to each other about music: records of nori's own, never its internals.
 interface types {

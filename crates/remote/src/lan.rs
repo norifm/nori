@@ -2,10 +2,11 @@
 //! can also use their existing account credential. Discovery carries only a keyed tag. A jam uses its
 //! own invite credential and derives a separate credential for every guest, without sharing an account.
 
+use alloc::{format, string::{String, ToString}, vec::Vec};
 use sha2::{Digest, Sha256};
 
 /// A 256-bit pairing or invite credential from the operating system.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub fn new_secret() -> std::io::Result<String> {
     let mut bytes = [0; 32];
     getrandom::fill(&mut bytes).map_err(std::io::Error::other)?;
@@ -40,9 +41,9 @@ pub fn parse_pairing(link: &str) -> Option<String> {
 
 
 /// The door listens on a socket, which a browser cannot.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 mod door;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub use door::{Ask, Asker, Door, Handler, Told, Unanswered};
 
 /// The mDNS service type a door is announced as.
@@ -83,6 +84,22 @@ fn signature(secret: &str, method: &str, target: &str, body: &[u8]) -> String {
     hex(&hmac(secret.as_bytes(), &msg))
 }
 
+/// How far a request's time may be from the door's: a captured request cannot be sent again later.
+const SKEW_MS: i64 = 60_000;
+
+/// Whether `target` (path and query, `sig` last) was signed with `secret` within [`SKEW_MS`] of `now_ms`.
+pub fn verified(secret: &str, method: &str, target: &str, body: &[u8], now_ms: i64) -> bool {
+    let Some((signed, sig)) = target.rsplit_once("&sig=") else { return false };
+    let fresh = query(signed, "ts").and_then(|t| t.parse::<i64>().ok()).is_some_and(|ts| now_ms.abs_diff(ts) <= SKEW_MS as u64);
+    let expected = signature(secret, method, signed, body);
+    fresh && expected.len() == sig.len() && expected.bytes().zip(sig.bytes()).fold(0, |difference, (a, b)| difference | (a ^ b)) == 0
+}
+
+/// Parameter `key` of a request target, undecoded (doors are only sent unreserved characters).
+pub fn query<'a>(target: &'a str, key: &str) -> Option<&'a str> {
+    target.split_once('?')?.1.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == key).map(|(_, v)| v)
+}
+
 /// `path?query` signed for a door: `ts` and `sig` appended.
 pub fn signed(secret: &str, method: &str, path_query: &str, body: &[u8], now_ms: i64) -> String {
     let target = format!("{path_query}{}ts={now_ms}", if path_query.contains('?') { '&' } else { '?' });
@@ -99,6 +116,20 @@ mod tests {
         assert_eq!(hex(&hmac(b"Jefe", b"what do ya want for nothing?")), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
         let long_key = [0xaa; 131];
         assert_eq!(hex(&hmac(&long_key, b"Test Using Larger Than Block-Size Key - Hash Key First")), "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54");
+    }
+
+    #[test]
+    fn requests_need_the_account_secret_and_a_fresh_time() {
+        let t = signed("sesame", "POST", "/rest/noriRemote.send?dev=a", b"{}", 1_000_000);
+        assert!(verified("sesame", "POST", &t, b"{}", 1_000_000 + SKEW_MS));
+        assert!(!verified("other", "POST", &t, b"{}", 1_000_000), "another secret");
+        assert!(!verified("sesame", "POST", &t, b"{\"x\":1}", 1_000_000), "another body");
+        assert!(!verified("sesame", "GET", &t, b"{}", 1_000_000), "another method");
+        assert!(!verified("sesame", "POST", &t.replace("dev=a", "dev=b"), b"{}", 1_000_000), "another device");
+        assert!(!verified("sesame", "POST", &t, b"{}", 1_000_001 + SKEW_MS), "too old");
+        assert_eq!(account_tag("ann", "pw"), account_tag("ann", "pw"));
+        assert_ne!(account_tag("ann", "pw"), account_tag("ann", "pw2"));
+        assert_ne!(account_tag("ann", "pw"), account_tag("bob", "pw"));
     }
 
 }

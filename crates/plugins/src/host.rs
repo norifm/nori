@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use std::sync::Arc;
 
-use nori_net::transport::{Exchange, FailureKind, Transport, TransportError};
+use nori_net::transport::{Exchange, FailureKind, HttpMethod, Transport, TransportError};
 
 use crate::runtime::nori::plugin::{http, log, notices, rows, settings, store};
 use crate::runtime::{types, Host};
@@ -104,6 +104,41 @@ pub trait Side: Send + Sync {
     /// A row is hidden or greyed (on top of its manifest's own conditions).
     fn shown(&self, id: &str, row: &str, shown: bool, enabled: bool);
     fn notice(&self, id: &str, problem: bool, words: &str, args: &[String]);
+    /// The controlled devices or what they report changed ([`crate::Plugins::controlled`]).
+    fn devices_changed(&self) {}
+    /// Starts or stops browsing mDNS for `kind` ("_googlecast._tcp"); what is found goes to
+    /// [`crate::Plugins::discovered`]. Asked only while a plugin browses it.
+    fn browse(&self, _kind: &str, _on: bool) {}
+    /// Holds the platform's multicast lock (Android's `MulticastLock`) while on: a plugin's socket is in
+    /// a multicast group.
+    fn multicast(&self, _on: bool) {}
+    /// A cast started, changed (its device's state), or ended (None): the client holds what the
+    /// platform needs for it while one runs.
+    fn cast(&self, _cast: Option<&crate::Cast>) {}
+    /// A deep sink takes a burst (true) or has it all (false): Android holds the Wi-Fi lock meanwhile.
+    fn streaming(&self, _on: bool) {}
+    /// A cast's device's button, as a media button's press.
+    fn pressed(&self, _press: nori_model::deciders::Press) {}
+    /// A plugin asks the player to do `c` (it may: its manifest says so).
+    fn control(&self, _c: crate::Control) {}
+    /// Opens plugin `id`'s provider's sign-in page at `url`; false where the client has none.
+    fn sign_in(&self, _id: &str, _url: &str) -> bool {
+        false
+    }
+    /// Keep on only these wake receivers.
+    fn wake(&self, _events: &[crate::WakeEvent]) {}
+    /// The commands other apps may run now; none: no receiver.
+    fn commands(&self, _commands: &[crate::Command]) {}
+    /// Say whether the screen is on ([`crate::Plugins::screen`]) from now on, or stop.
+    fn watch_screen(&self, _on: bool) {}
+    /// Plugin `id`'s asset `name` is now at `state`.
+    fn asset(&self, _id: &str, _name: &str, _state: crate::AssetState) {}
+    /// Say each change of the settings to [`crate::Plugins`] from now on, or stop.
+    fn watch_settings(&self, _on: bool) {}
+    /// The user's switch turns every plugin off (their own switches kept).
+    fn all_off(&self) -> bool {
+        false
+    }
 }
 
 /// Where a plugin's overrides are kept in its store.
@@ -146,11 +181,14 @@ impl store::Host for Host {
 }
 
 /// The host of an http(s) URL.
-fn host_of(url: &str) -> Option<&str> {
+pub(crate) fn host_of(url: &str) -> Option<&str> {
     let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
     let authority = rest.split(['/', '?', '#']).next()?;
     let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    Some(host.split(':').next().unwrap_or(host))
+    Some(match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next()?,
+        None => host.split(':').next().unwrap_or(host),
+    })
 }
 
 /// An answer to a plugin's request.
@@ -180,22 +218,22 @@ impl Host {
     /// `request` as the transport sends it, once the manifest allows its host.
     fn exchange(&self, request: http::Request) -> Result<(Arc<dyn Transport>, Exchange), types::Error> {
         let host = host_of(&request.url).ok_or_else(|| error(types::ErrorKind::Refused, "not an http(s) URL"))?;
-        if !self.manifest.reaches(host) {
+        let on_lan = || self.manifest.lan() && crate::lan::private_addresses(host, 0).is_some();
+        if !self.manifest.reaches(host) && !on_lan() {
             return Err(error(types::ErrorKind::Refused, format!("{host} is not among its net hosts")));
         }
         let transport = self.transport.lock().expect("not poisoned").clone().ok_or_else(|| error(types::ErrorKind::Network, "no transport yet"))?;
-        let mut headers: HashMap<String, String> = request.headers.into_iter().map(|h| (h.name, h.value)).collect();
-        // The transport sends a body as JSON or as a form, by its content type.
-        let content = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.to_ascii_lowercase());
-        let body = request.body.map(String::from_utf8).transpose().map_err(|_| error(types::ErrorKind::Unsupported, "a body that isn't text"))?;
-        let (json, form) = match (request.method, body) {
-            (http::Method::Get, None) => (None, None),
-            (http::Method::Post, Some(b)) if content.as_deref().is_some_and(|c| c.contains("form-urlencoded")) => (None, Some(b)),
-            (http::Method::Post, Some(b)) => (Some(b), None),
-            (m, _) => return Err(error(types::ErrorKind::Unsupported, format!("{m:?} is not sent yet"))),
+        let headers: HashMap<String, String> = request.headers.into_iter().map(|h| (h.name, h.value)).collect();
+        let method = match request.method {
+            http::Method::Get => HttpMethod::Get,
+            http::Method::Head => HttpMethod::Head,
+            http::Method::Post => HttpMethod::Post,
+            http::Method::Put => HttpMethod::Put,
+            http::Method::Patch => HttpMethod::Patch,
+            http::Method::Delete => HttpMethod::Delete,
         };
-        headers.retain(|k, _| !k.eq_ignore_ascii_case("content-type"));
-        Ok((transport, Exchange { url: request.url, headers, json, form, timeout_ms: request.timeout_ms.unwrap_or(0) }))
+        let exchange = Exchange { url: request.url, headers, body: request.body, method: Some(method), timeout_ms: request.timeout_ms.unwrap_or(0), ..Default::default() };
+        Ok((transport, exchange))
     }
 }
 
@@ -204,7 +242,7 @@ fn sent(transport: &dyn Transport, exchange: Exchange) -> Answered {
     match nori_tasks::block_on(transport.send(exchange)) {
         Ok(r) => Ok(http::Response {
             status: r.status,
-            headers: r.set_cookies.into_iter().map(|v| types::Header { name: "set-cookie".into(), value: v }).collect(),
+            headers: r.headers.into_iter().map(|h| types::Header { name: h.name, value: h.value }).collect(),
             body: r.body,
         }),
         Err(TransportError::Failed { kind: FailureKind::Timeout, .. }) => Err(error(types::ErrorKind::Timeout, "timed out")),
@@ -215,7 +253,7 @@ fn sent(transport: &dyn Transport, exchange: Exchange) -> Answered {
 impl http::Host for Host {
     fn fetch(&mut self, request: http::Request) -> Answered {
         let (transport, exchange) = self.exchange(request)?;
-        sent(&*transport, exchange)
+        self.mark.waiting(|| sent(&*transport, exchange))
     }
 
     fn start(&mut self, request: http::Request) -> Result<u64, types::Error> {
@@ -244,7 +282,7 @@ impl http::Host for Host {
             if let Some(&id) = ids.iter().find(|id| !matches!(s.answers.get(id), Some(None))) {
                 return id;
             }
-            let Ok((id, answer)) = s.came.recv() else { return ids.first().copied().unwrap_or_default() };
+            let Ok((id, answer)) = self.mark.waiting(|| s.came.recv()) else { return ids.first().copied().unwrap_or_default() };
             if let Some(slot) = s.answers.get_mut(&id) {
                 *slot = Some(answer);
             }
@@ -326,7 +364,7 @@ mod tests {
             assert_eq!(Value::decode(&v.encode()), Some(v));
         }
         assert_eq!(Value::decode(&[9]), None);
-        for (url, host) in [("https://music.youtube.com/youtubei/v1/browse?k=1", Some("music.youtube.com")), ("http://u:p@10.0.0.2:4533/rest", Some("10.0.0.2")), ("file:///etc", None)] {
+        for (url, host) in [("https://music.youtube.com/youtubei/v1/browse?k=1", Some("music.youtube.com")), ("http://u:p@10.0.0.2:4533/rest", Some("10.0.0.2")), ("http://[::1]:80/", Some("::1")), ("file:///etc", None)] {
             assert_eq!(host_of(url), host, "{url}");
         }
     }

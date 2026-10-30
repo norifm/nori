@@ -635,6 +635,10 @@ pub struct StoredPrefs {
     /// Remote playback control and hosting jams, through the relay or the local network.
     #[setting("remoteControl", FLAG, default = true, show = K::Switch)]
     pub remote_control: bool,
+    /// Every plugin off, each one's own switch kept: nothing is laid over the settings and no plugin is
+    /// called, to tell a nori bug from a plugin's. Any value a plugin overrides may change.
+    #[setting("pluginsOff", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO | APPLY_GAIN | REPLAN | SOUND | PLAYER | CACHE_LIMIT)]
+    pub plugins_off: bool,
     /// The home page's rows, in order; unlisted rows are hidden.
     #[setting("homeRows", Picks, default = HomeRow::ALL.to_vec(), hidden)]
     pub home_rows: Vec<HomeRow>,
@@ -1883,6 +1887,18 @@ pub fn servers_removed(list: ServerList, id: String) -> ServerList {
     ServerList { servers, active_server_id }
 }
 
+/// The profiles once a backup's are restored: the backup's first, then those here, which stay as they
+/// are when the backup has one with the same id, or the same address and user. The profile in use
+/// stays in use; with none, the backup's is.
+pub fn servers_restored(here: ServerList, backed: ServerList) -> ServerList {
+    let same = |a: &SavedServer, b: &SavedServer| a.id == b.id || (a.kind == b.kind && a.url == b.url && a.user == b.user);
+    let in_use = backed.servers.iter().find(|s| s.id == backed.active_server_id).map(|b| here.servers.iter().find(|h| same(h, b)).unwrap_or(b).id.clone());
+    let active_server_id = if here.active_server_id.is_empty() { in_use.unwrap_or_default() } else { here.active_server_id };
+    let mut servers: Vec<SavedServer> = backed.servers.into_iter().filter(|b| !here.servers.iter().any(|h| same(h, b))).collect();
+    servers.extend(here.servers);
+    ServerList { servers, active_server_id }
+}
+
 /// The server id rows in the app database are kept under: the active profile's, or "default".
 pub fn server_db_id(active_server_id: &str) -> String {
     if active_server_id.is_empty() { "default".into() } else { active_server_id.to_string() }
@@ -2379,6 +2395,21 @@ mod tests {
         assert_eq!(switches(&["2"]), [sw(false, "1,2"), sw(true, "2"), sw(false, "2,3")]);
         // A folder the server no longer has is dropped by the next tap.
         assert_eq!(switches(&["2", "9"])[0], sw(false, "1,2"));
+    }
+
+    #[test]
+    fn restored_profiles_join_those_here() {
+        let s = |id: &str, url: &str, password: &str| SavedServer { id: id.into(), url: url.into(), user: "u".into(), password: password.into(), ..SavedServer::default() };
+        let here = ServerList { servers: vec![s("h1", "https://a", "new")], active_server_id: "h1".into() };
+        let backed = ServerList { servers: vec![s("b1", "https://a", "old"), s("b2", "https://b", "x")], active_server_id: "b1".into() };
+        let l = servers_restored(here.clone(), backed.clone());
+        let got: Vec<(&str, &str)> = l.servers.iter().map(|x| (x.id.as_str(), x.password.as_str())).collect();
+        assert_eq!(got, [("b2", "x"), ("h1", "new")], "the same address and user stays as it is here");
+        assert_eq!(l.active_server_id, "h1", "the profile in use stays");
+        let none_here = servers_restored(ServerList { servers: vec![], active_server_id: String::new() }, backed.clone());
+        assert_eq!((none_here.servers.len(), none_here.active_server_id.as_str()), (2, "b1"), "with none in use, the backup's is");
+        let logged_out = servers_restored(ServerList { active_server_id: String::new(), ..here }, backed);
+        assert_eq!(logged_out.active_server_id, "h1", "the backup's one in use, as it is here");
     }
 
     #[test]

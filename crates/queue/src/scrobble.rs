@@ -2,7 +2,7 @@
 //! timer). The song left is recorded in the local history in the background; the platform is told what
 //! to send the server.
 
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use nori_db as db;
 use nori_db::background;
@@ -52,6 +52,14 @@ impl Scrobbler {
         self.edge(playing, now_ms);
         (done, heard, at, left_in)
     }
+}
+
+/// Where plays go besides the profile's server (plugins' scrobblers). They count by the same rule,
+/// whatever the server's scrobbling switch and the profile's rules: their accounts are their own.
+pub trait Scrobbles: Send + Sync {
+    fn now_playing(&self, song: &Song);
+    /// `song`, started at `at_ms` (wall clock), was heard long enough to count.
+    fn scrobble(&self, song: &Song, at_ms: i64);
 }
 
 /// What to tell the server when a song is left.
@@ -104,6 +112,11 @@ impl Session {
     pub fn receive_listen(&self, listen: Option<Listen>) {
         self.scrobbler.lock().incoming = listen;
     }
+
+    /// Plays go to `to` too from now on; None stops it.
+    pub fn scrobble_to(&self, to: Option<Arc<dyn Scrobbles>>) {
+        *self.scrobbles.lock() = to;
+    }
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -130,11 +143,19 @@ impl Session {
                 });
             }
         }
+        let counted = done.filter(|s| still_open && heard >= needed_ms(s.duration as i64));
+        if let Some(to) = self.scrobbles.lock().clone() {
+            if let Some(s) = &counted {
+                to.scrobble(s, at);
+            }
+            if let Some(s) = next.as_deref().and_then(|id| self.song(id)) {
+                to.now_playing(&s);
+            }
+        }
         if !scrobble {
             return ScrobbleSend { submit_id: None, submit_at: 0, now_playing_id: None };
         }
-        let submit_id = done.filter(|s| still_open && heard >= needed_ms(s.duration as i64)).map(|s| s.id);
-        ScrobbleSend { submit_id, submit_at: at, now_playing_id: next }
+        ScrobbleSend { submit_id: counted.map(|s| s.id), submit_at: at, now_playing_id: next }
     }
 }
 
@@ -165,6 +186,38 @@ mod tests {
         s.edge(true, 10_000);
         let (done, heard, at, _) = s.switch(None, Weak::new(), false, 12_000, 60);
         assert_eq!((done, heard, at), (Some(song), 6_000, 50));
+    }
+
+    /// Notes what it is told: "now <id>" and "play <id> <at>".
+    #[derive(Default)]
+    struct Told(Mutex<Vec<String>>);
+
+    impl Scrobbles for Told {
+        fn now_playing(&self, song: &Song) {
+            self.0.lock().push(format!("now {}", song.id));
+        }
+        fn scrobble(&self, song: &Song, at_ms: i64) {
+            self.0.lock().push(format!("play {} {at_ms}", song.id));
+        }
+    }
+
+    #[test]
+    fn plays_go_to_a_sink_by_the_same_rule_whatever_the_server_switch() {
+        let (_dir, session) = crate::playlist::tests::opened(|p| p.scrobble = false);
+        let song = |id: &str| Song { id: id.into(), duration: 100, ..Default::default() };
+        session.register(vec![song("a"), song("b"), song("c")]);
+        let told = Arc::new(Told::default());
+        session.scrobble_to(Some(told.clone()));
+        session.scrobble_track(Some("a".into()), TrackChange::Moved, true, 0, 1_000, 0);
+        // Heard 20 s of 100: not half.
+        session.scrobble_track(Some("b".into()), TrackChange::Moved, true, 20_000, 21_000, 0);
+        // Heard 60 s: counts, with its start.
+        let sent = session.scrobble_track(Some("c".into()), TrackChange::Moved, true, 80_000, 81_000, 0);
+        assert_eq!(sent.submit_id, None, "the server's switch is off");
+        assert_eq!(*told.0.lock(), ["now a", "now b", "play b 21000", "now c"]);
+        session.scrobble_to(None);
+        session.scrobble_track(None, TrackChange::Ended, false, 200_000, 201_000, 0);
+        assert_eq!(told.0.lock().len(), 4, "stopped");
     }
 
 }

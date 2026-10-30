@@ -13,7 +13,7 @@ use crate::{queue, Session};
 /// The queue plus the state that follows it.
 #[derive(Default)]
 pub(crate) struct Queue {
-    list: Playlist,
+    pub(crate) list: Playlist,
     /// The planner window last handed over and whether shuffling, to skip unchanged ones.
     window: (Vec<String>, bool),
     /// The page the queue was started from; kept through edits, replaced by each new queue.
@@ -153,6 +153,12 @@ impl Session {
     /// Whether the queue was started from `page` (same kind and id), not merely whether it holds its songs.
     pub fn from_page(&self, page: &nori_library::pages::PageQueue) -> bool {
         self.queue.lock().origin.as_ref() == Some(page.origin_ref())
+    }
+
+    /// A queue that may have started shuffling, landed at `at`: a plugin may order it instead.
+    fn shuffled(&self, at: Option<usize>) -> QueueChange {
+        self.decide_shuffle();
+        self.queue.lock().change(at)
     }
 
     fn edit(&self, f: impl FnOnce(&mut Playlist) -> Option<usize>) -> QueueChange {
@@ -342,7 +348,8 @@ impl Session {
         let mut q = self.queue.lock();
         q.set_origin(origin);
         let at = q.list.set(ids, start.map(|s| s as usize), shuffle, seed());
-        q.change(at)
+        drop(q);
+        self.shuffled(at)
     }
 
     /// Sets a queue shuffled into `order` (list indexes, a weighted shuffle), from its first song.
@@ -353,7 +360,8 @@ impl Session {
         q.set_origin(origin);
         let start = order.first().map_or(0, |&i| i as usize);
         let at = q.list.set_in_order(ids, start, order.into_iter().map(|i| i as usize).collect(), seed());
-        q.change(at)
+        drop(q);
+        self.shuffled(at)
     }
 
     /// A queue handed over from another device: from list index `index`, under `shuffle` in `order`
@@ -405,10 +413,11 @@ impl Session {
 
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_shuffle"))]
     pub fn shuffle(&self, on: bool) -> QueueChange {
-        self.edit(|p| {
+        let at = self.edit(|p| {
             p.set_shuffle(on, seed());
             p.current()
-        })
+        });
+        self.shuffled(at.at.map(|a| a as usize))
     }
 
     /// Shows shuffle as `on` right away, before the queue change that follows.

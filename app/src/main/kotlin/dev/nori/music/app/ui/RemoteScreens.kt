@@ -25,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
@@ -77,15 +78,17 @@ internal fun refusal(r: Refusal): String = words(
  * picker), and the jam: "Start a Jam", or "Your Jam" with End while one is on. Up only while remote control
  * or jams are on.
  */
-private enum class RoomPage { MAIN, INVITE, SETTINGS, PAIR }
+private enum class RoomPage { MAIN, INVITE, SETTINGS, PAIR, DEVICE }
 
 @Composable
 fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jams: Boolean, remote: Boolean, sound: dev.nori.music.app.vm.SettingsViewModel) {
     val vm: RemoteViewModel = viewModel()
+    val plugins: dev.nori.music.app.vm.PluginsViewModel = viewModel()
     val nav = LocalNav.current
     NoriSheet(open, onDismiss) {
         // Other devices are looked for only with remote control on; a plugin's rows alone need none of it.
         if (remote) LifecycleResumeEffect(Unit) { vm.watch(true); onPauseOrDispose { vm.watch(false) } }
+        LifecycleResumeEffect(Unit) { plugins.outputPicker(true); onPauseOrDispose { plugins.outputPicker(false) } }
         val devices by vm.devices.collectAsStateWithLifecycle()
         val names by vm.names.collectAsStateWithLifecycle()
         val jam by vm.jam.collectAsStateWithLifecycle()
@@ -93,12 +96,28 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         val mirror by vm.mirror.collectAsStateWithLifecycle()
         val pairing by vm.pairingLink.collectAsStateWithLifecycle()
         val unsupported = relay == dev.nori.music.ffi.RelaySupport.UNSUPPORTED
-        val pick = { device: String? -> vm.pick(device); onDismiss() }
+        val cast by sound.pluginCast.collectAsStateWithLifecycle()
+        val pick = { device: String? ->
+            if (device == null && cast != null) sound.endCast()
+            vm.pick(device)
+            onDismiss()
+        }
         val hosted = jam?.takeIf { it.hosting }
         var page by remember(hosted?.link) { mutableStateOf(RoomPage.MAIN) }
         BackHandler(page != RoomPage.MAIN) { page = RoomPage.MAIN }
+        val controlled by plugins.controlled.collectAsStateWithLifecycle()
+        val output by sound.currentOutput.collectAsStateWithLifecycle()
+        // The headphones playing now, when a plugin controls them; their page while it is open.
+        val here = remember(controlled, output) { dev.nori.music.ffi.plugins.controlledOutput(controlled, dev.nori.music.ffi.devices.outputLook(output).name) }
+        var shownDevice by remember { mutableStateOf<String?>(null) }
+        val pageDevice = controlled.firstOrNull { it.id == shownDevice }
+        // Its page goes with the device.
+        LaunchedEffect(pageDevice == null) { if (pageDevice == null && page == RoomPage.DEVICE) page = RoomPage.MAIN }
         Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
-            if (page == RoomPage.PAIR && pairing != null) {
+            if (page == RoomPage.DEVICE && pageDevice != null) {
+                SheetTitle(pageDevice.name)
+                ControlledDevicePage(plugins, pageDevice)
+            } else if (page == RoomPage.PAIR && pairing != null) {
                 SheetTitle(words(R.string.pair_devices))
                 PairingBody(pairing!!, vm) { page = RoomPage.MAIN }
             } else if (hosted != null && page != RoomPage.MAIN) {
@@ -106,8 +125,14 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                 if (page == RoomPage.INVITE) hosted.link?.let { InviteBody(it) } else JamSettings(hosted)
             } else {
                 SheetTitle(words(R.string.devices_title))
+                here?.let { d -> DeviceControls(plugins, d, Modifier.padding(bottom = 12.dp)) { shownDevice = d.id; page = RoomPage.DEVICE } }
                 GroupCard {
-                    DeviceRow(words(R.string.devices_this), kindIcon(DeviceKind.PHONE), null, mirror == null, divider = hosted == null && devices.isNotEmpty()) { pick(null) }
+                    DeviceRow(words(R.string.devices_this), kindIcon(DeviceKind.PHONE), null, mirror == null && cast == null, divider = cast != null || hosted == null && devices.isNotEmpty()) { pick(null) }
+                    // A plugin's device, playing: picking this phone above ends the cast.
+                    cast?.let { c ->
+                        val what = words(if (c.kind == dev.nori.music.ffi.plugins.CastKind.SINK) R.string.devices_casting else R.string.devices_cast_target)
+                        DeviceRow(c.device, Iconoir.SoundHigh, what, true, divider = hosted == null && devices.isNotEmpty(), trailing = c.volume?.let { "$it %" }) {}
+                    }
                     if (hosted == null) devices.forEachIndexed { k, d ->
                         val now = d.now
                         DeviceRow(
@@ -203,8 +228,10 @@ fun DevicesHost(open: Boolean, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val tell = LocalMessages.current
     val pluginDevices by settings.pluginDevices.collectAsStateWithLifecycle()
+    val controlled by viewModel<dev.nori.music.app.vm.PluginsViewModel>().controlled.collectAsStateWithLifecycle()
+    val cast by settings.pluginCast.collectAsStateWithLifecycle()
     val remote = prefs.remoteControl && LocalRules.current.remote
-    if (remote || pluginDevices.isNotEmpty()) DevicesSheet(open, onDismiss, { onDismiss(); openOutputPicker(context, output, tell) }, prefs.remoteControl, remote, settings)
+    if (remote || pluginDevices.isNotEmpty() || controlled.isNotEmpty() || cast != null) DevicesSheet(open, onDismiss, { onDismiss(); openOutputPicker(context, output, tell) }, prefs.remoteControl, remote, settings)
 }
 
 /** The jam this phone hosts, as the devices list it: a tap opens its queue, End ends it. */

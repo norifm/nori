@@ -8,6 +8,8 @@ use crate::heard::{HeardTracker, PlayerNow, Seen, StreamAt};
 use crate::pcm::Format;
 use crate::playlist::Playlist;
 use crate::queue::{measure_ahead, ErrorRun, OnError, PlaybackError};
+use crate::stage::{no_facts, Preparing, SongFacts, SongStages, StageSpec, Tap};
+use std::sync::Arc;
 use crate::transitions::WindowSong;
 use nori_time::Instant;
 
@@ -101,6 +103,10 @@ pub trait App: Host {
     /// [`Player::gain_max`]), applied per song by [`TransitionEngine::set_gain`].
     fn gain(&mut self, _list: &Playlist, _index: usize) -> f32 {
         1.0
+    }
+    /// Song `id`'s measured integrated loudness, LUFS, for the stages; asked only while there are any.
+    fn loudness(&mut self, _id: &str) -> Option<f32> {
+        None
     }
     /// The sound changed (`what`: the chain or the gain) from output frame `at.output`, made from input
     /// frame `at.input` (frames since the last flush).
@@ -198,6 +204,11 @@ struct Reader<R> {
     ended: bool,
     /// The last turn found the next buffer's bytes still missing.
     waiting: bool,
+    /// The song slot's stages, each buffer read through them once.
+    stages: Option<SongStages>,
+    /// Where plugins hear the song as it is read, and the buffer it is converted in.
+    tap: Option<Box<dyn Tap>>,
+    heard: Vec<f32>,
 }
 
 /// A song opened from `from_ms`, not ready yet.
@@ -209,19 +220,46 @@ struct Opening<R> {
 }
 
 impl<R: Reading> Reader<R> {
-    fn new(index: usize, offset_us: i64, r: R) -> Reader<R> {
-        Reader { index, offset_us, r, pos: 0, ended: false, waiting: false }
+    fn new(index: usize, offset_us: i64, r: R, stages: Option<SongStages>, tap: Option<Box<dyn Tap>>) -> Reader<R> {
+        Reader { index, offset_us, r, pos: 0, ended: false, waiting: false, stages, tap, heard: Vec::new() }
     }
 
+    /// Decodes the next buffer: heard by the tap as it is, then run through the song slot's stages.
     fn fill(&mut self) -> bool {
         self.pos = 0;
         let got = self.r.fill();
         self.ended = !got;
+        match (got, self.tap.as_mut()) {
+            (true, Some(t)) => {
+                // Only a longer buffer grows it.
+                self.heard.clear();
+                crate::pcm::to_f32(self.r.buffer(), self.r.format().encoding, &mut self.heard);
+                t.samples(&self.heard);
+            }
+            (false, Some(t)) => {
+                if self.r.error().is_none() {
+                    t.end();
+                }
+                self.tap = None;
+            }
+            (_, None) => {}
+        }
+        if let (true, Some(s)) = (got, self.stages.as_mut()) {
+            s.run(self.r.buffer());
+        }
         got
     }
 
+    /// The buffer read, as the song slot made it.
+    fn buffer(&self) -> &[u8] {
+        match &self.stages {
+            Some(s) => s.last(),
+            None => self.r.buffer(),
+        }
+    }
+
     fn left(&self) -> bool {
-        self.pos < self.r.buffer().len()
+        self.pos < self.buffer().len()
     }
 }
 
@@ -291,6 +329,12 @@ pub struct Player<S: Songs, T: Track, A: App, Q: Queue> {
     seqs: Vec<u64>,
     /// Music is made while paused, ready for a start at a set moment.
     pub priming: bool,
+    /// Plugins' song-slot stages, made for each song read.
+    song_stages: Vec<StageSpec>,
+    /// What plugins make of the songs read, and made.
+    preparing: Option<Arc<dyn Preparing>>,
+    /// What the stages read of each stream's song, by its serial, while there are stages.
+    facts: Vec<(u64, Arc<SongFacts>)>,
 }
 
 impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
@@ -336,6 +380,9 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             waiting: false,
             seqs: Vec::new(),
             priming: false,
+            song_stages: Vec::new(),
+            preparing: None,
+            facts: Vec::new(),
         };
         p.engine.follow_rate = true;
         p.seqs = p.queue.read(|q| q.seqs().to_vec());
@@ -516,10 +563,14 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         self.failed = None;
         self.source_ended = false;
         self.sink.track.source_bits(o.r.bits());
-        self.reading = Some(Reader::new(o.index, o.offset_us, o.r));
+        let song = self.facts_for(period.serial);
+        let stages = SongStages::new(&self.song_stages, self.sink.settings().around, &song, format);
+        // Read again: its tap heard it the first time.
+        self.reading = Some(Reader::new(o.index, o.offset_us, o.r, stages, None));
         self.configure(o.index, period.serial, format);
         self.engine.set_output_stream_offset_us(o.offset_us);
         self.engine.set_gain(period.gain);
+        self.engine.set_song(song);
     }
 
     /// Starts reading ready song `i`; false when it reports an error.
@@ -530,10 +581,13 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         }
         let (format, duration_us) = (r.format(), r.duration_us());
         self.sink.track.source_bits(r.bits());
-        self.reading = Some(Reader::new(i, offset_us, r));
         self.next = None;
         let gain = self.song_gain(i);
         let serial = self.serial_for(i);
+        self.facts.clear();
+        let song = self.tell(i, serial, gain);
+        let reader = self.reader(i, offset_us, r, &song, from_ms);
+        self.reading = Some(reader);
         self.periods = vec![Period { index: i, offset_us, duration_us, gain, serial }];
         self.place(offset_us + from_ms * 1000);
         self.heard_from = self.position_us;
@@ -541,7 +595,87 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         self.configure(i, serial, format);
         self.engine.set_output_stream_offset_us(offset_us);
         self.engine.set_gain(gain);
+        self.engine.set_song(song);
         true
+    }
+
+    /// A reader of song `i` (opened as `r` from `from_ms`) through the song slot's stages, heard by
+    /// the plugins' tap.
+    fn reader(&mut self, i: usize, offset_us: i64, r: S::Reading, song: &Arc<SongFacts>, from_ms: i64) -> Reader<S::Reading> {
+        let format = r.format();
+        let stages = SongStages::new(&self.song_stages, self.sink.settings().around, song, format);
+        let id = self.id_at(i);
+        let tap = self.preparing.as_ref().and_then(|p| p.tap(&id, format, (from_ms.max(0) * format.rate as i64 / 1000) as u64));
+        Reader::new(i, offset_us, r, stages, tap)
+    }
+
+    /// Whether any stage reads songs' facts.
+    fn told(&self) -> bool {
+        !self.song_stages.is_empty() || !self.sink.settings().stages.is_empty() || self.sink.track.marks_songs()
+    }
+
+    /// What the stages read of song `i`, played at `gain` as stream `serial`; kept for it.
+    fn tell(&mut self, i: usize, serial: u64, gain: f32) -> Arc<SongFacts> {
+        if !self.told() {
+            return no_facts();
+        }
+        let id = self.id_at(i);
+        let facts = Arc::new(SongFacts {
+            id: Some(id.clone()),
+            gain_db: Some(20.0 * gain.max(1e-6).log10()),
+            loudness_lufs: self.app.loudness(&id),
+            prepared: self.preparing.as_ref().map(|p| p.prepared(&id)).unwrap_or_default(),
+        });
+        let periods = &self.periods;
+        self.facts.retain(|(s, _)| *s != serial && periods.iter().any(|p| p.serial == *s));
+        self.facts.push((serial, facts.clone()));
+        facts
+    }
+
+    /// What was told of stream `serial`.
+    fn facts_for(&self, serial: u64) -> Arc<SongFacts> {
+        self.facts.iter().find(|(s, _)| *s == serial).map_or_else(no_facts, |(_, f)| f.clone())
+    }
+
+    /// Plugins' song-slot stages from the next buffer read on; a song read later is read through them.
+    pub fn set_song_stages(&mut self, specs: Vec<StageSpec>) {
+        if self.song_stages == specs {
+            return;
+        }
+        self.song_stages = specs;
+        let around = self.sink.settings().around;
+        if let Some(s) = self.reading.as_mut().and_then(|r| r.stages.as_mut()) {
+            s.apply(&self.song_stages, around);
+        }
+    }
+
+    /// What plugins make of songs as they are read, from the next song read.
+    pub fn set_preparing(&mut self, preparing: Option<Arc<dyn Preparing>>) {
+        self.preparing = preparing;
+    }
+
+    /// Plugins made more of the songs played (their prepared data came): what the stages read of
+    /// them changes from the first frame the output can still replace.
+    pub fn facts_changed(&mut self) {
+        let periods: Vec<(usize, u64, f32)> = self.periods.iter().map(|p| (p.index, p.serial, p.gain)).collect();
+        for (i, serial, gain) in periods {
+            let Some(was) = self.facts.iter().find(|(s, _)| *s == serial).map(|(_, f)| f.clone()) else { continue };
+            let now = self.tell(i, serial, gain);
+            if *now == *was {
+                self.facts.retain(|(s, _)| *s != serial);
+                self.facts.push((serial, was));
+                continue;
+            }
+            self.engine.retell(&was, &now);
+            if let Some((input, output)) = self.sink.retell(&was, &now) {
+                self.app.spliced("song's facts", Splice { input, output });
+            }
+            if let Some(s) = self.reading.as_mut().filter(|r| r.index == i).and_then(|r| r.stages.as_mut()) {
+                s.song(&now);
+            }
+        }
+        self.burst.restart();
+        self.sink.fill();
     }
 
     /// Song `i`'s ReplayGain, or 1 when gain is off.
@@ -1217,7 +1351,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             app.clock(*now_ms);
             let mut fed = Fed::new(sink, burst, *now_ms);
             let pts = r.offset_us + r.r.at_us();
-            let (taken, used) = engine.handle_buffer(&mut fed, app, &r.r.buffer()[r.pos..], pts);
+            let (taken, used) = engine.handle_buffer(&mut fed, app, &r.buffer()[r.pos..], pts);
             r.pos += used;
             if !taken {
                 self.hungry = false;
@@ -1297,11 +1431,14 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             self.sink.track.source_bits(next.bits());
             let gain = self.song_gain(n);
             let serial = self.new_serial();
+            let song = self.tell(n, serial, gain);
+            let reader = self.reader(n, end, next, &song, 0);
             self.configure(n, serial, format);
             self.call(|e, d, a| e.handle_discontinuity(d, a));
             self.engine.set_output_stream_offset_us(end);
             self.engine.set_gain(gain);
-            self.reading = Some(Reader::new(n, end, next));
+            self.engine.set_song(song);
+            self.reading = Some(reader);
             self.periods.push(Period { index: n, offset_us: end, duration_us, gain, serial });
         }
     }

@@ -1,5 +1,5 @@
-//! Lyrics from the lyrics services for a song the server has no timed lyrics for: each answer scored
-//! (trust.rs) and the best shown.
+//! Lyrics from the lyrics services (nori's, then plugins') for a song the server has no timed lyrics
+//! for: each answer scored (trust.rs) and the best shown.
 //!
 //! The choice from last time is shown at once and kept unless it scored below [`LOW`], when the services
 //! are asked again after [`LOW_RETRY_MS`]. Each service's own answers are cached (a hit for good, a miss
@@ -11,6 +11,8 @@
 
 use std::collections::HashSet;
 use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 use nori_time::{Duration, Instant};
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
@@ -100,6 +102,57 @@ pub struct Entry {
 impl Entry {
     pub fn of(s: LyricsService) -> Self {
         Entry { best: s.best(), prior: s.prior(), first_wave: s.first_wave() }
+    }
+}
+
+/// A plugin's lyrics service, asked in the race after nori's own.
+pub trait PluginLyrics: Send + Sync {
+    /// Its plugin's id.
+    fn plugin(&self) -> &str;
+    /// Its words for `song`, what they name unknown; [`Lookup::Unreachable`] when its call failed.
+    fn lookup<'a>(&'a self, song: &'a Song) -> Pin<Box<dyn Future<Output = Lookup> + Send + 'a>>;
+}
+
+/// What a plugin's service is taken to be: line-timed lyrics (the API times no words), asked in the
+/// first wave, trusted like nori's own middling services.
+const PLUGIN_ENTRY: Entry = Entry { best: Timing::Lines, prior: 0.8, first_wave: true };
+
+/// One rank of a lookup: one of nori's services or a plugin's.
+#[derive(Clone, Copy)]
+enum Asked<'a> {
+    Service(LyricsService),
+    Plugin(&'a dyn PluginLyrics),
+}
+
+impl Asked<'_> {
+    fn entry(self) -> Entry {
+        match self {
+            Asked::Service(s) => Entry::of(s),
+            Asked::Plugin(_) => PLUGIN_ENTRY,
+        }
+    }
+
+    fn origin(self) -> LyricsOrigin {
+        match self {
+            Asked::Service(s) => s.origin(),
+            Asked::Plugin(p) => LyricsOrigin::Plugin { id: p.plugin().to_string() },
+        }
+    }
+
+    /// Its name in the cache, and as the chosen answer's source.
+    fn name(self) -> String {
+        match self {
+            Asked::Service(s) => s.name().to_string(),
+            Asked::Plugin(p) => format!("plugin:{}", p.plugin()),
+        }
+    }
+
+    /// Its name in the log.
+    fn title(self) -> String {
+        match self {
+            Asked::Service(s) => s.title().to_string(),
+            Asked::Plugin(p) => p.plugin().to_string(),
+        }
     }
 }
 
@@ -333,9 +386,9 @@ pub(crate) fn sync_words(c: &SyncCheck) -> String {
 }
 
 /// A service's cache key for a song. With a BetterLyrics key given, a miss without one is asked again.
-fn cache_key(service: LyricsService, song: &Song, lookup: &LyricsLookup) -> String {
-    let keyed = service == LyricsService::BetterLyrics && !lookup.better_lyrics_key.is_empty();
-    format!("{CACHE_PREFIX}{}{}|{}|{}|{}", service.name(), if keyed { "+key" } else { "" }, song.artist, song.title, song.duration)
+fn cache_key(asked: Asked, song: &Song, lookup: &LyricsLookup) -> String {
+    let keyed = matches!(asked, Asked::Service(LyricsService::BetterLyrics)) && !lookup.better_lyrics_key.is_empty();
+    format!("{CACHE_PREFIX}{}{}|{}|{}|{}", asked.name(), if keyed { "+key" } else { "" }, song.artist, song.title, song.duration)
 }
 
 /// The cache key of the lyrics chosen for a song.
@@ -358,8 +411,8 @@ struct Kept {
     score: Option<f64>,
 }
 
-fn kept(lyrics: &Lyrics, named: &Named, chosen: Option<(LyricsService, f64)>) -> Vec<u8> {
-    let k = Kept { lyrics: lyrics.clone(), named: named.clone(), source: chosen.map(|c| c.0.name().to_string()), score: chosen.map(|c| c.1) };
+fn kept(lyrics: &Lyrics, named: &Named, chosen: Option<(Asked, f64)>) -> Vec<u8> {
+    let k = Kept { lyrics: lyrics.clone(), named: named.clone(), source: chosen.map(|c| c.0.name()), score: chosen.map(|c| c.1) };
     format!("{ANSWER_MARK}{}", serde_json::to_string(&k).unwrap_or_default()).into_bytes()
 }
 
@@ -397,9 +450,9 @@ fn remembered(cache: &dyn LyricsCache, key: &str, song: &Song) -> Remembered {
 }
 
 /// Last time's choice for `song`, while its service is still asked: rank, words, what it named, score.
-fn chosen_before(cache: &dyn LyricsCache, song: &Song, services: &[LyricsService]) -> Option<(usize, Lyrics, Named, f64)> {
+fn chosen_before(cache: &dyn LyricsCache, song: &Song, asked: &[Asked]) -> Option<(usize, Lyrics, Named, f64)> {
     let k = read_kept(&cache.get(&best_key(song))?)?;
-    let rank = services.iter().position(|s| Some(s.name()) == k.source.as_deref())?;
+    let rank = asked.iter().position(|a| Some(a.name()) == k.source)?;
     plausible(&k.lyrics, song).then(|| (rank, k.lyrics, k.named, k.score.unwrap_or(0.0)))
 }
 
@@ -408,14 +461,28 @@ pub fn chosen_service(cache: &dyn LyricsCache, song: &Song) -> Option<String> {
     read_kept(&cache.get(&best_key(song))?)?.source
 }
 
-/// The last chosen service lyrics, without making requests. Timed server lyrics take precedence.
-pub fn cached_pick(cache: &dyn LyricsCache, song: &Song, server_has_lines: bool, server_synced: bool, lookup: &LyricsLookup) -> Option<LyricsPick> {
-    if lookup.services.is_empty() || (server_has_lines && server_synced) { return None; }
-    let (rank, mut lyrics, _, _) = chosen_before(cache, song, &lookup.services)?;
+/// What a lookup asks, in rank order: the services `lookup` names, each once, then `plugins` when it
+/// asks them.
+fn ranks<'a>(lookup: &LyricsLookup, plugins: &'a [Arc<dyn PluginLyrics>]) -> Vec<Asked<'a>> {
+    let mut services: Vec<LyricsService> = Vec::new();
+    for s in &lookup.services {
+        if !services.contains(s) {
+            services.push(*s);
+        }
+    }
+    services.into_iter().map(Asked::Service).chain(plugins.iter().filter(|_| lookup.plugins).map(|p| Asked::Plugin(&**p))).collect()
+}
+
+/// The last chosen service lyrics (nori's or `plugins`'), without making requests. Timed server lyrics
+/// take precedence.
+pub fn cached_pick(cache: &dyn LyricsCache, song: &Song, server_has_lines: bool, server_synced: bool, lookup: &LyricsLookup, plugins: &[Arc<dyn PluginLyrics>]) -> Option<LyricsPick> {
+    if server_has_lines && server_synced { return None; }
+    let asked = ranks(lookup, plugins);
+    let (rank, mut lyrics, _, _) = chosen_before(cache, song, &asked)?;
     let server_timing = if server_has_lines { Timing::Untimed } else { Timing::Empty };
     if timing(&lyrics) <= server_timing { return None; }
     lyrics.timing = sync::timing(cache.voice(song).and_then(|voice| sync::check(&lyrics, &voice)));
-    Some(LyricsPick { lyrics, origin: lookup.services[rank].origin() })
+    Some(LyricsPick { lyrics, origin: asked[rank].origin() })
 }
 
 /// Services that failed lately: for which song (cache key) and when, and each one's failures in a row.
@@ -457,7 +524,7 @@ impl Failures {
     }
 }
 
-/// Looks `song` up with the services `lookup` names, the server's own lyrics (described by
+/// Looks `song` up with the services `lookup` names, then `plugins`, the server's own lyrics (described by
 /// `server_has_lines`, `server_synced`) already shown. Each choice goes to `shown`; with nothing from
 /// the server or anyone, an empty server answer goes out at the end. Returns the log line of the choice
 /// ("lyrics: chose BiniLyrics (0.91, word-timed), runner-up LRCLIB (0.84)").
@@ -471,14 +538,10 @@ pub async fn lookup(
     lookup: &LyricsLookup,
     shown: &dyn LyricsShown,
     memory: &LyricsMemory,
+    plugins: &[Arc<dyn PluginLyrics>],
 ) -> Option<String> {
     let none = || LyricsPick { lyrics: Lyrics::default(), origin: LyricsOrigin::Server };
-    let mut services: Vec<LyricsService> = Vec::new();
-    for s in &lookup.services {
-        if !services.contains(s) {
-            services.push(*s);
-        }
-    }
+    let services = ranks(lookup, plugins);
     if services.is_empty() || (server_has_lines && server_synced) {
         if !server_has_lines {
             shown.show(none());
@@ -486,7 +549,7 @@ pub async fn lookup(
         return None;
     }
     let server_timing = if server_has_lines { Timing::Untimed } else { Timing::Empty };
-    let mut race = Race::new(song, services.iter().map(|s| Entry::of(*s)).collect(), lookup.prefer_words, server_timing);
+    let mut race = Race::new(song, services.iter().map(|s| s.entry()).collect(), lookup.prefer_words, server_timing);
     let voice = cache.voice(song);
     if let Some(v) = voice.clone() {
         race.hear(v);
@@ -512,15 +575,19 @@ pub async fn lookup(
         before = Some((rank, was));
     }
     let keys: Vec<String> = services.iter().map(|s| cache_key(*s, song, lookup)).collect();
+    let resting = |rank: usize, now| match services[rank] {
+        Asked::Service(s) => memory.failures.lock().resting(s, &keys[rank], now),
+        Asked::Plugin(_) => false,
+    };
     let now = Instant::now();
-    for rank in 0..services.len() {
+    for (rank, key) in keys.iter().enumerate() {
         if race.done[rank] || race.entries[rank].best <= server_timing {
             continue;
         }
-        match remembered(cache, &keys[rank], song) {
+        match remembered(cache, key, song) {
             Remembered::Hit(l, n) => race.answer(rank, Some((l, n))),
             Remembered::Miss => race.answer(rank, None),
-            Remembered::Unknown if memory.failures.lock().resting(services[rank], &keys[rank], now) => race.answer(rank, None),
+            Remembered::Unknown if resting(rank, now) => race.answer(rank, None),
             Remembered::Unknown => {}
         }
     }
@@ -572,31 +639,39 @@ async fn run_race<F: Future<Output = Option<(Lyrics, Named)>>>(race: &mut Race, 
 }
 
 /// Asks one service and caches its answer, credits stripped; a failure is only rested in memory.
-async fn ask(transport: &dyn Transport, cache: &dyn LyricsCache, lookup: &LyricsLookup, shared: &Shared, service: LyricsService, key: &str, song: &Song) -> Option<(Lyrics, Named)> {
-    let a = Ask::new(transport, lookup, shared, service);
-    match services::ask(service, &a, song).await {
-        Lookup::Found(mut l, named) => {
-            shared.memory.failures.lock().answered(service);
+async fn ask(transport: &dyn Transport, cache: &dyn LyricsCache, lookup: &LyricsLookup, shared: &Shared, asked: Asked<'_>, key: &str, song: &Song) -> Option<(Lyrics, Named)> {
+    let answered = |service| shared.memory.failures.lock().answered(service);
+    let found = match asked {
+        Asked::Service(service) => services::ask(service, &Ask::new(transport, lookup, shared, service), song).await,
+        Asked::Plugin(p) => p.lookup(song).await,
+    };
+    match (found, asked) {
+        (Lookup::Found(mut l, named), _) => {
+            if let Asked::Service(service) = asked {
+                answered(service);
+            }
             strip_edges(&mut l, &song.title, &song.artist);
             if l.lines.is_empty() || !plausible(&l, song) {
-                nori_model::alog::info(&format!("{} lyrics do not fit the song: taken as a miss", service.name()));
+                nori_model::alog::info(&format!("{} lyrics do not fit the song: taken as a miss", asked.title()));
                 cache.put(key, Vec::new());
                 return None;
             }
             cache.put(key, kept(&l, &named, None));
             Some((l, named))
         }
-        Lookup::Missing => {
-            shared.memory.failures.lock().answered(service);
+        (Lookup::Missing, _) => {
+            if let Asked::Service(service) = asked {
+                answered(service);
+            }
             cache.put(key, Vec::new());
             None
         }
-        Lookup::Failed => {
+        (Lookup::Failed, Asked::Service(service)) => {
             shared.memory.failures.lock().failed(service, key.to_string(), Instant::now());
             None
         }
-        // The device was offline: asked again the next time, the service not rested.
-        Lookup::Unreachable => None,
+        // The device was offline (or a plugin's call failed): asked again the next time, not rested.
+        (Lookup::Failed | Lookup::Unreachable, _) => None,
     }
 }
 
@@ -680,8 +755,8 @@ mod tests {
         unison(&web, &lrc(&THEIRS[..3], true));
         let s = Song { title: "Glass Harbour".into(), id: "stable".into(), ..song() };
         let picks = run(&web, &cache, &s, (false, false), &asked(&[LyricsService::Lrclib, LyricsService::Unison]));
-        assert_eq!(picks.len(), 1, "shown once: {:?}", picks.iter().map(|p| p.origin).collect::<Vec<_>>());
-        assert_eq!((picks[0].origin, picks[0].lyrics.lines[0].text.as_str()), (LyricsOrigin::Lrclib, OURS[0]));
+        assert_eq!(picks.len(), 1, "shown once: {:?}", picks.iter().map(|p| p.origin.clone()).collect::<Vec<_>>());
+        assert_eq!((picks[0].origin.clone(), picks[0].lyrics.lines[0].text.as_str()), (LyricsOrigin::Lrclib, OURS[0]));
 
         // Fragments are misses even cached.
         let (web, cache) = (Web::default(), Kept::default());
@@ -694,7 +769,7 @@ mod tests {
         // The same fragment, kept for good by a build before the check: not shown either.
         let (web, cache) = (Web::default(), Kept::default());
         let junk = crate::lyrics::from_lrc("[00:05.00]la la\n[00:09.00]line two\n[00:13.00]la la\n");
-        cache.put(&cache_key(LyricsService::Unison, &s, &only), to_cache(&junk).into_bytes());
+        cache.put(&cache_key(Asked::Service(LyricsService::Unison), &s, &only), to_cache(&junk).into_bytes());
         assert_eq!(run(&web, &cache, &s, (false, false), &only)[0].origin, LyricsOrigin::Server);
         assert!(web.asked().is_empty(), "a miss for the week, not asked again");
     }
@@ -765,7 +840,7 @@ mod tests {
         let picks = run(&web, &cache, &s, (false, false), &asked(&[LyricsService::Unison]));
         let l = &picks.last().unwrap().lyrics;
         assert_eq!((l.lines.len(), l.lines[0].text.as_str(), l.lines[0].start_ms), (18, OURS[0], 10_000));
-        let kept = read_kept(&cache.get(&cache_key(LyricsService::Unison, &s, &asked(&[LyricsService::Unison]))).unwrap()).unwrap();
+        let kept = read_kept(&cache.get(&cache_key(Asked::Service(LyricsService::Unison), &s, &asked(&[LyricsService::Unison]))).unwrap()).unwrap();
         assert_eq!(kept.lyrics.lines.len(), 18, "the cached copy is already clean");
     }
 
@@ -891,7 +966,7 @@ mod tests {
     }
 
     fn asked(services: &[LyricsService]) -> LyricsLookup {
-        LyricsLookup { services: services.to_vec(), prefer_words: true, paxsenix_key: String::new(), better_lyrics_key: String::new() }
+        LyricsLookup { services: services.to_vec(), plugins: true, prefer_words: true, paxsenix_key: String::new(), better_lyrics_key: String::new() }
     }
 
     fn run_saying(web: &Web, cache: &Kept, s: &Song, server: (bool, bool), l: &LyricsLookup) -> (Vec<LyricsPick>, Option<String>) {
@@ -901,8 +976,57 @@ mod tests {
     /// A lookup by a client that remembers `memory` of its lookups before.
     fn run_remembering(web: &Web, cache: &Kept, s: &Song, server: (bool, bool), l: &LyricsLookup, memory: &LyricsMemory) -> (Vec<LyricsPick>, Option<String>) {
         let screen = Screen::default();
-        let said = block(lookup(web, cache, s, server.0, server.1, l, &screen, memory));
+        let said = block(lookup(web, cache, s, server.0, server.1, l, &screen, memory, &[]));
         (screen.0.into_inner(), said)
+    }
+
+    /// A plugin's service answering `lines` a line every ten seconds, or failing its call; counts its calls.
+    struct Plugged {
+        lines: Option<&'static [&'static str]>,
+        calls: Mutex<u32>,
+    }
+
+    impl PluginLyrics for Plugged {
+        fn plugin(&self) -> &str {
+            "fm.nori.test"
+        }
+        fn lookup<'a>(&'a self, _: &'a Song) -> Pin<Box<dyn Future<Output = Lookup> + Send + 'a>> {
+            *self.calls.lock() += 1;
+            let found = self.lines.map(|lines| {
+                let timed = lines.iter().cycle().take(18).enumerate().map(|(i, l)| (10_000 + i as i64 * 10_000, l.to_string())).collect();
+                Lookup::Found(crate::formats::from_lines(true, timed), Named::default())
+            });
+            Box::pin(async move { found.unwrap_or(Lookup::Unreachable) })
+        }
+    }
+
+    #[test]
+    fn a_plugins_service_runs_in_the_race_and_a_failed_call_is_asked_again() {
+        let (web, cache, s) = (Web::default(), Kept::default(), tune());
+        let run_with = |p: &Arc<Plugged>, l: &LyricsLookup| {
+            let screen = Screen::default();
+            let plugins: [Arc<dyn PluginLyrics>; 1] = [p.clone()];
+            block(lookup(&web, &cache, &s, false, false, l, &screen, &LyricsMemory::default(), &plugins));
+            screen.0.into_inner()
+        };
+        let run = |p: &Arc<Plugged>| run_with(p, &asked(&[]));
+        let failing = Arc::new(Plugged { lines: None, calls: Mutex::new(0) });
+        run_with(&failing, &LyricsLookup { plugins: false, ..asked(&[]) });
+        assert_eq!(*failing.calls.lock(), 0, "plugins not asked");
+        assert_eq!(run(&failing).last().map(|p| p.origin.clone()), Some(LyricsOrigin::Server), "nothing: the empty server answer");
+        run(&failing);
+        assert_eq!(*failing.calls.lock(), 2, "a failed call is no miss");
+        let answering = Arc::new(Plugged { lines: Some(&OURS), calls: Mutex::new(0) });
+        let picks = run(&answering);
+        let last = picks.last().unwrap();
+        assert_eq!(last.origin, LyricsOrigin::Plugin { id: "fm.nori.test".into() });
+        assert_eq!((last.lyrics.synced, last.lyrics.lines[0].text.as_str(), last.lyrics.lines[0].start_ms), (true, OURS[0], 10_000));
+        assert_eq!(chosen_service(&cache, &s).as_deref(), Some("plugin:fm.nori.test"));
+        let plugins: [Arc<dyn PluginLyrics>; 1] = [answering.clone()];
+        let kept = cached_pick(&cache, &s, false, false, &asked(&[]), &plugins).map(|p| p.origin);
+        assert_eq!(kept, Some(LyricsOrigin::Plugin { id: "fm.nori.test".into() }), "its choice shown at once next time");
+        assert!(cached_pick(&cache, &s, false, false, &LyricsLookup { plugins: false, ..asked(&[]) }, &plugins).is_none(), "not while plugins aren't asked");
+        assert_eq!(*answering.calls.lock(), 1);
     }
 
     fn run(web: &Web, cache: &Kept, s: &Song, server: (bool, bool), l: &LyricsLookup) -> Vec<LyricsPick> {
@@ -968,12 +1092,12 @@ mod tests {
         let n = web.asked().len();
         lrclib_synced(&web, &lrc(&OURS, false));
         let picks = run(&web, &cache, &s, (false, false), &asked(&[LyricsService::Lrclib, LyricsService::Unison]));
-        assert_eq!(picks.iter().map(|p| p.origin).collect::<Vec<_>>(), [LyricsOrigin::Unison]);
+        assert_eq!(picks.iter().map(|p| p.origin.clone()).collect::<Vec<_>>(), [LyricsOrigin::Unison]);
         assert_eq!(web.asked().len(), n, "no network");
         // A jam's host chose LRCLIB: its guest shows LRCLIB's, not its own choice.
         let both = asked(&[LyricsService::Lrclib, LyricsService::Unison]);
         let picks = run(&web, &cache, &s, (false, false), &both.only("LRCLIB"));
-        assert_eq!(picks.iter().map(|p| p.origin).collect::<Vec<_>>(), [LyricsOrigin::Lrclib]);
+        assert_eq!(picks.iter().map(|p| p.origin.clone()).collect::<Vec<_>>(), [LyricsOrigin::Lrclib]);
         // Its service switched off: the choice no longer stands, and the others are asked.
         let picks = run(&web, &cache, &s, (false, false), &asked(&[LyricsService::Lrclib]));
         assert_eq!(picks.last().unwrap().origin, LyricsOrigin::Lrclib);
@@ -983,14 +1107,14 @@ mod tests {
         let s = Song { title: "Glass Harbour".into(), id: "low".into(), ..song() };
         let l = asked(&[LyricsService::Lrclib, LyricsService::Unison]);
         let lines = crate::lyrics::from_lrc(&lrc(&OURS, false));
-        cache.put(&best_key(&s), super::kept(&lines, &Named::default(), Some((LyricsService::Lrclib, 0.5))));
+        cache.put(&best_key(&s), super::kept(&lines, &Named::default(), Some((Asked::Service(LyricsService::Lrclib), 0.5))));
         unison(&web, &lrc(&OURS, true));
         let picks = run(&web, &cache, &s, (false, false), &l);
-        assert_eq!(picks.iter().map(|p| p.origin).collect::<Vec<_>>(), [LyricsOrigin::Lrclib], "shown at once");
+        assert_eq!(picks.iter().map(|p| p.origin.clone()).collect::<Vec<_>>(), [LyricsOrigin::Lrclib], "shown at once");
         assert!(web.asked().is_empty(), "low, but kept only lately: not asked again yet");
         cache.1.lock().insert(best_key(&s));
         let (picks, said) = run_saying(&web, &cache, &s, (false, false), &l);
-        assert_eq!(picks.iter().map(|p| p.origin).collect::<Vec<_>>(), [LyricsOrigin::Lrclib, LyricsOrigin::Unison], "some days later: better lyrics replace them");
+        assert_eq!(picks.iter().map(|p| p.origin.clone()).collect::<Vec<_>>(), [LyricsOrigin::Lrclib, LyricsOrigin::Unison], "some days later: better lyrics replace them");
         assert!(said.unwrap().contains("was LRCLIB (0.50)"));
         let best = read_kept(&cache.get(&best_key(&s)).unwrap()).unwrap();
         assert_eq!(best.source.as_deref(), Some("UNISON"), "and the better choice is what is kept");
@@ -1007,7 +1131,7 @@ mod tests {
         }
         unison(&web, &lrc(&OURS, true));
         let picks = run_remembering(&web, &cache, &s, (false, false), &l, &memory).0;
-        assert_eq!(picks.last().map(|p| p.origin), Some(LyricsOrigin::Unison));
+        assert_eq!(picks.last().map(|p| p.origin.clone()), Some(LyricsOrigin::Unison));
     }
 
     #[test]

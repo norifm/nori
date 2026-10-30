@@ -1,6 +1,8 @@
 //! Output device keys ("USB: <name>", "Bluetooth: <name>", ...) that sound profiles bind to, which
 //! attached output media is routed to, and the list of every output seen.
 
+use crate::prelude::*;
+
 /// The speaker's key; always in the known list. Keys are stored in settings, so they never change.
 pub const SPEAKER: &str = "Phone speaker";
 const WIRED: &str = "Wired headphones";

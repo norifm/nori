@@ -430,7 +430,7 @@ mod tests {
             async fn get(&self, url: String, _timeout_ms: u32) -> Result<TransportResponse, TransportError> {
                 self.asked.lock().unwrap().push(url.clone());
                 match self.pages.iter().find(|(end, _, _)| url.ends_with(end)) {
-                    Some((_, status, body)) => Ok(TransportResponse { status: *status, body: body.as_bytes().to_vec(), set_cookies: Vec::new() }),
+                    Some((_, status, body)) => Ok(TransportResponse { status: *status, body: body.as_bytes().to_vec(), headers: Vec::new() }),
                     None => Err(TransportError::Failed { kind: FailureKind::Connect, detail: None }),
                 }
             }

@@ -24,7 +24,7 @@ import dev.nori.music.ffi.Read
 import dev.nori.music.ffi.model.SearchResult
 import dev.nori.music.ffi.model.ServerInfo
 import dev.nori.music.ffi.model.Song
-import dev.nori.music.ffi.net.Starrable
+import dev.nori.music.ffi.model.Starrable
 import dev.nori.music.ffi.library.Starred
 import dev.nori.music.ffi.library.StarMarks
 import dev.nori.music.ffi.library.AlbumSort
@@ -261,6 +261,9 @@ class Library(
 
     /** What carries the queue on past the song playing (see the core's autofill.rs); nothing on any failure. */
     suspend fun autofill(): dev.nori.music.ffi.Refill = withContext(Dispatchers.IO) { client.autofill() }
+
+    /** What a plugin plays when the queue ended; empty while none decides. */
+    suspend fun queueEnded(): dev.nori.music.ffi.Refill = withContext(Dispatchers.IO) { client.queueEnded() }
 
     /** Whether the fetched [count] songs go in; if so the core records what it picked. */
     suspend fun autofillArrived(fresh: dev.nori.music.ffi.Refill): Boolean = withContext(Dispatchers.IO) { client.autofillArrived(fresh) }

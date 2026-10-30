@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
-use nori_core::transport::{Exchange, FailureKind, Transport, TransportError, TransportResponse, USER_AGENT};
+use nori_core::transport::{Exchange, FailureKind, HttpHeader, HttpMethod, Transport, TransportError, TransportResponse, USER_AGENT};
 use nori_engine::{Body, ByteSource, Cancel, OpenError};
 use ureq::unversioned::resolver::DefaultResolver;
 use ureq::unversioned::transport::{Buffers, ConnectProxyConnector, ConnectionDetails, Connector, Either, LazyBuffers, NextTimeout, RustlsConnector};
@@ -25,8 +25,14 @@ pub struct Http {
 }
 
 impl Http {
+    /// Through the proxy `ALL_PROXY`, `HTTPS_PROXY` or `HTTP_PROXY` names (`NO_PROXY` excepted): an
+    /// `http://` or `https://` one (TLS to the proxy, then CONNECT).
     pub fn new() -> Arc<Http> {
-        let config = Agent::config_builder()
+        Http::with_config(Agent::config_builder())
+    }
+
+    fn with_config(config: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>) -> Arc<Http> {
+        let config = config
             .http_status_as_error(false)
             .user_agent(USER_AGENT)
             // Covers, API, audio and held polls share one host.
@@ -126,9 +132,9 @@ fn configured<B>(mut req: RequestBuilder<B>, headers: &HashMap<String, String>, 
 fn response(r: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<TransportResponse, TransportError> {
     let r = r.map_err(failure)?;
     let status = r.status().as_u16();
-    let set_cookies = r.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()).map(str::to_string).collect();
+    let headers = r.headers().iter().filter_map(|(name, value)| Some(HttpHeader { name: name.as_str().to_string(), value: value.to_str().ok()?.to_string() })).collect();
     let body = r.into_body().with_config().limit(MAX_ANSWER).read_to_vec().map_err(failure)?;
-    Ok(TransportResponse { status, body, set_cookies })
+    Ok(TransportResponse { status, body, headers })
 }
 
 /// Each request runs on a thread of its own ([`Call`]), so dropping its future ends it.
@@ -142,12 +148,22 @@ impl Transport for Http {
     async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {
         let agent = self.agent.clone();
         Call::run(move || {
-            let (headers, timeout) = (&request.headers, request.timeout_ms);
-            let post = |kind, body: &String| configured(agent.post(&request.url).header("Content-Type", kind), headers, timeout).send(body.as_bytes());
-            response(match (&request.json, &request.form) {
-                (Some(json), _) => post("application/json", json),
-                (None, Some(form)) => post("application/x-www-form-urlencoded", form),
-                (None, None) => configured(agent.get(&request.url), headers, timeout).call(),
+            let (url, headers, timeout) = (&request.url, &request.headers, request.timeout_ms);
+            let (body, kind) = request.payload().unwrap_or((&[], None));
+            let sent = |b: RequestBuilder<ureq::typestate::WithBody>| {
+                let b = configured(b, headers, timeout);
+                match kind {
+                    Some(kind) => b.header("Content-Type", kind).send(body),
+                    None => b.send(body),
+                }
+            };
+            response(match request.method() {
+                HttpMethod::Get => configured(agent.get(url), headers, timeout).call(),
+                HttpMethod::Head => configured(agent.head(url), headers, timeout).call(),
+                HttpMethod::Delete => configured(agent.delete(url), headers, timeout).call(),
+                HttpMethod::Post => sent(agent.post(url)),
+                HttpMethod::Put => sent(agent.put(url)),
+                HttpMethod::Patch => sent(agent.patch(url)),
             })
         })
         .await
@@ -501,6 +517,75 @@ mod tests {
         body.reader.read_to_string(&mut got).unwrap();
         assert_eq!((body.start, body.len, got.as_str()), (1000, Some(5000), "0123456789"));
         assert_eq!(answering.join().unwrap(), "bytes=1000-1009");
+    }
+
+    const PROXY_CERT: &[u8] = include_bytes!("../tests/data/proxy-cert.der");
+    const PROXY_KEY: &[u8] = include_bytes!("../tests/data/proxy-key.der");
+
+    /// What `r` sends up to the end of a request's or response's head.
+    fn head(r: &mut impl Read) -> String {
+        let mut got = Vec::new();
+        let mut b = [0];
+        while !got.ends_with(b"\r\n\r\n") && r.read(&mut b).unwrap() == 1 {
+            got.push(b[0]);
+        }
+        String::from_utf8(got).unwrap()
+    }
+
+    /// Answers a request with its own request line.
+    fn answer(s: &mut (impl Read + Write)) {
+        let asked = head(s).lines().next().unwrap_or_default().to_string();
+        write!(s, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{asked}", asked.len()).unwrap();
+        s.flush().unwrap();
+    }
+
+    /// An HTTPS proxy at 127.0.0.1 that is also every server it tunnels to (TLS again for port 443);
+    /// its port and the CONNECT lines it heard.
+    fn https_proxy() -> (u16, Arc<Mutex<Vec<String>>>) {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let config = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![CertificateDer::from(PROXY_CERT.to_vec())], PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(PROXY_KEY.to_vec())))
+            .unwrap();
+        let config = Arc::new(config);
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let told = heard.clone();
+        std::thread::spawn(move || {
+            for socket in listener.incoming() {
+                let mut tls = rustls::StreamOwned::new(rustls::ServerConnection::new(config.clone()).unwrap(), socket.unwrap());
+                let connect = head(&mut tls).lines().next().unwrap_or_default().to_string();
+                let secure = connect.contains(":443 ");
+                told.lock().unwrap().push(connect);
+                tls.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n").unwrap();
+                tls.flush().unwrap();
+                if secure {
+                    answer(&mut rustls::StreamOwned::new(rustls::ServerConnection::new(config.clone()).unwrap(), tls));
+                } else {
+                    answer(&mut tls);
+                }
+            }
+        });
+        (port, heard)
+    }
+
+    /// An `https://` proxy: TLS to it, CONNECT, then the request (in TLS again for an HTTPS server).
+    #[test]
+    fn requests_go_through_an_https_proxy() {
+        use ureq::tls::{Certificate, RootCerts, TlsConfig};
+        let (port, heard) = https_proxy();
+        let roots = RootCerts::Specific(Arc::new(vec![Certificate::from_der(PROXY_CERT)]));
+        let config = Agent::config_builder().proxy(Some(ureq::Proxy::new(&format!("https://127.0.0.1:{port}")).unwrap())).tls_config(TlsConfig::builder().root_certs(roots).build());
+        let http = Http::with_config(config);
+        for (url, connect) in [("http://music.example/rest/ping", "CONNECT music.example:80 HTTP/1.1"), ("https://127.0.0.1/rest/ping", "CONNECT 127.0.0.1:443 HTTP/1.1")] {
+            let mut got = String::new();
+            http.open(url, 0).unwrap().reader.read_to_string(&mut got).unwrap();
+            assert_eq!(got, "GET /rest/ping HTTP/1.1", "{url}");
+            assert_eq!(heard.lock().unwrap().pop().as_deref(), Some(connect));
+        }
     }
 
     #[test]

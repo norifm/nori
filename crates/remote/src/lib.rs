@@ -2,9 +2,18 @@
 //! for songs, through one protocol (wire.rs): octo-fiesta's relay hub with rooms (the account's own
 //! room, or a jam's), or straight over the LAN through a device's door (lan.rs). What a controlled device
 //! admits is device.rs; a jam's members, roles and requests are jam.rs. No I/O but the door's sockets.
+//! Without `std`, the frames, what a device admits and the LAN's proof only.
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
+use alloc::{format, string::{String, ToString}, vec::Vec};
+
+#[cfg(feature = "std")]
 pub mod clock;
 pub mod device;
+#[cfg(feature = "std")]
 pub mod jam;
 pub mod lan;
 pub mod wire;
@@ -92,7 +101,7 @@ pub fn is_invite(link: &str) -> bool {
 /// link-local address, or a name only such a network resolves), so an invite to it fails elsewhere.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn is_home_only(url: &str) -> bool {
-    use std::net::{IpAddr, Ipv6Addr};
+    use core::net::{IpAddr, Ipv6Addr};
     let rest = url.trim().split_once("://").map_or(url.trim(), |(_, r)| r);
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
     let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
@@ -115,6 +124,7 @@ pub fn is_home_only(url: &str) -> bool {
 }
 
 /// A new random id (a device's, kept by the app).
+#[cfg(feature = "std")]
 pub fn new_id() -> String {
     use sha2::{Digest, Sha256};
     let t = nori_time::since_epoch().as_nanos();
@@ -128,6 +138,7 @@ pub fn new_id() -> String {
 }
 
 /// A QR code's modules, row by row.
+#[cfg(feature = "std")]
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct QrCode {
@@ -137,6 +148,7 @@ pub struct QrCode {
 }
 
 /// `text` as a QR code (medium error correction); None when it is too long for one.
+#[cfg(feature = "std")]
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn qr_code(text: String) -> Option<QrCode> {
     let code = qrcode::QrCode::with_error_correction_level(text.as_bytes(), qrcode::EcLevel::M).ok()?;

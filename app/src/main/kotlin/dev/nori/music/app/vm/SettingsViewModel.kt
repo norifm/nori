@@ -58,6 +58,8 @@ data class LoginUi(val busy: Boolean = false, val error: String? = null, val don
 data class AccountUi(
     val account: dev.nori.music.ffi.AccountState? = null, val busy: Boolean = false, val failed: dev.nori.music.ffi.SignInResult? = null,
     val page: Boolean = false, val offer: Boolean = false, val ended: Boolean = false,
+    /** Where the page starts when the provider's plugin asked for it there; null: the provider's own start. */
+    val pageStart: String? = null,
 )
 /**
  * The AutoEQ list: how many headphones it holds ([countWords] and [searchWords] say so), the query and
@@ -115,6 +117,10 @@ data class StorageUi(
 class SettingsViewModel(app: Application) : NoriViewModel(app) {
     val prefs: StateFlow<StoredPrefs> = nori.settings.prefs
 
+    /** The palette worn where the season's is [palette] (at night when [dark]): a plugin's season of its own, or null for the season's. */
+    suspend fun look(palette: dev.nori.music.ffi.look.Palette, dark: Boolean): dev.nori.music.ffi.look.Palette? =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { nori.session.look(palette, null, dark) }.takeIf { it != palette }
+
     /** What the limiter is pulling back now, in dB, read on the meter's beat while collected. */
     val limiterDb = meter { dev.nori.music.playback.Equalizer.meterDb }
 
@@ -165,10 +171,10 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     /** What a settings page depends on besides the settings, from this platform. */
     val settingsFacts: StateFlow<SettingsFacts> by lazy {
-        combine(combine(dac, _sync, _storage, _analysed, _folders, ::factsOf), update, nori.plugins.names) { f, u, names -> f.copy(update = u, installsUpdates = nori.updates.installs, pluginNames = names) }
+        combine(combine(dac, _sync, _storage, _analysed, _folders, ::factsOf), update, nori.plugins.names, _backup) { f, u, names, b -> f.copy(update = u, installsUpdates = nori.updates.installs, pluginNames = names, backup = b) }
             .stateIn(
                 viewModelScope, SharingStarted.WhileSubscribed(5_000),
-                factsOf(dac.value, _sync.value, _storage.value, _analysed.value, _folders.value).copy(update = update.value, installsUpdates = nori.updates.installs, pluginNames = nori.plugins.names.value),
+                factsOf(dac.value, _sync.value, _storage.value, _analysed.value, _folders.value).copy(update = update.value, installsUpdates = nori.updates.installs, pluginNames = nori.plugins.names.value, backup = _backup.value),
             )
     }
 
@@ -204,6 +210,39 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         }
         nori.settings.took(change)
         if ((change.effect and CACHE_LIMIT) != 0u) applyCacheLimit()
+    }
+
+    private val _backup = kotlinx.coroutines.flow.MutableStateFlow<BackupUi>(BackupUi.Idle)
+
+    /** Saves a backup sealed with [password] into the file the user picked at [uri]. */
+    fun makeBackup(uri: android.net.Uri, password: String) = backupStep(false) {
+        val file = nori.plugins.backup(password)
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            getApplication<Application>().contentResolver.openOutputStream(uri, "wt")?.use { it.write(file) } ?: throw java.io.IOException("no stream for $uri")
+        }
+        BackupUi.Saved
+    }
+
+    /** Restores the backup at [uri] with [password], then takes in the settings it brought back. */
+    fun restoreBackup(uri: android.net.Uri, password: String) = backupStep(true) {
+        val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw java.io.IOException("no stream for $uri")
+        }
+        val r = nori.plugins.restore(file, password)
+        apply(r.settings)
+        BackupUi.Restored(r.plugins)
+    }
+
+    private fun backupStep(restore: Boolean, step: suspend () -> BackupUi) = viewModelScope.launch {
+        _backup.value = BackupUi.Working(restore)
+        _backup.value = try {
+            step()
+        } catch (e: dev.nori.music.ffi.backup.BackupException) {
+            BackupUi.Failed(restore, e)
+        } catch (e: java.io.IOException) {
+            dev.nori.music.NoriLog.w("backup: ${e.message}")
+            BackupUi.Failed(restore, null)
+        }
     }
 
     /** A button on a settings row. */
@@ -330,6 +369,14 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     /** The plugins whose rows show on the devices sheet too: with any, the output button opens that sheet. */
     val pluginDevices = nori.plugins.deviceCards
 
+    /** A plugin's cast while one runs: the devices sheet lists its device. */
+    val pluginCast = nori.plugins.cast
+
+    /** The music comes back to this phone: the plugin casting ends its cast. */
+    fun endCast() {
+        viewModelScope.launch { nori.plugins.castButton(dev.nori.music.ffi.plugins.CastButton.STOP) }
+    }
+
     /** The installed plugins, for a plugin kind's about. */
     val pluginCards = nori.plugins.cards
 
@@ -351,6 +398,13 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     val reportedRules = nori.reportedRules
 
     fun rules() = nori.rules
+
+    // A provider's plugin asks for its sign-in page (its `sign-in.open`): the page opens at that address.
+    init {
+        viewModelScope.launch {
+            nori.plugins.signIns.collect { (_, url) -> _account.update { it.copy(page = true, offer = false, failed = null, pageStart = url) } }
+        }
+    }
 
     // Each time the open profile's rules change (it opened, or its account changed under it), a session the
     // provider ended offers to sign in again, until told not to.
@@ -391,9 +445,9 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     /** Opens the provider's sign-in page, from the account's row or a just-added profile's offer. */
-    fun openSignInPage() = _account.update { it.copy(page = true, offer = false, failed = null) }
+    fun openSignInPage() = _account.update { it.copy(page = true, offer = false, failed = null, pageStart = null) }
 
-    fun closeSignInPage() = _account.update { it.copy(page = false, failed = null) }
+    fun closeSignInPage() = _account.update { it.copy(page = false, failed = null, pageStart = null) }
 
     /** Leaves the sign-in page's failure for a fresh page. */
     fun retrySignIn() = _account.update { it.copy(failed = null) }
@@ -406,15 +460,20 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         _account.update { it.copy(offer = true, ended = ended) }
     }
 
-    fun login(profile: SavedServer) {
+    fun login(profile: SavedServer, afterAdding: dev.nori.music.ffi.AfterAdding = dev.nori.music.ffi.AfterAdding.REMIND) {
         if (_login.value.busy) return
         _login.value = LoginUi(busy = true)
         val saved = prefs.value.servers.map { it.id }
         viewModelScope.launch {
             _login.value = try {
                 val accepted = nori.login(profile)
-                // A profile just added whose account signs in on a page offers it, which can be skipped.
-                if (accepted.id !in saved && provider(accepted.kind)?.signIn?.firstOrNull() is dev.nori.music.ffi.SignIn.WebPage) _account.value = AccountUi(offer = true)
+                val step = provider(accepted.kind)?.takeIf { accepted.id !in saved }?.let { dev.nori.music.ffi.providerAfterAdding(it, afterAdding) }
+                when (step) {
+                    dev.nori.music.ffi.SignInStep.OFFER -> _account.value = AccountUi(offer = true)
+                    dev.nori.music.ffi.SignInStep.OPEN -> _account.value = AccountUi(page = true)
+                    dev.nori.music.ffi.SignInStep.STOP_REMINDING -> nori.stopReminding()
+                    null -> {}
+                }
                 LoginUi(done = true)
             } catch (e: Exception) {
                 LoginUi(error = describeConnectionError(e))

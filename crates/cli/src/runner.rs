@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use nori_core::remote::wire::Op;
+use nori_core::providers::{AfterAdding, SignInStep};
 use nori_core::remote::JamStart;
 use nori_core::settings::SavedServer;
 use nori_host::player::{Playback, QueueShown};
@@ -121,6 +122,8 @@ struct Runner {
     http: Arc<Http>,
     tx: Sender<Msg>,
     session: Option<Session>,
+    /// What follows the profile about to open, when it was just added.
+    after_adding: Option<AfterAdding>,
     /// The lyrics panel was shown when last told to the session ([`Session::lyrics_view`]).
     lyrics_viewed: bool,
     /// Media controls for the process; each session drives them while open.
@@ -203,17 +206,32 @@ pub fn run(o: Options) -> Result<(), String> {
     app.settings.own.device = own::text(own::DEVICE).unwrap_or_default();
     let art = picker.clone().map(Art::new);
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
-    let mut r = Runner { http: Http::new(), tx, session: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
+    let mut r = Runner { http: Http::new(), tx, session: None, after_adding: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
     // Plugins reach the web before any profile opens; a session's own transport takes over.
     app.settings.own.kinds.set_transport(r.http.clone());
     let notices = r.tx.clone();
     nori_host::desktop::plugins(&r.o.data).watched.hear(move |n| {
         let _ = notices.send(Msg::Note { text: n.words, error: n.problem });
     });
+    let changed = r.tx.clone();
+    nori_host::desktop::plugins(&r.o.data).watched.on_changed(move || {
+        let _ = changed.send(Msg::PluginsChanged);
+    });
+    let casts = r.tx.clone();
+    nori_host::desktop::plugins(&r.o.data).watched.hear_casts(move |c| {
+        let _ = casts.send(Msg::Cast(c));
+    });
+    let asks = r.tx.clone();
+    nori_host::desktop::plugins(&r.o.data).watched.sign_in_with(move |plugin, url| {
+        let _ = asks.send(Msg::PluginSignIn { plugin, url });
+    });
+    if let Some((safe, names)) = nori_host::desktop::safe_start(&r.o.data) {
+        app.say(crate::text::plugins_safe(&safe, &names), true);
+    }
     match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => {
-            app.view = View::Login;
+            app.choose_provider();
             r.update_plugins();
         }
     }
@@ -262,8 +280,19 @@ impl Runner {
                 app.retheme();
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
                 app.output = self.o.device.clone().or_else(|| own::text(own::DEVICE)).unwrap_or_default();
-                if self.session.as_ref().is_some_and(|s| s.client.reminds_to_sign_in()) {
-                    self.offer_sign_in(app);
+                let added = self.after_adding.take();
+                match self.session.as_ref().and_then(|s| s.client.sign_in_step(added)) {
+                    Some(SignInStep::Offer) => self.offer_sign_in(app),
+                    Some(SignInStep::Open) => {
+                        self.offer_sign_in(app);
+                        self.carry(app, Cmd::SignInWindow);
+                    }
+                    Some(SignInStep::StopReminding) => {
+                        if let Some(s) = &self.session {
+                            s.client.stop_reminding();
+                        }
+                    }
+                    None => {}
                 }
                 self.remote_read(app);
                 self.follow(app);
@@ -348,8 +377,10 @@ impl Runner {
         app.dirty = true;
     }
 
-    /// Updates the plugins once a day.
+    /// Updates the plugins once a day. Called once the session (or the sign-in) is up, which ends the
+    /// start for safe mode.
     fn update_plugins(&self) {
+        nori_host::desktop::plugins(&self.o.data).host.started();
         let tx = self.tx.clone();
         nori_host::desktop::update_plugins(&self.o.data, move |updated| {
             let _ = tx.send(Msg::Updated(updated));
@@ -364,6 +395,7 @@ impl Runner {
         let tx = self.tx.clone();
         match c {
             PluginCmd::Read => {}
+            PluginCmd::Switched => host.switched(),
             PluginCmd::Install(path) => nori_host::spawn("nori-plugin-preview", move || {
                 let _ = tx.send(Msg::Preview(host.preview_file(path, "en".into())));
             }),
@@ -381,15 +413,39 @@ impl Runner {
                 });
             }
             PluginCmd::Turn(id, on) => host.turn(id, on),
+            PluginCmd::TurnOnChosen(id) => {
+                host.turn(id.clone(), true);
+                app.provider_chosen(nori_core::settings::ServerKind::Plugin { id });
+            }
             PluginCmd::Place(id, at) => host.place(id, at),
-            PluginCmd::Uninstall(id) => host.uninstall(id),
+            PluginCmd::Uninstall(id) => {
+                app.settings.plugin_gone(&id);
+                host.uninstall(id);
+            }
             PluginCmd::Set(id, row, v) => host.set(id, row, v),
             PluginCmd::Act(id, row) => host.act(id, row),
+            PluginCmd::EndCast => {
+                host.cast_button(nori_plugins::CastButton::Stop);
+            }
             PluginCmd::Look => {
                 app.settings.own.shelf = crate::settings_view::Shelf::Asking;
                 nori_host::spawn("nori-plugin-offers", move || {
                     let _ = tx.send(Msg::Offers(block_on(host.offers())));
                 });
+            }
+            PluginCmd::Readme(id, offer) => {
+                return nori_host::spawn("nori-plugin-readme", move || {
+                    let blocks = block_on(host.readme(id.clone(), offer.map(|o| *o)));
+                    let _ = tx.send(Msg::Readme { id, blocks });
+                });
+            }
+            PluginCmd::Search(query) => {
+                app.settings.own.query = query;
+                return narrowed(app);
+            }
+            PluginCmd::ShowRepo(repo) => {
+                app.settings.own.repo_shown = repo;
+                return narrowed(app);
             }
             PluginCmd::Get(offer, version) => {
                 let crate::settings_view::Shelf::Read(offers) = &app.settings.own.shelf else { return };
@@ -403,23 +459,41 @@ impl Runner {
                 host.add_repo(url);
                 return self.plugin(app, PluginCmd::Look);
             }
-            PluginCmd::RemoveRepo(url) => host.remove_repo(url),
+            PluginCmd::RemoveRepo(url) => {
+                host.remove_repo(url);
+                return self.plugin(app, PluginCmd::Look);
+            }
+            PluginCmd::Noise(device, noise) => return host.set_noise(device, noise),
+            PluginCmd::AllowMobileAssets(id) => host.allow_mobile_assets(id),
         }
-        let host = &nori_host::desktop::plugins(&self.o.data).host;
-        let cards = host.cards("en".into());
+        let plugged = nori_host::desktop::plugins(&self.o.data);
+        let host = &plugged.host;
+        let mut cards = host.cards("en".into());
         let own = &mut app.settings.own;
         // What was installed since the repos were asked shows as installed.
         if let crate::settings_view::Shelf::Read(offers) = &mut own.shelf {
-            for o in &mut offers.offers {
-                o.installed = cards.iter().find(|c| c.id == o.id).map(|c| c.version.clone());
-            }
+            host.offers_stand(&mut offers.offers);
         }
-        app.slots.asked = cards.iter().any(|c| c.enabled && c.points.iter().any(|p| p == "slots"));
+        app.slots.asked = host.running().iter().any(|i| i.manifest.extends("slots"));
+        own.off = plugged.watched.as_said(&mut cards);
+        own.assets = cards.iter().map(|c| (c.id.clone(), host.assets(c.id.clone()))).filter(|(_, a)| !a.is_empty()).collect();
         own.plugins = cards;
         own.repos = host.repos();
         app.slots.menu = [ItemKind::Song, ItemKind::Album, ItemKind::Artist, ItemKind::Playlist].into_iter().flat_map(|k| host.menu_entries(k, "en".into()).into_iter().map(move |e| (k, e))).collect();
-        app.devices.plugins = host.device_cards("en".into());
+        // A device's page: its known controls, then its plugin's rows.
+        let controlled = host.controlled("en".into());
+        let mut shown = host.device_cards("en".into());
+        for d in &controlled {
+            if !shown.iter().any(|c| c.id == d.card.id) {
+                shown.push(d.card.clone());
+            }
+        }
+        own.off.extend(plugged.watched.as_said(&mut shown));
+        app.devices.plugins = shown;
+        own.controlled = controlled.clone();
+        app.devices.controlled = controlled;
         app.settings.invalidate();
+        app.cmds.extend(app.settings.readme_wanted());
         app.dirty = true;
     }
 
@@ -455,9 +529,37 @@ impl Runner {
             Msg::Remote | Msg::Jam(_) => self.remote_read(app),
             // The plugin installed is shown, and asked to be turned on, from its card.
             Msg::Installed(_) => self.plugin(app, crate::app::PluginCmd::Read),
+            Msg::BackedUp(r) => return app.say(r.as_ref().map_or_else(crate::text::backup_failed, |_| crate::text::BACKUP_SAVED.into()), r.is_err()),
+            Msg::Restored(Ok(r)) => {
+                if let Some(s) = &self.session {
+                    s.backup_restored(&r.settings);
+                }
+                prefs_changed(app);
+                let said = crate::text::restored(r);
+                self.plugin(app, crate::app::PluginCmd::Read);
+                return app.say(said, false);
+            }
+            Msg::Restored(Err(f)) => return app.say(crate::text::backup_failed(f), true),
+            Msg::Readme { id, blocks } => {
+                app.settings.readme_came(id, blocks.clone());
+                return app.dirty = true;
+            }
             Msg::Offers(o) => {
                 app.settings.own.shelf = crate::settings_view::Shelf::Read(o.clone());
                 return self.plugin(app, crate::app::PluginCmd::Read);
+            }
+            Msg::PluginSignIn { plugin, url } => {
+                #[cfg(feature = "sign-in-window")]
+                if let Some(s) = &self.session {
+                    let kind = nori_core::settings::ServerKind::Plugin { id: plugin.clone() };
+                    let (h, tx) = ((**s).clone(), self.tx.clone());
+                    let title = format!("Sign in to {}", crate::text::provider_of(&app.settings.own.kinds, &kind).name);
+                    self.sign_in_window = nori_sign_in_window::SignInWindow::open_at(app.settings.own.kinds.clone(), kind, title, url.clone(), move |_, cookies| {
+                        let _ = tx.send(Msg::SignedIn(h.sign_in(cookies)));
+                    });
+                }
+                let _ = (plugin, url);
+                return;
             }
             Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { .. }) => {
                 #[cfg(feature = "sign-in-window")]
@@ -493,6 +595,7 @@ impl Runner {
                 return app.say(said.clone(), false);
             }
             Msg::LoggedIn(Ok(p)) => {
+                self.after_adding = app.login.after;
                 prefs_changed(app);
                 self.open(app, p.clone());
                 app.go(View::Home);
@@ -561,9 +664,11 @@ impl Runner {
     /// or the jam's, with its queue, copying strings only when the song or the queue changed.
     fn follow(&mut self, app: &mut App) {
         let Some(s) = &self.session else { return };
+        let devices_open = app.full && app.panel == Panel::Devices;
+        s.output_picker(devices_open);
         // A guest follows its jam all along.
         if let Some(r) = s.remote().filter(|_| !s.guest) {
-            r.watch(app.full && app.panel == Panel::Devices);
+            r.watch(devices_open);
         }
         let now = s.now();
         app.follow_now(Now { state: now.state, position_ms: now.position_ms, at: now.at, speed: now.pace, mixing: now.mixing, buffering: now.buffering });
@@ -610,9 +715,11 @@ impl Runner {
     }
 
     fn carry_out(&mut self, app: &mut App) {
-        let cmds = std::mem::take(&mut app.cmds);
-        for c in cmds {
-            self.carry(app, c);
+        // A command can add one: a provider turned on is added at once.
+        while !app.cmds.is_empty() {
+            for c in std::mem::take(&mut app.cmds) {
+                self.carry(app, c);
+            }
         }
         // The core warms the songs ahead's lyrics only while the panel is shown.
         let viewed = app.lyrics_shown();
@@ -669,6 +776,18 @@ impl Runner {
             }
             Cmd::OfferSignIn => return self.offer_sign_in(app),
             Cmd::Plugin(c) => return self.plugin(app, c),
+            Cmd::Backup { restore: false, path, password } => {
+                let tx = self.tx.clone();
+                return nori_host::desktop::make_backup(&self.o.data, path.into(), password, move |r| {
+                    let _ = tx.send(Msg::BackedUp(r));
+                });
+            }
+            Cmd::Backup { restore: true, path, password } => {
+                let tx = self.tx.clone();
+                return nori_host::desktop::restore_backup(&self.o.data, path.into(), password, move |r| {
+                    let _ = tx.send(Msg::Restored(r.map(Box::new)));
+                });
+            }
             Cmd::SignInWindow => {
                 let (Some(s), Some(crate::app::Overlay::Account { kind, pasting, error, busy, .. })) = (&self.session, &mut app.overlay) else { return };
                 #[cfg(feature = "sign-in-window")]
@@ -727,10 +846,13 @@ impl Runner {
                 return;
             }
             Cmd::Setting(name, value) => {
-                if let Some(s) = &self.session {
-                    if s.setting(&name, &value).is_none() {
-                        app.say(format!("{name}: not a setting"), true);
-                    }
+                // The first screen has no session, and its plugins' switch still works.
+                let changed = match &self.session {
+                    Some(s) => s.setting(&name, &value),
+                    None => crate::backend::app().settings.edit_by_name(&name, &value),
+                };
+                if changed.is_none() {
+                    app.say(format!("{name}: not a setting"), true);
                 }
                 prefs_changed(app);
                 // Remote control or jams may have come or gone.
@@ -939,7 +1061,7 @@ impl Runner {
                     }
                 }
             }
-            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) => {}
+            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
         }
     }
 
@@ -974,6 +1096,12 @@ fn sound_edited(s: &Session, app: &mut App, effect: Option<u32>) {
         }
     }
     prefs_changed(app);
+}
+
+/// The browser shows what is searched for now.
+fn narrowed(app: &mut App) {
+    app.settings.invalidate();
+    app.dirty = true;
 }
 
 fn prefs_changed(app: &mut App) {

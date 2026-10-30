@@ -2113,7 +2113,7 @@ fn automix_switched_on() {
 
 /// The chain the engine builds from `s` (not bit-perfect, no turned-up gain).
 fn chain_of(s: &Settings) -> ChainSettings {
-    ChainSettings { sound: s.sound.clone(), speed: s.speed, pitch: s.pitch, skip_silence: s.skip_silence, keep_eq: true, stages: s.stages.clone() }
+    ChainSettings { sound: s.sound.clone(), speed: s.speed, pitch: s.pitch, skip_silence: s.skip_silence, keep_eq: true, stages: s.stages.clone(), around: Default::default() }
 }
 
 /// Plays `raw` as the one song (or the songs `songs` whose chain input `raw` is), changing the settings
@@ -3837,4 +3837,59 @@ fn a_song_without_audio_on_repeat_fails() {
         drop(events);
         rig.engine.stop();
     }
+}
+
+#[test]
+fn another_card_plays_on_from_where_the_music_was() {
+    let a = music(20.0, 94);
+    let rig = Rig::new(&[("a", &a)], prefs_off(), Settings::default());
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 4));
+    // The same card's recording, through an output of its own.
+    let next = Recorder { card: rig.card.clone(), opened: Arc::default(), shut: Arc::default(), watch: Arc::default(), flushes: Arc::default(), shallow: Arc::default() };
+    let (opened, shut, watched) = (next.opened.clone(), rig.shut.clone(), next.watch.clone());
+    let left = rig.heard.lock().len();
+    rig.engine.set_card(Box::new(next), None, false);
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > left + RATE as usize * 4));
+    assert_eq!((shut.load(Ordering::Relaxed), opened.load(Ordering::Relaxed)), (1, 1), "the old one closed, the new one opened");
+    assert!(watched.lock().is_some(), "the new one tells of its device's changes");
+    assert_eq!(rig.engine.status().state, State::Playing);
+    let heard = rig.heard.lock();
+    let at = (0..a.len() - 256).step_by(2).find(|&k| heard[left..left + 256] == a[k..k + 256]).expect("the song, heard on");
+    assert!(at.abs_diff(left) < RATE as usize / 5, "within 100 ms of where it was: {} ms", (at as i64 - left as i64) * 500 / RATE as i64);
+}
+
+#[test]
+fn a_cast_playing_the_songs_moves_the_queue_and_comes_back_where_it_was() {
+    let (a, b) = (music(20.0, 94), music(60.0, 95));
+    let rig = Rig::new(&[("a", &a), ("b", &b)], prefs_off(), Settings::default());
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 4));
+    rig.engine.play_elsewhere(None, None);
+    assert!(rig.wait_for(5, |r| r.shut.load(Ordering::Relaxed) == 1), "the output here is let go");
+    assert_eq!(rig.engine.status().state, State::Playing, "the music plays on there");
+    let heard = rig.heard.lock().len();
+    rig.engine.next();
+    rig.engine.seek(30_000);
+    rig.engine.pause();
+    rig.engine.play();
+    rig.run(3_000);
+    assert_eq!(rig.heard.lock().len(), heard, "nothing is heard here");
+    assert_eq!(rig.opened.load(Ordering::Relaxed), 1, "nor opened");
+    rig.engine.look();
+    rig.run(10);
+    let st = rig.engine.status();
+    assert_eq!((st.index, st.state), (Some(1), State::Playing), "the queue moved for the device");
+    assert!((32_000..34_000).contains(&st.position_ms), "and runs on as it plays there: {}", st.position_ms);
+
+    rig.engine.play_elsewhere(Some(true), Some(40_000));
+    rig.run(100);
+    rig.engine.come_back();
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > heard + RATE as usize * 4));
+    let heard = rig.heard.lock();
+    let first = heard.len() - RATE as usize * 4;
+    let at = (0..b.len() - 256).step_by(2).find(|&k| heard[first..first + 256] == b[k..k + 256]).expect("song b, heard on");
+    // Played on from 40 s, said 100 ms before it came back.
+    let ms = at as i64 * 500 / RATE as i64;
+    assert!((40_000..40_500).contains(&ms), "on from where the device was: {ms} ms");
 }

@@ -6,6 +6,8 @@
 //! and gain, seeded greedily (each new peak at the largest remaining error). The pre-amp removes any
 //! boost, as AutoEQ does.
 
+use crate::prelude::*;
+
 use crate::dsp::{band_coefficients, Band, CH_BOTH};
 use crate::types::{EqBand, EqKind};
 
@@ -80,7 +82,7 @@ struct Grid {
 impl Grid {
     fn new(points: usize) -> Self {
         let hz: Vec<f64> = (0..points).map(|i| LOW_HZ * (HIGH_HZ / LOW_HZ).powf(i as f64 / (points - 1) as f64)).collect();
-        let w = |f: &f64| 2.0 * std::f64::consts::PI * f / RATE;
+        let w = |f: &f64| 2.0 * core::f64::consts::PI * f / RATE;
         Grid { cos1: hz.iter().map(|f| w(f).cos()).collect(), cos2: hz.iter().map(|f| (2.0 * w(f)).cos()).collect(), hz }
     }
 }
@@ -355,7 +357,7 @@ pub fn fit_graphic(points: &[(f64, f64)]) -> GraphicFit {
         EqKind::HighShelf => 2,
         _ => 1,
     };
-    filters.sort_by(|a, b| (order(a), a.lnf).partial_cmp(&(order(b), b.lnf)).unwrap_or(std::cmp::Ordering::Equal));
+    filters.sort_by(|a, b| (order(a), a.lnf).partial_cmp(&(order(b), b.lnf)).unwrap_or(core::cmp::Ordering::Equal));
 
     // Error of the rounded preset at its best level; pre-amp from a finer grid.
     let total = summed(&filters, &grid);
@@ -395,7 +397,7 @@ mod tests {
     use super::*;
 
     fn total_at(bands: &[EqBand], f: f64) -> f64 {
-        let grid = Grid { hz: vec![f], cos1: vec![(2.0 * std::f64::consts::PI * f / RATE).cos()], cos2: vec![(4.0 * std::f64::consts::PI * f / RATE).cos()] };
+        let grid = Grid { hz: vec![f], cos1: vec![(2.0 * core::f64::consts::PI * f / RATE).cos()], cos2: vec![(4.0 * core::f64::consts::PI * f / RATE).cos()] };
         let mut out = [0.0];
         bands
             .iter()
