@@ -160,9 +160,11 @@ fn name_of(d: &IOBluetoothDevice) -> String {
     name.map(|n| n.to_string()).unwrap_or_default()
 }
 
-fn connected_device(address: &str) -> Option<Retained<IOBluetoothDevice>> {
+/// A device on classic Bluetooth. IOBluetooth also lists an LE link to one, ours included, under a
+/// random address, of no class.
+fn is_classic(d: &IOBluetoothDevice) -> bool {
     // SAFETY: a property read.
-    paired().into_iter().find(|d| unsafe { d.isConnected() } && address_of(d).as_deref() == Some(address))
+    unsafe { d.classOfDevice() != 0 }
 }
 
 /// The service records SDP gave of `d`, kept by IOBluetooth.
@@ -208,6 +210,18 @@ fn device(d: &IOBluetoothDevice) -> Option<BtDevice> {
 }
 
 impl OnThread {
+    /// Whether `d` is connected: IOBluetooth tells of a device before `isConnected` says so, just
+    /// after it is first asked.
+    fn is_connected(&self, d: &IOBluetoothDevice) -> bool {
+        let told = self.watcher.as_ref().zip(address_of(d)).is_some_and(|((w, _), a)| w.ivars().gone.borrow().contains_key(&a));
+        // SAFETY: a property read.
+        told || unsafe { d.isConnected() }
+    }
+
+    fn connected_device(&self, address: &str) -> Option<Retained<IOBluetoothDevice>> {
+        paired().into_iter().find(|d| is_classic(d) && address_of(d).as_deref() == Some(address) && self.is_connected(d))
+    }
+
     fn watch(&mut self, on: bool) {
         if !on {
             if let Some((watcher, note)) = self.watcher.take() {
@@ -232,8 +246,7 @@ impl OnThread {
     }
 
     fn connected(&mut self) -> Vec<BtDevice> {
-        // SAFETY: a property read.
-        let all: Vec<_> = paired().into_iter().filter(|d| unsafe { d.isConnected() }).collect();
+        let all: Vec<_> = paired().into_iter().filter(|d| is_classic(d) && self.is_connected(d)).collect();
         if let Some((w, _)) = &self.watcher {
             all.iter().for_each(|d| w.follow(d));
         }
@@ -241,7 +254,7 @@ impl OnThread {
     }
 
     fn rfcomm(&mut self, link: u64, address: &str, uuid: [u8; 16], may_query: bool) -> Result<Opening, BtFailure> {
-        let d = connected_device(address).ok_or(BtFailure::NotFound)?;
+        let d = self.connected_device(address).ok_or(BtFailure::NotFound)?;
         // SAFETY: 16 bytes, copied by the call.
         let sdp = unsafe { IOBluetoothSDPUUID::uuidWithBytes_length(uuid.as_ptr().cast(), 16) }.ok_or(BtFailure::Unsupported)?;
         // SAFETY: a lookup among the records IOBluetooth keeps, then a read of one.
@@ -312,6 +325,9 @@ define_class!(
         #[unsafe(method(connected:device:))]
         fn connected(&self, _note: Option<&IOBluetoothUserNotification>, d: Option<&IOBluetoothDevice>) {
             let Some(d) = d else { return };
+            if !is_classic(d) {
+                return;
+            }
             self.follow(d);
             if let (Some(device), Some(plugins)) = (device(d), self.ivars().plugins.upgrade()) {
                 plugins.bluetooth_connected(device);
@@ -499,7 +515,7 @@ impl Classic {
 
     /// The name of connected device `address`.
     pub(super) fn name(&self, address: String) -> Option<String> {
-        self.call(move |_| connected_device(&address).map(|d| name_of(&d))).ok().flatten()
+        self.call(move |t| t.connected_device(&address).map(|d| name_of(&d))).ok().flatten()
     }
 
     pub(super) fn rfcomm(&self, link: u64, device: String, service: String) -> Result<(), BtFailure> {

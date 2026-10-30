@@ -82,11 +82,21 @@ pub(crate) struct Control {
 
 /// Which plugin controls which connected device.
 #[derive(Default)]
-pub(crate) struct Controls(Mutex<Vec<Control>>);
+pub(crate) struct Controls(Mutex<Vec<Control>>, Mutex<std::collections::BTreeSet<String>>);
 
 impl Controls {
     fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Control>> {
         self.0.lock().expect("not poisoned")
+    }
+
+    /// `device` is being offered to the plugins from now on, unless it already is; whether it now is.
+    fn offering(&self, device: &str) -> bool {
+        self.1.lock().expect("not poisoned").insert(device.to_string())
+    }
+
+    /// The offer of `device` ended.
+    fn offered(&self, device: &str) {
+        self.1.lock().expect("not poisoned").remove(device);
     }
 
     fn of(&self, device: &str) -> Option<String> {
@@ -171,12 +181,17 @@ impl Around {
 
     /// Asks the plugins in `rest`, in turn, whether one handles `device`; the first that does controls it.
     fn ask(self, mut rest: std::vec::IntoIter<(String, Worker)>, device: BtDevice) {
-        let Some((id, w)) = rest.next() else { return };
+        let Some((id, w)) = rest.next() else {
+            self.controls.offered(&device.id);
+            return;
+        };
         w.post(move |s, p| {
-            if !p.nori_plugin_device_control().call_handles(&mut *s, &device.id)? {
+            let handles = p.nori_plugin_device_control().call_handles(&mut *s, &device.id);
+            if !matches!(handles, Ok(true)) {
                 self.ask(rest, device);
-                return Ok(());
+                return handles.map(|_| ());
             }
+            self.controls.offered(&device.id);
             if self.controls.take(&device, &id) {
                 self.gate.active(&id, Active::Device, true);
                 self.side.devices_changed();
@@ -191,7 +206,10 @@ impl Around {
 /// system's default output (None) the only one connected.
 pub fn output_device<'a>(devices: &'a [ControlledDevice], output: Option<&str>) -> Option<&'a ControlledDevice> {
     match output {
-        Some(o) => devices.iter().find(|d| d.name.trim().eq_ignore_ascii_case(o.trim()) || d.id.eq_ignore_ascii_case(o.trim())),
+        Some(o) => {
+            let o = nori_player::outputs::parts(o).1.unwrap_or(o).trim();
+            devices.iter().find(|d| d.name.trim().eq_ignore_ascii_case(o) || d.id.eq_ignore_ascii_case(o))
+        }
         None if devices.len() == 1 => devices.first(),
         None => None,
     }
@@ -236,7 +254,7 @@ impl Plugins {
 
     /// Offers `device` to the plugins that may control it, unless one does.
     fn offer(&self, device: BtDevice) {
-        if self.controls.of(&device.id).is_some() {
+        if self.controls.of(&device.id).is_some() || !self.controls.offering(&device.id) {
             return;
         }
         let askers: Vec<(String, Worker)> = self.reaching(&device, "device-control").into_iter().filter_map(|id| Some((id.clone(), self.worker(&id)?))).collect();
@@ -275,6 +293,10 @@ impl Plugins {
         let enabled: Vec<String> = self.running().into_iter().filter(|i| i.manifest.reaches_devices()).map(|i| i.manifest.id.clone()).collect();
         let want = !enabled.is_empty() || (self.bluetooth_outputs.load(Ordering::Relaxed) && self.hears(Hook::DeviceConnected));
         let was = std::mem::replace(&mut *self.watching.lock().expect("not poisoned"), want);
+        // Before watching: a platform may tell of connected devices as soon as it is watched.
+        if want && !was {
+            self.radio.set_connected(Vec::new());
+        }
         if want != was {
             platform.watch(want);
         }
@@ -290,7 +312,6 @@ impl Plugins {
         if !want {
             self.radio.set_connected(Vec::new());
         } else if !was {
-            self.radio.set_connected(Vec::new());
             for d in platform.connected() {
                 self.arrived(d, false);
             }
@@ -330,6 +351,7 @@ impl Plugins {
     }
 
     pub fn bluetooth_disconnected(&self, id: String) {
+        self.controls.offered(&id);
         let device = self.radio.connected().into_iter().find(|d| d.id == id);
         if !self.radio.went(&id) {
             return;
