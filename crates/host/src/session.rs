@@ -1384,6 +1384,12 @@ impl Handle {
         self.remotes.played(&self.engine);
     }
 
+    /// A cast started, changed or ended: the client's volume is the one its steps move.
+    #[cfg(feature = "desktop")]
+    pub(crate) fn cast_changed(&self, cast: Option<&nori_plugins::Cast>) {
+        (self.out)(Said::Volume(shown_level(cast, self.level.get())));
+    }
+
     /// Another device set the volume: as [`Handle::set_level`], and the client is told.
     pub(crate) fn volume_from_afar(&self, v: f32) {
         self.set_level(v);
@@ -1651,6 +1657,12 @@ use nori_engine::testing::Device;
 #[path = "../../engine/tests/common/card.rs"]
 mod test_card;
 
+/// The volume a client shows: a cast's while it says one, else this device's `level`.
+#[cfg(feature = "desktop")]
+fn shown_level(cast: Option<&nori_plugins::Cast>, level: f32) -> f32 {
+    cast.and_then(|c| c.volume).map_or(level, |v| v as f32 / 100.0)
+}
+
 /// A volume `press` as a plugin's cast hears it: a step toward the level asked, none where the device
 /// says no volume. The rest moves nori's own queue, which the cast follows (`Plugins::played`).
 #[cfg(feature = "desktop")]
@@ -1688,6 +1700,19 @@ mod tests {
         ] {
             assert_eq!(cast_button(press, &cast(volume)), heard, "{press:?} at {volume:?}");
         }
+    }
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn a_step_from_the_volume_shown_moves_a_cast_that_way() {
+        use nori_plugins::{Cast, CastButton, CastKind};
+        let cast = Cast { plugin: "p".into(), kind: CastKind::Sink, device: "Kitchen".into(), playing: true, position_ms: 0, volume: Some(85), bursts: false };
+        for (level, step, heard) in [(0.7, 0.05, CastButton::VolumeUp), (1.0, 0.05, CastButton::VolumeUp), (1.0, -0.05, CastButton::VolumeDown), (0.0, -0.05, CastButton::VolumeDown)] {
+            let press = Press::Volume { level: shown_level(Some(&cast), level) + step };
+            assert_eq!(cast_button(press, &cast), Some(heard), "from {level}, by {step}");
+        }
+        assert_eq!(shown_level(None, 0.7), 0.7, "this device's own again");
+        assert_eq!(shown_level(Some(&Cast { volume: None, ..cast }), 0.7), 0.7, "a cast that says none");
     }
 
     #[test]
