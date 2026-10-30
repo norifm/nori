@@ -9,9 +9,11 @@ Built (2026-10-27, the `plugins` branch; docs/developers/plugins.md): the whole 
 with `log`, `store`, `http`, `settings`, `rows` and `notices`; overrides (settings by name, and the
 tunables speed, pitch, skip silence, previous always skips); master-slot sound stages; plugins'
 providers (YouTube Music moved out of nori into one); rows and the Plugins page in each client but
-the iPod and the web. Not yet: the song slot, song preparation, AutoMix seams, deciders, hooks' events,
-slots, device control, casting, repos and signatures, safe mode, the web host. Backups are built
-(crates/backup, docs/developers/plugins.md).
+the iPod and the web. Built since (2026-10-30, the `plugin-apis` branch): song preparation, AutoMix
+seams, slots, deciders, hooks' events and wakes, device control (Bluetooth on Android, Linux and macOS),
+the LAN (IPv4 and IPv6 multicast, TLS) and casting with deep sinks (crates/sink-protocol), lyrics
+services and scrobblers, repo signatures with key pinning, safe mode, one switch over every plugin,
+and backups (crates/backup). Not yet: the web host, macOS Bluetooth run on a Mac.
 
 ## Owner decisions so far (2026-10-24)
 
