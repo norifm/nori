@@ -176,8 +176,9 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
     }
     // Nothing to ask: an account's provider offers signing in or going on as a guest, and one with no
     // account is added as soon as it's chosen, its page showing only a failure.
-    val asksNothing = adding && info != null && info.fields.none { !it.advanced && it.what != Field.NAME }
-    val signsIn = asksNothing && info!!.signIn.any { it is SignIn.WebPage }
+    val step = info?.takeIf { adding }?.let { dev.nori.music.ffi.providerFirstStep(it) } ?: dev.nori.music.ffi.FirstStep.FORM
+    val asksNothing = step != dev.nori.music.ffi.FirstStep.FORM
+    val signsIn = step == dev.nori.music.ffi.FirstStep.ACCOUNT
     var added by remember(p.kind) { mutableStateOf(false) }
     LaunchedEffect(info, ready) {
         if (asksNothing && !signsIn && !added && ready) {
@@ -197,11 +198,11 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
             if (signsIn) {
                 PillButton(
                     if (ui.busy) say.connecting else words.account.pageButton, null,
-                    { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.app.vm.AfterAdding.SIGN_IN) },
+                    { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.SIGN_IN) },
                     Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect-sign-in"), prominent = true, enabled = !ui.busy && ready,
                 )
                 PillButton(
-                    say.providerGuest, null, { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.app.vm.AfterAdding.GUEST) },
+                    say.providerGuest, null, { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.GUEST) },
                     Modifier.fillMaxWidth().testTag("connect-guest"), enabled = !ui.busy && ready,
                 )
             } else PillButton(

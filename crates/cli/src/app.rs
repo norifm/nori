@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use nori_core::browse::{AlbumSort, HistoryAfter, LibrarySection, ProfileRules};
 use nori_core::library::QueueOffer;
+use nori_core::providers::{AfterAdding, FirstStep};
 use nori_core::menus::{DownloadAct, PageAction, PageKind, SongDownload};
 use nori_core::mixes::board::{MixSheet, MixTile};
 use nori_core::model::HistoryEntry;
@@ -16,7 +17,7 @@ use nori_core::playlist::PlaylistView;
 use nori_core::remote::wire::Pending;
 use nori_core::remote::{Controls, JamControls, JamView, Listening, Reach, RemoteDevice};
 use nori_core::search::SearchView;
-use nori_core::settings::{EqLevel, SavedServer, SoundBand, StoredPrefs, TapAction};
+use nori_core::settings::{EqLevel, SavedServer, ServerKind, SoundBand, StoredPrefs, TapAction};
 use nori_core::settings_store::SoundTool;
 use nori_core::stars::StarMarks;
 use nori_core::{Album, AlbumDetail, Artist, ArtistDetail, OriginKind, PageOrigin, Playlist, PlaylistDetail, Song};
@@ -203,6 +204,8 @@ pub enum PluginCmd {
     /// Installs what the sheet showed.
     InstallPreview(Box<nori_plugins::PluginPreview>),
     Turn(String, bool),
+    /// Turns on the plugin chosen on the first screen, and opens its form.
+    TurnOnChosen(String),
     /// Moves the plugin to this place in the order.
     Place(String, u32),
     Uninstall(String),
@@ -699,8 +702,27 @@ pub struct Login {
     pub sel: Sel,
     /// Whether the saved servers list has the keys.
     pub on_list: bool,
-    /// The kind of profile added, of those offered ([`App::login_kinds`]).
-    pub kind: usize,
+    /// The kind of profile added, once chosen; until then the first screen shows.
+    pub kind: Option<ServerKind>,
+    /// What its page is ([`ProviderInfo::first_step`]).
+    pub step: Option<FirstStep>,
+    /// Selection among the first screen's providers ([`App::provider_lines`]).
+    pub choice: Sel,
+    /// The plugin whose page the first screen opened; installed, it is turned on and its form opens.
+    pub offered: Option<String>,
+    /// The kind chosen is being added at once: the first screen stays unless that fails.
+    pub adding_now: bool,
+    /// How the profile being added was asked for; None for one already saved.
+    pub after: Option<AfterAdding>,
+}
+
+/// A line of the first screen.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProviderLine {
+    /// A kind a profile can be of: nori's own or a plugin's that is on.
+    Kind(ServerKind),
+    /// A plugin a repo offers that isn't on: quiet.
+    Offered { id: String, name: String },
 }
 
 pub const LOGIN_FIELDS: [&str; 4] = ["Name (optional)", "Server address", "User", "Password"];
@@ -768,7 +790,7 @@ pub struct Devices {
 }
 
 /// The sheet before installing what `p` shows: what it is, what it may reach, where it comes from.
-fn preview_sheet(p: nori_plugins::PluginPreview) -> Overlay {
+fn preview_sheet(p: nori_plugins::PluginPreview, turns_on: bool) -> Overlay {
     let c = &p.card;
     let mut lines: Vec<String> = c.about.iter().cloned().collect();
     lines.extend([crate::text::plugin_is(&c.points, !c.overrides.is_empty()), crate::text::plugin_reach(c)].into_iter().filter(|l| !l.is_empty()));
@@ -777,7 +799,7 @@ fn preview_sheet(p: nori_plugins::PluginPreview) -> Overlay {
     }
     lines.extend(p.repo.as_deref().map(crate::text::from_repo));
     lines.extend(p.key.is_none().then(|| crate::text::UNSIGNED.to_string()));
-    lines.push(crate::text::INSTALLED_OFF.into());
+    lines.push(if turns_on { crate::text::INSTALLED_ON } else { crate::text::INSTALLED_OFF }.into());
     Overlay::Confirm { title: crate::text::install_version(&c.name, &c.version), lines, yes: crate::text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::InstallPreview(Box::new(p)))) }
 }
 
@@ -1094,6 +1116,7 @@ pub enum ListRef {
     Lyrics,
     Devices,
     Profiles,
+    Providers,
     Picker,
     Menu,
     Help,
@@ -1137,6 +1160,8 @@ pub enum Button {
     Connect,
     /// The login's way to Settings › Plugins.
     LoginPlugins,
+    LoginSignIn,
+    LoginGuest,
     /// Plays the queue offered on Home, or turns it down.
     Resume,
     Dismiss,
@@ -1703,6 +1728,7 @@ impl App {
                 self.login.busy = false;
                 if let Err(e) = r {
                     self.login.error = Some(e);
+                    self.login.adding_now = false;
                 }
             }
             Msg::Reachable(r) => self.unreachable = r.err(),
@@ -1737,8 +1763,18 @@ impl App {
                     _ => self.say(said, true),
                 }
             }
-            Msg::Preview(Ok(p)) => self.overlay = Some(preview_sheet(p)),
-            Msg::Installed(Ok(_)) => self.say(crate::text::PLUGIN_INSTALLED, false),
+            Msg::Preview(Ok(p)) => {
+                let turns_on = self.login.offered.as_ref() == Some(&p.card.id);
+                self.overlay = Some(preview_sheet(p, turns_on));
+            }
+            Msg::Installed(Ok(id)) => {
+                self.say(crate::text::PLUGIN_INSTALLED, false);
+                if self.login.offered.as_ref() == Some(&id) {
+                    while self.settings.leave() {}
+                    self.plugins_left();
+                    self.cmds.push(Cmd::Plugin(PluginCmd::TurnOnChosen(id)));
+                }
+            }
             Msg::Installed(Err(e)) | Msg::Preview(Err(e)) => self.say(crate::text::plugin_refused(&e), true),
             Msg::Slots { song, info, status } => {
                 if self.song.as_ref().is_some_and(|s| s.id == song) {
@@ -2082,7 +2118,9 @@ impl App {
         if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Account { text: t, pasting: true, busy: false, .. }) = &mut self.overlay {
             t.push_str(&text);
         } else if self.view == View::Login {
-            self.login.fields[self.login.focus].push_str(&text);
+            if !self.login_choosing() {
+                self.login.fields[self.login.focus].push_str(&text);
+            }
         } else if nori_core::remote::is_invite(&text) || nori_core::remote::pairing_valid(text.clone()) {
             // An invite pasted anywhere offers to join its jam.
             self.overlay = Some(Overlay::Join { text, error: None, busy: false });
@@ -2135,19 +2173,80 @@ impl App {
         }
     }
 
-    /// The kinds of profile the login adds: a Subsonic server's, and the enabled plugins' sources.
-    pub fn login_kinds(&self) -> Vec<nori_core::providers::ProviderInfo> {
-        self.settings.own.kinds.providers()
+    /// What the first screen lists: the kinds a profile can be of, then what the repos offer that isn't on.
+    pub fn provider_lines(&self) -> Vec<ProviderLine> {
+        let own = &self.settings.own;
+        let kinds = own.kinds.providers().into_iter().map(|i| ProviderLine::Kind(i.kind));
+        let offers = nori_plugins::provider_offers(own.offers().to_vec(), own.plugins.clone(), self.prefs.plugins_off).into_iter().map(|o| ProviderLine::Offered { id: o.id, name: o.name });
+        kinds.chain(offers).collect()
+    }
+
+    /// The form's provider.
+    pub fn login_info(&self) -> Option<nori_core::providers::ProviderInfo> {
+        let kind = self.login.kind.as_ref()?;
+        self.settings.own.kinds.providers().into_iter().find(|i| i.kind == *kind)
     }
 
     /// Which of `LOGIN_FIELDS` the kind chosen asks.
     pub fn login_fields(&self) -> Vec<usize> {
-        let kinds = self.login_kinds();
-        let Some(info) = kinds.get(self.login.kind).or(kinds.first()) else { return (0..4).collect() };
+        let Some(info) = self.login_info().filter(|_| self.login.step == Some(FirstStep::Form)) else { return Vec::new() };
         (0..4).filter(|&i| info.fields.iter().any(|f| f.what == LOGIN_ASKS[i])).collect()
     }
 
-    /// Settings › Plugins on its own, from the login: no profile is needed to add one.
+    /// The first screen: what a new profile plays from, the repos asked what they offer.
+    pub fn choose_provider(&mut self) {
+        self.view = View::Login;
+        (self.login.kind, self.login.adding_now) = (None, false);
+        self.cmds.push(Cmd::Plugin(PluginCmd::Read));
+        if matches!(self.settings.own.shelf, crate::settings_view::Shelf::Unasked) {
+            self.cmds.push(Cmd::Plugin(PluginCmd::Look));
+        }
+    }
+
+    /// `kind`'s page, on its first field, or, with nothing to ask, the kind added at once from the first
+    /// screen; a kind that can't be added now stays there.
+    pub fn provider_chosen(&mut self, kind: ServerKind) {
+        let Some(info) = self.settings.own.kinds.providers().into_iter().find(|i| i.kind == kind) else { return };
+        self.provider_opened(&info);
+    }
+
+    /// See [`App::provider_chosen`].
+    pub(crate) fn provider_opened(&mut self, info: &nori_core::providers::ProviderInfo) {
+        self.login.kind = Some(info.kind.clone());
+        self.login.step = Some(info.first_step());
+        self.login.focus = self.login_fields().first().copied().unwrap_or(0);
+        self.login.error = None;
+        if self.login.step == Some(FirstStep::AddNow) {
+            self.login.adding_now = true;
+            self.connect(AfterAdding::Remind);
+        }
+    }
+
+    /// Whether the first screen shows.
+    pub fn login_choosing(&self) -> bool {
+        self.login.kind.is_none() || self.login.adding_now
+    }
+
+    /// The account page shows: a provider with an account and nothing to fill.
+    pub fn login_account(&self) -> bool {
+        self.login.kind.is_some() && self.login.step == Some(FirstStep::Account)
+    }
+
+    /// The first screen's line `at`: a kind's form, a plugin off turned on, or the page of one not installed.
+    fn provider_open(&mut self, at: usize) {
+        match self.provider_lines().into_iter().nth(at) {
+            Some(ProviderLine::Kind(kind)) => self.provider_chosen(kind),
+            Some(ProviderLine::Offered { id, .. }) if self.settings.own.plugins.iter().any(|c| c.id == id) => self.cmds.push(Cmd::Plugin(PluginCmd::TurnOnChosen(id))),
+            Some(ProviderLine::Offered { id, .. }) => {
+                self.login.offered = Some(id.clone());
+                self.plugins_alone();
+                self.plugin_page(crate::settings_view::PluginPage::Plugin(id));
+            }
+            None => {}
+        }
+    }
+
+    /// Settings › Plugins on its own, from the first screen: no profile is needed to add one.
     fn plugins_alone(&mut self) {
         self.settings.alone = true;
         self.settings.row = Sel::default();
@@ -2158,42 +2257,57 @@ impl App {
     }
 
     fn login_key(&mut self, k: KeyEvent) {
-        if k.code == KeyCode::Char('p') && k.modifiers.contains(KeyModifiers::CONTROL) {
-            return self.plugins_alone();
+        if self.login_choosing() {
+            self.provider_key(k)
+        } else {
+            self.form_key(k)
         }
-        let kinds = self.login_kinds().len();
-        // Another kind, where there is more than one: its fields from the first.
-        if matches!(k.code, KeyCode::Left | KeyCode::Right) && kinds > 1 && !self.login.on_list {
-            self.login.kind = (self.login.kind + if k.code == KeyCode::Right { 1 } else { kinds - 1 }) % kinds;
-            self.login.focus = self.login_fields().first().copied().unwrap_or(0);
-            self.login.error = None;
-            return;
+    }
+
+    /// A key on the first screen.
+    fn provider_key(&mut self, k: KeyEvent) {
+        let providers = self.provider_lines().len();
+        let profiles = self.prefs.servers.len();
+        let l = &mut self.login;
+        match k.code {
+            KeyCode::Up | KeyCode::Char('k') if l.on_list => l.sel.by(-1, profiles),
+            KeyCode::Down | KeyCode::Char('j') if l.on_list => l.sel.by(1, profiles),
+            KeyCode::Up | KeyCode::Char('k') => l.choice.by(-1, providers),
+            KeyCode::Down | KeyCode::Char('j') => l.choice.by(1, providers),
+            KeyCode::Tab if profiles > 0 => l.on_list = !l.on_list,
+            KeyCode::Esc if l.on_list => l.on_list = false,
+            KeyCode::Esc if profiles > 0 => self.view = View::Settings,
+            KeyCode::Esc | KeyCode::Char('q') => self.quit = true,
+            KeyCode::Char('p') => self.plugins_alone(),
+            KeyCode::Enter if l.on_list => {
+                if let Some(s) = self.prefs.servers.get(l.sel.at) {
+                    self.cmds.push(Cmd::SwitchServer(s.id.clone()));
+                }
+            }
+            KeyCode::Enter if !l.busy => {
+                let at = l.choice.at;
+                self.provider_open(at);
+            }
+            _ => {}
+        }
+    }
+
+    /// A key on a provider's page.
+    fn form_key(&mut self, k: KeyEvent) {
+        if self.login_account() {
+            match k.code {
+                KeyCode::Enter => return self.connect(AfterAdding::SignIn),
+                KeyCode::Char('g') => return self.connect(AfterAdding::Guest),
+                _ => {}
+            }
         }
         let fields = self.login_fields();
         let l = &mut self.login;
-        let profiles = self.prefs.servers.len();
-        if l.on_list {
-            match k.code {
-                KeyCode::Up | KeyCode::Char('k') => l.sel.by(-1, profiles),
-                KeyCode::Down | KeyCode::Char('j') => l.sel.by(1, profiles),
-                KeyCode::Tab | KeyCode::Esc => l.on_list = false,
-                KeyCode::Enter => {
-                    if let Some(s) = self.prefs.servers.get(l.sel.at) {
-                        self.cmds.push(Cmd::SwitchServer(s.id.clone()));
-                    }
-                }
-                KeyCode::Char('q') => self.quit = true,
-                _ => {}
-            }
-            return;
-        }
         let at = fields.iter().position(|&f| f == l.focus);
         let last = at.is_none_or(|i| i + 1 == fields.len());
         match k.code {
             KeyCode::Tab | KeyCode::Down => {
-                if last && profiles > 0 && k.code == KeyCode::Tab {
-                    l.on_list = true;
-                } else if let Some(i) = at {
+                if let Some(i) = at {
                     l.focus = fields[(i + 1) % fields.len()];
                 }
             }
@@ -2203,13 +2317,10 @@ impl App {
                 }
             }
             KeyCode::Enter if !last => l.focus = fields[at.map_or(0, |i| i + 1)],
-            KeyCode::Enter => self.connect(),
+            KeyCode::Enter => self.connect(AfterAdding::Remind),
             KeyCode::Esc => {
-                if !self.prefs.servers.is_empty() {
-                    self.view = View::Settings;
-                } else {
-                    self.quit = true;
-                }
+                l.kind = None;
+                l.error = None;
             }
             KeyCode::Backspace if at.is_some() => {
                 l.fields[l.focus].pop();
@@ -2219,17 +2330,22 @@ impl App {
         }
     }
 
-    fn connect(&mut self) {
-        let kinds = self.login_kinds();
-        let Some(info) = kinds.get(self.login.kind).or(kinds.first()) else { return };
+    fn connect(&mut self, after: AfterAdding) {
+        if self.login.busy {
+            return;
+        }
+        let Some(info) = self.login_info() else { return };
         let asked = self.login_fields();
         let l = &mut self.login;
         let typed = |i: usize| if asked.contains(&i) { l.fields[i].clone() } else { String::new() };
         let url = typed(1).trim().trim_end_matches('/').to_string();
         let url = if url.is_empty() || url.contains("://") { url } else { format!("https://{url}") };
         let draft = SavedServer { id: nori_core::settings::new_server_id(), kind: info.kind.clone(), name: typed(0).trim().to_string(), url, user: typed(2).trim().to_string(), password: typed(3), ..Default::default() };
+        let list = nori_core::settings::ServerList { servers: self.prefs.servers.clone(), active_server_id: self.prefs.active_server_id.clone() };
+        l.after = self.settings.own.kinds.adds_profile(list, draft.clone()).then_some(after);
         if !self.settings.own.kinds.server_ready(draft.clone()) {
             l.error = Some(crate::text::LOGIN_MISSING.into());
+            l.adding_now = false;
             return;
         }
         l.error = None;
@@ -2637,6 +2753,7 @@ impl App {
     pub fn session_ended(&mut self) {
         (self.now, self.lyrics_wake) = (Now::default(), None);
         self.go(View::Login);
+        self.choose_provider();
     }
 
     pub fn set_volume(&mut self, v: f32) {
@@ -2663,17 +2780,25 @@ impl App {
             return;
         }
         if self.on_settings() && self.settings.leave() {
+            if self.login.offered.is_some() && !self.settings.deep() {
+                self.plugins_left();
+            }
             return;
         }
         if self.view == View::Settings && self.settings.alone {
-            self.settings.alone = false;
-            self.settings.invalidate();
-            self.view = View::Login;
-            return;
+            return self.plugins_left();
         }
         if self.pages.pop().is_none() {
             self.dirty = false;
         }
+    }
+
+    /// Back on the first screen from the plugins on their own.
+    fn plugins_left(&mut self) {
+        self.settings.alone = false;
+        self.settings.invalidate();
+        self.login.offered = None;
+        self.view = View::Login;
     }
 
     fn refresh(&mut self) {
@@ -3476,7 +3601,7 @@ impl App {
             Some(Opened::Plugins(page)) => self.plugin_page(page),
             Some(Opened::Login) => {
                 self.login = Login::default();
-                self.view = View::Login;
+                self.choose_provider();
             }
             None => self.dirty = false,
         }
@@ -3631,7 +3756,7 @@ impl App {
                     sel.by(d, lines.len());
                 }
             }
-            ListRef::Profiles => {}
+            ListRef::Profiles | ListRef::Providers => {}
             _ => {
                 self.focus = l.focus();
                 if let Some((sel, len)) = self.list() {
@@ -3668,7 +3793,7 @@ impl App {
             }
             Hit::Button(b) => self.button(b),
             Hit::List(l) => {
-                if !matches!(l, ListRef::Help | ListRef::Picker | ListRef::Menu | ListRef::Profiles) && !self.full {
+                if !matches!(l, ListRef::Help | ListRef::Picker | ListRef::Menu | ListRef::Profiles | ListRef::Providers) && !self.full {
                     self.focus = l.focus();
                 } else {
                     self.dirty = false;
@@ -3749,7 +3874,9 @@ impl App {
                 }
             }
             Button::Help => self.do_action(Action::Help),
-            Button::Connect => self.connect(),
+            Button::Connect => self.connect(AfterAdding::Remind),
+            Button::LoginSignIn => self.connect(AfterAdding::SignIn),
+            Button::LoginGuest => self.connect(AfterAdding::Guest),
             Button::LoginPlugins => self.plugins_alone(),
             Button::Resume => self.take_offer(true),
             Button::Dismiss => self.take_offer(false),
@@ -3782,6 +3909,14 @@ impl App {
             ListRef::Profiles => {
                 self.login.on_list = true;
                 self.login.sel.at = i;
+                if again {
+                    self.login_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                }
+                return;
+            }
+            ListRef::Providers => {
+                self.login.on_list = false;
+                self.login.choice.at = i;
                 if again {
                     self.login_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                 }

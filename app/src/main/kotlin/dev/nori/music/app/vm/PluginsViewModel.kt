@@ -65,7 +65,7 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
         .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Plugins that would add a kind of profile if they were on. */
-    val providerOffers: StateFlow<List<Offer>> = combine(offers, cards) { o, c -> providerOffers(o.offers, c) }
+    val providerOffers: StateFlow<List<Offer>> = combine(offers, cards, nori.settings.prefs) { o, c, p -> providerOffers(o.offers, c, p.pluginsOff) }
         .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Updates waiting for plugins not kept at their version. */

@@ -106,6 +106,13 @@ pub const UPDATE: &str = "Update";
 pub const INSTALLED: &str = "Installed";
 pub const PLUGIN_INSTALLED: &str = "Plugin installed. Switch it on in Settings › Plugins.";
 pub const GET_PLUGINS: &str = "Get plugins";
+pub const PROVIDER_CHOOSE: &str = "Choose a provider";
+pub const PROVIDER_SUBSONIC_ABOUT: &str = "Navidrome and other servers";
+pub const CONTINUE_AS_GUEST: &str = "Continue as guest";
+/// The button that adds a provider and opens its sign-in.
+pub fn provider_sign_in(name: &str) -> String {
+    format!("Sign in to {name}")
+}
 pub const LOOK_AGAIN: &str = "Look again";
 pub const LOOKING: &str = "Looking…";
 pub const REPOS: &str = "Repos";
@@ -116,6 +123,7 @@ pub const TRUST_REPO: &str = "This repo isn’t nori’s. Its plugins can do wha
 
 pub const REMOVE_PLUGIN_NOTE: &str = "Its settings go with it.";
 pub const INSTALLED_OFF: &str = "It stays off until you turn it on.";
+pub const INSTALLED_ON: &str = "It turns on once installed.";
 
 /// Asks before removing `name`.
 pub fn remove_plugin(name: &str) -> String {
@@ -129,12 +137,12 @@ pub fn install_version(name: &str, version: &str) -> String {
 
 /// The install sheet's lines for `p`: what it says of itself, what it is and may reach, where it comes
 /// from, and that it installs off.
-pub fn preview_note(p: &nori_plugins::PluginPreview) -> Vec<String> {
+pub fn preview_note(p: &nori_plugins::PluginPreview, turns_on: bool) -> Vec<String> {
     let c = &p.card;
     let from = p.repo.as_ref().map(|url| format!("From {}", repo_name(&nori_plugins::Repo { url: url.clone(), official: url == nori_plugins::OFFICIAL })));
     let unsigned = p.key.is_none().then(|| UNSIGNED.to_string());
     let bluetooth = c.bluetooth.then(|| REACHES_BLUETOOTH.to_string());
-    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(c)]).chain(bluetooth).chain(from).chain(unsigned).chain([INSTALLED_OFF.into()]).filter(|l| !l.is_empty()).collect()
+    c.about.iter().cloned().chain([plugin_is(&c.points, !c.overrides.is_empty()), plugin_reach(c)]).chain(bluetooth).chain(from).chain(unsigned).chain([if turns_on { INSTALLED_ON } else { INSTALLED_OFF }.into()]).filter(|l| !l.is_empty()).collect()
 }
 
 pub const REACHES_BLUETOOTH: &str = "Reaches Bluetooth devices.";
@@ -921,9 +929,11 @@ mod tests {
             rows: Vec::new(),
         };
         let mut p = nori_plugins::PluginPreview { card, file: String::new(), repo: Some(nori_plugins::OFFICIAL.into()), key: Some("ab".into()) };
-        assert_eq!(preview_note(&p), ["Counts letters", "It’s a playback helper.", "Connects to a.example and devices on your network. Wakes at each lyric line while music plays. Downloads 3 MB of files.", "From nori’s own", "It stays off until you turn it on."]);
+        assert_eq!(preview_note(&p, false), ["Counts letters", "It’s a playback helper.", "Connects to a.example and devices on your network. Wakes at each lyric line while music plays. Downloads 3 MB of files.", "From nori’s own", "It stays off until you turn it on."]);
         p.key = None;
-        assert!(preview_note(&p).contains(&"Unsigned".to_string()));
+        assert!(preview_note(&p, false).contains(&"Unsigned".to_string()));
+        let last = |turns_on| preview_note(&p, turns_on).last().cloned();
+        assert_eq!((last(false).as_deref(), last(true).as_deref()), (Some(INSTALLED_OFF), Some(INSTALLED_ON)), "what follows installing");
     }
 
     #[test]

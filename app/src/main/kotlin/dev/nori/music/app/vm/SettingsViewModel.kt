@@ -55,9 +55,6 @@ data class LoginUi(val busy: Boolean = false, val error: String? = null, val don
  * failed, whether the provider's sign-in page is open, and whether a profile just added, or a session the
  * provider ended ([ended]), offers it.
  */
-/** What a profile just added goes on to: its provider's sign-in, asked or opened, or nothing. */
-enum class AfterAdding { OFFER_SIGN_IN, SIGN_IN, GUEST }
-
 data class AccountUi(
     val account: dev.nori.music.ffi.AccountState? = null, val busy: Boolean = false, val failed: dev.nori.music.ffi.SignInResult? = null,
     val page: Boolean = false, val offer: Boolean = false, val ended: Boolean = false,
@@ -463,18 +460,19 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         _account.update { it.copy(offer = true, ended = ended) }
     }
 
-    fun login(profile: SavedServer, afterAdding: AfterAdding = AfterAdding.OFFER_SIGN_IN) {
+    fun login(profile: SavedServer, afterAdding: dev.nori.music.ffi.AfterAdding = dev.nori.music.ffi.AfterAdding.REMIND) {
         if (_login.value.busy) return
         _login.value = LoginUi(busy = true)
         val saved = prefs.value.servers.map { it.id }
         viewModelScope.launch {
             _login.value = try {
                 val accepted = nori.login(profile)
-                // A profile just added whose account signs in on a page offers it, which can be skipped.
-                if (accepted.id !in saved && provider(accepted.kind)?.signIn?.firstOrNull() is dev.nori.music.ffi.SignIn.WebPage) when (afterAdding) {
-                    AfterAdding.OFFER_SIGN_IN -> _account.value = AccountUi(offer = true)
-                    AfterAdding.SIGN_IN -> _account.value = AccountUi(page = true)
-                    AfterAdding.GUEST -> {}
+                val step = provider(accepted.kind)?.takeIf { accepted.id !in saved }?.let { dev.nori.music.ffi.providerAfterAdding(it, afterAdding) }
+                when (step) {
+                    dev.nori.music.ffi.SignInStep.OFFER -> _account.value = AccountUi(offer = true)
+                    dev.nori.music.ffi.SignInStep.OPEN -> _account.value = AccountUi(page = true)
+                    dev.nori.music.ffi.SignInStep.STOP_REMINDING -> nori.stopReminding()
+                    null -> {}
                 }
                 LoginUi(done = true)
             } catch (e: Exception) {

@@ -86,7 +86,7 @@ re-exports every domain crate by module name (`nori_core::playlist` is `nori_que
 | Records, `CoreError`, the log, numbers for display | `nori-model`: `model`, `alog`, `numbers`, `lines` |
 | Settings: one `StoredPrefs` field per setting, the model, the pages per client | `nori-settings`: `settings`, `settings_store`, `settings_model`, `settings_pages`, `credits` |
 | A backup of the settings, sound profiles and plugins, sealed with a password | `nori-backup` (`nori-core::backup`) |
-| Plugins: what repos offer, search, updates waiting, a plugin's README and icon ([Plugins](plugins.md)) | `nori-plugins`: `offers_found`, `updates_waiting`, `offer_of`, `Plugins::offers_stand`, `Plugins::readme`, `Plugins::icon` |
+| Plugins: what repos offer, search, updates waiting, providers to offer on the first screen, a plugin's README and icon ([Plugins](plugins.md)) | `nori-plugins`: `offers_found`, `updates_waiting`, `provider_offers`, `offer_of`, `Plugins::offers_stand`, `Plugins::readme`, `Plugins::icon` |
 | Library, search, browse, mixes, smart playlists, history, favorites, M3U | `nori-library`: `library`, `search`, `browse`, `mixes`, `smart`, `history`, `stars`, `m3u` |
 | What each page shows, as data: discs, releases by kind, big buttons, row swipes, song menus, the car tree | `nori-library`: `pages`, `rows`, `menus`, `car` |
 | The queue: order, shuffle, autofill, radio, the offline bridge, scrobbling, the rules at each moment | `nori-queue`: `playlist`, `queue`, `autofill`, `bridge`, `scrobble`, `rules` |

@@ -1776,26 +1776,80 @@ fn track_bar(f: &mut Frame, r: Rect, share: f32, t: &Theme) {
 // ---- the login and what goes on top ----
 
 fn login(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+    if app.login_choosing() {
+        provider_choice(f, area, app, t)
+    } else {
+        sign_in_form(f, area, app, t)
+    }
+}
+
+/// The first screen: what a new profile plays from, those not on yet quieter, then the saved servers.
+fn provider_choice(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+    use crate::app::ProviderLine;
     let servers = app.prefs.servers.len() as u16;
-    let kinds = app.login_kinds();
+    let lines: Vec<(String, Option<&str>, bool)> = app
+        .provider_lines()
+        .into_iter()
+        .map(|p| match p {
+            ProviderLine::Kind(kind @ nori_core::settings::ServerKind::Subsonic) => (app.provider_words(&kind).name, Some(crate::text::PROVIDER_SUBSONIC_ABOUT), false),
+            ProviderLine::Kind(kind) => (app.provider_words(&kind).name, None, false),
+            ProviderLine::Offered { name, .. } => (name, None, true),
+        })
+        .collect();
+    let rows = (lines.len() as u16).min(area.height.saturating_sub(10));
+    let r = centred(area, 64, 7 + rows + if servers > 0 { servers + 2 } else { 0 });
+    let title = format!(" nori · {} ", crate::text::PROVIDER_CHOOSE);
+    let inner = popup(f, r, Span::styled(title, bold().fg(t.ink)), t);
+    let bottom = inner.y + inner.height;
+    let mut y = inner.y + 1;
+    let App { login, prefs, hits, .. } = app;
+    let choosing = !login.on_list;
+    let height = rows.min(bottom.saturating_sub(y));
+    let quiet = t.dim();
+    let ink = Style::default().fg(t.ink);
+    list(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height }, &mut login.choice, lines.len(), ListRef::Providers, hits, t, choosing, &|i, w| {
+        let (name, about, offered) = &lines[i];
+        let mut spans = vec![Span::styled(fit(name, w).into_owned(), if *offered { quiet } else { ink })];
+        spans.extend(about.map(|a| Span::styled(format!("  {a}"), quiet)));
+        Line::from(spans)
+    });
+    y += height + 1;
+    let plugins = format!(" {} › ", crate::text::PLUGINS);
+    let pr = Rect { x: inner.x + 2, y, width: plugins.width() as u16, height: 1 };
+    put(f, Paragraph::new(Span::styled(plugins, t.dim())), pr);
+    hits.push((pr, Hit::Button(Button::LoginPlugins)));
+    y += 2;
+    let keys = if servers > 0 { crate::text::PROVIDER_SAVED_KEYS } else { crate::text::PROVIDER_KEYS };
+    let msg = match &login.error {
+        Some(e) => Span::styled(format!("  {e}"), Style::default().fg(Color::LightRed)),
+        None => Span::styled(format!("  {keys}"), t.dim()),
+    };
+    put(f, Paragraph::new(msg).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x, y, width: inner.width, height: 2.min(bottom.saturating_sub(y)) });
+    y += 2;
+    if servers > 0 && y + 1 < bottom {
+        text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(2), height: 1 }, "Or use a saved server", bold().fg(t.ink));
+        y += 1;
+        let area = Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: servers.min(bottom - y) };
+        let names: Vec<String> = prefs.servers.iter().map(|s| format!("{}  {}", nori_core::settings::label(&s.name, &s.url), s.user)).collect();
+        let focused = login.on_list;
+        list(f, area, &mut login.sel, names.len(), ListRef::Profiles, hits, t, focused, &|i, w| Line::from(fit(&names[i], w).into_owned()));
+    }
+}
+
+/// The chosen kind's page: its form, or with an account and nothing to fill, two ways on.
+fn sign_in_form(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let fields = app.login_fields();
-    let info = kinds.get(app.login.kind).or(kinds.first());
-    let words = info.map(|i| app.provider_words(&i.kind));
-    let choosing = kinds.len() > 1;
-    let h = 11 + 2 * fields.len() as u16 + if choosing { 2 } else { 0 } + if servers > 0 { servers + 2 } else { 0 };
+    let info = app.login_info();
+    let account = app.login_account();
+    let name = info.as_ref().map_or(String::new(), |i| app.provider_words(&i.kind).name);
+    let h = 11 + 2 * fields.len() as u16;
     let r = centred(area, 64, h);
-    let inner = popup(f, r, Span::styled(" nori · add a profile ", bold().fg(t.ink)), t);
+    let inner = popup(f, r, Span::styled(format!(" {name} "), bold().fg(t.ink)), t);
     let l = &app.login;
     let bottom = inner.y + inner.height;
     let mut y = inner.y + 1;
-    if choosing {
-        let name = words.as_ref().map_or(String::new(), |w| w.name.clone());
-        let line = Line::from(vec![Span::styled(format!("  {:<16}", crate::text::LOGIN_KIND), t.dim()), Span::styled(format!("‹ {name} ›"), bold().fg(t.ink))]);
-        put(f, Paragraph::new(line), Rect { x: inner.x, y, width: inner.width, height: 1 });
-        y += 2;
-    }
-    let about = match info.map(|i| &i.kind) {
-        Some(nori_core::settings::ServerKind::Plugin { .. }) => crate::text::FROM_A_PLUGIN,
+    let about = match info.as_ref().map(|i| &i.kind) {
+        Some(nori_core::settings::ServerKind::Plugin { id }) => app.settings.own.plugins.iter().find(|c| c.id == *id).and_then(|c| c.about.as_deref()).unwrap_or(crate::text::FROM_A_PLUGIN),
         _ => "Navidrome, octo-fiesta or any Subsonic server",
     };
     text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: 1 }, about, t.dim());
@@ -1805,7 +1859,7 @@ fn login(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             break;
         }
         let label = LOGIN_FIELDS[i];
-        let focused = l.focus == i && !l.on_list;
+        let focused = l.focus == i;
         let value = if i == 3 { "•".repeat(l.fields[i].chars().count()) } else { l.fields[i].clone() };
         let cursor = if focused { "▏" } else { "" };
         let line = Line::from(vec![
@@ -1817,30 +1871,23 @@ fn login(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         app.hits.push((row, Hit::LoginField(i)));
         y += 2;
     }
-    let button = if l.busy { " Connecting… " } else { " Connect " };
-    let br = Rect { x: inner.x + 18, y, width: button.width() as u16, height: 1 };
+    let sign_in = format!(" {} ", crate::text::provider_sign_in(&name));
+    let button = if l.busy { " Connecting… " } else if account { sign_in.as_str() } else { " Connect " };
+    let br = Rect { x: inner.x + if account { 2 } else { 18 }, y, width: button.width() as u16, height: 1 };
     put(f, Paragraph::new(Span::styled(button, t.select(true))), br);
-    app.hits.push((br, Hit::Button(Button::Connect)));
-    let plugins = format!(" {} › ", crate::text::PLUGINS);
-    let pr = Rect { x: br.x + br.width + 2, y, width: plugins.width() as u16, height: 1 };
-    put(f, Paragraph::new(Span::styled(plugins, t.dim())), pr);
-    app.hits.push((pr, Hit::Button(Button::LoginPlugins)));
+    app.hits.push((br, Hit::Button(if account { Button::LoginSignIn } else { Button::Connect })));
+    if account {
+        let guest = format!(" {} ", crate::text::CONTINUE_AS_GUEST);
+        let gr = Rect { x: br.x + br.width + 2, y, width: guest.width() as u16, height: 1 };
+        put(f, Paragraph::new(Span::styled(guest, t.dim())), gr);
+        app.hits.push((gr, Hit::Button(Button::LoginGuest)));
+    }
     y += 2;
     let msg = match &l.error {
         Some(e) => Span::styled(format!("  {e}"), Style::default().fg(Color::LightRed)),
-        None => Span::styled(format!("  {}", if choosing { crate::text::LOGIN_KIND_KEYS } else { crate::text::LOGIN_KEYS }), t.dim()),
+        None => Span::styled(format!("  {}", if account { crate::text::ACCOUNT_KEYS } else { crate::text::LOGIN_KEYS }), t.dim()),
     };
     put(f, Paragraph::new(msg).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x, y, width: inner.width, height: 2.min(bottom.saturating_sub(y)) });
-    y += 3;
-    if servers > 0 && y + 1 < bottom {
-        text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(2), height: 1 }, "Or use a saved server", bold().fg(t.ink));
-        y += 1;
-        let area = Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: servers.min(bottom - y) };
-        let App { login, prefs, hits, .. } = app;
-        let names: Vec<String> = prefs.servers.iter().map(|s| format!("{}  {}", nori_core::settings::label(&s.name, &s.url), s.user)).collect();
-        let focused = login.on_list;
-        list(f, area, &mut login.sel, names.len(), ListRef::Profiles, hits, t, focused, &|i, w| Line::from(fit(&names[i], w).into_owned()));
-    }
 }
 
 /// Light modules around the code, so a camera finds its edges on a dark terminal.

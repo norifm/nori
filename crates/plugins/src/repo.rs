@@ -274,10 +274,11 @@ pub fn offers_to_update(offers: Vec<Offer>, cards: Vec<PluginCard>) -> Vec<Offer
 }
 
 /// The plugins that would add a kind of profile if they were on: of `offers`, those filling the provider
-/// point and not on among `cards`, once each, by name.
+/// point and not on among `cards`, once each, by name. None while `all_off`: a plugin turned on then
+/// wouldn't run.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn provider_offers(mut offers: Vec<Offer>, cards: Vec<PluginCard>) -> Vec<Offer> {
-    offers.retain(|o| o.points.iter().any(|p| p == "provider") && !cards.iter().any(|c| c.id == o.id && c.enabled));
+pub fn provider_offers(mut offers: Vec<Offer>, cards: Vec<PluginCard>, all_off: bool) -> Vec<Offer> {
+    offers.retain(|o| !all_off && o.points.iter().any(|p| p == "provider") && !cards.iter().any(|c| c.id == o.id && c.enabled));
     offers.sort_by_cached_key(|o| o.name.to_lowercase());
     offers.dedup_by(|a, b| a.id == b.id);
     offers

@@ -2407,6 +2407,7 @@ fn offer(name: &str, repo: &nori_plugins::Repo, installed: Option<&str>) -> nori
         source: Some("https://code.example/gain".into()),
         readme: None,
         icon: None,
+        points: Vec::new(),
         versions: vec![version("2.0.0", "2026-10-01"), version("1.0.0", "2026-06-01")],
         installed: installed.map(str::to_string),
         state: match installed {
@@ -2638,14 +2639,14 @@ fn the_devices_panel_lists_a_plugins_cast() {
     assert!(!a.devices.shown(), "gone with the cast");
 }
 
-/// The login reaches Settings › Plugins with no profile, and back.
+/// The first screen reaches Settings › Plugins with no profile, by key and by mouse, and back.
 #[test]
-fn the_login_opens_the_plugins() {
+fn the_first_screen_opens_the_plugins() {
     let mut a = app();
-    a.view = View::Login;
+    a.choose_provider();
+    assert_eq!(a.cmds.split_off(0), vec![Cmd::Plugin(crate::app::PluginCmd::Read), Cmd::Plugin(crate::app::PluginCmd::Look)], "the repos are asked once");
     let s = draw(&mut a, 100, 40);
-    dump("login", &s);
-    assert!(s.contains("Plugins ›") && s.contains("ctrl p plugins") && !s.contains("Kind"), "one kind, no choice:\n{s}");
+    assert!(s.contains("Plugins ›") && s.contains("p plugins"), "its way there is at its foot:\n{s}");
     let r = hit_rect(&a, Hit::Button(Button::LoginPlugins));
     a.handle(Msg::Mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: r.x, row: r.y, modifiers: KeyModifiers::NONE }));
     assert_eq!(a.view, View::Settings);
@@ -2654,6 +2655,8 @@ fn the_login_opens_the_plugins() {
     assert!(s.contains("Get plugins") && !s.contains("Playback"), "the plugins alone:\n{s}");
     key(&mut a, KeyCode::Esc);
     assert_eq!(a.view, View::Login);
+    key(&mut a, KeyCode::Char('p'));
+    assert_eq!(a.view, View::Settings);
 }
 
 struct Quiet;
@@ -2678,33 +2681,193 @@ impl nori_plugins::Client for Quiet {
     fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {}
 }
 
-/// With a plugin's music source on, the login offers its kind, and asks only what it asks.
-#[test]
-fn the_login_chooses_a_kind_when_a_plugin_adds_one() {
-    let dir = nori_testdir::TempDir::new("cli-login-kinds");
+/// An app on the first screen with the fixture plugin on, so its provider is a kind of profile.
+fn app_with_provider(dir: &nori_testdir::TempDir) -> App {
     let plugins = nori_plugins::open(dir.join("plugins"), crate::backend::app().settings.clone(), std::sync::Arc::new(Quiet));
     plugins.install(&nori_plugins::testing::fixture("")).unwrap();
     plugins.turn(nori_plugins::testing::FIXTURE.into(), true);
     let mut a = app();
     a.settings.own.kinds = nori_core::providers::Kinds::with_plugins(plugins);
     a.view = View::Login;
+    a
+}
+
+/// The first screen lists the kinds; each opens its own form, and back from it chooses again.
+#[test]
+fn the_kind_chosen_reaches_its_form() {
+    use nori_core::settings::ServerKind;
+    let dir = nori_testdir::TempDir::new("cli-login-kinds");
+    let mut a = app_with_provider(&dir);
     let s = draw(&mut a, 100, 40);
-    assert!(s.contains("Kind") && s.contains("‹ Your server ›") && s.contains("Server address") && s.contains("← → kind"), "{s}");
-    key(&mut a, KeyCode::Right);
+    dump("login-providers", &s);
+    assert!(s.contains("Choose a provider") && s.contains("OpenSubsonic") && s.contains("Navidrome and other servers") && s.contains("Test") && !s.contains("Server address"), "{s}");
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.login.kind, Some(ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() }));
     let s = draw(&mut a, 100, 40);
     dump("login-plugin-kind", &s);
-    assert!(s.contains("‹ Test ›") && s.contains("From a plugin") && !s.contains("Server address"), "{s}");
-    // Its own provider says when its form can be sent; the test plugin's never can.
+    assert!(s.contains("From a plugin") && !s.contains("Server address"), "{s}");
+    // The test plugin asks nothing and has no sign-in, so it is added at once; it can never be sent, so
+    // its page shows, with why.
+    assert!(a.cmds.is_empty() && a.login.error.is_some() && !a.login_choosing());
+    key(&mut a, KeyCode::Esc);
+    assert_eq!((a.login.kind.clone(), a.login.error.clone(), a.quit), (None, None, false), "back chooses again");
+    key(&mut a, KeyCode::Up);
+    a.login.focus = 3;
     key(&mut a, KeyCode::Enter);
-    assert!(a.cmds.is_empty() && a.login.error.is_some());
-    key(&mut a, KeyCode::Left);
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains("Server address") && s.contains("esc choose again"), "{s}");
+    assert_eq!(a.login.focus, 0, "on the first field it asks");
     key(&mut a, KeyCode::Tab);
     chars(&mut a, "music.example");
     key(&mut a, KeyCode::Tab);
     chars(&mut a, "ann");
     key(&mut a, KeyCode::Tab);
     key(&mut a, KeyCode::Enter);
-    assert!(matches!(a.cmds.last(), Some(Cmd::Login(p)) if p.kind == nori_core::settings::ServerKind::Subsonic && p.url == "https://music.example" && p.user == "ann"), "{:?}", a.cmds);
+    assert!(matches!(a.cmds.last(), Some(Cmd::Login(p)) if p.kind == ServerKind::Subsonic && p.url == "https://music.example" && p.user == "ann"), "{:?}", a.cmds);
+}
+
+/// A provider with nothing to ask is added from the first screen, which stays until that's answered.
+#[test]
+fn nothing_to_ask_adds_at_once() {
+    use nori_core::providers::{ProviderInfo, SignIn};
+    use nori_core::settings::ServerKind;
+    let dir = nori_testdir::TempDir::new("cli-login-add-now");
+    let mut a = app_with_provider(&dir);
+    let kind = ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() };
+    a.login.busy = true;
+    a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: Vec::new() });
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains("Choose a provider") && !s.contains("Connect"), "no lone button:\n{s}");
+    a.handle(Msg::LoggedIn(Err("no way".into())));
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains("no way") && !a.login_choosing(), "its page, with why:\n{s}");
+    // With an account it waits: sign in, or go on as a guest.
+    a.login = Default::default();
+    let web = vec![SignIn::WebPage { start_url: "https://a.example".into() }];
+    a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: web.clone() });
+    assert!(!a.login.adding_now && a.login.error.is_none(), "not added yet");
+    // A name is nothing to ask there.
+    let name = vec![nori_core::providers::FieldSpec { what: nori_core::providers::FormField::Name, advanced: false }];
+    a.provider_opened(&ProviderInfo { kind, fields: name, sign_in: web });
+    assert!(a.login_account() && a.login_fields().is_empty());
+}
+
+/// On the account page Enter signs in and g goes on as a guest.
+#[test]
+fn the_account_pages_keys_say_how_it_goes_on() {
+    use nori_core::providers::{AfterAdding, ProviderInfo, SignIn};
+    use nori_core::settings::ServerKind;
+    let dir = nori_testdir::TempDir::new("cli-login-account-keys");
+    for (code, after) in [(KeyCode::Enter, AfterAdding::SignIn), (KeyCode::Char('g'), AfterAdding::Guest)] {
+        let mut a = app_with_provider(&dir);
+        let kind = ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() };
+        a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: vec![SignIn::WebPage { start_url: "https://a.example".into() }] });
+        let page = draw(&mut a, 100, 40);
+        dump("login-account", &page);
+        assert!(page.contains("Continue as guest"), "{page}");
+        assert_eq!(a.login.after, None, "waits for a key");
+        key(&mut a, code);
+        assert_eq!(a.login.after, Some(after));
+    }
+}
+
+/// With every plugin off the first screen offers none: turning one on wouldn't run it.
+#[test]
+fn every_plugin_off_offers_no_provider() {
+    use crate::settings_view::Shelf;
+    let mut a = app();
+    let repo = nori_plugins::Repo { url: nori_plugins::OFFICIAL.into(), official: true };
+    let offer = nori_plugins::Offer { repo, id: "a.new".into(), name: "New".into(), about: None, source: None, readme: None, icon: None, points: vec!["provider".into()], versions: Vec::new(), installed: None, state: nori_plugins::OfferState::New };
+    a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: vec![offer], failed: Vec::new() });
+    assert_eq!(a.provider_lines().len(), 2);
+    a.prefs.plugins_off = true;
+    assert_eq!(a.provider_lines().len(), 1);
+}
+
+/// A form is titled with its provider, not nori.
+#[test]
+fn a_form_is_titled_with_its_provider() {
+    let mut a = app();
+    a.view = View::Login;
+    a.provider_chosen(nori_core::settings::ServerKind::Subsonic);
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains(" OpenSubsonic ") && !s.contains("nori ·"), "{s}");
+}
+
+/// What a repo offers shows after the kinds, quieter, and only what would add one that isn't on.
+#[test]
+fn the_first_screen_lists_offers_quietly() {
+    use crate::app::ProviderLine;
+    use crate::settings_view::Shelf;
+    let dir = nori_testdir::TempDir::new("cli-login-offers");
+    let mut a = app_with_provider(&dir);
+    let sound = offer("Sound", &official(), None);
+    let source = nori_plugins::Offer { points: vec!["provider".into()], ..offer("Radio", &official(), None) };
+    a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: vec![sound, source], failed: Vec::new() });
+    let lines = a.provider_lines();
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert_eq!(lines[2], ProviderLine::Offered { id: "dev.example.radio".into(), name: "Radio".into() });
+    let s = draw(&mut a, 100, 40);
+    dump("login-providers", &s);
+    let ink_of = |word: &str| {
+        let buf = LAST.with(|l| l.borrow().clone()).unwrap();
+        let line = s.lines().position(|l| l.contains(word)).unwrap() as u16;
+        let x = (0..buf.area.width).find(|&x| buf[(x, line)].symbol() == &word[..1]).unwrap();
+        buf[(x, line)].fg
+    };
+    assert_ne!(ink_of("Radio"), ink_of("Test"), "not on, it is quieter");
+}
+
+/// A repo that can't be read leaves the kinds there are.
+#[test]
+fn a_repo_failing_leaves_the_kinds() {
+    use crate::settings_view::Shelf;
+    let dir = nori_testdir::TempDir::new("cli-login-failed");
+    let mut a = app_with_provider(&dir);
+    a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: Vec::new(), failed: vec![nori_plugins::RepoFailure { repo: official(), reason: "offline".into() }] });
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains("OpenSubsonic") && s.contains("Test"), "{s}");
+}
+
+/// Choosing an offer not installed opens its page; installed from there it is turned on, and back
+/// without installing leaves it. One installed but off just turns on.
+#[test]
+fn choosing_an_offer_installs_or_turns_it_on() {
+    use crate::app::PluginCmd;
+    use crate::settings_view::Shelf;
+    let dir = nori_testdir::TempDir::new("cli-login-offer-chosen");
+    let mut a = app_with_provider(&dir);
+    let radio = nori_plugins::Offer { points: vec!["provider".into()], ..offer("Radio", &official(), None) };
+    a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: vec![radio], failed: Vec::new() });
+    let id = "dev.example.radio".to_string();
+    a.login.choice.at = 2;
+
+    key(&mut a, KeyCode::Enter);
+    assert_eq!((a.view, a.login.offered.clone()), (View::Settings, Some(id.clone())), "its page");
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("Radio about"), "{s}");
+    key(&mut a, KeyCode::Esc);
+    assert_eq!((a.view, a.login.offered.clone()), (View::Login, None), "back chooses again");
+
+    key(&mut a, KeyCode::Enter);
+    a.cmds.clear();
+    a.handle(Msg::Installed(Ok("dev.example.other".into())));
+    assert_eq!(a.view, View::Settings, "another plugin doesn't count");
+    a.handle(Msg::Installed(Ok(id.clone())));
+    assert_eq!(a.view, View::Login);
+    assert!(a.cmds.contains(&Cmd::Plugin(PluginCmd::TurnOnChosen(id.clone()))), "{:?}", a.cmds);
+    assert!(!a.settings.deep() && !a.settings.alone && a.login.offered.is_none());
+
+    a.cmds.clear();
+    a.settings.own.plugins = vec![card(&id, "Radio", Vec::new())];
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::TurnOnChosen(id.clone()))), "off, it just turns on");
+    assert_eq!(a.view, View::Login);
+
+    // Its kind isn't there (every plugin off): the first screen stays.
+    a.provider_chosen(nori_core::settings::ServerKind::Plugin { id });
+    assert_eq!(a.login.kind, None);
 }
 
 #[test]

@@ -45,10 +45,18 @@ pub fn sign_in(name: &str, r: &SignInResult) -> String {
 
 pub const INSTALL_FROM_FILE: &str = "Install from a file";
 pub const LOGIN_MISSING: &str = "Fill in what's asked first";
-pub const LOGIN_KEYS: &str = "tab next field · enter connect · ctrl p plugins · esc back";
-pub const LOGIN_KIND_KEYS: &str = "← → kind · tab next field · enter connect · ctrl p plugins · esc back";
+pub const LOGIN_KEYS: &str = "tab next field · enter connect · esc choose again";
+pub const PROVIDER_CHOOSE: &str = "Choose a provider";
+pub const CONTINUE_AS_GUEST: &str = "Continue as guest";
+pub const ACCOUNT_KEYS: &str = "enter sign in · g continue as guest · esc choose again";
+/// The button that adds a provider and opens its sign-in.
+pub fn provider_sign_in(name: &str) -> String {
+    format!("Sign in to {name}")
+}
+pub const PROVIDER_SUBSONIC_ABOUT: &str = "Navidrome and other servers";
+pub const PROVIDER_KEYS: &str = "↑ ↓ choose · enter open · p plugins · q quit";
+pub const PROVIDER_SAVED_KEYS: &str = "↑ ↓ choose · enter open · tab saved servers · p plugins · esc back · q quit";
 pub const PLUGINS: &str = "Plugins";
-pub const LOGIN_KIND: &str = "Kind";
 pub const FROM_A_PLUGIN: &str = "From a plugin";
 pub const PLUGIN_PATH: &str = "A .noriplugin file or a plugin folder";
 pub const NO_PLUGINS: &str = "No plugins installed.";
@@ -197,6 +205,7 @@ pub fn from_repo(url: &str) -> String {
     format!("From {}, which keeps it up to date.", host(url))
 }
 pub const INSTALLED_OFF: &str = "It stays off until you turn it on.";
+pub const INSTALLED_ON: &str = "It turns on once installed.";
 
 /// What a plugin is, from the extension points it fills and whether it overrides nori's values.
 pub fn plugin_is(points: &[String], overrides: bool) -> String {

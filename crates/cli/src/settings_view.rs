@@ -216,7 +216,7 @@ pub struct SettingsView {
     pub facts_asked: bool,
     /// State shown by the terminal's own rows.
     pub own: Own,
-    /// Only the plugins' group, opened from the login before any profile.
+    /// Only the plugins' group, opened from the first screen before any profile.
     pub alone: bool,
 }
 
@@ -261,7 +261,7 @@ pub struct Own {
 
 impl Own {
     /// What the repos offer, as last read.
-    fn offers(&self) -> &[Offer] {
+    pub fn offers(&self) -> &[Offer] {
         match &self.shelf {
             Shelf::Read(o) => &o.offers,
             _ => &[],

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use nori_core::remote::wire::Op;
+use nori_core::providers::{AfterAdding, SignInStep};
 use nori_core::remote::JamStart;
 use nori_core::settings::SavedServer;
 use nori_host::player::{Playback, QueueShown};
@@ -121,6 +122,8 @@ struct Runner {
     http: Arc<Http>,
     tx: Sender<Msg>,
     session: Option<Session>,
+    /// What follows the profile about to open, when it was just added.
+    after_adding: Option<AfterAdding>,
     /// The lyrics panel was shown when last told to the session ([`Session::lyrics_view`]).
     lyrics_viewed: bool,
     /// Media controls for the process; each session drives them while open.
@@ -203,7 +206,7 @@ pub fn run(o: Options) -> Result<(), String> {
     app.settings.own.device = own::text(own::DEVICE).unwrap_or_default();
     let art = picker.clone().map(Art::new);
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
-    let mut r = Runner { http: Http::new(), tx, session: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
+    let mut r = Runner { http: Http::new(), tx, session: None, after_adding: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
     // Plugins reach the web before any profile opens; a session's own transport takes over.
     app.settings.own.kinds.set_transport(r.http.clone());
     let notices = r.tx.clone();
@@ -228,7 +231,7 @@ pub fn run(o: Options) -> Result<(), String> {
     match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => {
-            app.view = View::Login;
+            app.choose_provider();
             r.update_plugins();
         }
     }
@@ -277,8 +280,19 @@ impl Runner {
                 app.retheme();
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
                 app.output = self.o.device.clone().or_else(|| own::text(own::DEVICE)).unwrap_or_default();
-                if self.session.as_ref().is_some_and(|s| s.client.reminds_to_sign_in()) {
-                    self.offer_sign_in(app);
+                let added = self.after_adding.take();
+                match self.session.as_ref().and_then(|s| s.client.sign_in_step(added)) {
+                    Some(SignInStep::Offer) => self.offer_sign_in(app),
+                    Some(SignInStep::Open) => {
+                        self.offer_sign_in(app);
+                        self.carry(app, Cmd::SignInWindow);
+                    }
+                    Some(SignInStep::StopReminding) => {
+                        if let Some(s) = &self.session {
+                            s.client.stop_reminding();
+                        }
+                    }
+                    None => {}
                 }
                 self.remote_read(app);
                 self.follow(app);
@@ -399,6 +413,10 @@ impl Runner {
                 });
             }
             PluginCmd::Turn(id, on) => host.turn(id, on),
+            PluginCmd::TurnOnChosen(id) => {
+                host.turn(id.clone(), true);
+                app.provider_chosen(nori_core::settings::ServerKind::Plugin { id });
+            }
             PluginCmd::Place(id, at) => host.place(id, at),
             PluginCmd::Uninstall(id) => {
                 app.settings.plugin_gone(&id);
@@ -577,6 +595,7 @@ impl Runner {
                 return app.say(said.clone(), false);
             }
             Msg::LoggedIn(Ok(p)) => {
+                self.after_adding = app.login.after;
                 prefs_changed(app);
                 self.open(app, p.clone());
                 app.go(View::Home);
@@ -696,9 +715,11 @@ impl Runner {
     }
 
     fn carry_out(&mut self, app: &mut App) {
-        let cmds = std::mem::take(&mut app.cmds);
-        for c in cmds {
-            self.carry(app, c);
+        // A command can add one: a provider turned on is added at once.
+        while !app.cmds.is_empty() {
+            for c in std::mem::take(&mut app.cmds) {
+                self.carry(app, c);
+            }
         }
         // The core warms the songs ahead's lyrics only while the panel is shown.
         let viewed = app.lyrics_shown();
@@ -825,10 +846,13 @@ impl Runner {
                 return;
             }
             Cmd::Setting(name, value) => {
-                if let Some(s) = &self.session {
-                    if s.setting(&name, &value).is_none() {
-                        app.say(format!("{name}: not a setting"), true);
-                    }
+                // The first screen has no session, and its plugins' switch still works.
+                let changed = match &self.session {
+                    Some(s) => s.setting(&name, &value),
+                    None => crate::backend::app().settings.edit_by_name(&name, &value),
+                };
+                if changed.is_none() {
+                    app.say(format!("{name}: not a setting"), true);
                 }
                 prefs_changed(app);
                 // Remote control or jams may have come or gone.

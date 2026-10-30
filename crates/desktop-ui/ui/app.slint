@@ -169,6 +169,8 @@ export struct SettingRow {
     control: string,
     icon: image,
     letter: string,
+    // The tile is nori's own provider's.
+    server-tile: bool,
 }
 
 // A tool at the top right of a plugin page: 0 a plus, 1 a folder, 2 the repos.
@@ -209,11 +211,14 @@ export struct EqLine {
     detail: string,
 }
 
-// A kind of profile the login page adds (the core's providers): its words, and the fields its form asks.
+// The kind of profile the sign-in form adds (the core's providers): its words, and the fields it asks.
 export struct LoginKind {
     name: string,
     note: string,
     add: string,
+    // A provider with an account and nothing to fill: its sign-in button, and going on without.
+    sign-in: string,
+    guest: string,
     asks-name: bool,
     asks-address: bool,
     asks-user: bool,
@@ -3902,6 +3907,8 @@ component PluginTile inherits Rectangle {
     in property <length> side: 44px;
     in property <image> icon;
     in property <string> letter;
+    // nori's own provider has no plugin behind it, so the server glyph stands for one.
+    in property <bool> server;
     width: root.side;
     height: root.side;
     border-radius: root.side * 0.22;
@@ -3917,6 +3924,12 @@ component PluginTile inherits Rectangle {
         height: root.side * 0.6;
         source: root.icon;
         colorize: Theme.text;
+    }
+    if root.server: Icon {
+        glyph: Icons.server;
+        colour: Theme.text;
+        width: root.side * 0.6;
+        height: root.side * 0.6;
     }
 }
 
@@ -4037,6 +4050,7 @@ component SettingLine inherits VerticalLayout {
                     side: 44px;
                     icon: root.item.icon;
                     letter: root.item.letter;
+                    server: root.item.server-tile;
                     opacity: root.item.enabled ? 1 : 0.45;
                 }
                 if root.item.kind == 8: Icon {
@@ -5881,8 +5895,13 @@ export component AppWindow inherits Window {
     in property <bool> login-busy;
     in property <bool> can-cancel-login;
     // The kinds of profile offered, and the one being added.
-    in property <[LoginKind]> login-kinds;
-    in-out property <int> login-kind;
+    // The first screen, what a new profile plays from, else the sign-in form of `login-form`.
+    in property <bool> login-choosing;
+    in property <[SettingRow]> provider-rows;
+    in property <PluginTop> provider-top;
+    in property <LoginKind> login-form;
+    // The form adds a profile, so back chooses again; it isn't editing one.
+    in property <bool> login-adding;
 
     callback go(int);
     callback back();
@@ -5945,9 +5964,9 @@ export component AppWindow inherits Window {
     callback cycle-repeat();
     callback jump(int);
     callback login();
-    // Settings › Plugins in a sheet, from the login.
-    callback open-plugins();
-    in-out property <bool> plugins-open;
+    // Settings › Plugins in a sheet, from the first screen.
+    callback close-plugins();
+    in property <bool> plugins-open;
     in property <[SettingRow]> plugin-rows;
     in property <PluginTop> plugin-top;
     // The Plugins tab shows, and the times a plugin page changed: each starts from its top.
@@ -5996,7 +6015,7 @@ export component AppWindow inherits Window {
             background: Theme.ground;
         }
 
-        if root.view == 7: Rectangle {
+        if root.view == 7 && root.login-choosing: Rectangle {
             TitleStrip {
                 y: 0;
                 drag => { root.drag-window(); }
@@ -6007,29 +6026,71 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     alignment: center;
                     VerticalLayout {
+                        width: 440px;
+                        spacing: 12px;
+                        PluginHead {
+                            top: root.provider-top;
+                            action(name) => { root.setting-action(name); }
+                        }
+                        Flickable {
+                            height: min(provider-list.preferred-height, root.height - 220px);
+                            content-height: provider-list.preferred-height;
+                            provider-list := VerticalLayout {
+                                for r in root.provider-rows: SettingLine {
+                                    item: r;
+                                    action(name) => { root.setting-action(name); }
+                                }
+                            }
+                        }
+                        if root.login-error != "": Text {
+                            text: root.login-error;
+                            color: Theme.danger;
+                            wrap: word-wrap;
+                            horizontal-alignment: center;
+                        }
+                        if root.can-cancel-login: HorizontalLayout {
+                            alignment: center;
+                            Capsule {
+                                text: "Cancel";
+                                ink: Theme.fill;
+                                label: Theme.text;
+                                clicked => { root.cancel-login(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.view == 7 && !root.login-choosing: Rectangle {
+            TitleStrip {
+                y: 0;
+                drag => { root.drag-window(); }
+                zoom => { root.zoom-window(); }
+            }
+            if root.login-adding && !root.login-busy: IconButton {
+                x: 16px;
+                y: 44px;
+                glyph: Icons.nav-arrow-left;
+                clicked => { root.setting-action("provider-again"); }
+            }
+            VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    VerticalLayout {
                         width: 360px;
                         spacing: 12px;
-                        HorizontalLayout {
-                            alignment: center;
-                            padding-bottom: 8px;
-                            Image {
-                                source: @image-url("assets/logo.png");
-                                height: 54px;
-                                image-fit: contain;
-                            }
-                        }
-                        if root.login-kinds.length > 1: HorizontalLayout {
-                            spacing: 10px;
-                            alignment: center;
-                            for k[i] in root.login-kinds: Capsule {
-                                text: k.name;
-                                ink: i == root.login-kind ? Theme.pill : Theme.plate;
-                                label: i == root.login-kind ? Theme.pill-ink : Theme.plate-ink;
-                                clicked => { root.login-kind = i; }
-                            }
+                        Text {
+                            text: root.login-form.name;
+                            color: Theme.text;
+                            font-family: Type.title;
+                            font-size: 26px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
                         }
                         Text {
-                            text: root.login-kinds[root.login-kind].note;
+                            text: root.login-form.note;
                             color: Theme.dim;
                             horizontal-alignment: center;
                             wrap: word-wrap;
@@ -6037,22 +6098,22 @@ export component AppWindow inherits Window {
                         Rectangle {
                             height: 10px;
                         }
-                        if root.login-kinds[root.login-kind].asks-name: Field {
+                        if root.login-form.asks-name: Field {
                             icon: Icons.user;
                             placeholder: "Name (optional)";
                             text <=> root.login-name;
                         }
-                        if root.login-kinds[root.login-kind].asks-address: Field {
+                        if root.login-form.asks-address: Field {
                             icon: Icons.server;
                             placeholder: "Server address";
                             text <=> root.login-url;
                         }
-                        if root.login-kinds[root.login-kind].asks-user: Field {
+                        if root.login-form.asks-user: Field {
                             icon: Icons.user;
                             placeholder: "User name";
                             text <=> root.login-user;
                         }
-                        if root.login-kinds[root.login-kind].asks-password: Field {
+                        if root.login-form.asks-password: Field {
                             icon: Icons.key;
                             placeholder: "Password";
                             secret: true;
@@ -6081,22 +6142,31 @@ export component AppWindow inherits Window {
                                 label: Theme.text;
                                 clicked => { root.cancel-login(); }
                             }
-                            Capsule {
-                                text: root.login-busy ? "Signing in…" : root.login-kinds[root.login-kind].add;
+                            if root.login-form.guest != "": Capsule {
+                                text: root.login-form.guest;
+                                ink: Theme.fill;
+                                label: Theme.text;
+                                clicked => {
+                                    if !root.login-busy {
+                                        root.setting-action("provider-guest");
+                                    }
+                                }
+                            }
+                            if root.login-form.guest != "": Capsule {
+                                text: root.login-busy ? "Signing in…" : root.login-form.sign-in;
+                                clicked => {
+                                    if !root.login-busy {
+                                        root.setting-action("provider-sign-in");
+                                    }
+                                }
+                            }
+                            if root.login-form.guest == "": Capsule {
+                                text: root.login-busy ? "Signing in…" : root.login-form.add;
                                 clicked => {
                                     if !root.login-busy {
                                         root.login();
                                     }
                                 }
-                            }
-                        }
-                        // Plugins can add kinds of profile, so they are reached before any profile.
-                        HorizontalLayout {
-                            alignment: center;
-                            ShowAllLink {
-                                text: "Plugins";
-                                font-size: 12px;
-                                clicked => { root.open-plugins(); }
                             }
                         }
                     }
@@ -8228,7 +8298,7 @@ export component AppWindow inherits Window {
         if root.plugins-open: Rectangle {
             background: Theme.ground.with-alpha(0.6);
             TouchArea {
-                clicked => { root.plugins-open = false; }
+                clicked => { root.close-plugins(); }
             }
             MenuSheet {
                 x: (parent.width - self.width) / 2;
@@ -8243,7 +8313,7 @@ export component AppWindow inherits Window {
                         alignment: end;
                         SmallButton {
                             text: "Done";
-                            clicked => { root.plugins-open = false; }
+                            clicked => { root.close-plugins(); }
                         }
                     }
                     PluginHead {

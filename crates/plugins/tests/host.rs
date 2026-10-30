@@ -308,8 +308,9 @@ fn an_offer_says_where_it_stands_and_shows_its_readme() {
     assert_eq!(states()[0], (own.to_string(), OfferState::Update));
 
     let offers = nori_tasks::block_on(plugins.offers()).offers;
-    let providers = |cards| nori_plugins::provider_offers(offers.clone(), cards).len();
+    let providers = |cards| nori_plugins::provider_offers(offers.clone(), cards, false).len();
     assert_eq!(providers(plugins.cards("en".into())), 1, "off, it is offered, once of its two repos");
+    assert!(nori_plugins::provider_offers(offers.clone(), plugins.cards("en".into()), true).is_empty(), "with every plugin off, turning one on wouldn't run it");
     plugins.turn(ID.into(), true);
     assert_eq!(providers(plugins.cards("en".into())), 0, "on, it is a kind of profile already");
     let found = |query: &str, repo: Option<&str>| offers_found(offers.clone(), query.into(), repo.map(String::from)).len();

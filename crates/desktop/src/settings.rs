@@ -11,6 +11,7 @@ use slint::{ModelRc, SharedString, VecModel};
 use nori_look::theme;
 
 use nori_core::providers::Kinds;
+use nori_core::settings::ServerKind;
 use nori_plugins::{AssetLine, AssetState, ControlledDevice, Offer, OfferState, Offers, PluginCard, PluginRow, ReadmeBlock, Repo, RowKind, Value};
 
 use crate::look::Today;
@@ -236,6 +237,8 @@ struct Row {
     /// A plugin row's icon and the letter drawn without one.
     icon: slint::Image,
     letter: String,
+    /// The tile holds the server glyph: nori's own provider.
+    server_tile: bool,
 }
 
 /// The profile whose rows are kept under `profile` (`server_db`), as the server list names it.
@@ -694,6 +697,7 @@ fn model(groups: Vec<(String, Vec<Row>)>, p: &StoredPrefs, f: &Facts, today: Tod
                 line: r.line.into(),
                 control: r.control.into(),
                 icon: r.icon,
+                server_tile: r.server_tile,
                 letter: r.letter.into(),
                 first: i == 0 || !plated[i - 1],
                 last: i + 1 == n || !plated[i + 1],
@@ -743,6 +747,12 @@ pub struct Plugged {
     pub readme_asked: Option<(String, Option<String>, Option<String>)>,
     pub readme: Vec<ReadmeBlock>,
     pub icons: Icons,
+    /// The first screen shows: its offers' tiles are wanted too.
+    pub choosing: bool,
+    /// The switch over every plugin (the `pluginsOff` setting) is on.
+    pub all_off: bool,
+    /// The plugin whose page the first screen opened; installed, it is turned on and its form opens.
+    pub offered: Option<String>,
 }
 
 impl Plugged {
@@ -769,7 +779,10 @@ impl Plugged {
         let offers = self.offers();
         let offer = |id: &str| nori_plugins::offer_of(offers, id, self.cards.iter().find(|c| c.id == id)).map(|(_, o)| o.clone());
         let shown: Vec<String> = match self.stack.last() {
-            None => self.cards.iter().map(|c| c.id.clone()).collect(),
+            None => {
+                let chosen_from = if self.choosing { nori_plugins::provider_offers(offers.to_vec(), self.cards.clone(), self.all_off) } else { Vec::new() };
+                self.cards.iter().map(|c| c.id.clone()).chain(chosen_from.into_iter().map(|o| o.id)).collect()
+            }
             Some(PluginPage::Browser) => nori_plugins::offers_found(offers.to_vec(), self.query.clone(), self.repo_shown.clone()).into_iter().map(|o| o.id).collect(),
             Some(PluginPage::Repos) => Vec::new(),
             Some(PluginPage::Plugin(id)) => vec![id.clone()],
@@ -803,6 +816,18 @@ impl Plugged {
         if self.readme_asked.as_ref().is_some_and(|a| a.0 == id) {
             self.readme = blocks;
         }
+    }
+
+    /// Back a page; true when that left the plugin offered, whose sheet then closes.
+    pub fn back(&mut self) -> bool {
+        self.stack.pop();
+        self.stack.is_empty() && self.offered.take().is_some()
+    }
+
+    /// What a plugin's kind says of itself; nori's own kinds are worded by the client.
+    pub fn about_of(&self, kind: &ServerKind) -> Option<&str> {
+        let ServerKind::Plugin { id } = kind else { return None };
+        self.cards.iter().find(|c| c.id == *id)?.about.as_deref()
     }
 
     /// Closes the pages of a plugin just removed.
@@ -863,6 +888,19 @@ pub enum PluginAct {
     Noise(String),
     /// Lets a plugin fetch its assets on mobile data.
     AllowMobile(String),
+    /// The first screen's choice: this kind's form.
+    Choose(ServerKind),
+    /// The first screen's choice of a plugin installed but off.
+    TurnOn(String),
+    /// The first screen's choice of a plugin not installed: its page.
+    OfferPage(String),
+    /// Every plugin and the repos, over the first screen.
+    Sheet,
+    /// Back from the form to the first screen.
+    ChooseAgain,
+    /// A provider's page: adds it and opens its sign-in, or goes on as a guest.
+    AddSigningIn,
+    AddAsGuest,
 }
 
 impl PluginAct {
@@ -900,6 +938,14 @@ impl PluginAct {
             "repo-remove" => PluginAct::RemoveRepo(id()),
             "device-noise" => PluginAct::Noise(id()),
             "plugin-mobile" => PluginAct::AllowMobile(id()),
+            "provider-own" => PluginAct::Choose(ServerKind::Subsonic),
+            "provider" => PluginAct::Choose(ServerKind::Plugin { id: id() }),
+            "provider-on" => PluginAct::TurnOn(id()),
+            "provider-offer" => PluginAct::OfferPage(id()),
+            "plugins-sheet" => PluginAct::Sheet,
+            "provider-again" => PluginAct::ChooseAgain,
+            "provider-sign-in" => PluginAct::AddSigningIn,
+            "provider-guest" => PluginAct::AddAsGuest,
             _ => return None,
         })
     }
@@ -929,6 +975,14 @@ impl PluginAct {
             PluginAct::RemoveRepo(url) => format!("repo-remove:{url}"),
             PluginAct::Noise(device) => format!("device-noise:{device}"),
             PluginAct::AllowMobile(id) => format!("plugin-mobile:{id}"),
+            PluginAct::Choose(ServerKind::Subsonic) => "provider-own".into(),
+            PluginAct::Choose(ServerKind::Plugin { id }) => format!("provider:{id}"),
+            PluginAct::TurnOn(id) => format!("provider-on:{id}"),
+            PluginAct::OfferPage(id) => format!("provider-offer:{id}"),
+            PluginAct::Sheet => "plugins-sheet".into(),
+            PluginAct::ChooseAgain => "provider-again".into(),
+            PluginAct::AddSigningIn => "provider-sign-in".into(),
+            PluginAct::AddAsGuest => "provider-guest".into(),
         }
     }
 }
@@ -945,6 +999,33 @@ fn plugin_groups(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
         Some(PluginPage::Repos) => repos_page(p),
         Some(PluginPage::Plugin(id)) => plugin_page(p, id),
     }
+}
+
+/// The first screen as it draws: what a new profile can play from.
+pub fn provider_rows(p: &Plugged, kinds: &Kinds, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    model(vec![(String::new(), provider_choices(p, kinds))], prefs, f, today)
+}
+
+/// The first screen's head: what it asks, and the plus to every plugin and the repos.
+pub fn provider_top() -> PluginTop {
+    PluginTop { title: words::PROVIDER_CHOOSE.into(), tools: tools(&[(TOOL_PLUS, words::GET_PLUGINS, PluginAct::Sheet)]), ..Default::default() }
+}
+
+/// nori's own and the plugins' providers in ink, then, quieter, those a repo offers that aren't on.
+fn provider_choices(p: &Plugged, kinds: &Kinds) -> Vec<Row> {
+    let active = kinds.providers().into_iter().map(|i| {
+        let name = crate::words::provider_of(kinds, &i.kind).name;
+        let act = PluginAct::Choose(i.kind.clone()).name();
+        match &i.kind {
+            ServerKind::Subsonic => Row { kind: PLUGIN, name: act, title: name, detail: words::PROVIDER_SUBSONIC_ABOUT.into(), server_tile: true, enabled: true, ..Default::default() },
+            ServerKind::Plugin { id } => Row { name: act, ..plugin_line(p, id, &name, None, String::new()) },
+        }
+    });
+    let offered = nori_plugins::provider_offers(p.offers().to_vec(), p.cards.clone(), p.all_off).into_iter().map(|o| {
+        let act = if p.cards.iter().any(|c| c.id == o.id) { PluginAct::TurnOn(o.id.clone()) } else { PluginAct::OfferPage(o.id.clone()) };
+        Row { name: act.name(), enabled: false, ..plugin_line(p, &o.id, &o.name, None, String::new()) }
+    });
+    active.chain(offered).collect()
 }
 
 /// A plugin in a list: its tile, name, what it is, a quiet `line`; opening it opens its page.
@@ -1429,7 +1510,7 @@ mod tests {
     fn offer(id: &str, repo: &Repo, state: OfferState) -> Offer {
         let version = |v: &str| Version { repo: repo.url.clone(), version: v.into(), released: None, url: String::new(), sha256: String::new(), key: None, signature: None };
         let installed = (state != OfferState::New).then(|| "1.0.0".to_string());
-        Offer { repo: repo.clone(), id: id.into(), name: id.into(), about: None, source: Some("https://code.example/x".into()), readme: None, icon: Some(format!("https://i.example/{id}.png")), versions: vec![version("2.0.0"), version("1.0.0")], installed, state }
+        Offer { repo: repo.clone(), id: id.into(), name: id.into(), about: None, source: Some("https://code.example/x".into()), readme: None, icon: Some(format!("https://i.example/{id}.png")), points: Vec::new(), versions: vec![version("2.0.0"), version("1.0.0")], installed, state }
     }
 
     fn row(id: &str, kind: RowKind, value: Option<Value>) -> PluginRow {
@@ -1612,6 +1693,77 @@ mod tests {
         p.stack = vec![PluginPage::Plugin("a.two".into())];
         assert!(p.readme_wanted().is_some());
         assert!(p.readme.is_empty(), "another plugin's isn't shown");
+    }
+
+    fn provider_offer(id: &str) -> Offer {
+        Offer { points: vec!["provider".into()], ..offer(id, &official(), OfferState::New) }
+    }
+
+    /// With `offers` read and the plugins `cards` installed.
+    fn offering(offers: Vec<Offer>, cards: Vec<PluginCard>) -> Plugged {
+        Plugged { cards, shelf: Shelf::Read(Offers { offers, failed: Vec::new() }), ..Default::default() }
+    }
+
+    /// nori's own provider in ink, on its glyph; an offer quiet, opening its page or, installed, turning on.
+    #[test]
+    fn offers_are_quiet_and_say_what_choosing_does() {
+        let installed = PluginCard { enabled: false, ..plugin_card("b.off", Vec::new()) };
+        let mut plugged = offering(vec![provider_offer("a.new"), provider_offer("b.off"), provider_offer("c.on"), offer("d.sound", &official(), OfferState::New)], vec![installed, plugin_card("c.on", Vec::new())]);
+        let rows = provider_choices(&plugged, &Kinds::builtin());
+        plugged.all_off = true;
+        assert_eq!(provider_choices(&plugged, &Kinds::builtin()).len(), 1, "with every plugin off, only nori's own");
+        let got: Vec<(&str, bool, bool)> = rows.iter().map(|r| (r.title.as_str(), r.enabled, r.server_tile)).collect();
+        assert_eq!(got, [("OpenSubsonic", true, true), ("a.new", false, false), ("b.off", false, false)], "only providers not on");
+        let acts: Vec<_> = rows.iter().map(|r| PluginAct::of(&r.name)).collect();
+        assert_eq!(acts, [Some(PluginAct::Choose(ServerKind::Subsonic)), Some(PluginAct::OfferPage("a.new".into())), Some(PluginAct::TurnOn("b.off".into()))]);
+    }
+
+    /// An active plugin's provider is chosen as its kind, in ink.
+    #[test]
+    fn an_active_provider_chooses_its_kind() {
+        let dir = nori_testdir::TempDir::new("desktop-providers");
+        let host = nori_plugins::open(dir.path().join("plugins"), nori_core::settings_store::Settings::new(), std::sync::Arc::new(nori_host::desktop::Watched::default()));
+        let id = host.install_from(nori_plugins::testing::fixture("").to_string_lossy().into_owned()).unwrap();
+        host.turn(id.clone(), true);
+        let rows = provider_choices(&Plugged::default(), &Kinds::with_plugins(host));
+        assert_eq!((rows.len(), rows[1].enabled, rows[1].server_tile), (2, true, false));
+        assert_eq!(PluginAct::of(&rows[1].name), Some(PluginAct::Choose(ServerKind::Plugin { id })));
+    }
+
+    /// Repos that can't be read, or not read yet, leave the providers there are.
+    #[test]
+    fn providers_show_without_the_repos() {
+        let failed = Plugged { shelf: Shelf::Read(Offers { offers: Vec::new(), failed: vec![nori_plugins::RepoFailure { repo: official(), reason: "offline".into() }] }), ..Default::default() };
+        for p in [failed, Plugged { shelf: Shelf::Asking, ..Default::default() }] {
+            assert_eq!(provider_choices(&p, &Kinds::builtin()).iter().map(|r| r.title.as_str()).collect::<Vec<_>>(), ["OpenSubsonic"]);
+        }
+    }
+
+    /// The first screen's tiles are asked for, and only while it shows.
+    #[test]
+    fn the_first_screen_wants_its_offers_tiles() {
+        let mut p = offering(vec![provider_offer("a.new")], Vec::new());
+        assert!(p.icons_wanted().is_empty());
+        p.choosing = true;
+        assert_eq!(p.icons_wanted().iter().map(|w| w.0.as_str()).collect::<Vec<_>>(), ["a.new"]);
+    }
+
+    /// Back from the page of the plugin offered closes the sheet; back in the sheet's own pages doesn't.
+    #[test]
+    fn back_from_the_offer_closes_its_sheet() {
+        let mut p = Plugged { stack: vec![PluginPage::Plugin("a.new".into())], offered: Some("a.new".into()), ..Default::default() };
+        assert!(p.back());
+        assert_eq!(p.offered, None);
+        let mut p = Plugged { stack: vec![PluginPage::Browser, PluginPage::Plugin("a.new".into())], ..Default::default() };
+        assert!(!p.back() && !p.back(), "the plus's list stays");
+    }
+
+    /// The first screen's row names parse back to what they do.
+    #[test]
+    fn provider_acts_round_trip() {
+        for act in [PluginAct::Choose(ServerKind::Subsonic), PluginAct::Choose(ServerKind::Plugin { id: "a.b".into() }), PluginAct::TurnOn("a.b".into()), PluginAct::OfferPage("a.b".into()), PluginAct::Sheet, PluginAct::ChooseAgain, PluginAct::AddSigningIn, PluginAct::AddAsGuest] {
+            assert_eq!(PluginAct::of(&act.name()), Some(act));
+        }
     }
 
     /// A tile is empty until the icon is heard of, then the icon, or the letter for a plugin with none;
