@@ -471,8 +471,11 @@ class PlaylistViewModel(app: Application) : DetailViewModel<PlaylistDetail>(app)
     override fun load(id: String) = version.flatMapLatest { nori.library.playlist(id) }
 }
 
-class GenreViewModel(app: Application) : DetailViewModel<List<Song>>(app) {
-    override fun load(id: String) = flow { emit(nori.library.songsByGenre(id)) }
+/** A genre's songs, and the cover its tile in search shows. */
+class GenrePage(val songs: List<Song>, val coverArt: String?)
+
+class GenreViewModel(app: Application) : DetailViewModel<GenrePage>(app) {
+    override fun load(id: String) = flow { emit(GenrePage(nori.library.songsByGenre(id), runCatching { nori.library.genreCover(id) }.getOrNull())) }
 }
 
 /** The orders of the "all songs" list; what each sorts on is the core's (`song_sorts`), its name Say's. */

@@ -254,6 +254,7 @@ class Library(
 
     /** The [limit] genres with most indexed songs, each with a cover (the core's `genre_tiles`). */
     suspend fun genreTiles(limit: Int): List<dev.nori.music.ffi.library.GenreTile> = withContext(Dispatchers.IO) { core.genreTiles(limit.toUInt()) }
+    suspend fun genreCover(genre: String): String? = withContext(Dispatchers.IO) { core.genreCover(genre) }
 
 
     suspend fun randomSongs(): List<Song> = call(Read.RandomSongs(sizes.randomSongs, null)) { (it as Page.Songs).v }
