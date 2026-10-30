@@ -95,6 +95,14 @@ impl Core {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
+    /// The cover `genre`'s tile shows, for its page; none without indexed songs of it.
+    pub fn genre_cover(&self, genre: String) -> Result<Option<String>> {
+        let c = self.db.lock();
+        let sql = format!("SELECT {GENRE_COVER} FROM items WHERE server=sid() AND kind={} AND json_extract(json, '$.genre') = ?1 COLLATE NOCASE", db::ItemKind::Song as i64);
+        let cover = c.prepare_cached(&sql)?.query_row([genre], |r| r.get(0))?;
+        Ok(cover)
+    }
+
     /// Decades with indexed songs, newest first, with song counts.
     pub fn browse_decades(&self) -> Result<Vec<Decade>> {
         let c = self.db.lock();
@@ -219,9 +227,12 @@ fn albums_sql(sort: AlbumSort, reversed: bool) -> String {
 
 /// [`Core::genre_tiles`]' query, limit ?1. The song kind written out, so the partial genre index (db.rs
 /// `items_genre`) serves the grouping.
+/// Which of a genre's songs' covers stands for it: one rule for its tile and its page.
+const GENRE_COVER: &str = "max(json_extract(json, '$.coverArt'))";
+
 fn genres_sql() -> String {
     format!(
-        "SELECT json_extract(json, '$.genre') AS g, count(*) AS n, max(json_extract(json, '$.coverArt')) FROM items
+        "SELECT json_extract(json, '$.genre') AS g, count(*) AS n, {GENRE_COVER} FROM items
          WHERE server=sid() AND kind={} AND g <> '' GROUP BY g COLLATE NOCASE ORDER BY n DESC, g LIMIT ?1",
         db::ItemKind::Song as i64
     )
@@ -256,6 +267,9 @@ pub(crate) mod tests {
         assert_eq!(got, [("rock".to_string(), 3), ("jazz".into(), 1)], "one rock whatever its case, no untagged");
         assert_eq!(tiles[1].cover_art.as_deref(), Some("jazz-cover"));
         assert_eq!(core.genre_tiles(1).unwrap().len(), 1);
+        assert_eq!(core.genre_cover("JAZZ".into()).unwrap().as_deref(), Some("jazz-cover"), "a genre's page has its tile's cover");
+        assert_eq!(core.genre_cover("Rock".into()).unwrap(), tiles[0].cover_art);
+        assert_eq!(core.genre_cover("Polka".into()).unwrap(), None);
     }
 
     #[test]

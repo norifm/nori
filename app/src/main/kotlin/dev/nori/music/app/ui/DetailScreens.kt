@@ -72,12 +72,15 @@ private fun FilterField(count: Int, filter: String, onFilter: (String) -> Unit) 
 internal fun SongListPage(
     title: String, songs: List<Song>, done: Set<String>, from: PageOrigin, actions: ActionsViewModel,
     headLabel: String = if (songs.isEmpty()) "" else say.listCaption(songs.size, songs.sumOf { it.duration.toLong() }, true),
-    pageActions: @Composable RowScope.() -> Unit = {}, content: LazyListScope.() -> Unit,
+    pageActions: @Composable RowScope.() -> Unit = {},
+    coverUrl: String? = null, coverStandIns: List<String?> = emptyList(),
+    content: LazyListScope.() -> Unit,
 ) {
     val any = songs.isNotEmpty()
     HeroPage(
-        coverUrl = null,
+        coverUrl = coverUrl,
         title = title,
+        coverStandIns = coverStandIns,
         onPlay = if (any) { { actions.play(songs, from = from) } } else null,
         onShuffle = if (any) { { actions.shuffle(songs, from) } } else null,
         queue = remember(from) { dev.nori.music.ffi.library.PageQueue(from) },
@@ -515,9 +518,12 @@ fun GenreScreen(name: String, actions: ActionsViewModel, vm: GenreViewModel = vi
     val load by vm.ui.collectAsStateWithLifecycle()
     val list = rememberSongListState(actions)
     val from = rememberOrigin(OriginKind.GENRE, name)
-    LoadBox(load) { songs ->
-        SongListPage(name, songs, list.downloaded, from, actions) {
-            songRows(songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
+    LoadBox(load) { page ->
+        SongListPage(
+            name, page.songs, list.downloaded, from, actions,
+            coverUrl = vm.cover(page.coverArt, CoverSize.FULL), coverStandIns = listOf(vm.cover(page.coverArt, CoverSize.ROW)),
+        ) {
+            songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
         }
     }
 }
