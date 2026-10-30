@@ -248,6 +248,9 @@ pub fn search_preview(r: &SearchResult) -> Vec<PreviewLine> {
 /// Shorter than this, a query is a keystroke on the way to one, not one worth remembering.
 pub const REMEMBER_MIN_UTF16: usize = 2;
 
+/// How many recent searches a profile keeps: the newest, few enough to sit above what an empty search browses.
+pub const SEARCHES_KEPT: u32 = 6;
+
 /// How long live search waits after a keystroke before asking the server, ms.
 pub const LIVE_SEARCH_DELAY_MS: i64 = 150;
 

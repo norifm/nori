@@ -149,6 +149,7 @@ class Library(
 
     suspend fun searchHistory(): List<String> = withContext(Dispatchers.IO) { core.searchHistory() }
     suspend fun forgetSearches() = withContext(Dispatchers.IO) { core.searchForget() }
+    suspend fun forgetSearch(query: String) = withContext(Dispatchers.IO) { core.searchForgetOne(query) }
 
     // ---- browse ----
 

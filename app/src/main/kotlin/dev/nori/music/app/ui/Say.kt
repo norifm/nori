@@ -112,6 +112,7 @@ class Say(private val r: Resources) {
     val reportProblemDetail: String = r.getString(R.string.report_problem_detail)
     val reportFailed: String = r.getString(R.string.report_failed)
     val clear: String = r.getString(R.string.clear)
+    val clearAll: String = r.getString(R.string.clear_all)
     val reset: String = r.getString(R.string.reset)
     val open: String = r.getString(R.string.open)
     val import: String = r.getString(R.string.import_it)

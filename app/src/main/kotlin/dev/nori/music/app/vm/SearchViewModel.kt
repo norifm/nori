@@ -118,4 +118,9 @@ class SearchViewModel(app: Application) : NoriViewModel(app) {
         nori.library.forgetSearches()
         _ui.update { it.copy(history = emptyList()) }
     }
+
+    fun forgetSearch(query: String) = viewModelScope.launch {
+        _ui.update { it.copy(history = it.history - query) }
+        nori.library.forgetSearch(query)
+    }
 }
