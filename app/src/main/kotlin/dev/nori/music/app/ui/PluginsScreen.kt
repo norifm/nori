@@ -57,6 +57,7 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import dev.nori.music.ffi.plugins.Offer
 import dev.nori.music.ffi.plugins.OfferState
 import dev.nori.music.ffi.plugins.ReadmeBlock
+import dev.nori.music.ffi.plugins.Repo
 import dev.nori.music.ffi.plugins.PluginCard
 import dev.nori.music.ffi.plugins.PluginRow
 import dev.nori.music.ffi.plugins.RowKind
@@ -70,6 +71,9 @@ private const val DIMMED = 0.38f
 private fun repoName(url: String, official: Boolean): String = if (official) say.pluginRepoOfficial else repoHost(url)
 
 private fun repoHost(url: String): String = android.net.Uri.parse(url).host ?: url
+
+/** The repo at [url] as its rows name it, among [repos]. */
+private fun repoName(url: String, repos: List<Repo>): String = repoName(url, repos.any { it.url == url && it.official })
 
 /** What a card is, in words: its extension points and whether it changes nori's values. */
 private fun PluginCard.kinds() = say.pluginKinds(points, overrides.isNotEmpty())
@@ -190,7 +194,7 @@ fun PluginBrowser(vm: PluginsViewModel, pages: PluginPages) {
         }
         items(found, key = { it.repo.url + it.id }) { o ->
             val version = o.versions.firstOrNull()?.version.orEmpty()
-            PluginLine(vm, o.id, o, o.name, o.about, say.pluginOfferLine(version, repoName(o.repo.url, o.repo.official)), true, Modifier.testTag("offer-${o.id}"), { pages.open(o.id) }) {
+            PluginLine(vm, o.id, o, o.name, o.about, say.pluginOfferLine(version, repoName(o.repo.url, o.repo.official)), true, Modifier.testTag("offer-${o.id}"), { pages.open(o.id) }, Space.gutter) {
                 when (o.state) {
                     OfferState.NEW -> TextAction(say.pluginInstall, { vm.previewOffer(o) })
                     OfferState.UPDATE -> TextAction(say.pluginUpdate, { vm.previewOffer(o) })
@@ -255,9 +259,9 @@ private fun PluginTile(vm: PluginsViewModel, id: String, offer: Offer?, name: St
 
 /** A plugin in a list: its tile, name, what it is on up to two lines, a quiet [line], and what ends the row. */
 @Composable
-private fun PluginLine(vm: PluginsViewModel, id: String, offer: Offer?, name: String, about: String?, line: String, divider: Boolean, modifier: Modifier, open: () -> Unit, trailing: @Composable () -> Unit) {
+private fun PluginLine(vm: PluginsViewModel, id: String, offer: Offer?, name: String, about: String?, line: String, divider: Boolean, modifier: Modifier, open: () -> Unit, inset: Dp = GROUP_INSET, trailing: @Composable () -> Unit) {
     Column(modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().clickable(onClick = open).padding(horizontal = GROUP_INSET, vertical = 12.dp), Arrangement.spacedBy(12.dp), Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().clickable(onClick = open).padding(horizontal = inset, vertical = 12.dp), Arrangement.spacedBy(12.dp), Alignment.CenterVertically) {
             PluginTile(vm, id, offer, name, 44.dp)
             Column(Modifier.weight(1f)) {
                 Text(name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -266,7 +270,7 @@ private fun PluginLine(vm: PluginsViewModel, id: String, offer: Offer?, name: St
             }
             trailing()
         }
-        if (divider) Hairline(startIndent = GROUP_INSET + 44.dp + 12.dp)
+        if (divider) Hairline(startIndent = inset + 44.dp + 12.dp)
     }
 }
 
@@ -315,6 +319,7 @@ private fun AddRepoSheet(visible: Boolean, close: () -> Unit, add: (String) -> U
 @Composable
 private fun InstallSheet(vm: PluginsViewModel) {
     val preview by vm.preview.collectAsStateWithLifecycle()
+    val repos by vm.repos.collectAsStateWithLifecycle()
     NoriSheet(preview, vm::dropPreview) { p ->
         val c = p.card
         SheetPage(c.name, {
@@ -322,7 +327,7 @@ private fun InstallSheet(vm: PluginsViewModel) {
             TextAction(say.pluginInstall, vm::installPreview, Modifier.testTag("install-confirm"))
         }) {
             c.about?.let { Text(it) }
-            Quiet(listOfNotNull(say.pluginVersion(c.version), c.kinds().takeIf { it.isNotEmpty() }, p.repo?.let { android.net.Uri.parse(it).host }, say.pluginUnsigned.takeIf { p.key == null }).joinToString(" · "))
+            Quiet(listOfNotNull(say.pluginVersion(c.version), c.kinds().takeIf { it.isNotEmpty() }, p.repo?.let { repoName(it, repos) }, say.pluginUnsigned.takeIf { p.key == null }).joinToString(" · "))
             Text(say.pluginMayTitle, style = MaterialTheme.typography.titleSmall)
             say.pluginMay(c).forEach { Text("· $it") }
         }
@@ -379,7 +384,8 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
             PluginTile(vm, id, offer, name, 64.dp)
             Column(Modifier.weight(1f)) {
                 Text(name, style = titled(MaterialTheme.typography.headlineSmall), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                val repo = card?.repo?.let(android.net.Uri::parse)?.host ?: offer?.takeIf { card == null }?.let { repoName(it.repo.url, it.repo.official) }
+                val repos by vm.repos.collectAsStateWithLifecycle()
+                val repo = (card?.repo ?: offer?.repo?.url.takeIf { card == null })?.let { repoName(it, repos) }
                 Quiet(listOfNotNull(card?.version ?: newest?.version, card?.kinds()?.takeIf { it.isNotEmpty() }, repo, say.pluginFromFile.takeIf { card != null && card.repo == null }).joinToString(" · "))
             }
             if (card != null) MoreButton(listOfNotNull(
@@ -424,7 +430,7 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
                     GroupRow(
                         v.version, minHeight = 44.dp, value = v.released, divider = i < offer.versions.lastIndex || offer.source != null,
                         trailing = {
-                            if (v.version != card?.version) TextAction(say.pluginInstall, { vm.previewVersion(v) }, Modifier.padding(start = 8.dp))
+                            if (v.version != (card?.version ?: newest?.version)) TextAction(say.pluginInstall, { vm.previewVersion(v) }, Modifier.padding(start = 8.dp))
                         },
                     )
                 }
