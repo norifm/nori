@@ -339,7 +339,7 @@ class Say(private val r: Resources) {
     } + listOfNotNull(R.string.plugins_kind_overrides.takeIf { overrides })).joinToString(" · ") { r.getString(it) }
     /** What a plugin may do, one line each: what it reaches, whether it plays music or changes the sound, the values it changes. */
     fun pluginMay(c: dev.nori.music.ffi.plugins.PluginCard): List<String> = listOfNotNull(
-        if (c.net.isEmpty() && !c.lan) r.getString(R.string.plugins_may_reach_nothing) else c.net.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_reach, it.joinToString(", ")) },
+        c.net.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_reach, it.joinToString(", ")) },
         r.getString(R.string.plugins_may_reach_lan).takeIf { c.lan },
         r.getString(R.string.plugins_may_bluetooth).takeIf { c.bluetooth },
         r.getString(R.string.plugins_may_play).takeIf { "provider" in c.points },
@@ -406,8 +406,7 @@ class Say(private val r: Resources) {
     val pluginSource: String get() = r.getString(R.string.plugins_source)
     val pluginFromFile: String get() = r.getString(R.string.plugins_from_file)
     val pluginUnsigned: String get() = r.getString(R.string.plugins_unsigned)
-    val pluginsOff: String get() = r.getString(R.string.settings_plugins_off)
-    val pluginsOffDetail: String get() = r.getString(R.string.settings_plugins_off_detail)
+    val pluginsEvery: String get() = r.getString(R.string.plugins_every)
     /** Why plugins are off at this start: [names] of those nori stopped in, or none for a start that didn't finish. */
     fun pluginsSafe(safe: dev.nori.music.ffi.plugins.SafeStart, names: List<String>): String = when (safe) {
         is dev.nori.music.ffi.plugins.SafeStart.Crashed -> r.getString(R.string.plugins_safe_crashed, names.joinToString(", "))

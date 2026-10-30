@@ -130,7 +130,7 @@ pub enum Row {
     /// A line of text: enter asks for a new one. A secret's is never shown.
     Text { title: String, shown: String, secret: bool, target: Target },
     /// An installed plugin: enter opens its page, ← → switch it, K J move it, d removes it.
-    Plugin { id: String, title: String, detail: String, on: bool },
+    Plugin { id: String, title: String, detail: String, on: bool, enabled: bool },
     /// A plugin a repo offers, with where it stands: enter opens its page.
     Offer { id: String, title: String, detail: String, status: String },
     /// A line of a plugin's words, wrapped to the page. `quiet`: code, in the quiet ink.
@@ -619,6 +619,7 @@ fn plugins_page(own: &Own, all_off: bool) -> Vec<Section> {
         sections.push(section("", vec![Row::Note { text: text::NO_PLUGINS.into() }]));
         return sections;
     }
+    sections[0].rows.push(Row::Toggle { switch: Switch::AllOff, title: text::ALL_PLUGINS.into(), detail: String::new(), on: !all_off, enabled: true });
     let updates: Vec<Row> = nori_plugins::updates_waiting(own.offers(), cards)
         .into_iter()
         .filter_map(|o| Some(Row::Offer { id: o.id.clone(), title: o.name.clone(), detail: text::update_line(o.installed.as_deref()?, &o.versions.first()?.version), status: text::UPDATE.into() }))
@@ -629,10 +630,9 @@ fn plugins_page(own: &Own, all_off: bool) -> Vec<Section> {
     let installed = cards.iter().map(|c| {
         let mut detail: Vec<String> = c.about.iter().cloned().collect();
         detail.push(c.version.clone());
-        Row::Plugin { id: c.id.clone(), title: c.name.clone(), detail: detail.join(" · "), on: c.enabled }
+        Row::Plugin { id: c.id.clone(), title: c.name.clone(), detail: detail.join(" · "), on: c.enabled, enabled: !all_off }
     });
     sections.push(section(text::INSTALLED_LIST, installed.collect()));
-    sections.push(section(text::EVERY_PLUGIN, vec![Row::Toggle { switch: Switch::AllOff, title: text::PLUGINS_OFF.into(), detail: text::PLUGINS_OFF_NOTE.into(), on: all_off, enabled: true }]));
     sections
 }
 
@@ -772,7 +772,10 @@ fn plugin_page(own: &Own, id: &str) -> Page {
     }
     sections.extend(readme_sections(&own.readme, own.wrap));
     if let Some(c) = card {
-        sections.push(section(text::PLUGIN_MAY, text::plugin_may(c).iter().flat_map(|l| prose(l, own.wrap)).collect()));
+        let may = text::plugin_may(c);
+        if !may.is_empty() {
+            sections.push(section(text::PLUGIN_MAY, may.iter().flat_map(|l| prose(l, own.wrap)).collect()));
+        }
     }
     if let Some((at, o)) = found {
         sections.push(versions(card, at, o));
@@ -825,7 +828,7 @@ pub fn open_row(row: Row) -> Option<Opened> {
         Row::Toggle { switch: Switch::Plugin { plugin, row }, on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(!on)))]),
         Row::Toggle { switch: Switch::Turn(plugin), on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Turn(plugin, !on))]),
         Row::Toggle { switch: Switch::Hold(plugin), on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Hold(plugin, !on))]),
-        Row::Toggle { switch: Switch::AllOff, on, .. } => Opened::Cmds(all_off(!on)),
+        Row::Toggle { switch: Switch::AllOff, on, .. } => Opened::Cmds(all_off(on)),
         Row::Toggle { switch, .. } => Opened::Own(switch),
         Row::Choice { target, title, options, shown, enabled: true, .. } => {
             let at = options.iter().position(|o| o.0 == shown).unwrap_or(0);
@@ -887,7 +890,7 @@ pub fn step_row(row: Row, up: bool) -> Vec<Cmd> {
                 Switch::Plugin { plugin, row } => vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(up)))],
                 Switch::Turn(plugin) => vec![Cmd::Plugin(PluginCmd::Turn(plugin, up))],
                 Switch::Hold(plugin) => vec![Cmd::Plugin(PluginCmd::Hold(plugin, up))],
-                Switch::AllOff => all_off(up),
+                Switch::AllOff => all_off(!up),
                 Switch::Mouse => vec![Cmd::Mouse(up)],
                 Switch::Images => vec![Cmd::Images(up)],
                 Switch::Transparent => vec![Cmd::Paint(!up)],
@@ -1373,7 +1376,7 @@ pub fn row_words(row: &Row) -> (String, String) {
 /// Whether the row is live; inactive settings are drawn dimmed.
 pub fn row_enabled(row: &Row) -> bool {
     match row {
-        Row::Toggle { enabled, .. } | Row::Choice { enabled, .. } | Row::Action { enabled, .. } | Row::Ranked { enabled, .. } | Row::Season { enabled, .. } => *enabled,
+        Row::Toggle { enabled, .. } | Row::Choice { enabled, .. } | Row::Action { enabled, .. } | Row::Ranked { enabled, .. } | Row::Season { enabled, .. } | Row::Plugin { enabled, .. } => *enabled,
         _ => true,
     }
 }

@@ -2156,7 +2156,7 @@ fn the_list_of_plugins_keeps_each_to_a_line() {
     let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
     assert!(line("Gain does things").contains("1.2.0") && line("Gain does things").contains("Off ›"), "{s}");
     assert!(!s.contains("Switch row"), "its rows are on its page:\n{s}");
-    assert!(line("Turn every plugin off").contains("Off"), "{s}");
+    assert!(line("All plugins").contains("On"), "{s}");
     select_row(&mut a, |r| matches!(r, Row::Toggle { switch: Switch::AllOff, .. }));
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.split_off(0), vec![Cmd::Setting("pluginsOff".into(), "true".into()), Cmd::Plugin(PluginCmd::Switched)], "the setting, then the plugins told");

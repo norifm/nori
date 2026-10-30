@@ -2684,7 +2684,7 @@ impl App {
         let ui = self.ui();
         let prefs = crate::session::app().settings.current().unwrap_or_default();
         ui.set_plugin_rows(crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, crate::look::Today::now()));
-        ui.set_plugin_top(crate::settings::plugin_top(&self.plugged));
+        ui.set_plugin_top(crate::settings::plugin_top(&self.plugged, prefs.plugins_off));
         self.settings_shown();
     }
 
@@ -3683,7 +3683,7 @@ impl App {
             ui.set_settings_tabs(ModelRc::new(VecModel::from(tabs)));
             let tab = ui.get_settings_tab();
             ui.set_plugins_tab(tab == plugins_tab);
-            ui.set_plugin_top(crate::settings::plugin_top(&self.plugged));
+            ui.set_plugin_top(crate::settings::plugin_top(&self.plugged, prefs.plugins_off));
             ui.set_settings(if tab == plugins_tab {
                 crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, today)
             } else {

@@ -245,9 +245,6 @@ pub fn plugin_may(c: &nori_plugins::PluginCard) -> Vec<String> {
     if !c.overrides.is_empty() {
         said.push(format!("Changes {}.", c.overrides.join(", ")));
     }
-    if said.is_empty() {
-        said.push("Connects to nothing.".into());
-    }
     for p in &c.permissions {
         said.push(match p {
             Permission::PlaybackRead => "Sees what plays and the queue.",
@@ -312,9 +309,7 @@ pub fn plugin_refused(r: &nori_plugins::Refusal) -> String {
     format!("Not installed: {why}")
 }
 
-pub const EVERY_PLUGIN: &str = "Every plugin";
-pub const PLUGINS_OFF: &str = "Turn every plugin off";
-pub const PLUGINS_OFF_NOTE: &str = "Each plugin keeps its own switch";
+pub const ALL_PLUGINS: &str = "All plugins";
 pub const UNSIGNED: &str = "Unsigned";
 
 /// Why plugins are off at this start: the `names` of those nori stopped in, or none for a start that

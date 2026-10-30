@@ -55,8 +55,6 @@ pub const MOVE_UP: &str = "Move up";
 pub const MOVE_DOWN: &str = "Move down";
 pub const REMOVE: &str = "Remove";
 pub const KEEP_VERSION: &str = "Keep this version";
-pub const PLUGINS_OFF: &str = "Turn every plugin off";
-pub const PLUGINS_OFF_NOTE: &str = "Each plugin keeps its own switch";
 pub const UNSIGNED: &str = "Unsigned";
 pub const VERSIONS: &str = "Versions";
 pub const SOURCE: &str = "Source";
@@ -235,9 +233,6 @@ pub fn plugin_may(c: &nori_plugins::PluginCard) -> Vec<String> {
     }
     if !c.overrides.is_empty() {
         said.push(format!("Changes {}.", c.overrides.join(", ")));
-    }
-    if said.is_empty() {
-        said.push("Connects to nothing.".into());
     }
     for p in &c.permissions {
         said.push(match p {

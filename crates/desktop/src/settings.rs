@@ -953,7 +953,7 @@ fn plugin_line(p: &Plugged, id: &str, name: &str, about: Option<&str>, line: Str
     Row { kind: PLUGIN, name: PluginAct::Page(id.into()).name(), title: name.into(), detail: about.unwrap_or_default().into(), line, icon, letter, enabled: true, ..Default::default() }
 }
 
-/// Updates waiting, the installed plugins in their order, and the switch over them all.
+/// Updates waiting, and the installed plugins in their order, grey while every plugin is off.
 fn plugin_list(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
     if p.cards.is_empty() {
         let get = Row { kind: BUTTON, name: PluginAct::Browser.name(), title: words::GET_PLUGINS.into(), enabled: true, ..Default::default() };
@@ -974,11 +974,9 @@ fn plugin_list(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
     let installed = p.cards.iter().map(|c| {
         let kinds = words::plugin_is(&c.points, !c.overrides.is_empty());
         let line = [c.version.clone(), kinds].into_iter().filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" · ");
-        Row { control: PluginAct::Turn(c.id.clone()).name(), on: c.enabled, ..plugin_line(p, &c.id, &c.name, c.about.as_deref(), line) }
+        Row { control: PluginAct::Turn(c.id.clone()).name(), on: c.enabled, enabled: !all_off, ..plugin_line(p, &c.id, &c.name, c.about.as_deref(), line) }
     });
     groups.push((words::INSTALLED_LIST.to_string(), installed.collect()));
-    let off = Row { kind: TOGGLE, name: PluginAct::AllOff.name(), title: words::PLUGINS_OFF.into(), detail: words::PLUGINS_OFF_NOTE.into(), on: all_off, enabled: true, ..Default::default() };
-    groups.push((String::new(), vec![off]));
     groups
 }
 
@@ -1054,7 +1052,10 @@ fn plugin_page(p: &Plugged, id: &str) -> Vec<(String, Vec<Row>)> {
     }
     groups.push((words::ABOUT.to_string(), p.readme.iter().map(readme_row).collect()));
     if let Some(c) = card {
-        groups.push((words::PLUGIN_MAY.to_string(), words::plugin_may(c).iter().map(|l| info(l, String::new())).collect()));
+        let may: Vec<Row> = words::plugin_may(c).iter().map(|l| info(l, String::new())).collect();
+        if !may.is_empty() {
+            groups.push((words::PLUGIN_MAY.to_string(), may));
+        }
     }
     if let Some((at, o)) = found {
         groups.push((words::VERSIONS.to_string(), versions(card, at, o)));
@@ -1110,10 +1111,10 @@ fn tools(list: &[(i32, &str, PluginAct)]) -> ModelRc<PluginTool> {
 }
 
 /// The head of what shows: its title and tools, and on a plugin's page what it is and the way to get it.
-pub fn plugin_top(p: &Plugged) -> PluginTop {
+pub fn plugin_top(p: &Plugged, all_off: bool) -> PluginTop {
     let back = !p.stack.is_empty();
     match p.stack.last() {
-        None => PluginTop { title: words::PLUGINS.into(), back, tools: tools(&[(TOOL_PLUS, words::GET_PLUGINS, PluginAct::Browser)]), ..Default::default() },
+        None => PluginTop { title: words::PLUGINS.into(), back, tools: tools(&[(TOOL_PLUS, words::GET_PLUGINS, PluginAct::Browser)]), every: !p.cards.is_empty(), all_on: !all_off, ..Default::default() },
         Some(PluginPage::Repos) => PluginTop { title: words::REPOS.into(), back, tools: tools(&[(TOOL_PLUS, words::ADD_REPO, PluginAct::AddRepo)]), ..Default::default() },
         Some(PluginPage::Browser) => {
             let shown = p.repos.iter().position(|r| p.repo_shown.as_ref() == Some(&r.url)).map_or(0, |i| i as i32 + 1);
@@ -1453,14 +1454,15 @@ mod tests {
         };
         let groups = plugin_groups(&p, true);
         let titles: Vec<&str> = groups.iter().map(|(t, _)| t.as_str()).collect();
-        assert_eq!(titles, [words::UPDATES, words::INSTALLED_LIST, ""]);
+        assert_eq!(titles, [words::UPDATES, words::INSTALLED_LIST]);
         let update = &groups[0].1;
         assert_eq!(update.len(), 1, "one kept at its version waits for nothing");
         assert_eq!((update[0].line.as_str(), PluginAct::of(&update[0].control)), ("1.0.0 → 2.0.0", Some(PluginAct::Get(0, 0))));
         let one = &groups[1].1[0];
         assert_eq!((one.kind, PluginAct::of(&one.name), PluginAct::of(&one.control), one.on), (PLUGIN, Some(PluginAct::Page("a.one".into())), Some(PluginAct::Turn("a.one".into())), true));
-        assert_eq!((groups[2].1[0].name.as_str(), groups[2].1[0].on), ("plugins-off", true), "the switch over every plugin last");
-        let top = plugin_top(&p);
+        assert!(!one.enabled, "grey while every plugin is off");
+        let top = plugin_top(&p, true);
+        assert!(top.every && !top.all_on, "the switch over every plugin in the head");
         assert!(!top.back);
         assert_eq!(PluginAct::of(&slint::Model::row_data(&top.tools, 0).unwrap().name), Some(PluginAct::Browser), "the plus opens the browser");
     }
@@ -1482,10 +1484,10 @@ mod tests {
             lines(&p),
             [("a.first".into(), "Update".into(), "plugin-get:1:0".into()), ("m.mid".into(), "Installed".into(), String::new()), ("z.last".into(), "Install".into(), "plugin-get:0:0".into())]
         );
-        let top = plugin_top(&p);
+        let top = plugin_top(&p, false);
         assert_eq!(slint::Model::row_count(&top.chips), 3, "All and one per repo");
         p.repo_shown = Some(friend.url.clone());
-        assert_eq!(plugin_top(&p).chip, 2);
+        assert_eq!(plugin_top(&p, false).chip, 2);
         assert_eq!(lines(&p).len(), 1);
         p.repo_shown = None;
         p.query = "z.la".into();
@@ -1493,7 +1495,7 @@ mod tests {
         p.query = "nothing".into();
         assert_eq!(plugin_groups(&p, false)[0].1[0].title, words::NONE_FOUND);
         p.repos.truncate(1);
-        assert_eq!(slint::Model::row_count(&plugin_top(&p).chips), 0, "one repo needs no chips");
+        assert_eq!(slint::Model::row_count(&plugin_top(&p, false).chips), 0, "one repo needs no chips");
     }
 
     /// Repos say what each offers; only those added can go.
@@ -1514,7 +1516,7 @@ mod tests {
         assert_eq!((rows[1].button.as_str(), PluginAct::of(&rows[1].name)), ("Remove", Some(PluginAct::RemoveRepo(friend.url.clone()))));
         assert!(rows[1].detail.ends_with("1 plugin"), "{}", rows[1].detail);
         assert!(rows[2].detail.contains("Couldn’t reach gone.example"), "{}", rows[2].detail);
-        assert_eq!(PluginAct::of(&slint::Model::row_data(&plugin_top(&p).tools, 0).unwrap().name), Some(PluginAct::AddRepo));
+        assert_eq!(PluginAct::of(&slint::Model::row_data(&plugin_top(&p, false).tools, 0).unwrap().name), Some(PluginAct::AddRepo));
     }
 
     /// A plugin's page draws each kind of row with the settings' own, each named so it parses back to
@@ -1545,7 +1547,7 @@ mod tests {
         };
         let groups = plugin_groups(&p, false);
         let titles: Vec<&str> = groups.iter().map(|(t, _)| t.as_str()).collect();
-        assert_eq!(titles, ["", "Buds", "more", "Files", "About", "What it may do", "Versions"]);
+        assert_eq!(titles, ["", "Buds", "more", "Files", "About", "Versions"], "nothing to say of what it may do, no group");
         let one: Vec<(i32, &str)> = groups[0].1.iter().map(|r| (r.kind, r.name.as_str())).collect();
         assert_eq!(one, [(TOGGLE, "plugin-on:a.one"), (TOGGLE, "plugin-hold:a.one"), (TOGGLE, "plugin-row:a.one:on"), (CHOICE, "plugin-row:a.one:pick"), (SLIDER, "plugin-row:a.one:gain"), (ACTION, "plugin-row:a.one:key"), (BUTTON, "plugin-row:a.one:go")]);
         assert!(!groups[0].1[3].enabled, "a row its plugin turned off takes no input");
@@ -1557,14 +1559,14 @@ mod tests {
         assert_eq!(files, [(INFO, "model", "Waiting for Wi-Fi"), (BUTTON, "Download on mobile data", "")]);
         assert_eq!(PluginAct::of(&groups[3].1[1].name), Some(PluginAct::AllowMobile("a.one".into())));
         assert_eq!(groups[4].1.iter().map(|r| r.kind).collect::<Vec<_>>(), [README_HEADING, README_TEXT, README_ITEM, README_CODE]);
-        let versions: Vec<(&str, &str, bool)> = groups[6].1.iter().map(|r| (r.title.as_str(), r.button.as_str(), r.enabled)).collect();
+        let versions: Vec<(&str, &str, bool)> = groups[5].1.iter().map(|r| (r.title.as_str(), r.button.as_str(), r.enabled)).collect();
         assert_eq!(versions, [("2.0.0", "Install", true), ("1.0.0", "Installed", false), ("Source", "", true)]);
-        assert_eq!(groups[6].1[2].detail, "code.example");
+        assert_eq!(groups[5].1[2].detail, "code.example");
         for r in groups.iter().flat_map(|(_, rows)| rows).filter(|r| !r.name.is_empty()) {
             assert_eq!(PluginAct::of(&r.name).map(|a| a.name()), Some(r.name.clone()), "{} parses back", r.name);
         }
 
-        let top = plugin_top(&p);
+        let top = plugin_top(&p, false);
         assert!(top.back && top.tile);
         assert_eq!((top.title.as_str(), top.action.as_str(), PluginAct::of(&top.action_name)), ("a.one", "Update to 2.0.0", Some(PluginAct::Get(0, 0))));
         let menu: Vec<String> = slint::Model::iter(&top.menu_names).map(|n| n.to_string()).collect();
@@ -1574,7 +1576,7 @@ mod tests {
         p.cards.clear();
         p.controlled.clear();
         p.assets.clear();
-        let top = plugin_top(&p);
+        let top = plugin_top(&p, false);
         assert_eq!((top.action.as_str(), slint::Model::row_count(&top.menu)), ("Install", 0));
         let groups = plugin_groups(&p, false);
         assert_eq!(groups.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["About", "Versions"]);

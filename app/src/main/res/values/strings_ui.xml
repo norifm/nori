@@ -735,6 +735,7 @@
     <string name="plugins_asking">Asking the repos…</string>
     <string name="plugins_search">Search plugins</string>
     <string name="plugins_all">All</string>
+    <string name="plugins_every">All plugins</string>
     <string name="plugins_none_found">No plugins found</string>
     <string name="plugins_updates">Updates</string>
     <string name="plugins_update_to">Update to %1$s</string>
@@ -756,7 +757,6 @@
     <string name="plugins_repo_warning">This repo isn’t nori’s. Its plugins can do what their pages say. Add it only if you trust it.</string>
     <string name="plugins_may">It may:</string>
     <string name="plugins_may_reach">Reach %1$s</string>
-    <string name="plugins_may_reach_nothing">Reach nothing outside this phone</string>
     <string name="plugins_may_reach_lan">Reach devices on your network</string>
     <string name="plugins_may_play">Play music as a music source</string>
     <string name="plugins_may_sound">Change the sound</string>

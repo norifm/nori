@@ -183,6 +183,9 @@ export struct PluginTop {
     title: string,
     back: bool,
     tools: [PluginTool],
+    // The list: the switch over every plugin.
+    every: bool,
+    all-on: bool,
     // A plugin's page: its tile, what it is, the way to install or update it, and its menu.
     tile: bool,
     icon: image,
@@ -4034,6 +4037,7 @@ component SettingLine inherits VerticalLayout {
                     side: 44px;
                     icon: root.item.icon;
                     letter: root.item.letter;
+                    opacity: root.item.enabled ? 1 : 0.45;
                 }
                 if root.item.kind == 8: Icon {
                     y: (parent.height - self.height) / 2;
@@ -4055,12 +4059,14 @@ component SettingLine inherits VerticalLayout {
                     if root.item.detail != "" && root.item.kind != 11: Text {
                         text: root.item.detail;
                         color: Theme.dim;
+                        opacity: root.item.kind != 17 || root.item.enabled ? 1 : 0.45;
                         font-size: 12px;
                         wrap: word-wrap;
                     }
                     if root.item.line != "": Text {
                         text: root.item.line;
                         color: Theme.dim;
+                        opacity: root.item.kind != 17 || root.item.enabled ? 1 : 0.45;
                         font-size: 11px;
                         overflow: elide;
                     }
@@ -4087,6 +4093,7 @@ component SettingLine inherits VerticalLayout {
                 if root.item.kind == 17 && root.item.control != "" && root.item.button == "": Toggle {
                     y: (parent.height - self.height) / 2;
                     on: root.item.on;
+                    enabled: root.item.enabled;
                     toggled(v) => { root.toggled(root.item.control, v); }
                 }
                 if root.item.kind == 17 && root.item.control != "" && root.item.button != "": SmallButton {
@@ -4200,6 +4207,7 @@ component SettingLine inherits VerticalLayout {
 component PluginHead inherits VerticalLayout {
     in property <PluginTop> top;
     callback action(string);
+    callback toggled(string, bool);
     callback chosen(string, int);
     callback typed(string, string);
     spacing: 10px;
@@ -4237,6 +4245,11 @@ component PluginHead inherits VerticalLayout {
                 font-size: 12px;
                 wrap: word-wrap;
             }
+        }
+        if root.top.every: Toggle {
+            y: (parent.height - self.height) / 2;
+            on: root.top.all-on;
+            toggled(v) => { root.toggled("plugins-off", !v); }
         }
         for t in root.top.tools: IconButton {
             y: (parent.height - self.height) / 2;
@@ -7066,6 +7079,7 @@ export component AppWindow inherits Window {
                                     if root.plugins-tab: PluginHead {
                                         top: root.plugin-top;
                                         action(name) => { root.setting-action(name); }
+                                        toggled(name, on) => { root.setting-toggled(name, on); }
                                         chosen(name, i) => { root.setting-chosen(name, i); }
                                         typed(name, text) => { root.setting-typed(name, text); }
                                     }
@@ -8235,6 +8249,7 @@ export component AppWindow inherits Window {
                     PluginHead {
                         top: root.plugin-top;
                         action(name) => { root.setting-action(name); }
+                        toggled(name, on) => { root.setting-toggled(name, on); }
                         chosen(name, i) => { root.setting-chosen(name, i); }
                         typed(name, text) => { root.setting-typed(name, text); }
                     }

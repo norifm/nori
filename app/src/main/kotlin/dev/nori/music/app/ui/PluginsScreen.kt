@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -42,6 +43,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
@@ -116,8 +119,17 @@ fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, pages: PluginP
     val refused by vm.refused.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.loadOffers() }
     val updates by vm.updates.collectAsStateWithLifecycle()
+    val prefs by sound.prefs.collectAsStateWithLifecycle()
+    val off = prefs.pluginsOff
+    val strength by animateFloatAsState(if (off) DIMMED else 1f, label = "plugins off")
     Column(Modifier.verticalScroll(rememberScrollState())) {
-        LargeTitle(say.plugins, trailing = { GlyphButton(Iconoir.Plus, say.pluginsGet, Modifier.testTag("plugins-browse"), onClick = pages.browser) })
+        LargeTitle(say.plugins, trailing = {
+            if (cards.isNotEmpty()) {
+                val every = say.pluginsEvery
+                NoriSwitch(!off, { on -> vm.allOff(sound, !on) }, Modifier.testTag("plugins-every").semantics { contentDescription = every })
+            }
+            GlyphButton(Iconoir.Plus, say.pluginsGet, Modifier.testTag("plugins-browse"), onClick = pages.browser)
+        })
         Refused(refused)
         if (cards.isEmpty()) {
             Column(Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -137,18 +149,13 @@ fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, pages: PluginP
                 }
             }
             GroupLabel(say.pluginsInstalled)
-            GroupCard {
+            GroupCard(Modifier.alpha(strength)) {
                 cards.forEachIndexed { i, c ->
                     val line = listOfNotNull(c.version, c.kinds().takeIf { it.isNotEmpty() }).joinToString(" · ")
                     PluginLine(vm, c.id, remember(offers, c) { vm.offerOf(c.id, c) }, c.name, c.about, line, i < cards.lastIndex, Modifier.testTag("plugin-${c.id}"), { pages.open(c.id) }) {
-                        NoriSwitch(c.enabled, { on -> vm.turn(c.id, on) }, Modifier.testTag("plugin-on-${c.id}"))
+                        NoriSwitch(c.enabled, { on -> vm.turn(c.id, on) }, Modifier.testTag("plugin-on-${c.id}"), enabled = !off)
                     }
                 }
-            }
-            val prefs by sound.prefs.collectAsStateWithLifecycle()
-            Spacer(Modifier.height(Space.section))
-            GroupCard {
-                Toggle(say.pluginsOff, say.pluginsOffDetail, prefs.pluginsOff, key = "pluginsOff", divider = false) { off -> vm.allOff(sound, off) }
             }
         }
         Spacer(Modifier.height(Space.section + LocalChromeInset.current))
@@ -328,8 +335,9 @@ private fun InstallSheet(vm: PluginsViewModel) {
         }) {
             c.about?.let { Text(it) }
             Quiet(listOfNotNull(say.pluginVersion(c.version), c.kinds().takeIf { it.isNotEmpty() }, p.repo?.let { repoName(it, repos) }, say.pluginUnsigned.takeIf { p.key == null }).joinToString(" · "))
-            Text(say.pluginMayTitle, style = MaterialTheme.typography.titleSmall)
-            say.pluginMay(c).forEach { Text("· $it") }
+            val may = say.pluginMay(c)
+            if (may.isNotEmpty()) Text(say.pluginMayTitle, style = MaterialTheme.typography.titleSmall)
+            may.forEach { Text("· $it") }
         }
     }
 }
@@ -415,10 +423,10 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
             PluginAssets(vm, id)
         }
         AnimatedVisibility(readme.isNotEmpty(), enter = fadeIn()) { Readme(readme) }
-        if (card != null) {
+        val may = card?.let(say::pluginMay).orEmpty()
+        if (may.isNotEmpty()) {
             GroupLabel(say.pluginMayTitle)
             GroupCard {
-                val may = say.pluginMay(card)
                 may.forEachIndexed { i, line -> GroupRow(line, minHeight = 44.dp, divider = i < may.lastIndex) }
             }
         }

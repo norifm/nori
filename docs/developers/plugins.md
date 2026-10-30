@@ -502,8 +502,8 @@ Android ending nori while a plugin waits blames no plugin.
 
 ## Every plugin off
 
-The `pluginsOff` setting (each client's Plugins page) turns every plugin off without touching their
-own switches, to tell a nori bug from a plugin's: `Plugins::running()` is empty, so no plugin is
+The `pluginsOff` setting (a switch in the head of each client's Plugins page, a row at the terminal's
+top; the list goes grey while it is off) turns every plugin off without touching their own switches, to tell a nori bug from a plugin's: `Plugins::running()` is empty, so no plugin is
 called, and the settings leave the plugins' layer out (`Settings::layer`), which is kept for when the
 switch goes back. `Plugins::report()` lists the plugins on, signed or not, and what each overrides, in
 English, for Android's bug report and the perf build's self test.
