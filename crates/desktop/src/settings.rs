@@ -1022,7 +1022,8 @@ fn provider_choices(p: &Plugged, kinds: &Kinds) -> Vec<Row> {
         }
     });
     let offered = nori_plugins::provider_offers(p.offers().to_vec(), p.cards.clone(), p.all_off).into_iter().map(|o| {
-        let act = if p.cards.iter().any(|c| c.id == o.id) { PluginAct::TurnOn(o.id.clone()) } else { PluginAct::OfferPage(o.id.clone()) };
+        // With every plugin off none could run: it leads to the switch.
+        let act = if p.all_off { PluginAct::Sheet } else if p.cards.iter().any(|c| c.id == o.id) { PluginAct::TurnOn(o.id.clone()) } else { PluginAct::OfferPage(o.id.clone()) };
         Row { name: act.name(), enabled: false, ..plugin_line(p, &o.id, &o.name, None, String::new()) }
     });
     active.chain(offered).collect()
@@ -1711,7 +1712,10 @@ mod tests {
         let mut plugged = offering(vec![provider_offer("a.new"), provider_offer("b.off"), provider_offer("c.on"), offer("d.sound", &official(), OfferState::New)], vec![installed, plugin_card("c.on", Vec::new())]);
         let rows = provider_choices(&plugged, &Kinds::builtin());
         plugged.all_off = true;
-        assert_eq!(provider_choices(&plugged, &Kinds::builtin()).len(), 1, "with every plugin off, only nori's own");
+        let off = provider_choices(&plugged, &Kinds::builtin());
+        let acts: Vec<Option<PluginAct>> = off[1..].iter().map(|r| PluginAct::of(&r.name)).collect();
+        assert_eq!(acts, [Some(PluginAct::Sheet), Some(PluginAct::Sheet), Some(PluginAct::Sheet)], "with every plugin off, all three quiet, leading to the switch");
+        assert!(off[1..].iter().all(|r| !r.enabled));
         let got: Vec<(&str, bool, bool)> = rows.iter().map(|r| (r.title.as_str(), r.enabled, r.server_tile)).collect();
         assert_eq!(got, [("OpenSubsonic", true, true), ("a.new", false, false), ("b.off", false, false)], "only providers not on");
         let acts: Vec<_> = rows.iter().map(|r| PluginAct::of(&r.name)).collect();

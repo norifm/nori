@@ -2772,9 +2772,9 @@ fn the_account_pages_keys_say_how_it_goes_on() {
     }
 }
 
-/// With every plugin off the first screen offers none: turning one on wouldn't run it.
+/// With every plugin off a provider is still listed, and choosing it leads to the switch.
 #[test]
-fn every_plugin_off_offers_no_provider() {
+fn every_plugin_off_leads_a_provider_to_the_switch() {
     use crate::settings_view::Shelf;
     let mut a = app();
     let repo = nori_plugins::Repo { url: nori_plugins::OFFICIAL.into(), official: true };
@@ -2782,7 +2782,11 @@ fn every_plugin_off_offers_no_provider() {
     a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: vec![offer], failed: Vec::new() });
     assert_eq!(a.provider_lines().len(), 2);
     a.prefs.plugins_off = true;
-    assert_eq!(a.provider_lines().len(), 1);
+    assert_eq!(a.provider_lines().len(), 2);
+    a.view = View::Login;
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert!(a.settings.alone && a.login.offered.is_none(), "the plugins' page, not the offer's");
 }
 
 /// A form is titled with its provider, not nori.

@@ -2235,6 +2235,8 @@ impl App {
     fn provider_open(&mut self, at: usize) {
         match self.provider_lines().into_iter().nth(at) {
             Some(ProviderLine::Kind(kind)) => self.provider_chosen(kind),
+            // With every plugin off none could run: it leads to the switch.
+            Some(ProviderLine::Offered { .. }) if self.prefs.plugins_off => self.plugins_alone(),
             Some(ProviderLine::Offered { id, .. }) if self.settings.own.plugins.iter().any(|c| c.id == id) => self.cmds.push(Cmd::Plugin(PluginCmd::TurnOnChosen(id))),
             Some(ProviderLine::Offered { id, .. }) => {
                 self.login.offered = Some(id.clone());

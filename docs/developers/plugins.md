@@ -68,8 +68,13 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
   compiled at install and kept as `compiled.cwasm` beside it for this engine (a newer nori compiles it
   again); never downloaded as native code. The compiler is built for size (it runs only at install),
   wasmtime's own calls for speed.
+- **The API version.** A component's types must match exactly, so any change to a type in `wit/`, even a
+  new case in a variant, breaks every plugin built before it: raise `API` (crates/plugins and the SDK) and
+  the package version in `wit/`, then release every plugin. A repo keeps each plugin's older versions, so
+  an older nori stays on the ones it runs. An installed plugin built for an older API stays listed, with
+  its store, and updates are looked for at once.
 - **Install checks first.** A package is unpacked beside the old version and refused when its manifest
-  can't be read, its API version is not this host's or the one before, its id isn't reverse DNS, it
+  can't be read, its API version is not this host's, its id isn't reverse DNS, it
   overrides a key nori doesn't have, or it imports calls of an interface this host doesn't link
   (`runtime::LINKED`). Its store survives an
   update.
@@ -454,7 +459,7 @@ A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
 ```json
 {"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "about": "…", "source": "https://github.com/…",
   "readme": "orbit/README.md", "icon": "orbit/icon.png", "points": ["sound-stage"],
-  "versions": [{"version": "1.2.0", "api": 1, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
+  "versions": [{"version": "1.2.0", "api": 2, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
     "sha256": "<hex>", "key": "<hex, 32 bytes>", "signature": "<hex, 64 bytes>"}]}]}
 ```
 

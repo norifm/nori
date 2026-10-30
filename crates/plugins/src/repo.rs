@@ -186,7 +186,7 @@ fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
             let mut versions: Vec<Version> = l
                 .versions
                 .into_iter()
-                .filter(|r| r.api == API || r.api + 1 == API)
+                .filter(|r| r.api == API)
                 .map(|r| Version {
                     repo: repo.url.clone(),
                     url: resolved(&repo.url, &r.url),
@@ -274,11 +274,10 @@ pub fn offers_to_update(offers: Vec<Offer>, cards: Vec<PluginCard>) -> Vec<Offer
 }
 
 /// The plugins that would add a kind of profile if they were on: of `offers`, those filling the provider
-/// point and not on among `cards`, once each, by name. None while `all_off`: a plugin turned on then
-/// wouldn't run.
+/// point and not on among `cards`, once each, by name. While `all_off`, those on too: none adds a kind then.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn provider_offers(mut offers: Vec<Offer>, cards: Vec<PluginCard>, all_off: bool) -> Vec<Offer> {
-    offers.retain(|o| !all_off && o.points.iter().any(|p| p == "provider") && !cards.iter().any(|c| c.id == o.id && c.enabled));
+    offers.retain(|o| o.points.iter().any(|p| p == "provider") && (all_off || !cards.iter().any(|c| c.id == o.id && c.enabled)));
     offers.sort_by_cached_key(|o| o.name.to_lowercase());
     offers.dedup_by(|a, b| a.id == b.id);
     offers
@@ -349,9 +348,10 @@ impl Plugins {
         installed
     }
 
-    /// Whether a day has passed since updates were last looked for, at `now_ms` (device ms).
+    /// Whether a day has passed since updates were last looked for, at `now_ms` (device ms), or a plugin
+    /// built for another API waits for its update.
     pub fn updates_due(&self, now_ms: i64) -> bool {
-        now_ms - self.checked_ms() >= UPDATE_EVERY_MS || now_ms < self.checked_ms()
+        now_ms - self.checked_ms() >= UPDATE_EVERY_MS || now_ms < self.checked_ms() || self.installed().iter().any(|i| i.manifest.api != API)
     }
 
     /// Updates each plugin not held to the newest version its own repo offers; what was updated.
@@ -381,9 +381,9 @@ mod tests {
         let repo = Repo { url: "https://example.com/nori/index.json".into(), official: false };
         let text = br#"{"plugins": [
             {"id": "a.b", "name": "A", "source": "https://git.example/a", "versions": [
-                {"version": "0.9.0", "api": 1, "url": "a-0.9.0.noriplugin", "sha256": "AB"},
-                {"version": "0.10.0", "api": 1, "url": "https://cdn.example/a-0.10.0.noriplugin", "sha256": "cd", "released": "2026-11-02"},
-                {"version": "2.0.0", "api": 9, "url": "a-2.0.0.noriplugin", "sha256": "ef"}
+                {"version": "0.9.0", "api": 2, "url": "a-0.9.0.noriplugin", "sha256": "AB"},
+                {"version": "0.10.0", "api": 2, "url": "https://cdn.example/a-0.10.0.noriplugin", "sha256": "cd", "released": "2026-11-02"},
+                {"version": "2.0.0", "api": 1, "url": "a-2.0.0.noriplugin", "sha256": "ef"}
             ]},
             {"id": "c.d", "name": "C", "versions": [{"version": "1.0.0", "api": 9, "url": "c.noriplugin", "sha256": "00"}]}
         ]}"#;

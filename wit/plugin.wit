@@ -1,4 +1,4 @@
-package nori:plugin@1.0.0;
+package nori:plugin@2.0.0;
 
 /// The plugin's page. Its rows are declared in its manifest, so nori draws them while it is not
 /// running; values are kept by nori in the plugin's store.

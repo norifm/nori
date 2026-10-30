@@ -1,4 +1,4 @@
-package nori:plugin@1.0.0;
+package nori:plugin@2.0.0;
 
 /// TCP and UDP. With `lan` only to private addresses; each socket closes when its handle is dropped.
 interface sockets {

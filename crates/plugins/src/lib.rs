@@ -191,7 +191,7 @@ impl Plugins {
             .iter()
             .filter_map(|e| {
                 let section = std::fs::read(dir.join(&e.id).join(package::MANIFEST)).ok()?;
-                let manifest = Manifest::of_section(&section).ok().filter(|m| m.id == e.id)?;
+                let manifest = Manifest::of_installed(&section).filter(|m| m.id == e.id)?;
                 Some(Installed { manifest: Arc::new(manifest), enabled: e.enabled, repo: e.repo.clone(), held: e.held, key: e.key.clone() })
             })
             .collect();

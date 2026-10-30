@@ -3,8 +3,9 @@
 
 use std::collections::BTreeMap;
 
-/// The plugin API major version this host speaks; it also loads the one before.
-pub const API: u32 = 1;
+/// The plugin API major version this host speaks. A component's types must match exactly, so a plugin
+/// built for another can't run: any change to a type in `wit/` raises it.
+pub const API: u32 = 2;
 
 /// The extension points in the order of `wit/`'s `plugin` world exports: a manifest's bits.
 pub const POINTS: [&str; 11] = ["lifecycle", "hooks", "provider", "sound-stage", "preparation", "automix", "deciders", "slots", "device-control", "lyrics", "scrobbler"];
@@ -323,10 +324,16 @@ impl Manifest {
         custom_section(wasm, "nori:plugin").ok_or_else(|| Refusal::Unreadable("no nori:plugin section (built without the SDK's plugin!)".into()))
     }
 
+    /// The manifest kept beside an installed plugin, whatever API it was built for: one left behind by a
+    /// new nori stays listed, with its store, until its update replaces it.
+    pub(crate) fn of_installed(section: &[u8]) -> Option<Manifest> {
+        Manifest::decode(section)
+    }
+
     /// The manifest in a `nori:plugin` section's bytes.
     pub(crate) fn of_section(section: &[u8]) -> Result<Manifest, Refusal> {
         let m = Manifest::decode(section).ok_or_else(|| Refusal::Unreadable("its manifest section can't be read".into()))?;
-        if m.api != API && m.api + 1 != API {
+        if m.api != API {
             return Err(Refusal::Api(m.api));
         }
         let parts: Vec<&str> = m.id.split('.').collect();

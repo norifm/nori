@@ -236,6 +236,7 @@ private fun ProviderChoice(vm: SettingsViewModel, onClose: (() -> Unit)?, choose
     val cards by plugins.cards.collectAsStateWithLifecycle()
     var more by remember { mutableStateOf(false) }
     var offered by remember { mutableStateOf<String?>(null) }
+    val allOff = vm.prefs.collectAsStateWithLifecycle().value.pluginsOff
     LaunchedEffect(Unit) { plugins.loadOffers() }
     // Installed from its page, it goes on and its form opens.
     LaunchedEffect(cards, offered) {
@@ -266,7 +267,12 @@ private fun ProviderChoice(vm: SettingsViewModel, onClose: (() -> Unit)?, choose
                 }
                 offers.forEachIndexed { i, o ->
                     ProviderLine(plugins, o.id, o, o.name, null, i < offers.lastIndex, Modifier.alpha(0.5f).testTag("offered-${o.id}")) {
-                        if (cards.any { it.id == o.id }) { plugins.turn(o.id, true); choose(ServerKind.Plugin(o.id)) } else offered = o.id
+                        when {
+                            // With every plugin off none could run: it leads to the switch.
+                            allOff -> more = true
+                            cards.any { it.id == o.id } -> { plugins.turn(o.id, true); choose(ServerKind.Plugin(o.id)) }
+                            else -> offered = o.id
+                        }
                     }
                 }
             }
