@@ -355,14 +355,14 @@ page songs [s1/200,s2*/180] #97749f946d1cfedb
 ended: ok
 asked getRandomSongs&size=5&genre=Rock&musicFolderId=7
 asked getRandomSongs&size=5&genre=Rock&musicFolderId=7
-read_now SongsByGenre { genre: "Rock", count: 5 }
+read_now SongsByGenre { genre: "Rock", count: 5, offset: 0 }
 page songs [s2*/180] #15dab7bb8054d2eb
-stored SongsByGenre { genre: "Rock", count: 5 }: none digest=false fresh=false
-read_each SongsByGenre { genre: "Rock", count: 5 }
+stored SongsByGenre { genre: "Rock", count: 5, offset: 0 }: none digest=false fresh=false
+read_each SongsByGenre { genre: "Rock", count: 5, offset: 0 }
 page songs [s2*/180] #15dab7bb8054d2eb
 ended: ok
-asked getSongsByGenre&genre=Rock&count=5&musicFolderId=7
-asked getSongsByGenre&genre=Rock&count=5&musicFolderId=7
+asked getSongsByGenre&genre=Rock&count=5&offset=0&musicFolderId=7
+asked getSongsByGenre&genre=Rock&count=5&offset=0&musicFolderId=7
 read_now SimilarSongs { id: "s1", count: 5 }
 page songs [s2*/180] #15dab7bb8054d2eb
 stored SimilarSongs { id: "s1", count: 5 }: none digest=false fresh=false

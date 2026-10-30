@@ -73,7 +73,7 @@ impl Client {
         let songs = match kind {
             "downloads" if row.song.is_none() => self.core.downloads(true).unwrap_or_default(),
             "artist" if row.song.is_none() => self.artist_songs_of(arg.into()).await.unwrap_or_default(),
-            "genre" if row.song.is_none() => self.songs(Read::SongsByGenre { genre: arg.into(), count: 100 }).await.unwrap_or_default(),
+            "genre" if row.song.is_none() => self.songs(Read::SongsByGenre { genre: arg.into(), count: 100, offset: 0 }).await.unwrap_or_default(),
             _ => {
                 let shown = self.car.lock().get(&row.parent).map(|p| p.songs);
                 match shown {
@@ -102,7 +102,7 @@ impl Client {
             shuffle,
         };
         if ask.focus == VoiceFocus::Genre {
-            let songs = self.songs(Read::SongsByGenre { genre: term.clone(), count: 100 }).await.unwrap_or_default();
+            let songs = self.songs(Read::SongsByGenre { genre: term.clone(), count: 100, offset: 0 }).await.unwrap_or_default();
             return queue(songs, None, term, true);
         }
         let sizes = crate::browse::library_sizes();
@@ -122,7 +122,7 @@ impl Client {
             VoicePick::Artist(id) => queue(self.artist_songs_of(id.clone()).await.unwrap_or_default(), Some(K::Artist), id, true),
             VoicePick::Album(id) => queue(self.folder_songs(&format!("album:{id}")).await.unwrap_or_default(), Some(K::Album), id, false),
             VoicePick::Playlist(id) => queue(self.folder_songs(&format!("playlist:{id}")).await.unwrap_or_default(), Some(K::Playlist), id, false),
-            VoicePick::Genre(g) => queue(self.songs(Read::SongsByGenre { genre: g.clone(), count: 100 }).await.unwrap_or_default(), None, g, true),
+            VoicePick::Genre(g) => queue(self.songs(Read::SongsByGenre { genre: g.clone(), count: 100, offset: 0 }).await.unwrap_or_default(), None, g, true),
             VoicePick::Songs(songs) => queue(songs, None, String::new(), false),
             VoicePick::Nothing => CarQueue::default(),
         }

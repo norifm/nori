@@ -58,7 +58,7 @@ pub(super) fn request(read: &Read) -> Option<Request> {
             }
             ("getRandomSongs", p, Parser::Songs)
         }
-        Read::SongsByGenre { genre, count } => ("getSongsByGenre", pairs(&[("genre", genre.clone()), ("count", count.to_string())]), Parser::Songs),
+        Read::SongsByGenre { genre, count, offset } => ("getSongsByGenre", pairs(&[("genre", genre.clone()), ("count", count.to_string()), ("offset", offset.to_string())]), Parser::Songs),
         Read::SimilarSongs { id: i, count } => ("getSimilarSongs2", pairs(&[("id", i.clone()), ("count", count.to_string())]), Parser::Songs),
         Read::SongById { id: i } => ("getSong", id(i), Parser::OneSong),
         Read::AlbumSongs { id: i } => ("getAlbum", id(i), Parser::AlbumSongs),

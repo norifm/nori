@@ -79,7 +79,7 @@ impl Client {
                 all
             }
             AutoFillBasis::Genre => match &seed.genre {
-                Some(g) => shuffled(self.songs(Read::SongsByGenre { genre: g.clone(), count: 100 }).await?),
+                Some(g) => shuffled(self.songs(Read::SongsByGenre { genre: g.clone(), count: 100, offset: 0 }).await?),
                 None => Vec::new(),
             },
             // From the local index: Subsonic has no songs-by-decade call.

@@ -494,16 +494,15 @@ pub struct LibrarySizes {
     pub local_search: u32,
     /// Songs a smart playlist is evaluated to.
     pub smart_songs: u32,
-    /// The server's random songs, and a genre's songs.
+    /// The server's random songs.
     pub random_songs: i32,
-    pub genre_songs: i32,
     /// Songs per request while the index is synced.
     pub sync_page: u32,
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn library_sizes() -> LibrarySizes {
-    LibrarySizes { search_songs: 40, search_albums: 20, search_artists: 10, local_search: 30, smart_songs: 500, random_songs: 100, genre_songs: 200, sync_page: 500 }
+    LibrarySizes { search_songs: 40, search_albums: 20, search_artists: 10, local_search: 30, smart_songs: 500, random_songs: 100, sync_page: 500 }
 }
 
 /// How many of a page's `total` songs show (an artist's, search's): a few until Show all is pressed
