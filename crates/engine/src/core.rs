@@ -1521,6 +1521,33 @@ pub fn settings(stored: &StoredPrefs, layer: Layer) -> Settings {
     }
 }
 
+/// What a cast's device shows of the queue's songs ([`crate::cast::Shows`]): their lines as the queue
+/// has them, and their covers by `cover` (the cover art id at a size, as the file the cache holds).
+#[cfg(feature = "plugins")]
+pub struct QueueShows {
+    pub queue: Arc<Session>,
+    pub cover: Option<CoverFile>,
+}
+
+/// A cover's file by its cover art id and size.
+#[cfg(feature = "plugins")]
+pub type CoverFile = Box<dyn Fn(&str, u32) -> Option<Vec<u8>> + Send + Sync>;
+
+#[cfg(feature = "plugins")]
+impl crate::cast::Shows for QueueShows {
+    fn now(&self, id: &str) -> Option<crate::cast::Shown> {
+        let s = self.queue.song(id)?;
+        Some(crate::cast::Shown { title: s.title, artist: s.artist, album: s.album, duration_ms: s.duration.saturating_mul(1000) })
+    }
+
+    /// JPEG only: the server's renditions are; another is left out rather than encoded here.
+    fn cover(&self, id: &str, size: u32) -> Option<(String, Vec<u8>)> {
+        let art = self.queue.cover_art(id)?;
+        let bytes = (self.cover.as_ref()?)(&art, size)?;
+        bytes.starts_with(&[0xff, 0xd8]).then_some((art, bytes))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

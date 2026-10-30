@@ -324,7 +324,7 @@ enum Command {
     Release,
     Follow(Option<Box<Leading>>),
     /// Plays through this output from now on, a cast's or not ([`Engine::set_card`]).
-    Card(Box<dyn AudioOutput>, bool),
+    Card(Box<dyn AudioOutput>, Option<Box<dyn OffloadOutput>>, bool),
     /// A cast's device plays the songs ([`Engine::play_elsewhere`]): whether it plays and where, as
     /// it last said.
     Elsewhere(Option<bool>, Option<i64>),
@@ -508,10 +508,10 @@ impl Engine {
     }
 
     /// Plays through `card` from now on, where the music is, closing the output it played through: a
-    /// cast's audio (`casting`: nothing is offloaded to the device's own chip meanwhile), or the
-    /// device's own output again after one.
-    pub fn set_card(&self, card: Box<dyn AudioOutput>, casting: bool) {
-        self.send(Command::Card(card, casting));
+    /// cast's audio (`casting`: nothing is offloaded to the device's own chip meanwhile, but to `offload`,
+    /// the cast's device decoding songs itself), or the device's own output again after one.
+    pub fn set_card(&self, card: Box<dyn AudioOutput>, offload: Option<Box<dyn OffloadOutput>>, casting: bool) {
+        self.send(Command::Card(card, offload, casting));
     }
 
     /// A cast's device plays the songs itself: the output here is let go and stays so while the queue
@@ -888,6 +888,9 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     following: Option<Following>,
     /// The card is a cast's ([`Engine::set_card`]): the device's chip plays nothing.
     casting: bool,
+    /// While a cast's device decodes songs itself, its offload path is `off`, and this the device's own,
+    /// back when the cast ends.
+    own_off: Option<Option<Offload>>,
     /// A cast's device plays the songs ([`Engine::play_elsewhere`]): the place is the parked one.
     away: Option<Away>,
     led_speed: (f32, f32),
@@ -941,6 +944,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             why: String::new(),
             following: None,
             casting: false,
+            own_off: None,
             away: None,
             led_speed: (1.0, 1.0),
             mix_place: None,
@@ -1038,6 +1042,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         self.follow_awake();
         // A flush made this turn reaches the device now, with the music after it in the ring.
         self.p.sink.track.tell_flush();
+        self.p.sink.track.turned();
         Some(self.wake_in(now))
     }
 
@@ -1606,11 +1611,25 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.release();
             }
             Command::Follow(lead) => self.follow(lead),
-            Command::Card(card, casting) => {
+            Command::Card(card, offload, casting) => {
                 let going = self.going();
                 self.pause(now, 0);
                 self.release();
+                self.leave_offload();
                 self.p.sink.track.replace(card);
+                self.p.sink.kept_us = nori_player::burst::BUFFER_US + self.p.sink.track.depth_us();
+                // The device's own offload path waits out a cast whose device decodes; the cast's goes.
+                match offload {
+                    Some(o) => {
+                        let own = self.off.replace(Offload::new(o));
+                        self.own_off.get_or_insert(own);
+                    }
+                    None => {
+                        if let Some(own) = self.own_off.take() {
+                            self.off = own;
+                        }
+                    }
+                }
                 self.casting = casting;
                 self.apply(self.settings.clone());
                 if going {
@@ -1965,9 +1984,11 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             Some(_) => (self.led_speed.0, self.led_speed.1, false),
             None => (s.speed, s.pitch, s.skip_silence),
         };
-        let offload = s.offload && self.off.is_some() && self.following.is_none() && !self.casting;
+        // A cast's device that decodes songs itself takes them whenever nothing touches the samples.
+        let cast_decodes = self.casting && self.own_off.is_some();
+        let offload = (s.offload || cast_decodes) && self.off.is_some() && self.following.is_none() && (!self.casting || cast_decodes);
         let prefs = AudioPrefs { dsp: s.sound.on() || !s.stages.is_empty(), skip_silence, offload, crossfade_s: s.crossfade_s, auto_mix: s.auto_mix, speed, pitch };
-        let state = OutputState { hi_res, bit_perfect, usb: self.facts.usb, offload_refused: self.h.refused };
+        let state = OutputState { hi_res, bit_perfect, usb: self.facts.usb && !self.casting, offload_refused: self.h.refused && !cast_decodes };
         let policy = audio_policy(&prefs, &state);
         let blocked = if self.off.is_some() { offload_blocked(&prefs, &state) } else { Some("the output does not decode songs itself") };
         // Turning up needs float samples and the limiter; the limiter alone does not block offload.

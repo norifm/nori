@@ -164,6 +164,17 @@ pub trait Track {
     fn must_reopen(&mut self, _format: Format) -> bool {
         false
     }
+    /// Whether the track may open for the next format ([`Track::must_reopen`]): everything written has
+    /// played, or (a device that takes the new format in its stream) was handed to it.
+    fn ready_to_reopen(&self) -> bool {
+        self.is_empty()
+    }
+    /// Whether the track is told where each song starts ([`Track::song_starts`]).
+    fn marks_songs(&self) -> bool {
+        false
+    }
+    /// Song `id`'s first frame is the next written.
+    fn song_starts(&mut self, _id: &str) {}
 }
 
 /// The processors and the buffers they run in. Allocation-free once the buffers have grown.
@@ -293,6 +304,9 @@ pub struct Sink<T: Track> {
     pub rebuilds: usize,
     /// Buffer depth.
     pub capacity_us: i64,
+    /// How far back the input is kept to be run again: the track's depth and what its device holds
+    /// beyond it. From the next flush or format on.
+    pub kept_us: i64,
     settings: ChainSettings,
     runner: Runner,
     kept: Kept,
@@ -313,6 +327,8 @@ pub struct Sink<T: Track> {
     gain: f32,
     /// What the stages read of the song offered ([`Downstream::song_facts`]).
     song: Arc<SongFacts>,
+    /// The song the track was last told starts ([`Track::song_starts`]).
+    told: Arc<SongFacts>,
     /// (submitted song frame, pace) where each pace began, for [`Sink::pace_heard`].
     paces: VecDeque<(f64, f64)>,
     /// Buffers more than [`PTS_TOLERANCE_US`] off (each a stutter on a phone).
@@ -342,6 +358,7 @@ impl<T: Track> Sink<T> {
             opens: 0,
             rebuilds: 0,
             capacity_us,
+            kept_us: capacity_us,
             settings,
             runner: Runner::default(),
             kept: Kept::default(),
@@ -354,6 +371,7 @@ impl<T: Track> Sink<T> {
             pace: 1.0,
             gain: 1.0,
             song: no_facts(),
+            told: no_facts(),
             paces: VecDeque::with_capacity(PACES),
             timestamp_jumps: 0,
             owed: None,
@@ -636,6 +654,10 @@ impl<T: Track> Sink<T> {
     /// pending) stays.
     fn back_at(&mut self, (frame, out, media): (u64, u64, f64), written: u64) {
         let fb = self.format.map_or(1, |f| f.frame_bytes());
+        // The track forgets the starts it was told past the cut: told again as the input is run again.
+        if let Some((piece, _)) = self.kept.piece(frame) {
+            self.told = piece.song;
+        }
         self.kept.forget_after(frame);
         let over = out.saturating_sub(written) as usize;
         let written_media = self.track.cut(out - over as u64);
@@ -679,6 +701,7 @@ impl<T: Track> Sink<T> {
             self.carry += media;
             let skipped = self.runner.skipped();
             self.runner.stages.song(&piece.song);
+            self.tell_song(&piece.song);
             self.runner.run(self.kept.frames(self.run, end), float, piece.gain, f.channels);
             self.run_media += media;
             self.run = end;
@@ -687,6 +710,17 @@ impl<T: Track> Sink<T> {
             let speed = if self.runner.chain.speed.is_some() { self.settings.speed as f64 } else { 1.0 };
             let made = (self.runner.out.len() / f.frame_bytes()) as f64 * speed + self.runner.skipped().saturating_sub(skipped) as f64;
             self.made_output(0.0, Some(made * piece.pace));
+        }
+    }
+
+    /// Tells the track `song` starts at the next frame written, if it is another than the last told.
+    fn tell_song(&mut self, song: &Arc<SongFacts>) {
+        if Arc::ptr_eq(&self.told, song) || !self.track.marks_songs() {
+            return;
+        }
+        self.told = song.clone();
+        if let Some(id) = &song.id {
+            self.track.song_starts(id);
         }
     }
 
@@ -816,11 +850,12 @@ impl<T: Track> Sink<T> {
 
     /// Input frames kept at `f`, played at 1x: what the track holds and what it may reach back to.
     fn kept_frames(&self, f: Format) -> u64 {
-        (f.rate as i64 * (self.capacity_us + KEPT_BEHIND_US) / 1_000_000) as u64
+        (f.rate as i64 * (self.kept_us.max(self.capacity_us) + KEPT_BEHIND_US) / 1_000_000) as u64
     }
 
     /// The track counts from zero again.
     fn restart_counts(&mut self) {
+        self.told = no_facts();
         let (frame_bytes, frames) = self.format.map_or((1, 0), |f| (f.frame_bytes(), self.kept_frames(f)));
         self.kept.restart(0, frame_bytes, frames);
         self.run = 0;
@@ -867,7 +902,7 @@ impl<T: Track> Sink<T> {
     fn reopened(&mut self) -> bool {
         let Some(f) = self.reopen else { return true };
         self.fill();
-        if !self.drained() {
+        if !(self.track.ready_to_reopen() && !self.pending()) {
             return false;
         }
         self.reopen = None;
@@ -948,6 +983,8 @@ impl<T: Track> Downstream for Sink<T> {
             let media = (n / fb) as f64 * self.pace;
             self.mark();
             self.kept.keep(&input[..n], self.pace, pts, 1.0, &self.song);
+            let song = self.song.clone();
+            self.tell_song(&song);
             self.track.write(&input[..n], media);
             self.submitted_frames += media;
             self.run += (n / fb) as u64;

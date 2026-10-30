@@ -115,9 +115,18 @@ pub fn action(id: &str) {
         "cast-socket" => {
             let (host, port) = address(&setup("cast-socket"));
             said(Tcp::connect(&host, port, 2000), |tcp| {
-                let r = audio_out::to_socket(&tcp, Encoding::Wav, 48_000, 2);
+                let r = audio_out::to_socket(&tcp, Encoding::Wav, Some(48_000), Some(2), audio_out::Pace::RealTime);
                 CASTING.with(|c| *c.borrow_mut() = Some(tcp));
                 cast::start(Kind::Sink, "Test speaker");
+                said(r, |()| "casting".into())
+            })
+        }
+        "cast-deep" => {
+            let (host, port) = address(&setup("cast-deep"));
+            said(Tcp::connect(&host, port, 2000), |tcp| {
+                let r = audio_out::to_socket(&tcp, Encoding::Pcm16, None, None, audio_out::Pace::Deep(Some(30_000)));
+                CASTING.with(|c| *c.borrow_mut() = Some(tcp));
+                cast::start(Kind::Sink, "Deep speaker");
                 said(r, |()| "casting".into())
             })
         }

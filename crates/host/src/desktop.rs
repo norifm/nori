@@ -371,6 +371,13 @@ impl nori_plugins::Client for Watched {
             s.plugin_control(control);
         }
     }
+    /// The desktop holds no Wi-Fi lock.
+    fn streaming(&self, _: bool) {}
+    fn pressed(&self, press: nori_core::deciders::Press) {
+        if let Some(s) = self.session() {
+            s.pressed(press);
+        }
+    }
     fn sign_in(&self, id: String, url: String) -> bool {
         let opens = self.signs_in.lock().expect("not poisoned");
         if let Some(open) = opens.as_ref() {
@@ -467,11 +474,23 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
     *plugged.watched.engine.lock().expect("not poisoned") = Some(Arc::downgrade(&session.engine));
     // A plugin's cast takes the music, and the sound card gets it back, at its volume, when it ends.
     let engine = Arc::downgrade(&session.engine);
+    let (core, covers) = (session.core.clone(), session.covers.clone());
     plugged.host.set_cards(Box::new(move |to| {
         let Some(engine) = engine.upgrade() else { return };
         match to {
-            nori_plugins::Card::Sink(sink) => engine.set_card(Box::new(nori_engine::cast::CastOutput::new(sink)), true),
-            nori_plugins::Card::Here => engine.set_card(Box::new(card(device.as_deref()).with_volume(level.clone())), false),
+            nori_plugins::Card::Sink(sink) => {
+                let (queue, core, covers) = (core.session.clone(), core.clone(), covers.clone());
+                let cover = covers.map(|c| {
+                    Box::new(move |art: &str, size: u32| {
+                        let mut file = Vec::new();
+                        c.kept(&core.cover_address(art.to_string(), nori_core::covers::cover_rendition(size)), &mut file).then_some(file)
+                    }) as nori_engine::core::CoverFile
+                });
+                let shows = Arc::new(nori_engine::core::QueueShows { queue, cover });
+                let (out, offload) = nori_engine::cast::card(sink, Some(shows));
+                engine.set_card(out, offload, true)
+            }
+            nori_plugins::Card::Here => engine.set_card(Box::new(card(device.as_deref()).with_volume(level.clone())), None, false),
             nori_plugins::Card::Elsewhere { playing, position_ms } => engine.play_elsewhere(playing, position_ms.map(|ms| ms as i64)),
             nori_plugins::Card::Back => engine.come_back(),
         }

@@ -176,16 +176,113 @@ off, removed or updated, or a call fails ([`Lan::forget`](../../crates/plugins/s
 | `discovery` | `browse(kind)` asks the client to browse mDNS while any plugin browses that kind (Android NSD, mdns-sd on the desktop and terminal); each service found goes to the `discovered` hook of the plugins browsing it (`Plugins::discovered`) |
 | `lan-serve` | the plugins' door (`door.rs`): plain HTTP on a port the system picks, open while a plugin has `open` or serves audio or a song. `/p/<id>/...` goes to plugin `id`'s `served` hook, its query kept. Its own listener, not remote control's door, which takes only requests signed with the account's secret; a speaker can't sign |
 | `media` | a song's stream URL (its own quality) and cover URL from the open profile's client (`Kinds::open_client`), as they are; a URL on this device (a server on localhost, plain HTTP) is proxied at the door's `/m/<n>`, its range passed on. A provider plugin's songs have none |
-| `audio-out` | `to-socket` (a plain TCP socket the plugin opened, at the rate and channels it asks) or `serve` (at the door's `/a/<encoding>`, nori's rate) make a `Sink`, and the client's engine plays into it (`Plugins::set_cards`, `nori_engine::cast::CastOutput`): pumped in real time half a second ahead, on a thread of its own, 16-bit. PCM is little-endian into a socket and `audio/L16` at the door, WAV has an open length, FLAC has verbatim frames of 4096. While a sink plays, nothing goes to offload; when the plugin stops, the device's own output comes back where the music is (`Engine::set_card`). `set-latency` adds to what the seek bar and lyrics wait for |
+| `audio-out` | `to-socket` with `pace.deep` makes a deep sink (below). Otherwise `to-socket` (a plain TCP socket the plugin opened, at the rate and channels it asks, or nori's) or `serve` (at the door's `/a/<encoding>`, nori's rate) make a `Sink`, and the client's engine plays into it (`Plugins::set_cards`, `nori_engine::cast::card`): pumped in real time half a second ahead, on a thread of its own, 16-bit. PCM is little-endian into a socket and `audio/L16` at the door, WAV has an open length, FLAC has verbatim frames of 4096. While a sink plays, nothing goes to the phone's offload; when the plugin stops, the device's own output comes back where the music is (`Engine::set_card`). `set-latency` adds to what the seek bar and lyrics wait for |
 | `cast` | `start` tells the client a cast runs (`Client::cast`); a target cast parks the music here (`Card::Elsewhere`, the engine's `play_elsewhere`): the output is let go, and nori's queue moves, plays and pauses for the device, never heard here, at the place and state the device `report`s. `end` or the plugin's instance going ends it, and a target cast's music plays on here from where the device was (`Card::Back`, `come_back`). One plugin casts at a time. The volume keys and picking another output reach the plugin as the media buttons `volume-up`, `volume-down`, `cast-stop` (`Plugins::cast_button`); during a target cast what nori's queue does, from a press or a plugin's `session`, reaches it as `jump:<list index>`, `seek:<ms>`, `play` and `pause` (`Plugins::played`, which clients call while a target cast runs), never what only repeats its own report |
 
 The clients' output pickers (Android's devices sheet, the desktop's devices panel, the terminal's) list
 the cast's device beside remote control's; picking this device again sends `cast-stop`. Android holds
-a Wi-Fi lock while a sink cast streams, and its media session shows the cast's device while one runs
+a Wi-Fi lock while a sink cast streams (a deep sink's only while a burst is sent), and its media session shows the cast's device while one runs
 (`CastPlayer`): the volume keys reach it as a remote device's. During a target cast every client's
 player shows the engine's status, which is the device's place and state, and media3 keeps the service in
 the foreground while it plays. The desktop and terminal hand the volume to the cast from crates/host's
 `Session`.
+
+### Deep sinks
+
+`audio-out.to-socket` with `pace.deep(depth-ms)` makes a deep sink: a device that holds tens of seconds
+(a speaker with PSRAM) and takes nori's audio the way a phone's AudioTrack does, a burst and then nothing
+until it runs low, so the phone's radio and CPU sleep between bursts. The host speaks the protocol
+([nori-sink-protocol](../../crates/sink-protocol/src/lib.rs), `no_std` + `alloc`, so firmware uses the
+same code) over the plugin's socket; the plugin only finds the device, connects, calls `to-socket` and
+starts the cast. `encoding` is not used; `rate` and `channels` none means each song's own format. No
+plugin code runs per buffer (`nori_plugins::deep`, `nori_engine::cast::deep`).
+
+**Framing.** Every frame is a `u32` length (little-endian, the bytes after it), a kind byte, then its
+fields, little-endian: `u16`/`u32`/`u64`, `f32` as its bits, strings a `u16` length and UTF-8, an option a
+byte (0 none, 1 some) and the value; byte payloads run to the frame's end. A frame is at most 1 MiB.
+`Frames::push` gathers bytes; `next_host`/`next_device` hand out frames borrowing them.
+
+**Handshake.** The host sends `Hello { version }` and waits (3 s) for `Caps`; nothing else comes before.
+Then `Depth`, and before the first audio a `Format`.
+
+Host to device (kind):
+
+| frame | fields | meaning |
+|---|---|---|
+| `Hello` 0x01 | `version: u16` | first frame; the device answers `Caps` |
+| `Depth` 0x02 | `ms: u32` | how much to hold; ask for more when under half of it. The host fits it to `buffer_bytes` at the format (90 %); 250 ms while a sound page is tuned, then full again |
+| `Format` 0x03 | `rate: u32, channels: u8, bits: u8, codec: u8` (0 PCM, 1 FLAC, 2 MP3) | the audio after it is in this format; `bits` is PCM's width (16, 24), 0 for encoded (FLAC says its own) |
+| `Audio` 0x04 | samples | PCM, whole frames, interleaved, little-endian (24-bit packed in 3 bytes) |
+| `Encoded` 0x05 | bytes | one whole packet of the file (a FLAC or MP3 frame); a FLAC song's first is `fLaC` and its STREAMINFO block, which counts no frames |
+| `Gain` 0x06 | `db: f32` | the song whose audio follows plays at this gain (ReplayGain). Sent only before encoded songs: in PCM nori has applied it to the samples |
+| `Flush` 0x07 | `seq: u32, keep: option<u64>` | drop what is held past stream frame `keep`; none, or if it already played past `keep`, drop everything not played. Answer `Flushed` and `Status` |
+| `Pause` 0x08, `Resume` 0x09 | | stop at once keeping what is held; go on. Answer `Status` |
+| `Ramp` 0x0a | `target: f32, ms: u32` | fade from the fade's current gain to `target` (linear, 0 to 1) over `ms`; `ms` 0 sets it |
+| `Volume` 0x0b | `gain: f32` | the user's volume, linear 0 to 1, heard at once (not positional) |
+| `Cover` 0x0c | `id: u32`, JPEG | a cover at the size `Caps` asked, kept for `Now` to name; sent once, before the first `Now` that names it |
+| `Now` 0x0d | `id: u32, title, artist, album, duration_ms: u32, cover: option<u32>` | the song whose audio follows |
+
+Device to host:
+
+| frame | fields | meaning |
+|---|---|---|
+| `Caps` 0x81 | `version: u16, buffer_bytes: u32, max_rate: u32, bits: u8` (bit 0 16-bit, bit 1 24-bit), `decodes: u8` (bit 1 FLAC, bit 2 MP3), `cover: option<u32>` (px square; none: no screen) | what it can do. Only a song above `max_rate` is resampled; FLAC and MP3 it decodes go as their own packets |
+| `Want` 0x82 | `frames: u32` | send this many frames more; replaces credit left |
+| `Status` 0x83 | `played: u64, held: u32, delay_us: u32` | frames played since Hello (never reset by a flush; the host subtracts), frames held, the delay after the buffer |
+| `Flushed` 0x84 | `seq: u32, played: u64` | the flush `seq` is done, at `played` |
+| `Press` 0x85 | `button: u8` (0 play-pause, 1 next, 2 previous) | a button: nori takes it as a media button, so plugins' deciders apply |
+| `Volume` 0x86 | `gain: f32` | its own knob: the cast's volume in nori, not sent back |
+
+**Positional frames.** `Format`, `Gain` and `Now` apply where they are in the stream: what came before
+plays out in its format, and the device switches exactly at the next audio. They wait in the buffer with
+the audio. A flush drops them with the audio past `keep`; covers and the last `Now` shown survive it.
+After a flush the first audio is preceded by `Format` (and by `Gain` and `Now` when they apply), so the
+device never guesses.
+
+**Flow control is credit, not TCP.** The device reads its socket always. When it holds less than half
+its depth it sends one `Want` for what fills it (and a `Status`); the host writes exactly that much audio
+and then nothing until the next `Want`. PCM never exceeds the credit; encoded audio goes in whole
+packets until the frames they cover reach it, so the last overshoots by less than a packet (accept it);
+counts stay exact through packet durations, and no credit splits a FLAC or MP3 frame. Control frames go
+out at once, never behind unasked audio, and the host keeps its send buffer small (64 KB), so a seek or a
+pause is heard in milliseconds, not after the device drains megabytes. The pump sleeps between `Want`s,
+woken only by the device, the engine (a command, music written at the end of its turn) or the socket;
+never a timer. The Wi-Fi lock (Android) is held only while a burst is sent (`Client::streaming`).
+
+**When Status is sent:** with each `Want`, and in answer to `Pause`, `Resume`, `Depth` and `Flush`;
+never periodically. The host runs the place on from the last one by its own clock (the seek bar, lyrics,
+the engine's deep-output hooks: `holding`, `latency_us`).
+
+**Flushes.** A seek or a jump drops everything (`keep` none). A sound change keeps what the device holds
+up to the frame where the music was made again (`keep`) and continues from there, so it is heard within
+a fraction of a second, seamlessly; the engine keeps the input reaching back over the device's depth to
+make it again.
+
+**Format follows the song.** With no rate asked, each song goes at its own rate, channels and the width
+the device takes (24-bit with high quality output on). The engine reopens its output where it always does
+between songs of different formats (after a crossfade or AutoMix mix, never inside one: the mix converts
+the incoming song); a deep sink takes the `Format` in its stream instead of draining first.
+
+**Offload.** While nothing touches the samples (`nori_player::policy`: no equalizer, effect, speed or
+mix) and the device decodes the song's codec, the engine's offload path sends the file's own packets
+(`Format` with the codec, then `Encoded`), as Android's offload output does: the same switch points
+(PCM again when the equalizer comes on, behind a dip where the ear is; back at the next song or where
+the ear is), seeks by the file's seek table or bitrate (FLAC seek table, MP3 Xing/TOC), a `Flush` and the
+packets from there. ReplayGain is `Gain` at each song's start; fades are `Ramp`s. `Status` counts decoded
+frames. MP3 encoder gaps are not told: an MP3 that joins its album gaplessly plays as PCM.
+
+**Now playing.** At each song's first frame (a gapless boundary, after a skip's flush, where a mix's
+next song begins) the host puts `Now`, with the song's cover sent once before it if `Caps.cover` asked a
+size (from nori's cover cache at that size; JPEG only). An album's songs share a cover id. Covers are
+never fetched for songs the engine is not already reading; one not on disk yet is fetched in the
+background and goes with the album's next song, so the audio threads never wait on the network.
+
+**What firmware implements:** read the socket always; answer `Hello` with `Caps`; keep a FIFO of audio
+and positional frames with stream frame counts; play it, switching format, gain and now-playing exactly
+at their place; send `Want` when under half the depth (one at a time: the next once the last's frames
+arrived or it is low again), `Status` at the times above; `Flush` by truncating at `keep` (or everything)
+and dropping incoming audio up to where it played; `Pause`/`Resume` at once; `Ramp` and `Volume` as gain
+stages (fade × volume × song gain); `Press` and `Volume` from its buttons and knob.
 
 ## Overrides
 

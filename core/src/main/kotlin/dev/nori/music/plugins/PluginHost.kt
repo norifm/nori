@@ -66,6 +66,8 @@ class PluginHost(
     private val transport: () -> dev.nori.music.ffi.net.Transport,
     /** Does what a plugin asked of the player, as a press of the app's own would (PlayerConnection's). */
     private val control: (Control) -> Unit,
+    /** A cast's device's button, as a media button's press. */
+    private val pressed: (dev.nori.music.ffi.model.Press) -> Unit,
 ) {
     private val _cards = MutableStateFlow<List<PluginCard>>(emptyList())
     /** The installed plugins in their order, in the user's language; empty until [refresh]. */
@@ -168,6 +170,8 @@ class PluginHost(
             _cast.value = cast
         }
         override fun control(control: Control) = this@PluginHost.control(control)
+        override fun streaming(on: Boolean) = lan.streaming(on)
+        override fun pressed(press: dev.nori.music.ffi.model.Press) = this@PluginHost.pressed(press)
         override fun signIn(id: String, url: String): Boolean = _signIns.tryEmit(ServerKind.Plugin(id) to url)
         override fun wake(events: List<WakeEvent>) = PluginReceivers.wake(context, events)
         override fun commands(commands: List<Command>) = PluginReceivers.commands(context, commands.isNotEmpty())

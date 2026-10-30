@@ -5094,6 +5094,7 @@ dependencies = [
  "nori-player",
  "nori-plugins",
  "nori-remote",
+ "nori-sink-protocol",
  "nori-testdir",
  "nori-time",
  "parking_lot",
@@ -5320,6 +5321,7 @@ dependencies = [
  "nori-plugin-sdk",
  "nori-plugins",
  "nori-settings",
+ "nori-sink-protocol",
  "nori-tasks",
  "nori-testdir",
  "nori-time",
@@ -5408,6 +5410,10 @@ dependencies = [
  "tao",
  "wry",
 ]
+
+[[package]]
+name = "nori-sink-protocol"
+version = "0.7.1"
 
 [[package]]
 name = "nori-stretch"

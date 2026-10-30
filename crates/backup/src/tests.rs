@@ -44,6 +44,8 @@ impl nori_plugins::Client for Quiet {
     fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}
     fn browse(&self, _: String, _: bool) {}
     fn multicast(&self, _: bool) {}
+    fn streaming(&self, _: bool) {}
+    fn pressed(&self, _: nori_model::deciders::Press) {}
     fn cast(&self, _: Option<nori_plugins::Cast>) {}
     fn control(&self, _: nori_plugins::Control) {}
     fn sign_in(&self, _: String, _: String) -> bool {

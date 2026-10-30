@@ -50,7 +50,9 @@ nori-plugins = { path = "../plugins", optional = true }
 [dev-dependencies]
 # tests/perf_stage.rs: the test plugin's sound stage.
 nori-plugins = { path = "../plugins", features = ["testing"] }
-nori-engine = { path = ".", features = ["testing"] }
+nori-engine = { path = ".", features = ["testing", "plugins"] }
+# tests/cast.rs: the fake deep sink speaks the protocol.
+nori-sink-protocol = { path = "../sink-protocol" }
 nori-testdir = { path = "../testdir" }
 nori-player = { path = "../player", features = ["synth"] }
 # tests/stretch.rs: the lyrics page's clock, read through a stretched mix as a screen reads it.

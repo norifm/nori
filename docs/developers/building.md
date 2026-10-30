@@ -287,17 +287,18 @@ All honor `ANDROID_SERIAL`. For the engine's cost on the host, see
 
 ## Without `std`
 
-nori-player, nori-model and nori-remote build with their `std` feature (on by default) off, for
-firmware on a microcontroller:
+nori-player, nori-model and nori-remote build with their `std` feature (on by default) off, and
+nori-sink-protocol has none, for firmware on a microcontroller:
 
 | crate | without `std` |
 |---|---|
 | nori-player | the sound chain's DSP (`dsp`, `compressor`, `graphic`, `eqfit`, `spatial`, `dither`) and the records it is set with; float math from libm (`math.rs`) |
 | nori-model | the library records and their JSON; no `CoreError`, log, deciders or database |
 | nori-remote | the frames (`wire`), what a device admits (`device`), the LAN's proof (`lan::verified`, `account_tag`) |
+| nori-sink-protocol | all of it: a deep cast sink's frames and their framing |
 
 ```sh
-cargo +nightly check -p nori-player -p nori-model -p nori-remote --no-default-features --target riscv32imafc-unknown-none-elf
+cargo +nightly check -p nori-player -p nori-model -p nori-remote -p nori-sink-protocol --no-default-features --target riscv32imafc-unknown-none-elf
 ```
 
 ## The web client

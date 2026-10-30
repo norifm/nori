@@ -32,6 +32,10 @@ pub trait Client: Send + Sync {
     /// The cast running changed: the client shows it and holds what the platform needs for it
     /// ([`crate::Cast`]); None, it ended.
     fn cast(&self, cast: Option<crate::Cast>);
+    /// A deep sink's burst is being sent (true) or all sent: Android holds the Wi-Fi lock meanwhile.
+    fn streaming(&self, on: bool);
+    /// A cast's device's button: what a media button's `press` does (`Session::media_button`).
+    fn pressed(&self, press: nori_model::deciders::Press);
     /// A plugin asks the player to do `control`, as a press of the client's own would.
     fn control(&self, control: Control);
     /// Opens the sign-in page of plugin `id`'s provider at `url`; false where the client has none.
@@ -123,6 +127,14 @@ impl Side for App {
 
     fn cast(&self, cast: Option<&crate::Cast>) {
         self.client.cast(cast.cloned());
+    }
+
+    fn streaming(&self, on: bool) {
+        self.client.streaming(on);
+    }
+
+    fn pressed(&self, press: nori_model::deciders::Press) {
+        self.client.pressed(press);
     }
 
     fn control(&self, c: Control) {

@@ -2288,6 +2288,8 @@ impl nori_plugins::Client for Heard {
     }
     fn browse(&self, _: String, _: bool) {}
     fn multicast(&self, _: bool) {}
+    fn streaming(&self, _: bool) {}
+    fn pressed(&self, _: nori_core::deciders::Press) {}
     fn cast(&self, _: Option<nori_plugins::Cast>) {}
     fn control(&self, _: nori_plugins::Control) {}
     fn sign_in(&self, _: String, _: String) -> bool {
@@ -2454,7 +2456,7 @@ fn a_plugins_rows_show_hint_unit_and_link() {
 fn the_devices_panel_lists_a_plugins_cast() {
     let mut a = app();
     a.song = Some(song("1", "Blue", 200));
-    a.handle(Msg::Cast(Some(nori_plugins::Cast { plugin: "fm.nori.cast".into(), kind: nori_plugins::CastKind::Sink, device: "Kitchen".into(), playing: true, position_ms: 0, volume: Some(40) })));
+    a.handle(Msg::Cast(Some(nori_plugins::Cast { plugin: "fm.nori.cast".into(), kind: nori_plugins::CastKind::Sink, device: "Kitchen".into(), playing: true, position_ms: 0, volume: Some(40), bursts: false })));
     key(&mut a, KeyCode::Char('C'));
     assert_eq!((a.full, a.panel), (true, Panel::Devices), "the panel shows for a cast alone");
     let s = draw(&mut a, 160, 30);
@@ -2494,6 +2496,8 @@ impl nori_plugins::Client for Quiet {
     fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}
     fn browse(&self, _: String, _: bool) {}
     fn multicast(&self, _: bool) {}
+    fn streaming(&self, _: bool) {}
+    fn pressed(&self, _: nori_core::deciders::Press) {}
     fn cast(&self, _: Option<nori_plugins::Cast>) {}
     fn control(&self, _: nori_plugins::Control) {}
     fn sign_in(&self, _: String, _: String) -> bool {

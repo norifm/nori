@@ -1,6 +1,7 @@
 //! An output into a plugin's cast ([`nori_plugins::Sink`]): the engine's final audio, pumped in real
 //! time, a little ahead, on a thread of its own while it plays. The device far away buffers what is
-//! ahead; a socket that fails ends the cast's output as a dead card would.
+//! ahead; a socket that fails ends the cast's output as a dead card would. A deep sink takes it in
+//! bursts instead ([`deep`]).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -9,7 +10,26 @@ use std::thread::JoinHandle;
 use nori_plugins::Sink;
 use nori_time::{Duration, Instant};
 
+use crate::offload::OffloadOutput;
 use crate::output::{AudioOutput, Feed, OutputFormat};
+
+mod deep;
+
+pub use deep::{CastOffload, DeepOutput, NowUs, Pump, Pumped, Shown, Shows};
+
+/// The outputs a cast into `sink` plays through: its audio output, and for a deep sink the offload
+/// output that sends songs' own packets ([`crate::Engine::set_card`]). `shows`: what its device shows
+/// of each song, if it shows any.
+pub fn card(sink: Arc<Sink>, shows: Option<Arc<dyn Shows>>) -> (Box<dyn AudioOutput>, Option<Box<dyn OffloadOutput>>) {
+    match sink.deep.clone() {
+        Some(d) => {
+            let now: NowUs = Arc::new(|| nori_time::monotonic().as_micros() as i64);
+            let (out, off) = DeepOutput::new(d, sink.rate, sink.channels, shows, now);
+            (Box::new(out), Some(Box::new(off)))
+        }
+        None => (Box::new(CastOutput::new(sink)), None),
+    }
+}
 
 /// Frames per pull.
 const PERIOD: usize = 1024;
@@ -63,7 +83,7 @@ fn pump(mut feed: Feed, sink: Arc<Sink>, shared: Arc<Shared>) {
 
 impl AudioOutput for CastOutput {
     fn open(&mut self, want: OutputFormat) -> Result<OutputFormat, String> {
-        let (rate, channels) = self.sink.wants.unwrap_or((want.rate, want.channels.min(8) as u8));
+        let (rate, channels) = (self.sink.rate.unwrap_or(want.rate), self.sink.channels.unwrap_or(want.channels.min(8) as u8));
         self.sink.open(rate, channels);
         Ok(OutputFormat { rate, channels: channels as usize, bits: 0 })
     }

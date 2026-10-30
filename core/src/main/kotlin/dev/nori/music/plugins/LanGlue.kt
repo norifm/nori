@@ -13,7 +13,8 @@ import dev.nori.music.net.NsdBrowse
 /**
  * What Android holds for plugins on the LAN, only while the plugin host asks (crates/plugins lan.rs):
  * NsdManager browsing a kind, the multicast lock while a plugin's socket is in a group, and the Wi-Fi
- * lock while a sink cast streams nori's audio from the phone.
+ * lock while a sink cast streams nori's audio from the phone: for the whole cast, or for a deep sink
+ * only while a burst is sent ([streaming]), so the radio sleeps between bursts.
  */
 internal class LanGlue(context: Context, private val plugins: () -> Plugins) {
     private val app = context.applicationContext
@@ -39,10 +40,18 @@ internal class LanGlue(context: Context, private val plugins: () -> Plugins) {
 
     @Synchronized
     fun cast(cast: Cast?) {
-        val sink = cast?.kind == CastKind.SINK
-        if (sink == (streaming != null)) return
+        // A deep sink's bursts say when it is held.
+        if (cast?.kind != CastKind.SINK || !cast.bursts) hold(cast?.kind == CastKind.SINK)
+    }
+
+    /** A deep sink's burst is being sent ([on]) or all sent. */
+    @Synchronized
+    fun streaming(on: Boolean) = hold(on)
+
+    private fun hold(on: Boolean) {
+        if (on == (streaming != null)) return
         streaming?.takeIf { it.isHeld }?.release()
         @Suppress("DEPRECATION")
-        streaming = if (sink) wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "nori cast").apply { setReferenceCounted(false); acquire() } else null
+        streaming = if (on) wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "nori cast").apply { setReferenceCounted(false); acquire() } else null
     }
 }

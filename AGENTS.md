@@ -17,7 +17,7 @@ python3 tools/rust.py build -p nori-desktop          # optional Bazel native des
 python3 tools/rust.py run -p nori-cli                # optional Bazel terminal client
 cargo test -p nori-player --test pipeline    # player end to end on a virtual clock
 cargo clippy -j4 --workspace --all-targets -- -D warnings  # none; CI fails on any
-cargo +nightly check -p nori-player -p nori-model -p nori-remote --no-default-features --target riscv32imafc-unknown-none-elf  # still no_std
+cargo +nightly check -p nori-player -p nori-model -p nori-remote -p nori-sink-protocol --no-default-features --target riscv32imafc-unknown-none-elf  # still no_std
 ./gradlew :app:compileDebugKotlin -PrustTargets=arm64-v8a    # Kotlin compiles (this Mac's emulator is arm64)
 ./gradlew :app:assembleDebug -PrustTargets=arm64-v8a         # debug APK for the emulator
 tools/dev-server.sh                                 # local Navidrome, admin/admin, http://10.0.2.2:4533 from the emulator
@@ -71,6 +71,7 @@ via nori-core):
 | look | colours from covers (AndroidX Palette port), themes, seek bar and lyric pacing |
 | perf | perf recorder bookkeeping and report (tooling, English) |
 | plugins | the plugin host: installing, compiling (wasmtime, Cranelift) and running plugins, their stores, overrides laid over the settings, sound stages, and the page a client draws (docs/developers/plugins.md) |
+| sink-protocol | the frames between nori and a deep cast sink (a speaker taking bursts on credit), both directions, `no_std` for its firmware |
 | plugin-sdk | for plugin authors: `wit/` as Rust, a trait per extension point (build.rs writes them), the manifest kept in the wasm, `plugin!` |
 | android | Android only: the `norimusic` cdylib, uniffi scaffolding, JNI doors, AudioTrack writer (track.rs), playback path (player.rs) |
 | http, output-cpal, mpris | desktop: ureq transport, cpal output, Linux media controls |

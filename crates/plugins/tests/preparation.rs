@@ -26,7 +26,7 @@ fn a_stage_reads_the_volume_the_route_and_its_songs_facts() {
     plugins.set(FIXTURE.into(), "gain".into(), Value::Level(-1.0));
     let spec = plugins.stages().remove(0);
     assert_eq!((spec.slot, spec.rows.clone()), (Slot::Master, vec![-1.0]));
-    let song = Arc::new(SongFacts { gain_db: Some(-3.0), loudness_lufs: Some(-14.0), prepared: vec![(FIXTURE.into(), Arc::from(&1234u64.to_le_bytes()[..])), ("other.plugin".into(), Arc::from(&[9u8; 8][..]))] });
+    let song = Arc::new(SongFacts { id: None, gain_db: Some(-3.0), loudness_lufs: Some(-14.0), prepared: vec![(FIXTURE.into(), Arc::from(&1234u64.to_le_bytes()[..])), ("other.plugin".into(), Arc::from(&[9u8; 8][..]))] });
     let inputs = Inputs { rows: spec.rows.clone(), around: Around { volume_db: -6.0, route: OutputKind::Bluetooth }, song };
     let mut stage = spec.maker.make(48_000, 2, &inputs).unwrap();
     let mut b = vec![0.0f32; 16];

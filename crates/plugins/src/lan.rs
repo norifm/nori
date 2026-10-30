@@ -73,6 +73,9 @@ pub struct Cast {
     pub position_ms: u64,
     /// 0 to 100, when the device says.
     pub volume: Option<u8>,
+    /// A deep sink: the phone sends its audio in bursts, so the Wi-Fi lock is held only while one is
+    /// sent ([`crate::Client::streaming`]), not for the whole cast.
+    pub bursts: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,8 +286,55 @@ impl Lan {
     }
 
     pub(crate) fn pump_sink(&self, id: &str, sink: Arc<Sink>) {
+        if let Some(deep) = &sink.deep {
+            let (me, plugin) = (self.me.clone(), id.to_string());
+            deep.controls(Box::new(move |said| {
+                if let (Some(lan), Some(said)) = (me.upgrade(), said) {
+                    lan.device_said(&plugin, said);
+                }
+            }));
+            let side = self.side.clone();
+            deep.on_burst(Box::new(move |on| side.streaming(on)));
+        }
         self.inner().pumped = Some((id.to_string(), sink.clone()));
         self.card(Card::Sink(sink));
+    }
+
+    /// A deep sink's button or knob.
+    fn device_said(&self, id: &str, said: crate::deep::Device) {
+        use crate::deep::{Button, Device};
+        use nori_model::deciders::Press;
+        match said {
+            Device::Press(b) => self.side.pressed(match b {
+                Button::PlayPause => Press::PlayPause,
+                Button::Next => Press::Next,
+                Button::Previous => Press::Previous,
+            }),
+            Device::Volume { gain } => {
+                let mut i = self.inner();
+                let Some(cast) = i.cast.as_mut().filter(|c| c.plugin == id) else { return };
+                cast.volume = Some((gain.clamp(0.0, 1.0) * 100.0).round() as u8);
+                let cast = cast.clone();
+                drop(i);
+                self.side.cast(Some(&cast));
+            }
+            _ => {}
+        }
+    }
+
+    /// The volume keys for a deep sink: its volume moves by `step` (of 100), sent to the device; false
+    /// when no deep sink plays.
+    pub(crate) fn deep_volume(&self, step: i8) -> bool {
+        let mut i = self.inner();
+        let Some(deep) = i.pumped.as_ref().and_then(|(_, s)| s.deep.clone()) else { return false };
+        let Some(cast) = i.cast.as_mut() else { return false };
+        let volume = (cast.volume.unwrap_or(50) as i16 + step as i16).clamp(0, 100) as u8;
+        cast.volume = Some(volume);
+        let cast = cast.clone();
+        drop(i);
+        deep.send(crate::deep::Frame::Volume { gain: volume as f32 / 100.0 });
+        self.side.cast(Some(&cast));
+        true
     }
 
     pub(crate) fn sink_latency(&self, id: &str, ms: u32) {
@@ -309,8 +359,9 @@ impl Lan {
     }
 
     pub(crate) fn start_cast(&self, id: &str, kind: CastKind, device: String) {
-        let cast = Cast { plugin: id.to_string(), kind, device, playing: false, position_ms: 0, volume: None };
         let mut i = self.inner();
+        let bursts = kind == CastKind::Sink && i.pumped.as_ref().is_some_and(|(by, s)| by == id && s.deep.is_some());
+        let cast = Cast { plugin: id.to_string(), kind, device, playing: false, position_ms: 0, volume: None, bursts };
         if i.cast.as_ref().is_some_and(|c| c.plugin != id) {
             nori_model::alog::info(&format!("plugin {id}: another plugin's cast runs"));
             return;

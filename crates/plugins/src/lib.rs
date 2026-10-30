@@ -14,6 +14,7 @@ mod cache;
 mod cast;
 pub mod convert;
 mod deciders;
+pub mod deep;
 mod devices;
 mod door;
 mod hooks;

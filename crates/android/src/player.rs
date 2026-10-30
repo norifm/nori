@@ -595,11 +595,13 @@ impl JavaOffload {
     }
 }
 
-fn encoding_of(c: Coding) -> i32 {
+/// The AudioTrack encoding of `c`; none for FLAC, which no phone offloads.
+fn encoding_of(c: Coding) -> Option<i32> {
     match c {
-        Coding::Mp3 => ENCODING_MP3,
-        Coding::Aac => ENCODING_AAC_LC,
-        Coding::Opus => ENCODING_OPUS,
+        Coding::Mp3 => Some(ENCODING_MP3),
+        Coding::Aac => Some(ENCODING_AAC_LC),
+        Coding::Opus => Some(ENCODING_OPUS),
+        Coding::Flac => None,
     }
 }
 
@@ -634,8 +636,8 @@ fn offload_support(answer: i32) -> (Support, String) {
 
 impl OffloadOutput for JavaOffload {
     fn supports(&mut self, coded: Coded) -> Support {
-        let Some((java, mut env)) = env() else { return Support::No };
-        let args = [JValue::Int(encoding_of(coded.coding)).as_jni(), JValue::Int(coded.rate as i32).as_jni(), JValue::Int(coded.channels as i32).as_jni()];
+        let (Some(encoding), Some((java, mut env))) = (encoding_of(coded.coding), env()) else { return Support::No };
+        let args = [JValue::Int(encoding).as_jni(), JValue::Int(coded.rate as i32).as_jni(), JValue::Int(coded.channels as i32).as_jni()];
         let answer = call(&mut env, self.bridge.obj(), java.offload_support, ReturnType::Primitive(Primitive::Int), &args).and_then(|v| v.i().ok()).unwrap_or(-1);
         let (s, words) = offload_support(answer);
         log(&format!("offload of {} at {} Hz x{}: {words}: {s:?}", coded.coding.name(), coded.rate, coded.channels));
@@ -650,6 +652,7 @@ impl OffloadOutput for JavaOffload {
 
     fn open(&mut self, coded: Coded, bytes: usize) -> Result<usize, String> {
         self.close();
+        let encoding = encoding_of(coded.coding).ok_or("no phone offloads FLAC")?;
         let (java, mut env) = env().ok_or("no JVM")?;
         if java.offload.is_none() {
             return Err("no offload before Android 10".into());
@@ -660,7 +663,7 @@ impl OffloadOutput for JavaOffload {
         let (staging, bridge) = (self.staging.as_mut_ptr(), &self.bridge);
         let opened = env.with_local_frame(4, |env| -> jni::errors::Result<Option<(GlobalRef, GlobalRef, usize)>> {
             let args = [
-                JValue::Int(encoding_of(coded.coding)).as_jni(),
+                JValue::Int(encoding).as_jni(),
                 JValue::Int(coded.rate as i32).as_jni(),
                 JValue::Int(coded.channels as i32).as_jni(),
                 JValue::Int(bytes.min(i32::MAX as usize) as i32).as_jni(),
@@ -1669,8 +1672,13 @@ extern "system" fn cast_to(h: jlong, plugins: jlong) {
     plugins.set_cards(Box::new(move |to| {
         let Some(p) = player.upgrade() else { return };
         match to {
-            nori_plugins::Card::Sink(sink) => p.engine.set_card(Box::new(nori_engine::cast::CastOutput::new(sink)), true),
-            nori_plugins::Card::Here => p.engine.set_card(Box::new(TrackOutput::new(Box::new(JavaOpener { bridge: p.bridge.clone(), quiet: p.quiet.clone(), sdk: p.sdk }), p.float, p.shared.clone())), false),
+            nori_plugins::Card::Sink(sink) => {
+                // The covers are drawn in Kotlin: a deep sink shows the songs' lines only.
+                let shows = Arc::new(nori_engine::core::QueueShows { queue: p.queue.clone(), cover: None });
+                let (out, offload) = nori_engine::cast::card(sink, Some(shows));
+                p.engine.set_card(out, offload, true)
+            }
+            nori_plugins::Card::Here => p.engine.set_card(Box::new(TrackOutput::new(Box::new(JavaOpener { bridge: p.bridge.clone(), quiet: p.quiet.clone(), sdk: p.sdk }), p.float, p.shared.clone())), None, false),
             nori_plugins::Card::Elsewhere { playing, position_ms } => p.engine.play_elsewhere(playing, position_ms.map(|ms| ms as i64)),
             nori_plugins::Card::Back => p.engine.come_back(),
         }

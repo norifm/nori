@@ -50,8 +50,7 @@ interface lan-serve {
     close: func();
 }
 
-/// Nori's final audio for a cast. The host moves every byte, in real time; no plugin code runs per
-/// buffer.
+/// Nori's final audio for a cast. The host moves every byte; no plugin code runs per buffer.
 interface audio-out {
     use types.{error};
     use sockets.{tcp};
@@ -62,8 +61,20 @@ interface audio-out {
         flac,
     }
 
-    /// Pumps the audio into a socket the plugin opened, at `rate` and `channels`.
-    to-socket: func(socket: borrow<tcp>, encoding: encoding, rate: u32, channels: u8) -> result<_, error>;
+    /// How the audio goes into the socket.
+    variant pace {
+        /// In real time, a little ahead, as `encoding` (a snapserver's source, a small speaker).
+        real-time,
+        /// nori-sink-protocol, which the host speaks (docs/developers/plugins.md, "Deep sinks"): the
+        /// device holds tens of seconds and asks for bursts, and says what it decodes, the rates and
+        /// widths it takes and its cover size. The depth preferred, ms (the host fits it to the
+        /// device's buffer). `encoding` is not used.
+        deep(option<u32>),
+    }
+
+    /// Sends the audio into a socket the plugin opened, at `rate` and `channels`; none: each song's own.
+    /// A deep sink is said Hello and answers before this returns.
+    to-socket: func(socket: borrow<tcp>, encoding: encoding, rate: option<u32>, channels: option<u8>, pace: pace) -> result<_, error>;
     /// Serves it at a LAN URL under the door; the URL.
     serve: func(encoding: encoding) -> result<string, error>;
     /// The device's delay, ms: the seek bar and lyrics move by it.

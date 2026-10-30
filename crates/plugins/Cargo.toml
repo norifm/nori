@@ -18,6 +18,8 @@ ffi = ["dep:uniffi", "nori-model/ffi", "nori-settings/ffi", "nori-net/ffi"]
 [dependencies]
 uniffi = { workspace = true, optional = true }
 nori-model = { path = "../model" }
+# The deep sink protocol (deep.rs).
+nori-sink-protocol = { path = "../sink-protocol" }
 # The clock a plugin's WASI monotonic clock reads.
 nori-time = { path = "../time" }
 nori-net = { path = "../net" }
@@ -57,6 +59,8 @@ ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 memmap2 = "0.9"
 
 [dev-dependencies]
+# tests/lan.rs: a deep sink's side of the protocol.
+nori-sink-protocol = { path = "../sink-protocol" }
 nori-plugins = { path = ".", features = ["testing"] }
 nori-testdir = { path = "../testdir" }
 async-trait = "0.1"

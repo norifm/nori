@@ -611,7 +611,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
 
     /// Whether any stage reads songs' facts.
     fn told(&self) -> bool {
-        !self.song_stages.is_empty() || !self.sink.settings().stages.is_empty()
+        !self.song_stages.is_empty() || !self.sink.settings().stages.is_empty() || self.sink.track.marks_songs()
     }
 
     /// What the stages read of song `i`, played at `gain` as stream `serial`; kept for it.
@@ -621,6 +621,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         }
         let id = self.id_at(i);
         let facts = Arc::new(SongFacts {
+            id: Some(id.clone()),
             gain_db: Some(20.0 * gain.max(1e-6).log10()),
             loudness_lufs: self.app.loudness(&id),
             prepared: self.preparing.as_ref().map(|p| p.prepared(&id)).unwrap_or_default(),

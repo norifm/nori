@@ -50,6 +50,8 @@ impl Around {
 /// What a stage reads of the song it plays (in the master slot, the song coming out).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SongFacts {
+    /// The song's id, for an output that is told where each song starts (`Track::marks_songs`).
+    pub id: Option<String>,
     /// The gain nori levels the song by, dB.
     pub gain_db: Option<f32>,
     /// Its measured integrated loudness, LUFS.

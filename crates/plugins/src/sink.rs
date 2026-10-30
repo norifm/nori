@@ -1,12 +1,15 @@
 //! nori's final audio for a cast (`audio-out`), encoded here and sent on by the host: into a socket
 //! the plugin opened, or to each device that fetches it at the door. The engine pumps it in real time
-//! (`nori_engine::cast`); no plugin code runs per buffer.
+//! (`nori_engine::cast`), or for a deep sink ([`Deep`]) in the bursts the device asks for; no plugin
+//! code runs per buffer.
 
 use std::io::Write;
 use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use crate::deep::Deep;
 
 /// How long a device may hold a write up before it is let go.
 const WRITE_WAIT: Duration = Duration::from_secs(2);
@@ -68,25 +71,35 @@ struct Out {
 
 pub struct Sink {
     pub encoding: Encoding,
-    /// The rate and channels the device takes; None: what nori plays.
-    pub wants: Option<(u32, u8)>,
+    /// The rate and channels the device takes; None: what nori plays (each song's own).
+    pub rate: Option<u32>,
+    pub channels: Option<u8>,
+    /// A deep sink's connection: the engine speaks nori-sink-protocol over it instead of pumping.
+    pub deep: Option<Arc<Deep>>,
     latency_ms: AtomicU32,
     out: Mutex<Out>,
 }
 
 impl Sink {
-    fn new(encoding: Encoding, wants: Option<(u32, u8)>, to: To) -> Sink {
+    fn new(encoding: Encoding, rate: Option<u32>, channels: Option<u8>, to: To) -> Sink {
         let out = Out { to, format: None, header: Vec::new(), bytes: Vec::new(), pending: Vec::new(), frames: 0, gone: false };
-        Sink { encoding, wants, latency_ms: AtomicU32::new(0), out: Mutex::new(out) }
+        Sink { encoding, rate, channels, deep: None, latency_ms: AtomicU32::new(0), out: Mutex::new(out) }
     }
 
-    pub(crate) fn to_socket(encoding: Encoding, socket: TcpStream, rate: u32, channels: u8) -> Sink {
+    pub(crate) fn to_socket(encoding: Encoding, socket: TcpStream, rate: Option<u32>, channels: Option<u8>) -> Sink {
         let _ = socket.set_write_timeout(Some(WRITE_WAIT));
-        Sink::new(encoding, Some((rate, channels)), To::Socket(socket))
+        Sink::new(encoding, rate, channels, To::Socket(socket))
+    }
+
+    /// A deep sink over `deep`, at `rate` and `channels` if the plugin said them.
+    pub fn deep(deep: Arc<Deep>, rate: Option<u32>, channels: Option<u8>) -> Sink {
+        let mut sink = Sink::new(Encoding::Pcm16, rate, channels, To::Listeners(Vec::new()));
+        sink.deep = Some(deep);
+        sink
     }
 
     pub(crate) fn served(encoding: Encoding) -> Sink {
-        Sink::new(encoding, None, To::Listeners(Vec::new()))
+        Sink::new(encoding, None, None, To::Listeners(Vec::new()))
     }
 
     fn out(&self) -> std::sync::MutexGuard<'_, Out> {
@@ -157,7 +170,7 @@ impl Sink {
     /// A device fetching it at the door: it hears the stream from now on.
     pub(crate) fn listen(&self, mut conn: TcpStream) {
         let mut o = self.out();
-        let (rate, channels) = o.format.or(self.wants).unwrap_or((44_100, 2));
+        let (rate, channels) = o.format.unwrap_or((self.rate.unwrap_or(44_100), self.channels.unwrap_or(2)));
         let head = format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n", self.encoding.content_type(rate, channels));
         let _ = conn.set_write_timeout(Some(WRITE_WAIT));
         if conn.write_all(head.as_bytes()).and_then(|_| conn.write_all(&o.header)).is_err() {
@@ -287,7 +300,7 @@ mod tests {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let s = TcpStream::connect(l.local_addr().unwrap()).unwrap();
         let (other, _) = l.accept().unwrap();
-        (Sink::to_socket(encoding, s, 48_000, 2), other)
+        (Sink::to_socket(encoding, s, Some(48_000), Some(2)), other)
     }
 
     fn heard(mut other: TcpStream) -> Vec<u8> {

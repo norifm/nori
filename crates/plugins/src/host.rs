@@ -115,6 +115,10 @@ pub trait Side: Send + Sync {
     /// A cast started, changed (its device's state), or ended (None): the client holds what the
     /// platform needs for it while one runs.
     fn cast(&self, _cast: Option<&crate::Cast>) {}
+    /// A deep sink takes a burst (true) or has it all (false): Android holds the Wi-Fi lock meanwhile.
+    fn streaming(&self, _on: bool) {}
+    /// A cast's device's button, as a media button's press.
+    fn pressed(&self, _press: nori_model::deciders::Press) {}
     /// A plugin asks the player to do `c` (it may: its manifest says so).
     fn control(&self, _c: crate::Control) {}
     /// Opens plugin `id`'s provider's sign-in page at `url`; false where the client has none.

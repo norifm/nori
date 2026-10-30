@@ -46,6 +46,9 @@ struct Session {
     browsed: Mutex<Vec<(String, bool)>>,
     multicast: Mutex<Vec<bool>>,
     casts: Mutex<Vec<Option<Cast>>>,
+    pressed: Mutex<Vec<nori_model::deciders::Press>>,
+    /// Told each cast change and press.
+    told: std::sync::Condvar,
 }
 
 impl Side for Session {
@@ -69,6 +72,11 @@ impl Side for Session {
     }
     fn cast(&self, cast: Option<&Cast>) {
         self.casts.lock().unwrap().push(cast.cloned());
+        self.told.notify_all();
+    }
+    fn pressed(&self, press: nori_model::deciders::Press) {
+        self.pressed.lock().unwrap().push(press);
+        self.told.notify_all();
     }
 }
 
@@ -350,7 +358,7 @@ fn a_cast_pumps_audio_into_the_plugins_socket_until_the_plugin_stops() {
     assert_eq!(rig.act("cast-socket"), ["casting"]);
     let (mut heard, _) = speaker.accept().unwrap();
     let sink = sink(&sinks);
-    assert_eq!(sink.wants, Some((48_000, 2)));
+    assert_eq!((sink.rate, sink.channels), (Some(48_000), Some(2)));
     sink.open(48_000, 2);
     assert!(sink.write(&[1, -1]));
     let mut got = [0; 48];
@@ -368,6 +376,59 @@ fn a_cast_pumps_audio_into_the_plugins_socket_until_the_plugin_stops() {
     assert_eq!(rig.plugins.cast(), None);
 }
 
+/// A deep sink: the host says Hello, the device its caps, and from then on the host speaks the
+/// protocol; the device's buttons are media buttons, the volume keys nori's own to send.
+#[test]
+fn a_deep_sink_is_said_hello_and_its_buttons_are_media_buttons() {
+    use nori_sink_protocol::{Button, Caps, Codec, Device, Frames, Host, VERSION};
+    let rig = Rig::new("plugins-lan-deep");
+    let sinks = cards(&rig.plugins);
+    let speaker = TcpListener::bind("127.0.0.1:0").unwrap();
+    rig.web.serve("cast-deep", format!("127.0.0.1:{}", speaker.local_addr().unwrap().port()));
+    rig.plugins.act(ID.into(), "cast-deep".into());
+    let (mut device, _) = speaker.accept().unwrap();
+    let mut frames = Frames::new();
+    let mut buf = [0u8; 64];
+    let hello = loop {
+        let n = device.read(&mut buf).unwrap();
+        frames.push(&buf[..n]);
+        if let Some(f) = frames.next_host() {
+            break format!("{:?}", f.unwrap());
+        }
+    };
+    assert_eq!(hello, format!("{:?}", Host::Hello { version: VERSION }));
+    let caps = Caps { version: VERSION, buffer_bytes: 8 << 20, max_rate: 48_000, bits: 1, decodes: Codec::Flac.bit(), cover: Some(240) };
+    let mut out = Vec::new();
+    Device::Caps(caps).encode(&mut out);
+    device.write_all(&out).unwrap();
+    rig.settle();
+    assert_eq!(rig.said("cast-deep"), Some(vec!["casting".into()]));
+    let sink = sink(&sinks);
+    let deep = sink.deep.as_ref().expect("a deep sink");
+    assert_eq!((deep.caps, deep.depth_ms, sink.rate), (caps, Some(30_000), None), "the song's own rate");
+    assert!(rig.plugins.cast().unwrap().bursts, "the Wi-Fi lock is the bursts'");
+
+    out.clear();
+    Device::Press(Button::Next).encode(&mut out);
+    Device::Volume { gain: 0.3 }.encode(&mut out);
+    device.write_all(&out).unwrap();
+    let pressed = rig.session.pressed.lock().unwrap();
+    let (pressed, _) = rig.session.told.wait_timeout_while(pressed, std::time::Duration::from_secs(5), |p| p.is_empty() || rig.plugins.cast().unwrap().volume != Some(30)).unwrap();
+    assert_eq!(*pressed, [nori_model::deciders::Press::Next]);
+    drop(pressed);
+    assert_eq!(rig.plugins.cast().unwrap().volume, Some(30), "the knob is the cast's volume");
+    assert!(rig.plugins.cast_button(CastButton::VolumeUp));
+    let volume = loop {
+        let n = device.read(&mut buf).unwrap();
+        frames.push(&buf[..n]);
+        if let Some(f) = frames.next_host() {
+            break format!("{:?}", f.unwrap());
+        }
+    };
+    assert_eq!(volume, format!("{:?}", Host::Volume { gain: 0.35 }), "nori sends the volume keys' step");
+    rig.act("cast-end");
+}
+
 #[test]
 fn served_audio_reaches_each_device_that_fetches_it() {
     let rig = Rig::new("plugins-lan-served");
@@ -375,7 +436,7 @@ fn served_audio_reaches_each_device_that_fetches_it() {
     let url = rig.act("cast-serve").remove(0);
     assert!(url.ends_with("/a/flac"), "{url}");
     let sink = sink(&sinks);
-    assert_eq!((sink.wants, sink.latency_us()), (None, 250_000));
+    assert_eq!((sink.rate, sink.latency_us()), (None, 250_000));
     let cast = rig.plugins.cast().unwrap();
     assert_eq!((cast.playing, cast.position_ms, cast.volume), (true, 1500, Some(40)));
     sink.open(44_100, 2);

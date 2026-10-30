@@ -9,6 +9,7 @@ use crate::lan::{Cast, CastButton, CastKind};
 use crate::runtime::nori::plugin::{audio_out, cast, discovery, lan_serve, media};
 use crate::runtime::points::hooks::Event;
 use crate::runtime::{types, Host};
+use crate::deep::Deep;
 use crate::sink::{Encoding, Sink};
 use crate::sockets::{error, Tcp};
 use crate::Plugins;
@@ -133,14 +134,18 @@ fn encoding(e: audio_out::Encoding) -> Encoding {
 }
 
 impl audio_out::Host for Host {
-    fn to_socket(&mut self, socket: Resource<Tcp>, e: audio_out::Encoding, rate: u32, channels: u8) -> Result<(), types::Error> {
-        if !(8_000..=192_000).contains(&rate) || !(1..=8).contains(&channels) {
-            return Err(error(types::ErrorKind::Refused, format!("{rate} Hz, {channels} channels")));
+    fn to_socket(&mut self, socket: Resource<Tcp>, e: audio_out::Encoding, rate: Option<u32>, channels: Option<u8>, pace: audio_out::Pace) -> Result<(), types::Error> {
+        if rate.is_some_and(|r| !(8_000..=192_000).contains(&r)) || channels.is_some_and(|c| !(1..=8).contains(&c)) {
+            return Err(error(types::ErrorKind::Refused, format!("{rate:?} Hz, {channels:?} channels")));
         }
         let tcp = self.table.get(&socket).map_err(|e| error(types::ErrorKind::Other, e.to_string()))?;
         let plain = tcp.plain().ok_or_else(|| error(types::ErrorKind::Unsupported, "audio over TLS"))?;
         let stream = plain.try_clone().map_err(|e| error(types::ErrorKind::Network, e.to_string()))?;
-        self.lan.pump_sink(&self.id, Arc::new(Sink::to_socket(encoding(e), stream, rate, channels)));
+        let sink = match pace {
+            audio_out::Pace::RealTime => Sink::to_socket(encoding(e), stream, rate, channels),
+            audio_out::Pace::Deep(depth_ms) => Sink::deep(Deep::connect(stream, depth_ms).map_err(|e| error(types::ErrorKind::Network, e))?, rate, channels),
+        };
+        self.lan.pump_sink(&self.id, Arc::new(sink));
         Ok(())
     }
 
@@ -207,6 +212,15 @@ impl Plugins {
     /// hears it. Whether a cast runs to take it.
     pub fn cast_button(&self, button: CastButton) -> bool {
         let Some(c) = self.lan.cast() else { return false };
+        // A deep sink's volume is nori's to send.
+        let step = match button {
+            CastButton::VolumeUp => 5,
+            CastButton::VolumeDown => -5,
+            CastButton::Stop => 0,
+        };
+        if step != 0 && self.lan.deep_volume(step) {
+            return true;
+        }
         self.tell_one(&c.plugin, Event::MediaButton(button.name().to_string()));
         true
     }

@@ -74,7 +74,15 @@ class Nori private constructor(private val context: Context) {
     val analyses: Long by lazy { dev.nori.music.playback.MeasureJni.analyses(currentClient.uniffiCloneHandle(), sessionHandle) }
 
     /** The plugin host, under `<filesDir>/plugins`: its kinds are every core's. Opened off the main thread ([warmUp]). */
-    val plugins = dev.nori.music.plugins.PluginHost(context, File(context.filesDir, "plugins"), settings, { transport }) { c -> player.plugin(c) }
+    val plugins = dev.nori.music.plugins.PluginHost(context, File(context.filesDir, "plugins"), settings, { transport }, { c -> player.plugin(c) }) { press ->
+        // A cast's device's button is a media button: what it does is the core's, deciders and all.
+        when (session.mediaButton(press)) {
+            dev.nori.music.ffi.model.ButtonAct.PLAY_PAUSE -> player.plugin(if (player.state.value.playing) dev.nori.music.ffi.plugins.Control.Pause else dev.nori.music.ffi.plugins.Control.Play)
+            dev.nori.music.ffi.model.ButtonAct.NEXT -> player.plugin(dev.nori.music.ffi.plugins.Control.Next)
+            dev.nori.music.ffi.model.ButtonAct.PREVIOUS -> player.plugin(dev.nori.music.ffi.plugins.Control.Previous)
+            dev.nori.music.ffi.model.ButtonAct.NOTHING -> {}
+        }
+    }
 
     /** The core's one door to the network; built with [http]. Plugins' HTTP goes through it too. */
     private val transport by lazy { http.transport { library.onServerChanged() }.also { coverNet.setTransport(it) } }

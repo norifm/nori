@@ -1669,7 +1669,7 @@ mod tests {
     #[test]
     fn a_cast_hears_a_volume_step_toward_the_level() {
         use nori_plugins::{Cast, CastButton, CastKind};
-        let cast = |volume| Cast { plugin: "p".into(), kind: CastKind::Target, device: "TV".into(), playing: true, position_ms: 0, volume };
+        let cast = |volume| Cast { plugin: "p".into(), kind: CastKind::Target, device: "TV".into(), playing: true, position_ms: 0, volume, bursts: false };
         for (press, volume, heard) in [
             (Press::Volume { level: 0.6 }, Some(40), Some(CastButton::VolumeUp)),
             (Press::Volume { level: 0.2 }, Some(40), Some(CastButton::VolumeDown)),
