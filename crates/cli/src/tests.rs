@@ -2626,7 +2626,7 @@ fn a_plugins_rows_show_hint_unit_and_link() {
 fn the_devices_panel_lists_a_plugins_cast() {
     let mut a = app();
     a.song = Some(song("1", "Blue", 200));
-    a.handle(Msg::Cast(Some(nori_plugins::Cast { plugin: "fm.nori.cast".into(), kind: nori_plugins::CastKind::Sink, device: "Kitchen".into(), playing: true, position_ms: 0, volume: Some(40), bursts: false })));
+    a.handle(Msg::Cast(Some(nori_plugins::Cast { plugin: "fm.nori.cast".into(), kind: nori_plugins::CastKind::Sink, device: "Kitchen".into(), look: Default::default(), playing: true, position_ms: 0, volume: Some(40), bursts: false })));
     key(&mut a, KeyCode::Char('C'));
     assert_eq!((a.full, a.panel), (true, Panel::Devices), "the panel shows for a cast alone");
     let s = draw(&mut a, 160, 30);

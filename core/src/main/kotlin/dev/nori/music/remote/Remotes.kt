@@ -224,7 +224,7 @@ class Remotes(private val context: Context, private val nori: Nori) {
         }
     }
 
-    private fun outputOf(t: dev.nori.music.ffi.plugins.CastTarget) = dev.nori.music.ffi.remote.CastOutput(t.plugin, t.id, t.name)
+    private fun outputOf(t: dev.nori.music.ffi.plugins.CastTarget) = dev.nori.music.ffi.remote.CastOutput(t.plugin, t.id, t.name, dev.nori.music.ffi.remote.OutputLook.valueOf(t.look.name))
 
     private fun work(f: () -> Unit) = worker.execute { runCatching(f).onFailure { dev.nori.music.NoriLog.w("remote: ${it.message}") } }
 

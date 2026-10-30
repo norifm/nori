@@ -5,7 +5,7 @@ use std::sync::{Arc, Weak};
 
 use wasmtime::component::Resource;
 
-use crate::lan::{Cast, CastButton, CastKind, CastTarget};
+use crate::lan::{Cast, CastButton, CastKind, CastLook, CastTarget};
 use crate::runtime::nori::plugin::{audio_out, cast, discovery, lan_serve, media};
 use crate::runtime::points::hooks::Event;
 use crate::runtime::{types, Host};
@@ -165,6 +165,16 @@ impl audio_out::Host for Host {
 }
 
 impl cast::Host for Host {
+    fn show_as(&mut self, id: String, look: cast::Look) {
+        let look = match look {
+            cast::Look::Speaker => CastLook::Speaker,
+            cast::Look::Headphones => CastLook::Headphones,
+            cast::Look::Phone => CastLook::Phone,
+            cast::Look::Tv => CastLook::Tv,
+        };
+        self.lan.show_as(&self.id, id, look);
+    }
+
     fn offer(&mut self, targets: Vec<cast::Target>) {
         self.lan.offer(&self.id, targets.into_iter().map(|t| (t.id, t.name)).collect());
     }

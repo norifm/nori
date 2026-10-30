@@ -134,11 +134,11 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                     // A plugin's device, playing: picking this phone above ends the cast.
                     cast?.let { c ->
                         val what = words(if (c.kind == dev.nori.music.ffi.plugins.CastKind.SINK) R.string.devices_casting else R.string.devices_cast_target)
-                        DeviceRow(c.device, Iconoir.SoundHigh, what, true, divider = targets.isNotEmpty() || more, trailing = c.volume?.let { "$it %" }) {}
+                        DeviceRow(c.device, castIcon(c.look), what, true, divider = targets.isNotEmpty() || more, trailing = c.volume?.let { "$it %" }) {}
                     }
                     // What plugins found on the network, as any other place the music can go.
                     targets.forEachIndexed { k, t ->
-                        DeviceRow(t.name, Iconoir.SoundHigh, null, false, divider = k < targets.lastIndex || more) {
+                        DeviceRow(t.name, castIcon(t.look), null, false, divider = k < targets.lastIndex || more) {
                             sound.castTo(t)
                             vm.pick(null)
                             onDismiss()
@@ -154,7 +154,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                     }
                     // A speaker another device casts to: the music goes through that device.
                     if (hosted == null) reached.forEachIndexed { k, r ->
-                        DeviceRow(r.output.name, Iconoir.SoundHigh, words(R.string.devices_via, r.via), false, k < reached.lastIndex) {
+                        DeviceRow(r.output.name, outputIcon(r.output.look), words(R.string.devices_via, r.via), false, k < reached.lastIndex) {
                             vm.castOn(r)
                             onDismiss()
                         }
@@ -262,6 +262,22 @@ private fun YourJam(listening: Int, onOpen: () -> Unit, onEnd: () -> Unit) {
             IconButton(onEnd) { Icon(Iconoir.LogOut, words(R.string.jam_end_short), Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) }
         },
     )
+}
+
+/** The icon of what a plugin casts to. */
+internal fun castIcon(look: dev.nori.music.ffi.plugins.CastLook) = when (look) {
+    dev.nori.music.ffi.plugins.CastLook.SPEAKER -> Iconoir.SoundHigh
+    dev.nori.music.ffi.plugins.CastLook.HEADPHONES -> Iconoir.Headset
+    dev.nori.music.ffi.plugins.CastLook.PHONE -> Iconoir.SmartphoneDevice
+    dev.nori.music.ffi.plugins.CastLook.TV -> Iconoir.Airplay
+}
+
+/** The icon of what another device casts to. */
+private fun outputIcon(look: dev.nori.music.ffi.remote.OutputLook) = when (look) {
+    dev.nori.music.ffi.remote.OutputLook.SPEAKER -> Iconoir.SoundHigh
+    dev.nori.music.ffi.remote.OutputLook.HEADPHONES -> Iconoir.Headset
+    dev.nori.music.ffi.remote.OutputLook.PHONE -> Iconoir.SmartphoneDevice
+    dev.nori.music.ffi.remote.OutputLook.TV -> Iconoir.Airplay
 }
 
 /** A row of the sheet that is not a device. */

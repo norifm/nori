@@ -3982,7 +3982,7 @@ mod tests {
     #[test]
     fn each_output_shows_once_through_the_device_playing_and_none_this_one_reaches() {
         use nori_remote::wire::CastOutput;
-        let speaker = |id: &str| CastOutput { plugin: "p".into(), id: id.into(), name: id.to_uppercase() };
+        let speaker = |id: &str| CastOutput { plugin: "p".into(), id: id.into(), name: id.to_uppercase(), look: Default::default() };
         let device = |id: &str, outputs: Vec<CastOutput>| RemoteDevice { id: id.into(), name: id.to_uppercase(), kind: DeviceKind::Phone, state: Some(DeviceState { outputs, ..Default::default() }), now: None, age_ms: 0, nearby: true, refused: None };
         let devices = [device("a", vec![speaker("kitchen"), speaker("hall")]), device("b", vec![speaker("kitchen"), speaker("bath")]), device("c", vec![speaker("own")])];
         let list = |active| reached(&[speaker("own")], &devices, active).into_iter().map(|r| (r.output.id, r.device)).collect::<Vec<_>>();

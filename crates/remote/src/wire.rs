@@ -340,6 +340,18 @@ pub struct DeviceState {
     pub outputs: Vec<CastOutput>,
 }
 
+/// What a device a plugin casts to is, for its icon.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+#[serde(rename_all = "camelCase")]
+pub enum OutputLook {
+    #[default]
+    Speaker,
+    Headphones,
+    Phone,
+    Tv,
+}
+
 /// A device a plugin on the publishing device can cast to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -348,6 +360,8 @@ pub struct CastOutput {
     pub plugin: String,
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub look: OutputLook,
 }
 
 /// Command `id` of controller `from`, carried out.
