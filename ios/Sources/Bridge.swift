@@ -26,9 +26,12 @@ struct Item {
     let progress: (percent: Int, speed: Int, left: Int)?
     /// In a jam's queue: who asked for the song, where someone did.
     let by: String
+    /// A song's download mark (`dl`): 0 none, 1 on its way, 2 downloaded.
+    let download: Int
 
     init(_ d: [String: Any]) {
         by = d["by"] as? String ?? ""
+        download = d["dl"] as? Int ?? 0
         progress = (d["pct"] as? Int).map { ($0, d["bps"] as? Int ?? 0, d["eta"] as? Int ?? -1) }
         letter = d["l"] as? String ?? ""
         covers = d["covers"] as? [String] ?? []

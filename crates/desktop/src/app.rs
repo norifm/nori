@@ -1622,12 +1622,12 @@ impl App {
             Data::Page(PageGot::Favorites(v)) => {
                 self.songs = v.songs;
                 ui.set_more_songs(false);
-                ui.set_songs(self.rows(&self.songs));
+                ui.set_songs(self.rows(&self.songs, false));
             }
             Data::Page(PageGot::Songs { songs: v, exhausted }) => {
                 self.songs.extend(v);
                 ui.set_more_songs(!exhausted);
-                ui.set_songs(self.rows(&self.songs));
+                ui.set_songs(self.rows(&self.songs, false));
             }
             // Page details apply only if that page is still shown.
             Data::Page(PageGot::Album(d)) if shown => {
@@ -1748,6 +1748,7 @@ impl App {
                 _ => PageKind::Playlist,
             });
         }
+        self.mark_playing();
     }
 
     /// Home's "For you": each mix's card on the season's paper dyed with the mix (the core's
@@ -1867,7 +1868,7 @@ impl App {
         let ui = self.ui();
         let all = self.page_songs_all || ui.get_page_kind() != 1;
         let n = nori_core::browse::songs_shown(self.page_songs.len() as u32, all) as usize;
-        ui.set_page_songs(self.rows(&self.page_songs[..n]));
+        ui.set_page_songs(self.rows(&self.page_songs[..n], ui.get_page_kind() != 1));
         ui.set_page_songs_more(n < self.page_songs.len());
     }
 
@@ -1875,14 +1876,28 @@ impl App {
     fn show_search_songs(&self) {
         let ui = self.ui();
         let n = nori_core::browse::songs_shown(self.search_songs.len() as u32, self.search_songs_all) as usize;
-        ui.set_search_songs(self.rows(&self.search_songs[..n]));
+        ui.set_search_songs(self.rows(&self.search_songs[..n], false));
         ui.set_search_songs_more(n < self.search_songs.len());
     }
 
-    fn rows(&self, songs: &[Song]) -> ModelRc<SongRow> {
+    /// `page`: the songs are a page's, whose head says when every one is downloaded.
+    fn rows(&self, songs: &[Song], page: bool) -> ModelRc<SongRow> {
+        use nori_core::menus::DownloadGlyph;
         let heard = self.heard.as_deref();
         let find = nori_core::pages::Find::new(&self.find);
-        let row = |(i, s): (usize, &Song)| SongRow { by: if self.asked.contains(&s.id) { words::ASKED.into() } else { SharedString::default() }, ..row(s, i, heard == Some(s.id.as_str())) };
+        let ids: Vec<&str> = songs.iter().map(|s| s.id.as_str()).collect();
+        let marks = self.session.as_ref().map(|s| s.download_glyphs(&ids, page)).unwrap_or_default();
+        let stars = self.session.as_ref().is_some_and(|s| s.rules().stars);
+        let row = |(i, s): (usize, &Song)| SongRow {
+            by: if self.asked.contains(&s.id) { words::ASKED.into() } else { SharedString::default() },
+            mark: match marks.get(i) {
+                Some(DownloadGlyph::Done) => 2,
+                Some(DownloadGlyph::Ring | DownloadGlyph::Failed) => 1,
+                _ => 0,
+            },
+            sealed: stars && self.starred(s),
+            ..row(s, i, heard == Some(s.id.as_str()))
+        };
         ModelRc::new(VecModel::from(songs.iter().enumerate().filter(|(_, s)| find.keeps_song(s)).map(row).collect::<Vec<_>>()))
     }
 
@@ -1906,7 +1921,7 @@ impl App {
         ui.set_albums(cards(albums.iter().map(album_card)));
         ui.set_artists(pick(&self.lists.artists));
         ui.set_playlists(pick(&self.lists.playlists.iter().map(playlist_card).collect::<Vec<_>>()));
-        ui.set_songs(self.rows(&self.songs));
+        ui.set_songs(self.rows(&self.songs, false));
         self.show_page_songs();
     }
 
@@ -1973,13 +1988,13 @@ impl App {
         ui.set_loading(false);
     }
 
-    /// Refreshes the now-playing marks in the lists.
+    /// Refreshes the lists' marks: the song playing, downloads and seals.
     fn mark_playing(&self) {
         let ui = self.ui();
         self.show_page_songs();
         self.show_search_songs();
         if !self.songs.is_empty() {
-            ui.set_songs(self.rows(&self.songs));
+            ui.set_songs(self.rows(&self.songs, false));
         }
     }
 
@@ -2285,6 +2300,9 @@ impl App {
             k if k >= PLUGIN_MENU => self.plugin_menu_run(3, (k - PLUGIN_MENU) as usize, nori_plugins::Items::Songs(vec![one])),
             _ => {}
         }
+        if matches!(how, 3 | 8 | 9 | 10) {
+            self.mark_playing();
+        }
     }
 
     /// The sleep timer's choice `i`: a time counts down here; a number of songs, or this one's end, is
@@ -2504,6 +2522,7 @@ impl App {
         }
         let on = !self.starred(s);
         self.on_session(|x| x.star_song(s.id.clone(), on, self.there()));
+        self.mark_playing();
     }
 
     /// Where the song shown is now: here, on the device playing or in the jam.
@@ -4068,6 +4087,8 @@ fn row(s: &Song, index: usize, playing: bool) -> SongRow {
         leaving: false,
         fresh: false,
         by: SharedString::default(),
+        mark: 0,
+        sealed: false,
     }
 }
 

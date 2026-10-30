@@ -138,6 +138,10 @@ export struct SongRow {
     fresh: bool,
     // Who asked for it, when it came in through the jam.
     by: string,
+    // Its download mark (menus.rs's `download_glyphs`): 0 none, 1 on its way, 2 downloaded.
+    mark: int,
+    // A favorite, where the profile keeps them.
+    sealed: bool,
 }
 
 // A row of the settings page: 0 a group's heading, 1 a switch, 2 a choice, 3 a button, 4 a fact, 5 a slider,
@@ -1949,9 +1953,9 @@ component SongLine inherits Rectangle {
     in property <bool> thumb;
     // A playlist's row: the artist in a column of its own, under its head.
     in property <bool> table;
-    // A table's columns: what is left beside the artwork and the time, split a half, a quarter, a quarter
-    // (the playlist's heads use the same sums).
-    property <length> cols: root.width - 8px - 12px - 44px - 44px - 4 * 12px;
+    // A table's columns: what is left beside the artwork and the marks and time (90px), split a half, a
+    // quarter, a quarter (the playlist's heads use the same sums).
+    property <length> cols: root.width - 8px - 12px - 44px - 90px - 4 * 12px;
     in property <image> picture;
     // The cover at the head of its menu: the row's own, or its album's where the row shows none.
     in property <image> menu-picture: root.picture;
@@ -2084,13 +2088,38 @@ component SongLine inherits Rectangle {
                 font-weight: 600;
             }
         }
-        Text {
-            text: root.song.time;
-            color: Theme.dim;
-            font-size: 13px;
-            vertical-alignment: center;
-            horizontal-alignment: right;
-            width: 44px;
+        // The marks in columns of their own, as Android's rows: the download, then the seal beside the
+        // time, each in its place whether or not the other is shown.
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle {
+                width: 15px;
+                if root.song.mark > 0: Icon {
+                    y: (parent.height - self.height) / 2;
+                    glyph: root.song.mark == 2 ? Icons.check-circle : Icons.download;
+                    colour: Theme.dim;
+                    width: 15px;
+                    height: 15px;
+                }
+            }
+            Rectangle {
+                width: 15px;
+                if root.song.sealed: Icon {
+                    y: (parent.height - self.height) / 2;
+                    glyph: Icons.seal;
+                    colour: Theme.accent;
+                    width: 15px;
+                    height: 15px;
+                }
+            }
+            Text {
+                text: root.song.time;
+                color: Theme.dim;
+                font-size: 13px;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+                width: 44px;
+            }
         }
     }
     if root.table: ArtistLine {
@@ -2116,7 +2145,7 @@ component SongLine inherits Rectangle {
 
 // The column heads over a table of SongLines: the same sums as its columns.
 component SongHeads inherits Rectangle {
-    property <length> cols: self.width - 8px - 12px - 44px - 44px - 4 * 12px;
+    property <length> cols: self.width - 8px - 12px - 44px - 90px - 4 * 12px;
     for h in [{ t: "Song", x: 0, w: 0.5, g: 0 }, { t: "Artist", x: 0.5, w: 0.25, g: 1 }, { t: "Album", x: 0.75, w: 0.25, g: 2 }]: Text {
         x: 8px + 44px + 12px + root.cols * h.x + h.g * 12px;
         width: root.cols * h.w;

@@ -158,8 +158,28 @@ pub(crate) fn extend_list(token: u64, more: &[Song]) -> Option<usize> {
 
 pub(crate) fn send(token: u64, v: &Value) {
     let Some(cb) = *lock(&PAGE_HOOK) else { return };
-    let text = CString::new(v.to_string().replace('\0', " ")).unwrap_or_default();
+    let marked = v.get("sections").and_then(|_| with_session(|s| with_download_marks(s, v.clone())));
+    let text = CString::new(marked.as_ref().unwrap_or(v).to_string().replace('\0', " ")).unwrap_or_default();
     unsafe { cb(token, text.as_ptr()) };
+}
+
+/// `v`'s song rows with their download marks, `dl` (menus.rs's `download_glyphs`): 1 on its way, 2
+/// downloaded, none without a mark. A collection's page has its head say when every song is downloaded.
+fn with_download_marks(s: &nori_host::session::Session, mut v: Value) -> Value {
+    use nori_core::menus::DownloadGlyph;
+    let page = matches!(v["head"]["k"].as_str(), Some("album" | "downloadedAlbum" | "playlist" | "mix" | "smart"));
+    let Some(sections) = v["sections"].as_array_mut() else { return v };
+    let mut rows: Vec<&mut Value> = sections.iter_mut().filter_map(|x| x["items"].as_array_mut()).flatten().filter(|r| r["k"] == "song").collect();
+    let ids: Vec<String> = rows.iter().map(|r| r["id"].as_str().unwrap_or_default().to_string()).collect();
+    let marks = s.download_glyphs(&ids.iter().map(String::as_str).collect::<Vec<_>>(), page);
+    for (row, mark) in rows.iter_mut().zip(marks) {
+        match mark {
+            DownloadGlyph::Done => row["dl"] = json!(2),
+            DownloadGlyph::Ring | DownloadGlyph::Failed => row["dl"] = json!(1),
+            DownloadGlyph::None => {}
+        }
+    }
+    v
 }
 
 fn send_error(token: u64, e: &nori_core::transport::NetError) {
