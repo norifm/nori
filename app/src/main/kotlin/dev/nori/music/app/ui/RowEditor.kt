@@ -42,18 +42,6 @@ fun HomeRows(settings: SettingsViewModel) {
     )
 }
 
-/** Which sections the Library page lists, and in what order (Settings, Appearance). */
-@Composable
-fun LibrarySections(settings: SettingsViewModel) {
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
-    RowEditor(
-        say.librarySectionsTitle, prefs.librarySections, remember(prefs.librarySections) { dev.nori.music.ffi.library.librarySectionsHidden(prefs.librarySections) },
-        key = { it.name }, label = say::librarySection,
-        onToggle = { s, on -> settings.update { p -> p.copy(librarySections = dev.nori.music.ffi.library.librarySectionsToggled(p.librarySections, s, on)) } },
-        onMove = settings::moveLibrarySection,
-    )
-}
-
 /**
  * A page's rows to show, hide and order: [shown] in their order, each with its switch, then the [hidden]
  * ones. A row is picked up by holding it anywhere, not by a handle at its edge - there is nothing else

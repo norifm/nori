@@ -376,7 +376,6 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
         when (action) {
             "equalizer" -> nav.equalizer()
             "home-rows" -> nav.homeRows()
-            "library-sections" -> nav.librarySections()
             "system-effects" -> runCatching {
                 context.startActivity(
                     Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)

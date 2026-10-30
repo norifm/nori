@@ -137,7 +137,6 @@
     <string name="settings_section_screen">Screen</string>
     <string name="settings_section_home">Layout</string>
     <string name="settings_home_rows">Home rows</string>
-    <string name="settings_library_sections">Library sections</string>
     <string name="settings_hide_status_bar">Hide the status bar</string>
     <string name="settings_hide_bar_sideways">Sideways</string>
     <string name="settings_hide_bar_upright">Upright</string>

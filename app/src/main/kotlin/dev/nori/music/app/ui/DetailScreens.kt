@@ -36,7 +36,6 @@ import dev.nori.music.app.vm.ActionsViewModel
 import dev.nori.music.app.vm.AlbumViewModel
 import dev.nori.music.app.vm.ArtistUi
 import dev.nori.music.app.vm.ArtistViewModel
-import dev.nori.music.app.vm.FolderViewModel
 import dev.nori.music.app.vm.GenreViewModel
 import dev.nori.music.app.vm.Load
 import dev.nori.music.app.vm.PlaylistViewModel
@@ -74,6 +73,8 @@ internal fun SongListPage(
     headLabel: String = if (songs.isEmpty()) "" else say.listCaption(songs.size, songs.sumOf { it.duration.toLong() }, true),
     pageActions: @Composable RowScope.() -> Unit = {},
     coverUrl: String? = null, coverStandIns: List<String?> = emptyList(),
+    /** After Play, where an album's seal stands. */
+    afterPlay: @Composable RowScope.() -> Unit = {},
     content: LazyListScope.() -> Unit,
 ) {
     val any = songs.isNotEmpty()
@@ -84,6 +85,7 @@ internal fun SongListPage(
         onPlay = if (any) { { actions.play(songs, from = from) } } else null,
         onShuffle = if (any) { { actions.shuffle(songs, from) } } else null,
         queue = remember(from) { dev.nori.music.ffi.library.PageQueue(from) },
+        actions = afterPlay,
         headLabel = headLabel,
         headActions = {
             PageActionGlyphs(PageKind.Album, songs, done, actions)
@@ -526,28 +528,10 @@ fun GenreScreen(name: String, actions: ActionsViewModel, vm: GenreViewModel = vi
         SongListPage(
             name, page.songs, list.downloaded, from, actions,
             coverUrl = vm.cover(page.coverArt, CoverSize.FULL), coverStandIns = listOf(vm.cover(page.coverArt, CoverSize.ROW)),
+            // As a mix's page has it: keep the genre's songs on the account as a playlist.
+            afterPlay = { if (LocalRules.current.account && page.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveAsPlaylist(name, page.songs) } },
         ) {
             songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from, pageWhole = whole)
-        }
-    }
-}
-
-/** One level of the server's folder tree: subfolders first, then the files in it. */
-@Composable
-fun FolderScreen(id: String, actions: ActionsViewModel, vm: FolderViewModel = viewModel()) {
-    LaunchedEffect(id) { vm.open(id) }
-    val load by vm.ui.collectAsStateWithLifecycle()
-    val list = rememberSongListState(actions)
-    val nav = LocalNav.current
-    val from = rememberOrigin(OriginKind.FOLDER, id)
-    LoadBox(load) { d ->
-        val whole = rememberPageWhole(d.songs, list.downloaded)
-        SongListPage(
-            remember(d.name) { say.folderTitle(d.name) }, d.songs, list.downloaded, from, actions,
-            headLabel = remember(d) { say.folderCaption(d.folders.size, d.songs.size, d.songs.sumOf { it.duration.toLong() }) },
-        ) {
-            items(d.folders, key = { "f" + it.id }) { f -> NavRow(remember(f.name) { say.folderRow(f.name) }, { nav.folder(f.id) }, chevron = true) }
-            songRows(d.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from, pageWhole = whole)
         }
     }
 }

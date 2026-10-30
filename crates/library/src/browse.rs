@@ -134,28 +134,10 @@ pub fn home_rows_hidden(shown: Vec<HomeRow>) -> Vec<HomeRow> {
     HomeRow::every().iter().copied().filter(|r| !shown.contains(r)).collect()
 }
 
-/// The Library page's sections: those `chosen`, in their order, that the profile `offered`.
+/// The Library page's sections: every one it lists, in its order, that the profile `offered`.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn library_sections_shown(chosen: Vec<LibrarySection>, offered: Vec<LibrarySection>) -> Vec<LibrarySection> {
-    chosen.into_iter().filter(|s| offered.contains(s) && LibrarySection::LISTED.contains(s)).collect()
-}
-
-/// The sections the Library page could list that are not `chosen`, in the order a new install lists them.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn library_sections_hidden(chosen: Vec<LibrarySection>) -> Vec<LibrarySection> {
-    LibrarySection::LISTED.into_iter().filter(|s| !chosen.contains(s)).collect()
-}
-
-/// The chosen sections with the one at `from` moved to `to`; unchanged when either is not one.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn library_sections_moved(chosen: Vec<LibrarySection>, from: u32, to: u32) -> Vec<LibrarySection> {
-    moved(chosen, from, to)
-}
-
-/// The chosen sections with `section` switched on (at the end) or off.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn library_sections_toggled(chosen: Vec<LibrarySection>, section: LibrarySection, on: bool) -> Vec<LibrarySection> {
-    toggled(chosen, section, on)
+pub fn library_sections_shown(offered: Vec<LibrarySection>) -> Vec<LibrarySection> {
+    LibrarySection::LISTED.into_iter().filter(|s| offered.contains(s)).collect()
 }
 
 /// The pinned playlists (kept on the device: the server cannot star one) with `id` pinned or not.
@@ -817,16 +799,10 @@ mod tests {
     }
 
     #[test]
-    fn library_sections_listed_and_edited() {
+    fn library_sections_listed() {
         use LibrarySection::*;
-        let account = profile_rules(false).sections;
-        assert_eq!(library_sections_shown(LibrarySection::LISTED.to_vec(), account.clone()), LibrarySection::LISTED, "a new install lists them all");
-        assert_eq!(library_sections_shown(vec![Smart, Radio, History, Downloads, Albums], account), [Radio, Albums], "smart, history and downloads are not rows");
-        assert_eq!(library_sections_shown(vec![Radio, Songs, Albums], profile_rules(true).sections), [Songs, Albums], "only what a guest is offered");
-        assert_eq!(library_sections_hidden(vec![Albums, Songs, Radio]), [Favourites, Artists, Playlists, Genres, Decades, Folders]);
-        assert_eq!(library_sections_toggled(vec![Albums, Songs], Radio, true), [Albums, Songs, Radio]);
-        assert_eq!(library_sections_toggled(vec![Albums, Songs], Albums, false), [Songs]);
-        assert_eq!(library_sections_moved(vec![Albums, Songs, Radio], 2, 0), [Radio, Albums, Songs]);
+        assert_eq!(library_sections_shown(profile_rules(false).sections), [Albums, Favourites, Artists, Songs, Playlists, Genres, Decades, Radio], "every listed one an account offers, in order");
+        assert_eq!(library_sections_shown(vec![Downloads, Songs, Smart, Albums, Folders]), [Albums, Songs], "only what is offered, and only the page's rows");
     }
 
     #[test]

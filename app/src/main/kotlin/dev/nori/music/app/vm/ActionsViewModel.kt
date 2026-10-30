@@ -293,7 +293,7 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
 
     fun deletePlaylist(id: String) = viewModelScope.launch { runCatching { nori.library.deletePlaylist(id) } }
 
-    fun saveMixAsPlaylist(title: String, songs: List<Song>) = viewModelScope.launch {
+    fun saveAsPlaylist(title: String, songs: List<Song>) = viewModelScope.launch {
         try {
             val name = dev.nori.music.ffi.library.savedMixName(title, playlists().map { it.name })
             nori.library.createPlaylist(name, songs.map { it.id })

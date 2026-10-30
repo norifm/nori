@@ -192,7 +192,7 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             headLabel = if (m.songs.isEmpty()) "" else say.listCaption(m.songs.size, m.songs.sumOf { it.duration.toLong() }, true),
             // After Play, as a record's seal stands there: keep the mix on the account as a playlist.
             actions = {
-                if (LocalRules.current.account && m.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveMixAsPlaylist(m.title, m.songs) }
+                if (LocalRules.current.account && m.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveAsPlaylist(m.title, m.songs) }
             },
             headActions = {
                 PageActionGlyphs(
