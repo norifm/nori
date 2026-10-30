@@ -8,7 +8,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
@@ -147,7 +146,7 @@ fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, radius: Dp = Ra
     val here = cover.image != null
     androidx.compose.runtime.LaunchedEffect(cover, here) {
         if (!here || fade.value == 1f) return@LaunchedEffect
-        if (AppMotion.reduce) fade.snapTo(1f) else fade.animateTo(1f, tween(260, easing = androidx.compose.animation.core.LinearEasing))
+        fade.animateTo(1f, AppMotion.fadeIn())
     }
     Box(
         // Without a size it fills what it is given.
@@ -169,7 +168,7 @@ fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, radius: Dp = Ra
         if (sheen && plate) Box(Modifier.matchParentSize().loadingSheen(true, leaving = !loading))
         androidx.compose.animation.AnimatedVisibility(
             missing && plate, Modifier.align(Alignment.Center),
-            enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(300)), exit = androidx.compose.animation.fadeOut(),
+            enter = androidx.compose.animation.fadeIn(AppMotion.fadeIn()), exit = androidx.compose.animation.fadeOut(AppMotion.fadeOut()),
         ) {
             LookIcon(
                 Iconoir.MusicNote, null,
@@ -255,7 +254,7 @@ internal fun Modifier.swipeable(
 ): Modifier = composed {
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
-    val back = remember { spring<Float>(dampingRatio = 0.8f, stiffness = 520f) }
+    val back = AppMotion.settle<Float>()
     // The gesture outlives recompositions (it is keyed on which sides act, not on the actions), so it
     // reads the actions as they are now: a favourite swiped once must offer "Remove" the second time.
     val acts by rememberUpdatedState(right to left)
@@ -282,15 +281,14 @@ internal fun Modifier.swipeable(
                 val act = if (s.armed) (if (x > 0f) acts.first else acts.second) else null
                 when {
                     act == null -> settle()
-                    gone && !AppMotion.reduce -> s.settling = scope.launch {
+                    gone -> s.settling = scope.launch {
                         // Off the side it was going, at the speed of a short slide, and only then acted on:
                         // the rows under it close up once the queue has changed.
                         val to = kotlin.math.sign(x) * size.width.toFloat()
-                        androidx.compose.animation.core.animate(s.offset.floatValue, to, animationSpec = tween(SWIPE_GONE_MS, easing = androidx.compose.animation.core.FastOutLinearInEasing)) { v, _ -> s.offset.floatValue = v }
+                        androidx.compose.animation.core.animate(s.offset.floatValue, to, animationSpec = AppMotion.leave()) { v, _ -> s.offset.floatValue = v }
                         act.action()
                         comeBackIfStill()
                     }
-                    gone -> s.settling = scope.launch { s.offset.floatValue = kotlin.math.sign(x) * size.width.toFloat(); act.action(); comeBackIfStill() }
                     else -> { act.action(); settle() }
                 }
             },
@@ -320,7 +318,6 @@ internal fun Modifier.swipeable(
 }
 
 /** How long a row taken away by its swipe takes to leave from where the finger let go. */
-private const val SWIPE_GONE_MS = 200
 private const val SWIPE_GONE_WAIT_MS = 1_500L
 
 /**
@@ -383,7 +380,7 @@ internal fun SwipeBackdrop(
     val c = colours ?: remember(scheme) {
         SwipeColours({ scheme.surfaceContainerHighest }, { scheme.onSurface }, { scheme.onSurfaceVariant }, { scheme.background })
     }
-    val armed by animateFloatAsState(if (s.armed) 1f else 0f, tween(140), label = "swipe armed")
+    val armed by animateFloatAsState(if (s.armed) 1f else 0f, AppMotion.fadeIn(), label = "swipe armed")
     val fill = { androidx.compose.ui.graphics.lerp(c.fill(), c.armedFill(), armed) }
     val ink = androidx.compose.ui.graphics.ColorProducer { androidx.compose.ui.graphics.lerp(c.ink(), c.armedInk(), armed) }
     val pop by animateFloatAsState(if (s.armed) 1.15f else 1f, spring(dampingRatio = 0.45f, stiffness = 700f), label = "swipe pop")
@@ -629,11 +626,7 @@ fun LazyListScope.songRows(
         val s = songs[at]
         val moving = animated || appear
         val sheet = LocalPlayerSheet.current
-        val modifier = when {
-            !moving -> Modifier
-            AppMotion.reduce -> Modifier.animateItem(null, null, null)
-            else -> Modifier.animateItem()
-        }
+        val modifier = if (moving) itemMotion() else Modifier
         SongRow(
             s, if (numbered) null else remember(s) { cover(s) },
             onClick = { if (actions.tap(songs, at, from, playing = s.id == playingId)) sheet.open() }, onMenu = { menu(s) },
@@ -759,43 +752,33 @@ fun AlbumCard(album: Album, coverUrl: String?, size: Dp, onClick: () -> Unit, mo
 fun SectionTitle(text: String, modifier: Modifier = Modifier, onMore: (() -> Unit)? = null, compact: Boolean = false) = SectionHeader(text, modifier, onMore, compact = compact)
 
 /**
- * Content that was not on the page at first (the songs under a hero hint) fades and rises once, as one
- * block. The body of a page is many lazy items - a row each, so a long list composes only what is on
- * screen - and they share this one clock, started when [ready] turns true: each item reads it in its draw
- * phase ([arriving]), so the run redraws the rows on screen and recomposes none of them, and a row
- * composed later (scrolled to mid-run) joins wherever the block is. Once run it stays at 1: rows scrolled
- * to afterwards are simply there - and so is the whole body when the page is come back to, which composes
- * it again: run a second time, it showed as the page changing once more after a swipe back had already
- * brought it.
+ * Content that was not on the page at first (the songs under a hero hint) fades in once, as one block, where
+ * it stands: it was not touched, so it does not move. The body of a page is many lazy items - a row each, so
+ * a long list composes only what is on screen - and they share this one clock, started when [ready] turns
+ * true: each item reads it in its draw phase ([arriving]), so the fade redraws the rows on screen and
+ * recomposes none of them, and a row composed later (scrolled to mid-fade) joins wherever the block is. Once
+ * run it stays at 1: rows scrolled to afterwards are simply there - and so is the whole body when the page
+ * is come back to, which composes it again: run a second time, it showed as the page changing once more
+ * after a swipe back had already brought it.
  */
 @Composable
 fun rememberArrival(ready: Boolean): State<Float> {
     var arrived by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    // With movement reduced there is no run: the body is simply there on its first frame.
-    val progress = remember { Animatable(if (AppMotion.reduce || arrived) 1f else 0f) }
+    val progress = remember { Animatable(if (arrived) 1f else 0f) }
     LaunchedEffect(ready) {
         if (!ready || progress.value >= 1f) return@LaunchedEffect
         arrived = true
-        if (AppMotion.reduce) progress.snapTo(1f)
-        else progress.animateTo(1f, tween(ARRIVE_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+        progress.animateTo(1f, AppMotion.fadeIn())
     }
     return progress.asState()
 }
-
-/** How long a page's body takes to arrive, ms. */
-private const val ARRIVE_MS = 320
-
-/** How far a page's body rises as it arrives: 6 % of an album page's height. */
-private val ARRIVE_RISE = 36.dp
 
 /**
  * One item of a page's arriving body ([rememberArrival]), read in the draw phase. The alpha is applied to
  * each thing drawn rather than through a layer of its own, so a row costs no offscreen buffer while it fades.
  */
 fun Modifier.arriving(arrival: State<Float>): Modifier = graphicsLayer {
-    val t = arrival.value
-    alpha = t
-    translationY = (1f - t) * ARRIVE_RISE.toPx()
+    alpha = arrival.value
     compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
 }
 
@@ -807,7 +790,7 @@ fun <T> LoadBox(load: Load<T>, modifier: Modifier = Modifier, content: @Composab
     // But only once a loader has really been seen. The dots stay invisible for their first quarter
     // second (LoadingDots), so data that arrives inside that window replaces nothing anyone saw - and
     // a fade there is not a fade over a loader, it is the page's content fading up out of the page's
-    // own background while the page is still sliding in (PageMotion): a black card arriving, and then
+    // own background while the page is still sliding in (Pages): a black card arriving, and then
     // the album appearing on it. Quick data snaps in; only a page that was waiting gets the fade.
     val opened = remember { android.os.SystemClock.uptimeMillis() }
     androidx.compose.animation.AnimatedContent(
@@ -817,8 +800,7 @@ fun <T> LoadBox(load: Load<T>, modifier: Modifier = Modifier, content: @Composab
                 androidx.compose.animation.fadeIn(androidx.compose.animation.core.snap()) togetherWith
                     androidx.compose.animation.fadeOut(androidx.compose.animation.core.snap())
             } else {
-                androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(260, delayMillis = 60)) togetherWith
-                    androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(160))
+                androidx.compose.animation.fadeIn(AppMotion.fadeIn()) togetherWith androidx.compose.animation.fadeOut(AppMotion.fadeOut())
             }
         },
         label = "load",

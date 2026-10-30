@@ -33,13 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -71,8 +65,6 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
     // Each time the page comes into sight: back from another app, or the phone unlocked.
     androidx.lifecycle.compose.LifecycleStartEffect(Unit) { vm.lookForOffer(); onStopOrDispose {} }
     LoadBox(load) { ui ->
-        val arrival = rememberArrival()
-        val rise = with(LocalDensity.current) { Arrival.RISE.toPx() }
         val refreshing by vm.refreshing.collectAsStateWithLifecycle()
         val pull = rememberPullToRefreshState()
         PullToRefreshBox(
@@ -86,7 +78,7 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
         LazyColumn(Modifier.pageToEdges().underStatusBar().graphicsLayer { translationY = pullGap(pull).toPx() }, contentPadding = pagePadding(LocalChromeInset.current, top = LocalStatusRoom.current)) {
             // Only the title, as Apple's: shuffling the library lives in Library, and which rows this page has
             // in Settings, Appearance.
-            item(key = "title") { LargeTitle(say.listenNow, Modifier.arriving(arrival, 0, rise)) }
+            item(key = "title") { LargeTitle(say.listenNow) }
             // The card stays in the list while it goes: taken or turned down, it fades and settles back as its
             // room folds away and the page below rises into it. Arriving, it is simply there. Taken, the queue
             // starts once the card has gone: starting playback holds the main thread for a few frames, which
@@ -94,7 +86,6 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
             if (offer != null) shownOffer[0] = offer
             shownOffer[0]?.let { o ->
                 item(key = "offer") {
-                    val ms = if (reduceMotion()) 0 else 320
                     var taking by remember(o) { mutableStateOf(false) }
                     val shown = remember { androidx.compose.animation.core.MutableTransitionState(true) }
                     shown.targetState = offer != null && !taking
@@ -102,9 +93,7 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
                     androidx.compose.animation.AnimatedVisibility(
                         shown,
                         enter = androidx.compose.animation.EnterTransition.None,
-                        exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(ms * 2 / 3)) +
-                            androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(ms), targetScale = 0.94f) +
-                            androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(ms, easing = androidx.compose.animation.core.FastOutSlowInEasing)),
+                        exit = AppMotion.shrink() + androidx.compose.animation.scaleOut(AppMotion.move(), targetScale = 0.94f),
                     ) {
                         // Flicked away to either side, it is turned down, as its cross does: the room it leaves folds away after.
                         androidx.compose.runtime.key(o) {
@@ -126,17 +115,14 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
                 Text(say.searchIsTheWayIn, Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             // Favourites are always here; the mixes join them when the taste model is on (MixesViewModel).
-            if (mixes) item(key = "mixes") { Column(Modifier.arriving(arrival, 1, rise)) { SectionTitle(say.forYou, onMore = { nav.homeRow(MIXES_ROW) }); MixTiles() } }
-            // The shelves carry on the count the sections above started, so each one arrives a moment
-            // after the one over it; an empty shelf is not drawn and does not take a place in the order.
-            var place = 2
+            if (mixes) item(key = "mixes") { Column { SectionTitle(say.forYou, onMore = { nav.homeRow(MIXES_ROW) }); MixTiles() } }
             // A source's own shelves (`ProfileRules.feed`), titled as it titles them; each kind drawn as the
             // library's shelves of that kind are.
             ui.feed.forEachIndexed { i, f ->
                 val key = "feed-$i"
-                if (f.songs.isNotEmpty()) songShelf(f.title, f.songs, vm, actions, arrival, place++, rise, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, f.title), "$key-songs")
-                if (f.albums.isNotEmpty()) shelf(f.title, f.albums, vm, arrival, place++, rise, "$key-albums")
-                if (f.playlists.isNotEmpty()) playlistShelf(f.title, f.playlists, vm, arrival, place++, rise, "$key-playlists")
+                if (f.songs.isNotEmpty()) songShelf(f.title, f.songs, vm, actions, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, f.title), "$key-songs")
+                if (f.albums.isNotEmpty()) shelf(f.title, f.albums, vm, "$key-albums")
+                if (f.playlists.isNotEmpty()) playlistShelf(f.title, f.playlists, vm, "$key-playlists")
             }
             ui.rows.forEach { shelf ->
                 // The favourite playlists are a selection of something the page fetches once for all of
@@ -145,9 +131,9 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
                 val s = if (shelf.row == dev.nori.music.ffi.settings.HomeRow.PINNED) dev.nori.music.app.vm.Shelf.Playlists(shelf.row, ui.pinned) else shelf
                 if (s.isEmpty) return@forEach
                 when (s) {
-                    is dev.nori.music.app.vm.Shelf.Albums -> shelf(say.homeRow(s.row), s.albums, vm, arrival, place++, rise, s.row.name)
-                    is dev.nori.music.app.vm.Shelf.Playlists -> playlistShelf(say.homeRow(s.row), s.playlists, vm, arrival, place++, rise, s.row.name)
-                    is dev.nori.music.app.vm.Shelf.Songs -> songShelf(say.homeRow(s.row), s.songs, vm, actions, arrival, place++, rise, s.origin, s.row.name)
+                    is dev.nori.music.app.vm.Shelf.Albums -> shelf(say.homeRow(s.row), s.albums, vm, s.row.name)
+                    is dev.nori.music.app.vm.Shelf.Playlists -> playlistShelf(say.homeRow(s.row), s.playlists, vm, s.row.name)
+                    is dev.nori.music.app.vm.Shelf.Songs -> songShelf(say.homeRow(s.row), s.songs, vm, actions, s.origin, s.row.name)
                 }
             }
         }
@@ -197,14 +183,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.shelf(
     title: String,
     albums: List<Album>,
     vm: HomeViewModel,
-    arrival: State<Float>,
-    place: Int,
-    rise: Float,
     route: String,
 ) {
     item(key = route, contentType = "shelf") {
         val nav = LocalNav.current
-        Column(Modifier.arriving(arrival, place, rise)) {
+        Column {
             SectionTitle(title, onMore = { nav.homeRow(route) })
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(albums.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(albums, key = { it.id }, contentType = { "album" }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }) }
@@ -218,14 +201,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playlistShelf(
     title: String,
     playlists: List<dev.nori.music.ffi.model.Playlist>,
     vm: HomeViewModel,
-    arrival: State<Float>,
-    place: Int,
-    rise: Float,
     route: String,
 ) {
     item(key = route, contentType = "shelf") {
         val nav = LocalNav.current
-        Column(Modifier.arriving(arrival, place, rise)) {
+        Column {
             SectionTitle(title, onMore = { nav.homeRow(route) })
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(playlists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(playlists, key = { it.id }, contentType = { "playlist" }) { p ->
@@ -260,9 +240,6 @@ private fun androidx.compose.foundation.lazy.LazyListScope.songShelf(
     songs: List<dev.nori.music.ffi.model.Song>,
     vm: HomeViewModel,
     actions: dev.nori.music.app.vm.ActionsViewModel,
-    arrival: State<Float>,
-    place: Int,
-    rise: Float,
     /** The shelf: the songs played from it are its queue. */
     from: dev.nori.music.ffi.model.PageOrigin,
     route: String,
@@ -271,7 +248,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.songShelf(
         // A long press opens the song's menu, as it does on a row of a list.
         val menu = LocalSongMenu.current
         val nav = LocalNav.current
-        Column(Modifier.arriving(arrival, place, rise)) {
+        Column {
             SectionTitle(title, onMore = { nav.homeRow(route) })
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(songs.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 itemsIndexed(songs, key = { _, s -> s.id }, contentType = { _, _ -> "song" }) { i, s ->
@@ -281,68 +258,6 @@ private fun androidx.compose.foundation.lazy.LazyListScope.songShelf(
         }
     }
 }
-
-/**
- * The home page's sections do not appear all at once: each one fades up and rises the last few pixels
- * into place a moment after the one above it, so the page reads top to bottom the way the pages it is
- * part of now arrive (see PageMotion in App.kt). It is one run, started when the page's content first
- * exists and over inside four tenths of a second, and the fourth section is the last to wait - with a
- * dozen shelves the page would otherwise still be assembling itself after the user had begun to scroll.
- */
-private object Arrival {
-    /** How long the whole run lasts, and how far apart two sections start within it. */
-    const val RUN = 380
-    private const val STEP = 40
-    /** Each section's own move, and the last place that still waits its turn. */
-    private const val MOVE = 220
-    private const val LAST = 4
-
-    /** The same curve the pages use: quick to appear, unhurried about coming to rest. */
-    private val Settle = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
-
-    val RISE = 14.dp
-
-    /** Where one section is in its own move, given how far the single run driving all of them has got. */
-    fun at(run: Float, place: Int): Float {
-        val ms = run * RUN - minOf(place, LAST) * STEP
-        return Settle.transform((ms / MOVE).coerceIn(0f, 1f))
-    }
-}
-
-/**
- * The one animation behind the whole page. It runs once, the first time the page is on screen after
- * the app starts: a section scrolled away and back reads a run that finished long ago, and fresh data
- * for a page already showing does not start it again, so nothing here moves while the page is sitting
- * still.
- *
- * Once per process, not once per visit. Coming back to the page - a pop from an album, a tab tap -
- * composes it again from nothing; run again, the page would slide back into place (PageMotion) with
- * every section at nought, a black card whose sections appear only once the slide is over. The page
- * is what is coming back; it should look as it did.
- */
-@Composable
-private fun rememberArrival(): State<Float> {
-    val plain = reduceMotion()
-    val progress = remember { Animatable(if (arrived) 1f else 0f) }
-    // Linear, because the curve belongs to each section's own move and not to the clock they share.
-    LaunchedEffect(plain) {
-        arrived = true
-        if (plain) progress.snapTo(1f)
-        else if (progress.value < 1f) progress.animateTo(1f, tween(Arrival.RUN, easing = LinearEasing))
-    }
-    return progress.asState()
-}
-
-/** Whether the home page has arrived once already since the app started; see rememberArrival. */
-private var arrived = false
-
-/** Read in the draw phase: the run redraws the sections on screen and recomposes none of them. */
-private fun Modifier.arriving(arrival: State<Float>, place: Int, rise: Float) = graphicsLayer {
-    val t = Arrival.at(arrival.value, place)
-    alpha = t
-    translationY = rise * (1f - t)
-}
-
 
 /** An album, playlist or song print on a shelf. */
 internal val PRINT = 128.dp

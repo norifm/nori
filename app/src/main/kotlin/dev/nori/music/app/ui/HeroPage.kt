@@ -150,7 +150,7 @@ fun HeroPage(
 
     TintedTheme(palette) {
         val scheme = MaterialTheme.colorScheme
-        SystemBarIcons(LocalLook.current)
+        if (LocalPageFront.current) SystemBarIcons(LocalLook.current)
         PageTint(palette, waiting = palette == null && tinted && lead != null)
         val list = rememberLazyListState()
         // How far the hero has scrolled off, for its parallax: the list's own scroll upright; on its side the

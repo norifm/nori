@@ -28,8 +28,23 @@ pub struct Stage {
 
     /// Buffering time before Play shows a spinner (most skips start within it).
     pub spinner_after_ms: i64,
-    /// Cross-fade between artwork, lyrics and queue panels.
-    pub panel_ms: i32,
+    /// A move from rest: the player opened by a tap, a panel changed.
+    pub move_ms: i32,
+    /// A move's curve, a cubic Bézier's two control points (x1, y1, x2, y2): most of the way early, a long
+    /// soft landing.
+    pub move_ease: Vec<f32>,
+    /// Something appearing where nothing moved: content arriving, a tab's page, a colour changing.
+    pub fade_ms: i32,
+    /// Something going away: quicker than it came.
+    pub fade_out_ms: i32,
+    /// Stiffness of the spring that settles what a finger let go (damping ratio 1: no bounce).
+    pub settle_stiffness: f32,
+    /// A change of page: both pages shift a little and cross-fade.
+    pub page_ms: i32,
+    /// A change of page's curve, a cubic Bézier's two control points (x1, y1, x2, y2).
+    pub page_ease: Vec<f32>,
+    /// How far each page shifts in a change of page, dp.
+    pub page_shift: f32,
     /// How long the previous cover stays while the new one loads, before the placeholder.
     pub sleeve_hold_ms: i64,
     /// How long the previous page colours stay while the new ones are computed.
@@ -71,7 +86,14 @@ pub fn stage() -> Stage {
         floor_stops: sleeve::FLOOR_STOPS.to_vec(),
         lyrics_mask: sleeve::LYRICS_MASK.to_vec(),
         spinner_after_ms: 300,
-        panel_ms: 360,
+        move_ms: 340,
+        move_ease: vec![0.25, 1.0, 0.5, 1.0],
+        fade_ms: 180,
+        fade_out_ms: 120,
+        settle_stiffness: 450.0,
+        page_ms: 200,
+        page_ease: vec![0.4, 0.0, 0.2, 1.0],
+        page_shift: 48.0,
         sleeve_hold_ms: 180,
         colour_wait_ms: 180,
         colour_fade_ms: 420,
