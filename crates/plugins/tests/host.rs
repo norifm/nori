@@ -281,7 +281,7 @@ fn an_offer_says_where_it_stands_and_shows_its_readme() {
     plugins.add_repo(other.into());
     let pkg = package();
     let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
-    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "about": "Loud covers", "readme": "t.md", "icon": "t.png", "versions": [{{"version": "{v}", "api": 1, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
+    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "about": "Loud covers", "readme": "t.md", "icon": "t.png", "points": ["provider"], "versions": [{{"version": "{v}", "api": 1, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
     let serve = |mine: &str| {
         *session.web.serves.lock().unwrap() = vec![
             (own.to_string(), index(mine)),
@@ -308,6 +308,10 @@ fn an_offer_says_where_it_stands_and_shows_its_readme() {
     assert_eq!(states()[0], (own.to_string(), OfferState::Update));
 
     let offers = nori_tasks::block_on(plugins.offers()).offers;
+    let providers = |cards| nori_plugins::provider_offers(offers.clone(), cards).len();
+    assert_eq!(providers(plugins.cards("en".into())), 1, "off, it is offered, once of its two repos");
+    plugins.turn(ID.into(), true);
+    assert_eq!(providers(plugins.cards("en".into())), 0, "on, it is a kind of profile already");
     let found = |query: &str, repo: Option<&str>| offers_found(offers.clone(), query.into(), repo.map(String::from)).len();
     assert_eq!((found("  LOUD ", None), found("loud", Some(own)), found("quiet", None)), (2, 1, 0));
 }

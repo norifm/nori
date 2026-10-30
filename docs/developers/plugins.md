@@ -453,7 +453,7 @@ A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
 
 ```json
 {"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "about": "…", "source": "https://github.com/…",
-  "readme": "orbit/README.md", "icon": "orbit/icon.png",
+  "readme": "orbit/README.md", "icon": "orbit/icon.png", "points": ["sound-stage"],
   "versions": [{"version": "1.2.0", "api": 1, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
     "sha256": "<hex>", "key": "<hex, 32 bytes>", "signature": "<hex, 64 bytes>"}]}]}
 ```
@@ -466,6 +466,8 @@ A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
   repo, `updates_waiting` for the list, `offer_of` for the offer a plugin's page shows, and
   `offers_stand` for offers read before an install, update or removal. Android, the desktop and the
   terminal have the same pages: the list, the browser, the repos, and a plugin's page.
+- `points` are the extension points it fills. A first screen lists those filling `provider` before they
+  are installed (`provider_offers`).
 - `key` is the author's ed25519 public key, `signature` that key's signature over the package's SHA-256
   (the 32 raw bytes, not the hex). Both or neither; one without the other, or a signature that doesn't
   verify (`verify_strict`), refuses the version (`Refusal::Signature`).

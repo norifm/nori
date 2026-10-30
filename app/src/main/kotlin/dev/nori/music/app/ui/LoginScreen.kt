@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -19,6 +21,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.draw.alpha
+import dev.nori.music.ffi.settings.ServerKind
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -163,11 +167,12 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
         }
     }
 
-    var plugins by remember { mutableStateOf(false) }
-    NoriDialog(plugins, { plugins = false }, DialogStyle.Page) {
-        Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.systemBarsPadding()) { PluginsPages(androidx.lifecycle.viewmodel.compose.viewModel(), vm) }
-        }
+    // A new profile starts by choosing what it plays from; back from its form chooses again.
+    var choosing by remember { mutableStateOf(adding) }
+    androidx.activity.compose.BackHandler(adding && !choosing) { choosing = true }
+    if (choosing) {
+        ProviderChoice(vm, onClose) { kind -> p = p.copy(kind = kind); choosing = false }
+        return
     }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), Arrangement.spacedBy(12.dp)) {
@@ -175,11 +180,6 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
                 if (initial == null) "nori" else say.server,
                 style = titled(MaterialTheme.typography.displaySmall), modifier = Modifier.padding(top = 16.dp, bottom = 2.dp),
             )
-            if (adding && providers.size > 1) androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                providers.forEach { k -> Chip(providerWords(vm, k.kind).name, p.kind == k.kind, Modifier.testTag("kind-${kindTag(k.kind)}")) { p = p.copy(kind = k.kind) } }
-            }
-            // A kind a plugin brings can be the first profile: its plugin is got here.
-            if (adding) TextAction(say.pluginsGetMore, { plugins = true }, Modifier.testTag("get-plugins"))
             if (adding && words.hint.isNotEmpty()) Text(words.hint, color = MaterialTheme.colorScheme.onSurfaceVariant)
             info?.fields?.filter { !it.advanced }?.forEach { Ask(it.what) }
             ui.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -197,6 +197,58 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
                 onClose?.let { TextAction(say.cancel, it) }
             }
             if (advanced) folded.forEach { Ask(it.what) }
+        }
+    }
+}
+
+/**
+ * What a new profile plays from: nori's own and the plugins' providers in ink, then, quieter, those a repo
+ * offers that aren't on. Choosing one of those installs it (its sheet says what it may do) and turns it on.
+ * The title's plus reaches every plugin and the repos.
+ */
+@Composable
+private fun ProviderChoice(vm: SettingsViewModel, onClose: (() -> Unit)?, choose: (ServerKind) -> Unit) {
+    val plugins: dev.nori.music.app.vm.PluginsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val providers by vm.providers.collectAsStateWithLifecycle()
+    val offers by plugins.providerOffers.collectAsStateWithLifecycle()
+    val cards by plugins.cards.collectAsStateWithLifecycle()
+    var more by remember { mutableStateOf(false) }
+    var offered by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { plugins.loadOffers() }
+    // Installed from its page, it goes on and its form opens.
+    LaunchedEffect(cards, offered) {
+        val id = offered ?: return@LaunchedEffect
+        if (cards.any { it.id == id }) { plugins.turn(id, true); offered = null; choose(ServerKind.Plugin(id)) }
+    }
+    NoriDialog(more, { more = false }, DialogStyle.Page) {
+        Surface(Modifier.fillMaxSize()) { Column(Modifier.systemBarsPadding()) { PluginsPages(plugins, vm) } }
+    }
+    NoriDialog(offered != null, { offered = null }, DialogStyle.Page) {
+        Surface(Modifier.fillMaxSize()) {
+            Column(Modifier.systemBarsPadding()) { offered?.let { PluginPage(plugins, vm, it) { offered = null } } }
+        }
+    }
+    Surface(Modifier.fillMaxSize()) {
+        Column(Modifier.systemBarsPadding().verticalScroll(rememberScrollState())) {
+            LargeTitle(say.providerChoose, Modifier.padding(top = 16.dp), trailing = { GlyphButton(Iconoir.Plus, say.pluginsGet, Modifier.testTag("get-plugins")) { more = true } })
+            Spacer(Modifier.height(12.dp))
+            GroupCard {
+                providers.forEachIndexed { i, k ->
+                    val words = providerWords(vm, k.kind)
+                    val divider = i < providers.lastIndex || offers.isNotEmpty()
+                    val tag = Modifier.testTag("kind-${kindTag(k.kind)}")
+                    when (val kind = k.kind) {
+                        is ServerKind.Plugin -> ProviderLine(plugins, kind.id, null, words.name, null, divider, tag) { choose(kind) }
+                        ServerKind.Subsonic -> ProviderLine(Iconoir.Server, words.name, say.providerSubsonicAbout, divider, tag) { choose(kind) }
+                    }
+                }
+                offers.forEachIndexed { i, o ->
+                    ProviderLine(plugins, o.id, o, o.name, null, i < offers.lastIndex, Modifier.alpha(0.5f).testTag("offered-${o.id}")) {
+                        if (cards.any { it.id == o.id }) { plugins.turn(o.id, true); choose(ServerKind.Plugin(o.id)) } else offered = o.id
+                    }
+                }
+            }
+            onClose?.let { Row(Modifier.padding(horizontal = 8.dp, vertical = 12.dp)) { TextAction(say.cancel, it) } }
         }
     }
 }

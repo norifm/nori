@@ -23,7 +23,7 @@ pub struct ProviderWords {
 /// The words of `kind`; `plugin_name` is a plugin kind's name in its own words.
 pub fn provider(kind: &ServerKind, plugin_name: Option<String>) -> ProviderWords {
     match kind {
-        ServerKind::Subsonic => ProviderWords { name: "Your server".into(), no_user: "API key" },
+        ServerKind::Subsonic => ProviderWords { name: "OpenSubsonic".into(), no_user: "API key" },
         ServerKind::Plugin { id } => ProviderWords { name: plugin_name.unwrap_or_else(|| id.clone()), no_user: "no account" },
     }
 }

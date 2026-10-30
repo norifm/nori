@@ -210,7 +210,9 @@
     <string name="server">Server</string>
     <string name="server_hint">Navidrome, octo-fiesta or any Subsonic server</string>
     <string name="server_url">Server URL</string>
-    <string name="profile_kind_server">Your server</string>
+    <string name="profile_kind_server">OpenSubsonic</string>
+    <string name="provider_choose">Choose a provider</string>
+    <string name="provider_subsonic_about">Navidrome and other servers</string>
     <string name="profile_kind_plugin_no_user">Not signed in</string>
     <string name="provider_add">Add %1$s</string>
     <string name="account">Account</string>
@@ -714,7 +716,6 @@
     <string name="plugins">Plugins</string>
     <string name="plugins_summary">Music sources, sounds and more</string>
     <string name="plugins_empty">Plugins add music sources, sounds and more.</string>
-    <string name="plugins_get_more">Get more with plugins</string>
     <string name="plugins_installed_list">Installed</string>
     <string name="plugins_install_file">Install from file</string>
     <string name="plugins_version">Version %1$s</string>

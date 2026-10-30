@@ -44,6 +44,9 @@ struct Listed {
     /// Its icon, absolute or relative to the index.
     #[serde(default)]
     icon: Option<String>,
+    /// The extension points it fills (`wit/`'s names).
+    #[serde(default)]
+    points: Vec<String>,
     versions: Vec<Release>,
 }
 
@@ -76,6 +79,8 @@ pub struct Offer {
     pub readme: Option<String>,
     /// Where its icon is, when its repo says.
     pub icon: Option<String>,
+    /// The extension points it fills, when its repo says.
+    pub points: Vec<String>,
     /// The versions this nori runs, newest first.
     pub versions: Vec<Version>,
     /// The version installed here, if it is.
@@ -194,7 +199,7 @@ fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
                 .collect();
             versions.sort_by_cached_key(|v| std::cmp::Reverse(numbers(&v.version)));
             let (readme, icon) = (l.readme.map(|r| resolved(&repo.url, &r)), l.icon.map(|i| resolved(&repo.url, &i)));
-            (!versions.is_empty()).then(|| Offer { repo: repo.clone(), id: l.id, name: l.name, about: l.about, source: l.source, readme, icon, versions, installed: None, state: OfferState::New })
+            (!versions.is_empty()).then(|| Offer { repo: repo.clone(), id: l.id, name: l.name, about: l.about, source: l.source, readme, icon, points: l.points, versions, installed: None, state: OfferState::New })
         })
         .collect())
 }
@@ -266,6 +271,16 @@ pub fn offer_for(offers: Vec<Offer>, id: String, card: Option<PluginCard>) -> Op
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn offers_to_update(offers: Vec<Offer>, cards: Vec<PluginCard>) -> Vec<Offer> {
     updates_waiting(&offers, &cards).into_iter().cloned().collect()
+}
+
+/// The plugins that would add a kind of profile if they were on: of `offers`, those filling the provider
+/// point and not on among `cards`, once each, by name.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn provider_offers(mut offers: Vec<Offer>, cards: Vec<PluginCard>) -> Vec<Offer> {
+    offers.retain(|o| o.points.iter().any(|p| p == "provider") && !cards.iter().any(|c| c.id == o.id && c.enabled));
+    offers.sort_by_cached_key(|o| o.name.to_lowercase());
+    offers.dedup_by(|a, b| a.id == b.id);
+    offers
 }
 
 /// Those of `offers` from `repo` (any, without one) whose name or about holds `query`, by name.

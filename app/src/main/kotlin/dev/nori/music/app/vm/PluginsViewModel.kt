@@ -17,6 +17,7 @@ import dev.nori.music.ffi.plugins.Version
 import dev.nori.music.ffi.plugins.offerFor
 import dev.nori.music.ffi.plugins.offersFound
 import dev.nori.music.ffi.plugins.offersToUpdate
+import dev.nori.music.ffi.plugins.providerOffers
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -61,6 +62,10 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The browser's offers: those found, by name. */
     val found: StateFlow<List<Offer>> = combine(offers, _query, _repoShown) { o, q, r -> offersFound(o.offers, q, r) }
+        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Plugins that would add a kind of profile if they were on. */
+    val providerOffers: StateFlow<List<Offer>> = combine(offers, cards) { o, c -> providerOffers(o.offers, c) }
         .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Updates waiting for plugins not kept at their version. */

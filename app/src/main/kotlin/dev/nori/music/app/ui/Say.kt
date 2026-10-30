@@ -315,7 +315,6 @@ class Say(private val r: Resources) {
     val plugins: String get() = r.getString(R.string.plugins)
     val pluginsSummary: String get() = r.getString(R.string.plugins_summary)
     val pluginsEmpty: String get() = r.getString(R.string.plugins_empty)
-    val pluginsGetMore: String get() = r.getString(R.string.plugins_get_more)
     val pluginsInstalled: String get() = r.getString(R.string.plugins_installed_list)
     val pluginsInstallFile: String get() = r.getString(R.string.plugins_install_file)
     fun pluginVersion(v: String): String = r.getString(R.string.plugins_version, v)
@@ -406,6 +405,8 @@ class Say(private val r: Resources) {
     val pluginSource: String get() = r.getString(R.string.plugins_source)
     val pluginFromFile: String get() = r.getString(R.string.plugins_from_file)
     val pluginUnsigned: String get() = r.getString(R.string.plugins_unsigned)
+    val providerChoose: String get() = r.getString(R.string.provider_choose)
+    val providerSubsonicAbout: String get() = r.getString(R.string.provider_subsonic_about)
     val pluginsEvery: String get() = r.getString(R.string.plugins_every)
     /** Why plugins are off at this start: [names] of those nori stopped in, or none for a start that didn't finish. */
     fun pluginsSafe(safe: dev.nori.music.ffi.plugins.SafeStart, names: List<String>): String = when (safe) {

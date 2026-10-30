@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -264,16 +266,34 @@ private fun PluginTile(vm: PluginsViewModel, id: String, offer: Offer?, name: St
     }
 }
 
+/** A plugin as a provider to choose: its tile, name and about. */
+@Composable
+fun ProviderLine(vm: PluginsViewModel, id: String, offer: Offer?, name: String, about: String?, divider: Boolean, modifier: Modifier, open: () -> Unit) {
+    TiledLine({ PluginTile(vm, id, offer, name, 44.dp) }, name, about, null, divider, modifier, open, GROUP_INSET) {}
+}
+
+/** The provider nori has without a plugin: as [ProviderLine], with [glyph] on its tile. */
+@Composable
+fun ProviderLine(glyph: ImageVector, name: String, about: String?, divider: Boolean, modifier: Modifier, open: () -> Unit) {
+    TiledLine({
+        Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.surfaceContainerHighest, TileShape), Alignment.Center) { Icon(glyph, null, Modifier.size(26.dp)) }
+    }, name, about, null, divider, modifier, open, GROUP_INSET) {}
+}
+
 /** A plugin in a list: its tile, name, what it is on up to two lines, a quiet [line], and what ends the row. */
 @Composable
-private fun PluginLine(vm: PluginsViewModel, id: String, offer: Offer?, name: String, about: String?, line: String, divider: Boolean, modifier: Modifier, open: () -> Unit, inset: Dp = GROUP_INSET, trailing: @Composable () -> Unit) {
+private fun PluginLine(vm: PluginsViewModel, id: String, offer: Offer?, name: String, about: String?, line: String, divider: Boolean, modifier: Modifier, open: () -> Unit, inset: Dp = GROUP_INSET, trailing: @Composable () -> Unit) =
+    TiledLine({ PluginTile(vm, id, offer, name, 44.dp) }, name, about, line, divider, modifier, open, inset, trailing)
+
+@Composable
+private fun TiledLine(tile: @Composable () -> Unit, name: String, about: String?, line: String?, divider: Boolean, modifier: Modifier, open: () -> Unit, inset: Dp, trailing: @Composable () -> Unit) {
     Column(modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().clickable(onClick = open).padding(horizontal = inset, vertical = 12.dp), Arrangement.spacedBy(12.dp), Alignment.CenterVertically) {
-            PluginTile(vm, id, offer, name, 44.dp)
+            tile()
             Column(Modifier.weight(1f)) {
                 Text(name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 about?.let { Quiet(it, lines = 2) }
-                Text(line, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (line != null) Text(line, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             trailing()
         }
