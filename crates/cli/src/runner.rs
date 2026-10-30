@@ -220,6 +220,8 @@ pub fn run(o: Options) -> Result<(), String> {
     let casts = r.tx.clone();
     nori_host::desktop::plugins(&r.o.data).watched.hear_casts(move |c| {
         let _ = casts.send(Msg::Cast(c));
+        // What can be cast to leaves out what is cast to.
+        let _ = casts.send(Msg::PluginsChanged);
     });
     let asks = r.tx.clone();
     nori_host::desktop::plugins(&r.o.data).watched.sign_in_with(move |plugin, url| {
