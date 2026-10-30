@@ -340,6 +340,11 @@ fn loader<'a>(h: jlong) -> Option<&'a Covers> {
     unsafe { crate::handle(h) }
 }
 
+/// The cover file at `url` from the disk of loader `h` into `out`; a miss warms it for next time.
+pub(crate) fn kept(h: jlong, url: &str, out: &mut Vec<u8>) -> bool {
+    loader(h).is_some_and(|l| l.kept(url, out))
+}
+
 /// Imagination's Vulkan driver, there on a device whose GPU is PowerVR.
 const POWERVR_VULKAN: &str = "/vendor/lib64/hw/vulkan.powervr.so";
 

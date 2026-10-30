@@ -62,7 +62,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"onCpu", c"(J)Z", on_cpu),
         native!(c"pace", c"(J)F", pace),
         native!(c"follow", c"(JJ)V", follow),
-        native!(c"castTo", c"(JJ)V", cast_to),
+        native!(c"castTo", c"(JJJ)V", cast_to),
         native!(c"gainReductionDb", c"(J)F", gain_reduction_db),
         native!(c"compressionDb", c"(J)F", compression_db),
         native!(c"setQuiet", c"(JF)V", set_quiet),
@@ -1422,6 +1422,8 @@ struct Player {
     analyses: Arc<Analyses>,
     /// The app's queue session, whose settings the engine plays by.
     queue: Arc<nori_core::queue::Session>,
+    /// The client of the profile in use.
+    current: Arc<CurrentClient>,
     /// The API level and high quality output, for a track made again after a cast.
     sdk: jint,
     float: bool,
@@ -1463,7 +1465,7 @@ extern "system" fn create(env: JNIEnv, _: JClass, bridge: JObject, current: jlon
     let ahead = Ahead::new();
     let library = AndroidLibrary { bridge: bridge.clone(), queue: queue.clone(), current: current.clone(), analyses: analyses.clone(), stations: stations.clone(), ahead: ahead.clone() };
     let sound = queue.settings.current().map(|p| settings(&p, queue.settings.layer())).unwrap_or_default();
-    let watch = Some(nori_engine::watch::Watcher(Arc::new(PerfWatch { current, bridge: bridge.clone() })));
+    let watch = Some(nori_engine::watch::Watcher(Arc::new(PerfWatch { current: current.clone(), bridge: bridge.clone() })));
     let config = Config { memory_mb: memory_mb.max(16) as u32, settings: sound, watch, platform: nori_player::decode::Platform { aac: crate::mediacodec::platform_aac(), later: None }, ..Config::default() };
     let events = Arc::new(Events { bridge: bridge.clone(), queue: Mutex::default(), signalled: AtomicBool::new(false), text: Mutex::default(), jumps: AtomicI64::new(0) });
     let tell = events.clone();
@@ -1473,7 +1475,7 @@ extern "system" fn create(env: JNIEnv, _: JClass, bridge: JObject, current: jlon
     log(&format!("the engine starts: API {sdk}, {} output, {} MB of memory, offload {}", if float != 0 { "float" } else { "16-bit" }, config.memory_mb, if can_offload { "possible" } else { "not on this Android" }));
     let app = CoreApp::new(queue.clone()).bridging();
     let engine = Engine::start(library, app, CoreQueue(queue.clone()), Box::new(output), offloaded, config, move |e| tell.push(e));
-    PLAYERS.add(Arc::new(Player { engine, bridge, shared, events, offload, stations, jumped: Mutex::new(None), looked_ms: AtomicI64::new(i64::MIN / 2), quiet, ahead, analyses, queue, sdk, float: float != 0 }))
+    PLAYERS.add(Arc::new(Player { engine, bridge, shared, events, offload, stations, jumped: Mutex::new(None), looked_ms: AtomicI64::new(i64::MIN / 2), quiet, ahead, analyses, queue, current, sdk, float: float != 0 }))
 }
 
 /// Unregisters the player and stops it on a thread of its own (stopping joins engine threads, and media3
@@ -1663,8 +1665,9 @@ extern "system" fn follow(h: jlong, remote: jlong) {
 
 /// A plugin's cast takes the engine's audio while it runs (`plugins`, a `Plugins.uniffiCloneHandle()`,
 /// taken over): its sink while one runs, then a track of this phone's again; nothing here while its
-/// device plays the songs itself.
-extern "system" fn cast_to(h: jlong, plugins: jlong) {
+/// device plays the songs itself. A deep sink's covers come from the app's loader (`covers`, its
+/// handle, open for as long as the app runs).
+extern "system" fn cast_to(h: jlong, plugins: jlong, covers: jlong) {
     // SAFETY: Kotlin passes `Plugins.uniffiCloneHandle()`, once.
     let plugins: Arc<nori_plugins::Plugins> = unsafe { crate::uniffi_object(plugins) };
     let Some(p) = player(h) else { return };
@@ -1673,8 +1676,13 @@ extern "system" fn cast_to(h: jlong, plugins: jlong) {
         let Some(p) = player.upgrade() else { return };
         match to {
             nori_plugins::Card::Sink(sink) => {
-                // The covers are drawn in Kotlin: a deep sink shows the songs' lines only.
-                let shows = Arc::new(nori_engine::core::QueueShows { queue: p.queue.clone(), cover: None });
+                let current = p.current.clone();
+                let cover: nori_engine::core::CoverFile = Box::new(move |art, size| {
+                    let address = current.get()?.cover_address(art.to_string(), nori_core::covers::cover_rendition(size));
+                    let mut file = Vec::new();
+                    crate::covers::kept(covers, &address, &mut file).then_some(file)
+                });
+                let shows = Arc::new(nori_engine::core::QueueShows { queue: p.queue.clone(), cover: Some(cover) });
                 let (out, offload) = nori_engine::cast::card(sink, Some(shows));
                 p.engine.set_card(out, offload, true)
             }

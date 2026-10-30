@@ -45,6 +45,9 @@ class CoverLoader private constructor(context: Context) {
     /** Cheap to open: the core reads its directory on the loader's first thread, not here. */
     private val loader = CoverPixels.open(dev.nori.music.Nori.get(app).coverNet.uniffiCloneHandle(), File(app.cacheDir, DIR).path, Covers.rules.diskBytes.toLong(), CoverPixels.hardware, true)
 
+    /** The loader for the player's cast; open for as long as the app runs. */
+    internal val handle: Long get() = loader
+
     /** By [key], so a cover asked for through the server's other address is the one already kept. */
     private val memory = object : LruCache<Long, Kept>(memoryBytes(app)) {
         override fun sizeOf(key: Long, value: Kept): Int = value.bitmap.allocationByteCount
