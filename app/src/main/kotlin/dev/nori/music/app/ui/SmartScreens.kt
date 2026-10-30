@@ -27,7 +27,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -217,7 +219,8 @@ fun SmartList(vm: SmartViewModel = viewModel()) {
     val nav = LocalNav.current
     var deleting by remember { mutableStateOf<dev.nori.music.ffi.model.SmartPlaylist?>(null) }
     DeleteQuestion(deleting, { say.smartName(it) }, { vm.delete(it.id) }, { deleting = null })
-    LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+    val scroll = rememberLazyListState()
+    LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
         item { ActionRow(say.newSmartPlaylist, Iconoir.Plus, { nav.smartEdit("") }) }
         items(saved, key = { it.id }) { p ->
             NavRow(
@@ -271,14 +274,26 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
     val saved by vm.saved.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     // What the form opens with, and every change to its rules, are the core's (`smart/draft.rs`).
-    var draft by remember(id, saved.size) { mutableStateOf(dev.nori.music.ffi.library.smartEditOpen(vm.find(id)?.let { it.copy(name = say.smartName(it)) })) }
+    val opened = remember(id, saved.size) { dev.nori.music.ffi.library.smartEditOpen(vm.find(id)?.let { it.copy(name = say.smartName(it)) }) }
+    var draft by remember(opened) { mutableStateOf(opened) }
+    // Changes are not dropped by a stray back: back asks first.
+    val changed = draft != opened
+    val swipe = LocalPageSwipe.current!!
+    DisposableEffect(changed) { swipe.held = changed; onDispose { swipe.held = false } }
+    var asking by remember { mutableStateOf(false) }
+    BackHandler(changed) { asking = true }
+    NoriDialog(asking, { asking = false }) {
+        AlertCard(
+            title = { Text(say.discardChanges) },
+            confirmButton = { TextAction(say.discard, { asking = false; swipe.held = false; nav.back() }, destructive = true) },
+            dismissButton = { TextAction(say.keepEditing, { asking = false }) },
+        )
+    }
     val fields = remember { dev.nori.music.ffi.library.smartEditFields() }
     val sorts = remember { dev.nori.music.ffi.library.smartEditSchema().sorts }
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = 24.dp + LocalChromeInset.current)) {
-        Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
-            Text(say.smartPlaylist, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+        LargeTitle(say.smartPlaylist) {
             TextAction(say.save, { error = vm.save(draft) { nav.back() } })
         }
         FormField(draft.name, { draft = draft.copy(name = it) }, Modifier.fillMaxWidth().padding(horizontal = Space.gutter), label = { Text(say.name) }, singleLine = true)
@@ -338,7 +353,7 @@ fun HistoryList(actions: ActionsViewModel, vm: HistoryViewModel = viewModel()) {
     val list = rememberLazyListState()
     LaunchedEffect(list, entries.size) { snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= entries.size - 30 }.collect { if (it) vm.loadMore() } }
     val songs = remember(entries) { entries.map { it.song } }
-    LazyColumn(state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+    LazyColumn(Modifier.fadesUnderTitle(list), state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
         item { Row(Modifier.padding(horizontal = 8.dp)) { TextAction(say.listeningStats, nav::stats); TextAction(say.clearHistory, vm::clear) } }
         if (entries.isEmpty()) item { Text(noteText(Note.NO_HISTORY), Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         songRows(songs, actions, rows, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, keyPrefix = "h")
@@ -356,12 +371,8 @@ fun StatsScreen(vm: HistoryViewModel = viewModel()) {
     LaunchedEffect(days, source) { vm.loadStats(days, source) }
     val s by vm.stats.collectAsStateWithLifecycle()
     val server by vm.server.collectAsStateWithLifecycle()
-    val nav = LocalNav.current
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = 24.dp + LocalChromeInset.current)) {
-        Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
-            Text(say.listening, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
-        }
+        LargeTitle(say.listening)
         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(sources) { (from, label) -> Chip(label, source == from) { source = from } }
         }

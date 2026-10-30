@@ -76,7 +76,6 @@ class Say(private val r: Resources) {
     val search: String = r.getString(R.string.search)
     val library: String = r.getString(R.string.library)
     val settings: String = r.getString(R.string.settings)
-    val back: String = r.getString(R.string.back)
     val more: String = r.getString(R.string.more)
     val next: String = r.getString(R.string.next)
     val previous: String = r.getString(R.string.previous)
@@ -921,6 +920,9 @@ class Say(private val r: Resources) {
 
     /** Stopping every download: its title, and what it does to [unfinished] songs. */
     val stopAllTitle: String get() = r.getString(R.string.stop_all_title)
+    val discardChanges: String get() = r.getString(R.string.discard_changes)
+    val discard: String get() = r.getString(R.string.discard)
+    val keepEditing: String get() = r.getString(R.string.keep_editing)
     fun stopAllText(unfinished: Int): String = r.getQuantityString(R.plurals.stop_all_text, unfinished, unfinished)
 
     fun note(n: Note): String = r.getString(n.id)

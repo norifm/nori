@@ -83,9 +83,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
     NoriDialog(importing, { importing = false }) { ImportDialog(vm) { importing = false } }
 
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = LocalChromeInset.current)) {
-        Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
-            Text(say.equalizer, Modifier.weight(1f), style = titled(MaterialTheme.typography.headlineSmall))
+        LargeTitle(say.equalizer, Modifier.padding(end = Space.gutter - Space.tight)) {
             NoriSwitch(p.eqEnabled, { on -> vm.update { it.copy(eqEnabled = on) } })
         }
         val graphic = p.eqMode == EqMode.GRAPHIC

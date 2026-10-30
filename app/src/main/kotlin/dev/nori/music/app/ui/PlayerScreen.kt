@@ -594,7 +594,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             )
                             .then(if (page == Panel.QUEUE) Modifier.padding(horizontal = 26.dp) else Modifier),
                     ) {
-                        if (page == Panel.QUEUE) Queue(vm) { choose(Panel.ART) } else LyricsView(vm, actions, state.advancing)
+                        if (page == Panel.QUEUE) Queue(vm) { choose(Panel.ART) } else LyricsView(vm, actions, state.advancing) { choose(Panel.ART) }
                     }
                 }
 
@@ -1162,7 +1162,22 @@ internal fun SoftSleeve(
             .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen; if (mirror) scaleX = -1f }
             .rubOutBottom(across) { val (bottom, height) = edge(); (bottom - height * (if (across) stage.acrossMelt else MELT)) to bottom },
     ) {
-        Unturned(mirror) { content(false) }
+        // The sharp picture gives way to the blurred copy by the same mask, so the two always add up to one. Laid
+        // under it instead, the sharp picture showed through wherever the blur is thin: at the edge of a record
+        // shrinking past the title on a pull down, a hard line across the soft band.
+        Box(
+            if (!soft || band == null) Modifier.fillMaxSize() else Modifier.fillMaxSize().drawWithCache {
+                val (bottom, height) = edge()
+                val top = bottom - height
+                val mask = if (across) alphaGradient(stage.acrossSoft, Color.Black, top + height * (1f - stage.acrossMelt), top + height, true)
+                else alphaGradient(stage.soft, Color.Black, top + height * stage.softFrom, top + height * stage.softTo, false)
+                onDrawWithContent {
+                    drawContent()
+                    val shown = blur.read().coerceIn(0f, 1f)
+                    if (shown > 0f) drawRect(mask, alpha = shown, blendMode = androidx.compose.ui.graphics.BlendMode.DstOut)
+                }
+            },
+        ) { Unturned(mirror) { content(false) } }
         if (soft && band != null) Box(
             Modifier.fillMaxSize()
                 .then(if (!cropped) Modifier else Modifier.layout { measurable, constraints ->
@@ -1175,6 +1190,8 @@ internal fun SoftSleeve(
                 .graphicsLayer {
                     compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
                     alpha = blur.read().coerceIn(0f, 1f)
+                    // Added to the sharp picture's share, not laid over it, which would take that share away twice.
+                    blendMode = androidx.compose.ui.graphics.BlendMode.Plus
                 }
                 .drawWithCache {
                     // Where the blurred copy shows: nowhere above the band's upper reach, all of it by the
@@ -2967,10 +2984,12 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                 // (the × does, on purpose). Leftwards only: rightwards from the edge is the back gesture's.
                 val taken = if (i in kept || !edits) null else take
                 SwipeBackdrop(swipe, null, taken, Modifier.matchParentSize(), swipeColours, reveal = true, inset = 12.dp)
+                val seen = remember { RowPlace() }
                 Row(
                     Modifier.fillMaxWidth()
+                        .touchedInSight(seen, null)
                         .then(if (played) Modifier.graphicsLayer { alpha = QUEUE_PLAYED_ALPHA } else Modifier)
-                        .then(if (edits) Modifier.swipeable(swipe, null, taken, null, gone = true, resist = i in kept).clickable { if (i == state.index) showPlayer() else { tapped = key; vm.skipTo(i) } } else Modifier)
+                        .then(if (edits) Modifier.swipeable(swipe, null, taken, null, gone = true, resist = i in kept, shown = { seen.inSight(null) }).clickable { if (i == state.index) showPlayer() else { tapped = key; vm.skipTo(i) } } else Modifier)
                         .padding(vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -2995,7 +3014,9 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                             LookText(s.artist, quiet, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                    if (edits) IconButton({ undo.took(s, i, key, 0f); vm.remove(i) }, Modifier.size(38.dp)) {
+                    // The rows a swipe leaves (the song playing) have no × either; its room stays, so the × line up.
+                    if (edits && i in kept) Spacer(Modifier.size(38.dp))
+                    else if (edits) IconButton({ undo.took(s, i, key, 0f); vm.remove(i) }, Modifier.size(38.dp)) {
                         LookIcon(Iconoir.Xmark, say.remove, Modifier.size(19.dp), quiet)
                     }
                     // The handle's room is kept on every row while the list can be reordered, so every ×

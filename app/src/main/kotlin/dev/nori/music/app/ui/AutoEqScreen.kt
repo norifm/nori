@@ -1,5 +1,6 @@
 package dev.nori.music.app.ui
 
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -33,7 +34,7 @@ fun AutoEqScreen(vm: SettingsViewModel) {
     LifecycleStartEffect(vm) { vm.soundPageShown(true); onStopOrDispose { vm.soundPageShown(false) } }
     val nav = LocalNav.current
     Column {
-        BackTitle(say.headphonePresets)
+        LargeTitle(say.headphonePresets)
         if (ui.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.onSurface, trackColor = MaterialTheme.colorScheme.outlineVariant)
         ui.error?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
         ui.applied?.let { Text(androidx.compose.runtime.remember(it) { say.autoeqApplied(it) }, Modifier.padding(16.dp)) }
@@ -52,7 +53,8 @@ fun AutoEqScreen(vm: SettingsViewModel) {
             TextAction(say.refreshList, vm::downloadAutoEqIndex, enabled = !ui.busy)
         }
         SearchField(ui.query, vm::searchAutoEq, ui.searchWords, Modifier.padding(horizontal = Space.gutter, vertical = 8.dp))
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             if (ui.hits.isNotEmpty()) item {
                 GroupCard {
                     ui.hits.forEachIndexed { i, e -> GroupRow(e.entry.name, { vm.applyAutoEq(e.entry) }, subtitle = e.caption, divider = i < ui.hits.lastIndex) }

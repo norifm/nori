@@ -55,14 +55,14 @@ private fun PluginCard.kinds() = say.pluginKinds(points, overrides.isNotEmpty())
 
 /**
  * Settings › Plugins and its plugins' pages, for where there is no navigation of the app's yet (the first
- * profile's form): one page at a time, back going from a plugin's page to the list, then [close].
+ * profile's form): one page at a time, back going from a plugin's page to the list.
  */
 @Composable
-fun PluginsPages(vm: PluginsViewModel, sound: SettingsViewModel, close: () -> Unit) {
+fun PluginsPages(vm: PluginsViewModel, sound: SettingsViewModel) {
     var page by remember { mutableStateOf<String?>(null) }
     BackHandler(page != null) { page = null }
     when (val id = page) {
-        null -> PluginsScreen(vm, sound, close) { page = it }
+        null -> PluginsScreen(vm, sound) { page = it }
         else -> PluginPage(vm, sound, id) { page = null }
     }
 }
@@ -72,7 +72,7 @@ fun PluginsPages(vm: PluginsViewModel, sound: SettingsViewModel, close: () -> Un
  * page with [open]), installing one from a file, what the repos offer that isn't here, and the repos.
  */
 @Composable
-fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, back: () -> Unit, open: (String) -> Unit) {
+fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, open: (String) -> Unit) {
     SoundPage(sound)
     val cards by vm.cards.collectAsStateWithLifecycle()
     val repos by vm.repos.collectAsStateWithLifecycle()
@@ -85,7 +85,7 @@ fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, back: () -> Un
     // Offered and not here, or here in an older version.
     val wanted = offers.offers.filter { o -> o.installed == null || o.installed != o.versions.firstOrNull()?.version }
     Column(Modifier.verticalScroll(rememberScrollState())) {
-        BackTitle(say.plugins, back)
+        LargeTitle(say.plugins)
         if (cards.isEmpty()) Quiet(say.pluginsEmpty, Modifier.padding(horizontal = Space.gutter, vertical = 8.dp))
         else {
             GroupLabel(say.pluginsInstalled)
@@ -271,7 +271,7 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
     // What the repo it came from offers of it; a plugin from a file updates from nowhere.
     val offer = offers.offers.firstOrNull { it.id == id && it.repo.url == card.repo }
     Column(Modifier.verticalScroll(rememberScrollState())) {
-        BackTitle(card.name, back)
+        LargeTitle(card.name)
         Column(Modifier.padding(horizontal = Space.gutter, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             card.about?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
             Quiet(listOfNotNull(say.pluginVersion(card.version), card.kinds().takeIf { it.isNotEmpty() }, say.pluginFromFile.takeIf { card.repo == null }).joinToString(" · "))

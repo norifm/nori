@@ -425,6 +425,7 @@ internal fun PrintGrid(onEnd: () -> Unit, content: androidx.compose.foundation.l
     }
     androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
         if (LocalWide.current) androidx.compose.foundation.lazy.grid.GridCells.Adaptive(GRID_MIN) else androidx.compose.foundation.lazy.grid.GridCells.Fixed(2),
+        Modifier.fadesUnderTitle(list),
         state = list,
         contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, top = Space.gutter, bottom = Space.gutter + LocalChromeInset.current),
         horizontalArrangement = Arrangement.spacedBy(GRID_GAP), verticalArrangement = Arrangement.spacedBy(GRID_GAP),
@@ -438,7 +439,7 @@ private fun MixesFull(vm: dev.nori.music.app.vm.MixesViewModel = viewModel()) {
     val papers = LocalPapers.current
     val nav = LocalNav.current
     Column {
-        BackTitle(say.forYou)
+        LargeTitle(say.forYou)
         PrintGrid(onEnd = {}) {
             gridItems(cards, key = { it.id }, contentType = { "mix" }) { c ->
                 MixCardView(c, papers, Modifier.fillMaxWidth(), fill = true) { nav.mix(c.id) }
@@ -455,7 +456,7 @@ private fun RowFull(key: String, actions: ActionsViewModel, vm: dev.nori.music.a
     val nav = LocalNav.current
     val title = remember(key, feedTitle) { HomeRow.entries.firstOrNull { it.name == key }?.let(say::homeRow) ?: feedTitle.orEmpty() }
     Column {
-        BackTitle(title)
+        LargeTitle(title)
         when (val e = entries) {
             null -> {}
             is dev.nori.music.app.vm.RowEntries.Albums -> PrintGrid(vm::loadMore) {
@@ -475,7 +476,7 @@ private fun RowFull(key: String, actions: ActionsViewModel, vm: dev.nori.music.a
                 LaunchedEffect(list, e.songs.size) {
                     androidx.compose.runtime.snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= e.songs.size - 20 }.collect { if (it) vm.loadMore() }
                 }
-                LazyColumn(state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+                LazyColumn(Modifier.fadesUnderTitle(list), state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
                     songRows(e.songs, actions, rows, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = e.origin)
                 }
             }

@@ -3,7 +3,7 @@
 
 use nori_core::client::Starrable;
 use nori_core::menus::{JamOffer, PageAction, SongAction, SongDownload};
-use nori_core::Song;
+use nori_core::{OriginKind, PageOrigin, Song};
 
 use nori_plugins::{ItemKind, Items};
 
@@ -78,14 +78,20 @@ impl App {
         }
     }
 
-    /// The core's menu of `song`, without what this client cannot do.
+    /// The core's menu of `song`, without what this client cannot do; off the player it leaves out the page's
+    /// own album or artist.
     fn song_lines(&self, song: &Song, player: bool) -> Vec<MenuLine> {
+        let page = match self.page().filter(|_| !player) {
+            Some(Page::Album { id, .. } | Page::DownloadedAlbum { id, .. }) => Some(PageOrigin::new(OriginKind::Album, id.clone())),
+            Some(Page::Artist { id, .. }) => Some(PageOrigin::new(OriginKind::Artist, id.clone())),
+            _ => None,
+        };
         let starred = self.starred(Starrable::Song, &song.id, song.starred);
         let download = self.downloaded.get(&song.id).copied().unwrap_or(SongDownload::None);
         let lyrics = self.lyrics.as_ref().is_some_and(|l| !l.pick.lyrics.lines.is_empty()) && self.lyrics_for.as_deref() == Some(&song.id);
         let jam = if self.guest() { Some(JamOffer::Guest) } else if self.devices.jams && self.devices.jam.is_none() { Some(JamOffer::Start) } else { None };
         let r = &self.rules;
-        let items = nori_core::menus::song_menu(song.clone(), starred, download, player, lyrics, r.stars, r.account, r.downloads, r.radio, jam);
+        let items = nori_core::menus::song_menu(song.clone(), starred, download, player, lyrics, r.stars, r.account, r.downloads, r.radio, jam, page);
         let mut lines = Vec::with_capacity(items.len() + 1);
         let mut more = false;
         for i in items.into_iter().filter(|i| offered(&i.action) && i.enabled) {

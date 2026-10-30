@@ -61,9 +61,9 @@ CREATE INDEX IF NOT EXISTS items_created ON items(server, json_extract(json,'$.c
 CREATE INDEX IF NOT EXISTS items_plays ON items(server, json_extract(json,'$.playCount')) WHERE kind=2;
 CREATE INDEX IF NOT EXISTS items_starred ON items(server, json_extract(json,'$.starred')) WHERE kind=2 AND json_extract(json,'$.starred')=1;
 CREATE INDEX IF NOT EXISTS items_rated ON items(server, json_extract(json,'$.userRating')) WHERE kind=2 AND json_extract(json,'$.userRating')>=4;
-CREATE INDEX IF NOT EXISTS items_title ON items(server, json_extract(json,'$.title') COLLATE NOCASE) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_by_artist ON items(server, json_extract(json,'$.artist') COLLATE NOCASE) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_album ON items(server, json_extract(json,'$.album') COLLATE NOCASE) WHERE kind=2;
+CREATE INDEX IF NOT EXISTS items_title_natural ON items(server, json_extract(json,'$.title') COLLATE natural_order) WHERE kind=2;
+CREATE INDEX IF NOT EXISTS items_artist_natural ON items(server, json_extract(json,'$.artist') COLLATE natural_order) WHERE kind=2;
+CREATE INDEX IF NOT EXISTS items_album_natural ON items(server, json_extract(json,'$.album') COLLATE natural_order) WHERE kind=2;
 CREATE TABLE IF NOT EXISTS track_analysis(server TEXT NOT NULL, song_id TEXT NOT NULL, analysis_version INTEGER NOT NULL, duration_ms INTEGER NOT NULL, bpm REAL NOT NULL, bpm_confidence REAL NOT NULL, beat_offset_ms REAL NOT NULL, stability REAL NOT NULL, downbeat_phase INTEGER NOT NULL, downbeat_confidence REAL NOT NULL, lufs REAL NOT NULL, key INTEGER NOT NULL, key_confidence REAL NOT NULL, silence_start_ms INTEGER NOT NULL, silence_end_ms INTEGER NOT NULL, mixramp_start_ms INTEGER NOT NULL, mixramp_end_ms INTEGER NOT NULL, intro_end_ms INTEGER NOT NULL, outro_start_ms INTEGER NOT NULL, outro_vocal REAL NOT NULL, intro_vocal REAL NOT NULL, outro_centroid REAL NOT NULL, intro_centroid REAL NOT NULL, outro_bpm REAL NOT NULL, outro_bpm_confidence REAL NOT NULL, outro_beat_offset_ms REAL NOT NULL, outro_stability REAL NOT NULL, outro_downbeat_phase INTEGER NOT NULL, intro_bpm REAL NOT NULL, intro_bpm_confidence REAL NOT NULL, intro_beat_offset_ms REAL NOT NULL, intro_stability REAL NOT NULL, intro_downbeat_phase INTEGER NOT NULL, beats_per_bar INTEGER NOT NULL DEFAULT 0, drop_ms INTEGER NOT NULL DEFAULT 0, drop_runup_vocal REAL NOT NULL DEFAULT 0, drop_vocal REAL NOT NULL DEFAULT 0, exit_ms INTEGER NOT NULL DEFAULT 0, gap_ms INTEGER NOT NULL DEFAULT 0, gap_end_ms INTEGER NOT NULL DEFAULT 0, exit_vocal REAL NOT NULL DEFAULT 0, drop_runup_tonal_db REAL NOT NULL DEFAULT 0, intro_beats_per_bar INTEGER NOT NULL DEFAULT 0, outro_beats_per_bar INTEGER NOT NULL DEFAULT 0, intro_grid_source INTEGER NOT NULL DEFAULT 0, outro_grid_source INTEGER NOT NULL DEFAULT 0, analysed_ms INTEGER NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS vocal_curve(server TEXT NOT NULL, song_id TEXT NOT NULL, curve BLOB NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 ";
@@ -92,9 +92,11 @@ pub fn open(path: &str, server: &str) -> rusqlite::Result<Connection> {
     c.create_scalar_function("lower_text", 1, rusqlite::functions::FunctionFlags::SQLITE_UTF8 | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
         Ok(ctx.get::<String>(0)?.to_lowercase())
     })?;
+    c.create_collation("natural_order", natural_cmp)?;
     drop_old_analysis(&c)?;
     c.execute_batch(APP_SCHEMA)?;
     c.execute_batch(SCHEMA)?;
+    drop_old_sort_indexes(&c)?;
     add_pending_tries(&c)?;
     drop_old_lyrics(&c)?;
     drop_old_pages(&c)?;
@@ -132,6 +134,33 @@ fn drop_old_analysis(c: &Connection) -> rusqlite::Result<()> {
         c.execute_batch("DROP TABLE track_analysis")?;
     }
     Ok(())
+}
+
+/// Drops the song sort indexes from before the natural order (`natural_cmp`).
+fn drop_old_sort_indexes(c: &Connection) -> rusqlite::Result<()> {
+    c.execute_batch("DROP INDEX IF EXISTS items_title; DROP INDEX IF EXISTS items_by_artist; DROP INDEX IF EXISTS items_album;")
+}
+
+/// Text in the order people read it, SQL's `natural_order` collation: case aside, and a run of digits by its
+/// number, so "#2" comes before "#10".
+pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let digits = |s: &str| s.len() - s.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    let (mut a, mut b) = (a, b);
+    loop {
+        let (Some(p), Some(q)) = (a.chars().next(), b.chars().next()) else { return b.is_empty().cmp(&a.is_empty()) };
+        let (order, m, n) = if p.is_ascii_digit() && q.is_ascii_digit() {
+            let (m, n) = (digits(a), digits(b));
+            let (x, y) = (a[..m].trim_start_matches('0'), b[..n].trim_start_matches('0'));
+            (x.len().cmp(&y.len()).then_with(|| x.cmp(y)), m, n)
+        } else {
+            (p.to_lowercase().cmp(q.to_lowercase()), p.len_utf8(), q.len_utf8())
+        };
+        if order != Ordering::Equal {
+            return order;
+        }
+        (a, b) = (&a[m..], &b[n..]);
+    }
 }
 
 /// Adds the replay bookkeeping to a `pending` table from before it; its rows count as queued now.
@@ -358,6 +387,13 @@ mod tests {
     }
 
     #[test]
+    fn natural_order() {
+        let mut titles = ["#10", "track 2", "#2", "B", "Track 10", "a", "#1", "", "#01b", "a1", "A01"];
+        titles.sort_by(|a, b| natural_cmp(a, b));
+        assert_eq!(titles, ["", "#1", "#01b", "#2", "#10", "a", "a1", "A01", "B", "track 2", "Track 10"]);
+    }
+
+    #[test]
     fn migrations() {
         let dir = nori_testdir::TempDir::new("db-old");
         let path = dir.join("old.db").to_string_lossy().into_owned();
@@ -397,6 +433,17 @@ mod tests {
         let keys: Vec<(String, String)> = c.prepare("SELECT server, key FROM cache ORDER BY server, key").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect();
         let kept = |s: &str, k: &str| (s.to_string(), k.to_string());
         assert_eq!(keys, [kept("s", "lrclib2"), kept("s", "lrclib3|a"), kept("t", "lrclib2|a")]);
+
+        // The song sort indexes from before the natural order give way to it.
+        let dir = nori_testdir::TempDir::new("db-sort");
+        let path = dir.join("sort.db").to_string_lossy().into_owned();
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch("CREATE TABLE items(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, kind INTEGER NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, UNIQUE(server, kind, id)); CREATE INDEX items_title ON items(server, json_extract(json,'$.title') COLLATE NOCASE) WHERE kind=2;").unwrap();
+        }
+        let c = open(&path, "s").unwrap();
+        let indexes: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'items_title%'").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(indexes, ["items_title_natural"]);
     }
 
     #[test]

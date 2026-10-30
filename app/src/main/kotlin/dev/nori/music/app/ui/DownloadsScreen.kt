@@ -1,5 +1,6 @@
 package dev.nori.music.app.ui
 
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
@@ -27,7 +28,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -264,7 +264,6 @@ private fun DownloadsSummary(s: DownloadSections?, plain: Boolean) {
  */
 @Composable
 fun DownloadsScreen(actions: ActionsViewModel) {
-    val nav = LocalNav.current
     val sections by actions.downloadSections.collectAsStateWithLifecycle()
     val plain = reduceMotion()
     val cover = { id: String? -> actions.cover(id, CoverSize.ROW) }
@@ -282,9 +281,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
         )
     }
     Column {
-        Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = Space.gutter - 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
-            Spacer(Modifier.weight(1f))
+        LargeTitle(say.downloads) {
             AnimatedVisibility(unfinished > 0, enter = fadeIn(tween(if (plain) 0 else 200)), exit = fadeOut(tween(if (plain) 0 else 200))) {
                 Text(
                     say.stopAll,
@@ -293,11 +290,11 @@ fun DownloadsScreen(actions: ActionsViewModel) {
                 )
             }
         }
-        LargeTitle(say.downloads)
         DownloadsSummary(s, plain)
         // Until the lists are worked out there is nothing to say, not "no downloads" for a frame.
         if (s == null) return@Column
-        LazyColumn(contentPadding = PaddingValues(bottom = Space.section + LocalChromeInset.current)) {
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = Space.section + LocalChromeInset.current)) {
             // Every section's rows come from this one call, so a row moving between sections is the same
             // row: its second line cross-fades rather than being drawn anew.
             fun LazyListScope.section(key: String, title: String, songs: List<Song>, section: DownloadPhase, action: (@Composable RowScope.() -> Unit)? = null) {

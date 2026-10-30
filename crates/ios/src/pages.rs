@@ -135,6 +135,11 @@ pub(crate) fn list(token: u64) -> Option<(Vec<Song>, Option<PageOrigin>)> {
         .map(|l| (l.songs.clone(), l.origin.clone()))
 }
 
+/// The page list `token` was read for.
+pub(crate) fn list_origin(token: u64) -> Option<PageOrigin> {
+    lock(&LISTS).iter().find(|l| l.token == token)?.origin.clone()
+}
+
 /// Song `i` of list `token`, copying only that song.
 pub(crate) fn list_song(token: u64, i: usize) -> Option<Song> {
     lock(&LISTS).iter().find(|l| l.token == token)?.songs.get(i).cloned()

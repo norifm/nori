@@ -696,6 +696,9 @@ fn queue_panel_editing() {
     assert!(s.contains("▶ Song 1") && s.contains("Playing next  5 songs") && s.contains("Shuffle   Repeat"), "{s}");
     dump("queue", &s);
     assert_eq!(a.queue_sel.at, 1, "the queue opens on the song playing");
+    let sent = a.cmds.len();
+    key(&mut a, KeyCode::Char('d'));
+    assert_eq!(a.cmds.len(), sent, "the song playing is not taken out");
     key(&mut a, KeyCode::Char('j'));
     key(&mut a, KeyCode::Char('d'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Remove(2)));
@@ -1958,7 +1961,7 @@ fn the_menu_lists_what_the_core_offers() {
     a.handle(Msg::Data(Req::Album("al-1".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-1", "Record"), songs.clone(), vec![]))))));
     key(&mut a, KeyCode::Char('m'));
     let Some(Overlay::Menu { lines, folded, .. }) = &a.overlay else { panic!("no menu") };
-    let core: Vec<MenuLine> = nori_core::menus::song_menu(songs[0].clone(), false, nori_core::menus::SongDownload::None, false, false, true, true, true, a.rules.radio, None)
+    let core: Vec<MenuLine> = nori_core::menus::song_menu(songs[0].clone(), false, nori_core::menus::SongDownload::None, false, false, true, true, true, a.rules.radio, None, Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, "al-1")))
         .into_iter()
         .filter(|i| !i.more && !matches!(i.action, SongAction::Details | SongAction::Share | SongAction::AddToLibrary))
         .map(|i| MenuLine::Act(MenuAct::Song(i.action)))
@@ -1969,7 +1972,7 @@ fn the_menu_lists_what_the_core_offers() {
     assert_eq!(lines[core.len() + 1], MenuLine::Heading("Record".into()), "then the page's");
     let s = draw(&mut a, 120, 40);
     dump("menu", &s);
-    assert!(s.contains("Add to favorites") && s.contains("Go to album") && s.contains("More") && !s.contains("Instant mix") && !s.contains("Remove downloads") && s.contains("Download"), "{s}");
+    assert!(s.contains("Add to favorites") && !s.contains("Go to album") && s.contains("Go to artist") && s.contains("More") && !s.contains("Instant mix") && !s.contains("Remove downloads") && s.contains("Download"), "{s}");
     // More unfolds in its place; a line does its thing and closes the menu.
     let more = core.len();
     if let Some(Overlay::Menu { sel, .. }) = &mut a.overlay {

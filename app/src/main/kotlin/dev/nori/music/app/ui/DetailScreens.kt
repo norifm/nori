@@ -329,7 +329,7 @@ fun ArtistReleasesScreen(id: String, group: Int, vm: ArtistViewModel = viewModel
     LoadBox(load) { ready ->
         val (title, albums) = remember(ready.detail) { groupsOf(ready.detail).getOrNull(group) } ?: return@LoadBox
         Column {
-            BackTitle(title)
+            LargeTitle(title)
             PrintGrid(onEnd = {}) {
                 gridItems(albums, key = { it.id }, contentType = { "album" }) { a ->
                     AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }, Modifier.fillMaxWidth(), fill = true)

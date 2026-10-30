@@ -589,6 +589,33 @@ fun GroupRow(
     }
 }
 
+/** How far a list moves under a pinned head before the fade under the head is full, and how tall that fade is. */
+internal val HEAD_FADE = 64.dp
+internal val HEAD_EDGE = 18.dp
+
+/**
+ * A list under a pinned title: what scrolls up fades out into the page at the list's top rather than being
+ * cut there, coming in over the list's first [HEAD_FADE] of scroll, so a list at rest is untouched.
+ */
+@Composable
+fun Modifier.fadesUnderTitle(list: androidx.compose.foundation.lazy.LazyListState): Modifier =
+    fadesUnderTitle(MaterialTheme.colorScheme.background) { if (list.firstVisibleItemIndex > 0) Float.MAX_VALUE else list.firstVisibleItemScrollOffset.toFloat() }
+
+@Composable
+fun Modifier.fadesUnderTitle(grid: androidx.compose.foundation.lazy.grid.LazyGridState): Modifier =
+    fadesUnderTitle(MaterialTheme.colorScheme.background) { if (grid.firstVisibleItemIndex > 0) Float.MAX_VALUE else grid.firstVisibleItemScrollOffset.toFloat() }
+
+private fun Modifier.fadesUnderTitle(page: Color, scrolled: () -> Float) = drawWithCache {
+    val fade = HEAD_FADE.toPx()
+    val edge = HEAD_EDGE.toPx()
+    val under = Brush.verticalGradient(0f to page, 1f to Color.Transparent, endY = edge)
+    onDrawWithContent {
+        drawContent()
+        val shown = (scrolled() / fade).coerceIn(0f, 1f)
+        if (shown > 0f) drawRect(under, size = Size(size.width, edge), alpha = shown)
+    }
+}
+
 /** The name of a whole screen, the size Apple sets it: big, bold, sitting on the gutter. */
 @Composable
 fun LargeTitle(text: String, modifier: Modifier = Modifier, trailing: @Composable (RowScope.() -> Unit)? = null) {
@@ -602,16 +629,6 @@ fun LargeTitle(text: String, modifier: Modifier = Modifier, trailing: @Composabl
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
         trailing?.invoke(this)
-    }
-}
-
-/** A page opened from another: back ([back], else the app's navigation), and its name. */
-@Composable
-fun BackTitle(text: String, back: (() -> Unit)? = null) {
-    val onBack = back ?: LocalNav.current::back
-    Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-        androidx.compose.material3.IconButton(onBack) { Icon(Iconoir.ArrowLeft, say.back, Modifier.size(22.dp)) }
-        Text(text, Modifier.weight(1f), style = titled(MaterialTheme.typography.headlineSmall), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
