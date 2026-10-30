@@ -169,8 +169,8 @@ export const W = {
   /** A list's head: "8 songs · 36:28". */
   listCaption: (n: number, seconds: number) => `${n} songs · ${clock(seconds * 1000)}`,
   time: clock,
-  account: "Account",
-  thisServer: "This server",
+  servers: "Servers",
+  accounts: "Accounts",
   // Settings, by the core's pages (their title and what they hold), sections and setting names.
   settingsPages: {
     Playing: ["Playback", "Crossfade, AutoMix, queue"],

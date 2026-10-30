@@ -1,6 +1,6 @@
 <script lang="ts">
-  // Settings. On a wide screen as the desktop's: the pages the core lays out for a browser
-  // (`settings_pages`) and the account as tabs under the title, the one open below them. On a phone as
+  // Settings. On a wide screen as the desktop's: the servers first, the pages the core lays out for a
+  // browser (`settings_pages`), as tabs under the title, the one open below them. On a phone as
   // Android's: the root lists them, each with its glyph and what it holds, and a page (`#/settings/<page>`)
   // opens on its own. A page has its sections as small-caps labels over grouped cards, each row drawn by
   // its kind and worded here. A row says only what is not obvious from its name. Appearance is the look
@@ -16,19 +16,19 @@
   import Look from "../ui/Look.svelte";
   import Page from "../ui/Page.svelte";
 
-  const glyphs: Record<string, string> = { Playing: "play", Sound: "control-slider", Look: "palette", Lyrics: "quote-message", Library: "album-list", Account: "server", About: "info-circle" };
+  const glyphs: Record<string, string> = { Playing: "play", Sound: "control-slider", Look: "palette", Lyrics: "quote-message", Library: "album-list", Servers: "server", About: "info-circle" };
   let rev = $state(0);
   const page = reading("settings", async () => {
     void rev;
     const names = JSON.parse(await ask<string>("settings_pages")) as string[];
-    const name = route.arg || (ui.wide ? names[0] : "");
+    const name = route.arg;
     const sections = names.includes(name) ? (JSON.parse(await ask<string>("settings_page", name)) as SettingsSection[]) : [];
     const profile = JSON.parse(await ask<string>("profile")) as { url: string; user: string } | null;
     return { names, sections, profile };
   });
   /** The page open: on a wide screen the first while none is asked for. */
-  const name = $derived(route.arg || (ui.wide ? (page.data?.names[0] ?? "") : ""));
-  const tabs = $derived([...(page.data?.names ?? []).map((n) => [n, W.settingsPages[n]?.[0] ?? n]), ["Account", W.account]]);
+  const name = $derived(route.arg || (ui.wide ? "Servers" : ""));
+  const tabs = $derived([["Servers", W.servers], ...(page.data?.names ?? []).map((n) => [n, W.settingsPages[n]?.[0] ?? n])]);
   /** The page's sections the rows draw: Appearance is the look, drawn whole. */
   const drawn = $derived(name === "Look" ? [] : (page.data?.sections ?? []));
 
@@ -55,25 +55,25 @@
         <a class="tab" class:on={n === name} aria-current={n === name ? "page" : undefined} href={href("settings", n)} data-page={n}>{label}</a>
       {/each}
     </nav>
-    {#if name === "Account"}{@render accountPage()}{:else}{@render settingsPage()}{/if}
+    {#if name === "Servers"}{@render serversPage()}{:else}{@render settingsPage()}{/if}
   </Page>
 {:else if !name}
   <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
     <div class="group root">
+      <a class="group-row" href={href("settings", "Servers")}><Icon name="server" /><span class="words"><span>{W.servers}</span><span class="sub">{page.data?.profile?.user ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
       {#each page.data?.names ?? [] as n (n)}
         <a class="group-row" href={href("settings", n)} data-page={n}><Icon name={glyphs[n] ?? "settings"} /><span class="words"><span>{W.settingsPages[n]?.[0] ?? n}</span><span class="sub">{W.settingsPages[n]?.[1] ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
       {/each}
-      <a class="group-row" href={href("settings", "Account")}><Icon name="server" /><span class="words"><span>{W.account}</span><span class="sub">{page.data?.profile?.user ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
     </div>
   </Page>
-{:else if name === "Account"}
-  <Page title={W.account} back narrow ready={!!page.data} error={page.error}>{@render accountPage()}</Page>
+{:else if name === "Servers"}
+  <Page title={W.servers} back narrow ready={!!page.data} error={page.error}>{@render serversPage()}</Page>
 {:else}
   <Page title={W.settingsPages[name]?.[0] ?? name} back narrow ready={!!page.data} error={page.error}>{@render settingsPage()}</Page>
 {/if}
 
-{#snippet accountPage()}
-  <div class="group-label">{W.thisServer}</div>
+{#snippet serversPage()}
+  <div class="group-label">{W.accounts}</div>
   <div class="group">
     <div class="group-row"><Icon name="server" /><span class="words"><span>{page.data?.profile?.user ?? ""}</span><span class="sub">{page.data?.profile?.url ?? ""}</span></span></div>
     <button class="group-row" onclick={() => void signOut()}><Icon name="log-out" /><span class="words">{W.signOut}</span></button>
