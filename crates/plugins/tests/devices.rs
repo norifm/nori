@@ -24,6 +24,8 @@ struct Fake {
     devices: Vec<BtDevice>,
     /// Those connecting after the host asked.
     later: Mutex<Vec<BtDevice>>,
+    /// The platform tells of connected devices as soon as it is watched, as macOS does.
+    tells_at_once: bool,
     watching: Mutex<Vec<bool>>,
     /// Links opened: (link, device, what).
     opened: Mutex<Vec<(u64, String, String)>>,
@@ -45,6 +47,9 @@ impl Fake {
 impl Bluetooth for Fake {
     fn watch(&self, on: bool) {
         self.watching.lock().unwrap().push(on);
+        if on && self.tells_at_once {
+            self.devices.iter().for_each(|d| self.host().bluetooth_connected(d.clone()));
+        }
     }
     fn connected(&self) -> Vec<BtDevice> {
         self.devices.clone()
@@ -184,6 +189,7 @@ fn headphones_are_controlled_while_connected_and_heard_without_polling() {
     let all = plugins.controlled("en".into());
     let on = |output: Option<&str>| output_device(&all, output).map(|d| d.id.as_str());
     assert_eq!((on(Some("test buds pro")), on(Some("AA")), on(Some("Speaker"))), (Some("AA"), Some("AA"), None), "by its name or id");
+    assert_eq!(on(Some("Bluetooth: Test Buds Pro")), Some("AA"), "by the output's key");
     assert_eq!(on(None), Some("AA"), "the default output is the one device");
     let two = [all.clone(), all.clone()].concat();
     assert_eq!(output_device(&two, None), None, "of two, neither is the default's");
@@ -273,6 +279,22 @@ fn an_audio_device_connecting_is_an_output_where_bluetooth_tells_of_them() {
         settle();
         assert_eq!(session.notice("heard"), outputs.then(|| vec!["Event::DeviceDisconnected(\"Car\")".to_string()]));
     }
+}
+
+#[test]
+fn a_device_told_of_as_watching_starts_is_heard_once() {
+    let dir = nori_testdir::TempDir::new("plugins-devices-at-once");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    let fake = Arc::new(Fake { devices: vec![device("AA", "Test Buds Pro")], tells_at_once: true, buds: Mutex::new([80, 70, 1]), ..Fake::default() });
+    let _ = fake.plugins.set(Arc::downgrade(&plugins));
+    plugins.use_bluetooth(fake, false);
+    plugins.install(&fixture("headphones")).unwrap();
+    plugins.turn(ID.into(), true);
+    assert_eq!(nori_tasks::block_on(plugins.worker(ID).unwrap().call(|_, _| Ok(1))), Some(1));
+    let said = session.said.lock().unwrap().clone();
+    let count = |w: &str| said.iter().filter(|s| *s == w).count();
+    assert_eq!((count("connected"), count("reach")), (1, 1), "heard and offered once: {said:?}");
 }
 
 #[test]
