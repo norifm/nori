@@ -41,6 +41,9 @@ struct Listed {
     /// Its README, absolute or relative to the index.
     #[serde(default)]
     readme: Option<String>,
+    /// Its icon, absolute or relative to the index.
+    #[serde(default)]
+    icon: Option<String>,
     versions: Vec<Release>,
 }
 
@@ -71,6 +74,8 @@ pub struct Offer {
     pub source: Option<String>,
     /// Where its README is, when its repo says.
     pub readme: Option<String>,
+    /// Where its icon is, when its repo says.
+    pub icon: Option<String>,
     /// The versions this nori runs, newest first.
     pub versions: Vec<Version>,
     /// The version installed here, if it is.
@@ -188,8 +193,8 @@ fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
                 })
                 .collect();
             versions.sort_by_cached_key(|v| std::cmp::Reverse(numbers(&v.version)));
-            let readme = l.readme.map(|r| resolved(&repo.url, &r));
-            (!versions.is_empty()).then(|| Offer { repo: repo.clone(), id: l.id, name: l.name, about: l.about, source: l.source, readme, versions, installed: None, state: OfferState::New })
+            let (readme, icon) = (l.readme.map(|r| resolved(&repo.url, &r)), l.icon.map(|i| resolved(&repo.url, &i)));
+            (!versions.is_empty()).then(|| Offer { repo: repo.clone(), id: l.id, name: l.name, about: l.about, source: l.source, readme, icon, versions, installed: None, state: OfferState::New })
         })
         .collect())
 }

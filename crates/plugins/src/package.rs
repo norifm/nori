@@ -14,7 +14,7 @@ pub(crate) const MANIFEST: &str = "manifest.bin";
 
 /// The files a package may hold.
 fn kept(name: &str) -> bool {
-    matches!(name, "plugin.wasm" | "icon.svg" | "README.md") || (name.starts_with("strings/") && name.ends_with(".toml") && !name[8..].contains('/'))
+    matches!(name, "plugin.wasm" | "icon.png" | "README.md") || (name.starts_with("strings/") && name.ends_with(".toml") && !name[8..].contains('/'))
 }
 
 /// Its files by name.
@@ -22,7 +22,7 @@ pub(crate) fn files(from: &Path) -> Result<Vec<(String, Vec<u8>)>, Refusal> {
     let unreadable = |e: &dyn std::fmt::Display| Refusal::Unreadable(e.to_string());
     if from.is_dir() {
         let mut out = Vec::new();
-        for name in ["plugin.wasm", "icon.svg", "README.md"] {
+        for name in ["plugin.wasm", "icon.png", "README.md"] {
             if let Ok(b) = fs::read(from.join(name)) {
                 out.push((name.to_string(), b));
             }

@@ -65,6 +65,11 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun showRepo(url: String?) { _repoShown.value = url }
 
+    /** Plugin [id]'s icon as last read, if it was. */
+    fun iconRead(id: String) = host.iconRead(id)
+
+    suspend fun icon(id: String, offer: Offer?) = host.icon(id, offer)
+
     /** Plugin [id]'s README, empty without one. */
     suspend fun readme(id: String, offer: Offer?) = host.readme(id, offer)
 

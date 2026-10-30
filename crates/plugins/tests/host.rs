@@ -281,13 +281,15 @@ fn an_offer_says_where_it_stands_and_shows_its_readme() {
     plugins.add_repo(other.into());
     let pkg = package();
     let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
-    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "about": "Loud covers", "readme": "t.md", "versions": [{{"version": "{v}", "api": 1, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
+    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "about": "Loud covers", "readme": "t.md", "icon": "t.png", "versions": [{{"version": "{v}", "api": 1, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
     let serve = |mine: &str| {
         *session.web.serves.lock().unwrap() = vec![
             (own.to_string(), index(mine)),
             (other.to_string(), index("9.0.0")),
             (format!("https://own.example/t-{mine}.noriplugin"), pkg.clone()),
             ("https://own.example/t.md".to_string(), b"# Test\n\nHello".to_vec()),
+            ("https://own.example/t.png".to_string(), b"\x89PNG\r\n\x1a\nimage".to_vec()),
+            ("https://other.example/t.png".to_string(), b"<html>not an icon".to_vec()),
         ];
     };
     let states = || nori_tasks::block_on(plugins.offers()).offers.into_iter().map(|o| (o.repo.url.clone(), o.state)).collect::<Vec<_>>();
@@ -297,6 +299,9 @@ fn an_offer_says_where_it_stands_and_shows_its_readme() {
     let offer = nori_tasks::block_on(plugins.offers()).offers.into_iter().find(|o| o.repo.url == own).unwrap();
     let said = vec![nori_plugins::ReadmeBlock::Text { text: "Hello".into() }];
     assert_eq!(nori_tasks::block_on(plugins.readme(ID.into(), Some(offer.clone()))), said, "before it is installed, from its repo");
+    assert_eq!(nori_tasks::block_on(plugins.icon(ID.into(), Some(offer.clone()))).as_deref(), Some(&b"\x89PNG\r\n\x1a\nimage"[..]));
+    let other_offer = nori_tasks::block_on(plugins.offers()).offers.into_iter().find(|o| o.repo.url == other);
+    assert_eq!(nori_tasks::block_on(plugins.icon(ID.into(), other_offer)), None, "what isn't a PNG is no icon");
     nori_tasks::block_on(plugins.install_version(offer.versions[0].clone())).unwrap();
     assert_eq!(states(), [(own.to_string(), OfferState::Installed), (other.to_string(), OfferState::Installed)], "another repo's newer version is no update");
     serve("0.2.0");
@@ -503,7 +508,10 @@ fn left_on(dir: &std::path::Path, id: &str) {
 #[test]
 fn a_plugin_nori_stopped_in_is_off_at_the_next_start() {
     let dir = nori_testdir::TempDir::new("plugins-crashed");
-    let open = || Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()));
+    let open = || {
+        nori_plugins::testing::marks_released(dir.path());
+        Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()))
+    };
     open().install(&fixture("")).unwrap();
     left_on(dir.path(), ID);
     let plugins = open();
@@ -524,7 +532,10 @@ fn a_plugin_nori_stopped_in_is_off_at_the_next_start() {
 #[test]
 fn a_start_that_never_finished_starts_once_with_every_plugin_off() {
     let dir = nori_testdir::TempDir::new("plugins-start-crashed");
-    let open = || Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()));
+    let open = || {
+        nori_plugins::testing::marks_released(dir.path());
+        Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()))
+    };
     open().install(&fixture("")).unwrap();
     left_on(dir.path(), ID);
     drop(open());

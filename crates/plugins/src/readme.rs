@@ -1,9 +1,13 @@
-//! A plugin's README, as blocks a client draws: from its package, or from its repo before it is
-//! installed. Inline marks are dropped and a link keeps its words.
+//! A plugin's README, as blocks a client draws, and its icon: from its package, or from its repo before
+//! it is installed. Inline marks are dropped and a link keeps its words.
 
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 
 use crate::{Offer, Plugins};
+
+/// A repo's file: the most an icon may be.
+const ICON_BYTES: usize = 256 * 1024;
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -45,19 +49,28 @@ fn blocks(markdown: &str) -> Vec<ReadmeBlock> {
     out
 }
 
+impl Plugins {
+    /// Plugin `id`'s `file`, from its package when installed with one, else from `url`.
+    async fn shown_file(&self, id: &str, file: &str, url: Option<String>) -> Option<Vec<u8>> {
+        if let Ok(bytes) = std::fs::read(self.folder(id).join(file)) {
+            return Some(bytes);
+        }
+        let r = self.transport_now().ok()?.get(url?, 0).await.ok()?;
+        (200..=299).contains(&r.status).then_some(r.body)
+    }
+}
+
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Plugins {
-    /// Plugin `id`'s README: its package's when installed with one, else what `offer` points at.
-    /// Empty when it has none or its repo can't be reached.
+    /// Plugin `id`'s README; empty when it has none or its repo can't be reached.
     pub async fn readme(&self, id: String, offer: Option<Offer>) -> Vec<ReadmeBlock> {
-        if let Ok(text) = std::fs::read_to_string(self.folder(&id).join("README.md")) {
-            return blocks(&text);
-        }
-        let (Some(url), Ok(transport)) = (offer.and_then(|o| o.readme), self.transport_now()) else { return Vec::new() };
-        match transport.get(url, 0).await {
-            Ok(r) if (200..=299).contains(&r.status) => blocks(&String::from_utf8_lossy(&r.body)),
-            _ => Vec::new(),
-        }
+        self.shown_file(&id, "README.md", offer.and_then(|o| o.readme)).await.map_or_else(Vec::new, |b| blocks(&String::from_utf8_lossy(&b)))
+    }
+
+    /// Plugin `id`'s icon, a PNG a client draws in the page's ink; None without one, or for what isn't one
+    /// or is past [`ICON_BYTES`].
+    pub async fn icon(&self, id: String, offer: Option<Offer>) -> Option<Vec<u8>> {
+        self.shown_file(&id, "icon.png", offer.and_then(|o| o.icon)).await.filter(|b| b.len() <= ICON_BYTES && b.starts_with(PNG))
     }
 }
 

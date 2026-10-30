@@ -4,7 +4,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.fadeIn
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -37,6 +39,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,6 +54,7 @@ import dev.nori.music.app.vm.PluginsViewModel
 import dev.nori.music.app.vm.SettingsViewModel
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
+import dev.nori.music.ffi.plugins.Offer
 import dev.nori.music.ffi.plugins.OfferState
 import dev.nori.music.ffi.plugins.ReadmeBlock
 import dev.nori.music.ffi.plugins.PluginCard
@@ -121,7 +126,7 @@ fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, pages: PluginP
                 GroupCard {
                     updates.forEachIndexed { i, o ->
                         val to = o.versions.first().version
-                        PluginLine(o.name, null, say.pluginUpdateLine(o.installed.orEmpty(), to), i < updates.lastIndex, Modifier.testTag("update-${o.id}"), { pages.open(o.id) }) {
+                        PluginLine(vm, o.id, o, o.name, null, say.pluginUpdateLine(o.installed.orEmpty(), to), i < updates.lastIndex, Modifier.testTag("update-${o.id}"), { pages.open(o.id) }) {
                             TextAction(say.pluginUpdate, { vm.previewOffer(o) })
                         }
                     }
@@ -131,7 +136,7 @@ fun PluginsScreen(vm: PluginsViewModel, sound: SettingsViewModel, pages: PluginP
             GroupCard {
                 cards.forEachIndexed { i, c ->
                     val line = listOfNotNull(c.version, c.kinds().takeIf { it.isNotEmpty() }).joinToString(" · ")
-                    PluginLine(c.name, c.about, line, i < cards.lastIndex, Modifier.testTag("plugin-${c.id}"), { pages.open(c.id) }) {
+                    PluginLine(vm, c.id, offers.offers.firstOrNull { it.id == c.id && it.repo.url == c.repo }, c.name, c.about, line, i < cards.lastIndex, Modifier.testTag("plugin-${c.id}"), { pages.open(c.id) }) {
                         NoriSwitch(c.enabled, { on -> vm.turn(c.id, on) }, Modifier.testTag("plugin-on-${c.id}"))
                     }
                 }
@@ -185,7 +190,7 @@ fun PluginBrowser(vm: PluginsViewModel, pages: PluginPages) {
         }
         items(found, key = { it.repo.url + it.id }) { o ->
             val version = o.versions.firstOrNull()?.version.orEmpty()
-            PluginLine(o.name, o.about, say.pluginOfferLine(version, repoName(o.repo.url, o.repo.official)), true, Modifier.testTag("offer-${o.id}"), { pages.open(o.id) }) {
+            PluginLine(vm, o.id, o, o.name, o.about, say.pluginOfferLine(version, repoName(o.repo.url, o.repo.official)), true, Modifier.testTag("offer-${o.id}"), { pages.open(o.id) }) {
                 when (o.state) {
                     OfferState.NEW -> TextAction(say.pluginInstall, { vm.previewOffer(o) })
                     OfferState.UPDATE -> TextAction(say.pluginUpdate, { vm.previewOffer(o) })
@@ -232,20 +237,28 @@ private fun Refused(refused: String?) {
     refused?.let { Text(it, Modifier.padding(horizontal = Space.gutter, vertical = 4.dp).testTag("plugin-refused"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
 }
 
-/** A plugin's mark until plugins can show their own: its first letter on a tile. */
+/** A plugin's mark on a tile: its icon in ink, or its first letter without one. */
 @Composable
-private fun PluginTile(name: String, side: Dp, modifier: Modifier = Modifier) {
-    Box(modifier.size(side).background(MaterialTheme.colorScheme.surfaceContainerHighest, TileShape), Alignment.Center) {
-        Text(name.take(1).uppercase(), style = MaterialTheme.typography.titleMedium.copy(fontSize = (side.value * 0.42f).sp, fontWeight = FontWeight.SemiBold))
+private fun PluginTile(vm: PluginsViewModel, id: String, offer: Offer?, name: String, side: Dp) {
+    val ink = MaterialTheme.colorScheme.onSurface
+    val icon by produceState(vm.iconRead(id), id) { value = java.util.Optional.ofNullable(vm.icon(id, offer)) }
+    Box(Modifier.size(side).background(MaterialTheme.colorScheme.surfaceContainerHighest, TileShape), Alignment.Center) {
+        Crossfade(icon, label = "plugin icon") { shown ->
+            val bitmap = shown?.orElse(null)
+            when {
+                bitmap != null -> Image(bitmap.asImageBitmap(), null, Modifier.size(side * 0.6f), colorFilter = ColorFilter.tint(ink))
+                shown != null -> Text(name.take(1).uppercase(), style = MaterialTheme.typography.titleMedium.copy(fontSize = (side.value * 0.42f).sp, fontWeight = FontWeight.SemiBold))
+            }
+        }
     }
 }
 
 /** A plugin in a list: its tile, name, what it is on up to two lines, a quiet [line], and what ends the row. */
 @Composable
-private fun PluginLine(name: String, about: String?, line: String, divider: Boolean, modifier: Modifier, open: () -> Unit, trailing: @Composable () -> Unit) {
+private fun PluginLine(vm: PluginsViewModel, id: String, offer: Offer?, name: String, about: String?, line: String, divider: Boolean, modifier: Modifier, open: () -> Unit, trailing: @Composable () -> Unit) {
     Column(modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().clickable(onClick = open).padding(horizontal = GROUP_INSET, vertical = 12.dp), Arrangement.spacedBy(12.dp), Alignment.CenterVertically) {
-            PluginTile(name, 44.dp)
+            PluginTile(vm, id, offer, name, 44.dp)
             Column(Modifier.weight(1f)) {
                 Text(name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 about?.let { Quiet(it, lines = 2) }
@@ -364,7 +377,7 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
     Column(Modifier.verticalScroll(rememberScrollState())) {
         val name = card?.name ?: offer?.name ?: return@Column
         Row(Modifier.padding(start = Space.gutter, end = Space.tight, top = 8.dp), Arrangement.spacedBy(14.dp), Alignment.CenterVertically) {
-            PluginTile(name, 64.dp)
+            PluginTile(vm, id, offer, name, 64.dp)
             Column(Modifier.weight(1f)) {
                 Text(name, style = titled(MaterialTheme.typography.headlineSmall), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val repo = card?.repo?.let(android.net.Uri::parse)?.host ?: offer?.takeIf { card == null }?.let { repoName(it.repo.url, it.repo.official) }

@@ -54,6 +54,8 @@ data class RowShown(val shown: Boolean, val enabled: Boolean)
 /** A line a plugin showed, in its own words. */
 data class PluginNotice(val plugin: String, val problem: Boolean, val line: String)
 
+private const val ICON_PX = 256
+
 /**
  * The plugin host (crates/plugins), opened once for the process over the app's settings, under [dir]:
  * the kinds of profile every core opens ([kinds]), the cards and offers Settings › Plugins draws, and
@@ -293,6 +295,25 @@ class PluginHost(
 
     /** Plugin [id]'s README: its package's, else what [offer] points at. */
     suspend fun readme(id: String, offer: Offer?): List<ReadmeBlock> = withContext(Dispatchers.IO) { plugins.readme(id, offer) }
+
+    private val icons = java.util.concurrent.ConcurrentHashMap<String, java.util.Optional<android.graphics.Bitmap>>()
+
+    /** Plugin [id]'s icon as last read, if it was; the inner value is null for none. */
+    fun iconRead(id: String): java.util.Optional<android.graphics.Bitmap>? = icons[id]
+
+    /** Plugin [id]'s icon, read once. */
+    suspend fun icon(id: String, offer: Offer?): android.graphics.Bitmap? = withContext(Dispatchers.IO) {
+        icons.getOrPut(id) { java.util.Optional.ofNullable(plugins.icon(id, offer)?.let(::decoded)) }.orElse(null)
+    }
+
+    /** A repo's PNG at no more than the size a tile draws it. */
+    private fun decoded(png: ByteArray): android.graphics.Bitmap? {
+        val size = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(png, 0, png.size, size)
+        var sample = 1
+        while (maxOf(size.outWidth, size.outHeight) / sample > ICON_PX) sample *= 2
+        return android.graphics.BitmapFactory.decodeByteArray(png, 0, png.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+    }
 
     /** Plugin [id] keeps the version it has ([held]) or updates from its repo. */
     suspend fun hold(id: String, held: Boolean) = withContext(Dispatchers.IO) { plugins.hold(id, held); refresh() }
