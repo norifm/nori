@@ -43,7 +43,7 @@ pub fn sign_in(name: &str, r: &SignInResult) -> String {
     }
 }
 
-pub const INSTALL_PLUGIN: &str = "Install a plugin";
+pub const INSTALL_FROM_FILE: &str = "Install from a file";
 pub const LOGIN_MISSING: &str = "Fill in what's asked first";
 pub const LOGIN_KEYS: &str = "tab next field · enter connect · ctrl p plugins · esc back";
 pub const LOGIN_KIND_KEYS: &str = "← → kind · tab next field · enter connect · ctrl p plugins · esc back";
@@ -52,14 +52,23 @@ pub const LOGIN_KIND: &str = "Kind";
 pub const FROM_A_PLUGIN: &str = "From a plugin";
 pub const PLUGIN_PATH: &str = "A .noriplugin file or a plugin folder";
 pub const NO_PLUGINS: &str = "No plugins installed.";
-pub const PLUGIN_VERSION: &str = "Version";
 pub const SECRET_SET: &str = "Set";
 pub const PLUGIN_INSTALLED: &str = "Plugin installed";
 pub const GET_PLUGINS: &str = "Get plugins";
-pub const LOOK_FOR_PLUGINS: &str = "Look for plugins";
+pub const SEARCH_PLUGINS: &str = "Search plugins";
+pub const ALL: &str = "All";
+pub const OFFERED: &str = "Offered";
+pub const NONE_FOUND: &str = "No plugins found";
+pub const UPDATES: &str = "Updates";
+pub const INSTALLED_LIST: &str = "Installed";
+pub const ABOUT: &str = "About";
+pub const PLUGIN_MAY: &str = "What it may do";
+pub const PLUGIN_ON: &str = "On";
+pub const FROM_A_FILE: &str = "From a file";
+pub const MOVE_UP: &str = "Move up";
+pub const MOVE_DOWN: &str = "Move down";
 pub const LOOK_AGAIN: &str = "Look again";
 pub const LOOKING: &str = "Looking…";
-pub const NOTHING_OFFERED: &str = "No plugins offered.";
 pub const INSTALL: &str = "Install";
 pub const UPDATE: &str = "Update";
 pub const INSTALLED: &str = "Installed";
@@ -69,6 +78,42 @@ pub const VERSIONS: &str = "Versions";
 pub const SOURCE: &str = "Source";
 
 /// Plugins updated on their own: each one's name and new version.
+pub fn update_to(version: &str) -> String {
+    format!("Update to {version}")
+}
+
+pub fn update_line(from: &str, to: &str) -> String {
+    format!("{from} → {to}")
+}
+
+pub fn plugin_count(n: usize) -> String {
+    format!("{n} {}", if n == 1 { "plugin" } else { "plugins" })
+}
+
+/// `text` in lines of at most `width` columns, broken between words; a word wider stays whole. Its own
+/// line breaks stay. No width, no wrapping.
+pub fn wrapped(text: &str, width: usize) -> Vec<String> {
+    use unicode_width::UnicodeWidthStr;
+    if width == 0 {
+        return text.lines().map(str::to_string).collect();
+    }
+    let mut out = Vec::new();
+    for given in text.lines() {
+        let mut line = String::new();
+        for word in given.split_whitespace() {
+            if !line.is_empty() && line.width() + 1 + word.width() > width {
+                out.push(std::mem::take(&mut line));
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+        out.push(line);
+    }
+    out
+}
+
 pub fn plugins_updated(updated: &[(String, String)]) -> String {
     let each: Vec<String> = updated.iter().map(|(name, to)| format!("{name} to {to}")).collect();
     format!("Updated {}", each.join(", "))
@@ -184,6 +229,11 @@ pub fn plugin_is(points: &[String], overrides: bool) -> String {
 /// What a plugin may reach and do: the hosts it sends to, nori's values it changes, the session, what
 /// wakes it or nori for it, and the room it takes.
 pub fn plugin_reach(c: &nori_plugins::PluginCard) -> String {
+    plugin_may(c).join(" ")
+}
+
+/// [`plugin_reach`], a line each.
+pub fn plugin_may(c: &nori_plugins::PluginCard) -> Vec<String> {
     use nori_plugins::{Hook, Permission, WakeEvent};
     let mut said = Vec::new();
     match (c.net.is_empty(), c.lan) {
@@ -224,7 +274,7 @@ pub fn plugin_reach(c: &nori_plugins::PluginCard) -> String {
     if c.asset_bytes > 0 {
         said.push(format!("Downloads {} MB of files.", c.asset_bytes.div_ceil(1 << 20)));
     }
-    said.join(" ")
+    said
 }
 
 /// A repo by its host; nori's own by name.
@@ -593,6 +643,10 @@ pub mod hints {
     pub const PAGE: Hints = &[("enter", "play"), ("m", "menu"), ("x", "play all"), ("X", "shuffle"), ("f", "favorite"), ("esc", "back"), ("?", "keys")];
     pub const RESULTS: Hints = &[("enter", "open"), ("m", "menu"), ("/", "type"), ("esc", "back"), ("?", "keys")];
     pub const TYPING: Hints = &[("enter", "results"), ("esc", "stop typing"), ("ctrl u", "clear")];
+    pub const PLUGIN_ROW: Hints = &[("enter", "open"), ("← →", "off, on"), ("m", "menu"), ("K J", "move"), ("d", "remove"), ("?", "keys")];
+    pub const PLUGIN_PAGE: Hints = &[("enter", "switch or open"), ("← →", "change"), ("m", "move, remove"), ("esc", "back"), ("?", "keys")];
+    pub const PLUGIN_BROWSER: Hints = &[("enter", "open"), ("/", "search"), ("← →", "repo"), ("esc", "back"), ("?", "keys")];
+    pub const PLUGIN_REPOS: Hints = &[("enter", "add"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
     pub const SETTINGS: Hints = &[("enter", "switch"), ("← →", "change"), ("[ ]", "group"), ("?", "keys")];
     pub const EQUALIZER: Hints = &[("← →", "choose"), ("↑ ↓", "change"), ("enter", "switch"), ("d", "remove a band"), ("?", "keys")];
     pub const DOWNLOADS: Hints = &[("enter", "play"), ("d", "remove"), ("esc", "back"), ("?", "keys")];

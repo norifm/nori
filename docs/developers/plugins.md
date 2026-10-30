@@ -461,7 +461,11 @@ A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
 - `readme` is the plugin's Markdown README, absolute or relative to the index: its page shows it before
   it is installed. Once installed, a `README.md` in its package goes first (`Plugins::readme`). `icon` is
   the same for its icon (`Plugins::icon`): a PNG of at most 256 KiB, 256 px square, one color on
-  transparent, which each client draws in the page's ink.
+  transparent, which each client with images draws in the page's ink.
+- What a client's plugin pages show comes from the core: `offers_found` for the browser's search and
+  repo, `updates_waiting` for the list, `offer_of` for the offer a plugin's page shows, and
+  `offers_stand` for offers read before an install, update or removal. Android, the desktop and the
+  terminal have the same pages: the list, the browser, the repos, and a plugin's page.
 - `key` is the author's ed25519 public key, `signature` that key's signature over the package's SHA-256
   (the 32 raw bytes, not the hex). Both or neither; one without the other, or a signature that doesn't
   verify (`verify_strict`), refuses the version (`Refusal::Signature`).

@@ -39,17 +39,22 @@ pub fn provider_of(kinds: &nori_core::providers::Kinds, kind: &ServerKind) -> Pr
 pub const SHOW_ALL: &str = "Show all";
 
 pub const PLUGINS: &str = "Plugins";
-pub const INSTALL_FROM_FILE: &str = "From a file";
-pub const INSTALL_PLUGIN: &str = "Install a plugin…";
+pub const FROM_A_FILE: &str = "From a file";
+pub const INSTALL_FROM_FILE: &str = "Install from file";
 pub const PLUGIN_PATH: &str = "A .noriplugin file or a plugin folder";
 pub const NO_PLUGINS: &str = "No plugins installed.";
-pub const PLUGIN_VERSION: &str = "Version";
-pub const PLUGIN_ORDER: &str = "Order";
+pub const UPDATES: &str = "Updates";
+pub const INSTALLED_LIST: &str = "Installed";
+pub const ALL: &str = "All";
+pub const SEARCH_PLUGINS: &str = "Search plugins";
+pub const NONE_FOUND: &str = "No plugins found";
+pub const ABOUT: &str = "About";
+pub const PLUGIN_MAY: &str = "What it may do";
+pub const PLUGIN_ON: &str = "On";
 pub const MOVE_UP: &str = "Move up";
 pub const MOVE_DOWN: &str = "Move down";
 pub const REMOVE: &str = "Remove";
 pub const KEEP_VERSION: &str = "Keep this version";
-pub const EVERY_PLUGIN: &str = "Every plugin";
 pub const PLUGINS_OFF: &str = "Turn every plugin off";
 pub const PLUGINS_OFF_NOTE: &str = "Each plugin keeps its own switch";
 pub const UNSIGNED: &str = "Unsigned";
@@ -103,10 +108,8 @@ pub const UPDATE: &str = "Update";
 pub const INSTALLED: &str = "Installed";
 pub const PLUGIN_INSTALLED: &str = "Plugin installed. Switch it on in Settings › Plugins.";
 pub const GET_PLUGINS: &str = "Get plugins";
-pub const LOOK_FOR_PLUGINS: &str = "Look for plugins";
 pub const LOOK_AGAIN: &str = "Look again";
 pub const LOOKING: &str = "Looking…";
-pub const NOTHING_OFFERED: &str = "No plugins offered.";
 pub const REPOS: &str = "Repos";
 pub const ADD_REPO: &str = "Add repo";
 pub const ADD: &str = "Add";
@@ -204,7 +207,24 @@ pub fn plugin_is(points: &[String], overrides: bool) -> String {
 
 /// What a plugin may reach and do: the hosts it sends to, nori's values it changes, the session, what
 /// wakes it or nori for it, and the room it takes.
+pub fn update_to(version: &str) -> String {
+    format!("Update to {version}")
+}
+
+pub fn update_line(from: &str, to: &str) -> String {
+    format!("{from} → {to}")
+}
+
+pub fn plugin_count(n: usize) -> String {
+    count(n as u32, "plugin", "plugins")
+}
+
 pub fn plugin_reach(c: &nori_plugins::PluginCard) -> String {
+    plugin_may(c).join(" ")
+}
+
+/// [`plugin_reach`], a line each.
+pub fn plugin_may(c: &nori_plugins::PluginCard) -> Vec<String> {
     use nori_plugins::{Hook, Permission, WakeEvent};
     let mut said = Vec::new();
     match (c.net.is_empty(), c.lan) {
@@ -245,7 +265,7 @@ pub fn plugin_reach(c: &nori_plugins::PluginCard) -> String {
     if c.asset_bytes > 0 {
         said.push(format!("Downloads {} MB of files.", c.asset_bytes.div_ceil(1 << 20)));
     }
-    said.join(" ")
+    said
 }
 
 /// Why a plugin wasn't installed.
@@ -313,7 +333,7 @@ pub fn repo_name(r: &nori_plugins::Repo) -> String {
     host(&r.url).to_string()
 }
 
-fn host(url: &str) -> &str {
+pub fn host(url: &str) -> &str {
     let rest = url.split_once("://").map_or(url, |(_, r)| r);
     rest.split('/').next().unwrap_or(rest)
 }

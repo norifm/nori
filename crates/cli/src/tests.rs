@@ -2061,24 +2061,55 @@ fn plugin_row(id: &str, kind: nori_plugins::RowKind, value: Option<nori_plugins:
     nori_plugins::PluginRow { id: id.into(), kind, label: format!("{kind:?} row"), options: Vec::new(), min: None, max: None, step: None, value, hint: None, unit: None, decimals: 0, url: None }
 }
 
+/// Selects a link of the page by its title and opens it.
+fn follow(a: &mut App, name: &str) {
+    select_row(a, |r| matches!(r, Row::Link { title, .. } if title == name));
+    key(a, KeyCode::Enter);
+}
+
+/// Opens installed plugin `id`'s page from the list.
+fn open_plugin(a: &mut App, id: &str) {
+    select_row(a, |r| matches!(r, Row::Plugin { id: at, .. } if at == id));
+    key(a, KeyCode::Enter);
+}
+
 #[test]
-fn no_plugins_offers_to_install_and_lists_nori_s_repo() {
+fn no_plugins_offers_the_browser_then_repos_and_a_file() {
+    use crate::app::PluginCmd;
     let mut a = plugins_app(Vec::new(), vec![official()], Default::default());
     let s = draw(&mut a, 140, 300);
     dump("plugins-empty", &s);
-    for said in ["Plugins", "No plugins installed.", "[ Install a plugin ]", "GET PLUGINS", "[ Look for plugins ]", "REPOS", "nori's own", "[ Add repo ]"] {
+    for said in ["Plugins", "No plugins installed.", "Get plugins"] {
         assert!(s.contains(said), "{said} missing:\n{s}");
     }
-    select_row(&mut a, |r| matches!(r, Row::Button { title, .. } if title == "Install a plugin"));
+    assert!(!s.contains("Add repo"), "repos are a page of their own:\n{s}");
+
+    follow(&mut a, "Get plugins");
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Look)), "the browser asks the repos");
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("Looking…") && s.contains("[ Install from a file ]") && s.contains("esc back"), "{s}");
+    select_row(&mut a, |r| matches!(r, Row::Button { title, .. } if title == "Install from a file"));
     key(&mut a, KeyCode::Enter);
     chars(&mut a, "/tmp/gain.noriplugin");
     key(&mut a, KeyCode::Enter);
-    assert!(matches!(a.cmds.last(), Some(Cmd::Plugin(crate::app::PluginCmd::Install(p))) if p == "/tmp/gain.noriplugin"));
+    assert!(matches!(a.cmds.last(), Some(Cmd::Plugin(PluginCmd::Install(p))) if p == "/tmp/gain.noriplugin"));
+
+    follow(&mut a, "Repos");
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("nori's own") && s.contains("[ Add repo ]"), "{s}");
     // nori's own repo can't be removed.
     select_row(&mut a, |r| matches!(r, Row::Repo { .. }));
     a.cmds.clear();
     key(&mut a, KeyCode::Char('d'));
-    assert!(a.cmds.is_empty());
+    assert!(a.cmds.is_empty() && a.overlay.is_none());
+
+    // Back goes down the pages, to the row each was opened from.
+    key(&mut a, KeyCode::Esc);
+    assert!(a.settings.browsing());
+    key(&mut a, KeyCode::Esc);
+    assert!(!a.settings.deep());
+    let pages = a.settings.pages(&a.prefs.clone()).to_vec();
+    assert!(matches!(SettingsView::lines(&pages)[a.settings.row.at], Line::Row(Row::Link { .. })), "back on Get plugins");
 }
 
 /// A plugin's page shows the devices it controls with their controls, its assets and the way to
@@ -2093,14 +2124,16 @@ fn a_plugins_page_shows_its_devices_assets_and_rows_turned_off() {
     a.settings.own.assets.insert("dev.example.gain".into(), vec![AssetLine { name: "model".into(), size: 3 << 20, state: AssetState::WaitingForWifi }]);
     a.settings.own.controlled = vec![ControlledDevice { id: "AA".into(), name: "Test Buds".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Off), noise_modes: vec![Noise::Off, Noise::Canceling], card: gain }];
     a.settings.invalidate();
+    open_plugin(&mut a, "dev.example.gain");
     let s = draw(&mut a, 140, 300);
     dump("plugins-page-devices", &s);
     let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
     assert!(s.contains("TEST BUDS") && line("Battery").contains("80%"), "{s}");
-    assert!(line("model").contains("Waiting for Wi-Fi") && s.contains("GAIN · FILES"), "{s}");
+    assert!(line("model").contains("Waiting for Wi-Fi") && s.contains("FILES"), "{s}");
     assert!(line("Switch row").contains("On"));
 
     select_row(&mut a, |r| matches!(r, Row::Info { title, .. } if title == "Switch row"));
+    a.cmds.clear();
     key(&mut a, KeyCode::Enter);
     assert!(a.cmds.is_empty(), "a row turned off takes no input");
     select_row(&mut a, |r| matches!(r, Row::Choice { title, .. } if title == "Noise control"));
@@ -2109,6 +2142,42 @@ fn a_plugins_page_shows_its_devices_assets_and_rows_turned_off() {
     select_row(&mut a, |r| matches!(r, Row::Button { title, .. } if title == "Download on mobile data"));
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::AllowMobileAssets("dev.example.gain".into()))));
+}
+
+/// The list holds a line per plugin: enter opens it, ← → switch it, K J move it, d removes it.
+#[test]
+fn the_list_of_plugins_keeps_each_to_a_line() {
+    use crate::app::PluginCmd;
+    use nori_plugins::{RowKind, Value};
+    let rows = vec![plugin_row("on", RowKind::Switch, Some(Value::Switch(true)))];
+    let mut a = plugins_app(vec![card("dev.example.gain", "Gain", rows), card("dev.example.other", "Other", Vec::new())], vec![official()], Default::default());
+    let s = draw(&mut a, 140, 300);
+    dump("plugins-list", &s);
+    let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
+    assert!(line("Gain does things").contains("1.2.0") && line("Gain does things").contains("Off ›"), "{s}");
+    assert!(!s.contains("Switch row"), "its rows are on its page:\n{s}");
+    assert!(line("Turn every plugin off").contains("Off"), "{s}");
+    select_row(&mut a, |r| matches!(r, Row::Toggle { switch: Switch::AllOff, .. }));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.split_off(0), vec![Cmd::Setting("pluginsOff".into(), "true".into()), Cmd::Plugin(PluginCmd::Switched)], "the setting, then the plugins told");
+
+    select_row(&mut a, |r| matches!(r, Row::Plugin { id, .. } if id == "dev.example.gain"));
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("K J move"), "the row's keys at the foot:\n{s}");
+    key(&mut a, KeyCode::Right);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Turn("dev.example.gain".into(), true))));
+    key(&mut a, KeyCode::Char('J'));
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Place("dev.example.gain".into(), 1))));
+    key(&mut a, KeyCode::Char('K'));
+    assert!(a.cmds.is_empty(), "the first can't go higher");
+    key(&mut a, KeyCode::Char('d'));
+    assert!(a.cmds.is_empty(), "removing asks first");
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("Remove Gain?") && s.contains("enter remove · esc cancel"), "{s}");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Uninstall("dev.example.gain".into()))));
+    key(&mut a, KeyCode::Enter);
+    assert!(a.settings.deep(), "enter opens its page");
 }
 
 #[test]
@@ -2126,11 +2195,13 @@ fn a_plugins_page_draws_a_row_of_each_kind() {
         plugin_row("more", RowKind::Section, None),
         plugin_row("hint", RowKind::Note, None),
     ];
-    let mut a = plugins_app(vec![card("dev.example.gain", "Gain", rows), card("dev.example.other", "Other", Vec::new())], vec![official()], Default::default());
+    let mut a = plugins_app(vec![card("dev.example.gain", "Gain", rows)], vec![official()], Default::default());
+    open_plugin(&mut a, "dev.example.gain");
     let s = draw(&mut a, 140, 300);
     dump("plugins-page", &s);
     let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
-    assert!(line("Version 1.2.0").contains("Gain does things · Connects to api.example.com") && line("Version 1.2.0").contains("Off"), "{s}");
+    assert!(line("Gain").contains("1.2.0") && line("Gain does things").contains("Gain does things"), "{s}");
+    assert!(line("Connects to api.example.com").contains("Connects") && s.contains("WHAT IT MAY DO"), "{s}");
     assert!(line("Switch row").contains("On"));
     assert!(line("Choice row").contains("Soft") && line("Choice row").contains("Loud"));
     assert!(line("Level row: 1.5").contains('●'));
@@ -2138,29 +2209,14 @@ fn a_plugins_page_draws_a_row_of_each_kind() {
     assert!(line("Text row").contains("Not set ›"));
     assert!(line("[ Action row ]").contains("Action row"));
     assert!(line("Status row").contains("All good"));
-    assert!(s.contains("GAIN") && s.contains("SECTION ROW") && s.contains("Note row") && s.contains("OTHER"), "{s}");
-    assert!(line("Turn every plugin off").contains("Off"), "{s}");
-    select_row(&mut a, |r| matches!(r, Row::Toggle { switch: Switch::AllOff, .. }));
-    key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.split_off(0), vec![Cmd::Setting("pluginsOff".into(), "true".into()), Cmd::Plugin(PluginCmd::Switched)], "the setting, then the plugins told");
-
-    // Enter switches the plugin on; J moves it down, K can't move the first up, d removes it.
-    select_row(&mut a, |r| matches!(r, Row::Plugin { id, .. } if id == "dev.example.gain"));
-    key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Turn("dev.example.gain".into(), true))));
-    key(&mut a, KeyCode::Char('J'));
-    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Place("dev.example.gain".into(), 1))));
-    key(&mut a, KeyCode::Char('K'));
-    assert!(a.cmds.is_empty(), "the first can't go higher");
-    key(&mut a, KeyCode::Char('d'));
-    assert!(a.cmds.is_empty(), "removing asks first");
-    let s = draw(&mut a, 140, 40);
-    assert!(s.contains("Remove Gain?") && s.contains("enter remove · esc cancel"), "{s}");
-    key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Uninstall("dev.example.gain".into()))));
+    assert!(s.contains("SECTION ROW") && s.contains("Note row"), "{s}");
 
     // Rows set the plugin's values by the plugin's row ids.
     let set = |row: &str, v: Value| Some(Cmd::Plugin(PluginCmd::Set("dev.example.gain".into(), row.into(), v)));
+    select_row(&mut a, |r| matches!(r, Row::Toggle { title, .. } if title == "On"));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Turn("dev.example.gain".into(), true))));
     select_row(&mut a, |r| matches!(r, Row::Toggle { title, .. } if title == "Switch row"));
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), set("on", Value::Switch(false)));
@@ -2180,41 +2236,97 @@ fn a_plugins_page_draws_a_row_of_each_kind() {
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Act("dev.example.gain".into(), "sync".into()))));
 }
 
+/// m on a plugin's page moves or removes it; removing closes the page.
 #[test]
-fn repos_offer_plugins_and_another_repo_is_added_only_once_trusted() {
+fn a_plugins_menu_moves_and_removes_it() {
+    use crate::app::PluginCmd;
+    let cards = vec![card("dev.example.a", "A", Vec::new()), card("dev.example.b", "B", Vec::new())];
+    let mut a = plugins_app(cards, vec![official()], Default::default());
+    open_plugin(&mut a, "dev.example.b");
+    a.cmds.clear();
+    key(&mut a, KeyCode::Char('m'));
+    let s = draw(&mut a, 140, 40);
+    dump("plugins-menu", &s);
+    assert!(s.contains("Move up") && !s.contains("Move down") && s.contains("Remove"), "the last can only go up:\n{s}");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Place("dev.example.b".into(), 0))));
+    key(&mut a, KeyCode::Char('m'));
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(&a.overlay, Some(Overlay::Confirm { title, .. }) if title == "Remove B?"), "asked first");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Uninstall("dev.example.b".into()))));
+    a.settings.plugin_gone("dev.example.b");
+    assert!(!a.settings.deep(), "its page closes");
+}
+
+/// The browser lists what the repos offer by name, searched and narrowed through the core; each
+/// opens its page, whose Install asks for the right offer of those read, whatever order they show in.
+#[test]
+fn the_browser_searches_narrows_and_opens_the_offer_shown() {
     use crate::app::PluginCmd;
     use crate::settings_view::Shelf;
     let friend = nori_plugins::Repo { url: "https://friend.example/nori/index.json".into(), official: false };
     let shelf = Shelf::Read(nori_plugins::Offers {
-        offers: vec![
-            offer("Lyrics plus", &official(), None),
-            nori_plugins::Offer { versions: Vec::new(), ..offer("Runs nowhere", &official(), None) },
-            offer("Gain", &official(), Some("1.0.0")),
-            offer("Radio", &friend, Some("2.0.0")),
-        ],
+        offers: vec![offer("Lyrics plus", &official(), None), offer("Gain", &official(), Some("1.0.0")), offer("Radio", &friend, Some("2.0.0"))],
         failed: vec![nori_plugins::RepoFailure { repo: nori_plugins::Repo { url: "https://gone.example/index.json".into(), official: false }, reason: "HTTP 404".into() }],
     });
-    let mut a = plugins_app(Vec::new(), vec![official(), friend.clone()], shelf);
+    let gain = nori_plugins::PluginCard { repo: Some(nori_plugins::OFFICIAL.into()), version: "1.0.0".into(), ..card("dev.example.gain", "Gain", Vec::new()) };
+    let mut a = plugins_app(vec![gain], vec![official(), friend.clone()], shelf);
     let s = draw(&mut a, 140, 300);
-    dump("plugins-offers", &s);
+    assert!(s.contains("UPDATES") && s.contains("1.0.0 → 2.0.0"), "an update waits on the list:\n{s}");
+    follow(&mut a, "Get plugins");
+    assert!(a.cmds.is_empty(), "what was read isn't asked again");
+    let s = draw(&mut a, 140, 40);
+    dump("plugins-browser", &s);
     let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
-    assert!(!s.contains("Runs nowhere"), "an offer with no version this nori runs is left out");
-    assert!(line("Lyrics plus").contains("nori's own") && line("Lyrics plus").contains("[ Install ]"), "{s}");
-    assert!(line("Gain about").contains("[ Update ]"));
-    assert!(!s.contains("Radio about"), "what is installed at its newest isn't offered");
+    assert!(line("Lyrics plus").contains("nori's own") && line("Lyrics plus").contains("Install ›"), "{s}");
+    assert!(line("Gain about").contains("Update ›"), "{s}");
+    assert!(line("Radio about").contains("Installed ›") && line("Radio about").contains("friend.example"), "{s}");
     assert!(s.contains("Couldn't reach gone.example") && !s.contains("HTTP 404"), "one quiet line:\n{s}");
-    assert!(line("https://friend.example/nori/index.json").contains("friend.example"));
+    assert!(s.find("Gain about") < s.find("Lyrics plus"), "by name:\n{s}");
 
-    // Its sheet comes once its package is read.
-    select_row(&mut a, |r| matches!(r, Row::Action { title, .. } if title == "Gain"));
+    // The chips narrow to a repo.
+    select_row(&mut a, |r| matches!(r, Row::Choice { title, .. } if title == "Repos"));
+    key(&mut a, KeyCode::Right);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::ShowRepo(Some(nori_plugins::OFFICIAL.into())))));
+    a.settings.own.repo_shown = Some(nori_plugins::OFFICIAL.into());
+    a.settings.invalidate();
+    assert!(!draw(&mut a, 140, 40).contains("Radio about"));
+    a.settings.own.repo_shown = None;
+
+    // / searches; what was typed comes back to edit.
+    key(&mut a, KeyCode::Char('/'));
+    chars(&mut a, "gai");
     key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Get(2, 0))), "its newest, by its place in the offers read");
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Search("gai".into()))));
+    a.settings.own.query = "gai".into();
+    a.settings.invalidate();
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("Gain about") && !s.contains("Lyrics plus") && !s.contains("Radio about"), "{s}");
+    key(&mut a, KeyCode::Char('/'));
+    assert!(matches!(&a.overlay, Some(Overlay::Input { text, .. }) if text == "gai"));
+    key(&mut a, KeyCode::Esc);
+
+    select_row(&mut a, |r| matches!(r, Row::Offer { title, .. } if title == "Gain"));
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Readme(id, Some(_)))) if id == "dev.example.gain"), "its README, off the UI's way");
+    let s = draw(&mut a, 140, 60);
+    dump("plugins-offer-page", &s);
+    assert!(s.contains("[ Update to 2.0.0 ]"), "{s}");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Get(1, 0))), "enter lands on Update, its place in the offers read");
+
+    // Adding a repo warns first: cancelled, nothing is added; confirmed, it is.
+    key(&mut a, KeyCode::Esc);
+    follow(&mut a, "Repos");
+    let s = draw(&mut a, 140, 40);
+    dump("plugins-repos", &s);
+    assert!(s.contains("2 plugins") && s.contains("friend.example") && s.contains("1 plugin"), "what each offers:\n{s}");
     select_row(&mut a, |r| matches!(r, Row::Repo { removable: true, .. }));
     key(&mut a, KeyCode::Char('d'));
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::RemoveRepo(friend.url.clone()))));
-
-    // Adding a repo warns first: cancelled, nothing is added; confirmed, it is.
     let add = |a: &mut App| {
         select_row(a, |r| matches!(r, Row::Button { title, .. } if title == "Add repo"));
         key(a, KeyCode::Enter);
@@ -2233,6 +2345,50 @@ fn repos_offer_plugins_and_another_repo_is_added_only_once_trusted() {
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::AddRepo("https://new.example/index.json".into()))));
 }
 
+/// A plugin only offered has a page with Install; its README comes after, wrapped to the page, and one
+/// for a page left since is dropped.
+#[test]
+fn an_offered_plugins_page_shows_its_readme() {
+    use crate::app::PluginCmd;
+    use crate::settings_view::Shelf;
+    use nori_plugins::ReadmeBlock;
+    let shelf = Shelf::Read(nori_plugins::Offers { offers: vec![offer("Lyrics plus", &official(), None)], failed: Vec::new() });
+    let mut a = plugins_app(Vec::new(), vec![official()], shelf);
+    follow(&mut a, "Get plugins");
+    select_row(&mut a, |r| matches!(r, Row::Offer { .. }));
+    key(&mut a, KeyCode::Enter);
+    let id = "dev.example.lyrics-plus";
+    assert!(matches!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Readme(..)))));
+    a.settings.readme_came("dev.example.elsewhere", vec![ReadmeBlock::Text { text: "Not this".into() }]);
+    a.settings.readme_came(id, vec![
+        ReadmeBlock::Text { text: "word ".repeat(40) },
+        ReadmeBlock::Heading { level: 2, text: "Use it".into() },
+        ReadmeBlock::Item { text: "One thing".into() },
+        ReadmeBlock::Code { text: "let a;\nlet b;".into() },
+    ]);
+    let s = draw(&mut a, 60, 40);
+    dump("plugins-readme", &s);
+    assert!(s.contains("[ Install ]") && s.contains("ABOUT") && s.contains("USE IT") && s.contains("• One thing") && s.contains("let b;"), "{s}");
+    assert!(!s.contains("Not this"), "{s}");
+    assert!(s.lines().filter(|l| l.contains("word word")).count() >= 2, "wrapped, not cut:\n{s}");
+    assert_eq!(a.settings.readme_wanted(), None, "asked once");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Get(0, 0))));
+}
+
+#[test]
+fn words_wrap_to_the_width() {
+    let wrapped = crate::text::wrapped;
+    for (text, width, lines) in [
+        ("one two three", 7, vec!["one two", "three"]),
+        ("one two", 0, vec!["one two"]),
+        ("a\n\nb", 9, vec!["a", "", "b"]),
+        ("wholeword x", 4, vec!["wholeword", "x"]),
+    ] {
+        assert_eq!(wrapped(text, width), lines, "{text} at {width}");
+    }
+}
+
 #[test]
 fn a_refused_plugin_says_why() {
     let mut a = app();
@@ -2249,8 +2405,15 @@ fn offer(name: &str, repo: &nori_plugins::Repo, installed: Option<&str>) -> nori
         name: name.into(),
         about: Some(format!("{name} about")),
         source: Some("https://code.example/gain".into()),
+        readme: None,
+        icon: None,
         versions: vec![version("2.0.0", "2026-10-01"), version("1.0.0", "2026-06-01")],
         installed: installed.map(str::to_string),
+        state: match installed {
+            None => nori_plugins::OfferState::New,
+            Some("2.0.0") => nori_plugins::OfferState::Installed,
+            Some(_) => nori_plugins::OfferState::Update,
+        },
     }
 }
 
@@ -2262,6 +2425,7 @@ fn a_repo_plugins_page_holds_and_lists_its_versions() {
     let gain = nori_plugins::PluginCard { version: "1.0.0".into(), repo: Some(nori_plugins::OFFICIAL.into()), held: true, ..card("dev.example.gain", "Gain", Vec::new()) };
     let shelf = crate::settings_view::Shelf::Read(nori_plugins::Offers { offers: vec![offer("Gain", &official(), Some("1.0.0"))], failed: Vec::new() });
     let mut a = plugins_app(vec![gain], vec![official()], shelf);
+    open_plugin(&mut a, "dev.example.gain");
     let s = draw(&mut a, 140, 300);
     dump("plugins-versions", &s);
     let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
@@ -2269,6 +2433,7 @@ fn a_repo_plugins_page_holds_and_lists_its_versions() {
     assert!(line("Source").contains("https://code.example/gain") && s.contains("VERSIONS"), "{s}");
     assert!(line("2026-10-01").contains("[ Install ]") && line("2026-06-01").contains("[ Installed ]"), "{s}");
     select_row(&mut a, |r| matches!(r, Row::Toggle { title, .. } if title == "Keep this version"));
+    a.cmds.clear();
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Hold("dev.example.gain".into(), false))));
     select_row(&mut a, |r| matches!(r, Row::Action { detail, .. } if detail == "2026-10-01"));
@@ -2433,6 +2598,7 @@ fn a_plugins_rows_show_hint_unit_and_link() {
     ];
     let gain = card("dev.example.gain", "Gain", rows);
     let mut a = plugins_app(vec![gain.clone()], vec![official()], Default::default());
+    open_plugin(&mut a, "dev.example.gain");
     let s = draw(&mut a, 140, 300);
     dump("plugins-row-words", &s);
     let next = |name: &str| s.lines().skip_while(|l| !l.contains(name)).nth(1).unwrap_or_default().to_string();
@@ -2485,7 +2651,7 @@ fn the_login_opens_the_plugins() {
     assert_eq!(a.view, View::Settings);
     assert!(a.cmds.contains(&Cmd::Plugin(crate::app::PluginCmd::Read)));
     let s = draw(&mut a, 140, 40);
-    assert!(s.contains("Install a plugin") && !s.contains("Playback"), "the plugins alone:\n{s}");
+    assert!(s.contains("Get plugins") && !s.contains("Playback"), "the plugins alone:\n{s}");
     key(&mut a, KeyCode::Esc);
     assert_eq!(a.view, View::Login);
 }

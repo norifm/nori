@@ -42,6 +42,9 @@ pub struct CoverKey {
 }
 
 /// Messages from other threads to the UI thread.
+/// The side icons are decoded at.
+pub const ICON_SIDE: u32 = 96;
+
 pub enum Msg {
     Engine(Event),
     Data(Req, Result<Data, String>),
@@ -97,6 +100,10 @@ pub enum Msg {
     Artwork { song: String, url: String },
     /// A plugin's still sleeve for song `song`, drawn as its cover in Now Playing.
     Sleeve { song: String, image: Arc<Image> },
+    /// Plugin `id`'s README.
+    PluginReadme { id: String, blocks: Vec<nori_plugins::ReadmeBlock> },
+    /// Plugin `id`'s icon as straight RGBA pixels, `session::ICON_SIDE` square, or that it has none.
+    PluginIcon { id: String, pixels: Option<Vec<u8>> },
     /// What the plugin repos offer.
     PluginOffers(nori_plugins::Offers),
     /// Plugins updated on their own: each one's id and new version.

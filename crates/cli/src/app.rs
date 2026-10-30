@@ -212,6 +212,12 @@ pub enum PluginCmd {
     Act(String, String),
     /// Asks the repos what they offer.
     Look,
+    /// Asks for plugin `.0`'s README, `.1` its offer.
+    Readme(String, Option<Box<nori_plugins::Offer>>),
+    /// The browser's search.
+    Search(String),
+    /// The browser narrowed to this repo, or showing all.
+    ShowRepo(Option<String>),
     /// Shows a version (newest first) of the offer at this place in those last read, before it is
     /// installed.
     Get(u32, u32),
@@ -1005,6 +1011,12 @@ pub enum Target {
     Install,
     /// The repo to add, once the user trusts it.
     AddRepo,
+    /// The browser's search.
+    PluginSearch,
+    /// The repo the browser is narrowed to: its address, empty for all.
+    PluginRepo,
+    /// A line of a plugin's menu.
+    PluginMenu,
     /// A controlled device's noise control: an index into its `modes`.
     Noise { device: String, modes: Vec<nori_plugins::Noise> },
     /// The file to save a backup to or restore one from; its password is asked next.
@@ -1034,6 +1046,9 @@ impl Target {
             }
             Target::Install => Some(Cmd::Plugin(PluginCmd::Install(value.trim().to_string()))),
             Target::AddRepo => Some(Cmd::Plugin(PluginCmd::AddRepo(value.trim().to_string()))),
+            Target::PluginSearch => Some(Cmd::Plugin(PluginCmd::Search(value))),
+            Target::PluginRepo => Some(Cmd::Plugin(PluginCmd::ShowRepo(Some(value).filter(|u| !u.is_empty())))),
+            Target::PluginMenu => None,
             Target::Noise { device, modes } => value.parse::<usize>().ok().and_then(|i| modes.get(i).copied()).map(|n| Cmd::Plugin(PluginCmd::Noise(device, n))),
             Target::BackupFile { .. } => None,
             Target::BackupPassword { restore, path } => Some(Cmd::Backup { restore, path, password: value }),
@@ -1501,6 +1516,10 @@ impl App {
                 self.settings.facts_asked = true;
                 self.cmds.push(Cmd::Load(Req::Facts));
                 self.cmds.push(Cmd::Plugin(PluginCmd::Read));
+                // Updates waiting show on the plugins' list.
+                if !self.settings.own.plugins.is_empty() && matches!(self.settings.own.shelf, crate::settings_view::Shelf::Unasked) {
+                    self.cmds.push(Cmd::Plugin(PluginCmd::Look));
+                }
             }
             View::Search if self.search.view.is_none() => self.search.editing = true,
             _ => {}
@@ -1733,7 +1752,7 @@ impl App {
                 self.cmds.push(Cmd::Plugin(PluginCmd::Read));
             }
             Msg::PluginsChanged => self.cmds.push(Cmd::Plugin(PluginCmd::Read)),
-            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) | Msg::PluginSignIn { .. } | Msg::BackedUp(_) | Msg::Restored(_) => {}
+            Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) | Msg::Offers(_) | Msg::Readme { .. } | Msg::PluginSignIn { .. } | Msg::BackedUp(_) | Msg::Restored(_) => {}
         }
     }
 
@@ -2237,6 +2256,11 @@ impl App {
                         self.overlay = match target {
                             // A new playlist asks for its name.
                             Target::Playlist(songs) if value.is_empty() => Some(Overlay::NewPlaylist { text: String::new(), songs }),
+                            Target::PluginMenu => {
+                                let (sheet, cmd) = self.settings.plugin_menu_picked(&value);
+                                self.cmds.extend(cmd);
+                                sheet
+                            }
                             target => {
                                 self.cmds.extend(target.cmd(value));
                                 None
@@ -2400,6 +2424,7 @@ impl App {
             }
             Action::Help => self.overlay = Some(Overlay::Help { scroll: 0 }),
             Action::Join => self.join(),
+            Action::Search if self.on_settings() && self.settings.browsing() => self.overlay = Some(self.settings.search_field()),
             // A jam guest's keys reach what its role does (Spotify's Jam): an admin's the host's playback, a
             // guest's play and pause its own listening; shuffle, repeat and removals are the host's.
             Action::TogglePlay if !self.offers(|c| c.play_pause) => self.dirty = false,
@@ -2480,7 +2505,7 @@ impl App {
                     self.say(if ms == 0 { "Lyrics on their own timing".to_string() } else { format!("Lyrics {}", crate::text::nudge(ms)) }, false);
                 }
             }
-            Action::GroupBack | Action::GroupOn if self.view == View::Settings && self.page().is_none() => {
+            Action::GroupBack | Action::GroupOn if self.on_settings() && !self.settings.deep() => {
                 let g = self.settings.group_at() as isize + if a == Action::GroupOn { 1 } else { -1 };
                 let last = crate::settings_view::GROUPS.len() as isize - 1;
                 self.settings.jump(g.clamp(0, last) as usize);
@@ -2531,7 +2556,7 @@ impl App {
                     None => self.dirty = false,
                 }
             }
-            Action::Remove if self.focus == Focus::Main && self.view == View::Settings => match self.settings.plugin_key(a) {
+            Action::Remove if self.focus == Focus::Main && self.view == View::Settings => match self.settings.plugin_key() {
                 Some(o) => self.overlay = Some(o),
                 None => self.dirty = false,
             },
@@ -2562,6 +2587,10 @@ impl App {
                 let item = if self.focus == Focus::Main { self.selected() } else { None };
                 self.jam_with(item);
             }
+            Action::Menu if self.on_settings() => match self.settings.plugin_menu() {
+                Some(o) => self.overlay = Some(o),
+                None => self.dirty = false,
+            },
             Action::Menu => self.open_menu(),
             Action::Undo if self.queue_in_focus() => match self.taken.take() {
                 Some(id) => self.cmds.push(Cmd::Restore(id)),
@@ -2631,6 +2660,9 @@ impl App {
             } else {
                 self.close_full();
             }
+            return;
+        }
+        if self.on_settings() && self.settings.leave() {
             return;
         }
         if self.view == View::Settings && self.settings.alone {
@@ -3441,6 +3473,7 @@ impl App {
             Some(Opened::Overlay(o)) => self.overlay = Some(o),
             Some(Opened::View(v)) => self.go(v),
             Some(Opened::Own(switch)) => self.own_toggle(switch),
+            Some(Opened::Plugins(page)) => self.plugin_page(page),
             Some(Opened::Login) => {
                 self.login = Login::default();
                 self.view = View::Login;
@@ -3449,12 +3482,26 @@ impl App {
         }
     }
 
+    /// Whether the main area shows the settings, focused.
+    fn on_settings(&self) -> bool {
+        self.focus == Focus::Main && self.view == View::Settings && self.page().is_none() && !self.full
+    }
+
+    /// Opens a plugin page, asking what it shows for the first time.
+    fn plugin_page(&mut self, page: crate::settings_view::PluginPage) {
+        self.settings.enter(page, &self.prefs);
+        if matches!(self.settings.own.shelf, crate::settings_view::Shelf::Unasked) {
+            self.cmds.push(Cmd::Plugin(PluginCmd::Look));
+        }
+        self.cmds.extend(self.settings.readme_wanted());
+    }
+
     fn own_toggle(&mut self, switch: Switch) {
         match switch {
             Switch::Mouse => self.do_action(Action::Mouse),
             Switch::Images => self.do_action(Action::Images),
             Switch::Transparent => self.cmds.push(Cmd::Paint(!self.paint)),
-            Switch::Setting(_) | Switch::Stores(..) | Switch::Plugin { .. } | Switch::Hold(_) | Switch::AllOff => {}
+            Switch::Setting(_) | Switch::Stores(..) | Switch::Plugin { .. } | Switch::Turn(_) | Switch::Hold(_) | Switch::AllOff => {}
         }
         self.settings.invalidate();
     }

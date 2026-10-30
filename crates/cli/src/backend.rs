@@ -75,6 +75,8 @@ pub enum Msg {
     Preview(Result<nori_plugins::PluginPreview, nori_plugins::Refusal>),
     /// The plugins' lines in `song`'s info and under the player's output.
     Slots { song: String, info: Vec<nori_plugins::InfoGroup>, status: Vec<String> },
+    /// Plugin `id`'s README.
+    Readme { id: String, blocks: Vec<nori_plugins::ReadmeBlock> },
     /// What the plugin repos offer.
     Offers(nori_plugins::Offers),
     /// Plugins updated on their own: each one's id and new version.
@@ -127,6 +129,7 @@ impl Msg {
             Msg::PluginSignIn { plugin, .. } => format!("plugin {plugin} asks to sign in"),
             Msg::BackedUp(r) => format!("backed up: {r:?}"),
             Msg::Restored(r) => format!("restored: {:?}", r.as_ref().map(|r| &r.plugins)),
+            Msg::Readme { id, blocks } => format!("{id}'s readme, {} blocks", blocks.len()),
             Msg::Offers(o) => format!("{} plugins offered, {} repos unread", o.offers.len(), o.failed.len()),
             Msg::From(id, m) => format!("session {id}: {}", m.brief()),
         }

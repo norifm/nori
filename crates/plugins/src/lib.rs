@@ -53,7 +53,7 @@ pub use bluetooth::{Bluetooth, BtDevice, BtFailure};
 pub use devices::{controlled_output, output_device, Battery, ControlledDevice, Noise};
 pub use safe::SafeStart;
 pub use readme::ReadmeBlock;
-pub use repo::{offers_found, Offer, OfferState, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
+pub use repo::{offer_of, offers_found, updates_waiting, Offer, OfferState, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
 pub use slots::{Artwork, InfoGroup, InfoLine, Items, MenuEntry};
 pub use view::{PluginCard, PluginPreview, PluginRow};
 pub use assets::{AssetLine, AssetState};

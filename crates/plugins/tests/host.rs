@@ -312,6 +312,46 @@ fn an_offer_says_where_it_stands_and_shows_its_readme() {
     assert_eq!((found("  LOUD ", None), found("loud", Some(own)), found("quiet", None)), (2, 1, 0));
 }
 
+/// Offers read before a plugin was installed, updated or removed stand as it stands now, and a page
+/// finds an installed plugin's offer in the repo it came from.
+#[test]
+fn offers_read_earlier_follow_what_is_installed() {
+    use nori_plugins::{offer_of, updates_waiting, OfferState};
+    use sha2::Digest;
+    let dir = nori_testdir::TempDir::new("plugins-offers-stand");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.set_transport(Some(session.web.clone()));
+    let (own, other) = ("https://own.example/index.json", "https://other.example/index.json");
+    plugins.add_repo(other.into());
+    plugins.add_repo(own.into());
+    let pkg = package();
+    let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
+    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "versions": [{{"version": "{v}", "api": 1, "url": "t.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
+    *session.web.serves.lock().unwrap() = vec![(other.to_string(), index("9.0.0")), (own.to_string(), index("9.0.0")), ("https://own.example/t.noriplugin".to_string(), pkg.clone())];
+
+    let mut offers = nori_tasks::block_on(plugins.offers()).offers;
+    let states = |o: &[nori_plugins::Offer]| o.iter().map(|o| o.state).collect::<Vec<_>>();
+    assert_eq!(states(&offers), [OfferState::New, OfferState::New]);
+    let (_, first) = offer_of(&offers, ID, None).unwrap();
+    assert_eq!(first.repo.url, other, "before it is installed, the first repo listing it");
+    let from_own = offers.iter().find(|o| o.repo.url == own).unwrap().versions[0].clone();
+    nori_tasks::block_on(plugins.install_version(from_own)).unwrap();
+
+    plugins.offers_stand(&mut offers);
+    assert_eq!(states(&offers), [OfferState::Installed, OfferState::Update], "only its own repo updates it");
+    let cards = plugins.cards("en".into());
+    assert_eq!(offer_of(&offers, ID, cards.first()).map(|(at, _)| at), Some(1), "its own repo's offer");
+    assert_eq!(updates_waiting(&offers, &cards).len(), 1);
+    plugins.hold(ID.into(), true);
+    assert!(updates_waiting(&offers, &plugins.cards("en".into())).is_empty(), "kept at its version");
+
+    plugins.uninstall(ID.into());
+    plugins.offers_stand(&mut offers);
+    assert_eq!(states(&offers), [OfferState::New, OfferState::New]);
+    assert!(offers.iter().all(|o| o.installed.is_none()));
+}
+
 #[test]
 fn updates_come_daily_from_a_plugins_own_repo_unless_held() {
     use sha2::Digest;

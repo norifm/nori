@@ -400,7 +400,10 @@ impl Runner {
             }
             PluginCmd::Turn(id, on) => host.turn(id, on),
             PluginCmd::Place(id, at) => host.place(id, at),
-            PluginCmd::Uninstall(id) => host.uninstall(id),
+            PluginCmd::Uninstall(id) => {
+                app.settings.plugin_gone(&id);
+                host.uninstall(id);
+            }
             PluginCmd::Set(id, row, v) => host.set(id, row, v),
             PluginCmd::Act(id, row) => host.act(id, row),
             PluginCmd::EndCast => {
@@ -411,6 +414,20 @@ impl Runner {
                 nori_host::spawn("nori-plugin-offers", move || {
                     let _ = tx.send(Msg::Offers(block_on(host.offers())));
                 });
+            }
+            PluginCmd::Readme(id, offer) => {
+                return nori_host::spawn("nori-plugin-readme", move || {
+                    let blocks = block_on(host.readme(id.clone(), offer.map(|o| *o)));
+                    let _ = tx.send(Msg::Readme { id, blocks });
+                });
+            }
+            PluginCmd::Search(query) => {
+                app.settings.own.query = query;
+                return narrowed(app);
+            }
+            PluginCmd::ShowRepo(repo) => {
+                app.settings.own.repo_shown = repo;
+                return narrowed(app);
             }
             PluginCmd::Get(offer, version) => {
                 let crate::settings_view::Shelf::Read(offers) = &app.settings.own.shelf else { return };
@@ -424,7 +441,10 @@ impl Runner {
                 host.add_repo(url);
                 return self.plugin(app, PluginCmd::Look);
             }
-            PluginCmd::RemoveRepo(url) => host.remove_repo(url),
+            PluginCmd::RemoveRepo(url) => {
+                host.remove_repo(url);
+                return self.plugin(app, PluginCmd::Look);
+            }
             PluginCmd::Noise(device, noise) => return host.set_noise(device, noise),
             PluginCmd::AllowMobileAssets(id) => host.allow_mobile_assets(id),
         }
@@ -434,9 +454,7 @@ impl Runner {
         let own = &mut app.settings.own;
         // What was installed since the repos were asked shows as installed.
         if let crate::settings_view::Shelf::Read(offers) = &mut own.shelf {
-            for o in &mut offers.offers {
-                o.installed = cards.iter().find(|c| c.id == o.id).map(|c| c.version.clone());
-            }
+            host.offers_stand(&mut offers.offers);
         }
         app.slots.asked = host.running().iter().any(|i| i.manifest.extends("slots"));
         own.off = plugged.watched.as_said(&mut cards);
@@ -457,6 +475,7 @@ impl Runner {
         own.controlled = controlled.clone();
         app.devices.controlled = controlled;
         app.settings.invalidate();
+        app.cmds.extend(app.settings.readme_wanted());
         app.dirty = true;
     }
 
@@ -503,6 +522,10 @@ impl Runner {
                 return app.say(said, false);
             }
             Msg::Restored(Err(f)) => return app.say(crate::text::backup_failed(f), true),
+            Msg::Readme { id, blocks } => {
+                app.settings.readme_came(id, blocks.clone());
+                return app.dirty = true;
+            }
             Msg::Offers(o) => {
                 app.settings.own.shelf = crate::settings_view::Shelf::Read(o.clone());
                 return self.plugin(app, crate::app::PluginCmd::Read);
@@ -1049,6 +1072,12 @@ fn sound_edited(s: &Session, app: &mut App, effect: Option<u32>) {
         }
     }
     prefs_changed(app);
+}
+
+/// The browser shows what is searched for now.
+fn narrowed(app: &mut App) {
+    app.settings.invalidate();
+    app.dirty = true;
 }
 
 fn prefs_changed(app: &mut App) {

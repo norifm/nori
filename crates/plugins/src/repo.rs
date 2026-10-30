@@ -8,7 +8,7 @@
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::{Plugins, Refusal, API};
+use crate::{PluginCard, Plugins, Refusal, API};
 
 /// nori's own repo: nori-plugins' index (its packages are that repository's releases).
 pub const OFFICIAL: &str = "https://raw.githubusercontent.com/norifm/nori-plugins/main/index.json";
@@ -228,6 +228,34 @@ impl Plugins {
     }
 }
 
+impl Plugins {
+    /// Sets where each of `offers` stands against what is installed now, for offers read before an
+    /// install, update or removal.
+    pub fn offers_stand(&self, offers: &mut [Offer]) {
+        let installed = self.installed();
+        for o in offers {
+            let here = installed.iter().find(|i| i.manifest.id == o.id);
+            o.installed = here.map(|i| i.manifest.version.clone());
+            o.state = match here {
+                None => OfferState::New,
+                Some(i) if i.repo.as_ref() == Some(&o.repo.url) && o.versions.first().is_some_and(|v| older(&i.manifest.version, &v.version)) => OfferState::Update,
+                Some(_) => OfferState::Installed,
+            };
+        }
+    }
+}
+
+/// What `offers` hold of plugin `id`, with its place among them: from the repo `card` came from when it
+/// is installed (one from a file comes from no repo), else from the first repo that lists it.
+pub fn offer_of<'a>(offers: &'a [Offer], id: &str, card: Option<&PluginCard>) -> Option<(usize, &'a Offer)> {
+    offers.iter().enumerate().find(|(_, o)| o.id == id && card.is_none_or(|c| c.repo.as_ref() == Some(&o.repo.url)))
+}
+
+/// Those of `offers` with an update for a plugin of `cards` that isn't kept at its version.
+pub fn updates_waiting<'a>(offers: &'a [Offer], cards: &[PluginCard]) -> Vec<&'a Offer> {
+    offers.iter().filter(|o| o.state == OfferState::Update && cards.iter().any(|c| c.id == o.id && !c.held)).collect()
+}
+
 /// Those of `offers` from `repo` (any, without one) whose name or about holds `query`, by name.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn offers_found(offers: Vec<Offer>, query: String, repo: Option<String>) -> Vec<Offer> {
@@ -266,7 +294,6 @@ impl Plugins {
 
     /// What every repo offers that this host can run, each with the version installed here.
     pub async fn offers(&self) -> Offers {
-        let installed = self.installed();
         let mut out = Offers { offers: Vec::new(), failed: Vec::new() };
         for repo in self.repos() {
             let read = match self.transport_now() {
@@ -281,12 +308,7 @@ impl Plugins {
                 Err(reason) => out.failed.push(RepoFailure { repo, reason }),
             }
         }
-        for o in &mut out.offers {
-            let Some(here) = installed.iter().find(|i| i.manifest.id == o.id) else { continue };
-            let newer = o.versions.first().is_some_and(|v| older(&here.manifest.version, &v.version));
-            o.state = if newer && here.repo.as_ref() == Some(&o.repo.url) { OfferState::Update } else { OfferState::Installed };
-            o.installed = Some(here.manifest.version.clone());
-        }
+        self.offers_stand(&mut out.offers);
         out
     }
 

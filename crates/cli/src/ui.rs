@@ -386,7 +386,7 @@ fn hints(app: &App) -> &'static [(&'static str, &'static str)] {
     match app.view {
         View::Home if app.home.line() == Some(crate::app::HomeLine::Offer) => h::OFFER,
         View::Home => h::HOME,
-        View::Settings => h::SETTINGS,
+        View::Settings => app.settings.hints(),
         View::Equalizer => h::EQUALIZER,
         View::Downloads => h::DOWNLOADS,
         View::Search => h::RESULTS,
@@ -1087,7 +1087,12 @@ fn curve(f: &mut Frame, area: Rect, rows: &[EqRow], bands: &[usize], p: &nori_co
 fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let prefs = app.prefs.clone();
     let own = app.settings.own.clone();
-    app.settings.own = settings_view::Own { mouse: app.mouse, images: app.images, paint: app.paint, protocol: app.protocol.to_string(), dark: app.dark, ..own };
+    // Past the four columns a row is indented by.
+    let wrap = (area.width.min(110) as usize).saturating_sub(5);
+    if wrap != own.wrap {
+        app.settings.invalidate();
+    }
+    app.settings.own = settings_view::Own { mouse: app.mouse, images: app.images, paint: app.paint, protocol: app.protocol.to_string(), dark: app.dark, wrap, ..own };
     let body = heading(f, area, View::Settings.name(), "", t);
     let App { settings: v, hits, .. } = app;
     let pages = v.pages(&prefs).to_vec();
@@ -1097,7 +1102,7 @@ fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) 
         v.skip_titles(true);
     }
     // The groups down the left when wide enough.
-    let body = if body.width >= 96 && !v.alone {
+    let body = if body.width >= 96 && !v.alone && !v.deep() {
         let at = v.group_at();
         for (g, group) in settings_view::GROUPS.iter().enumerate() {
             let r = Rect { x: body.x, y: body.y + g as u16, width: 18, height: 1 };
@@ -1122,6 +1127,9 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
         SLine::Title(title) => return Line::from(Span::styled(format!("  {}", title.to_uppercase()), t.dim())),
         SLine::Row(r) => *r,
     };
+    if let settings_view::Row::Prose { text, quiet } = row {
+        return Line::from(Span::styled(fit(&format!("    {text}"), w).into_owned(), if *quiet { t.dim() } else { Style::default().fg(t.ink) }));
+    }
     let (title, detail) = settings_view::row_words(row);
     let live = settings_view::row_enabled(row);
     let text_style = if live { Style::default().fg(t.ink) } else { t.dim() };
@@ -1165,7 +1173,7 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
         return Line::from(Span::styled(fit(&format!("    {detail}"), w).into_owned(), t.dim().add_modifier(Modifier::ITALIC)));
     }
     let value = match row {
-        settings_view::Row::Toggle { on, .. } | settings_view::Row::Ranked { on, .. } | settings_view::Row::Plugin { on, .. } => crate::text::on_off(*on).to_string(),
+        settings_view::Row::Toggle { on, .. } | settings_view::Row::Ranked { on, .. } => crate::text::on_off(*on).to_string(),
         _ => settings_view::row_value(row),
     };
     let mut left = vec![Span::styled(format!("    {title}"), text_style)];

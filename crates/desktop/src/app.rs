@@ -1080,12 +1080,17 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.follow();
     });
     on!(ui.on_open_plugins, h, |a| {
+        a.plugged.stack.clear();
         a.plugins_read();
+        a.plugins_look();
         a.ui().set_plugins_open(true);
     });
     on!(ui.on_settings_tab_chosen, h, |a, t| {
         a.ui().set_settings_tab(t);
         a.plugins_read();
+        if t == crate::settings::tabs(&a.facts.rules.settings).len() as i32 {
+            a.plugins_look();
+        }
         a.untune(SETTINGS);
         a.settings_shown();
     });
@@ -1301,6 +1306,7 @@ impl App {
             self.narrowed();
         }
         self.untune(view);
+        self.plugged.stack.clear();
         let ui = self.ui();
         ui.set_failed("".into());
         ui.set_loading(false);
@@ -2624,9 +2630,7 @@ impl App {
         let mut cards = host.cards("en".into());
         // What was installed since the repos were asked shows as installed.
         if let crate::settings::Shelf::Read(offers) = &mut self.plugged.shelf {
-            for o in &mut offers.offers {
-                o.installed = cards.iter().find(|c| c.id == o.id).map(|c| c.version.clone());
-            }
+            host.offers_stand(&mut offers.offers);
         }
         let watched = &nori_host::desktop::plugins(&self.data).watched;
         self.plugged.off = watched.as_said(&mut cards);
@@ -2645,14 +2649,59 @@ impl App {
         let mut shown_here = host.device_cards("en".into());
         let off = watched.as_said(&mut shown_here);
         ui.set_device_plugin_rows(crate::settings::device_rows(&shown_here, &self.plugged.controlled, &off, &prefs, &self.facts, today));
-        ui.set_plugin_rows(crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, today));
         let menus = ui.global::<crate::PluginMenus>();
         let labels = |k: usize| ModelRc::new(VecModel::from(self.plugin_menus[k].iter().map(|e| SharedString::from(e.label.as_str())).collect::<Vec<_>>()));
         menus.set_album(labels(0));
         menus.set_artist(labels(1));
         menus.set_playlist(labels(2));
         self.devices_shown();
+        self.plugins_shown();
+    }
+
+    /// Draws Settings › Plugins and the page over it as they stand, asking what they show for the first time.
+    fn plugins_shown(&mut self) {
+        let host = self.plugin_host().clone();
+        if let Some((id, offer)) = self.plugged.readme_wanted() {
+            let tx = self.tx.clone();
+            let host = host.clone();
+            nori_host::spawn("nori-plugin-readme", move || {
+                let blocks = nori_core::transport::block_on(host.readme(id.clone(), offer));
+                tx.send(Msg::PluginReadme { id, blocks });
+            });
+        }
+        let icons = self.plugged.icons_wanted();
+        if !icons.is_empty() {
+            let tx = self.tx.clone();
+            nori_host::spawn("nori-plugin-icons", move || {
+                let side = session::ICON_SIDE as usize;
+                for (id, offer) in icons {
+                    let png = nori_core::transport::block_on(host.icon(id.clone(), offer));
+                    let pixels = png.and_then(|png| nori_covers::decode::Decoder::new().decode(&png, side, side, nori_covers::Alpha::Straight).ok());
+                    tx.send(Msg::PluginIcon { id, pixels });
+                }
+            });
+        }
+        let ui = self.ui();
+        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        ui.set_plugin_rows(crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, crate::look::Today::now()));
+        ui.set_plugin_top(crate::settings::plugin_top(&self.plugged));
         self.settings_shown();
+    }
+
+    /// Asks the repos what they offer, once: a plugin page needs it.
+    fn plugins_look(&mut self) {
+        if matches!(self.plugged.shelf, crate::settings::Shelf::Unasked) {
+            self.plugin_act(crate::settings::PluginAct::Look);
+        }
+    }
+
+    /// `change` to the pages open over Settings › Plugins, shown from their top.
+    fn plugin_pages(&mut self, change: impl FnOnce(&mut Vec<crate::settings::PluginPage>)) {
+        change(&mut self.plugged.stack);
+        let ui = self.ui();
+        ui.set_plugin_page_seen(ui.get_plugin_page_seen() + 1);
+        self.plugins_look();
+        self.plugins_shown();
     }
 
     /// Whether a running plugin fills `place`: only then are the plugins asked for it.
@@ -2772,6 +2821,10 @@ impl App {
             self.plugin_host().switched();
             return self.plugins_read();
         }
+        if let (PluginAct::Chip, nori_plugins::Value::Choice(i)) = (&act, &v) {
+            self.plugged.repo_shown = (*i as usize).checked_sub(1).and_then(|at| self.plugged.repos.get(at)).map(|r| r.url.clone());
+            return self.plugins_shown();
+        }
         let host = self.plugin_host();
         match (act, v) {
             (PluginAct::Turn(id), nori_plugins::Value::Switch(on)) => host.turn(id, on),
@@ -2811,6 +2864,10 @@ impl App {
             PluginAct::AddRepo => return ask(words::REPO_ADDRESS, PluginAct::AddRepo.name(), false),
             PluginAct::RemoveRepo(url) => return self.confirm(&words::remove_plugin(&url), "", words::REMOVE, PluginAct::RemoveRepo(url)),
             PluginAct::Open(url) => return open_in_browser(&url),
+            PluginAct::Browser => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Browser)),
+            PluginAct::Repos => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Repos)),
+            PluginAct::Page(id) => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Plugin(id))),
+            PluginAct::Back => return self.plugin_pages(|s| drop(s.pop())),
             PluginAct::Look => {
                 self.plugged.shelf = crate::settings::Shelf::Asking;
                 let tx = self.tx.clone();
@@ -2824,7 +2881,7 @@ impl App {
                 return;
             }
             PluginAct::AllowMobile(id) => host.allow_mobile_assets(id),
-            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::TrustRepo(_) | PluginAct::InstallPreview | PluginAct::Noise(_) => return,
+            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::TrustRepo(_) | PluginAct::InstallPreview | PluginAct::Noise(_) | PluginAct::Search | PluginAct::Chip => return,
         }
         self.plugins_read();
     }
@@ -2864,8 +2921,19 @@ impl App {
                 return self.plugin_act(PluginAct::Look);
             }
             // What the sheets asked, answered.
-            PluginAct::Remove(id) => host.uninstall(id),
-            PluginAct::RemoveRepo(url) => host.remove_repo(url),
+            PluginAct::Remove(id) => {
+                self.plugged.gone(&id);
+                host.uninstall(id);
+            }
+            PluginAct::RemoveRepo(url) => {
+                host.remove_repo(url);
+                self.plugins_read();
+                return self.plugin_act(PluginAct::Look);
+            }
+            PluginAct::Search => {
+                self.plugged.query = text;
+                return self.plugins_shown();
+            }
             _ => return,
         }
         self.plugins_read();
@@ -3171,6 +3239,16 @@ impl App {
                 ui.set_sleeved(true);
             }
             Msg::Sleeve { .. } => {}
+            Msg::PluginReadme { id, blocks } => {
+                self.plugged.readme_came(&id, blocks);
+                self.plugins_shown();
+            }
+            Msg::PluginIcon { id, pixels } => {
+                let side = session::ICON_SIDE;
+                let icon = pixels.map(|px| slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(&px, side, side)));
+                self.plugged.icons.read.insert(id, icon);
+                self.plugins_shown();
+            }
             Msg::PluginOffers(o) => {
                 self.plugged.shelf = crate::settings::Shelf::Read(o);
                 self.plugins_read();
@@ -3604,6 +3682,8 @@ impl App {
             tabs.push(words::PLUGINS.into());
             ui.set_settings_tabs(ModelRc::new(VecModel::from(tabs)));
             let tab = ui.get_settings_tab();
+            ui.set_plugins_tab(tab == plugins_tab);
+            ui.set_plugin_top(crate::settings::plugin_top(&self.plugged));
             ui.set_settings(if tab == plugins_tab {
                 crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, today)
             } else {
@@ -3997,6 +4077,9 @@ impl App {
     /// The back button: the page this one was opened from, else the tab it was opened on; Home from a
     /// page of its own.
     fn back(&mut self) {
+        if self.ui().get_view() == SETTINGS && !self.plugged.stack.is_empty() {
+            return self.plugin_act(crate::settings::PluginAct::Back);
+        }
         if self.ui().get_view() != PAGE {
             self.trail.left();
             return self.go(HOME);
