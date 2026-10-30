@@ -28,8 +28,10 @@ import dev.nori.music.settings.server
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
 
 /**
@@ -209,6 +211,21 @@ class Remotes(private val context: Context, private val nori: Nori) {
     }
     private var keysWatched = false
 
+    /** Other devices see what plugins here can cast to and the cast's volume; follows them from the first remote on. */
+    private val followsPlugins by lazy {
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+            nori.plugins.castTargets.combine(nori.plugins.cast) { targets, _ -> targets }.collect { targets ->
+                val r = remote ?: return@collect
+                work {
+                    r.outputsChanged(targets.map(::outputOf))
+                    r.volumeChanged(volumePercent(context)?.toUByte())
+                }
+            }
+        }
+    }
+
+    private fun outputOf(t: dev.nori.music.ffi.plugins.CastTarget) = dev.nori.music.ffi.remote.CastOutput(t.plugin, t.id, t.name)
+
     private fun work(f: () -> Unit) = worker.execute { runCatching(f).onFailure { dev.nori.music.NoriLog.w("remote: ${it.message}") } }
 
     /** The remote for the profile in use, built when asked for and switched on; null otherwise. Off the main thread. */
@@ -231,6 +248,8 @@ class Remotes(private val context: Context, private val nori: Nori) {
             if (appShown && p.remoteControl && !isGuest()) remote?.discoverActive(true)
             // Built while music plays, it hears where the player is now, not at its next change.
             remote?.let { r -> engine?.remotePlayed(r, volumePercent(context)) }
+            remote?.outputsChanged(nori.plugins.castTargets.value.map(::outputOf))
+            followsPlugins
         }
         remote
     }
@@ -331,6 +350,9 @@ class Remotes(private val context: Context, private val nori: Nori) {
     fun jamRemoteSongs(on: Boolean) = work { current()?.jamRemoteSongs(on) }
 
     /** Moves the playback to [device], or to this phone (null). */
+    /** The music goes to [output], through the device reaching it. */
+    fun castOn(output: dev.nori.music.ffi.ReachedOutput) = work { current()?.castOn(output) }
+
     fun pick(device: String?) = work { current()?.pick(device) }
 
     /**

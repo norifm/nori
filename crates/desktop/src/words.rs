@@ -711,6 +711,15 @@ pub fn target_row(t: &nori_plugins::CastTarget) -> crate::DeviceRow {
     crate::DeviceRow { id: target_id(t).into(), name: t.name.clone().into(), ..Default::default() }
 }
 
+/// The devices panel's row id of a speaker another device casts to.
+pub fn reached_id(r: &nori_core::remote::ReachedOutput) -> String {
+    format!("{CAST_ROW}:{}:{}:{}", r.device, r.output.plugin, r.output.id)
+}
+
+pub fn reached_row(r: &nori_core::remote::ReachedOutput) -> crate::DeviceRow {
+    crate::DeviceRow { id: reached_id(r).into(), name: r.output.name.clone().into(), line: format!("Through {}", r.via).into(), ..Default::default() }
+}
+
 pub fn device_row(d: Option<&nori_core::remote::RemoteDevice>, active: bool) -> crate::DeviceRow {
     use nori_core::remote::wire::Refusal;
     let Some(d) = d else {

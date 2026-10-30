@@ -37,6 +37,10 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
     /** [devices]' names as the picker lists them, told apart where two share one (the core's `device_names`). */
     val names: StateFlow<List<String>> = _names.asStateFlow()
 
+    private val _outputs = MutableStateFlow<List<dev.nori.music.ffi.ReachedOutput>>(emptyList())
+    /** What other devices can cast to and this phone cannot, each once. */
+    val outputs: StateFlow<List<dev.nori.music.ffi.ReachedOutput>> = _outputs.asStateFlow()
+
     private val _pairingLink = MutableStateFlow<String?>(null)
     val pairingLink: StateFlow<String?> = _pairingLink.asStateFlow()
     private val _pairRequest = MutableStateFlow<String?>(null)
@@ -93,7 +97,9 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
         viewModelScope.launch { remotes.changes.collect { if (watchers > 0) refresh() } }
     }
 
-    private fun refresh() = remotes.ask({ r -> r.devices().let { d -> Triple(d, dev.nori.music.ffi.deviceNames(d, me, kinds), r.pairingLink()) } }) { (d, n, link) ->
+    private fun refresh() = remotes.ask({ r -> r.outputs() to r.devices().let { d -> Triple(d, dev.nori.music.ffi.deviceNames(d, me, kinds), r.pairingLink()) } }) { (outputs, shown) ->
+        val (d, n, link) = shown
+        _outputs.value = outputs
         _devices.value = d
         _names.value = n
         _pairingLink.value = link
@@ -112,6 +118,9 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
 
     /** Moves the playback to [device], or to this phone (null). */
     fun pick(device: String?) = remotes.pick(device)
+
+    /** The music goes to [output], through the device reaching it. */
+    fun castOn(output: dev.nori.music.ffi.ReachedOutput) = remotes.castOn(output)
 
     /** Starts hosting a jam around what plays; a failure comes out of [jamFailed]. */
     fun jamStart() = viewModelScope.launch {

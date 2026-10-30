@@ -28,7 +28,7 @@ use nori_remote::lan::Door;
 use nori_player::engine::Plan;
 use nori_player::transitions::engine_plan;
 use nori_player::types::TransitionPlan;
-use nori_remote::wire::{Along, Answer, Body, DeviceKind, DeviceState, Entry, JamLyrics, JamMember, JamState, Member, Mix, Obeyed, Op, Outgoing, Pending, Refusal, Role, Room, HOLD_MS};
+use nori_remote::wire::{Along, Answer, Body, CastOutput, DeviceKind, DeviceState, Entry, JamLyrics, JamMember, JamState, Member, Mix, Obeyed, Op, Outgoing, Pending, Refusal, Role, Room, HOLD_MS};
 use parking_lot::Mutex;
 use serde::Deserialize;
 
@@ -173,6 +173,32 @@ pub struct RemoteDevice {
     pub nearby: bool,
     /// Its answer to the last command sent to it, when it refused.
     pub refused: Option<Refusal>,
+}
+
+/// A speaker or such another device casts to, as a picker lists it.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct ReachedOutput {
+    /// The device it plays through.
+    pub device: String,
+    pub via: String,
+    pub output: CastOutput,
+}
+
+/// What `devices` reach and this device, which casts to `own` itself, does not; each output once,
+/// through the `active` device where it reaches it, else the first.
+fn reached(own: &[CastOutput], devices: &[RemoteDevice], active: Option<&str>) -> Vec<ReachedOutput> {
+    let same = |a: &CastOutput, b: &CastOutput| a.plugin == b.plugin && a.id == b.id;
+    let mut out: Vec<ReachedOutput> = Vec::new();
+    let (first, rest): (Vec<_>, Vec<_>) = devices.iter().partition(|d| Some(d.id.as_str()) == active);
+    for d in first.into_iter().chain(rest) {
+        for o in d.state.iter().flat_map(|s| &s.outputs) {
+            if !own.iter().any(|m| same(m, o)) && !out.iter().any(|r| same(&r.output, o)) {
+                out.push(ReachedOutput { device: d.id.clone(), via: d.name.clone(), output: o.clone() });
+            }
+        }
+    }
+    out
 }
 
 /// The account's active device while it is another one: what this device mirrors in its own player.
@@ -958,6 +984,8 @@ struct PendingTransfer {
 
 #[derive(Default)]
 struct Inner {
+    /// What plugins here can cast to.
+    outputs: Vec<CastOutput>,
     serving: bool,
     watching: bool,
     /// A foreground app is looking for playback already active on the account.
@@ -1607,6 +1635,37 @@ impl Remote {
         if publish {
             self.publish();
         }
+    }
+
+    /// What plugins here can cast to now: other devices see it, and may ask for it ([`Op::CastTo`]).
+    pub fn outputs_changed(self: Arc<Self>, outputs: Vec<CastOutput>) {
+        let publish = {
+            let mut i = self.inner.lock();
+            if i.outputs == outputs {
+                return;
+            }
+            i.outputs = outputs;
+            i.serving || i.hosted.is_some()
+        };
+        if publish {
+            self.publish();
+        }
+    }
+
+    /// What other devices can cast to and this one cannot.
+    pub fn outputs(&self) -> Vec<ReachedOutput> {
+        let (own, active) = {
+            let i = self.inner.lock();
+            (i.outputs.clone(), i.mirror.as_ref().map(|m| m.id.clone()))
+        };
+        reached(&own, &self.devices(), active.as_deref())
+    }
+
+    /// Moves the playback to `output`: the device reaching it takes the music and casts it there. Either
+    /// may come first: what plays on that device goes to the cast.
+    pub fn cast_on(self: Arc<Self>, output: ReachedOutput) {
+        self.clone().pick(Some(output.device.clone()));
+        self.send(output.device, Op::CastTo { output: output.output });
     }
 
     /// The account's active device while it is another one, as this device mirrors it; None while this
@@ -3726,6 +3785,7 @@ impl Remote {
             server_us: None,
             rate: Some(p.rate),
             source: Some(self.client.core.kind().id().to_string()),
+            outputs: i.outputs.clone(),
         };
         let now = self.now();
         st.position_ms = i.position_at_of(&st, now);
@@ -3867,7 +3927,7 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
         (a, b) => a == b,
     };
     // Each field named, so a new one is compared too.
-    let DeviceState { instance, seq: _, listen_handoff, playing, buffering, mixing, position_ms: _, at_us: _, server_us: _, rate, index, rev, len, entries, volume, shuffle, repeat, jam, handed_to, obeyed, source } = last;
+    let DeviceState { instance, seq: _, listen_handoff, playing, buffering, mixing, position_ms: _, at_us: _, server_us: _, rate, index, rev, len, entries, volume, shuffle, repeat, jam, handed_to, obeyed, source, outputs } = last;
     let ran = |rate: Option<f32>| if *playing && !*buffering { (elapsed_ms as f64 * rate.unwrap_or(1.0) as f64) as i64 } else { 0 };
     let jam_same = match (jam, &now.jam) {
         (Some(a), Some(b)) => jam_same_but_time(a, b, ran),
@@ -3891,6 +3951,7 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
         && *handed_to == now.handed_to
         && *obeyed == now.obeyed
         && *source == now.source
+        && *outputs == now.outputs
         && *entries == now.entries
 }
 
@@ -3918,6 +3979,18 @@ fn jam_same_but_time(last: &JamState, now: &JamState, ran: impl Fn(Option<f32>) 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn each_output_shows_once_through_the_device_playing_and_none_this_one_reaches() {
+        use nori_remote::wire::CastOutput;
+        let speaker = |id: &str| CastOutput { plugin: "p".into(), id: id.into(), name: id.to_uppercase() };
+        let device = |id: &str, outputs: Vec<CastOutput>| RemoteDevice { id: id.into(), name: id.to_uppercase(), kind: DeviceKind::Phone, state: Some(DeviceState { outputs, ..Default::default() }), now: None, age_ms: 0, nearby: true, refused: None };
+        let devices = [device("a", vec![speaker("kitchen"), speaker("hall")]), device("b", vec![speaker("kitchen"), speaker("bath")]), device("c", vec![speaker("own")])];
+        let list = |active| reached(&[speaker("own")], &devices, active).into_iter().map(|r| (r.output.id, r.device)).collect::<Vec<_>>();
+        let pair = |o: &str, d: &str| (o.to_string(), d.to_string());
+        assert_eq!(list(None), [pair("kitchen", "a"), pair("hall", "a"), pair("bath", "b")]);
+        assert_eq!(list(Some("b")), [pair("kitchen", "b"), pair("bath", "b"), pair("hall", "a")], "the music need not move");
+    }
+
     use super::*;
 
     struct Quiet;

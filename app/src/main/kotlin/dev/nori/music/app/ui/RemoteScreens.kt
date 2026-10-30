@@ -98,6 +98,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         val unsupported = relay == dev.nori.music.ffi.RelaySupport.UNSUPPORTED
         val cast by sound.pluginCast.collectAsStateWithLifecycle()
         val targets by sound.pluginTargets.collectAsStateWithLifecycle()
+        val reached by vm.outputs.collectAsStateWithLifecycle()
         val pick = { device: String? ->
             if (device == null && cast != null) sound.endCast()
             vm.pick(device)
@@ -127,16 +128,17 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
             } else {
                 SheetTitle(words(R.string.devices_title))
                 here?.let { d -> DeviceControls(plugins, d, Modifier.padding(bottom = 12.dp)) { shownDevice = d.id; page = RoomPage.DEVICE } }
+                val more = hosted == null && (devices.isNotEmpty() || reached.isNotEmpty())
                 GroupCard {
-                    DeviceRow(words(R.string.devices_this), kindIcon(DeviceKind.PHONE), null, mirror == null && cast == null, divider = cast != null || targets.isNotEmpty() || hosted == null && devices.isNotEmpty()) { pick(null) }
+                    DeviceRow(words(R.string.devices_this), kindIcon(DeviceKind.PHONE), null, mirror == null && cast == null, divider = cast != null || targets.isNotEmpty() || more) { pick(null) }
                     // A plugin's device, playing: picking this phone above ends the cast.
                     cast?.let { c ->
                         val what = words(if (c.kind == dev.nori.music.ffi.plugins.CastKind.SINK) R.string.devices_casting else R.string.devices_cast_target)
-                        DeviceRow(c.device, Iconoir.SoundHigh, what, true, divider = targets.isNotEmpty() || hosted == null && devices.isNotEmpty(), trailing = c.volume?.let { "$it %" }) {}
+                        DeviceRow(c.device, Iconoir.SoundHigh, what, true, divider = targets.isNotEmpty() || more, trailing = c.volume?.let { "$it %" }) {}
                     }
                     // What plugins found on the network, as any other place the music can go.
                     targets.forEachIndexed { k, t ->
-                        DeviceRow(t.name, Iconoir.SoundHigh, null, false, divider = k < targets.lastIndex || hosted == null && devices.isNotEmpty()) {
+                        DeviceRow(t.name, Iconoir.SoundHigh, null, false, divider = k < targets.lastIndex || more) {
                             sound.castTo(t)
                             vm.pick(null)
                             onDismiss()
@@ -147,8 +149,15 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                         DeviceRow(
                             names.getOrNull(k) ?: d.name, kindIcon(d.kind),
                             now?.let { "${it.title} · ${it.artist}" } ?: words(R.string.devices_idle),
-                            mirror?.id == d.id, k < devices.lastIndex, if (d.nearby) words(R.string.devices_nearby) else null,
+                            mirror?.id == d.id, k < devices.lastIndex || reached.isNotEmpty(), if (d.nearby) words(R.string.devices_nearby) else null,
                         ) { pick(d.id) }
+                    }
+                    // A speaker another device casts to: the music goes through that device.
+                    if (hosted == null) reached.forEachIndexed { k, r ->
+                        DeviceRow(r.output.name, Iconoir.SoundHigh, words(R.string.devices_via, r.via), false, k < reached.lastIndex) {
+                            vm.castOn(r)
+                            onDismiss()
+                        }
                     }
                 }
                 if (hosted == null) {

@@ -3692,6 +3692,7 @@ impl App {
             let names = nori_core::remote::device_names(devices.clone(), r.me(), words::kind_words());
             devices.iter_mut().zip(names).for_each(|(d, name)| d.name = name);
             rows.extend(devices.iter().map(|d| words::device_row(Some(d), active == Some(d.id.as_str()))));
+            rows.extend(r.outputs().iter().map(words::reached_row));
         }
         devices_set(&ui, rows);
     }
@@ -3749,6 +3750,11 @@ impl App {
         let host = &nori_host::desktop::plugins(&self.data).host;
         if let Some(target) = host.cast_targets().into_iter().find(|t| words::target_id(t) == id) {
             return host.cast_to(target);
+        }
+        if let Some(r) = self.session.as_ref().and_then(|s| s.remote()) {
+            if let Some(output) = r.outputs().into_iter().find(|o| words::reached_id(o) == id) {
+                return r.cast_on(output);
+            }
         }
         if id.is_empty() && self.cast().is_some() {
             nori_host::desktop::plugins(&self.data).host.cast_button(nori_plugins::CastButton::Stop);

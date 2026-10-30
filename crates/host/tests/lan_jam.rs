@@ -189,6 +189,46 @@ fn paired_devices_control_each_other_and_can_be_forgotten() {
     a.stop();
 }
 
+#[test]
+fn a_speaker_reached_through_a_device_is_cast_to_there() {
+    let (a_dir, b_dir) = (nori_testdir::TempDir::new("nori-lan-outputs-a"), nori_testdir::TempDir::new("nori-lan-outputs-b"));
+    let make = |dir: &nori_testdir::TempDir, id: &str| {
+        let settings = Settings::new();
+        let path = nori_host::db_path(dir.path());
+        settings.open(&path).unwrap();
+        client(path, SavedServer { id: id.into(), kind: music_plugin(), ..Default::default() }, settings)
+    };
+    let (a_ops, a_commands) = mpsc::channel();
+    let (a_changed, _) = mpsc::channel();
+    let discovery = Arc::new(Discovery::default());
+    let a = Remote::new(make(&a_dir, "a"), RemoteMe { name: "A".into(), kind: DeviceKind::Desktop }, Arc::new(Player(a_ops)), Arc::new(Shown(a_changed, Mutex::new(false))), Some(discovery.clone()));
+    let (b_ops, _) = mpsc::channel();
+    let (b_changes, b_changed) = mpsc::channel();
+    let b = Remote::new(make(&b_dir, "b"), RemoteMe { name: "B".into(), kind: DeviceKind::Terminal }, Arc::new(Player(b_ops)), Arc::new(Shown(b_changes, Mutex::new(false))), None);
+    assert!(b.clone().pair(a.pairing_link().unwrap()));
+    a.clone().serve(true);
+    let announced = discovery.0.lock().unwrap().clone().unwrap();
+    b.clone().watch(true);
+    b.clone().lan_found("host".into(), "127.0.0.1".into(), announced.port, announced.txt);
+    wait(&b_changed, || b.devices().len() == 1);
+    assert!(b.outputs().is_empty());
+    let speaker = nori_remote::wire::CastOutput { plugin: "p".into(), id: "kitchen".into(), name: "Kitchen".into() };
+    a.clone().outputs_changed(vec![speaker.clone()]);
+    wait(&b_changed, || !b.outputs().is_empty());
+    let reached = b.outputs().remove(0);
+    assert_eq!((reached.via.as_str(), &reached.output), ("A", &speaker));
+    b.clone().cast_on(reached);
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        match a_commands.recv_timeout(until.saturating_duration_since(Instant::now())).expect("the cast asked for") {
+            Op::CastTo { output } => break assert_eq!(output, speaker),
+            _ => continue,
+        }
+    }
+    b.stop();
+    a.stop();
+}
+
 /// One device's place on a [`Lan`].
 #[derive(Default)]
 struct Seat {
