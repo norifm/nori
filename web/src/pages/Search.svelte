@@ -28,6 +28,14 @@
     return { ...p, query: q };
   });
   const d = $derived(page.data);
+  // A shelf longer than a phone shows across opens whole, as a grid, from its title; a new search folds it.
+  const SEEN = 3;
+  let whole = $state<"artists" | "albums" | null>(null);
+  $effect(() => {
+    void d?.query;
+    whole = null;
+  });
+  const flip = (shelf: "artists" | "albums") => () => (whole = whole === shelf ? null : shelf);
   // The results on show are for another query: the server is still answering.
   const busy = $derived(!!query.trim() && d?.query !== query.trim() && !page.error);
   $effect(() => {
@@ -41,8 +49,8 @@
   {/if}
   <div class="busy" class:on={busy} role="progressbar" aria-hidden={!busy} aria-label={W.loading}></div>
   {#if d}
-    {#if d.artists?.length}<SectionTitle title={W.artists} /><div class="artists"><Cards artists={d.artists} row /></div>{/if}
-    {#if d.albums?.length}<SectionTitle title={W.albums} /><div class="albums"><Cards albums={d.albums} row /></div>{/if}
+    {#if d.artists?.length}<SectionTitle title={W.artists} toggle={d.artists.length > SEEN ? flip("artists") : undefined} open={whole === "artists"} /><div class="artists"><Cards artists={d.artists} row={whole !== "artists"} /></div>{/if}
+    {#if d.albums?.length}<SectionTitle title={W.albums} toggle={d.albums.length > SEEN ? flip("albums") : undefined} open={whole === "albums"} /><div class="albums"><Cards albums={d.albums} row={whole !== "albums"} /></div>{/if}
     {#if d.songs?.length}<SectionTitle title={W.songs} />{#key d.query}<SongList songs={d.songs} kind="Search" id={query} shown={d.few} one />{/key}{/if}
     {#if !d.artists?.length && !d.albums?.length && !d.songs?.length}<p class="empty"><Icon name="search" />{W.noResults}</p>{/if}
   {/if}

@@ -15,7 +15,8 @@
 {:else}
   <div class={row ? "row" : "grid"}>
     {#each artists as a (a.id)}
-      <Card href={href("artist", a.id)} kind="artist" id={a.id} cover={a.cover} title={a.name} round fallback="user" />
+      <!-- How many albums: two artists of one name are told apart. -->
+      <Card href={href("artist", a.id)} kind="artist" id={a.id} cover={a.cover} title={a.name} sub={a.albumCount ? W.albumCount(a.albumCount) : ""} round fallback="user" />
     {/each}
     {#each albums as a (a.id)}
       <Card href={href("album", a.id)} kind="album" id={a.id} cover={a.cover} title={a.name} sub={sub ? sub(a) : (a.subtitle ?? a.artist)} />

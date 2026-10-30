@@ -12,7 +12,7 @@
 
 <a class="card" class:round {href} oncontextmenu={(e) => (e.preventDefault(), wholeMenu(kind, id, { title, line: sub, cover }, pointer(e), editable))}>
   <Cover src={cover} {round} radius="var(--r-card)" {fallback} />
-  <span class="title clip">{title}</span>
+  <span class="title" class:clip={!round}>{title}</span>
   {#if sub}<span class="sub clip">{sub}</span>{/if}
 </a>
 
@@ -35,8 +35,14 @@
   .round {
     text-align: center;
   }
+  /* Two lines: names that start alike ("Aphex Twin", "Aphex Twin & …") are told apart by how they end. */
   .round .title {
     margin-top: 7px;
     font-weight: 400;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 </style>
