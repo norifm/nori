@@ -3,13 +3,7 @@ package dev.nori.music.app.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.MutableTransitionState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,7 +51,7 @@ fun DevicesSection(vm: SettingsViewModel) {
         AnimatedRows(rows, { it.output }) { d -> DeviceItem(d) { vm.clearAssignError(); picking = d.output } }
         Toggle(say.autoeqAuto, say.autoeqAutoDetail, p.autoEqAuto, divider = false) { on -> vm.update { it.copy(autoEqAuto = on) } }
     }
-    AnimatedVisibility(!p.profilePerOutput, enter = fadeIn(tween(motion())) + expandVertically(tween(motion())), exit = fadeOut(tween(motion())) + shrinkVertically(tween(motion()))) {
+    AnimatedVisibility(!p.profilePerOutput, enter = AppMotion.grow(), exit = AppMotion.shrink()) {
         Text(
             say.devicesNote,
             Modifier.padding(horizontal = Space.gutter, vertical = 6.dp),
@@ -65,9 +59,6 @@ fun DevicesSection(vm: SettingsViewModel) {
         )
     }
 }
-
-@Composable
-private fun motion(ms: Int = 220) = if (reduceMotion()) 0 else ms
 
 @Composable
 private fun DeviceItem(d: DeviceRow, onClick: () -> Unit) {
@@ -81,14 +72,14 @@ private fun DeviceItem(d: DeviceRow, onClick: () -> Unit) {
                 Text(d.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row {
                     d.kind?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant) }
-                    AnimatedVisibility(d.current, enter = fadeIn(tween(motion())) + expandHorizontally(tween(motion())), exit = fadeOut(tween(motion())) + shrinkHorizontally(tween(motion()))) {
+                    AnimatedVisibility(d.current, enter = AppMotion.grow(across = true), exit = AppMotion.shrink(across = true)) {
                         val playing = remember(d.kind != null) { say.devicePlayingNow(d.kind != null) }
                         Text(playing, style = MaterialTheme.typography.bodySmall, color = scheme.primary)
                     }
                 }
             }
             // The sound it gets cross-fades when it changes rather than being swapped in one frame.
-            Crossfade(d.sound, Modifier.padding(start = 12.dp), animationSpec = tween(motion()), label = "sound") { sound ->
+            Crossfade(d.sound, Modifier.padding(start = 12.dp), animationSpec = AppMotion.fadeIn(), label = "sound") { sound ->
                 Text(sound, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Icon(Iconoir.NavArrowRight, null, Modifier.padding(start = 6.dp).size(19.dp), tint = scheme.onSurfaceVariant.copy(alpha = 0.7f))
@@ -126,10 +117,9 @@ internal fun <T> AnimatedRows(items: List<T>, key: (T) -> String, content: @Comp
         holder[0] = next
         next
     }
-    val ms = motion()
     rows.forEach { r ->
         key(r.key) {
-            AnimatedVisibility(r.state, enter = fadeIn(tween(ms)) + expandVertically(tween(ms)), exit = fadeOut(tween(ms)) + shrinkVertically(tween(ms))) {
+            AnimatedVisibility(r.state, enter = AppMotion.grow(), exit = AppMotion.shrink()) {
                 content(r.item)
             }
         }
@@ -155,7 +145,6 @@ private fun DeviceSheet(vm: SettingsViewModel, d: DeviceRow, onDone: () -> Unit)
     val automatic = remember(p.autoEqAuto) { say.deviceAutomatic(p.autoEqAuto) }
     val curves = if (!eq.tooShort && eq.query == query) eq.hits else suggested
     val pick = { c: DeviceSound.Choice -> vm.assignDevice(d.output, c, onDone) }
-    val ms = motion()
     // While a plugin controls these headphones, all of it under their sound.
     val plugins: dev.nori.music.app.vm.PluginsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val controlled by plugins.controlled.collectAsStateWithLifecycle()
@@ -192,7 +181,7 @@ private fun DeviceSheet(vm: SettingsViewModel, d: DeviceRow, onDone: () -> Unit)
                 )
                 Row(Modifier.padding(vertical = 10.dp).heightIn(min = 42.dp), verticalAlignment = Alignment.CenterVertically) {
                     PillButton(say.downloadTheList, null, vm::downloadAutoEqIndex, prominent = true, enabled = !eq.busy)
-                    AnimatedVisibility(eq.busy, enter = fadeIn(tween(ms)), exit = fadeOut(tween(ms))) { LoadingDots(Modifier.padding(start = 14.dp)) }
+                    AnimatedVisibility(eq.busy, enter = AppMotion.appear(), exit = AppMotion.vanish()) { LoadingDots(Modifier.padding(start = 14.dp)) }
                 }
             }
         } else item("search") {
@@ -207,10 +196,10 @@ private fun DeviceSheet(vm: SettingsViewModel, d: DeviceRow, onDone: () -> Unit)
         }
         item("status") {
             Column {
-                AnimatedVisibility(busy == d.output, enter = fadeIn(tween(ms)) + expandVertically(tween(ms)), exit = fadeOut(tween(ms)) + shrinkVertically(tween(ms))) {
+                AnimatedVisibility(busy == d.output, enter = AppMotion.grow(), exit = AppMotion.shrink()) {
                     Box(Modifier.fillMaxWidth().padding(12.dp), Alignment.Center) { LoadingDots() }
                 }
-                AnimatedVisibility(error != null || eq.error != null, enter = fadeIn(tween(ms)) + expandVertically(tween(ms)), exit = fadeOut(tween(ms)) + shrinkVertically(tween(ms))) {
+                AnimatedVisibility(error != null || eq.error != null, enter = AppMotion.grow(), exit = AppMotion.shrink()) {
                     Text(error ?: eq.error.orEmpty(), Modifier.padding(horizontal = Space.gutter, vertical = 8.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -228,7 +217,7 @@ private fun Option(title: String, subtitle: String?, selected: Boolean, divider:
     GroupRow(
         title, onClick, subtitle = subtitle, divider = divider,
         trailing = {
-            AnimatedVisibility(selected, enter = fadeIn(tween(motion())), exit = fadeOut(tween(motion()))) {
+            AnimatedVisibility(selected, enter = AppMotion.appear(), exit = AppMotion.vanish()) {
                 Icon(Iconoir.Check, say.chosen, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
             }
         },

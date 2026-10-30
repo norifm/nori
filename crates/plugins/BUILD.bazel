@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-plugins',
  'edition': '2021',
- 'version': '0.7.1',
+ 'version': '0.7.2',
  'targets': [{'name': 'nori_plugins', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True},
              {'name': 'deciders', 'kind': 'test', 'root': 'tests/deciders.rs', 'test': True},
              {'name': 'devices', 'kind': 'test', 'root': 'tests/devices.rs', 'test': True},

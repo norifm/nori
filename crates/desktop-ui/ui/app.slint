@@ -138,6 +138,10 @@ export struct SongRow {
     fresh: bool,
     // Who asked for it, when it came in through the jam.
     by: string,
+    // Its download mark (menus.rs's `download_glyphs`): 0 none, 1 on its way, 2 downloaded.
+    mark: int,
+    // A favorite, where the profile keeps them.
+    sealed: bool,
 }
 
 // A row of the settings page: 0 a group's heading, 1 a switch, 2 a choice, 3 a button, 4 a fact, 5 a slider,
@@ -247,7 +251,6 @@ export struct EqBandRow {
 export struct Pick {
     id: string,
     title: string,
-    sub: string,
     covers: [string],
     seed: color,
     page: color,
@@ -1120,6 +1123,8 @@ component MenuLine inherits Rectangle {
     in property <bool> enabled: true;
     // A chevron at its end: it opens more lines.
     in property <bool> opens;
+    // A quiet check at its end: the one chosen.
+    in property <bool> chosen;
     callback clicked;
     height: MenuShape.row;
     opacity: root.enabled ? 1 : 0.38;
@@ -1150,6 +1155,13 @@ component MenuLine inherits Rectangle {
             colour: Theme.dim;
             width: 18px;
             height: 18px;
+        }
+        if root.chosen: Icon {
+            y: (parent.height - self.height) / 2;
+            glyph: Icons.check;
+            colour: Theme.dim;
+            width: 16px;
+            height: 16px;
         }
     }
     if root.divider: Rectangle {
@@ -1367,6 +1379,106 @@ component Chip inherits Rectangle {
     }
 }
 
+// A pill of a [ListBar], a [Chip]'s size: raised while `raised` (the order, a filter that is on), quiet words
+// otherwise, and edged either way so it reads as a control.
+component BarPill inherits Rectangle {
+    in property <bool> raised;
+    callback clicked;
+    height: 34px;
+    border-radius: self.height / 2;
+    background: root.raised ? Theme.panel : bt.has-hover ? Theme.hover : transparent;
+    border-width: 1px;
+    border-color: Theme.hairline;
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 12px;
+        spacing: 6px;
+        @children
+    }
+    bt := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A long list's bar, as Android's: the order it is in and which way that runs (`ways`, each order's: 1 up,
+// -1 down, 0 shuffled), which opens the others; and a filter (none: "") apart from the orders, its seal lit
+// while it is on.
+component ListBar inherits HorizontalLayout {
+    in property <[string]> orders;
+    in property <[int]> ways;
+    in property <int> order;
+    callback ordered(int);
+    in property <string> filter;
+    in property <bool> filtered;
+    callback filter-toggled();
+    height: 34px;
+    spacing: 8px;
+    alignment: start;
+    order-pill := BarPill {
+        raised: true;
+        clicked => { orders-menu.show(); }
+        Text {
+            text: root.orders[root.order];
+            color: Theme.text;
+            font-size: 14px;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+        if root.ways[root.order] != 0: Icon {
+            y: (parent.height - self.height) / 2;
+            glyph: root.ways[root.order] > 0 ? Icons.arrow-up : Icons.arrow-down;
+            colour: Theme.text;
+            width: 14px;
+            height: 14px;
+        }
+        Icon {
+            y: (parent.height - self.height) / 2;
+            glyph: Icons.nav-arrow-down;
+            colour: Theme.dim;
+            width: 16px;
+            height: 16px;
+        }
+        orders-menu := PopupWindow {
+            y: parent.height + 6px;
+            width: 200px;
+            close-policy: close-on-click-outside;
+            Popover {
+                VerticalLayout {
+                    padding: MenuShape.inset;
+                    for o[i] in root.orders: MenuLine {
+                        text: o;
+                        chosen: i == root.order;
+                        divider: i < root.orders.length - 1;
+                        clicked => {
+                            root.ordered(i);
+                            orders-menu.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if root.filter != "": BarPill {
+        raised: root.filtered;
+        clicked => { root.filter-toggled(); }
+        Icon {
+            y: (parent.height - self.height) / 2;
+            glyph: root.filtered ? Icons.seal : Icons.seal-outline;
+            colour: root.filtered ? Theme.accent : Theme.dim;
+            width: 16px;
+            height: 16px;
+        }
+        Text {
+            text: root.filter;
+            color: root.filtered ? Theme.text : Theme.dim;
+            font-size: 14px;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+    }
+}
+
 // Cards in rows filling the page width; only nearby rows keep components and images.
 // Where the page shown is scrolled: `at` as it scrolls, `want` where the next page shown starts, and `asked`
 // counts the pages shown, so a page view that stays (an album opened from an artist) starts again too.
@@ -1410,10 +1522,11 @@ component Grid inherits Remembered {
     in property <bool> round;
     in property <length> pad: 32px;
     in property <length> bottom: 100px;
-    // A page title above the cards, scrolling with them, and the orders it can be in as chips under it,
-    // after a filter's chip where it has one (none: "").
+    // A page title above the cards, scrolling with them, and the orders it can be in as a [ListBar] under it,
+    // with a filter where it has one (none: "").
     in property <string> title;
     in property <[string]> orders;
+    in property <[int]> ways;
     in property <int> order;
     callback ordered(int);
     in property <string> filter;
@@ -1443,21 +1556,16 @@ component Grid inherits Remembered {
         font-weight: 700;
         letter-spacing: -0.5px;
     }
-    if root.orders.length > 0: HorizontalLayout {
+    if root.orders.length > 0: ListBar {
         x: root.pad;
         y: Chrome.top-room + 58px;
-        height: 34px;
-        spacing: 8px;
-        if root.filter != "": Chip {
-            text: root.filter;
-            lit: root.filtered;
-            clicked => { root.filter-toggled(); }
-        }
-        for o[i] in root.orders: Chip {
-            text: o;
-            lit: i == root.order;
-            clicked => { root.ordered(i); }
-        }
+        orders: root.orders;
+        ways: root.ways;
+        order: root.order;
+        ordered(i) => { root.ordered(i); }
+        filter: root.filter;
+        filtered: root.filtered;
+        filter-toggled => { root.filter-toggled(); }
     }
     // The cards drawn. A repeater over a count makes its cards anew whenever the count is worked out
     // again, a card under a press with them; held here, they are made anew only when the count changes.
@@ -1688,7 +1796,7 @@ component PickCard inherits Rectangle {
     callback play;
     callback queue(bool);
     width: floor(root.side / 1phx) * 1phx;
-    height: floor(root.side * 206 / 150 / 1phx) * 1phx;
+    height: floor(root.side * 186 / 150 / 1phx) * 1phx;
     border-radius: 18px;
     clip: true;
     background: root.pick.page;
@@ -1728,25 +1836,20 @@ component PickCard inherits Rectangle {
             background: @linear-gradient(180deg, root.pick.page.with-alpha(0) 45%, root.pick.page 100%);
         }
     }
+    // The name low on the paper, over the end of the fade.
     VerticalLayout {
-        y: root.width;
-        height: root.height - self.y;
-        padding-left: 12px;
-        padding-right: 12px;
-        alignment: center;
+        padding-left: 13px;
+        padding-right: 13px;
+        padding-bottom: 12px;
+        alignment: end;
         Text {
             text: root.pick.title;
             color: root.pick.ink;
             font-family: Type.title;
-            font-size: 18px;
+            font-size: 20px;
             font-weight: 600;
             letter-spacing: -0.3px;
-            overflow: elide;
-        }
-        Text {
-            text: root.pick.sub;
-            color: root.pick.ink.with-alpha(0.7);
-            font-size: 12px;
+            wrap: word-wrap;
             overflow: elide;
         }
     }
@@ -1775,7 +1878,6 @@ component PickCard inherits Rectangle {
         y: root.menu-y - Chrome.menu-lift(root.menu-at, self.height);
         picture: root.picture;
         title: root.pick.title;
-        line: root.pick.sub;
         play => { root.play(); }
         queue(next) => { root.queue(next); }
     }
@@ -1891,9 +1993,9 @@ component SongLine inherits Rectangle {
     in property <bool> thumb;
     // A playlist's row: the artist in a column of its own, under its head.
     in property <bool> table;
-    // A table's columns: what is left beside the artwork and the time, split a half, a quarter, a quarter
-    // (the playlist's heads use the same sums).
-    property <length> cols: root.width - 8px - 12px - 44px - 44px - 4 * 12px;
+    // A table's columns: what is left beside the artwork and the marks and time (90px), split a half, a
+    // quarter, a quarter (the playlist's heads use the same sums).
+    property <length> cols: root.width - 8px - 12px - 44px - 90px - 4 * 12px;
     in property <image> picture;
     // The cover at the head of its menu: the row's own, or its album's where the row shows none.
     in property <image> menu-picture: root.picture;
@@ -1906,13 +2008,6 @@ component SongLine inherits Rectangle {
     border-radius: 7px;
     background: touch.has-hover ? Theme.hover : transparent;
     animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
-    Rectangle {
-        x: root.thumb ? 64px : 44px;
-        y: parent.height - 1px;
-        width: parent.width - self.x - 8px;
-        height: 1px;
-        background: Theme.hairline;
-    }
     // A right press opens the song's menu where it was pressed, drawn as the app's own menus are.
     touch := TouchArea {
         double-clicked => { root.play(); }
@@ -2033,13 +2128,38 @@ component SongLine inherits Rectangle {
                 font-weight: 600;
             }
         }
-        Text {
-            text: root.song.time;
-            color: Theme.dim;
-            font-size: 13px;
-            vertical-alignment: center;
-            horizontal-alignment: right;
-            width: 44px;
+        // The marks in columns of their own, as Android's rows: the download, then the seal beside the
+        // time, each in its place whether or not the other is shown.
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle {
+                width: 15px;
+                if root.song.mark > 0: Icon {
+                    y: (parent.height - self.height) / 2;
+                    glyph: root.song.mark == 2 ? Icons.check-circle : Icons.download;
+                    colour: Theme.dim;
+                    width: 15px;
+                    height: 15px;
+                }
+            }
+            Rectangle {
+                width: 15px;
+                if root.song.sealed: Icon {
+                    y: (parent.height - self.height) / 2;
+                    glyph: Icons.seal;
+                    colour: Theme.accent;
+                    width: 15px;
+                    height: 15px;
+                }
+            }
+            Text {
+                text: root.song.time;
+                color: Theme.dim;
+                font-size: 13px;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+                width: 44px;
+            }
         }
     }
     if root.table: ArtistLine {
@@ -2065,7 +2185,7 @@ component SongLine inherits Rectangle {
 
 // The column heads over a table of SongLines: the same sums as its columns.
 component SongHeads inherits Rectangle {
-    property <length> cols: self.width - 8px - 12px - 44px - 44px - 4 * 12px;
+    property <length> cols: self.width - 8px - 12px - 44px - 90px - 4 * 12px;
     for h in [{ t: "Song", x: 0, w: 0.5, g: 0 }, { t: "Artist", x: 0.5, w: 0.25, g: 1 }, { t: "Album", x: 0.75, w: 0.25, g: 2 }]: Text {
         x: 8px + 44px + 12px + root.cols * h.x + h.g * 12px;
         width: root.cols * h.w;
@@ -5503,6 +5623,8 @@ export component AppWindow inherits Window {
     // The album grid's orders, the one in use, and its rows when it is drawn a row per artist; whether it
     // lists only the favorites, where the profile has them.
     in property <[string]> album-sorts;
+    // Which way each of `album-sorts` runs: 1 up, -1 down, 0 shuffled (the core's `album_sort_direction`).
+    in property <[int]> album-sort-ways;
     in property <int> album-sort;
     in property <bool> albums-in-rows;
     in property <[Shelf]> album-rows;
@@ -6576,21 +6698,16 @@ export component AppWindow inherits Window {
                             font-weight: 700;
                             letter-spacing: -0.5px;
                         }
-                        HorizontalLayout {
+                        ListBar {
                             x: 32px;
                             y: Chrome.top-room + 58px;
-                            height: 34px;
-                            spacing: 8px;
-                            if root.favorites-offered: Chip {
-                                text: "Favorites";
-                                lit: root.albums-favorites;
-                                clicked => { root.albums-favorites-toggled(); }
-                            }
-                            for o[i] in root.album-sorts: Chip {
-                                text: o;
-                                lit: i == root.album-sort;
-                                clicked => { root.album-sort-chosen(i); }
-                            }
+                            orders: root.album-sorts;
+                            ways: root.album-sort-ways;
+                            order: root.album-sort;
+                            ordered(i) => { root.album-sort-chosen(i); }
+                            filter: root.favorites-offered ? "Favorites" : "";
+                            filtered: root.albums-favorites;
+                            filter-toggled => { root.albums-favorites-toggled(); }
                         }
                         for slot in self.slots: artist-row := ShelfView {
                             property <int> index: rows-scroll.first + slot;
@@ -6620,6 +6737,7 @@ export component AppWindow inherits Window {
                     Grid {
                         title: root.list-name;
                         orders: root.view == 2 ? root.album-sorts : [];
+                        ways: root.album-sort-ways;
                         order: root.album-sort;
                         ordered(i) => { root.album-sort-chosen(i); }
                         filter: root.view == 2 && root.favorites-offered ? "Favorites" : "";
@@ -6661,9 +6779,9 @@ export component AppWindow inherits Window {
                     picks-grid := Remembered {
                         property <int> columns: max(2, floor((self.width - 64px + 22px) / 222px));
                         property <length> side: (self.width - 64px - (self.columns - 1) * 22px) / self.columns;
-                        content-height: Chrome.top-room + 64px + ceil(root.picks.length / self.columns) * (self.side * 206 / 150 + 22px) + 100px;
-                        property <int> first: max(0, floor((-self.content-y - Chrome.top-room - 64px) / (self.side * 206 / 150 + 22px)) - 1) * self.columns;
-                        property <int> visible-count: max(0, min(root.picks.length - self.first, (ceil(self.height / (self.side * 206 / 150 + 22px)) + 2) * self.columns));
+                        content-height: Chrome.top-room + 64px + ceil(root.picks.length / self.columns) * (self.side * 186 / 150 + 22px) + 100px;
+                        property <int> first: max(0, floor((-self.content-y - Chrome.top-room - 64px) / (self.side * 186 / 150 + 22px)) - 1) * self.columns;
+                        property <int> visible-count: max(0, min(root.picks.length - self.first, (ceil(self.height / (self.side * 186 / 150 + 22px)) + 2) * self.columns));
                         property <int> slots;
                         init => { self.slots = self.visible-count; }
                         changed visible-count => { self.slots = self.visible-count; }
@@ -6681,7 +6799,7 @@ export component AppWindow inherits Window {
                             property <int> i: picks-grid.first + slot;
                             property <Pick> item: root.picks[self.i];
                             x: 32px + mod(self.i, parent.columns) * (parent.side + 22px);
-                            y: Chrome.top-room + 64px + floor(self.i / parent.columns) * (parent.side * 206 / 150 + 22px);
+                            y: Chrome.top-room + 64px + floor(self.i / parent.columns) * (parent.side * 186 / 150 + 22px);
                             side: parent.side;
                             pick: self.item;
                             picture: root.pick-art(self.item.covers, root.covers-rev);

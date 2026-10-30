@@ -39,6 +39,9 @@ enum Glyph {
     static let sealSmall = draw(Iconoir.sealOutline, 22)
     /// The seal a favorite row carries.
     static let sealedRow = draw(Iconoir.seal, 15)
+    /// A song row's download mark: downloaded, and on its way.
+    static let downloadedRow = draw(Iconoir.checkCircle, 15)
+    static let downloadingRow = draw(Iconoir.download, 15)
     static let more = draw(Iconoir.moreHoriz, 28)
     static let moreSmall = draw(Iconoir.moreHoriz, 22)
     static let close = draw(Iconoir.navArrowDown, 28)

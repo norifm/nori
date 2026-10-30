@@ -36,7 +36,6 @@ import dev.nori.music.app.vm.ActionsViewModel
 import dev.nori.music.app.vm.AlbumViewModel
 import dev.nori.music.app.vm.ArtistUi
 import dev.nori.music.app.vm.ArtistViewModel
-import dev.nori.music.app.vm.FolderViewModel
 import dev.nori.music.app.vm.GenreViewModel
 import dev.nori.music.app.vm.Load
 import dev.nori.music.app.vm.PlaylistViewModel
@@ -72,15 +71,21 @@ private fun FilterField(count: Int, filter: String, onFilter: (String) -> Unit) 
 internal fun SongListPage(
     title: String, songs: List<Song>, done: Set<String>, from: PageOrigin, actions: ActionsViewModel,
     headLabel: String = if (songs.isEmpty()) "" else say.listCaption(songs.size, songs.sumOf { it.duration.toLong() }, true),
-    pageActions: @Composable RowScope.() -> Unit = {}, content: LazyListScope.() -> Unit,
+    pageActions: @Composable RowScope.() -> Unit = {},
+    coverUrl: String? = null, coverStandIns: List<String?> = emptyList(),
+    /** After Play, where an album's seal stands. */
+    afterPlay: @Composable RowScope.() -> Unit = {},
+    content: LazyListScope.() -> Unit,
 ) {
     val any = songs.isNotEmpty()
     HeroPage(
-        coverUrl = null,
+        coverUrl = coverUrl,
         title = title,
+        coverStandIns = coverStandIns,
         onPlay = if (any) { { actions.play(songs, from = from) } } else null,
         onShuffle = if (any) { { actions.shuffle(songs, from) } } else null,
         queue = remember(from) { dev.nori.music.ffi.library.PageQueue(from) },
+        actions = afterPlay,
         headLabel = headLabel,
         headActions = {
             PageActionGlyphs(PageKind.Album, songs, done, actions)
@@ -187,7 +192,7 @@ private fun foldedBiography(
  * come after the page itself): it arrives with the body, and fades in where it joins if it is late.
  */
 private fun LazyItemScope.late(arrival: State<Float>): Modifier =
-    (if (AppMotion.reduce) Modifier.animateItem(null, null, null) else Modifier.animateItem()).arriving(arrival)
+    itemMotion().arriving(arrival)
 
 /** The second line of a song on its artist's page: "Album · 1979", the artist being the page's. */
 private fun albumYear(song: Song): String = listOfNotNull(song.album.takeIf { it.isNotEmpty() }, song.year.takeIf { it > 0u }).joinToString(" · ")
@@ -225,7 +230,7 @@ private fun LoadFailed(message: String) = Text(
 /*
  * Album, artist and playlist pages each have one drawing path, from whatever is known of the page so far.
  * What the row that opened it already knew (Nav's hint: cover, title, counts) is enough for the hero to be
- * there from the first frame of the slide (PageMotion), with Play held in its place and the
+ * there from the first frame of the slide (Pages), with Play held in its place and the
  * songs rising in under it (Arrive) when the server answers. A page
  * opened with no hint (a deep link, "Go to album" from a song) waits behind LoadBox, which fades the same
  * page in over its loader once the detail is there.
@@ -256,6 +261,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
     // A queue started here - its Play, Shuffle or a row - is the album's; its song played from anywhere else is not.
     val from = remember(detail?.queue, album.id) { detail?.queue?.origin() ?: PageOrigin(OriginKind.ALBUM, album.id) }
     val queue = rememberPageQueue(from, detail?.queue)
+    val whole = rememberPageWhole(detail?.songs.orEmpty(), list.downloaded)
     HeroPage(
         coverUrl = vm.cover(album.coverArt, CoverSize.FULL),
         coverStandIns = listOf(vm.cover(album.coverArt, CoverSize.CARD), vm.cover(album.coverArt, CoverSize.ROW)),
@@ -289,7 +295,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
                     if (disc.headed) item(key = "disc-$n", contentType = "disc") { SectionTitle(remember(disc) { say.discHeading(disc) }, Modifier.arriving(arrival), compact = true) }
                     songRows(
                         detail.songs, actions, list,
-                        numbered = true, rows = disc.songs, lines = disc.lines, arrival = arrival, from = from,
+                        numbered = true, rows = disc.songs, lines = disc.lines, arrival = arrival, from = from, pageWhole = whole,
                     )
                 }
             }
@@ -393,7 +399,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                     item(key = "group-$n", contentType = "shelf") {
                         Column(late(arrival)) {
                             SectionTitle(group, onMore = { nav.artistReleases(artist.id, n) })
-                            LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            LazyRow(Modifier.bleedsToEdges(), rememberShelfState(albums.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 items(albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }) }
                             }
                         }
@@ -423,7 +429,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                 if (similar.isNotEmpty()) item(key = "similar", contentType = "similar") {
                     Column(late(arrival)) {
                         SectionTitle(say.similarArtists)
-                        LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        LazyRow(Modifier.bleedsToEdges(), rememberShelfState(similar.firstOrNull()?.id), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             items(similar, key = { it.id }) { a ->
                                 val cardMenu = LocalCardMenu.current
                                 Text(a.name, Modifier.combinedClickable(onClick = { nav.artist(a.id, a) }, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) }).padding(8.dp))
@@ -474,6 +480,7 @@ private fun PlaylistPage(
     }
     val shown = rememberMatching(detail?.songs.orEmpty(), filter)
     val from = rememberOrigin(OriginKind.PLAYLIST, id)
+    val whole = rememberPageWhole(detail?.songs.orEmpty(), list.downloaded)
     HeroPage(
         coverUrl = vm.cover(playlist.coverArt, CoverSize.FULL),
         coverStandIns = listOf(vm.cover(playlist.coverArt, CoverSize.CARD), vm.cover(playlist.coverArt, CoverSize.ROW)),
@@ -501,6 +508,7 @@ private fun PlaylistPage(
                 songRows(
                     detail.songs, actions, list,
                     cover = { vm.cover(it.coverArt, CoverSize.ROW) }, rows = shown, arrival = arrival, from = from,
+                    pageWhole = whole,
                 )
             }
             failed != null -> item(key = "fail") { LoadFailed(failed) }
@@ -515,28 +523,15 @@ fun GenreScreen(name: String, actions: ActionsViewModel, vm: GenreViewModel = vi
     val load by vm.ui.collectAsStateWithLifecycle()
     val list = rememberSongListState(actions)
     val from = rememberOrigin(OriginKind.GENRE, name)
-    LoadBox(load) { songs ->
-        SongListPage(name, songs, list.downloaded, from, actions) {
-            songRows(songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
-        }
-    }
-}
-
-/** One level of the server's folder tree: subfolders first, then the files in it. */
-@Composable
-fun FolderScreen(id: String, actions: ActionsViewModel, vm: FolderViewModel = viewModel()) {
-    LaunchedEffect(id) { vm.open(id) }
-    val load by vm.ui.collectAsStateWithLifecycle()
-    val list = rememberSongListState(actions)
-    val nav = LocalNav.current
-    val from = rememberOrigin(OriginKind.FOLDER, id)
-    LoadBox(load) { d ->
+    LoadBox(load) { page ->
+        val whole = rememberPageWhole(page.songs, list.downloaded)
         SongListPage(
-            remember(d.name) { say.folderTitle(d.name) }, d.songs, list.downloaded, from, actions,
-            headLabel = remember(d) { say.folderCaption(d.folders.size, d.songs.size, d.songs.sumOf { it.duration.toLong() }) },
+            name, page.songs, list.downloaded, from, actions,
+            coverUrl = vm.cover(page.coverArt, CoverSize.FULL), coverStandIns = listOf(vm.cover(page.coverArt, CoverSize.ROW)),
+            // As a mix's page has it: keep the genre's songs on the account as a playlist.
+            afterPlay = { if (LocalRules.current.account && page.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveAsPlaylist(name, page.songs) } },
         ) {
-            items(d.folders, key = { "f" + it.id }) { f -> NavRow(remember(f.name) { say.folderRow(f.name) }, { nav.folder(f.id) }, chevron = true) }
-            songRows(d.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
+            songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from, pageWhole = whole)
         }
     }
 }

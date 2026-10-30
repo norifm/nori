@@ -104,7 +104,7 @@ impl Handle {
         };
         match ask {
             PageAsk::Albums { sort, favorites: true, .. } => {
-                pages(Read::StarredItems, &|p| if let Page::StarredPage { v } = p { Some(PageGot::Albums(favorites_in_order(v.albums, sort))) } else { None });
+                pages(Read::StarredItems, &|p| if let Page::StarredPage { v } = p { Some(PageGot::Albums(favorites_in_order(v.albums, sort, false))) } else { None });
             }
             PageAsk::Albums { sort, offset, favorites: false } => {
                 let read = Read::AlbumList { kind: sort, size: ALBUM_PAGE as i32, offset: offset as i32, genre: None };
@@ -121,7 +121,7 @@ impl Handle {
                 Ok(None) => Err(PageFailed::NotDownloaded),
                 Err(e) => Err(PageFailed::Stored(e)),
             }),
-            PageAsk::Songs { offset } => each(match block_on(self.client.songs_listed("title".into(), false, 0, 0, offset)) {
+            PageAsk::Songs { offset } => each(match block_on(self.client.songs_listed("title".into(), false, false, 0, 0, offset)) {
                 Ok(p) => Ok(PageGot::Songs { songs: p.songs, exhausted: p.exhausted }),
                 Err(e) => Err(PageFailed::Net(e)),
             }),

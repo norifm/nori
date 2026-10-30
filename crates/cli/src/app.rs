@@ -1355,9 +1355,9 @@ impl App {
 
     // ---- going places ----
 
-    /// The library's sections kept in the order chosen, of those the profile has and this client lists.
+    /// The library's sections in their order, of those the profile has and this client lists.
     pub fn sections(&self) -> Vec<View> {
-        let shown = nori_core::browse::library_sections_shown(self.prefs.library_sections.clone(), self.rules.sections.clone());
+        let shown = nori_core::browse::library_sections_shown(self.rules.sections.clone());
         shown
             .into_iter()
             .filter_map(|s| match s {
@@ -1374,9 +1374,8 @@ impl App {
     /// favorites where they are kept, downloads and history where the profile keeps them, and shuffling the
     /// list where it can be (an account's albums or songs).
     pub fn places(&self, view: View) -> Vec<Place> {
-        let kept = nori_core::browse::library_sections_shown(self.prefs.library_sections.clone(), self.rules.sections.clone());
         let mut out = Vec::new();
-        if kept.contains(&LibrarySection::Favourites) {
+        if self.rules.sections.contains(&LibrarySection::Favourites) {
             out.push(Place::Favorites);
         }
         for (s, place) in [(LibrarySection::Downloads, Place::Downloads), (LibrarySection::History, Place::History)] {

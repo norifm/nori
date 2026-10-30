@@ -47,7 +47,7 @@ impl Ask {
             Ask::Playlists => Read::PlaylistList,
             Ask::Playlist { id } => Read::PlaylistById { id },
             Ask::Genres => Read::GenreList,
-            Ask::Genre { name } => Read::SongsByGenre { genre: name, count: 500 },
+            Ask::Genre { .. } => return Err("a genre is read whole, by genre_songs".into()),
             Ask::Songs { offset, count } => Read::SongPage { offset, count },
             Ask::Starred => Read::StarredItems,
             Ask::Search { query } => Read::Search { query, songs: 40, albums: 20, artists: 20 },
@@ -110,6 +110,10 @@ pub async fn change(client: &Client, change: Change) -> Result<(), String> {
 /// None for a profile without an account's things.
 pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<String, String> {
     let ask = serde_json::from_str::<Ask>(ask).map_err(|e| e.to_string())?;
+    if let Ask::Genre { name } = ask {
+        let v = client.genre_songs(name).await.map_err(|e| e.to_string())?;
+        return Ok(page(client.core(), Page::Songs { v }, user).to_string());
+    }
     let paged = match &ask {
         Ask::Albums { sort, size, offset, favorites } => Some((album_sort(sort)?, *favorites, *offset as u32, *size as u32)),
         _ => None,
@@ -123,7 +127,7 @@ pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<Stri
     let core = client.core();
     let p = match (last, paged) {
         (None, _) => return Ok(Value::Null.to_string()),
-        (Some(Page::StarredPage { v }), Some((sort, true, ..))) => Page::Albums { v: nori_core::browse::favorites_in_order(v.albums, sort) },
+        (Some(Page::StarredPage { v }), Some((sort, true, ..))) => Page::Albums { v: nori_core::browse::favorites_in_order(v.albums, sort, false) },
         (Some(p), _) => p,
     };
     // A search's answer ranked as every client's is, with the field's preview of it.

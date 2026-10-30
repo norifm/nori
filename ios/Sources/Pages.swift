@@ -1,13 +1,16 @@
 import UIKit
 
 /// A list row: the cover (or the track number on an album), title and a quiet line; the hairline under
-/// it starts at the title. The song playing has its title in the accent; a favorite carries the seal.
+/// it starts at the title, except under a song. The song playing has its title in the accent. A song's marks
+/// sit in columns of their own, as Android's rows: its download, then its seal at the edge, each in its
+/// place whether or not the other is shown.
 final class ItemCell: UITableViewCell {
     static let id = "item"
     let cover = CoverView()
     private let number = label(Fonts.digits(15), Theme.secondary)
     private let title = label(Fonts.font(16), Theme.label)
     private let detail = label(Fonts.font(13, .regular, .footnote), Theme.secondary)
+    private let saved = UIImageView()
     private let mark = UIImageView(image: Glyph.sealedRow)
     /// "Asked": a jam guest's request the host has yet to take.
     private let asked = label(Fonts.font(12, .medium, .caption1), Theme.secondary)
@@ -26,9 +29,9 @@ final class ItemCell: UITableViewCell {
         let text = UIStackView(arrangedSubviews: [title, detail])
         text.axis = .vertical
         text.spacing = 2
-        mark.setContentHuggingPriority(.required, for: .horizontal)
         asked.text = Say.asked
-        let trail = UIStackView(arrangedSubviews: [asked, mark])
+        let trail = UIStackView(arrangedSubviews: [asked, saved, mark])
+        trail.spacing = 8
         trail.setContentHuggingPriority(.required, for: .horizontal)
         trail.setContentCompressionResistancePriority(.required, for: .horizontal)
         for v in [cover, number, text, trail, bar, line] as [UIView] {
@@ -54,6 +57,8 @@ final class ItemCell: UITableViewCell {
             bar.heightAnchor.constraint(equalToConstant: 2),
             trail.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -Space.gutter),
             trail.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            saved.widthAnchor.constraint(equalToConstant: 15),
+            mark.widthAnchor.constraint(equalToConstant: 15),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 60),
             line.leadingAnchor.constraint(equalTo: text.leadingAnchor),
             line.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
@@ -94,10 +99,16 @@ final class ItemCell: UITableViewCell {
         detail.attributedText = remoteText(line, remote: item.external && !line.isEmpty, font: detail.font, colour: look.quiet)
         number.textColor = current ? look.accent : look.quiet
         self.line.backgroundColor = look.hairline
+        self.line.isHidden = item.kind == "song"
         asked.textColor = look.quiet
         asked.isHidden = !Core.shared.isAsked(item)
+        let song = item.kind == "song"
+        saved.isHidden = !song
+        saved.image = item.download == 2 ? Glyph.downloadedRow : item.download == 1 ? Glyph.downloadingRow : nil
+        saved.tintColor = look.quiet
         mark.tintColor = look.accent
-        mark.isHidden = !(item.kind == "song" && Core.shared.rules.stars && Core.shared.isFavorite(item)) || !asked.isHidden
+        mark.isHidden = !song || !asked.isHidden
+        mark.alpha = Core.shared.rules.stars && Core.shared.isFavorite(item) ? 1 : 0
         bar.progressTintColor = look.ink
         bar.trackTintColor = look.veil(0.12)
         bar.isHidden = (item.progress?.percent ?? -1) < 0
@@ -239,11 +250,11 @@ final class Collage: UIView {
 }
 
 /// A mix on Home: a portrait card on the season's paper dyed with the mix's color (the core's
-/// `mix_card_colours`), its covers a square on top running into that paper, its name and a line under it
-/// in the card's own ink.
+/// `mix_card_colours`), its covers a square on top running into that paper, and its name low on the paper,
+/// over the end of the fade, in the card's own ink.
 final class MixCard: UIView {
-    /// The card's height to its width: 206 to 150.
-    static let tall: CGFloat = 206 / 150
+    /// The card's height to its width: 186 to 150.
+    static let tall: CGFloat = 186 / 150
 
     init(_ item: Item, width: CGFloat) {
         super.init(frame: .zero)
@@ -262,16 +273,11 @@ final class MixCard: UIView {
         fade.colors = [UIColor.black.cgColor, UIColor.black.cgColor, UIColor.clear.cgColor]
         fade.locations = [0, 0.45, 1]
         art.layer.mask = fade
-        let name = label(Fonts.title(18, .headline), ink)
+        let name = label(Fonts.title(20, .headline), ink, lines: 2)
         name.text = Say.mix(item.count)
-        let line = label(Fonts.font(12, .regular, .caption1), ink.withAlphaComponent(0.7))
-        line.text = item.count == 0 ? Say.mixLineFavourites : Say.mixLineMade
-        // The name and its line in the middle of the paper under the covers.
-        let (a, b) = (name.sizeThatFits(.zero).height, line.sizeThatFits(.zero).height)
-        let top = width + (width * MixCard.tall - width - a - b) / 2
-        name.frame = CGRect(x: 12, y: top, width: width - 24, height: a)
-        line.frame = CGRect(x: 12, y: top + a, width: width - 24, height: b)
-        for v in [art, name, line] { addSubview(v) }
+        let high = name.sizeThatFits(CGSize(width: width - 26, height: .greatestFiniteMagnitude)).height
+        name.frame = CGRect(x: 13, y: width * MixCard.tall - 12 - high, width: width - 26, height: high)
+        for v in [art, name] { addSubview(v) }
         isUserInteractionEnabled = false
         isAccessibilityElement = true
         accessibilityLabel = name.text

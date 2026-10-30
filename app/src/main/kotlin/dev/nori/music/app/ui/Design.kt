@@ -49,9 +49,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -778,7 +778,7 @@ fun SystemBarIcons(look: Look) {
 
 /**
  * A search or filter field as a capsule raised on the surface with a hairline edge, outlined in the accent
- * while it has the focus: an icon, and a clear button that only exists when there is something to clear.
+ * while it has the focus (until the keyboard is put away): an icon, and a clear button that only exists when there is something to clear.
  */
 @Composable
 fun SearchField(
@@ -792,6 +792,11 @@ fun SearchField(
     // A focus request needs the field's node attached, which it is once the field is placed.
     var placed by remember { mutableStateOf(false) }
     var focused by remember { mutableStateOf(false) }
+    // The keyboard put away (Back) ends the typing, so the accent edge goes with it.
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    val typing = androidx.compose.foundation.layout.WindowInsets.isImeVisible
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    LaunchedEffect(typing) { if (!typing && focused) focusManager.clearFocus() }
     LaunchedEffect(focus, focusKey, placed) {
         if (focus == null || !placed) return@LaunchedEffect
         focus.requestFocus()
@@ -1055,7 +1060,7 @@ class Stamp(private val scope: kotlinx.coroutines.CoroutineScope, private val ha
 fun rememberStamp(): Stamp {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
-    val plain = reduceMotion()
+    val plain = AppMotion.reduce
     return remember(scope, haptics, plain) { Stamp(scope, haptics, plain) }
 }
 
@@ -1107,17 +1112,6 @@ fun MoreButton(items: List<Pair<String, () -> Unit>>, modifier: Modifier = Modif
 
 
 /**
- * Whether movement is kept to short fades or none ([Motion] Reduced or E-ink, the user's choice, whatever
- * Android's animation setting says). Read it rather than hard-coding durations, so it means the same
- * thing everywhere.
- */
-@Composable
-fun reduceMotion(): Boolean {
-    val prefs by (androidx.lifecycle.viewmodel.compose.viewModel<dev.nori.music.app.vm.SettingsViewModel>()).prefs.collectAsStateWithLifecycle()
-    return prefs.motion != dev.nori.music.ffi.settings.Motion.FULL
-}
-
-/**
  * The E-ink motion, provided once by App: the player redraws only when something changes (a song, play
  * or pause, a seek, a touch, the next line of lyrics), so its seek bar and playing bars do not run on their own.
  */
@@ -1126,24 +1120,6 @@ val LocalEinkScreen = androidx.compose.runtime.compositionLocalOf { false }
 /** How much room a [GlyphButton] takes for a finger. */
 private val GLYPH_TARGET = 48.dp
 
-/**
- * How fast every animation in the app runs. Compose scales each one by whatever MotionDurationScale is
- * in its coroutine's context, and by default that is Android's animator duration scale - so with system
- * animations off, every tween and spring in the app finished on its first frame. The activity starts
- * the whole composition with this object in its context instead (see MainActivity), so every animation
- * there is, ours and the libraries', runs at full speed: nori's own Motion setting is what reduces them.
- */
-object AppMotion : androidx.compose.ui.MotionDurationScale {
-    /**
-     * The user's reduce-motion answer, for code that must not look it up per call - a cover in a grid
-     * of a hundred cannot each collect the settings. Kept current by App; [reduceMotion] is the same
-     * answer for everything else.
-     */
-    @Volatile var reduce = false
-    /** The E-ink motion: every animation ends on its first frame. Kept current by App. */
-    @Volatile var still = false
-    override val scaleFactor: Float get() = if (still) 0f else 1f
-}
 
 
 /**
@@ -1158,7 +1134,7 @@ object AppMotion : androidx.compose.ui.MotionDurationScale {
 fun NoriSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val scheme = MaterialTheme.colorScheme
     val t by androidx.compose.animation.core.animateFloatAsState(
-        if (checked) 1f else 0f, androidx.compose.animation.core.tween(if (reduceMotion()) 0 else 180), label = "switch",
+        if (checked) 1f else 0f, AppMotion.settle(), label = "switch",
     )
     // The season's color for what is on, not its accent: the accent is kept for the one current thing.
     val on = scheme.secondary
@@ -1239,8 +1215,8 @@ fun LoadingDots(modifier: Modifier = Modifier, dot: androidx.compose.ui.unit.Dp 
     val plain = AppMotion.reduce
     val appear = remember { androidx.compose.animation.core.Animatable(0f) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(250)
-        appear.animateTo(1f, androidx.compose.animation.core.tween(350))
+        kotlinx.coroutines.delay(stage.quickLoadMs)
+        appear.animateTo(1f, AppMotion.fadeIn())
     }
     val phase = if (plain) null else androidx.compose.animation.core.rememberInfiniteTransition(label = "dots").animateFloat(
         0f, 1f,
@@ -1273,15 +1249,15 @@ fun LoadingDots(modifier: Modifier = Modifier, dot: androidx.compose.ui.unit.Dp 
  * the caller drops it after that.
  */
 /** How long a sheen whose load is over takes to fade out. */
-const val SHEEN_LEAVE_MS = 300
+val SHEEN_LEAVE_MS: Int get() = stage.fadeMs
 
 fun Modifier.loadingSheen(active: Boolean, leaving: Boolean = false): Modifier = if (!active) this else composed {
     val appear = remember { androidx.compose.animation.core.Animatable(0f) }
     androidx.compose.runtime.LaunchedEffect(leaving) {
         if (leaving) appear.animateTo(0f, androidx.compose.animation.core.tween(SHEEN_LEAVE_MS))
         else {
-            kotlinx.coroutines.delay(250)
-            appear.animateTo(1f, androidx.compose.animation.core.tween(400))
+            kotlinx.coroutines.delay(stage.quickLoadMs)
+            appear.animateTo(1f, AppMotion.fadeIn())
         }
     }
     val plain = AppMotion.reduce
@@ -1347,10 +1323,8 @@ fun PlayPauseGlyph(
     androidx.compose.animation.AnimatedContent(
         glyph,
         transitionSpec = {
-            (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(180)) +
-                androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(180), initialScale = 0.8f)) togetherWith
-                (androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(140)) +
-                    androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(140), targetScale = 0.8f))
+            (AppMotion.appear() + androidx.compose.animation.scaleIn(AppMotion.move(), initialScale = 0.8f)) togetherWith
+                (AppMotion.vanish() + androidx.compose.animation.scaleOut(AppMotion.move(), targetScale = 0.8f))
         },
         contentAlignment = Alignment.Center,
         label = "playPause",

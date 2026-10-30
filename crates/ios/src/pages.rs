@@ -7,7 +7,7 @@ use std::ffi::{c_char, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use nori_core::browse::{album_sort_kept, album_sort_saved, album_sorts, artist_rows, favorites_in_order, home_pinned, home_row_more, home_row_page, next_album_page, shelf_albums_read, song_sort_kept, song_sort_saved, song_sorts, AlbumSort, HomeShelf};
+use nori_core::browse::{album_sort_direction, album_sort_kept, album_sort_saved, album_sorts, artist_rows, favorites_in_order, home_pinned, home_row_more, home_row_page, next_album_page, shelf_albums_read, song_sort_direction, song_sort_kept, song_sort_saved, song_sorts, AlbumSort, HomeShelf, SortDirection};
 use nori_core::cache_policy::{Page, Read};
 use nori_core::numbers::{self, POINT};
 use nori_core::client::Starrable;
@@ -158,8 +158,28 @@ pub(crate) fn extend_list(token: u64, more: &[Song]) -> Option<usize> {
 
 pub(crate) fn send(token: u64, v: &Value) {
     let Some(cb) = *lock(&PAGE_HOOK) else { return };
-    let text = CString::new(v.to_string().replace('\0', " ")).unwrap_or_default();
+    let marked = v.get("sections").and_then(|_| with_session(|s| with_download_marks(s, v.clone())));
+    let text = CString::new(marked.as_ref().unwrap_or(v).to_string().replace('\0', " ")).unwrap_or_default();
     unsafe { cb(token, text.as_ptr()) };
+}
+
+/// `v`'s song rows with their download marks, `dl` (menus.rs's `download_glyphs`): 1 on its way, 2
+/// downloaded, none without a mark. A collection's page has its head say when every song is downloaded.
+fn with_download_marks(s: &nori_host::session::Session, mut v: Value) -> Value {
+    use nori_core::menus::DownloadGlyph;
+    let page = matches!(v["head"]["k"].as_str(), Some("album" | "downloadedAlbum" | "playlist" | "mix" | "smart"));
+    let Some(sections) = v["sections"].as_array_mut() else { return v };
+    let mut rows: Vec<&mut Value> = sections.iter_mut().filter_map(|x| x["items"].as_array_mut()).flatten().filter(|r| r["k"] == "song").collect();
+    let ids: Vec<String> = rows.iter().map(|r| r["id"].as_str().unwrap_or_default().to_string()).collect();
+    let marks = s.download_glyphs(&ids.iter().map(String::as_str).collect::<Vec<_>>(), page);
+    for (row, mark) in rows.iter_mut().zip(marks) {
+        match mark {
+            DownloadGlyph::Done => row["dl"] = json!(2),
+            DownloadGlyph::Ring | DownloadGlyph::Failed => row["dl"] = json!(1),
+            DownloadGlyph::None => {}
+        }
+    }
+    v
 }
 
 fn send_error(token: u64, e: &nori_core::transport::NetError) {
@@ -381,7 +401,7 @@ fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, f
     pages(client, token, read, &|p| {
         let v = match p {
             Page::Albums { v } => v,
-            Page::StarredPage { v } => favorites_in_order(v.albums, sort),
+            Page::StarredPage { v } => favorites_in_order(v.albums, sort, false),
             _ => return None,
         };
         let sections = if sort == AlbumSort::ArtistRows {
@@ -700,7 +720,7 @@ fn read(token: u64, kind: i32, arg: String) {
         PAGE_SONGS => {
             let offset = arg.parse().unwrap_or(0);
             let sort = song_sort_saved(list_prefs());
-            match nori_core::transport::block_on(client.songs_listed(sort.clone(), false, 0, 0, offset)) {
+            match nori_core::transport::block_on(client.songs_listed(sort.clone(), false, false, 0, 0, offset)) {
                 Ok(p) => {
                     let kept = if offset == 0 { None } else { extend_list(token, &p.songs) };
                     let from = kept.unwrap_or(0);
@@ -1401,19 +1421,26 @@ pub unsafe extern "C" fn nori_ios_lyrics_page(song: *const c_char) -> *mut c_cha
 }
 
 /// A long list's orders as JSON to free: `now` the one it is in, `all` every one in the menu's order
-/// (albums by [`AlbumSort::name`], songs by [`song_sorts`] name, both for the client to word). Null for a
-/// page without orders.
+/// (albums by [`AlbumSort::name`], songs by [`song_sorts`] name, both for the client to word), and `ways`
+/// which way each runs (1 up, -1 down, 0 shuffled). Null for a page without orders.
 #[no_mangle]
 pub extern "C" fn nori_ios_sorts(kind: i32) -> *mut c_char {
+    let way = |d| match d {
+        SortDirection::Ascending => 1,
+        SortDirection::Descending => -1,
+        SortDirection::Shuffled => 0,
+    };
     let prefs = list_prefs();
     let v = match kind {
         PAGE_ALBUMS => json!({
             "now": album_sort_saved(prefs).name(),
             "all": album_sorts().into_iter().map(|s| s.name()).collect::<Vec<_>>(),
+            "ways": album_sorts().into_iter().map(|s| way(album_sort_direction(s))).collect::<Vec<_>>(),
         }),
         PAGE_SONGS => json!({
             "now": song_sort_saved(prefs),
             "all": song_sorts().into_iter().map(|s| s.name).collect::<Vec<_>>(),
+            "ways": song_sorts().into_iter().map(|s| way(song_sort_direction(s.name))).collect::<Vec<_>>(),
         }),
         _ => return std::ptr::null_mut(),
     };

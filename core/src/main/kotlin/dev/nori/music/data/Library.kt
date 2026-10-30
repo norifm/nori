@@ -149,6 +149,7 @@ class Library(
 
     suspend fun searchHistory(): List<String> = withContext(Dispatchers.IO) { core.searchHistory() }
     suspend fun forgetSearches() = withContext(Dispatchers.IO) { core.searchForget() }
+    suspend fun forgetSearch(query: String) = withContext(Dispatchers.IO) { core.searchForgetOne(query) }
 
     // ---- browse ----
 
@@ -240,9 +241,6 @@ class Library(
     suspend fun smartPage(json: String): dev.nori.music.ffi.library.SmartPage =
         withContext(Dispatchers.IO) { core.smartPage(json, sizes.smartSongs) }
 
-    /** The server's folder tree, for libraries organised by directory rather than by tags. */
-    fun folders(): Flow<List<Artist>> = cached(Read.FolderIndex) { (it as Page.Artists).v }
-    fun folder(id: String): Flow<dev.nori.music.ffi.model.Directory> = cached(Read.FolderById(id)) { (it as Page.DirectoryPage).v }
 
     /** Sorted pages of the offline index: the "all songs" and "by decade" lists. */
     suspend fun browseSongs(sort: String, descending: Boolean, starredOnly: Boolean, years: IntRange?, offset: Int, limit: Int): List<Song> = withContext(Dispatchers.IO) {
@@ -251,10 +249,14 @@ class Library(
 
     suspend fun decades(): List<dev.nori.music.ffi.library.Decade> = withContext(Dispatchers.IO) { core.browseDecades() }
 
+    /** The [limit] genres with most indexed songs, each with a cover (the core's `genre_tiles`). */
+    suspend fun genreTiles(limit: Int): List<dev.nori.music.ffi.library.GenreTile> = withContext(Dispatchers.IO) { core.genreTiles(limit.toUInt()) }
+    suspend fun genreCover(genre: String): String? = withContext(Dispatchers.IO) { core.genreCover(genre) }
+
 
     suspend fun randomSongs(): List<Song> = call(Read.RandomSongs(sizes.randomSongs, null)) { (it as Page.Songs).v }
 
-    suspend fun songsByGenre(genre: String): List<Song> = call(Read.SongsByGenre(genre, sizes.genreSongs)) { (it as Page.Songs).v }
+    suspend fun songsByGenre(genre: String): List<Song> = withContext(Dispatchers.IO) { lifted { client.genreSongs(genre) } }
 
 
     /** What carries the queue on past the song playing (see the core's autofill.rs); nothing on any failure. */
@@ -346,8 +348,12 @@ class Library(
      * from the socket into SQLite inside Rust; only the counts come back.
      */
     /** A page of the songs list (the core's `songs_listed`): the offline index's, or the server's where the profile keeps none. */
-    suspend fun songsListed(sort: String, starredOnly: Boolean, yearFrom: UInt, yearTo: UInt, offset: UInt) =
-        withContext(Dispatchers.IO) { lifted { client.songsListed(sort, starredOnly, yearFrom, yearTo, offset) } }
+    suspend fun songsListed(sort: String, reversed: Boolean, starredOnly: Boolean, yearFrom: UInt, yearTo: UInt, offset: UInt) =
+        withContext(Dispatchers.IO) { lifted { client.songsListed(sort, reversed, starredOnly, yearFrom, yearTo, offset) } }
+
+    /** A page of the indexed albums in [sort]'s order turned around, which the server cannot list (the core's `albums_indexed`). */
+    suspend fun albumsIndexed(sort: AlbumSort, reversed: Boolean, offset: Int, size: Int): List<Album> =
+        withContext(Dispatchers.IO) { core.albumsIndexed(sort, reversed, offset.toUInt(), size.toUInt()) }
 
     suspend fun sync(): IngestStats = withContext(Dispatchers.IO) { lifted { client.syncLibrary() } }
 

@@ -344,7 +344,7 @@ impl Session {
             // The index's songs in the order asked for (the server's own for a profile that keeps none).
             Req::Songs { sort, starred, offset } => {
                 let client = self.client.clone();
-                nori_host::spawn("nori-read", move || send(block_on(client.songs_listed(sort, starred, 0, 0, offset)).map(|p| Data::Songs(p.songs, p.exhausted)).map_err(|e| unreachable(&e))));
+                nori_host::spawn("nori-read", move || send(block_on(client.songs_listed(sort, false, starred, 0, 0, offset)).map(|p| Data::Songs(p.songs, p.exhausted)).map_err(|e| unreachable(&e))));
             }
             Req::History(after) => {
                 let core = self.core.clone();

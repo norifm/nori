@@ -62,6 +62,11 @@ object Iconoir {
         "M3 11C3 15.4183 6.58172 19 11 19C13.213 19 15.2161 18.1015 16.6644 16.6493C18.1077 15.2022 19 13.2053 19 11C19 6.58172 15.4183 3 11 3C6.58172 3 3 6.58172 3 11Z",
     )
 
+    /** arrow-left */
+    val ArrowLeft by glyph(true,
+        "M21 12L3 12M3 12L11.5 3.5M3 12L11.5 20.5",
+    )
+
     /** nav-arrow-right */
     val NavArrowRight by glyph(true,
         "M9 6L15 12L9 18",
@@ -223,6 +228,23 @@ object Iconoir {
     val Sparks by parts(false,
         Part("M8 15C12.8747 15 15 12.949 15 8C15 12.949 17.1104 15 22 15C17.1104 15 15 17.1104 15 22C15 17.1104 12.8747 15 8 15Z", cap = false),
         Part("M2 6.5C5.13376 6.5 6.5 5.18153 6.5 2C6.5 5.18153 7.85669 6.5 11 6.5C7.85669 6.5 6.5 7.85669 6.5 11C6.5 7.85669 5.13376 6.5 2 6.5Z", cap = false),
+    )
+
+    /** magic-wand */
+    val MagicWand by parts(false,
+        Part("M3 21L13 11M18 6L15.5 8.5"),
+        Part("M9.5 2L10.4453 4.55468L13 5.5L10.4453 6.44532L9.5 9L8.55468 6.44532L6 5.5L8.55468 4.55468L9.5 2Z", cap = false),
+        Part("M19 10L19.5402 11.4598L21 12L19.5402 12.5402L19 14L18.4598 12.5402L17 12L18.4598 11.4598L19 10Z", cap = false),
+    )
+
+    /** arrow-up */
+    val ArrowUp by glyph(false,
+        "M12 21L12 3M12 3L20.5 11.5M12 3L3.5 11.5",
+    )
+
+    /** arrow-down */
+    val ArrowDown by glyph(false,
+        "M12 3L12 21M12 21L20.5 12.5M12 21L3.5 12.5",
     )
 
     /** prohibition */

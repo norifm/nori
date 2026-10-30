@@ -8,7 +8,7 @@ use nori_look::theme::{Dye, Palette};
 use nori_model::Song;
 use rusqlite::Connection;
 
-use super::{discover, listen_again, quick_picks, top};
+use super::{discover, listen_again, quick_picks, rewind, top};
 
 /// The id of the favourites tile and page; every other id names one of [MIXES].
 pub const FAVOURITES_MIX: &str = "favourites";
@@ -22,10 +22,11 @@ pub enum Kind {
     QuickPicks,
     Discover,
     ListenAgain,
+    Rewind,
     Top,
 }
 
-/// Which "For you" tile or page this is; the client names it ("Quick picks", "Your top songs").
+/// Which "For you" tile or page this is; the client names it ("Quick picks", "Top songs").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 #[repr(u8)]
@@ -33,7 +34,7 @@ pub enum MixName {
     Favourites,
     QuickPicks,
     Discover,
-    DiscoverWeekly,
+    Rewind,
     ListenAgain,
     Top,
 }
@@ -59,7 +60,7 @@ impl Spec {
 pub const MIXES: [Spec; 5] = [
     Spec { id: "quick-picks", kind: Kind::QuickPicks, name: MixName::QuickPicks, weekly: false, colour: 0xFF8E_3BD6 },
     Spec { id: "discover", kind: Kind::Discover, name: MixName::Discover, weekly: false, colour: 0xFF1E_88E5 },
-    Spec { id: "discover-weekly", kind: Kind::Discover, name: MixName::DiscoverWeekly, weekly: true, colour: 0xFF15_65C0 },
+    Spec { id: "rewind", kind: Kind::Rewind, name: MixName::Rewind, weekly: true, colour: 0xFFB0_7A1E },
     Spec { id: "listen-again", kind: Kind::ListenAgain, name: MixName::ListenAgain, weekly: false, colour: 0xFF00_897B },
     Spec { id: "top", kind: Kind::Top, name: MixName::Top, weekly: false, colour: 0xFFE0_662B },
 ];
@@ -191,6 +192,7 @@ pub fn draw(c: &Connection, kind: Kind, seed: u64, now_ms: i64) -> Vec<Song> {
         Kind::QuickPicks => quick_picks(c, DRAW, seed, now_ms),
         Kind::Discover => discover(c, DRAW, seed, now_ms),
         Kind::ListenAgain => listen_again(c, DRAW, seed, now_ms),
+        Kind::Rewind => rewind(c, DRAW, seed, now_ms),
         Kind::Top => top(c, DRAW, now_ms),
     }
     .unwrap_or_default()

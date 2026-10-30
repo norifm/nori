@@ -891,13 +891,22 @@ impl Handle {
         self.download_states(&[id])[0]
     }
 
-    /// Where each song's download stands, the queue read once for them all.
+    /// Where each song's download stands, the downloads and the queue read once for them all.
     pub fn download_states(&self, ids: &[&str]) -> Vec<nori_core::menus::SongDownload> {
         use nori_core::menus::SongDownload;
+        let done: std::collections::HashSet<String> = self.core.download_ids(true).unwrap_or_default().into_iter().collect();
         let waiting = self.core.download_waiting().unwrap_or_default();
         ids.iter()
-            .map(|id| if self.core.download_song(id).is_some() { SongDownload::Done } else if waiting.contains(*id) { SongDownload::Pending } else { SongDownload::None })
+            .map(|id| if done.contains(*id) { SongDownload::Done } else if waiting.contains(*id) { SongDownload::Pending } else { SongDownload::None })
             .collect()
+    }
+
+    /// Each song's row mark (`menus::download_glyphs`), none where downloads are not the profile's.
+    pub fn download_glyphs(&self, ids: &[&str], page: bool) -> Vec<nori_core::menus::DownloadGlyph> {
+        if !self.rules().downloads {
+            return vec![nori_core::menus::DownloadGlyph::None; ids.len()];
+        }
+        nori_core::menus::download_glyphs(&self.download_states(ids), page)
     }
 
     /// Deletes a download from disk.

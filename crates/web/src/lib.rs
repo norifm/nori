@@ -237,9 +237,19 @@ impl Nori {
         js_sys::Array::of3(&JsValue::from_str(&colors.to_string()), &rgba(true), &rgba(false))
     }
 
-    /// The album grid's orders, in the order offered, by name (`browse::album_sorts`): `newest`, `artistRows`, ...
+    /// The album grid's orders, in the order offered (`browse::album_sorts`): each by name (`newest`,
+    /// `artistRows`, ...) and the way it runs (`browse::album_sort_direction`: `up`, `down`, or `` shuffled).
     pub fn album_sorts(&self) -> String {
-        Value::from(nori_core::browse::album_sorts().iter().map(|s| s.name()).collect::<Vec<_>>()).to_string()
+        use nori_core::browse::SortDirection;
+        let orders = nori_core::browse::album_sorts().into_iter().map(|s| {
+            let way = match nori_core::browse::album_sort_direction(s) {
+                SortDirection::Ascending => "up",
+                SortDirection::Descending => "down",
+                SortDirection::Shuffled => "",
+            };
+            json!({ "name": s.name(), "way": way })
+        });
+        Value::from(orders.collect::<Vec<_>>()).to_string()
     }
 
     /// The album grid's order as it was left, by name (`browse::album_sort_saved`).
@@ -308,12 +318,11 @@ impl Nori {
         pages::mix(&client, id).await.map_err(error)
     }
 
-    /// The Library page's sections a browser has, in the order kept (`browse::library_sections_shown`), by
+    /// The Library page's sections a browser has, in their order (`browse::library_sections_shown`), by
     /// name: those it shows as pills, and `Favourites` where it is one of its places.
     pub fn library_sections(&self) -> String {
         use nori_core::settings::LibrarySection::*;
-        let prefs = self.app.settings.current().unwrap_or_default();
-        let shown = nori_core::browse::library_sections_shown(prefs.library_sections, self.rules().sections);
+        let shown = nori_core::browse::library_sections_shown(self.rules().sections);
         let drawn: Vec<String> = shown.into_iter().filter(|s| matches!(s, Albums | Artists | Songs | Playlists | Genres | Favourites)).map(|s| format!("{s:?}")).collect();
         Value::from(drawn).to_string()
     }

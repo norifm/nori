@@ -507,10 +507,6 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         p.copy(homeRows = dev.nori.music.ffi.library.homeRowsMoved(p.homeRows, from.toUInt(), to.toUInt()))
     }
 
-    fun moveLibrarySection(from: Int, to: Int) = update { p ->
-        p.copy(librarySections = dev.nori.music.ffi.library.librarySectionsMoved(p.librarySections, from.toUInt(), to.toUInt()))
-    }
-
     /**
      * A report of a problem (core `Report`) under [header], written to a file of its own - a day of log is a
      * megabyte or two, more than a share's text or the clipboard carries - and handed to [share] as the

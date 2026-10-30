@@ -18,8 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,7 +27,6 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -37,7 +34,6 @@ import androidx.compose.ui.unit.dp
 import dev.nori.music.app.ui.Hairline
 import dev.nori.music.app.ui.Iconoir
 import dev.nori.music.app.ui.LocalChromeInset
-import dev.nori.music.app.ui.LocalNav
 import dev.nori.music.app.ui.PillButton
 import dev.nori.music.app.ui.SectionHeader
 import dev.nori.music.app.ui.Space
@@ -52,16 +48,12 @@ import dev.nori.music.ffi.perf.PerfFigures
  */
 @Composable
 internal fun PerfPage(recorder: Recorder) {
-    val nav = LocalNav.current
     LaunchedEffect(Unit) { recorder.refresh() }
     val read by recorder.shown
     val calls by recorder.callBench
     val covers by recorder.coverBench
     Column(Modifier.verticalScroll(rememberScrollState()).animateContentSize()) {
-        Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back) }
-            Text(say.performance, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
-        }
+        Text(say.performance, Modifier.padding(horizontal = Space.gutter), style = MaterialTheme.typography.headlineSmall)
         // The first reading takes a few milliseconds on the recorder's thread; the figures fade in once it is there.
         AnimatedVisibility(read != null, enter = fadeIn()) { read?.let { Recorded(it, calls, covers, recorder) } }
         Spacer(Modifier.height(Space.section + LocalChromeInset.current))

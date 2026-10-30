@@ -192,13 +192,14 @@ fn dress(s: &Scheme, edge: Option<u32>, out: &mut [u32; LEN]) {
     out[CHROME_OUTLINE] = with_alpha(on, 0.20);
 
     out[STATUS_LIGHT] = (luminance(on) < 0.5) as u32;
-    // White, cream and black pages have a single-tint wash, so the blurred band takes that tint too.
+    // White, cream and black pages have a single-tint wash, so the blurred band takes that tint too;
+    // pure black has no hue to take, so its band goes grey rather than black.
     let l = color_to_hsl(bg)[2];
     let tinted = l > 0.85 || l < 0.08;
     out[BAND_TINT] = (if tinted { 1.0f32 } else { 0.0 }).to_bits();
     let (r, g, b) = (crate::color::red(bg) as f32 / 255.0, crate::color::green(bg) as f32 / 255.0, crate::color::blue(bg) as f32 / 255.0);
     let top = r.max(g).max(b).max(0.01);
-    let k = if tinted { [r / top, g / top, b / top] } else { [1.0, 1.0, 1.0] };
+    let k = if tinted && top > 0.01 { [r / top, g / top, b / top] } else { [1.0, 1.0, 1.0] };
     out[BAND_KR] = k[0].to_bits();
     out[BAND_KG] = k[1].to_bits();
     out[BAND_KB] = k[2].to_bits();
@@ -322,6 +323,9 @@ mod tests {
         assert_eq!(mid[STATUS_LIGHT], 1);
         assert_eq!((f32::from_bits(dark[BAND_TINT]), f32::from_bits(white[BAND_TINT])), (0.0, 1.0));
         assert_eq!(f32::from_bits(white[BAND_KG]), 1.0);
+        // Midnight's black page keeps the band's light and dark, grey.
+        let black = page(0xFF00_0000, 0xFF00_0000, WHITE, 0xFFE0_4040, 0xFF00_0000);
+        assert_eq!([black[BAND_KR], black[BAND_KG], black[BAND_KB]].map(f32::from_bits), [1.0; 3]);
     }
 
     #[test]

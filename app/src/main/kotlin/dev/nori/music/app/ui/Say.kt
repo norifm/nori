@@ -117,6 +117,7 @@ class Say(private val r: Resources) {
     val reportProblemDetail: String = r.getString(R.string.report_problem_detail)
     val reportFailed: String = r.getString(R.string.report_failed)
     val clear: String = r.getString(R.string.clear)
+    val clearAll: String = r.getString(R.string.clear_all)
     val reset: String = r.getString(R.string.reset)
     val open: String = r.getString(R.string.open)
     val import: String = r.getString(R.string.import_it)
@@ -137,7 +138,6 @@ class Say(private val r: Resources) {
         is dev.nori.music.ffi.library.QueueBy.App -> r.getString(R.string.continue_from_app, by.name)
     }
     val homeRowsTitle: String = r.getString(R.string.settings_home_rows)
-    val librarySectionsTitle: String = r.getString(R.string.settings_library_sections)
     val recentlyAdded: String = r.getString(R.string.library_recently_added)
     val showAll: String = r.getString(R.string.show_all)
     private val untitled: String = r.getString(R.string.untitled)
@@ -471,16 +471,6 @@ class Say(private val r: Resources) {
     /** The count alone, where "12 selected" does not fit. */
     fun selectedShort(n: Int): String = r.getString(R.string.selected_count_short, n)
 
-    /** A folder's list head: "2 folders · 14 songs · 48:10", the songs and length only if it has songs. */
-    fun folderCaption(folders: Int, songs: Int, seconds: Long): String = listOfNotNull(
-        r.getQuantityString(R.plurals.folders, folders, folders).takeIf { folders > 0 },
-        songs(songs).takeIf { songs > 0 },
-        Fmt.duration(seconds).takeIf { songs > 0 },
-    ).joinToString(" · ")
-    /** A folder's title: its name, or "Folder" for one the server did not name. */
-    fun folderTitle(name: String): String = name.ifEmpty { r.getString(R.string.folder_untitled) }
-    /** A folder's row in a folder: a folder mark, then its name. */
-    fun folderRow(name: String): String = "📁  $name"
     /** A decade by its first year: "1990s". */
     fun decade(start: Int): String = r.getString(R.string.decade_name, start)
 
@@ -516,16 +506,13 @@ class Say(private val r: Resources) {
     /** The format of a record, from its first song: "FLAC 24/96.0", "MP3 320 kbps". */
     fun quality(s: Song): String? = dev.nori.music.ffi.model.quality(s.suffix, s.bitDepth, s.samplingRate, s.bitRate)
 
-    /** A song's rate, sample rate, depth and (with [channels]) channels as the details say them, each only if known. */
-    private fun qualityParts(s: Song, channels: Boolean): List<String> = listOfNotNull(
+    /** A song's rate, sample rate, depth and channels as the details say them, each only if known. */
+    private fun qualityParts(s: Song): List<String> = listOfNotNull(
         if (s.bitRate > 0u) "${s.bitRate} kbps" else null,
         if (s.samplingRate > 0u) "${Fmt.khz(s.samplingRate.toInt())} kHz" else null,
         if (s.bitDepth > 0u) "${s.bitDepth} bit" else null,
-        if (channels && s.channelCount > 0u) "${s.channelCount} ch" else null,
+        if (s.channelCount > 0u) "${s.channelCount} ch" else null,
     )
-
-    /** The line under a song at the top of its menu: "FLAC · 1411 kbps · 44.1 kHz · 16 bit". */
-    fun songFormat(s: Song): String = (listOf(s.suffix.uppercase()) + qualityParts(s, false)).joinToString(" · ")
 
     /** A song's second line where it is shown on its own (its menu's head): "Artist · Album". */
     fun songLine(artist: String, album: String): String = if (album.isEmpty()) artist else "$artist · $album"
@@ -552,7 +539,7 @@ class Say(private val r: Resources) {
             R.string.info_genre to s.genre,
             R.string.info_duration to Fmt.duration(s.duration.toLong()),
             R.string.info_format to listOfNotNull(s.suffix.ifEmpty { null }?.uppercase(), s.contentType.ifEmpty { null }).joinToString(" · "),
-            R.string.info_quality to qualityParts(s, true).joinToString(" · "),
+            R.string.info_quality to qualityParts(s).joinToString(" · "),
             R.string.info_size to (if (s.size > 0u) Fmt.megabytes(s.size.toLong()) else null),
             R.string.info_replay_gain to gain,
             R.string.info_bpm to (if (s.bpm > 0u) s.bpm.toString() else null),
@@ -689,7 +676,7 @@ class Say(private val r: Resources) {
         MixName.FAVOURITES -> favourites
         MixName.QUICK_PICKS -> r.getString(R.string.mix_quick_picks)
         MixName.DISCOVER -> r.getString(R.string.mix_discover)
-        MixName.DISCOVER_WEEKLY -> r.getString(R.string.mix_discover_weekly)
+        MixName.REWIND -> r.getString(R.string.mix_rewind)
         MixName.LISTEN_AGAIN -> r.getString(R.string.mix_listen_again)
         MixName.TOP -> r.getString(R.string.mix_top)
     }
@@ -1047,8 +1034,6 @@ class Say(private val r: Resources) {
     val continueLabel: String = r.getString(R.string.continue_label)
     val resume: String = r.getString(R.string.resume)
     fun offerPlace(artist: String, at: Int, of: Int): String = r.getString(R.string.offer_place, artist, at, of)
-    val mixLineMade: String = r.getString(R.string.mix_line_made)
-    val mixLineFavourites: String = r.getString(R.string.mix_line_favourites)
 
     companion object {
         /** Counts up to this are made once and kept. */

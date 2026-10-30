@@ -8,7 +8,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
@@ -147,7 +146,7 @@ fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, radius: Dp = Ra
     val here = cover.image != null
     androidx.compose.runtime.LaunchedEffect(cover, here) {
         if (!here || fade.value == 1f) return@LaunchedEffect
-        if (AppMotion.reduce) fade.snapTo(1f) else fade.animateTo(1f, tween(260, easing = androidx.compose.animation.core.LinearEasing))
+        fade.animateTo(1f, AppMotion.fadeIn())
     }
     Box(
         // Without a size it fills what it is given.
@@ -169,7 +168,7 @@ fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, radius: Dp = Ra
         if (sheen && plate) Box(Modifier.matchParentSize().loadingSheen(true, leaving = !loading))
         androidx.compose.animation.AnimatedVisibility(
             missing && plate, Modifier.align(Alignment.Center),
-            enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(300)), exit = androidx.compose.animation.fadeOut(),
+            enter = androidx.compose.animation.fadeIn(AppMotion.fadeIn()), exit = androidx.compose.animation.fadeOut(AppMotion.fadeOut()),
         ) {
             LookIcon(
                 Iconoir.MusicNote, null,
@@ -255,7 +254,7 @@ internal fun Modifier.swipeable(
 ): Modifier = composed {
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
-    val back = remember { spring<Float>(dampingRatio = 0.8f, stiffness = 520f) }
+    val back = AppMotion.settle<Float>()
     // The gesture outlives recompositions (it is keyed on which sides act, not on the actions), so it
     // reads the actions as they are now: a favourite swiped once must offer "Remove" the second time.
     val acts by rememberUpdatedState(right to left)
@@ -282,15 +281,14 @@ internal fun Modifier.swipeable(
                 val act = if (s.armed) (if (x > 0f) acts.first else acts.second) else null
                 when {
                     act == null -> settle()
-                    gone && !AppMotion.reduce -> s.settling = scope.launch {
+                    gone -> s.settling = scope.launch {
                         // Off the side it was going, at the speed of a short slide, and only then acted on:
                         // the rows under it close up once the queue has changed.
                         val to = kotlin.math.sign(x) * size.width.toFloat()
-                        androidx.compose.animation.core.animate(s.offset.floatValue, to, animationSpec = tween(SWIPE_GONE_MS, easing = androidx.compose.animation.core.FastOutLinearInEasing)) { v, _ -> s.offset.floatValue = v }
+                        androidx.compose.animation.core.animate(s.offset.floatValue, to, animationSpec = AppMotion.leave()) { v, _ -> s.offset.floatValue = v }
                         act.action()
                         comeBackIfStill()
                     }
-                    gone -> s.settling = scope.launch { s.offset.floatValue = kotlin.math.sign(x) * size.width.toFloat(); act.action(); comeBackIfStill() }
                     else -> { act.action(); settle() }
                 }
             },
@@ -320,7 +318,6 @@ internal fun Modifier.swipeable(
 }
 
 /** How long a row taken away by its swipe takes to leave from where the finger let go. */
-private const val SWIPE_GONE_MS = 200
 private const val SWIPE_GONE_WAIT_MS = 1_500L
 
 /**
@@ -383,7 +380,7 @@ internal fun SwipeBackdrop(
     val c = colours ?: remember(scheme) {
         SwipeColours({ scheme.surfaceContainerHighest }, { scheme.onSurface }, { scheme.onSurfaceVariant }, { scheme.background })
     }
-    val armed by animateFloatAsState(if (s.armed) 1f else 0f, tween(140), label = "swipe armed")
+    val armed by animateFloatAsState(if (s.armed) 1f else 0f, AppMotion.fadeIn(), label = "swipe armed")
     val fill = { androidx.compose.ui.graphics.lerp(c.fill(), c.armedFill(), armed) }
     val ink = androidx.compose.ui.graphics.ColorProducer { androidx.compose.ui.graphics.lerp(c.ink(), c.armedInk(), armed) }
     val pop by animateFloatAsState(if (s.armed) 1.15f else 1f, spring(dampingRatio = 0.45f, stiffness = 700f), label = "swipe pop")
@@ -414,18 +411,13 @@ internal fun SwipeBackdrop(
 /** A swipe's strip: plain, and once far enough to act; its words and icon the same. Read in the draw phase. */
 internal class SwipeColours(val fill: () -> Color, val armedFill: () -> Color, val ink: () -> Color, val armedInk: () -> Color)
 
-/**
- * One track. Numbered rows (an album) carry no artwork; everywhere else the cover leads. The row ends
- * in a hairline that starts where the text starts, which is what keeps a long list from reading as a
- * stack of boxes.
- */
+/** One track. Numbered rows (an album) carry no artwork; everywhere else the cover leads. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SongRow(
     song: Song, coverUrl: String?, onClick: () -> Unit, onMenu: () -> Unit, modifier: Modifier = Modifier,
-    number: Int? = null, playing: Boolean = false, downloaded: Boolean = false,
+    number: Int? = null, playing: Boolean = false, downloaded: Boolean = false, pageWhole: Boolean = false,
     selected: Boolean = false, onLongClick: (() -> Unit)? = null, swipeRight: RowSwipe? = null, swipeLeft: RowSwipe? = null,
-    divider: Boolean = true,
     /** The second line: the song's own (its explicit mark and artist), or what the page makes of it (an album's, without its own artist). */
     line: String = song.line,
 ) {
@@ -462,29 +454,28 @@ fun SongRow(
                 if (line.isNotEmpty()) RemoteLine(line, song.isExternal, MaterialTheme.typography.bodySmall)
             }
             val tint = scheme.onSurfaceVariant
-            // Every row's marks sit in columns of their own, the same width on every row: the heart, then
-            // the download ring or tick, then the time, then the menu. A list of favourites then puts all
-            // its hearts one above another - placed after the title, the heart moved with the width of
+            // Every row's marks sit in columns of their own, the same width on every row: the download
+            // ring or tick, then the seal, then the time, then the menu. A list of favourites then puts all
+            // its seals one above another - placed after the title, the seal moved with the width of
             // the time beside it, "3:44" against "12:05" - and a mark arriving or leaving moves nothing
-            // else. The time is last before the menu and in a box of one fixed width, its digits held to
+            // else, so a song without a seal keeps its tick in the download column. The time is last before the menu and in a box of one fixed width, its digits held to
             // the right edge, so it sits against the ⋯ rather than with an empty download slot between.
             // A jam guest's seals would be the host's: none are shown.
             val rules = LocalRules.current
-            Box(Modifier.padding(start = 4.dp).width(15.dp), Alignment.Center) {
+            Box(Modifier.padding(start = 4.dp).width(MARK), Alignment.Center) { DownloadSlot(song.id, downloaded, tint, pageWhole) }
+            Box(Modifier.padding(start = MARK_GAP).width(MARK), Alignment.Center) {
                 if (rules.stars && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)) Icon(Kanji.Sealed, say.favourite, Modifier.size(15.dp), LocalLook.current.color(CoverLook.ACCENT))
             }
-            Box(Modifier.width(MARK_SLOT), Alignment.Center) { DownloadSlot(song.id, downloaded, tint) }
             // A song a jam guest asked for says so in its time's place until the host decides.
             val asked = rules.asks && song.id in LocalAsked.current.value
             Text(
                 if (asked) words(R.string.jam_asked_mark) else if (song.duration > 0u) duration(song.duration.toLong()) else "",
-                Modifier.widthIn(min = TIME_SLOT), textAlign = TextAlign.End,
+                Modifier.padding(start = MARK_GAP).widthIn(min = TIME_SLOT), textAlign = TextAlign.End,
                 style = MaterialTheme.typography.bodySmall, color = if (asked) scheme.onSurface else tint, maxLines = 1, softWrap = false,
             )
             IconButton(onMenu, Modifier.size(40.dp)) { Icon(Iconoir.MoreHoriz, say.more, Modifier.size(20.dp), tint) }
         }
       }
-        if (divider) Hairline(startIndent = if (number != null) Space.gutter + 40.dp else Space.gutter + 56.dp)
     }
 }
 
@@ -617,6 +608,8 @@ fun LazyListScope.songRows(
     arrival: State<Float>? = null,
     /** The page [songs] are the list of: a tap that plays them from the row starts that page's queue. */
     from: dev.nori.music.ffi.model.PageOrigin? = null,
+    /** The page's head says every one of [songs] is downloaded ([rememberPageWhole]): their rows carry no mark of it. */
+    pageWhole: Boolean = false,
 ) {
     val (onRight, onLeft) = actions.swipes
     val (playingId, downloaded, selected, menu) = list
@@ -633,11 +626,7 @@ fun LazyListScope.songRows(
         val s = songs[at]
         val moving = animated || appear
         val sheet = LocalPlayerSheet.current
-        val modifier = when {
-            !moving -> Modifier
-            AppMotion.reduce -> Modifier.animateItem(null, null, null)
-            else -> Modifier.animateItem()
-        }
+        val modifier = if (moving) itemMotion() else Modifier
         SongRow(
             s, if (numbered) null else remember(s) { cover(s) },
             onClick = { if (actions.tap(songs, at, from, playing = s.id == playingId)) sheet.open() }, onMenu = { menu(s) },
@@ -645,10 +634,16 @@ fun LazyListScope.songRows(
             number = if (numbered) s.track.toInt() else null, playing = s.id == playingId, downloaded = s.id in downloaded,
             selected = s.id in selected, onLongClick = { menu(s) },
             swipeRight = rowSwipe(onRight, s, actions), swipeLeft = rowSwipe(onLeft, s, actions),
-            divider = k < count - 1,
-            line = lines?.getOrNull(k) ?: s.line,
+            line = lines?.getOrNull(k) ?: s.line, pageWhole = pageWhole,
         )
     }
+}
+
+/** Whether every one of [songs] is downloaded, so the page head's download mark speaks for their rows. */
+@Composable
+fun rememberPageWhole(songs: List<Song>, done: Set<String>): Boolean {
+    val downloads = LocalRules.current.downloads
+    return remember(songs, done, downloads) { downloads && songs.isNotEmpty() && songs.all { it.id in done } }
 }
 
 /** The icon and words a swipe setting uncovers under [song]'s row, and the action; null when that side does nothing. */
@@ -727,19 +722,17 @@ fun RemoteLine(
     }
 }
 
-/** A round portrait, for artists. */
+/** A round portrait, for artists; [remote] leads the line under it with the cloud, as a [CoverCard]'s. */
 @Composable
-fun ArtistCard(name: String, subtitle: String, coverUrl: String?, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null) {
+fun ArtistCard(name: String, subtitle: String, coverUrl: String?, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, remote: Boolean = false, onLongClick: (() -> Unit)? = null) {
     Column(modifier.width(size).combinedClickable(onClick = onClick, onLongClick = onLongClick), horizontalAlignment = Alignment.CenterHorizontally) {
         Cover(coverUrl, size, radius = size / 2)
+        // Two lines: names that start alike ("Aphex Twin", "Aphex Twin & …") are told apart by how they end.
         Text(
-            name, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
+            name, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 7.dp),
         )
-        if (subtitle.isNotEmpty()) Text(
-            subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (subtitle.isNotEmpty() || remote) RemoteLine(subtitle, remote, MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -759,43 +752,33 @@ fun AlbumCard(album: Album, coverUrl: String?, size: Dp, onClick: () -> Unit, mo
 fun SectionTitle(text: String, modifier: Modifier = Modifier, onMore: (() -> Unit)? = null, compact: Boolean = false) = SectionHeader(text, modifier, onMore, compact = compact)
 
 /**
- * Content that was not on the page at first (the songs under a hero hint) fades and rises once, as one
- * block. The body of a page is many lazy items - a row each, so a long list composes only what is on
- * screen - and they share this one clock, started when [ready] turns true: each item reads it in its draw
- * phase ([arriving]), so the run redraws the rows on screen and recomposes none of them, and a row
- * composed later (scrolled to mid-run) joins wherever the block is. Once run it stays at 1: rows scrolled
- * to afterwards are simply there - and so is the whole body when the page is come back to, which composes
- * it again: run a second time, it showed as the page changing once more after a swipe back had already
- * brought it.
+ * Content that was not on the page at first (the songs under a hero hint) fades in once, as one block, where
+ * it stands: it was not touched, so it does not move. The body of a page is many lazy items - a row each, so
+ * a long list composes only what is on screen - and they share this one clock, started when [ready] turns
+ * true: each item reads it in its draw phase ([arriving]), so the fade redraws the rows on screen and
+ * recomposes none of them, and a row composed later (scrolled to mid-fade) joins wherever the block is. Once
+ * run it stays at 1: rows scrolled to afterwards are simply there - and so is the whole body when the page
+ * is come back to, which composes it again: run a second time, it showed as the page changing once more
+ * after a swipe back had already brought it.
  */
 @Composable
 fun rememberArrival(ready: Boolean): State<Float> {
     var arrived by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    // With movement reduced there is no run: the body is simply there on its first frame.
-    val progress = remember { Animatable(if (AppMotion.reduce || arrived) 1f else 0f) }
+    val progress = remember { Animatable(if (arrived) 1f else 0f) }
     LaunchedEffect(ready) {
         if (!ready || progress.value >= 1f) return@LaunchedEffect
         arrived = true
-        if (AppMotion.reduce) progress.snapTo(1f)
-        else progress.animateTo(1f, tween(ARRIVE_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+        progress.animateTo(1f, AppMotion.fadeIn())
     }
     return progress.asState()
 }
-
-/** How long a page's body takes to arrive, ms. */
-private const val ARRIVE_MS = 320
-
-/** How far a page's body rises as it arrives: 6 % of an album page's height. */
-private val ARRIVE_RISE = 36.dp
 
 /**
  * One item of a page's arriving body ([rememberArrival]), read in the draw phase. The alpha is applied to
  * each thing drawn rather than through a layer of its own, so a row costs no offscreen buffer while it fades.
  */
 fun Modifier.arriving(arrival: State<Float>): Modifier = graphicsLayer {
-    val t = arrival.value
-    alpha = t
-    translationY = (1f - t) * ARRIVE_RISE.toPx()
+    alpha = arrival.value
     compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
 }
 
@@ -807,7 +790,7 @@ fun <T> LoadBox(load: Load<T>, modifier: Modifier = Modifier, content: @Composab
     // But only once a loader has really been seen. The dots stay invisible for their first quarter
     // second (LoadingDots), so data that arrives inside that window replaces nothing anyone saw - and
     // a fade there is not a fade over a loader, it is the page's content fading up out of the page's
-    // own background while the page is still sliding in (PageMotion): a black card arriving, and then
+    // own background while the page is still sliding in (Pages): a black card arriving, and then
     // the album appearing on it. Quick data snaps in; only a page that was waiting gets the fade.
     val opened = remember { android.os.SystemClock.uptimeMillis() }
     androidx.compose.animation.AnimatedContent(
@@ -817,8 +800,7 @@ fun <T> LoadBox(load: Load<T>, modifier: Modifier = Modifier, content: @Composab
                 androidx.compose.animation.fadeIn(androidx.compose.animation.core.snap()) togetherWith
                     androidx.compose.animation.fadeOut(androidx.compose.animation.core.snap())
             } else {
-                androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(260, delayMillis = 60)) togetherWith
-                    androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(160))
+                androidx.compose.animation.fadeIn(AppMotion.fadeIn()) togetherWith androidx.compose.animation.fadeOut(AppMotion.fadeOut())
             }
         },
         label = "load",
@@ -890,4 +872,5 @@ fun prefetchCovers(context: android.content.Context, urls: List<String?>) {
  * The time's column: wide enough for "59:59" in the row's small type, so every ordinary track's time
  * ends in the same place. A track over an hour is wider and pushes left, which is rare enough to allow.
  */
-private val TIME_SLOT = 36.dp
+/** A time's width that "0:00" fills: the marks sit one [MARK_GAP] from most songs' time, and a longer one pushes them along. */
+private val TIME_SLOT = 26.dp

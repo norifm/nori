@@ -1,9 +1,6 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
@@ -112,13 +109,6 @@ private fun AppStatusBar() {
     }
 }
 
-/** The app's settle: most of the travel early, no overshoot (PageMotion's). */
-private val Settle = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-private const val ENTER_MS = 240
-private const val EXIT_MS = 170
-/** With motion reduced: a short fade, never a cut. */
-private const val PLAIN_MS = 120
-
 /** How a dialog arrives: a card in the middle over a scrim, or a page over the whole screen. */
 enum class DialogStyle { Card, Page }
 
@@ -161,12 +151,8 @@ fun <T : Any> NoriDialog(
         AppStatusBar()
         val shownAt = remember { Animatable(0f) }
         LaunchedEffect(open) {
-            val plain = AppMotion.reduce
-            val ms = if (plain) PLAIN_MS else if (open) ENTER_MS else EXIT_MS
             // The dialog's composition is the window's own; run on the app's clock whatever it inherited.
-            withContext(AppMotion) {
-                shownAt.animateTo(if (open) 1f else 0f, tween(ms, easing = if (plain) LinearEasing else Settle))
-            }
+            withContext(AppMotion) { shownAt.animateTo(if (open) 1f else 0f, if (open) AppMotion.show() else AppMotion.fadeOut()) }
             if (!open) held = null
         }
         val plain = AppMotion.reduce
@@ -360,9 +346,8 @@ fun NoriSheet(visible: Boolean, onDismissRequest: () -> Unit, skipPartiallyExpan
 
 /**
  * A bar that takes its place in the layout while [value] is not null - the selection bar over the mini
- * player. It opens its own height and fades in on the app's clock (in: 240 ms, out: 170 ms, a 120 ms
- * fade with motion reduced, like [NoriDialog]), rising from behind what is under it, and closes the
- * same way, showing the last value while it leaves; what is under it moves with the room it takes
+ * player. It opens its own height and fades in, as [NoriDialog] arrives, rising from behind what is under
+ * it, and closes the same way, showing the last value while it leaves; what is under it moves with the room it takes
  * rather than jumping. A leaving bar takes no taps. Closed, it is one remembered state and an early return.
  */
 @Composable
@@ -373,11 +358,7 @@ fun <T : Any> NoriBar(value: T?, modifier: Modifier = Modifier, content: @Compos
     val open = value != null
     val shownAt = remember { Animatable(0f) }
     LaunchedEffect(open) {
-        val plain = AppMotion.reduce
-        val ms = if (plain) PLAIN_MS else if (open) ENTER_MS else EXIT_MS
-        withContext(AppMotion) {
-            shownAt.animateTo(if (open) 1f else 0f, tween(ms, easing = if (plain) LinearEasing else Settle))
-        }
+        withContext(AppMotion) { shownAt.animateTo(if (open) 1f else 0f, if (open) AppMotion.show() else AppMotion.fadeOut()) }
         if (!open) held = null
     }
     Box(

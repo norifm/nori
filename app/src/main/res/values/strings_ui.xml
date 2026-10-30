@@ -37,6 +37,7 @@
     <string name="report_problem_detail">Shares the app\'s log of the last day, what is playing and the settings you changed, to attach to an issue</string>
     <string name="report_failed">The report could not be written</string>
     <string name="clear">Clear</string>
+    <string name="clear_all">Clear all</string>
     <string name="reset">Reset</string>
     <string name="open">Open</string>
     <string name="import_it">Import</string>
@@ -309,16 +310,11 @@
         <item quantity="one">%d release</item>
         <item quantity="other">%d releases</item>
     </plurals>
-    <plurals name="folders">
-        <item quantity="one">%d folder</item>
-        <item quantity="other">%d folders</item>
-    </plurals>
     <string name="selected_count">%1$d selected</string>
     <!-- The selection bar's count where "%1$d selected" does not fit on one line. -->
     <string name="selected_count_short">%1$d</string>
     <string name="download_queue_to_go">%1$d to go</string>
     <string name="decade_name">%1$ds</string>
-    <string name="folder_untitled">Folder</string>
     <string name="caption_explicit">explicit</string>
     <string name="disc_heading">Disc %1$d</string>
     <string name="disc_heading_titled">Disc %1$d · %2$s</string>
@@ -503,9 +499,9 @@
     <!-- The "For you" mixes (mixes::board). -->
     <string name="mix_quick_picks">Quick picks</string>
     <string name="mix_discover">Discover</string>
-    <string name="mix_discover_weekly">Discover Weekly</string>
+    <string name="mix_rewind">Rewind</string>
     <string name="mix_listen_again">Listen again</string>
-    <string name="mix_top">Your top songs</string>
+    <string name="mix_top">Top songs</string>
     <string name="mix_unknown">There is no mix called %1$s</string>
     <!-- The ready-made smart playlists (smart.rs). -->
     <string name="smart_most_played">Most played</string>
@@ -712,8 +708,6 @@
     <string name="continue_label">Continue</string>
     <string name="resume">Resume</string>
     <string name="offer_place">%1$s · %2$d of %3$d</string>
-    <string name="mix_line_made">Made for you</string>
-    <string name="mix_line_favourites">Your favorites</string>
     <string name="plugins">Plugins</string>
     <string name="plugins_summary">Music sources, sounds and more</string>
     <string name="plugins_empty">Plugins add music sources, sounds and more.</string>

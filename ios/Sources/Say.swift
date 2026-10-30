@@ -43,7 +43,7 @@ enum Say {
     }
 
     static func mix(_ code: Int) -> String {
-        ["Favorites", "Quick picks", "Discover", "Discover Weekly", "Listen again", "Your top songs"][safe: code] ?? ""
+        ["Favorites", "Quick picks", "Discover", "Rewind", "Listen again", "Top songs"][safe: code] ?? ""
     }
 
     /// A long list's order, by the name the core keeps it under: album orders by `AlbumSort::name`,
@@ -214,8 +214,6 @@ enum Say {
         default: return download
         }
     }
-    static let mixLineMade = "Made for you"
-    static let mixLineFavourites = "Your favorites"
     static let continueLabel = "Continue"
     static let resume = "Resume"
     /// The offered queue's line: "Artist · 3 of 12".
@@ -379,6 +377,7 @@ enum Say {
     static let newPlaylist = "New playlist"
     static let create = "Create"
     static let cancel = "Cancel"
+    static let sortBy = "Sort by"
     static let sleepTimer = "Sleep timer"
     static let detailsTitle = "Details"
     static let excludedFromMixes = "Excluded from mixes"

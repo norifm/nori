@@ -76,22 +76,6 @@
     gap: 8px;
     padding-right: 8px;
   }
-  /* The hairline starts where the title does. */
-  li::after {
-    content: "";
-    position: absolute;
-    left: 74px;
-    right: 0;
-    bottom: 0;
-    height: 1px;
-    background: var(--line);
-  }
-  .numbered li::after {
-    left: 60px;
-  }
-  li:last-child::after {
-    display: none;
-  }
   li:hover {
     background: var(--hover);
   }
@@ -208,12 +192,6 @@
     }
     .album {
       display: none;
-    }
-    li::after {
-      left: 70px;
-    }
-    .numbered li::after {
-      left: 56px;
     }
   }
   /* The song playing: three bars in the accent, moving while it plays. */

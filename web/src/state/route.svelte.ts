@@ -44,9 +44,11 @@ export function go(top: string, arg = "") {
   location.hash = href(top, arg);
 }
 
-/** Searches for `q`: on the search page the address follows the field, without a step back for each key. */
+/** Searches for `q`: on the search page the address follows the field, without a step back for each key.
+ *  A search's first letters are one step, so Back comes to the blank search page rather than before it. */
 export function searchFor(q: string) {
   if (route.top !== "search") return go("search", q);
-  history.replaceState(null, "", href("search", q));
+  if (!route.arg.trim() && q.trim()) history.pushState(null, "", href("search", q));
+  else history.replaceState(null, "", href("search", q));
   route.arg = q;
 }

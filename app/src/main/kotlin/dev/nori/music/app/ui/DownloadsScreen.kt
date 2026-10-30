@@ -6,14 +6,12 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -33,7 +31,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -95,7 +92,7 @@ val LocalDownloadMarks = staticCompositionLocalOf<DownloadMarks?> { null }
 fun rememberDownloadMarks(actions: ActionsViewModel): DownloadMarks {
     val state = actions.downloads.collectAsStateWithLifecycle()
     val marks = actions.downloadMarks.collectAsStateWithLifecycle()
-    val plain = rememberUpdatedState(reduceMotion())
+    val plain = rememberUpdatedState(AppMotion.reduce)
     return remember(state, marks, plain) { DownloadMarks(state, marks, plain) }
 }
 
@@ -104,21 +101,21 @@ private typealias Glyph = dev.nori.music.ffi.library.DownloadGlyph
 
 /** The core's answer for each phase (or none) and state, asked once each: a row asks on every composition. */
 private object Glyphs {
-    private val made = arrayOfNulls<Glyph>((DownloadPhase.entries.size + 1) * 4)
-    fun of(phase: DownloadPhase?, downloaded: Boolean, pending: Boolean): Glyph {
-        val i = ((phase?.ordinal ?: -1) + 1) * 4 + (if (downloaded) 2 else 0) + (if (pending) 1 else 0)
-        return made[i] ?: dev.nori.music.ffi.library.downloadGlyph(phase, downloaded, pending).also { made[i] = it }
+    private val made = arrayOfNulls<Glyph>((DownloadPhase.entries.size + 1) * 8)
+    fun of(phase: DownloadPhase?, downloaded: Boolean, pending: Boolean, pageWhole: Boolean): Glyph {
+        val i = ((phase?.ordinal ?: -1) + 1) * 8 + (if (pageWhole) 4 else 0) + (if (downloaded) 2 else 0) + (if (pending) 1 else 0)
+        return made[i] ?: dev.nori.music.ffi.library.downloadGlyph(phase, downloaded, pending, pageWhole).also { made[i] = it }
     }
 }
 
 /** The last glyph a row showed, kept so it can fade out rather than vanish. A plain field: never drawn from. */
 private class LastGlyph(var value: Glyph, val bornEmpty: Boolean)
 
-/** How big the mark is: the size of the downloaded icon it grew out of. */
-private val MARK = 15.dp
+/** How big a row's marks are, the seal's and the download's alike. */
+val MARK = 15.dp
 
-/** The fixed width a song row gives its download mark, so the marks of every row line up. */
-val MARK_SLOT = 26.dp
+/** The space between a row's marks, and between them and its time. */
+val MARK_GAP = 8.dp
 
 /**
  * Where a song row says how its download stands: a faint empty ring while it waits, a ring closing
@@ -127,14 +124,14 @@ val MARK_SLOT = 26.dp
  * screen grows in, and one that goes shrinks away, so nothing snaps into place.
  */
 @Composable
-fun DownloadSlot(id: String, downloaded: Boolean, tint: Color) {
+fun DownloadSlot(id: String, downloaded: Boolean, tint: Color, pageWhole: Boolean = false) {
     val all = LocalDownloadMarks.current
     if (all == null) {
-        if (downloaded) Icon(Iconoir.CheckCircle, say.downloaded, Modifier.size(MARK), tint)
+        if (downloaded && !pageWhole) Icon(Iconoir.CheckCircle, say.downloaded, Modifier.size(MARK), tint)
         return
     }
     val mark = all.marks.value[id]
-    val glyph = Glyphs.of(mark?.phase, downloaded, id in all.state.value.pendingIds)
+    val glyph = Glyphs.of(mark?.phase, downloaded, id in all.state.value.pendingIds, pageWhole)
     val last = remember { LastGlyph(glyph, glyph == Glyph.NONE) }
     if (glyph != Glyph.NONE) last.value = glyph
     if (last.value == Glyph.NONE) return
@@ -146,7 +143,7 @@ private fun MarkBody(glyph: Glyph, drawn: Glyph, mark: DownloadMark?, growIn: Bo
     val presence = remember { Animatable(if (growIn) 0f else 1f) }
     val target = if (glyph == Glyph.NONE) 0f else 1f
     LaunchedEffect(target) {
-        if (presence.value != target) presence.animateTo(target, if (plain) snap() else tween(240, easing = FastOutSlowInEasing))
+        if (presence.value != target) presence.animateTo(target, if (target == 1f) AppMotion.show() else AppMotion.fadeOut())
     }
     // The width is read in the layout phase and the fade in the draw phase: growing in re-lays out
     // this one row for a quarter of a second and recomposes nothing.
@@ -171,10 +168,9 @@ private fun MarkBody(glyph: Glyph, drawn: Glyph, mark: DownloadMark?, growIn: Bo
     AnimatedContent(
         drawn, box,
         transitionSpec = {
-            if (plain) fadeIn(snap()) togetherWith fadeOut(snap())
             // The finished icon rises out of the closing ring rather than replacing it.
-            else (fadeIn(tween(220, delayMillis = 60)) + scaleIn(tween(260, easing = FastOutSlowInEasing), initialScale = 0.6f)) togetherWith
-                (fadeOut(tween(180)) + scaleOut(tween(220), targetScale = 1.2f)) using SizeTransform(clip = false)
+            (AppMotion.appear() + scaleIn(AppMotion.move(), initialScale = 0.6f)) togetherWith
+                (AppMotion.vanish() + scaleOut(AppMotion.move(), targetScale = 1.2f)) using SizeTransform(clip = false)
         },
         label = "download mark",
     ) { g ->
@@ -197,7 +193,7 @@ fun DownloadRing(progress: StateFlow<Float>?, size: Dp, stroke: Dp, track: Color
     val value = progress?.collectAsStateWithLifecycle()?.value
     val known = value == null || value >= 0f
     val still = plain || LocalPageCovered.current
-    Crossfade(known, modifier.size(size), animationSpec = if (plain) snap() else tween(200), label = "ring") { determinate ->
+    Crossfade(known, modifier.size(size), animationSpec = AppMotion.fadeIn(), label = "ring") { determinate ->
         if (determinate) {
             val shown = remember { Animatable(0f) }
             val to = (value ?: 0f).coerceAtLeast(0f)
@@ -238,7 +234,7 @@ private fun DrawScope.arc(color: Color, stroke: Dp, start: Float, sweep: Float) 
 
 /** The line under the title; its own scope, so the 1 s beat recomposes only this line. */
 @Composable
-private fun DownloadsSummary(s: DownloadSections?, plain: Boolean) {
+private fun DownloadsSummary(s: DownloadSections?) {
     // Speed and time left move every second while something downloads; the words are the core's,
     // asked again on this beat only while the screen is seen and something is running.
     val running = (s?.active?.size ?: 0) > 0
@@ -250,7 +246,7 @@ private fun DownloadsSummary(s: DownloadSections?, plain: Boolean) {
     val summary = s?.let { beat.let { _ -> DownloadLines.summary(res, it.active.size, it.queued.size, it.failed.size) } }.orEmpty()
     AnimatedContent(
         summary, Modifier.padding(start = Space.gutter, end = Space.gutter, bottom = 6.dp),
-        transitionSpec = { fadeIn(tween(if (plain) 0 else 180)) togetherWith fadeOut(tween(if (plain) 0 else 120)) },
+        transitionSpec = { AppMotion.appear() togetherWith AppMotion.vanish() },
         label = "summary",
     ) { text ->
         Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
@@ -265,7 +261,7 @@ private fun DownloadsSummary(s: DownloadSections?, plain: Boolean) {
 @Composable
 fun DownloadsScreen(actions: ActionsViewModel) {
     val sections by actions.downloadSections.collectAsStateWithLifecycle()
-    val plain = reduceMotion()
+    val plain = AppMotion.reduce
     val cover = { id: String? -> actions.cover(id, CoverSize.ROW) }
     var confirm by remember { mutableStateOf(false) }
     val s = sections
@@ -282,7 +278,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
     }
     Column {
         LargeTitle(say.downloads) {
-            AnimatedVisibility(unfinished > 0, enter = fadeIn(tween(if (plain) 0 else 200)), exit = fadeOut(tween(if (plain) 0 else 200))) {
+            AnimatedVisibility(unfinished > 0, enter = AppMotion.appear(), exit = AppMotion.vanish()) {
                 Text(
                     say.stopAll,
                     Modifier.clip8().clickable { if (asks) confirm = true else actions.cancelAllDownloads() }.padding(horizontal = 8.dp, vertical = 8.dp),
@@ -290,7 +286,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
                 )
             }
         }
-        DownloadsSummary(s, plain)
+        DownloadsSummary(s)
         // Until the lists are worked out there is nothing to say, not "no downloads" for a frame.
         if (s == null) return@Column
         val scroll = rememberLazyListState()
@@ -299,12 +295,12 @@ fun DownloadsScreen(actions: ActionsViewModel) {
             // row: its second line cross-fades rather than being drawn anew.
             fun LazyListScope.section(key: String, title: String, songs: List<Song>, section: DownloadPhase, action: (@Composable RowScope.() -> Unit)? = null) {
                 if (songs.isEmpty()) return
-                item(key = "h-$key", contentType = "header") { SectionHeader(title, moving(plain), action = action) }
+                item(key = "h-$key", contentType = "header") { SectionHeader(title, itemMotion(), action = action) }
                 itemsIndexed(songs, key = { _, song -> song.id }, contentType = { _, _ -> "download" }) { i, song ->
                     // A saved song still being processed is listed with the downloading ones and says what it waits for.
                     val phase = LocalDownloadMarks.current?.marks?.value?.get(song.id)?.phase?.takeIf { section == DownloadPhase.DOWNLOADING && it.processing } ?: section
                     DownloadRow(
-                        song, cover(song.coverArt), phase, i < songs.lastIndex, plain, moving(plain),
+                        song, cover(song.coverArt), phase, i < songs.lastIndex, itemMotion(),
                         sub = if (phase == DownloadPhase.DOWNLOADING) activeSub(song) else null,
                         onClick = if (phase == DownloadPhase.DONE) ({ actions.play(songs, i, DOWNLOADED_SONGS) }) else null,
                     ) {
@@ -314,7 +310,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
                                 IconButton({ actions.cancelDownloads(listOf(song)) }, Modifier.size(40.dp)) { Icon(Iconoir.Xmark, say.remove, Modifier.size(19.dp), MaterialTheme.colorScheme.onSurfaceVariant) }
                             }
                             // The ring hands over to the downloaded icon as the song moves to the finished ones.
-                            else -> Crossfade(section == DownloadPhase.DONE, animationSpec = if (plain) snap() else tween(200), label = "trailing") { done ->
+                            else -> Crossfade(section == DownloadPhase.DONE, animationSpec = AppMotion.fadeIn(), label = "trailing") { done ->
                                 if (done) Box(Modifier.size(40.dp), Alignment.Center) { Icon(Iconoir.CheckCircle, say.downloaded, Modifier.size(MARK), MaterialTheme.colorScheme.onSurfaceVariant) }
                                 else StopControl(song, plain, stoppable = !phase.processing) { actions.cancelDownloads(listOf(song)) }
                             }
@@ -340,7 +336,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
             section("finished", say.finished, finished, DownloadPhase.DONE)
             if (s.active.isEmpty() && s.queued.isEmpty() && s.failed.isEmpty() && s.finished.isEmpty()) item(key = "empty", contentType = "empty") {
                 Column(
-                    Modifier.fillMaxWidth().then(moving(plain)).padding(horizontal = Space.gutter * 2, vertical = 96.dp),
+                    Modifier.fillMaxWidth().then(itemMotion()).padding(horizontal = Space.gutter * 2, vertical = 96.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Icon(Iconoir.DataTransferDown, null, Modifier.size(44.dp), MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
@@ -372,7 +368,7 @@ private fun activeSub(song: Song): String {
 /** A song on the downloads screen: the same proportions as a row in any song list. */
 @Composable
 private fun DownloadRow(
-    song: Song, coverUrl: String?, phase: DownloadPhase, divider: Boolean, plain: Boolean, modifier: Modifier = Modifier,
+    song: Song, coverUrl: String?, phase: DownloadPhase, divider: Boolean, modifier: Modifier = Modifier,
     sub: String? = null,
     onClick: (() -> Unit)? = null, trailing: @Composable RowScope.() -> Unit,
 ) {
@@ -389,7 +385,7 @@ private fun DownloadRow(
                 Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge, color = scheme.onSurface)
                 // The second line says what went wrong when something did, what a saved song is still
                 // waiting for, how an arrival is doing while it is, otherwise the artist.
-                Crossfade(phase.takeIf { it == DownloadPhase.FAILED || it.processing }, animationSpec = if (plain) snap() else tween(200), label = "subtitle") { said ->
+                Crossfade(phase.takeIf { it == DownloadPhase.FAILED || it.processing }, animationSpec = AppMotion.fadeIn(), label = "subtitle") { said ->
                     Text(
                         when (said) {
                             DownloadPhase.FAILED -> couldNot
@@ -420,7 +416,7 @@ private fun StopControl(song: Song, plain: Boolean, stoppable: Boolean, onStop: 
     val mark = all?.marks?.value?.get(song.id)
     val scheme = MaterialTheme.colorScheme
     // A saved song being processed has nothing to stop: its ring turns and the square fades away.
-    val square by animateFloatAsState(if (stoppable) 1f else 0f, if (plain) snap() else tween(200), label = "stop")
+    val square by animateFloatAsState(if (stoppable) 1f else 0f, AppMotion.fadeIn(), label = "stop")
     Box(
         Modifier.size(40.dp).clip8().clickable(stoppable, onClickLabel = say.stopDownload, onClick = onStop),
         Alignment.Center,
@@ -435,8 +431,4 @@ private val TURNING = kotlinx.coroutines.flow.MutableStateFlow(-1f)
 
 private fun Modifier.clip8() = clip(RoundedCornerShape(8.dp))
 
-/** Rows slide to their new place and fade in and out; with reduced motion they simply are where they are. */
-private fun LazyItemScope.moving(plain: Boolean): Modifier = if (plain) Modifier.animateItem(null, null, null) else Modifier.animateItem(
-    fadeInSpec = tween(220), placementSpec = tween(260, easing = FastOutSlowInEasing), fadeOutSpec = tween(160),
-)
 

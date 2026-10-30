@@ -1,11 +1,7 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -33,7 +29,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import dev.nori.music.app.vm.ActionsViewModel
@@ -86,15 +81,15 @@ fun SongMenu(
     // as the menu refusing to close. There is only ever one stage here, so back always dismisses.
     NoriSheet(song?.takeIf { !picking && !details && !sleeping && !timing }, onDismiss) { song ->
         val downloads by actions.downloads.collectAsState()
-        var more by remember { mutableStateOf(false) }
         // No stretch past the ends and no lift, here or in the other sheets: a menu that fits moved under every swipe.
         Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
             // The track leads the sheet, the way the row it came from looked.
             SheetHead(actions.cover(song.coverArt, CoverSize.ROW), song.title, remember(song) { say.songLine(song.artist, song.album) }) {
-                if (song.suffix.isNotEmpty()) Caption(remember(song) { say.songFormat(song) })
+                // The album page's way of saying it, in its own case: "FLAC 16/44.1", "MP3 320 kbps".
+                remember(song) { say.quality(song) }?.let { Caption(it, caps = false) }
             }
             // What someone opened this menu to do: queue it, keep it, or leave for where it came
-            // from. Everything one reaches for perhaps once a month waits under "More" below.
+            // from. Everything one reaches for perhaps once a month comes after it.
             // The heart comes first because it is the one thing here that is about the song rather than
             // about the queue, and it reads this session's marks rather than the snapshot the song was
             // handed over with: one starred a moment ago from the bar above still says so, without
@@ -151,32 +146,24 @@ fun SongMenu(
             val main = items.indices.filter { !items[it].more }
             val folded = items.indices.filter { items[it].more }
             SheetRows(head = true) {
-                main.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < main.lastIndex || folded.isNotEmpty()) }
-                // A jam guest's menu has nothing under "More".
-                if (folded.isNotEmpty()) {
-                    val ms = if (reduceMotion()) 0 else 220
-                    val turn by animateFloatAsState(if (more) 180f else 0f, animationSpec = tween(ms), label = "more")
-                    GroupRow(
-                        say.more, { more = !more }, icon = Iconoir.MoreHoriz, divider = more, minHeight = SHEET_ROW,
-                        // The chevron turns over rather than swapping for its opposite, so the row says which
-                        // way it is about to move before it moves.
-                        trailing = { Icon(Iconoir.NavArrowDown, null, Modifier.size(22.dp).graphicsLayer { rotationZ = turn }, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                    )
-                    // The lines take their room at once and fade in: growing them while the sheet grows around
-                    // them moved both at once.
-                    AnimatedVisibility(more, enter = if (ms == 0) EnterTransition.None else fadeIn(tween(ms)), exit = ExitTransition.None) {
-                        Column { folded.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < folded.lastIndex) } }
-                    }
-                }
+                main.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < main.lastIndex) }
+                // The rest follows in full after a hairline (a jam guest's menu has none): a menu shows everything.
+                if (folded.isNotEmpty()) Hairline(startIndent = GROUP_INSET)
+                folded.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < folded.lastIndex) }
                 PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.SONG, dev.nori.music.ffi.plugins.Items.Songs(listOf(song)), onDismiss)
             }
         }
     }
 }
 
-/** An album's, playlist's or artist's card menu: play it, play it next, add it to the queue. A jam guest only asks. */
+/**
+ * An album's, playlist's or artist's card menu: play it, play it next, add it to the queue, and delete a
+ * playlist of the account's own. A jam guest only asks.
+ */
 @Composable
 fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) {
+    var deleting by remember { mutableStateOf<dev.nori.music.ffi.model.Playlist?>(null) }
+    DeleteQuestion(deleting, { it.name }, { actions.deletePlaylist(it.id) }, { deleting = null })
     NoriSheet(card, onDismiss) { card ->
         val (title, line, art) = when (card) {
             is CardItem.OfAlbum -> Triple(card.album.name, card.album.subtitle, card.album.coverArt)
@@ -188,7 +175,9 @@ fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) 
             SheetRows(head = true) {
                 if (!LocalRules.current.asks) Item(say.play, Iconoir.Play) { actions.play(card); onDismiss() }
                 Item(say.menuPlayNext, Iconoir.PlaylistPlay) { actions.queue(card, next = true); onDismiss() }
-                Item(say.addToQueue, Iconoir.Playlist, divider = false) { actions.queue(card, next = false); onDismiss() }
+                val deletes = card is CardItem.OfPlaylist && actions.editable(card.playlist)
+                Item(say.addToQueue, Iconoir.Playlist, divider = deletes) { actions.queue(card, next = false); onDismiss() }
+                if (deletes) Item(say.delete, Iconoir.Trash, divider = false) { deleting = (card as CardItem.OfPlaylist).playlist; onDismiss() }
                 when (card) {
                     is CardItem.OfAlbum -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.ALBUM, dev.nori.music.ffi.plugins.Items.Albums(listOf(card.album)), onDismiss)
                     is CardItem.OfPlaylist -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.PLAYLIST, dev.nori.music.ffi.plugins.Items.Playlists(listOf(card.playlist)), onDismiss)
@@ -349,14 +338,13 @@ fun TrackInfo(song: Song, actions: ActionsViewModel, onDone: () -> Unit) {
     val rows = remember(song) { say.trackInfo(song) }
     val groups by androidx.compose.runtime.produceState(emptyList<dev.nori.music.ffi.plugins.InfoGroup>(), song) { value = actions.pluginSongInfo(song) }
     val uri = androidx.compose.ui.platform.LocalUriHandler.current
-    val ms = if (reduceMotion()) 0 else 220
     AlertCard(
         title = { Text(say.details) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 rows.forEach { (label, value) -> Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, Modifier.padding(bottom = 8.dp)) }
                 // Asked as the sheet opens: the plugins' lines come in under nori's own, never in place of them.
-                AnimatedVisibility(groups.isNotEmpty(), enter = if (ms == 0) EnterTransition.None else fadeIn(tween(ms)) + androidx.compose.animation.expandVertically(tween(ms)), exit = ExitTransition.None) {
+                AnimatedVisibility(groups.isNotEmpty(), enter = AppMotion.grow(), exit = ExitTransition.None) {
                     Column {
                         groups.forEach { g ->
                             Text(g.name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

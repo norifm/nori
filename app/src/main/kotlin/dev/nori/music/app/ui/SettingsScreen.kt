@@ -405,7 +405,6 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
         when (action) {
             "equalizer" -> nav.equalizer()
             "home-rows" -> nav.homeRows()
-            "library-sections" -> nav.librarySections()
             "system-effects" -> runCatching {
                 context.startActivity(
                     Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
@@ -524,11 +523,11 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                     LaunchedEffect(shownY, following) {
                         if (following) return@LaunchedEffect
                         if (!glide) slot.snapTo(shownY)
-                        else slot.animateTo(shownY, androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 200))
+                        else slot.animateTo(shownY, AppMotion.settle())
                     }
                     // Picked up and put down over a moment, not in a frame: its lift, shadow and plate.
                     val lift = androidx.compose.animation.core.animateFloatAsState(
-                        if (following) 1f else 0f, androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 160), label = "lift",
+                        if (following) 1f else 0f, AppMotion.fadeIn(), label = "lift",
                     )
                     val above by remember { androidx.compose.runtime.derivedStateOf { lift.value > 0f } }
                     Column(

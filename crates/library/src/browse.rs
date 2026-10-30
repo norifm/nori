@@ -134,28 +134,10 @@ pub fn home_rows_hidden(shown: Vec<HomeRow>) -> Vec<HomeRow> {
     HomeRow::every().iter().copied().filter(|r| !shown.contains(r)).collect()
 }
 
-/// The Library page's sections: those `chosen`, in their order, that the profile `offered`.
+/// The Library page's sections: every one it lists, in its order, that the profile `offered`.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn library_sections_shown(chosen: Vec<LibrarySection>, offered: Vec<LibrarySection>) -> Vec<LibrarySection> {
-    chosen.into_iter().filter(|s| offered.contains(s) && LibrarySection::LISTED.contains(s)).collect()
-}
-
-/// The sections the Library page could list that are not `chosen`, in the order a new install lists them.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn library_sections_hidden(chosen: Vec<LibrarySection>) -> Vec<LibrarySection> {
-    LibrarySection::LISTED.into_iter().filter(|s| !chosen.contains(s)).collect()
-}
-
-/// The chosen sections with the one at `from` moved to `to`; unchanged when either is not one.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn library_sections_moved(chosen: Vec<LibrarySection>, from: u32, to: u32) -> Vec<LibrarySection> {
-    moved(chosen, from, to)
-}
-
-/// The chosen sections with `section` switched on (at the end) or off.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn library_sections_toggled(chosen: Vec<LibrarySection>, section: LibrarySection, on: bool) -> Vec<LibrarySection> {
-    toggled(chosen, section, on)
+pub fn library_sections_shown(offered: Vec<LibrarySection>) -> Vec<LibrarySection> {
+    LibrarySection::LISTED.into_iter().filter(|s| offered.contains(s)).collect()
 }
 
 /// The pinned playlists (kept on the device: the server cannot star one) with `id` pinned or not.
@@ -269,6 +251,25 @@ pub fn album_sorts() -> Vec<AlbumSort> {
     ]
 }
 
+/// Which way a list runs in one of its orders, for the client to mark beside the order's name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum SortDirection {
+    Ascending,
+    Descending,
+    Shuffled,
+}
+
+/// The way the album grid runs in `sort`: names from A, counts and dates from the most.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn album_sort_direction(sort: AlbumSort) -> SortDirection {
+    match sort {
+        AlbumSort::ByName | AlbumSort::ByArtist | AlbumSort::ArtistRows | AlbumSort::ByGenre => SortDirection::Ascending,
+        AlbumSort::Newest | AlbumSort::Recent | AlbumSort::Frequent | AlbumSort::Starred | AlbumSort::ByYear => SortDirection::Descending,
+        AlbumSort::Random => SortDirection::Shuffled,
+    }
+}
+
 /// One entry of the list settings (`listPrefs`): which order a long list was left in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -279,6 +280,65 @@ pub struct ListPref {
 
 const ALBUMS_SORT_KEY: &str = "albums.sort";
 const SONGS_SORT_KEY: &str = "songs.sort";
+const ALBUMS_REVERSED_KEY: &str = "albums.reversed";
+const SONGS_REVERSED_KEY: &str = "songs.reversed";
+
+/// A long list whose order can be chosen and turned around.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum SortedList {
+    Albums,
+    Songs,
+}
+
+/// The order a list is in, by its place among the orders offered, and whether it runs against its own way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct SortPick {
+    pub order: u32,
+    pub reversed: bool,
+}
+
+/// What a tap on order `picked` does to a list in order `now`: the order it is in turns around (when it
+/// has a way to turn, `reversible`), another starts in its own way, so a first tap always gives what its
+/// name says (titles from A, the newest first).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn sort_picked(now: SortPick, picked: u32, reversible: bool) -> SortPick {
+    if picked == now.order {
+        SortPick { order: picked, reversed: now.reversed != reversible }
+    } else {
+        SortPick { order: picked, reversed: false }
+    }
+}
+
+/// The way a list runs: its order's own (`natural`), turned around while `reversed`.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn sort_way(natural: SortDirection, reversed: bool) -> SortDirection {
+    match (natural, reversed) {
+        (SortDirection::Ascending, true) => SortDirection::Descending,
+        (SortDirection::Descending, true) => SortDirection::Ascending,
+        (way, _) => way,
+    }
+}
+
+/// Whether `list` was left turned around (the list settings, `listPrefs`).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn sort_reversed_saved(prefs: std::collections::HashMap<String, String>, list: SortedList) -> bool {
+    prefs.get(reversed_key(list)).is_some_and(|v| v == "1")
+}
+
+/// The list setting that remembers whether `list` is turned around.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn sort_reversed_kept(list: SortedList, reversed: bool) -> ListPref {
+    ListPref { key: reversed_key(list).into(), value: if reversed { "1" } else { "0" }.into() }
+}
+
+fn reversed_key(list: SortedList) -> &'static str {
+    match list {
+        SortedList::Albums => ALBUMS_REVERSED_KEY,
+        SortedList::Songs => SONGS_REVERSED_KEY,
+    }
+}
 
 /// The album grid's order as it was left (A–Z the first time), kept by [`AlbumSort::name`]. A plain A–Z
 /// by artist comes back as [`AlbumSort::ArtistRows`]; any other order no longer offered (favorites) as A–Z.
@@ -416,16 +476,15 @@ pub struct LibrarySizes {
     pub local_search: u32,
     /// Songs a smart playlist is evaluated to.
     pub smart_songs: u32,
-    /// The server's random songs, and a genre's songs.
+    /// The server's random songs.
     pub random_songs: i32,
-    pub genre_songs: i32,
     /// Songs per request while the index is synced.
     pub sync_page: u32,
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn library_sizes() -> LibrarySizes {
-    LibrarySizes { search_songs: 40, search_albums: 20, search_artists: 10, local_search: 30, smart_songs: 500, random_songs: 100, genre_songs: 200, sync_page: 500 }
+    LibrarySizes { search_songs: 40, search_albums: 20, search_artists: 10, local_search: 30, smart_songs: 500, random_songs: 100, sync_page: 500 }
 }
 
 /// How many of a page's `total` songs show (an artist's, search's): a few until Show all is pressed
@@ -464,6 +523,15 @@ pub const SONG_SORTS: [(&str, &str, bool); 7] = [
 
 pub fn song_sorts() -> Vec<SongSortOption> {
     SONG_SORTS.iter().map(|(name, key, descending)| SongSortOption { name: (*name).into(), key: (*key).into(), descending: *descending }).collect()
+}
+
+/// The way the songs list runs in the order kept as `name`; an order it does not know runs from A.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn song_sort_direction(name: String) -> SortDirection {
+    match SONG_SORTS.iter().find(|(n, _, _)| *n == name) {
+        Some((_, _, true)) => SortDirection::Descending,
+        _ => SortDirection::Ascending,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -551,6 +619,15 @@ impl StatsPage {
     }
 }
 
+/// A genre with songs in the index: its name as tagged, how many songs, and one of their covers.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct GenreTile {
+    pub name: String,
+    pub song_count: u32,
+    pub cover_art: Option<String>,
+}
+
 /// A decade that has songs in the index: its first year and how many songs.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -562,6 +639,31 @@ pub struct Decade {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picking_the_order_again_turns_it_around() {
+        let pick = |order, reversed| SortPick { order, reversed };
+        for (now, picked, reversible, want) in [
+            (pick(0, false), 0, true, pick(0, true)),
+            (pick(0, true), 0, true, pick(0, false)),
+            (pick(0, true), 2, true, pick(2, false)),
+            (pick(5, false), 5, false, pick(5, false)),
+        ] {
+            assert_eq!(sort_picked(now, picked, reversible), want, "{now:?} tapped {picked}");
+        }
+        assert_eq!(sort_way(SortDirection::Ascending, true), SortDirection::Descending);
+        assert_eq!(sort_way(SortDirection::Shuffled, true), SortDirection::Shuffled);
+        let kept = sort_reversed_kept(SortedList::Songs, true);
+        let prefs = std::collections::HashMap::from([(kept.key, kept.value)]);
+        assert!(sort_reversed_saved(prefs.clone(), SortedList::Songs) && !sort_reversed_saved(prefs, SortedList::Albums));
+    }
+
+    #[test]
+    fn album_orders_run_the_way_the_songs_list_does() {
+        for (album, song) in [(AlbumSort::ByName, "TITLE"), (AlbumSort::ArtistRows, "ARTIST"), (AlbumSort::ByYear, "YEAR"), (AlbumSort::Newest, "ADDED"), (AlbumSort::Frequent, "PLAYS")] {
+            assert_eq!(album_sort_direction(album), song_sort_direction(song.into()), "{album:?}");
+        }
+    }
 
     #[test]
     fn album_pages_go_on_while_full() {
@@ -697,16 +799,10 @@ mod tests {
     }
 
     #[test]
-    fn library_sections_listed_and_edited() {
+    fn library_sections_listed() {
         use LibrarySection::*;
-        let account = profile_rules(false).sections;
-        assert_eq!(library_sections_shown(LibrarySection::LISTED.to_vec(), account.clone()), LibrarySection::LISTED, "a new install lists them all");
-        assert_eq!(library_sections_shown(vec![Smart, Radio, History, Downloads, Albums], account), [Radio, Albums], "smart, history and downloads are not rows");
-        assert_eq!(library_sections_shown(vec![Radio, Songs, Albums], profile_rules(true).sections), [Songs, Albums], "only what a guest is offered");
-        assert_eq!(library_sections_hidden(vec![Albums, Songs, Radio]), [Favourites, Artists, Playlists, Genres, Decades, Folders]);
-        assert_eq!(library_sections_toggled(vec![Albums, Songs], Radio, true), [Albums, Songs, Radio]);
-        assert_eq!(library_sections_toggled(vec![Albums, Songs], Albums, false), [Songs]);
-        assert_eq!(library_sections_moved(vec![Albums, Songs, Radio], 2, 0), [Radio, Albums, Songs]);
+        assert_eq!(library_sections_shown(profile_rules(false).sections), [Albums, Favourites, Artists, Songs, Playlists, Genres, Decades, Radio], "every listed one an account offers, in order");
+        assert_eq!(library_sections_shown(vec![Downloads, Songs, Smart, Albums, Folders]), [Albums, Songs], "only what is offered, and only the page's rows");
     }
 
     #[test]

@@ -6,6 +6,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.foundation.layout.widthIn
@@ -630,13 +631,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                         androidx.compose.animation.AnimatedContent(
                             targetState = meta,
                             transitionSpec = {
-                                if (AppMotion.reduce) {
-                                    androidx.compose.animation.fadeIn(androidx.compose.animation.core.snap()) togetherWith
-                                        androidx.compose.animation.fadeOut(androidx.compose.animation.core.snap())
-                                } else {
-                                    androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(220)) togetherWith
-                                        androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(160))
-                                }
+                                AppMotion.appear() togetherWith AppMotion.vanish()
                             },
                             contentKey = { it.key },
                             label = "player title",
@@ -906,8 +901,8 @@ internal fun openOutputPicker(context: android.content.Context, output: String, 
  */
 private val PLAYER_GUTTER = 33.dp
 
-/** How long the artwork, the lyrics and the queue take to dissolve into one another (the core's). */
-private val PANEL_MS: Int get() = stage.panelMs
+/** How long the artwork, the lyrics and the queue take to dissolve into one another: a move's, as the cover travels between them. */
+private val PANEL_MS: Int get() = stage.moveMs
 
 // Which clock the player's [LiveLook] is on: none (one look), the post-skip fade, or the sleeve's slide.
 private const val MIX_NONE = 0
@@ -2320,7 +2315,6 @@ private fun PluginStatus(vm: PlayerViewModel, songId: String?) {
     val shown = LocalPlayerShown.current
     LaunchedEffect(shown, songId) { if (shown) vm.askPluginStatus() }
     val lines by vm.pluginStatus.collectAsStateWithLifecycle()
-    val ms = if (reduceMotion()) 0 else 220
     androidx.compose.animation.AnimatedVisibility(
         lines.isNotEmpty(),
         Modifier.layout { measurable, constraints ->
@@ -2328,8 +2322,8 @@ private fun PluginStatus(vm: PlayerViewModel, songId: String?) {
             // Into the output row's own room below its name, clear of the gesture bar.
             layout(p.width, 0) { p.place(0, -STATUS_TUCK.roundToPx()) }
         },
-        enter = if (ms == 0) androidx.compose.animation.EnterTransition.None else androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(ms)),
-        exit = if (ms == 0) androidx.compose.animation.ExitTransition.None else androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(ms)),
+        enter = AppMotion.appear(),
+        exit = AppMotion.vanish(),
     ) {
         val look = LocalLook.current
         Column(Modifier.fillMaxWidth().padding(horizontal = PLAYER_GUTTER), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -2351,7 +2345,7 @@ private fun PluginStatus(vm: PlayerViewModel, songId: String?) {
  * player was open held a 120 Hz phone at fifty frames a second and two thirds of a core. Only while
  * the player is on screen: it stays composed behind the rest of the app (see LocalPlayerShown). 0
  * holds the line still, soft edge and all, so a row can stop walking without changing how it looks;
- * so does [reduceMotion] (e-ink screens pay for every redrawn frame).
+ * so does [AppMotion.reduce] (e-ink screens pay for every redrawn frame).
  */
 @Composable
 internal fun Modifier.readable(iterations: Int = READ_OUT, key: String? = null): Modifier {
@@ -2371,7 +2365,7 @@ internal fun Modifier.readable(iterations: Int = READ_OUT, key: String? = null):
     val over = needs > room + 1
     // Only the first copy of the line reads it out; one drawn after it (another panel) holds still at the start,
     // as the line settles, rather than walking it from the beginning again.
-    val still = reduceMotion()
+    val still = AppMotion.reduce
     val walks = remember(seen, still, iterations) { if (seen?.started == true || still) 0 else iterations }
     if (seen != null && over && walks > 0) LaunchedEffect(seen) { seen.started = true }
     return onSizeChanged { room = it.width; seen?.room = it.width }
@@ -2468,7 +2462,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     val watched by vm.pendingSeek.collectAsStateWithLifecycle()
     LaunchedEffect(watched, held.value) { if (held.value != null && vm.pendingSeek.value == null) held.value = null }
 
-    val reduced = reduceMotion()
+    val reduced = AppMotion.reduce
     val pace = remember(reduced) { dev.nori.music.look.SeekPace(reduced) }
     androidx.compose.runtime.DisposableEffect(pace) { onDispose { pace.close() } }
     // What the pace says, as the draw phase reads it: written only when it changes.
@@ -2562,8 +2556,8 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
 
     // Held, the bar thickens and the dot grows, the way Apple's does, so the scrub is felt as well as
     // seen. Animated both ways: nothing here changes size in one frame.
-    val thickness = animateFloatAsState(if (dragging.value) 11f else SEEK_THICKNESS, spring(0.9f, 420f), label = "seek")
-    val knob = animateFloatAsState(if (dragging.value) 1.5f else 0f, spring(0.9f, 420f), label = "knob")
+    val thickness = animateFloatAsState(if (dragging.value) 11f else SEEK_THICKNESS, AppMotion.settle(), label = "seek")
+    val knob = animateFloatAsState(if (dragging.value) 1.5f else 0f, AppMotion.settle(), label = "knob")
     Column(Modifier.island(slot).onGloballyPositioned { drawing.origin = it.placeInWindow() }.padding(horizontal = PLAYER_GUTTER, vertical = 4.dp)) {
         Box(
             // The strip is wider than the hairline it draws: a thumb is not a mouse.
@@ -2766,7 +2760,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
     val undo = remember { QueueUndo<Song>() }
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
-    val plain = reduceMotion()
+    val plain = AppMotion.reduce
     val look = LocalLook.current
     val quiet = androidx.compose.ui.graphics.ColorProducer { look.color(CoverLook.ON_VARIANT) }
     val accent = androidx.compose.ui.graphics.ColorProducer { look.color(CoverLook.ACCENT) }
@@ -2904,7 +2898,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
             if (at < 0) {
                 Caption(
                     if (at == QUEUE_HISTORY) say.history else say.upNext,
-                    Modifier.animateItem(fadeInSpec = null, placementSpec = if (plain) null else tween(QUEUE_MOVE_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing), fadeOutSpec = null)
+                    Modifier.animateItem(fadeInSpec = null, placementSpec = AppMotion.settle(androidx.compose.ui.unit.IntOffset.VisibilityThreshold), fadeOutSpec = null)
                         .padding(top = if (at == QUEUE_HISTORY) 4.dp else 14.dp, bottom = 6.dp),
                 )
                 return@items
@@ -2922,7 +2916,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
             val stepping = remember(key) { androidx.compose.animation.core.Animatable(0f) }
             LaunchedEffect(aside) {
                 if (plain || drag.from < 0) stepping.snapTo(aside)
-                else stepping.animateTo(aside, tween(QUEUE_STEP_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+                else stepping.animateTo(aside, AppMotion.settle())
             }
             val back = undo.returning?.takeIf { it.key == key }
             // A row put back by the undo comes in from the side it left by, and does not fade as well.
@@ -2931,7 +2925,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                 if (undo.returning?.key != key) return@LaunchedEffect
                 undo.arrived(key)
                 if (swipe.offset.floatValue != 0f) androidx.compose.animation.core.animate(
-                    swipe.offset.floatValue, 0f, animationSpec = spring(dampingRatio = 0.9f, stiffness = 420f),
+                    swipe.offset.floatValue, 0f, animationSpec = AppMotion.settle(),
                 ) { v, _ -> swipe.offset.floatValue = v }
             }
             val take = RowSwipe(Iconoir.MinusCircle, say.remove) {
@@ -2946,8 +2940,8 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
             Box(
                 Modifier.fillMaxWidth()
                     .animateItem(
-                        fadeInSpec = if (plain || back != null) null else tween(QUEUE_IN_MS),
-                        placementSpec = if (plain || landed) null else tween(QUEUE_MOVE_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                        fadeInSpec = if (back != null) null else AppMotion.fadeIn(),
+                        placementSpec = if (landed) null else AppMotion.settle(androidx.compose.ui.unit.IntOffset.VisibilityThreshold),
                         // A song that left the queue goes at once. Faded out, it stayed behind where it
                         // was when the fade never finished (a queue replaced or refilled under the panel):
                         // a whole old list drawn still over the real one, which scrolled under it.
@@ -3038,7 +3032,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                                 lifting?.cancel()
                                 lifting = scope.launch {
                                     if (plain) drag.lift.floatValue = to
-                                    else androidx.compose.animation.core.animate(drag.lift.floatValue, to, animationSpec = tween(QUEUE_LIFT_MS)) { v, _ -> drag.lift.floatValue = v }
+                                    else androidx.compose.animation.core.animate(drag.lift.floatValue, to, animationSpec = AppMotion.settle()) { v, _ -> drag.lift.floatValue = v }
                                     if (to == 0f && drag.liftKey == key) drag.liftKey = null
                                 }
                             }
@@ -3052,7 +3046,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                                 scope.launch {
                                     val rest = (to - from) * h
                                     if (plain) drag.offset.floatValue = rest
-                                    else androidx.compose.animation.core.animate(drag.offset.floatValue, rest, animationSpec = tween(QUEUE_DROP_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing)) { v, _ -> drag.offset.floatValue = v }
+                                    else androidx.compose.animation.core.animate(drag.offset.floatValue, rest, animationSpec = AppMotion.settle()) { v, _ -> drag.offset.floatValue = v }
                                     lift(0f)
                                     if (to == from || drag.from != from) { if (drag.from == from) drag.clear(); return@launch }
                                     drag.landing = queueNow
@@ -3110,20 +3104,10 @@ private const val QUEUE_PLAYED_ALPHA = 0.45f
 /** The shade over the playing song's cover, under its bars. */
 private val QUEUE_NOW_VEIL = Color.Black.copy(alpha = 0.4f)
 
-/** How the queue's rows come and move: a row appearing, the rest closing up. */
-private const val QUEUE_IN_MS = 220
-private const val QUEUE_MOVE_MS = 260
-/** A held row lifting and settling, and a dropped row going into its slot. */
-private const val QUEUE_LIFT_MS = 150
-private const val QUEUE_DROP_MS = 140
-/** A row stepping out of the held one's way. */
-private const val QUEUE_STEP_MS = 160
 /** How long the rows wait for a move to reach the queue before they give it up. */
 private const val QUEUE_LANDING_MS = 1_000L
 /** How long the undo is offered for. */
 private const val UNDO_MS = 5_000L
-private const val UNDO_IN_MS = 240f
-private const val UNDO_OUT_MS = 170f
 
 /**
  * "Removed “song” · Undo", a small pill over the foot of the queue for a few seconds after a song is taken
@@ -3144,8 +3128,8 @@ private fun UndoPill(undo: QueueUndo<Song>, plain: Boolean, modifier: Modifier, 
     LaunchedEffect(now != null) {
         val to = if (now != null) 1f else 0f
         if (shown.value == to) return@LaunchedEffect
-        if (plain) shown.animateTo(to, tween(120, easing = androidx.compose.animation.core.LinearEasing))
-        else shown.fadeByFrames(to, if (to == 1f) UNDO_IN_MS else UNDO_OUT_MS)
+        if (plain) shown.animateTo(to, if (to == 1f) AppMotion.fadeIn() else AppMotion.fadeOut())
+        else shown.fadeByFrames(to, (if (to == 1f) stage.fadeMs else stage.fadeOutMs).toFloat())
     }
     val present by remember { derivedStateOf { shown.value > 0f } }
     val t = last ?: return

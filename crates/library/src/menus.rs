@@ -252,17 +252,27 @@ pub enum DownloadGlyph {
     Failed,
 }
 
-/// A row's download mark: this session's phase when there is one, else downloaded or queued.
+/// A row's download mark: this session's phase when there is one, else downloaded or queued. `page_whole`:
+/// the row's page has every song downloaded and its head says so, so a downloaded row shows no mark of
+/// its own; one still arriving or failed still does.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn download_glyph(phase: Option<DownloadPhase>, downloaded: bool, pending: bool) -> DownloadGlyph {
-    match phase {
+pub fn download_glyph(phase: Option<DownloadPhase>, downloaded: bool, pending: bool, page_whole: bool) -> DownloadGlyph {
+    let glyph = match phase {
         Some(DownloadPhase::Done | DownloadPhase::FindingLyrics | DownloadPhase::Analysing | DownloadPhase::DetectingBeats) => DownloadGlyph::Done,
         Some(DownloadPhase::Failed) => DownloadGlyph::Failed,
         Some(DownloadPhase::Queued | DownloadPhase::Downloading) => DownloadGlyph::Ring,
         None if downloaded => DownloadGlyph::Done,
         None if pending => DownloadGlyph::Ring,
         None => DownloadGlyph::None,
-    }
+    };
+    if page_whole && glyph == DownloadGlyph::Done { DownloadGlyph::None } else { glyph }
+}
+
+/// The marks of rows whose downloads stand at `states`, where nothing is known of this session's phases.
+/// `page`: the rows are a page's, whose head says when every song is downloaded.
+pub fn download_glyphs(states: &[SongDownload], page: bool) -> Vec<DownloadGlyph> {
+    let whole = page && !states.is_empty() && states.iter().all(|s| *s == SongDownload::Done);
+    states.iter().map(|s| download_glyph(None, *s == SongDownload::Done, *s == SongDownload::Pending, whole)).collect()
 }
 
 /// What a page's download entry does.
@@ -361,6 +371,7 @@ pub fn page_actions(kind: PageKind, songs: u32, missing: u32, downloads: bool) -
 
 /// Whether the profile, signed in as `user`, may change `playlist`: add songs to it, remove them, rename
 /// and delete it. Only an account's own playlists: not a provider's, nor one another user shares.
+#[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn playlist_editable(playlist: &Playlist, user: &str, account: bool) -> bool {
     account && !is_provider_id(&playlist.id) && playlist.owner.as_deref().is_none_or(|o| o.eq_ignore_ascii_case(user))
 }
@@ -608,16 +619,23 @@ mod tests {
 
         // A rows download mark.
         use DownloadPhase as P;
-        assert_eq!(download_glyph(Some(P::Done), false, false), DownloadGlyph::Done);
-        assert_eq!(download_glyph(Some(P::Failed), true, false), DownloadGlyph::Failed, "this session's phase wins");
-        assert_eq!((download_glyph(Some(P::Queued), false, false), download_glyph(Some(P::Downloading), false, false)), (DownloadGlyph::Ring, DownloadGlyph::Ring));
+        assert_eq!(download_glyph(Some(P::Done), false, false, false), DownloadGlyph::Done);
+        assert_eq!(download_glyph(Some(P::Failed), true, false, false), DownloadGlyph::Failed, "this session's phase wins");
+        assert_eq!((download_glyph(Some(P::Queued), false, false, false), download_glyph(Some(P::Downloading), false, false, false)), (DownloadGlyph::Ring, DownloadGlyph::Ring));
         // Saved and still processing, whichever step: downloaded already.
         for p in [P::FindingLyrics, P::Analysing, P::DetectingBeats] {
-            assert_eq!(download_glyph(Some(p), false, false), DownloadGlyph::Done, "{p:?}");
+            assert_eq!(download_glyph(Some(p), false, false, false), DownloadGlyph::Done, "{p:?}");
         }
-        assert_eq!(download_glyph(None, true, true), DownloadGlyph::Done);
-        assert_eq!(download_glyph(None, false, true), DownloadGlyph::Ring);
-        assert_eq!(download_glyph(None, false, false), DownloadGlyph::None);
+        assert_eq!(download_glyph(None, true, true, false), DownloadGlyph::Done);
+        assert_eq!(download_glyph(None, false, true, false), DownloadGlyph::Ring);
+        assert_eq!(download_glyph(None, false, false, false), DownloadGlyph::None);
+        // A page whose head says every song is here: its downloaded rows go unmarked, the rest keep theirs.
+        assert_eq!((download_glyph(None, true, false, true), download_glyph(Some(P::Done), true, false, true)), (DownloadGlyph::None, DownloadGlyph::None));
+        assert_eq!((download_glyph(Some(P::Downloading), false, false, true), download_glyph(Some(P::Failed), false, false, true)), (DownloadGlyph::Ring, DownloadGlyph::Failed));
+        use SongDownload as D;
+        assert_eq!(download_glyphs(&[D::Done, D::Done], true), [DownloadGlyph::None, DownloadGlyph::None]);
+        assert_eq!(download_glyphs(&[D::Done, D::Done], false), [DownloadGlyph::Done, DownloadGlyph::Done], "a list that is no page keeps them");
+        assert_eq!(download_glyphs(&[D::Done, D::Pending, D::None], true), [DownloadGlyph::Done, DownloadGlyph::Ring, DownloadGlyph::None]);
     }
 
 }

@@ -78,7 +78,7 @@ private fun tileColours(id: String) =
 private fun MixCovers(urls: List<String>, size: androidx.compose.ui.unit.Dp) {
     androidx.compose.animation.Crossfade(
         urls, Modifier.size(size),
-        animationSpec = androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 320), label = "mix art",
+        animationSpec = AppMotion.fadeIn(), label = "mix art",
     ) { covers ->
         // Cells share the square by weight: halves rounded one by one left a pixel gap that showed at the seam.
         val cell = Modifier.fillMaxSize()
@@ -116,12 +116,12 @@ private fun MixArt(card: MixCard, size: androidx.compose.ui.unit.Dp) {
 
 private val MIX_CARD_WIDTH = 150.dp
 private val ART_FADE = androidx.compose.ui.graphics.Brush.verticalGradient(0.45f to androidx.compose.ui.graphics.Color.Black, 1f to androidx.compose.ui.graphics.Color.Transparent)
-private val MIX_CARD_HEIGHT = 206.dp
+private val MIX_CARD_HEIGHT = 186.dp
 
 /**
  * A mix on Home: a portrait card on the season's paper dyed with the mix's colour, its art a square on
- * top running into that paper, the name and a line under it in the card's own ink. [fill]: as wide as
- * the cell it is in, the same proportions.
+ * top running into that paper, and its name low on the paper, over the end of the fade, in the card's
+ * own ink. [fill]: as wide as the cell it is in, the same proportions.
  */
 @Composable
 internal fun MixCardView(card: MixCard, papers: Papers, modifier: Modifier = Modifier, fill: Boolean = false, onClick: () -> Unit) {
@@ -140,7 +140,7 @@ private fun MixCardBody(card: MixCard, papers: Papers, width: androidx.compose.u
     val page = tint?.background ?: androidx.compose.ui.graphics.Color(dyed.page.toInt())
     val ink = tint?.let { androidx.compose.ui.graphics.Color(it.look[dev.nori.music.look.CoverLook.ON]) } ?: androidx.compose.ui.graphics.Color(dyed.ink.toInt())
     val seed = remember(card.id) { tileColours(card.id)[0] }
-    Column(modifier.size(width, width * (MIX_CARD_HEIGHT / MIX_CARD_WIDTH)).clip(TileShape).background(page).clickable(onClick = onClick)) {
+    Box(modifier.size(width, width * (MIX_CARD_HEIGHT / MIX_CARD_WIDTH)).clip(TileShape).background(page).clickable(onClick = onClick)) {
         // The art is rubbed out into the card's paper rather than painted over with it: a painted edge
         // let the covers show through as a light line wherever it fell between pixels (an overscroll stretch).
         Box(
@@ -149,16 +149,11 @@ private fun MixCardBody(card: MixCard, papers: Papers, width: androidx.compose.u
                 .drawWithContent { drawContent(); drawRect(ART_FADE, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn) }
                 .background(seed),
         ) { MixCovers(card.covers, width) }
-        Column(Modifier.fillMaxSize().padding(horizontal = 12.dp), Arrangement.Center) {
-            Text(
-                card.title, style = titled(MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp, fontWeight = FontWeight.SemiBold)),
-                color = ink, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-            )
-            Text(
-                if (card.favourites) say.mixLineFavourites else say.mixLineMade, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                color = ink.copy(alpha = 0.7f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-            )
-        }
+        Text(
+            card.title, Modifier.align(Alignment.BottomStart).padding(start = 13.dp, end = 13.dp, bottom = 12.dp),
+            style = titled(MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold)),
+            color = ink, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -184,6 +179,7 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
     val load by vm.ui.collectAsStateWithLifecycle()
     val list = rememberSongListState(actions)
     LoadBox(load) { m ->
+        val whole = rememberPageWhole(m.songs, list.downloaded)
         HeroPage(
             coverUrl = null,
             title = m.title,
@@ -196,7 +192,7 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             headLabel = if (m.songs.isEmpty()) "" else say.listCaption(m.songs.size, m.songs.sumOf { it.duration.toLong() }, true),
             // After Play, as a record's seal stands there: keep the mix on the account as a playlist.
             actions = {
-                if (LocalRules.current.account && m.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveMixAsPlaylist(m.title, m.songs) }
+                if (LocalRules.current.account && m.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveAsPlaylist(m.title, m.songs) }
             },
             headActions = {
                 PageActionGlyphs(
@@ -208,7 +204,7 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             if (m.songs.isEmpty()) item(key = "empty") {
                 EmptyNote(if (m.favourites) Note.NO_FAVOURITE_SONGS else Note.NOTHING_TO_MIX)
             }
-            songRows(m.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, animated = true, from = m.origin)
+            songRows(m.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, animated = true, from = m.origin, pageWhole = whole)
         }
     }
 }
@@ -249,6 +245,7 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
     val list = rememberSongListState(actions)
     val from = remember(id) { dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SMART, id) }
     LoadBox(load) { page ->
+        val whole = rememberPageWhole(page.songs, list.downloaded)
         val any = page.songs.isNotEmpty()
         HeroPage(
             coverUrl = null,
@@ -264,7 +261,7 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
                 )
             },
         ) {
-            songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
+            songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from, pageWhole = whole)
         }
     }
 }
@@ -278,14 +275,14 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
     var draft by remember(opened) { mutableStateOf(opened) }
     // Changes are not dropped by a stray back: back asks first.
     val changed = draft != opened
-    val swipe = LocalPageSwipe.current!!
-    DisposableEffect(changed) { swipe.held = changed; onDispose { swipe.held = false } }
+    val pages = LocalPages.current!!
+    DisposableEffect(changed) { pages.asks = changed; onDispose { pages.asks = false } }
     var asking by remember { mutableStateOf(false) }
     BackHandler(changed) { asking = true }
     NoriDialog(asking, { asking = false }) {
         AlertCard(
             title = { Text(say.discardChanges) },
-            confirmButton = { TextAction(say.discard, { asking = false; swipe.held = false; nav.back() }, destructive = true) },
+            confirmButton = { TextAction(say.discard, { asking = false; pages.asks = false; nav.back() }, destructive = true) },
             dismissButton = { TextAction(say.keepEditing, { asking = false }) },
         )
     }

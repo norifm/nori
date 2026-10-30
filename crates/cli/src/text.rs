@@ -780,16 +780,12 @@ pub fn mix_name(n: nori_core::mixes::board::MixName) -> &'static str {
         M::Favourites => "Favorites",
         M::QuickPicks => "Quick picks",
         M::Discover => "Discover",
-        M::DiscoverWeekly => "Discover Weekly",
+        M::Rewind => "Rewind",
         M::ListenAgain => "Listen again",
-        M::Top => "Your top songs",
+        M::Top => "Top songs",
     }
 }
 
-/// Under a mix's name: what it is made from.
-pub fn mix_line(favourites: bool) -> &'static str {
-    if favourites { "Your favorites" } else { "Made for you" }
-}
 
 /// One of the albums' orders (`browse::album_sorts`).
 pub fn album_sort(sort: nori_core::browse::AlbumSort) -> &'static str {

@@ -10,6 +10,15 @@ import dev.nori.music.ffi.library.albumsExhausted
 import dev.nori.music.ffi.library.artistRows
 import dev.nori.music.ffi.library.songSortKept
 import dev.nori.music.ffi.library.songSortSaved
+import dev.nori.music.ffi.library.SortDirection
+import dev.nori.music.ffi.library.SortPick
+import dev.nori.music.ffi.library.SortedList
+import dev.nori.music.ffi.library.albumSortDirection
+import dev.nori.music.ffi.library.albumSorts
+import dev.nori.music.ffi.library.songSortDirection
+import dev.nori.music.ffi.library.sortPicked
+import dev.nori.music.ffi.library.sortReversedKept
+import dev.nori.music.ffi.library.sortReversedSaved
 import dev.nori.music.ffi.model.Album
 import dev.nori.music.ffi.library.AlbumDetail
 import dev.nori.music.ffi.model.Artist
@@ -33,7 +42,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.distinctUntilChanged
 import dev.nori.music.ffi.settings.HomeRow
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -293,6 +301,9 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
     // The order it was left in, and how that is kept, are the core's (`album_sort_saved`, `album_sort_kept`).
     private val _sort = MutableStateFlow(albumSortSaved(nori.settings.value.listPrefs))
     val sort: StateFlow<AlbumSort> = _sort
+    private val _reversed = MutableStateFlow(sortReversedSaved(nori.settings.value.listPrefs, SortedList.ALBUMS))
+    /** The order runs against its own way (picked again); listed from the index, as the server cannot. */
+    val reversed: StateFlow<Boolean> = _reversed
     private val _favorites = MutableStateFlow(false)
     val favorites: StateFlow<Boolean> = _favorites
     private val _albums = MutableStateFlow(Grown.empty<Album>())
@@ -309,11 +320,17 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
 
     init { loadMore() }
 
-    fun setSort(s: AlbumSort) {
-        if (s == _sort.value) return
+    /** Order [s] tapped: another order in its own way, the same one turned around where it can turn (the core's `sort_picked`). */
+    fun pick(s: AlbumSort) {
+        val sorts = albumSorts()
+        val reversible = nori.rules.indexed && albumSortDirection(s) != SortDirection.SHUFFLED
+        val picked = sortPicked(SortPick(sorts.indexOf(_sort.value).toUInt(), _reversed.value), sorts.indexOf(s).toUInt(), reversible)
+        if (s == _sort.value && picked.reversed == _reversed.value) return
         _sort.value = s
+        _reversed.value = picked.reversed
         val kept = albumSortKept(s)
-        nori.settings.update { it.copy(listPrefs = it.listPrefs + (kept.key to kept.value)) }
+        val turned = sortReversedKept(SortedList.ALBUMS, picked.reversed)
+        nori.settings.update { it.copy(listPrefs = it.listPrefs + (kept.key to kept.value) + (turned.key to turned.value)) }
         reset()
     }
 
@@ -332,10 +349,12 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
     fun loadMore() {
         if (exhausted || job?.isActive == true) return
         val sort = _sort.value
-        if (_favorites.value) return loadFavorites(sort)
+        val reversed = _reversed.value
+        if (_favorites.value) return loadFavorites(sort, reversed)
         val offset = _albums.value.size
         job = viewModelScope.launch {
-            nori.library.albums(sort, pageSize, offset).catch { }.collect { page ->
+            val pages = if (reversed) flow { emit(nori.library.albumsIndexed(sort, true, offset, pageSize)) } else nori.library.albums(sort, pageSize, offset)
+            pages.catch { }.collect { page ->
                 val all = _albums.value.from(offset, page)
                 if (sort == AlbumSort.ARTIST_ROWS) regroup(all, offset)
                 _albums.value = all
@@ -346,11 +365,11 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     /** Every favorite at once, in [sort]'s order (the core's `favorites_in_order`): the stored answer, then the server's. */
-    private fun loadFavorites(sort: AlbumSort) {
+    private fun loadFavorites(sort: AlbumSort, reversed: Boolean) {
         exhausted = true
         job = viewModelScope.launch {
             nori.library.starred().catch { }.collect { starred ->
-                val all = withContext(Dispatchers.Default) { favoritesInOrder(starred.albums, sort) }
+                val all = withContext(Dispatchers.Default) { favoritesInOrder(starred.albums, sort, reversed) }
                 if (sort == AlbumSort.ARTIST_ROWS) regroup(all, 0)
                 _albums.value = _albums.value.from(0, all)
                 _none.value = all.isEmpty()
@@ -378,7 +397,6 @@ class PlaylistsViewModel(app: Application) : NoriViewModel(app) {
     val playlists: StateFlow<Load<List<Playlist>>> = nori.library.playlistsVersion.flatMapLatest { nori.library.playlists() }.asLoad()
 
     fun create(name: String) = viewModelScope.launch { runCatching { nori.library.createPlaylist(name, emptyList()) } }
-    fun delete(id: String) = viewModelScope.launch { runCatching { nori.library.deletePlaylist(id) } }
 }
 
 class StarredViewModel(app: Application) : NoriViewModel(app) {
@@ -395,14 +413,6 @@ class GenresViewModel(app: Application) : NoriViewModel(app) {
 }
 
 /** The Library page's own: what the downloads weigh, for its row of places. */
-class LibraryHomeViewModel(app: Application) : NoriViewModel(app) {
-    /** This profile's downloaded songs' size, worded (the download cache holds every profile's); null until weighed. */
-    val downloadsSize: StateFlow<String?> = nori.downloads.state
-        .map { dev.nori.music.text.Fmt.bytes(nori.sources.downloadBytes(it.doneIds)) }
-        .flowOn(Dispatchers.IO)
-        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), null)
-}
-
 class RadioViewModel(app: Application) : NoriViewModel(app) {
     private val refresh = MutableStateFlow(0)
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -461,8 +471,11 @@ class PlaylistViewModel(app: Application) : DetailViewModel<PlaylistDetail>(app)
     override fun load(id: String) = version.flatMapLatest { nori.library.playlist(id) }
 }
 
-class GenreViewModel(app: Application) : DetailViewModel<List<Song>>(app) {
-    override fun load(id: String) = flow { emit(nori.library.songsByGenre(id)) }
+/** A genre's songs, and the cover its tile in search shows. */
+class GenrePage(val songs: List<Song>, val coverArt: String?)
+
+class GenreViewModel(app: Application) : DetailViewModel<GenrePage>(app) {
+    override fun load(id: String) = flow { emit(GenrePage(nori.library.songsByGenre(id), runCatching { nori.library.genreCover(id) }.getOrNull())) }
 }
 
 /** The orders of the "all songs" list; what each sorts on is the core's (`song_sorts`), its name Say's. */
@@ -472,6 +485,9 @@ enum class SongSort { TITLE, ARTIST, ALBUM, YEAR, ADDED, PLAYS, LONGEST }
 class SongsViewModel(app: Application) : NoriViewModel(app) {
     private val _sort = MutableStateFlow(SongSort.valueOf(songSortSaved(nori.settings.value.listPrefs)))
     val sort: StateFlow<SongSort> = _sort
+    private val _reversed = MutableStateFlow(sortReversedSaved(nori.settings.value.listPrefs, SortedList.SONGS))
+    /** The order runs against its own way (picked again). */
+    val reversed: StateFlow<Boolean> = _reversed
     private val _starred = MutableStateFlow(false)
     val starredOnly: StateFlow<Boolean> = _starred
     private val _songs = MutableStateFlow(Grown.empty<Song>())
@@ -483,10 +499,14 @@ class SongsViewModel(app: Application) : NoriViewModel(app) {
     init { loadMore() }
 
     fun setYears(range: IntRange?) { if (range != years) { years = range; reset() } }
-    fun setSort(s: SongSort) {
+    /** Order [s] tapped: another order in its own way, the same one turned around (the core's `sort_picked`). */
+    fun pick(s: SongSort) {
+        val picked = sortPicked(SortPick(_sort.value.ordinal.toUInt(), _reversed.value), s.ordinal.toUInt(), songSortDirection(s.name) != SortDirection.SHUFFLED)
         _sort.value = s
+        _reversed.value = picked.reversed
         val kept = songSortKept(s.name)
-        nori.settings.update { it.copy(listPrefs = it.listPrefs + (kept.key to kept.value)) }
+        val turned = sortReversedKept(SortedList.SONGS, picked.reversed)
+        nori.settings.update { it.copy(listPrefs = it.listPrefs + (kept.key to kept.value) + (turned.key to turned.value)) }
         reset()
     }
     fun setStarredOnly(on: Boolean) { _starred.value = on; reset() }
@@ -495,13 +515,14 @@ class SongsViewModel(app: Application) : NoriViewModel(app) {
     fun loadMore() {
         if (exhausted || job?.isActive == true) return
         val s = _sort.value
+        val turned = _reversed.value
         val st = _starred.value
         val y = years
         val offset = _songs.value.size
         job = viewModelScope.launch {
             // A page that could not be read ends the list, as an empty one would.
             val next = runCatching {
-                nori.library.songsListed(s.name, st, (y?.first ?: 0).toUInt(), (y?.last ?: 0).toUInt(), offset.toUInt())
+                nori.library.songsListed(s.name, turned, st, (y?.first ?: 0).toUInt(), (y?.last ?: 0).toUInt(), offset.toUInt())
             }.getOrNull()
             // runCatching also caught a cancellation: a reset while the page was being read drops it.
             ensureActive()
@@ -515,10 +536,3 @@ class DecadesViewModel(app: Application) : NoriViewModel(app) {
     val decades: StateFlow<Load<List<dev.nori.music.ffi.library.Decade>>> = flow { emit(nori.library.decades()) }.asLoad()
 }
 
-class FoldersViewModel(app: Application) : NoriViewModel(app) {
-    val roots: StateFlow<Load<List<Artist>>> = nori.library.folders().asLoad()
-}
-
-class FolderViewModel(app: Application) : DetailViewModel<dev.nori.music.ffi.model.Directory>(app) {
-    override fun load(id: String) = nori.library.folder(id)
-}
