@@ -638,6 +638,15 @@ impl StatsPage {
     }
 }
 
+/// A genre with songs in the index: its name as tagged, how many songs, and one of their covers.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct GenreTile {
+    pub name: String,
+    pub song_count: u32,
+    pub cover_art: Option<String>,
+}
+
 /// A decade that has songs in the index: its first year and how many songs.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
