@@ -173,6 +173,7 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
             if (route == "search") searchTaps.intValue++
             return
         }
+        pages.tab()
         c.navigate(route) {
             popUpTo(c.graph.startDestinationId)
             launchSingleTop = true

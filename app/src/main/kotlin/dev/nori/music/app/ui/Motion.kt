@@ -17,7 +17,7 @@ import androidx.compose.runtime.setValue
  *
  * - [move]: a move from rest - the player opened by a tap, a panel changed. One
  *   curve, most of the way early and a long soft landing.
- * - [page]: a change of page, a fade with nothing moving.
+ * - [page]: a change of page, both pages shifting a little and cross-fading.
  * - [settle]: something a finger let go (the player, a row, a record, a thumb), on a spring from the finger's speed.
  * - [leave]: something a finger sent away (a row swiped off) leaving the screen, quick and speeding up.
  * - [fadeIn] / [fadeOut]: something appearing or going where nothing moves, going quicker than it came.
@@ -43,8 +43,11 @@ object AppMotion : androidx.compose.ui.MotionDurationScale {
 
     fun <T> move(): FiniteAnimationSpec<T> = if (reduce) snap() else tween(stage.moveMs, easing = Ease)
 
+    private val pageEase = stage.pageEase.let { CubicBezierEasing(it[0], it[1], it[2], it[3]) }
+
     /** A change of page, or the [left] share of one a finger let go. */
-    fun <T> page(left: Float = 1f): FiniteAnimationSpec<T> = tween((stage.fadeMs * left).toInt(), easing = LinearOutSlowInEasing)
+    fun <T> page(left: Float = 1f): FiniteAnimationSpec<T> =
+        if (reduce) snap() else tween((stage.pageMs * left).toInt(), easing = pageEase)
 
     fun <T> settle(visibilityThreshold: T? = null): FiniteAnimationSpec<T> =
         if (reduce) snap() else spring(dampingRatio = 1f, stiffness = stage.settleStiffness, visibilityThreshold = visibilityThreshold)
