@@ -634,6 +634,7 @@
     <string name="devices_idle">Idle</string>
     <!-- Under a device a plugin casts to: nori's audio streams there, or the device plays the songs itself. -->
     <string name="devices_casting">Casting</string>
+    <string name="devices_via">Through %1$s</string>
     <string name="devices_cast_target">Playing there</string>
     <string name="devices_playing_on">Playing on %1$s</string>
     <string name="devices_playing_here">Playing here</string>

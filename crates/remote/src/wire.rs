@@ -174,6 +174,8 @@ pub enum Op {
     },
     /// The device's media volume, 0 to 100.
     Volume { percent: u8 },
+    /// Casts what plays here to `output`, one of those this device publishes.
+    CastTo { output: CastOutput },
     Shuffle { on: bool },
     /// Media3 numbering: off 0, one 1, all 2.
     Repeat { mode: u8 },
@@ -333,6 +335,19 @@ pub struct DeviceState {
     /// Where its songs come from: its profile's kind (`ServerKind::id`); None from an older device.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// The speakers and such a plugin here can cast to; picked elsewhere, the music goes through here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<CastOutput>,
+}
+
+/// A device a plugin on the publishing device can cast to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+#[serde(rename_all = "camelCase")]
+pub struct CastOutput {
+    pub plugin: String,
+    pub id: String,
+    pub name: String,
 }
 
 /// Command `id` of controller `from`, carried out.

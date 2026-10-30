@@ -627,6 +627,7 @@ impl Runner {
         d.jams = jams && d.on && (start == Some(JamStart::Offered) || remote.as_ref().is_some_and(|r| r.jam_view().is_some()));
         d.jams_unsupported = d.on && start == Some(JamStart::Unsupported);
         d.list = remote.as_ref().filter(|_| d.on).map(|r| r.devices()).unwrap_or_default();
+        d.reached = remote.as_ref().filter(|_| d.on).map(|r| r.outputs()).unwrap_or_default();
         if let Some(r) = &remote {
             let names = nori_core::remote::device_names(d.list.clone(), r.me(), crate::text::kind_words());
             d.list.iter_mut().zip(names).for_each(|(x, name)| x.name = name);
@@ -1000,6 +1001,11 @@ impl Runner {
             Cmd::Pick(device) => {
                 if let Some(r) = s.remote() {
                     r.pick(device);
+                }
+            }
+            Cmd::CastOn(output) => {
+                if let Some(r) = s.remote() {
+                    r.cast_on(output);
                 }
             }
             Cmd::Pair(link) => {

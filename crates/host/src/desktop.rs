@@ -295,6 +295,9 @@ impl nori_plugins::Client for Watched {
         }
     }
     fn devices_changed(&self) {
+        if let Some(s) = self.session() {
+            s.outputs_changed();
+        }
         self.tell_changed();
     }
 
