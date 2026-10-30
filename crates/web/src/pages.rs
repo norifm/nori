@@ -123,7 +123,7 @@ pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<Stri
     let core = client.core();
     let p = match (last, paged) {
         (None, _) => return Ok(Value::Null.to_string()),
-        (Some(Page::StarredPage { v }), Some((sort, true, ..))) => Page::Albums { v: nori_core::browse::favorites_in_order(v.albums, sort) },
+        (Some(Page::StarredPage { v }), Some((sort, true, ..))) => Page::Albums { v: nori_core::browse::favorites_in_order(v.albums, sort, false) },
         (Some(p), _) => p,
     };
     // A search's answer ranked as every client's is, with the field's preview of it.

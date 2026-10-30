@@ -3,6 +3,7 @@
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult};
 use crate::{db, history, Core, Result};
+use rusqlite::params;
 
 pub use nori_library::browse::*;
 
@@ -51,10 +52,19 @@ impl Core {
 
     /// A page of the local song list at `offset`, sorted by the [song_sorts] entry `sort` (unknown: index
     /// order), optionally starred only and within `year_from..=year_to` (when `year_to` > 0).
-    pub fn songs_page(&self, sort: String, starred_only: bool, year_from: u32, year_to: u32, offset: u32) -> Result<SongsPage> {
+    pub fn songs_page(&self, sort: String, reversed: bool, starred_only: bool, year_from: u32, year_to: u32, offset: u32) -> Result<SongsPage> {
         let (key, descending) = SONG_SORTS.iter().find(|s| s.0 == sort).map_or(("", false), |s| (s.1, s.2));
-        let songs = self.browse_songs(key.into(), descending, starred_only, year_from, year_to, offset, SONG_PAGE)?;
+        let songs = self.browse_songs(key.into(), descending != reversed, starred_only, year_from, year_to, offset, SONG_PAGE)?;
         Ok(SongsPage { exhausted: (songs.len() as u32) < SONG_PAGE, songs })
+    }
+
+    /// A page of `limit` indexed albums at `offset` in `sort`'s order, `reversed` turning it around: the
+    /// album grid turned against the server's way, which `getAlbumList2` cannot list.
+    pub fn albums_indexed(&self, sort: AlbumSort, reversed: bool, offset: u32, limit: u32) -> Result<Vec<crate::Album>> {
+        let c = self.db.lock();
+        let mut st = c.prepare_cached(&albums_sql(sort, reversed))?;
+        let rows: Vec<String> = st.query_map(params![offset, limit], |r| r.get::<_, String>(0))?.filter_map(|r| r.ok()).collect();
+        Ok(rows.iter().filter_map(|j| serde_json::from_str(j).ok()).collect())
     }
 
     /// A page of the listening history from `after` (None: the newest), newest first, without skips.
@@ -119,9 +129,9 @@ impl Client {
 
     /// A page of the songs list at `offset`: the offline index's, as [`Core::songs_page`] has it, or for a
     /// profile that keeps none (a jam guest's) the server's, in its own order whatever the sort.
-    pub async fn songs_listed(&self, sort: String, starred_only: bool, year_from: u32, year_to: u32, offset: u32) -> NetResult<SongsPage> {
+    pub async fn songs_listed(&self, sort: String, reversed: bool, starred_only: bool, year_from: u32, year_to: u32, offset: u32) -> NetResult<SongsPage> {
         if self.core.rules().indexed {
-            return Ok(self.core.songs_page(sort, starred_only, year_from, year_to, offset)?);
+            return Ok(self.core.songs_page(sort, reversed, starred_only, year_from, year_to, offset)?);
         }
         let songs = match self.read_now(Read::SongPage { offset: offset as i32, count: SONG_PAGE as i32 }).await? {
             Page::Found { v } => v.songs,
@@ -133,9 +143,17 @@ impl Client {
 
 /// The favorite albums, read whole (`Read::StarredItems`), in `sort`'s order as the server orders the
 /// album grid: A–Z by name, by artist (each artist's together, by year), newest year first, last added
-/// first, most played first, or shuffled.
+/// first, most played first, or shuffled; `reversed` turns an order around.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn favorites_in_order(mut albums: Vec<crate::Album>, sort: AlbumSort) -> Vec<crate::Album> {
+pub fn favorites_in_order(albums: Vec<crate::Album>, sort: AlbumSort, reversed: bool) -> Vec<crate::Album> {
+    let mut albums = in_order(albums, sort);
+    if reversed && sort != AlbumSort::Random {
+        albums.reverse();
+    }
+    albums
+}
+
+fn in_order(mut albums: Vec<crate::Album>, sort: AlbumSort) -> Vec<crate::Album> {
     let name = |a: &crate::Album, b: &crate::Album| db::natural_cmp(&a.name, &b.name);
     match sort {
         AlbumSort::ByName => albums.sort_by(|a, b| name(a, b).then_with(|| db::natural_cmp(&a.artist, &b.artist))),
@@ -173,6 +191,23 @@ pub(crate) fn songs_sql(sort: &str, descending: bool, starred_only: bool, years:
     sql
 }
 
+/// [`Core::albums_indexed`]' query: offset ?1, limit ?2. Each order as [`favorites_in_order`] has it, every
+/// key's way turned when `reversed` except the year inside an artist's albums and the name breaking ties.
+fn albums_sql(sort: AlbumSort, reversed: bool) -> String {
+    let (up, down) = if reversed { ("DESC", "ASC") } else { ("ASC", "DESC") };
+    let name = "json_extract(json, '$.name') COLLATE natural_order";
+    let artist = "json_extract(json, '$.artist') COLLATE natural_order";
+    let order = match sort {
+        AlbumSort::ByName => format!("{name} {up}, {artist} {up}"),
+        AlbumSort::ByArtist | AlbumSort::ArtistRows => format!("{artist} {up}, json_extract(json, '$.artistId') {up}, json_extract(json, '$.year'), {name}"),
+        AlbumSort::ByYear => format!("json_extract(json, '$.year') {down}, {name}"),
+        AlbumSort::Newest => format!("json_extract(json, '$.created') {down}, {name}"),
+        AlbumSort::Frequent => format!("coalesce(json_extract(json, '$.playCount'), 0) {down}, {name}"),
+        AlbumSort::Random | AlbumSort::Recent | AlbumSort::ByGenre | AlbumSort::Starred => "rowid".into(),
+    };
+    format!("SELECT json FROM items WHERE server=sid() AND kind={} ORDER BY {order} LIMIT ?2 OFFSET ?1", db::ItemKind::Album as i64)
+}
+
 /// The song kind written out, so the partial year index (db.rs `items_year`) serves the count.
 fn decades_sql() -> String {
     format!("SELECT (json_extract(json, '$.year') / 10) * 10 AS d, count(*) FROM items WHERE server=sid() AND kind={} AND json_extract(json, '$.year') > 0 GROUP BY d ORDER BY d DESC", db::ItemKind::Song as i64)
@@ -192,21 +227,37 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn reversed_lists_turn_around() {
+        let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        let songs: Vec<Song> = ["T1", "T2", "T10"].iter().enumerate().map(|(i, t)| song(&format!("s{i}"), t, "A", "B", "", 1990)).collect();
+        let album = |id: &str, name: &str, year: u32| crate::Album { id: id.into(), name: name.into(), artist: "A".into(), year, ..Default::default() };
+        let albums = vec![album("a", "LP 2", 2001), album("b", "LP 10", 1999), album("c", "LP 1", 2010)];
+        db::index(&mut core.db.lock(), &[], &albums, &songs).unwrap();
+        let titles = |reversed| core.songs_page("TITLE".into(), reversed, false, 0, 0, 0).unwrap().songs.into_iter().map(|s| s.title).collect::<Vec<_>>();
+        assert_eq!((titles(false), titles(true)), (vec!["T1".to_string(), "T2".into(), "T10".into()], vec!["T10".to_string(), "T2".into(), "T1".into()]));
+        let ids = |sort, reversed| core.albums_indexed(sort, reversed, 0, 10).unwrap().into_iter().map(|a| a.id).collect::<String>();
+        assert_eq!((ids(AlbumSort::ByName, false), ids(AlbumSort::ByName, true)), ("cab".into(), "bac".into()));
+        assert_eq!((ids(AlbumSort::ByYear, false), ids(AlbumSort::ByYear, true)), ("cab".into(), "bac".into()));
+        let favorites = |sort, reversed| favorites_in_order(albums.clone(), sort, reversed).into_iter().map(|a| a.id).collect::<String>();
+        assert_eq!(favorites(AlbumSort::ByName, true), "bac");
+    }
+
+    #[test]
     fn pages() {
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
         let all: Vec<Song> = (0..250).map(|i| song(&format!("s{i:03}"), &format!("T{:03}", 249 - i), "A", "B", "", 1990 + (i % 20) as u32)).collect();
         db::index(&mut core.db.lock(), &[], &[], &all).unwrap();
-        let first = core.songs_page("TITLE".into(), false, 0, 0, 0).unwrap();
+        let first = core.songs_page("TITLE".into(), false, false, 0, 0, 0).unwrap();
         assert_eq!((first.songs.len(), first.exhausted), (200, false));
         assert_eq!(first.songs[0].title, "T000");
-        let last = core.songs_page("TITLE".into(), false, 0, 0, 200).unwrap();
+        let last = core.songs_page("TITLE".into(), false, false, 0, 0, 200).unwrap();
         assert_eq!((last.songs.len(), last.exhausted), (50, true));
-        let years = core.songs_page("YEAR".into(), false, 2000, 2009, 0).unwrap();
+        let years = core.songs_page("YEAR".into(), false, false, 2000, 2009, 0).unwrap();
         // Numbers in titles in their order, not the characters'.
         let numbered: Vec<Song> = ["#10", "#2", "#1"].iter().enumerate().map(|(i, t)| song(&format!("n{i}"), t, "A", "B", "", 1990)).collect();
         let core2 = Core::new(String::new(), "t".into(), Default::default()).unwrap();
         db::index(&mut core2.db.lock(), &[], &[], &numbered).unwrap();
-        let titles: Vec<String> = core2.songs_page("TITLE".into(), false, 0, 0, 0).unwrap().songs.into_iter().map(|s| s.title).collect();
+        let titles: Vec<String> = core2.songs_page("TITLE".into(), false, false, 0, 0, 0).unwrap().songs.into_iter().map(|s| s.title).collect();
         assert_eq!(titles, ["#1", "#2", "#10"]);
         assert_eq!(years.songs[0].year, 2009);
         assert!(years.exhausted && years.songs.iter().all(|s| (2000..=2009).contains(&s.year)));
@@ -269,7 +320,7 @@ pub(crate) mod tests {
             album("c", "Gamma", "Zed", 2010, "2025-01-01T00:00:00Z", 3),
             album("d", "Delta", "Bo", 0, "2023-07-01T00:00:00Z", 1),
         ];
-        let order = |sort| favorites_in_order(read.clone(), sort).into_iter().map(|a| a.id).collect::<String>();
+        let order = |sort| favorites_in_order(read.clone(), sort, false).into_iter().map(|a| a.id).collect::<String>();
         for (sort, want) in [
             (AlbumSort::ByName, "badc"),
             (AlbumSort::ArtistRows, "bdac"),

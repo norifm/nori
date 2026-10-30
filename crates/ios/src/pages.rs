@@ -381,7 +381,7 @@ fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, f
     pages(client, token, read, &|p| {
         let v = match p {
             Page::Albums { v } => v,
-            Page::StarredPage { v } => favorites_in_order(v.albums, sort),
+            Page::StarredPage { v } => favorites_in_order(v.albums, sort, false),
             _ => return None,
         };
         let sections = if sort == AlbumSort::ArtistRows {
@@ -700,7 +700,7 @@ fn read(token: u64, kind: i32, arg: String) {
         PAGE_SONGS => {
             let offset = arg.parse().unwrap_or(0);
             let sort = song_sort_saved(list_prefs());
-            match nori_core::transport::block_on(client.songs_listed(sort.clone(), false, 0, 0, offset)) {
+            match nori_core::transport::block_on(client.songs_listed(sort.clone(), false, false, 0, 0, offset)) {
                 Ok(p) => {
                     let kept = if offset == 0 { None } else { extend_list(token, &p.songs) };
                     let from = kept.unwrap_or(0);

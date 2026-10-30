@@ -719,13 +719,13 @@ mod tests {
         c.core.configure(crate::ServerConfig { url: "h".into(), api_key: Some(nori_remote::guest_key("k")), ..Default::default() }).unwrap();
         assert!(c.core.rules().asks);
         fake.answer(r#"{"subsonic-response":{"status":"ok","searchResult3":{"song":[{"id":"s9","title":"t"}]}}}"#);
-        let page = block(c.songs_listed("title".into(), false, 0, 0, 0)).unwrap();
+        let page = block(c.songs_listed("title".into(), false, false, 0, 0, 0)).unwrap();
         assert!(page.exhausted && page.songs.iter().map(|s| s.id.as_str()).eq(["s9"]));
         assert!(fake.asked()[0].contains("search3?") && fake.asked()[0].contains("&query=&songCount="), "{}", fake.asked()[0]);
 
         c.core.configure(crate::ServerConfig { url: "h".into(), user: "ann".into(), password: "pw".into(), ..Default::default() }).unwrap();
         assert!(!c.core.rules().asks);
-        assert!(block(c.songs_listed("title".into(), false, 0, 0, 0)).unwrap().songs.is_empty(), "nothing indexed");
+        assert!(block(c.songs_listed("title".into(), false, false, 0, 0, 0)).unwrap().songs.is_empty(), "nothing indexed");
         assert_eq!(fake.asked().len(), 1, "the index, not the server");
     }
 

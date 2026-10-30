@@ -71,7 +71,7 @@ private val LIST_GAP = 10.dp
 
 /**
  * A long list's bar, pinned over it: the order it is in and which way that runs, which opens the others
- * ([orders], [chosen] among them); Favorites, a filter kept apart from the orders ([favorites], where the
+ * ([orders], [chosen] among them; the chosen one again turns it around); Favorites, a filter kept apart from the orders ([favorites], where the
  * profile has them); and Shuffle at the end ([shuffle], the account's own library only).
  */
 @Composable
@@ -125,11 +125,12 @@ private fun BarPill(raised: Boolean, onClick: () -> Unit, modifier: Modifier = M
 @Composable
 private fun AlbumBar(vm: AlbumsViewModel, shuffle: (() -> Unit)?) {
     val sort by vm.sort.collectAsStateWithLifecycle()
+    val reversed by vm.reversed.collectAsStateWithLifecycle()
     val favorites by vm.favorites.collectAsStateWithLifecycle()
     val sorts = remember { dev.nori.music.ffi.library.albumSorts() }
     val names = remember { sorts.map(say::albumSort) }
     ListBar(
-        names, sorts.indexOf(sort).coerceAtLeast(0), dev.nori.music.ffi.library.albumSortDirection(sort), { vm.setSort(sorts[it]) },
+        names, sorts.indexOf(sort).coerceAtLeast(0), dev.nori.music.ffi.library.sortWay(dev.nori.music.ffi.library.albumSortDirection(sort), reversed), { vm.pick(sorts[it]) },
         favorites.takeIf { LocalRules.current.stars }, vm::setFavorites, shuffle.takeIf { LocalRules.current.account },
     )
 }
@@ -368,6 +369,7 @@ fun SongsScreen(actions: ActionsViewModel, decade: Int?, shuffle: (() -> Unit)? 
     LaunchedEffect(decade) { vm.setYears(decade?.let { dev.nori.music.ffi.library.decadeYears(it.toUInt()) }?.let { it.from.toInt()..it.to.toInt() }) }
     val songs by vm.songs.collectAsStateWithLifecycle()
     val sort by vm.sort.collectAsStateWithLifecycle()
+    val reversed by vm.reversed.collectAsStateWithLifecycle()
     val starred by vm.starredOnly.collectAsStateWithLifecycle()
     val rows = rememberSongListState(actions)
     val list = rememberLazyListState()
@@ -378,7 +380,7 @@ fun SongsScreen(actions: ActionsViewModel, decade: Int?, shuffle: (() -> Unit)? 
     Column {
         if (decade != null) SectionTitle(remember(decade) { say.decade(decade) })
         if (indexed) ListBar(
-            remember { SongSort.entries.map { say.songSort(it.name) } }, sort.ordinal, dev.nori.music.ffi.library.songSortDirection(sort.name), { vm.setSort(SongSort.entries[it]) },
+            remember { SongSort.entries.map { say.songSort(it.name) } }, sort.ordinal, dev.nori.music.ffi.library.sortWay(dev.nori.music.ffi.library.songSortDirection(sort.name), reversed), { vm.pick(SongSort.entries[it]) },
             starred, vm::setStarredOnly, shuffle.takeIf { rules.account },
         )
         LazyColumn(Modifier.fadesUnderTitle(list), state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
