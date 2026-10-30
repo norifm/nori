@@ -218,6 +218,11 @@ h1 {
   letter-spacing: -0.2px;
 }
 
+button.section-title {
+  width: 100%;
+  text-align: start;
+}
+
 .section-title > span {
   flex: 1;
   min-width: 0;
