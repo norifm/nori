@@ -11,7 +11,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
@@ -46,8 +45,11 @@ data class SearchUi(
  * in the library yet. A newer keystroke cancels the request in flight, socket included. Which answer is
  * still worth showing, and what the screen then says, is the core's [SearchSession].
  */
-/** How many recently played albums an empty search shows: a shelf's worth. */
-private const val RECENT_SHOWN = 12
+/** How many genres an empty search shows as tiles: four rows of two. */
+private const val GENRES_SHOWN = 8
+
+/** What an empty search offers to browse. */
+data class Browse(val genres: List<dev.nori.music.ffi.library.GenreTile> = emptyList(), val decades: List<dev.nori.music.ffi.library.Decade> = emptyList())
 
 @OptIn(FlowPreview::class)
 class SearchViewModel(app: Application) : NoriViewModel(app) {
@@ -59,10 +61,10 @@ class SearchViewModel(app: Application) : NoriViewModel(app) {
     val ui: StateFlow<SearchUi> = _ui
     private val localLimit by lazy { dev.nori.music.ffi.library.librarySizes().localSearch }
 
-    /** The albums played lately, shown with the recent searches while the field is empty. */
-    val recent: StateFlow<List<dev.nori.music.ffi.model.Album>> = nori.library.albums(dev.nori.music.ffi.library.AlbumSort.RECENT, RECENT_SHOWN)
-        .catch { emit(emptyList()) }
-        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
+    /** What an empty search offers to browse, from the offline index: its biggest genres and its decades. */
+    val browse: StateFlow<Browse> = kotlinx.coroutines.flow.flow {
+        emit(Browse(runCatching { nori.library.genreTiles(GENRES_SHOWN) }.getOrDefault(emptyList()), runCatching { nori.library.decades() }.getOrDefault(emptyList())))
+    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), Browse())
 
     init {
         viewModelScope.launch { _ui.update { it.copy(history = nori.library.searchHistory()) } }

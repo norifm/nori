@@ -86,6 +86,15 @@ impl Core {
         Ok(StatsPage::new(source, stats))
     }
 
+    /// The `limit` genres with most indexed songs, most first, each with a cover of its songs (tag case
+    /// aside, one genre).
+    pub fn genre_tiles(&self, limit: u32) -> Result<Vec<GenreTile>> {
+        let c = self.db.lock();
+        let mut st = c.prepare_cached(&genres_sql())?;
+        let rows = st.query_map(params![limit], |r| Ok(GenreTile { name: r.get(0)?, song_count: r.get(1)?, cover_art: r.get(2)? }))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
     /// Decades with indexed songs, newest first, with song counts.
     pub fn browse_decades(&self) -> Result<Vec<Decade>> {
         let c = self.db.lock();
@@ -208,6 +217,16 @@ fn albums_sql(sort: AlbumSort, reversed: bool) -> String {
     format!("SELECT json FROM items WHERE server=sid() AND kind={} ORDER BY {order} LIMIT ?2 OFFSET ?1", db::ItemKind::Album as i64)
 }
 
+/// [`Core::genre_tiles`]' query, limit ?1. The song kind written out, so the partial genre index (db.rs
+/// `items_genre`) serves the grouping.
+fn genres_sql() -> String {
+    format!(
+        "SELECT json_extract(json, '$.genre') AS g, count(*) AS n, max(json_extract(json, '$.coverArt')) FROM items
+         WHERE server=sid() AND kind={} AND g <> '' GROUP BY g COLLATE NOCASE ORDER BY n DESC, g LIMIT ?1",
+        db::ItemKind::Song as i64
+    )
+}
+
 /// The song kind written out, so the partial year index (db.rs `items_year`) serves the count.
 fn decades_sql() -> String {
     format!("SELECT (json_extract(json, '$.year') / 10) * 10 AS d, count(*) FROM items WHERE server=sid() AND kind={} AND json_extract(json, '$.year') > 0 GROUP BY d ORDER BY d DESC", db::ItemKind::Song as i64)
@@ -224,6 +243,19 @@ pub(crate) mod tests {
         assert!(matches!(shelf_albums_read(AlbumSort::Starred, 60, true, 0), Read::FavouriteAlbums { size: 60 }), "the favourites, marked");
         assert!(matches!(shelf_albums_read(AlbumSort::Starred, 60, true, 60), Read::AlbumList { kind: AlbumSort::Starred, size: 60, offset: 60, genre: None }), "then the starred list");
         assert!(matches!(shelf_albums_read(AlbumSort::Recent, 60, false, 0), Read::AlbumList { kind: AlbumSort::Recent, size: 60, offset: 0, genre: None }));
+    }
+
+    #[test]
+    fn genre_tiles_count_their_songs() {
+        let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        let mut songs: Vec<Song> = [("a", "Rock"), ("b", "rock"), ("c", "Rock"), ("d", "Jazz"), ("e", "")].iter().map(|(id, g)| song(id, "T", "A", "B", g, 1990)).collect();
+        songs[3].cover_art = Some("jazz-cover".into());
+        db::index(&mut core.db.lock(), &[], &[], &songs).unwrap();
+        let tiles = core.genre_tiles(10).unwrap();
+        let got: Vec<(String, u32)> = tiles.iter().map(|t| (t.name.to_lowercase(), t.song_count)).collect();
+        assert_eq!(got, [("rock".to_string(), 3), ("jazz".into(), 1)], "one rock whatever its case, no untagged");
+        assert_eq!(tiles[1].cover_art.as_deref(), Some("jazz-cover"));
+        assert_eq!(core.genre_tiles(1).unwrap().len(), 1);
     }
 
     #[test]

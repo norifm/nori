@@ -26,6 +26,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.vm.ActionsViewModel
@@ -53,7 +56,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(2.dp)) {
             if (ui.searching) LinearProgressIndicator(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.onSurface, trackColor = MaterialTheme.colorScheme.outlineVariant)
         }
-        ui.error?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        ui.error?.let { Text(it, Modifier.padding(horizontal = Space.gutter), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 
         if (ui.scopesOffered) LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(scopes) { (scope, label) -> Chip(label, ui.scope == scope) { vm.setScope(scope) } }
@@ -62,25 +65,33 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         // A new search starts with its best few songs again.
         var allSongs by androidx.compose.runtime.remember(ui.query) { androidx.compose.runtime.mutableStateOf(false) }
         if (r == null) {
-            val recent by vm.recent.collectAsStateWithLifecycle()
+            // Before a search: the recent searches, then ways in that need no words, the library's biggest
+            // genres and its decades.
+            val browse by vm.browse.collectAsStateWithLifecycle()
             val scroll = rememberLazyListState()
             LazyColumn(Modifier.pageToEdges().fadesUnderTitle(scroll), scroll, contentPadding = pagePadding(LocalChromeInset.current)) {
-                if (ui.history.isNotEmpty()) item {
-                    Row(Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(say.recentSearches, Modifier.weight(1f).padding(start = 4.dp), style = MaterialTheme.typography.titleLarge)
-                        TextAction(say.clear, vm::clearHistory)
-                    }
+                if (ui.history.isNotEmpty()) item(key = "recent") {
+                    SectionHeader(say.recentSearches, action = { TextAction(say.clear, vm::clearHistory) })
                 }
-                items(ui.history, key = { it }) { q ->
+                items(ui.history, key = { "q-$it" }) { q ->
                     Row(Modifier.fillMaxWidth().clickable { vm.setQuery(q) }.padding(horizontal = Space.gutter, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
                         androidx.compose.material3.Icon(Iconoir.ClockRotateRight, null, Modifier.padding(end = 14.dp).size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(q, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
                     }
                 }
-                if (recent.isNotEmpty()) item {
-                    SectionTitle(say.homeRow(dev.nori.music.ffi.settings.HomeRow.RECENT))
-                    LazyRow(Modifier.bleedsToEdges(), rememberShelfState(recent.firstOrNull()?.id), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(recent, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { nav.album(a.id, a) }) }
+                if (browse.genres.isNotEmpty()) {
+                    item(key = "genres") { SectionTitle(say.librarySection(dev.nori.music.ffi.settings.LibrarySection.GENRES), onMore = { nav.librarySection(dev.nori.music.ffi.settings.LibrarySection.GENRES) }) }
+                    items(browse.genres.chunked(2), key = { "g-" + it.first().name }) { pair ->
+                        Row(Modifier.padding(start = Space.gutter, end = Space.gutter, bottom = GRID_GAP), horizontalArrangement = Arrangement.spacedBy(GRID_GAP)) {
+                            pair.forEach { g -> GenreCard(g, vm.cover(g.coverArt, CoverSize.ROW), { nav.genre(g.name) }, Modifier.weight(1f)) }
+                            if (pair.size == 1) androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
+                if (browse.decades.isNotEmpty()) item(key = "decades") {
+                    SectionTitle(say.decades)
+                    LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(browse.decades, key = { it.start.toInt() }) { d -> Chip(remember(d.start) { say.decade(d.start.toInt()) }, selected = true) { nav.decade(d.start.toInt()) } }
                     }
                 }
             }
@@ -103,19 +114,19 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         LazyColumn(Modifier.pageToEdges().fadesUnderTitle(list), list, contentPadding = pagePadding(LocalChromeInset.current)) {
             if (r.artists.isNotEmpty()) item(key = "artists") {
                 SectionTitle(say.artists, onMore = { whole = Whole.ARTISTS }.takeIf { r.artists.size > SHELF_SEEN })
-                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.artists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.artists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(r.artists, key = { it.id }) { a -> FoundArtist(a, vm, 96.dp) }
                 }
             }
             if (r.albums.isNotEmpty()) item(key = "albums") {
                 SectionTitle(say.albums, onMore = { whole = Whole.ALBUMS }.takeIf { r.albums.size > SHELF_SEEN })
-                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.albums.firstOrNull()?.id), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.albums.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(r.albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { vm.remember(); nav.album(a.id, a) }) }
                 }
             }
             if (r.playlists.isNotEmpty()) item(key = "playlists") {
                 SectionTitle(say.playlists, onMore = { whole = Whole.PLAYLISTS }.takeIf { r.playlists.size > SHELF_SEEN })
-                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.playlists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.playlists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(r.playlists, key = { it.id }) { p -> FoundPlaylist(p, vm, Modifier.width(120.dp)) }
                 }
             }
@@ -189,3 +200,28 @@ private fun FoundPlaylist(p: dev.nori.music.ffi.model.Playlist, vm: SearchViewMo
     val line = remember(p.songCount, p.comment) { if (p.songCount > 0u) say.songs(p.songCount.toInt()) else p.comment.orEmpty() }
     CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), 120.dp, { vm.remember(); nav.playlist(p.id, p) }, modifier, fill = fill, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) })
 }
+
+/** The tile a genre is browsed from: its name in Literata on the surface, a cover of its songs running into the paper at the end. */
+@Composable
+private fun GenreCard(g: dev.nori.music.ffi.library.GenreTile, cover: String?, onClick: () -> Unit, modifier: Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    androidx.compose.material3.Surface(onClick, modifier.height(GENRE_TILE), shape = TileShape, color = scheme.surfaceContainer, contentColor = scheme.onSurface, border = hairlineBorder()) {
+        androidx.compose.foundation.layout.Box {
+            androidx.compose.foundation.layout.Box(
+                Modifier.align(Alignment.CenterEnd).size(GENRE_TILE)
+                    .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                    .drawWithContent { drawContent(); drawRect(COVER_FADE, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn) },
+            ) { Cover(cover, GENRE_TILE, radius = 0.dp) }
+            Column(Modifier.align(Alignment.CenterStart).padding(start = 14.dp, end = GENRE_TILE / 2)) {
+                Text(
+                    g.name, style = titled(MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)),
+                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+                Text(remember(g.songCount) { say.songs(g.songCount.toInt()) }, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1)
+            }
+        }
+    }
+}
+
+private val GENRE_TILE = 72.dp
+private val COVER_FADE = androidx.compose.ui.graphics.Brush.horizontalGradient(0f to androidx.compose.ui.graphics.Color.Transparent, 0.75f to androidx.compose.ui.graphics.Color.Black)
