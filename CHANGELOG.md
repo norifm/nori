@@ -6,6 +6,60 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-30
+
+### Added
+
+- Plugins (#130)
+- Lan jams served by the host (#131)
+- Tapping the lyrics header's cover or title goes back to the artwork
+- Album pages keep the title and buttons on top as songs scroll
+- Pages drop the back arrow, left by the back gesture
+- Full views fade cards out under the title as they scroll
+- Leaving a smart playlist with changes asks before discarding them
+- Every list under a pinned title fades out under it as it scrolls
+- Smart playlists have a wand of their own instead of the plugins' sparkle
+- Playlists and stations open a menu with Delete instead of a trash button
+- The library's places sit by its title and each list's order stays pinned
+- Song rows go without the hairline between them
+- A song's menu shows every action instead of folding some under More
+- Tapping Search shows its page; a second tap brings the keyboard
+- A long search shelf opens whole as a grid from its chevron
+- Mix cards carry only their name, set low on the card
+- Web, desktop and iPod lists show their order and filter as Android's bar
+- Web search shows artists' album counts and opens long shelves whole
+- For you has Rewind for old favorites and a shorter Top songs
+- Picking a list's order again turns it around
+- Empty search offers recent searches, genre tiles and decades
+
+### Fixed
+
+- A device handed the music no longer pauses to follow the sender
+- A device handed the music ignores the sender until it plays again
+- A jam guest watching sees the jam's button in the player again
+- A page covered before it was drawn no longer crashes the app
+- A cover asked for just after another doesn't start a second thread
+- The one-row player widget shows only what fits
+- A sound or plugin change is heard at once, not after the buffered seconds
+- The player's soft band keeps a pulled-down cover's edge soft
+- Songs sort numbers in order, so #2 comes before #10
+- A song's menu doesn't offer the album or artist page it's on
+- The song playing can't be removed from the queue by mistake
+- A song row mostly hidden under a title can't be touched by mistake
+- The playlist page's own rows are one grouped card, lined up
+- An artist's chevron on the albums shelf keeps to the edge whatever the name
+- The search field lets go of its accent edge when the keyboard goes
+- The Favorites card no longer repeats its name under it
+- A song's menu says its format as the album page does, not in capitals
+- Artists in search show their whole name and how many albums
+- Fast typing in search no longer loses or reorders letters
+- Shelves that gain a card ahead of their first stay at their start
+
+### Performance
+
+- Remote control publishes without copying the queue's songs
+- The same queue window keeps the planner's cached answer
+
 ## [0.7.1] - 2026-10-27
 
 ### Added

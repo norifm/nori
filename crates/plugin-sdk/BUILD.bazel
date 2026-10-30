@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-plugin-sdk',
  'edition': '2021',
- 'version': '0.7.1',
+ 'version': '0.7.2',
  'targets': [{'name': 'nori_plugin_sdk', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True},
              {'name': 'build-script-build',
               'kind': 'custom-build',
