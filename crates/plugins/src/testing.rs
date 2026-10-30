@@ -18,6 +18,13 @@ pub fn stop_in_a_call(plugins: &crate::Plugins, id: &str) {
     plugins.marks.mark(id, crate::safe::Caller::Worker).set(crate::safe::CALLING, 1);
 }
 
+/// Waits for the run before over plugins folder `dir` to let its marks go: its threads end after it.
+pub fn marks_released(dir: &Path) {
+    if let Ok(file) = std::fs::File::open(dir.join("safe")) {
+        file.lock().unwrap();
+    }
+}
+
 /// The test plugin built with `features`, in a plugin folder of its own.
 pub fn fixture(features: &str) -> PathBuf {
     static MADE: AtomicU32 = AtomicU32::new(0);
