@@ -27,6 +27,19 @@ pub trait RulesShown: Send + Sync {
 }
 
 impl Core {
+    /// Every indexed song of `genre` (tag case aside, as its tile counts them), by artist, album and track.
+    pub(crate) fn genre_songs_indexed(&self, genre: String) -> Result<Vec<crate::Song>> {
+        let c = self.db.lock();
+        let sql = format!(
+            "SELECT json FROM items WHERE server=sid() AND kind={} AND json_extract(json, '$.genre') = ?1 COLLATE NOCASE
+             ORDER BY json_extract(json, '$.artist') COLLATE NOCASE, json_extract(json, '$.album') COLLATE NOCASE, json_extract(json, '$.discNumber'), json_extract(json, '$.track')",
+            db::ItemKind::Song as i64
+        );
+        let mut st = c.prepare_cached(&sql)?;
+        let rows: Vec<String> = st.query_map([genre], |r| r.get(0))?.filter_map(|r| r.ok()).collect();
+        Ok(rows.iter().filter_map(|j| serde_json::from_str(j).ok()).collect())
+    }
+
     /// Sets what the app offers over this profile; its songs are measured only where the rules say.
     pub(crate) fn set_rules(&self, rules: ProfileRules) {
         self.session.planner.set_measures(rules.measures);
@@ -156,7 +169,33 @@ impl Client {
         };
         Ok(SongsPage { exhausted: (songs.len() as u32) < SONG_PAGE, songs })
     }
+
+    /// Every song of `genre`: the offline index's, or the server's a page at a time where the index has
+    /// none of it (no index, or one still being filled).
+    pub async fn genre_songs(&self, genre: String) -> NetResult<Vec<crate::Song>> {
+        if self.core.rules().indexed {
+            let songs = self.core.genre_songs_indexed(genre.clone())?;
+            if !songs.is_empty() {
+                return Ok(songs);
+            }
+        }
+        let mut songs = Vec::new();
+        loop {
+            let page = match self.read_now(Read::SongsByGenre { genre: genre.clone(), count: GENRE_PAGE as i32, offset: songs.len() as i32 }).await? {
+                Page::Songs { v } => v,
+                _ => Vec::new(),
+            };
+            let last = (page.len() as u32) < GENRE_PAGE;
+            songs.extend(page);
+            if last {
+                return Ok(songs);
+            }
+        }
+    }
 }
+
+/// Songs per request for a genre's page: the most `getSongsByGenre` answers at once.
+const GENRE_PAGE: u32 = 500;
 
 /// The favorite albums, read whole (`Read::StarredItems`), in `sort`'s order as the server orders the
 /// album grid: A–Z by name, by artist (each artist's together, by year), newest year first, last added
@@ -270,6 +309,28 @@ pub(crate) mod tests {
         assert_eq!(core.genre_cover("JAZZ".into()).unwrap().as_deref(), Some("jazz-cover"), "a genre's page has its tile's cover");
         assert_eq!(core.genre_cover("Rock".into()).unwrap(), tiles[0].cover_art);
         assert_eq!(core.genre_cover("Polka".into()).unwrap(), None);
+    }
+
+    #[test]
+    fn a_genres_page_lists_all_its_songs() {
+        // Indexed: every song its tile counts, whatever the tag's case.
+        let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        let songs: Vec<Song> = (0..250).map(|i| song(&format!("s{i}"), "T", "A", "B", if i % 2 == 0 { "R&B" } else { "r&b" }, 1990)).collect();
+        db::index(&mut core.db.lock(), &[], &[], &songs).unwrap();
+        assert_eq!(core.genre_songs_indexed("R&B".into()).unwrap().len(), core.genre_tiles(1).unwrap()[0].song_count as usize);
+
+        // From the server: page after page until one comes back short.
+        let (client, fake) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
+        let page = |n: u32| {
+            let songs: Vec<String> = (0..n).map(|i| format!(r#"{{"id":"g{i}","title":"T","isDir":false}}"#)).collect();
+            format!(r#"{{"subsonic-response":{{"status":"ok","version":"1.16.1","songsByGenre":{{"song":[{}]}}}}}}"#, songs.join(","))
+        };
+        fake.answer(&page(GENRE_PAGE));
+        fake.answer(&page(3));
+        let got = crate::client::tests::block(client.genre_songs("Jazz".into())).unwrap();
+        assert_eq!(got.len(), GENRE_PAGE as usize + 3);
+        let asked = fake.asked();
+        assert!(asked.iter().any(|u| u.contains("offset=0")) && asked.iter().any(|u| u.contains(&format!("offset={GENRE_PAGE}"))), "{asked:?}");
     }
 
     #[test]

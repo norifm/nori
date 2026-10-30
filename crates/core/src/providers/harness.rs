@@ -250,7 +250,7 @@ fn asked_reads() -> Vec<Read> {
         Read::Search { query: "a".into(), songs: 5, albums: 5, artists: 5 },
         Read::SongPage { offset: 0, count: 10 },
         Read::RandomSongs { size: 5, genre: Some("Rock".into()) },
-        Read::SongsByGenre { genre: "Rock".into(), count: 5 },
+        Read::SongsByGenre { genre: "Rock".into(), count: 5, offset: 0 },
         Read::SimilarSongs { id: "s1".into(), count: 5 },
         Read::SongById { id: "s1".into() },
         Read::AlbumSongs { id: "al1".into() },

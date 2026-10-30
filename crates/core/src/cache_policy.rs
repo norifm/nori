@@ -60,7 +60,8 @@ pub enum Read {
     /// keeps no offline index (a jam guest's).
     SongPage { offset: i32, count: i32 },
     RandomSongs { size: i32, genre: Option<String> },
-    SongsByGenre { genre: String, count: i32 },
+    /// `count` of the genre's songs from `offset`.
+    SongsByGenre { genre: String, count: i32, offset: i32 },
     SimilarSongs { id: String, count: i32 },
     SongById { id: String },
     AlbumSongs { id: String },

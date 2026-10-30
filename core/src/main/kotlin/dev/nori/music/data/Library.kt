@@ -259,7 +259,7 @@ class Library(
 
     suspend fun randomSongs(): List<Song> = call(Read.RandomSongs(sizes.randomSongs, null)) { (it as Page.Songs).v }
 
-    suspend fun songsByGenre(genre: String): List<Song> = call(Read.SongsByGenre(genre, sizes.genreSongs)) { (it as Page.Songs).v }
+    suspend fun songsByGenre(genre: String): List<Song> = withContext(Dispatchers.IO) { lifted { client.genreSongs(genre) } }
 
 
     /** What carries the queue on past the song playing (see the core's autofill.rs); nothing on any failure. */
