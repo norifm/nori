@@ -96,7 +96,21 @@ wasmtime with the component model.
   is cached, keyed by the plugin's hash, the wasmtime version and the CPU. Never download precompiled
   native code (Play forbids it, and it can't be verified like wasm).
 - **Web:** the browser's own engine. Browsers don't run components directly, so the web host transpiles
-  them with jco at install, or loads a core module build. The web host comes last.
+  them with jco at install, or loads a core module build. The web host comes last. Checked 2026-10-30:
+  jco's `@bytecodealliance/jco/component` transpiles in a browser, but jco calls browser support
+  experimental, and one third-party project reports that entry point is broken in the published package.
+  Try it first; if it fails, `tools/pack.py` packs a transpiled build beside `plugin.wasm`. What a web host
+  needs:
+  - **Host calls:** `crates/plugins`' host is tied to wasmtime (`runtime.rs`, `host.rs`, `worker.rs`). Keep its
+    stores, settings layer, repos, signatures and views for both; put the calls behind a seam with a browser
+    side in `crates/web`.
+  - **Blocking calls:** a plugin's `http` and `store` calls are synchronous and `fetch` isn't. Plugins run in a
+    worker, blocked with JSPI where the browser has it, else with Atomics on a helper worker.
+  - **Storage:** plugin files and stores in OPFS or IndexedDB, not a folder.
+  - **Sound stages:** run in the AudioWorklet, with no allocation.
+  - **Install:** browser plugins may hold back what a page can't do, so `missing()` refuses sockets,
+    multicast and classic Bluetooth up front.
+  - **Client:** the plugin pages in Svelte, from the same cards and offers.
 - **iPod:** none.
 
 Cranelift ships on every native client; its APK size is accepted. It compiles wasm SIMD (`simd128`),
