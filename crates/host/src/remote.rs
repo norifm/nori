@@ -79,6 +79,7 @@ impl Remotes {
     }
 
     /// A plugin's cast has this volume from now on; none, this device's own again.
+    #[cfg(feature = "desktop")]
     pub(crate) fn cast_volume(&self, volume: Option<u8>, engine: &Engine) {
         *self.cast_volume.lock() = volume;
         self.played(engine);
