@@ -28,7 +28,7 @@ pub struct Stage {
 
     /// Buffering time before Play shows a spinner (most skips start within it).
     pub spinner_after_ms: i64,
-    /// A move from rest: a page pushed or popped, the player opened by a tap, a panel changed.
+    /// A move from rest: the player opened by a tap, a panel changed.
     pub move_ms: i32,
     /// A move's curve, a cubic Bézier's two control points (x1, y1, x2, y2): most of the way early, a long
     /// soft landing. A move let go by a finger takes the same curve, shortened to keep the finger's speed.
@@ -39,10 +39,12 @@ pub struct Stage {
     pub fade_out_ms: i32,
     /// Stiffness of the spring that settles what a finger let go (damping ratio 1: no bounce).
     pub settle_stiffness: f32,
-    /// How dark the page under a page moving over it gets, at most.
-    pub page_dim: f32,
-    /// Where the page under a moving page starts, as a share of the width to the leading side.
-    pub page_under: f32,
+    /// A change of page: both pages shift a little and cross-fade.
+    pub page_ms: i32,
+    /// A change of page's curve, a cubic Bézier's two control points (x1, y1, x2, y2).
+    pub page_ease: Vec<f32>,
+    /// How far each page shifts in a change of page, dp.
+    pub page_shift: f32,
     /// How long the previous cover stays while the new one loads, before the placeholder.
     pub sleeve_hold_ms: i64,
     /// How long the previous page colours stay while the new ones are computed.
@@ -89,8 +91,9 @@ pub fn stage() -> Stage {
         fade_ms: 180,
         fade_out_ms: 120,
         settle_stiffness: 450.0,
-        page_dim: 0.1,
-        page_under: 1.0 / 3.0,
+        page_ms: 200,
+        page_ease: vec![0.4, 0.0, 0.2, 1.0],
+        page_shift: 48.0,
         sleeve_hold_ms: 180,
         colour_wait_ms: 180,
         colour_fade_ms: 420,

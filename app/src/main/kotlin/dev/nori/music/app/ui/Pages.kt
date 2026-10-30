@@ -20,14 +20,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -35,7 +31,6 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.VelocityTracker1D
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
@@ -94,10 +89,10 @@ fun NavGraphBuilder.addPage(route: String, content: @Composable (NavBackStackEnt
 }
 
 /**
- * A change of page as it is shown: [over] moving across [under]. Pushed, [over] is the page opened, coming in
- * over the page that opened it; popped, it is the page going away, uncovering the one coming back. [offset]
- * is how far [over] is from its place, px, towards [side] (1 the right, -1 the left); a [fade] runs the same
- * number as [over]'s opacity instead, with nothing moving.
+ * A change of page as it is shown, between [over] and [under]. Pushed, [over] is the page opened; popped, it is
+ * the page going away. [offset] is how far the change has gone from [over] to [under], px of the width, towards
+ * [side] (1 the right, -1 the left), which is how far a finger has to go to finish it. A [fade] runs the same
+ * number as [over]'s opacity alone, with nothing moving.
  */
 @Stable
 class PageChange(val over: NavBackStackEntry, val under: NavBackStackEntry, val pop: Boolean, val fade: Boolean, start: Float, val side: Float = 1f) {
@@ -109,14 +104,13 @@ class PageChange(val over: NavBackStackEntry, val under: NavBackStackEntry, val 
 }
 
 /**
- * The pages, a stack moving the way iOS moves one: a page opened slides in from the right edge, opaque, over
- * the page that opened it, which moves a third of the way left and darkens a little, plainly still there,
- * behind. Going back is the same in reverse: run from rest by the back button or key, or held under the
- * finger by a swipe on the page or Android's back gesture from either edge, and, let go, carried on at the
- * finger's speed or put back. A tap on a tab has no stack - Home and Library are siblings - so that change is
- * a short cross-fade with no direction.
+ * The pages: a page opened and the page that opened it cross-fade, each shifting a little the same way
+ * (stage.pageShift), neither crossing the screen. Going back is the same in reverse: run from rest by the back
+ * button or key, or held under the finger by a swipe on the page or Android's back gesture from either edge,
+ * and, let go, finished or put back. A tap on a tab has no stack - Home and Library are siblings - so that
+ * change is a short cross-fade with no direction.
  *
- * Every change of page is one number, the page on top's offset ([PageChange]), and each is drawn from live
+ * Every change of page is one number ([PageChange.offset]), and each is drawn from live
  * pages: the page under the one on top stays composed, hidden and stopped (its lifecycle created, not
  * started), so a swipe back shows it as it is now from its first frame, without composing it on that frame.
  *
@@ -185,8 +179,10 @@ class Pages(private val controller: NavHostController, val navigator: PageNaviga
     internal suspend fun run(c: PageChange) {
         if (c.ran || held && changing === c) return
         c.ran = true
+        // Started after the frame the new page is first drawn in, however long that took, so none of it is skipped.
+        withFrameNanos {}
         // A fade either way as long as the chrome's colours and the tab's own take, so a tab tapped ends at once.
-        animate(c.offset, if (c.pop) width else 0f, animationSpec = if (c.fade) AppMotion.fadeIn() else AppMotion.move()) { v, _ -> c.offset = v }
+        animate(c.offset, if (c.pop) width else 0f, animationSpec = if (c.fade) AppMotion.fadeIn() else AppMotion.page()) { v, _ -> c.offset = v }
         if (changing === c) settle(c.target)
     }
 
@@ -226,7 +222,7 @@ class Pages(private val controller: NavHostController, val navigator: PageNaviga
     fun dragTo(x: Float) { changing?.takeIf { held }?.offset = x.coerceIn(0f, width) }
 
     /**
-     * The finger let go at [velocity] px/s towards going back. [commit] says whether to go back: when null,
+     * The finger let go at [velocity] px/s towards going back: the rest of the change runs. [commit] says whether to go back: when null,
      * the motion decides - a flick, or past [COMMIT] of the width without the finger turning back. [flung]:
      * the system decided it was a back from a gesture, which goes at least at a flick's speed - a quick edge
      * flick can end on one or two finger positions, too few to measure a speed from.
@@ -239,10 +235,10 @@ class Pages(private val controller: NavHostController, val navigator: PageNaviga
         running?.cancel()
         running = scope.launch {
             if (back) {
-                animate(c.offset, width, animationSpec = AppMotion.moveFrom(width - c.offset, along)) { v, _ -> c.offset = v }
+                animate(c.offset, width, animationSpec = AppMotion.page(1f - c.offset / width)) { v, _ -> c.offset = v }
                 if (changing === c) settle(c.under)
             } else {
-                animate(c.offset, 0f, animationSpec = AppMotion.moveFrom(c.offset, -along)) { v, _ -> c.offset = v }
+                animate(c.offset, 0f, animationSpec = AppMotion.page(c.offset / width)) { v, _ -> c.offset = v }
                 if (changing === c) settle(c.over)
             }
         }
@@ -333,19 +329,15 @@ fun PageStack(controller: NavHostController, pages: Pages, start: String, modifi
 }
 
 /**
- * One page of the stack as [role] has it: opaque while it moves (the screens paint no background, the app's
- * one Surface does), darkened as the page under a moving one, edged by a soft shadow as the page on top of
- * one, not placed at all while hidden - composed, so it is there the moment a swipe shows it, but neither
- * drawn nor touched.
+ * One page of the stack as [role] has it: shifted and faded with the other in a change of page, not placed at
+ * all while hidden - composed, so it is there the moment a swipe shows it, but neither drawn nor touched. Opaque
+ * only for a [PageChange.fade], which fades the page on top over the page under it.
  */
 @Composable
 private fun ShownPage(pages: Pages, entry: NavBackStackEntry, role: Role, change: PageChange?, content: @Composable () -> Unit) {
     val background = MaterialTheme.colorScheme.background
     val outStart = LocalPageStart.current
     val outEnd = LocalPageEnd.current
-    // Where the page stands in the window, the slide included: its shadow goes as its edge reaches the edge of
-    // the pages (the strip's), rather than showing past the chrome after the edge that casts it has gone under it.
-    var at by remember { mutableFloatStateOf(0f) }
     val front = when (role) {
         Role.TOP -> true
         Role.HIDDEN -> false
@@ -359,46 +351,18 @@ private fun ShownPage(pages: Pages, entry: NavBackStackEntry, role: Role, change
                 val p = measurable.measure(constraints)
                 layout(p.width, p.height) { if (role != Role.HIDDEN) p.place(0, 0) }
             }
-            .onGloballyPositioned { at = it.placeInRoot().x }
             .graphicsLayer {
                 val c = change ?: return@graphicsLayer
                 val w = pages.width.takeIf { it > 0f } ?: return@graphicsLayer
                 val gone = (c.offset / w).coerceIn(0f, 1f)
+                val shift = c.side * stage.pageShift.dp.toPx()
                 when {
                     role == Role.OVER && c.fade -> alpha = 1f - gone
-                    role == Role.OVER -> translationX = c.side * c.offset
-                    role == Role.UNDER && !c.fade -> translationX = -c.side * w * stage.pageUnder * (1f - gone)
+                    role == Role.OVER -> { alpha = 1f - gone; translationX = shift * gone }
+                    role == Role.UNDER && !c.fade -> { alpha = gone; translationX = -shift * (1f - gone) }
                 }
             }
-            .drawBehind {
-                val c = change ?: return@drawBehind
-                drawRect(background)
-                if (role != Role.OVER || c.fade) return@drawBehind
-                // Drawn beside the page rather than cast by an elevation: a layer with one is drawn in front of
-                // the chrome over the page, and the page passing under the side pill showed over it for a moment.
-                val x = at + c.side * c.offset
-                val room = minOf(size.width - outEnd.toPx() - x, x + size.width - outStart.toPx())
-                val w = EDGE_SHADOW.toPx()
-                val shade = Color.Black.copy(alpha = EDGE_SHADE * (room / (w * 2f)).coerceIn(0f, 1f))
-                val soft = shade.copy(alpha = shade.alpha * 0.3f)
-                drawRect(
-                    Brush.horizontalGradient(0f to Color.Transparent, 0.6f to soft, 1f to shade, startX = -w, endX = 0f),
-                    topLeft = Offset(-w, 0f), size = Size(w, size.height),
-                )
-                drawRect(
-                    Brush.horizontalGradient(0f to shade, 0.4f to soft, 1f to Color.Transparent, startX = size.width, endX = size.width + w),
-                    topLeft = Offset(size.width, 0f), size = Size(w, size.height),
-                )
-            }
-            .drawWithContent {
-                drawContent()
-                // The page under a moving one, darkened by how much of it the page on top still covers.
-                val c = change ?: return@drawWithContent
-                val w = pages.width.takeIf { it > 0f } ?: return@drawWithContent
-                if (role != Role.UNDER || c.fade) return@drawWithContent
-                val dim = stage.pageDim * (1f - (c.offset / w).coerceIn(0f, 1f))
-                if (dim > 0.002f) drawRect(Color.Black.copy(alpha = dim))
-            }
+            .drawBehind { if (change?.fade == true) drawRect(background) }
             .swipeBack(pages, enabled = swipes),
     ) {
         CompositionLocalProvider(LocalPageFront provides front) {
@@ -406,10 +370,6 @@ private fun ShownPage(pages: Pages, entry: NavBackStackEntry, role: Role, change
         }
     }
 }
-
-/** The shadow the page on top casts on the one under it while it moves: how far it reaches, and how dark at the edge. */
-private val EDGE_SHADOW = 16.dp
-private const val EDGE_SHADE = 0.12f
 
 /** The swipe right on a page that takes it back; a child that takes the drag (a row of covers, a slider) keeps it. */
 private fun Modifier.swipeBack(pages: Pages, enabled: Boolean): Modifier = if (!enabled) this else pointerInput(pages) {
