@@ -827,13 +827,16 @@ internal fun OutputButton(
     val output by settings.currentOutput.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val o = remember(output) { dev.nori.music.ffi.devices.outputLook(output) }
-    val icon = otherDevice?.let(::kindIcon) ?: when (o.glyph) {
+    // Where a plugin casts is where the music plays, whatever this phone's own output is.
+    val cast by settings.pluginCast.collectAsStateWithLifecycle()
+    val playingOn = otherName ?: cast?.device
+    val icon = otherDevice?.let(::kindIcon) ?: cast?.let { Iconoir.SoundHigh } ?: when (o.glyph) {
         dev.nori.music.ffi.devices.OutputGlyph.PHONE -> Iconoir.SmartphoneDevice
         dev.nori.music.ffi.devices.OutputGlyph.HEADPHONES -> Iconoir.Headset
         dev.nori.music.ffi.devices.OutputGlyph.BLUETOOTH -> Iconoir.Bluetooth
         dev.nori.music.ffi.devices.OutputGlyph.CAST -> Iconoir.Airplay
     }
-    val description = remember(o, otherName) { otherName?.let(say::devicePlayingOn) ?: say.outputDescription(o.port, o.name) }
+    val description = remember(o, playingOn) { playingOn?.let(say::devicePlayingOn) ?: say.outputDescription(o.port, o.name) }
     // Headphones a plugin controls: their battery beside their name, and the button opens nori's devices.
     val controlled by viewModel<dev.nori.music.app.vm.PluginsViewModel>().controlled.collectAsStateWithLifecycle()
     val here = remember(controlled, o) { if (controlled.isEmpty()) null else dev.nori.music.ffi.plugins.controlledOutput(controlled, o.name) }
@@ -854,7 +857,7 @@ internal fun OutputButton(
     ) {
         LookIcon(icon, description, Modifier.size(size), color)
         LookText(
-            otherName ?: say.outputName(o.port, o.name).let { name -> here?.level?.let { say.withLevel(name, it) } ?: name }, color, Modifier.weight(1f, fill = false),
+            playingOn ?: say.outputName(o.port, o.name).let { name -> here?.level?.let { say.withLevel(name, it) } ?: name }, color, Modifier.weight(1f, fill = false),
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
