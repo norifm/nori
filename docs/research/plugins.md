@@ -96,20 +96,36 @@ wasmtime with the component model.
   is cached, keyed by the plugin's hash, the wasmtime version and the CPU. Never download precompiled
   native code (Play forbids it, and it can't be verified like wasm).
 - **Web:** the browser's own engine. Browsers don't run components directly, so the web host transpiles
-  them with jco at install, or loads a core module build. The web host comes last. Checked 2026-10-30:
-  jco's `@bytecodealliance/jco/component` transpiles in a browser, but jco calls browser support
-  experimental, and one third-party project reports that entry point is broken in the published package.
-  Try it first; if it fails, `tools/pack.py` packs a transpiled build beside `plugin.wasm`. What a web host
-  needs:
+  them at install, in the browser, with nothing added to a plugin's package or repo. The web host comes
+  last. Tried 2026-10-30 in Chromium 153, on released orbit 0.2.0 and youtube-music 0.2.0, with
+  `@bytecodealliance/jco-transpile` 0.21.0:
+  - **It works.** The package's main entry is Node-only (`node:fs`, `node:path`, `node:child_process`), but
+    its `./component` entry (`generate`) runs in a page. Orbit: 180 ms to transpile, 3 ms to instantiate, then
+    `lifecycle.start` and `sound-stage.process` on real samples, 74 µs a 1024-frame block. The generator is
+    4.2 MB of wasm (1.0 MB brotli) plus 36 KB of glue, fetched only to install a plugin. Each plugin keeps its
+    core wasm and about 440 KB of JS once minified (50 KB brotli).
+  - **Blocking calls:** a plugin's `http` and `store` calls are synchronous and `fetch` isn't. Plugins run in a
+    Worker with synchronous `XMLHttpRequest`, whose `start`, `wait` and `take` also work: youtube-music's
+    search made its 4 requests and returned a typed page in 33 ms against a local echo. jco's JSPI mode did
+    not work, even with its `manuallyAsync` flag: the promise reached the guest ("Cannot convert [object
+    Promise] to a BigInt"). Atomics on a helper worker stays the fallback, and needs cross-origin isolation.
+  - **Cross-origin:** that test answered from the same origin. A real provider's requests need CORS, which
+    music.youtube.com doesn't allow, so it needs the server to proxy them or stays unavailable.
+  - **Sound stages:** ran in an AudioWorklet from modules compiled outside it and handed over: orbit panned
+    a 440 Hz tone (peak 1.27 left, 0.63 right) for 350 blocks. The worklet has no `TextDecoder`,
+    `TextEncoder` or `performance`, so the host polyfills the first two and doesn't use the third. Each
+    `process` copies its `list<f32>` through JS, which allocates on the audio thread: measure it or give
+    stages a shared buffer.
+  - **WASI:** a stub of a few calls ran both plugins, so `preview2-shim` needn't ship at run time.
+
+  What a web host still needs:
   - **Host calls:** `crates/plugins`' host is tied to wasmtime (`runtime.rs`, `host.rs`, `worker.rs`). Keep its
     stores, settings layer, repos, signatures and views for both; put the calls behind a seam with a browser
     side in `crates/web`.
-  - **Blocking calls:** a plugin's `http` and `store` calls are synchronous and `fetch` isn't. Plugins run in a
-    worker, blocked with JSPI where the browser has it, else with Atomics on a helper worker.
-  - **Storage:** plugin files and stores in OPFS or IndexedDB, not a folder.
-  - **Sound stages:** run in the AudioWorklet, with no allocation.
-  - **Install:** browser plugins may hold back what a page can't do, so `missing()` refuses sockets,
-    multicast and classic Bluetooth up front.
+  - **Storage:** the transpiled output, plugin files and stores in OPFS or IndexedDB, not a folder.
+  - **Install:** `missing()` works out from a plugin's imports and manifest what the browser can't give it
+    (raw sockets, multicast, classic Bluetooth, cross-origin HTTP with no proxy) and each such plugin is
+    listed greyed with its reason, on no list of its own.
   - **Client:** the plugin pages in Svelte, from the same cards and offers.
 - **iPod:** none.
 
