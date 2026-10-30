@@ -82,7 +82,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
                         Text(say.clearAll, Modifier.clip(PillShape).clickable(onClick = vm::clearHistory).padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelLarge)
                     })
                 }
-                items(ui.history, key = { "q-$it" }) { q -> RecentSearch(q, { vm.setQuery(q) }, { vm.forgetSearch(q) }, Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)) }
+                itemsIndexed(ui.history, key = { _, q -> "q-$q" }) { i, q -> RecentSearch(q, i == 0, { vm.setQuery(q) }, { vm.forgetSearch(q) }, Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)) }
                 if (browse.genres.isNotEmpty()) {
                     item(key = "genres") { SectionTitle(say.librarySection(dev.nori.music.ffi.settings.LibrarySection.GENRES), onMore = { nav.librarySection(dev.nori.music.ffi.settings.LibrarySection.GENRES) }) }
                     items(browse.genres.chunked(2), key = { "g-" + it.first().name }) { pair ->
@@ -231,15 +231,16 @@ private val GENRE_TILE = 72.dp
 private val COVER_FADE = androidx.compose.ui.graphics.Brush.horizontalGradient(0f to androidx.compose.ui.graphics.Color.Transparent, 0.75f to androidx.compose.ui.graphics.Color.Black)
 
 /** A recent search: tapped, it searches again; swiped either way, it is forgotten. */
+/** [first]: right under its header, as a shelf's cards sit under theirs, without the room between rows above it. */
 @Composable
-private fun RecentSearch(query: String, onClick: () -> Unit, onForget: () -> Unit, modifier: Modifier) {
+private fun RecentSearch(query: String, first: Boolean, onClick: () -> Unit, onForget: () -> Unit, modifier: Modifier) {
     val forget = RowSwipe(Iconoir.Xmark, say.remove, onForget)
     val swipe = remember { SwipeState() }
     Box(modifier.fillMaxWidth()) {
         SwipeBackdrop(swipe, forget, forget, Modifier.matchParentSize())
         Row(
             Modifier.fillMaxWidth().swipeable(swipe, forget, forget, MaterialTheme.colorScheme.background, gone = true)
-                .clickable(onClick = onClick).padding(horizontal = Space.gutter, vertical = 9.dp),
+                .clickable(onClick = onClick).padding(start = Space.gutter, end = Space.gutter, top = if (first) 0.dp else 9.dp, bottom = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             androidx.compose.material3.Icon(Iconoir.ClockRotateRight, null, Modifier.padding(end = 14.dp).size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
