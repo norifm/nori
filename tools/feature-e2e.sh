@@ -137,7 +137,7 @@ import hashlib, json, pathlib, sys
 repo = pathlib.Path(sys.argv[1]); pkg = next(repo.glob("orbit-*.noriplugin"))
 version = pkg.stem.removeprefix("orbit-")
 (repo / "index.json").write_text(json.dumps({"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "versions": [
-    {"version": version, "api": 1, "url": pkg.name, "sha256": hashlib.sha256(pkg.read_bytes()).hexdigest()}]}]}))
+    {"version": version, "api": 2, "url": pkg.name, "sha256": hashlib.sha256(pkg.read_bytes()).hexdigest()}]}]}))
 INDEX
   plugins_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
   python3 -m http.server "$plugins_port" --bind 127.0.0.1 --directory "$repo" >/dev/null 2>&1 &

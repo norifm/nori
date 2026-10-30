@@ -97,7 +97,7 @@ impl Device {
         let mut entries = Vec::new();
         for (id, features, versions) in listed {
             let (pkg, sha) = package(features);
-            let v: Vec<String> = versions.iter().map(|v| format!(r#"{{"version": "{v}", "api": 1, "url": "{id}-{v}.noriplugin", "sha256": "{sha}"}}"#)).collect();
+            let v: Vec<String> = versions.iter().map(|v| format!(r#"{{"version": "{v}", "api": 2, "url": "{id}-{v}.noriplugin", "sha256": "{sha}"}}"#)).collect();
             entries.push(format!(r#"{{"id": "{id}", "name": "{id}", "versions": [{}]}}"#, v.join(",")));
             serves.extend(versions.iter().map(|v| (format!("https://friend.example/nori/{id}-{v}.noriplugin"), pkg.clone())));
         }
