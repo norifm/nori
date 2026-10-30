@@ -1,6 +1,6 @@
 # Plugins
 
-Applies to nori 0.7, the Android, desktop and terminal clients. The iPod and the web have no plugins.
+Applies to nori 0.7, the Android, desktop and terminal clients. The iPod has no plugins; the web has no host yet, and lists nori's repo with what stops each plugin there (`nori_plugin_index::web_fit`, from an index's `points`, `net` and `imports`).
 
 A plugin is a WebAssembly component built against the `nori:plugin` API in `wit/`. It runs sandboxed in
 the plugin host (`crates/plugins`): it reaches only what the host links for it, only the hosts its

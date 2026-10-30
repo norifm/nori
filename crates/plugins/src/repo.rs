@@ -5,13 +5,11 @@
 //! and its author's key with the key's ed25519 signature over that sha256 (its 32 bytes). Old versions
 //! stay listed, so a plugin can be taken back to one.
 
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::{PluginCard, Plugins, Refusal, API};
 
-/// nori's own repo: nori-plugins' index (its packages are that repository's releases).
-pub const OFFICIAL: &str = "https://raw.githubusercontent.com/norifm/nori-plugins/main/index.json";
+pub use nori_plugin_index::OFFICIAL;
 
 /// How often updates are looked for, at most: once a day, when a client asks.
 const UPDATE_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -23,46 +21,6 @@ pub struct Repo {
     pub url: String,
     /// nori's own.
     pub official: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct Index {
-    plugins: Vec<Listed>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Listed {
-    id: String,
-    name: String,
-    #[serde(default)]
-    about: Option<String>,
-    #[serde(default)]
-    source: Option<String>,
-    /// Its README, absolute or relative to the index.
-    #[serde(default)]
-    readme: Option<String>,
-    /// Its icon, absolute or relative to the index.
-    #[serde(default)]
-    icon: Option<String>,
-    /// The extension points it fills (`wit/`'s names).
-    #[serde(default)]
-    points: Vec<String>,
-    versions: Vec<Release>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Release {
-    version: String,
-    api: u32,
-    #[serde(default)]
-    released: Option<String>,
-    /// Absolute, or relative to the index.
-    url: String,
-    sha256: String,
-    #[serde(default)]
-    key: Option<String>,
-    #[serde(default)]
-    signature: Option<String>,
 }
 
 /// A plugin a repo offers.
@@ -178,7 +136,7 @@ fn older(a: &str, b: &str) -> bool {
 
 /// The plugins in `index`'s text, from `repo`, with the versions this host runs; one with none is left out.
 fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
-    let index: Index = serde_json::from_slice(text).map_err(|e| format!("not an index: {e}"))?;
+    let index = nori_plugin_index::parse(text)?;
     Ok(index
         .plugins
         .into_iter()
