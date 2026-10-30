@@ -1,10 +1,7 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -340,14 +337,13 @@ fun TrackInfo(song: Song, actions: ActionsViewModel, onDone: () -> Unit) {
     val rows = remember(song) { say.trackInfo(song) }
     val groups by androidx.compose.runtime.produceState(emptyList<dev.nori.music.ffi.plugins.InfoGroup>(), song) { value = actions.pluginSongInfo(song) }
     val uri = androidx.compose.ui.platform.LocalUriHandler.current
-    val ms = if (reduceMotion()) 0 else 220
     AlertCard(
         title = { Text(say.details) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 rows.forEach { (label, value) -> Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, Modifier.padding(bottom = 8.dp)) }
                 // Asked as the sheet opens: the plugins' lines come in under nori's own, never in place of them.
-                AnimatedVisibility(groups.isNotEmpty(), enter = if (ms == 0) EnterTransition.None else fadeIn(tween(ms)) + androidx.compose.animation.expandVertically(tween(ms)), exit = ExitTransition.None) {
+                AnimatedVisibility(groups.isNotEmpty(), enter = AppMotion.grow(), exit = ExitTransition.None) {
                     Column {
                         groups.forEach { g ->
                             Text(g.name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

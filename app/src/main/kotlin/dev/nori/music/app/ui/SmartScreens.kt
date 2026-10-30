@@ -78,7 +78,7 @@ private fun tileColours(id: String) =
 private fun MixCovers(urls: List<String>, size: androidx.compose.ui.unit.Dp) {
     androidx.compose.animation.Crossfade(
         urls, Modifier.size(size),
-        animationSpec = androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 320), label = "mix art",
+        animationSpec = AppMotion.fadeIn(), label = "mix art",
     ) { covers ->
         // Cells share the square by weight: halves rounded one by one left a pixel gap that showed at the seam.
         val cell = Modifier.fillMaxSize()
@@ -275,14 +275,14 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
     var draft by remember(opened) { mutableStateOf(opened) }
     // Changes are not dropped by a stray back: back asks first.
     val changed = draft != opened
-    val swipe = LocalPageSwipe.current!!
-    DisposableEffect(changed) { swipe.held = changed; onDispose { swipe.held = false } }
+    val pages = LocalPages.current!!
+    DisposableEffect(changed) { pages.asks = changed; onDispose { pages.asks = false } }
     var asking by remember { mutableStateOf(false) }
     BackHandler(changed) { asking = true }
     NoriDialog(asking, { asking = false }) {
         AlertCard(
             title = { Text(say.discardChanges) },
-            confirmButton = { TextAction(say.discard, { asking = false; swipe.held = false; nav.back() }, destructive = true) },
+            confirmButton = { TextAction(say.discard, { asking = false; pages.asks = false; nav.back() }, destructive = true) },
             dismissButton = { TextAction(say.keepEditing, { asking = false }) },
         )
     }

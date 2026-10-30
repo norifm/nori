@@ -49,7 +49,6 @@ import androidx.compose.ui.draw.drawWithCache
 import dev.nori.music.look.CoverLook
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.composed
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -272,8 +271,6 @@ private val CHROME_CORNER = MINI_COVER_CORNER + MINI_PAD
 /** How much the page behind the chrome is blurred, and how much of the page's own color is laid over that. */
 private val BACKDROP_BLUR = 24.dp
 private const val BLURRED_TINT = 0.55f
-/** How long a tab takes to light, and its name to open. */
-private val TAB_FADE = androidx.compose.animation.core.tween<Float>(220)
 
 /**
  * The chrome's colors, all of them the page's: its ink, the idle tabs' quieter ink, the outline and the
@@ -307,8 +304,8 @@ val LocalPageEnd = androidx.compose.runtime.compositionLocalOf { 0.dp }
  * bar tinted by whatever happens to be playing turned the whole app red on screens that have nothing to
  * do with the record. The accent is the theme's on every page, made to read on a cover's.
  *
- * The bar changes with the page rather than switching over in the frame the page does: one cross-fade
- * over the span the player's own colours travel in, shared by the bar and the tabs.
+ * The bar changes with the page rather than switching over in the frame the page does: one cross-fade, as
+ * long as the tab's own and a tab's page's.
  */
 @Composable
 fun rememberChromeLook(): Look {
@@ -332,7 +329,7 @@ fun rememberChromeLook(): Look {
         val now = IntArray(CoverLook.LEN) { live.argb(it) }
         t.snapTo(0f)
         live.set(now, target, 0)
-        t.animateTo(1f, androidx.compose.animation.core.tween(CHROME_FADE_MS))
+        t.animateTo(1f, AppMotion.fadeIn())
     }
     return live
 }
@@ -344,7 +341,8 @@ data class Tab(val route: String, val label: String, val icon: ImageVector)
 private fun TabButton(tab: Tab, selected: Boolean, chrome: ChromeColours, modifier: Modifier, onClick: () -> Unit) {
     val turn = LocalGlyphTurn.current
     // Only the choosing fades; the accent itself is already the chrome's, drawn as it is.
-    val chosen by androidx.compose.animation.core.animateFloatAsState(if (selected) 1f else 0f, TAB_FADE, label = "tab")
+    // The same fade as the page the tab brings, so the two end together.
+    val chosen by androidx.compose.animation.core.animateFloatAsState(if (selected) 1f else 0f, AppMotion.fadeIn(), label = "tab")
     val colour = androidx.compose.ui.graphics.lerp(chrome.quiet, chrome.accent, chosen)
     val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Box(
@@ -489,21 +487,12 @@ private val pagePalette = androidx.compose.runtime.mutableStateOf<PagePalette?>(
  */
 fun Modifier.keepsTouches(): Modifier = pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
 
-/** How long the chrome takes to go from one page's colours to the next's. */
-private const val CHROME_FADE_MS = 340
-
 /**
  * How much room the floating chrome takes at the bottom. Screens add it to the bottom of their own
  * scrolling content, so a list can run underneath the mini player - the page's colour reaches the
  * bottom edge of the screen, and the last row is still reachable.
  */
 val LocalChromeInset = androidx.compose.runtime.compositionLocalOf { 0.dp }
-
-/**
- * Whether the page this is in is on its way out: being popped, or held by a swipe back, which may yet put it
- * back (and the chrome turns back with it).
- */
-val LocalPageLeaving = androidx.compose.runtime.compositionLocalOf { false }
 
 /**
  * Pages whose cover's colors are still being worked out. While there are any, the chrome keeps the
@@ -514,35 +503,17 @@ val LocalPageLeaving = androidx.compose.runtime.compositionLocalOf { false }
 private val pagesWaiting = androidx.compose.runtime.mutableIntStateOf(0)
 
 /**
- * The colours each of the last few pages of the stack lent the chrome, by entry id: what a page coming back
- * wears from the moment the one over it starts to leave, before it is composed again and has worked them out.
- */
-private val pageTints = object : LinkedHashMap<String, PagePalette>() {
-    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, PagePalette>?) = size > 8
-}
-
-/** The stack entry of the page this is in. */
-val LocalPageEntry = androidx.compose.runtime.compositionLocalOf<String?> { null }
-
-/**
- * A tinted page (an album, an artist, the player) lends its colours to the chrome while it is open. As soon
- * as it is on its way out ([LocalPageLeaving]) the chrome turns to the page coming back - the colours it
- * last lent, or the theme's for a page with none - while the two cross, not after: kept until the page was
- * gone, the pill wore the old page's colour over the old page's as it slid under it. Given back plainly, it
- * went to the theme's on the way from an album back to its artist, and only then to the artist's.
+ * A tinted page (an album, an artist, the player) lends its colours to the chrome while it is the page the
+ * stack shows or is going to ([LocalPageFront]): from the moment a page coming back starts to be uncovered,
+ * not once the page over it has gone - kept until then, the pill wore the old page's colour over the old
+ * page's as it slid under it. A page with none gives them back, and the chrome wears the theme's.
  * [waiting]: it will have colours, but they are not worked out yet.
  */
 @Composable
 fun PageTint(palette: PagePalette?, waiting: Boolean = false) {
-    val leaving = LocalPageLeaving.current
-    val entry = LocalPageEntry.current
-    val swipe = LocalPageSwipe.current
-    androidx.compose.runtime.DisposableEffect(palette, waiting, leaving) {
-        if (entry != null && palette != null) pageTints[entry] = palette
-        if (leaving) {
-            pagePalette.value = entry?.let { swipe?.comingBack(it) }?.let(pageTints::get)
-            return@DisposableEffect onDispose {}
-        }
+    val front = LocalPageFront.current
+    androidx.compose.runtime.DisposableEffect(palette, waiting, front) {
+        if (!front) return@DisposableEffect onDispose {}
         if (waiting) pagesWaiting.intValue++ else pagePalette.value = palette
         onDispose {
             if (waiting) pagesWaiting.intValue--
@@ -610,7 +581,7 @@ internal fun <T> SwipeCarousel(
     }
     androidx.compose.runtime.LaunchedEffect(natural) {
         // Counted in frames, as the sleeve's is: the new song's first frames can be slow ones.
-        if (natural.value != 0f) settleByFrames(natural, 560f)
+        if (natural.value != 0f) settleByFrames(natural, stage.settleStiffness)
     }
     Box(
         modifier.clipToBounds().pointerInput(Unit) {
@@ -624,7 +595,7 @@ internal fun <T> SwipeCarousel(
                 val running = moving
                 moving = scope.launch {
                     running?.cancelAndJoin()
-                    val settle = androidx.compose.animation.core.spring<Float>(dampingRatio = 1f, stiffness = 560f)
+                    val settle = AppMotion.settle<Float>()
                     if (go == 0) {
                         androidx.compose.animation.core.animate(offset, 0f, v, settle) { value, _ -> offset = value }
                         return@launch

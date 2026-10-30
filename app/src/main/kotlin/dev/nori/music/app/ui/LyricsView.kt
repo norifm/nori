@@ -299,7 +299,7 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
     val pokes = remember(clock) { LinePokes() }
     val hasBacking = remember(lyrics) { lyrics.lines.any { it.backing.isNotEmpty() } }
     // Words rise and glow as they are sung unless movement is reduced; then there is only the fill.
-    val lively = !reduceMotion()
+    val lively = !AppMotion.reduce
     val seeking = if (eink) vm.pendingSeek.collectAsStateWithLifecycle().value else null
     LaunchedEffect(playing, live, sweep, lively, clock, following, eink, seeking) {
         if (!following) return@LaunchedEffect
@@ -368,7 +368,7 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
         // default spring is done in two or three frames over one line's distance, a teleport. A line that is not on screen at
         // all (a seek, the first line after opening) is still jumped to: gliding past a whole song's
         // worth of words is not a transition, it is a wait.
-        val plain = reduceMotion()
+        val plain = AppMotion.reduce
         // Reading ahead, or back, is allowed: while a finger is on the words nothing scrolls them, and
         // for a few seconds after it lifts they stay where they were put. Then the lyrics come back to
         // the line being sung - gliding, not jumping, because this one is a return to the song rather

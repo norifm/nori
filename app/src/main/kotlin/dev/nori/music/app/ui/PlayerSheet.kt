@@ -1,8 +1,6 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
@@ -35,7 +33,8 @@ import kotlinx.coroutines.launch
  * edge to the far side of the screen (up from the bottom, or across from the side the mini player stands
  * on, [edge]), and the cover grows from the mini player's thumbnail into the sleeve. A drag
  * sets the number directly, so the whole thing follows the finger and holds wherever it is held; a
- * release settles it with the finger's own speed. Closing is the same path backwards.
+ * release carries on from the finger's own speed on a spring (AppMotion.settle), and a tap moves it from
+ * rest (AppMotion.move). Closing is the same path backwards.
  *
  * Before this the player was a route: a drag on the mini player had to cross a threshold, and then a
  * separate slide played on its own - you pulled, and then something else happened.
@@ -76,9 +75,6 @@ class PlayerSheet(private val scope: CoroutineScope, startOpen: Boolean = false)
 
     /** The window's size, for when there is no mini player to start from. */
     var rootSize by mutableStateOf(IntSize.Zero)
-
-    /** Settle quickly and without a spring: the user's reduce-motion switch. */
-    var plain = false
 
     /**
      * Open, or on the way there. What the back button, the test bridge and the chrome go by.
@@ -126,12 +122,6 @@ class PlayerSheet(private val scope: CoroutineScope, startOpen: Boolean = false)
         settle(0f, 0f)
     }
 
-    /**
-     * Put away by the back gesture: quicker than a close from a tap. The gesture has already carried the
-     * sheet part of the way, and the rest at the drag's pace read as the app lagging behind the thumb.
-     */
-    fun backClose() = settle(0f, 0f, stiffness = 700f)
-
     /** Which end the sheet was nearer when the finger went down. */
     private var from = 0f
 
@@ -147,15 +137,20 @@ class PlayerSheet(private val scope: CoroutineScope, startOpen: Boolean = false)
 
     /** The finger let go at [velocity] pixels a second, towards putting it away: it settles where [sheetTarget] says. */
     fun release(velocity: Float) {
-        settle(sheetTarget(from, progress.value, velocity), -velocity / travel)
+        val target = sheetTarget(from, progress.value, velocity)
+        settle(target, (if (target == 0f) velocity else -velocity) / travel)
     }
 
-    private fun settle(target: Float, velocity: Float, stiffness: Float = 420f) {
+    /** Goes to [target] (1 open, 0 put away), carrying on at [speed], in sheets a second towards it; 0 from rest. */
+    private fun settle(target: Float, speed: Float) {
         isOpen = target == 1f
         scope.launch {
-            // Critically damped: it arrives with the finger's speed and does not bounce past either end.
-            if (plain) progress.animateTo(target, tween(120))
-            else progress.animateTo(target, spring(dampingRatio = 1f, stiffness = stiffness), initialVelocity = velocity)
+            if (speed > 0f) {
+                val towards = if (target > progress.value) speed else -speed
+                progress.animateTo(target, AppMotion.settle(SHEET_REST), initialVelocity = towards)
+            } else {
+                progress.animateTo(target, AppMotion.move())
+            }
         }
     }
 
@@ -231,8 +226,12 @@ internal fun Modifier.dragsSheet(sheet: PlayerSheet, enabled: Boolean = true, on
     }
 }
 
+/** How near its end, in sheets, the spring counts as there: a jump of less than a pixel or two. */
+private const val SHEET_REST = 0.001f
+
 /** How far the back gesture takes the player down before it is let go. */
 private const val BACK_TRAVEL = 0.2f
+
 /** The player sheet: a release faster than this, in pixels a second, goes the way it was flicked... */
 private const val SHEET_FLICK_PX_S = 900f
 /** ...and a slow drag that has come this share of the way finishes the move it started. */

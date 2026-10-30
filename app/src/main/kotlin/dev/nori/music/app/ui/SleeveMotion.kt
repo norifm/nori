@@ -130,7 +130,7 @@ internal fun MotionDirector(vm: PlayerViewModel, motion: SleeveMotion, loop: Str
     LifecycleResumeEffect(Unit) { resumed = true; onPauseOrDispose { resumed = false } }
     val live = shown && resumed
     val open by remember(sheet) { derivedStateOf { sheet.progress.value >= 1f && sheet.isOpen } }
-    val still = reduceMotion()
+    val still = AppMotion.reduce
     // Everything but the finger: a tap that moved nothing does not count as a move ending.
     val calm = live && open && onArtwork && !still && motion.resting
     val want = calm && !motion.touching
