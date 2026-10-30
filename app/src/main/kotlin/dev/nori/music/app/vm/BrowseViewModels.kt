@@ -536,10 +536,3 @@ class DecadesViewModel(app: Application) : NoriViewModel(app) {
     val decades: StateFlow<Load<List<dev.nori.music.ffi.library.Decade>>> = flow { emit(nori.library.decades()) }.asLoad()
 }
 
-class FoldersViewModel(app: Application) : NoriViewModel(app) {
-    val roots: StateFlow<Load<List<Artist>>> = nori.library.folders().asLoad()
-}
-
-class FolderViewModel(app: Application) : DetailViewModel<dev.nori.music.ffi.model.Directory>(app) {
-    override fun load(id: String) = nori.library.folder(id)
-}

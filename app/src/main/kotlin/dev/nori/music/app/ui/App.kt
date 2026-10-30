@@ -142,7 +142,6 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
         go("playlist/${Uri.encode(id)}")
     }
     fun genre(name: String) = go("genre/${Uri.encode(name)}")
-    fun folder(id: String) = go("folder/${Uri.encode(id)}")
     fun decade(year: Int) = go("decade/$year")
     fun smart(id: String) = go("smart/${Uri.encode(id)}")
     fun mix(id: String) = go("mix/${Uri.encode(id)}")
@@ -160,8 +159,12 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
     fun plugins() = go("plugins")
     fun plugin(id: String) = go("plugins/${Uri.encode(id)}")
     fun homeRows() = go("home-rows")
-    fun librarySections() = go("library-sections")
-    fun librarySection(s: dev.nori.music.ffi.settings.LibrarySection) = go("library/${s.name}")
+    /** A section the Library page has a chip for is chosen there; the others are pages of their own. */
+    fun librarySection(s: dev.nori.music.ffi.settings.LibrarySection) {
+        if (s.onLibraryPage()) { libraryAsked = s; tab("library") } else go("library/${s.name}")
+    }
+    /** The section [librarySection] asked the Library page for, until it arrives there. */
+    var libraryAsked: dev.nori.music.ffi.settings.LibrarySection? = null
     fun autoEq() = go("autoeq")
     fun back() { if (sheet.isOpen) sheet.close() else swipe.back() }
     /**
@@ -573,12 +576,8 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                     page("plugins") { PluginsScreen(viewModel(), settings, LocalNav.current::plugin) }
                     page("plugins/{id}") { PluginPage(viewModel(), settings, it.arguments!!.getString("id")!!, LocalNav.current::back) }
                     page("home-rows") { HomeRows(settings) }
-                    page("library-sections") { LibrarySections(settings) }
-                    page("library/{section}") {
-                        // A section with a chip is shown on the Library page; the places and smart playlists have a page.
-                        val section = dev.nori.music.ffi.settings.LibrarySection.valueOf(it.arguments!!.getString("section")!!)
-                        if (section.onLibraryPage()) LibraryScreen(actions, initial = section) else LibrarySectionScreen(section, actions)
-                    }
+                    // The places and smart playlists; a section with a chip is shown on the Library page.
+                    page("library/{section}") { LibrarySectionScreen(dev.nori.music.ffi.settings.LibrarySection.valueOf(it.arguments!!.getString("section")!!), actions) }
                     page("autoeq") { AutoEqScreen(settings) }
                     page("album/{id}", inset = false) { AlbumScreen(it.arguments!!.getString("id")!!, actions) }
                     page("downloaded/{id}", inset = false) {
@@ -594,7 +593,6 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                     page("stats") { StatsScreen() }
                     page("perf") { dev.nori.music.app.PerfHooks.recorder?.Page() }
                     page("downloads") { DownloadsScreen(actions) }
-                    page("folder/{id}", inset = false) { FolderScreen(it.arguments!!.getString("id")!!, actions) }
                     page("decade/{year}") { SongsScreen(actions, it.arguments!!.getString("year")!!.toInt()) }
                 }
                 // A newer release, and its download and install once asked for; under the player, so the

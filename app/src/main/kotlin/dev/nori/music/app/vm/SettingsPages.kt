@@ -272,7 +272,6 @@ private fun itemWords(item: RowItem): Pair<Int, Int>? = when (item) {
         SettingsLink.EQUALIZER -> R.string.settings_equalizer to 0
         SettingsLink.SYSTEM_EFFECTS -> R.string.settings_system_effects to 0
         SettingsLink.HOME_ROWS -> R.string.settings_home_rows to 0
-        SettingsLink.LIBRARY_SECTIONS -> R.string.settings_library_sections to 0
         SettingsLink.LYRICS_SOURCES -> R.string.settings_lyrics_sources to R.string.settings_hint_lyrics_sources
         SettingsLink.DOWNLOADS -> R.string.settings_downloads to 0
     }
@@ -628,7 +627,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         }
         SettingsLink.SYSTEM_EFFECTS -> linkRow(R.string.settings_system_effects, "", false, "system-effects")
         SettingsLink.HOME_ROWS -> linkRow(R.string.settings_home_rows, "", false, "home-rows")
-        SettingsLink.LIBRARY_SECTIONS -> linkRow(R.string.settings_library_sections, "", false, "library-sections")
         SettingsLink.LYRICS_SOURCES -> {
             val n = s.lyricsSources.count { it.on }
             val status = if (n == 0) str(R.string.settings_lyrics_sources_none) else res.getQuantityString(R.plurals.settings_lyrics_sources_on, n, n)

@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -50,7 +51,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         LargeTitle(say.search)
         SearchField(
             ui.query, vm::setQuery, say.searchHint,
-            Modifier.padding(horizontal = Space.gutter, vertical = 8.dp), testTag = "search", autofocus = taps != opened,
+            Modifier.padding(start = Space.gutter, end = Space.gutter, top = 8.dp), testTag = "search", autofocus = taps != opened,
             focusKey = taps,
         )
         // Its room is kept whether or not it shows, so the results do not move as the server answers.
@@ -62,6 +63,9 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         if (ui.scopesOffered) LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(scopes) { (scope, label) -> Chip(label, ui.scope == scope) { vm.setScope(scope) } }
         }
+        // Back from a search comes back to this page's start, not to the tab before it.
+        val focus = androidx.compose.ui.platform.LocalFocusManager.current
+        androidx.activity.compose.BackHandler(ui.query.isNotEmpty()) { vm.setQuery(""); focus.clearFocus() }
         val r = ui.shown
         // A new search starts with its best few songs again.
         var allSongs by androidx.compose.runtime.remember(ui.query) { androidx.compose.runtime.mutableStateOf(false) }
@@ -70,9 +74,13 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
             // genres and its decades.
             val browse by vm.browse.collectAsStateWithLifecycle()
             val scroll = rememberLazyListState()
-            LazyColumn(Modifier.pageToEdges().fadesUnderTitle(scroll), scroll, contentPadding = pagePadding(LocalChromeInset.current)) {
+            // The last shelf stops a gutter short of the chrome rather than against it.
+            LazyColumn(Modifier.pageToEdges().fadesUnderTitle(scroll), scroll, contentPadding = pagePadding(LocalChromeInset.current + Space.gutter)) {
                 if (ui.history.isNotEmpty()) item(key = "recent") {
-                    SectionHeader(say.recentSearches, action = { TextAction(say.clearAll, vm::clearHistory) })
+                    // Clear all is a word in the header's line, not a button as tall as a row.
+                    SectionHeader(say.recentSearches, action = {
+                        Text(say.clearAll, Modifier.clip(PillShape).clickable(onClick = vm::clearHistory).padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelLarge)
+                    })
                 }
                 items(ui.history, key = { "q-$it" }) { q -> RecentSearch(q, { vm.setQuery(q) }, { vm.forgetSearch(q) }, Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)) }
                 if (browse.genres.isNotEmpty()) {
@@ -85,7 +93,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
                     }
                 }
                 if (browse.decades.isNotEmpty()) item(key = "decades") {
-                    SectionTitle(say.decades)
+                    SectionTitle(say.decades, onMore = { nav.librarySection(dev.nori.music.ffi.settings.LibrarySection.DECADES) })
                     LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(browse.decades, key = { it.start.toInt() }) { d -> Chip(remember(d.start) { say.decade(d.start.toInt()) }, selected = true) { nav.decade(d.start.toInt()) } }
                     }
@@ -231,7 +239,7 @@ private fun RecentSearch(query: String, onClick: () -> Unit, onForget: () -> Uni
         SwipeBackdrop(swipe, forget, forget, Modifier.matchParentSize())
         Row(
             Modifier.fillMaxWidth().swipeable(swipe, forget, forget, MaterialTheme.colorScheme.background, gone = true)
-                .clickable(onClick = onClick).padding(horizontal = Space.gutter, vertical = 11.dp),
+                .clickable(onClick = onClick).padding(horizontal = Space.gutter, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             androidx.compose.material3.Icon(Iconoir.ClockRotateRight, null, Modifier.padding(end = 14.dp).size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)

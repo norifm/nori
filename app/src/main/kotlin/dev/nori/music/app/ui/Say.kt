@@ -133,7 +133,6 @@ class Say(private val r: Resources) {
         is dev.nori.music.ffi.library.QueueBy.App -> r.getString(R.string.continue_from_app, by.name)
     }
     val homeRowsTitle: String = r.getString(R.string.settings_home_rows)
-    val librarySectionsTitle: String = r.getString(R.string.settings_library_sections)
     val recentlyAdded: String = r.getString(R.string.library_recently_added)
     val showAll: String = r.getString(R.string.show_all)
     private val untitled: String = r.getString(R.string.untitled)
@@ -420,16 +419,6 @@ class Say(private val r: Resources) {
     /** The count alone, where "12 selected" does not fit. */
     fun selectedShort(n: Int): String = r.getString(R.string.selected_count_short, n)
 
-    /** A folder's list head: "2 folders · 14 songs · 48:10", the songs and length only if it has songs. */
-    fun folderCaption(folders: Int, songs: Int, seconds: Long): String = listOfNotNull(
-        r.getQuantityString(R.plurals.folders, folders, folders).takeIf { folders > 0 },
-        songs(songs).takeIf { songs > 0 },
-        Fmt.duration(seconds).takeIf { songs > 0 },
-    ).joinToString(" · ")
-    /** A folder's title: its name, or "Folder" for one the server did not name. */
-    fun folderTitle(name: String): String = name.ifEmpty { r.getString(R.string.folder_untitled) }
-    /** A folder's row in a folder: a folder mark, then its name. */
-    fun folderRow(name: String): String = "📁  $name"
     /** A decade by its first year: "1990s". */
     fun decade(start: Int): String = r.getString(R.string.decade_name, start)
 

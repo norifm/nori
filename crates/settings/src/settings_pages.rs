@@ -104,7 +104,6 @@ pub enum SettingsLink {
     /// The phone's own sound effects panel.
     SystemEffects,
     HomeRows,
-    LibrarySections,
     LyricsSources,
     Downloads,
 }
@@ -392,7 +391,7 @@ impl Page<'_> {
         let mut out = vec![(SectionId::Theme, theme)];
         if self.phone() {
             use crate::settings::DimIdle;
-            let home = vec![row(RowItem::Link { to: SettingsLink::HomeRows }), row(RowItem::Link { to: SettingsLink::LibrarySections })];
+            let home = vec![row(RowItem::Link { to: SettingsLink::HomeRows })];
             let mut screen = vec![
                 self.setting("hideStatusBar"),
                 self.setting("keepAwake"),

@@ -389,9 +389,9 @@ pub enum LibrarySection {
 impl LibrarySection {
     /// The sections the Library page lists, in the order a new install lists them: smart playlists are
     /// found under Playlists, and History and Downloads are the page's own buttons.
-    pub const LISTED: [LibrarySection; 9] = {
+    pub const LISTED: [LibrarySection; 8] = {
         use LibrarySection::*;
-        [Albums, Favourites, Artists, Songs, Playlists, Genres, Decades, Folders, Radio]
+        [Albums, Favourites, Artists, Songs, Playlists, Genres, Decades, Radio]
     };
 }
 
@@ -638,8 +638,6 @@ pub struct StoredPrefs {
     /// The home page's rows, in order; unlisted rows are hidden.
     #[setting("homeRows", Picks, default = HomeRow::ALL.to_vec(), hidden)]
     pub home_rows: Vec<HomeRow>,
-    #[setting("librarySections", Picks, default = LibrarySection::LISTED.to_vec(), hidden)]
-    pub library_sections: Vec<LibrarySection>,
     #[setting("pinnedPlaylists", LINES, default = Vec::new(), hidden)]
     pub pinned_playlists: Vec<String>,
     #[setting("listPrefs", LIST_PREFS, default = HashMap::new(), hidden)]

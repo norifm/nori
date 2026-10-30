@@ -1,6 +1,6 @@
 <script lang="ts">
-  // The library's sections (a phone's Library tab; the top bar lists them on a wide screen), in the order
-  // kept (the core's `library_sections`), and what was added last.
+  // The library's sections (a phone's Library tab; the top bar lists them on a wide screen), in their
+  // order (the core's `library_sections`), and what was added last.
   import { ask, read } from "../rpc";
   import { reading } from "../state/library.svelte";
   import type { Album } from "../state/types";

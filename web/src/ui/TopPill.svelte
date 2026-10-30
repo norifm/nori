@@ -14,7 +14,7 @@
 
 <script lang="ts">
   // The top bar on a wide screen, as the desktop's top pill: one outline holding Home and the library's
-  // sections in the order kept (the core's `library_sections`), the current one in the accent and named
+  // sections in their order (the core's `library_sections`), the current one in the accent and named
   // while there is room; then the search and the settings button. Settings opens the account, the
   // equalizer and Settings, and the season and appearance. The wordmark stands left of it where it fits.
   import { ask } from "../rpc";

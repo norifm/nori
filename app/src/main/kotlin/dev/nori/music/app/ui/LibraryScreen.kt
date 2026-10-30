@@ -45,7 +45,6 @@ import dev.nori.music.app.vm.ActionsViewModel
 import dev.nori.music.app.vm.AlbumsViewModel
 import dev.nori.music.app.vm.ArtistsViewModel
 import dev.nori.music.app.vm.DecadesViewModel
-import dev.nori.music.app.vm.FoldersViewModel
 import dev.nori.music.ffi.model.Artist
 import dev.nori.music.ffi.settings.LibrarySection
 import dev.nori.music.ffi.library.SortDirection
@@ -136,24 +135,26 @@ private fun AlbumBar(vm: AlbumsViewModel, shuffle: (() -> Unit)?) {
 }
 
 /**
- * The library: its title, a strip of chips for the sections kept in Library sections and the one
- * chosen shown below it, with the places (Favorites, Downloads, History) at the top of each. The chosen
- * section is remembered; a deep link ([initial]) chooses one. Smart playlists are under Playlists.
+ * The library: its title, a strip of chips for its sections and the one chosen shown below it, with the
+ * places (Favorites, Downloads, History) at the top of each. The chosen section is remembered; one asked
+ * for elsewhere ([Nav.librarySection]) is chosen on arrival. Smart playlists are under Playlists.
  */
 @Composable
-fun LibraryScreen(actions: ActionsViewModel, initial: LibrarySection? = null) {
+fun LibraryScreen(actions: ActionsViewModel) {
     val rules = LocalRules.current
-    val settings: dev.nori.music.app.vm.SettingsViewModel = viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
-    val sections = remember(prefs.librarySections, rules.sections) { dev.nori.music.ffi.library.librarySectionsShown(prefs.librarySections, rules.sections) }
+    val sections = remember(rules.sections) { dev.nori.music.ffi.library.librarySectionsShown(rules.sections) }
     val chips = remember(sections) { sections.filter { it.onLibraryPage() } }
-    var picked by rememberSaveable { mutableStateOf(initial?.name) }
+    val nav = LocalNav.current
+    var picked by rememberSaveable { mutableStateOf(nav.libraryAsked?.name) }
+    androidx.compose.runtime.LaunchedEffect(Unit) { nav.libraryAsked = null }
     val shown = picked?.let(LibrarySection::valueOf)?.takeIf { it in chips } ?: chips.firstOrNull()
     // Only the shown section's view model is made, so only it loads anything.
     val albums = if (shown == LibrarySection.ALBUMS) viewModel<AlbumsViewModel>() else null
     Column {
         LargeTitle(say.library) { Places(favorites = LibrarySection.FAVOURITES in sections) }
-        LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = LIST_GAP), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // A section asked for from elsewhere may be far along the strip: it opens scrolled to its chip.
+        val strip = rememberLazyListState(initialFirstVisibleItemIndex = chips.indexOf(shown).coerceAtLeast(0))
+        LazyRow(Modifier.bleedsToEdges(), strip, contentPadding = edgePadding(horizontal = Space.gutter, vertical = LIST_GAP), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(chips, key = { it.name }) { s -> Chip(say.librarySection(s), s == shown) { picked = s.name } }
         }
         // A profile with no library (a provider's, signed out) is found through search.
@@ -165,7 +166,6 @@ fun LibraryScreen(actions: ActionsViewModel, initial: LibrarySection? = null) {
             LibrarySection.PLAYLISTS -> Playlists(actions)
             LibrarySection.GENRES -> Genres()
             LibrarySection.DECADES -> Decades()
-            LibrarySection.FOLDERS -> Folders()
             LibrarySection.RADIO -> Radio()
             else -> Unit
         }
@@ -223,8 +223,8 @@ fun LibrarySectionScreen(section: LibrarySection, actions: ActionsViewModel) {
             LibrarySection.FAVOURITES -> Favourites(actions)
             LibrarySection.GENRES -> Genres()
             LibrarySection.DECADES -> Decades()
-            LibrarySection.FOLDERS -> Folders()
             LibrarySection.RADIO -> Radio()
+            LibrarySection.FOLDERS -> Unit
             LibrarySection.DOWNLOADS -> Downloads(actions)
         }
     }
@@ -403,22 +403,6 @@ private fun Decades(vm: DecadesViewModel = viewModel()) {
                     decades.forEachIndexed { i, d ->
                         GroupRow(remember(d.start) { say.decade(d.start.toInt()) }, { nav.decade(d.start.toInt()) }, value = "${d.songCount}", chevron = true, divider = i < decades.lastIndex)
                     }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun Folders(vm: FoldersViewModel = viewModel()) {
-    val load by vm.roots.collectAsStateWithLifecycle()
-    val nav = LocalNav.current
-    LoadBox(load) { roots ->
-        val scroll = rememberLazyListState()
-        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-            item {
-                GroupCard {
-                    roots.forEachIndexed { i, f -> GroupRow(f.name, { nav.folder(f.id) }, icon = Iconoir.Folder, chevron = true, divider = i < roots.lastIndex) }
                 }
             }
         }
