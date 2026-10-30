@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-http',
  'edition': '2021',
- 'version': '0.7.1',
+ 'version': '0.7.2',
  'targets': [{'name': 'nori_http', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True},
              {'name': 'cancel', 'kind': 'test', 'root': 'tests/cancel.rs', 'test': True},
              {'name': 'held_poll', 'kind': 'test', 'root': 'tests/held_poll.rs', 'test': True}],

@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-tasks',
  'edition': '2021',
- 'version': '0.7.1',
+ 'version': '0.7.2',
  'targets': [{'name': 'nori_tasks', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True}],
  'features': {'tests': [], 'desktop': [], 'desktop-tests': []},
  'local': [{'package': 'nori-time',
