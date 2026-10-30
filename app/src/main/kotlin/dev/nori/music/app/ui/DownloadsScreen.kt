@@ -104,21 +104,21 @@ private typealias Glyph = dev.nori.music.ffi.library.DownloadGlyph
 
 /** The core's answer for each phase (or none) and state, asked once each: a row asks on every composition. */
 private object Glyphs {
-    private val made = arrayOfNulls<Glyph>((DownloadPhase.entries.size + 1) * 4)
-    fun of(phase: DownloadPhase?, downloaded: Boolean, pending: Boolean): Glyph {
-        val i = ((phase?.ordinal ?: -1) + 1) * 4 + (if (downloaded) 2 else 0) + (if (pending) 1 else 0)
-        return made[i] ?: dev.nori.music.ffi.library.downloadGlyph(phase, downloaded, pending).also { made[i] = it }
+    private val made = arrayOfNulls<Glyph>((DownloadPhase.entries.size + 1) * 8)
+    fun of(phase: DownloadPhase?, downloaded: Boolean, pending: Boolean, pageWhole: Boolean): Glyph {
+        val i = ((phase?.ordinal ?: -1) + 1) * 8 + (if (pageWhole) 4 else 0) + (if (downloaded) 2 else 0) + (if (pending) 1 else 0)
+        return made[i] ?: dev.nori.music.ffi.library.downloadGlyph(phase, downloaded, pending, pageWhole).also { made[i] = it }
     }
 }
 
 /** The last glyph a row showed, kept so it can fade out rather than vanish. A plain field: never drawn from. */
 private class LastGlyph(var value: Glyph, val bornEmpty: Boolean)
 
-/** How big the mark is: the size of the downloaded icon it grew out of. */
-private val MARK = 15.dp
+/** How big a row's marks are, the seal's and the download's alike. */
+val MARK = 15.dp
 
-/** The fixed width a song row gives its download mark, so the marks of every row line up. */
-val MARK_SLOT = 26.dp
+/** The space between a row's marks, and between them and its time. */
+val MARK_GAP = 8.dp
 
 /**
  * Where a song row says how its download stands: a faint empty ring while it waits, a ring closing
@@ -127,14 +127,14 @@ val MARK_SLOT = 26.dp
  * screen grows in, and one that goes shrinks away, so nothing snaps into place.
  */
 @Composable
-fun DownloadSlot(id: String, downloaded: Boolean, tint: Color) {
+fun DownloadSlot(id: String, downloaded: Boolean, tint: Color, pageWhole: Boolean = false) {
     val all = LocalDownloadMarks.current
     if (all == null) {
-        if (downloaded) Icon(Iconoir.CheckCircle, say.downloaded, Modifier.size(MARK), tint)
+        if (downloaded && !pageWhole) Icon(Iconoir.CheckCircle, say.downloaded, Modifier.size(MARK), tint)
         return
     }
     val mark = all.marks.value[id]
-    val glyph = Glyphs.of(mark?.phase, downloaded, id in all.state.value.pendingIds)
+    val glyph = Glyphs.of(mark?.phase, downloaded, id in all.state.value.pendingIds, pageWhole)
     val last = remember { LastGlyph(glyph, glyph == Glyph.NONE) }
     if (glyph != Glyph.NONE) last.value = glyph
     if (last.value == Glyph.NONE) return

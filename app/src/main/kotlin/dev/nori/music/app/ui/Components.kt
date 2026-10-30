@@ -419,7 +419,7 @@ internal class SwipeColours(val fill: () -> Color, val armedFill: () -> Color, v
 @Composable
 fun SongRow(
     song: Song, coverUrl: String?, onClick: () -> Unit, onMenu: () -> Unit, modifier: Modifier = Modifier,
-    number: Int? = null, playing: Boolean = false, downloaded: Boolean = false,
+    number: Int? = null, playing: Boolean = false, downloaded: Boolean = false, pageWhole: Boolean = false,
     selected: Boolean = false, onLongClick: (() -> Unit)? = null, swipeRight: RowSwipe? = null, swipeLeft: RowSwipe? = null,
     /** The second line: the song's own (its explicit mark and artist), or what the page makes of it (an album's, without its own artist). */
     line: String = song.line,
@@ -457,23 +457,23 @@ fun SongRow(
                 if (line.isNotEmpty()) RemoteLine(line, song.isExternal, MaterialTheme.typography.bodySmall)
             }
             val tint = scheme.onSurfaceVariant
-            // Every row's marks sit in columns of their own, the same width on every row: the heart, then
-            // the download ring or tick, then the time, then the menu. A list of favourites then puts all
-            // its hearts one above another - placed after the title, the heart moved with the width of
+            // Every row's marks sit in columns of their own, the same width on every row: the download
+            // ring or tick, then the seal, then the time, then the menu. A list of favourites then puts all
+            // its seals one above another - placed after the title, the seal moved with the width of
             // the time beside it, "3:44" against "12:05" - and a mark arriving or leaving moves nothing
-            // else. The time is last before the menu and in a box of one fixed width, its digits held to
+            // else, so a song without a seal keeps its tick in the download column. The time is last before the menu and in a box of one fixed width, its digits held to
             // the right edge, so it sits against the ⋯ rather than with an empty download slot between.
             // A jam guest's seals would be the host's: none are shown.
             val rules = LocalRules.current
-            Box(Modifier.padding(start = 4.dp).width(15.dp), Alignment.Center) {
+            Box(Modifier.padding(start = 4.dp).width(MARK), Alignment.Center) { DownloadSlot(song.id, downloaded, tint, pageWhole) }
+            Box(Modifier.padding(start = MARK_GAP).width(MARK), Alignment.Center) {
                 if (rules.stars && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)) Icon(Kanji.Sealed, say.favourite, Modifier.size(15.dp), LocalLook.current.color(CoverLook.ACCENT))
             }
-            Box(Modifier.width(MARK_SLOT), Alignment.Center) { DownloadSlot(song.id, downloaded, tint) }
             // A song a jam guest asked for says so in its time's place until the host decides.
             val asked = rules.asks && song.id in LocalAsked.current.value
             Text(
                 if (asked) words(R.string.jam_asked_mark) else if (song.duration > 0u) duration(song.duration.toLong()) else "",
-                Modifier.widthIn(min = TIME_SLOT), textAlign = TextAlign.End,
+                Modifier.padding(start = MARK_GAP).widthIn(min = TIME_SLOT), textAlign = TextAlign.End,
                 style = MaterialTheme.typography.bodySmall, color = if (asked) scheme.onSurface else tint, maxLines = 1, softWrap = false,
             )
             IconButton(onMenu, Modifier.size(40.dp)) { Icon(Iconoir.MoreHoriz, say.more, Modifier.size(20.dp), tint) }
@@ -611,6 +611,8 @@ fun LazyListScope.songRows(
     arrival: State<Float>? = null,
     /** The page [songs] are the list of: a tap that plays them from the row starts that page's queue. */
     from: dev.nori.music.ffi.model.PageOrigin? = null,
+    /** The page's head says every one of [songs] is downloaded ([rememberPageWhole]): their rows carry no mark of it. */
+    pageWhole: Boolean = false,
 ) {
     val (onRight, onLeft) = actions.swipes
     val (playingId, downloaded, selected, menu) = list
@@ -639,9 +641,16 @@ fun LazyListScope.songRows(
             number = if (numbered) s.track.toInt() else null, playing = s.id == playingId, downloaded = s.id in downloaded,
             selected = s.id in selected, onLongClick = { menu(s) },
             swipeRight = rowSwipe(onRight, s, actions), swipeLeft = rowSwipe(onLeft, s, actions),
-            line = lines?.getOrNull(k) ?: s.line,
+            line = lines?.getOrNull(k) ?: s.line, pageWhole = pageWhole,
         )
     }
+}
+
+/** Whether every one of [songs] is downloaded, so the page head's download mark speaks for their rows. */
+@Composable
+fun rememberPageWhole(songs: List<Song>, done: Set<String>): Boolean {
+    val downloads = LocalRules.current.downloads
+    return remember(songs, done, downloads) { downloads && songs.isNotEmpty() && songs.all { it.id in done } }
 }
 
 /** The icon and words a swipe setting uncovers under [song]'s row, and the action; null when that side does nothing. */
@@ -881,4 +890,5 @@ fun prefetchCovers(context: android.content.Context, urls: List<String?>) {
  * The time's column: wide enough for "59:59" in the row's small type, so every ordinary track's time
  * ends in the same place. A track over an hour is wider and pushes left, which is rare enough to allow.
  */
-private val TIME_SLOT = 36.dp
+/** A time's width that "0:00" fills: the marks sit one [MARK_GAP] from most songs' time, and a longer one pushes them along. */
+private val TIME_SLOT = 26.dp

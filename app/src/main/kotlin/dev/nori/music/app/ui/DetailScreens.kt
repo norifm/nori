@@ -259,6 +259,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
     // A queue started here - its Play, Shuffle or a row - is the album's; its song played from anywhere else is not.
     val from = remember(detail?.queue, album.id) { detail?.queue?.origin() ?: PageOrigin(OriginKind.ALBUM, album.id) }
     val queue = rememberPageQueue(from, detail?.queue)
+    val whole = rememberPageWhole(detail?.songs.orEmpty(), list.downloaded)
     HeroPage(
         coverUrl = vm.cover(album.coverArt, CoverSize.FULL),
         coverStandIns = listOf(vm.cover(album.coverArt, CoverSize.CARD), vm.cover(album.coverArt, CoverSize.ROW)),
@@ -292,7 +293,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
                     if (disc.headed) item(key = "disc-$n", contentType = "disc") { SectionTitle(remember(disc) { say.discHeading(disc) }, Modifier.arriving(arrival), compact = true) }
                     songRows(
                         detail.songs, actions, list,
-                        numbered = true, rows = disc.songs, lines = disc.lines, arrival = arrival, from = from,
+                        numbered = true, rows = disc.songs, lines = disc.lines, arrival = arrival, from = from, pageWhole = whole,
                     )
                 }
             }
@@ -477,6 +478,7 @@ private fun PlaylistPage(
     }
     val shown = rememberMatching(detail?.songs.orEmpty(), filter)
     val from = rememberOrigin(OriginKind.PLAYLIST, id)
+    val whole = rememberPageWhole(detail?.songs.orEmpty(), list.downloaded)
     HeroPage(
         coverUrl = vm.cover(playlist.coverArt, CoverSize.FULL),
         coverStandIns = listOf(vm.cover(playlist.coverArt, CoverSize.CARD), vm.cover(playlist.coverArt, CoverSize.ROW)),
@@ -504,6 +506,7 @@ private fun PlaylistPage(
                 songRows(
                     detail.songs, actions, list,
                     cover = { vm.cover(it.coverArt, CoverSize.ROW) }, rows = shown, arrival = arrival, from = from,
+                    pageWhole = whole,
                 )
             }
             failed != null -> item(key = "fail") { LoadFailed(failed) }
@@ -519,11 +522,12 @@ fun GenreScreen(name: String, actions: ActionsViewModel, vm: GenreViewModel = vi
     val list = rememberSongListState(actions)
     val from = rememberOrigin(OriginKind.GENRE, name)
     LoadBox(load) { page ->
+        val whole = rememberPageWhole(page.songs, list.downloaded)
         SongListPage(
             name, page.songs, list.downloaded, from, actions,
             coverUrl = vm.cover(page.coverArt, CoverSize.FULL), coverStandIns = listOf(vm.cover(page.coverArt, CoverSize.ROW)),
         ) {
-            songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
+            songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from, pageWhole = whole)
         }
     }
 }
@@ -537,12 +541,13 @@ fun FolderScreen(id: String, actions: ActionsViewModel, vm: FolderViewModel = vi
     val nav = LocalNav.current
     val from = rememberOrigin(OriginKind.FOLDER, id)
     LoadBox(load) { d ->
+        val whole = rememberPageWhole(d.songs, list.downloaded)
         SongListPage(
             remember(d.name) { say.folderTitle(d.name) }, d.songs, list.downloaded, from, actions,
             headLabel = remember(d) { say.folderCaption(d.folders.size, d.songs.size, d.songs.sumOf { it.duration.toLong() }) },
         ) {
             items(d.folders, key = { "f" + it.id }) { f -> NavRow(remember(f.name) { say.folderRow(f.name) }, { nav.folder(f.id) }, chevron = true) }
-            songRows(d.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
+            songRows(d.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from, pageWhole = whole)
         }
     }
 }
