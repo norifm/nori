@@ -219,8 +219,9 @@ class MediaSources(context: Context, private val clientOf: () -> Client, private
      * The same sources as [cached], over a network whose every OkHttp call [ticket] can cancel: made per
      * request the Rust player may call off, a few builders and nothing else.
      */
-    private fun cancellable(ticket: Ticket): DataSource.Factory {
+    private fun cancellable(ticket: Ticket, kept: Boolean): DataSource.Factory {
         val net = OkHttpDataSource.Factory(okhttp3.Call.Factory { http.stream.newCall(it).also(ticket::track) })
+        if (!kept) return net
         val stream = CacheDataSource.Factory().setCache(streamCache).setUpstreamDataSourceFactory(net)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
         return CacheDataSource.Factory().setCache(downloadCache).setCacheWriteDataSinkFactory(null).setUpstreamDataSourceFactory(stream)
@@ -228,8 +229,9 @@ class MediaSources(context: Context, private val clientOf: () -> Client, private
 
     /**
      * A song's bytes from [from] on, at [url] under the cache key [key] as the core resolved them (the Rust
-     * player opens its songs so): a download, then the stream cache, then the network. The source and how
-     * many bytes are left (C.LENGTH_UNSET unknown).
+     * player opens its songs so): a download, then the stream cache, then the network. An empty [key] is a
+     * URL kept nowhere (a stream's segment, radio): the network alone. The source and how many bytes are
+     * left (C.LENGTH_UNSET unknown).
      */
     fun openResolved(url: String, key: String, from: Long): Pair<DataSource, Long> = openResolved(url, key, from, -1, null)
 
@@ -239,14 +241,15 @@ class MediaSources(context: Context, private val clientOf: () -> Client, private
      */
     internal fun openResolved(url: String, key: String, from: Long, end: Long, t: Ticket?): Pair<DataSource, Long> {
         applyStreamLimit()
-        val source = (if (t == null) cached else cancellable(t)).createDataSource()
+        val kept = key.isNotEmpty()
+        val source = (if (t == null) (if (kept) cached else network) else cancellable(t, kept)).createDataSource()
         try {
             t?.opening()
             if (t?.cancelled == true) throw java.io.InterruptedIOException("called off")
             val spec = DataSpec.Builder().setUri(Uri.parse(url)).setKey(key).setPosition(from)
             if (end > from) spec.setLength(end - from)
             val left = source.open(spec.build())
-            if (end > from) rememberLength(key, source.responseHeaders)
+            if (kept && end > from) rememberLength(key, source.responseHeaders)
             return source to left
         } catch (e: IOException) {
             // Let go at once: the stream cache's lock on the song goes with it.
@@ -257,7 +260,7 @@ class MediaSources(context: Context, private val clientOf: () -> Client, private
             // alone, whose ranged answer does. Past the end, the server holds the finished transcode and
             // serves ranges.
             val whole = if (said >= 0) said else wholeLength(url).takeIf { it in 1..from } ?: -1
-            forgetEstimate(key, from, whole)
+            if (kept) forgetEstimate(key, from, whole)
             throw PastEnd(whole)
         } finally {
             t?.opened()

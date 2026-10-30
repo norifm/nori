@@ -619,13 +619,40 @@ impl ByteSource for Served {
 #[test]
 fn addresses_open_at_the_resolved_url() {
     let (bytes, resolver) = (Arc::new(Served::default()), Arc::new(Resolver::default()));
-    let resolving = nori_engine::core::Resolving { bytes: bytes.clone(), resolver: resolver.clone() };
+    let resolving = nori_engine::core::Resolving::new(bytes.clone(), resolver.clone());
     assert!(matches!(resolving.open("addr:song", 0), Err(nori_engine::OpenError::Status(403))));
     assert_eq!(*resolver.refused.lock(), ["addr:song"]);
     assert!(resolving.open("addr:song", 1000).is_ok());
     assert!(resolving.open("http://nas/rest/stream?id=1", 0).is_ok());
     assert_eq!(*bytes.opened.lock(), [("https://served/song?1".to_string(), 0), ("https://served/song?2".to_string(), 1000), ("http://nas/rest/stream?id=1".to_string(), 0)]);
     assert_eq!(resolver.refused.lock().len(), 1, "a served URL is not refused");
+}
+
+/// Addresses `fails:<n>` resolve to the provider's failure `n`.
+struct Failing;
+
+impl nori_core::providers::ResolveStream for Failing {
+    fn resolve(&self, address: &str) -> Option<nori_core::client::NetResult<String>> {
+        use nori_core::transport::NetError;
+        let e = match address.strip_prefix("fails:")? {
+            "network" => NetError::Transport { kind: nori_core::transport::FailureKind::Connect, detail: None },
+            "gone" => NetError::Http { status: 404 },
+            _ => NetError::Api { code: 0, reason: "a preview only".into() },
+        };
+        Some(Err(e))
+    }
+
+    fn refused(&self, _: &str) {}
+}
+
+/// Only a provider the network kept from answering fails as the network: a status or a refusal it
+/// answered stays one, so the song is not waited for.
+#[test]
+fn a_providers_answer_is_not_the_networks_failure() {
+    let resolving = nori_engine::core::Resolving::new(Arc::new(Served::default()), Arc::new(Failing));
+    assert!(matches!(resolving.open("fails:network", 0), Err(nori_engine::OpenError::Failed(_))));
+    assert_eq!(resolving.open("fails:gone", 0).err(), Some(nori_engine::OpenError::Status(404)));
+    assert_eq!(resolving.open("fails:preview", 0).err(), Some(nori_engine::OpenError::Refused("a preview only".into())));
 }
 
 /// A profile whose addresses are URLs gets its byte source as it is.
@@ -698,7 +725,7 @@ impl ByteSource for Ranged {
 fn a_stream_in_parts_reads_as_one_body() {
     for ends in [true, false] {
         let bytes = Arc::new(Ranged { ends, ..Default::default() });
-        let resolving = nori_engine::core::Resolving { bytes: bytes.clone(), resolver: Arc::new(InParts::default()) };
+        let resolving = nori_engine::core::Resolving::new(bytes.clone(), Arc::new(InParts::default()));
         let mut body = resolving.open("parts:song", 700).unwrap();
         assert_eq!((body.start, body.len), (700, Some(2500)));
         let mut got = Vec::new();
@@ -715,8 +742,156 @@ fn a_stream_in_parts_reads_as_one_body() {
 fn a_part_refused_on_the_way_is_reported() {
     let bytes = Arc::new(Ranged { ends: true, refuse: Some(1700), ..Default::default() });
     let resolver = Arc::new(InParts::default());
-    let resolving = nori_engine::core::Resolving { bytes, resolver: resolver.clone() };
+    let resolving = nori_engine::core::Resolving::new(bytes, resolver.clone());
     let mut body = resolving.open("parts:song", 700).unwrap();
     assert!(body.reader.read_to_end(&mut Vec::new()).is_err());
     assert_eq!(*resolver.refused.lock(), ["parts:song"]);
+}
+
+/// Addresses `hls:<name>` resolve to `https://cdn/<name>/list.m3u8?<n>`, `n` counting the resolves, and
+/// `unnamed:<name>` to `https://cdn/<name>/list?<n>`, a playlist whose path doesn't say so; refusals kept.
+#[derive(Default)]
+struct Hls {
+    resolved: Mutex<u32>,
+    refused: Mutex<Vec<String>>,
+}
+
+impl nori_core::providers::ResolveStream for Hls {
+    fn resolve(&self, address: &str) -> Option<nori_core::client::NetResult<String>> {
+        let (name, ext) = match address.split_once(':')? {
+            ("hls", name) => (name, ".m3u8"),
+            ("unnamed", name) => (name, ""),
+            _ => return None,
+        };
+        let mut n = self.resolved.lock();
+        *n += 1;
+        Some(Ok(format!("https://cdn/{name}/list{ext}?{n}")))
+    }
+
+    fn refused(&self, address: &str) {
+        self.refused.lock().push(address.to_string());
+    }
+}
+
+/// A song as an HLS playlist of three segments, each led by an ID3 tag; any other URL a plain file.
+/// Every request kept as (URL, from, through the cache), and a segment URL in `refuse` refused once; the
+/// cached copies dropped kept.
+#[derive(Default)]
+struct Cdn {
+    asked: Mutex<Vec<(String, u64, bool)>>,
+    refuse: Mutex<Option<String>>,
+    forgot: Mutex<Vec<String>>,
+}
+
+/// The song's bytes: 300 + 200 + 100, byte `i` being `i % 251`.
+const SEGMENTS: [(u64, u64); 3] = [(0, 300), (300, 500), (500, 600)];
+
+fn song_bytes(from: u64, to: u64) -> Vec<u8> {
+    (from..to).map(|i| (i % 251) as u8).collect()
+}
+
+impl Cdn {
+    fn serve(&self, url: &str, from: u64, cached: bool) -> Result<Body, nori_engine::OpenError> {
+        self.asked.lock().push((url.to_string(), from, cached));
+        if self.refuse.lock().as_deref() == Some(url) {
+            self.refuse.lock().take();
+            return Err(nori_engine::OpenError::Status(403));
+        }
+        let path = url.split('?').next().unwrap_or(url);
+        let bytes = if path.ends_with("/list.m3u8") || path.ends_with("/list") {
+            let n = url.rsplit('?').next().unwrap_or("");
+            let mut text = "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n".to_string();
+            for k in 0..SEGMENTS.len() {
+                text += &format!("#EXTINF:10.0,\nseg{k}.mp3?sig={n}&amp;k=1\n");
+            }
+            (text + "#EXT-X-ENDLIST\n").into_bytes()
+        } else if let Some(k) = path.strip_suffix(".mp3").and_then(|p| p.rsplit("seg").next()).and_then(|k| k.parse::<usize>().ok()) {
+            // An ID3v2 tag of 6 bytes (syncsafe size), as an HLS segment's timestamp is carried.
+            let mut b = b"ID3\x04\x00\x00\x00\x00\x00\x06PRIV!!".to_vec();
+            b.extend(song_bytes(SEGMENTS[k].0, SEGMENTS[k].1));
+            b
+        } else {
+            return Ok(Body { start: from, len: Some(1000), reader: Box::new(Cursor::new(song_bytes(from, 1000))) });
+        };
+        // These servers ignore ranges.
+        Ok(Body { start: 0, len: Some(bytes.len() as u64), reader: Box::new(Cursor::new(bytes)) })
+    }
+}
+
+impl ByteSource for Cdn {
+    fn open(&self, url: &str, from: u64) -> Result<Body, nori_engine::OpenError> {
+        self.serve(url, from, true)
+    }
+
+    fn open_plain(&self, url: &str, from: u64, _: &nori_engine::Cancel) -> Result<Body, nori_engine::OpenError> {
+        self.serve(url, from, false)
+    }
+
+    fn forget(&self, url: &str) -> bool {
+        self.forgot.lock().push(url.to_string());
+        true
+    }
+}
+
+fn read_all(body: Body) -> Vec<u8> {
+    let mut got = Vec::new();
+    let mut reader = body.reader;
+    reader.read_to_end(&mut got).unwrap();
+    got
+}
+
+/// An address served as an HLS playlist reads as its segments' stream, their ID3 tags left out, from any
+/// byte: before the segments' sizes are known and after, the same bytes. Named by its path, the playlist
+/// is asked for once, like the segments outside the cache.
+#[test]
+fn an_hls_playlist_reads_as_its_segments() {
+    let cdn = Arc::new(Cdn::default());
+    let resolving = nori_engine::core::Resolving::new(cdn.clone(), Arc::new(Hls::default()));
+    let body = resolving.open("hls:song", 350).unwrap();
+    assert_eq!((body.start, body.len), (350, None), "the length unknown until every segment is read");
+    assert_eq!(read_all(body), song_bytes(350, 600));
+    let body = resolving.open("hls:song", 0).unwrap();
+    assert_eq!(body.len, Some(600));
+    assert_eq!(read_all(body), song_bytes(0, 600));
+    for from in [0, 299, 300, 450, 599, 600] {
+        assert_eq!(read_all(resolving.open("hls:song", from).unwrap()), song_bytes(from, 600), "from {from}");
+    }
+    let asked = cdn.asked.lock();
+    assert_eq!(asked.iter().filter(|(u, _, _)| u.contains(".m3u8")).collect::<Vec<_>>(), [&("https://cdn/song/list.m3u8?1".to_string(), 0, false)]);
+    assert!(cdn.forgot.lock().is_empty(), "nothing of it was cached");
+    assert!(asked.iter().filter(|(u, _, _)| u.contains(".mp3")).all(|(u, from, cached)| !cached && *from == 0 && u.ends_with("sig=1&k=1")), "{asked:?}");
+}
+
+/// A playlist whose path doesn't say so is known by its first bytes, asked for through the cache, whose
+/// copy of it is then dropped; a file comes as it is, from any byte.
+#[test]
+fn a_playlist_is_known_by_its_first_bytes() {
+    let cdn = Arc::new(Cdn::default());
+    let resolving = nori_engine::core::Resolving::new(cdn.clone(), Arc::new(Hls::default()));
+    assert_eq!(read_all(resolving.open("unnamed:song", 0).unwrap()), song_bytes(0, 600));
+    assert_eq!(cdn.asked.lock()[0], ("https://cdn/song/list?1".to_string(), 0, true));
+    assert_eq!(*cdn.forgot.lock(), ["unnamed:song"]);
+    let resolving = nori_engine::core::Resolving::new(cdn.clone(), Arc::new(Resolver::default()));
+    for from in [0, 400] {
+        let body = resolving.open("addr:song", from).unwrap();
+        assert_eq!((body.start, body.len), (from, Some(1000)));
+        assert_eq!(read_all(body), song_bytes(from, 1000));
+    }
+}
+
+/// A segment refused on the way (its URL expired) is an error of the body and reports the address refused;
+/// the next open resolves the address and reads its playlist anew.
+#[test]
+fn a_refused_segment_asks_for_the_playlist_anew() {
+    let cdn = Arc::new(Cdn::default());
+    let resolver = Arc::new(Hls::default());
+    let resolving = nori_engine::core::Resolving::new(cdn.clone(), resolver.clone());
+    *cdn.refuse.lock() = Some("https://cdn/song/seg1.mp3?sig=1&k=1".into());
+    let mut body = resolving.open("hls:song", 0).unwrap();
+    let mut got = Vec::new();
+    assert!(body.reader.read_to_end(&mut got).is_err());
+    assert_eq!(got, song_bytes(0, 300), "up to the refused segment");
+    assert_eq!(*resolver.refused.lock(), ["hls:song"]);
+    assert_eq!(read_all(resolving.open("hls:song", 300).unwrap()), song_bytes(300, 600));
+    assert!(cdn.asked.lock().iter().any(|(u, _, _)| u == "https://cdn/song/list.m3u8?2"), "a new playlist");
 }

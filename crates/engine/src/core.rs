@@ -23,6 +23,8 @@ use nori_core::overrides::Layer;
 use nori_core::settings::StoredPrefs;
 
 use nori_core::transfers;
+
+use crate::hls;
 use nori_core::Core;
 use parking_lot::{Condvar, Mutex};
 
@@ -280,18 +282,25 @@ impl Library for CoreLibrary {
 /// ([`Resolving`]); `bytes` itself when its addresses are URLs already.
 pub fn resolving(client: &Arc<Client>, bytes: Arc<dyn ByteSource>) -> Arc<dyn ByteSource> {
     match client.stream_resolver() {
-        Some(resolver) => Arc::new(Resolving { bytes, resolver }),
+        Some(resolver) => Arc::new(Resolving::new(bytes, resolver)),
         None => bytes,
     }
 }
 
 /// A byte source over a provider's stream addresses: each opens at the URL it resolves to now, on the
-/// opening thread. A refused URL is forgotten, so the loader's next try resolves it anew. Other URLs
-/// pass through.
+/// opening thread. A refused URL is forgotten, so the loader's next try resolves it anew. An address
+/// served as an HLS playlist reads as its segments' stream ([`crate::hls`]). Other URLs pass through.
 pub struct Resolving {
-    pub bytes: Arc<dyn ByteSource>,
-    pub resolver: Arc<dyn ResolveStream>,
+    bytes: Arc<dyn ByteSource>,
+    resolver: Arc<dyn ResolveStream>,
+    playlists: Playlists,
 }
+
+/// The addresses lately served as HLS playlists, newest last, with what was learned of them.
+type Playlists = Arc<Mutex<Vec<(String, Arc<hls::Playlist>)>>>;
+
+/// Playlists kept: the songs playing and coming up.
+const PLAYLISTS_KEPT: usize = 4;
 
 impl ByteSource for Resolving {
     fn open(&self, url: &str, from: u64) -> Result<crate::source::Body, OpenError> {
@@ -300,10 +309,10 @@ impl ByteSource for Resolving {
 
     fn open_cancellable(&self, url: &str, key: Option<&str>, from: u64, cancel: &crate::source::Cancel) -> Result<crate::source::Body, OpenError> {
         let Some(served) = self.resolver.resolve(url) else { return self.bytes.open_cancellable(url, key, from, cancel) };
-        let served = served.map_err(|e| OpenError::Failed(e.to_string()))?;
+        let served = served.map_err(provider_error)?;
         let opened = match self.resolver.parts(url).filter(|p| from < p.len) {
             Some(parts) => self.open_parts(url, &served, key, from, parts, cancel),
-            None => self.bytes.open_cancellable(&served, key, from, cancel),
+            None => self.open_whole(url, &served, key, from, cancel),
         };
         if matches!(opened, Err(OpenError::Status(403))) {
             self.resolver.refused(url);
@@ -327,7 +336,68 @@ impl ByteSource for Resolving {
     }
 }
 
+/// Why a provider gave no URL, as an open's failure: only a request that never came back is the network's.
+fn provider_error(e: nori_core::transport::NetError) -> OpenError {
+    match e {
+        nori_core::transport::NetError::Transport { .. } => OpenError::Failed(e.to_string()),
+        nori_core::transport::NetError::Http { status } => OpenError::Status(status),
+        _ => OpenError::Refused(e.to_string()),
+    }
+}
+
 impl Resolving {
+    pub fn new(bytes: Arc<dyn ByteSource>, resolver: Arc<dyn ResolveStream>) -> Resolving {
+        Resolving { bytes, resolver, playlists: Arc::default() }
+    }
+
+    /// `address` (served at `served`) from byte `from` in one request, or as its segments when it is an
+    /// HLS playlist: one whose path ends in `.m3u8`, read outside the cache, or a body from the start that
+    /// begins as a playlist does, whose copy the client's cache then drops.
+    fn open_whole(&self, address: &str, served: &str, key: Option<&str>, from: u64, cancel: &crate::source::Cancel) -> Result<crate::source::Body, OpenError> {
+        let known = self.playlists.lock().iter().find(|(a, _)| a == address).map(|(_, p)| p.clone());
+        if let Some(playlist) = known {
+            return Ok(self.segments(address, playlist, from, cancel));
+        }
+        let path = served.split(['?', '#']).next().unwrap_or_default();
+        let named = path.ends_with(".m3u8");
+        let body = if named { self.bytes.open_plain(served, 0, cancel) } else { self.bytes.open_cancellable(served, key, from, cancel) };
+        let body = body.inspect_err(|e| nori_core::alog::info(&format!("{address}: {path} answered {e}")))?;
+        if body.start != 0 {
+            return Ok(body);
+        }
+        let mut head = Vec::with_capacity(hls::MARK.len());
+        let mut reader = body.reader;
+        reader.by_ref().take(hls::MARK.len() as u64).read_to_end(&mut head).map_err(|e| OpenError::Failed(e.to_string()))?;
+        if head != hls::MARK {
+            let reader = Box::new(std::io::Cursor::new(head).chain(reader));
+            return Ok(crate::source::Body { reader, ..body });
+        }
+        let playlist = hls::read_playlist(&head, reader, served).map_err(|e| OpenError::Failed(format!("an HLS playlist that can't be played: {e}")))?;
+        if !named {
+            // Its text went into the client's cache as the song's; the song is its segments.
+            self.bytes.forget(address);
+        }
+        let playlist = Arc::new(playlist);
+        let mut kept = self.playlists.lock();
+        kept.push((address.to_string(), playlist.clone()));
+        let over = kept.len().saturating_sub(PLAYLISTS_KEPT);
+        kept.drain(..over);
+        drop(kept);
+        Ok(self.segments(address, playlist, from, cancel))
+    }
+
+    /// `playlist`'s stream from byte `from`. A segment refused on the way forgets the playlist and reports
+    /// the address refused, so the loader's next open resolves a new one.
+    fn segments(&self, address: &str, playlist: Arc<hls::Playlist>, from: u64, cancel: &crate::source::Cancel) -> crate::source::Body {
+        let (resolver, playlists, address) = (self.resolver.clone(), self.playlists.clone(), address.to_string());
+        let refused = Box::new(move || {
+            playlists.lock().retain(|(a, _)| *a != address);
+            resolver.refused(&address);
+        });
+        let len = playlist.len();
+        crate::source::Body { start: from, len, reader: Box::new(hls::Segments::new(self.bytes.clone(), playlist, from, cancel.clone(), refused)) }
+    }
+
     /// `address` (served at `served`) from byte `from` as one body read a part at a time.
     fn open_parts(&self, address: &str, served: &str, key: Option<&str>, from: u64, parts: StreamParts, cancel: &crate::source::Cancel) -> Result<crate::source::Body, OpenError> {
         let end = parts.len.min(from + parts.most);

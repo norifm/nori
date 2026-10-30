@@ -72,9 +72,10 @@ fn usage() -> ! {
          \x20               [--download] [--offline] [--mpris]\n\
          \x20               [--wav OUT.wav [--pace X]] [--device NAME] [--devices]\n\
          \x20      nori-cli --script --provider KIND [the same, without the server] [--sign-in FILE] [--home]\n\
-         \x20               [--data DIR]\n\
+         \x20               [--data DIR] [--install-plugin FILE]\n\
          The url, user and password may also come from NORI_URL, NORI_USER and NORI_PASSWORD.\n\
-         KIND is a profile kind as the settings store it (a plugin's id)."
+         KIND is a profile kind as the settings store it (a plugin's id). --install-plugin installs (or\n\
+         updates) a .noriplugin package or plugin folder into DIR and turns it on first."
     );
     std::process::exit(2)
 }
@@ -108,6 +109,7 @@ fn args(argv: Vec<String>) -> Args {
         pace: 16.0,
         device: None,
     };
+    let mut install = None;
     let mut it = argv.into_iter();
     while let Some(k) = it.next() {
         let mut v = || it.next().unwrap_or_else(|| usage());
@@ -119,6 +121,7 @@ fn args(argv: Vec<String>) -> Args {
             "--user" => a.user = v(),
             "--password" => a.password = v(),
             "--data" => a.data = v().into(),
+            "--install-plugin" => install = Some(PathBuf::from(v())),
             "--search" | "--play" => a.search = Some(v()),
             "--songs" => a.songs = v().parse().unwrap_or_else(|_| usage()),
             "--start" => a.start_s = v().parse().unwrap_or_else(|_| usage()),
@@ -141,6 +144,12 @@ fn args(argv: Vec<String>) -> Args {
             }
             _ => usage(),
         }
+    }
+    if let Some(file) = install {
+        nori_host::desktop::install_plugin(&a.data, &file).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1)
+        });
     }
     if !nori_host::desktop::plugins(&a.data).kinds.server_ready(a.profile()) {
         usage();
