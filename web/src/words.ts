@@ -171,6 +171,27 @@ export const W = {
   time: clock,
   servers: "Servers",
   accounts: "Accounts",
+  plugins: "Plugins",
+  pluginsGet: "Get plugins",
+  pluginsAsking: "Asking the repo…",
+  pluginRepoUnreachable: "Couldn't reach nori's plugins",
+  pluginFit: {
+    Supported: "Works in a browser. Installing comes soon",
+    Unknown: "Not checked for a browser yet",
+  },
+  // Why a plugin can't run in a browser, by the core's `WebBlock`.
+  webBlocks: {
+    Sockets: "Needs direct network connections",
+    LocalNetwork: "Needs devices on your network",
+    Discovery: "Needs to find devices nearby",
+    Serving: "Needs to serve other devices",
+    Casting: "Needs to send audio to a device",
+    Bluetooth: "Needs Bluetooth",
+    DeviceControl: "Needs to control your headphones",
+    Wake: "Needs to start while nori is closed",
+    SignIn: "Needs a sign-in page browsers don't allow",
+    OtherSites: "Needs sites that block web pages",
+  } as Record<string, string>,
   // Settings, by the core's pages (their title and what they hold), sections and setting names.
   settingsPages: {
     Playing: ["Playback", "Crossfade, AutoMix, queue"],

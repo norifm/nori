@@ -5297,6 +5297,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nori-plugin-index"
+version = "0.7.2"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wasmparser 0.261.0",
+]
+
+[[package]]
 name = "nori-plugin-sdk"
 version = "0.7.2"
 dependencies = [
@@ -5320,6 +5329,7 @@ dependencies = [
  "nori-model",
  "nori-net",
  "nori-player",
+ "nori-plugin-index",
  "nori-plugin-sdk",
  "nori-plugins",
  "nori-settings",
@@ -5482,6 +5492,7 @@ dependencies = [
  "nori-host",
  "nori-look",
  "nori-player",
+ "nori-plugin-index",
  "nori-tasks",
  "parking_lot",
  "serde",

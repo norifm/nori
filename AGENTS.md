@@ -72,6 +72,7 @@ via nori-core):
 | perf | perf recorder bookkeeping and report (tooling, English) |
 | plugins | the plugin host: installing, compiling (wasmtime, Cranelift) and running plugins, their stores, overrides laid over the settings, sound stages, and the page a client draws (docs/developers/plugins.md) |
 | sink-protocol | the frames between nori and a deep cast sink (a speaker taking bursts on credit), both directions, `no_std` for its firmware |
+| plugin-index | a plugin repo's `index.json` and what stops a plugin running in a browser (`web_blocks`), pure, for every client |
 | plugin-sdk | for plugin authors: `wit/` as Rust, a trait per extension point (build.rs writes them), the manifest kept in the wasm, `plugin!` |
 | android | Android only: the `norimusic` cdylib, uniffi scaffolding, JNI doors, AudioTrack writer (track.rs), playback path (player.rs) |
 | http, output-cpal, mpris | desktop: ureq transport, cpal output, Linux media controls |
