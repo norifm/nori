@@ -5,6 +5,9 @@
 //! The engine is told the current device on open and when the system moves the default stream
 //! (not reported on ALSA).
 
+#[cfg(target_os = "macos")]
+mod macos;
+
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -72,7 +75,44 @@ fn describe(device: &Device) -> Option<nori_engine::Device> {
         (_, DeviceType::Dock) => OutputKind::Line,
         _ => OutputKind::Other,
     };
-    Some(nori_engine::Device { kind, name: d.name().to_string() })
+    #[cfg(target_os = "macos")]
+    let kind = macos::kind_of(d.name()).unwrap_or(kind);
+    let device = nori_engine::Device { kind, name: d.name().to_string() };
+    #[cfg(target_os = "linux")]
+    if device.name == SYSTEM_DEFAULT {
+        return Some(system_output().unwrap_or(device));
+    }
+    Some(device)
+}
+
+/// What cpal calls ALSA's default, whichever sound card the sound server plays on.
+#[cfg(target_os = "linux")]
+const SYSTEM_DEFAULT: &str = "Default Audio Device";
+
+/// The sound server's default sink: what the music really plays on. Asked as an output opens.
+#[cfg(target_os = "linux")]
+fn system_output() -> Option<nori_engine::Device> {
+    let pactl = |args: &[&str]| {
+        let out = std::process::Command::new("pactl").args(args).output().ok().filter(|o| o.status.success())?;
+        String::from_utf8(out.stdout).ok()
+    };
+    sink(&pactl(&["list", "sinks"])?, pactl(&["get-default-sink"])?.trim())
+}
+
+/// Sink `name` of what `pactl list sinks` said, as an output: its description without the profile's
+/// words, its kind from the name's bus.
+#[cfg(any(target_os = "linux", test))]
+fn sink(sinks: &str, name: &str) -> Option<nori_engine::Device> {
+    let lines = sinks.lines().map(str::trim);
+    let description = lines.skip_while(|l| l.strip_prefix("Name: ") != Some(name)).find_map(|l| l.strip_prefix("Description: "))?;
+    let bare = [" Analog ", " Digital ", " Pro"].iter().fold(description, |d, profile| d.split(profile).next().unwrap_or(d));
+    let kind = match () {
+        _ if name.starts_with("bluez_output.") => OutputKind::Bluetooth,
+        _ if name.contains(".usb-") => OutputKind::Usb,
+        _ if name.contains(".hdmi") => OutputKind::Line,
+        _ => OutputKind::Other,
+    };
+    Some(nori_engine::Device { kind, name: bare.trim().to_string() })
 }
 
 impl CpalOutput {
@@ -312,6 +352,20 @@ impl AudioOutput for CpalOutput {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_default_sink_names_what_plays() {
+        const SINKS: &str = "Sink #65\n\tState: RUNNING\n\tName: alsa_output.usb-Realtek_HECATE_G30_S-00.analog-stereo\n\tDescription: HECATE G30 S  Analog Stereo\n\nSink #88\n\tName: bluez_output.58_18_62_25_85_CB.1\n\tDescription: WH-1000XM6\n\nSink #90\n\tName: alsa_output.pci-0000_07_00.1.hdmi-stereo\n\tDescription: GM206 High Definition Audio Controller Digital Stereo (HDMI)\n";
+        for (name, kind, words) in [
+            ("alsa_output.usb-Realtek_HECATE_G30_S-00.analog-stereo", OutputKind::Usb, "HECATE G30 S"),
+            ("bluez_output.58_18_62_25_85_CB.1", OutputKind::Bluetooth, "WH-1000XM6"),
+            ("alsa_output.pci-0000_07_00.1.hdmi-stereo", OutputKind::Line, "GM206 High Definition Audio Controller"),
+        ] {
+            let d = sink(SINKS, name).unwrap();
+            assert_eq!((d.kind, d.name.as_str()), (kind, words), "{name}");
+        }
+        assert!(sink(SINKS, "gone").is_none());
+    }
+
     use super::*;
 
     #[test]
