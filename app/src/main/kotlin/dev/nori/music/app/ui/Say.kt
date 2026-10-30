@@ -633,7 +633,7 @@ class Say(private val r: Resources) {
         MixName.FAVOURITES -> favourites
         MixName.QUICK_PICKS -> r.getString(R.string.mix_quick_picks)
         MixName.DISCOVER -> r.getString(R.string.mix_discover)
-        MixName.DISCOVER_WEEKLY -> r.getString(R.string.mix_discover_weekly)
+        MixName.REWIND -> r.getString(R.string.mix_rewind)
         MixName.LISTEN_AGAIN -> r.getString(R.string.mix_listen_again)
         MixName.TOP -> r.getString(R.string.mix_top)
     }

@@ -41,7 +41,7 @@ export const W = {
   empty: "Nothing here yet",
   forYou: "For you",
   /** The mixes on "For you", by the core's `MixName`. */
-  mixNames: { Favourites: "Favorites", QuickPicks: "Quick picks", Discover: "Discover", DiscoverWeekly: "Discover Weekly", ListenAgain: "Listen again", Top: "Your top songs" } as Record<string, string>,
+  mixNames: { Favourites: "Favorites", QuickPicks: "Quick picks", Discover: "Discover", Rewind: "Rewind", ListenAgain: "Listen again", Top: "Top songs" } as Record<string, string>,
   /** Under a mix's name: what it is made from. */
   /** Home's rows, by the core's `HomeRow`. */
   homeRows: {

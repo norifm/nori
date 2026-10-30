@@ -71,6 +71,7 @@ pub(crate) mod tests {
             assert!(quick_picks(&c, 20, 1, NOW).unwrap().is_empty());
             assert!(discover(&c, 20, 1, NOW).unwrap().is_empty());
             assert!(listen_again(&c, 20, 1, NOW).unwrap().is_empty());
+            assert!(rewind(&c, 20, 1, NOW).unwrap().is_empty());
             assert!(top(&c, 20, NOW).unwrap().is_empty());
         }
         assert!(core.mix_instant("nope".into(), 20, 1).unwrap().is_empty());
@@ -118,6 +119,25 @@ pub(crate) mod tests {
         let again = listen_again(&c, 10, 2, NOW).unwrap();
         assert_eq!(again.len(), 5, "the one from 100 days ago is not recent");
         assert_eq!(ids(&again), ids(&listen_again(&c, 10, 2, NOW).unwrap()));
+    }
+
+    #[test]
+    fn rewind_brings_back_old_favourites() {
+        let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        let all = library(&core);
+        let (old, recent, once, skipped) = (&all[0], &all[10], &all[20], &all[30]);
+        for d in 0..4 {
+            listen(&core, old, NOW - (200 + d) * DAY);
+            listen(&core, recent, NOW - (200 + d) * DAY);
+            listen(&core, skipped, NOW - (200 + d) * DAY);
+        }
+        listen(&core, recent, NOW - 10 * DAY);
+        listen(&core, once, NOW - 200 * DAY);
+        for d in 0..5 {
+            skip(&core, skipped, NOW - (150 + d) * DAY);
+        }
+        let c = core.db.lock();
+        assert_eq!(ids(&rewind(&c, 10, 1, NOW).unwrap()), [old.id.as_str()], "played lately, heard once, skipped more than heard: not a rewind");
     }
 
     #[test]

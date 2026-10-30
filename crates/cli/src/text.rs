@@ -630,9 +630,9 @@ pub fn mix_name(n: nori_core::mixes::board::MixName) -> &'static str {
         M::Favourites => "Favorites",
         M::QuickPicks => "Quick picks",
         M::Discover => "Discover",
-        M::DiscoverWeekly => "Discover Weekly",
+        M::Rewind => "Rewind",
         M::ListenAgain => "Listen again",
-        M::Top => "Your top songs",
+        M::Top => "Top songs",
     }
 }
 

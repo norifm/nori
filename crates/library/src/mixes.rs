@@ -250,6 +250,15 @@ pub fn listen_again(c: &Connection, limit: usize, seed: u64, now_ms: i64) -> rus
     Ok(spread(picked, &mut rng, None))
 }
 
+/// Old favourites: played at least three times, more often heard through than skipped, and not for over
+/// three months; the more played the more likely. A song since disliked stays out.
+pub fn rewind(c: &Connection, limit: usize, seed: u64, now_ms: i64) -> rusqlite::Result<Vec<Song>> {
+    let mut rng = Rng::new(seed);
+    let cands = pool(c, true, "s.plays>=3 AND s.skips<s.plays AND s.last_played_ms<?1", vec![Value::Integer(now_ms - 90 * DAY_MS)], Order::Plays, (limit * 4).max(100), now_ms)?;
+    let picked = sample(cands.into_iter().filter(|c| c.taste >= 0.0).map(|c| (c.song, (1.0 + c.plays as f64).ln())).collect(), limit, (limit / 5).max(2), &mut rng);
+    Ok(spread(picked, &mut rng, None))
+}
+
 /// Most played, in order; the one mix that is a ranking and not a draw.
 pub fn top(c: &Connection, limit: usize, now_ms: i64) -> rusqlite::Result<Vec<Song>> {
     Ok(pool(c, true, "s.plays>0", vec![], Order::Plays, limit, now_ms)?.into_iter().map(|c| c.song).collect())
