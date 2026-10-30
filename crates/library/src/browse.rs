@@ -298,6 +298,65 @@ pub struct ListPref {
 
 const ALBUMS_SORT_KEY: &str = "albums.sort";
 const SONGS_SORT_KEY: &str = "songs.sort";
+const ALBUMS_REVERSED_KEY: &str = "albums.reversed";
+const SONGS_REVERSED_KEY: &str = "songs.reversed";
+
+/// A long list whose order can be chosen and turned around.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum SortedList {
+    Albums,
+    Songs,
+}
+
+/// The order a list is in, by its place among the orders offered, and whether it runs against its own way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct SortPick {
+    pub order: u32,
+    pub reversed: bool,
+}
+
+/// What a tap on order `picked` does to a list in order `now`: the order it is in turns around (when it
+/// has a way to turn, `reversible`), another starts in its own way, so a first tap always gives what its
+/// name says (titles from A, the newest first).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn sort_picked(now: SortPick, picked: u32, reversible: bool) -> SortPick {
+    if picked == now.order {
+        SortPick { order: picked, reversed: now.reversed != reversible }
+    } else {
+        SortPick { order: picked, reversed: false }
+    }
+}
+
+/// The way a list runs: its order's own (`natural`), turned around while `reversed`.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn sort_way(natural: SortDirection, reversed: bool) -> SortDirection {
+    match (natural, reversed) {
+        (SortDirection::Ascending, true) => SortDirection::Descending,
+        (SortDirection::Descending, true) => SortDirection::Ascending,
+        (way, _) => way,
+    }
+}
+
+/// Whether `list` was left turned around (the list settings, `listPrefs`).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn sort_reversed_saved(prefs: std::collections::HashMap<String, String>, list: SortedList) -> bool {
+    prefs.get(reversed_key(list)).is_some_and(|v| v == "1")
+}
+
+/// The list setting that remembers whether `list` is turned around.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn sort_reversed_kept(list: SortedList, reversed: bool) -> ListPref {
+    ListPref { key: reversed_key(list).into(), value: if reversed { "1" } else { "0" }.into() }
+}
+
+fn reversed_key(list: SortedList) -> &'static str {
+    match list {
+        SortedList::Albums => ALBUMS_REVERSED_KEY,
+        SortedList::Songs => SONGS_REVERSED_KEY,
+    }
+}
 
 /// The album grid's order as it was left (A–Z the first time), kept by [`AlbumSort::name`]. A plain A–Z
 /// by artist comes back as [`AlbumSort::ArtistRows`]; any other order no longer offered (favorites) as A–Z.
@@ -590,6 +649,24 @@ pub struct Decade {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picking_the_order_again_turns_it_around() {
+        let pick = |order, reversed| SortPick { order, reversed };
+        for (now, picked, reversible, want) in [
+            (pick(0, false), 0, true, pick(0, true)),
+            (pick(0, true), 0, true, pick(0, false)),
+            (pick(0, true), 2, true, pick(2, false)),
+            (pick(5, false), 5, false, pick(5, false)),
+        ] {
+            assert_eq!(sort_picked(now, picked, reversible), want, "{now:?} tapped {picked}");
+        }
+        assert_eq!(sort_way(SortDirection::Ascending, true), SortDirection::Descending);
+        assert_eq!(sort_way(SortDirection::Shuffled, true), SortDirection::Shuffled);
+        let kept = sort_reversed_kept(SortedList::Songs, true);
+        let prefs = std::collections::HashMap::from([(kept.key, kept.value)]);
+        assert!(sort_reversed_saved(prefs.clone(), SortedList::Songs) && !sort_reversed_saved(prefs, SortedList::Albums));
+    }
 
     #[test]
     fn album_orders_run_the_way_the_songs_list_does() {

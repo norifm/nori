@@ -343,8 +343,12 @@ class Library(
      * from the socket into SQLite inside Rust; only the counts come back.
      */
     /** A page of the songs list (the core's `songs_listed`): the offline index's, or the server's where the profile keeps none. */
-    suspend fun songsListed(sort: String, starredOnly: Boolean, yearFrom: UInt, yearTo: UInt, offset: UInt) =
-        withContext(Dispatchers.IO) { lifted { client.songsListed(sort, starredOnly, yearFrom, yearTo, offset) } }
+    suspend fun songsListed(sort: String, reversed: Boolean, starredOnly: Boolean, yearFrom: UInt, yearTo: UInt, offset: UInt) =
+        withContext(Dispatchers.IO) { lifted { client.songsListed(sort, reversed, starredOnly, yearFrom, yearTo, offset) } }
+
+    /** A page of the indexed albums in [sort]'s order turned around, which the server cannot list (the core's `albums_indexed`). */
+    suspend fun albumsIndexed(sort: AlbumSort, reversed: Boolean, offset: Int, size: Int): List<Album> =
+        withContext(Dispatchers.IO) { core.albumsIndexed(sort, reversed, offset.toUInt(), size.toUInt()) }
 
     suspend fun sync(): IngestStats = withContext(Dispatchers.IO) { lifted { client.syncLibrary() } }
 
