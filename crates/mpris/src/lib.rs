@@ -59,6 +59,9 @@ impl Now {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub use bus::{Commands, Run};
+
 #[cfg(any(target_os = "linux", all(test, unix)))]
 mod bus {
     use std::collections::HashMap;
@@ -260,6 +263,74 @@ mod bus {
         Ok(Builder::async_io_unix_stream(stream))
     }
 
+    /// `builder`'s connection, its executor run on a thread of its own named `name`, where its objects
+    /// are called.
+    fn running(builder: Builder<'static>, name: &str) -> Result<Connection, String> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name(name.into())
+            .spawn(move || {
+                // futures-lite's block_on leaves the socket to async-io's thread, which sleeps in the
+                // poller between messages; async-io's own block_on would have it nap in a backoff loop.
+                block_on(async move {
+                    let conn = match builder.build().await {
+                        Ok(conn) => conn,
+                        Err(e) => return drop(tx.send(Err(e.to_string()))),
+                    };
+                    let executor = conn.executor().clone();
+                    let _ = tx.send(Ok(conn));
+                    while !executor.is_empty() {
+                        executor.tick().await;
+                    }
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rx.recv().map_err(|e| e.to_string())?
+    }
+
+    /// What another app's `Run(plugin, command)` reaches.
+    pub type Run = Box<dyn Fn(String, String) + Send + Sync>;
+
+    struct Runner(Run);
+
+    #[interface(name = "fm.nori.Commands")]
+    impl Runner {
+        fn run(&self, plugin: String, command: String) {
+            (self.0)(plugin, command);
+        }
+    }
+
+    const COMMANDS: &str = "/fm/nori/Commands";
+
+    /// Plugins' commands other apps run: `fm.nori.Commands` on the session bus, `Run(plugin, command)`
+    /// at `/fm/nori/Commands`. The name is let go when this is dropped.
+    pub struct Commands {
+        conn: Connection,
+    }
+
+    impl Commands {
+        #[cfg(target_os = "linux")]
+        pub fn start(run: Run) -> Result<Commands, String> {
+            Commands::on(session().map_err(|e| e.to_string())?, run, true)
+        }
+
+        fn on(builder: Builder<'static>, run: Run, named: bool) -> Result<Commands, String> {
+            let builder = builder.internal_executor(false).serve_at(COMMANDS, Runner(run)).map_err(|e| e.to_string())?;
+            let conn = running(builder, "nori-commands")?;
+            if named {
+                block_on(conn.request_name("fm.nori.Commands")).map_err(|e| e.to_string())?;
+            }
+            Ok(Commands { conn })
+        }
+    }
+
+    impl Drop for Commands {
+        fn drop(&mut self) {
+            let _ = block_on(self.conn.object_server().remove::<Runner, _>(COMMANDS));
+            let _ = block_on(self.conn.release_name("fm.nori.Commands"));
+        }
+    }
+
     /// The objects on a connection whose executor runs on the "nori-mpris" thread, where the controls are called.
     pub struct Served {
         conn: Connection,
@@ -282,27 +353,7 @@ mod bus {
                 .serve_at(OBJECT, Root { identity: identity.to_string() })
                 .and_then(|b| b.serve_at(OBJECT, Player(controls.clone())))
                 .map_err(|e| e.to_string())?;
-            let (tx, rx) = mpsc::sync_channel(1);
-            std::thread::Builder::new()
-                .name("nori-mpris".into())
-                .spawn(move || {
-                    // futures-lite's block_on leaves the socket to async-io's thread, which sleeps in the
-                    // poller between messages; async-io's own block_on would have it nap in a backoff loop.
-                    block_on(async move {
-                        let conn = match builder.build().await {
-                            Ok(conn) => conn,
-                            Err(e) => return drop(tx.send(Err(e.to_string()))),
-                        };
-                        let executor = conn.executor().clone();
-                        let _ = tx.send(Ok(conn));
-                        while !executor.is_empty() {
-                            executor.tick().await;
-                        }
-                    })
-                })
-                .map_err(|e| e.to_string())?;
-            let conn = rx.recv().map_err(|e| e.to_string())??;
-            Ok(Served { conn, controls })
+            Ok(Served { conn: running(builder, "nori-mpris")?, controls })
         }
 
         pub fn changed(&self) {
@@ -393,6 +444,20 @@ mod bus {
 
         fn path(p: &str) -> ObjectPath<'_> {
             ObjectPath::try_from(p).unwrap()
+        }
+
+        #[test]
+        fn another_apps_command_reaches_its_plugin() {
+            let (server, client) = UnixStream::pair().unwrap();
+            let guid = Guid::generate();
+            let ran = Arc::new(Mutex::new(Vec::new()));
+            let into = ran.clone();
+            let run: Run = Box::new(move |plugin, command| into.lock().unwrap().push(format!("{plugin} {command}")));
+            let served = std::thread::spawn(move || Commands::on(Builder::async_io_unix_stream(server).server(guid).unwrap().p2p(), run, false));
+            let client = block_on(Builder::async_io_unix_stream(client).p2p().build()).unwrap();
+            let _commands = served.join().unwrap().unwrap();
+            block_on(client.call_method(None::<BusName>, COMMANDS, Some("fm.nori.Commands"), "Run", &("fm.nori.test", "ping"))).unwrap();
+            assert_eq!(*ran.lock().unwrap(), ["fm.nori.test ping"]);
         }
 
         #[test]

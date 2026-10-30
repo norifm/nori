@@ -9,8 +9,11 @@ Built (2026-10-27, the `plugins` branch; docs/developers/plugins.md): the whole 
 with `log`, `store`, `http`, `settings`, `rows` and `notices`; overrides (settings by name, and the
 tunables speed, pitch, skip silence, previous always skips); master-slot sound stages; plugins'
 providers (YouTube Music moved out of nori into one); rows and the Plugins page in each client but
-the iPod and the web. Not yet: the song slot, song preparation, AutoMix seams, deciders, hooks' events,
-slots, device control, casting, repos and signatures, backups, safe mode, the web host.
+the iPod and the web. Built since (2026-10-30, the `plugin-apis` branch): song preparation, AutoMix
+seams, slots, deciders, hooks' events and wakes, device control (Bluetooth on Android, Linux and macOS),
+the LAN (IPv4 and IPv6 multicast, TLS) and casting with deep sinks (crates/sink-protocol), lyrics
+services and scrobblers, repo signatures with key pinning, safe mode, one switch over every plugin,
+and backups (crates/backup). Not yet: the web host, macOS Bluetooth run on a Mac.
 
 ## Owner decisions so far (2026-10-24)
 
@@ -93,7 +96,21 @@ wasmtime with the component model.
   is cached, keyed by the plugin's hash, the wasmtime version and the CPU. Never download precompiled
   native code (Play forbids it, and it can't be verified like wasm).
 - **Web:** the browser's own engine. Browsers don't run components directly, so the web host transpiles
-  them with jco at install, or loads a core module build. The web host comes last.
+  them with jco at install, or loads a core module build. The web host comes last. Checked 2026-10-30:
+  jco's `@bytecodealliance/jco/component` transpiles in a browser, but jco calls browser support
+  experimental, and one third-party project reports that entry point is broken in the published package.
+  Try it first; if it fails, `tools/pack.py` packs a transpiled build beside `plugin.wasm`. What a web host
+  needs:
+  - **Host calls:** `crates/plugins`' host is tied to wasmtime (`runtime.rs`, `host.rs`, `worker.rs`). Keep its
+    stores, settings layer, repos, signatures and views for both; put the calls behind a seam with a browser
+    side in `crates/web`.
+  - **Blocking calls:** a plugin's `http` and `store` calls are synchronous and `fetch` isn't. Plugins run in a
+    worker, blocked with JSPI where the browser has it, else with Atomics on a helper worker.
+  - **Storage:** plugin files and stores in OPFS or IndexedDB, not a folder.
+  - **Sound stages:** run in the AudioWorklet, with no allocation.
+  - **Install:** browser plugins may hold back what a page can't do, so `missing()` refuses sockets,
+    multicast and classic Bluetooth up front.
+  - **Client:** the plugin pages in Svelte, from the same cards and offers.
 - **iPod:** none.
 
 Cranelift ships on every native client; its APK size is accepted. It compiles wasm SIMD (`simd128`),

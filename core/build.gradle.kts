@@ -126,7 +126,7 @@ val cargoHome = providers.environmentVariable("CARGO_HOME").orElse("${System.get
 val cargoInputs = files("../Cargo.toml", "../Cargo.lock", "../.cargo/config", "../.cargo/config.toml", "../rust-toolchain.toml", "../rust-toolchain", cargoHome.map { "$it/config" }, cargoHome.map { "$it/config.toml" })
 val nativeInputs = fileTree("../crates") { exclude("**/.DS_Store", "**/tests/**", "**/benches/**", "**/examples/**") }
 // Source bindings read the exported crates, their configuration and the generator.
-val bindingCrates = listOf("android", "core", "model", "db", "net", "library", "automix", "settings", "lyrics", "devices", "queue", "transfers", "perf", "remote", "look", "plugins", "uniffi-bindgen")
+val bindingCrates = listOf("android", "core", "model", "db", "net", "library", "automix", "settings", "lyrics", "devices", "queue", "transfers", "perf", "remote", "look", "plugins", "backup", "uniffi-bindgen")
 val bindingInputs = fileTree("../crates") {
     bindingCrates.forEach { include("$it/src/**", "$it/Cargo.toml", "$it/uniffi.toml", "$it/build.rs") }
     include("*/Cargo.toml")

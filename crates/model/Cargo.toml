@@ -9,21 +9,25 @@ edition.workspace = true
 name = "nori_model"
 
 [features]
+default = ["std"]
+# Everything but the library records: `CoreError`, the log, the heap counter, the display lines. Off,
+# the records build on `core` and `alloc`, for microcontrollers.
+std = ["dep:rusqlite", "dep:thiserror", "dep:nori-time", "nori-player/std", "serde/std"]
 # The uniffi records the Android app's Kotlin bindings are generated from. A Rust client links the
 # crate without them.
-ffi = ["dep:uniffi"]
+ffi = ["std", "dep:uniffi"]
 
 [dependencies]
 # Time, read the same way natively and in a browser.
-nori-time = { path = "../time" }
+nori-time = { path = "../time", optional = true }
 uniffi = { workspace = true, optional = true }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 # The core's error says what the database said.
-rusqlite = { version = "0.40", features = ["bundled", "functions"] }
-thiserror = "2"
+rusqlite = { version = "0.40", features = ["bundled", "functions"], optional = true }
+thiserror = { version = "2", optional = true }
 # The player's own records (the equalizer's bands, AutoMix's analyses, the audio policy), described
 # again here for uniffi.
-nori-player = { path = "../player" }
+nori-player = { path = "../player", default-features = false }
 
 [dev-dependencies]
 nori-testdir = { path = "../testdir" }

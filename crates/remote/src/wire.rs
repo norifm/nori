@@ -2,6 +2,7 @@
 //! with the rooms the caller is in (their members, each with the state it last published) and the
 //! events addressed to it; a send publishes the sender's state or posts an event.
 
+use alloc::{boxed::Box, string::String, vec::Vec};
 use nori_model::Song;
 use serde::{Deserialize, Serialize};
 
@@ -117,7 +118,7 @@ pub enum Body {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct LibraryMark {
-    pub kind: nori_net::requests::Starrable,
+    pub kind: nori_model::Starrable,
     pub id: String,
     pub on: bool,
 }

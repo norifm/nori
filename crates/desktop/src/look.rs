@@ -39,9 +39,9 @@ pub fn palette(prefs: &StoredPrefs, system_dark: bool, today: Today) -> Palette 
     theme::palette(season_of(prefs.season), today.month, today.day, today.southern, is_dark(prefs, system_dark), prefs.theme == ThemeMode::Midnight)
 }
 
-/// A page with no cover: the palette's own.
+/// A page with no cover: the palette's own, or a plugin's season (`Session::look`).
 pub fn plain(prefs: &StoredPrefs, system_dark: bool, today: Today) -> Look {
-    let p = palette(prefs, system_dark, today);
+    let p = crate::session::app().look(palette(prefs, system_dark, today), None, is_dark(prefs, system_dark));
     let r = theme::roles(p);
     let scheme = Scheme {
         background: r.background,

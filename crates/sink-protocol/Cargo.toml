@@ -1,0 +1,12 @@
+[package]
+name = "nori-sink-protocol"
+version.workspace = true
+edition.workspace = true
+
+# The frames between nori and a deep cast sink (a speaker that takes nori's audio in bursts): the
+# framing and both directions' encode and decode, on `core` and `alloc` so the device's firmware
+# speaks it with the same code (docs/developers/plugins.md, "Deep sinks").
+[lib]
+name = "nori_sink_protocol"
+
+[dependencies]

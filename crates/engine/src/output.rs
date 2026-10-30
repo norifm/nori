@@ -92,6 +92,29 @@ pub trait AudioOutput: Send {
     fn failed(&mut self) -> Option<String> {
         None
     }
+    /// The device takes a new format in its stream, after what it holds of the last (a deep cast sink):
+    /// opening for another format waits only for the ring to be taken, not for the device to play it, and
+    /// the place heard counts what it still plays of the stream before.
+    fn takes_formats(&self) -> bool {
+        false
+    }
+    /// Said before closing for a new format the device takes in its stream: the next opening goes on
+    /// after what it holds. Any other closing lets that go.
+    fn goes_on(&mut self) {}
+    /// What the device holds at most beyond the ring, µs: the input kept to make a sound change again
+    /// reaches back that far.
+    fn depth_us(&self) -> i64 {
+        0
+    }
+    /// The engine wrote music into the ring this turn (at its end): a device waiting for music takes it.
+    fn wrote(&mut self) {}
+    /// Whether the device is told where each song starts ([`AudioOutput::song_at`]).
+    fn marks_songs(&self) -> bool {
+        false
+    }
+    /// Song `id` starts at ring frame `frame` (frames written since the ring was made); told before that
+    /// frame is in the ring. A flush drops the marks at or past the frames it replaces.
+    fn song_at(&mut self, _frame: u64, _id: &str) {}
     fn close(&mut self);
 }
 
@@ -152,6 +175,10 @@ pub(crate) struct Ring {
     pulling: AtomicBool,
     /// Frames pulls handed to the device: unlike `read`, never moved by a flush's discard.
     taken: AtomicU64,
+    /// The earliest ring frame a flush made again since a pull last looked (`u64::MAX`: none), and
+    /// whether one dropped everything taken (a seek): [`Feed::kept`].
+    cut_from: AtomicU64,
+    dropped: AtomicBool,
 }
 
 // SAFETY: the slots are the only unsynchronised state; the writer and the reader never touch the same
@@ -184,6 +211,8 @@ impl Ring {
             underruns: AtomicU64::new(0),
             pulling: AtomicBool::new(false),
             taken: AtomicU64::new(0),
+            cut_from: AtomicU64::new(u64::MAX),
+            dropped: AtomicBool::new(false),
         }
     }
 
@@ -228,6 +257,16 @@ impl Ring {
         self.write.load(Ordering::Acquire).saturating_sub(self.read_at())
     }
 
+    /// Frames written the reader may still take, for the writer: from where it reads, or after music was
+    /// made again from before that, from as far back as it may be taken back to ([`Feed::rewind`]). A
+    /// device holding more than the ring would otherwise leave the writer room to overrun it.
+    fn unread(&self) -> u64 {
+        let w = self.write.load(Ordering::Acquire);
+        let read = self.read_at();
+        let from = if w < read { self.discard.load(Ordering::Acquire) } else { read };
+        w.saturating_sub(from)
+    }
+
     fn ramp(&self, from: Option<f32>, target: f32, ms: i64) {
         self.gain_from.store(from.unwrap_or(f32::NAN).to_bits(), Ordering::Relaxed);
         self.gain_target.store(target.to_bits(), Ordering::Relaxed);
@@ -249,11 +288,42 @@ pub struct Feed {
     /// The last flush seen, and whether one happened since [`Feed::flushed`] was asked.
     seen: u64,
     flushed: bool,
+    /// What the flushes seen since [`Feed::kept`] was asked kept of the music taken.
+    kept: Kept,
+}
+
+/// What flushes kept of the music a device took ([`Feed::kept`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kept {
+    /// No flush since last asked.
+    Unflushed,
+    /// Everything taken was dropped (a seek, a jump): the new music starts the stream again.
+    Nothing,
+    /// Music was made again from this ring frame on: what was taken before it stands.
+    Before(u64),
 }
 
 impl Feed {
     fn new(ring: Arc<Ring>) -> Feed {
-        Feed { ring, gain: 1.0, target: 1.0, step: 0.0, gen: 0, rests: false, seen: 0, flushed: false }
+        Feed { ring, gain: 1.0, target: 1.0, step: 0.0, gen: 0, rests: false, seen: 0, flushed: false, kept: Kept::Unflushed }
+    }
+
+    /// What the flushes since last asked kept of what the device took: a device that keeps its own
+    /// buffer drops only what follows ([`Kept::Before`]) and pulls on from there ([`Feed::rewind_to`]).
+    pub fn kept(&mut self) -> Kept {
+        std::mem::replace(&mut self.kept, Kept::Unflushed)
+    }
+
+    /// The ring frame the next pull starts at.
+    pub fn position(&self) -> u64 {
+        self.ring.read_at()
+    }
+
+    /// Pulls on from ring frame `frame`, back from where the pulls got to (never before what the last
+    /// flush kept for the device).
+    pub fn rewind_to(&mut self, frame: u64) {
+        let r = &*self.ring;
+        r.read.store(frame.max(r.discard.load(Ordering::Acquire)).min(r.read_at()), Ordering::Release);
     }
 
     /// Whether a pull found a flush since last asked: the last pull's frames are new music, and what the
@@ -293,6 +363,14 @@ impl Feed {
             self.seen = flushes;
             self.flushed = true;
             self.rests = false;
+            let (dropped, cut) = (r.dropped.swap(false, Ordering::AcqRel), r.cut_from.swap(u64::MAX, Ordering::AcqRel));
+            self.kept = match (self.kept, dropped, cut) {
+                (_, true, _) | (Kept::Nothing, _, _) => Kept::Nothing,
+                (Kept::Before(a), false, b) => Kept::Before(a.min(b)),
+                // Seen with the flush before it.
+                (Kept::Unflushed, false, u64::MAX) => self.kept,
+                (Kept::Unflushed, false, b) => Kept::Before(b),
+            };
         }
         let at = r.read.load(Ordering::Acquire).max(r.discard.load(Ordering::Acquire));
         let n = w.saturating_sub(at).min(limit.saturating_sub(at));
@@ -558,6 +636,8 @@ pub(crate) struct Slipped {
 /// frames and song time.
 pub(crate) struct RingTrack {
     output: Box<dyn AudioOutput>,
+    /// Where the output's device changes go; each output put in tells it too.
+    watch: Option<Arc<dyn Fn(Device) + Send + Sync>>,
     ring: Option<Arc<Ring>>,
     device: Option<OutputFormat>,
     /// What the device was asked for (it may have given something else).
@@ -606,6 +686,13 @@ pub(crate) struct RingTrack {
     untold: Option<Untold>,
     /// A fade asked for before the device opened, applied as it opens.
     unopened_ramp: Option<(Option<f32>, f32, i64)>,
+    /// The device still plays the stream before this ring, opened for another format while it held
+    /// that ([`AudioOutput::takes_formats`]): the place heard is in it until the ring's music is reached.
+    lead: bool,
+    /// A song starting at the next frame written ([`Track::song_starts`]).
+    starts: Option<String>,
+    /// Music was written since the device was last told ([`AudioOutput::wrote`]).
+    wrote: bool,
 }
 
 /// A flush the device has not been told of yet.
@@ -621,6 +708,7 @@ impl RingTrack {
     pub(crate) fn new(output: Box<dyn AudioOutput>) -> RingTrack {
         RingTrack {
             output,
+            watch: None,
             ring: None,
             device: None,
             asked: None,
@@ -650,6 +738,9 @@ impl RingTrack {
             shallow: false,
             untold: None,
             unopened_ramp: None,
+            lead: false,
+            starts: None,
+            wrote: false,
         }
     }
 
@@ -667,6 +758,22 @@ impl RingTrack {
         self.device.is_some()
     }
 
+    /// Takes `output` as the device from now on, the old one released.
+    pub(crate) fn replace(&mut self, output: Box<dyn AudioOutput>) {
+        self.release();
+        self.output = output;
+        if let Some(changed) = self.watch.clone() {
+            self.output.watch(Box::new(move |d| changed(d)));
+        }
+    }
+
+    /// Sends the output's device changes, and those of each output put in after it, to `changed`.
+    pub(crate) fn watch(&mut self, changed: Arc<dyn Fn(Device) + Send + Sync>) {
+        let to = changed.clone();
+        self.output.watch(Box::new(move |d| to(d)));
+        self.watch = Some(changed);
+    }
+
     /// Releases the device; the next stream reopens it.
     pub(crate) fn release(&mut self) {
         if self.device.take().is_some() {
@@ -679,6 +786,34 @@ impl RingTrack {
         self.restart_map();
         self.untold = None;
         self.unopened_ramp = None;
+        self.lead = false;
+    }
+
+    /// The device is told of music written this turn, at its end.
+    pub(crate) fn turned(&mut self) {
+        if std::mem::take(&mut self.wrote) {
+            self.output.wrote();
+        }
+    }
+
+    /// What the device holds at most beyond the ring, µs ([`AudioOutput::depth_us`]).
+    pub(crate) fn depth_us(&self) -> i64 {
+        self.output.depth_us()
+    }
+
+    /// Ring frames the device still plays of the stream before this ring, while it does.
+    fn lead_frames(&mut self) -> Option<u64> {
+        if !self.lead {
+            return None;
+        }
+        let (Some(r), Some(d)) = (self.ring.as_ref(), self.device) else { return None };
+        let taken = r.read_at().saturating_sub(self.base);
+        let held = self.output.latency_us() * d.rate as u64 / 1_000_000;
+        if held > taken {
+            return Some(held - taken);
+        }
+        self.lead = false;
+        None
     }
 
     fn restart_map(&mut self) {
@@ -754,7 +889,7 @@ impl RingTrack {
     /// Music in the ring, µs.
     pub(crate) fn filled_us(&self) -> i64 {
         match (&self.ring, self.device) {
-            (Some(r), Some(d)) => (r.filled() as i128 * 1_000_000 / d.rate as i128) as i64,
+            (Some(r), Some(d)) => (r.unread() as i128 * 1_000_000 / d.rate as i128) as i64,
             _ => 0,
         }
     }
@@ -958,8 +1093,14 @@ impl Track for RingTrack {
         self.format = Some(format);
         let want = self.wanted(format);
         if self.reopens(format) {
-            // Another format: a new device (the old one played out, `Track::must_reopen`).
+            // Another format: a new device (the old one played out, `Track::must_reopen`), or the same
+            // one told the format in its stream after what it holds.
+            self.lead = self.output.takes_formats();
+            if self.lead {
+                self.output.goes_on();
+            }
             self.release();
+            self.lead = self.output.takes_formats();
             self.format = Some(format);
         }
         if self.device.is_none() {
@@ -993,7 +1134,7 @@ impl Track for RingTrack {
 
     fn queued_bytes(&self) -> usize {
         let (Some(r), Some(d), Some(f)) = (&self.ring, self.device, self.format) else { return 0 };
-        (r.filled() as u128 * f.rate as u128 / d.rate as u128) as usize * f.frame_bytes()
+        (r.unread() as u128 * f.rate as u128 / d.rate as u128) as usize * f.frame_bytes()
     }
 
     fn write(&mut self, data: &[u8], media: f64) {
@@ -1025,6 +1166,13 @@ impl Track for RingTrack {
         };
         let frames = if slipping { put(&r, w, self.blend, &self.slipper.out, |v| v) } else { frames };
         self.blend = self.blend.and_then(|(done, of)| (done + frames < of).then_some((done + frames, of)));
+        if frames > 0 {
+            // Told before the frame is in the ring, so no pull takes it first.
+            if let Some(id) = self.starts.take() {
+                self.output.song_at(w, &id);
+            }
+            self.wrote = true;
+        }
         r.write.store(w + frames, Ordering::Release);
         let before = self.written;
         let sink = before.sink + (data.len() / f.frame_bytes()) as u64;
@@ -1051,7 +1199,12 @@ impl Track for RingTrack {
         }
     }
 
+    /// Below zero while the device still plays the stream before this ring ([`RingTrack::lead`]): the
+    /// place is before this stream's start by that much.
     fn played_media(&mut self) -> f64 {
+        if let (Some(ahead), Some(d), Some(f)) = (self.lead_frames(), self.device, self.format) {
+            return -(ahead as f64) * f.rate as f64 / d.rate as f64;
+        }
         self.played_at().media
     }
 
@@ -1116,10 +1269,12 @@ impl Track for RingTrack {
             let (heard, _) = self.heard();
             let early = self.device.map_or(0, |d| (REWIND_EARLY_US * d.rate as i64 / 1_000_000) as u64);
             r.discard.store(w.min(self.base + heard.saturating_sub(early)), Ordering::Release);
+            r.cut_from.fetch_min(w, Ordering::AcqRel);
             r.flushes.fetch_add(1, Ordering::AcqRel);
             r.ended.store(false, Ordering::Release);
             r.quiet();
             self.untold = Some(Untold::default());
+            self.lead = false;
         }
         let n = self.device.map_or(0, |d| d.rate as i64 * nori_player::pipeline::BLEND_US / 1_000_000) as u64;
         let n = n.min(end.ring - p);
@@ -1134,19 +1289,21 @@ impl Track for RingTrack {
     }
 
     fn is_empty(&self) -> bool {
-        self.ring.as_ref().is_none_or(|r| r.filled() == 0) && !self.output.holding()
+        self.ring.as_ref().is_none_or(|r| r.unread() == 0) && !self.output.holding()
     }
 
     fn flush(&mut self) {
         if let Some(r) = &self.ring {
             let w = r.write.load(Ordering::Relaxed);
             r.discard.store(w, Ordering::Release);
+            r.dropped.store(true, Ordering::Release);
             r.flushes.fetch_add(1, Ordering::AcqRel);
             r.ended.store(false, Ordering::Release);
             r.quiet();
             self.base = w;
             self.untold = Some(Untold::default());
         }
+        self.lead = false;
         self.restart_map();
         self.restart_resampler();
     }
@@ -1161,6 +1318,18 @@ impl Track for RingTrack {
         let reopen = self.reopens(format);
         self.set_ended(reopen);
         reopen
+    }
+
+    fn ready_to_reopen(&self) -> bool {
+        self.ring.as_ref().is_none_or(|r| r.unread() == 0) && (self.output.takes_formats() || !self.output.holding())
+    }
+
+    fn marks_songs(&self) -> bool {
+        self.output.marks_songs()
+    }
+
+    fn song_starts(&mut self, id: &str) {
+        self.starts = Some(id.to_string());
     }
 
     fn play(&mut self) {

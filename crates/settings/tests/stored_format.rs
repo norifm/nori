@@ -78,6 +78,7 @@ fn sample() -> StoredPrefs {
         update_check: false,
         update_beta: true,
         remote_control: false,
+        plugins_off: true,
         profile_per_output: false,
         auto_eq_auto: true,
         auto_eq_download: false,

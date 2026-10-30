@@ -6,6 +6,8 @@
 pub(crate) mod subsonic;
 #[cfg(feature = "plugins")]
 mod plugin;
+#[cfg(feature = "plugins")]
+mod plugged;
 pub(crate) mod hosted;
 #[cfg(test)]
 mod fake;
@@ -184,6 +186,82 @@ impl ProviderInfo {
     fn asks(&self, what: FormField) -> bool {
         self.fields.iter().any(|f| f.what == what)
     }
+
+    /// The account signs in on a page, the first way offered.
+    fn signs_in_on_a_page(&self) -> bool {
+        matches!(self.sign_in.first(), Some(SignIn::WebPage { .. }))
+    }
+
+    /// What choosing this kind on the first screen leads to. A name alone is nothing to ask.
+    pub fn first_step(&self) -> FirstStep {
+        let asks = self.fields.iter().any(|f| !f.advanced && f.what != FormField::Name);
+        match (asks, self.signs_in_on_a_page()) {
+            (true, _) => FirstStep::Form,
+            (false, true) => FirstStep::Account,
+            (false, false) => FirstStep::AddNow,
+        }
+    }
+
+    /// What a profile of this kind just added goes on to about its account.
+    pub fn after_adding(&self, after: AfterAdding) -> Option<SignInStep> {
+        if !self.signs_in_on_a_page() {
+            return None;
+        }
+        Some(match after {
+            AfterAdding::Remind => SignInStep::Offer,
+            AfterAdding::SignIn => SignInStep::Open,
+            AfterAdding::Guest => SignInStep::StopReminding,
+        })
+    }
+}
+
+/// [`ProviderInfo::first_step`], owned.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn provider_first_step(info: ProviderInfo) -> FirstStep {
+    info.first_step()
+}
+
+/// [`ProviderInfo::after_adding`], owned.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn provider_after_adding(info: ProviderInfo, after: AfterAdding) -> Option<SignInStep> {
+    info.after_adding(after)
+}
+
+/// What choosing a kind of profile on the first screen leads to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum FirstStep {
+    /// Its form, which has fields to fill.
+    Form,
+    /// No fields but a sign-in page: its page, to sign in or go on as a guest.
+    Account,
+    /// Nothing to ask: added at once; its page shows only if that fails.
+    AddNow,
+}
+
+/// How a new profile was asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum AfterAdding {
+    /// From its form: the sign-in is offered.
+    #[default]
+    Remind,
+    /// With the page's sign-in button.
+    SignIn,
+    /// With the page's guest button.
+    Guest,
+}
+
+/// What a client does about the account of a profile just added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum SignInStep {
+    /// Offers signing in, which can be skipped.
+    Offer,
+    /// Opens the sign-in page.
+    Open,
+    /// `Client::stop_reminding`.
+    StopReminding,
 }
 
 /// One field of an add form.
@@ -269,7 +347,39 @@ impl Kinds {
     }
 }
 
+/// Plays told to the plugins' scrobblers.
+#[cfg(feature = "plugins")]
+struct PluginScrobbles(Arc<nori_plugins::Plugins>);
+
+#[cfg(feature = "plugins")]
+impl nori_queue::scrobble::Scrobbles for PluginScrobbles {
+    fn now_playing(&self, song: &nori_model::Song) {
+        self.0.scrobblers_now_playing(song);
+    }
+    fn scrobble(&self, song: &nori_model::Song, at_ms: i64) {
+        self.0.scrobblers_scrobble(song, at_ms);
+    }
+}
+
 impl Kinds {
+    /// The enabled plugins' lyrics services; none without plugins.
+    pub(crate) fn lyrics_services(&self) -> Vec<Arc<dyn nori_lyrics::race::PluginLyrics>> {
+        #[cfg(feature = "plugins")]
+        if let Some(p) = &self.plugins {
+            return p.lyrics_services();
+        }
+        Vec::new()
+    }
+
+    /// Where plays go besides the profile's server: the plugins' scrobblers; None without plugins.
+    pub(crate) fn scrobbles(&self) -> Option<Arc<dyn nori_queue::scrobble::Scrobbles>> {
+        #[cfg(feature = "plugins")]
+        if let Some(p) = &self.plugins {
+            return Some(Arc::new(PluginScrobbles(p.clone())));
+        }
+        None
+    }
+
     /// A provider for `kind`; None for a plugin not installed and enabled here.
     pub(crate) fn provider(&self, kind: &ServerKind) -> Option<Arc<dyn Provider>> {
         match kind {
@@ -281,6 +391,14 @@ impl Kinds {
         }
     }
 
+    /// Where its enabled plugins decide in place of nori; None without plugins.
+    pub(crate) fn deciders(&self) -> Option<Arc<dyn nori_model::deciders::Deciders>> {
+        #[cfg(feature = "plugins")]
+        return self.plugins.clone().map(|p| p as Arc<dyn nori_model::deciders::Deciders>);
+        #[cfg(not(feature = "plugins"))]
+        None
+    }
+
     /// `kind`'s provider; a kind missing here reads as a Subsonic server.
     fn or_subsonic(&self, kind: &ServerKind) -> Arc<dyn Provider> {
         self.provider(kind).unwrap_or_else(|| Arc::new(subsonic::Subsonic))
@@ -289,7 +407,7 @@ impl Kinds {
     /// The kinds a profile can be of here, a Subsonic server's first.
     fn kinds(&self) -> Vec<ServerKind> {
         #[cfg(feature = "plugins")]
-        let plugins: Vec<ServerKind> = self.plugins.iter().flat_map(|p| p.installed()).filter(|i| i.enabled && i.manifest.extends("provider")).map(|i| ServerKind::Plugin { id: i.manifest.id.clone() }).collect();
+        let plugins: Vec<ServerKind> = self.plugins.iter().flat_map(|p| p.running()).filter(|i| i.manifest.extends("provider")).map(|i| ServerKind::Plugin { id: i.manifest.id.clone() }).collect();
         #[cfg(not(feature = "plugins"))]
         let plugins = Vec::new();
         std::iter::once(ServerKind::Subsonic).chain(plugins).collect()
@@ -357,6 +475,12 @@ impl Kinds {
     /// The profile a login saves ([`server_for_login`]).
     pub fn login_profile(&self, list: ServerList, profile: SavedServer) -> SavedServer {
         server_for_login(&self.or_subsonic(&profile.kind).info(), list, profile)
+    }
+
+    /// Logging in with `profile` adds one to `list`, rather than logging in to one saved.
+    pub fn adds_profile(&self, list: ServerList, profile: SavedServer) -> bool {
+        let id = self.login_profile(list.clone(), profile).id;
+        !list.servers.iter().any(|s| s.id == id)
     }
 }
 
@@ -497,6 +621,15 @@ impl Core {
 
     /// The kinds of profile it opens: [`Kinds::builtin`] until a client with plugins gives it its own.
     pub fn use_kinds(&self, kinds: Arc<Kinds>) {
+        #[cfg(feature = "plugins")]
+        if let Some(p) = &kinds.plugins {
+            // What plugins are handed of a song is the profile's record of it.
+            let session = Arc::downgrade(&self.session);
+            p.set_songs(Arc::new(move |id: &str| session.upgrade()?.song(id)));
+            self.session.planner.set_mixing(Some(p.mixing()));
+        }
+        self.session.use_deciders(kinds.deciders());
+        self.session.scrobble_to(kinds.scrobbles());
         *self.kinds.write() = kinds;
     }
 
@@ -508,6 +641,15 @@ impl Core {
 }
 
 impl Client {
+    /// What the session just opened does about its account: `added` says how a profile just added was
+    /// asked for; any other reminds if the session ended.
+    pub fn sign_in_step(&self, added: Option<AfterAdding>) -> Option<SignInStep> {
+        match added {
+            Some(after) => self.core.provider().info().after_adding(after),
+            None => self.reminds_to_sign_in().then_some(SignInStep::Offer),
+        }
+    }
+
     /// What opens the profile's stream addresses at the URLs they are served at; None when they are
     /// URLs already.
     pub fn stream_resolver(self: &Arc<Self>) -> Option<Arc<dyn ResolveStream>> {
@@ -555,6 +697,41 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn info(fields: Vec<FieldSpec>, sign_in: Vec<SignIn>) -> ProviderInfo {
+        ProviderInfo { kind: ServerKind::Subsonic, fields, sign_in }
+    }
+
+    fn web() -> SignIn {
+        SignIn::WebPage { start_url: "https://a.example".into() }
+    }
+
+    #[test]
+    fn the_first_step_follows_the_fields_and_the_sign_in() {
+        let field = |what, advanced| FieldSpec { what, advanced };
+        let (address, name) = (FormField::Address, FormField::Name);
+        for (fields, sign_in, step, why) in [
+            (vec![field(address, false)], vec![web()], FirstStep::Form, "fields to fill"),
+            (vec![field(address, true)], vec![web()], FirstStep::Account, "advanced fields don't make a form"),
+            (vec![field(name, false)], vec![web()], FirstStep::Account, "a name alone is nothing to ask"),
+            (vec![field(name, false)], Vec::new(), FirstStep::AddNow, "a name alone, and no account"),
+            (Vec::new(), vec![SignIn::Paste], FirstStep::AddNow, "no page to go to"),
+            (Vec::new(), vec![SignIn::Paste, web()], FirstStep::AddNow, "the page isn't offered first"),
+            (vec![field(address, true)], Vec::new(), FirstStep::AddNow, "only advanced fields"),
+        ] {
+            assert_eq!(info(fields, sign_in).first_step(), step, "{why}");
+        }
+    }
+
+    #[test]
+    fn only_a_sign_in_page_goes_on_after_adding() {
+        let page = info(Vec::new(), vec![web()]);
+        for (after, step) in [(AfterAdding::Remind, SignInStep::Offer), (AfterAdding::SignIn, SignInStep::Open), (AfterAdding::Guest, SignInStep::StopReminding)] {
+            assert_eq!(page.after_adding(after), Some(step));
+            assert_eq!(info(Vec::new(), vec![SignIn::Paste]).after_adding(after), None);
+            assert_eq!(info(Vec::new(), Vec::new()).after_adding(after), None);
+        }
+    }
 
     #[test]
     fn a_resolved_stream_address_keeps_bit_rate_and_song() {

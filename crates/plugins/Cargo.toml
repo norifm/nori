@@ -18,16 +18,22 @@ ffi = ["dep:uniffi", "nori-model/ffi", "nori-settings/ffi", "nori-net/ffi"]
 [dependencies]
 uniffi = { workspace = true, optional = true }
 nori-model = { path = "../model" }
+# The deep sink protocol (deep.rs).
+nori-sink-protocol = { path = "../sink-protocol" }
 # The clock a plugin's WASI monotonic clock reads.
 nori-time = { path = "../time" }
 nori-net = { path = "../net" }
 nori-player = { path = "../player" }
 nori-settings = { path = "../settings" }
+# The AutoMix seams plugins fill (mixing.rs).
+nori-automix = { path = "../automix" }
+# A plugin's lyrics service runs in nori's race.
+nori-lyrics = { path = "../lyrics" }
 nori-tasks = { path = "../tasks" }
 # The runtime: components compiled by Cranelift once at install (never downloaded as native code),
 # fuel for every call's budget.
 wasmtime = { version = "50", default-features = false, features = ["cranelift", "runtime", "component-model", "std", "parallel-compilation"] }
-# index.json (the plugins' order).
+# index.json (the plugins' order) and a backup's plugins.
 serde = { version = "1", features = ["derive"] }
 # The manifest, in the wasm's `nori:plugin` custom section; wasmtime's own parser.
 wasmparser = "0.261"
@@ -35,12 +41,27 @@ wasmparser = "0.261"
 sha2 = "0.10"
 # index.json and a repo's index.json.
 serde_json = "1"
+# A plugin's store in a backup (kept.rs).
+base64 = "0.22"
 # A `.noriplugin` package.
+pulldown-cmark = { version = "0.13", default-features = false }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # What a provider plugin's async calls wait on while its thread works.
 futures-channel = "0.3"
+# TLS over a plugin's socket (`sockets.tcp.tls`), ring's crypto as nori-http's ureq has it, and the
+# roots a `system` check trusts.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+# A plugin's UDP socket shares a well-known port (SSDP's) with the system's own listeners.
+socket2 = "0.6"
+# A package's author's signature, checked at install.
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+# Safe mode's marks of the plugin being called: a file a crash leaves as it was.
+memmap2 = "0.9"
 
 [dev-dependencies]
+# tests/lan.rs: a deep sink's side of the protocol.
+nori-sink-protocol = { path = "../sink-protocol" }
 nori-plugins = { path = ".", features = ["testing"] }
 nori-testdir = { path = "../testdir" }
 async-trait = "0.1"
@@ -49,5 +70,6 @@ nori-plugin-sdk = { path = "../plugin-sdk" }
 # The extension points' order, read from wit/.
 wit-parser = "0.239"
 # A package served by a test's repo.
+pulldown-cmark = { version = "0.13", default-features = false }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"

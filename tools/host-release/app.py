@@ -91,6 +91,7 @@ def bundle(binary, directory, version):
         "CFBundleShortVersionString": version.split("-", 1)[0],
         "CFBundleVersion": version.replace("-beta.", "b").replace("-nightly.", "d"), "LSMinimumSystemVersion": "11.0",
         "LSApplicationCategoryType": "public.app-category.music", "NSHighResolutionCapable": True,
+        "NSBluetoothAlwaysUsageDescription": "Plugins control the Bluetooth devices they are made for, such as headphones.",
     }
     (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
     shutil.copy2(ROOT / "LICENSE", resources / "LICENSE")

@@ -1,4 +1,4 @@
-package nori:plugin@1.0.0;
+package nori:plugin@2.0.0;
 
 /// TCP and UDP. With `lan` only to private addresses; each socket closes when its handle is dropped.
 interface sockets {
@@ -22,12 +22,15 @@ interface sockets {
         none,
     }
 
+    /// IPv6 and IPv4 both, where the system has IPv6.
     resource udp {
         bind: static func(port: u16) -> result<udp, error>;
-        /// Joins a multicast group; the host holds Android's multicast lock while one is joined.
+        /// Joins a multicast group of the LAN ("239.255.255.250", "ff02::c", "ff02::fb%3" on interface
+        /// 3); the host holds Android's multicast lock while one is joined.
         join: func(group: string) -> result<_, error>;
         send: func(host: string, port: u16, bytes: list<u8>) -> result<_, error>;
-        /// A datagram and who sent it, waiting at most `timeout-ms`; none on timeout.
+        /// A datagram and who sent it, waiting at most `timeout-ms`; none on timeout. A link-local
+        /// IPv6 sender comes with its zone ("fe80::1%3"), which `send` and `tcp.connect` take.
         receive: func(timeout-ms: u32) -> result<option<tuple<string, u16, list<u8>>>, error>;
     }
 }
@@ -47,8 +50,7 @@ interface lan-serve {
     close: func();
 }
 
-/// Nori's final audio for a cast. The host moves every byte, in real time; no plugin code runs per
-/// buffer.
+/// Nori's final audio for a cast. The host moves every byte; no plugin code runs per buffer.
 interface audio-out {
     use types.{error};
     use sockets.{tcp};
@@ -59,8 +61,20 @@ interface audio-out {
         flac,
     }
 
-    /// Pumps the audio into a socket the plugin opened, at `rate` and `channels`.
-    to-socket: func(socket: borrow<tcp>, encoding: encoding, rate: u32, channels: u8) -> result<_, error>;
+    /// How the audio goes into the socket.
+    variant pace {
+        /// In real time, a little ahead, as `encoding` (a snapserver's source, a small speaker).
+        real-time,
+        /// nori-sink-protocol, which the host speaks (docs/developers/plugins.md, "Deep sinks"): the
+        /// device holds tens of seconds and asks for bursts, and says what it decodes, the rates and
+        /// widths it takes and its cover size. The depth preferred, ms (the host fits it to the
+        /// device's buffer). `encoding` is not used.
+        deep(option<u32>),
+    }
+
+    /// Sends the audio into a socket the plugin opened, at `rate` and `channels`; none: each song's own.
+    /// A deep sink is said Hello and answers before this returns.
+    to-socket: func(socket: borrow<tcp>, encoding: encoding, rate: option<u32>, channels: option<u8>, pace: pace) -> result<_, error>;
     /// Serves it at a LAN URL under the door; the URL.
     serve: func(encoding: encoding) -> result<string, error>;
     /// The device's delay, ms: the seek bar and lyrics move by it.
@@ -107,9 +121,11 @@ interface bluetooth {
         product: option<u16>,
     }
 
+    /// The connected devices the filter matches.
     connected: func() -> list<device>;
 
-    /// An RFCOMM channel by service UUID.
+    /// An RFCOMM channel by service UUID. Bytes that come while no `read` waits come to the `notified`
+    /// hook, with the service UUID as the characteristic.
     resource rfcomm {
         open: static func(device: string, service: string) -> result<rfcomm, error>;
         read: func(max: u32, timeout-ms: u32) -> result<list<u8>, error>;
@@ -120,6 +136,8 @@ interface bluetooth {
     resource gatt {
         open: static func(device: string) -> result<gatt, error>;
         mtu: func() -> u16;
+        /// The UUIDs of the device's GATT services.
+        services: func() -> list<string>;
         read: func(service: string, characteristic: string) -> result<list<u8>, error>;
         write: func(service: string, characteristic: string, bytes: list<u8>, with-response: bool) -> result<_, error>;
         notify: func(service: string, characteristic: string, on: bool) -> result<_, error>;

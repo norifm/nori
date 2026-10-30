@@ -10,11 +10,8 @@ use nori_time::{Duration, Instant};
 
 use parking_lot::{Mutex, MutexGuard};
 
-use super::{signature, ROOM};
+use super::{query, verified, ROOM};
 use crate::wire::{Answer, Body, DeviceState, Event, HostPage, HostRead, HostSource, Member, Outgoing, Room, HOLD_MS};
-
-/// How far a request's time may be from the door's: a captured request cannot be sent again later.
-const SKEW_MS: i64 = 60_000;
 
 /// Connections a door serves at once; later ones are closed unread. Held polls from a few controllers and jam guests fit.
 const MAX_CONNECTIONS: usize = 32;
@@ -24,19 +21,6 @@ const HEAD_MOST: u64 = 16 << 10;
 
 /// Replies a door keeps for controllers that have not polled them yet.
 const KEPT_EVENTS: usize = 64;
-
-/// Whether `target` (path and query, `sig` last) was signed with `secret` within [`SKEW_MS`] of `now_ms`.
-fn verified(secret: &str, method: &str, target: &str, body: &[u8], now_ms: i64) -> bool {
-    let Some((signed, sig)) = target.rsplit_once("&sig=") else { return false };
-    let fresh = query(signed, "ts").and_then(|t| t.parse::<i64>().ok()).is_some_and(|ts| now_ms.abs_diff(ts) <= SKEW_MS as u64);
-    let expected = signature(secret, method, signed, body);
-    fresh && expected.len() == sig.len() && expected.bytes().zip(sig.bytes()).fold(0, |difference, (a, b)| difference | (a ^ b)) == 0
-}
-
-/// Parameter `key` of a request target, undecoded (doors are only sent unreserved characters).
-fn query<'a>(target: &'a str, key: &str) -> Option<&'a str> {
-    target.split_once('?')?.1.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == key).map(|(_, v)| v)
-}
 
 fn now_ms() -> i64 {
     nori_time::unix_ms()
@@ -499,23 +483,9 @@ fn wait(_: &TcpStream, ear: &Ear, until: Instant) -> Woke {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::{account_tag, signed};
+    use super::super::signed;
     use crate::wire::Op;
     use std::io::Read;
-
-    #[test]
-    fn requests_need_the_account_secret_and_a_fresh_time() {
-        let t = signed("sesame", "POST", "/rest/noriRemote.send?dev=a", b"{}", 1_000_000);
-        assert!(verified("sesame", "POST", &t, b"{}", 1_000_000 + SKEW_MS));
-        assert!(!verified("other", "POST", &t, b"{}", 1_000_000), "another secret");
-        assert!(!verified("sesame", "POST", &t, b"{\"x\":1}", 1_000_000), "another body");
-        assert!(!verified("sesame", "GET", &t, b"{}", 1_000_000), "another method");
-        assert!(!verified("sesame", "POST", &t.replace("dev=a", "dev=b"), b"{}", 1_000_000), "another device");
-        assert!(!verified("sesame", "POST", &t, b"{}", 1_000_001 + SKEW_MS), "too old");
-        assert_eq!(account_tag("ann", "pw"), account_tag("ann", "pw"));
-        assert_ne!(account_tag("ann", "pw"), account_tag("ann", "pw2"));
-        assert_ne!(account_tag("ann", "pw"), account_tag("bob", "pw"));
-    }
 
     fn request(port: u16, secret: &str, method: &str, path_query: &str, body: &str) -> (u16, String) {
         let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();

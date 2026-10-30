@@ -115,7 +115,18 @@ impl Session {
             // Outside the store's lock: the database's is never taken inside it.
             song.measured_lufs = measured_lufs(&self.db, &current).map(|mid| stereo_loudness_of_mid(mid, channels));
         }
-        song_gain(prefs, &song, run)
+        let nori = song_gain(prefs, &song, run);
+        // Leveling off stays off.
+        if prefs.mode == PlayerGainMode::Off {
+            return nori;
+        }
+        self.decide_leveling(&current, nori)
+    }
+
+    /// Song `id`'s measured integrated loudness (BS.1770, LUFS), once AutoMix measured it.
+    pub fn loudness(&self, id: &str) -> Option<f32> {
+        let channels = self.store(|s| s.songs.get(id).map_or(2, |(song, _)| song.channel_count));
+        measured_lufs(&self.db, id).filter(|l| *l > -70.0).map(|mid| stereo_loudness_of_mid(mid, channels))
     }
 
     /// Whether registered song `id` is marked explicit; false if unknown.

@@ -3,12 +3,15 @@
 //! reduction, then make-up gain. `α = exp(-1 / (τ fs))`. At rest a frame costs a compare; logs and powers
 //! only run while reducing.
 
+#[cfg(not(feature = "std"))]
+use crate::math::Float;
+
 /// Soft-knee gain reduction (dB, >= 0) for a level `over` dB past the threshold with knee width `w`.
 /// The slope is `1 - 1/ratio`.
 /// Both sides are computed and one picked: music crosses the knee too often for a branch to guess.
 #[inline(always)]
 fn curve_db(over: f64, slope: f64, w: f64) -> f64 {
-    use std::hint::select_unpredictable as pick;
+    use core::hint::select_unpredictable as pick;
     let knee = slope * (over + w / 2.0).powi(2) / (2.0 * w);
     let above = pick(2.0 * over.abs() <= w && w > 0.0, knee, slope * over);
     pick(2.0 * over <= -w, 0.0, above)
@@ -233,7 +236,7 @@ mod tests {
     fn run(c: &mut Compressor, db: f64, secs: f64, freq: f64) -> (f64, Vec<f64>) {
         let a = 10f64.powf(db / 20.0);
         let n = (secs * RATE) as usize;
-        let x: Vec<f64> = (0..n).map(|i| a * (std::f64::consts::TAU * freq * i as f64 / RATE).sin()).collect();
+        let x: Vec<f64> = (0..n).map(|i| a * (core::f64::consts::TAU * freq * i as f64 / RATE).sin()).collect();
         let (mut l, mut r) = (x.clone(), x.clone());
         compress(c, &mut l, &mut r);
         let gains = x.iter().zip(&l).map(|(x, y)| if x.abs() > 1e-12 { y / x } else { f64::NAN }).collect();
@@ -299,7 +302,7 @@ mod tests {
     #[test]
     fn channels_are_linked() {
         let mut c = Compressor::new(RATE, hard(-20.0, 4.0));
-        let mut l: Vec<f64> = (0..48_000).map(|i| (std::f64::consts::TAU * 440.0 * i as f64 / RATE).sin()).collect();
+        let mut l: Vec<f64> = (0..48_000).map(|i| (core::f64::consts::TAU * 440.0 * i as f64 / RATE).sin()).collect();
         let mut r: Vec<f64> = l.iter().map(|x| 0.01 * x).collect();
         compress(&mut c, &mut l, &mut r);
         assert!(c.meter_db > 6.0, "it compressed: {}", c.meter_db);
@@ -327,7 +330,7 @@ mod tests {
         let x: Vec<f64> = (0..n)
             .map(|i| {
                 let level = if (i + 7) % 9_001 < 2_500 { 0.95 } else { 0.02 };
-                level * (std::f64::consts::TAU * 330.0 * i as f64 / RATE).sin()
+                level * (core::f64::consts::TAU * 330.0 * i as f64 / RATE).sin()
             })
             .collect();
         let mut exact = Compressor::new(RATE, s);

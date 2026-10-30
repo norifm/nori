@@ -10,6 +10,8 @@
 //! Gauss-Newton on the exact response. Accuracy over random ±12 dB curves: ~0.3 dB at centres and
 //! 0.7 dB between (to 16 kHz). Runs when a slider moves, never per buffer.
 
+use crate::prelude::*;
+
 use crate::dsp::{band_db, Band, CH_BOTH};
 use crate::types::EqKind;
 
@@ -54,7 +56,7 @@ pub fn nominal(freq: f64) -> f64 {
 
 /// RBJ Q for a bell `octaves` wide between its half-gain points.
 fn q_for(octaves: f64) -> f64 {
-    1.0 / (2.0 * (std::f64::consts::LN_2 / 2.0 * octaves).sinh())
+    1.0 / (2.0 * (core::f64::consts::LN_2 / 2.0 * octaves).sinh())
 }
 
 /// Bell width in band spacings: the widest that still draws a ±12 dB zigzag.
@@ -84,7 +86,7 @@ const MIDPOINT_WEIGHT: f64 = 0.35;
 /// Ridge on the filter gains per dB², raised only when the sliders cannot be drawn within [`MAX_FILTER_DB`].
 const RIDGE: f64 = 1e-4;
 /// The top-band shelf's Q (steepest without overshoot).
-const SHELF_Q: f64 = std::f64::consts::FRAC_1_SQRT_2;
+const SHELF_Q: f64 = core::f64::consts::FRAC_1_SQRT_2;
 /// Gauss-Newton refinement steps after the two solves.
 const REFINE: usize = 3;
 
@@ -108,7 +110,7 @@ pub fn design(rate: f64, sliders: &[f64]) -> Vec<Band> {
         if shelf_top && j == n - 1 {
             Band { kind: EqKind::HighShelf, freq: (freqs[j] * freqs[j - 1]).sqrt(), gain_db: g, q: SHELF_Q, channel: CH_BOTH }
         } else {
-            let w = std::f64::consts::TAU * freqs[j] / rate;
+            let w = core::f64::consts::TAU * freqs[j] / rate;
             bell(freqs[j], g, q_for(octaves * w / w.sin()))
         }
     };

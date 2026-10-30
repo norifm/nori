@@ -482,6 +482,19 @@ impl Playlist {
         self.rev += 1;
     }
 
+    /// Replaces the play order while shuffling with `order` (list indexes, each once); false, and the
+    /// order kept, when it does not fit the list.
+    pub fn reorder(&mut self, order: Vec<usize>) -> bool {
+        let n = self.ids.len();
+        let mut seen = vec![false; n];
+        if !self.shuffling || order.len() != n || !order.iter().all(|&i| i < n && !std::mem::replace(&mut seen[i], true)) {
+            return false;
+        }
+        self.order = order;
+        self.rev += 1;
+        true
+    }
+
     /// The offline bridge's downloads are in the queue.
     pub fn bridging(&self) -> bool {
         self.hand.contains(&Hand::Bridge)

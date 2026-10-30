@@ -43,10 +43,10 @@ impl SongLyrics {
         o.iter().take_while(|&&u| (u as f32) < sung.floor()).count()
     }
 
-    /// The credit line; none for the server's lyrics.
-    pub fn credit(&self) -> Option<String> {
-        let origin = self.pick.origin;
-        (origin != LyricsOrigin::Server).then(|| crate::text::lyrics_credit(origin, self.pick.lyrics.synced))
+    /// The credit line, a plugin's service by `plugin_name`; none for the server's lyrics.
+    pub fn credit(&self, plugin_name: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+        let origin = &self.pick.origin;
+        (*origin != LyricsOrigin::Server).then(|| crate::text::lyrics_credit(origin, self.pick.lyrics.synced, plugin_name))
     }
 
     /// Whether `next` should replace these (`race::lyrics_replaces`: the same lyrics again do not).

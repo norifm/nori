@@ -2,6 +2,8 @@ package dev.nori.music.playback
 
 import dev.nori.music.core.R
 import dev.nori.music.ffi.queue.FillNext
+import dev.nori.music.ffi.model.ButtonAct
+import dev.nori.music.ffi.model.Press
 import dev.nori.music.ffi.queue.Hand
 import android.app.AlarmManager
 import android.app.PendingIntent
@@ -135,7 +137,9 @@ class PlaybackService : MediaLibraryService() {
     private lateinit var controls: Controls
     /** The session's player while another device plays (Remotes.mirror): this phone controls that one. */
     private lateinit var elsewhere: dev.nori.music.remote.RemoteDevicePlayer
-    /** What the session shows: [controls], or [elsewhere] while another device plays. */
+    /** The session's player while a plugin casts (PluginHost.cast): the cast's device controlled through [controls]. Made at the first cast: it follows [controls] from then on. */
+    private var casting: CastPlayer? = null
+    /** What the session shows: [controls], [elsewhere] while another device plays, or [casting] while a plugin casts. */
     private val shown: Player get() = session.player
     private lateinit var scrobbler: Scrobbler
     @Suppress("DEPRECATION")
@@ -228,7 +232,7 @@ class PlaybackService : MediaLibraryService() {
         }
         scope.launch {
             // The device's own sound (a bound profile or AutoEQ curve), or the sound from before it came back.
-            nori.outputs.current.collect { output -> nori.deviceSound.onOutput(output) }
+            nori.outputs.current.collect { output -> nori.deviceSound.onOutput(output); pluginMoment() }
         }
         applyAudio(nori.settings.value)
         scope.launch {
@@ -274,7 +278,10 @@ class PlaybackService : MediaLibraryService() {
         scope.launch { nori.settings.prefs.map { it.remoteControl }.distinctUntilChanged().collect { nori.remotes.serve(true) } }
         elsewhere = dev.nori.music.remote.RemoteDevicePlayer(this, nori)
         scope.launch { nori.remotes.mirror.collect(::mirrored) }
+        scope.launch { nori.plugins.cast.collect(::casted) }
         restoreQueue()
+        // The player is up, with the plugins' layer: a crash from here on is no startup crash for safe mode.
+        scope.launch { nori.plugins.started() }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
@@ -294,14 +301,30 @@ class PlaybackService : MediaLibraryService() {
             if (session.player !== elsewhere) {
                 dev.nori.music.NoriLog.i("playing on ${m.name}: this phone's player stops")
                 player.letGo()
-                session.player = elsewhere
             }
         } else if (session.player === elsewhere) {
             dev.nori.music.NoriLog.i("playing on this phone again")
-            session.player = controls
         }
+        pickPlayer()
         showRoute()
         refreshButtons()
+    }
+
+    /** A plugin's cast started, its device's state changed, or it ended (null): the session shows its device while it runs. */
+    private fun casted(c: dev.nori.music.ffi.plugins.Cast?) {
+        if (c != null) (casting ?: CastPlayer(controls, nori.plugins).also { casting = it }).show(c)
+        pickPlayer()
+        refreshButtons()
+    }
+
+    /** The session's player: another device's while one plays, else the cast's while a plugin casts, else this phone's. */
+    private fun pickPlayer() {
+        val want = when {
+            nori.remotes.mirror.value != null -> elsewhere
+            nori.plugins.cast.value != null -> casting ?: controls
+            else -> controls
+        }
+        if (session.player !== want) session.player = want
     }
 
     /** Whether media3 keeps the service in the foreground: playing, or paused for less than its idle timeout. */
@@ -363,6 +386,11 @@ class PlaybackService : MediaLibraryService() {
     private val listener = object : Player.Listener {
         override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
             item?.let { observer?.song(it.mediaId) }
+            item?.mediaId?.let { id ->
+                if (nori.session.deciding()) scope.launch {
+                    withContext(Dispatchers.IO) { nori.session.nowPlaying(id) }?.let { player.showAs(id, it) }
+                }
+            }
             observer?.arrived(player.currentMediaItemIndex, reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO, player.shuffleModeEnabled)
             val looped = reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
             // The player walked the core's queue itself (explicit songs skipped, each song's volume set):
@@ -426,6 +454,7 @@ class PlaybackService : MediaLibraryService() {
 
         override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
+                pluginMoment()
                 keepQueue(dev.nori.music.ffi.queue.QueueMoment.EDITED)
                 remoteState()
                 prefetchLyrics()
@@ -446,7 +475,10 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onPlaybackStateChanged(state: Int) {
-            if (state == Player.STATE_ENDED) scrobbler.onTrack(null, dev.nori.music.ffi.queue.TrackChange.ENDED, false)
+            if (state == Player.STATE_ENDED) {
+                scrobbler.onTrack(null, dev.nori.music.ffi.queue.TrackChange.ENDED, false)
+                if (nori.session.deciding()) queueEnded()
+            }
         }
     }
 
@@ -471,7 +503,7 @@ class PlaybackService : MediaLibraryService() {
 
     /** As the app's heart has it: this session's mark, else the song as the queue playing it holds it - another device's while it plays. */
     private fun currentStarred(item: MediaItem): Boolean =
-        nori.library.isStarred(StarKind.SONG, item.mediaId, if (shown !== controls) elsewhere.currentStarred else nori.session.queueStarred(item.mediaId))
+        nori.library.isStarred(StarKind.SONG, item.mediaId, if (shown === elsewhere) elsewhere.currentStarred else nori.session.queueStarred(item.mediaId))
 
     /**
      * Heart and shuffle beside previous / play / next, in the secondary slots the way other players put
@@ -559,6 +591,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun announce() {
+        pluginMoment()
         remoteState()
         if (!nori.widgets.any) return
         val m = player.currentMediaItem?.mediaMetadata
@@ -777,6 +810,17 @@ class PlaybackService : MediaLibraryService() {
         if (nori.session.autofillLanded()) player.seekToNextMediaItem()
     }
 
+    /** The queue played out: a plugin may say what plays now (the core's `Client::queue_ended`). */
+    private fun queueEnded() = scope.launch {
+        val fresh = runCatching { nori.library.queueEnded() }.getOrNull() ?: return@launch
+        // Something else started meanwhile: that plays.
+        if (fresh.songs.isEmpty() || player.playbackState != Player.STATE_ENDED) return@launch
+        controls.addMediaItems(held(fresh.songs))
+        player.seekToNextMediaItem()
+        player.prepare()
+        player.play()
+    }
+
     /** Next with nothing after: fetch, and take the skip when the songs land (the core remembers the press). */
     private fun fillThenNext() {
         when (nori.session.autofillNext()) {
@@ -863,7 +907,53 @@ class PlaybackService : MediaLibraryService() {
         observer?.shallow(!was)
     }
 
+    /** What plays now, for the plugins, while one follows the player (crates/plugins hooks.rs tells the events apart). */
+    private fun pluginMoment() {
+        if (!nori.plugins.follows()) return
+        val index = player.currentMediaItemIndex.takeIf { it >= 0 && player.mediaItemCount > 0 }?.toUInt()
+        val moment = dev.nori.music.ffi.plugins.Moment(player.isPlaying, index, player.currentMediaItem?.mediaId, player.currentPosition.coerceAtLeast(0).toULong(), nori.outputs.current.value)
+        scope.launch(Dispatchers.IO) { nori.plugins.played(moment) }
+    }
+
     private inner class Callback : MediaLibrarySession.Callback {
+        /**
+         * While a plugin decides, what a media button does is the core's (`Session::media_button`): the
+         * press is taken here and acted on once it answers. Otherwise media3 handles it.
+         */
+        override fun onMediaButtonEvent(session: MediaSession, controllerInfo: MediaSession.ControllerInfo, intent: android.content.Intent): Boolean {
+            val key = androidx.core.content.IntentCompat.getParcelableExtra(intent, android.content.Intent.EXTRA_KEY_EVENT, android.view.KeyEvent::class.java) ?: return false
+            if (nori.plugins.hears(dev.nori.music.ffi.plugins.Hook.MEDIA_BUTTON) && key.action == android.view.KeyEvent.ACTION_DOWN && key.repeatCount == 0) {
+                val heard = when (key.keyCode) {
+                    android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, android.view.KeyEvent.KEYCODE_HEADSETHOOK -> dev.nori.music.ffi.plugins.Press.PLAY_PAUSE
+                    android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> dev.nori.music.ffi.plugins.Press.PLAY
+                    android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> dev.nori.music.ffi.plugins.Press.PAUSE
+                    android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> dev.nori.music.ffi.plugins.Press.NEXT
+                    android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> dev.nori.music.ffi.plugins.Press.PREVIOUS
+                    android.view.KeyEvent.KEYCODE_MEDIA_STOP -> dev.nori.music.ffi.plugins.Press.STOP
+                    else -> null
+                }
+                heard?.let { scope.launch(Dispatchers.IO) { nori.plugins.heardPress(it) } }
+            }
+            val press = when (key.keyCode) {
+                android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> if (key.isLongPress) Press.LONG else Press.PLAY_PAUSE
+                android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> Press.NEXT
+                android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> Press.PREVIOUS
+                else -> return false
+            }
+            if (!nori.session.deciding()) return false
+            // A key's release and its repeats while held are taken with it; a long press once.
+            if (key.action != android.view.KeyEvent.ACTION_DOWN || (key.repeatCount > 0 && !key.isLongPress)) return true
+            scope.launch {
+                when (withContext(Dispatchers.IO) { nori.session.mediaButton(press) }) {
+                    ButtonAct.PLAY_PAUSE -> if (player.playWhenReady) player.pause() else player.play()
+                    ButtonAct.NEXT -> player.seekToNext()
+                    ButtonAct.PREVIOUS -> player.seekToPrevious()
+                    ButtonAct.NOTHING -> {}
+                }
+            }
+            return true
+        }
+
         override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon().add(SessionCommand(CMD_SLEEP, Bundle.EMPTY)).add(SessionCommand(CMD_TUNING, Bundle.EMPTY))
                 .add(SessionCommand(CMD_FAVOURITE, Bundle.EMPTY)).add(SessionCommand(CMD_UNFAVOURITE, Bundle.EMPTY)).add(SessionCommand(CMD_SHUFFLE, Bundle.EMPTY))

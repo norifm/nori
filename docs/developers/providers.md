@@ -67,11 +67,11 @@ A client asks the core and draws:
 
 | step | the core's calls |
 |---|---|
-| the kinds offered | `Kinds::providers`, in order; offer a choice only when there are several |
+| the first screen | a new profile starts here: `Kinds::providers`, in order, then quieter `nori_plugins::provider_offers`, what repos offer that isn't on. One not installed opens its plugin page, and once installed is turned on; one installed but off just turns on. Then `ProviderInfo::first_step` decides: a form to fill, titled with the provider's name; a sign-in page and nothing to fill (a name alone doesn't count), a page with its sign-in and Continue as guest; nothing at all, added at once, its page showing only if that fails. `ProviderInfo::after_adding` turns how it was added (`AfterAdding`) into what a client does next (`SignInStep`). Back from a page chooses again. With every plugin off (`pluginsOff`) no plugin is offered. Repos that can't be read leave `Kinds::providers` |
 | the add form | the chosen kind's `ProviderInfo` fields, advanced ones folded away; `Kinds::server_ready` says whether it can be sent |
 | logging in | `log_in`: `Kinds::login_profile`, then `Kinds::check_profile`; keeps the profile as the active one |
 | opening a profile | `Core::configure_profile`; the engine's byte source wrapped by `nori_engine::core::resolving` |
-| signing in | for a `SignIn::WebPage`, a page of the app's own at `start_url` whose address and cookies go to `Kinds::sign_in_done` until it says done, then to `Client::sign_in`; for `SignIn::Paste`, a box to paste into. `Client::account` says where it stands |
+| signing in | for a `SignIn::WebPage`, a page of the app's own at `start_url` whose addresses (each page, and each address it refuses to open: an OAuth redirect to an app's own address) and cookies go to `Kinds::sign_in_done` until it says done, then to `Client::sign_in`; for `SignIn::Paste`, a box to paste into. `Client::account` says where it stands |
 | covers | `Core::cover_prefix` (the id and size appended), or `Core::cover_address` without one |
 
 A client's only per-provider code is its words, one entry per kind:

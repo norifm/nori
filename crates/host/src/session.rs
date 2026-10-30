@@ -323,6 +323,12 @@ pub struct Parts {
     curve: parking_lot::Mutex<Option<CurveNotice>>,
     tasks: Arc<dyn Tasks>,
     out: Out,
+    /// The plugin host the session's kinds come with, told what plays.
+    #[cfg(feature = "desktop")]
+    pub(crate) plugins: Option<Arc<nori_plugins::Plugins>>,
+    /// The output the engine last said it plays on, for the plugins.
+    #[cfg(feature = "desktop")]
+    pub(crate) output: parking_lot::Mutex<String>,
 }
 
 impl Session {
@@ -363,6 +369,9 @@ impl Session {
         let cover_net = CoverNet::over(o.http.clone());
         let client = Client::new(core.clone(), transport, cover_net.clone());
         client.set_profile(net(&o.profile));
+        // Plugins reach the open profile: its session, its songs' URLs for a cast.
+        #[cfg(feature = "desktop")]
+        o.kinds.open_client(client.clone());
         let prefs = core.session.settings.current().unwrap_or_default();
         // Set by the client before the engine starts, so the first chain has the right compensation.
         let level = o.volume;
@@ -396,6 +405,7 @@ impl Session {
             out(Said::Engine(e));
         });
         let engine = Arc::new(start(library, app, CoreQueue(core.session.clone()), output, config, events));
+        engine.set_volume(level.get());
         let covers = o.covers.map(|config| Arc::new(Loader::new(config, cover_net)));
         let remotes = Arc::new(crate::remote::Remotes::new(level.clone()));
         let (saved, playing) = (core.clone(), engine.clone());
@@ -426,6 +436,10 @@ impl Session {
             curve: Default::default(),
             tasks: o.tasks,
             out: o.out,
+            #[cfg(feature = "desktop")]
+            plugins: o.kinds.plugins().cloned(),
+            #[cfg(feature = "desktop")]
+            output: Default::default(),
         };
         let h = Handle(Arc::new(parts));
         let _ = heard.set(Arc::downgrade(&h.0));
@@ -434,6 +448,8 @@ impl Session {
             m.mpris.serve(Some(Arc::new(h.clone())));
         }
         h.restore();
+        #[cfg(feature = "desktop")]
+        h.player_shown(true);
         h.follow_remote();
         if !h.offline && h.rules().downloads && h.core.download_counts().pending > 0 {
             h.start_downloads();
@@ -455,6 +471,15 @@ impl Session {
 }
 
 impl Handle {
+    /// The session, held weakly (by what outlives it, a plugin's client).
+    pub fn weak(&self) -> std::sync::Weak<Parts> {
+        Arc::downgrade(&self.0)
+    }
+
+    pub fn of(parts: Arc<Parts>) -> Handle {
+        Handle(parts)
+    }
+
     fn note(&self, n: Note) {
         (self.out)(Said::Note(n));
     }
@@ -468,6 +493,8 @@ impl Handle {
     fn heard(&self, e: &Event) {
         #[cfg(feature = "desktop")]
         self.mpris_heard(e);
+        #[cfg(feature = "desktop")]
+        self.plugins_heard(e);
         self.followed(e);
     }
 
@@ -692,6 +719,12 @@ impl Handle {
                 None => !matches!(press, Press::Volume { .. }),
             };
         }
+        #[cfg(feature = "desktop")]
+        if let Some(p) = &self.plugins {
+            if p.cast().and_then(|c| cast_button(press, &c)).is_some_and(|b| p.cast_button(b)) {
+                return true;
+            }
+        }
         let Some(e) = self.elsewhere() else { return false };
         if let Some(op) = e.op(press) {
             e.send(op);
@@ -707,6 +740,9 @@ impl Handle {
     /// The app came into sight or left it: a mirrored device's clock and the search for a playing
     /// device follow only while it is seen.
     pub fn in_sight(&self, seen: bool) {
+        // The player shows on every page of a desktop client while it is seen.
+        #[cfg(feature = "desktop")]
+        self.player_shown(seen);
         let Some(remote) = self.remote() else { return };
         remote.clone().sight(if seen { nori_core::remote::Sight::Screen } else { nori_core::remote::Sight::Nothing });
         if seen {
@@ -884,10 +920,22 @@ impl Handle {
     /// Sets a setting by name and applies its effects, as Android's player does. None if no such setting.
     pub fn setting(&self, name: &str, value: &str) -> Option<SettingChange> {
         let change = self.core.session.settings.edit_by_name(name, value)?;
-        self.apply(change.effect, &change.prefs);
+        self.took(&change);
         if matches!(name, "remoteControl" | "jam") {
             self.follow_remote();
         }
+        Some(change)
+    }
+
+    /// Applies the settings a backup restored (`nori_backup::restore`), as [`Session::setting`] does a
+    /// change.
+    pub fn backup_restored(&self, change: &SettingChange) {
+        self.took(change);
+        self.follow_remote();
+    }
+
+    fn took(&self, change: &SettingChange) {
+        self.apply(change.effect, &change.prefs);
         if let Some(store) = self.store.as_ref().filter(|_| change.effect & CACHE_LIMIT != 0) {
             store.set_limit(change.prefs.cache_mb.max(0) as u64 * 1024 * 1024);
         }
@@ -897,7 +945,6 @@ impl Handle {
                 self.client.set_profile(net(s));
             }
         }
-        Some(change)
     }
 
     /// The system moved the volume by itself (its keys, where it keeps the volume), 0 to 1: the
@@ -1194,6 +1241,7 @@ impl Handle {
         }
         match e {
             Event::Song { .. } => self.arrived(),
+            Event::State(State::Ended) => self.ended(),
             Event::State(State::Paused) => self.keep(QueueMoment::Paused),
             Event::Bridge { .. } => self.bridge(),
             Event::Output { name } => self.device_curve(name.clone()),
@@ -1277,6 +1325,41 @@ impl Handle {
         }
     }
 
+    /// The queue played out: a plugin may say what plays now (`Client::queue_ended`).
+    fn ended(&self) {
+        if self.core.session.deciders().is_none() {
+            return;
+        }
+        let me = self.clone();
+        self.run(async move {
+            let fresh = me.client.queue_ended().await;
+            let ids: Vec<String> = fresh.songs.iter().map(|s| s.id.clone()).collect();
+            let q = &me.core.session;
+            let (len, end) = q.playlist(|p| (p.len(), p.play_order().last().map(|at| p.seqs()[at])));
+            // A queue started meanwhile plays instead.
+            if ids.is_empty() || end != fresh.after {
+                return;
+            }
+            let n = ids.len();
+            q.take(len as u32, ids, vec![Hand::No; n]);
+            me.edited();
+            if let Some(end) = end {
+                me.engine.resume_after_refill(end);
+            }
+        });
+    }
+
+    /// A media key or button pressed: what it does is the core's (`Session::media_button`).
+    pub fn pressed(&self, press: nori_core::deciders::Press) {
+        use nori_core::deciders::ButtonAct;
+        match self.core.session.media_button(press) {
+            ButtonAct::PlayPause => self.toggle(),
+            ButtonAct::Next => self.next(),
+            ButtonAct::Previous => self.previous(),
+            ButtonAct::Nothing => {}
+        }
+    }
+
     fn filled(&self, fresh: nori_core::autofill::Refill) {
         let ids: Vec<String> = fresh.songs.iter().map(|s| s.id.clone()).collect();
         if !self.client.autofill_arrived(fresh) || ids.is_empty() {
@@ -1297,6 +1380,7 @@ impl Handle {
     /// Sets the volume here; the account's other devices see it.
     fn set_level(&self, v: f32) {
         self.level.set(v);
+        self.engine.set_volume(self.level.get());
         self.remotes.played(&self.engine);
     }
 
@@ -1567,6 +1651,19 @@ use nori_engine::testing::Device;
 #[path = "../../engine/tests/common/card.rs"]
 mod test_card;
 
+/// A volume `press` as a plugin's cast hears it: a step toward the level asked, none where the device
+/// says no volume. The rest moves nori's own queue, which the cast follows (`Plugins::played`).
+#[cfg(feature = "desktop")]
+fn cast_button(press: Press, cast: &nori_plugins::Cast) -> Option<nori_plugins::CastButton> {
+    use nori_plugins::CastButton;
+    let Press::Volume { level } = press else { return None };
+    match (level * 100.0).round() as i32 - cast.volume? as i32 {
+        0 => None,
+        up if up > 0 => Some(CastButton::VolumeUp),
+        _ => Some(CastButton::VolumeDown),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Read as _;
@@ -1576,6 +1673,22 @@ mod tests {
     use nori_engine::Loader;
 
     use super::*;
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn a_cast_hears_a_volume_step_toward_the_level() {
+        use nori_plugins::{Cast, CastButton, CastKind};
+        let cast = |volume| Cast { plugin: "p".into(), kind: CastKind::Target, device: "TV".into(), playing: true, position_ms: 0, volume, bursts: false };
+        for (press, volume, heard) in [
+            (Press::Volume { level: 0.6 }, Some(40), Some(CastButton::VolumeUp)),
+            (Press::Volume { level: 0.2 }, Some(40), Some(CastButton::VolumeDown)),
+            (Press::Volume { level: 0.4 }, Some(40), None),
+            (Press::Volume { level: 0.6 }, None, None),
+            (Press::Next, Some(40), None),
+        ] {
+            assert_eq!(cast_button(press, &cast(volume)), heard, "{press:?} at {volume:?}");
+        }
+    }
 
     #[test]
     fn downloads_said_are_the_ones_queued() {

@@ -14,3 +14,7 @@ nori-engine = { path = "../engine" }
 async-trait = "0.1"
 # rustls, no OpenSSL: one small TLS stack that builds the same everywhere.
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+
+[dev-dependencies]
+# The HTTPS proxy a test goes through.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

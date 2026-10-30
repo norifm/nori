@@ -9,7 +9,8 @@ use crate::dsp::Equalizer;
 use crate::pcm::Encoding;
 use crate::silence::SilenceSkipper;
 use crate::speed::SpeedPitch;
-use crate::stage::{Saved, Stages};
+use crate::stage::{Saved, SongFacts, Stages};
+use std::sync::Arc;
 
 /// Input frames between kept states: the most that is run again to reach a splice.
 pub(crate) const MARK_FRAMES: u64 = 8192;
@@ -35,14 +36,16 @@ impl Clone for Processors {
     }
 }
 
-/// Input as offered: its first frame, song frames per frame, timeline position (µs) of that frame, and
-/// the gain the chain applies to it (1 when the samples are at their level).
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Input as offered: its first frame, song frames per frame, timeline position (µs) of that frame,
+/// the gain the chain applies to it (1 when the samples are at their level), and what the stages read
+/// of its song.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Piece {
     pub frame: u64,
     pub pace: f64,
     pub pts: i64,
     pub gain: f32,
+    pub song: Arc<SongFacts>,
 }
 
 impl Piece {
@@ -100,9 +103,9 @@ impl Kept {
     }
 
     /// Keeps `input` at the end.
-    pub fn keep(&mut self, input: &[u8], pace: f64, pts: i64, gain: f32) {
+    pub fn keep(&mut self, input: &[u8], pace: f64, pts: i64, gain: f32, song: &Arc<SongFacts>) {
         let frame = self.end();
-        self.pieces.push_back(Piece { frame, pace, pts, gain });
+        self.pieces.push_back(Piece { frame, pace, pts, gain, song: song.clone() });
         self.bytes.extend_from_slice(input);
     }
 
@@ -201,7 +204,7 @@ impl Kept {
     /// down) within an unstretched piece, or the end of the input.
     pub fn frame_at(&self, pts: i64, rate: u32) -> Option<u64> {
         let k = self.pieces.partition_point(|p| p.pts <= pts).checked_sub(1)?;
-        let p = self.pieces[k];
+        let p = &self.pieces[k];
         let end = self.pieces.get(k + 1).map_or(self.end(), |n| n.frame);
         let d = ((pts - p.pts) as f64 * rate as f64 / 1_000_000.0).round() as u64;
         (p.pace == 1.0 && p.frame + d <= end).then_some(p.frame + d)
@@ -211,7 +214,7 @@ impl Kept {
     pub fn piece(&self, frame: u64) -> Option<(Piece, u64)> {
         let k = self.pieces.partition_point(|p| p.frame <= frame).checked_sub(1)?;
         let end = self.pieces.get(k + 1).map_or(self.end(), |p| p.frame);
-        (frame < end).then_some((self.pieces[k], end))
+        (frame < end).then(|| (self.pieces[k].clone(), end))
     }
 
     /// Input frames `from..to`.
@@ -225,7 +228,7 @@ impl Kept {
     pub fn rescale(&mut self, from: u64, pts: std::ops::Range<i64>, ratio: f32, encoding: Encoding, rate: u32) {
         let mut k = 0;
         while k < self.pieces.len() {
-            let p = self.pieces[k];
+            let p = self.pieces[k].clone();
             let end = self.pieces.get(k + 1).map_or(self.end(), |n| n.frame);
             k += 1;
             if end <= from || !pts.contains(&p.pts) {
@@ -240,6 +243,27 @@ impl Kept {
                 k += 1;
             } else {
                 self.pieces[k - 1].gain *= ratio;
+            }
+        }
+    }
+
+    /// The input from frame `from` of the song `was` tells of is now told of by `now` (its prepared
+    /// data came); what comes before `from` is run again as it was.
+    pub fn retell(&mut self, from: u64, was: &Arc<SongFacts>, now: &Arc<SongFacts>, rate: u32) {
+        let mut k = 0;
+        while k < self.pieces.len() {
+            let end = self.pieces.get(k + 1).map_or(self.end(), |n| n.frame);
+            let p = &self.pieces[k];
+            k += 1;
+            if end <= from || !Arc::ptr_eq(&p.song, was) {
+                continue;
+            }
+            if p.frame < from {
+                let rest = Piece { frame: from, pts: p.at(from, rate).0, song: now.clone(), ..p.clone() };
+                self.pieces.insert(k, rest);
+                k += 1;
+            } else {
+                self.pieces[k - 1].song = now.clone();
             }
         }
     }
@@ -260,12 +284,12 @@ mod tests {
         let (chain, mut stages) = (Processors::default(), Stages::default());
         for i in 0..4u64 {
             k.mark(i * MARK_FRAMES, i * MARK_FRAMES, 0.0, &chain, &mut stages);
-            k.keep(&frames(MARK_FRAMES, i as u8), 1.0, i as i64 * 1000, 1.0);
+            k.keep(&frames(MARK_FRAMES, i as u8), 1.0, i as i64 * 1000, 1.0, &crate::stage::no_facts());
         }
         k.trim(2 * MARK_FRAMES + 5);
         assert_eq!(k.mark_at(0).frame, 2 * MARK_FRAMES, "nothing kept before the mark still needed");
         assert_eq!(k.frames(2 * MARK_FRAMES, 2 * MARK_FRAMES + 1), &frames(1, 2)[..], "the input kept is the input given");
         assert_eq!(k.end(), 4 * MARK_FRAMES);
-        assert_eq!(k.piece(3 * MARK_FRAMES + 1), Some((Piece { frame: 3 * MARK_FRAMES, pace: 1.0, pts: 3000, gain: 1.0 }, 4 * MARK_FRAMES)));
+        assert_eq!(k.piece(3 * MARK_FRAMES + 1), Some((Piece { frame: 3 * MARK_FRAMES, pace: 1.0, pts: 3000, gain: 1.0, song: crate::stage::no_facts() }, 4 * MARK_FRAMES)));
     }
 }

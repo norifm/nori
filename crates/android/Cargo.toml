@@ -32,9 +32,10 @@ nori-remote = { path = "../remote", features = ["ffi"] }
 nori-player = { path = "../player" }
 nori-look = { path = "../look", features = ["ffi"] }
 nori-plugins = { path = "../plugins", features = ["ffi"] }
+nori-backup = { path = "../backup", features = ["ffi"] }
 nori-covers = { path = "../covers" }
 async-trait = "0.1"
-nori-engine = { path = "../engine", features = ["core"] }
+nori-engine = { path = "../engine", features = ["core", "plugins"] }
 libc = "0.2"
 jni = { version = "0.21", default-features = false }
 parking_lot = "0.12"

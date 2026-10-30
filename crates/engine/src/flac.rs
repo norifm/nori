@@ -12,7 +12,7 @@ use symphonia::core::io::MediaSource;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Head {
     /// The stream info block's body.
-    info: [u8; 34],
+    pub info: [u8; 34],
     /// Where the first frame starts.
     first: u64,
     pub rate: u32,

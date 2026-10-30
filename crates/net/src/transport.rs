@@ -62,9 +62,42 @@ pub fn get_failed(status: u16, body_empty: bool) -> bool {
 pub struct TransportResponse {
     pub status: u16,
     pub body: Vec<u8>,
-    /// The answer's `Set-Cookie` values (a provider session's rotated cookies).
+    /// The answer's headers, names in lower case (a provider session's rotated cookies are its
+    /// `set-cookie` ones).
     #[cfg_attr(feature = "ffi", uniffi(default))]
-    pub set_cookies: Vec<String>,
+    pub headers: Vec<HttpHeader>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct HttpHeader {
+    pub name: String,
+    pub value: String,
+}
+
+/// How an [`Exchange`] is sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum HttpMethod {
+    Get,
+    Head,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
+impl HttpMethod {
+    pub fn name(self) -> &'static str {
+        match self {
+            HttpMethod::Get => "GET",
+            HttpMethod::Head => "HEAD",
+            HttpMethod::Post => "POST",
+            HttpMethod::Put => "PUT",
+            HttpMethod::Patch => "PATCH",
+            HttpMethod::Delete => "DELETE",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +105,23 @@ pub struct TransportResponse {
 pub enum TransportError {
     /// `detail` is the platform's own message.
     Failed { kind: FailureKind, detail: Option<String> },
+}
+
+impl Exchange {
+    /// Its body and the content type it goes as, if it has one.
+    pub fn payload(&self) -> Option<(&[u8], Option<&str>)> {
+        match (&self.json, &self.form, &self.body) {
+            (Some(json), _, _) => Some((json.as_bytes(), Some("application/json"))),
+            (None, Some(form), _) => Some((form.as_bytes(), Some("application/x-www-form-urlencoded"))),
+            (None, None, Some(body)) => Some((body, None)),
+            (None, None, None) => None,
+        }
+    }
+
+    /// How it is sent.
+    pub fn method(&self) -> HttpMethod {
+        self.method.unwrap_or(if self.payload().is_some() { HttpMethod::Post } else { HttpMethod::Get })
+    }
 }
 
 impl fmt::Display for TransportError {
@@ -90,17 +140,23 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for TransportError {
     }
 }
 
-/// A third-party request with its own headers or a JSON body. Error statuses are returned, not raised.
+/// A third-party request with its own method, headers and body. Error statuses are returned, not raised.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Exchange {
     pub url: String,
     pub headers: std::collections::HashMap<String, String>,
-    /// POSTed as `application/json` when set; a GET otherwise.
+    /// Sent as `application/json` when set.
     pub json: Option<String>,
-    /// POSTed as `application/x-www-form-urlencoded` when set and `json` is not.
+    /// Sent as `application/x-www-form-urlencoded` when set and `json` is not.
     #[cfg_attr(feature = "ffi", uniffi(default))]
     pub form: Option<String>,
+    /// Sent as it is, with the `Content-Type` its headers give, when set and neither `json` nor `form` is.
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub body: Option<Vec<u8>>,
+    /// None: POST with a body, GET without.
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub method: Option<HttpMethod>,
     /// As in [`Transport::get`].
     pub timeout_ms: u32,
 }

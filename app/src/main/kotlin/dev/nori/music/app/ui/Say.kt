@@ -102,6 +102,11 @@ class Say(private val r: Resources) {
     fun serviceKey(service: String): String = r.getString(R.string.settings_service_key, service)
     val betterLyricsKeyAsk: String = r.getString(R.string.settings_betterlyrics_key_ask)
     val keyChange: String = r.getString(R.string.settings_key_change)
+    val backupPasswordNew: String = r.getString(R.string.settings_backup_password_new)
+    val backupPasswordNewText: String = r.getString(R.string.settings_backup_password_new_text)
+    val backupPassword: String = r.getString(R.string.settings_backup_password)
+    val backupSave: String = r.getString(R.string.settings_backup_save)
+    val backupOpen: String = r.getString(R.string.settings_backup_open)
     val addKey: String = r.getString(R.string.settings_add_key)
     val paxsenixKeyAsk: String = r.getString(R.string.settings_paxsenix_key_ask)
     val paxsenixKeyChange: String = r.getString(R.string.settings_paxsenix_key_change)
@@ -310,7 +315,6 @@ class Say(private val r: Resources) {
     val plugins: String get() = r.getString(R.string.plugins)
     val pluginsSummary: String get() = r.getString(R.string.plugins_summary)
     val pluginsEmpty: String get() = r.getString(R.string.plugins_empty)
-    val pluginsGetMore: String get() = r.getString(R.string.plugins_get_more)
     val pluginsInstalled: String get() = r.getString(R.string.plugins_installed_list)
     val pluginsInstallFile: String get() = r.getString(R.string.plugins_install_file)
     fun pluginVersion(v: String): String = r.getString(R.string.plugins_version, v)
@@ -333,13 +337,51 @@ class Say(private val r: Resources) {
         }
     } + listOfNotNull(R.string.plugins_kind_overrides.takeIf { overrides })).joinToString(" · ") { r.getString(it) }
     /** What a plugin may do, one line each: what it reaches, whether it plays music or changes the sound, the values it changes. */
-    fun pluginMay(points: List<String>, net: List<String>, overrides: List<String>): List<String> = listOfNotNull(
-        if (net.isEmpty()) r.getString(R.string.plugins_may_reach_nothing) else r.getString(R.string.plugins_may_reach, net.joinToString(", ")),
-        r.getString(R.string.plugins_may_play).takeIf { "provider" in points },
-        r.getString(R.string.plugins_may_sound).takeIf { "sound-stage" in points },
-        overrides.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_change, it.joinToString(", ")) },
+    fun pluginMay(c: dev.nori.music.ffi.plugins.PluginCard): List<String> = listOfNotNull(
+        c.net.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_reach, it.joinToString(", ")) },
+        r.getString(R.string.plugins_may_reach_lan).takeIf { c.lan },
+        r.getString(R.string.plugins_may_bluetooth).takeIf { c.bluetooth },
+        r.getString(R.string.plugins_may_play).takeIf { "provider" in c.points },
+        r.getString(R.string.plugins_may_sound).takeIf { "sound-stage" in c.points },
+        c.overrides.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_change, it.joinToString(", ")) },
+    ) + c.permissions.map { p ->
+        r.getString(when (p) {
+            dev.nori.music.ffi.plugins.Permission.PLAYBACK_READ -> R.string.plugins_may_read_playing
+            dev.nori.music.ffi.plugins.Permission.PLAYBACK_CONTROL -> R.string.plugins_may_control
+            dev.nori.music.ffi.plugins.Permission.LIBRARY_READ -> R.string.plugins_may_read_library
+            dev.nori.music.ffi.plugins.Permission.LIBRARY_WRITE -> R.string.plugins_may_write_library
+            dev.nori.music.ffi.plugins.Permission.SUBSONIC -> R.string.plugins_may_subsonic
+            dev.nori.music.ffi.plugins.Permission.SCHEDULE -> R.string.plugins_may_schedule
+        })
+    } + listOfNotNull(
+        r.getString(R.string.plugins_may_lyric_wakes).takeIf { dev.nori.music.ffi.plugins.Hook.LYRIC_LINE in c.hooks },
+        r.getString(R.string.plugins_may_start_at_boot).takeIf { dev.nori.music.ffi.plugins.WakeEvent.BOOT in c.wakes },
+        r.getString(R.string.plugins_may_start_on_bluetooth).takeIf { dev.nori.music.ffi.plugins.WakeEvent.BLUETOOTH_CONNECTED in c.wakes },
+        c.commands.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_commands, it.joinToString(", ")) },
+        c.cacheBytes.takeIf { it > 0uL }?.let { r.getString(R.string.plugins_may_cache, size(it)) },
+        c.assetBytes.takeIf { it > 0uL }?.let { r.getString(R.string.plugins_may_download, size(it)) },
     )
+
+    private fun size(bytes: ULong): String = dev.nori.music.text.Fmt.bytes(bytes.toLong())
+
+    /** An asset's line on its plugin's page. */
+    fun pluginAsset(a: dev.nori.music.ffi.plugins.AssetLine): String = when (val st = a.state) {
+        is dev.nori.music.ffi.plugins.AssetState.Missing -> r.getString(R.string.plugins_asset_missing, a.name, size(a.size))
+        is dev.nori.music.ffi.plugins.AssetState.WaitingForWifi -> r.getString(R.string.plugins_asset_waiting, a.name)
+        is dev.nori.music.ffi.plugins.AssetState.Fetching -> r.getString(R.string.plugins_asset_fetching, a.name, if (st.total > 0uL) (st.done * 100uL / st.total).toInt() else 0)
+        is dev.nori.music.ffi.plugins.AssetState.Ready -> r.getString(R.string.plugins_asset_ready, a.name)
+        is dev.nori.music.ffi.plugins.AssetState.Failed -> r.getString(R.string.plugins_asset_failed, a.name)
+    }
+    val pluginAssetsOnMobile: String get() = r.getString(R.string.plugins_assets_on_mobile)
     val pluginsGet: String get() = r.getString(R.string.plugins_get)
+    val pluginsSearch: String get() = r.getString(R.string.plugins_search)
+    val pluginsAll: String get() = r.getString(R.string.plugins_all)
+    val pluginsNoneFound: String get() = r.getString(R.string.plugins_none_found)
+    val pluginsUpdates: String get() = r.getString(R.string.plugins_updates)
+    val pluginAbout: String get() = r.getString(R.string.plugins_about)
+    fun pluginUpdateTo(version: String): String = r.getString(R.string.plugins_update_to, version)
+    fun pluginUpdateLine(from: String, to: String): String = r.getString(R.string.plugins_update_line, from, to)
+    fun pluginRepoCount(n: Int): String = r.getQuantityString(R.plurals.plugins_repo_count, n, n)
     val pluginsAsking: String get() = r.getString(R.string.plugins_asking)
     fun pluginOfferLine(version: String, repo: String): String = r.getString(R.string.plugins_offer_line, version, repo)
     val pluginInstall: String get() = r.getString(R.string.plugins_install)
@@ -362,6 +404,16 @@ class Say(private val r: Resources) {
     val pluginKeepVersion: String get() = r.getString(R.string.plugins_keep_version)
     val pluginSource: String get() = r.getString(R.string.plugins_source)
     val pluginFromFile: String get() = r.getString(R.string.plugins_from_file)
+    val pluginUnsigned: String get() = r.getString(R.string.plugins_unsigned)
+    val providerChoose: String get() = r.getString(R.string.provider_choose)
+    val providerGuest: String get() = r.getString(R.string.provider_guest)
+    val providerSubsonicAbout: String get() = r.getString(R.string.provider_subsonic_about)
+    val pluginsEvery: String get() = r.getString(R.string.plugins_every)
+    /** Why plugins are off at this start: [names] of those nori stopped in, or none for a start that didn't finish. */
+    fun pluginsSafe(safe: dev.nori.music.ffi.plugins.SafeStart, names: List<String>): String = when (safe) {
+        is dev.nori.music.ffi.plugins.SafeStart.Crashed -> r.getString(R.string.plugins_safe_crashed, names.joinToString(", "))
+        dev.nori.music.ffi.plugins.SafeStart.AllOff -> r.getString(R.string.plugins_safe_all_off)
+    }
     val user: String = r.getString(R.string.user)
     val password: String = r.getString(R.string.password)
     val connecting: String = r.getString(R.string.connecting)
@@ -527,23 +579,24 @@ class Say(private val r: Resources) {
 
     // ---- lyrics ----
 
-    /** A lyrics source's name as the credit gives it: "your server", "LRCLIB". */
-    fun lyricsOrigin(o: LyricsOrigin): String = when (o) {
-        LyricsOrigin.SERVER -> r.getString(R.string.lyrics_your_server)
-        LyricsOrigin.BINILYRICS -> "BiniLyrics"
-        LyricsOrigin.BETTER_LYRICS -> "BetterLyrics"
-        LyricsOrigin.PAXSENIX, LyricsOrigin.PAXSENIX_MUSIXMATCH, LyricsOrigin.PAXSENIX_SPOTIFY -> "PaxSenix"
-        LyricsOrigin.LYRICS_PLUS -> "LyricsPlus"
-        LyricsOrigin.UNISON -> "Unison"
-        LyricsOrigin.NETEASE -> "NetEase"
-        LyricsOrigin.KUGOU -> "KuGou"
-        LyricsOrigin.LRCLIB -> "LRCLIB"
-        LyricsOrigin.YOUTUBE_MUSIC -> "YouTube Music"
+    /** A lyrics source's name as the credit gives it: "your server", "LRCLIB"; a plugin's by its name in [pluginNames]. */
+    fun lyricsOrigin(o: LyricsOrigin, pluginNames: Map<String, String>): String = when (o) {
+        LyricsOrigin.Server -> r.getString(R.string.lyrics_your_server)
+        LyricsOrigin.Binilyrics -> "BiniLyrics"
+        LyricsOrigin.BetterLyrics -> "BetterLyrics"
+        LyricsOrigin.Paxsenix, LyricsOrigin.PaxsenixMusixmatch, LyricsOrigin.PaxsenixSpotify -> "PaxSenix"
+        LyricsOrigin.LyricsPlus -> "LyricsPlus"
+        LyricsOrigin.Unison -> "Unison"
+        LyricsOrigin.Netease -> "NetEase"
+        LyricsOrigin.Kugou -> "KuGou"
+        LyricsOrigin.Lrclib -> "LRCLIB"
+        LyricsOrigin.YoutubeMusic -> "YouTube Music"
+        is LyricsOrigin.Plugin -> pluginNames[o.id] ?: o.id
     }
 
     /** Where lyrics came from and how finely they are timed: "From LRCLIB · timed line by line". */
-    fun lyricsSource(o: LyricsOrigin, synced: Boolean, wordTimed: Boolean): String = r.getString(
-        R.string.lyrics_source, lyricsOrigin(o),
+    fun lyricsSource(o: LyricsOrigin, synced: Boolean, wordTimed: Boolean, pluginNames: Map<String, String>): String = r.getString(
+        R.string.lyrics_source, lyricsOrigin(o, pluginNames),
         r.getString(if (!synced) R.string.lyrics_not_timed else if (wordTimed) R.string.lyrics_timed_words else R.string.lyrics_timed_lines),
     )
 
@@ -793,6 +846,25 @@ class Say(private val r: Resources) {
 
     /** What the output button says while device [name] plays: "Playing on S22". */
     fun devicePlayingOn(name: String): String = r.getString(R.string.devices_playing_on, name)
+    fun noise(n: dev.nori.music.ffi.plugins.Noise): String = r.getString(
+        when (n) {
+            dev.nori.music.ffi.plugins.Noise.OFF -> R.string.device_noise_off
+            dev.nori.music.ffi.plugins.Noise.CANCELING -> R.string.device_noise_canceling
+            dev.nori.music.ffi.plugins.Noise.TRANSPARENCY -> R.string.device_noise_transparency
+            dev.nori.music.ffi.plugins.Noise.ADAPTIVE -> R.string.device_noise_adaptive
+        },
+    )
+    /** Each battery a device has: "80%", or "L 80% · R 70% · Case 50%"; empty when it said none. */
+    fun battery(b: dev.nori.music.ffi.plugins.Battery): String = b.single?.let { r.getString(R.string.device_battery, it.toInt()) }
+        ?: listOfNotNull(
+            b.left?.let { r.getString(R.string.device_battery_left, it.toInt()) },
+            b.right?.let { r.getString(R.string.device_battery_right, it.toInt()) },
+            b.case?.let { r.getString(R.string.device_battery_case, it.toInt()) },
+        ).joinToString(" · ")
+    /** An output's name with its battery: "WH-1000XM5 · 80%". */
+    fun withLevel(name: String, level: UByte): String = r.getString(R.string.device_with_level, name, level.toInt())
+    val deviceSettings: String get() = r.getString(R.string.device_settings)
+    val allowBluetooth: String get() = r.getString(R.string.plugins_allow_bluetooth)
 
     /** The mark on the device playing now, after its kind when it has one. */
     fun devicePlayingNow(afterKind: Boolean): String = r.getString(if (afterKind) R.string.device_playing_now_after else R.string.device_playing_now)

@@ -276,6 +276,8 @@ impl<'a> Spec<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Coding {
     Mp3,
+    /// Only a cast's device decodes it (`cast::deep`); no phone's DSP does.
+    Flac,
     /// AAC Low Complexity.
     Aac,
     Opus,
@@ -285,6 +287,7 @@ impl Coding {
     pub fn name(self) -> &'static str {
         match self {
             Coding::Mp3 => "MP3",
+            Coding::Flac => "FLAC",
             Coding::Aac => "AAC-LC",
             Coding::Opus => "Opus",
         }
@@ -578,7 +581,10 @@ impl Stream {
         let source = past_id3(source).map_err(|e| e.to_string())?;
         // Asked once the first bytes are read: a song still arriving learns its length with them.
         let byte_len = source.byte_len();
-        let source: Box<dyn MediaSource> = if sized { source } else { Box::new(Unsized(source)) };
+        let mut source: Box<dyn MediaSource> = if sized { source } else { Box::new(Unsized(source)) };
+        // A FLAC song's stream info, which an output decoding its packets reads first.
+        let flac_info = if packets { crate::flac::head(&mut *source).ok().flatten().map(|h| h.info) } else { None };
+        source.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
         // A FLAC song opened at a time starts at that time's frame.
         let (source, landed) = match byte_len.filter(|_| sized && from_ms > 0) {
             Some(len) => crate::flac::landed(source, len, from_ms).map_err(|e| e.to_string())?,
@@ -620,7 +626,7 @@ impl Stream {
         };
         // Only Ogg says its length in its last page; a WebM never states its frames.
         let cut_short = sized && byte_len.is_some() && reader.format_info().format == FORMAT_ID_OGG && track.num_frames.is_none();
-        let setup = params.extra_data.clone();
+        let setup = params.extra_data.clone().or_else(|| flac_info.filter(|_| codec == Some(Codec::Flac)).map(|i| Box::from(&i[..])));
         let ticks = Ticks::of(track.time_base, rate);
         let bits = params.bits_per_sample.or(params.bits_per_coded_sample).unwrap_or(0);
         // The gapless numbers are in the track's timescale: used when it counts frames.
@@ -648,6 +654,7 @@ impl Stream {
                 },
                 // Pre-skip is in the header the output reads.
                 (Coding::Opus, None) => (0, track_padding.unwrap_or(0)),
+                (Coding::Flac, None) => (0, 0),
                 (Coding::Aac, None) => (track_delay.unwrap_or(0), track_padding.unwrap_or(0)),
             };
             CodedSong { coded: Coded { coding, rate, channels }, bitrate, delay, padding, setup: setup.clone(), from_frame: 0 }
@@ -1198,6 +1205,7 @@ impl MediaSource for Unsized {
 fn coding(codec: Option<Codec>, setup: Option<&[u8]>, rate: u32) -> Option<Coding> {
     match codec? {
         Codec::Mp3 => Some(Coding::Mp3),
+        Codec::Flac => Some(Coding::Flac),
         Codec::Aac if rate > 24_000 && setup.and_then(|s| s.first()).is_some_and(|b| b >> 3 == 2) => Some(Coding::Aac),
         Codec::Opus => Some(Coding::Opus),
         _ => None,

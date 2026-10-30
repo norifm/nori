@@ -243,19 +243,24 @@ impl Handle {
 #[cfg(feature = "desktop")]
 impl nori_mpris::Controls for Handle {
     fn play(&self) {
+        self.heard_press(nori_plugins::Press::Play);
         self.resume();
     }
     fn pause(&self) {
+        self.heard_press(nori_plugins::Press::Pause);
         self.halt();
     }
     fn toggle(&self) {
-        Handle::toggle(self);
+        self.heard_press(nori_plugins::Press::PlayPause);
+        self.pressed(nori_core::deciders::Press::PlayPause);
     }
     fn next(&self) {
-        Handle::next(self);
+        self.heard_press(nori_plugins::Press::Next);
+        self.pressed(nori_core::deciders::Press::Next);
     }
     fn previous(&self) {
-        Handle::previous(self);
+        self.heard_press(nori_plugins::Press::Previous);
+        self.pressed(nori_core::deciders::Press::Previous);
     }
     fn seek(&self, ms: i64) {
         Handle::seek(self, ms);
@@ -271,13 +276,14 @@ impl nori_mpris::Controls for Handle {
         let now = Handle::now(self);
         let playback = self.playback();
         let song = now.song.clone().unwrap_or_default();
+        let lines = now.song.as_ref().and_then(|s| self.core.session.now_playing(s.id.clone())).unwrap_or_else(|| nori_core::deciders::Shown::of(&song));
         let mut shown = nori_mpris::Now {
             playing: now.state == State::Playing,
             loaded: now.state == State::Paused,
             index: now.index,
-            title: song.title.clone(),
-            artist: song.artist.clone(),
-            album: song.album.clone(),
+            title: lines.title,
+            artist: lines.artist,
+            album: lines.album,
             length_ms: song.duration as i64 * 1000,
             position_ms: now.position_now(),
             starred: now.song.as_ref().is_some_and(|s| self.starred(s, playback.mirrored())),

@@ -646,6 +646,38 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         _state.value = _state.value.copy(shuffle = on || it.shuffleModeEnabled)
     }
 
+    /** Repeat in media3's numbering (off 0, one 1, all 2). */
+    private fun setRepeat(mode: Int) = with { c ->
+        mirror?.let { m -> press(m, Press.Repeat(mode.toUByte())); return@with }
+        c.repeatMode = mode
+    }
+
+    /** Everything after the song playing leaves the queue. */
+    private fun clearUpcoming() = with { c ->
+        mirror?.let { m -> press(m, Press.Clear); return@with }
+        if (c.currentMediaItemIndex + 1 < c.mediaItemCount) c.removeMediaItems(c.currentMediaItemIndex + 1, c.mediaItemCount)
+    }
+
+    /** What a plugin asked of the player (crates/plugins session.rs), through the same controls a press uses. */
+    fun plugin(control: dev.nori.music.ffi.plugins.Control) = when (control) {
+        is dev.nori.music.ffi.plugins.Control.Play -> with { c -> if (!_state.value.playing) { mirror?.let { m -> press(m, Press.Play) } ?: Util.handlePlayButtonAction(c) } }
+        is dev.nori.music.ffi.plugins.Control.Pause -> with { c -> mirror?.let { m -> press(m, Press.Pause) } ?: Util.handlePauseButtonAction(c) }
+        is dev.nori.music.ffi.plugins.Control.Next -> next()
+        is dev.nori.music.ffi.plugins.Control.Previous -> previous()
+        is dev.nori.music.ffi.plugins.Control.Seek -> seekTo(control.ms.toLong())
+        is dev.nori.music.ffi.plugins.Control.PlayAt -> skipTo(control.index.toInt())
+        is dev.nori.music.ffi.plugins.Control.SetShuffle -> setShuffle(control.on)
+        is dev.nori.music.ffi.plugins.Control.SetRepeat -> setRepeat(when (control.repeat) {
+            dev.nori.music.ffi.plugins.Repeat.OFF -> Player.REPEAT_MODE_OFF
+            dev.nori.music.ffi.plugins.Repeat.ONE -> Player.REPEAT_MODE_ONE
+            dev.nori.music.ffi.plugins.Repeat.ALL -> Player.REPEAT_MODE_ALL
+        })
+        is dev.nori.music.ffi.plugins.Control.Add -> if (control.next) playNext(control.songs) else enqueue(control.songs)
+        is dev.nori.music.ffi.plugins.Control.Remove -> remove(control.index.toInt())
+        is dev.nori.music.ffi.plugins.Control.Move -> move(control.index.toInt(), control.to.toInt())
+        is dev.nori.music.ffi.plugins.Control.Clear -> clearUpcoming()
+    }
+
     fun cycleRepeat() = with { c ->
         mirror?.let { m -> press(m, Press.Repeat(dev.nori.music.ffi.queue.queueNextRepeat(m.repeat))); return@with }
         c.repeatMode = dev.nori.music.ffi.queue.queueNextRepeat(c.repeatMode.toUByte()).toInt()

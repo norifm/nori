@@ -109,7 +109,7 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 } +
                 (TestActions.lastLyrics?.takeIf { it.songId == st.current?.id }?.value ?: (player2.lyrics.value.of(st.current?.id, dev.nori.music.app.vm.Load.Loading) as? dev.nori.music.app.vm.Load.Ready)?.data)?.let { f ->
                     """"lyricsSong":"${st.current?.id.orEmpty()}","lyricLines":${f.lyrics.lines.size},"lyricsSynced":${f.lyrics.synced},""" +
-                        """"lyricsWordTimed":${f.lyrics.wordTimed},"lyricsWordLines":${f.lyrics.lines.count { it.words.isNotEmpty() }},"lyricsSource":"${f.source}","""
+                        """"lyricsWordTimed":${f.lyrics.wordTimed},"lyricsWordLines":${f.lyrics.lines.count { it.words.isNotEmpty() }},"lyricsSource":"${sourceName(f.source)}","""
                 }.orEmpty() +
                 // What the screen shows, mark included - not the snapshot the queue was painted with,
                 // which is what a favourite toggled this session no longer agrees with.
@@ -140,3 +140,7 @@ private fun timingWords(t: dev.nori.music.ffi.model.LyricsTiming): String = when
     is dev.nori.music.ffi.model.LyricsTiming.Automatic -> "auto:${t.ms}"
     is dev.nori.music.ffi.model.LyricsTiming.Yours -> "yours:${t.ms}"
 }
+
+/** A lyrics source as the device scripts read it: "SERVER", "LRCLIB", "BETTER_LYRICS", "PLUGIN". */
+private fun sourceName(o: dev.nori.music.ffi.settings.LyricsOrigin): String =
+    o::class.simpleName.orEmpty().replace(Regex("([a-z])([A-Z])"), "$1_$2").uppercase()

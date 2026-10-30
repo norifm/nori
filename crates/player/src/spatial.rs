@@ -6,6 +6,8 @@
 //! Head and room are fed the L-R difference, so centred content cancels and passes bit-exact
 //! (plain crossfeed would comb it).
 
+use crate::prelude::*;
+
 /// The strength the "Wide" headphone sound plays at.
 pub const WIDE: f64 = 0.6;
 /// Ring length; longer than the latest tap.
@@ -44,14 +46,14 @@ impl Clone for Virtualizer {
     }
 
     fn clone_from(&mut self, o: &Self) {
-        let mut ring = std::mem::take(&mut self.ring);
+        let mut ring = core::mem::take(&mut self.ring);
         ring.clone_from(&o.ring);
         *self = Virtualizer { ring, ..*o };
     }
 }
 
 fn one_pole(rate: f64, hz: f64) -> f64 {
-    1.0 - (-std::f64::consts::TAU * hz / rate).exp()
+    1.0 - (-core::f64::consts::TAU * hz / rate).exp()
 }
 
 impl Virtualizer {
@@ -131,7 +133,7 @@ mod tests {
         let n = 24_000;
         let (mut el, mut er, mut ex) = (0.0, 0.0, 0.0);
         for i in 0..n {
-            let x = 0.25 * (std::f64::consts::TAU * freq * i as f64 / RATE).sin();
+            let x = 0.25 * (core::f64::consts::TAU * freq * i as f64 / RATE).sin();
             let (l, r) = v.frame(gl * x, gr * x);
             if i >= n / 2 {
                 (el, er, ex) = (el + l * l, er + r * r, ex + x * x);

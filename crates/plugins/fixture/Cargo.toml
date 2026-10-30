@@ -10,11 +10,19 @@ publish = false
 crate-type = ["cdylib"]
 
 [features]
-# Imports `timers`, which this host doesn't link: the plugin can't be installed.
-timers = []
+# Imports an interface of a newer SDK (src/unlinked.rs) that this host doesn't link: the plugin
+# can't be installed.
+unlinked = ["dep:wit-bindgen"]
+# Headphones over Bluetooth instead (src/headphones.rs): device control and its hooks.
+headphones = []
+# Its stage in the song slot.
+song = []
+# Another id (`testing::SECOND`): a second plugin beside the first.
+second = []
 
 [dependencies]
 nori-plugin-sdk = { path = "../../plugin-sdk" }
+wit-bindgen = { version = "0.46", optional = true }
 
 [profile.release]
 opt-level = 1

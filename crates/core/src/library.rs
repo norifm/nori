@@ -27,6 +27,10 @@ impl Client {
             let restored = self.core.stars.lock().restore(kind, id.clone(), on, m.previous);
             marked.marks(restored);
         }
+        #[cfg(feature = "plugins")]
+        if let (Ok(()), Some(p)) = (&sent, self.core.kinds.read().plugins()) {
+            p.favorite_changed(id.clone(), on);
+        }
         let remote = self.core.remote.lock().upgrade();
         if let Some(remote) = remote {
             remote.sync_mark(kind, id);

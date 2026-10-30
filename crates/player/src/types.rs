@@ -1,6 +1,8 @@
 //! Shared value types: equalizer bands, AutoMix track analysis, settings and transition plans
 //! (exposed to Kotlin through uniffi `remote` records).
 
+use crate::prelude::*;
+
 /// Ordinals are the wire format read by `dsp.rs`: only append.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EqKind {

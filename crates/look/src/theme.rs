@@ -177,6 +177,13 @@ pub fn palette(season: Option<Season>, month: u32, day: u32, southern: bool, dar
     }
 }
 
+/// Whether a palette reads: its ink on its page and surface, its accent and the color of what is on
+/// against its page.
+pub fn readable(p: &Palette) -> bool {
+    let at_least = |fg: u32, bg: u32, ratio: f64| calculate_contrast(fg | 0xFF00_0000, bg | 0xFF00_0000) >= ratio;
+    at_least(p.ink, p.page, 4.5) && at_least(p.ink, p.surface, 4.5) && at_least(p.accent, p.page, 3.0) && at_least(p.on, p.page, 3.0)
+}
+
 /// Whether a time zone (an IANA id, "Australia/Sydney") lies south of the equator.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn southern(zone: &str) -> bool {
@@ -345,6 +352,19 @@ pub fn roles(p: Palette) -> Roles {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_season_reads_and_a_faint_one_does_not() {
+        for s in super::SEASONS {
+            for dark in [false, true] {
+                assert!(super::readable(&s.palette(dark)), "{s:?} dark {dark}");
+                assert!(super::readable(&super::palette(Some(s), 1, 1, false, dark, true)), "{s:?} on black");
+            }
+        }
+        let mut faint = super::Season::Spring.palette(false);
+        faint.ink = 0xFFC0_C0C0;
+        assert!(!super::readable(&faint));
+    }
+
     use super::*;
     use crate::color::{calculate_contrast, WHITE};
 

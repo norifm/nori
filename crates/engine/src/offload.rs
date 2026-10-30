@@ -75,6 +75,17 @@ pub trait OffloadOutput: Send {
     }
     /// A note for the perf report (why a song ended, a bad play head).
     fn note(&mut self, what: &str);
+    /// Takes each packet in a write of its own, so no write splits one (a device counting its credit in
+    /// frames, `cast::deep`).
+    fn whole_packets(&self) -> bool {
+        false
+    }
+    /// The song `id` (`song`, at ReplayGain `level`) is the one whose packets come next. True when the
+    /// output applies `level` itself where the song starts: [`OffloadOutput::set_volume`] then carries
+    /// only the fades.
+    fn song(&mut self, _song: &CodedSong, _id: &str, _level: f32) -> bool {
+        false
+    }
     /// How much faster than real time the track may present: 1 for a real device, more for a simulation.
     fn pace(&self) -> f64 {
         1.0
@@ -391,6 +402,8 @@ pub(crate) struct Offload {
     pub stop_after: Option<usize>,
     gain: f32,
     level: f32,
+    /// The output applies each song's level itself ([`OffloadOutput::song`]).
+    level_in_band: bool,
     fade: Option<Fade>,
     seq: u64,
     /// Why the last song left for the CPU.
@@ -423,6 +436,7 @@ impl Offload {
             stop_after: None,
             gain: 1.0,
             level: 1.0,
+            level_in_band: false,
             fade: None,
             seq: 0,
             on_cpu: None,
@@ -616,7 +630,8 @@ impl Offload {
 
     fn volume(&mut self) {
         if self.open.is_some() {
-            self.out.set_volume(self.gain * self.level);
+            let level = if self.level_in_band { 1.0 } else { self.level };
+            self.out.set_volume(self.gain * level);
         }
     }
 
@@ -1078,6 +1093,7 @@ impl Offload {
         // Started part way in: no delay to cut.
         let delay = if song.from_frame > 0 { 0 } else { song.delay };
         self.out.delay_padding(delay, song.padding);
+        self.level_in_band = self.out.song(&song, &id, level);
         let from_ms = song.from_frame * 1000 / coded.rate.max(1) as i64;
         self.level = level;
         self.seq += 1;
@@ -1133,7 +1149,8 @@ impl Offload {
                 self.stage.clear();
                 self.t.staged = 0;
                 self.t.stage_frames = 0;
-                while self.stage.len() < STAGE_BYTES && w.r.packet() {
+                let whole = self.out.whole_packets();
+                while self.stage.len() < STAGE_BYTES && !(whole && !self.stage.is_empty()) && w.r.packet() {
                     let frames = w.r.packet_frames();
                     match w.ogg.as_mut() {
                         Some(ogg) => ogg.page(w.r.buffer(), &mut self.stage),
@@ -1204,6 +1221,7 @@ impl Offload {
             let (_, opened) = self.t.next.take().expect("checked");
             let r = opened.expect("checked");
             self.out.delay_padding(song.delay, song.padding);
+            self.level_in_band = self.out.song(&song, &id, level);
             let start = self.t.written_frames;
             self.seq += 1;
             let from_ms = song.from_frame * 1000 / song.coded.rate.max(1) as i64;

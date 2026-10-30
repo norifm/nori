@@ -179,7 +179,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "nori-plugin-sdk"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "wit-bindgen",
  "wit-parser",
@@ -190,6 +190,7 @@ name = "nori-test-plugin"
 version = "0.1.0"
 dependencies = [
  "nori-plugin-sdk",
+ "wit-bindgen",
 ]
 
 [[package]]

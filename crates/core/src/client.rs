@@ -197,7 +197,7 @@ pub(crate) mod tests {
                 .await;
             }
             match self.answers.lock().pop_front().unwrap_or(Err(FailureKind::Connect)) {
-                Ok((status, body)) => Ok(TransportResponse { status, body, set_cookies: Vec::new() }),
+                Ok((status, body)) => Ok(TransportResponse { status, body, headers: Vec::new() }),
                 Err(kind) => Err(TransportError::Failed { kind, detail: Some(format!("{kind:?}")) }),
             }
         }

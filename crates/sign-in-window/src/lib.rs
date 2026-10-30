@@ -37,6 +37,11 @@ impl SignInWindow {
             SignIn::WebPage { start_url } => Some(start_url),
             SignIn::Paste => None,
         })?;
+        SignInWindow::open_at(kinds, kind, title, start, done)
+    }
+
+    /// [`SignInWindow::open`] at `start`: a page the provider's plugin asked for (`sign-in.open`).
+    pub fn open_at(kinds: Arc<Kinds>, kind: ServerKind, title: String, start: String, done: impl FnOnce(u32, String) + Send + 'static) -> Option<SignInWindow> {
         let me = std::env::current_exe().ok()?;
         let mut child = Command::new(me).arg("--sign-in").arg(title).arg(start).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
         let (out, id) = (child.stdout.take()?, child.id());

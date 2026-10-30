@@ -2,6 +2,7 @@
 //! beat model's file. Analysis and planning themselves are `nori_player::automix`.
 
 pub mod beat_model;
+pub mod mixing;
 pub mod planner;
 pub mod store;
 

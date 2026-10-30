@@ -67,8 +67,8 @@ fn main() {
         writeln!(out, "            $crate::__pick!({n}, $plugin, [$($point)*]),").unwrap();
     }
     writeln!(out, "        >;\n        $crate::__export!(__NoriPlugin with_types_in $crate);").unwrap();
-    writeln!(out, "        #[cfg(target_arch = \"wasm32\")]\n        #[unsafe(export_name = \"nori:plugin/sound-stage@1.0.0#process\")]\n        unsafe extern \"C\" fn __nori_stage_process(ptr: *mut f32, len: usize) -> *const u32 {{\n            unsafe {{ $crate::stage_abi::process::<$crate::__pick!(sound_stage, $plugin, [$($point)*])>(ptr, len) }}\n        }}").unwrap();
-    writeln!(out, "        #[cfg(target_arch = \"wasm32\")]\n        #[unsafe(export_name = \"nori:plugin/sound-stage@1.0.0#save\")]\n        unsafe extern \"C\" fn __nori_stage_save() -> *const u32 {{\n            unsafe {{ $crate::stage_abi::save::<$crate::__pick!(sound_stage, $plugin, [$($point)*])>() }}\n        }}\n    }};\n}}\n").unwrap();
+    writeln!(out, "        #[cfg(target_arch = \"wasm32\")]\n        #[unsafe(export_name = \"nori:plugin/sound-stage@2.0.0#process\")]\n        unsafe extern \"C\" fn __nori_stage_process(ptr: *mut f32, len: usize) -> *const u32 {{\n            unsafe {{ $crate::stage_abi::process::<$crate::__pick!(sound_stage, $plugin, [$($point)*])>(ptr, len) }}\n        }}").unwrap();
+    writeln!(out, "        #[cfg(target_arch = \"wasm32\")]\n        #[unsafe(export_name = \"nori:plugin/sound-stage@2.0.0#save\")]\n        unsafe extern \"C\" fn __nori_stage_save() -> *const u32 {{\n            unsafe {{ $crate::stage_abi::save::<$crate::__pick!(sound_stage, $plugin, [$($point)*])>() }}\n        }}\n    }};\n}}\n").unwrap();
     writeln!(out, "/// The bit of extension point `$point` in the manifest, in `wit/`'s order.\n#[doc(hidden)]\n#[macro_export]\nmacro_rules! __point_bit {{").unwrap();
     for (k, n) in names.iter().enumerate() {
         writeln!(out, "    ({n}) => {{ 1u32 << {k} }};").unwrap();

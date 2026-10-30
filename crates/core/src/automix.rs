@@ -69,6 +69,7 @@ impl Core {
             return Ok(None);
         }
         let (track, curve) = measure(song_id, &a.take_features());
+        let track = self.session.planner.refined(track);
         let stored = put_finished(&self.db.lock(), track, &curve)?;
         self.session.planner.analyses_changed();
         Ok(Some(stored))

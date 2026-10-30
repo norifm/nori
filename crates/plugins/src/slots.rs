@@ -64,9 +64,9 @@ pub struct Artwork {
 }
 
 impl Plugins {
-    /// The enabled plugins that fill `place`, in their order.
+    /// The running plugins that fill `place`, in their order.
     fn filling(&self, place: Place) -> Vec<String> {
-        self.installed().into_iter().filter(|i| i.enabled && i.manifest.extends("slots") && i.manifest.places.contains(&place)).map(|i| i.manifest.id.clone()).collect()
+        self.running().into_iter().filter(|i| i.manifest.extends("slots") && i.manifest.places.contains(&place)).map(|i| i.manifest.id.clone()).collect()
     }
 }
 
@@ -74,9 +74,9 @@ impl Plugins {
 impl Plugins {
     /// The actions plugins add to the menus of `kind`, in `lang`: from their manifests, with no call.
     pub fn menu_entries(&self, kind: ItemKind, lang: String) -> Vec<MenuEntry> {
-        self.installed()
+        self.running()
             .into_iter()
-            .filter(|i| i.enabled && i.manifest.extends("slots"))
+            .filter(|i| i.manifest.extends("slots"))
             .flat_map(|i| {
                 let words = crate::view::words(&self.folder(&i.manifest.id), &lang);
                 i.manifest

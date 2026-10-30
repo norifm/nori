@@ -193,6 +193,10 @@ impl App for CoreApp {
         self.session.planner.transition_setup(off);
     }
 
+    fn loudness(&mut self, id: &str) -> Option<f32> {
+        self.session.loudness(id)
+    }
+
     /// The core's ReplayGain for the song at `index` of the list the engine holds.
     fn gain(&mut self, list: &Playlist, index: usize) -> f32 {
         let g = self.session.gain_of(list, index, false);
@@ -1513,6 +1517,34 @@ pub fn settings(stored: &StoredPrefs, layer: Layer) -> Settings {
         skip_silence: t.skip_silence,
         previous_always_skips: t.previous_always_skips,
         stages: layer.stages,
+        preparing: layer.preparing,
+    }
+}
+
+/// What a cast's device shows of the queue's songs ([`crate::cast::Shows`]): their lines as the queue
+/// has them, and their covers by `cover` (the cover art id at a size, as the file the cache holds).
+#[cfg(feature = "plugins")]
+pub struct QueueShows {
+    pub queue: Arc<Session>,
+    pub cover: Option<CoverFile>,
+}
+
+/// A cover's file by its cover art id and size.
+#[cfg(feature = "plugins")]
+pub type CoverFile = Box<dyn Fn(&str, u32) -> Option<Vec<u8>> + Send + Sync>;
+
+#[cfg(feature = "plugins")]
+impl crate::cast::Shows for QueueShows {
+    fn now(&self, id: &str) -> Option<crate::cast::Shown> {
+        let s = self.queue.song(id)?;
+        Some(crate::cast::Shown { title: s.title, artist: s.artist, album: s.album, duration_ms: s.duration.saturating_mul(1000) })
+    }
+
+    /// JPEG only: the server's renditions are; another is left out rather than encoded here.
+    fn cover(&self, id: &str, size: u32) -> Option<(String, Vec<u8>)> {
+        let art = self.queue.cover_art(id)?;
+        let bytes = (self.cover.as_ref()?)(&art, size)?;
+        bytes.starts_with(&[0xff, 0xd8]).then_some((art, bytes))
     }
 }
 
@@ -1555,7 +1587,7 @@ mod tests {
     #[test]
     fn plugins_overrides_reach_the_engine() {
         let stored = StoredPrefs::default();
-        let o = |pairs: &[(&str, &str)]| Layer { overrides: pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), stages: Vec::new() };
+        let o = |pairs: &[(&str, &str)]| Layer { overrides: pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), ..Layer::default() };
         let s = settings(&stored, o(&[("playback.speed", "1.5"), ("silence.skip", "true"), ("crossfadeSec", "4")]));
         assert_eq!((s.speed, s.pitch, s.skip_silence, s.crossfade_s), (1.5, 1.0, true, 4));
         assert_eq!(stored.crossfade_sec, StoredPrefs::default().crossfade_sec);

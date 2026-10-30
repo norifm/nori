@@ -4,7 +4,10 @@
 //!
 //! One xorshift32 generator per channel, seeded apart so the channels' noise is uncorrelated.
 
-use std::hint::select_unpredictable;
+#[cfg(not(feature = "std"))]
+use crate::math::Float;
+
+use core::hint::select_unpredictable;
 
 /// Channels with their own generator; more share them (the chain takes eight at most).
 const CHANNELS: usize = 8;

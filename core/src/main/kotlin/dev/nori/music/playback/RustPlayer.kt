@@ -7,6 +7,8 @@ import android.content.IntentFilter
 import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
+import dev.nori.music.ffi.model.Focus
+import dev.nori.music.ffi.model.FocusAct
 import android.media.AudioRouting
 import android.media.AudioTrack
 import android.os.Build
@@ -59,8 +61,10 @@ internal object RustPlayerJni {
     @JvmStatic @CriticalNative external fun replan(h: Long)
     @JvmStatic @CriticalNative external fun gainChanged(h: Long)
     @JvmStatic @CriticalNative external fun setShallow(h: Long, on: Boolean)
-    /** The sound and the controls' fades as the core's settings are now. */
-    @JvmStatic @CriticalNative external fun applySettings(h: Long)
+    /** The sound and the controls' fades as the core's settings are now; whether a plugin's sound stage reads the volume. */
+    @JvmStatic @CriticalNative external fun applySettings(h: Long): Boolean
+    /** The media volume, 0 to 1, for plugins' sound stages. */
+    @JvmStatic @CriticalNative external fun setVolume(h: Long, level: Float)
     /** Where the ear is in it now (the engine's `status().position_now()`), read when asked, never ticked. */
     @JvmStatic @CriticalNative external fun positionMs(h: Long): Long
     /** [positionMs] for the seek bar on screen in queue index [index] (-1: the engine is on another song): see `EnginePlayer.shownMs`. */
@@ -82,6 +86,8 @@ internal object RustPlayerJni {
     @JvmStatic @CriticalNative external fun pace(h: Long): Float
     /** Plays along with the jam whose guest [remote] is (`Remote.uniffiCloneHandle()`, taken over) while it listens along. */
     @JvmStatic @CriticalNative external fun follow(h: Long, remote: Long)
+    /** A plugin's cast takes the engine's audio while it runs ([plugins] `Plugins.uniffiCloneHandle()`, taken over). */
+    @JvmStatic @CriticalNative external fun castTo(h: Long, plugins: Long)
     @JvmStatic @CriticalNative external fun gainReductionDb(h: Long): Float
     @JvmStatic @CriticalNative external fun compressionDb(h: Long): Float
     /** The outputs play at [level] (0 to 1) of their own volume from their next volume or open on ([Quiet]). */
@@ -284,6 +290,14 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     private var loops = 0
     /** What the radio station playing announced (ICY), shown as the song's title as ExoPlayer shows it. */
     private var announced: String? = null
+    /** The lines a plugin shows for a song (the core's `Session::now_playing`), by its id. */
+    private var shownAs: Pair<String, dev.nori.music.ffi.model.Shown>? = null
+
+    /** The system's controls show [shown] for song [id] while it plays. */
+    fun showAs(id: String, shown: dev.nori.music.ffi.model.Shown) {
+        shownAs = id to shown
+        invalidateState()
+    }
     /**
      * A song the network would not bring, with the offline bridge's setting on: the service hands it to
      * the bridge, and says whether the music goes on (it jumped somewhere to play) or stops here.
@@ -322,7 +336,30 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     // ---- what the service asks of it directly ----
 
     /** The settings changed: the engine takes them from the core. */
-    fun applySettings() = RustPlayerJni.applySettings(h)
+    fun applySettings() = watchVolume(RustPlayerJni.applySettings(h))
+
+    /** The media volume as plugins' sound stages read it, followed only while one does. */
+    private val volume = object : android.database.ContentObserver(main) {
+        override fun onChange(selfChange: Boolean, uri: android.net.Uri?) {
+            if (uri != null && uri.lastPathSegment?.startsWith("volume_") != true) return
+            tellVolume()
+        }
+    }
+    private var volumeWatched = false
+
+    private fun tellVolume() {
+        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        if (max > 0 && h != 0L) RustPlayerJni.setVolume(h, audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max)
+    }
+
+    private fun watchVolume(on: Boolean) = main.post {
+        if (on == volumeWatched) return@post
+        volumeWatched = on
+        if (on) {
+            context.contentResolver.registerContentObserver(android.provider.Settings.System.CONTENT_URI, true, volume)
+            tellVolume()
+        } else context.contentResolver.unregisterContentObserver(volume)
+    }
     fun gainChanged() = RustPlayerJni.gainChanged(h)
     /** A sound page is tuned: the engine trades its deep buffer for a shallow one until it stops. */
     fun setShallow(on: Boolean) = RustPlayerJni.setShallow(h, on)
@@ -435,7 +472,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
             // media3 has nothing loading while idle or ended (the engine may be, following a jam's host).
             .setIsLoading(loading > 0 && state != Player.STATE_IDLE && state != Player.STATE_ENDED)
             .setAudioAttributes(ATTRIBUTES)
-            .setPlaylist(timeline(), Tracks.EMPTY, announcement())
+            .setPlaylist(timeline(), Tracks.EMPTY, announcement() ?: decided())
             .setCurrentMediaItemIndex(if (items.isEmpty()) C.INDEX_UNSET else current.coerceIn(0, items.size - 1))
             .setContentPositionMs(position(loops))
         error?.let { b.setPlayerError(it) }
@@ -455,6 +492,13 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         val said = announced ?: return null
         val item = items.getOrNull(current)?.takeIf { it.isRadio } ?: return null
         return item.mediaMetadata.buildUpon().setTitle(said).build()
+    }
+
+    /** The song playing with the lines a plugin gave it; null otherwise. */
+    private fun decided(): androidx.media3.common.MediaMetadata? {
+        val (id, shown) = shownAs ?: return null
+        val item = items.getOrNull(current)?.takeIf { it.mediaId == id } ?: return null
+        return item.mediaMetadata.buildUpon().setTitle(shown.title).setArtist(shown.artist).setAlbumTitle(shown.album).build()
     }
 
     // ---- commands ----
@@ -553,6 +597,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
 
     override fun handleRelease(): ListenableFuture<*> {
         unwatchNetwork()
+        watchVolume(false)
         unfocus()
         main.removeCallbacks(drain)
         val handle = h
@@ -841,26 +886,44 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         focused = false
     }
 
-    /** A call or another player: paused for good, or until it is over. Ducking the system does itself. */
+    /** Where focus changes are decided (the core's `Session::audio_focus`, which a plugin may answer): off the main thread, in order. */
+    private val focusing by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
+
+    /** A call or another player: what it does is the core's; acted on here. */
     private fun onFocus(change: Int) {
-        dev.nori.music.NoriLog.i("rust player: audio focus $change, wants to play $playWhenReady")
-        when (change) {
-            AudioManager.AUDIOFOCUS_LOSS -> {
-                focused = false
-                if (playWhenReady) {
-                    RustPlayerJni.pause(h)
+        val focus = when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> Focus.LOST
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> Focus.LOST_TRANSIENT
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> Focus.DUCK
+            AudioManager.AUDIOFOCUS_GAIN -> Focus.GAINED
+            else -> return
+        }
+        if (focus == Focus.LOST) focused = false
+        val (wants, held) = playWhenReady to (suppressed != Player.PLAYBACK_SUPPRESSION_REASON_NONE)
+        focusing.execute {
+            val act = nori.session.audioFocus(focus, wants, held)
+            main.post { onFocus(focus, act) }
+        }
+    }
+
+    /** [act] for [focus]: a pause is for good after a loss, until the focus is back otherwise. Ducking the system does itself. */
+    private fun onFocus(focus: Focus, act: FocusAct) {
+        dev.nori.music.NoriLog.i("rust player: audio focus $focus: $act, wants to play $playWhenReady")
+        when (act) {
+            FocusAct.PAUSE -> if (playWhenReady) {
+                RustPlayerJni.pause(h)
+                if (focus == Focus.LOST) {
                     playWhenReady = false
                     whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
+                } else {
+                    suppressed = Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS
                 }
             }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> if (playWhenReady) {
-                RustPlayerJni.pause(h)
-                suppressed = Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS
-            }
-            AudioManager.AUDIOFOCUS_GAIN -> if (suppressed != Player.PLAYBACK_SUPPRESSION_REASON_NONE) {
+            FocusAct.RESUME -> if (suppressed != Player.PLAYBACK_SUPPRESSION_REASON_NONE) {
                 suppressed = Player.PLAYBACK_SUPPRESSION_REASON_NONE
                 if (playWhenReady) start()
             }
+            FocusAct.DUCK, FocusAct.KEEP_PLAYING, FocusAct.NOTHING -> {}
         }
         follow()
         invalidateState()
@@ -1091,7 +1154,11 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         )
         if (h == 0L) error = PlaybackException("the Rust player would not start", null, PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK)
         quiet(Quiet.level)
+        nori.plugins.castTo(this)
     }
+
+    /** A plugin's cast takes this engine's audio while it runs. */
+    internal fun castTo(plugins: dev.nori.music.ffi.plugins.Plugins) = RustPlayerJni.castTo(h, plugins.uniffiCloneHandle())
 
     /** Its outputs play at [level] of their own volume ([Quiet]). */
     internal fun quiet(level: Float) = RustPlayerJni.setQuiet(h, level)

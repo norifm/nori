@@ -137,6 +137,10 @@ impl<D: Downstream> Downstream for Fed<'_, D> {
         self.down.song_gain(gain);
     }
 
+    fn song_facts(&mut self, song: &std::sync::Arc<crate::stage::SongFacts>) {
+        self.down.song_facts(song);
+    }
+
     fn handle_discontinuity(&mut self) {
         // Written audio stays in the output, so the count stands; `queued_us` ignores the clock's jump.
         self.burst.filling = true;

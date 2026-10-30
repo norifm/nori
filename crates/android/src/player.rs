@@ -49,7 +49,8 @@ pub(crate) static CLASS: Class = Class {
         native!(c"replan", c"(J)V", replan),
         native!(c"gainChanged", c"(J)V", gain_changed),
         native!(c"setShallow", c"(JZ)V", set_shallow),
-        native!(c"applySettings", c"(J)V", apply_settings),
+        native!(c"applySettings", c"(J)Z", apply_settings),
+        native!(c"setVolume", c"(JF)V", set_volume),
         native!(c"positionMs", c"(J)J", position_ms),
         native!(c"shownMs", c"(JI)J", shown_ms),
         native!(c"look", c"(J)V", look),
@@ -61,6 +62,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"onCpu", c"(J)Z", on_cpu),
         native!(c"pace", c"(J)F", pace),
         native!(c"follow", c"(JJ)V", follow),
+        native!(c"castTo", c"(JJ)V", cast_to),
         native!(c"gainReductionDb", c"(J)F", gain_reduction_db),
         native!(c"compressionDb", c"(J)F", compression_db),
         native!(c"setQuiet", c"(JF)V", set_quiet),
@@ -593,11 +595,13 @@ impl JavaOffload {
     }
 }
 
-fn encoding_of(c: Coding) -> i32 {
+/// The AudioTrack encoding of `c`; none for FLAC, which no phone offloads.
+fn encoding_of(c: Coding) -> Option<i32> {
     match c {
-        Coding::Mp3 => ENCODING_MP3,
-        Coding::Aac => ENCODING_AAC_LC,
-        Coding::Opus => ENCODING_OPUS,
+        Coding::Mp3 => Some(ENCODING_MP3),
+        Coding::Aac => Some(ENCODING_AAC_LC),
+        Coding::Opus => Some(ENCODING_OPUS),
+        Coding::Flac => None,
     }
 }
 
@@ -632,8 +636,8 @@ fn offload_support(answer: i32) -> (Support, String) {
 
 impl OffloadOutput for JavaOffload {
     fn supports(&mut self, coded: Coded) -> Support {
-        let Some((java, mut env)) = env() else { return Support::No };
-        let args = [JValue::Int(encoding_of(coded.coding)).as_jni(), JValue::Int(coded.rate as i32).as_jni(), JValue::Int(coded.channels as i32).as_jni()];
+        let (Some(encoding), Some((java, mut env))) = (encoding_of(coded.coding), env()) else { return Support::No };
+        let args = [JValue::Int(encoding).as_jni(), JValue::Int(coded.rate as i32).as_jni(), JValue::Int(coded.channels as i32).as_jni()];
         let answer = call(&mut env, self.bridge.obj(), java.offload_support, ReturnType::Primitive(Primitive::Int), &args).and_then(|v| v.i().ok()).unwrap_or(-1);
         let (s, words) = offload_support(answer);
         log(&format!("offload of {} at {} Hz x{}: {words}: {s:?}", coded.coding.name(), coded.rate, coded.channels));
@@ -648,6 +652,7 @@ impl OffloadOutput for JavaOffload {
 
     fn open(&mut self, coded: Coded, bytes: usize) -> Result<usize, String> {
         self.close();
+        let encoding = encoding_of(coded.coding).ok_or("no phone offloads FLAC")?;
         let (java, mut env) = env().ok_or("no JVM")?;
         if java.offload.is_none() {
             return Err("no offload before Android 10".into());
@@ -658,7 +663,7 @@ impl OffloadOutput for JavaOffload {
         let (staging, bridge) = (self.staging.as_mut_ptr(), &self.bridge);
         let opened = env.with_local_frame(4, |env| -> jni::errors::Result<Option<(GlobalRef, GlobalRef, usize)>> {
             let args = [
-                JValue::Int(encoding_of(coded.coding)).as_jni(),
+                JValue::Int(encoding).as_jni(),
                 JValue::Int(coded.rate as i32).as_jni(),
                 JValue::Int(coded.channels as i32).as_jni(),
                 JValue::Int(bytes.min(i32::MAX as usize) as i32).as_jni(),
@@ -1417,6 +1422,9 @@ struct Player {
     analyses: Arc<Analyses>,
     /// The app's queue session, whose settings the engine plays by.
     queue: Arc<nori_core::queue::Session>,
+    /// The API level and high quality output, for a track made again after a cast.
+    sdk: jint,
+    float: bool,
 }
 
 impl Player {
@@ -1465,7 +1473,7 @@ extern "system" fn create(env: JNIEnv, _: JClass, bridge: JObject, current: jlon
     log(&format!("the engine starts: API {sdk}, {} output, {} MB of memory, offload {}", if float != 0 { "float" } else { "16-bit" }, config.memory_mb, if can_offload { "possible" } else { "not on this Android" }));
     let app = CoreApp::new(queue.clone()).bridging();
     let engine = Engine::start(library, app, CoreQueue(queue.clone()), Box::new(output), offloaded, config, move |e| tell.push(e));
-    PLAYERS.add(Arc::new(Player { engine, bridge, shared, events, offload, stations, jumped: Mutex::new(None), looked_ms: AtomicI64::new(i64::MIN / 2), quiet, ahead, analyses, queue }))
+    PLAYERS.add(Arc::new(Player { engine, bridge, shared, events, offload, stations, jumped: Mutex::new(None), looked_ms: AtomicI64::new(i64::MIN / 2), quiet, ahead, analyses, queue, sdk, float: float != 0 }))
 }
 
 /// Unregisters the player and stops it on a thread of its own (stopping joins engine threads, and media3
@@ -1554,10 +1562,20 @@ extern "system" fn set_shallow(h: jlong, on: jboolean) {
     }
 }
 
-extern "system" fn apply_settings(h: jlong) {
-    let Some(p) = player(h) else { return };
-    if let Some(prefs) = p.queue.settings.current() {
-        p.engine.set_settings(settings(&prefs, p.queue.settings.layer()));
+/// Whether a plugin's sound stage reads the volume now: the platform tells it then ([`set_volume`]).
+extern "system" fn apply_settings(h: jlong) -> jboolean {
+    let Some(p) = player(h) else { return 0 };
+    let Some(prefs) = p.queue.settings.current() else { return 0 };
+    let s = settings(&prefs, p.queue.settings.layer());
+    let reads = !s.stages.is_empty();
+    p.engine.set_settings(s);
+    reads as jboolean
+}
+
+/// The media volume, 0 to 1, for plugins' sound stages.
+extern "system" fn set_volume(h: jlong, level: jfloat) {
+    if let Some(p) = player(h) {
+        p.engine.set_volume(level);
     }
 }
 
@@ -1641,6 +1659,30 @@ extern "system" fn follow(h: jlong, remote: jlong) {
     let remote: Arc<nori_core::remote::Remote> = unsafe { crate::uniffi_object(remote) };
     let Some(p) = player(h) else { return };
     remote.follow_with(Some(Arc::new(Along(Arc::downgrade(&p)))));
+}
+
+/// A plugin's cast takes the engine's audio while it runs (`plugins`, a `Plugins.uniffiCloneHandle()`,
+/// taken over): its sink while one runs, then a track of this phone's again; nothing here while its
+/// device plays the songs itself.
+extern "system" fn cast_to(h: jlong, plugins: jlong) {
+    // SAFETY: Kotlin passes `Plugins.uniffiCloneHandle()`, once.
+    let plugins: Arc<nori_plugins::Plugins> = unsafe { crate::uniffi_object(plugins) };
+    let Some(p) = player(h) else { return };
+    let player = Arc::downgrade(&p);
+    plugins.set_cards(Box::new(move |to| {
+        let Some(p) = player.upgrade() else { return };
+        match to {
+            nori_plugins::Card::Sink(sink) => {
+                // The covers are drawn in Kotlin: a deep sink shows the songs' lines only.
+                let shows = Arc::new(nori_engine::core::QueueShows { queue: p.queue.clone(), cover: None });
+                let (out, offload) = nori_engine::cast::card(sink, Some(shows));
+                p.engine.set_card(out, offload, true)
+            }
+            nori_plugins::Card::Here => p.engine.set_card(Box::new(TrackOutput::new(Box::new(JavaOpener { bridge: p.bridge.clone(), quiet: p.quiet.clone(), sdk: p.sdk }), p.float, p.shared.clone())), None, false),
+            nori_plugins::Card::Elsewhere { playing, position_ms } => p.engine.play_elsewhere(playing, position_ms.map(|ms| ms as i64)),
+            nori_plugins::Card::Back => p.engine.come_back(),
+        }
+    }));
 }
 
 /// A player playing along with a jam's host, while it is there.

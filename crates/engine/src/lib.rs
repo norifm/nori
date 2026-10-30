@@ -5,6 +5,8 @@
 
 pub mod ahead;
 pub mod arriving;
+#[cfg(feature = "plugins")]
+pub mod cast;
 pub mod clock;
 pub mod demux;
 mod flac;

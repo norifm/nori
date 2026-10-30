@@ -83,7 +83,7 @@ pub struct NoApi {
 impl nori_core::transport::Transport for NoApi {
     async fn get(&self, url: String, _timeout_ms: u32) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
         self.asked.lock().push(url);
-        Ok(nori_core::transport::TransportResponse { status: 500, body: Vec::new(), set_cookies: Vec::new() })
+        Ok(nori_core::transport::TransportResponse { status: 500, body: Vec::new(), headers: Vec::new() })
     }
 
     async fn send(&self, request: nori_core::transport::Exchange) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {

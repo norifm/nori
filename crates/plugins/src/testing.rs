@@ -1,7 +1,8 @@
 //! For tests in nori's crates: the test plugin (fixture/), built to wasm and laid out as a plugin
 //! folder to install. It has a lifecycle that overrides `playback.speed` and fetches over HTTP, a
 //! sound stage whose gain grows each block (its state), and a provider with nori's own answers (a
-//! profile with no Subsonic server). Needs `rustup target add wasm32-wasip2`.
+//! profile with no Subsonic server); with `headphones`, device control instead (fixture/src/headphones.rs).
+//! Needs `rustup target add wasm32-wasip2`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -9,6 +10,20 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 /// The test plugin's id.
 pub const FIXTURE: &str = "fm.nori.test";
+/// Its id built with the `second` feature.
+pub const SECOND: &str = "fm.nori.test.second";
+
+/// Marks `plugins` as calling plugin `id` from now on, as when nori stops in one of its calls.
+pub fn stop_in_a_call(plugins: &crate::Plugins, id: &str) {
+    plugins.marks.mark(id, crate::safe::Caller::Worker).set(crate::safe::CALLING, 1);
+}
+
+/// Waits for the run before over plugins folder `dir` to let its marks go: its threads end after it.
+pub fn marks_released(dir: &Path) {
+    if let Ok(file) = std::fs::File::open(dir.join("safe")) {
+        file.lock().unwrap();
+    }
+}
 
 /// The test plugin built with `features`, in a plugin folder of its own.
 pub fn fixture(features: &str) -> PathBuf {

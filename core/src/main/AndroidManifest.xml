@@ -3,14 +3,30 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Plugins' Bluetooth devices (PluginBluetooth); asked for when one reaching devices is installed. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- A plugin's socket in a multicast group (SSDP) and a cast streamed from the phone (plugins/LanGlue.kt):
+         the locks are held only then. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- The app updating itself from its GitHub releases (update/Updates.kt); with the second, Android 12+
          installs updates without asking, from the update after the one that brought it. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <!-- A plugin's wakes (plugins/PluginReceivers.kt): the device started, a Bluetooth audio device connected. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <!-- What another app must hold to run a plugin's command; the user grants it to that app. -->
+    <permission
+        android:name="${applicationId}.permission.RUN_COMMAND"
+        android:label="@string/permission_run_command"
+        android:description="@string/permission_run_command_about"
+        android:protectionLevel="dangerous" />
 
     <application>
         <service
@@ -42,6 +58,26 @@
                 <category android:name="android.media.MediaRoute2ProviderService.SELF_SCAN_ONLY" />
             </intent-filter>
         </service>
+        <!-- Enabled only while an enabled plugin wants them (plugins/PluginReceivers.kt). -->
+        <receiver android:name="dev.nori.music.plugins.PluginBootReceiver" android:enabled="false" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <receiver android:name="dev.nori.music.plugins.PluginBluetoothReceiver" android:enabled="false" android:exported="false">
+            <intent-filter>
+                <action android:name="android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="dev.nori.music.plugins.PluginCommandReceiver"
+            android:enabled="false"
+            android:exported="true"
+            android:permission="${applicationId}.permission.RUN_COMMAND">
+            <intent-filter>
+                <action android:name="dev.nori.music.RUN_COMMAND" />
+            </intent-filter>
+        </receiver>
         <receiver android:name="dev.nori.music.update.UpdateStatusReceiver" android:exported="false" />
         <receiver android:name="dev.nori.music.update.UpdatedReceiver" android:exported="false">
             <intent-filter>

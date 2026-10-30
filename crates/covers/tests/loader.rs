@@ -60,7 +60,7 @@ impl Transport for Server {
         if self.status == 0 {
             return Err(TransportError::Failed { kind: FailureKind::Connect, detail: Some("refused".into()) });
         }
-        Ok(TransportResponse { status: self.status, body: self.body.lock().clone(), set_cookies: Vec::new() })
+        Ok(TransportResponse { status: self.status, body: self.body.lock().clone(), headers: Vec::new() })
     }
 
     async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {
@@ -427,6 +427,24 @@ fn warm_fetches_without_decoding() {
     assert_eq!(server.calls(), 5, "read from the disk, not fetched: {:?}", server.asked.lock());
     drop((busy, late));
     drop(loader);
+}
+
+#[test]
+fn kept_never_waits_on_the_network() {
+    let d = dir("kept");
+    let server = Server::new(200);
+    let loader = Loader::new(config(Some(d.to_path_buf()), 1), CoverNet::over(server.clone()));
+    server.hold();
+    let mut bytes = Vec::new();
+    assert!(!loader.kept(PHOTO, &mut bytes), "a miss answers at once while the server holds");
+    server.wait_calls(1);
+    // One worker: once `next` is asked for, the photo is on the disk.
+    loader.warm("http://s/rest/getCoverArt.view?u=a&id=al-2&size=320");
+    server.release();
+    server.wait_calls(2);
+    assert!(loader.kept(PHOTO, &mut bytes));
+    assert_eq!(bytes, *server.body.lock());
+    assert_eq!(server.calls(), 2, "read from the disk, not fetched again");
 }
 
 /// Painter that panics at width 13.

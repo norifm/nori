@@ -419,3 +419,18 @@ impl ResolveStream for Resolver {
         }
     }
 }
+
+/// A song's URLs for another device on the LAN (a plugin's `media`): the provider's own address at the
+/// song's own quality, when that is a URL. A provider plugin's songs open through their plugin, so they
+/// have none.
+impl nori_plugins::Media for Client {
+    fn stream_url(&self, id: &str) -> Option<String> {
+        let url = self.core.provider().stream(self, id.to_string(), StreamQuality::default()).url;
+        url.starts_with("http").then_some(url)
+    }
+
+    fn cover_url(&self, id: &str, size: u32) -> Option<String> {
+        let url = self.core.cover_address(id.to_string(), size);
+        url.starts_with("http").then_some(url)
+    }
+}

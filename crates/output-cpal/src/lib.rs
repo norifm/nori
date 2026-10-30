@@ -90,6 +90,11 @@ impl CpalOutput {
         self.volume.clone()
     }
 
+    /// At the level `volume` sets (a card made again keeps the session's volume).
+    pub fn with_volume(self, volume: Volume) -> CpalOutput {
+        CpalOutput { volume, ..self }
+    }
+
     pub fn devices() -> Vec<String> {
         let host = cpal::default_host();
         host.output_devices().map(|ds| ds.filter_map(|d| d.description().ok().map(|n| n.to_string())).collect()).unwrap_or_default()

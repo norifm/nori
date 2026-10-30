@@ -485,11 +485,11 @@ impl Transport for Authors {
     async fn get(&self, url: String, _timeout_ms: u32) -> Result<TransportResponse, TransportError> {
         let found = url == nori_core::automix::beat_model::CHECKPOINT_URL;
         self.1.lock().push(url);
-        Ok(if found { TransportResponse { status: 200, body: self.0.clone(), set_cookies: Vec::new() } } else { TransportResponse { status: 404, body: b"<html>not found</html>".to_vec(), set_cookies: Vec::new() } })
+        Ok(if found { TransportResponse { status: 200, body: self.0.clone(), headers: Vec::new() } } else { TransportResponse { status: 404, body: b"<html>not found</html>".to_vec(), headers: Vec::new() } })
     }
 
     async fn send(&self, _request: Exchange) -> Result<TransportResponse, TransportError> {
-        Ok(TransportResponse { status: 500, body: Vec::new(), set_cookies: Vec::new() })
+        Ok(TransportResponse { status: 500, body: Vec::new(), headers: Vec::new() })
     }
 
     fn address_changed(&self) {}

@@ -2054,31 +2054,130 @@ fn official() -> nori_plugins::Repo {
 }
 
 fn card(id: &str, name: &str, rows: Vec<nori_plugins::PluginRow>) -> nori_plugins::PluginCard {
-    nori_plugins::PluginCard { id: id.into(), version: "1.2.0".into(), name: name.into(), about: Some(format!("{name} does things")), enabled: false, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: vec!["api.example.com".into()], rows }
+    nori_plugins::PluginCard { id: id.into(), version: "1.2.0".into(), name: name.into(), about: Some(format!("{name} does things")), enabled: false, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: vec!["api.example.com".into()], lan: false, bluetooth: false, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows }
 }
 
 fn plugin_row(id: &str, kind: nori_plugins::RowKind, value: Option<nori_plugins::Value>) -> nori_plugins::PluginRow {
     nori_plugins::PluginRow { id: id.into(), kind, label: format!("{kind:?} row"), options: Vec::new(), min: None, max: None, step: None, value, hint: None, unit: None, decimals: 0, url: None }
 }
 
+/// Selects a link of the page by its title and opens it.
+fn follow(a: &mut App, name: &str) {
+    select_row(a, |r| matches!(r, Row::Link { title, .. } if title == name));
+    key(a, KeyCode::Enter);
+}
+
+/// Opens installed plugin `id`'s page from the list.
+fn open_plugin(a: &mut App, id: &str) {
+    select_row(a, |r| matches!(r, Row::Plugin { id: at, .. } if at == id));
+    key(a, KeyCode::Enter);
+}
+
 #[test]
-fn no_plugins_offers_to_install_and_lists_nori_s_repo() {
+fn no_plugins_offers_the_browser_then_repos_and_a_file() {
+    use crate::app::PluginCmd;
     let mut a = plugins_app(Vec::new(), vec![official()], Default::default());
     let s = draw(&mut a, 140, 300);
     dump("plugins-empty", &s);
-    for said in ["Plugins", "No plugins installed.", "[ Install a plugin ]", "GET PLUGINS", "[ Look for plugins ]", "REPOS", "nori's own", "[ Add repo ]"] {
+    for said in ["Plugins", "No plugins installed.", "Get plugins"] {
         assert!(s.contains(said), "{said} missing:\n{s}");
     }
-    select_row(&mut a, |r| matches!(r, Row::Button { title, .. } if title == "Install a plugin"));
+    assert!(!s.contains("Add repo"), "repos are a page of their own:\n{s}");
+
+    follow(&mut a, "Get plugins");
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Look)), "the browser asks the repos");
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("Looking…") && s.contains("[ Install from a file ]") && s.contains("esc back"), "{s}");
+    select_row(&mut a, |r| matches!(r, Row::Button { title, .. } if title == "Install from a file"));
     key(&mut a, KeyCode::Enter);
     chars(&mut a, "/tmp/gain.noriplugin");
     key(&mut a, KeyCode::Enter);
-    assert!(matches!(a.cmds.last(), Some(Cmd::Plugin(crate::app::PluginCmd::Install(p))) if p == "/tmp/gain.noriplugin"));
+    assert!(matches!(a.cmds.last(), Some(Cmd::Plugin(PluginCmd::Install(p))) if p == "/tmp/gain.noriplugin"));
+
+    follow(&mut a, "Repos");
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("nori's own") && s.contains("[ Add repo ]"), "{s}");
     // nori's own repo can't be removed.
     select_row(&mut a, |r| matches!(r, Row::Repo { .. }));
     a.cmds.clear();
     key(&mut a, KeyCode::Char('d'));
-    assert!(a.cmds.is_empty());
+    assert!(a.cmds.is_empty() && a.overlay.is_none());
+
+    // Back goes down the pages, to the row each was opened from.
+    key(&mut a, KeyCode::Esc);
+    assert!(a.settings.browsing());
+    key(&mut a, KeyCode::Esc);
+    assert!(!a.settings.deep());
+    let pages = a.settings.pages(&a.prefs.clone()).to_vec();
+    assert!(matches!(SettingsView::lines(&pages)[a.settings.row.at], Line::Row(Row::Link { .. })), "back on Get plugins");
+}
+
+/// A plugin's page shows the devices it controls with their controls, its assets and the way to
+/// fetch them on mobile data, and a row it turned off as a line that takes no input.
+#[test]
+fn a_plugins_page_shows_its_devices_assets_and_rows_turned_off() {
+    use crate::app::PluginCmd;
+    use nori_plugins::{AssetLine, AssetState, Battery, ControlledDevice, Noise, RowKind, Value};
+    let gain = card("dev.example.gain", "Gain", vec![plugin_row("on", RowKind::Switch, Some(Value::Switch(true)))]);
+    let mut a = plugins_app(vec![gain.clone()], vec![official()], Default::default());
+    a.settings.own.off.insert(("dev.example.gain".into(), "on".into()));
+    a.settings.own.assets.insert("dev.example.gain".into(), vec![AssetLine { name: "model".into(), size: 3 << 20, state: AssetState::WaitingForWifi }]);
+    a.settings.own.controlled = vec![ControlledDevice { id: "AA".into(), name: "Test Buds".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Off), noise_modes: vec![Noise::Off, Noise::Canceling], card: gain }];
+    a.settings.invalidate();
+    open_plugin(&mut a, "dev.example.gain");
+    let s = draw(&mut a, 140, 300);
+    dump("plugins-page-devices", &s);
+    let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
+    assert!(s.contains("TEST BUDS") && line("Battery").contains("80%"), "{s}");
+    assert!(line("model").contains("Waiting for Wi-Fi") && s.contains("FILES"), "{s}");
+    assert!(line("Switch row").contains("On"));
+
+    select_row(&mut a, |r| matches!(r, Row::Info { title, .. } if title == "Switch row"));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert!(a.cmds.is_empty(), "a row turned off takes no input");
+    select_row(&mut a, |r| matches!(r, Row::Choice { title, .. } if title == "Noise control"));
+    key(&mut a, KeyCode::Right);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Noise("AA".into(), Noise::Canceling))));
+    select_row(&mut a, |r| matches!(r, Row::Button { title, .. } if title == "Download on mobile data"));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::AllowMobileAssets("dev.example.gain".into()))));
+}
+
+/// The list holds a line per plugin: enter opens it, ← → switch it, K J move it, d removes it.
+#[test]
+fn the_list_of_plugins_keeps_each_to_a_line() {
+    use crate::app::PluginCmd;
+    use nori_plugins::{RowKind, Value};
+    let rows = vec![plugin_row("on", RowKind::Switch, Some(Value::Switch(true)))];
+    let mut a = plugins_app(vec![card("dev.example.gain", "Gain", rows), card("dev.example.other", "Other", Vec::new())], vec![official()], Default::default());
+    let s = draw(&mut a, 140, 300);
+    dump("plugins-list", &s);
+    let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
+    assert!(line("Gain does things").contains("1.2.0") && line("Gain does things").contains("Off ›"), "{s}");
+    assert!(!s.contains("Switch row"), "its rows are on its page:\n{s}");
+    assert!(line("All plugins").contains("On"), "{s}");
+    select_row(&mut a, |r| matches!(r, Row::Toggle { switch: Switch::AllOff, .. }));
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.split_off(0), vec![Cmd::Setting("pluginsOff".into(), "true".into()), Cmd::Plugin(PluginCmd::Switched)], "the setting, then the plugins told");
+
+    select_row(&mut a, |r| matches!(r, Row::Plugin { id, .. } if id == "dev.example.gain"));
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("K J move"), "the row's keys at the foot:\n{s}");
+    key(&mut a, KeyCode::Right);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Turn("dev.example.gain".into(), true))));
+    key(&mut a, KeyCode::Char('J'));
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Place("dev.example.gain".into(), 1))));
+    key(&mut a, KeyCode::Char('K'));
+    assert!(a.cmds.is_empty(), "the first can't go higher");
+    key(&mut a, KeyCode::Char('d'));
+    assert!(a.cmds.is_empty(), "removing asks first");
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("Remove Gain?") && s.contains("enter remove · esc cancel"), "{s}");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Uninstall("dev.example.gain".into()))));
+    key(&mut a, KeyCode::Enter);
+    assert!(a.settings.deep(), "enter opens its page");
 }
 
 #[test]
@@ -2096,11 +2195,13 @@ fn a_plugins_page_draws_a_row_of_each_kind() {
         plugin_row("more", RowKind::Section, None),
         plugin_row("hint", RowKind::Note, None),
     ];
-    let mut a = plugins_app(vec![card("dev.example.gain", "Gain", rows), card("dev.example.other", "Other", Vec::new())], vec![official()], Default::default());
+    let mut a = plugins_app(vec![card("dev.example.gain", "Gain", rows)], vec![official()], Default::default());
+    open_plugin(&mut a, "dev.example.gain");
     let s = draw(&mut a, 140, 300);
     dump("plugins-page", &s);
     let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
-    assert!(line("Version 1.2.0").contains("Gain does things · Connects to api.example.com") && line("Version 1.2.0").contains("Off"), "{s}");
+    assert!(line("Gain").contains("1.2.0") && line("Gain does things").contains("Gain does things"), "{s}");
+    assert!(line("Connects to api.example.com").contains("Connects") && s.contains("WHAT IT MAY DO"), "{s}");
     assert!(line("Switch row").contains("On"));
     assert!(line("Choice row").contains("Soft") && line("Choice row").contains("Loud"));
     assert!(line("Level row: 1.5").contains('●'));
@@ -2108,25 +2209,14 @@ fn a_plugins_page_draws_a_row_of_each_kind() {
     assert!(line("Text row").contains("Not set ›"));
     assert!(line("[ Action row ]").contains("Action row"));
     assert!(line("Status row").contains("All good"));
-    assert!(s.contains("GAIN") && s.contains("SECTION ROW") && s.contains("Note row") && s.contains("OTHER"), "{s}");
-
-    // Enter switches the plugin on; J moves it down, K can't move the first up, d removes it.
-    select_row(&mut a, |r| matches!(r, Row::Plugin { id, .. } if id == "dev.example.gain"));
-    key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Turn("dev.example.gain".into(), true))));
-    key(&mut a, KeyCode::Char('J'));
-    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Place("dev.example.gain".into(), 1))));
-    key(&mut a, KeyCode::Char('K'));
-    assert!(a.cmds.is_empty(), "the first can't go higher");
-    key(&mut a, KeyCode::Char('d'));
-    assert!(a.cmds.is_empty(), "removing asks first");
-    let s = draw(&mut a, 140, 40);
-    assert!(s.contains("Remove Gain?") && s.contains("enter remove · esc cancel"), "{s}");
-    key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Uninstall("dev.example.gain".into()))));
+    assert!(s.contains("SECTION ROW") && s.contains("Note row"), "{s}");
 
     // Rows set the plugin's values by the plugin's row ids.
     let set = |row: &str, v: Value| Some(Cmd::Plugin(PluginCmd::Set("dev.example.gain".into(), row.into(), v)));
+    select_row(&mut a, |r| matches!(r, Row::Toggle { title, .. } if title == "On"));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Turn("dev.example.gain".into(), true))));
     select_row(&mut a, |r| matches!(r, Row::Toggle { title, .. } if title == "Switch row"));
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), set("on", Value::Switch(false)));
@@ -2146,41 +2236,97 @@ fn a_plugins_page_draws_a_row_of_each_kind() {
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Act("dev.example.gain".into(), "sync".into()))));
 }
 
+/// m on a plugin's page moves or removes it; removing closes the page.
 #[test]
-fn repos_offer_plugins_and_another_repo_is_added_only_once_trusted() {
+fn a_plugins_menu_moves_and_removes_it() {
+    use crate::app::PluginCmd;
+    let cards = vec![card("dev.example.a", "A", Vec::new()), card("dev.example.b", "B", Vec::new())];
+    let mut a = plugins_app(cards, vec![official()], Default::default());
+    open_plugin(&mut a, "dev.example.b");
+    a.cmds.clear();
+    key(&mut a, KeyCode::Char('m'));
+    let s = draw(&mut a, 140, 40);
+    dump("plugins-menu", &s);
+    assert!(s.contains("Move up") && !s.contains("Move down") && s.contains("Remove"), "the last can only go up:\n{s}");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Place("dev.example.b".into(), 0))));
+    key(&mut a, KeyCode::Char('m'));
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(&a.overlay, Some(Overlay::Confirm { title, .. }) if title == "Remove B?"), "asked first");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Uninstall("dev.example.b".into()))));
+    a.settings.plugin_gone("dev.example.b");
+    assert!(!a.settings.deep(), "its page closes");
+}
+
+/// The browser lists what the repos offer by name, searched and narrowed through the core; each
+/// opens its page, whose Install asks for the right offer of those read, whatever order they show in.
+#[test]
+fn the_browser_searches_narrows_and_opens_the_offer_shown() {
     use crate::app::PluginCmd;
     use crate::settings_view::Shelf;
     let friend = nori_plugins::Repo { url: "https://friend.example/nori/index.json".into(), official: false };
     let shelf = Shelf::Read(nori_plugins::Offers {
-        offers: vec![
-            offer("Lyrics plus", &official(), None),
-            nori_plugins::Offer { versions: Vec::new(), ..offer("Runs nowhere", &official(), None) },
-            offer("Gain", &official(), Some("1.0.0")),
-            offer("Radio", &friend, Some("2.0.0")),
-        ],
+        offers: vec![offer("Lyrics plus", &official(), None), offer("Gain", &official(), Some("1.0.0")), offer("Radio", &friend, Some("2.0.0"))],
         failed: vec![nori_plugins::RepoFailure { repo: nori_plugins::Repo { url: "https://gone.example/index.json".into(), official: false }, reason: "HTTP 404".into() }],
     });
-    let mut a = plugins_app(Vec::new(), vec![official(), friend.clone()], shelf);
+    let gain = nori_plugins::PluginCard { repo: Some(nori_plugins::OFFICIAL.into()), version: "1.0.0".into(), ..card("dev.example.gain", "Gain", Vec::new()) };
+    let mut a = plugins_app(vec![gain], vec![official(), friend.clone()], shelf);
     let s = draw(&mut a, 140, 300);
-    dump("plugins-offers", &s);
+    assert!(s.contains("UPDATES") && s.contains("1.0.0 → 2.0.0"), "an update waits on the list:\n{s}");
+    follow(&mut a, "Get plugins");
+    assert!(a.cmds.is_empty(), "what was read isn't asked again");
+    let s = draw(&mut a, 140, 40);
+    dump("plugins-browser", &s);
     let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
-    assert!(!s.contains("Runs nowhere"), "an offer with no version this nori runs is left out");
-    assert!(line("Lyrics plus").contains("nori's own") && line("Lyrics plus").contains("[ Install ]"), "{s}");
-    assert!(line("Gain about").contains("[ Update ]"));
-    assert!(!s.contains("Radio about"), "what is installed at its newest isn't offered");
+    assert!(line("Lyrics plus").contains("nori's own") && line("Lyrics plus").contains("Install ›"), "{s}");
+    assert!(line("Gain about").contains("Update ›"), "{s}");
+    assert!(line("Radio about").contains("Installed ›") && line("Radio about").contains("friend.example"), "{s}");
     assert!(s.contains("Couldn't reach gone.example") && !s.contains("HTTP 404"), "one quiet line:\n{s}");
-    assert!(line("https://friend.example/nori/index.json").contains("friend.example"));
+    assert!(s.find("Gain about") < s.find("Lyrics plus"), "by name:\n{s}");
 
-    // Its sheet comes once its package is read.
-    select_row(&mut a, |r| matches!(r, Row::Action { title, .. } if title == "Gain"));
+    // The chips narrow to a repo.
+    select_row(&mut a, |r| matches!(r, Row::Choice { title, .. } if title == "Repos"));
+    key(&mut a, KeyCode::Right);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::ShowRepo(Some(nori_plugins::OFFICIAL.into())))));
+    a.settings.own.repo_shown = Some(nori_plugins::OFFICIAL.into());
+    a.settings.invalidate();
+    assert!(!draw(&mut a, 140, 40).contains("Radio about"));
+    a.settings.own.repo_shown = None;
+
+    // / searches; what was typed comes back to edit.
+    key(&mut a, KeyCode::Char('/'));
+    chars(&mut a, "gai");
     key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Get(2, 0))), "its newest, by its place in the offers read");
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Search("gai".into()))));
+    a.settings.own.query = "gai".into();
+    a.settings.invalidate();
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("Gain about") && !s.contains("Lyrics plus") && !s.contains("Radio about"), "{s}");
+    key(&mut a, KeyCode::Char('/'));
+    assert!(matches!(&a.overlay, Some(Overlay::Input { text, .. }) if text == "gai"));
+    key(&mut a, KeyCode::Esc);
+
+    select_row(&mut a, |r| matches!(r, Row::Offer { title, .. } if title == "Gain"));
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Readme(id, Some(_)))) if id == "dev.example.gain"), "its README, off the UI's way");
+    let s = draw(&mut a, 140, 60);
+    dump("plugins-offer-page", &s);
+    assert!(s.contains("[ Update to 2.0.0 ]"), "{s}");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Get(1, 0))), "enter lands on Update, its place in the offers read");
+
+    // Adding a repo warns first: cancelled, nothing is added; confirmed, it is.
+    key(&mut a, KeyCode::Esc);
+    follow(&mut a, "Repos");
+    let s = draw(&mut a, 140, 40);
+    dump("plugins-repos", &s);
+    assert!(s.contains("2 plugins") && s.contains("friend.example") && s.contains("1 plugin"), "what each offers:\n{s}");
     select_row(&mut a, |r| matches!(r, Row::Repo { removable: true, .. }));
     key(&mut a, KeyCode::Char('d'));
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::RemoveRepo(friend.url.clone()))));
-
-    // Adding a repo warns first: cancelled, nothing is added; confirmed, it is.
     let add = |a: &mut App| {
         select_row(a, |r| matches!(r, Row::Button { title, .. } if title == "Add repo"));
         key(a, KeyCode::Enter);
@@ -2199,6 +2345,50 @@ fn repos_offer_plugins_and_another_repo_is_added_only_once_trusted() {
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::AddRepo("https://new.example/index.json".into()))));
 }
 
+/// A plugin only offered has a page with Install; its README comes after, wrapped to the page, and one
+/// for a page left since is dropped.
+#[test]
+fn an_offered_plugins_page_shows_its_readme() {
+    use crate::app::PluginCmd;
+    use crate::settings_view::Shelf;
+    use nori_plugins::ReadmeBlock;
+    let shelf = Shelf::Read(nori_plugins::Offers { offers: vec![offer("Lyrics plus", &official(), None)], failed: Vec::new() });
+    let mut a = plugins_app(Vec::new(), vec![official()], shelf);
+    follow(&mut a, "Get plugins");
+    select_row(&mut a, |r| matches!(r, Row::Offer { .. }));
+    key(&mut a, KeyCode::Enter);
+    let id = "dev.example.lyrics-plus";
+    assert!(matches!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Readme(..)))));
+    a.settings.readme_came("dev.example.elsewhere", vec![ReadmeBlock::Text { text: "Not this".into() }]);
+    a.settings.readme_came(id, vec![
+        ReadmeBlock::Text { text: "word ".repeat(40) },
+        ReadmeBlock::Heading { level: 2, text: "Use it".into() },
+        ReadmeBlock::Item { text: "One thing".into() },
+        ReadmeBlock::Code { text: "let a;\nlet b;".into() },
+    ]);
+    let s = draw(&mut a, 60, 40);
+    dump("plugins-readme", &s);
+    assert!(s.contains("[ Install ]") && s.contains("ABOUT") && s.contains("USE IT") && s.contains("• One thing") && s.contains("let b;"), "{s}");
+    assert!(!s.contains("Not this"), "{s}");
+    assert!(s.lines().filter(|l| l.contains("word word")).count() >= 2, "wrapped, not cut:\n{s}");
+    assert_eq!(a.settings.readme_wanted(), None, "asked once");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Get(0, 0))));
+}
+
+#[test]
+fn words_wrap_to_the_width() {
+    let wrapped = crate::text::wrapped;
+    for (text, width, lines) in [
+        ("one two three", 7, vec!["one two", "three"]),
+        ("one two", 0, vec!["one two"]),
+        ("a\n\nb", 9, vec!["a", "", "b"]),
+        ("wholeword x", 4, vec!["wholeword", "x"]),
+    ] {
+        assert_eq!(wrapped(text, width), lines, "{text} at {width}");
+    }
+}
+
 #[test]
 fn a_refused_plugin_says_why() {
     let mut a = app();
@@ -2208,15 +2398,23 @@ fn a_refused_plugin_says_why() {
 
 /// A plugin `name` that `repo` offers at 2.0.0 and 1.0.0, installed here at `installed`.
 fn offer(name: &str, repo: &nori_plugins::Repo, installed: Option<&str>) -> nori_plugins::Offer {
-    let version = |v: &str, day: &str| nori_plugins::Version { repo: repo.url.clone(), version: v.into(), released: Some(day.into()), url: format!("https://pkg.example/{v}"), sha256: String::new() };
+    let version = |v: &str, day: &str| nori_plugins::Version { repo: repo.url.clone(), version: v.into(), released: Some(day.into()), url: format!("https://pkg.example/{v}"), sha256: String::new(), key: None, signature: None };
     nori_plugins::Offer {
         repo: repo.clone(),
         id: format!("dev.example.{}", name.to_lowercase().replace(' ', "-")),
         name: name.into(),
         about: Some(format!("{name} about")),
         source: Some("https://code.example/gain".into()),
+        readme: None,
+        icon: None,
+        points: Vec::new(),
         versions: vec![version("2.0.0", "2026-10-01"), version("1.0.0", "2026-06-01")],
         installed: installed.map(str::to_string),
+        state: match installed {
+            None => nori_plugins::OfferState::New,
+            Some("2.0.0") => nori_plugins::OfferState::Installed,
+            Some(_) => nori_plugins::OfferState::Update,
+        },
     }
 }
 
@@ -2228,6 +2426,7 @@ fn a_repo_plugins_page_holds_and_lists_its_versions() {
     let gain = nori_plugins::PluginCard { version: "1.0.0".into(), repo: Some(nori_plugins::OFFICIAL.into()), held: true, ..card("dev.example.gain", "Gain", Vec::new()) };
     let shelf = crate::settings_view::Shelf::Read(nori_plugins::Offers { offers: vec![offer("Gain", &official(), Some("1.0.0"))], failed: Vec::new() });
     let mut a = plugins_app(vec![gain], vec![official()], shelf);
+    open_plugin(&mut a, "dev.example.gain");
     let s = draw(&mut a, 140, 300);
     dump("plugins-versions", &s);
     let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
@@ -2235,6 +2434,7 @@ fn a_repo_plugins_page_holds_and_lists_its_versions() {
     assert!(line("Source").contains("https://code.example/gain") && s.contains("VERSIONS"), "{s}");
     assert!(line("2026-10-01").contains("[ Install ]") && line("2026-06-01").contains("[ Installed ]"), "{s}");
     select_row(&mut a, |r| matches!(r, Row::Toggle { title, .. } if title == "Keep this version"));
+    a.cmds.clear();
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Hold("dev.example.gain".into(), false))));
     select_row(&mut a, |r| matches!(r, Row::Action { detail, .. } if detail == "2026-10-01"));
@@ -2249,11 +2449,25 @@ fn a_repo_plugins_page_holds_and_lists_its_versions() {
 struct Heard(std::sync::Mutex<Vec<(String, Vec<String>)>>);
 impl nori_plugins::Client for Heard {
     fn layer_changed(&self, _: u32) {}
+    fn devices_changed(&self) {}
     fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
     fn shown(&self, _: String, _: String, _: bool, _: bool) {}
     fn notice(&self, _: String, _: bool, words: String, args: Vec<String>) {
         self.0.lock().unwrap().push((words, args));
     }
+    fn browse(&self, _: String, _: bool) {}
+    fn multicast(&self, _: bool) {}
+    fn streaming(&self, _: bool) {}
+    fn pressed(&self, _: nori_core::deciders::Press) {}
+    fn cast(&self, _: Option<nori_plugins::Cast>) {}
+    fn control(&self, _: nori_plugins::Control) {}
+    fn sign_in(&self, _: String, _: String) -> bool {
+        false
+    }
+    fn wake(&self, _: Vec<nori_plugins::WakeEvent>) {}
+    fn commands(&self, _: Vec<nori_plugins::Command>) {}
+    fn watch_screen(&self, _: bool) {}
+    fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {}
 }
 
 /// The test plugin installed in `dir` and on, over settings of its own.
@@ -2277,7 +2491,7 @@ fn a_plugin_says_what_it_is_before_it_is_installed() {
     dump("plugins-preview", &s);
     assert!(s.contains(&format!("Install Test {}?", preview.card.version)) && s.contains("enter install · esc cancel"), "{s}");
     let Some(Overlay::Confirm { lines, .. }) = &a.overlay else { panic!("no sheet") };
-    assert_eq!(lines, &["It's a music source, a sound effect, a playback helper. It changes playback values.", "Connects to allowed.example. Changes playback.speed.", "It stays off until you turn it on."]);
+    assert_eq!(lines, &["It's a playback helper, a music source, a sound effect, a mixer, a lyrics source, a scrobbler. It changes playback values.", "Connects to allowed.example and devices on your network. Changes playback.speed. Sees what plays and the queue. Controls playback and the queue. Searches your library. Uses your server's API as you. Wakes at each lyric line while music plays. Starts nori while it is closed (on a phone). Lets other apps run: ping. Keeps up to 1 MB of cache. Downloads 1 MB of files.", "Unsigned", "It stays off until you turn it on."]);
     key(&mut a, KeyCode::Enter);
     let Some(Cmd::Plugin(crate::app::PluginCmd::InstallPreview(p))) = a.cmds.pop() else { panic!("not installed") };
     assert_eq!(plugins.install_preview(*p), Ok(nori_plugins::testing::FIXTURE.into()));
@@ -2344,6 +2558,36 @@ fn a_plugins_lines_show_in_the_player() {
     assert!(under("This computer").contains("Testing"), "{s}");
 }
 
+/// Headphones a plugin controls: their battery beside the output, and on the devices panel their
+/// batteries and noise control, which Enter moves to the next mode.
+#[test]
+fn a_controlled_device_shows_its_battery_and_sets_its_noise_control() {
+    use nori_plugins::{Battery, ControlledDevice, Noise};
+    let mut a = app();
+    a.song = Some(song("1", "Blue", 200));
+    a.devices.controlled = vec![ControlledDevice {
+        id: "AA".into(),
+        name: "WH-1000XM5".into(),
+        battery: Battery { left: Some(60), right: Some(40), case: Some(90), single: None },
+        level: Some(40),
+        noise: Some(Noise::Canceling),
+        noise_modes: vec![Noise::Off, Noise::Canceling, Noise::Transparency],
+        card: card("dev.example.sony", "Sony", Vec::new()),
+    }];
+    let s = draw(&mut a, 160, 30);
+    dump("player-controlled-device", &s);
+    assert!(s.contains("WH-1000XM5 · 40%") && !s.contains("This computer"), "the default output is the headphones: {s}");
+    key(&mut a, KeyCode::Char('C'));
+    assert_eq!((a.full, a.panel), (true, Panel::Devices), "the panel shows for a controlled device alone");
+    let s = draw(&mut a, 160, 30);
+    dump("devices-controlled", &s);
+    assert!(s.lines().any(|l| l.contains("WH-1000XM5") && l.contains("L 60% · R 40% · Case 90%")), "{s}");
+    assert!(s.lines().any(|l| l.contains("Noise control") && l.contains("Noise canceling")), "{s}");
+    assert_eq!(a.devices.rows()[a.devices.sel.at], crate::app::DeviceRow::Noise(0), "the device's line is passed over");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(crate::app::PluginCmd::Noise("AA".into(), Noise::Transparency))));
+}
+
 /// A row's hint is a quiet line under it, a level shows its unit at its digits, a link where it goes;
 /// the devices panel shows the rows of a plugin that asks to be there, and sets them.
 #[test]
@@ -2355,6 +2599,7 @@ fn a_plugins_rows_show_hint_unit_and_link() {
     ];
     let gain = card("dev.example.gain", "Gain", rows);
     let mut a = plugins_app(vec![gain.clone()], vec![official()], Default::default());
+    open_plugin(&mut a, "dev.example.gain");
     let s = draw(&mut a, 140, 300);
     dump("plugins-row-words", &s);
     let next = |name: &str| s.lines().skip_while(|l| !l.contains(name)).nth(1).unwrap_or_default().to_string();
@@ -2376,57 +2621,273 @@ fn a_plugins_rows_show_hint_unit_and_link() {
     assert_eq!(a.devices.rows()[a.devices.sel.at], crate::app::DeviceRow::Plugin(0, 1), "the hint is passed over");
 }
 
-/// The login reaches Settings › Plugins with no profile, and back.
+/// A plugin's cast shows beside this computer, playing; picking this computer asks it to end.
 #[test]
-fn the_login_opens_the_plugins() {
+fn the_devices_panel_lists_a_plugins_cast() {
     let mut a = app();
-    a.view = View::Login;
+    a.song = Some(song("1", "Blue", 200));
+    a.handle(Msg::Cast(Some(nori_plugins::Cast { plugin: "fm.nori.cast".into(), kind: nori_plugins::CastKind::Sink, device: "Kitchen".into(), playing: true, position_ms: 0, volume: Some(40), bursts: false })));
+    key(&mut a, KeyCode::Char('C'));
+    assert_eq!((a.full, a.panel), (true, Panel::Devices), "the panel shows for a cast alone");
+    let s = draw(&mut a, 160, 30);
+    dump("devices-cast", &s);
+    assert!(s.contains("✓ Kitchen") && s.contains("Casting · 40 %") && !s.contains("✓ This computer"), "{s}");
+    a.devices.sel.at = 0;
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(crate::app::PluginCmd::EndCast)));
+    a.handle(Msg::Cast(None));
+    assert!(!a.devices.shown(), "gone with the cast");
+}
+
+/// The first screen reaches Settings › Plugins with no profile, by key and by mouse, and back.
+#[test]
+fn the_first_screen_opens_the_plugins() {
+    let mut a = app();
+    a.choose_provider();
+    assert_eq!(a.cmds.split_off(0), vec![Cmd::Plugin(crate::app::PluginCmd::Read), Cmd::Plugin(crate::app::PluginCmd::Look)], "the repos are asked once");
     let s = draw(&mut a, 100, 40);
-    dump("login", &s);
-    assert!(s.contains("Plugins ›") && s.contains("ctrl p plugins") && !s.contains("Kind"), "one kind, no choice:\n{s}");
+    assert!(s.contains("Plugins ›") && s.contains("p plugins"), "its way there is at its foot:\n{s}");
     let r = hit_rect(&a, Hit::Button(Button::LoginPlugins));
     a.handle(Msg::Mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: r.x, row: r.y, modifiers: KeyModifiers::NONE }));
     assert_eq!(a.view, View::Settings);
     assert!(a.cmds.contains(&Cmd::Plugin(crate::app::PluginCmd::Read)));
     let s = draw(&mut a, 140, 40);
-    assert!(s.contains("Install a plugin") && !s.contains("Playback"), "the plugins alone:\n{s}");
+    assert!(s.contains("Get plugins") && !s.contains("Playback"), "the plugins alone:\n{s}");
     key(&mut a, KeyCode::Esc);
     assert_eq!(a.view, View::Login);
+    key(&mut a, KeyCode::Char('p'));
+    assert_eq!(a.view, View::Settings);
 }
 
 struct Quiet;
 impl nori_plugins::Client for Quiet {
     fn layer_changed(&self, _: u32) {}
+    fn devices_changed(&self) {}
     fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
     fn shown(&self, _: String, _: String, _: bool, _: bool) {}
     fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}
+    fn browse(&self, _: String, _: bool) {}
+    fn multicast(&self, _: bool) {}
+    fn streaming(&self, _: bool) {}
+    fn pressed(&self, _: nori_core::deciders::Press) {}
+    fn cast(&self, _: Option<nori_plugins::Cast>) {}
+    fn control(&self, _: nori_plugins::Control) {}
+    fn sign_in(&self, _: String, _: String) -> bool {
+        false
+    }
+    fn wake(&self, _: Vec<nori_plugins::WakeEvent>) {}
+    fn commands(&self, _: Vec<nori_plugins::Command>) {}
+    fn watch_screen(&self, _: bool) {}
+    fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {}
 }
 
-/// With a plugin's music source on, the login offers its kind, and asks only what it asks.
-#[test]
-fn the_login_chooses_a_kind_when_a_plugin_adds_one() {
-    let dir = nori_testdir::TempDir::new("cli-login-kinds");
+/// An app on the first screen with the fixture plugin on, so its provider is a kind of profile.
+fn app_with_provider(dir: &nori_testdir::TempDir) -> App {
     let plugins = nori_plugins::open(dir.join("plugins"), crate::backend::app().settings.clone(), std::sync::Arc::new(Quiet));
     plugins.install(&nori_plugins::testing::fixture("")).unwrap();
     plugins.turn(nori_plugins::testing::FIXTURE.into(), true);
     let mut a = app();
     a.settings.own.kinds = nori_core::providers::Kinds::with_plugins(plugins);
     a.view = View::Login;
+    a
+}
+
+/// The first screen lists the kinds; each opens its own form, and back from it chooses again.
+#[test]
+fn the_kind_chosen_reaches_its_form() {
+    use nori_core::settings::ServerKind;
+    let dir = nori_testdir::TempDir::new("cli-login-kinds");
+    let mut a = app_with_provider(&dir);
     let s = draw(&mut a, 100, 40);
-    assert!(s.contains("Kind") && s.contains("‹ Your server ›") && s.contains("Server address") && s.contains("← → kind"), "{s}");
-    key(&mut a, KeyCode::Right);
+    dump("login-providers", &s);
+    assert!(s.contains("Choose a provider") && s.contains("OpenSubsonic") && s.contains("Navidrome and other servers") && s.contains("Test") && !s.contains("Server address"), "{s}");
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.login.kind, Some(ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() }));
     let s = draw(&mut a, 100, 40);
     dump("login-plugin-kind", &s);
-    assert!(s.contains("‹ Test ›") && s.contains("From a plugin") && !s.contains("Server address"), "{s}");
-    // Its own provider says when its form can be sent; the test plugin's never can.
+    assert!(s.contains("From a plugin") && !s.contains("Server address"), "{s}");
+    // The test plugin asks nothing and has no sign-in, so it is added at once; it can never be sent, so
+    // its page shows, with why.
+    assert!(a.cmds.is_empty() && a.login.error.is_some() && !a.login_choosing());
+    key(&mut a, KeyCode::Esc);
+    assert_eq!((a.login.kind.clone(), a.login.error.clone(), a.quit), (None, None, false), "back chooses again");
+    key(&mut a, KeyCode::Up);
+    a.login.focus = 3;
     key(&mut a, KeyCode::Enter);
-    assert!(a.cmds.is_empty() && a.login.error.is_some());
-    key(&mut a, KeyCode::Left);
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains("Server address") && s.contains("esc choose again"), "{s}");
+    assert_eq!(a.login.focus, 0, "on the first field it asks");
     key(&mut a, KeyCode::Tab);
     chars(&mut a, "music.example");
     key(&mut a, KeyCode::Tab);
     chars(&mut a, "ann");
     key(&mut a, KeyCode::Tab);
     key(&mut a, KeyCode::Enter);
-    assert!(matches!(a.cmds.last(), Some(Cmd::Login(p)) if p.kind == nori_core::settings::ServerKind::Subsonic && p.url == "https://music.example" && p.user == "ann"), "{:?}", a.cmds);
+    assert!(matches!(a.cmds.last(), Some(Cmd::Login(p)) if p.kind == ServerKind::Subsonic && p.url == "https://music.example" && p.user == "ann"), "{:?}", a.cmds);
+}
+
+/// A provider with nothing to ask is added from the first screen, which stays until that's answered.
+#[test]
+fn nothing_to_ask_adds_at_once() {
+    use nori_core::providers::{ProviderInfo, SignIn};
+    use nori_core::settings::ServerKind;
+    let dir = nori_testdir::TempDir::new("cli-login-add-now");
+    let mut a = app_with_provider(&dir);
+    let kind = ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() };
+    a.login.busy = true;
+    a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: Vec::new() });
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains("Choose a provider") && !s.contains("Connect"), "no lone button:\n{s}");
+    a.handle(Msg::LoggedIn(Err("no way".into())));
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains("no way") && !a.login_choosing(), "its page, with why:\n{s}");
+    // With an account it waits: sign in, or go on as a guest.
+    a.login = Default::default();
+    let web = vec![SignIn::WebPage { start_url: "https://a.example".into() }];
+    a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: web.clone() });
+    assert!(!a.login.adding_now && a.login.error.is_none(), "not added yet");
+    // A name is nothing to ask there.
+    let name = vec![nori_core::providers::FieldSpec { what: nori_core::providers::FormField::Name, advanced: false }];
+    a.provider_opened(&ProviderInfo { kind, fields: name, sign_in: web });
+    assert!(a.login_account() && a.login_fields().is_empty());
+}
+
+/// On the account page Enter signs in and g goes on as a guest.
+#[test]
+fn the_account_pages_keys_say_how_it_goes_on() {
+    use nori_core::providers::{AfterAdding, ProviderInfo, SignIn};
+    use nori_core::settings::ServerKind;
+    let dir = nori_testdir::TempDir::new("cli-login-account-keys");
+    for (code, after) in [(KeyCode::Enter, AfterAdding::SignIn), (KeyCode::Char('g'), AfterAdding::Guest)] {
+        let mut a = app_with_provider(&dir);
+        let kind = ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() };
+        a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: vec![SignIn::WebPage { start_url: "https://a.example".into() }] });
+        let page = draw(&mut a, 100, 40);
+        dump("login-account", &page);
+        assert!(page.contains("Continue as guest"), "{page}");
+        assert_eq!(a.login.after, None, "waits for a key");
+        key(&mut a, code);
+        assert_eq!(a.login.after, Some(after));
+    }
+}
+
+/// With every plugin off a provider is still listed, and choosing it leads to the switch.
+#[test]
+fn every_plugin_off_leads_a_provider_to_the_switch() {
+    use crate::settings_view::Shelf;
+    let mut a = app();
+    let repo = nori_plugins::Repo { url: nori_plugins::OFFICIAL.into(), official: true };
+    let offer = nori_plugins::Offer { repo, id: "a.new".into(), name: "New".into(), about: None, source: None, readme: None, icon: None, points: vec!["provider".into()], versions: Vec::new(), installed: None, state: nori_plugins::OfferState::New };
+    a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: vec![offer], failed: Vec::new() });
+    assert_eq!(a.provider_lines().len(), 2);
+    a.prefs.plugins_off = true;
+    assert_eq!(a.provider_lines().len(), 2);
+    a.view = View::Login;
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert!(a.settings.alone && a.login.offered.is_none(), "the plugins' page, not the offer's");
+}
+
+/// A form is titled with its provider, not nori.
+#[test]
+fn a_form_is_titled_with_its_provider() {
+    let mut a = app();
+    a.view = View::Login;
+    a.provider_chosen(nori_core::settings::ServerKind::Subsonic);
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains(" OpenSubsonic ") && !s.contains("nori ·"), "{s}");
+}
+
+/// What a repo offers shows after the kinds, quieter, and only what would add one that isn't on.
+#[test]
+fn the_first_screen_lists_offers_quietly() {
+    use crate::app::ProviderLine;
+    use crate::settings_view::Shelf;
+    let dir = nori_testdir::TempDir::new("cli-login-offers");
+    let mut a = app_with_provider(&dir);
+    let sound = offer("Sound", &official(), None);
+    let source = nori_plugins::Offer { points: vec!["provider".into()], ..offer("Radio", &official(), None) };
+    a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: vec![sound, source], failed: Vec::new() });
+    let lines = a.provider_lines();
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert_eq!(lines[2], ProviderLine::Offered { id: "dev.example.radio".into(), name: "Radio".into() });
+    let s = draw(&mut a, 100, 40);
+    dump("login-providers", &s);
+    let ink_of = |word: &str| {
+        let buf = LAST.with(|l| l.borrow().clone()).unwrap();
+        let line = s.lines().position(|l| l.contains(word)).unwrap() as u16;
+        let x = (0..buf.area.width).find(|&x| buf[(x, line)].symbol() == &word[..1]).unwrap();
+        buf[(x, line)].fg
+    };
+    assert_ne!(ink_of("Radio"), ink_of("Test"), "not on, it is quieter");
+}
+
+/// A repo that can't be read leaves the kinds there are.
+#[test]
+fn a_repo_failing_leaves_the_kinds() {
+    use crate::settings_view::Shelf;
+    let dir = nori_testdir::TempDir::new("cli-login-failed");
+    let mut a = app_with_provider(&dir);
+    a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: Vec::new(), failed: vec![nori_plugins::RepoFailure { repo: official(), reason: "offline".into() }] });
+    let s = draw(&mut a, 100, 40);
+    assert!(s.contains("OpenSubsonic") && s.contains("Test"), "{s}");
+}
+
+/// Choosing an offer not installed opens its page; installed from there it is turned on, and back
+/// without installing leaves it. One installed but off just turns on.
+#[test]
+fn choosing_an_offer_installs_or_turns_it_on() {
+    use crate::app::PluginCmd;
+    use crate::settings_view::Shelf;
+    let dir = nori_testdir::TempDir::new("cli-login-offer-chosen");
+    let mut a = app_with_provider(&dir);
+    let radio = nori_plugins::Offer { points: vec!["provider".into()], ..offer("Radio", &official(), None) };
+    a.settings.own.shelf = Shelf::Read(nori_plugins::Offers { offers: vec![radio], failed: Vec::new() });
+    let id = "dev.example.radio".to_string();
+    a.login.choice.at = 2;
+
+    key(&mut a, KeyCode::Enter);
+    assert_eq!((a.view, a.login.offered.clone()), (View::Settings, Some(id.clone())), "its page");
+    let s = draw(&mut a, 140, 40);
+    assert!(s.contains("Radio about"), "{s}");
+    key(&mut a, KeyCode::Esc);
+    assert_eq!((a.view, a.login.offered.clone()), (View::Login, None), "back chooses again");
+
+    key(&mut a, KeyCode::Enter);
+    a.cmds.clear();
+    a.handle(Msg::Installed(Ok("dev.example.other".into())));
+    assert_eq!(a.view, View::Settings, "another plugin doesn't count");
+    a.handle(Msg::Installed(Ok(id.clone())));
+    assert_eq!(a.view, View::Login);
+    assert!(a.cmds.contains(&Cmd::Plugin(PluginCmd::TurnOnChosen(id.clone()))), "{:?}", a.cmds);
+    assert!(!a.settings.deep() && !a.settings.alone && a.login.offered.is_none());
+
+    a.cmds.clear();
+    a.settings.own.plugins = vec![card(&id, "Radio", Vec::new())];
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::TurnOnChosen(id.clone()))), "off, it just turns on");
+    assert_eq!(a.view, View::Login);
+
+    // Its kind isn't there (every plugin off): the first screen stays.
+    a.provider_chosen(nori_core::settings::ServerKind::Plugin { id });
+    assert_eq!(a.login.kind, None);
+}
+
+#[test]
+fn a_backup_asks_for_its_file_then_its_password() {
+    for (restore, title) in [(false, crate::text::BACK_UP), (true, crate::text::RESTORE)] {
+        let mut a = plugins_app(Vec::new(), vec![official()], Default::default());
+        select_row(&mut a, |r| matches!(r, Row::Action { title: t, .. } if t == title));
+        key(&mut a, KeyCode::Enter);
+        key(&mut a, KeyCode::Enter);
+        assert!(a.overlay.is_none() && a.cmds.is_empty(), "no file, nothing asked or done");
+        key(&mut a, KeyCode::Enter);
+        chars(&mut a, "/tmp/nori.noribackup");
+        key(&mut a, KeyCode::Enter);
+        assert!(matches!(a.overlay, Some(crate::app::Overlay::Input { secret: true, .. })), "the password is hidden");
+        chars(&mut a, "pw");
+        key(&mut a, KeyCode::Enter);
+        assert_eq!(a.cmds.last(), Some(&Cmd::Backup { restore, path: "/tmp/nori.noribackup".into(), password: "pw".into() }));
+    }
 }

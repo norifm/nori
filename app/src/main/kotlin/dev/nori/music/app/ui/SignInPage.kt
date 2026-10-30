@@ -70,7 +70,7 @@ fun SignInFlow(vm: SettingsViewModel, kind: ServerKind) {
             },
         )
     }
-    NoriDialog(ui.page, vm::closeSignInPage, DialogStyle.Page) { SignInSheet(vm, kind, start, words) }
+    NoriDialog(ui.page, vm::closeSignInPage, DialogStyle.Page) { SignInSheet(vm, kind, ui.pageStart ?: start, words) }
 }
 
 /** The sign-in page as a sheet: Cancel and the title over the provider's page, then the core's answer. */
@@ -116,7 +116,7 @@ private fun ColumnScope.Centered(content: @Composable ColumnScope.() -> Unit) {
 /**
  * A provider's sign-in page, opened at [start], in a WebView of its own: no JavaScript bridge, nothing
  * but https, no other WebView in the app to share its cookies with. Once the core says the page is done
- * (`sign_in_done`, from the address shown and its cookies), its Cookie header goes to [signedIn]. Every
+ * (`sign_in_done`, from the address shown or refused and its cookies), its Cookie header goes to [signedIn]. Every
  * cookie and all storage are cleared before it opens, as soon as the cookies are taken, and when it
  * leaves (Cancel included): a WebView keeping the session could rotate it behind nori's back and end
  * nori's copy.
@@ -141,8 +141,13 @@ private fun WebSignIn(done: suspend (String, String) -> Boolean, start: String, 
                 webViewClient = object : WebViewClient() {
                     var taken = false
 
-                    // Web pages only: an intent:// or app link opens nothing.
-                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = request.url.scheme != "https"
+                    // Web pages only: an intent:// or app link opens nothing. Its address is still looked at, as a
+                    // sign-in may end there (an OAuth redirect to an app's own address carries its code).
+                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                        if (request.url.scheme == "https") return false
+                        look(view, request.url.toString())
+                        return true
+                    }
 
                     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) = onLoading(true)
 
@@ -156,7 +161,7 @@ private fun WebSignIn(done: suspend (String, String) -> Boolean, start: String, 
                     // The provider answers off the main thread; the page goes on meanwhile.
                     fun look(view: WebView, url: String) {
                         if (taken) return
-                        val cookies = CookieManager.getInstance().getCookie(url) ?: return
+                        val cookies = CookieManager.getInstance().getCookie(url).orEmpty()
                         scope.launch {
                             if (taken || !isDone(url, cookies)) return@launch
                             taken = true

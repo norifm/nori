@@ -138,6 +138,34 @@ pub enum Place {
     Devices,
 }
 
+/// Bluetooth devices it reaches and may control: one matches when all that is given matches.
+#[derive(Clone, Copy)]
+pub struct DeviceFilter {
+    /// Its name, `*` for any run of characters, ignoring case ("WH-1000XM*").
+    pub name: Option<&'static str>,
+    /// A service UUID it offers.
+    pub service: Option<&'static str>,
+    /// Its vendor id (Bluetooth SIG or USB).
+    pub vendor: Option<u16>,
+}
+
+impl DeviceFilter {
+    /// Any device.
+    pub const ANY: DeviceFilter = DeviceFilter { name: None, service: None, vendor: None };
+
+    pub const fn name(self, pattern: &'static str) -> DeviceFilter {
+        DeviceFilter { name: Some(pattern), ..self }
+    }
+
+    pub const fn service(self, uuid: &'static str) -> DeviceFilter {
+        DeviceFilter { service: Some(uuid), ..self }
+    }
+
+    pub const fn vendor(self, id: u16) -> DeviceFilter {
+        DeviceFilter { vendor: Some(id), ..self }
+    }
+}
+
 pub struct Manifest {
     /// Reverse DNS ("fm.nori.orbit").
     pub id: &'static str,
@@ -152,16 +180,83 @@ pub struct Manifest {
     pub rows: &'static [Row],
     pub menu: &'static [MenuAction],
     pub places: &'static [Place],
+    /// The Bluetooth devices it reaches (`bluetooth`) and is offered to control (`device-control`).
+    pub devices: &'static [DeviceFilter],
+    pub permissions: &'static [Permission],
+    pub hooks: &'static [Hook],
+    pub wake: &'static [Wake],
+    /// Commands other apps may run (an Android intent, D-Bus on Linux); each reaches `lifecycle.action`.
+    pub commands: &'static [&'static str],
+    /// Its `cache`'s quota, MB; 0 for none.
+    pub cache_mb: u32,
+    pub assets: &'static [Asset],
 }
 
 impl Manifest {
     pub const fn new(id: &'static str) -> Manifest {
-        Manifest { id, stage: None, net: &[], signin: &[], overrides: &[], rows: &[], menu: &[], places: &[] }
+        Manifest { id, stage: None, net: &[], signin: &[], overrides: &[], rows: &[], menu: &[], places: &[], devices: &[], permissions: &[], hooks: &[], wake: &[], commands: &[], cache_mb: 0, assets: &[] }
     }
 }
 
+/// What a plugin may do beyond its own data and rows, each shown on its install sheet.
+#[derive(Clone, Copy)]
+pub enum Permission {
+    /// `session`'s now playing, queue and profile.
+    PlaybackRead,
+    /// `session`'s playback controls and queue edits.
+    PlaybackControl,
+    /// `session`'s search and lookups.
+    LibraryRead,
+    /// `session`'s favorites and playlists.
+    LibraryWrite,
+    /// `subsonic`: the open profile's Subsonic API.
+    Subsonic,
+    /// `timers` without an active session: at most one wake per period, never during screen-off playback.
+    Schedule,
+}
+
+/// One of nori's events a plugin hears through its `hooks` export; only those some plugin names are built.
+#[derive(Clone, Copy)]
+pub enum Hook {
+    PlaybackStarted,
+    PlaybackPaused,
+    SongChanged,
+    QueueChanged,
+    FavoriteChanged,
+    ProfileOpened,
+    RouteChanged,
+    /// Connected and disconnected.
+    DeviceConnected,
+    SettingChanged,
+    MediaButton,
+    /// Brings a wake per line while music plays, the screen off too; the install sheet says so.
+    LyricLine,
+    /// A client's output picker opened or closed: when to browse for devices.
+    OutputPicker,
+}
+
+/// What starts nori while it is closed, for the plugin's `woke` hook, once `wake.want` asks for it.
+#[derive(Clone, Copy)]
+pub enum Wake {
+    /// A Bluetooth audio device connected: "bluetooth-connected".
+    BluetoothConnected,
+    /// The device started: "boot".
+    Boot,
+}
+
+/// A large file nori fetches for the plugin (`assets`).
+#[derive(Clone, Copy)]
+pub struct Asset {
+    pub name: &'static str,
+    pub url: &'static str,
+    /// Bytes.
+    pub size: u64,
+    /// Lowercase hex.
+    pub sha256: &'static str,
+}
+
 /// The plugin API this SDK speaks.
-pub const API: u32 = 1;
+pub const API: u32 = 2;
 /// The section's own format.
 const FORMAT: u8 = 2;
 
@@ -264,6 +359,43 @@ const fn write<const N: usize>(m: &Manifest, version: &str, points: u32) -> Out<
     k = 0;
     while k < m.places.len() {
         o = o.byte(m.places[k] as u8);
+        k += 1;
+    }
+    // After the places, each group after the last: a host reads what it knows and stops, and finds none
+    // of what a manifest written before a group lacks.
+    o = o.u16(m.devices.len());
+    k = 0;
+    while k < m.devices.len() {
+        let d = &m.devices[k];
+        o = o.opt_str(d.name).opt_str(d.service).u32(match d.vendor {
+            Some(v) => v as u32,
+            None => u32::MAX,
+        });
+        k += 1;
+    }
+    o = o.u16(m.permissions.len());
+    k = 0;
+    while k < m.permissions.len() {
+        o = o.byte(m.permissions[k] as u8);
+        k += 1;
+    }
+    o = o.u16(m.hooks.len());
+    k = 0;
+    while k < m.hooks.len() {
+        o = o.byte(m.hooks[k] as u8);
+        k += 1;
+    }
+    o = o.u16(m.wake.len());
+    k = 0;
+    while k < m.wake.len() {
+        o = o.byte(m.wake[k] as u8);
+        k += 1;
+    }
+    o = o.strs(m.commands).u32(m.cache_mb).u16(m.assets.len());
+    k = 0;
+    while k < m.assets.len() {
+        let a = &m.assets[k];
+        o = o.str(a.name).str(a.url).all(&a.size.to_le_bytes()).str(a.sha256);
         k += 1;
     }
     o

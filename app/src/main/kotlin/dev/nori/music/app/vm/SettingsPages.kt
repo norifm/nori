@@ -121,7 +121,47 @@ data class SettingsFacts(
     val installsUpdates: Boolean = false,
     /** Installed plugins' names by id, which name their kinds of profile. */
     val pluginNames: Map<String, String> = emptyMap(),
+    val backup: BackupUi = BackupUi.Idle,
 )
+
+/** Where making or restoring a backup stands; [restore] tells which row says it. */
+sealed interface BackupUi {
+    data object Idle : BackupUi
+    data class Working(val restore: Boolean) : BackupUi
+    data object Saved : BackupUi
+    data class Restored(val plugins: List<dev.nori.music.ffi.plugins.PluginRestored>) : BackupUi
+    /** [error] is the core's; null when the file itself couldn't be read or written. */
+    data class Failed(val restore: Boolean, val error: dev.nori.music.ffi.backup.BackupException?) : BackupUi
+}
+
+/** What [b] says on its row, or null for the row's own line. */
+fun backupWords(res: Resources, b: BackupUi, restore: Boolean): String? = when (b) {
+    BackupUi.Idle -> null
+    is BackupUi.Working -> if (b.restore == restore) res.getString(R.string.settings_backup_working) else null
+    BackupUi.Saved -> if (!restore) res.getString(R.string.settings_backup_saved) else null
+    is BackupUi.Restored -> if (restore) {
+        val each = b.plugins.mapNotNull { p ->
+            when (val o = p.outcome) {
+                is dev.nori.music.ffi.plugins.PluginReturn.AsKept -> null
+                is dev.nori.music.ffi.plugins.PluginReturn.Other -> res.getString(R.string.settings_backup_plugin_other, p.id, o.version)
+                is dev.nori.music.ffi.plugins.PluginReturn.FromFile -> res.getString(R.string.settings_backup_plugin_file, p.id)
+                is dev.nori.music.ffi.plugins.PluginReturn.Unavailable -> res.getString(R.string.settings_backup_plugin_gone, p.id)
+            }
+        }
+        (listOf(res.getString(R.string.settings_backup_restored)) + each).joinToString(" ")
+    } else null
+    is BackupUi.Failed -> if (b.restore == restore) res.getString(
+        when (b.error) {
+            is dev.nori.music.ffi.backup.BackupException.NoPassword -> R.string.settings_backup_no_password
+            is dev.nori.music.ffi.backup.BackupException.WrongPassword -> R.string.settings_backup_wrong_password
+            is dev.nori.music.ffi.backup.BackupException.NotABackup -> R.string.settings_backup_not_backup
+            is dev.nori.music.ffi.backup.BackupException.Newer -> R.string.settings_backup_newer
+            is dev.nori.music.ffi.backup.BackupException.Damaged -> R.string.settings_backup_damaged
+            is dev.nori.music.ffi.backup.BackupException.Database -> R.string.settings_backup_database
+            null -> R.string.settings_backup_file
+        },
+    ) else null
+}
 
 /** A row's key: its title, lowercased, with every run of anything but a-z and 0-9 made one '-'. Search lands on a row by it. */
 fun settingKey(title: String): String {
@@ -284,6 +324,8 @@ private fun itemWords(item: RowItem): Pair<Int, Int>? = when (item) {
         SettingsAction.CLEAR_COVERS -> R.string.settings_covers to R.string.settings_hint_covers
         SettingsAction.CLEAR_LYRICS -> R.string.settings_lyrics_cache to R.string.settings_hint_lyrics_cache
         SettingsAction.CHECK_UPDATE -> R.string.settings_update_check_now to R.string.settings_hint_updates
+        SettingsAction.MAKE_BACKUP -> R.string.settings_back_up to R.string.settings_hint_backup
+        SettingsAction.RESTORE_BACKUP -> R.string.settings_restore to R.string.settings_hint_backup
         SettingsAction.ADD_SERVER, SettingsAction.JOIN_JAM -> null
     }
     is RowItem.Stored -> R.string.settings_stored to R.string.settings_hint_stored
@@ -461,6 +503,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         SectionId.STREAMING -> R.string.settings_section_streaming
         SectionId.DOWNLOADS -> R.string.settings_section_downloads
         SectionId.STORAGE -> R.string.settings_section_storage
+        SectionId.BACKUP -> R.string.settings_section_backup
         SectionId.UPDATES -> R.string.settings_updates
     }
 
@@ -673,8 +716,20 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
                     button ?: str(R.string.update_check), button != null, failed, act,
                 )
             }
+            SettingsAction.MAKE_BACKUP -> backupRow(false, enabled)
+            SettingsAction.RESTORE_BACKUP -> backupRow(true, enabled)
             SettingsAction.JOIN_JAM -> null
         }
+    }
+
+    /** Making a backup ([restore] false) or restoring one: its line says how the last one went. */
+    fun backupRow(restore: Boolean, enabled: Boolean): SettingRow.Action {
+        val b = f.backup
+        val t = str(if (restore) R.string.settings_restore else R.string.settings_back_up)
+        val said = backupWords(res, b, restore) ?: str(if (restore) R.string.settings_restore_detail else R.string.settings_back_up_detail)
+        val failed = b is BackupUi.Failed && b.restore == restore
+        val button = str(if (restore) R.string.settings_backup_open else R.string.settings_backup_save)
+        return SettingRow.Action(settingKey(t), t, said, button, enabled && b !is BackupUi.Working, failed, if (restore) "restore" else "backup")
     }
 
     fun actionRow(title: Int, detail: String, button: String, enabled: Boolean, act: String): SettingRow.Action {

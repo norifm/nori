@@ -1,6 +1,8 @@
 //! Which sound profile an output device gets when playback moves to it: its bound profile, or with
 //! none bound an AutoEQ curve offered or applied, unless it is marked quiet.
 
+use crate::prelude::*;
+
 /// Facts about a newly active output device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Arrival {
@@ -90,7 +92,7 @@ pub struct DeviceRow {
 /// Every known output plus the current one, speaker first, then by name. `profiles`: (name, bound outputs).
 pub fn rows(known: &[String], current: &str, profiles: &[(&str, &[String])], quiet: &[String]) -> Vec<DeviceRow> {
     let mut outputs: Vec<&str> = Vec::with_capacity(known.len() + 1);
-    for o in known.iter().map(String::as_str).chain(std::iter::once(current)) {
+    for o in known.iter().map(String::as_str).chain(core::iter::once(current)) {
         if !outputs.contains(&o) {
             outputs.push(o);
         }
