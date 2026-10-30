@@ -341,6 +341,9 @@ impl nori_plugins::Client for Watched {
 
     fn cast(&self, cast: Option<nori_plugins::Cast>) {
         nori_core::alog::info(&format!("plugins: casting {cast:?}"));
+        if let Some(s) = self.session() {
+            s.cast_changed(cast.as_ref());
+        }
         if let Some(to) = self.casts.lock().expect("not poisoned").as_ref() {
             to(cast);
         }

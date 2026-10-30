@@ -895,7 +895,7 @@ impl Runner {
                 s.set_volume(v);
                 // A guest's volume is this computer's, while the player shows the jam.
                 if !matches!(self.playback, Playback::There(_)) {
-                    own::keep(own::VOLUME, v.to_string());
+                    own::keep(own::VOLUME, s.volume().to_string());
                 }
                 app.volume = v;
                 app.settings.invalidate();
