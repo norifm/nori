@@ -174,16 +174,37 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
         ProviderChoice(vm, onClose) { kind -> p = p.copy(kind = kind); choosing = false }
         return
     }
+    // Nothing to ask: an account's provider offers signing in or going on as a guest, and one with no
+    // account is added as soon as it's chosen, its page showing only a failure.
+    val asksNothing = adding && info != null && info.fields.none { !it.advanced && it.what != Field.NAME }
+    val signsIn = asksNothing && info!!.signIn.any { it is SignIn.WebPage }
+    var added by remember(p.kind) { mutableStateOf(false) }
+    LaunchedEffect(info, ready) {
+        if (asksNothing && !signsIn && !added && ready) {
+            added = true
+            vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers))
+        }
+    }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), Arrangement.spacedBy(12.dp)) {
             Text(
-                if (initial == null) "nori" else say.server,
+                if (adding) words.name else say.server,
                 style = titled(MaterialTheme.typography.displaySmall), modifier = Modifier.padding(top = 16.dp, bottom = 2.dp),
             )
             if (adding && words.hint.isNotEmpty()) Text(words.hint, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            info?.fields?.filter { !it.advanced }?.forEach { Ask(it.what) }
+            if (!asksNothing) info?.fields?.filter { !it.advanced }?.forEach { Ask(it.what) }
             ui.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            PillButton(
+            if (signsIn) {
+                PillButton(
+                    if (ui.busy) say.connecting else words.account.pageButton, null,
+                    { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.app.vm.AfterAdding.SIGN_IN) },
+                    Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect-sign-in"), prominent = true, enabled = !ui.busy && ready,
+                )
+                PillButton(
+                    say.providerGuest, null, { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.app.vm.AfterAdding.GUEST) },
+                    Modifier.fillMaxWidth().testTag("connect-guest"), enabled = !ui.busy && ready,
+                )
+            } else PillButton(
                 if (ui.busy) say.connecting else if (adding) words.add else say.save, null,
                 { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers)) },
                 Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect"), prominent = true,

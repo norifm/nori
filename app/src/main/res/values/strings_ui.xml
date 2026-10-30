@@ -212,6 +212,7 @@
     <string name="server_url">Server URL</string>
     <string name="profile_kind_server">OpenSubsonic</string>
     <string name="provider_choose">Choose a provider</string>
+    <string name="provider_guest">Continue as guest</string>
     <string name="provider_subsonic_about">Navidrome and other servers</string>
     <string name="profile_kind_plugin_no_user">Not signed in</string>
     <string name="provider_add">Add %1$s</string>

@@ -406,6 +406,7 @@ class Say(private val r: Resources) {
     val pluginFromFile: String get() = r.getString(R.string.plugins_from_file)
     val pluginUnsigned: String get() = r.getString(R.string.plugins_unsigned)
     val providerChoose: String get() = r.getString(R.string.provider_choose)
+    val providerGuest: String get() = r.getString(R.string.provider_guest)
     val providerSubsonicAbout: String get() = r.getString(R.string.provider_subsonic_about)
     val pluginsEvery: String get() = r.getString(R.string.plugins_every)
     /** Why plugins are off at this start: [names] of those nori stopped in, or none for a start that didn't finish. */

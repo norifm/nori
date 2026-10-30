@@ -55,6 +55,9 @@ data class LoginUi(val busy: Boolean = false, val error: String? = null, val don
  * failed, whether the provider's sign-in page is open, and whether a profile just added, or a session the
  * provider ended ([ended]), offers it.
  */
+/** What a profile just added goes on to: its provider's sign-in, asked or opened, or nothing. */
+enum class AfterAdding { OFFER_SIGN_IN, SIGN_IN, GUEST }
+
 data class AccountUi(
     val account: dev.nori.music.ffi.AccountState? = null, val busy: Boolean = false, val failed: dev.nori.music.ffi.SignInResult? = null,
     val page: Boolean = false, val offer: Boolean = false, val ended: Boolean = false,
@@ -460,7 +463,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         _account.update { it.copy(offer = true, ended = ended) }
     }
 
-    fun login(profile: SavedServer) {
+    fun login(profile: SavedServer, afterAdding: AfterAdding = AfterAdding.OFFER_SIGN_IN) {
         if (_login.value.busy) return
         _login.value = LoginUi(busy = true)
         val saved = prefs.value.servers.map { it.id }
@@ -468,7 +471,11 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
             _login.value = try {
                 val accepted = nori.login(profile)
                 // A profile just added whose account signs in on a page offers it, which can be skipped.
-                if (accepted.id !in saved && provider(accepted.kind)?.signIn?.firstOrNull() is dev.nori.music.ffi.SignIn.WebPage) _account.value = AccountUi(offer = true)
+                if (accepted.id !in saved && provider(accepted.kind)?.signIn?.firstOrNull() is dev.nori.music.ffi.SignIn.WebPage) when (afterAdding) {
+                    AfterAdding.OFFER_SIGN_IN -> _account.value = AccountUi(offer = true)
+                    AfterAdding.SIGN_IN -> _account.value = AccountUi(page = true)
+                    AfterAdding.GUEST -> {}
+                }
                 LoginUi(done = true)
             } catch (e: Exception) {
                 LoginUi(error = describeConnectionError(e))
