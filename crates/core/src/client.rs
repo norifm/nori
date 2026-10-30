@@ -77,6 +77,11 @@ impl CurrentClient {
 }
 
 impl Client {
+    /// The URL of cover `id` at `size` px ([`Core::cover_address`]).
+    pub fn cover_address(&self, id: String, size: u32) -> String {
+        self.core.cover_address(id, size)
+    }
+
     pub fn core(&self) -> &Arc<Core> {
         &self.core
     }
