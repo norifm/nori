@@ -237,9 +237,19 @@ impl Nori {
         js_sys::Array::of3(&JsValue::from_str(&colors.to_string()), &rgba(true), &rgba(false))
     }
 
-    /// The album grid's orders, in the order offered, by name (`browse::album_sorts`): `newest`, `artistRows`, ...
+    /// The album grid's orders, in the order offered (`browse::album_sorts`): each by name (`newest`,
+    /// `artistRows`, ...) and the way it runs (`browse::album_sort_direction`: `up`, `down`, or `` shuffled).
     pub fn album_sorts(&self) -> String {
-        Value::from(nori_core::browse::album_sorts().iter().map(|s| s.name()).collect::<Vec<_>>()).to_string()
+        use nori_core::browse::SortDirection;
+        let orders = nori_core::browse::album_sorts().into_iter().map(|s| {
+            let way = match nori_core::browse::album_sort_direction(s) {
+                SortDirection::Ascending => "up",
+                SortDirection::Descending => "down",
+                SortDirection::Shuffled => "",
+            };
+            json!({ "name": s.name(), "way": way })
+        });
+        Value::from(orders.collect::<Vec<_>>()).to_string()
     }
 
     /// The album grid's order as it was left, by name (`browse::album_sort_saved`).

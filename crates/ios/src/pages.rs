@@ -7,7 +7,7 @@ use std::ffi::{c_char, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use nori_core::browse::{album_sort_kept, album_sort_saved, album_sorts, artist_rows, favorites_in_order, home_pinned, home_row_more, home_row_page, next_album_page, shelf_albums_read, song_sort_kept, song_sort_saved, song_sorts, AlbumSort, HomeShelf};
+use nori_core::browse::{album_sort_direction, album_sort_kept, album_sort_saved, album_sorts, artist_rows, favorites_in_order, home_pinned, home_row_more, home_row_page, next_album_page, shelf_albums_read, song_sort_direction, song_sort_kept, song_sort_saved, song_sorts, AlbumSort, HomeShelf, SortDirection};
 use nori_core::cache_policy::{Page, Read};
 use nori_core::numbers::{self, POINT};
 use nori_core::client::Starrable;
@@ -1401,19 +1401,26 @@ pub unsafe extern "C" fn nori_ios_lyrics_page(song: *const c_char) -> *mut c_cha
 }
 
 /// A long list's orders as JSON to free: `now` the one it is in, `all` every one in the menu's order
-/// (albums by [`AlbumSort::name`], songs by [`song_sorts`] name, both for the client to word). Null for a
-/// page without orders.
+/// (albums by [`AlbumSort::name`], songs by [`song_sorts`] name, both for the client to word), and `ways`
+/// which way each runs (1 up, -1 down, 0 shuffled). Null for a page without orders.
 #[no_mangle]
 pub extern "C" fn nori_ios_sorts(kind: i32) -> *mut c_char {
+    let way = |d| match d {
+        SortDirection::Ascending => 1,
+        SortDirection::Descending => -1,
+        SortDirection::Shuffled => 0,
+    };
     let prefs = list_prefs();
     let v = match kind {
         PAGE_ALBUMS => json!({
             "now": album_sort_saved(prefs).name(),
             "all": album_sorts().into_iter().map(|s| s.name()).collect::<Vec<_>>(),
+            "ways": album_sorts().into_iter().map(|s| way(album_sort_direction(s))).collect::<Vec<_>>(),
         }),
         PAGE_SONGS => json!({
             "now": song_sort_saved(prefs),
             "all": song_sorts().into_iter().map(|s| s.name).collect::<Vec<_>>(),
+            "ways": song_sorts().into_iter().map(|s| way(song_sort_direction(s.name))).collect::<Vec<_>>(),
         }),
         _ => return std::ptr::null_mut(),
     };

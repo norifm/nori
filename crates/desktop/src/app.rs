@@ -1916,6 +1916,12 @@ impl App {
         ui.set_albums_favorites(self.albums_favorites);
         let sorts = nori_core::browse::album_sorts();
         ui.set_album_sorts(ModelRc::new(VecModel::from(sorts.iter().map(|&s| SharedString::from(words::album_sort(s))).collect::<Vec<_>>())));
+        let way = |s| match nori_core::browse::album_sort_direction(s) {
+            nori_core::browse::SortDirection::Ascending => 1,
+            nori_core::browse::SortDirection::Descending => -1,
+            nori_core::browse::SortDirection::Shuffled => 0,
+        };
+        ui.set_album_sort_ways(ModelRc::new(VecModel::from(sorts.iter().map(|&s| way(s)).collect::<Vec<i32>>())));
         ui.set_album_sort(sorts.iter().position(|&s| s == self.album_sort).unwrap_or(0) as i32);
         ui.set_albums_in_rows(self.album_sort == AlbumSort::ArtistRows);
     }

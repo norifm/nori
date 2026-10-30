@@ -377,6 +377,7 @@ enum Say {
     static let newPlaylist = "New playlist"
     static let create = "Create"
     static let cancel = "Cancel"
+    static let sortBy = "Sort by"
     static let sleepTimer = "Sleep timer"
     static let detailsTitle = "Details"
     static let excludedFromMixes = "Excluded from mixes"
