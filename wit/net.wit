@@ -102,6 +102,15 @@ interface cast {
         target,
     }
 
+    /// A device a cast could go to.
+    record target {
+        id: string,
+        name: string,
+    }
+
+    /// The devices it can cast to now, each a row of nori's own devices list; picking one runs the
+    /// lifecycle action `cast:<id>`. Replaces those it offered before.
+    offer: func(targets: list<target>);
     start: func(kind: kind, device-name: string);
     /// The device's state, for the player.
     report: func(playing: bool, position-ms: u64, volume: option<u8>);

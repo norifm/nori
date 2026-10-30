@@ -1206,6 +1206,7 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
             let c = d.cast.as_ref().expect("a cast row has its cast");
             spread(vec![tick(true), name(&c.device, true)], Span::styled(crate::text::cast_line(c), t.dim()), w)
         }
+        DeviceRow::Target(k) => Line::from(vec![tick(false), name(&d.targets[k].name, false)]),
         DeviceRow::Device(k) => {
             let x = &d.list[k];
             let on = active == Some(x.id.as_str());

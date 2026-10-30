@@ -141,6 +141,11 @@ pub fn action(id: &str) {
             cast::start(Kind::Target, "TV");
             "casting".into()
         }
+        "cast-offer" => {
+            cast::offer(&[cast::Target { id: "kitchen".into(), name: "Kitchen".into() }]);
+            "offered".into()
+        }
+        "cast:kitchen" => "picked".into(),
         "cast-report" => {
             cast::report(true, 20_000, None);
             "reported".into()

@@ -3677,13 +3677,16 @@ impl App {
         let remote = self.session.as_ref().and_then(|s| s.remote());
         let cast = self.cast();
         // A jam guest's music is the jam's; it moves to no other device.
-        ui.set_devices_on((remote.is_some() || cast.is_some() || ui.get_device_plugin_rows().row_count() > 0) && !self.guest());
-        if !devices_open(&ui) || (remote.is_none() && cast.is_none()) {
+        let host = &nori_host::desktop::plugins(&self.data).host;
+        let targets = host.cast_targets();
+        ui.set_devices_on((remote.is_some() || cast.is_some() || host.finds_outputs() || ui.get_device_plugin_rows().row_count() > 0) && !self.guest());
+        if !devices_open(&ui) || (remote.is_none() && cast.is_none() && targets.is_empty()) {
             return;
         }
         let active = self.there().map(|e| e.mirror.id.as_str());
         let mut rows = vec![words::device_row(None, active.is_none() && cast.is_none())];
         rows.extend(cast.as_ref().map(words::cast_row));
+        rows.extend(targets.iter().map(words::target_row));
         if let Some(r) = remote {
             let mut devices = r.devices();
             let names = nori_core::remote::device_names(devices.clone(), r.me(), words::kind_words());
@@ -3742,6 +3745,10 @@ impl App {
     fn pick_device(&self, id: String) {
         if id == words::CAST_ROW {
             return;
+        }
+        let host = &nori_host::desktop::plugins(&self.data).host;
+        if let Some(target) = host.cast_targets().into_iter().find(|t| words::target_id(t) == id) {
+            return host.cast_to(target);
         }
         if id.is_empty() && self.cast().is_some() {
             nori_host::desktop::plugins(&self.data).host.cast_button(nori_plugins::CastButton::Stop);

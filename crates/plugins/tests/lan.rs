@@ -426,7 +426,37 @@ fn a_deep_sink_is_said_hello_and_its_buttons_are_media_buttons() {
         }
     };
     assert_eq!(volume, format!("{:?}", Host::Volume { gain: 0.35 }), "nori sends the volume keys' step");
-    rig.act("cast-end");
+    assert!(rig.plugins.cast_volume(100));
+    let volume = loop {
+        let n = device.read(&mut buf).unwrap();
+        frames.push(&buf[..n]);
+        if let Some(f) = frames.next_host() {
+            break format!("{:?}", f.unwrap());
+        }
+    };
+    assert_eq!(volume, format!("{:?}", Host::Volume { gain: 1.0 }), "a slider's place, not a step");
+    assert_eq!(rig.plugins.cast().unwrap().volume, Some(100));
+
+    drop(device);
+    let gone = std::time::Instant::now();
+    while last(&sinks).as_deref() != Some("here") && gone.elapsed() < std::time::Duration::from_secs(5) {
+        std::thread::yield_now();
+    }
+    assert_eq!(last(&sinks).as_deref(), Some("here"), "a device lost: the music comes back here");
+    assert!(rig.plugins.cast().is_none(), "its cast ended");
+    rig.settle();
+    assert_eq!(rig.said("button"), Some(vec!["cast-stop".into()]), "the plugin hears it stop");
+}
+
+#[test]
+fn what_a_plugin_offers_is_a_device_to_cast_to() {
+    let rig = Rig::new("plugins-lan-offer");
+    rig.act("cast-offer");
+    let targets = rig.plugins.cast_targets();
+    assert_eq!(targets.iter().map(|t| (t.id.as_str(), t.name.as_str())).collect::<Vec<_>>(), [("kitchen", "Kitchen")]);
+    rig.plugins.cast_to(targets[0].clone());
+    rig.settle();
+    assert_eq!(rig.said("cast:kitchen"), Some(vec!["picked".into()]));
 }
 
 #[test]

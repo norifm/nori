@@ -720,8 +720,8 @@ impl Handle {
             };
         }
         #[cfg(feature = "desktop")]
-        if let Some(p) = &self.plugins {
-            if p.cast().and_then(|c| cast_button(press, &c)).is_some_and(|b| p.cast_button(b)) {
+        if let Press::Volume { level } = press {
+            if self.cast_took(level) {
                 return true;
             }
         }
@@ -1390,8 +1390,21 @@ impl Handle {
         (self.out)(Said::Volume(shown_level(cast, self.level.get())));
     }
 
+    /// A plugin's cast with a volume of its own takes `level` as that volume.
+    fn cast_took(&self, level: f32) -> bool {
+        #[cfg(feature = "desktop")]
+        if let Some(p) = &self.plugins {
+            return p.cast().is_some_and(|c| c.volume.is_some()) && p.cast_volume((level.clamp(0.0, 1.0) * 100.0).round() as u8);
+        }
+        let _ = level;
+        false
+    }
+
     /// Another device set the volume: as [`Handle::set_level`], and the client is told.
     pub(crate) fn volume_from_afar(&self, v: f32) {
+        if self.cast_took(v) {
+            return;
+        }
         self.set_level(v);
         (self.out)(Said::Volume(self.level.get()));
     }
@@ -1663,19 +1676,6 @@ fn shown_level(cast: Option<&nori_plugins::Cast>, level: f32) -> f32 {
     cast.and_then(|c| c.volume).map_or(level, |v| v as f32 / 100.0)
 }
 
-/// A volume `press` as a plugin's cast hears it: a step toward the level asked, none where the device
-/// says no volume. The rest moves nori's own queue, which the cast follows (`Plugins::played`).
-#[cfg(feature = "desktop")]
-fn cast_button(press: Press, cast: &nori_plugins::Cast) -> Option<nori_plugins::CastButton> {
-    use nori_plugins::CastButton;
-    let Press::Volume { level } = press else { return None };
-    match (level * 100.0).round() as i32 - cast.volume? as i32 {
-        0 => None,
-        up if up > 0 => Some(CastButton::VolumeUp),
-        _ => Some(CastButton::VolumeDown),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::Read as _;
@@ -1688,29 +1688,10 @@ mod tests {
 
     #[cfg(feature = "desktop")]
     #[test]
-    fn a_cast_hears_a_volume_step_toward_the_level() {
-        use nori_plugins::{Cast, CastButton, CastKind};
-        let cast = |volume| Cast { plugin: "p".into(), kind: CastKind::Target, device: "TV".into(), playing: true, position_ms: 0, volume, bursts: false };
-        for (press, volume, heard) in [
-            (Press::Volume { level: 0.6 }, Some(40), Some(CastButton::VolumeUp)),
-            (Press::Volume { level: 0.2 }, Some(40), Some(CastButton::VolumeDown)),
-            (Press::Volume { level: 0.4 }, Some(40), None),
-            (Press::Volume { level: 0.6 }, None, None),
-            (Press::Next, Some(40), None),
-        ] {
-            assert_eq!(cast_button(press, &cast(volume)), heard, "{press:?} at {volume:?}");
-        }
-    }
-
-    #[cfg(feature = "desktop")]
-    #[test]
-    fn a_step_from_the_volume_shown_moves_a_cast_that_way() {
-        use nori_plugins::{Cast, CastButton, CastKind};
+    fn a_cast_with_a_volume_is_the_volume_shown() {
+        use nori_plugins::{Cast, CastKind};
         let cast = Cast { plugin: "p".into(), kind: CastKind::Sink, device: "Kitchen".into(), playing: true, position_ms: 0, volume: Some(85), bursts: false };
-        for (level, step, heard) in [(0.7, 0.05, CastButton::VolumeUp), (1.0, 0.05, CastButton::VolumeUp), (1.0, -0.05, CastButton::VolumeDown), (0.0, -0.05, CastButton::VolumeDown)] {
-            let press = Press::Volume { level: shown_level(Some(&cast), level) + step };
-            assert_eq!(cast_button(press, &cast), Some(heard), "from {level}, by {step}");
-        }
+        assert_eq!(shown_level(Some(&cast), 0.7), 0.85);
         assert_eq!(shown_level(None, 0.7), 0.7, "this device's own again");
         assert_eq!(shown_level(Some(&Cast { volume: None, ..cast }), 0.7), 0.7, "a cast that says none");
     }

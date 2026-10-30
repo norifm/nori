@@ -197,6 +197,8 @@ pub enum Cmd {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PluginCmd {
     Read,
+    /// The music goes to this device.
+    CastTo(nori_plugins::CastTarget),
     /// The switch over every plugin changed.
     Switched,
     /// Shows the `.noriplugin` or plugin folder at this path before it is installed.
@@ -787,6 +789,10 @@ pub struct Devices {
     pub controlled: Vec<nori_plugins::ControlledDevice>,
     /// A plugin's cast, while one runs.
     pub cast: Option<nori_plugins::Cast>,
+    /// The devices plugins can cast to now.
+    pub targets: Vec<nori_plugins::CastTarget>,
+    /// A plugin looks for devices while the panel is open.
+    pub finds: bool,
 }
 
 /// The sheet before installing what `p` shows: what it is, what it may reach, where it comes from.
@@ -837,6 +843,8 @@ pub enum DeviceRow {
     Here,
     /// The device a plugin casts to.
     Cast,
+    /// Index into [`Devices::targets`]: a device a plugin can cast to.
+    Target(usize),
     /// Index into [`Devices::list`]: its name, then what it plays.
     Device(usize),
     Playing(usize),
@@ -867,12 +875,13 @@ impl Devices {
                 rows.push(DeviceRow::Noise(i));
             }
         }
-        if self.on || self.cast.is_some() {
+        if self.on || self.cast.is_some() || !self.targets.is_empty() {
             rows.push(DeviceRow::Here);
         }
         if self.cast.is_some() {
             rows.push(DeviceRow::Cast);
         }
+        rows.extend((0..self.targets.len()).map(DeviceRow::Target));
         if self.on {
             rows.extend((0..self.list.len()).flat_map(|i| [DeviceRow::Device(i), DeviceRow::Playing(i)]));
             if self.jams || self.jam.is_some() {
@@ -918,7 +927,7 @@ impl Devices {
 
     /// The panel shows: other devices or jams are on, a plugin has rows here, casts or controls a device.
     pub fn shown(&self) -> bool {
-        self.on || !self.plugins.is_empty() || self.cast.is_some() || !self.controlled.is_empty()
+        self.on || !self.plugins.is_empty() || self.cast.is_some() || !self.controlled.is_empty() || self.finds
     }
 
     /// The controlled device this computer's `output` plays on ("" for the system's default).
@@ -3499,6 +3508,11 @@ impl App {
                 }
             }
             Some(DeviceRow::Cast) => self.dirty = false,
+            Some(DeviceRow::Target(i)) => {
+                if let Some(t) = d.targets.get(i).cloned() {
+                    self.cmds.push(Cmd::Plugin(PluginCmd::CastTo(t)));
+                }
+            }
             Some(DeviceRow::Device(i) | DeviceRow::Playing(i)) => {
                 if let Some(id) = d.list.get(i).map(|x| x.id.clone()) {
                     self.cmds.push(Cmd::Pick(Some(id)));

@@ -702,6 +702,15 @@ pub fn cast_row(c: &nori_plugins::Cast) -> crate::DeviceRow {
     crate::DeviceRow { id: CAST_ROW.into(), name: c.device.clone().into(), line: line.into(), active: true, ..Default::default() }
 }
 
+/// The devices panel's row id of a device a plugin can cast to.
+pub fn target_id(t: &nori_plugins::CastTarget) -> String {
+    format!("{CAST_ROW}:{}:{}", t.plugin, t.id)
+}
+
+pub fn target_row(t: &nori_plugins::CastTarget) -> crate::DeviceRow {
+    crate::DeviceRow { id: target_id(t).into(), name: t.name.clone().into(), ..Default::default() }
+}
+
 pub fn device_row(d: Option<&nori_core::remote::RemoteDevice>, active: bool) -> crate::DeviceRow {
     use nori_core::remote::wire::Refusal;
     let Some(d) = d else {

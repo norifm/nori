@@ -38,15 +38,17 @@ class CastPlayer(controls: Player, private val plugins: PluginHost) : Forwarding
             .build()
     }
 
-    override fun handleSetDeviceVolume(deviceVolume: Int, flags: Int): ListenableFuture<*> =
-        step(deviceVolume - getState().deviceVolume)
+    override fun handleSetDeviceVolume(deviceVolume: Int, flags: Int): ListenableFuture<*> {
+        plugins.castVolumeTook(deviceVolume * 100 / STEPS)
+        return Futures.immediateVoidFuture()
+    }
 
     override fun handleIncreaseDeviceVolume(flags: Int): ListenableFuture<*> = step(1)
 
     override fun handleDecreaseDeviceVolume(flags: Int): ListenableFuture<*> = step(-1)
 
     private fun step(by: Int): ListenableFuture<*> {
-        if (by != 0) plugins.castTook(if (by > 0) CastButton.VOLUME_UP else CastButton.VOLUME_DOWN)
+        plugins.castTook(if (by > 0) CastButton.VOLUME_UP else CastButton.VOLUME_DOWN)
         return Futures.immediateVoidFuture()
     }
 

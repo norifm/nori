@@ -61,7 +61,7 @@ pub use cast::{Card, Cards, Media, Service, TxtEntry};
 pub use hooks::Press;
 pub use host::{Side, Value};
 pub use kept::{KeptPlugin, KeptPlugins, PluginRestored, PluginReturn};
-pub use lan::{Cast, CastButton, CastKind};
+pub use lan::{Cast, CastButton, CastKind, CastTarget};
 pub use sink::{Encoding, Sink};
 pub use manifest::{AssetSpec, DeviceFilter, Glyph, Hook, ItemKind, Manifest, MenuSpec, Permission, Place, Refusal, RowKind, RowSpec, Slot, WakeEvent, API, POINTS};
 pub use session::{Control, Found, Library, Moment, Profile, Repeat, Route};
@@ -249,6 +249,7 @@ impl Plugins {
             paused: AtomicBool::new(paused),
             safe_start: Mutex::new(safe_start),
         });
+        plugins.lan.set_plugins(Arc::downgrade(&plugins));
         if crashed {
             plugins.keep(&plugins.installed());
         }
