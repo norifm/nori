@@ -43,7 +43,7 @@ enum Say {
     }
 
     static func mix(_ code: Int) -> String {
-        ["Favorites", "Quick picks", "Discover", "Discover Weekly", "Listen again", "Your top songs"][safe: code] ?? ""
+        ["Favorites", "Quick picks", "Discover", "Rewind", "Listen again", "Top songs"][safe: code] ?? ""
     }
 
     /// A long list's order, by the name the core keeps it under: album orders by `AlbumSort::name`,

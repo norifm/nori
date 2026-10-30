@@ -154,7 +154,7 @@ pub(crate) mod tests {
         assert_eq!(core.mix_draw("top".into(), 100, false, None), MixDraw::Kept);
         assert!(!sheet(&core, "top").refreshable);
         let warm = core.mix_warm(100);
-        assert_eq!(warm.needs_fallback, ["quick-picks", "discover-weekly", "listen-again"]);
+        assert_eq!(warm.needs_fallback, ["quick-picks", "rewind", "listen-again"]);
         assert!(!warm.changed);
     }
 
@@ -177,9 +177,10 @@ pub(crate) mod tests {
         assert_eq!(ids(&sheet(&core, "discover").songs), expected(today * 1000 + 2));
         assert_eq!(core.mix_draw("discover".into(), today + 1, false, None), MixDraw::Drawn);
         assert_eq!(ids(&sheet(&core, "discover").songs), expected((today + 1) * 1000));
-        assert_eq!(core.mix_draw("discover-weekly".into(), 7 * 3000, false, None), MixDraw::Drawn);
-        assert_eq!(core.mix_draw("discover-weekly".into(), 7 * 3000 + 6, false, None), MixDraw::Kept);
-        assert_eq!(ids(&sheet(&core, "discover-weekly").songs), expected(3000 * 1000 + 7_000_000));
+        // Rewind is weekly: one draw for the seven days, a new one after.
+        assert_eq!(core.mix_draw("rewind".into(), 7 * 3000, false, Some(all[..3].to_vec())), MixDraw::Drawn);
+        assert_eq!(core.mix_draw("rewind".into(), 7 * 3000 + 6, false, None), MixDraw::Kept);
+        assert_eq!(core.mix_draw("rewind".into(), 7 * 3001, false, None), MixDraw::NeedsFallback);
         let cards = core.mix_cards(true);
         assert_eq!(cards.len(), 6);
         assert_eq!(cards[2].id, "discover");
@@ -194,7 +195,7 @@ pub(crate) mod tests {
         assert_eq!(ids(&core).len(), 6, "not drawn yet: loading");
         assert_eq!(core.mix_draw("discover".into(), 100, false, Some(vec![])), MixDraw::Drawn);
         core.mix_favourites(vec![song("ext-1", "t", "a", "b", "", 0)]);
-        assert_eq!(ids(&core), ["quick-picks", "discover-weekly", "listen-again", "top"]);
+        assert_eq!(ids(&core), ["quick-picks", "rewind", "listen-again", "top"]);
     }
 
     #[test]

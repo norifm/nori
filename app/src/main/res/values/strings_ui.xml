@@ -500,9 +500,9 @@
     <!-- The "For you" mixes (mixes::board). -->
     <string name="mix_quick_picks">Quick picks</string>
     <string name="mix_discover">Discover</string>
-    <string name="mix_discover_weekly">Discover Weekly</string>
+    <string name="mix_rewind">Rewind</string>
     <string name="mix_listen_again">Listen again</string>
-    <string name="mix_top">Your top songs</string>
+    <string name="mix_top">Top songs</string>
     <string name="mix_unknown">There is no mix called %1$s</string>
     <!-- The ready-made smart playlists (smart.rs). -->
     <string name="smart_most_played">Most played</string>
