@@ -143,6 +143,7 @@ pub fn action(id: &str) {
         }
         "cast-offer" => {
             cast::offer(&[cast::Target { id: "kitchen".into(), name: "Kitchen".into() }]);
+            cast::show_as("kitchen", cast::Look::Headphones);
             "offered".into()
         }
         "cast:kitchen" => "picked".into(),

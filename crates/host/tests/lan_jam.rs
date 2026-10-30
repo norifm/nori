@@ -212,7 +212,7 @@ fn a_speaker_reached_through_a_device_is_cast_to_there() {
     b.clone().lan_found("host".into(), "127.0.0.1".into(), announced.port, announced.txt);
     wait(&b_changed, || b.devices().len() == 1);
     assert!(b.outputs().is_empty());
-    let speaker = nori_remote::wire::CastOutput { plugin: "p".into(), id: "kitchen".into(), name: "Kitchen".into() };
+    let speaker = nori_remote::wire::CastOutput { plugin: "p".into(), id: "kitchen".into(), name: "Kitchen".into(), look: Default::default() };
     a.clone().outputs_changed(vec![speaker.clone()]);
     wait(&b_changed, || !b.outputs().is_empty());
     let reached = b.outputs().remove(0);

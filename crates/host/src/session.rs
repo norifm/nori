@@ -1398,14 +1398,24 @@ impl Handle {
     #[cfg(feature = "desktop")]
     pub(crate) fn outputs_changed(&self) {
         let (Some(p), Some(r)) = (&self.plugins, self.remotes.get()) else { return };
-        r.outputs_changed(p.cast_targets().into_iter().map(|t| nori_remote::wire::CastOutput { plugin: t.plugin, id: t.id, name: t.name }).collect());
+        r.outputs_changed(p.cast_targets().into_iter().map(|t| nori_remote::wire::CastOutput {
+            look: match t.look {
+                nori_plugins::CastLook::Speaker => nori_remote::wire::OutputLook::Speaker,
+                nori_plugins::CastLook::Headphones => nori_remote::wire::OutputLook::Headphones,
+                nori_plugins::CastLook::Phone => nori_remote::wire::OutputLook::Phone,
+                nori_plugins::CastLook::Tv => nori_remote::wire::OutputLook::Tv,
+            },
+            plugin: t.plugin,
+            id: t.id,
+            name: t.name,
+        }).collect());
     }
 
     /// Another device picked `output`, which a plugin here reaches.
     pub(crate) fn cast_from_afar(&self, output: nori_remote::wire::CastOutput) {
         #[cfg(feature = "desktop")]
         if let Some(p) = &self.plugins {
-            p.cast_to(nori_plugins::CastTarget { plugin: output.plugin, id: output.id, name: output.name });
+            p.cast_to(nori_plugins::CastTarget { plugin: output.plugin, id: output.id, name: output.name, look: Default::default() });
         }
         #[cfg(not(feature = "desktop"))]
         let _ = output;
@@ -1711,7 +1721,7 @@ mod tests {
     #[test]
     fn a_cast_with_a_volume_is_the_volume_shown() {
         use nori_plugins::{Cast, CastKind};
-        let cast = Cast { plugin: "p".into(), kind: CastKind::Sink, device: "Kitchen".into(), playing: true, position_ms: 0, volume: Some(85), bursts: false };
+        let cast = Cast { plugin: "p".into(), kind: CastKind::Sink, device: "Kitchen".into(), look: Default::default(), playing: true, position_ms: 0, volume: Some(85), bursts: false };
         assert_eq!(shown_level(Some(&cast), 0.7), 0.85);
         assert_eq!(shown_level(None, 0.7), 0.7, "this device's own again");
         assert_eq!(shown_level(Some(&Cast { volume: None, ..cast }), 0.7), 0.7, "a cast that says none");

@@ -108,6 +108,16 @@ interface cast {
         name: string,
     }
 
+    /// What a device is, for the icon that stands for it.
+    enum look {
+        speaker,
+        headphones,
+        phone,
+        tv,
+    }
+
+    /// Target `id` of its offer is a `look`; without this, a speaker.
+    show-as: func(id: string, look: look);
     /// The devices it can cast to now, each a row of nori's own devices list; picking one runs the
     /// lifecycle action `cast:<id>`. Replaces those it offered before.
     offer: func(targets: list<target>);

@@ -3713,7 +3713,7 @@ impl App {
         use nori_core::outputs::{output_look, OutputGlyph};
         let (elsewhere, glyph, name) = match (self.there(), self.cast()) {
             (Some(e), _) => (true, words::device_glyph(e.mirror.kind), e.mirror.name.clone()),
-            (None, Some(c)) => (true, 3, c.device),
+            (None, Some(c)) => (true, if c.look == nori_plugins::CastLook::Headphones { 1 } else { 3 }, c.device),
             // Headphones a plugin controls by their own name, with their battery.
             (None, None) if self.output_device().is_some() => {
                 let d = self.output_device().expect("just found");

@@ -830,7 +830,7 @@ internal fun OutputButton(
     // Where a plugin casts is where the music plays, whatever this phone's own output is.
     val cast by settings.pluginCast.collectAsStateWithLifecycle()
     val playingOn = otherName ?: cast?.device
-    val icon = otherDevice?.let(::kindIcon) ?: cast?.let { Iconoir.SoundHigh } ?: when (o.glyph) {
+    val icon = otherDevice?.let(::kindIcon) ?: cast?.let { castIcon(it.look) } ?: when (o.glyph) {
         dev.nori.music.ffi.devices.OutputGlyph.PHONE -> Iconoir.SmartphoneDevice
         dev.nori.music.ffi.devices.OutputGlyph.HEADPHONES -> Iconoir.Headset
         dev.nori.music.ffi.devices.OutputGlyph.BLUETOOTH -> Iconoir.Bluetooth

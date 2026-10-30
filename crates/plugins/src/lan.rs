@@ -69,6 +69,7 @@ pub struct Cast {
     pub kind: CastKind,
     /// The device's name, as the plugin said it.
     pub device: String,
+    pub look: CastLook,
     pub playing: bool,
     pub position_ms: u64,
     /// 0 to 100, when the device says.
@@ -118,10 +119,24 @@ pub struct CastTarget {
     pub plugin: String,
     pub id: String,
     pub name: String,
+    pub look: CastLook,
+}
+
+/// What a device a plugin casts to is, for its icon.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum CastLook {
+    #[default]
+    Speaker,
+    Headphones,
+    Phone,
+    Tv,
 }
 
 #[derive(Default)]
 struct Inner {
+    /// What plugins said their devices are, by plugin and target.
+    looks: BTreeMap<(String, String), CastLook>,
     /// What each plugin offers to cast to.
     targets: BTreeMap<String, Vec<CastTarget>>,
     /// Sockets that joined a multicast group, across all plugins: the lock is held while any is.
@@ -394,10 +409,24 @@ impl Lan {
         }
     }
 
+    /// Target `target` of plugin `id` is a `look`.
+    pub(crate) fn show_as(&self, id: &str, target: String, look: CastLook) {
+        let mut i = self.inner();
+        for t in i.targets.get_mut(id).into_iter().flatten().filter(|t| t.id == target) {
+            t.look = look;
+        }
+        i.looks.insert((id.to_string(), target), look);
+        drop(i);
+        self.side.devices_changed();
+    }
+
     /// What plugin `id` can cast to now.
     pub(crate) fn offer(&self, id: &str, targets: Vec<(String, String)>) {
         let plugin = id.to_string();
-        self.inner().targets.insert(plugin.clone(), targets.into_iter().map(|(id, name)| CastTarget { plugin: plugin.clone(), id, name }).collect());
+        let mut i = self.inner();
+        let offered = targets.into_iter().map(|(id, name)| CastTarget { look: i.looks.get(&(plugin.clone(), id.clone())).copied().unwrap_or_default(), plugin: plugin.clone(), id, name }).collect();
+        i.targets.insert(plugin, offered);
+        drop(i);
         self.side.devices_changed();
     }
 
@@ -411,7 +440,8 @@ impl Lan {
     pub(crate) fn start_cast(&self, id: &str, kind: CastKind, device: String) {
         let mut i = self.inner();
         let bursts = kind == CastKind::Sink && i.pumped.as_ref().is_some_and(|(by, s)| by == id && s.deep.is_some());
-        let cast = Cast { plugin: id.to_string(), kind, device, playing: false, position_ms: 0, volume: None, bursts };
+        let look = i.targets.get(id).into_iter().flatten().find(|t| t.name == device).map(|t| t.look).unwrap_or_default();
+        let cast = Cast { plugin: id.to_string(), kind, device, look, playing: false, position_ms: 0, volume: None, bursts };
         if i.cast.as_ref().is_some_and(|c| c.plugin != id) {
             nori_model::alog::info(&format!("plugin {id}: another plugin's cast runs"));
             return;

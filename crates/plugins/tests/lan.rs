@@ -456,7 +456,7 @@ fn what_a_plugin_offers_is_a_device_to_cast_to() {
     let rig = Rig::new("plugins-lan-offer");
     rig.act("cast-offer");
     let targets = rig.plugins.cast_targets();
-    assert_eq!(targets.iter().map(|t| (t.id.as_str(), t.name.as_str())).collect::<Vec<_>>(), [("kitchen", "Kitchen")]);
+    assert_eq!(targets.iter().map(|t| (t.id.as_str(), t.name.as_str(), t.look)).collect::<Vec<_>>(), [("kitchen", "Kitchen", nori_plugins::CastLook::Headphones)]);
     rig.plugins.cast_to(targets[0].clone());
     rig.settle();
     assert_eq!(rig.said("cast:kitchen"), Some(vec!["picked".into()]));
