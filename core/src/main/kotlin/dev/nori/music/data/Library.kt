@@ -24,7 +24,7 @@ import dev.nori.music.ffi.Read
 import dev.nori.music.ffi.model.SearchResult
 import dev.nori.music.ffi.model.ServerInfo
 import dev.nori.music.ffi.model.Song
-import dev.nori.music.ffi.net.Starrable
+import dev.nori.music.ffi.model.Starrable
 import dev.nori.music.ffi.library.Starred
 import dev.nori.music.ffi.library.StarMarks
 import dev.nori.music.ffi.library.AlbumSort
