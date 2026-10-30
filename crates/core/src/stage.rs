@@ -39,12 +39,6 @@ pub struct Stage {
     pub fade_out_ms: i32,
     /// Stiffness of the spring that settles what a finger let go (damping ratio 1: no bounce).
     pub settle_stiffness: f32,
-    /// A change of page: both pages shift a little and cross-fade.
-    pub page_ms: i32,
-    /// A change of page's curve, a cubic Bézier's two control points (x1, y1, x2, y2).
-    pub page_ease: Vec<f32>,
-    /// How far each page shifts in a change of page, dp.
-    pub page_shift: f32,
     /// How long the previous cover stays while the new one loads, before the placeholder.
     pub sleeve_hold_ms: i64,
     /// How long the previous page colours stay while the new ones are computed.
@@ -91,9 +85,6 @@ pub fn stage() -> Stage {
         fade_ms: 180,
         fade_out_ms: 120,
         settle_stiffness: 450.0,
-        page_ms: 200,
-        page_ease: vec![0.4, 0.0, 0.2, 1.0],
-        page_shift: 48.0,
         sleeve_hold_ms: 180,
         colour_wait_ms: 180,
         colour_fade_ms: 420,

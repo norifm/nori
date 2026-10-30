@@ -89,13 +89,12 @@ fun NavGraphBuilder.addPage(route: String, content: @Composable (NavBackStackEnt
 }
 
 /**
- * A change of page as it is shown, between [over] and [under]. Pushed, [over] is the page opened; popped, it is
- * the page going away. [offset] is how far the change has gone from [over] to [under], px of the width, towards
- * [side] (1 the right, -1 the left), which is how far a finger has to go to finish it. A [fade] runs the same
- * number as [over]'s opacity alone, with nothing moving.
+ * A change of page as it is shown: [over] fading over [under]. Pushed, [over] is the page opened; popped, it is
+ * the page going away. [offset] is how far the change has gone from [over] to [under], px of the width, which is
+ * how far a finger has to go to finish it.
  */
 @Stable
-class PageChange(val over: NavBackStackEntry, val under: NavBackStackEntry, val pop: Boolean, val fade: Boolean, start: Float, val side: Float = 1f) {
+class PageChange(val over: NavBackStackEntry, val under: NavBackStackEntry, val pop: Boolean, start: Float) {
     var offset by mutableFloatStateOf(start)
     /** The page shown once this is over. */
     val target: NavBackStackEntry get() = if (pop) under else over
@@ -104,11 +103,9 @@ class PageChange(val over: NavBackStackEntry, val under: NavBackStackEntry, val 
 }
 
 /**
- * The pages: a page opened and the page that opened it cross-fade, each shifting a little the same way
- * (stage.pageShift), neither crossing the screen. Going back is the same in reverse: run from rest by the back
- * button or key, or held under the finger by a swipe on the page or Android's back gesture from either edge,
- * and, let go, finished or put back. A tap on a tab has no stack - Home and Library are siblings - so that
- * change is a short cross-fade with no direction.
+ * The pages: every change of page is the same short fade with nothing moving, a page opened as a tab tapped.
+ * Going back is the same in reverse: run from rest by the back button or key, or held under the finger by a
+ * swipe on the page or Android's back gesture from either edge, and, let go, finished or put back.
  *
  * Every change of page is one number ([PageChange.offset]), and each is drawn from live
  * pages: the page under the one on top stays composed, hidden and stopped (its lifecycle created, not
@@ -145,16 +142,10 @@ class Pages(private val controller: NavHostController, val navigator: PageNaviga
      */
     var asks by mutableStateOf(false)
 
-    /** The next change is a tab tapped: a fade, not a push or a pop. */
-    private var tabbed = false
-
-    /** The page on top goes back to its tab's page, or Home's: a cross-fade, whatever the stack does to get there. */
-    fun tab() { tabbed = true }
-
     /**
      * The change that shows [top], now on top of the stack: from the page shown until now, or from the page a
-     * change under way was going to. A page pushed comes in over the one shown; one popped uncovers it; a tab
-     * cross-fades; a page shown no more (the stack let it go with no change, as a tab's pop does to the pages
+     * change under way was going to. A page pushed fades in over the one shown; one popped fades off it; a page
+     * shown no more (the stack let it go with no change, as a tab's pop does to the pages
      * above the one it pops to) is replaced at once.
      */
     internal fun changeTo(top: NavBackStackEntry): PageChange? {
@@ -164,13 +155,11 @@ class Pages(private val controller: NavHostController, val navigator: PageNaviga
         if (from == top) return moving
         val stack = navigator.backStack.value
         val alive = from in stack || from in navigator.transitions.value
-        val fade = tabbed || AppMotion.reduce
-        tabbed = false
         held = false
         changing = when {
             !alive -> null.also { settled = top }
-            from in stack -> PageChange(over = top, under = from, pop = false, fade = fade, start = width)
-            else -> PageChange(over = from, under = top, pop = true, fade = fade, start = 0f)
+            from in stack -> PageChange(over = top, under = from, pop = false, start = width)
+            else -> PageChange(over = from, under = top, pop = true, start = 0f)
         }
         return changing
     }
@@ -181,8 +170,7 @@ class Pages(private val controller: NavHostController, val navigator: PageNaviga
         c.ran = true
         // Started after the frame the new page is first drawn in, however long that took, so none of it is skipped.
         withFrameNanos {}
-        // A fade either way as long as the chrome's colours and the tab's own take, so a tab tapped ends at once.
-        animate(c.offset, if (c.pop) width else 0f, animationSpec = if (c.fade) AppMotion.fadeIn() else AppMotion.page()) { v, _ -> c.offset = v }
+        animate(c.offset, if (c.pop) width else 0f, animationSpec = AppMotion.page()) { v, _ -> c.offset = v }
         if (changing === c) settle(c.target)
     }
 
@@ -206,19 +194,19 @@ class Pages(private val controller: NavHostController, val navigator: PageNaviga
     fun canGoBack(stack: List<NavBackStackEntry>, edge: Boolean): Boolean =
         !asks && stack.size > 1 && (edge || stack.last().destination.route !in ROOTS)
 
-    /** Starts holding the page on top for a swipe back from [side] (1 the left edge, -1 the right); false when it cannot go. */
-    fun begin(edge: Boolean, side: Float = 1f): Boolean {
+    /** Starts holding the page on top for a swipe back; false when it cannot go. */
+    fun begin(edge: Boolean): Boolean {
         val stack = navigator.backStack.value
         if (changing != null || width <= 0f || !canGoBack(stack, edge)) return false
         val under = stack[stack.size - 2]
         navigator.prepare(under)
         held = true
-        changing = PageChange(over = stack.last(), under = under, pop = true, fade = false, start = 0f, side = side)
+        changing = PageChange(over = stack.last(), under = under, pop = true, start = 0f)
         shownVersion++
         return true
     }
 
-    /** Puts the page held at [x] px from its place, towards the side the swipe goes. */
+    /** Takes the change held to [x] px of the width. */
     fun dragTo(x: Float) { changing?.takeIf { held }?.offset = x.coerceIn(0f, width) }
 
     /**
@@ -329,9 +317,9 @@ fun PageStack(controller: NavHostController, pages: Pages, start: String, modifi
 }
 
 /**
- * One page of the stack as [role] has it: shifted and faded with the other in a change of page, not placed at
- * all while hidden - composed, so it is there the moment a swipe shows it, but neither drawn nor touched. Opaque
- * only for a [PageChange.fade], which fades the page on top over the page under it.
+ * One page of the stack as [role] has it: opaque in a change of page (the screens paint no background, the app's
+ * one Surface does), the page on top faded over the other; not placed at all while hidden - composed, so it is
+ * there the moment a swipe shows it, but neither drawn nor touched.
  */
 @Composable
 private fun ShownPage(pages: Pages, entry: NavBackStackEntry, role: Role, change: PageChange?, content: @Composable () -> Unit) {
@@ -352,17 +340,11 @@ private fun ShownPage(pages: Pages, entry: NavBackStackEntry, role: Role, change
                 layout(p.width, p.height) { if (role != Role.HIDDEN) p.place(0, 0) }
             }
             .graphicsLayer {
-                val c = change ?: return@graphicsLayer
+                val c = change?.takeIf { role == Role.OVER } ?: return@graphicsLayer
                 val w = pages.width.takeIf { it > 0f } ?: return@graphicsLayer
-                val gone = (c.offset / w).coerceIn(0f, 1f)
-                val shift = c.side * stage.pageShift.dp.toPx()
-                when {
-                    role == Role.OVER && c.fade -> alpha = 1f - gone
-                    role == Role.OVER -> { alpha = 1f - gone; translationX = shift * gone }
-                    role == Role.UNDER && !c.fade -> { alpha = gone; translationX = -shift * (1f - gone) }
-                }
+                alpha = 1f - (c.offset / w).coerceIn(0f, 1f)
             }
-            .drawBehind { if (change?.fade == true) drawRect(background) }
+            .drawBehind { if (change != null) drawRect(background) }
             .swipeBack(pages, enabled = swipes),
     ) {
         CompositionLocalProvider(LocalPageFront provides front) {
@@ -424,7 +406,7 @@ fun EdgeBack(pages: Pages, sheet: PlayerSheet) {
                 if (start.isNaN()) {
                     start = e.touchX
                     side = if (e.swipeEdge == androidx.activity.BackEventCompat.EDGE_RIGHT) -1f else 1f
-                    if (!pages.begin(edge = true, side = side)) side = 0f
+                    if (!pages.begin(edge = true)) side = 0f
                 }
                 if (side == 0f) return@collect
                 pages.dragTo((e.touchX - start) * side)
