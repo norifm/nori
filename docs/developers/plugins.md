@@ -271,8 +271,8 @@ the incoming song); a deep sink takes the `Format` in its stream instead of drai
 **Offload.** While nothing touches the samples (`nori_player::policy`: no equalizer, effect, speed or
 mix) and the device decodes the song's codec, the engine's offload path sends the file's own packets
 (`Format` with the codec, then `Encoded`), as Android's offload output does: the same switch points
-(PCM again when the equalizer comes on, behind a dip where the ear is; back at the next song or where
-the ear is), seeks by the file's seek table or bitrate (FLAC seek table, MP3 Xing/TOC), a `Flush` and the
+(PCM again when the equalizer comes on, behind a dip where the ear is; back where the ear is, never at a
+song's end, which would run a device holding tens of seconds dry), seeks by the file's seek table or bitrate (FLAC seek table, MP3 Xing/TOC), a `Flush` and the
 packets from there. ReplayGain is `Gain` at each song's start; fades are `Ramp`s. `Status` counts decoded
 frames. MP3 encoder gaps are not told: an MP3 that joins its album gaplessly plays as PCM.
 
