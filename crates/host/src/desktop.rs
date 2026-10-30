@@ -150,27 +150,6 @@ pub fn safe_start(data: &Path) -> Option<(nori_plugins::SafeStart, Vec<String>)>
     Some((safe, names))
 }
 
-/// Where a plugin a repo offers stands here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OfferState {
-    New,
-    /// Another version is installed.
-    Update,
-    Installed,
-}
-
-/// The newest version `offer` has that this nori runs, and where the plugin stands against it; None
-/// without one.
-pub fn offer_state(offer: &nori_plugins::Offer) -> Option<(&nori_plugins::Version, OfferState)> {
-    let newest = offer.versions.first()?;
-    let state = match &offer.installed {
-        None => OfferState::New,
-        Some(v) if *v == newest.version => OfferState::Installed,
-        Some(_) => OfferState::Update,
-    };
-    Some((newest, state))
-}
-
 /// The plugin host, the kinds of profile it adds, and what hears from it.
 pub struct Plugged {
     pub host: Arc<nori_plugins::Plugins>,

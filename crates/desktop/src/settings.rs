@@ -11,8 +11,7 @@ use slint::{ModelRc, SharedString, VecModel};
 use nori_look::theme;
 
 use nori_core::providers::Kinds;
-use nori_host::desktop::OfferState;
-use nori_plugins::{AssetLine, AssetState, ControlledDevice, Offers, PluginCard, PluginRow, Repo, RowKind, Value};
+use nori_plugins::{AssetLine, AssetState, ControlledDevice, OfferState, Offers, PluginCard, PluginRow, Repo, RowKind, Value};
 
 use crate::look::Today;
 use crate::{words, SettingRow};
@@ -871,11 +870,11 @@ fn plugin_groups(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
             let mut rows = Vec::new();
             for (at, o) in offers.iter().enumerate() {
                 // What is installed at its newest is not offered again.
-                let Some((newest, state)) = nori_host::desktop::offer_state(o).filter(|(_, s)| *s != OfferState::Installed) else { continue };
+                let Some(newest) = o.versions.first().filter(|_| o.state != OfferState::Installed) else { continue };
                 let mut detail: Vec<String> = o.about.iter().cloned().collect();
                 detail.push(format!("{} {}", words::PLUGIN_VERSION, newest.version));
                 detail.push(words::repo_name(&o.repo));
-                let button = if state == OfferState::Update { words::UPDATE } else { words::INSTALL };
+                let button = if o.state == OfferState::Update { words::UPDATE } else { words::INSTALL };
                 rows.push(Row { kind: ACTION, name: PluginAct::Get(at as u32, 0).name(), title: o.name.clone(), detail: detail.join(" · "), button: button.into(), enabled: true, ..Default::default() });
             }
             if rows.is_empty() && failed.is_empty() {

@@ -55,7 +55,7 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
 - A plugin depends on the SDK from this repository, `nori-plugin-sdk = { git = "https://github.com/norifm/nori" }`,
   its commit pinned by the plugin's `Cargo.lock`.
 - Build with `cargo build --release --target wasm32-wasip2`; a `.noriplugin` is a zip of `plugin.wasm`,
-  `strings/` and an optional `icon.svg` (`tools/pack.py` in nori-plugins). A plugin's `cdylib` doesn't
+  `strings/`, an optional `icon.svg` and an optional `README.md` (`tools/pack.py` in nori-plugins). A plugin's `cdylib` doesn't
   link for the host target (its export names are wasm's); its tests do.
 
 ## The host
@@ -453,10 +453,13 @@ A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
 
 ```json
 {"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "about": "…", "source": "https://github.com/…",
+  "readme": "orbit/README.md",
   "versions": [{"version": "1.2.0", "api": 1, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
     "sha256": "<hex>", "key": "<hex, 32 bytes>", "signature": "<hex, 64 bytes>"}]}]}
 ```
 
+- `readme` is the plugin's Markdown README, absolute or relative to the index: its page shows it before
+  it is installed. Once installed, a `README.md` in its package goes first (`Plugins::readme`).
 - `key` is the author's ed25519 public key, `signature` that key's signature over the package's SHA-256
   (the 32 raw bytes, not the hex). Both or neither; one without the other, or a signature that doesn't
   verify (`verify_strict`), refuses the version (`Refusal::Signature`).

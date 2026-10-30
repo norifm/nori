@@ -172,13 +172,20 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   check "the Plugins page opens, empty" wait_until 10 on_screen 'Plugins add music sources'
   shots="$here/../build/e2e/$ANDROID_SERIAL/plugins"; mkdir -p "$shots"
   adb exec-out screencap -p > "$shots/plugins-empty.png"
-  tapnode text "Add repo"
+  tapnode content-desc "Get plugins"
+  tapnode content-desc Repos
+  tapnode content-desc "Add repo"
   check "adding a repo warns first" wait_until 10 on_screen 'Add it only if you trust it'
   tapnode text "Repo address"
   adb shell input text "http://10.0.2.2:$plugins_port/index.json"
   tapnode text Add
-  check "the repo offers orbit" wait_until 30 on_screen 'text="Orbit"'
+  check "the repo is listed" wait_until 30 on_screen '10.0.2.2'
+  adb shell input keyevent 4
+  check "the browser offers orbit" wait_until 30 on_screen 'text="Orbit"'
+  adb exec-out screencap -p > "$shots/browser.png"
   tapnode text Orbit
+  check "its page offers it" wait_until 10 on_screen 'text="Versions"'
+  tapnode text Install
   check "before installing, its sheet says what it may do" wait_until 30 on_screen 'Change the sound'
   check "and nothing is installed yet" plugin_is none
   adb exec-out screencap -p > "$shots/install-sheet.png"
@@ -188,7 +195,7 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   "$app" plugin turn "fm.nori.orbit on" >/dev/null
   check "orbit turns on" wait_until 10 plugin_is 'fm.nori.orbit:on'
   check "the player takes its stage in at once" waitfor_log 'the chain changes' 10
-  check "installed, it leaves Get plugins" wait_until 10 off_screen 'text="Install"'
+  check "installed, its page stops offering it" wait_until 10 off_screen 'text="Install"'
   check "music sounds with orbit's stage in the chain" sounds 10
   adb exec-out screencap -p > "$shots/plugins.png"
   watch_from_now
@@ -197,19 +204,20 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   watch_from_now
   "$app" plugin turn "fm.nori.orbit on" >/dev/null
   check "and takes it in again" waitfor_log 'the chain changes' 10
-  tapnode text Orbit
   check "its page shows each level's value" wait_until 10 on_screen 'Width · 0.80'
   adb exec-out screencap -p > "$shots/orbit.png"
   "$app" play "$SONG" >/dev/null
   check "a song started with orbit on sounds" sounds 10
   check "and plays on" wait_for positionMs '>3000' 15
+  tapnode content-desc More
   tapnode text Remove
   check "Remove asks first" wait_until 10 on_screen 'Its own settings go with it'
   watch_from_now
   tapnode text Remove
   check "removed, it is gone" wait_until 10 plugin_is none
   check "and so is its stage" waitfor_log 'the chain changes' 10
-  check "the page goes back to the list" wait_until 10 on_screen 'Plugins add music sources'
+  "$app" open plugins >/dev/null
+  check "the list is empty again" wait_until 10 on_screen 'Plugins add music sources'
   # The showcase fills every slot and kind of row; installed from its package file.
   check "the showcase installs from its file and turns on" test -n "$(plugin_from_file showcase)"
   "$app" open player >/dev/null

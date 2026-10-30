@@ -18,7 +18,9 @@ import dev.nori.music.ffi.plugins.Updated
 import dev.nori.music.ffi.plugins.Version
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import dev.nori.music.ffi.plugins.Offer
 import dev.nori.music.ffi.plugins.Offers
+import dev.nori.music.ffi.plugins.ReadmeBlock
 import dev.nori.music.ffi.plugins.InfoGroup
 import dev.nori.music.ffi.plugins.Artwork
 import dev.nori.music.ffi.plugins.ItemKind
@@ -282,8 +284,15 @@ class PluginHost(
 
     suspend fun removeRepo(url: String) = withContext(Dispatchers.IO) { plugins.removeRepo(url); _repos.value = plugins.repos() }
 
-    /** What the repos offer, and those that couldn't be read. Asks each repo. */
-    suspend fun offers(): Offers = withContext(Dispatchers.IO) { plugins.offers() }
+    private val _offers = MutableStateFlow<Offers?>(null)
+    /** What the repos last offered, shared by every plugin page; null before [offers]. */
+    val offersRead: StateFlow<Offers?> = _offers
+
+    /** Asks each repo what it offers, and which couldn't be read, into [offersRead]. */
+    suspend fun offers() = withContext(Dispatchers.IO) { _offers.value = plugins.offers() }
+
+    /** Plugin [id]'s README: its package's, else what [offer] points at. */
+    suspend fun readme(id: String, offer: Offer?): List<ReadmeBlock> = withContext(Dispatchers.IO) { plugins.readme(id, offer) }
 
     /** Plugin [id] keeps the version it has ([held]) or updates from its repo. */
     suspend fun hold(id: String, held: Boolean) = withContext(Dispatchers.IO) { plugins.hold(id, held); refresh() }

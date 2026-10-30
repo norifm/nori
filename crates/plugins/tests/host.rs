@@ -269,6 +269,45 @@ fn a_repo_offers_and_installs_the_version_asked() {
 }
 
 #[test]
+fn an_offer_says_where_it_stands_and_shows_its_readme() {
+    use nori_plugins::{offers_found, OfferState};
+    use sha2::Digest;
+    let dir = nori_testdir::TempDir::new("plugins-offer-state");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.set_transport(Some(session.web.clone()));
+    let (own, other) = ("https://own.example/index.json", "https://other.example/index.json");
+    plugins.add_repo(own.into());
+    plugins.add_repo(other.into());
+    let pkg = package();
+    let sha: String = sha2::Sha256::digest(&pkg).iter().map(|b| format!("{b:02x}")).collect();
+    let index = |v: &str| format!(r#"{{"plugins": [{{"id": "{ID}", "name": "Test", "about": "Loud covers", "readme": "t.md", "versions": [{{"version": "{v}", "api": 1, "url": "t-{v}.noriplugin", "sha256": "{sha}"}}]}}]}}"#).into_bytes();
+    let serve = |mine: &str| {
+        *session.web.serves.lock().unwrap() = vec![
+            (own.to_string(), index(mine)),
+            (other.to_string(), index("9.0.0")),
+            (format!("https://own.example/t-{mine}.noriplugin"), pkg.clone()),
+            ("https://own.example/t.md".to_string(), b"# Test\n\nHello".to_vec()),
+        ];
+    };
+    let states = || nori_tasks::block_on(plugins.offers()).offers.into_iter().map(|o| (o.repo.url.clone(), o.state)).collect::<Vec<_>>();
+
+    serve("0.1.0");
+    assert_eq!(states(), [(own.to_string(), OfferState::New), (other.to_string(), OfferState::New)]);
+    let offer = nori_tasks::block_on(plugins.offers()).offers.into_iter().find(|o| o.repo.url == own).unwrap();
+    let said = vec![nori_plugins::ReadmeBlock::Text { text: "Hello".into() }];
+    assert_eq!(nori_tasks::block_on(plugins.readme(ID.into(), Some(offer.clone()))), said, "before it is installed, from its repo");
+    nori_tasks::block_on(plugins.install_version(offer.versions[0].clone())).unwrap();
+    assert_eq!(states(), [(own.to_string(), OfferState::Installed), (other.to_string(), OfferState::Installed)], "another repo's newer version is no update");
+    serve("0.2.0");
+    assert_eq!(states()[0], (own.to_string(), OfferState::Update));
+
+    let offers = nori_tasks::block_on(plugins.offers()).offers;
+    let found = |query: &str, repo: Option<&str>| offers_found(offers.clone(), query.into(), repo.map(String::from)).len();
+    assert_eq!((found("  LOUD ", None), found("loud", Some(own)), found("quiet", None)), (2, 1, 0));
+}
+
+#[test]
 fn updates_come_daily_from_a_plugins_own_repo_unless_held() {
     use sha2::Digest;
     let dir = nori_testdir::TempDir::new("plugins-update");

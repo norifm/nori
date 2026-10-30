@@ -14,9 +14,14 @@ import dev.nori.music.ffi.plugins.Value
 import dev.nori.music.ffi.plugins.Noise
 import dev.nori.music.ffi.plugins.PluginPreview
 import dev.nori.music.ffi.plugins.Version
+import dev.nori.music.ffi.plugins.offersFound
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -24,8 +29,8 @@ import kotlinx.coroutines.withContext
 data class OffersUi(val loading: Boolean = false, val offers: List<Offer> = emptyList(), val failed: List<RepoFailure> = emptyList())
 
 /**
- * Settings › Plugins: the installed plugins (the core's cards, in the plugins' own words), what the repos
- * offer, and each plugin's rows. Every call into the plugin host runs off the main thread.
+ * Settings › Plugins, its browser and repos: the installed plugins (the core's cards, in the plugins' own
+ * words), what the repos offer, and each plugin's rows. Every call into the plugin host runs off the main thread.
  */
 class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     private val nori = Nori.get(app)
@@ -40,8 +45,28 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     val shown = host.shown
     val notice = host.notice
 
-    private val _offers = MutableStateFlow(OffersUi())
-    val offers: StateFlow<OffersUi> = _offers
+    private val asking = MutableStateFlow(false)
+    val offers: StateFlow<OffersUi> = combine(host.offersRead, asking) { read, loading -> OffersUi(loading, read?.offers.orEmpty(), read?.failed.orEmpty()) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, OffersUi(false, host.offersRead.value?.offers.orEmpty(), host.offersRead.value?.failed.orEmpty()))
+
+    private val _query = MutableStateFlow("")
+    /** What the browser's search says. */
+    val query: StateFlow<String> = _query
+
+    private val _repoShown = MutableStateFlow<String?>(null)
+    /** The one repo the browser shows; null for all. */
+    val repoShown: StateFlow<String?> = _repoShown
+
+    /** The browser's offers: those found, by name. */
+    val found: StateFlow<List<Offer>> = combine(offers, _query, _repoShown) { o, q, r -> offersFound(o.offers, q, r) }
+        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun search(query: String) { _query.value = query }
+
+    fun showRepo(url: String?) { _repoShown.value = url }
+
+    /** Plugin [id]'s README, empty without one. */
+    suspend fun readme(id: String, offer: Offer?) = host.readme(id, offer)
 
     private val _refused = MutableStateFlow<String?>(null)
     /** Why the last install was refused, in words. */
@@ -95,9 +120,9 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadOffers() {
-        if (_offers.value.loading) return
-        _offers.value = _offers.value.copy(loading = true)
-        viewModelScope.launch { _offers.value = host.offers().let { OffersUi(false, it.offers, it.failed) } }
+        if (asking.value) return
+        asking.value = true
+        viewModelScope.launch { host.offers(); asking.value = false }
     }
 
     /** Copies the picked package to the cache and shows its install sheet from there. */

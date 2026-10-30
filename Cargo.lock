@@ -5325,6 +5325,7 @@ dependencies = [
  "nori-tasks",
  "nori-testdir",
  "nori-time",
+ "pulldown-cmark",
  "rustls",
  "serde",
  "serde_json",

@@ -1,4 +1,4 @@
-//! Installing a plugin: a `.noriplugin` (a zip of `plugin.wasm`, `strings/`, an icon) or a folder
+//! Installing a plugin: a `.noriplugin` (a zip of `plugin.wasm`, `strings/`, an icon, a README) or a folder
 //! holding the same. It is checked before anything is replaced: its manifest (in the wasm), its API
 //! version, and that it imports only the host interfaces this nori links.
 
@@ -14,7 +14,7 @@ pub(crate) const MANIFEST: &str = "manifest.bin";
 
 /// The files a package may hold.
 fn kept(name: &str) -> bool {
-    matches!(name, "plugin.wasm" | "icon.svg") || (name.starts_with("strings/") && name.ends_with(".toml") && !name[8..].contains('/'))
+    matches!(name, "plugin.wasm" | "icon.svg" | "README.md") || (name.starts_with("strings/") && name.ends_with(".toml") && !name[8..].contains('/'))
 }
 
 /// Its files by name.
@@ -22,7 +22,7 @@ pub(crate) fn files(from: &Path) -> Result<Vec<(String, Vec<u8>)>, Refusal> {
     let unreadable = |e: &dyn std::fmt::Display| Refusal::Unreadable(e.to_string());
     if from.is_dir() {
         let mut out = Vec::new();
-        for name in ["plugin.wasm", "icon.svg"] {
+        for name in ["plugin.wasm", "icon.svg", "README.md"] {
             if let Ok(b) = fs::read(from.join(name)) {
                 out.push((name.to_string(), b));
             }

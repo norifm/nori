@@ -38,6 +38,9 @@ struct Listed {
     about: Option<String>,
     #[serde(default)]
     source: Option<String>,
+    /// Its README, absolute or relative to the index.
+    #[serde(default)]
+    readme: Option<String>,
     versions: Vec<Release>,
 }
 
@@ -66,10 +69,23 @@ pub struct Offer {
     pub about: Option<String>,
     /// Where its code is, when its repo says.
     pub source: Option<String>,
+    /// Where its README is, when its repo says.
+    pub readme: Option<String>,
     /// The versions this nori runs, newest first.
     pub versions: Vec<Version>,
     /// The version installed here, if it is.
     pub installed: Option<String>,
+    pub state: OfferState,
+}
+
+/// Where a plugin a repo offers stands here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum OfferState {
+    New,
+    /// This repo, the one it came from, has a newer version.
+    Update,
+    Installed,
 }
 
 /// One published version of a plugin.
@@ -172,7 +188,8 @@ fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
                 })
                 .collect();
             versions.sort_by_cached_key(|v| std::cmp::Reverse(numbers(&v.version)));
-            (!versions.is_empty()).then(|| Offer { repo: repo.clone(), id: l.id, name: l.name, about: l.about, source: l.source, versions, installed: None })
+            let readme = l.readme.map(|r| resolved(&repo.url, &r));
+            (!versions.is_empty()).then(|| Offer { repo: repo.clone(), id: l.id, name: l.name, about: l.about, source: l.source, readme, versions, installed: None, state: OfferState::New })
         })
         .collect())
 }
@@ -201,9 +218,19 @@ impl Plugins {
         Ok(file)
     }
 
-    fn transport_now(&self) -> Result<std::sync::Arc<dyn nori_net::transport::Transport>, String> {
+    pub(crate) fn transport_now(&self) -> Result<std::sync::Arc<dyn nori_net::transport::Transport>, String> {
         self.transport.lock().expect("not poisoned").clone().ok_or_else(|| "no connection yet".to_string())
     }
+}
+
+/// Those of `offers` from `repo` (any, without one) whose name or about holds `query`, by name.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn offers_found(offers: Vec<Offer>, query: String, repo: Option<String>) -> Vec<Offer> {
+    let query = query.trim().to_lowercase();
+    let holds = |text: &str| text.to_lowercase().contains(&query);
+    let mut found: Vec<Offer> = offers.into_iter().filter(|o| repo.as_ref().is_none_or(|r| *r == o.repo.url) && (holds(&o.name) || o.about.as_deref().is_some_and(holds))).collect();
+    found.sort_by_cached_key(|o| o.name.to_lowercase());
+    found
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -234,7 +261,7 @@ impl Plugins {
 
     /// What every repo offers that this host can run, each with the version installed here.
     pub async fn offers(&self) -> Offers {
-        let installed: Vec<(String, String)> = self.installed().into_iter().map(|i| (i.manifest.id.clone(), i.manifest.version.clone())).collect();
+        let installed = self.installed();
         let mut out = Offers { offers: Vec::new(), failed: Vec::new() };
         for repo in self.repos() {
             let read = match self.transport_now() {
@@ -250,7 +277,10 @@ impl Plugins {
             }
         }
         for o in &mut out.offers {
-            o.installed = installed.iter().find(|(id, _)| *id == o.id).map(|(_, v)| v.clone());
+            let Some(here) = installed.iter().find(|i| i.manifest.id == o.id) else { continue };
+            let newer = o.versions.first().is_some_and(|v| older(&here.manifest.version, &v.version));
+            o.state = if newer && here.repo.as_ref() == Some(&o.repo.url) { OfferState::Update } else { OfferState::Installed };
+            o.installed = Some(here.manifest.version.clone());
         }
         out
     }

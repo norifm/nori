@@ -733,6 +733,17 @@
     <string name="plugins_kind_overrides">Changes playback values</string>
     <string name="plugins_get">Get plugins</string>
     <string name="plugins_asking">Asking the repos…</string>
+    <string name="plugins_search">Search plugins</string>
+    <string name="plugins_all">All</string>
+    <string name="plugins_none_found">No plugins found</string>
+    <string name="plugins_updates">Updates</string>
+    <string name="plugins_update_to">Update to %1$s</string>
+    <string name="plugins_update_line">%1$s → %2$s</string>
+    <string name="plugins_about">About</string>
+    <plurals name="plugins_repo_count">
+        <item quantity="one">%1$d plugin</item>
+        <item quantity="other">%1$d plugins</item>
+    </plurals>
     <string name="plugins_offer_line">%1$s · %2$s</string>
     <string name="plugins_install">Install</string>
     <string name="plugins_update">Update</string>

@@ -159,6 +159,8 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
     fun equalizer() = go("equalizer")
     fun plugins() = go("plugins")
     fun plugin(id: String) = go("plugins/${Uri.encode(id)}")
+    fun pluginBrowser() = go("plugin-browser")
+    fun pluginRepos() = go("plugin-repos")
     fun homeRows() = go("home-rows")
     fun librarySections() = go("library-sections")
     fun librarySection(s: dev.nori.music.ffi.settings.LibrarySection) = go("library/${s.name}")
@@ -568,7 +570,9 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                         SettingsGroupScreen(settings, e.arguments!!.getString("id")!!, e.arguments?.getString("key").orEmpty(), actions)
                     }
                     page("equalizer") { EqualizerScreen(settings) }
-                    page("plugins") { PluginsScreen(viewModel(), settings, LocalNav.current::plugin) }
+                    page("plugins") { PluginsScreen(viewModel(), settings, LocalNav.current.pluginPages()) }
+                    page("plugin-browser") { PluginBrowser(viewModel(), LocalNav.current.pluginPages()) }
+                    page("plugin-repos") { PluginRepos(viewModel()) }
                     page("plugins/{id}") { PluginPage(viewModel(), settings, it.arguments!!.getString("id")!!, LocalNav.current::back) }
                     page("home-rows") { HomeRows(settings) }
                     page("library-sections") { LibrarySections(settings) }
