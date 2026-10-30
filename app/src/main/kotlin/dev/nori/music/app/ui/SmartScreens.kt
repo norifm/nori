@@ -179,6 +179,7 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
     val load by vm.ui.collectAsStateWithLifecycle()
     val list = rememberSongListState(actions)
     LoadBox(load) { m ->
+        val whole = rememberPageWhole(m.songs, list.downloaded)
         HeroPage(
             coverUrl = null,
             title = m.title,
@@ -203,7 +204,7 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             if (m.songs.isEmpty()) item(key = "empty") {
                 EmptyNote(if (m.favourites) Note.NO_FAVOURITE_SONGS else Note.NOTHING_TO_MIX)
             }
-            songRows(m.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, animated = true, from = m.origin)
+            songRows(m.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, animated = true, from = m.origin, pageWhole = whole)
         }
     }
 }
@@ -244,6 +245,7 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
     val list = rememberSongListState(actions)
     val from = remember(id) { dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SMART, id) }
     LoadBox(load) { page ->
+        val whole = rememberPageWhole(page.songs, list.downloaded)
         val any = page.songs.isNotEmpty()
         HeroPage(
             coverUrl = null,
@@ -259,7 +261,7 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
                 )
             },
         ) {
-            songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
+            songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from, pageWhole = whole)
         }
     }
 }
