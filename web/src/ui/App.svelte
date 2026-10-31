@@ -19,20 +19,36 @@
   let user = $state("admin");
   let password = $state("admin");
 
-  /** A new build waiting in the service worker takes over now, and the page loads again: true then.
-   * Otherwise the service worker is registered (or checked for a new build). */
+  /** Longest a start waits for a new build to arrive, ms: on a slow network the page starts as it is. */
+  const UPDATE_WAIT_MS = 8000;
+
+  /** Whether `worker`, installing or waiting, is ready to take over within the wait. */
+  function installed(worker: ServiceWorker): Promise<boolean> {
+    if (worker.state === "installed") return Promise.resolve(true);
+    return new Promise((done) => {
+      setTimeout(() => done(false), UPDATE_WAIT_MS);
+      worker.addEventListener("statechange", () => {
+        if (worker.state === "installed") done(true);
+        if (worker.state === "redundant") done(false);
+      });
+    });
+  }
+
+  /** Looks for a new build on every start: one that arrives takes over and the page loads again, so
+   * nothing old ever runs beside what is new. True then. */
   async function updated(): Promise<boolean> {
     if (!("serviceWorker" in navigator)) return false;
-    const reg = await navigator.serviceWorker.getRegistration();
-    if (reg?.waiting && navigator.serviceWorker.controller) {
-      const taken = new Promise((r) => navigator.serviceWorker.addEventListener("controllerchange", r, { once: true }));
-      reg.waiting.postMessage("take over");
-      await taken;
-      location.reload();
-      return true;
-    }
-    void navigator.serviceWorker.register("sw.js").then(() => (facts.serviceWorker = true));
-    return false;
+    const reg = await navigator.serviceWorker.register("sw.js", { updateViaCache: "none" });
+    facts.serviceWorker = true;
+    // Offline the running build goes on.
+    await reg.update().catch(() => {});
+    const next = reg.installing ?? reg.waiting;
+    if (!next || !navigator.serviceWorker.controller || !(await installed(next))) return false;
+    const taken = new Promise((r) => navigator.serviceWorker.addEventListener("controllerchange", r, { once: true }));
+    next.postMessage("take over");
+    await taken;
+    location.reload();
+    return true;
   }
 
   function enter() {

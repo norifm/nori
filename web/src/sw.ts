@@ -17,7 +17,8 @@ const sw = self as unknown as {
   registration: { scope: string };
 };
 
-sw.addEventListener("install", (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES))));
+// From the server, past the HTTP cache: the modules' names don't change between builds.
+sw.addEventListener("install", (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: "reload" }))))));
 
 sw.addEventListener("activate", (e) =>
   e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith("nori-") && k !== CACHE).map((k) => caches.delete(k))))),
@@ -40,7 +41,7 @@ sw.addEventListener("fetch", (e) => {
       const kept = await c.match(file);
       if (kept) return kept;
       // A module of this build not kept at install (the Rust-codecs player): kept once fetched.
-      const got = await fetch(e.request);
+      const got = await fetch(e.request, { cache: "reload" });
       if (got.ok) await c.put(file, got.clone());
       return got;
     }),

@@ -17,6 +17,11 @@ TYPES = {".js": "text/javascript", ".wasm": "application/wasm", ".css": "text/cs
 
 def handler(server, log, kbps, files_kbps):
     class Handler(http.server.SimpleHTTPRequestHandler):
+        def end_headers(self):
+            # A new build is seen at the next load.
+            self.send_header("Cache-Control", "no-cache")
+            super().end_headers()
+
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(DIST), **kwargs)
 
