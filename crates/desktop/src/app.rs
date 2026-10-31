@@ -3374,6 +3374,7 @@ impl App {
             Msg::PluginsChanged => {
                 self.plugins_read();
                 self.output_shown();
+                self.devices_shown();
             }
             Msg::BackedUp(r) => match r {
                 Ok(()) => self.say(words::BACKUP_SAVED, false),
@@ -3753,10 +3754,14 @@ impl App {
         }
         if let Some(r) = self.session.as_ref().and_then(|s| s.remote()) {
             if let Some(output) = r.outputs().into_iter().find(|o| words::reached_id(o) == id) {
+                if self.cast().is_some() {
+                    host.cast_button(nori_plugins::CastButton::Stop);
+                }
                 return r.cast_on(output);
             }
         }
-        if id.is_empty() && self.cast().is_some() {
+        // The music goes to one place: wherever it goes now, a cast's device stops.
+        if self.cast().is_some() {
             nori_host::desktop::plugins(&self.data).host.cast_button(nori_plugins::CastButton::Stop);
         }
         if let Some(r) = self.session.as_ref().and_then(|s| s.remote()) {

@@ -100,7 +100,8 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         val targets by sound.pluginTargets.collectAsStateWithLifecycle()
         val reached by vm.outputs.collectAsStateWithLifecycle()
         val pick = { device: String? ->
-            if (device == null && cast != null) sound.endCast()
+            // The music goes to one place: wherever it goes now, a cast's device stops.
+            if (cast != null) sound.endCast()
             vm.pick(device)
             onDismiss()
         }
@@ -155,6 +156,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                     // A speaker another device casts to: the music goes through that device.
                     if (hosted == null) reached.forEachIndexed { k, r ->
                         DeviceRow(r.output.name, outputIcon(r.output.look), words(R.string.devices_via, r.via), false, k < reached.lastIndex) {
+                            if (cast != null) sound.endCast()
                             vm.castOn(r)
                             onDismiss()
                         }
