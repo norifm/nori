@@ -4,16 +4,17 @@
   import { cubicOut } from "svelte/easing";
   import { fly } from "svelte/transition";
   import { ui, type Pane } from "../state/ui.svelte";
-  import PaneView from "./PaneView.svelte";
   import PanelTabs from "./PanelTabs.svelte";
 
   let { pane }: { pane: Pane } = $props();
+  // Apart from the first paint; the shell fetches it with the full player, once idle.
+  const paneView = () => import("./PaneView.svelte");
   const still = () => document.documentElement.classList.contains("still");
 </script>
 
 <aside class="side-sheet tinted" id="side" transition:fly={{ x: 24, duration: still() ? 0 : 240, easing: cubicOut }}>
   <div class="tabs"><PanelTabs current={pane} pick={(p) => ui.show(p)} /></div>
-  <div class="body {pane}"><PaneView {pane} look="side" /></div>
+  <div class="body {pane}">{#await paneView() then m}<m.default {pane} look="side" />{/await}</div>
 </aside>
 
 <style>

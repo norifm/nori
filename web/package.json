@@ -11,6 +11,7 @@
     "@bytecodealliance/jco-transpile": "0.21.0",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "hls.js": "1.5.17",
+    "subset-font": "2.9.0",
     "svelte": "5.57.1",
     "svelte-check": "4.7.6",
     "typescript": "5.9.3",
