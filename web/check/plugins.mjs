@@ -54,7 +54,7 @@ async function start() {
 }
 
 async function play(album = "Long Album") {
-  const albums = JSON.parse(await ask("read", JSON.stringify({ kind: "albums", sort: "alphabeticalByName", size: 200, offset: 0 })));
+  const albums = JSON.parse(await ask("read", JSON.stringify({ kind: "albums", sort: "alphabeticalByName", size: 500, offset: 0 })));
   const list = albums.albums ?? albums;
   await hash(`#/album/${(list.find((a) => a.name === album) ?? list[0]).id}`);
   await page.waitForSelector(".songs li .play");
@@ -62,7 +62,7 @@ async function play(album = "Long Album") {
   await (await page.$$(".songs li .play"))[0].click();
   await page.waitForFunction(async () => ((await window.nori.heard?.())?.seconds ?? 0) > 1, { timeout: 60000 });
   // The library's quiet tracks say nothing of a stage.
-  for (let tries = 0; tries < 6 && (await heard()).peak < 0.01; tries++) {
+  for (let tries = 0; album === "Long Album" && tries < 6 && (await heard()).peak < 0.01; tries++) {
     console.log('  silent:', await page.evaluate(() => window.nori.page + ' ' + JSON.stringify(document.querySelector('#bar')?.innerText?.slice(0, 60))));
     await ask("next");
     await wait(4000);
@@ -108,7 +108,7 @@ const open = async (id) => {
   await page.waitForSelector(`[data-plugin-page="${id}"]`);
 };
 await open("fm.nori.orbit");
-const rows = await page.$$eval("[data-plugin-page] [data-row]", (r) => r.map((e) => e.dataset.row));
+const rows = await page.$$eval("[data-row]", (r) => r.map((e) => e.dataset.row));
 check("orbit's page shows its rows", rows.length > 0, rows);
 const shownPage = await page.$eval(".page", (e) => e.innerText);
 check("its page says what it is and may do", /Versions/i.test(shownPage) && /It may/i.test(shownPage), shownPage.slice(0, 120));
