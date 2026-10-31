@@ -3,16 +3,33 @@
 (no CORS). For development only: python3 web/serve.py [--port 8080] [--server http://localhost:4533]
 [--log] [--kbps N] [--files-kbps N]. --log prints each API request (endpoint, range, status); --kbps
 sends the API's answers (songs) at most that fast, --files-kbps the client's own files, as a slow network
-would."""
+would. /plugin-http carries a plugin's requests, which browsers won't send themselves: it is what a
+server gives the page for plugins that reach other sites."""
 import argparse
 import http.server
+import ipaddress
+import json
+import socket
 import time
+import urllib.parse
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 DIST = Path(__file__).resolve().parent / "dist"
 TYPES = {".js": "text/javascript", ".wasm": "application/wasm", ".css": "text/css", ".html": "text/html"}
+
+
+def public_https(url):
+    """Whether a plugin may reach `url`: HTTPS to public addresses only."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "https" or not parts.hostname:
+        return False
+    try:
+        found = socket.getaddrinfo(parts.hostname, parts.port or 443, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return False
+    return all(ipaddress.ip_address(a[4][0]).is_global for a in found)
 
 
 def handler(server, log, kbps, files_kbps):
@@ -43,12 +60,56 @@ def handler(server, log, kbps, files_kbps):
             return TYPES.get(Path(path).suffix, super().guess_type(path))
 
         def do_GET(self):
+            if self.path.startswith("/plugin-http"):
+                return self.plugin_http()
             if self.path.startswith(("/rest/", "/nori/")):
                 return self.forward()
             super().do_GET()
 
         def do_POST(self):
+            if self.path.startswith("/plugin-http"):
+                return self.plugin_http()
             self.forward()
+
+        do_PUT = do_PATCH = do_DELETE = lambda self: self.plugin_http()
+
+        def do_HEAD(self):
+            if self.path.startswith("/plugin-http"):
+                return self.plugin_http()
+            super().do_HEAD()
+
+        def plugin_http(self):
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query, keep_blank_values=True)
+            if "ping" in query:
+                self.send_response(204)
+                self.send_header("X-Plugin-Http", "1")
+                self.end_headers()
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(length) if length else None
+            # A custom header: another site's page can't send one without a preflight, which fails here.
+            sent = self.headers.get("X-Plugin-Headers")
+            url = query.get("to", [""])[0]
+            if sent is None or not public_https(url):
+                self.send_error(403)
+                return
+            request = urllib.request.Request(url, data=body, headers=dict(json.loads(sent)), method=self.command)
+            try:
+                answer = urllib.request.urlopen(request, timeout=60)
+            except urllib.error.HTTPError as e:
+                answer = e
+            except OSError:
+                self.send_error(502)
+                return
+            data = answer.read()
+            self.send_response(answer.status)
+            for k, v in answer.headers.items():
+                if k.lower() not in ("transfer-encoding", "connection", "content-encoding", "content-length", "set-cookie"):
+                    self.send_header(k, v)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(data)
 
         def forward(self):
             length = int(self.headers.get("Content-Length") or 0)

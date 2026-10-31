@@ -365,15 +365,29 @@ impl Nori {
     }
 
     /// The plugins nori's own repo lists, newest version first, each with what stops it in a browser
-    /// (`web_fit`): `[{ id, name, about, icon, version, fit }]`.
-    pub async fn plugin_offers(&self) -> Result<String, JsValue> {
+    /// (`web_fit`; `proxied`: this page's server carries a plugin's requests): `[{ id, name, about, icon,
+    /// version, url, sha256, fit }]`, each at its newest version of this API.
+    pub async fn plugin_offers(&self, proxied: bool) -> Result<String, JsValue> {
         let answer = fetch::fetch(nori_core::transport::Exchange { url: nori_plugin_index::OFFICIAL.into(), timeout_ms: 15_000, ..Default::default() }).await.map_err(|e| error(e.to_string()))?;
         if !(200..=299).contains(&answer.status) {
             return Err(error(format!("HTTP {}", answer.status)));
         }
         let index = nori_plugin_index::parse(&answer.body).map_err(error)?;
-        let offers: Vec<Value> = index.plugins.iter().map(|l| json!({ "id": l.id, "name": l.name, "about": l.about, "icon": l.icon, "version": l.versions.first().map(|v| &v.version), "fit": nori_plugin_index::web_fit(l) })).collect();
+        let offers: Vec<Value> = index
+            .plugins
+            .iter()
+            .map(|l| {
+                let release = l.versions.iter().find(|v| v.api == nori_plugin_index::section::API);
+                json!({ "id": l.id, "name": l.name, "about": l.about, "icon": l.icon, "version": release.map(|v| &v.version), "url": release.map(|v| &v.url), "sha256": release.map(|v| &v.sha256), "fit": nori_plugin_index::web_fit(l, proxied) })
+            })
+            .collect();
         Ok(Value::from(offers).to_string())
+    }
+
+    /// A package's `plugin.wasm` and English strings as the page installs it (`WebPlugin`, as JSON).
+    pub fn plugin_read(&self, component: Vec<u8>, strings: String, proxied: bool) -> Result<String, JsValue> {
+        let plugin = nori_plugin_index::read_web_plugin(&component, &strings, proxied).map_err(error)?;
+        serde_json::to_string(&plugin).map_err(error)
     }
 
     /// Settings page `name` as a browser draws it: `[{ id, rows: [row] }]`, each row `{ item, shown,

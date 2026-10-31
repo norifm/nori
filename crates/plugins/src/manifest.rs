@@ -3,12 +3,8 @@
 
 use std::collections::BTreeMap;
 
-/// The plugin API major version this host speaks. A component's types must match exactly, so a plugin
-/// built for another can't run: any change to a type in `wit/` raises it.
-pub const API: u32 = 2;
-
-/// The extension points in the order of `wit/`'s `plugin` world exports: a manifest's bits.
-pub const POINTS: [&str; 11] = ["lifecycle", "hooks", "provider", "sound-stage", "preparation", "automix", "deciders", "slots", "device-control", "lyrics", "scrobbler"];
+use nori_plugin_index::section::{custom_section, Section};
+pub use nori_plugin_index::section::{API, POINTS};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Manifest {
@@ -277,42 +273,6 @@ impl std::fmt::Display for Refusal {
 
 impl std::error::Error for Refusal {}
 
-/// Reads the section's fields in order.
-struct In<'a>(&'a [u8]);
-
-impl<'a> In<'a> {
-    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
-        let (a, b) = (self.0.get(..n)?, self.0.get(n..)?);
-        self.0 = b;
-        Some(a)
-    }
-    fn byte(&mut self) -> Option<u8> {
-        Some(self.take(1)?[0])
-    }
-    fn u16(&mut self) -> Option<usize> {
-        Some(u16::from_le_bytes(self.take(2)?.try_into().ok()?) as usize)
-    }
-    fn u32(&mut self) -> Option<u32> {
-        Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
-    }
-    fn str(&mut self) -> Option<String> {
-        let n = self.u16()?;
-        String::from_utf8(self.take(n)?.to_vec()).ok()
-    }
-    fn strs(&mut self) -> Option<Vec<String>> {
-        (0..self.u16()?).map(|_| self.str()).collect()
-    }
-    /// None for an empty string.
-    fn opt_str(&mut self) -> Option<Option<String>> {
-        self.str().map(|s| (!s.is_empty()).then_some(s))
-    }
-
-    fn number(&mut self) -> Option<Option<f64>> {
-        let v = f64::from_bits(u64::from_le_bytes(self.take(8)?.try_into().ok()?));
-        Some((!v.is_nan()).then_some(v))
-    }
-}
-
 impl Manifest {
     /// The manifest in `wasm`'s `nori:plugin` section.
     pub fn of_wasm(wasm: &[u8]) -> Result<Manifest, Refusal> {
@@ -351,66 +311,52 @@ impl Manifest {
     }
 
     fn decode(bytes: &[u8]) -> Option<Manifest> {
-        let mut i = In(bytes);
-        (i.byte()? == 2).then_some(())?;
-        let (id, version, api, bits) = (i.str()?, i.str()?, i.u32()?, i.u32()?);
-        let stage = match i.byte()? {
-            0 => None,
+        let w = Section::read(bytes)?;
+        let stage = match w.stage {
             1 => Some(Slot::Song),
             2 => Some(Slot::Master),
-            _ => return None,
+            _ => None,
         };
-        let (net, signin, overrides) = (i.strs()?, i.strs()?, i.strs()?);
-        let rows = (0..i.u16()?)
-            .map(|_| {
+        let rows = w
+            .rows
+            .iter()
+            .map(|r| {
                 Some(RowSpec {
-                    id: i.str()?,
-                    kind: *RowKind::ALL.get(i.byte()? as usize)?,
-                    options: i.strs()?,
-                    min: i.number()?,
-                    max: i.number()?,
-                    step: i.number()?,
-                    default: i.number()?,
-                    hint: i.opt_str()?,
-                    unit: i.opt_str()?,
-                    decimals: i.byte()?,
-                    url: i.opt_str()?,
+                    id: r.id.clone(),
+                    kind: *RowKind::ALL.get(r.kind as usize)?,
+                    options: r.options.clone(),
+                    min: r.min,
+                    max: r.max,
+                    step: r.step,
+                    default: r.default,
+                    hint: r.hint.clone(),
+                    unit: r.unit.clone(),
+                    decimals: r.decimals,
+                    url: r.url.clone(),
                 })
             })
             .collect::<Option<Vec<_>>>()?;
         const GLYPHS: [Glyph; 10] = [Glyph::Sparkle, Glyph::Info, Glyph::Share, Glyph::Link, Glyph::Search, Glyph::Heart, Glyph::Download, Glyph::Add, Glyph::Play, Glyph::Tune];
         const KINDS: [ItemKind; 4] = [ItemKind::Song, ItemKind::Album, ItemKind::Artist, ItemKind::Playlist];
         const PLACES: [Place; 4] = [Place::Artwork, Place::SongInfo, Place::PlayerStatus, Place::Devices];
-        let menu = (0..i.u16()?)
-            .map(|_| Some(MenuSpec { id: i.str()?, glyph: *GLYPHS.get(i.byte()? as usize)?, kinds: (0..i.u16()?).map(|_| KINDS.get(i.byte()? as usize).copied()).collect::<Option<_>>()? }))
+        let menu = w
+            .menu
+            .iter()
+            .map(|a| Some(MenuSpec { id: a.id.clone(), glyph: *GLYPHS.get(a.glyph as usize)?, kinds: a.kinds.iter().map(|k| KINDS.get(*k as usize).copied()).collect::<Option<_>>()? }))
             .collect::<Option<Vec<_>>>()?;
-        let places = (0..i.u16()?).map(|_| PLACES.get(i.byte()? as usize).copied()).collect::<Option<Vec<_>>>()?;
-        // Absent from a manifest written before it.
-        let devices = if i.0.is_empty() {
-            Vec::new()
-        } else {
-            (0..i.u16()?)
-                .map(|_| {
-                    let (name, service, vendor) = (i.opt_str()?, i.opt_str()?, i.u32()?);
-                    Some(DeviceFilter { name, service, vendor: u16::try_from(vendor).ok() })
-                })
-                .collect::<Option<Vec<_>>>()?
-        };
-        let points = POINTS.iter().enumerate().filter(|(k, _)| bits & (1 << k) != 0).map(|(_, p)| *p).collect();
-        let mut m = Manifest { id, version, api, points, stage, net, signin, overrides, rows, menu, places, devices, permissions: Vec::new(), hooks: Vec::new(), wake: Vec::new(), commands: Vec::new(), cache_bytes: 0, assets: Vec::new() };
-        // A plugin built before these fields ends here.
-        if i.0.is_empty() {
-            return Some(m);
-        }
+        let places = w.places.iter().map(|p| PLACES.get(*p as usize).copied()).collect::<Option<Vec<_>>>()?;
+        let devices = w.devices.iter().map(|d| DeviceFilter { name: d.name.clone(), service: d.service.clone(), vendor: u16::try_from(d.vendor).ok() }).collect();
+        let points = w.points();
+        let mut m = Manifest { points, stage, rows, menu, places, devices, id: w.id, version: w.version, api: w.api, net: w.net, signin: w.signin, overrides: w.overrides, permissions: Vec::new(), hooks: Vec::new(), wake: Vec::new(), commands: Vec::new(), cache_bytes: 0, assets: Vec::new() };
+        let Some(later) = w.later else { return Some(m) };
         const PERMISSIONS: [Permission; 6] = [Permission::PlaybackRead, Permission::PlaybackControl, Permission::LibraryRead, Permission::LibraryWrite, Permission::Subsonic, Permission::Schedule];
         // Kinds a newer SDK adds are skipped.
-        let bytes = |i: &mut In| -> Option<Vec<u8>> { (0..i.u16()?).map(|_| i.byte()).collect() };
-        m.permissions = bytes(&mut i)?.into_iter().filter_map(|b| PERMISSIONS.get(b as usize).copied()).collect();
-        m.hooks = bytes(&mut i)?.into_iter().filter_map(|b| Hook::ALL.get(b as usize).copied()).collect();
-        m.wake = bytes(&mut i)?.into_iter().filter_map(|b| WakeEvent::ALL.get(b as usize).copied()).collect();
-        m.commands = i.strs()?;
-        m.cache_bytes = i.u32()? as u64 * 1024 * 1024;
-        m.assets = (0..i.u16()?).map(|_| Some(AssetSpec { name: i.str()?, url: i.str()?, size: u64::from_le_bytes(i.take(8)?.try_into().ok()?), sha256: i.str()? })).collect::<Option<Vec<_>>>()?;
+        m.permissions = later.permissions.iter().filter_map(|b| PERMISSIONS.get(*b as usize).copied()).collect();
+        m.hooks = later.hooks.iter().filter_map(|b| Hook::ALL.get(*b as usize).copied()).collect();
+        m.wake = later.wake.iter().filter_map(|b| WakeEvent::ALL.get(*b as usize).copied()).collect();
+        m.commands = later.commands;
+        m.cache_bytes = later.cache_mb as u64 * 1024 * 1024;
+        m.assets = later.assets.into_iter().map(|a| AssetSpec { name: a.name, url: a.url, size: a.size, sha256: a.sha256 }).collect();
         Some(m)
     }
 
@@ -465,18 +411,6 @@ fn among<'a>(hosts: impl IntoIterator<Item = &'a String>, host: &str) -> bool {
             Some(base) => host == base || host.ends_with(&format!(".{base}")),
             None => host == *d,
         })
-}
-
-/// The first custom section `name` in `wasm`, a component's nested modules included.
-fn custom_section(wasm: &[u8], name: &str) -> Option<Vec<u8>> {
-    for payload in wasmparser::Parser::new(0).parse_all(wasm) {
-        if let Ok(wasmparser::Payload::CustomSection(c)) = payload {
-            if c.name() == name {
-                return Some(c.data().to_vec());
-            }
-        }
-    }
-    None
 }
 
 #[cfg(test)]
