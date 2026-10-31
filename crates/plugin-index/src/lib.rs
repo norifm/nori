@@ -232,8 +232,8 @@ pub fn web_plugin(section: &Section, imports: &[String], strings: &str, proxied:
                     max: r.max,
                     step: r.step,
                     default: r.default,
-                    hint: r.hint.as_deref().and_then(&said),
-                    unit: r.unit.as_deref().and_then(&said),
+                    hint: r.hint.as_deref().and_then(said),
+                    unit: r.unit.as_deref().and_then(said),
                     decimals: r.decimals,
                     url: r.url.clone(),
                 }
