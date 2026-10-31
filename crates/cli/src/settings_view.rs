@@ -1460,7 +1460,7 @@ impl EqRow {
                 (numbers::iso_band(label, POINT), format!("{} dB", numbers::signed_db(p.eq_graphic.get(i).copied().unwrap_or(0.0), POINT)))
             }
             EqRow::Presets => ("Presets".into(), String::new()),
-            EqRow::AutoPreamp => ("Automatic pre-amp".into(), on(p.eq_preamp_db.is_none())),
+            EqRow::AutoPreamp => ("Auto pre-amp".into(), on(p.eq_preamp_db.is_none())),
             EqRow::Preamp => ("Pre-amp".into(), text::preamp(p.eq_preamp_db.unwrap_or(0.0), false)),
             EqRow::Band(i) => {
                 let b = p.eq_bands.get(i).copied().unwrap_or(nori_core::settings::band_from(0, 0.0, 0.0, 1.0, 0));

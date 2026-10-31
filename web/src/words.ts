@@ -277,7 +277,7 @@ export const W = {
     reset: "Reset",
     presets: "Presets",
     preamp: "Pre-amp",
-    preampAuto: "Automatic pre-amp",
+    preampAuto: "Auto pre-amp",
     preampAutoNote: "Pulls the level down by the largest boost so the curve can't clip",
     output: "Output",
     balance: "Balance",

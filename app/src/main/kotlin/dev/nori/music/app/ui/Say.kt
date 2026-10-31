@@ -925,9 +925,9 @@ class Say(private val r: Resources) {
 
     // ---- the equalizer ----
 
-    /** "Pre-amp -3.5 dB (automatic)". */
-    fun preamp(db: Float, automatic: Boolean): String =
-        r.getString(if (automatic) R.string.eq_preamp_automatic else R.string.eq_preamp, Fmt.signedDb(db))
+    val autoPreamp: String = r.getString(R.string.eq_auto_preamp)
+    /** The pre-amp in effect: "-3.5 dB". */
+    fun preamp(db: Float): String = r.getString(R.string.settings_db, Fmt.signedDb(db))
     /** "centre", "L 30%", "R 5%". */
     fun balance(balance: Float): String = when {
         balance == 0f -> r.getString(R.string.eq_balance_centre)

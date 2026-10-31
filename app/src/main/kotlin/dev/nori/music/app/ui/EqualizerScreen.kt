@@ -121,8 +121,8 @@ fun EqualizerScreen(vm: SettingsViewModel) {
         GroupCard {
             val automatic = p.eqPreampDb == null
             GroupRow(
-                remember(p.effectivePreampDb, automatic) { say.preamp(p.effectivePreampDb, automatic) }, { vm.setAutoPreamp(!automatic) },
-                divider = !automatic, trailing = { NoriSwitch(automatic, vm::setAutoPreamp) },
+                say.autoPreamp, { vm.setAutoPreamp(!automatic) }, value = remember(p.effectivePreampDb) { say.preamp(p.effectivePreampDb) },
+                divider = !automatic, trailing = { NoriSwitch(automatic, vm::setAutoPreamp, Modifier.padding(start = 12.dp)) },
             )
             p.eqPreampDb?.let { v -> CardSlider(v, ranges.preamp.min..ranges.preamp.max, { x -> vm.setLevel(EqLevel.PREAMP, x) }, enabled = p.eqEnabled, divider = false) }
         }
