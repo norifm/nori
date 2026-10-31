@@ -341,7 +341,7 @@ private fun AddRepoSheet(visible: Boolean, close: () -> Unit, add: (String) -> U
 
 /**
  * A plugin read but not installed, from a file or a repo: what it is and everything it may reach, before
- * Install. A new install lands off; turning it on is one tap on its row.
+ * Install. A new install lands on.
  */
 @Composable
 private fun InstallSheet(vm: PluginsViewModel) {

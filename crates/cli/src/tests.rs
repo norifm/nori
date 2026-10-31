@@ -2470,15 +2470,14 @@ impl nori_plugins::Client for Heard {
     fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {}
 }
 
-/// The test plugin installed in `dir` and on, over settings of its own.
+/// The test plugin installed in `dir`, on, over settings of its own.
 fn fixture_host(dir: &nori_testdir::TempDir, client: std::sync::Arc<Heard>) -> std::sync::Arc<nori_plugins::Plugins> {
     let plugins = nori_plugins::open(dir.join("plugins"), nori_core::settings_store::Settings::new(), client);
     plugins.install(&nori_plugins::testing::fixture("")).unwrap();
-    plugins.turn(nori_plugins::testing::FIXTURE.into(), true);
     plugins
 }
 
-/// A plugin's sheet says what it is and reaches before anything is installed; Install installs it, off.
+/// A plugin's sheet says what it is and reaches before anything is installed; Install installs it, on.
 #[test]
 fn a_plugin_says_what_it_is_before_it_is_installed() {
     let dir = nori_testdir::TempDir::new("cli-plugin-preview");
@@ -2491,11 +2490,11 @@ fn a_plugin_says_what_it_is_before_it_is_installed() {
     dump("plugins-preview", &s);
     assert!(s.contains(&format!("Install Test {}?", preview.card.version)) && s.contains("enter install · esc cancel"), "{s}");
     let Some(Overlay::Confirm { lines, .. }) = &a.overlay else { panic!("no sheet") };
-    assert_eq!(lines, &["It's a playback helper, a music source, a sound effect, a mixer, a lyrics source, a scrobbler. It changes playback values.", "Connects to allowed.example and devices on your network. Changes playback.speed. Sees what plays and the queue. Controls playback and the queue. Searches your library. Uses your server's API as you. Wakes at each lyric line while music plays. Starts nori while it is closed (on a phone). Lets other apps run: ping. Keeps up to 1 MB of cache. Downloads 1 MB of files.", "Unsigned", "It stays off until you turn it on."]);
+    assert_eq!(lines, &["It's a playback helper, a music source, a sound effect, a mixer, a lyrics source, a scrobbler. It changes playback values.", "Connects to allowed.example and devices on your network. Changes playback.speed. Sees what plays and the queue. Controls playback and the queue. Searches your library. Uses your server's API as you. Wakes at each lyric line while music plays. Starts nori while it is closed (on a phone). Lets other apps run: ping. Keeps up to 1 MB of cache. Downloads 1 MB of files.", "Unsigned", "It turns on once installed."]);
     key(&mut a, KeyCode::Enter);
     let Some(Cmd::Plugin(crate::app::PluginCmd::InstallPreview(p))) = a.cmds.pop() else { panic!("not installed") };
     assert_eq!(plugins.install_preview(*p), Ok(nori_plugins::testing::FIXTURE.into()));
-    assert!(plugins.installed().iter().all(|i| !i.enabled) && plugins.installed().len() == 1);
+    assert!(plugins.installed().iter().all(|i| i.enabled) && plugins.installed().len() == 1);
     a.handle(Msg::Installed(Ok(nori_plugins::testing::FIXTURE.into())));
     assert!(matches!(&a.note, Some((t, false, _)) if t == "Plugin installed"), "{:?}", a.note);
 }

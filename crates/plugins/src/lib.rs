@@ -129,6 +129,13 @@ struct IndexEntry {
     key: Option<String>,
 }
 
+/// Whether a plugin not installed before turns on: a restore sets its being on itself, after its store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WhenNew {
+    On,
+    Off,
+}
+
 #[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct Plugins {
     pub(crate) dir: PathBuf,
@@ -355,10 +362,10 @@ impl Plugins {
         self.dir.join(id)
     }
 
-    /// Installs (or updates) the `.noriplugin` package or plugin folder at `from`, off when new. A file
+    /// Installs (or updates) the `.noriplugin` package or plugin folder at `from`, on when new. A file
     /// is unsigned: it can't update a plugin whose author's key is pinned.
     pub fn install(&self, from: &Path) -> Result<Arc<Manifest>, Refusal> {
-        self.install_as(from, None, None)
+        self.install_as(from, None, None, WhenNew::On)
     }
 
     /// Whether a version of plugin `id` signed by `key` (None: unsigned) may replace the one installed:
@@ -373,17 +380,21 @@ impl Plugins {
 
     /// [`Plugins::install`] of a package from `repo`, which it is updated from from now on, signed by
     /// `key` (already checked). An update keeps its place, its being on and its being held; the first
-    /// signed version pins its key.
-    pub(crate) fn install_as(&self, from: &Path, repo: Option<String>, key: Option<String>) -> Result<Arc<Manifest>, Refusal> {
+    /// signed version pins its key. A plugin that can't start stays installed: its start only logs.
+    pub(crate) fn install_as(&self, from: &Path, repo: Option<String>, key: Option<String>, when_new: WhenNew) -> Result<Arc<Manifest>, Refusal> {
         let manifest = Arc::new(package::install(from, &self.dir, |m| self.admits(&m.id, key.as_deref()))?);
         let mut list = self.installed.lock().expect("not poisoned");
-        match list.iter_mut().find(|i| i.manifest.id == manifest.id) {
+        let new = match list.iter_mut().find(|i| i.manifest.id == manifest.id) {
             Some(i) => {
                 (i.manifest, i.repo) = (manifest.clone(), repo);
                 i.key = i.key.take().or(key);
+                false
             }
-            None => list.push(Installed { manifest: manifest.clone(), enabled: false, repo, held: false, key }),
-        }
+            None => {
+                list.push(Installed { manifest: manifest.clone(), enabled: false, repo, held: false, key });
+                true
+            }
+        };
         self.keep(&list);
         let on = list.iter().any(|i| i.manifest.id == manifest.id && i.enabled);
         drop(list);
@@ -395,6 +406,9 @@ impl Plugins {
             self.side.laid(&manifest.id);
         }
         self.refresh();
+        if new && when_new == WhenNew::On {
+            self.turn(manifest.id.clone(), true);
+        }
         Ok(manifest)
     }
 

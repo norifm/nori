@@ -100,6 +100,8 @@ impl Lifecycle for Test {
     }
 
     fn start(&mut self) {
+        #[cfg(feature = "fails-to-start")]
+        panic!("told to");
         settings::override_(&[("playback.speed".into(), Value::Level(1.25))]).unwrap();
         let _ = settings::override_(&[("playback.pitch".into(), Value::Level(2.0))]).map(|_| panic!("not its key"));
         let heard = [fetch("https://allowed.example/a"), fetch("https://elsewhere.example/b")].join("|");

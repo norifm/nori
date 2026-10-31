@@ -19,6 +19,8 @@ headphones = []
 song = []
 # Another id (`testing::SECOND`): a second plugin beside the first.
 second = []
+# Its lifecycle's start panics.
+fails-to-start = []
 
 [dependencies]
 nori-plugin-sdk = { path = "../../plugin-sdk" }

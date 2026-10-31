@@ -189,11 +189,9 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   check "before installing, its sheet says what it may do" wait_until 30 on_screen 'Change the sound'
   check "and nothing is installed yet" plugin_is none
   adb exec-out screencap -p > "$shots/install-sheet.png"
-  tapnode text Install
-  check "orbit installs from the repo, off" wait_until 30 plugin_is 'fm.nori.orbit:off'
   watch_from_now
-  "$app" plugin turn "fm.nori.orbit on" >/dev/null
-  check "orbit turns on" wait_until 10 plugin_is 'fm.nori.orbit:on'
+  tapnode text Install
+  check "orbit installs from the repo, on" wait_until 30 plugin_is 'fm.nori.orbit:on'
   check "the player takes its stage in at once" waitfor_log 'the chain changes' 10
   check "installed, its page stops offering it" wait_until 10 off_screen 'text="Install"'
   check "music sounds with orbit's stage in the chain" sounds 10

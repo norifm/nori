@@ -209,7 +209,6 @@ pub fn from_repo(url: &str) -> String {
     }
     format!("From {}, which keeps it up to date.", host(url))
 }
-pub const INSTALLED_OFF: &str = "It stays off until you turn it on.";
 pub const INSTALLED_ON: &str = "It turns on once installed.";
 
 /// What a plugin is, from the extension points it fills and whether it overrides nori's values.

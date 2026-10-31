@@ -810,7 +810,7 @@ fn preview_sheet(p: nori_plugins::PluginPreview, turns_on: bool) -> Overlay {
     }
     lines.extend(p.repo.as_deref().map(crate::text::from_repo));
     lines.extend(p.key.is_none().then(|| crate::text::UNSIGNED.to_string()));
-    lines.push(if turns_on { crate::text::INSTALLED_ON } else { crate::text::INSTALLED_OFF }.into());
+    lines.extend(turns_on.then(|| crate::text::INSTALLED_ON.to_string()));
     Overlay::Confirm { title: crate::text::install_version(&c.name, &c.version), lines, yes: crate::text::INSTALL.into(), cmd: Box::new(Cmd::Plugin(PluginCmd::InstallPreview(Box::new(p)))) }
 }
 
@@ -1780,7 +1780,7 @@ impl App {
                 }
             }
             Msg::Preview(Ok(p)) => {
-                let turns_on = self.login.offered.as_ref() == Some(&p.card.id);
+                let turns_on = self.login.offered.as_ref() == Some(&p.card.id) || !self.settings.own.plugins.iter().any(|c| c.id == p.card.id);
                 self.overlay = Some(preview_sheet(p, turns_on));
             }
             Msg::Installed(Ok(id)) => {
