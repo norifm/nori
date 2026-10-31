@@ -199,7 +199,6 @@ export const W = {
     SignIn: "Needs a sign-in page browsers don't allow",
     OtherSites: "Needs sites that block web pages",
     Provider: "Needs streams browsers don't allow",
-    Overrides: "Changes settings a browser doesn't have",
     NotYet: "Not available in a browser yet",
   } as Record<string, string>,
   // Settings, by the core's pages (their title and what they hold), sections and setting names.

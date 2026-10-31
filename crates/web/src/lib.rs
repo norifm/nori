@@ -504,4 +504,11 @@ impl Nori {
     pub fn setting(&self, name: String, value: String) -> bool {
         self.app.settings.edit_by_name(&name, &value).is_some()
     }
+
+    /// What the plugins on override: `[[key, value]]`, as text.
+    pub fn plugin_overrides(&self, overrides: String) -> Result<(), JsValue> {
+        let overrides = serde_json::from_str(&overrides).map_err(error)?;
+        self.app.settings.set_layer(nori_core::overrides::Layer { overrides, ..self.app.settings.layer() });
+        Ok(())
+    }
 }

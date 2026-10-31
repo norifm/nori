@@ -1,6 +1,7 @@
 // The plugin host in headless Chrome, against web/serve.py and the local Navidrome: nothing of it loads with
 // no plugin; blocked plugins are greyed with their reasons; orbit installs from the repo, shows its rows,
-// changes the samples the AudioWorklet plays, survives a reload and goes on Remove; moving-covers reaches
+// changes the samples the AudioWorklet plays, survives a reload and goes on Remove; playback sets the
+// engine's speed through an override; moving-covers reaches
 // Apple through the server and its loop plays in a <video>.
 //
 //   node web/check/plugins.mjs [http://localhost:8099/]
@@ -123,6 +124,37 @@ const [a, b] = [await heard(), (await wait(1500), await heard())];
 check("off, it stops touching the sound", a.staged === b.staged, [a.staged, b.staged]);
 
 await listed();
+await install("fm.nori.playback");
+await open("fm.nori.playback");
+await clickText("[data-plugin-on]");
+await wait(800);
+/** How much of the song passes in 3 s of the clock, and the pace the session says. */
+const paced = async () => {
+  const now = async () => JSON.parse(await ask("now"));
+  const a = await now();
+  await wait(3000);
+  const b = await now();
+  return { pace: b.pace, passed: (b.positionMs - a.positionMs) / 3000 };
+};
+const setSpeed = (v) => page.evaluate((v) => { const p = window.plugins; return p.setRow("fm.nori.playback", p.find("fm.nori.playback").plugin.rows.find((r) => r.id === "speed"), v); }, v);
+await setSpeed(1.5);
+await wait(1500);
+const fast = await paced();
+check("speed reaches the engine", Math.abs(fast.pace - 1.5) < 0.01 && Math.abs(fast.passed - 1.5) < 0.2, fast);
+await page.reload({ waitUntil: "load" });
+await start();
+await wait(800);
+await play();
+await wait(1500);
+const after = await paced();
+check("speed stays after a reload", Math.abs(after.pace - 1.5) < 0.01, after);
+await open("fm.nori.playback");
+await clickText("[data-plugin-on]");
+await wait(1500);
+const plain = await paced();
+check("off, nori's own speed is back", Math.abs(plain.pace - 1) < 0.01 && Math.abs(plain.passed - 1) < 0.2, plain);
+
+await listed();
 await install("fm.nori.moving-covers");
 await open("fm.nori.moving-covers");
 await clickText("[data-plugin-on]");
@@ -146,7 +178,7 @@ if (sleeve) {
   await page.keyboard.press("Escape");
 }
 
-for (const id of ["fm.nori.moving-covers", "fm.nori.orbit"]) {
+for (const id of ["fm.nori.moving-covers", "fm.nori.playback", "fm.nori.orbit"]) {
   await open(id);
   await clickText("[data-plugin-remove]");
   await listed();

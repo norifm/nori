@@ -929,6 +929,16 @@ impl Handle {
         Some(change)
     }
 
+    /// Lays `overrides` (key and value as text) over the settings, for a client whose plugins run outside
+    /// nori's plugin host, and applies them.
+    pub fn lay_overrides(&self, overrides: Vec<(String, String)>) {
+        let settings = &self.core.session.settings;
+        let effect = settings.set_layer(nori_core::overrides::Layer { overrides, ..settings.layer() });
+        if let Some(prefs) = settings.current() {
+            self.apply(effect, &prefs);
+        }
+    }
+
     /// Applies the settings a backup restored (`nori_backup::restore`), as [`Session::setting`] does a
     /// change.
     pub fn backup_restored(&self, change: &SettingChange) {

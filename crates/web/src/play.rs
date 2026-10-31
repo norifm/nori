@@ -416,6 +416,18 @@ impl Nori {
         self.with(|h| h.setting(&name, &value).is_some()).unwrap_or_else(|| self.app.settings.edit_by_name(&name, &value).is_some())
     }
 
+    /// What the plugins on override: `[[key, value]]`, as text.
+    pub fn plugin_overrides(&self, overrides: String) -> Result<(), JsValue> {
+        let overrides: Vec<(String, String)> = serde_json::from_str(&overrides).map_err(error)?;
+        match self.with(|h| h.lay_overrides(overrides.clone())) {
+            Some(()) => {}
+            None => {
+                self.app.settings.set_layer(nori_core::overrides::Layer { overrides, ..self.app.settings.layer() });
+            }
+        }
+        Ok(())
+    }
+
     /// Asks for `song`'s lyrics; they come as a `lyrics` report.
     pub fn lyrics(&self, song: String) {
         self.with(|h| h.lyrics(song));

@@ -463,7 +463,9 @@ with the plugin's store. Nothing of this loads while no plugin is installed: `no
 - What can run here is one rule, `nori_plugin_index::web_blocks`, for a repo's listing (`web_fit`, from
   the `points`, `imports` and `net` that `tools/pack.py` writes into `index.json`) and for a package
   being installed (`read_web_plugin`, the manifest and the component's real imports). Lifecycle, hooks,
-  sound stages and slots run; providers, overrides and every device or socket import are greyed.
+  sound stages, slots and overrides run; providers and every device or socket import are greyed.
+- Overrides reach the core's layer as they do natively and the engine applies them. A worker's call
+  can't wait for the core, so `settings.stored` and `effective` answer none.
 - A plugin runs in its own worker (`runner.ts`): its host calls block, and only a worker has synchronous
   XHR, so `http.start` is done when it returns. WASI is a stub (`wasi.ts`): clocks and stderr.
 - A sound stage runs in the AudioWorklet (`stage.ts`, `worklet.ts`): its core modules are compiled there,

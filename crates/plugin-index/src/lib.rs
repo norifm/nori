@@ -87,8 +87,6 @@ pub enum WebBlock {
     OtherSites,
     /// A kind of profile to add: the web's profiles are servers.
     Provider,
-    /// Changing nori's own settings.
-    Overrides,
     /// An extension point or host call the web's host doesn't have yet.
     NotYet,
 }
@@ -97,7 +95,7 @@ pub enum WebBlock {
 const WEB_POINTS: [&str; 4] = ["lifecycle", "hooks", "sound-stage", "slots"];
 
 /// The host calls the web's host answers, and those only a client's own stack can.
-const WEB_IMPORTS: [&str; 7] = ["log", "store", "cache", "http", "notices", "rows", "timers"];
+const WEB_IMPORTS: [&str; 8] = ["log", "store", "cache", "http", "notices", "rows", "settings", "timers"];
 
 /// The name of the host interface in a component's import (`nori:plugin/sockets@2.0.0`).
 fn interface(import: &str) -> Option<&str> {
@@ -136,7 +134,6 @@ pub fn web_blocks(points: &[String], net: &[String], imports: &[String], proxied
             "bluetooth" => add(Bluetooth),
             "wake" => add(Wake),
             "sign-in" => add(SignIn),
-            "settings" => add(Overrides),
             "http" if !proxied && net.iter().any(|h| h != "lan") => add(OtherSites),
             "types" => {}
             i if !WEB_IMPORTS.contains(&i) => add(NotYet),
@@ -198,6 +195,8 @@ pub struct WebPlugin {
     pub points: Vec<&'static str>,
     pub stage: bool,
     pub net: Vec<String>,
+    /// The keys it may override.
+    pub overrides: Vec<String>,
     pub rows: Vec<WebRow>,
     pub blocks: Vec<WebBlock>,
 }
@@ -215,6 +214,7 @@ pub fn web_plugin(section: &Section, imports: &[String], strings: &str, proxied:
         about: said("about"),
         stage: section.stage != 0,
         net: section.net.clone(),
+        overrides: section.overrides.clone(),
         blocks: web_blocks(&named, &section.net, imports, proxied),
         points,
         rows: section
@@ -292,7 +292,7 @@ mod tests {
             (vec!["slots"], vec!["amp-api.music.apple.com"], vec!["http", "log", "store"], false, vec![OtherSites]),
             (vec!["slots"], vec!["amp-api.music.apple.com"], vec!["http", "log", "store"], true, vec![]),
             (vec!["lifecycle", "preparation"], vec![], vec!["log"], false, vec![NotYet]),
-            (vec!["lifecycle"], vec![], vec!["settings", "rows"], false, vec![Overrides]),
+            (vec!["lifecycle"], vec![], vec!["settings", "rows"], false, vec![]),
             (vec!["hooks"], vec![], vec!["session", "subsonic", "assets"], false, vec![NotYet]),
         ] {
             assert_eq!(web_blocks(&all(&points), &all(&net), &all(&imports), proxied), want, "{points:?} {net:?} {imports:?} {proxied}");

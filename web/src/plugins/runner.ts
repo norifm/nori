@@ -5,9 +5,16 @@ import type { Code, Row, Value } from "./types";
 import { valueOf, witValue } from "./types";
 import { wasi } from "./wasi";
 
+/** Where a plugin's overrides are kept in its store, as native hosts keep them; each value as text. */
+const OVERRIDE = "nori/override/";
+
+/** What the store `data` overrides: key and value. */
+export const overridesIn = (data: Map<string, Uint8Array>): [string, string][] =>
+  [...data].filter(([k]) => k.startsWith(OVERRIDE)).map(([k, v]) => [k.slice(OVERRIDE.length), new TextDecoder().decode(v)]);
+
 /** The first message: the plugin to run. `proxy`: the address that carries its requests, if the page's
  * server has one. */
-export type Start = { code: Code; net: string[]; proxy: string | null; rows: Row[]; values: Record<string, Value>; data: Map<string, Uint8Array> };
+export type Start = { code: Code; net: string[]; overrides: string[]; proxy: string | null; rows: Row[]; values: Record<string, Value>; data: Map<string, Uint8Array> };
 /** A call on one of its exports: `at` the interface, `call` the function. */
 export type Call = { n: number; at: "lifecycle" | "hooks" | "slots"; call: string; args: unknown[] };
 
@@ -58,7 +65,7 @@ function perform(start: Start, r: HttpRequest): HttpResponse {
 
 /** The plugin API's imports, over what it was started with. */
 function imports(start: Start) {
-  const { data, rows, values } = start;
+  const { data, rows, values, overrides } = start;
   const told = (m: unknown) => scope.postMessage(m);
   const set = (key: string, value: Uint8Array) => {
     data.set(key, value);
@@ -106,6 +113,21 @@ function imports(start: Start) {
       },
       setStatus: (row: string, words: string, args: string[]) => told({ status: { row, words, args } }),
       setShown: (row: string, shown: boolean, enabled: boolean) => told({ shown: { row, shown, enabled } }),
+    },
+    // The core can't be asked from here while a plugin waits, so a plugin reading a setting hears none.
+    "nori:plugin/settings": {
+      stored: () => undefined,
+      effective: () => undefined,
+      override: (changes: [string, { val: unknown }][]) => {
+        const refused = changes.find(([k]) => !overrides.includes(k));
+        if (refused) throw decline("refused", `${refused[0]} is not among its overrides`);
+        for (const [k, v] of changes) set(OVERRIDE + k, new TextEncoder().encode(String(v.val)));
+        told({ overrides: overridesIn(data) });
+      },
+      clear: (keys: string[]) => {
+        for (const k of keys.length > 0 ? keys : overrides) unset(OVERRIDE + k);
+        told({ overrides: overridesIn(data) });
+      },
     },
     "nori:plugin/timers": {
       start: (id: number, ms: number, repeat: boolean) => {

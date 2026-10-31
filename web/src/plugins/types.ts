@@ -26,6 +26,7 @@ export type WebPlugin = {
   points: string[];
   stage: boolean;
   net: string[];
+  overrides: string[];
   rows: Row[];
   blocks: string[];
 };
