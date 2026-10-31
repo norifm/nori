@@ -3,10 +3,9 @@ on:
   push:
   workflow_dispatch:
 concurrency:
-  group: checks-${{ github.ref }}
-  # On master the run going finishes, since a cancelled job marks its commit failed; only runs still
-  # waiting are replaced.
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+  # On master each commit keeps its run: a cancelled job marks its commit failed.
+  group: checks-${{ github.ref == 'refs/heads/master' && github.sha || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 env:
@@ -14,7 +13,41 @@ env:
   CARGO_BUILD_JOBS: '4'
   CARGO_PROFILE_TEST_DEBUG: '0'
 jobs:
+  # A job this push can't affect is skipped, which shows grey.
+  changes:
+    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    outputs:
+      rust: ${{ steps.touched.outputs.rust }}
+      web: ${{ steps.touched.outputs.web }}
+      android: ${{ steps.touched.outputs.android }}
+    steps:
+      - id: touched
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          all() {
+            printf 'rust=true\nweb=true\nandroid=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          case "$BEFORE" in ''|*[!0]*) ;; *) all ;; esac
+          [ -n "$BEFORE" ] || all
+          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename') || all
+          # The API lists 300 files at most.
+          [ "$(wc -l <<< "$files")" -lt 300 ] || all
+          shared='^(crates/|vendor/|wit/|Cargo\.|\.cargo/|\.config/|\.github/)'
+          # Rust's tests and builds also read these: core's native calls, the fonts, licenses, icons, the map.
+          read_by_rust='^(core/|AGENTS\.md|app/src/main/assets/|app/src/main/res/font/|docs/brand/)'
+          touches() { grep -qE "$1" <<< "$files" && echo true || echo false; }
+          {
+            echo "rust=$(touches "$shared|$read_by_rust")"
+            echo "web=$(touches "$shared|^web/")"
+            echo "android=$(touches "$shared|^(app/|core/|gradle|gradlew|build\.gradle\.kts|settings\.gradle\.kts)")"
+          } >> "$GITHUB_OUTPUT"
   rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 45
     runs-on: ubuntu-26.04
     steps:
@@ -40,6 +73,8 @@ jobs:
       - run: cargo nextest run --workspace
       - run: cargo test -j4 --workspace --doc
   clippy:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 45
     runs-on: ubuntu-26.04
     steps:
@@ -59,6 +94,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: cargo clippy -j4 --workspace --all-targets -- -D warnings
   web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     timeout-minutes: 40
     runs-on: ubuntu-24.04
     steps:
@@ -74,6 +111,8 @@ jobs:
           cargo clippy -j4 --target wasm32-unknown-unknown -p nori-web --all-targets -- -D warnings
           cargo clippy -j4 --target wasm32-unknown-unknown -p nori-web --all-targets --no-default-features -- -D warnings
   android:
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
     timeout-minutes: 40
     runs-on: ubuntu-24.04
     steps:
