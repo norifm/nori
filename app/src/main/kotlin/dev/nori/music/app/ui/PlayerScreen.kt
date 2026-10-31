@@ -2917,6 +2917,14 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
     val fadeOut = with(androidx.compose.ui.platform.LocalDensity.current) { 64.dp.toPx() }
     LazyColumn(
         Modifier.fillMaxSize().weight(1f)
+            // The layer clips to the list, so it runs [QUEUE_LIFT_ROOM] past the panel's sides, where the
+            // held row's plate reaches; the rows take it back as padding.
+            .layout { measurable, constraints ->
+                val room = QUEUE_LIFT_ROOM.roundToPx()
+                val w = constraints.maxWidth + 2 * room
+                val p = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
+                layout(constraints.maxWidth, p.height) { p.place(-room, 0) }
+            }
             .onSizeChanged { listWidth = it.width.toFloat() }
             .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
             .drawWithCache {
@@ -2935,6 +2943,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                 }
             },
         state = list,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = QUEUE_LIFT_ROOM),
     ) {
         items(
             entries.size,
@@ -3002,18 +3011,14 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                             drag.from == place -> drag.offset.floatValue
                             else -> stepping.value
                         }
-                        if (drag.liftKey == key) {
-                            val l = drag.lift.floatValue
-                            scaleX = 1f + 0.02f * l; scaleY = 1f + 0.02f * l
-                        }
                     }
                     // The row held is a step of paper over the rows it passes, so they never show through it.
                     .drawBehind {
                         if (drag.liftKey != key) return@drawBehind
                         val l = drag.lift.floatValue
-                        val corner = androidx.compose.ui.geometry.CornerRadius(12.dp.toPx())
-                        // A little past the cover and the handle on either side, as a raised row's plate.
-                        val out = 8.dp.toPx()
+                        // A little past the cover and the handle on either side, its corners round the cover's.
+                        val out = QUEUE_LIFT_ROOM.toPx()
+                        val corner = androidx.compose.ui.geometry.CornerRadius((Radius.cover + QUEUE_LIFT_ROOM).toPx())
                         val at = Offset(-out, 0f)
                         val area = androidx.compose.ui.geometry.Size(size.width + 2 * out, size.height)
                         drawRoundRect(look.color(CoverLook.BACKGROUND), at, area, corner, alpha = l)
@@ -3149,6 +3154,9 @@ private fun queueEntries(size: Int, now: Int): List<Int> = buildList(size + 2) {
 /** How much a song already played shows through. */
 private const val QUEUE_PLAYED_ALPHA = 0.45f
 /** The shade over the playing song's cover, under its bars. */
+/** How far the held queue row's plate reaches past the row on either side. */
+private val QUEUE_LIFT_ROOM = 8.dp
+
 private val QUEUE_NOW_VEIL = Color.Black.copy(alpha = 0.4f)
 
 /** How long the rows wait for a move to reach the queue before they give it up. */
