@@ -100,7 +100,7 @@ fn cookie_header(cookies: &[wry::cookie::Cookie<'static>], address: &str) -> Str
 }
 
 fn fail(why: &str) -> ! {
-    eprintln!("nori sign-in window: {why}");
+    nori_core::alog::info(&format!("sign-in window: {why}"));
     std::process::exit(1);
 }
 

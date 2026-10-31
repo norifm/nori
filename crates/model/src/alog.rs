@@ -141,8 +141,9 @@ pub fn info(message: &str) {
             unsafe { sys::__android_log_write(INFO, c"nori".as_ptr(), text.as_ptr()) };
         }
     }
+    // Not `eprintln!`, which panics when nobody reads stderr: a launcher that exited leaves it so.
     #[cfg(not(target_os = "android"))]
-    eprintln!("nori: {message}");
+    let _ = writeln!(std::io::stderr(), "nori: {message}");
 }
 
 /// Keeps a line Kotlin already wrote to logcat.
@@ -154,6 +155,27 @@ pub fn alog_keep(line: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A launcher that has exited leaves stderr a pipe nobody reads.
+    #[test]
+    fn a_line_with_nobody_reading_stderr_panics_nothing() {
+        const CHILD: &str = "NORI_ALOG_NO_READER";
+        if std::env::var_os(CHILD).is_some() {
+            for _ in 0..2000 {
+                super::info("a line");
+            }
+            return;
+        }
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "alog::tests::a_line_with_nobody_reading_stderr_panics_nothing", "--nocapture"])
+            .env(CHILD, "1")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        drop(child.stderr.take());
+        assert!(child.wait().unwrap().success());
+    }
 
     #[test]
     fn logs() {

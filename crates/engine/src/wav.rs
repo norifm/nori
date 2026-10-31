@@ -153,7 +153,7 @@ impl AudioOutput for WavOutput {
         if let Some(t) = self.thread.take() {
             t.thread().unpark();
             if let Ok(Err(e)) = t.join() {
-                eprintln!("nori: the WAV file could not be written: {e}");
+                let _ = writeln!(std::io::stderr(), "nori: the WAV file could not be written: {e}");
             }
         }
     }
