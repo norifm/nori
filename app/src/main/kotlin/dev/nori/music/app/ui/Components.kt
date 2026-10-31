@@ -474,7 +474,7 @@ fun SongRow(
                 Modifier.padding(start = MARK_GAP).widthIn(min = TIME_SLOT), textAlign = TextAlign.End,
                 style = MaterialTheme.typography.bodySmall, color = if (asked) scheme.onSurface else tint, maxLines = 1, softWrap = false,
             )
-            IconButton(onMenu, Modifier.size(40.dp)) { Icon(Iconoir.MoreHoriz, say.more, Modifier.size(20.dp), tint) }
+            IconButton(onMenu, Modifier.size(MENU_BUTTON, 40.dp)) { Icon(Iconoir.MoreHoriz, say.more, Modifier.size(MENU_GLYPH), tint) }
         }
       }
     }
@@ -876,5 +876,11 @@ fun prefetchCovers(context: android.content.Context, urls: List<String?>) {
 /** A time's width that "0:00" fills: the marks sit one [MARK_GAP] from most songs' time, and a longer one pushes them along. */
 private val TIME_SLOT = 26.dp
 
-/** A song row's end, so its ⋯ glyph ends at the gutter, where the list's head and hairline do. */
-private val MENU_INSET = Space.gutter - 10.dp
+/**
+ * A song row's ⋯: narrow (as tall as ever, which sets the row's height), so it stands as near the seal as the seal does the download mark (its tap target
+ * is still the minimum, past its sides), and inset so its glyph ends at the gutter, where the list's head
+ * and hairline do.
+ */
+private val MENU_BUTTON = 32.dp
+private val MENU_GLYPH = 20.dp
+private val MENU_INSET = Space.gutter - (MENU_BUTTON - MENU_GLYPH) / 2
