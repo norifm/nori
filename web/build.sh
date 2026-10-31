@@ -70,7 +70,7 @@ cp "$root/app/src/main/res/font/inter.ttf" "$root/app/src/main/res/font/literata
 
 (
   cd "$here"
-  [ -d node_modules ] || npm ci --no-audit --no-fund
+  [ node_modules/.package-lock.json -nt package-lock.json ] || npm ci --no-audit --no-fund
   npx svelte-check --tsconfig ./tsconfig.json --fail-on-warnings --output human
   npx vite build --logLevel warn
   npx vite build --mode decoder --logLevel warn
