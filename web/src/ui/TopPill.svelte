@@ -164,6 +164,11 @@
     min-width: 0;
     font-weight: 600;
   }
+  .who .sub {
+    font-size: 12.5px;
+    font-weight: 400;
+    color: var(--ink2);
+  }
   .pop :global(.look) {
     margin-top: 6px;
     padding: 6px 4px 4px;
