@@ -2353,6 +2353,55 @@ fn picking_a_device_moves_the_active_ones_playback() {
     }
 }
 
+/// A speaker another device reaches takes the music here, whatever that device last played; only what
+/// plays there now goes on.
+#[test]
+fn casting_through_a_device_sends_this_ones_music() {
+    use Did::*;
+    type Steps = &'static [(bool, Did)];
+    let cases: &[(&str, Steps, Picked)] = &[
+        ("the phone played last", &[(true, Played), (true, Paused), (false, Played), (false, Paused)], Picked::Transfers),
+        ("the desk plays", &[(false, Played), (false, Paused), (true, Played)], Picked::Transfers),
+        ("the phone plays", &[(true, Played), (true, Paused), (false, Played)], Picked::Mirrors),
+    ];
+    for (case, steps, want) in cases {
+        let relay = Relay::new();
+        let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+        let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+        phone.remote.clone().serve(true);
+        desk.remote.clone().serve(true);
+        let phone_id = phone.remote.id();
+        for &(on_desk, did) in steps.iter() {
+            let (d, ids) = if on_desk { (&desk, ["d1", "d2"]) } else { (&phone, ["p1", "p2"]) };
+            match did {
+                Played => d.playing(&ids, 0),
+                Paused => d.remote.clone().played(Playing { playing: false, position_ms: 6_000, ..Default::default() }),
+                Queued => d.queued(&ids),
+            }
+            relay.sim.pass(Duration::from_secs(1));
+            if !on_desk {
+                let playing = matches!(did, Played);
+                desk.until(&format!("{case}: the phone's state"), |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state).filter(|s| s.playing == playing && s.index.is_some()));
+            }
+        }
+        let output = nori_remote::wire::CastOutput { plugin: "p".into(), id: "kitchen".into(), name: "Kitchen".into(), look: Default::default() };
+        desk.remote.clone().cast_on(nori_core::remote::ReachedOutput { device: phone_id.clone(), via: "Phone".into(), output: output.clone() });
+        let mut replaced = None;
+        let mut cast = false;
+        relay.sim.pass(Duration::from_millis(300));
+        while let Ok(op) = phone.ops.try_recv() {
+            match op {
+                Op::Replace { songs, .. } => replaced = Some(songs[0].id.clone()),
+                Op::CastTo { output: o } => cast = o == output,
+                _ => {}
+            }
+        }
+        assert!(cast, "{case}: the phone casts");
+        assert_eq!(replaced.as_deref(), matches!(want, Picked::Transfers).then_some("d1"), "{case}: the music cast");
+        relay.close();
+    }
+}
+
 /// A relay that tells its time: a jam's host and its guests each learn its clock, and a guest plays the
 /// host's place by it, however late the host's words and answers reach it (a guest's own exchanges with
 /// the host come out as lopsided as those delays).

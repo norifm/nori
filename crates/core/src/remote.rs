@@ -1148,6 +1148,12 @@ impl Inner {
         self.peers.iter().map(|p| &p.member).chain(self.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members)).find(|m| m.id == id)
     }
 
+    /// Whether what device `id` plays is what a cast through it is to carry: it plays now and this one
+    /// does not. What it played before stays behind, unlike [`Self::leads`].
+    fn casts_its_own(&self, id: &str) -> bool {
+        !self.playing.playing && self.plays(id)
+    }
+
     /// Device `id`'s name and kind, as it is listed.
     fn who(&self, id: &str) -> Option<(String, DeviceKind)> {
         self.member(id).map(|m| (m.name.clone(), m.kind))
@@ -1664,7 +1670,7 @@ impl Remote {
     /// Moves the playback to `output`: the device reaching it takes the music and casts it there. Either
     /// may come first: what plays on that device goes to the cast.
     pub fn cast_on(self: Arc<Self>, output: ReachedOutput) {
-        self.clone().pick(Some(output.device.clone()));
+        self.clone().pick_for(Some(output.device.clone()), true);
         self.send(output.device, Op::CastTo { output: output.output });
     }
 
@@ -1687,6 +1693,11 @@ impl Remote {
     /// pauses. A device that is the active one already (it plays, or played since this one did) is only
     /// followed, as is any device while nothing is queued here.
     pub fn pick(self: Arc<Self>, device: Option<String>) {
+        self.pick_for(device, false);
+    }
+
+    /// [`Self::pick`]; `cast`: to carry a cast through it.
+    fn pick_for(self: Arc<Self>, device: Option<String>, cast: bool) {
         self.clone().discover_active(false);
         let cancelled = self.inner.lock().taking.take().is_some();
         let (active, idle, plays, leads) = {
@@ -1695,7 +1706,7 @@ impl Remote {
                 return;
             }
             let m = i.mirror.as_ref();
-            let (plays, leads) = device.as_deref().map_or((false, false), |d| (i.plays(d), i.leads(d)));
+            let (plays, leads) = device.as_deref().map_or((false, false), |d| (i.plays(d), if cast { i.casts_its_own(d) } else { i.leads(d) }));
             (m.map(|m| m.id.clone()), m.and_then(|m| m.shown.as_ref()).is_some_and(|s| s.index.is_none()), plays, leads)
         };
         let here = self.client.core.session.playlist(|p| p.current().is_some());
