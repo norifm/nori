@@ -41,6 +41,9 @@ const heard = () => ask("heard");
 const hostLoaded = () => fetched.filter((u) => /js-component-bindgen|\/(install|runner|hls)-/.test(u)).map((u) => u.split("/").pop());
 const hash = (h) => page.evaluate((x) => (location.hash = x), h);
 const clickText = (selector) => page.$eval(selector, (e) => e.click());
+const get = (id) => `#/settings/Plugins/get`;
+/** Whether plugin `id` is on, as the host says. */
+const isOn = (id) => page.evaluate((x) => window.plugins.find(x)?.on, id);
 
 async function start() {
   await page.goto(url, { waitUntil: "load" });
@@ -78,17 +81,22 @@ await wait(800);
 check("no plugin: nothing of the host is fetched", hostLoaded().length === 0, hostLoaded());
 check("no plugin: the host's generator isn't precached", !(await page.evaluate(async () => (await (await fetch("sw.js")).text()).match(/js-component-bindgen|runner-/))));
 
-await hash(plugins);
+await hash(get());
 await page.waitForSelector("[data-plugin]", { timeout: 20000 });
 for (const [id, wants] of [...(index ? [["fm.nori.speaker", "Blocked"]] : []), ["fm.nori.youtube-music", "Blocked"]]) {
   const row = await page.$eval(`[data-plugin="${id}"]`, (e) => ({ fit: e.dataset.fit, greyed: e.classList.contains("off"), why: [...e.querySelectorAll(".why")].map((w) => w.textContent) }));
   check(`${id} is greyed with its reasons`, row.fit === wants && row.greyed && row.why.length > 0, row.why);
 }
 
+/** Installs `id` from the browser: its sheet says what it may do, and it lands on. */
 async function install(id) {
+  await hash(get());
   await page.waitForSelector(`[data-plugin="${id}"] [data-install]`, { timeout: 20000 });
   await clickText(`[data-plugin="${id}"] [data-install]`);
-  await page.waitForSelector(`[data-installed="${id}"]`, { timeout: 60000 });
+  await page.waitForSelector("#confirm-yes", { timeout: 60000 });
+  await clickText("#confirm-yes");
+  await page.waitForSelector(`[data-plugin="${id}"] [data-up-to-date]`, { timeout: 60000 });
+  check(`${id} is on once installed`, await isOn(id));
 }
 await install("fm.nori.orbit");
 check("the generator came with the install", hostLoaded().some((f) => f.includes("js-component-bindgen")), hostLoaded());
@@ -102,8 +110,8 @@ const open = async (id) => {
 await open("fm.nori.orbit");
 const rows = await page.$$eval("[data-plugin-page] [data-row]", (r) => r.map((e) => e.dataset.row));
 check("orbit's page shows its rows", rows.length > 0, rows);
-await clickText("[data-plugin-on]");
-await wait(300);
+const shownPage = await page.$eval(".page", (e) => e.innerText);
+check("its page says what it is and may do", /Versions/i.test(shownPage) && /It may/i.test(shownPage), shownPage.slice(0, 120));
 
 await play();
 await wait(6000);
@@ -125,10 +133,7 @@ await wait(500);
 const [a, b] = [await heard(), (await wait(1500), await heard())];
 check("off, it stops touching the sound", a.staged === b.staged, [a.staged, b.staged]);
 
-await listed();
 await install("fm.nori.playback");
-await open("fm.nori.playback");
-await clickText("[data-plugin-on]");
 await wait(800);
 /** How much of the song passes in 3 s of the clock, and the pace the session says. */
 const paced = async () => {
@@ -156,10 +161,7 @@ await wait(1500);
 const plain = await paced();
 check("off, nori's own speed is back", Math.abs(plain.pace - 1) < 0.01 && Math.abs(plain.passed - 1) < 0.2, plain);
 
-await listed();
 await install("fm.nori.moving-covers");
-await open("fm.nori.moving-covers");
-await clickText("[data-plugin-on]");
 await wait(1500);
 await play("Midnights (Deluxe)");
 await page.click("#bar .art");
@@ -176,7 +178,12 @@ await page.keyboard.press("Escape");
 
 for (const id of ["fm.nori.moving-covers", "fm.nori.playback", "fm.nori.orbit"]) {
   await open(id);
-  await clickText("[data-plugin-remove]");
+  await clickText("[data-plugin-menu]");
+  await page.waitForFunction(() => [...document.querySelectorAll("dialog button, [role=menu] button, .popover button")].some((b) => b.textContent.trim() === "Remove"));
+  await page.evaluate(() => [...document.querySelectorAll("dialog button, [role=menu] button, .popover button")].find((b) => b.textContent.trim() === "Remove").click());
+  await page.waitForSelector("#confirm-yes");
+  await clickText("#confirm-yes");
+  await page.waitForFunction((x) => !window.plugins.find(x), {}, id);
   await listed();
   await page.waitForFunction((x) => !document.querySelector(`[data-installed="${x}"]`), {}, id);
 }
@@ -190,7 +197,7 @@ if (index) {
   noProxy = true;
   await page.reload({ waitUntil: "load" });
   await start();
-  await hash(plugins);
+  await hash(get());
   await page.waitForSelector("[data-plugin]", { timeout: 20000 });
   const covers = await page.$eval('[data-plugin="fm.nori.moving-covers"]', (e) => ({ fit: e.dataset.fit, why: e.querySelector(".why")?.textContent, install: !!e.querySelector("[data-install]") }));
   check("no route on the server: a plugin that names hosts is greyed", covers.fit === "Blocked" && !covers.install, covers);

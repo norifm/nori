@@ -15,6 +15,8 @@ function decoded(a: string): string {
 class Route {
   top = $state("home");
   arg = $state("");
+  /** A page under `arg` (a plugin's, under Settings › Plugins). */
+  sub = $state("");
   /** Bumped by every visit, the same address again too: a page reads itself again. */
   visit = $state(0);
 
@@ -22,9 +24,10 @@ class Route {
   tab = $derived(LIBRARY.includes(this.top) ? "library" : this.top === "row" || this.top === "mix" ? "home" : this.top === "equalizer" ? "settings" : this.top);
 
   read() {
-    const [, top = "", a = ""] = location.hash.replace(/^#\/?/, "/").split("/");
+    const [, top = "", a = "", b = ""] = location.hash.replace(/^#\/?/, "/").split("/");
     this.top = top || "home";
     this.arg = decoded(a);
+    this.sub = decoded(b);
     this.visit++;
   }
 }

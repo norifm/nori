@@ -37,6 +37,7 @@
   .line {
     margin: 8px 0 0;
     color: var(--ink2);
+    white-space: pre-line;
   }
   .row {
     display: flex;

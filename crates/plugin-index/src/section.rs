@@ -53,6 +53,9 @@ pub struct Asset {
     pub sha256: String,
 }
 
+/// A plugin's permissions by the byte its section keeps.
+pub const PERMISSIONS: [&str; 6] = ["PlaybackRead", "PlaybackControl", "LibraryRead", "LibraryWrite", "Subsonic", "Schedule"];
+
 /// The part a plugin built before it doesn't have.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Later {

@@ -5311,6 +5311,7 @@ dependencies = [
 name = "nori-plugin-index"
 version = "0.7.2"
 dependencies = [
+ "pulldown-cmark",
  "serde",
  "serde_json",
  "wasmparser 0.261.0",
@@ -5348,7 +5349,6 @@ dependencies = [
  "nori-tasks",
  "nori-testdir",
  "nori-time",
- "pulldown-cmark",
  "rustls",
  "serde",
  "serde_json",

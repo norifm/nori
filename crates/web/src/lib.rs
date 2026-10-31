@@ -39,6 +39,24 @@ fn db() -> String {
     nori_core::db::DB_FILE.into()
 }
 
+/// A plugin here, as `plugin_offers` is told of it.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginHere {
+    id: String,
+    version: String,
+    held: bool,
+    from_file: bool,
+}
+
+/// What `plugin_found` searches of an offer.
+#[derive(serde::Deserialize)]
+struct PluginNamed {
+    id: String,
+    name: String,
+    about: Option<String>,
+}
+
 #[wasm_bindgen]
 pub struct Nori {
     /// The app's queue session over its settings.
@@ -364,10 +382,14 @@ impl Nori {
         Value::from(pages.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>()).to_string()
     }
 
-    /// The plugins nori's own repo lists, newest version first, each with what stops it in a browser
-    /// (`web_fit`; `proxied`: this page's server carries a plugin's requests): `[{ id, name, about, icon,
-    /// version, url, sha256, fit }]`, each at its newest version of this API.
-    pub async fn plugin_offers(&self, proxied: bool) -> Result<String, JsValue> {
+    /// The plugins nori's own repo lists, each with what stops it in a browser (`web_fit`; `proxied`: this
+    /// page's server carries a plugin's requests), how it stands against `installed` (`[{ id, version,
+    /// held, fromFile }]`) and its versions of this API, newest first: `[{ id, name, about, icon, readme,
+    /// source, versions: [{ version, released, url, sha256 }], state, waiting, fit }]`.
+    pub async fn plugin_offers(&self, proxied: bool, installed: String) -> Result<String, JsValue> {
+        let installed: Vec<PluginHere> = serde_json::from_str(&installed).map_err(error)?;
+        let from = nori_plugin_index::OFFICIAL;
+        let at = |url: &str| nori_plugin_index::resolved(from, url);
         let answer = fetch::fetch(nori_core::transport::Exchange { url: nori_plugin_index::OFFICIAL.into(), timeout_ms: 15_000, ..Default::default() }).await.map_err(|e| error(e.to_string()))?;
         if !(200..=299).contains(&answer.status) {
             return Err(error(format!("HTTP {}", answer.status)));
@@ -377,11 +399,32 @@ impl Nori {
             .plugins
             .iter()
             .map(|l| {
-                let release = l.versions.iter().find(|v| v.api == nori_plugin_index::section::API);
-                json!({ "id": l.id, "name": l.name, "about": l.about, "icon": l.icon, "version": release.map(|v| &v.version), "url": release.map(|v| &v.url), "sha256": release.map(|v| &v.sha256), "fit": nori_plugin_index::web_fit(l, proxied) })
+                let mut versions: Vec<_> = l.versions.iter().filter(|v| v.api == nori_plugin_index::section::API).collect();
+                versions.sort_by_cached_key(|v| std::cmp::Reverse(nori_plugin_index::version_numbers(&v.version)));
+                let here = installed.iter().find(|h| h.id == l.id);
+                let update = here.is_some_and(|h| !h.from_file && versions.first().is_some_and(|v| nori_plugin_index::older(&h.version, &v.version)));
+                let state = match (here, update) {
+                    (None, _) => "New",
+                    (_, true) => "Update",
+                    _ => "Installed",
+                };
+                let listed: Vec<Value> = versions.iter().map(|v| json!({ "version": v.version, "released": v.released, "url": at(&v.url), "sha256": v.sha256.to_ascii_lowercase() })).collect();
+                json!({ "id": l.id, "name": l.name, "about": l.about, "icon": l.icon.as_deref().map(at), "readme": l.readme.as_deref().map(at), "source": l.source, "versions": listed, "state": state, "waiting": update && here.is_some_and(|h| !h.held), "fit": nori_plugin_index::web_fit(l, proxied) })
             })
             .collect();
         Ok(Value::from(offers).to_string())
+    }
+
+    /// The ids of `offers` (`[{ id, name, about }]`) whose name or about holds `query`, by name.
+    pub fn plugin_found(&self, offers: String, query: String) -> Result<String, JsValue> {
+        let offers: Vec<PluginNamed> = serde_json::from_str(&offers).map_err(error)?;
+        let found = nori_plugin_index::found(offers, &query, |o: &PluginNamed| &o.name, |o| o.about.as_deref());
+        Ok(Value::from(found.into_iter().map(|o| o.id).collect::<Vec<_>>()).to_string())
+    }
+
+    /// `markdown` as the blocks a page draws (`readme::Block`).
+    pub fn plugin_readme(&self, markdown: String) -> Result<String, JsValue> {
+        serde_json::to_string(&nori_plugin_index::readme::blocks(&markdown)).map_err(error)
     }
 
     /// A package's `plugin.wasm` and English strings as the page installs it (`WebPlugin`, as JSON).

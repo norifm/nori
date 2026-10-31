@@ -1,7 +1,5 @@
 //! A plugin's README, as blocks a client draws, and its icon: from its package, or from its repo before
-//! it is installed. Inline marks are dropped and a link keeps its words.
-
-use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+//! it is installed.
 
 use crate::{Offer, Plugins};
 
@@ -18,35 +16,16 @@ pub enum ReadmeBlock {
     Code { text: String },
 }
 
-fn blocks(markdown: &str) -> Vec<ReadmeBlock> {
-    let mut out = Vec::new();
-    let mut text = String::new();
-    let mut items = 0;
-    for event in Parser::new(markdown) {
-        match event {
-            Event::Text(t) | Event::Code(t) => text.push_str(&t),
-            Event::SoftBreak => text.push(' '),
-            Event::HardBreak => text.push('\n'),
-            Event::Start(Tag::Item) => items += 1,
-            // An item's own words end where a list inside it starts.
-            Event::Start(Tag::List(_)) if !text.is_empty() => out.push(ReadmeBlock::Item { text: std::mem::take(&mut text) }),
-            Event::End(TagEnd::Item) => {
-                items -= 1;
-                if !text.is_empty() {
-                    out.push(ReadmeBlock::Item { text: std::mem::take(&mut text) });
-                }
-            }
-            Event::End(TagEnd::Heading(level)) => out.push(ReadmeBlock::Heading { level: level as u8, text: std::mem::take(&mut text) }),
-            Event::End(TagEnd::Paragraph) if items == 0 => out.push(ReadmeBlock::Text { text: std::mem::take(&mut text) }),
-            Event::End(TagEnd::CodeBlock) => out.push(ReadmeBlock::Code { text: std::mem::take(&mut text).trim_end().to_string() }),
-            _ => {}
+impl From<nori_plugin_index::readme::Block> for ReadmeBlock {
+    fn from(b: nori_plugin_index::readme::Block) -> ReadmeBlock {
+        use nori_plugin_index::readme::Block;
+        match b {
+            Block::Heading { level, text } => ReadmeBlock::Heading { level, text },
+            Block::Text { text } => ReadmeBlock::Text { text },
+            Block::Item { text } => ReadmeBlock::Item { text },
+            Block::Code { text } => ReadmeBlock::Code { text },
         }
     }
-    // The page already names it.
-    if matches!(out.first(), Some(ReadmeBlock::Heading { level: 1, .. })) {
-        out.remove(0);
-    }
-    out
 }
 
 impl Plugins {
@@ -64,35 +43,12 @@ impl Plugins {
 impl Plugins {
     /// Plugin `id`'s README; empty when it has none or its repo can't be reached.
     pub async fn readme(&self, id: String, offer: Option<Offer>) -> Vec<ReadmeBlock> {
-        self.shown_file(&id, "README.md", offer.and_then(|o| o.readme)).await.map_or_else(Vec::new, |b| blocks(&String::from_utf8_lossy(&b)))
+        self.shown_file(&id, "README.md", offer.and_then(|o| o.readme)).await.map_or_else(Vec::new, |b| nori_plugin_index::readme::blocks(&String::from_utf8_lossy(&b)).into_iter().map(ReadmeBlock::from).collect())
     }
 
     /// Plugin `id`'s icon, a PNG a client draws in the page's ink; None without one, or for what isn't one
     /// or is past [`ICON_BYTES`].
     pub async fn icon(&self, id: String, offer: Option<Offer>) -> Option<Vec<u8>> {
         self.shown_file(&id, "icon.png", offer.and_then(|o| o.icon)).await.filter(|b| b.len() <= ICON_BYTES && b.starts_with(PNG))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn markdown_becomes_blocks() {
-        let text = |t: &str| t.to_string();
-        let got = blocks("# Orbit\n\nA *moving* [cover](http://x)\nline.\n\n- one\n- two\n  - under\n\n```\nlet a;\n```\n\n<b>html</b>\n\n## End\n");
-        assert_eq!(
-            got,
-            [
-                ReadmeBlock::Text { text: text("A moving cover line.") },
-                ReadmeBlock::Item { text: text("one") },
-                ReadmeBlock::Item { text: text("two") },
-                ReadmeBlock::Item { text: text("under") },
-                ReadmeBlock::Code { text: text("let a;") },
-                ReadmeBlock::Text { text: text("html") },
-                ReadmeBlock::Heading { level: 2, text: text("End") },
-            ]
-        );
     }
 }

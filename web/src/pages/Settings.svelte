@@ -49,14 +49,16 @@
   const label = (setting: string) => W.settingNames[setting] ?? setting;
 </script>
 
-{#if ui.wide}
+{#if name === "Plugins" && (route.sub || !ui.wide)}
+  <Plugins />
+{:else if ui.wide}
   <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
     <nav class="tabs" aria-label={W.settings}>
       {#each tabs as [n, label] (n)}
         <a class="tab" class:on={n === name} aria-current={n === name ? "page" : undefined} href={href("settings", n)} data-page={n}>{label}</a>
       {/each}
     </nav>
-    {#if name === "Servers"}{@render serversPage()}{:else if name === "Plugins"}<Plugins />{:else}{@render settingsPage()}{/if}
+    {#if name === "Servers"}{@render serversPage()}{:else if name === "Plugins"}<Plugins tabbed />{:else}{@render settingsPage()}{/if}
   </Page>
 {:else if !name}
   <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
@@ -70,8 +72,6 @@
   </Page>
 {:else if name === "Servers"}
   <Page title={W.servers} back narrow ready={!!page.data} error={page.error}>{@render serversPage()}</Page>
-{:else if name === "Plugins"}
-  <Page title={W.plugins} back narrow ready={!!page.data} error={page.error}><Plugins /></Page>
 {:else}
   <Page title={W.settingsPages[name]?.[0] ?? name} back narrow ready={!!page.data} error={page.error}>{@render settingsPage()}</Page>
 {/if}

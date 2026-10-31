@@ -3,10 +3,10 @@
 
 import { $init, generate } from "@bytecodealliance/jco-transpile/component";
 import { ask } from "../rpc";
-import type { Code, WebPlugin } from "./types";
+import type { Code, Read, WebPlugin } from "./types";
 
 /** A package is a zip; these are the files of it nori uses. */
-const WANTED = ["plugin.wasm", "strings/en.toml", "icon.png"];
+const WANTED = ["plugin.wasm", "strings/en.toml", "icon.png", "README.md"];
 
 async function inflate(bytes: Uint8Array): Promise<Uint8Array> {
   const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
@@ -41,7 +41,7 @@ async function sha256(bytes: Uint8Array) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function transpile(wasm: Uint8Array): Promise<Code> {
+export async function transpile(wasm: Uint8Array): Promise<Code> {
   await $init;
   const made = generate(wasm, { name: "plugin", instantiation: { tag: "async" }, noTypescript: true, noNodejsCompat: true, base64Cutoff: 0, tlaCompat: false });
   const cores: Record<string, Uint8Array> = {};
@@ -53,17 +53,16 @@ async function transpile(wasm: Uint8Array): Promise<Code> {
   return { js, cores };
 }
 
-/** What a package holds, ready to keep; refused when it can't run here (`blocks`) or isn't what the
- * repo said (`sha256`). */
-export async function open(pack: Uint8Array, proxied: boolean, want?: string): Promise<{ plugin: WebPlugin; code: Code | null; icon?: string }> {
+/** What a package says of itself, for its sheet; refused when it isn't what the repo said (`sha256`). */
+export async function read(pack: Uint8Array, proxied: boolean, want?: string): Promise<Read> {
   if (want && (await sha256(pack)) !== want) throw new Error("the package isn't what the repo lists");
   const files = await unzip(pack);
   const wasm = files.get("plugin.wasm");
   if (!wasm) throw new Error("no plugin.wasm in the package");
   const strings = new TextDecoder().decode(files.get("strings/en.toml") ?? new Uint8Array());
   const plugin = JSON.parse(await ask<string>("plugin_read", wasm, strings, proxied)) as WebPlugin;
-  if (plugin.blocks.length > 0) return { plugin, code: null };
   const png = files.get("icon.png");
   const icon = png && `data:image/png;base64,${btoa(String.fromCharCode(...png))}`;
-  return { plugin, code: await transpile(wasm), icon };
+  const readme = files.get("README.md");
+  return { plugin, wasm, icon, readme: readme && new TextDecoder().decode(readme) };
 }
