@@ -43,6 +43,19 @@ pub fn db_path(data: &Path) -> String {
 
 pub use nori_core::{net_profile as net, server_config as config};
 
+/// Keeps the log in `data`'s `logs` folder from now on, with what panics, so a problem can be read later
+/// however the app was started.
+pub fn keep_log(data: &std::path::Path) {
+    let offset_min = nori_core::library::local_offset_s(nori_core::db::now_ms() / 1000) / 60;
+    nori_core::alog::alog_persist(data.join("logs").to_string_lossy().into_owned(), offset_min as i32);
+    let before = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        let thread = std::thread::current();
+        nori_core::alog::info(&format!("panicked on {}: {panic}", thread.name().unwrap_or("a thread")));
+        before(panic);
+    }));
+}
+
 /// This computer's name, as the account's other devices list it (remote control). A browser has none.
 #[cfg(unix)]
 pub fn device_name() -> String {
@@ -303,6 +316,26 @@ impl PlaceSeen {
 
 #[cfg(test)]
 mod tests {
+    /// In a process of its own: the hook is the whole process's.
+    #[test]
+    fn a_panic_is_kept_in_the_log() {
+        const DATA: &str = "NORI_KEPT_LOG";
+        if let Some(data) = std::env::var_os(DATA) {
+            super::keep_log(std::path::Path::new(&data));
+            let _ = std::thread::Builder::new().name("nori-doomed".into()).spawn(|| panic!("on purpose")).unwrap().join();
+            return;
+        }
+        let dir = nori_testdir::TempDir::new("host-kept-log");
+        let run = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::a_panic_is_kept_in_the_log", "--nocapture"])
+            .env(DATA, dir.path())
+            .output()
+            .unwrap();
+        assert!(run.status.success());
+        let log = std::fs::read_to_string(dir.join("logs/nori.log")).unwrap();
+        assert!(log.contains("panicked on nori-doomed") && log.contains("on purpose"), "{log}");
+    }
+
     use super::*;
     use nori_core::settings::ServerKind;
 

@@ -116,6 +116,7 @@ fn main() {
         eprintln!("nori: {}: {e}", o.data.display());
         std::process::exit(1);
     }
+    nori_host::keep_log(&o.data);
     let ran = runner::run(o);
     nori_core::background::flush();
     if let Err(e) = ran {

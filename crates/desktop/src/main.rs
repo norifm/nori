@@ -65,6 +65,7 @@ fn main() -> Result<(), String> {
         }
     }
     std::fs::create_dir_all(&data).map_err(|e| format!("{}: {e}", data.display()))?;
+    nori_host::keep_log(&data);
     let db = nori_host::db_path(&data);
     let mut prefs = crate::session::app().settings.open(&db).map_err(|e| format!("the settings: {e}"))?;
     // A server given on the command line is added if new, and made active.
