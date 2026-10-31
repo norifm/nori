@@ -27,15 +27,50 @@ export type WebPlugin = {
   stage: boolean;
   net: string[];
   overrides: string[];
+  /** Absent from a plugin kept before they were read. */
+  permissions?: string[];
   rows: Row[];
   blocks: string[];
 };
+
+/** A package read, not yet installed. */
+export type Read = { plugin: WebPlugin; wasm: Uint8Array; icon?: string; readme?: string };
+
+export type Fit = { state: "Supported" | "Unknown" } | { state: "Blocked"; blocks: string[] };
+export type Version = { version: string; released: string | null; url: string; sha256: string };
+/** What the repo lists of a plugin (`plugin_offers`): `waiting`, an update for one not kept at its version. */
+export type Offer = {
+  id: string;
+  name: string;
+  about: string | null;
+  icon: string | null;
+  readme: string | null;
+  source: string | null;
+  versions: Version[];
+  state: "New" | "Update" | "Installed";
+  waiting: boolean;
+  fit: Fit;
+};
+
+/** A block of a README, `plugin_readme`'s. */
+export type Readme = { kind: "Heading"; level: number; text: string } | { kind: "Text" | "Item" | "Code"; text: string };
 
 /** A value a row holds: a number for a numeric row, else text. */
 export type Value = number | string;
 
 /** What the installed list keeps of one plugin; its code is kept apart (`db.ts`). */
-export type Installed = { plugin: WebPlugin; on: boolean; values: Record<string, Value>; icon?: string };
+export type Installed = {
+  plugin: WebPlugin;
+  on: boolean;
+  values: Record<string, Value>;
+  icon?: string;
+  readme?: string;
+  /** Kept at its version: no update is offered. */
+  held?: boolean;
+  fromFile?: boolean;
+  /** Its place in the order plugins apply in. */
+  at?: number;
+};
 
 /** The transpiled component: its glue and its core modules by name. */
 export type Code = { js: string; cores: Record<string, Uint8Array> };

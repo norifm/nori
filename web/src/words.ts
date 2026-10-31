@@ -173,19 +173,74 @@ export const W = {
   accounts: "Accounts",
   plugins: "Plugins",
   pluginsGet: "Get plugins",
+  pluginsEmpty: "Plugins add music sources, sounds and more.",
+  pluginsEvery: "All plugins",
+  pluginsSearch: "Search plugins",
+  pluginsNoneFound: "No plugins found",
+  pluginsUpdates: "Updates",
   pluginsAsking: "Asking the repo…",
-  pluginRepoUnreachable: "Couldn't reach nori's plugins",
+  pluginRepoUnreachable: "Couldn’t reach nori’s plugins",
+  pluginRepoOfficial: "nori",
   pluginFit: {
     Unknown: "Not checked for a browser yet",
   },
   pluginsInstalled: "Installed",
   pluginInstall: "Install",
   pluginInstalling: "Installing…",
-  pluginInstallFailed: "Couldn't install that plugin",
-  pluginFromFile: "Install from a file",
+  pluginInstallFailed: "Couldn’t install it. Nothing changed.",
+  pluginsInstallFile: "Install from file",
+  pluginFromFile: "From a file",
+  pluginFromFileLine: "Installed from a file",
+  pluginVersion: (v: string) => `Version ${v}`,
+  pluginUpdate: "Update",
+  pluginUpdateTo: (v: string) => `Update to ${v}`,
+  pluginUpdateLine: (from: string, to: string) => `${from} → ${to}`,
+  pluginUpToDate: "Installed",
+  pluginAbout: "About",
+  pluginVersions: "Versions",
+  pluginSource: "Source",
+  pluginKeepVersion: "Keep this version",
+  pluginMoveUp: "Move up",
+  pluginMoveDown: "Move down",
   pluginOn: "On",
-  pluginIsOff: "Off",
   pluginRemove: "Remove",
+  pluginRemoveTitle: (name: string) => `Remove ${name}?`,
+  pluginRemoveText: "Its own settings go with it.",
+  pluginLevel: (label: string, value: string) => `${label} · ${value}`,
+  pluginMayTitle: "It may:",
+  /** What a plugin is: its extension points and whether it changes nori's values. */
+  pluginKinds(points: string[], overrides: boolean) {
+    const kinds: Record<string, string> = {
+      provider: "Music source",
+      "sound-stage": "Sound",
+      lyrics: "Lyrics",
+      automix: "AutoMix",
+      scrobbler: "Scrobbling",
+      "device-control": "Device controls",
+      slots: "Adds to screens",
+      deciders: "Chooses what plays",
+      preparation: "Prepares songs",
+    };
+    return [...points.flatMap((p) => kinds[p] ?? []), ...(overrides ? ["Changes playback values"] : [])].join(" · ");
+  },
+  /** What a plugin may do, one line each. */
+  pluginMay(p: { net: string[]; points: string[]; overrides: string[]; permissions?: string[] }) {
+    const permissions: Record<string, string> = {
+      PlaybackRead: "See what plays and the queue",
+      PlaybackControl: "Control playback and the queue",
+      LibraryRead: "Search your library",
+      LibraryWrite: "Change favorites and playlists",
+      Subsonic: "Use your server's API as you",
+      Schedule: "Wake now and then, never while music plays with the screen off",
+    };
+    return [
+      ...(p.net.length > 0 ? [`Reach ${p.net.join(", ")}`] : []),
+      ...(p.points.includes("provider") ? ["Play music as a music source"] : []),
+      ...(p.points.includes("sound-stage") ? ["Change the sound"] : []),
+      ...(p.overrides.length > 0 ? [`Change settings: ${p.overrides.join(", ")}`] : []),
+      ...(p.permissions ?? []).flatMap((x) => permissions[x] ?? []),
+    ];
+  },
   // Why a plugin can't run in a browser, by the core's `WebBlock`.
   webBlocks: {
     Sockets: "Needs direct network connections",

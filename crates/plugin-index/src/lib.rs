@@ -1,6 +1,7 @@
 //! A plugin repo's `index.json`, and what stops a plugin running in a browser: pure, with no plugin
 //! host, so the web client reads it too. [`web_blocks`] is the one rule, for a listing and an install.
 
+pub mod readme;
 pub mod section;
 
 use section::Section;
@@ -8,6 +9,33 @@ use serde::{Deserialize, Serialize};
 
 /// nori's own repo: nori-plugins' index (its packages are that repository's releases).
 pub const OFFICIAL: &str = "https://raw.githubusercontent.com/norifm/nori-plugins/main/index.json";
+
+/// `url` relative to the index at `index`.
+pub fn resolved(index: &str, url: &str) -> String {
+    if url.contains("://") {
+        return url.to_string();
+    }
+    let base = index.rsplit_once('/').map_or(index, |(b, _)| b);
+    format!("{base}/{}", url.trim_start_matches("./"))
+}
+
+/// A dotted version's numbers, which order versions.
+pub fn version_numbers(v: &str) -> Vec<u64> {
+    v.split(['.', '-']).map(|p| p.parse::<u64>().unwrap_or(0)).collect()
+}
+
+pub fn older(a: &str, b: &str) -> bool {
+    version_numbers(a) < version_numbers(b)
+}
+
+/// Those of `list` whose `name` or `about` holds `query`, by name.
+pub fn found<T>(mut list: Vec<T>, query: &str, name: impl Fn(&T) -> &str, about: impl Fn(&T) -> Option<&str>) -> Vec<T> {
+    let query = query.trim().to_lowercase();
+    let holds = |text: &str| text.to_lowercase().contains(&query);
+    list.retain(|t| holds(name(t)) || about(t).is_some_and(holds));
+    list.sort_by_cached_key(|t| name(t).to_lowercase());
+    list
+}
 
 /// What a repo's `index.json` holds.
 #[derive(Debug, Deserialize)]
@@ -197,6 +225,8 @@ pub struct WebPlugin {
     pub net: Vec<String>,
     /// The keys it may override.
     pub overrides: Vec<String>,
+    /// By name, in `Later::permissions`' order.
+    pub permissions: Vec<&'static str>,
     pub rows: Vec<WebRow>,
     pub blocks: Vec<WebBlock>,
 }
@@ -215,6 +245,7 @@ pub fn web_plugin(section: &Section, imports: &[String], strings: &str, proxied:
         stage: section.stage != 0,
         net: section.net.clone(),
         overrides: section.overrides.clone(),
+        permissions: section.later.iter().flat_map(|l| &l.permissions).filter_map(|b| section::PERMISSIONS.get(*b as usize).copied()).collect(),
         blocks: web_blocks(&named, &section.net, imports, proxied),
         points,
         rows: section

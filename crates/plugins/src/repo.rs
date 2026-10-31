@@ -5,6 +5,7 @@
 //! and its author's key with the key's ed25519 signature over that sha256 (its 32 bytes). Old versions
 //! stay listed, so a plugin can be taken back to one.
 
+use nori_plugin_index::{older, resolved};
 use sha2::{Digest, Sha256};
 
 use crate::{PluginCard, Plugins, Refusal, WhenNew, API};
@@ -98,15 +99,6 @@ pub struct Offers {
     pub failed: Vec<RepoFailure>,
 }
 
-/// `url` relative to the index at `index`.
-fn resolved(index: &str, url: &str) -> String {
-    if url.contains("://") {
-        return url.to_string();
-    }
-    let base = index.rsplit_once('/').map_or(index, |(b, _)| b);
-    format!("{base}/{}", url.trim_start_matches("./"))
-}
-
 /// The bytes hex `text` spells; None when it isn't `N` of them.
 fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
     let mut out = [0; N];
@@ -123,15 +115,6 @@ fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
 fn signed(key: &str, signature: &str, digest: &[u8]) -> bool {
     let (Some(key), Some(signature)) = (unhex::<32>(key), unhex::<64>(signature)) else { return false };
     ed25519_dalek::VerifyingKey::from_bytes(&key).is_ok_and(|k| k.verify_strict(digest, &ed25519_dalek::Signature::from_bytes(&signature)).is_ok())
-}
-
-/// A dotted version's numbers, which order versions.
-fn numbers(v: &str) -> Vec<u64> {
-    v.split(['.', '-']).map(|p| p.parse::<u64>().unwrap_or(0)).collect()
-}
-
-fn older(a: &str, b: &str) -> bool {
-    numbers(a) < numbers(b)
 }
 
 /// The plugins in `index`'s text, from `repo`, with the versions this host runs; one with none is left out.
@@ -155,7 +138,7 @@ fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
                     signature: r.signature.map(|s| s.to_ascii_lowercase()),
                 })
                 .collect();
-            versions.sort_by_cached_key(|v| std::cmp::Reverse(numbers(&v.version)));
+            versions.sort_by_cached_key(|v| std::cmp::Reverse(nori_plugin_index::version_numbers(&v.version)));
             let (readme, icon) = (l.readme.map(|r| resolved(&repo.url, &r)), l.icon.map(|i| resolved(&repo.url, &i)));
             (!versions.is_empty()).then(|| Offer { repo: repo.clone(), id: l.id, name: l.name, about: l.about, source: l.source, readme, icon, points: l.points, versions, installed: None, state: OfferState::New })
         })
@@ -244,11 +227,8 @@ pub fn provider_offers(mut offers: Vec<Offer>, cards: Vec<PluginCard>, all_off: 
 /// Those of `offers` from `repo` (any, without one) whose name or about holds `query`, by name.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn offers_found(offers: Vec<Offer>, query: String, repo: Option<String>) -> Vec<Offer> {
-    let query = query.trim().to_lowercase();
-    let holds = |text: &str| text.to_lowercase().contains(&query);
-    let mut found: Vec<Offer> = offers.into_iter().filter(|o| repo.as_ref().is_none_or(|r| *r == o.repo.url) && (holds(&o.name) || o.about.as_deref().is_some_and(holds))).collect();
-    found.sort_by_cached_key(|o| o.name.to_lowercase());
-    found
+    let shown = offers.into_iter().filter(|o| repo.as_ref().is_none_or(|r| *r == o.repo.url)).collect();
+    nori_plugin_index::found(shown, &query, |o: &Offer| &o.name, |o| o.about.as_deref())
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
