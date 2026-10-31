@@ -4586,6 +4586,8 @@ component EqSection inherits Text {
 component ToggleLine inherits HorizontalLayout {
     in property <string> title;
     in property <string> detail;
+    /// Beside the switch, quiet: what the setting gives now.
+    in property <string> value;
     in property <bool> on;
     callback toggled(bool);
     spacing: 12px;
@@ -4602,6 +4604,11 @@ component ToggleLine inherits HorizontalLayout {
             font-size: 11px;
             wrap: word-wrap;
         }
+    }
+    if root.value != "": Text {
+        text: root.value;
+        color: Theme.dim;
+        vertical-alignment: center;
     }
     Toggle {
         y: (parent.height - self.height) / 2;
@@ -5093,7 +5100,8 @@ component EqualizerPage inherits Flickable {
         }
         ToggleLine {
             padding-top: 12px;
-            title: root.preamp-label;
+            title: "Auto pre-amp";
+            value: root.preamp-label;
             detail: "Automatic pulls the level down by the largest boost so the curve cannot clip";
             on: root.auto-preamp;
             toggled(v) => { root.tool(v ? "auto-preamp" : "manual-preamp", 0); }

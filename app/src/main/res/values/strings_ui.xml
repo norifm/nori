@@ -389,8 +389,7 @@
     <string name="cannot_be_undone">This can’t be undone.</string>
 
     <!-- The equalizer's figures. -->
-    <string name="eq_preamp">Pre-amp %1$s dB</string>
-    <string name="eq_preamp_automatic">Pre-amp %1$s dB (automatic)</string>
+    <string name="eq_auto_preamp">Auto pre-amp</string>
     <string name="eq_balance_centre">center</string>
     <string name="eq_balance_left">L %1$s%%</string>
     <string name="eq_balance_right">R %1$s%%</string>

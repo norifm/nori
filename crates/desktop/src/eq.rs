@@ -182,7 +182,7 @@ pub fn fill(ui: &AppWindow, p: &StoredPrefs) {
     ui.set_eq_auto_preamp(auto);
     let effective = effective_preamp_db(p);
     ui.set_eq_preamp(p.eq_preamp_db.unwrap_or(effective));
-    ui.set_eq_preamp_label(if auto { format!("Pre-amp {} dB (automatic)", signed(effective)) } else { format!("Pre-amp {} dB", signed(effective)) }.into());
+    ui.set_eq_preamp_label(format!("{} dB", signed(effective)).into());
     ui.set_eq_balance(p.balance);
     ui.set_eq_balance_label(
         match (p.balance * 100.0).round() as i32 {
