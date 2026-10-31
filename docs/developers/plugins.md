@@ -378,7 +378,7 @@ client from what the plugin answers (`crates/plugins/src/slots.rs`); one not nam
 |---|---|---|
 | menu actions | `menu(action, items)` when one is tapped | lists `menu_entries(kind)` in the menus of songs, albums, artists, playlists (from the manifest, no call) |
 | song info | `song-info(song)`: lines, with a link each | shows them under the plugin's name |
-| artwork | `artwork(song)`: a still image or a muted loop, or none (nori's cover) | plays the loop in the player's sleeve (Moving covers' rules) |
+| artwork | `artwork(song)`: a still image or a muted loop, or none (nori's cover) | plays the loop in the player's sleeve (Moving covers' rules): the desktop decodes H.264 itself (`crates/desktop` `motion.rs`, openh264) while the full player shows and music plays, and keeps the poster for anything else |
 | player status | `player-status()`: one line | shows it under the output row |
 | devices | nothing: its rows | shows its page's rows on the devices sheet ("Playing on") too, after nori's own entries |
 
