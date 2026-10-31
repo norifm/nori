@@ -111,15 +111,40 @@
   }
   .choices {
     display: flex;
-    flex-wrap: wrap;
     gap: 8px;
+  }
+  /* The top bar's menu as the desktop's gear menu: the four on one line, centered, under the calendar's
+     switch with no heading or card of their own. */
+  :global(.popover) .choices {
+    justify-content: center;
+    gap: 2px;
+  }
+  :global(.popover) .chip {
+    height: 30px;
+    padding: 0 10px;
+    font-size: 13px;
+  }
+  :global(.popover) .chips-row {
+    padding: 2px 0 6px;
+    background: none;
+    border: 0;
+  }
+  :global(.popover) .chips-row .words,
+  :global(.popover) .group-label {
+    display: none;
+  }
+  :global(.popover) .group {
+    background: none;
+    border: 0;
+  }
+  :global(.popover) .group-row {
+    min-height: 0;
+    padding-left: 6px;
+    padding-right: 6px;
   }
   /* In the top bar's menu what is round is round by the menu's inner corner. */
   :global(.popover) .paper,
   :global(.popover) .group {
     border-radius: var(--inner);
-  }
-  :global(.popover) .group-label:first-child {
-    margin-top: 6px;
   }
 </style>
