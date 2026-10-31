@@ -143,6 +143,17 @@ impl Nori {
         pages::read(&client, &ask, user.as_deref()).await.map_err(error)
     }
 
+    /// Fills the offline index when the profile keeps one and it is empty, as the session does.
+    pub async fn sync_index(&self) -> Result<(), JsValue> {
+        let Some(client) = self.client().filter(|c| self.rules().indexed && c.core().index_size().map_or(true, |s| s.songs == 0)) else { return Ok(()) };
+        client.sync_library().await.map(|_| ()).map_err(|e| error(e.to_string()))
+    }
+
+    /// How long live search waits for `query` before asking the server, ms.
+    pub fn search_delay(&self, query: &str) -> f64 {
+        nori_core::search::live_delay_ms(query, nori_core::search::LIVE_SEARCH_DELAY_MS) as f64
+    }
+
     /// The queue another device or app left on the server, offered while nothing plays here
     /// (`Client::queue_offer`; `playing` and `shown`, the song the player shows, are the player's):
     /// `{ songs, index, positionMs }` (the songs as a page reads them), or null.
