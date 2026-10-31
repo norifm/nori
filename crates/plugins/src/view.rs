@@ -85,9 +85,9 @@ pub struct PluginPreview {
 
 /// A plugin's words in `lang` (`en` for what that lacks), each language's strings file read by `read`.
 fn words_by(read: impl Fn(&str) -> Option<String>, lang: &str) -> BTreeMap<String, String> {
-    let mut w = read("en").map(|t| flat(&t)).unwrap_or_default();
+    let mut w = read("en").map(|t| nori_plugin_index::section::strings(&t)).unwrap_or_default();
     if lang != "en" {
-        w.extend(read(lang).map(|t| flat(&t)).unwrap_or_default());
+        w.extend(read(lang).map(|t| nori_plugin_index::section::strings(&t)).unwrap_or_default());
     }
     w
 }
@@ -95,40 +95,6 @@ fn words_by(read: impl Fn(&str) -> Option<String>, lang: &str) -> BTreeMap<Strin
 /// An installed plugin's words in `lang`, from its folder's `strings/`.
 pub(crate) fn words(dir: &std::path::Path, lang: &str) -> BTreeMap<String, String> {
     words_by(|l| std::fs::read_to_string(dir.join("strings").join(format!("{l}.toml"))).ok(), lang)
-}
-
-/// A strings file: one `key = "text"` per line (TOML's basic strings and comments); any other line is
-/// skipped.
-fn flat(text: &str) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    for line in text.lines() {
-        let Some((key, rest)) = line.split_once('=') else { continue };
-        let (key, rest) = (key.trim(), rest.trim());
-        let Some(body) = rest.strip_prefix('"') else { continue };
-        let mut value = String::new();
-        let mut chars = body.chars();
-        let closed = loop {
-            match chars.next() {
-                None => break false,
-                Some('"') => break true,
-                Some('\\') => match chars.next() {
-                    Some('n') => value.push('\n'),
-                    Some('t') => value.push('\t'),
-                    Some('u') => {
-                        let hex: String = chars.by_ref().take(4).collect();
-                        value.extend(u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32));
-                    }
-                    Some(c) => value.push(c),
-                    None => break false,
-                },
-                Some(c) => value.push(c),
-            }
-        };
-        if closed && !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
-            out.insert(key.to_string(), value);
-        }
-    }
-    out
 }
 
 /// What a client shows of a plugin of manifest `m`, in its words `w`, with its rows' `stored` values.
@@ -236,20 +202,5 @@ impl Plugins {
     /// Plugin `id`'s word `key` in `lang`.
     pub fn word(&self, id: String, key: String, lang: String) -> Option<String> {
         words(&self.folder(&id), &lang).remove(&key)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_strings_file_reads_as_its_keys_and_texts() {
-        let text = "# Orbit\nname = \"Orbit\"\nabout = \"Circles \\\"you\\\"\\nround\"\nunit-s = \"\\u00e9\"\n[table]\nbroken = \"no end\n";
-        let w = flat(text);
-        assert_eq!(w.get("name").map(String::as_str), Some("Orbit"));
-        assert_eq!(w.get("about").map(String::as_str), Some("Circles \"you\"\nround"));
-        assert_eq!(w.get("unit-s").map(String::as_str), Some("é"));
-        assert!(!w.contains_key("broken") && w.len() == 3);
     }
 }
