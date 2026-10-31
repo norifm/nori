@@ -3518,6 +3518,9 @@ impl App {
             Some(DeviceRow::Cast) => self.dirty = false,
             Some(DeviceRow::Reached(i)) => {
                 if let Some(o) = d.reached.get(i).cloned() {
+                    if d.cast.is_some() {
+                        self.cmds.push(Cmd::Plugin(PluginCmd::EndCast));
+                    }
                     self.cmds.push(Cmd::CastOn(o));
                 }
             }
@@ -3528,6 +3531,9 @@ impl App {
             }
             Some(DeviceRow::Device(i) | DeviceRow::Playing(i)) => {
                 if let Some(id) = d.list.get(i).map(|x| x.id.clone()) {
+                    if d.cast.is_some() {
+                        self.cmds.push(Cmd::Plugin(PluginCmd::EndCast));
+                    }
                     self.cmds.push(Cmd::Pick(Some(id)));
                 }
             }
