@@ -59,6 +59,7 @@ async function hash(h, top) {
 
 await page.goto(url, { waitUntil: "load" });
 await page.waitForFunction(() => window.nori.coreMs !== undefined, { timeout: 30000 });
+await page.waitForFunction(() => window.nori.page === "home" || document.querySelector("#login"), { timeout: 30000 });
 if (await page.$("#login")) await page.click("#login button");
 await page.waitForFunction(() => window.nori.page === "home", { timeout: 30000 });
 const start = await facts();
@@ -71,7 +72,7 @@ const album = (name, artist) => albums.find((a) => a.name === name && (!artist |
 if (!only || only.includes("browse")) {
   const counts = {};
   const firstArtist = (await read({ kind: "artists" })).artists[0]?.id;
-  for (const [h, top, sel] of [["#/library", "library", ".sections a"], ["#/albums/alphabeticalByName", "albums", ".grid .card"], ["#/artists", "artists", ".grid .card"], ["#/genres", "genres", ".genres li"], ["#/songs", "songs", ".songs li"], [`#/artist/${firstArtist}`, "artist", ".grid .card"], ["#/settings", "settings", "[data-page]"], ["#/settings/Playing", "settings", "[data-setting]"]]) {
+  for (const [h, top, sel] of [["#/library", "library", ".sections a"], ["#/albums/alphabeticalByName", "albums", ".grid .card"], ["#/artists", "artists", ".names .name, .grid .card"], ["#/genres", "genres", ".genres li"], ["#/songs", "songs", ".songs li"], [`#/artist/${firstArtist}`, "artist", ".card, .songs li"], ["#/settings", "settings", "[data-page]"], ["#/settings/Playing", "settings", "[data-setting]"]]) {
     await hash(h, top);
     counts[h] = await page.$$eval(sel, (e) => e.length);
     expect(counts[h] > 0 && !(await facts()).pageError, `${h} lists something`);
@@ -88,7 +89,7 @@ async function playAlbum(id, at = 0) {
   const t0 = Date.now();
   await (await page.$$(".songs li .play"))[at].click();
   // The player module answers once the first Play has started it.
-  await page.waitForFunction(async (a) => window.nori.playerSwitchMs !== undefined && JSON.parse(await window.ask("now"))?.song?.albumId === a && ((await window.nori.heard?.())?.seconds ?? 0) > 0, { timeout: 60000, polling: 50 }, id);
+  await page.waitForFunction(async (a, i) => { const n = JSON.parse(await window.ask("now")); return window.nori.playerSwitchMs !== undefined && n?.song?.albumId === a && n.index === i && ((await window.nori.heard?.())?.seconds ?? 0) > 0; }, { timeout: 60000, polling: 50 }, id, at);
   return Date.now() - t0;
 }
 
@@ -302,7 +303,8 @@ if (!only || only.includes("instant")) {
   const nextMs = ms((await facts()).heard.freshAt - skipped);
   const index = (await now()).index;
   report.instant = { pauseMs, resumeMs, seekMs: ms(seekHeard - sought), nextMs, pausedMovedMs: held1 - held0, offsetMs: [Math.round(before), Math.round(after)], seekPlaceMs, index, seekBar: bar };
-  expect(pauseMs >= 0 && pauseMs < 50, "a pause is silent within 50 ms");
+  // Play and pause fade over 150 ms (`PLAY_PAUSE_FADE_MS`).
+  expect(pauseMs >= 0 && pauseMs < 200, "a pause is silent within 200 ms");
   expect(resumeMs >= 0 && resumeMs < 50, "play sounds again within 50 ms");
   expect(report.instant.seekMs >= 0 && report.instant.seekMs < 100 && Math.abs(seekPlaceMs) < 100, "a seek is heard from its place within 100 ms");
   expect(nextMs >= 0 && nextMs < 250 && index === 1, "next is heard within 250 ms");
@@ -328,9 +330,12 @@ async function transition(name, settings, measured = false) {
   }, { timeout: 30000, polling: 250 }, unmeasured).catch(() => {});
   const first = await now();
   const plan = first.transition && { ...first.transition, afterMs: Date.now() - t0 };
-  const before = (await facts()).heard;
+  const sought = await page.evaluate(() => window.nori.audioTime);
   await ask("seek", first.song.duration * 1000 - 16000);
-  const seekHeard = (await facts()).heard.seconds;
+  // What a seek itself is silent for is the `instant` phase's.
+  await page.waitForFunction(async (t) => ((await window.nori.heard?.())?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, sought).catch(() => {});
+  const before = (await facts()).heard;
+  const seekHeard = before.seconds;
   // Listened to until the second song plays on its own: how long the two mixed, and when it took over.
   await page.waitForFunction(async () => {
     const s = (window.through ??= { mixedMs: 0, last: performance.now(), moved: false });

@@ -44,6 +44,7 @@ const clickText = (selector) => page.$eval(selector, (e) => e.click());
 async function start() {
   await page.goto(url, { waitUntil: "load" });
   await page.waitForFunction(() => document.querySelector("#login") || window.nori?.page === "home", { timeout: 30000 });
+  await page.waitForFunction(() => window.nori.page === "home" || document.querySelector("#login"), { timeout: 30000 });
   if (await page.$("#login")) await page.click("#login button");
   await page.waitForFunction(() => window.nori.page === "home", { timeout: 30000 });
 }
