@@ -306,20 +306,21 @@ type Playlists = Arc<Mutex<Vec<(String, Arc<hls::Playlist>)>>>;
 /// Playlists kept: the songs playing and coming up.
 const PLAYLISTS_KEPT: usize = 4;
 
+/// Past this a stream's answer is logged: at a song's start it is what the listener waits for.
+const SLOW_ANSWER: std::time::Duration = std::time::Duration::from_secs(1);
+
 impl ByteSource for Resolving {
     fn open(&self, url: &str, from: u64) -> Result<crate::source::Body, OpenError> {
         self.open_cancellable(url, None, from, &crate::source::Cancel::new())
     }
 
     fn open_cancellable(&self, url: &str, key: Option<&str>, from: u64, cancel: &crate::source::Cancel) -> Result<crate::source::Body, OpenError> {
-        let Some(served) = self.resolver.resolve(url) else { return self.bytes.open_cancellable(url, key, from, cancel) };
-        let served = served.map_err(provider_error)?;
-        let opened = match self.resolver.parts(url).filter(|p| from < p.len) {
-            Some(parts) => self.open_parts(url, &served, key, from, parts, cancel),
-            None => self.open_whole(url, &served, key, from, cancel),
-        };
-        if matches!(opened, Err(OpenError::Status(403))) {
-            self.resolver.refused(url);
+        let asked = nori_time::Instant::now();
+        let opened = self.open_resolved(url, key, from, cancel);
+        let waited = asked.elapsed();
+        if waited >= SLOW_ANSWER {
+            let kind = if url.contains("id=ext-") { "not on the server yet" } else { "on the server" };
+            nori_core::alog::info(&format!("a stream took {} ms to answer from byte {from}, {kind}: {}", waited.as_millis(), if opened.is_ok() { "opened" } else { "failed" }));
         }
         opened
     }
@@ -337,6 +338,21 @@ impl ByteSource for Resolving {
 
     fn files(&self, url: &str) -> Option<Vec<std::path::PathBuf>> {
         self.bytes.files(url)
+    }
+}
+
+impl Resolving {
+    fn open_resolved(&self, url: &str, key: Option<&str>, from: u64, cancel: &crate::source::Cancel) -> Result<crate::source::Body, OpenError> {
+        let Some(served) = self.resolver.resolve(url) else { return self.bytes.open_cancellable(url, key, from, cancel) };
+        let served = served.map_err(provider_error)?;
+        let opened = match self.resolver.parts(url).filter(|p| from < p.len) {
+            Some(parts) => self.open_parts(url, &served, key, from, parts, cancel),
+            None => self.open_whole(url, &served, key, from, cancel),
+        };
+        if matches!(opened, Err(OpenError::Status(403))) {
+            self.resolver.refused(url);
+        }
+        opened
     }
 }
 
