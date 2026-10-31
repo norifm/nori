@@ -143,7 +143,7 @@ impl AppHandle {
         let Some(app) = self.0.upgrade() else { return };
         match app.try_borrow_mut() {
             Ok(mut a) => f(&mut a),
-            Err(_) => eprintln!("nori: a callback came while the window's state was busy ({}); dropped", std::panic::Location::caller()),
+            Err(_) => nori_core::alog::info(&format!("a callback came while the window's state was busy ({}); dropped", std::panic::Location::caller())),
         };
     }
 }
@@ -532,7 +532,7 @@ fn over_pill(m: &AppWindow, x: f32) -> (f32, f32) {
 
 /// The player pill's window; its buttons forward to the main window.
 fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) -> Option<PlayerBar> {
-    let bar = PlayerBar::new().map_err(|e| eprintln!("nori: no player window: {e}")).ok()?;
+    let bar = PlayerBar::new().map_err(|e| nori_core::alog::info(&format!("no player window: {e}"))).ok()?;
     bar.on_art(move |id, size, _rev| art(id, size));
     bar.on_toggle(to_main(ui, |m| m.invoke_toggle()));
     bar.on_star(to_main(ui, |m| m.invoke_star()));
@@ -575,7 +575,7 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
 
 /// The top pill's window; its tabs and search field forward to the main window.
 fn top(ui: &AppWindow) -> Option<TopBar> {
-    let bar = TopBar::new().map_err(|e| eprintln!("nori: no top pill: {e}")).ok()?;
+    let bar = TopBar::new().map_err(|e| nori_core::alog::info(&format!("no top pill: {e}"))).ok()?;
     bar.on_go(to_main_with(ui, |m, v| m.invoke_go(v)));
     bar.on_open_menu(to_main(ui, |m| m.invoke_show_menu()));
     bar.on_search_edited(to_main_with(ui, |m, text| m.invoke_search_edited(text)));

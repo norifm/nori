@@ -222,7 +222,7 @@ fn build_stream<T: SizedSample + Default + Send + 'static>(
 /// A stream error other than a device change: one whose device is gone stops the stream for good, so the
 /// engine is told ([`AudioOutput::failed`]) and woken to hear it; others are only logged.
 fn stream_failed(kind: ErrorKind, detail: String, failed: &Mutex<Option<String>>, wake: impl FnOnce()) {
-    eprintln!("nori: the output stream failed: {detail}");
+    let _ = std::io::Write::write_fmt(&mut std::io::stderr(), format_args!("nori: the output stream failed: {detail}\n"));
     if matches!(kind, ErrorKind::DeviceNotAvailable | ErrorKind::HostUnavailable | ErrorKind::StreamInvalidated) {
         *failed.lock() = Some(detail);
         wake();

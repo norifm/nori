@@ -765,7 +765,7 @@ impl ApplicationHandler<Wake> for Runner {
         #[cfg(target_os = "linux")]
         let attrs = match gl::window_attributes(el, attrs) {
             Ok(attrs) => attrs,
-            Err(e) => { eprintln!("nori: no window visual: {e}"); el.exit(); return; }
+            Err(e) => { nori_core::alog::info(&format!("no window visual: {e}")); el.exit(); return; }
         };
         #[cfg(target_os = "macos")]
         let attrs = {
@@ -775,7 +775,7 @@ impl ApplicationHandler<Wake> for Runner {
         let window = match el.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
-                eprintln!("nori: no window: {e}");
+                nori_core::alog::info(&format!("no window: {e}"));
                 el.exit();
                 return;
             }
@@ -783,7 +783,7 @@ impl ApplicationHandler<Wake> for Runner {
         match Draw::new(&self.shared.gpu, window.clone()) {
             Ok(d) => self.draw = Some(d),
             Err(e) => {
-                eprintln!("nori: the window cannot be drawn: {e}");
+                nori_core::alog::info(&format!("the window cannot be drawn: {e}"));
                 el.exit();
                 return;
             }
@@ -916,7 +916,7 @@ impl ApplicationHandler<Wake> for Runner {
                 let win = self.logical_window();
                 if let (Some(d), Some(win)) = (&mut self.draw, win) {
                     #[cfg(target_os = "linux")]
-                    if let Err(e) = d.frame(&self.shared, win) { eprintln!("nori: the window was not drawn: {e}"); }
+                    if let Err(e) = d.frame(&self.shared, win) { nori_core::alog::info(&format!("the window was not drawn: {e}")); }
                     #[cfg(not(target_os = "linux"))]
                     d.frame(&self.shared, win);
                 }
@@ -1141,7 +1141,7 @@ impl Draw {
                 if let Some((t, _)) = layer.texture.borrow().as_ref() {
                     prepare_layer(&gpu, t, fresh);
                     if let Err(e) = layer.renderer.render_to_texture(t) {
-                        eprintln!("nori: a layer was not drawn: {e}");
+                        nori_core::alog::info(&format!("a layer was not drawn: {e}"));
                     }
                 }
             }
