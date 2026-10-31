@@ -18,7 +18,9 @@ let worker: Worker;
 let build: Build = { kind: "core" };
 let calls = 0;
 const waiting = new Map<number, { done: (v: unknown) => void; failed: (e: Error) => void }>();
-let gate: Promise<void>;
+let booted!: () => void;
+/** Open while the worker takes calls; a call waits here for the first one to start. */
+let gate = new Promise<void>((r) => (booted = r));
 export let player = false;
 
 const listeners: ((s: Said) => void)[] = [];
@@ -230,8 +232,8 @@ export async function boot(): Promise<boolean> {
   const free = await navigator.locks.query().then((s) => !(s.held ?? []).some((l) => l.name === LOCK));
   if (!free) return false;
   await hold();
-  gate = start({ kind: "core" });
-  await gate;
+  await start({ kind: "core" });
+  booted();
   return true;
 }
 

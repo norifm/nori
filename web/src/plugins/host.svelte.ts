@@ -1,11 +1,12 @@
 // The installed plugins: what's on, each one's worker and sound stage, and what they answer. Loaded only
 // once a plugin is installed, or by the Plugins page.
 
+import { ask, onPlayerUp, onRestart } from "../rpc";
 import { player } from "../state/player.svelte";
 import { sleeves } from "../state/sleeve.svelte";
 import { ui } from "../state/ui.svelte";
 import * as db from "./db";
-import type { Call, Start } from "./runner";
+import { overridesIn, type Call, type Start } from "./runner";
 import { stageModule } from "./stage";
 import type { Code, Installed, Row, Value, WebPlugin } from "./types";
 import { numbers, witValue } from "./types";
@@ -30,14 +31,17 @@ class Running {
   started: Promise<void>;
   status = $state<Record<string, string>>({});
   shown = $state<Record<string, { shown: boolean; enabled: boolean }>>({});
+  overrides: [string, string][];
 
   constructor(
     i: Installed,
     code: Code,
     data: Map<string, Uint8Array>,
     proxy: string | null,
+    overridden: () => void,
   ) {
     const id = i.plugin.id;
+    this.overrides = overridesIn(data);
     this.started = new Promise((started, failed) => {
       this.worker.onmessage = (e: MessageEvent) => {
         const m = e.data;
@@ -54,10 +58,14 @@ class Running {
         else if (m.notice) ui.say(m.notice.words);
         else if (m.status) this.status[m.status.row] = m.status.words;
         else if (m.shown) this.shown[m.shown.row] = m.shown;
+        else if (m.overrides) {
+          this.overrides = m.overrides;
+          overridden();
+        }
       };
     });
     const { plugin, values } = $state.snapshot(i);
-    const start: Start = { code, net: plugin.net, proxy, rows: plugin.rows, values, data };
+    const start: Start = { code, net: plugin.net, overrides: plugin.overrides, proxy, rows: plugin.rows, values, data };
     this.worker.postMessage(start);
   }
 
@@ -116,6 +124,9 @@ class Plugins {
       this.installed = await db.list();
       sleeves.failed = (id, status) => this.sleeveFailed(id, status);
       player.onCard = () => void this.stages();
+      // The core keeps them in memory, and each worker has its own.
+      onPlayerUp(() => this.lay());
+      onRestart(() => this.lay());
       $effect.root(() => {
         $effect(() => void this.asked(player.song));
         $effect(() => {
@@ -125,6 +136,7 @@ class Plugins {
       });
       for (const i of this.installed) if (i.on) await this.begin(i);
       await this.stages();
+      this.lay();
       await this.asked(player.song);
     })());
   }
@@ -147,10 +159,16 @@ class Plugins {
     const id = i.plugin.id;
     if (!this.needsWorker(i.plugin) || this.running.has(id)) return;
     const [code, data] = await Promise.all([db.code(id), db.data(id)]);
-    const r = new Running(i, code, data, this.proxied ? PROXY : null);
+    const r = new Running(i, code, data, this.proxied ? PROXY : null, () => this.lay());
     this.running.set(id, r);
     await r.started;
     if (i.plugin.points.includes("lifecycle")) await r.call("lifecycle", "start");
+  }
+
+  /** Tells the core what the plugins running override, in their order: the last says. */
+  private lay() {
+    const overrides = this.installed.flatMap((i) => this.running.get(i.plugin.id)?.overrides ?? []);
+    void ask("plugin_overrides", JSON.stringify(overrides));
   }
 
   /** What's on, in the sound card, once there is one. */
@@ -246,7 +264,7 @@ class Plugins {
 
   private stop(id: string) {
     this.running.get(id)?.stop();
-    this.running.delete(id);
+    if (this.running.delete(id)) this.lay();
   }
 
   async remove(id: string) {
