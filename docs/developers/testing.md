@@ -18,6 +18,9 @@ service, the screens and a force stop.
 | `tools/audio-e2e.sh --only …`, `tools/feature-e2e.sh --only …` | the sections a change touches | the change's author |
 | `tools/audio-e2e.sh`, `tools/feature-e2e.sh` in full | every device check | once per batch |
 
+CI on a push runs only the jobs it touches, and `tools/affected.py` narrows Rust to the crates changed
+and those depending on them; a change to `Cargo.*`, `wit/`, `vendor/` or `.github/` runs everything.
+
 For the shared queue, nextest, Bazel and running several emulators, see
 [Building](building.md#faster-development-checks).
 
