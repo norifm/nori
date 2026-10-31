@@ -2,6 +2,8 @@
 // engine's output tells it (pause, resume, flush, fade), and says how many frames it played and dropped
 // so the engine knows what was heard. Nothing here decides anything.
 
+import { wasi } from "./plugins/wasi";
+
 declare abstract class AudioWorkletProcessor {
   readonly port: MessagePort;
   constructor();
@@ -9,6 +11,7 @@ declare abstract class AudioWorkletProcessor {
 declare function registerProcessor(name: string, processor: unknown): void;
 declare const sampleRate: number;
 declare const currentTime: number;
+declare const noriStages: Record<string, (core: (name: string) => WebAssembly.Module | undefined, imports: unknown, make: unknown) => Promise<{ soundStage: Stage["calls"]; lifecycle: { start(): void } }>>;
 
 /** Frames between reports to the worker. */
 const REPORT = 2048;
@@ -19,6 +22,13 @@ const EDGE_STEP = 1 / (0.015 * sampleRate);
 /** How far the listener's volume moves per frame toward where it was set: a whole turn in 30 ms, so a
  * dragged slider does not click. */
 const VOLUME_STEP = 1 / (0.03 * sampleRate);
+
+/** A plugin's sound stage from the page: its module was added by that id (`plugins/stage.ts`). */
+type StageSpec = { id: string; cores: Record<string, Uint8Array>; numbers: number[]; lifecycle: boolean };
+type Stage = { id: string; calls: { configure(format: unknown, inputs: unknown): void; process(samples: Float32Array): Float32Array } };
+type PageMessage = MessagePort | { stages: StageSpec[] } | { numbers: { id: string; numbers: number[] } };
+
+const inputs = (rows: number[]) => ({ rows: Float64Array.from(rows), volumeDb: 0, route: "speaker" });
 
 type Chunk = { pcm: Float32Array; channels: number };
 /** From the engine's output: stop where it is keeping the music held, go on from there, drop the music
@@ -46,9 +56,14 @@ type Diagnostics = {
   soundAt: number;
   freshAt: number;
   fresh: boolean;
+  /** Plugins' sound stages: the frames through them, how much they moved the sound (the sum of each
+   * frame's change over both channels), and the peak each channel left them at. */
+  staged: number;
+  moved: number;
+  stagedPeak: [number, number];
 };
 
-const noDiagnostics = (): Diagnostics => ({ dry: 0, dryAt: [], peak: 0, quiet: 0, silences: [], lastLoud: 0, soundAt: 0, freshAt: 0, fresh: false });
+const noDiagnostics = (): Diagnostics => ({ dry: 0, dryAt: [], peak: 0, quiet: 0, silences: [], lastLoud: 0, soundAt: 0, freshAt: 0, fresh: false, staged: 0, moved: 0, stagedPeak: [0, 0] });
 
 class Out extends AudioWorkletProcessor {
   private chunks: Chunk[] = [];
@@ -74,11 +89,20 @@ class Out extends AudioWorkletProcessor {
   private volumeTo = 1;
   private diag = noDiagnostics();
   private worker?: MessagePort;
+  private stages: Stage[] = [];
+  /** Both channels of a block, one after the other, as a stage takes them. */
+  private planar = new Float32Array(2048);
 
   constructor() {
     super();
-    // The page hands over the port the worker writes to.
+    // The page hands over the port the worker writes to, and plugins' sound stages.
     this.port.onmessage = (e: MessageEvent) => {
+      const page = e.data as PageMessage;
+      if ("stages" in page) return void this.setStages(page.stages);
+      if ("numbers" in page) {
+        const { id, numbers } = page.numbers;
+        return this.stages.find((s) => s.id === id)?.calls.configure({ rate: sampleRate, channels: 2 }, inputs(numbers));
+      }
       // A new worker (the first, or one started again after a crash) counts from nothing.
       this.worker = e.data as MessagePort;
       this.chunks = [];
@@ -96,6 +120,56 @@ class Out extends AudioWorkletProcessor {
       this.levelStep = 0;
       this.worker.onmessage = (m: MessageEvent) => this.take(m.data as Message);
     };
+  }
+
+  /** The stages to run, in order; one already running goes on. */
+  private async setStages(specs: StageSpec[]) {
+    const made: Stage[] = [];
+    for (const { id, cores, numbers, lifecycle } of specs) {
+      const kept = this.stages.find((s) => s.id === id);
+      if (kept) {
+        made.push(kept);
+        continue;
+      }
+      try {
+        // Compiled here: a page can't post a compiled module to a worklet.
+        const modules = new Map(await Promise.all(Object.entries(cores).map(async ([name, bytes]) => [name, await WebAssembly.compile(bytes as BufferSource)] as const)));
+        const stage = await noriStages[id]((name) => modules.get(name), wasi(() => {}), WebAssembly.instantiate);
+        if (lifecycle) stage.lifecycle.start();
+        stage.soundStage.configure({ rate: sampleRate, channels: 2 }, inputs(numbers));
+        made.push({ id, calls: stage.soundStage });
+      } catch (err) {
+        this.port.postMessage({ stageFailed: id, error: String(err) });
+      }
+    }
+    this.stages = made;
+  }
+
+  /** The block's `made` frames through the stages; one that fails is taken out. */
+  private stage(out: Float32Array[], made: number) {
+    const d = this.diag;
+    const both = this.planar.subarray(0, made * 2);
+    both.set(out[0].subarray(0, made));
+    both.set(out[1].subarray(0, made), made);
+    let sound: Float32Array = both;
+    for (const s of this.stages) {
+      try {
+        sound = s.calls.process(sound);
+      } catch (err) {
+        this.stages = this.stages.filter((x) => x !== s);
+        this.port.postMessage({ stageFailed: s.id, error: String(err) });
+      }
+    }
+    if (sound === both) return;
+    for (let f = 0; f < made; f++) {
+      const [l, r] = [sound[f] ?? 0, sound[made + f] ?? 0];
+      d.moved += Math.abs(l - out[0][f]) + Math.abs(r - out[1][f]);
+      if (Math.abs(l) > d.stagedPeak[0]) d.stagedPeak[0] = Math.abs(l);
+      if (Math.abs(r) > d.stagedPeak[1]) d.stagedPeak[1] = Math.abs(r);
+      out[0][f] = l;
+      out[1][f] = r;
+    }
+    d.staged += made;
   }
 
   private take(m: Message) {
@@ -168,6 +242,7 @@ class Out extends AudioWorkletProcessor {
         this.at = 0;
       }
     }
+    if (this.stages.length > 0 && made > 0) this.stage(out, made);
     this.queued -= made;
     this.played += made;
     if (this.running && made < frames && !closing) {

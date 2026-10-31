@@ -14,6 +14,7 @@
   import { W } from "../words";
   import Controls from "./Controls.svelte";
   import Cover from "./Cover.svelte";
+  import Sleeve from "./Sleeve.svelte";
   import Seal from "./Seal.svelte";
   import Icon from "./Icon.svelte";
   import OutputButton, { kindGlyph } from "./OutputButton.svelte";
@@ -65,7 +66,7 @@
   {#if ui.wide}
     <section class="left">
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="art" class:held={!player.playing} oncontextmenu={menu}><Cover src={s.cover} radius="var(--r-cover)" /></div>
+      <div class="art" class:held={!player.playing} oncontextmenu={menu}><Cover src={s.cover} radius="var(--r-cover)" /><Sleeve song={s.id} /></div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="title-row" oncontextmenu={menu}>
         <span class="title clip">{s.title}</span>
@@ -87,7 +88,7 @@
   {:else}
     <section class="main">
       {#if !pane}
-        <div class="art" class:held={!player.playing}><Cover src={s.cover} radius="var(--r-card)" /></div>
+        <div class="art" class:held={!player.playing}><Cover src={s.cover} radius="var(--r-card)" /><Sleeve song={s.id} /></div>
       {:else}
         <div class="small-head">
           <div class="small-art"><Cover src={s.cover} /></div>
@@ -201,6 +202,7 @@
     cursor: default;
   }
   .art {
+    position: relative;
     transition: transform 500ms cubic-bezier(0.3, 1.35, 0.6, 1);
   }
   .art.held {

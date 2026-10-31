@@ -34,6 +34,9 @@ class Player {
 
   private audio?: AudioContext;
   private made?: Promise<void>;
+  private node?: AudioWorkletNode;
+  /** Told when there is a sound card: plugins' sound stages go in it. */
+  onCard: () => void = () => {};
   /** `now` as last drawn, without its position: drawn again only when the rest changes. */
   private key = "";
 
@@ -41,6 +44,11 @@ class Player {
   position(t = performance.now()): number {
     const a = this.anchor;
     return Math.max(0, Math.min(a.ms + (t - a.at) * a.pace, a.length || Infinity));
+  }
+
+  /** The sound card, once it is made. */
+  card() {
+    return this.audio && this.node ? { ctx: this.audio, node: this.node } : null;
   }
 
   /** The sound card, made on the first Play (a browser starts audio only after a click on the page):
@@ -57,6 +65,8 @@ class Player {
       await ctx.audioWorklet.addModule(workletUrl);
       const node = new AudioWorkletNode(ctx, "nori-out", { outputChannelCount: [2] });
       node.connect(ctx.destination);
+      this.node = node;
+      this.onCard();
       facts.rate = ctx.sampleRate;
       // The sound card's clock, which the worklet's times are on.
       Object.defineProperty(facts, "audioTime", { get: () => ctx.currentTime, enumerable: true, configurable: true });
@@ -70,7 +80,7 @@ class Player {
       if (ui.toast === W.loadingPlayer) ui.say("");
     })().catch((e) => {
       // A failed setup is made again by the next Play.
-      this.audio = this.made = undefined;
+      this.audio = this.made = this.node = undefined;
       void ctx.close();
       throw e;
     });

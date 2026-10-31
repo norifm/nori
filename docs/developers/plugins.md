@@ -1,6 +1,6 @@
 # Plugins
 
-Applies to nori 0.7, the Android, desktop and terminal clients. The iPod has no plugins; the web has no host yet, and lists nori's repo with what stops each plugin there (`nori_plugin_index::web_fit`, from an index's `points`, `net` and `imports`).
+Applies to nori 0.7, the Android, desktop, terminal and web clients (the web's own host: [In a browser](#in-a-browser)). The iPod has no plugins.
 
 A plugin is a WebAssembly component built against the `nori:plugin` API in `wit/`. It runs sandboxed in
 the plugin host (`crates/plugins`): it reaches only what the host links for it, only the hosts its
@@ -451,6 +451,31 @@ A plugin's covers are URLs with `{size}` where the pixels go; the core fills it 
 `preview_file(path)` and `preview_version(version)` (fetched and checked against its sha256 and its
 signature) read a package's manifest and words without installing it, for the sheet that shows what it
 is and may reach before the user installs it (`install_preview`).
+
+### In a browser
+
+A browser has no wasmtime, so the web client (`web/src/plugins/`) runs a plugin as JavaScript. Installing
+transpiles the component with `@bytecodealliance/jco-transpile` (`install.ts`, 4 MB, fetched only then; it
+and the worker stay out of the service worker's list) and keeps the glue and core modules in IndexedDB,
+with the plugin's store. Nothing of this loads while no plugin is installed: `nori-plugins` in
+`localStorage` says one is.
+
+- What can run here is one rule, `nori_plugin_index::web_blocks`, for a repo's listing (`web_fit`, from
+  the `points`, `imports` and `net` that `tools/pack.py` writes into `index.json`) and for a package
+  being installed (`read_web_plugin`, the manifest and the component's real imports). Lifecycle, hooks,
+  sound stages and slots run; providers, overrides and every device or socket import are greyed.
+- A plugin runs in its own worker (`runner.ts`): its host calls block, and only a worker has synchronous
+  XHR, so `http.start` is done when it returns. WASI is a stub (`wasi.ts`): clocks and stderr.
+- A sound stage runs in the AudioWorklet (`stage.ts`, `worklet.ts`): its core modules are compiled there,
+  since a page can't post a compiled module to a worklet, and it sees the sound after the volume, with
+  no `latency()` compensation and `route` always `speaker`.
+- Browsers won't send a plugin's requests: most sites answer no CORS, and `Origin` and `User-Agent` can't
+  be set. `/plugin-http` on the page's own server carries them (`web/serve.py` has it, HTTPS to public
+  addresses only, and it answers `?ping` with `X-Plugin-Http: 1`). A plugin's hosts are checked in
+  `runner.ts` before a request goes. Without that route (a static host) a plugin that names hosts is
+  greyed `OtherSites`, and packages, whose GitHub releases have no CORS either, install from a file.
+- Signatures aren't checked in a browser, only a repo package's sha256.
+- A moving cover's HLS plays through hls.js, loaded only then: Apple's video hosts allow any origin.
 
 ### Repos and signatures
 

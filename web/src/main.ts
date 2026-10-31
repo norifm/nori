@@ -8,5 +8,6 @@ import { startTheme } from "./state/theme.svelte";
 
 startTheme();
 mount(App, { target: document.getElementById("app")! });
+if (localStorage.getItem("nori-plugins")) void import("./plugins/host.svelte").then((h) => h.plugins.load());
 // For a check driving the page.
 (window as unknown as { ask: unknown }).ask = ask;

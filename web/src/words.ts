@@ -176,9 +176,16 @@ export const W = {
   pluginsAsking: "Asking the repo…",
   pluginRepoUnreachable: "Couldn't reach nori's plugins",
   pluginFit: {
-    Supported: "Works in a browser. Installing comes soon",
     Unknown: "Not checked for a browser yet",
   },
+  pluginsInstalled: "Installed",
+  pluginInstall: "Install",
+  pluginInstalling: "Installing…",
+  pluginInstallFailed: "Couldn't install that plugin",
+  pluginFromFile: "Install from a file",
+  pluginOn: "On",
+  pluginIsOff: "Off",
+  pluginRemove: "Remove",
   // Why a plugin can't run in a browser, by the core's `WebBlock`.
   webBlocks: {
     Sockets: "Needs direct network connections",
@@ -191,6 +198,9 @@ export const W = {
     Wake: "Needs to start while nori is closed",
     SignIn: "Needs a sign-in page browsers don't allow",
     OtherSites: "Needs sites that block web pages",
+    Provider: "Needs streams browsers don't allow",
+    Overrides: "Changes settings a browser doesn't have",
+    NotYet: "Not available in a browser yet",
   } as Record<string, string>,
   // Settings, by the core's pages (their title and what they hold), sections and setting names.
   settingsPages: {

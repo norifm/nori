@@ -78,7 +78,8 @@ cp "$root/app/src/main/res/font/inter.ttf" "$root/app/src/main/res/font/literata
 
 # The service worker keeps this build's shell and modules (the Rust-codecs player once fetched), under
 # the hash of them all.
-kept=$(cd "$dist" && ls index.html decoder.js assets/* pkg/core.js pkg/core.wasm pkg/player.js pkg/player.wasm pkg/player-codecs.js)
+# Not the plugin host's generator and worker, fetched only with a plugin.
+kept=$(cd "$dist" && ls index.html decoder.js $(ls assets/* | grep -Ev 'js-component-bindgen|/(install|runner|hls)-') pkg/core.js pkg/core.wasm pkg/player.js pkg/player.wasm pkg/player-codecs.js)
 build=$(cd "$dist" && cat $kept pkg/player-codecs.wasm | shasum -a 256 | cut -c1-16)
 files=$(printf '%s\n' $kept | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))')
 sed -i.bak -e "s|__BUILD__|$build|" -e "s|__FILES__|$files|" "$dist/sw.js" && rm "$dist/sw.js.bak"
