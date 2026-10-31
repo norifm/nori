@@ -6,7 +6,7 @@
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 pub use nori_sink_protocol::{Button, Caps, Codec, Device, Format, Host as Frame};
@@ -42,13 +42,20 @@ pub struct Deep {
     bursting: Mutex<Option<Bursts>>,
     /// Bytes encoded for one send.
     scratch: Mutex<Vec<u8>>,
+    /// The volume yet to go out: a newer one replaces it.
+    volume: Mutex<Option<f32>>,
+    /// Wakes the thread that sends it.
+    volume_set: mpsc::Sender<()>,
 }
 
 impl Deep {
     /// A connection over `out` to a device that said `caps`; what the device says comes to
     /// [`Deep::heard`]. Tests make one over a buffer.
     pub fn new(caps: Caps, depth_ms: Option<u32>, out: Box<dyn Write + Send>) -> Arc<Deep> {
-        Arc::new(Deep { caps, depth_ms, out: Mutex::new(out), socket: None, gone: AtomicBool::new(false), engine: Mutex::default(), controls: Mutex::default(), bursting: Mutex::default(), scratch: Mutex::default() })
+        let (volume_set, sends) = mpsc::channel();
+        let deep = Arc::new(Deep { caps, depth_ms, out: Mutex::new(out), socket: None, gone: AtomicBool::new(false), engine: Mutex::default(), controls: Mutex::default(), bursting: Mutex::default(), scratch: Mutex::default(), volume: Mutex::default(), volume_set });
+        deep.send_volumes(sends).expect("a thread");
+        deep
     }
 
     /// Says Hello on `socket`, waits for the device's caps and reads it from then on, on a thread of its own.
@@ -82,13 +89,37 @@ impl Deep {
         socket.set_read_timeout(None).map_err(|e| e.to_string())?;
         let out = socket.try_clone().map_err(|e| e.to_string())?;
         let reader = socket.try_clone().map_err(|e| e.to_string())?;
-        let deep = Arc::new(Deep { caps, depth_ms, out: Mutex::new(Box::new(out)), socket: Some(socket), gone: AtomicBool::new(false), engine: Mutex::default(), controls: Mutex::default(), bursting: Mutex::default(), scratch: Mutex::default() });
+        let (volume_set, sends) = mpsc::channel();
+        let deep = Arc::new(Deep { caps, depth_ms, out: Mutex::new(Box::new(out)), socket: Some(socket), gone: AtomicBool::new(false), engine: Mutex::default(), controls: Mutex::default(), bursting: Mutex::default(), scratch: Mutex::default(), volume: Mutex::default(), volume_set });
         let weak = Arc::downgrade(&deep);
         std::thread::Builder::new()
             .name("nori-sink-read".into())
             .spawn(move || read(reader, frames, buf, weak))
             .map_err(|e| e.to_string())?;
+        deep.send_volumes(sends).map_err(|e| e.to_string())?;
         Ok(deep)
+    }
+
+    /// Sends what [`Deep::set_volume`] left, on a thread of its own until the connection goes.
+    fn send_volumes(self: &Arc<Self>, sends: mpsc::Receiver<()>) -> std::io::Result<()> {
+        let deep = Arc::downgrade(self);
+        std::thread::Builder::new().name("nori-sink-volume".into()).spawn(move || {
+            while sends.recv().is_ok() {
+                let Some(deep) = deep.upgrade() else { return };
+                let gain = deep.volume.lock().expect("not poisoned").take();
+                if let Some(gain) = gain {
+                    deep.send(Frame::Volume { gain });
+                }
+            }
+        })?;
+        Ok(())
+    }
+
+    /// Sets the device's volume without waiting for the socket: a slider moves it from the UI's thread,
+    /// and a write can wait seconds behind a burst.
+    pub fn set_volume(&self, gain: f32) {
+        *self.volume.lock().expect("not poisoned") = Some(gain);
+        let _ = self.volume_set.send(());
     }
 
     /// Sends `frame`; false once the device is gone.
@@ -192,5 +223,62 @@ fn read(mut socket: TcpStream, mut frames: Frames, mut buf: Vec<u8>, deep: std::
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// A socket that takes nothing until it is let go.
+    #[derive(Clone, Default)]
+    struct Stalled {
+        open: Arc<(Mutex<bool>, std::sync::Condvar)>,
+        wrote: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for Stalled {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            let (open, opened) = &*self.open;
+            drop(opened.wait_while(open.lock().unwrap(), |o| !*o).unwrap());
+            self.wrote.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn volumes(bytes: &[u8]) -> Vec<f32> {
+        let mut frames = Frames::new();
+        frames.push(bytes);
+        let mut out = Vec::new();
+        while let Some(f) = frames.next_host() {
+            if let nori_sink_protocol::Host::Volume { gain } = f.unwrap() {
+                out.push(gain);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_slider_never_waits_for_the_socket_and_its_last_place_goes_out() {
+        let wire = Stalled::default();
+        let caps = Caps { version: VERSION, buffer_bytes: 1 << 20, max_rate: 48_000, bits: 1, decodes: 0, cover: None };
+        let deep = Deep::new(caps, None, Box::new(wire.clone()));
+        let moved = Instant::now();
+        for percent in 40..=100 {
+            deep.set_volume(percent as f32 / 100.0);
+        }
+        assert!(moved.elapsed() < Duration::from_secs(1), "waited {:?}", moved.elapsed());
+        *wire.open.0.lock().unwrap() = true;
+        wire.open.1.notify_all();
+        let until = Instant::now() + Duration::from_secs(5);
+        while volumes(&wire.wrote.lock().unwrap()).last() != Some(&1.0) {
+            assert!(Instant::now() < until, "the last place went out");
+            std::thread::yield_now();
+        }
+        assert!(volumes(&wire.wrote.lock().unwrap()).len() <= 3, "a drag isn't a frame a step");
     }
 }

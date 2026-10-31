@@ -383,7 +383,7 @@ impl Lan {
         cast.volume = Some(volume);
         let cast = cast.clone();
         drop(i);
-        deep.send(crate::deep::Frame::Volume { gain: volume as f32 / 100.0 });
+        deep.set_volume(volume as f32 / 100.0);
         self.side.cast(Some(&cast));
         true
     }
