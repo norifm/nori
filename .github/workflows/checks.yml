@@ -36,7 +36,7 @@ jobs:
           files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename') || all
           # The API lists 300 files at most.
           [ "$(wc -l <<< "$files")" -lt 300 ] || all
-          shared='^(crates/|vendor/|wit/|Cargo\.|\.cargo/|\.config/|\.github/)'
+          shared='^(crates/|vendor/|wit/|Cargo\.|\.cargo/|\.config/|\.github/|tools/affected\.py)'
           # Rust's tests and builds also read these: core's native calls, the fonts, licenses, icons, the map.
           read_by_rust='^(core/|AGENTS\.md|app/src/main/assets/|app/src/main/res/font/|docs/brand/)'
           touches() { grep -qE "$1" <<< "$files" && echo true || echo false; }
