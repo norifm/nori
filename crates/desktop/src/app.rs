@@ -466,6 +466,9 @@ pub struct App {
     details_song: Option<String>,
     /// The plugin's still sleeve being fetched for the song playing.
     sleeve: Option<Ticket>,
+    /// The song playing's moving cover, and what plays it while the sleeve shows.
+    moving: Option<(Song, nori_plugins::Artwork, crate::motion::Kept)>,
+    motion: Option<crate::motion::Playing>,
     /// Now Playing was open when last seen: its opening asks the plugins' status lines.
     full_seen: bool,
     /// The engine is in its shallow equalizer-tuning buffer.
@@ -701,6 +704,8 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             plugin_menus: Default::default(),
             details_song: None,
             sleeve: None,
+            moving: None,
+            motion: None,
             full_seen: false,
             lists: Lists::default(),
             find: String::new(),
@@ -974,6 +979,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_zoom_window, h, |a| a.compositor.zoom_window());
     on!(ui.on_page_moved, h, |a| a.place_player());
     on!(ui.on_player_changed, h, |a| {
+        a.motion_follow();
         // Another view or the full player: no menu of the last one stays open over it.
         a.compositor.close_menus();
         a.repaint();
@@ -2837,23 +2843,59 @@ impl App {
     }
 
     /// Asks the plugins for `song`'s sleeve, off this thread; a still one is fetched and drawn as its
-    /// cover in Now Playing, and so is a loop's first frame (Slint draws no video).
+    /// cover in Now Playing, and so is a loop's first frame, until the loop plays over it.
     fn ask_sleeve(&mut self, song: Song) {
         self.sleeve = None;
+        self.moving = None;
+        self.motion = None;
         self.ui().set_sleeved(false);
         if !self.plugins_fill(nori_plugins::Place::Artwork) {
             return;
         }
         let (host, tx) = (self.plugin_host().clone(), self.tx.clone());
         nori_host::spawn("nori-plugin-artwork", move || {
-            let picture = nori_core::transport::block_on(host.artwork(song.clone())).and_then(|a| match a.looping {
-                false => Some(a.url),
-                true => a.poster.map(|p| p.replace("{size}", &cover_px(CoverSize::Large).to_string())),
-            });
+            let Some(artwork) = nori_core::transport::block_on(host.artwork(song.clone())) else { return };
+            let picture = match artwork.looping {
+                false => Some(artwork.url.clone()),
+                true => {
+                    tx.send(Msg::Loop { song: song.clone(), artwork: artwork.clone() });
+                    artwork.poster.as_ref().map(|p| p.replace("{size}", &cover_px(CoverSize::Large).to_string()))
+                }
+            };
             if let Some(url) = picture {
                 tx.send(Msg::Artwork { song: song.id, url });
             }
         });
+    }
+
+    /// The moving cover plays only while its sleeve shows: the full player open on a window in sight,
+    /// music playing and Motion not off. Otherwise its thread goes and the last picture stays.
+    fn motion_follow(&mut self) {
+        let ui = self.ui();
+        let shows = !self.hidden && ui.get_full_player() && ui.get_playing() && !ui.global::<Motion>().get_reduced();
+        if !shows {
+            self.motion = None;
+            return;
+        }
+        if self.motion.is_some() {
+            return;
+        }
+        let Some((song, artwork, kept)) = self.moving.clone() else { return };
+        let (frames, fails) = (self.tx.clone(), self.tx.clone());
+        let id = song.id.clone();
+        self.motion = Some(crate::motion::play(
+            artwork.url.clone(),
+            kept,
+            move |image| frames.send(Msg::LoopFrame { song: id.clone(), image }),
+            move |failed| {
+                nori_core::alog::info(&format!("moving cover: {failed:?}"));
+                let status = match failed {
+                    crate::motion::Failed::Status(s) => Some(s),
+                    crate::motion::Failed::Unplayable(_) => None,
+                };
+                fails.send(Msg::LoopFailed { song: song.clone(), artwork: artwork.clone(), status });
+            },
+        ));
     }
 
     /// Asks for a line of text: the sheet sends it back by `name` (`setting_typed`).
@@ -3357,6 +3399,29 @@ impl App {
                 ui.set_sleeved(true);
             }
             Msg::Sleeve { .. } => {}
+            Msg::Loop { song, artwork } if Some(&song.id) == self.heard.as_ref() => {
+                self.moving = Some((song, artwork, Default::default()));
+                self.motion_follow();
+            }
+            Msg::Loop { .. } => {}
+            Msg::LoopFrame { song, image } => {
+                if let Some(playing) = &self.motion {
+                    playing.busy.store(false, std::sync::atomic::Ordering::Relaxed);
+                }
+                if Some(&song) == self.heard.as_ref() && self.motion.is_some() {
+                    let ui = self.ui();
+                    ui.set_sleeve(self.compositor.picture(&image.pixels, image.width, image.height));
+                    ui.set_sleeved(true);
+                }
+            }
+            Msg::LoopFailed { song, artwork, status } => {
+                self.moving = None;
+                self.motion = None;
+                if let Some(status) = status {
+                    let host = self.plugin_host().clone();
+                    nori_host::spawn("nori-plugin-artwork", move || host.artwork_failed(artwork, song, status));
+                }
+            }
             Msg::PluginReadme { id, blocks } => {
                 self.plugged.readme_came(&id, blocks);
                 self.plugins_shown();
@@ -4162,6 +4227,8 @@ impl App {
                 Some(one) => self.ask_sleeve(one),
                 None => {
                     self.sleeve = None;
+                    self.moving = None;
+                    self.motion = None;
                     ui.set_sleeved(false);
                 }
             }
@@ -4246,6 +4313,7 @@ impl App {
     /// Syncs the window with what the player shows: this computer's playback and queue, the device's
     /// playing elsewhere, or the jam's.
     fn follow(&mut self) {
+        self.motion_follow();
         let Some(s) = &self.session else { return };
         let ui = self.ui();
         let now = s.now();

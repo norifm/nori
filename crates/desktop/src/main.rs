@@ -11,6 +11,7 @@ mod jam;
 mod look;
 mod lyrics;
 mod menu;
+mod motion;
 mod session;
 mod settings;
 mod sung;
