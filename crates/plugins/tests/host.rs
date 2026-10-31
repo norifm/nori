@@ -617,7 +617,10 @@ fn a_plugin_nori_stopped_in_is_off_at_the_next_start() {
         nori_plugins::testing::marks_released(dir.path());
         Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()))
     };
-    open().install(&fixture("")).unwrap();
+    let first = open();
+    first.install(&fixture("")).unwrap();
+    first.turn(ID.into(), false);
+    drop(first);
     left_on(dir.path(), ID);
     let plugins = open();
     assert_eq!(plugins.take_safe_start(), None);
@@ -641,7 +644,10 @@ fn a_start_that_never_finished_starts_once_with_every_plugin_off() {
         nori_plugins::testing::marks_released(dir.path());
         Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()))
     };
-    open().install(&fixture("")).unwrap();
+    let first = open();
+    first.install(&fixture("")).unwrap();
+    first.turn(ID.into(), false);
+    drop(first);
     left_on(dir.path(), ID);
     drop(open());
 
