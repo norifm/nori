@@ -1,6 +1,7 @@
 // The installed plugins: what's on, each one's worker and sound stage, and what they answer. Loaded only
 // once a plugin is installed, or by the Plugins page.
 
+import { untrack } from "svelte";
 import { ask, onPlayerUp, onRestart } from "../rpc";
 import { player } from "../state/player.svelte";
 import { sleeves } from "../state/sleeve.svelte";
@@ -89,21 +90,21 @@ function song(s: NonNullable<typeof player.song>) {
     title: s.title,
     artist: s.artist,
     artistId: s.artistId,
-    artists: [],
+    artists: (s.artists ?? []).map((a) => ({ id: a.id || undefined, name: a.name })),
     album: s.album,
     albumId: s.albumId,
     cover: s.cover,
     duration: Math.round(s.duration),
     track: s.track ?? 0,
-    disc: 0,
-    year: 0,
-    genre: undefined,
+    disc: s.discNumber ?? 0,
+    year: s.year ?? 0,
+    genre: s.genre,
     starred: !!s.starred,
     external: s.id.startsWith("ext-"),
-    explicit: "unknown",
-    replayGain: undefined,
-    bpm: 0,
-    rating: 0,
+    explicit: s.explicitStatus || "unknown",
+    replayGain: s.replayGain && { trackDb: s.replayGain.trackGain, albumDb: s.replayGain.albumGain, trackPeak: s.replayGain.trackPeak, albumPeak: s.replayGain.albumPeak },
+    bpm: s.bpm ?? 0,
+    rating: s.userRating ?? 0,
   };
 }
 
@@ -128,7 +129,12 @@ class Plugins {
       onPlayerUp(() => this.lay());
       onRestart(() => this.lay());
       $effect.root(() => {
-        $effect(() => void this.asked(player.song));
+        // Once a song: `player.song` is new on every refresh, and a new sleeve starts its loop again.
+        const id = $derived(player.song?.id);
+        $effect(() => {
+          void id;
+          untrack(() => void this.asked(player.song));
+        });
         $effect(() => {
           const event = player.playing ? "playback-started" : "playback-paused";
           for (const r of this.withHooks()) void r.call("hooks", "on", { tag: event });

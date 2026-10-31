@@ -2,7 +2,8 @@
 // no plugin; blocked plugins are greyed with their reasons; orbit installs from the repo, shows its rows,
 // changes the samples the AudioWorklet plays, survives a reload and goes on Remove; playback sets the
 // engine's speed through an override; moving-covers reaches
-// Apple through the server and its loop plays in a <video>.
+// Apple through the server for a song of a real album (tools/dev-server.sh seeds one) and its loop plays in
+// a <video>.
 //
 //   node web/check/plugins.mjs [http://localhost:8099/]
 //   NORI_INDEX=index.json node web/check/plugins.mjs ...   (the repo's index read from this file)
@@ -49,10 +50,10 @@ async function start() {
   await page.waitForFunction(() => window.nori.page === "home", { timeout: 30000 });
 }
 
-async function play() {
+async function play(album = "Long Album") {
   const albums = JSON.parse(await ask("read", JSON.stringify({ kind: "albums", sort: "alphabeticalByName", size: 200, offset: 0 })));
   const list = albums.albums ?? albums;
-  await hash(`#/album/${(list.find((a) => a.name === "Long Album") ?? list[0]).id}`);
+  await hash(`#/album/${(list.find((a) => a.name === album) ?? list[0]).id}`);
   await page.waitForSelector(".songs li .play");
   await wait(400);
   await (await page.$$(".songs li .play"))[0].click();
@@ -160,24 +161,18 @@ await install("fm.nori.moving-covers");
 await open("fm.nori.moving-covers");
 await clickText("[data-plugin-on]");
 await wait(1500);
-const sleeve = await page.evaluate(async (albums) => {
-  const p = window.plugins;
-  const now = window.player.song;
-  for (const [artist, album] of albums) {
-    const s = await p.sleeve({ ...now, albumId: album, artist, album, title: album });
-    if (s?.video) return { album, video: s.video };
-  }
-  return null;
-}, [["Billie Eilish", "HIT ME HARD AND SOFT"], ["Taylor Swift", "Midnights"], ["Bad Bunny", "Un Verano Sin Ti"], ["The Weeknd", "Dawn FM"]]);
-check("moving covers finds a loop on Apple through the server", !!sleeve, sleeve);
-if (sleeve) {
-  await page.click("#bar .art");
-  await page.waitForSelector("video[data-sleeve]", { timeout: 10000 });
-  await page.waitForFunction(() => { const v = document.querySelector("video[data-sleeve]"); return v && v.currentTime > 0.3 && v.videoWidth > 0; }, { timeout: 30000 }).catch(() => {});
-  const v = await page.$eval("video[data-sleeve]", (e) => ({ t: e.currentTime, w: e.videoWidth, muted: e.muted, loop: e.loop, error: e.error?.message }));
-  check("its loop plays over the cover", v.t > 0.3 && v.w > 0, v);
-  await page.keyboard.press("Escape");
-}
+await play("Midnights (Deluxe)");
+await page.click("#bar .art");
+await page.waitForSelector("video[data-sleeve]", { timeout: 20000 }).catch(() => {});
+await page.waitForFunction(() => { const v = document.querySelector("video[data-sleeve]"); return v && v.currentTime > 0.3 && v.videoWidth > 0; }, { timeout: 30000 }).catch(() => {});
+const loop = () => page.$eval("video[data-sleeve]", (e) => ({ t: e.currentTime, w: e.videoWidth, src: e.src, poster: e.poster, muted: e.muted, loop: e.loop, error: e.error?.message })).catch(() => null);
+const v = await loop();
+check("a real song's loop plays over the cover, found by its year", v?.t > 0.3 && v?.w > 0, v);
+check("its poster's size is filled in", v?.poster && !v.poster.includes("size"), v?.poster);
+await wait(5000);
+const on2 = await loop();
+check("the session's refreshes leave the loop playing", on2?.src === v?.src && on2?.t > v?.t, [v?.t, on2?.t]);
+await page.keyboard.press("Escape");
 
 for (const id of ["fm.nori.moving-covers", "fm.nori.playback", "fm.nori.orbit"]) {
   await open(id);

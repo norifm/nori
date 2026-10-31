@@ -14,6 +14,14 @@ export type Song = {
   starred?: boolean;
   /** Its second line, as the core words it (the explicit mark and the artist). */
   line?: string;
+  artists?: { id: string; name: string }[];
+  discNumber?: number;
+  year?: number;
+  genre?: string;
+  explicitStatus?: "" | "clean" | "explicit";
+  replayGain?: { trackGain?: number; albumGain?: number; trackPeak?: number; albumPeak?: number };
+  bpm?: number;
+  userRating?: number;
 };
 /** `subtitle`: a card's line under its name, as the core words it. */
 export type Album = { id: string; name: string; artist: string; artistId?: string; year: number; cover?: string; songCount: number; duration: number; genre?: string; starred?: boolean; subtitle?: string };
