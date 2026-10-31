@@ -432,7 +432,7 @@ fun SongRow(
             Modifier.fillMaxWidth()
                 .then(if (swipe != null) Modifier.swipeable(swipe, swipeRight, swipeLeft, if (selected) scheme.secondaryContainer else scheme.background, shown = { place.inSight(head) }) else Modifier)
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                .padding(start = Space.gutter, top = 9.dp, bottom = 9.dp),
+                .padding(start = Space.gutter, end = MENU_INSET, top = 9.dp, bottom = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // The track playing shows a waveform where its number would be - the same cue Apple uses, and
@@ -460,6 +460,7 @@ fun SongRow(
             // the time beside it, "3:44" against "12:05" - and a mark arriving or leaving moves nothing
             // else, so a song without a seal keeps its tick in the download column. The time is last before the menu and in a box of one fixed width, its digits held to
             // the right edge, so it sits against the ⋯ rather than with an empty download slot between.
+            // An album's rows have no time: its head says how long the album is, and a song's info how long it is.
             // A jam guest's seals would be the host's: none are shown.
             val rules = LocalRules.current
             Box(Modifier.padding(start = 4.dp).width(MARK), Alignment.Center) { DownloadSlot(song.id, downloaded, tint, pageWhole) }
@@ -468,7 +469,7 @@ fun SongRow(
             }
             // A song a jam guest asked for says so in its time's place until the host decides.
             val asked = rules.asks && song.id in LocalAsked.current.value
-            Text(
+            if (number == null || asked) Text(
                 if (asked) words(R.string.jam_asked_mark) else if (song.duration > 0u) duration(song.duration.toLong()) else "",
                 Modifier.padding(start = MARK_GAP).widthIn(min = TIME_SLOT), textAlign = TextAlign.End,
                 style = MaterialTheme.typography.bodySmall, color = if (asked) scheme.onSurface else tint, maxLines = 1, softWrap = false,
@@ -874,3 +875,6 @@ fun prefetchCovers(context: android.content.Context, urls: List<String?>) {
  */
 /** A time's width that "0:00" fills: the marks sit one [MARK_GAP] from most songs' time, and a longer one pushes them along. */
 private val TIME_SLOT = 26.dp
+
+/** A song row's end, so its ⋯ glyph ends at the gutter, where the list's head and hairline do. */
+private val MENU_INSET = Space.gutter - 10.dp
