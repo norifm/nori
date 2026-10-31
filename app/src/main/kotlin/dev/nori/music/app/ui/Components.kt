@@ -454,24 +454,20 @@ fun SongRow(
                 if (line.isNotEmpty()) RemoteLine(line, song.isExternal, MaterialTheme.typography.bodySmall)
             }
             val tint = scheme.onSurfaceVariant
-            // The marks stand to the right, against the time (or the ⋯ where there is none): the seal
-            // nearest, the download ring or tick before it. A list of favourites so keeps its seals one
-            // above another, and a mark alone takes the place by the time, the title running on into the
-            // room the other leaves. The time is in a box of one fixed width, its digits held to the right
-            // edge, so the marks stand the same on every row whatever its length.
-            // An album's rows have no time: its head says how long the album is, and a song's info how long it is.
+            // The marks stand to the right, against the ⋯: the seal nearest, the download ring or tick
+            // before it. A list of favourites so keeps its seals one above another, and a mark alone takes
+            // the place by the ⋯, the title running on into the room the other leaves.
+            // No row has its time: a song's info says how long it is.
             // A jam guest's seals would be the host's: none are shown.
             val rules = LocalRules.current
             val sealed = rules.stars && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)
             // As wide as its mark, which grows in and shrinks away by itself; nothing when there is none.
             Box(Modifier.padding(start = 4.dp), Alignment.Center) { DownloadSlot(song.id, downloaded, tint, pageWhole) }
             if (sealed) Icon(Kanji.Sealed, say.favourite, Modifier.padding(start = MARK_GAP).size(MARK), LocalLook.current.color(CoverLook.ACCENT))
-            // A song a jam guest asked for says so in its time's place until the host decides.
-            val asked = rules.asks && song.id in LocalAsked.current.value
-            if (number == null || asked) Text(
-                if (asked) words(R.string.jam_asked_mark) else if (song.duration > 0u) duration(song.duration.toLong()) else "",
-                Modifier.padding(start = MARK_GAP).widthIn(min = TIME_SLOT), textAlign = TextAlign.End,
-                style = MaterialTheme.typography.bodySmall, color = if (asked) scheme.onSurface else tint, maxLines = 1, softWrap = false,
+            // A song a jam guest asked for says so by the ⋯ until the host decides.
+            if (rules.asks && song.id in LocalAsked.current.value) Text(
+                words(R.string.jam_asked_mark), Modifier.padding(start = MARK_GAP),
+                style = MaterialTheme.typography.bodySmall, color = scheme.onSurface, maxLines = 1, softWrap = false,
             )
             IconButton(onMenu, Modifier.size(MENU_BUTTON, 40.dp)) { Icon(Iconoir.MoreHoriz, say.more, Modifier.size(MENU_GLYPH), tint) }
         }
@@ -867,13 +863,6 @@ fun prefetchCovers(context: android.content.Context, urls: List<String?>) {
     val loader = dev.nori.music.data.CoverLoader.get(context)
     urls.forEach { url -> if (url != null) loader.prefetch(url) }
 }
-
-/**
- * The time's column: wide enough for "59:59" in the row's small type, so every ordinary track's time
- * ends in the same place. A track over an hour is wider and pushes left, which is rare enough to allow.
- */
-/** A time's width that "0:00" fills: the marks sit one [MARK_GAP] from most songs' time, and a longer one pushes them along. */
-private val TIME_SLOT = 26.dp
 
 /**
  * A song row's ⋯: narrow (as tall as ever, which sets the row's height), so it stands as near the seal as the seal does the download mark (its tap target
