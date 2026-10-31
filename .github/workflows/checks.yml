@@ -3,7 +3,8 @@ on:
   push:
   workflow_dispatch:
 concurrency:
-  group: checks-${{ github.ref }}
+  # A branch's newer push replaces its run; each commit on master keeps its own.
+  group: checks-${{ github.ref == 'refs/heads/master' && github.sha || github.ref }}
   cancel-in-progress: true
 permissions:
   contents: read
