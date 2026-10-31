@@ -12,6 +12,8 @@
 #                               album joins), "Far Song One" the one transcoded to Opus in the checks
 #   Nori Codecs / Lossless      one Apple Lossless song of 20 s (no browser decodes ALAC: the web client's
 #                               Rust decoders)
+#   Taylor Swift / Midnights (Deluxe)  one generated song, an album Apple has a moving cover for under
+#                               a near name: what web/check/plugins.mjs plays
 #   Nori Bench 1000 (playlist)  a thousand songs, for opening a long page (tools/open-bench.sh)
 set -euo pipefail
 common=$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
@@ -47,7 +49,7 @@ song() { # song <file> <title> <artist> <album> <track> <seconds> <seed> [codec]
     -f lavfi -i "anoisesrc=d=$6:c=pink:a=0.05" \
     -filter_complex "[0][1][2]amix=inputs=3,volume=2,apulsator=hz=2:amount=0.6[a]" -map "[a]" -ac 2 -ar 44100 \
     -metadata title="$2" -metadata artist="$3" -metadata album_artist="$3" -metadata album="$4" \
-    -metadata track="$5" -metadata date=2024 -metadata genre="Test" ${codec[@]+"${codec[@]}"} "$f"
+    -metadata track="$5" -metadata date="${YEAR:-2024}" -metadata genre="Test" ${codec[@]+"${codec[@]}"} "$f"
 }
 seeded=0
 d="$music/Nori E2E/Long Album"
@@ -74,6 +76,14 @@ if [ ! -f "$d/.done" ]; then
   mkdir -p "$d"
   ffmpeg -loglevel error -y -f lavfi -i "color=c=0x608040:s=600x600" -frames:v 1 "$d/cover.jpg"
   song "$d/01 - Lossless Song.m4a" "Lossless Song" "Nori Codecs" "Lossless" 1 20 31 alac
+  touch "$d/.done"; seeded=1
+fi
+
+d="$music/Taylor Swift/Midnights (Deluxe)"
+if [ ! -f "$d/.done" ]; then
+  mkdir -p "$d"
+  ffmpeg -loglevel error -y -f lavfi -i "color=c=0x304050:s=600x600" -frames:v 1 "$d/cover.jpg"
+  YEAR=2022 song "$d/01 - Generated Song.mp3" "Generated Song" "Taylor Swift" "Midnights (Deluxe)" 1 60 41
   touch "$d/.done"; seeded=1
 fi
 

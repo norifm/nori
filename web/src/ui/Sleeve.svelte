@@ -4,7 +4,7 @@
 
   let { song }: { song: string } = $props();
   const s = $derived(sleeves.current?.song === song ? sleeves.current : null);
-  const poster = $derived(s?.poster?.replace("{size}", "1000"));
+  const poster = $derived(s?.poster?.replaceAll("{size}", "1000"));
   let video = $state<HTMLVideoElement>();
 
   // HLS goes through hls.js, loaded only then, where the browser has Media Source; a phone's Safari plays
@@ -34,7 +34,7 @@
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} data-sleeve {poster} muted loop autoplay playsinline onerror={() => sleeves.failed(song, 0)}></video>
 {:else if s?.still}
-  <img data-sleeve src={s.still.replace("{size}", "1000")} alt="" />
+  <img data-sleeve src={s.still.replaceAll("{size}", "1000")} alt="" />
 {/if}
 
 <style>
