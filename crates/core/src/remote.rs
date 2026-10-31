@@ -1402,6 +1402,47 @@ fn kept_device_id(c: &rusqlite::Connection, key: &str, shared: bool) -> rusqlite
     Ok(id)
 }
 
+impl Remote {
+    /// [`Self::pick`]; `cast`: to carry a cast through it.
+    fn pick_for(self: Arc<Self>, device: Option<String>, cast: bool) {
+        self.clone().discover_active(false);
+        let cancelled = self.inner.lock().taking.take().is_some();
+        let (active, idle, plays, leads) = {
+            let i = self.inner.lock();
+            if device.is_some() && i.jams() {
+                return;
+            }
+            let m = i.mirror.as_ref();
+            let (plays, leads) = device.as_deref().map_or((false, false), |d| (i.plays(d), if cast { i.casts_its_own(d) } else { i.leads(d) }));
+            (m.map(|m| m.id.clone()), m.and_then(|m| m.shown.as_ref()).is_some_and(|s| s.index.is_none()), plays, leads)
+        };
+        let here = self.client.core.session.playlist(|p| p.current().is_some());
+        match (active, device) {
+            (None, None) => {}
+            (Some(_), None) if idle => self.set_active(None, Becomes::Followed),
+            (Some(a), None) => self.pull(a),
+            (None, Some(d)) if here && !leads => self.clone().hand_over(d),
+            (None, Some(d)) => self.set_active(Some(d), Becomes::Followed),
+            (Some(a), Some(d)) if a == d => {}
+            (Some(_), Some(d)) if plays => self.set_active(Some(d), Becomes::Followed),
+            (Some(a), Some(d)) => {
+                let id = self.next_id();
+                let shown = self.inner.lock().mirror.as_ref().and_then(|m| Some((m.shown.clone()?, m.shown_at())));
+                self.clone().command(id, a, Op::Transfer { to: d.clone(), listen_handoff: false });
+                let how = match shown {
+                    Some((state, at)) => Becomes::HandedAs { id, state: Box::new(DeviceState { handed_to: None, obeyed: Vec::new(), ..state }), at },
+                    None => Becomes::Handed,
+                };
+                self.set_active(Some(d), how);
+                self.end_foresight();
+            }
+        }
+        if cancelled {
+            self.keep_polling();
+        }
+    }
+}
+
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Remote {
     /// A remote whose work runs on a thread of its own (in a browser, on the page's event loop).
@@ -1694,45 +1735,6 @@ impl Remote {
     /// followed, as is any device while nothing is queued here.
     pub fn pick(self: Arc<Self>, device: Option<String>) {
         self.pick_for(device, false);
-    }
-
-    /// [`Self::pick`]; `cast`: to carry a cast through it.
-    fn pick_for(self: Arc<Self>, device: Option<String>, cast: bool) {
-        self.clone().discover_active(false);
-        let cancelled = self.inner.lock().taking.take().is_some();
-        let (active, idle, plays, leads) = {
-            let i = self.inner.lock();
-            if device.is_some() && i.jams() {
-                return;
-            }
-            let m = i.mirror.as_ref();
-            let (plays, leads) = device.as_deref().map_or((false, false), |d| (i.plays(d), if cast { i.casts_its_own(d) } else { i.leads(d) }));
-            (m.map(|m| m.id.clone()), m.and_then(|m| m.shown.as_ref()).is_some_and(|s| s.index.is_none()), plays, leads)
-        };
-        let here = self.client.core.session.playlist(|p| p.current().is_some());
-        match (active, device) {
-            (None, None) => {}
-            (Some(_), None) if idle => self.set_active(None, Becomes::Followed),
-            (Some(a), None) => self.pull(a),
-            (None, Some(d)) if here && !leads => self.clone().hand_over(d),
-            (None, Some(d)) => self.set_active(Some(d), Becomes::Followed),
-            (Some(a), Some(d)) if a == d => {}
-            (Some(_), Some(d)) if plays => self.set_active(Some(d), Becomes::Followed),
-            (Some(a), Some(d)) => {
-                let id = self.next_id();
-                let shown = self.inner.lock().mirror.as_ref().and_then(|m| Some((m.shown.clone()?, m.shown_at())));
-                self.clone().command(id, a, Op::Transfer { to: d.clone(), listen_handoff: false });
-                let how = match shown {
-                    Some((state, at)) => Becomes::HandedAs { id, state: Box::new(DeviceState { handed_to: None, obeyed: Vec::new(), ..state }), at },
-                    None => Becomes::Handed,
-                };
-                self.set_active(Some(d), how);
-                self.end_foresight();
-            }
-        }
-        if cancelled {
-            self.keep_polling();
-        }
     }
 
     /// The account's other devices, nearby ones first; through the relay only while it answers.
