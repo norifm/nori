@@ -16,12 +16,11 @@
   // The top bar on a wide screen, as the desktop's top pill: one outline holding Home and the library's
   // sections in their order (the core's `library_sections`), the current one in the accent and named
   // while there is room; then the search and the settings button. Settings opens the account, the
-  // equalizer and Settings, and the season and appearance. The wordmark stands left of it where it fits.
+  // equalizer and Settings, and the season and appearance.
   import { ask } from "../rpc";
   import { remote } from "../state/remote.svelte";
   import { go, route } from "../state/route.svelte";
   import { W } from "../words";
-  import wordmark from "../../../docs/brand/nori-wordmark.svg?raw";
   import Icon from "./Icon.svelte";
   import Look from "./Look.svelte";
   import SearchBox from "./SearchBox.svelte";
@@ -31,7 +30,8 @@
   let sections = $state<string[]>([]);
   $effect(() => {
     void remote.jam?.guest;
-    void ask<string>("library_sections").then((s) => (sections = (JSON.parse(s) as string[]).filter((x) => x in tops)));
+    // Favorites last, as the desktop's top pill has it.
+    void ask<string>("library_sections").then((s) => (sections = (JSON.parse(s) as string[]).filter((x) => x in tops).sort((a, b) => +(a === "Favourites") - +(b === "Favourites"))));
   });
   let pop = $state(false);
   let bar = $state<HTMLElement>();
@@ -49,7 +49,6 @@
 
 <svelte:window onpointerdown={(e) => pop && !bar?.contains(e.target as Node) && (pop = false)} onkeydown={(e) => e.key === "Escape" && (pop = false)} onhashchange={() => (pop = false)} />
 
-<a class="brand" href={href("home")} aria-label={W.appName}>{@html wordmark}</a>
 <header class="top chrome" id="nav" bind:this={bar}>
   <nav class="tabs" aria-label={W.library}>
     <a class="tab" class:on={on("home", "row")} href={href("home")} data-top="home"><Icon name="home-simple" /><span>{W.home}</span></a>
@@ -88,26 +87,6 @@
     padding: 0 8px;
     border-radius: 24px;
     border: 1px solid var(--outline);
-  }
-  /* The wordmark in the page's ink, its record's face the page's paper; its left edge on the page's,
-     only where it clears the pill. */
-  .brand {
-    --logo-ink: var(--ink);
-    --logo-rice: var(--page);
-    position: fixed;
-    top: 23px;
-    left: var(--gutter);
-    z-index: 30;
-  }
-  .brand :global(svg) {
-    display: block;
-    height: 26px;
-    width: auto;
-  }
-  @media (max-width: 1279px) {
-    .brand {
-      display: none;
-    }
   }
   .tabs {
     flex: 1;
