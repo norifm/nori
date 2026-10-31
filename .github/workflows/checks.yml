@@ -6,6 +6,7 @@ concurrency:
   # A branch's newer push replaces its run; each commit on master keeps its own.
   # On master the run going finishes, since a cancelled job marks its commit failed; only runs still waiting are replaced.
   cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
   cancel-in-progress: true
 permissions:
   contents: read
