@@ -15,7 +15,6 @@ EVERYWHERE = ("Cargo.", "vendor/", "wit/", ".cargo/", ".config/", ".github/", "t
 # Read by one crate's build or tests from outside it.
 READ_BY = {
     "core/": "nori-android",
-    "AGENTS.md": "nori-testdir",
     "app/src/main/assets/": "nori-settings",
     "app/src/main/res/font/": "nori-desktop",
     "docs/brand/": "nori-desktop",
