@@ -454,19 +454,18 @@ fun SongRow(
                 if (line.isNotEmpty()) RemoteLine(line, song.isExternal, MaterialTheme.typography.bodySmall)
             }
             val tint = scheme.onSurfaceVariant
-            // Every row's marks sit in columns of their own, the same width on every row: the download
-            // ring or tick, then the seal, then the time, then the menu. A list of favourites then puts all
-            // its seals one above another - placed after the title, the seal moved with the width of
-            // the time beside it, "3:44" against "12:05" - and a mark arriving or leaving moves nothing
-            // else, so a song without a seal keeps its tick in the download column. The time is last before the menu and in a box of one fixed width, its digits held to
-            // the right edge, so it sits against the ⋯ rather than with an empty download slot between.
+            // The marks stand to the right, against the time (or the ⋯ where there is none): the seal
+            // nearest, the download ring or tick before it. A list of favourites so keeps its seals one
+            // above another, and a mark alone takes the place by the time, the title running on into the
+            // room the other leaves. The time is in a box of one fixed width, its digits held to the right
+            // edge, so the marks stand the same on every row whatever its length.
             // An album's rows have no time: its head says how long the album is, and a song's info how long it is.
             // A jam guest's seals would be the host's: none are shown.
             val rules = LocalRules.current
-            Box(Modifier.padding(start = 4.dp).width(MARK), Alignment.Center) { DownloadSlot(song.id, downloaded, tint, pageWhole) }
-            Box(Modifier.padding(start = MARK_GAP).width(MARK), Alignment.Center) {
-                if (rules.stars && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)) Icon(Kanji.Sealed, say.favourite, Modifier.size(15.dp), LocalLook.current.color(CoverLook.ACCENT))
-            }
+            val sealed = rules.stars && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)
+            // As wide as its mark, which grows in and shrinks away by itself; nothing when there is none.
+            Box(Modifier.padding(start = 4.dp), Alignment.Center) { DownloadSlot(song.id, downloaded, tint, pageWhole) }
+            if (sealed) Icon(Kanji.Sealed, say.favourite, Modifier.padding(start = MARK_GAP).size(MARK), LocalLook.current.color(CoverLook.ACCENT))
             // A song a jam guest asked for says so in its time's place until the host decides.
             val asked = rules.asks && song.id in LocalAsked.current.value
             if (number == null || asked) Text(
