@@ -69,9 +69,16 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+      - id: affected
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename') || files=
+          echo "crates=$(tools/affected.py <<< "$files")" >> "$GITHUB_OUTPUT"
       # Every test binary at once, not one after another; nextest runs no doctests.
-      - run: cargo nextest run --workspace
-      - run: cargo test -j4 --workspace --doc
+      - run: cargo nextest run ${{ steps.affected.outputs.crates || '--workspace' }}
+      - run: cargo test -j4 ${{ steps.affected.outputs.crates || '--workspace' }} --doc
   clippy:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
@@ -92,7 +99,14 @@ jobs:
         with:
           key: clippy
           save-if: ${{ github.ref == 'refs/heads/master' }}
-      - run: cargo clippy -j4 --workspace --all-targets -- -D warnings
+      - id: affected
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename') || files=
+          echo "crates=$(tools/affected.py <<< "$files")" >> "$GITHUB_OUTPUT"
+      - run: cargo clippy -j4 ${{ steps.affected.outputs.crates || '--workspace' }} --all-targets -- -D warnings
   web:
     needs: changes
     if: needs.changes.outputs.web == 'true'
