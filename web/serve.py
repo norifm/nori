@@ -17,7 +17,9 @@ import urllib.request
 from pathlib import Path
 
 DIST = Path(__file__).resolve().parent / "dist"
-TYPES = {".js": "text/javascript", ".wasm": "application/wasm", ".css": "text/css", ".html": "text/html"}
+TYPES = {".js": "text/javascript", ".wasm": "application/wasm", ".css": "text/css", ".html": "text/html", ".woff2": "font/woff2"}
+# The twins web/build.sh writes, the best first.
+ENCODINGS = (("br", ".br"), ("gzip", ".gz"))
 
 
 def public_https(url):
@@ -34,10 +36,27 @@ def public_https(url):
 
 def handler(server, log, kbps, files_kbps):
     class Handler(http.server.SimpleHTTPRequestHandler):
+        encoding = None
+
         def end_headers(self):
             # A new build is seen at the next load.
             self.send_header("Cache-Control", "no-cache")
+            if self.encoding:
+                self.send_header("Content-Encoding", self.encoding)
+                self.send_header("Vary", "Accept-Encoding")
             super().end_headers()
+
+        def translate_path(self, path):
+            file = Path(super().translate_path(path))
+            if file.is_dir():
+                file /= "index.html"
+            accepted = self.headers.get("Accept-Encoding", "")
+            for encoding, suffix in ENCODINGS:
+                twin = file.with_name(file.name + suffix)
+                if encoding in accepted and twin.is_file():
+                    self.encoding = encoding
+                    return str(twin)
+            return str(file)
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(DIST), **kwargs)
@@ -57,7 +76,8 @@ def handler(server, log, kbps, files_kbps):
                 pass
 
         def guess_type(self, path):
-            return TYPES.get(Path(path).suffix, super().guess_type(path))
+            file = Path(path).with_suffix("") if self.encoding else Path(path)
+            return TYPES.get(file.suffix, super().guess_type(path))
 
         def do_GET(self):
             if self.path.startswith("/plugin-http"):

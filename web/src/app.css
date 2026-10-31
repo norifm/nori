@@ -3,19 +3,7 @@
    no shadows, hairlines and steps of paper between surfaces. The components keep their own styles; this
    is the ground they share. */
 
-@font-face {
-  font-family: "Inter";
-  src: url("./fonts/inter.ttf") format("truetype");
-  font-weight: 100 900;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Literata";
-  src: url("./fonts/literata.ttf") format("truetype");
-  font-weight: 200 900;
-  font-display: swap;
-}
+@import "./fonts/fonts.css";
 
 /* Registered so a new season, or Day to Night, cross-fades every color made from these in one go. */
 @property --page {

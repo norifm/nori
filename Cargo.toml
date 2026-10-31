@@ -176,5 +176,5 @@ opt-level = 3
 
 [profile.web]
 inherits = "dist"
-opt-level = "s"
+opt-level = "z"
 panic = "abort"

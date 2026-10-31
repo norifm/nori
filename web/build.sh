@@ -4,7 +4,8 @@
 # browser's WebCodecs) and player-codecs.wasm (the same with Vorbis, ALAC and Opus decoded in Rust, for a
 # browser without them), each with its wasm-bindgen glue and run through wasm-opt -Oz; then the shell
 # (Svelte 5, type-checked with svelte-check and built with Vite; web/package.json pins them). Prints
-# each piece's raw and brotli size, and the first paint's.
+# each piece's raw and brotli size, the first paint's and the full load's. Every file gets .br and .gz
+# twins for the server to send.
 # Needs: the wasm32-unknown-unknown target, wasm-bindgen-cli matching Cargo.lock, wasm-opt (binaryen),
 # brotli, node 20 or later with npm, and a clang that targets wasm32 for SQLite's C (Homebrew LLVM, or
 # the Android NDK's; Apple's clang has no wasm32 backend).
@@ -35,7 +36,9 @@ export CFLAGS_wasm32_unknown_unknown="${CFLAGS_wasm32_unknown_unknown:-} -USQLIT
   -DSQLITE_OMIT_COMPLETE -DSQLITE_OMIT_GET_TABLE -DSQLITE_OMIT_TCL_VARIABLE -DSQLITE_OMIT_UTF16 -DSQLITE_DQS=0 \
   -DSQLITE_DEFAULT_MEMSTATUS=0 -DSQLITE_MAX_EXPR_DEPTH=0 -Oz"
 
-size() { printf '%-22s %9d raw %8d br\n' "$1" "$(wc -c < "$2")" "$(brotli -q 11 -c "$2" | wc -c)"; }
+# A file's size as sent: its brotli twin's, or its own for a font (already compressed).
+sent() { wc -c < "$([ -f "$1.br" ] && echo "$1.br" || echo "$1")"; }
+size() { printf '%-22s %9d raw %8d br\n' "$1" "$(wc -c < "$2")" "$(sent "$2")"; }
 
 if $shell_only; then
   [ -f "$dist/pkg/player.wasm" ] || { echo "no modules in $dist/pkg: build them first (web/build.sh)" >&2; exit 1; }
@@ -64,13 +67,11 @@ if ! $shell_only; then
   module player-codecs --features rust-codecs
 fi
 
-# Inter and Literata are the Android app's files, copied in for the shell to bundle (not kept in git here).
-mkdir -p "$here/src/fonts"
-cp "$root/app/src/main/res/font/inter.ttf" "$root/app/src/main/res/font/literata.ttf" "$here/src/fonts/"
-
 (
   cd "$here"
   [ node_modules/.package-lock.json -nt package-lock.json ] || npm ci --no-audit --no-fund
+  # Inter and Literata are the Android app's files, cut into WOFF2 for the shell to bundle (not kept in git here).
+  node fonts.mjs
   npx svelte-check --tsconfig ./tsconfig.json --fail-on-warnings --output human
   npx vite build --logLevel warn
   npx vite build --mode decoder --logLevel warn
@@ -78,18 +79,26 @@ cp "$root/app/src/main/res/font/inter.ttf" "$root/app/src/main/res/font/literata
 
 # The service worker keeps this build's shell and modules (the Rust-codecs player once fetched), under
 # the hash of them all.
-# Not the plugin host's generator and worker, fetched only with a plugin.
-kept=$(cd "$dist" && ls index.html decoder.js $(ls assets/* | grep -Ev 'js-component-bindgen|/(install|runner|hls)-') pkg/core.js pkg/core.wasm pkg/player.js pkg/player.wasm pkg/player-codecs.js)
+# Not the plugin host's generator and worker, fetched only with a plugin, nor the fonts past Latin,
+# kept once a page needs them.
+kept=$(cd "$dist" && ls index.html decoder.js $(ls assets/* | grep -Ev 'js-component-bindgen|/(install|runner|hls)-|-rest-') pkg/core.js pkg/core.wasm pkg/player.js pkg/player.wasm pkg/player-codecs.js)
 build=$(cd "$dist" && cat $kept pkg/player-codecs.wasm | shasum -a 256 | cut -c1-16)
 files=$(printf '%s\n' $kept | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))')
 sed -i.bak -e "s|__BUILD__|$build|" -e "s|__FILES__|$files|" "$dist/sw.js" && rm "$dist/sw.js.bak"
 echo "build $build"
+# Every file beside its brotli and gzip twins, for a server to send as they are.
+find "$dist" -type f ! -name '*.woff2' ! -name '*.br' ! -name '*.gz' | while read -r f; do
+  [ "$f.br" -nt "$f" ] || brotli -q 11 -f -k "$f"
+  [ "$f.gz" -nt "$f" ] || gzip -9 -f -k "$f"
+done
 size "core.wasm" "$dist/pkg/core.wasm"
 size "core.js (glue)" "$dist/pkg/core.js"
 size "player.wasm" "$dist/pkg/player.wasm"
 size "player.js (glue)" "$dist/pkg/player.js"
 size "player-codecs.wasm" "$dist/pkg/player-codecs.wasm"
-for f in "$dist/index.html" "$dist/sw.js" "$dist/decoder.js" "$dist"/assets/*; do size "${f#"$dist/"}" "$f"; done
+for f in "$dist/index.html" "$dist/sw.js" "$dist/decoder.js" $(ls "$dist"/assets/* | grep -Ev '\.(br|gz)$'); do size "${f#"$dist/"}" "$f"; done
+total() { printf '%-22s %9d raw %8d br\n' "$1" "$(cd "$dist" && cat $2 | wc -c)" "$(cd "$dist" && for f in $2; do sent "$f"; done | awk '{s+=$1} END {print s}')"; }
 # The first paint: the page, its script and its style (the workers and the rest come after it).
-first=$(cd "$dist" && grep -o 'assets/[^"]*' index.html | sort -u)
-printf '%-22s %9d raw %8d br\n' "first paint" "$(cd "$dist" && cat index.html $first | wc -c)" "$(cd "$dist" && for f in index.html $first; do brotli -q 11 -c "$f" | wc -c; done | awk '{s+=$1} END {print s}')"
+total "first paint" "index.html $(cd "$dist" && grep -o 'assets/[^"]*' index.html | sort -u)"
+# Everything a first visit ends up fetching.
+total "full load" "$kept sw.js"

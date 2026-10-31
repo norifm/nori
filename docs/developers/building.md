@@ -30,7 +30,7 @@ sets `jobs = 4` and `gradle.properties` sets four Gradle workers.
 | `dev` | `cargo test`, `cargo build` | Line tables only for the workspace, no debug info for dependencies. Test builds compile nori-player, nori-engine, nori-android, nori-ios and every dependency at opt-level 2, with debug assertions on. nori-stretch is always at opt-level 3 |
 | `release` | `cargo run --release`, debug APKs | Optimized and incremental: an edit rebuilds in seconds |
 | `dist` | release, perf and nightly APKs, desktop packages, the iPod app | Fat LTO, one codegen unit, stripped, `panic = "unwind"`. Takes minutes to link |
-| `web` | `web/build.sh` | `dist` with `opt-level = "s"` and `panic = "abort"` |
+| `web` | `web/build.sh` | `dist` with `opt-level = "z"` and `panic = "abort"` |
 
 Set `CARGO_PROFILE_DEV_DEBUG=true` for a session that needs a debugger's variables. Keep debug APKs
 out of performance comparisons; use [the perf build](#the-perf-build).
@@ -337,8 +337,10 @@ too). It is for development only.
 | `player.wasm` | the shared session and the engine, decoding with the browser's WebCodecs; loaded on the first Play |
 | `player-codecs.wasm` | the same with Vorbis, ALAC and Opus decoded in Rust, for browsers without them |
 
-It then builds the shell with Vite, copies Inter and Literata from the Android app into `web/src/fonts`
-(not in git) and prints each piece's raw and brotli size. SQLite is built without the extras the core
+It then builds the shell with Vite, cuts Inter and Literata from the Android app into WOFF2 in
+`web/src/fonts` (`web/fonts.mjs`, not in git: a Latin file every page takes, and a second a browser
+fetches only for a character in it), writes `.br` and `.gz` twins beside every file, and prints each
+piece's raw and brotli size, with the first paint's and a full first load's. SQLite is built without the extras the core
 never uses (`CFLAGS_wasm32_unknown_unknown` in the script).
 
 The glyphs are nori's Iconoir set, written into `web/index.html`'s sprite for the names `web/src`
@@ -350,8 +352,9 @@ uses. After using a new glyph, run `python3 tools/glyphs.py <iconoir>/icons` aga
 page signs in to that server only and asks for no address. Served anywhere else, it asks for the
 server's address, and that server must answer CORS preflights (Navidrome does; octo-fiesta does from
 `fbe3dc1`). A page over https cannot reach a server over plain http. The page needs a secure context
-(https, or localhost) for its databases. Serve `.wasm` as `application/wasm`, precompressed with
-brotli in production. A service worker keeps the shell and modules of one build. A new build installs
+(https, or localhost) for its databases. Serve `.wasm` as `application/wasm`, and send the twins:
+nginx takes `gzip_static on;`, and `brotli_static on;` with its brotli module. A server that sends the
+plain files costs about three times the bytes on a first load. A service worker keeps the shell and modules of one build. A new build installs
 beside the running one and takes over at the next load, which reloads the page once.
 
 Every push to master that touches the web client builds it into `ghcr.io/norifm/nori-web`

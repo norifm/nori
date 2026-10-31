@@ -17,8 +17,9 @@ const sw = self as unknown as {
   registration: { scope: string };
 };
 
-// From the server, past the HTTP cache: the modules' names don't change between builds.
-sw.addEventListener("install", (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: "reload" }))))));
+// Checked with the server, as the modules' names don't change between builds; what the page just fetched
+// comes from the HTTP cache, not over the network again.
+sw.addEventListener("install", (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: "no-cache" }))))));
 
 sw.addEventListener("activate", (e) =>
   e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith("nori-") && k !== CACHE).map((k) => caches.delete(k))))),
@@ -35,12 +36,12 @@ sw.addEventListener("fetch", (e) => {
   // The server's API and songs go to the network as they are.
   if (e.request.method !== "GET" || url.origin !== location.origin || path.startsWith("rest/") || path.startsWith("nori/")) return;
   const file = path === "" || e.request.mode === "navigate" ? "index.html" : path;
-  if (!FILES.includes(file) && !file.startsWith("pkg/")) return;
+  if (!FILES.includes(file) && !file.startsWith("pkg/") && !file.endsWith(".woff2")) return;
   e.respondWith(
     caches.open(CACHE).then(async (c) => {
       const kept = await c.match(file);
       if (kept) return kept;
-      // A module of this build not kept at install (the Rust-codecs player): kept once fetched.
+      // A file of this build not kept at install (the Rust-codecs player, a font past Latin): kept once fetched.
       const got = await fetch(e.request, { cache: "reload" });
       if (got.ok) await c.put(file, got.clone());
       return got;
