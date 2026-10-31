@@ -98,6 +98,12 @@ pub enum Msg {
     PlayerStatus { song: Option<String>, lines: Vec<String> },
     /// A plugin's still sleeve's address for song `song`, to fetch.
     Artwork { song: String, url: String },
+    /// A plugin's moving cover for `song`, which plays while the sleeve shows.
+    Loop { song: nori_core::Song, artwork: nori_plugins::Artwork },
+    /// A frame of the moving cover of song `song`.
+    LoopFrame { song: String, image: nori_covers::Image },
+    /// The moving cover of `song` failed; with a status, its plugin hears it.
+    LoopFailed { song: nori_core::Song, artwork: nori_plugins::Artwork, status: Option<u16> },
     /// A plugin's still sleeve for song `song`, drawn as its cover in Now Playing.
     Sleeve { song: String, image: Arc<Image> },
     /// Plugin `id`'s README.
