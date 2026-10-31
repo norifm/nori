@@ -60,7 +60,8 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         }
         ui.error?.let { Text(it, Modifier.padding(horizontal = Space.gutter), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 
-        if (ui.scopesOffered) LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // As far below the field as the library's chips are below its title, the progress line's room counted.
+        if (ui.scopesOffered) LazyRow(Modifier.bleedsToEdges().padding(top = 8.dp), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(scopes) { (scope, label) -> Chip(label, ui.scope == scope) { vm.setScope(scope) } }
         }
         // Back from a search comes back to this page's start, not to the tab before it.
