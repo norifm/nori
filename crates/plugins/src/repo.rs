@@ -231,6 +231,15 @@ pub fn offers_found(offers: Vec<Offer>, query: String, repo: Option<String>) -> 
     nori_plugin_index::found(shown, &query, |o: &Offer| &o.name, |o| o.about.as_deref())
 }
 
+impl Plugins {
+    pub(crate) async fn fetch_and_install(&self, version: Version, when_new: WhenNew) -> Result<String, Refusal> {
+        let file = self.fetch(&version).await?;
+        let installed = self.install_as(&file, Some(version.repo.clone()), version.key.clone(), when_new).map(|m| m.id.clone());
+        let _ = std::fs::remove_file(&file);
+        installed
+    }
+}
+
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Plugins {
     /// nori's repo, then those the user added.
@@ -281,13 +290,6 @@ impl Plugins {
     /// store and its being on are kept), on when new; its id.
     pub async fn install_version(&self, version: Version) -> Result<String, Refusal> {
         self.fetch_and_install(version, WhenNew::On).await
-    }
-
-    pub(crate) async fn fetch_and_install(&self, version: Version, when_new: WhenNew) -> Result<String, Refusal> {
-        let file = self.fetch(&version).await?;
-        let installed = self.install_as(&file, Some(version.repo.clone()), version.key.clone(), when_new).map(|m| m.id.clone());
-        let _ = std::fs::remove_file(&file);
-        installed
     }
 
     /// Whether a day has passed since updates were last looked for, at `now_ms` (device ms), or a plugin
