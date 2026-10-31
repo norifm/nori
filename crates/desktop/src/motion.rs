@@ -230,7 +230,7 @@ fn samples(file: &[u8], t: &Track) -> Vec<Sample> {
             continue;
         }
         let Some(traf) = child(moof, b"traf") else { continue };
-        let (Some(tfhd), Some(trun)) = (child(traf, b"tfhd"), child(traf, b"trun")) else { continue };
+        let Some(tfhd) = child(traf, b"tfhd") else { continue };
         let flags = be32(tfhd, 0).unwrap_or(0) & 0xFF_FFFF;
         let mut at = 8;
         at += if flags & 1 != 0 { 8 } else { 0 } + if flags & 2 != 0 { 4 } else { 0 };
@@ -240,29 +240,32 @@ fn samples(file: &[u8], t: &Track) -> Vec<Sample> {
             at += 4;
         }
         let size = if flags & 0x10 != 0 { be32(tfhd, at).unwrap_or(t.default_size) } else { t.default_size };
-        let run = be32(trun, 0).unwrap_or(0) & 0xFF_FFFF;
-        let count = be32(trun, 4).unwrap_or(0);
-        let mut read = 8;
+        // A run with no offset of its own goes on from the one before.
         let mut data = start;
-        if run & 1 != 0 {
-            data = (start as i64 + be32(trun, read).unwrap_or(0) as i32 as i64) as usize;
-            read += 4;
-        }
-        read += if run & 4 != 0 { 4 } else { 0 };
-        for _ in 0..count {
-            let (mut d, mut s) = (duration, size);
-            if run & 0x100 != 0 {
-                d = be32(trun, read).unwrap_or(d);
+        for trun in boxes(traf).filter(|b| &b.0 == b"trun").map(|b| b.1) {
+            let run = be32(trun, 0).unwrap_or(0) & 0xFF_FFFF;
+            let count = be32(trun, 4).unwrap_or(0);
+            let mut read = 8;
+            if run & 1 != 0 {
+                data = (start as i64 + be32(trun, read).unwrap_or(0) as i32 as i64) as usize;
                 read += 4;
             }
-            if run & 0x200 != 0 {
-                s = be32(trun, read).unwrap_or(s);
-                read += 4;
+            read += if run & 4 != 0 { 4 } else { 0 };
+            for _ in 0..count {
+                let (mut d, mut s) = (duration, size);
+                if run & 0x100 != 0 {
+                    d = be32(trun, read).unwrap_or(d);
+                    read += 4;
+                }
+                if run & 0x200 != 0 {
+                    s = be32(trun, read).unwrap_or(s);
+                    read += 4;
+                }
+                read += if run & 0x400 != 0 { 4 } else { 0 } + if run & 0x800 != 0 { 4 } else { 0 };
+                let ms = if t.timescale > 0 && d > 0 { d as u64 * 1000 / t.timescale as u64 } else { FALLBACK_FRAME_MS };
+                out.push(Sample { at: data, size: s as usize, ms });
+                data += s as usize;
             }
-            read += if run & 0x400 != 0 { 4 } else { 0 } + if run & 0x800 != 0 { 4 } else { 0 };
-            let ms = if t.timescale > 0 && d > 0 { d as u64 * 1000 / t.timescale as u64 } else { FALLBACK_FRAME_MS };
-            out.push(Sample { at: data, size: s as usize, ms });
-            data += s as usize;
         }
     }
     out
@@ -450,6 +453,19 @@ mod tests {
         let offset = moof(0).len() as u32 + 8;
         let file = [boxed(b"ftyp", &[0; 8]), moof(offset), boxed(b"mdat", &[0; 12])].concat();
         let start = 16 + offset as usize;
+        assert_eq!(samples(&file, &t), [Sample { at: start, size: 5, ms: 40 }, Sample { at: start + 5, size: 7, ms: 40 }]);
+    }
+
+    #[test]
+    fn every_run_of_a_fragment_gives_its_samples() {
+        let t = Track { setup: Vec::new(), length_size: 4, timescale: 1000, default_duration: 40, default_size: 0 };
+        // Apple's: one traf of two runs, each with its own offset from the moof.
+        let tfhd = boxed(b"tfhd", &[0, 2, 0, 0, 0, 0, 0, 1]);
+        let run = |offset: u32, size: u32| boxed(b"trun", &[&[0, 0, 2, 1, 0, 0, 0, 1][..], &offset.to_be_bytes(), &size.to_be_bytes()].concat());
+        let moof = |first: u32, second: u32| boxed(b"moof", &boxed(b"traf", &[tfhd.clone(), run(first, 5), run(second, 7)].concat()));
+        let first = moof(0, 0).len() as u32 + 8;
+        let file = [boxed(b"ftyp", &[0; 8]), moof(first, first + 5), boxed(b"mdat", &[0; 12])].concat();
+        let start = 16 + first as usize;
         assert_eq!(samples(&file, &t), [Sample { at: start, size: 5, ms: 40 }, Sample { at: start + 5, size: 7, ms: 40 }]);
     }
 
