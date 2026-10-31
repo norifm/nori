@@ -106,7 +106,7 @@ impl Plugins {
             let now = match wanted {
                 _ if here.as_deref() == Some(k.version.as_str()) => here,
                 Some(v) if here.as_deref() == Some(v.version.as_str()) => here,
-                Some(v) => match self.install_version(v.clone()).await {
+                Some(v) => match self.fetch_and_install(v.clone(), crate::WhenNew::Off).await {
                     Ok(_) => self.installed().into_iter().find(|i| i.manifest.id == k.id).map(|i| i.manifest.version.clone()),
                     Err(e) => {
                         nori_model::alog::info(&format!("restore: plugin {}: {e:?}", k.id));

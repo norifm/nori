@@ -177,17 +177,17 @@ impl Plugins {
         shown
     }
 
-    /// Installs what `preview` showed, off when new; its id. A package fetched for it is let go.
+    /// Installs what `preview` showed, on when new; its id. A package fetched for it is let go.
     pub fn install_preview(&self, preview: PluginPreview) -> Result<String, Refusal> {
         let file = std::path::PathBuf::from(&preview.file);
-        let installed = self.install_as(&file, preview.repo, preview.key).map(|m| m.id.clone());
+        let installed = self.install_as(&file, preview.repo, preview.key, crate::WhenNew::On).map(|m| m.id.clone());
         if file.parent() == Some(self.dir.as_path()) {
             let _ = std::fs::remove_file(&file);
         }
         installed
     }
 
-    /// Installs the `.noriplugin` or plugin folder at `path`, off; its id.
+    /// Installs the `.noriplugin` or plugin folder at `path`, on when new; its id.
     pub fn install_from(&self, path: String) -> Result<String, Refusal> {
         self.install(std::path::Path::new(&path)).map(|m| m.id.clone())
     }

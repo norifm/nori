@@ -7,7 +7,7 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::{PluginCard, Plugins, Refusal, API};
+use crate::{PluginCard, Plugins, Refusal, WhenNew, API};
 
 pub use nori_plugin_index::OFFICIAL;
 
@@ -298,10 +298,14 @@ impl Plugins {
     }
 
     /// Fetches and installs `version` of a plugin a repo offers, newer or older than the one here (its
-    /// store and its being on are kept); its id.
+    /// store and its being on are kept), on when new; its id.
     pub async fn install_version(&self, version: Version) -> Result<String, Refusal> {
+        self.fetch_and_install(version, WhenNew::On).await
+    }
+
+    pub(crate) async fn fetch_and_install(&self, version: Version, when_new: WhenNew) -> Result<String, Refusal> {
         let file = self.fetch(&version).await?;
-        let installed = self.install_as(&file, Some(version.repo.clone()), version.key.clone()).map(|m| m.id.clone());
+        let installed = self.install_as(&file, Some(version.repo.clone()), version.key.clone(), when_new).map(|m| m.id.clone());
         let _ = std::fs::remove_file(&file);
         installed
     }

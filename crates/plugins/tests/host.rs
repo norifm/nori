@@ -117,12 +117,46 @@ impl Side for Session {
 const ID: &str = FIXTURE;
 
 #[test]
+fn a_new_install_turns_on_and_an_update_keeps_its_switch() {
+    let dir = nori_testdir::TempDir::new("plugins-on");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.set_transport(Some(session.web.clone()));
+    let enabled = || plugins.installed().iter().map(|i| (i.manifest.id.clone(), i.enabled)).collect::<Vec<_>>();
+    let package = fixture("");
+    plugins.install(&package).unwrap();
+    assert_eq!(enabled(), vec![(ID.to_string(), true)]);
+    assert_eq!(plugins.stages().len(), 1, "its stage is in at once");
+    assert_eq!(nori_tasks::block_on(plugins.worker(ID).unwrap().call(|_, _| Ok(1))), Some(1));
+    assert!(session.web.asked.lock().unwrap().contains(&"https://allowed.example/a".to_string()), "its lifecycle started");
+
+    plugins.install(&package).unwrap();
+    assert_eq!(enabled(), vec![(ID.to_string(), true)], "an update of one on");
+    plugins.turn(ID.into(), false);
+    plugins.install(&package).unwrap();
+    assert_eq!(enabled(), vec![(ID.to_string(), false)], "an update of one off");
+    assert!(plugins.stages().is_empty());
+}
+
+#[test]
+fn a_first_start_that_fails_keeps_the_install() {
+    let dir = nori_testdir::TempDir::new("plugins-failed-start");
+    let session = Arc::new(Session::default());
+    let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
+    plugins.install(&fixture("fails-to-start")).unwrap();
+    assert_eq!(nori_tasks::block_on(plugins.worker(ID).unwrap().call(|_, _| Ok(1))), None, "it never started");
+    assert_eq!(plugins.installed().iter().map(|i| (i.manifest.id.as_str(), i.enabled)).collect::<Vec<_>>(), vec![(ID, true)]);
+    drop(plugins);
+    nori_plugins::testing::marks_released(dir.path());
+    let again = Plugins::open(dir.path().to_path_buf(), session);
+    assert_eq!(again.installed().len(), 1, "kept in the index");
+}
+
+#[test]
 fn a_stage_runs_and_its_state_is_kept() {
     let dir = nori_testdir::TempDir::new("plugins-stage");
     let plugins = Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()));
     plugins.install(&fixture("")).unwrap();
-    assert!(plugins.stages().is_empty(), "installed off");
-    plugins.turn(ID.into(), true);
     plugins.set(ID.into(), "gain".into(), Value::Level(0.25));
     let specs = plugins.stages();
     assert_eq!(specs.len(), 1);
@@ -307,6 +341,7 @@ fn an_offer_says_where_it_stands_and_shows_its_readme() {
     serve("0.2.0");
     assert_eq!(states()[0], (own.to_string(), OfferState::Update));
 
+    plugins.turn(ID.into(), false);
     let offers = nori_tasks::block_on(plugins.offers()).offers;
     let providers = |cards| nori_plugins::provider_offers(offers.clone(), cards, false).len();
     assert_eq!(providers(plugins.cards("en".into())), 1, "off, it is offered, once of its two repos");
@@ -486,6 +521,7 @@ fn slots_ask_the_plugins_that_fill_them() {
     let session = Arc::new(Session::default());
     let plugins = Plugins::open(dir.path().to_path_buf(), session.clone());
     plugins.install(&fixture("")).unwrap();
+    plugins.turn(ID.into(), false);
     let song = |title: &str| nori_model::Song { id: "s".into(), title: title.into(), ..Default::default() };
     assert!(plugins.menu_entries(ItemKind::Song, "en".into()).is_empty(), "off, it fills nothing");
     assert_eq!(nori_tasks::block_on(plugins.artwork(song("loop"))), None);

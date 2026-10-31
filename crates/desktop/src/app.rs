@@ -3363,7 +3363,7 @@ impl App {
             }
             // What it is and may reach, before it is installed.
             Msg::PluginPreview(Ok(p)) => {
-                self.confirm(&words::install_version(&p.card.name, &p.card.version), &words::preview_note(&p, self.plugged.offered.as_ref() == Some(&p.card.id)).join("\n\n"), words::INSTALL, crate::settings::PluginAct::InstallPreview);
+                self.confirm(&words::install_version(&p.card.name, &p.card.version), &words::preview_note(&p, self.plugged.offered.as_ref() == Some(&p.card.id) || !self.plugged.cards.iter().any(|c| c.id == p.card.id)).join("\n\n"), words::INSTALL, crate::settings::PluginAct::InstallPreview);
                 self.preview = Some(p);
             }
             Msg::PluginPreview(Err(e)) => self.say(&words::plugin_refused(&e), true),

@@ -170,11 +170,8 @@ fn open_hearing(name: &str, devices: Vec<BtDevice>, outputs: bool) -> (nori_test
 fn headphones_are_controlled_while_connected_and_heard_without_polling() {
     let (_dir, session, fake, plugins) = open("plugins-devices", vec![device("AA", "Test Buds Pro"), device("CAR", "Car")]);
     plugins.install(&fixture("headphones")).unwrap();
-    assert!(fake.watching.lock().unwrap().is_empty(), "nothing is watched before a plugin reaching devices is on");
     assert!(plugins.reaches_bluetooth(), "the permission is for it");
-
-    plugins.turn(ID.into(), true);
-    assert_eq!(*fake.watching.lock().unwrap(), vec![true]);
+    assert_eq!(*fake.watching.lock().unwrap(), vec![true], "installed, it is on");
     let shown = |p: &Plugins| p.controlled("en".into()).into_iter().next();
     session.until("the buds are controlled with their state", || shown(&plugins).is_some_and(|d| d.battery.case.is_some()));
     let d = shown(&plugins).unwrap();

@@ -98,7 +98,7 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     /** The sheet put away: nothing is installed. */
     fun dropPreview() { _preview.value = null }
 
-    /** Installs what the sheet showed, off when new; one that [needsBluetooth] asks for the permission. */
+    /** Installs what the sheet showed, on when new; one that [needsBluetooth] asks for the permission. */
     fun installPreview() {
         val p = _preview.value ?: return
         _preview.value = null

@@ -14,6 +14,8 @@ const REPO: &str = "https://friend.example/nori/index.json";
 #[derive(Default)]
 struct Web {
     serves: Mutex<Vec<(String, Vec<u8>)>>,
+    /// What plugins sent.
+    sent: Mutex<Vec<String>>,
 }
 
 #[async_trait::async_trait]
@@ -24,6 +26,7 @@ impl Transport for Web {
     }
 
     async fn send(&self, e: Exchange) -> Result<TransportResponse, TransportError> {
+        self.sent.lock().unwrap().push(e.url.clone());
         self.get(e.url, e.timeout_ms).await
     }
 
@@ -128,6 +131,8 @@ fn set_up() -> Device {
     a.plugins.add_repo(REPO.into());
     a.install(FIXTURE);
     a.install(SECOND);
+    a.started(SECOND);
+    a.plugins.turn(SECOND.into(), false);
     a.plugins.set(FIXTURE.into(), "gain".into(), Value::Level(1.5));
     a.plugins.turn(FIXTURE.into(), true);
     a.started(FIXTURE);
@@ -158,6 +163,25 @@ fn settings_profiles_and_plugins_come_back() {
     assert_eq!(b.plugins.kept(), kept, "the same order, being on and held, repos and stores");
     assert_eq!(b.settings.layer().overrides, a.settings.layer().overrides, "the enabled plugin's overrides are laid over the settings");
     assert!(!b.settings.layer().overrides.is_empty());
+}
+
+#[test]
+fn a_plugin_kept_off_never_starts_on_a_restore() {
+    let a = Device::new("backup-kept-off");
+    a.serve(&[(FIXTURE, "", &["0.1.0"])]);
+    a.plugins.add_repo(REPO.into());
+    a.install(FIXTURE);
+    a.plugins.turn(FIXTURE.into(), false);
+    let file = make_at(&a.settings, &a.plugins, "pw", CHEAP).unwrap();
+
+    let b = Device::new("backup-kept-off-here");
+    b.serve(&[(FIXTURE, "", &["0.1.0"])]);
+    b.restore(&file, "pw").unwrap();
+    assert_eq!(b.plugins.installed().iter().map(|i| i.enabled).collect::<Vec<_>>(), [false]);
+    let Device { _dir, settings, plugins, web } = b;
+    drop((settings, plugins));
+    nori_plugins::testing::marks_released(&_dir.join("plugins"));
+    assert_eq!(*web.sent.lock().unwrap(), Vec::<String>::new(), "its start fetches");
 }
 
 #[test]

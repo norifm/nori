@@ -232,7 +232,8 @@ fn the_session_reads_the_player_and_library_and_controls_through_the_client() {
 #[test]
 fn events_are_built_only_for_what_an_enabled_plugin_hears() {
     let r = Rig::new("plugins-hooks", Client::default(), Web::default());
-    assert!(!r.plugins.hears(Hook::SongChanged) && !r.plugins.follows(), "installed off, nothing is heard");
+    r.plugins.turn(ID.into(), false);
+    assert!(!r.plugins.hears(Hook::SongChanged) && !r.plugins.follows(), "off, nothing is heard");
     r.plugins.turn(ID.into(), true);
     assert!(r.plugins.hears(Hook::SongChanged) && r.plugins.follows());
     assert!(!r.plugins.hears(Hook::MediaButton) && !r.plugins.hears(Hook::SettingChanged), "only what its manifest names");
@@ -369,7 +370,10 @@ fn assets_are_fetched_on_wifi_or_when_the_user_allows_mobile_data() {
 #[test]
 fn wakes_and_commands_are_on_only_while_a_plugin_wants_them() {
     let r = Rig::new("plugins-wake", Client::default(), Web::default());
-    assert!(r.client.commands.lock().unwrap().is_empty(), "nothing on for a plugin that is off");
+    r.plugins.turn(ID.into(), false);
+    assert_eq!(r.client.commands.lock().unwrap().last(), Some(&vec![]), "nothing on for a plugin that is off");
+    r.client.commands.lock().unwrap().clear();
+    r.client.wakes.lock().unwrap().clear();
     r.plugins.turn(ID.into(), true);
     assert_eq!(*r.client.commands.lock().unwrap(), [vec![Command { plugin: ID.into(), command: "ping".into() }]]);
     assert_eq!(*r.client.wakes.lock().unwrap(), [vec![]], "declared, but not wanted yet");

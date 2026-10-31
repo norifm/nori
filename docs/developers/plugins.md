@@ -450,7 +450,9 @@ A plugin's covers are URLs with `{size}` where the pixels go; the core fills it 
 
 `preview_file(path)` and `preview_version(version)` (fetched and checked against its sha256 and its
 signature) read a package's manifest and words without installing it, for the sheet that shows what it
-is and may reach before the user installs it (`install_preview`).
+is and may reach before the user installs it (`install_preview`). A plugin new here turns on once
+installed, on every client (`Plugins::install_as`, the web's `install` in `host.svelte.ts`): one that can't
+start stays installed and on, its failure logged. An update keeps its switch, and a restore sets it itself.
 
 ### In a browser
 
