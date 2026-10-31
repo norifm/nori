@@ -1,7 +1,7 @@
 <script lang="ts">
   // Search over the server, read a moment after the typing stops: artists and albums as shelves, songs as
   // rows, where a click plays that one song (a search's results are not an album).
-  import { facts, read } from "../rpc";
+  import { ask, facts, read } from "../rpc";
   import { reading } from "../state/library.svelte";
   import { route, searchFor } from "../state/route.svelte";
   import { ui } from "../state/ui.svelte";
@@ -21,7 +21,8 @@
     const q = route.arg.trim();
     if (!q) return null;
     // A moment after the typing stops; a later key replaces this read.
-    await new Promise((r) => setTimeout(r, 200));
+    const ms = await ask<number>("search_delay", q);
+    await new Promise((r) => setTimeout(r, ms));
     if (route.arg.trim() !== q) return new Promise<never>(() => {});
     const p = await read<Found>({ kind: "search", query: q });
     facts.searched = { query: q, artists: p.artists?.length ?? 0, albums: p.albums?.length ?? 0, songs: p.songs?.length ?? 0 };

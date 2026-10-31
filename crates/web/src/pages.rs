@@ -30,6 +30,8 @@ pub enum Ask {
     Songs { offset: i32, count: i32 },
     Starred,
     Search { query: String },
+    /// The offline index's answer to `query`, at once; null with nothing there.
+    SearchIndex { query: String },
 }
 
 fn album_sort(name: &str) -> Result<AlbumSort, String> {
@@ -51,6 +53,7 @@ impl Ask {
             Ask::Songs { offset, count } => Read::SongPage { offset, count },
             Ask::Starred => Read::StarredItems,
             Ask::Search { query } => Read::Search { query, songs: 40, albums: 20, artists: 20 },
+            Ask::SearchIndex { .. } => return Err("read from the index, not the server".into()),
         })
     }
 }
@@ -104,12 +107,31 @@ pub async fn change(client: &Client, change: Change) -> Result<(), String> {
     client.write(w).await.map_err(|e| e.to_string())
 }
 
+/// A search's answer `result`, ranked as every client's is, with the field's preview of it.
+fn found_page(core: &nori_core::Core, result: nori_core::SearchResult, query: &str, user: Option<&str>) -> Value {
+    let found = nori_core::search::search_split(result, query).everything;
+    let mut v = page(core, Page::Found { v: found.clone() }, user);
+    if let Value::Object(m) = &mut v {
+        m.insert("playlists".into(), found.playlists.iter().map(|p| playlist(core, p, user)).collect());
+        m.insert("preview".into(), json!(nori_core::search::search_preview(&found)));
+    }
+    v
+}
+
 /// Reads what `ask` (JSON) names: the stored copy, then the server's if it differs; the last as JSON. An
 /// album list's answer says where its `next` page starts, or null.
 /// `user`: the account signed in, whose own playlists it may change (the core's `playlist_editable`);
 /// None for a profile without an account's things.
 pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<String, String> {
     let ask = serde_json::from_str::<Ask>(ask).map_err(|e| e.to_string())?;
+    if let Ask::SearchIndex { query } = &ask {
+        let limit = nori_core::browse::library_sizes().local_search;
+        let found = client.core().local_search(query.clone(), limit).map_err(|e| e.to_string())?;
+        if found.artists.is_empty() && found.albums.is_empty() && found.songs.is_empty() {
+            return Ok(Value::Null.to_string());
+        }
+        return Ok(found_page(client.core(), found, query, user).to_string());
+    }
     if let Ask::Genre { name } = ask {
         let v = client.genre_songs(name).await.map_err(|e| e.to_string())?;
         return Ok(page(client.core(), Page::Songs { v }, user).to_string());
@@ -132,13 +154,7 @@ pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<Stri
     };
     // A search's answer ranked as every client's is, with the field's preview of it.
     if let (Some(query), Page::Found { v }) = (query, &p) {
-        let found = nori_core::search::search_split(v.clone(), &query).everything;
-        let mut v = page(core, Page::Found { v: found.clone() }, user);
-        if let Value::Object(m) = &mut v {
-            m.insert("playlists".into(), found.playlists.iter().map(|p| playlist(core, p, user)).collect());
-            m.insert("preview".into(), json!(nori_core::search::search_preview(&found)));
-        }
-        return Ok(v.to_string());
+        return Ok(found_page(core, v.clone(), &query, user).to_string());
     }
     let got = match &p {
         Page::Albums { v } => v.len() as u32,

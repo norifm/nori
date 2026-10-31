@@ -124,7 +124,11 @@ async function replace(b: Build, answered: boolean) {
     worker.postMessage({ id: ++calls, call: "audio", args: [port, rate, ear] }, [port]);
   }
   open();
-  if (player) up.forEach((f) => f());
+  if (player) {
+    up.forEach((f) => f());
+    // Here, not before: this worker stays, where a call on the core's would hold up the move or be cut.
+    send("sync_index", []).catch(() => {});
+  }
 }
 
 let restarting = false;

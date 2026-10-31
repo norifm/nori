@@ -6,7 +6,7 @@
   // page, which shows the answer itself.
   import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
-  import { read } from "../rpc";
+  import { ask, read } from "../rpc";
   import { go, route, searchFor } from "../state/route.svelte";
   import { player } from "../state/player.svelte";
   import type { Album, Artist, Playlist, Song } from "../state/types";
@@ -42,13 +42,28 @@
       open = false;
       return;
     }
-    timer = setTimeout(async () => {
-      const p = await read<Found>({ kind: "search", query: q }).catch(() => null);
-      if (mine !== asked || !p) return;
-      found = p;
-      at = -1;
-    }, 200);
     open = true;
+    let answered = false;
+    // The offline index at once, as the desktop's search; then the server's better answer.
+    void read<Found | null>({ kind: "searchIndex", query: q })
+      .then((p) => {
+        if (mine !== asked || answered || !p) return;
+        found = p;
+        at = -1;
+      })
+      .catch(() => {});
+    void ask<number>("search_delay", q).then((ms) => {
+      if (mine !== asked) return;
+      timer = setTimeout(async () => {
+        const p = await read<Found>({ kind: "search", query: q }).catch(() => null);
+        if (mine !== asked || !p) return;
+        answered = true;
+        // A server that finds nothing for a letter or two takes nothing from what the index found.
+        if (!p.preview?.length && found?.preview?.length) return;
+        found = p;
+        at = -1;
+      }, ms);
+    });
   }
 
   const shown = $derived(open && !!found && route.top !== "search");
