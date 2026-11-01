@@ -585,7 +585,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         let gain = self.song_gain(i);
         let serial = self.serial_for(i);
         self.facts.clear();
-        let song = self.tell(i, serial, gain);
+        let song = self.tell(i, serial, gain, from_ms);
         let reader = self.reader(i, offset_us, r, &song, from_ms);
         self.reading = Some(reader);
         self.periods = vec![Period { index: i, offset_us, duration_us, gain, serial }];
@@ -614,8 +614,9 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         !self.song_stages.is_empty() || !self.sink.settings().stages.is_empty() || self.sink.track.marks_songs()
     }
 
-    /// What the stages read of song `i`, played at `gain` as stream `serial`; kept for it.
-    fn tell(&mut self, i: usize, serial: u64, gain: f32) -> Arc<SongFacts> {
+    /// What the stages read of song `i`, played at `gain` as stream `serial` from `from_ms` in it; kept
+    /// for it.
+    fn tell(&mut self, i: usize, serial: u64, gain: f32, from_ms: i64) -> Arc<SongFacts> {
         if !self.told() {
             return no_facts();
         }
@@ -625,6 +626,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             gain_db: Some(20.0 * gain.max(1e-6).log10()),
             loudness_lufs: self.app.loudness(&id),
             prepared: self.preparing.as_ref().map(|p| p.prepared(&id)).unwrap_or_default(),
+            from_ms,
         });
         let periods = &self.periods;
         self.facts.retain(|(s, _)| *s != serial && periods.iter().any(|p| p.serial == *s));
@@ -660,7 +662,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         let periods: Vec<(usize, u64, f32)> = self.periods.iter().map(|p| (p.index, p.serial, p.gain)).collect();
         for (i, serial, gain) in periods {
             let Some(was) = self.facts.iter().find(|(s, _)| *s == serial).map(|(_, f)| f.clone()) else { continue };
-            let now = self.tell(i, serial, gain);
+            let now = self.tell(i, serial, gain, was.from_ms);
             if *now == *was {
                 self.facts.retain(|(s, _)| *s != serial);
                 self.facts.push((serial, was));
@@ -1431,7 +1433,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             self.sink.track.source_bits(next.bits());
             let gain = self.song_gain(n);
             let serial = self.new_serial();
-            let song = self.tell(n, serial, gain);
+            let song = self.tell(n, serial, gain, 0);
             let reader = self.reader(n, end, next, &song, 0);
             self.configure(n, serial, format);
             self.call(|e, d, a| e.handle_discontinuity(d, a));

@@ -173,8 +173,8 @@ pub trait Track {
     fn marks_songs(&self) -> bool {
         false
     }
-    /// Song `id`'s first frame is the next written.
-    fn song_starts(&mut self, _id: &str) {}
+    /// Song `id`'s first frame is the next written, `at_ms` into it.
+    fn song_starts(&mut self, _id: &str, _at_ms: i64) {}
 }
 
 /// The processors and the buffers they run in. Allocation-free once the buffers have grown.
@@ -505,6 +505,10 @@ impl<T: Track> Sink<T> {
         if Arc::ptr_eq(&self.song, was) {
             self.song = now.clone();
         }
+        // The same song told again: the track is not told it starts there.
+        if Arc::ptr_eq(&self.told, was) {
+            self.told = now.clone();
+        }
         let f = self.format?;
         let at = self.splice(Remake::Sound);
         self.kept.retell(self.run, was, now, f.rate);
@@ -720,7 +724,7 @@ impl<T: Track> Sink<T> {
         }
         self.told = song.clone();
         if let Some(id) = &song.id {
-            self.track.song_starts(id);
+            self.track.song_starts(id, song.from_ms);
         }
     }
 

@@ -225,7 +225,7 @@ Host to device (kind):
 | `Ramp` 0x0a | `target: f32, ms: u32` | fade from the fade's current gain to `target` (linear, 0 to 1) over `ms`; `ms` 0 sets it |
 | `Volume` 0x0b | `gain: f32` | the user's volume, linear 0 to 1, heard at once (not positional) |
 | `Cover` 0x0c | `id: u32`, JPEG | a cover at the size `Caps` asked, kept for `Now` to name; sent once, before the first `Now` that names it |
-| `Now` 0x0d | `id: u32, title, artist, album, duration_ms: u32, cover: option<u32>` | the song whose audio follows |
+| `Now` 0x0d | `id: u32, title, artist, album, duration_ms: u32, cover: option<u32>, at_ms: u32` | the song whose audio follows, and where in it that audio starts (0 at its start; where a seek went, or where a mix brings it in) |
 
 Device to host:
 
@@ -277,7 +277,7 @@ packets from there. ReplayGain is `Gain` at each song's start; fades are `Ramp`s
 frames. MP3 encoder gaps are not told: an MP3 that joins its album gaplessly plays as PCM.
 
 **Now playing.** At each song's first frame (a gapless boundary, after a skip's flush, where a mix's
-next song begins) the host puts `Now`, with the song's cover sent once before it if `Caps.cover` asked a
+next song begins, and where a seek lands in a song) the host puts `Now`, saying how far into the song it starts, with the song's cover sent once before it if `Caps.cover` asked a
 size (from nori's cover cache at that size; JPEG only). An album's songs share a cover id. Covers are
 never fetched for songs the engine is not already reading; one not on disk yet is fetched in the
 background and goes with the album's next song, so the audio threads never wait on the network.

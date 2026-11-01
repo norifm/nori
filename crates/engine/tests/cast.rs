@@ -89,6 +89,8 @@ pub struct Fake {
     pub say: Vec<Said>,
     /// Ticks it played with nothing held: an underrun.
     pub dry: u64,
+    /// Each `Now` as it came: the song and where in it its audio starts, ms.
+    pub nows: Vec<(String, u32)>,
 }
 
 const TICK_NS: i64 = 10_000_000;
@@ -144,7 +146,10 @@ impl Fake {
                     self.take_audio(Item::Packet(b.to_vec(), frames), frames);
                 }
                 Frame::Gain { db } => self.held.push_back((at, Item::Gain(db))),
-                Frame::Now { title, cover, .. } => self.held.push_back((at, Item::Now { title: title.to_string(), cover })),
+                Frame::Now { title, cover, at_ms, .. } => {
+                    self.nows.push((title.to_string(), at_ms));
+                    self.held.push_back((at, Item::Now { title: title.to_string(), cover }));
+                }
                 Frame::Cover { id, .. } => self.did.push((self.played, Did::Cover(id))),
                 Frame::Flush { seq, keep } => {
                     self.did.push((self.played, Did::Flush(keep)));
@@ -466,6 +471,7 @@ impl Rig {
             overshoot: 0,
             say: Vec::new(),
             dry: 0,
+            nows: Vec::new(),
         }));
         engine.set_card(Box::new(out), Some(Box::new(offload)), true);
         let time = Stepper::new(clock, dev.clone());
@@ -683,6 +689,20 @@ fn a_now_after_a_skip_lands_where_the_new_song_starts() {
     let d = rig.dev.lock();
     let at = d.did.iter().find(|(_, x)| *x == Did::Now("b".into(), None)).map(|(at, _)| *at as usize).unwrap();
     assert_eq!(find(&left(&b), &d.heard[at..at + 256]), Some(0), "b's first frame comes right after its Now");
+}
+
+#[test]
+fn a_now_after_a_seek_says_where_it_went() {
+    let a = music(44_100, 120.0, 17);
+    let rig = Rig::new(vec![wav("a", 44_100, &a)], prefs_off(), Settings::default(), caps(), Some(Arc::new(Covers)));
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(20, |d| d.nows.first().is_some_and(|n| n.1 == 0)), "the song's start is at 0: {:?}", rig.dev.lock().nows);
+    assert!(rig.wait_for(20, |d| d.heard.len() > 44_100 * 3));
+    rig.engine.seek(70_000);
+    assert!(rig.wait_for(10, |d| d.nows.len() > 1), "a Now after the seek: {:?}", rig.dev.lock().nows);
+    let (title, at_ms) = rig.dev.lock().nows[1].clone();
+    assert_eq!(title, "a");
+    assert!(at_ms.abs_diff(70_000) < 50, "at 70 s: {at_ms}");
 }
 
 #[test]

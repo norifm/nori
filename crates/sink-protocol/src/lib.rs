@@ -12,7 +12,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 /// The protocol's version, said in both directions' first frame.
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 /// The longest frame either side sends or takes (kind and fields), bytes.
 pub const MAX_FRAME: usize = 1 << 20;
 
@@ -128,8 +128,9 @@ pub enum Host<'a> {
     Volume { gain: f32 },
     /// A cover, JPEG, kept for [`Host::Now`] to name by `id`.
     Cover { id: u32, jpeg: &'a [u8] },
-    /// The song whose audio follows. Positional.
-    Now { id: u32, title: &'a str, artist: &'a str, album: &'a str, duration_ms: u32, cover: Option<u32> },
+    /// The song whose audio follows, and where in it that audio starts (ms: 0 at its start, where a
+    /// seek went after one). Positional.
+    Now { id: u32, title: &'a str, artist: &'a str, album: &'a str, duration_ms: u32, cover: Option<u32>, at_ms: u32 },
 }
 
 /// Device to host.
@@ -303,8 +304,8 @@ impl Host<'_> {
             Host::Cover { id, jpeg } => frame(out, 0x0c, |o| {
                 o.u32(id).bytes(jpeg);
             }),
-            Host::Now { id, title, artist, album, duration_ms, cover } => frame(out, 0x0d, |o| {
-                o.u32(id).str(title).str(artist).str(album).u32(duration_ms).opt_u32(cover);
+            Host::Now { id, title, artist, album, duration_ms, cover, at_ms } => frame(out, 0x0d, |o| {
+                o.u32(id).str(title).str(artist).str(album).u32(duration_ms).opt_u32(cover).u32(at_ms);
             }),
         }
     }
@@ -324,7 +325,7 @@ impl Host<'_> {
             0x0a => Host::Ramp { target: i.f32()?, ms: i.u32()? },
             0x0b => Host::Volume { gain: i.f32()? },
             0x0c => Host::Cover { id: i.u32()?, jpeg: i.rest() },
-            0x0d => Host::Now { id: i.u32()?, title: i.str()?, artist: i.str()?, album: i.str()?, duration_ms: i.u32()?, cover: i.opt(In::u32)? },
+            0x0d => Host::Now { id: i.u32()?, title: i.str()?, artist: i.str()?, album: i.str()?, duration_ms: i.u32()?, cover: i.opt(In::u32)?, at_ms: i.u32()? },
             k => return Err(Error::Kind(k)),
         };
         i.end(f)
@@ -452,7 +453,7 @@ mod tests {
             Host::Ramp { target: 0.25, ms: 300 },
             Host::Volume { gain: 0.5 },
             Host::Cover { id: 3, jpeg: &[0xff, 0xd8] },
-            Host::Now { id: 4, title: "Blue", artist: "Ä", album: "", duration_ms: 1000, cover: Some(3) },
+            Host::Now { id: 4, title: "Blue", artist: "Ä", album: "", duration_ms: 1000, cover: Some(3), at_ms: 250 },
         ];
         let mut bytes = Vec::new();
         for h in &host {
