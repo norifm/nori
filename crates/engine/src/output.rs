@@ -112,9 +112,9 @@ pub trait AudioOutput: Send {
     fn marks_songs(&self) -> bool {
         false
     }
-    /// Song `id` starts at ring frame `frame` (frames written since the ring was made); told before that
-    /// frame is in the ring. A flush drops the marks at or past the frames it replaces.
-    fn song_at(&mut self, _frame: u64, _id: &str) {}
+    /// Song `id` starts at ring frame `frame` (frames written since the ring was made), `at_ms` into it;
+    /// told before that frame is in the ring. A flush drops the marks at or past the frames it replaces.
+    fn song_at(&mut self, _frame: u64, _id: &str, _at_ms: i64) {}
     fn close(&mut self);
 }
 
@@ -689,8 +689,8 @@ pub(crate) struct RingTrack {
     /// The device still plays the stream before this ring, opened for another format while it held
     /// that ([`AudioOutput::takes_formats`]): the place heard is in it until the ring's music is reached.
     lead: bool,
-    /// A song starting at the next frame written ([`Track::song_starts`]).
-    starts: Option<String>,
+    /// A song starting at the next frame written, and where in it ([`Track::song_starts`]).
+    starts: Option<(String, i64)>,
     /// Music was written since the device was last told ([`AudioOutput::wrote`]).
     wrote: bool,
 }
@@ -1173,8 +1173,8 @@ impl Track for RingTrack {
         self.blend = self.blend.and_then(|(done, of)| (done + frames < of).then_some((done + frames, of)));
         if frames > 0 {
             // Told before the frame is in the ring, so no pull takes it first.
-            if let Some(id) = self.starts.take() {
-                self.output.song_at(w, &id);
+            if let Some((id, at_ms)) = self.starts.take() {
+                self.output.song_at(w, &id, at_ms);
             }
             self.wrote = true;
         }
@@ -1333,8 +1333,8 @@ impl Track for RingTrack {
         self.output.marks_songs()
     }
 
-    fn song_starts(&mut self, id: &str) {
-        self.starts = Some(id.to_string());
+    fn song_starts(&mut self, id: &str, at_ms: i64) {
+        self.starts = Some((id.to_string(), at_ms));
     }
 
     fn play(&mut self) {

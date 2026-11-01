@@ -139,7 +139,7 @@ struct State {
     format: Option<Format>,
     format_due: bool,
     /// Song starts by ring frame ([`AudioOutput::song_at`]).
-    marks: VecDeque<(u64, String)>,
+    marks: VecDeque<(u64, String, i64)>,
     // What was told the device.
     told_playing: bool,
     told_depth: Option<u32>,
@@ -171,8 +171,8 @@ struct State {
 struct Offloaded {
     /// The device's count when the track was opened or flushed: the offload path counts from it.
     base: u64,
-    /// The next song's start, to send before its first packet: its id, gain and stream info.
-    song: Option<(String, f32)>,
+    /// The next song's start, to send before its first packet: its id, gain and where in it (ms).
+    song: Option<(String, f32, i64)>,
     header: Option<Vec<u8>>,
 }
 
@@ -328,9 +328,9 @@ impl Shared {
         }
     }
 
-    /// Song `id`'s start, onto `out`: its cover once (if the device shows covers), then `Now`. Called
-    /// without the state's lock.
-    fn now_playing(&self, id: &str, out: &mut Vec<u8>) {
+    /// Song `id`'s start, `at_ms` into it, onto `out`: its cover once (if the device shows covers), then
+    /// `Now`. Called without the state's lock.
+    fn now_playing(&self, id: &str, at_ms: i64, out: &mut Vec<u8>) {
         let Some(shows) = &self.shows else { return };
         let shown = shows.now(id).unwrap_or_default();
         let cover = self.deep.caps.cover.and_then(|size| shows.cover(id, size));
@@ -349,7 +349,7 @@ impl Shared {
             }
         });
         st.next_id += 1;
-        Frame::Now { id: st.next_id, title: &shown.title, artist: &shown.artist, album: &shown.album, duration_ms: shown.duration_ms, cover }.encode(out);
+        Frame::Now { id: st.next_id, title: &shown.title, artist: &shown.artist, album: &shown.album, duration_ms: shown.duration_ms, cover, at_ms: at_ms.clamp(0, u32::MAX as i64) as u32 }.encode(out);
     }
 
     fn send(&self, out: &[u8]) {
@@ -419,10 +419,10 @@ impl Pump {
         let at = self.feed.position();
         // A song's start is told before its first frame.
         if st.marks.front().is_some_and(|m| m.0 <= at) && st.credit > 0 && self.feed.available() > 0 {
-            let (_, id) = st.marks.pop_front().expect("checked");
+            let (_, id, at_ms) = st.marks.pop_front().expect("checked");
             sh.format(&mut st, &mut out);
             drop(st);
-            sh.now_playing(&id, &mut out);
+            sh.now_playing(&id, at_ms, &mut out);
             sh.send(&out);
             self.bytes = out;
             return Pumped::More;
@@ -703,10 +703,10 @@ impl AudioOutput for DeepOutput {
         self.shared.shows.is_some()
     }
 
-    fn song_at(&mut self, frame: u64, id: &str) {
+    fn song_at(&mut self, frame: u64, id: &str, at_ms: i64) {
         self.tell(|st| {
             st.marks.retain(|m| m.0 < frame);
-            st.marks.push_back((frame, id.to_string()));
+            st.marks.push_back((frame, id.to_string(), at_ms));
         });
     }
 
@@ -806,9 +806,9 @@ impl OffloadOutput for CastOffload {
         sh.format(&mut st, &mut out);
         let song = st.offloaded.as_mut().and_then(|o| o.song.take().map(|s| (s, o.header.take())));
         drop(st);
-        if let Some(((id, level), header)) = song {
+        if let Some(((id, level, at_ms), header)) = song {
             Frame::Gain { db: 20.0 * level.max(1e-6).log10() }.encode(&mut out);
-            sh.now_playing(&id, &mut out);
+            sh.now_playing(&id, at_ms, &mut out);
             if let Some(h) = header {
                 Frame::Encoded(&h).encode(&mut out);
             }
@@ -897,7 +897,8 @@ impl OffloadOutput for CastOffload {
     fn song(&mut self, song: &CodedSong, id: &str, level: f32) -> bool {
         let mut st = self.lock();
         let Some(o) = st.offloaded.as_mut() else { return true };
-        o.song = Some((id.to_string(), level));
+        let at_ms = song.from_frame * 1000 / song.coded.rate.max(1) as i64;
+        o.song = Some((id.to_string(), level, at_ms));
         o.header = (song.coded.coding == Coding::Flac).then(|| song.setup.as_deref().map(flac_head)).flatten();
         true
     }

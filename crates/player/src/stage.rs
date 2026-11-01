@@ -58,6 +58,8 @@ pub struct SongFacts {
     pub loudness_lufs: Option<f32>,
     /// Each plugin's prepared data for the song, by its id.
     pub prepared: Vec<(String, Arc<[u8]>)>,
+    /// Where in the song its reading began, ms: 0 at its start, where a seek went after one.
+    pub from_ms: i64,
 }
 
 impl SongFacts {
