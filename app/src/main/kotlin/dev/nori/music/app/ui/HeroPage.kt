@@ -349,7 +349,7 @@ fun HeroPage(
                     stickyHeader(key = "hero-head", contentType = "hero-head") {
                         val look = LocalLook.current
                         Column(
-                            Modifier.onPlaced { pinned.placed = it }.drawWithCache {
+                            Modifier.onPlaced { pinned.placed = it }.coversPage(below = HEAD_EDGE).drawWithCache {
                                 val fade = HEAD_FADE.toPx()
                                 val edge = HEAD_EDGE.toPx()
                                 val page = look.color(CoverLook.BACKGROUND)

@@ -1,6 +1,7 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onPlaced
 import dev.nori.music.app.R
 
@@ -487,11 +488,11 @@ private const val BARS_STEP_MS = 34L
  * repaints only their few pixels; whenever something is in the way - the row meeting the chrome or a
  * banner, cut by the list's edge, or anything round it moving (HoldIslands) - they are drawn here again, in their place
  * among the page's layers. Both read the same clock, so the hand-over does not jump. Nothing runs at all
- * while the music is paused, while this row is not composed or not [seen] (screen off, or the player over
- * the page).
+ * while the music is paused, while this row is not composed, not [seen] (screen off, or the player over
+ * the page) or wholly under a pinned head. [within] is where a list holding them leaves them unfaded.
  */
 @Composable
-fun PlayingBars(tint: Color, modifier: Modifier = Modifier) {
+fun PlayingBars(tint: Color, modifier: Modifier = Modifier, within: android.graphics.Rect? = null) {
     // Read here rather than threaded through every list: these bars exist on exactly one row, so this
     // is one collector on one boolean, not one per song.
     val player: dev.nori.music.app.vm.PlayerViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
@@ -502,9 +503,11 @@ fun PlayingBars(tint: Color, modifier: Modifier = Modifier) {
     val seen = seen()
     val drawing = remember { BarsDrawing() }
     drawing.paint.color = tint.toArgb()
-    val slot = rememberIsland(drawing, wanted = moving && seen, overPage = true)
-    androidx.compose.runtime.LaunchedEffect(moving, seen, slot.apart) {
-        if (slot.apart || !moving || !seen) return@LaunchedEffect
+    val slot = rememberIsland(drawing, wanted = moving && seen, overPage = true, within = within)
+    val head = LocalPinnedHead.current
+    var hidden by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(moving, seen, slot.apart, hidden) {
+        if (slot.apart || !moving || !seen || hidden) return@LaunchedEffect
         // One callback object for every frame, handed to the frame clock as it is: the millisecond
         // variants wrap it in a new lambda each frame, which is garbage for as long as the music plays.
         val tick: (Long) -> Unit = { phase.floatValue = barsClock() }
@@ -516,7 +519,8 @@ fun PlayingBars(tint: Color, modifier: Modifier = Modifier) {
             kotlinx.coroutines.delay(BARS_STEP_MS)
         }
     }
-    androidx.compose.foundation.Canvas(modifier.island(slot)) {
+    val placed = if (head == null) Modifier else Modifier.onGloballyPositioned { hidden = it.boundsInWindow().bottom <= head.bottom() }
+    androidx.compose.foundation.Canvas(modifier.island(slot).then(placed)) {
         if (slot.handOff()) return@Canvas
         val t = phase.floatValue
         val w = size.width / (BARS * 2 - 1)
