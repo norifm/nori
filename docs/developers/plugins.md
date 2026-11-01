@@ -225,7 +225,7 @@ Host to device (kind):
 | `Ramp` 0x0a | `target: f32, ms: u32` | fade from the fade's current gain to `target` (linear, 0 to 1) over `ms`; `ms` 0 sets it |
 | `Volume` 0x0b | `gain: f32` | the user's volume, linear 0 to 1, heard at once (not positional) |
 | `Cover` 0x0c | `id: u32`, JPEG | a cover at the size `Caps` asked, kept for `Now` to name; sent once, before the first `Now` that names it |
-| `Now` 0x0d | `id: u32, title, artist, album, duration_ms: u32, cover: option<u32>, at_ms: u32` | the song whose audio follows, and where in it that audio starts (0 at its start; where a seek went, or where a mix brings it in) |
+| `Now` 0x0d | `id: u32, title, artist, album, duration_ms: u32, cover: option<u32>, at_ms: u32` | the song whose audio follows, and where in it that audio starts (0 at its start; where a seek went, or where a mix brings it in). Version 1 hosts send no `at_ms`: read it as 0 |
 
 Device to host:
 

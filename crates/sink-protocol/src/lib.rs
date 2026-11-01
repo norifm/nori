@@ -325,7 +325,7 @@ impl Host<'_> {
             0x0a => Host::Ramp { target: i.f32()?, ms: i.u32()? },
             0x0b => Host::Volume { gain: i.f32()? },
             0x0c => Host::Cover { id: i.u32()?, jpeg: i.rest() },
-            0x0d => Host::Now { id: i.u32()?, title: i.str()?, artist: i.str()?, album: i.str()?, duration_ms: i.u32()?, cover: i.opt(In::u32)?, at_ms: i.u32()? },
+            0x0d => Host::Now { id: i.u32()?, title: i.str()?, artist: i.str()?, album: i.str()?, duration_ms: i.u32()?, cover: i.opt(In::u32)?, at_ms: if i.0.is_empty() { 0 } else { i.u32()? } },
             k => return Err(Error::Kind(k)),
         };
         i.end(f)
@@ -487,6 +487,19 @@ mod tests {
         let got: Vec<Device> = core::iter::from_fn(|| frames.next_device()).map(Result::unwrap).collect();
         assert_eq!(got, device);
         assert!(caps.decodes(Codec::Mp3) && caps.takes_bits(24) && !caps.takes_bits(32));
+    }
+
+    #[test]
+    fn a_now_from_version_1_has_no_place_and_starts_at_0() {
+        let mut v1 = Vec::new();
+        Host::Now { id: 1, title: "A", artist: "", album: "", duration_ms: 1000, cover: None, at_ms: 0 }.encode(&mut v1);
+        // Version 1's Now: the same but its last four bytes, and the length that says so.
+        v1.truncate(v1.len() - 4);
+        let len = (v1.len() - 4) as u32;
+        v1[..4].copy_from_slice(&len.to_le_bytes());
+        let mut frames = Frames::new();
+        frames.push(&v1);
+        assert_eq!(frames.next_host(), Some(Ok(Host::Now { id: 1, title: "A", artist: "", album: "", duration_ms: 1000, cover: None, at_ms: 0 })));
     }
 
     #[test]
