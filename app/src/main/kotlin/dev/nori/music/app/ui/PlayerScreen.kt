@@ -16,6 +16,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import kotlin.math.roundToInt
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.zIndex
@@ -2915,8 +2916,13 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
     // lyrics do, and a mask is used rather than a colour laid on top because the page behind is the
     // cover's blur and any flat colour meeting it draws a line of its own.
     val fadeOut = with(androidx.compose.ui.platform.LocalDensity.current) { 64.dp.toPx() }
+    val unfaded = remember { android.graphics.Rect() }
     LazyColumn(
         Modifier.fillMaxSize().weight(1f)
+            .onGloballyPositioned { c ->
+                val b = c.boundsInWindow()
+                unfaded.set(b.left.toInt(), b.top.toInt(), b.right.toInt(), (b.bottom - fadeOut).toInt())
+            }
             // The layer clips to the list, so it runs [QUEUE_LIFT_ROOM] past the panel's sides, where the
             // held row's plate reaches; the rows take it back as padding.
             .layout { measurable, constraints ->
@@ -3044,7 +3050,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                         // The song playing: its cover darkened under the playing bars, as in Apple's queue.
                         if (i == state.index) {
                             Box(Modifier.matchParentSize().drawBehind { drawRoundRect(QUEUE_NOW_VEIL, cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx())) })
-                            PlayingBars(Color.White, Modifier.size(16.dp))
+                            PlayingBars(Color.White, Modifier.size(16.dp), within = unfaded)
                         }
                     }
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {

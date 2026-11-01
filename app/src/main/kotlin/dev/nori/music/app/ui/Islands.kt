@@ -32,6 +32,9 @@ import androidx.compose.ui.node.DrawModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 
 /**
  * Small things that move by themselves - the playing row's bars, the seek bar - drawn by views of their own
@@ -428,16 +431,17 @@ fun Modifier.island(slot: IslandSlot): Modifier = if (!slot.wanted) this else on
 
 /**
  * Marks this as drawn over the page, so an island on the page under it hands its element back to Compose,
- * which draws it under this, while they meet.
+ * which draws it under this, while they meet. [below] is what it also paints past its bottom edge.
  */
 @Composable
-fun Modifier.coversPage(): Modifier {
+fun Modifier.coversPage(below: Dp = 0.dp): Modifier {
     val islands = LocalIslands.current ?: return this
     val key = remember { Any() }
+    val past = with(LocalDensity.current) { below.roundToPx() }
     DisposableEffect(islands) { onDispose { islands.covers.remove(key) } }
     return onGloballyPositioned { c ->
         val b = c.boundsInWindow()
-        val r = Rect(b.left.toInt(), b.top.toInt(), kotlin.math.ceil(b.right).toInt(), kotlin.math.ceil(b.bottom).toInt())
+        val r = Rect(b.left.toInt(), b.top.toInt(), kotlin.math.ceil(b.right).toInt(), kotlin.math.ceil(b.bottom).toInt() + past)
         if (islands.covers[key] != r) islands.covers[key] = r
     }
 }
