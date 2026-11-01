@@ -33,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -349,7 +350,8 @@ fun HeroPage(
                     stickyHeader(key = "hero-head", contentType = "hero-head") {
                         val look = LocalLook.current
                         Column(
-                            Modifier.onPlaced { pinned.placed = it }.coversPage(below = HEAD_EDGE).drawWithCache {
+                            // pointerInput: a touch on the head is the head's, never a row's under it; a drag still scrolls the list.
+                            Modifier.onPlaced { pinned.placed = it }.coversPage(below = HEAD_EDGE).pointerInput(Unit) {}.drawWithCache {
                                 val fade = HEAD_FADE.toPx()
                                 val edge = HEAD_EDGE.toPx()
                                 val page = look.color(CoverLook.BACKGROUND)
