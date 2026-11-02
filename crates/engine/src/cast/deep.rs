@@ -127,8 +127,12 @@ struct State {
     playing: bool,
     shallow: bool,
     ramps: VecDeque<(Option<f32>, f32, i64)>,
-    /// A flush to look for in the ring.
+    /// A flush to look for in the ring, and how many of `ramps` were asked before it: they go before
+    /// it, the rest after (a skip's fade in is for the new music, never the old the device holds).
     flush: bool,
+    ramps_first: usize,
+    /// A flush was asked and has not gone yet: the fades after it wait for it (or for audio to send).
+    flush_awaited: bool,
     /// The next ring goes on after what the device holds ([`AudioOutput::goes_on`]); otherwise its
     /// first step drops that.
     goes_on: bool,
@@ -269,6 +273,7 @@ impl Shared {
         st.flushes += 1;
         let seq = st.flushes;
         Frame::Flush { seq, keep }.encode(out);
+        st.flush_awaited = false;
         match keep {
             Some(k) => st.sent = k.min(st.sent),
             // Until it answers: where it is now, all dropped.
@@ -303,12 +308,18 @@ impl Shared {
             self.anchor(st, played, None);
             if st.playing { Frame::Resume } else { Frame::Pause }.encode(out);
         }
-        while let Some((from, target, ms)) = st.ramps.pop_front() {
+    }
+
+    /// The first `n` fades asked for (all if none) and not told yet, onto `out`.
+    fn ramps(&self, st: &mut State, n: Option<usize>, out: &mut Vec<u8>) {
+        let n = n.unwrap_or(st.ramps.len()).min(st.ramps.len());
+        for (from, target, ms) in st.ramps.drain(..n) {
             if let Some(v) = from {
                 Frame::Ramp { target: v, ms: 0 }.encode(out);
             }
             Frame::Ramp { target, ms: ms.clamp(0, u32::MAX as i64) as u32 }.encode(out);
         }
+        st.ramps_first = st.ramps_first.saturating_sub(n);
     }
 
     /// The format, before the first audio after it changed or a flush.
@@ -408,6 +419,8 @@ impl Pump {
             return Pumped::Done;
         }
         sh.controls(&mut st, &mut out);
+        let first = Some(std::mem::take(&mut st.ramps_first));
+        sh.ramps(&mut st, first, &mut out);
         if std::mem::take(&mut st.drop_held) {
             sh.flush(&mut st, None, &mut out);
         }
@@ -416,6 +429,9 @@ impl Pump {
         self.feed.pull(&mut []);
         self.feed.flushed();
         self.flushed(&mut st, &mut out);
+        if !st.flush_awaited {
+            sh.ramps(&mut st, None, &mut out);
+        }
         let at = self.feed.position();
         // A song's start is told before its first frame.
         if st.marks.front().is_some_and(|m| m.0 <= at) && st.credit > 0 && self.feed.available() > 0 {
@@ -446,6 +462,9 @@ impl Pump {
             return if did { Pumped::More } else { Pumped::Idle };
         }
         sh.burst(&mut st, true);
+        // Audio goes: the fades waiting for a flush go before it all the same.
+        st.flush_awaited = false;
+        sh.ramps(&mut st, None, &mut out);
         sh.format(&mut st, &mut out);
         let ch = f.channels as usize;
         self.samples.resize(n * ch, 0.0);
@@ -548,6 +567,8 @@ impl DeepOutput {
             playing: false,
             shallow: false,
             ramps: VecDeque::new(),
+            ramps_first: 0,
+            flush_awaited: false,
             flush: false,
             goes_on: false,
             drop_held: false,
@@ -654,7 +675,11 @@ impl AudioOutput for DeepOutput {
     }
 
     fn flush(&mut self) {
-        self.tell(|st| st.flush = true);
+        self.tell(|st| {
+            st.flush = true;
+            st.ramps_first = st.ramps.len();
+            st.flush_awaited = true;
+        });
     }
 
     fn fades(&self) -> bool {
@@ -743,6 +768,7 @@ impl CastOffload {
         f(&mut st);
         let mut out = Vec::new();
         self.shared.controls(&mut st, &mut out);
+        self.shared.ramps(&mut st, None, &mut out);
         drop(st);
         self.shared.send(&out);
     }
@@ -787,6 +813,7 @@ impl OffloadOutput for CastOffload {
         st.offloaded = Some(Offloaded { base, ..Offloaded::default() });
         // The depth at the codec, so the device asks.
         sh.controls(&mut st, &mut out);
+        sh.ramps(&mut st, None, &mut out);
         drop(st);
         sh.send(&out);
         Ok(bytes)
