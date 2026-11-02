@@ -153,6 +153,9 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
             let (m, n) = (digits(a), digits(b));
             let (x, y) = (a[..m].trim_start_matches('0'), b[..n].trim_start_matches('0'));
             (x.len().cmp(&y.len()).then_with(|| x.cmp(y)), m, n)
+        } else if p.is_ascii() && q.is_ascii() {
+            // What `to_lowercase` gives an ASCII letter, without its table.
+            (p.to_ascii_lowercase().cmp(&q.to_ascii_lowercase()), 1, 1)
         } else {
             (p.to_lowercase().cmp(q.to_lowercase()), p.len_utf8(), q.len_utf8())
         };
@@ -391,6 +394,9 @@ mod tests {
         let mut titles = ["#10", "track 2", "#2", "B", "Track 10", "a", "#1", "", "#01b", "a1", "A01"];
         titles.sort_by(|a, b| natural_cmp(a, b));
         assert_eq!(titles, ["", "#1", "#01b", "#2", "#10", "a", "a1", "A01", "B", "track 2", "Track 10"]);
+        let mut mixed = ["Éclair", "eclair", "zebra", "émile", "Zoë", "zoe", "ÄB", "äa", "Ab"];
+        mixed.sort_by(|a, b| natural_cmp(a, b));
+        assert_eq!(mixed, ["Ab", "eclair", "zebra", "zoe", "Zoë", "äa", "ÄB", "Éclair", "émile"]);
     }
 
     #[test]

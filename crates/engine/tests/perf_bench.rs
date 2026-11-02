@@ -1,7 +1,8 @@
 // Host perf report, included into tests/engine.rs for its rig: per minute of music, the engine's wakes,
 // CPU time and allocations, and the heap's peak (the test thread's own work left out). Not a check; compare revisions with
 // tools/perf-host.sh. `NORI_PERF=name,name` runs only those cases, `NORI_PERF_MINUTES` plays each that
-// long (for a profiler). The queue repeats.
+// long (for a profiler), `NORI_HEAP_STACKS=dir` writes where each case allocated to dir/<case>.folded
+// (tools/flame-engine.sh --heap). The queue repeats.
 //
 //   cargo test --release -p nori-engine --test engine perf_report -- --ignored --nocapture --test-threads=1
 
@@ -32,11 +33,18 @@ fn perf_measure(name: &str, rig: &Rig, minutes: u64, mut during: impl FnMut(&Rig
     assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2 * 2), "{name}: the music started");
     let (wakes, cpu, (allocs, bytes), heard) = (rig.time.clock.sleeps(), cpu_ms(), crate::perf_alloc::counts(), rig.heard.lock().len());
     crate::perf_alloc::restart_peak();
+    let stacks = std::env::var_os("NORI_HEAP_STACKS").map(std::path::PathBuf::from);
+    if stacks.is_some() {
+        crate::perf_alloc::sample_stacks();
+    }
     for k in 0..minutes * 4 {
         during(rig, k);
         rig.run(15_000);
     }
     let played = (rig.heard.lock().len() - heard) as f64 / 2.0 / RATE as f64 / 60.0;
+    if let Some(dir) = stacks {
+        crate::perf_alloc::write_stacks(&dir.join(format!("{name}.folded")), name);
+    }
     let (allocs2, bytes2) = crate::perf_alloc::counts();
     let per = |v: f64| v / played.max(1e-9);
     println!(

@@ -79,6 +79,7 @@ impl Sample {
 }
 
 /// A float sample as 16-bit, rounded (symphonia's own conversion truncates).
+#[inline]
 pub fn rounded_i16(v: f32) -> i16 {
     (v * 32768.0).round_ties_even().clamp(-32768.0, 32767.0) as i16
 }

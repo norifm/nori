@@ -52,6 +52,11 @@ opt-level = 2
 opt-level = 3
 incremental = true
 
+# Profilers (tools/flame.py): release code with line tables, so stacks have names.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+
 # What ships (tools/release.sh: the APK, desktop packages, the iPod app): whole-program optimized, minutes
 # to link.
 [profile.dist]
