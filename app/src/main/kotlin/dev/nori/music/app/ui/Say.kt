@@ -272,6 +272,8 @@ class Say(private val r: Resources) {
     val autoeqCredit: String = r.getString(R.string.autoeq_credit)
     val autoeqCreditGraphic: String = r.getString(R.string.autoeq_credit_graphic)
     val devices: String = r.getString(R.string.devices)
+    val playingOn: String = r.getString(R.string.devices_title)
+    val otherDevices: String = r.getString(R.string.other_devices)
     val autoeqAuto: String = r.getString(R.string.autoeq_auto)
     val autoeqAutoDetail: String = r.getString(R.string.autoeq_auto_detail)
     val devicesNote: String = r.getString(R.string.devices_note)
@@ -865,9 +867,6 @@ class Say(private val r: Resources) {
     fun withLevel(name: String, level: UByte): String = r.getString(R.string.device_with_level, name, level.toInt())
     val deviceSettings: String get() = r.getString(R.string.device_settings)
     val allowBluetooth: String get() = r.getString(R.string.plugins_allow_bluetooth)
-
-    /** The mark on the device playing now, after its kind when it has one. */
-    fun devicePlayingNow(afterKind: Boolean): String = r.getString(if (afterKind) R.string.device_playing_now_after else R.string.device_playing_now)
 
     /** The words under a device's name in its sheet. */
     fun deviceIntro(kind: String?): String =

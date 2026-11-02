@@ -192,6 +192,7 @@
     <string name="autoeq_credit">Curves by the AutoEQ project (jaakkopasanen/AutoEq). Tapping one replaces the equalizer\'s bands.</string>
     <string name="autoeq_credit_graphic">Curves by the AutoEQ project (jaakkopasanen/AutoEq). Tapping one sets the graphic equalizer\'s sliders to follow it.</string>
     <string name="devices">Devices</string>
+    <string name="other_devices">Other devices</string>
     <string name="autoeq_auto">Apply AutoEQ automatically</string>
     <string name="autoeq_auto_detail">Headphones with a known AutoEQ curve get it as soon as they connect, instead of being asked.</string>
     <string name="devices_note">Devices keep their sound only while Settings, then Sound, then Remember sound per device is on.</string>
@@ -576,8 +577,6 @@
     <string name="output_other">Other output</string>
     <string name="output_named">%1$s: %2$s</string>
     <string name="output_description">Output: %1$s</string>
-    <string name="device_playing_now">Playing now</string>
-    <string name="device_playing_now_after">" · Playing now"</string>
     <string name="device_sheet_intro">What music played through %1$s sounds like. It switches by itself whenever the device connects.</string>
     <string name="device_this">this</string>
     <string name="device_this_kind">this %1$s device</string>

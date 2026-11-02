@@ -831,12 +831,7 @@ internal fun OutputButton(
     // Where a plugin casts is where the music plays, whatever this phone's own output is.
     val cast by settings.pluginCast.collectAsStateWithLifecycle()
     val playingOn = otherName ?: cast?.device
-    val icon = otherDevice?.let(::kindIcon) ?: cast?.let { castIcon(it.look) } ?: when (o.glyph) {
-        dev.nori.music.ffi.devices.OutputGlyph.PHONE -> Iconoir.SmartphoneDevice
-        dev.nori.music.ffi.devices.OutputGlyph.HEADPHONES -> Iconoir.Headset
-        dev.nori.music.ffi.devices.OutputGlyph.BLUETOOTH -> Iconoir.Bluetooth
-        dev.nori.music.ffi.devices.OutputGlyph.CAST -> Iconoir.Airplay
-    }
+    val icon = otherDevice?.let(::kindIcon) ?: cast?.let { castIcon(it.look) } ?: outputIcon(o.glyph)
     val description = remember(o, playingOn) { playingOn?.let(say::devicePlayingOn) ?: say.outputDescription(o.port, o.name) }
     // Headphones a plugin controls: their battery beside their name, and the button opens nori's devices.
     val controlled by viewModel<dev.nori.music.app.vm.PluginsViewModel>().controlled.collectAsStateWithLifecycle()
