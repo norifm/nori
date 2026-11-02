@@ -370,6 +370,7 @@ impl Lan {
                 drop(i);
                 self.side.cast(Some(&cast));
             }
+            Device::Seek { ms } => self.side.control(crate::session::Control::Seek { ms: ms as u64 }),
             _ => {}
         }
     }

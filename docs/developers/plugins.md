@@ -237,6 +237,7 @@ Device to host:
 | `Flushed` 0x84 | `seq: u32, played: u64` | the flush `seq` is done, at `played` |
 | `Press` 0x85 | `button: u8` (0 play-pause, 1 next, 2 previous) | a button: nori takes it as a media button, so plugins' deciders apply |
 | `Volume` 0x86 | `gain: f32` | its own knob: the cast's volume in nori, not sent back |
+| `Seek` 0x87 | `ms: u32` | go to `ms` in the song playing (its knob or wheel), as nori's seek bar would. Version 3: sent only to a host whose `Hello` said 3 or more |
 
 **Positional frames.** `Format`, `Gain` and `Now` apply where they are in the stream: what came before
 plays out in its format, and the device switches exactly at the next audio. They wait in the buffer with
@@ -276,7 +277,7 @@ song's end, which would run a device holding tens of seconds dry), seeks by the 
 packets from there. ReplayGain is `Gain` at each song's start; fades are `Ramp`s. `Status` counts decoded
 frames. MP3 encoder gaps are not told: an MP3 that joins its album gaplessly plays as PCM.
 
-**Now playing.** At each song's first frame (a gapless boundary, after a skip's flush, where a mix's
+**Now playing.** A cast picked while nori is paused shows the song loaded at once: `Now` (and its cover) goes before any audio, and again where the song plays. At each song's first frame (a gapless boundary, after a skip's flush, where a mix's
 next song begins, and where a seek lands in a song) the host puts `Now`, saying how far into the song it starts, with the song's cover sent once before it if `Caps.cover` asked a
 size (from nori's cover cache at that size; JPEG only). An album's songs share a cover id. Covers are
 never fetched for songs the engine is not already reading; one not on disk yet is fetched in the

@@ -115,6 +115,9 @@ pub trait AudioOutput: Send {
     /// Song `id` starts at ring frame `frame` (frames written since the ring was made), `at_ms` into it;
     /// told before that frame is in the ring. A flush drops the marks at or past the frames it replaces.
     fn song_at(&mut self, _frame: u64, _id: &str, _at_ms: i64) {}
+    /// Song `id` is loaded, `at_ms` into it, and nothing plays yet (a cast picked while paused): a
+    /// device that shows songs shows it now.
+    fn shows(&mut self, _id: &str, _at_ms: i64) {}
     fn close(&mut self);
 }
 
@@ -759,6 +762,11 @@ impl RingTrack {
     }
 
     /// Takes `output` as the device from now on, the old one released.
+    /// What the output shows of the song loaded, playing nothing yet ([`AudioOutput::shows`]).
+    pub(crate) fn output_shows(&mut self, id: &str, at_ms: i64) {
+        self.output.shows(id, at_ms);
+    }
+
     pub(crate) fn replace(&mut self, output: Box<dyn AudioOutput>) {
         self.release();
         self.output = output;

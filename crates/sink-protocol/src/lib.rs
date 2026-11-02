@@ -12,7 +12,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 /// The protocol's version, said in both directions' first frame.
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 /// The longest frame either side sends or takes (kind and fields), bytes.
 pub const MAX_FRAME: usize = 1 << 20;
 
@@ -147,6 +147,9 @@ pub enum Device {
     Press(Button),
     /// The device's own volume knob, linear 0 to 1.
     Volume { gain: f32 },
+    /// Go to `ms` in the song playing (the device's seek: a knob, a wheel). Version 3; a device sends it
+    /// only to a host that said 3 or more in its `Hello`.
+    Seek { ms: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,6 +361,9 @@ impl Device {
             Device::Volume { gain } => frame(out, 0x86, |o| {
                 o.f32(gain);
             }),
+            Device::Seek { ms } => frame(out, 0x87, |o| {
+                o.u32(ms);
+            }),
         }
     }
 
@@ -375,6 +381,7 @@ impl Device {
                 _ => return Err(Error::Value),
             }),
             0x86 => Device::Volume { gain: i.f32()? },
+            0x87 => Device::Seek { ms: i.u32()? },
             k => return Err(Error::Kind(k)),
         };
         i.end(f)
@@ -478,6 +485,7 @@ mod tests {
             Device::Flushed { seq: 7, played: 12 },
             Device::Press(Button::Next),
             Device::Volume { gain: 0.75 },
+            Device::Seek { ms: 61_000 },
         ];
         let mut bytes = Vec::new();
         for d in &device {

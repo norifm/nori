@@ -1635,6 +1635,13 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.apply(self.settings.clone());
                 if going {
                     self.play();
+                } else if casting {
+                    // Paused: the device shows the song it would play.
+                    let at = self.shown().or_else(|| self.p.queue.read(|q| q.current()).map(|i| (i, 0)));
+                    if let Some((i, ms)) = at {
+                        let id = self.p.id_at(i);
+                        self.p.sink.track.output_shows(&id, ms);
+                    }
                 }
             }
             Command::NetworkBack => {
