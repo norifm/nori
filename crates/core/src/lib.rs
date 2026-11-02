@@ -282,13 +282,9 @@ impl Core {
         let sql = browse::songs_sql(&sort, descending, starred_only, year_to > 0);
         let c = self.db.lock();
         let mut st = c.prepare_cached(&sql)?;
-        let map = |r: &rusqlite::Row| r.get::<_, String>(0);
-        let rows: Vec<String> = if year_to > 0 {
-            st.query_map(params![offset, limit, year_from, year_to], map)?.filter_map(|r| r.ok()).collect()
-        } else {
-            st.query_map(params![offset, limit], map)?.filter_map(|r| r.ok()).collect()
-        };
-        Ok(rows.iter().filter_map(|j| serde_json::from_str(j).ok()).collect())
+        let map = |r: &rusqlite::Row| db::items::song(r, 0);
+        let songs: rusqlite::Result<Vec<Song>> = if year_to > 0 { st.query_map(params![offset, limit, year_from, year_to], map)?.collect() } else { st.query_map(params![offset, limit], map)?.collect() };
+        Ok(songs?)
     }
 
     /// The ids of [`Self::downloads`], same order.

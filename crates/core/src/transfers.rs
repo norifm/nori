@@ -25,7 +25,7 @@ impl Core {
     pub fn downloaded_album(&self, id: String) -> crate::Result<Option<crate::AlbumDetail>> {
         let songs = {
             let c = self.db.lock();
-            let mut st = c.prepare_cached("SELECT json FROM downloads WHERE server=sid() AND done=1 AND json_extract(json, '$.albumId')=?1 ORDER BY ts DESC")?;
+            let mut st = c.prepare_cached("SELECT json FROM downloads WHERE server=sid() AND done=1 AND json_extract(json,'$.albumId')=?1 ORDER BY ts DESC")?;
             let rows = st.query_map([id], |r| r.get::<_, String>(0))?;
             rows.filter_map(|j| serde_json::from_str(&j.ok()?).ok()).collect()
         };
@@ -65,9 +65,9 @@ impl Core {
         self.downloads.with(|t| t.follow_quality(self.download_kbps()));
         let rows: Vec<(String, String)> = {
             let c = self.db.lock();
-            let mut st = c.prepare("SELECT id, json FROM items WHERE server=sid() AND kind=?1 ORDER BY rowid")?;
-            let rows = st.query_map([crate::db::ItemKind::Song], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            rows.filter_map(|r| r.ok()).collect()
+            let mut st = c.prepare(&format!("SELECT {} FROM items i WHERE server=sid() AND kind=?1 ORDER BY rowid", crate::db::items::SONG))?;
+            let rows = st.query_map([crate::db::ItemKind::Song], |r| crate::db::items::song(r, 0))?;
+            rows.filter_map(|r| r.ok()).map(|s| (s.id.clone(), serde_json::to_string(&s).unwrap_or_default())).collect()
         };
         self.queue_downloads(rows)
     }

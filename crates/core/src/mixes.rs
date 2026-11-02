@@ -225,15 +225,15 @@ pub(crate) mod tests {
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
         let c = core.db.lock();
         let plan = |cond: &str| -> String {
-            let sql = format!("EXPLAIN QUERY PLAN SELECT i.json FROM items i LEFT JOIN song_stats s ON s.server=i.server AND s.song_id=i.id WHERE {SONGS} AND {cond}");
+            let sql = format!("EXPLAIN QUERY PLAN SELECT i.id FROM items i LEFT JOIN song_stats s ON s.server=i.server AND s.song_id=i.id WHERE {SONGS} AND {cond}");
             let mut st = c.prepare(&sql).unwrap();
             let rows = st.query_map([], |r| r.get::<_, String>(3)).unwrap();
             rows.map(|r| r.unwrap()).collect::<Vec<_>>().join("\n")
         };
-        assert!(plan("json_extract(i.json,'$.genre')='x' COLLATE NOCASE").contains("items_genre"));
-        assert!(plan("json_extract(i.json,'$.artistId')='x'").contains("items_artist"));
-        assert!(plan("json_extract(i.json,'$.year') BETWEEN 1 AND 2").contains("items_year"));
-        assert!(plan("json_extract(i.json,'$.starred')=1").contains("items_starred"));
-        assert!(plan("json_extract(i.json,'$.userRating')>=4").contains("items_rated"));
+        assert!(plan("i.genre='x' COLLATE NOCASE").contains("items_genre"));
+        assert!(plan("i.artist_id='x'").contains("items_artist"));
+        assert!(plan("i.year BETWEEN 1 AND 2").contains("items_year"));
+        assert!(plan("i.starred=1").contains("items_starred"));
+        assert!(plan("i.user_rating>=4").contains("items_rated"));
     }
 }

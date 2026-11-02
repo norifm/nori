@@ -213,8 +213,8 @@ fn picked(c: &Connection, kind: Picked, now_ms: i64, used: &mut HashMap<String, 
 pub fn album_use(c: &Connection, now_ms: i64) -> rusqlite::Result<HashMap<String, i64>> {
     let mut used = HashMap::new();
     picked(c, Picked::Album, now_ms, &mut used)?;
-    let plays = "SELECT json_extract(i.json,'$.albumId'), max(p.started_ms) FROM plays p JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=p.song_id
-         WHERE p.server=sid() AND p.started_ms>=?1 AND json_extract(i.json,'$.albumId') IS NOT NULL GROUP BY 1";
+    let plays = "SELECT i.album_id, max(p.started_ms) FROM plays p JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=p.song_id
+         WHERE p.server=sid() AND p.started_ms>=?1 AND i.album_id IS NOT NULL GROUP BY 1";
     add_uses(c, plays, params![now_ms - LATELY_MS], &mut used)?;
     Ok(used)
 }

@@ -31,13 +31,14 @@ impl Core {
     pub(crate) fn genre_songs_indexed(&self, genre: String) -> Result<Vec<crate::Song>> {
         let c = self.db.lock();
         let sql = format!(
-            "SELECT json FROM items WHERE server=sid() AND kind={} AND json_extract(json, '$.genre') = ?1 COLLATE NOCASE
-             ORDER BY json_extract(json, '$.artist') COLLATE NOCASE, json_extract(json, '$.album') COLLATE NOCASE, json_extract(json, '$.discNumber'), json_extract(json, '$.track')",
+            "SELECT {} FROM items i WHERE server=sid() AND kind={} AND genre = ?1 COLLATE NOCASE
+             ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, disc_number, track",
+            db::items::SONG,
             db::ItemKind::Song as i64
         );
         let mut st = c.prepare_cached(&sql)?;
-        let rows: Vec<String> = st.query_map([genre], |r| r.get(0))?.filter_map(|r| r.ok()).collect();
-        Ok(rows.iter().filter_map(|j| serde_json::from_str(j).ok()).collect())
+        let songs = st.query_map([genre], |r| db::items::song(r, 0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(songs)
     }
 
     /// Sets what the app offers over this profile; its songs are measured only where the rules say.
@@ -76,8 +77,8 @@ impl Core {
     pub fn albums_indexed(&self, sort: AlbumSort, reversed: bool, offset: u32, limit: u32) -> Result<Vec<crate::Album>> {
         let c = self.db.lock();
         let mut st = c.prepare_cached(&albums_sql(sort, reversed))?;
-        let rows: Vec<String> = st.query_map(params![offset, limit], |r| r.get::<_, String>(0))?.filter_map(|r| r.ok()).collect();
-        Ok(rows.iter().filter_map(|j| serde_json::from_str(j).ok()).collect())
+        let albums = st.query_map(params![offset, limit], |r| db::items::album(r, 0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(albums)
     }
 
     /// A page of the listening history from `after` (None: the newest), newest first, without skips.
@@ -111,7 +112,7 @@ impl Core {
     /// The cover `genre`'s tile shows, for its page; none without indexed songs of it.
     pub fn genre_cover(&self, genre: String) -> Result<Option<String>> {
         let c = self.db.lock();
-        let sql = format!("SELECT {GENRE_COVER} FROM items WHERE server=sid() AND kind={} AND json_extract(json, '$.genre') = ?1 COLLATE NOCASE", db::ItemKind::Song as i64);
+        let sql = format!("SELECT {GENRE_COVER} FROM items WHERE server=sid() AND kind={} AND genre = ?1 COLLATE NOCASE", db::ItemKind::Song as i64);
         let cover = c.prepare_cached(&sql)?.query_row([genre], |r| r.get(0))?;
         Ok(cover)
     }
@@ -229,19 +230,21 @@ fn in_order(mut albums: Vec<crate::Album>, sort: AlbumSort) -> Vec<crate::Album>
 /// [`Core::browse_songs`]' query: offset ?1, limit ?2, and with `years` the range ?3..=?4.
 pub(crate) fn songs_sql(sort: &str, descending: bool, starred_only: bool, years: bool) -> String {
     let key = match sort {
-        "title" | "artist" | "album" => format!("json_extract(json, '$.{sort}') COLLATE natural_order"),
-        "year" | "duration" | "created" | "playCount" | "userRating" => format!("json_extract(json, '$.{sort}')"),
+        "title" | "artist" | "album" => format!("{sort} COLLATE natural_order"),
+        "year" | "duration" | "created" => sort.to_string(),
+        "playCount" => "play_count".to_string(),
+        "userRating" => "user_rating".to_string(),
         _ => "rowid".to_string(),
     };
     // The song kind written out, so the songs' sort indexes (db.rs) serve the order a page at a time.
     // Starred songs are few: sorting them beats walking a sort index past all the others.
-    let items = if starred_only { "items INDEXED BY items_starred" } else { "items" };
-    let mut sql = format!("SELECT json FROM {items} WHERE server=sid() AND kind={}", db::ItemKind::Song as i64);
+    let items = if starred_only { "items i INDEXED BY items_starred" } else { "items i" };
+    let mut sql = format!("SELECT {} FROM {items} WHERE server=sid() AND kind={}", db::items::SONG, db::ItemKind::Song as i64);
     if starred_only {
-        sql.push_str(" AND json_extract(json, '$.starred') = 1");
+        sql.push_str(" AND starred = 1");
     }
     if years {
-        sql.push_str(" AND json_extract(json, '$.year') BETWEEN ?3 AND ?4");
+        sql.push_str(" AND year BETWEEN ?3 AND ?4");
     }
     sql.push_str(&format!(" ORDER BY {key} {} LIMIT ?2 OFFSET ?1", if descending { "DESC" } else { "ASC" }));
     sql
@@ -251,27 +254,27 @@ pub(crate) fn songs_sql(sort: &str, descending: bool, starred_only: bool, years:
 /// key's way turned when `reversed` except the year inside an artist's albums and the name breaking ties.
 fn albums_sql(sort: AlbumSort, reversed: bool) -> String {
     let (up, down) = if reversed { ("DESC", "ASC") } else { ("ASC", "DESC") };
-    let name = "json_extract(json, '$.name') COLLATE natural_order";
-    let artist = "json_extract(json, '$.artist') COLLATE natural_order";
+    let name = "name COLLATE natural_order";
+    let artist = "artist COLLATE natural_order";
     let order = match sort {
         AlbumSort::ByName => format!("{name} {up}, {artist} {up}"),
-        AlbumSort::ByArtist | AlbumSort::ArtistRows => format!("{artist} {up}, json_extract(json, '$.artistId') {up}, json_extract(json, '$.year'), {name}"),
-        AlbumSort::ByYear => format!("json_extract(json, '$.year') {down}, {name}"),
-        AlbumSort::Newest => format!("json_extract(json, '$.created') {down}, {name}"),
-        AlbumSort::Frequent => format!("coalesce(json_extract(json, '$.playCount'), 0) {down}, {name}"),
+        AlbumSort::ByArtist | AlbumSort::ArtistRows => format!("{artist} {up}, artist_id {up}, year, {name}"),
+        AlbumSort::ByYear => format!("year {down}, {name}"),
+        AlbumSort::Newest => format!("created {down}, {name}"),
+        AlbumSort::Frequent => format!("coalesce(play_count, 0) {down}, {name}"),
         AlbumSort::Random | AlbumSort::Recent | AlbumSort::ByGenre | AlbumSort::Starred => "rowid".into(),
     };
-    format!("SELECT json FROM items WHERE server=sid() AND kind={} ORDER BY {order} LIMIT ?2 OFFSET ?1", db::ItemKind::Album as i64)
+    format!("SELECT {} FROM items i WHERE server=sid() AND kind={} ORDER BY {order} LIMIT ?2 OFFSET ?1", db::items::ALBUM, db::ItemKind::Album as i64)
 }
 
 /// [`Core::genre_tiles`]' query, limit ?1. The song kind written out, so the partial genre index (db.rs
 /// `items_genre`) serves the grouping.
 /// Which of a genre's songs' covers stands for it: one rule for its tile and its page.
-const GENRE_COVER: &str = "max(json_extract(json, '$.coverArt'))";
+const GENRE_COVER: &str = "max(cover_art)";
 
 fn genres_sql() -> String {
     format!(
-        "SELECT json_extract(json, '$.genre') AS g, count(*) AS n, {GENRE_COVER} FROM items
+        "SELECT genre AS g, count(*) AS n, {GENRE_COVER} FROM items
          WHERE server=sid() AND kind={} AND g <> '' GROUP BY g COLLATE NOCASE ORDER BY n DESC, g LIMIT ?1",
         db::ItemKind::Song as i64
     )
@@ -279,7 +282,7 @@ fn genres_sql() -> String {
 
 /// The song kind written out, so the partial year index (db.rs `items_year`) serves the count.
 fn decades_sql() -> String {
-    format!("SELECT (json_extract(json, '$.year') / 10) * 10 AS d, count(*) FROM items WHERE server=sid() AND kind={} AND json_extract(json, '$.year') > 0 GROUP BY d ORDER BY d DESC", db::ItemKind::Song as i64)
+    format!("SELECT (year / 10) * 10 AS d, count(*) FROM items WHERE server=sid() AND kind={} AND year > 0 GROUP BY d ORDER BY d DESC", db::ItemKind::Song as i64)
 }
 
 #[cfg(test)]
@@ -382,7 +385,7 @@ pub(crate) mod tests {
             assert!(plan(true).contains("USING INDEX items_starred"), "{key} starred");
         }
         let decades: String = c.prepare(&format!("EXPLAIN QUERY PLAN {}", decades_sql())).unwrap().query_map([], |r| r.get::<_, String>(3)).unwrap().map(|r| r.unwrap()).collect::<Vec<_>>().join("; ");
-        assert!(decades.contains("USING INDEX items_year"), "decades: {decades}");
+        assert!(decades.contains("INDEX items_year"), "decades: {decades}");
     }
 
     #[test]

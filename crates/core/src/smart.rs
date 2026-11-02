@@ -121,8 +121,8 @@ pub(crate) mod tests {
         db::index(&mut core.db.lock(), &[], &[], &songs).unwrap();
         // Keys Song does not carry yet.
         let c = core.db.lock();
-        c.execute("UPDATE items SET json=json_set(json,'$.created','2026-08-20T10:00:00.000Z','$.playCount',40) WHERE id='dogs'", []).unwrap();
-        c.execute("UPDATE items SET json=json_set(json,'$.created','2024-02-29T23:59:59Z','$.playCount',2) WHERE id='so'", []).unwrap();
+        c.execute("UPDATE items SET created='2026-08-20T10:00:00.000Z', play_count=40 WHERE id='dogs'", []).unwrap();
+        c.execute("UPDATE items SET created='2024-02-29T23:59:59Z', play_count=2 WHERE id='so'", []).unwrap();
         drop(c);
         for d in [1, 2, 3] {
             listen(&core, &songs[0], NOW - d * DAY);
@@ -292,12 +292,8 @@ pub(crate) mod tests {
     fn large_library_pages_and_budget() {
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
         {
-            let mut c = core.db.lock();
-            let tx = c.transaction().unwrap();
-            {
-                let mut st = tx.prepare("INSERT INTO items(server, kind, id, json) VALUES(sid(), 2, ?1, ?2)").unwrap();
-                for i in 0..10_000u32 {
-                    let s = Song {
+            let songs: Vec<Song> = (0..10_000u32)
+                .map(|i| Song {
                         id: format!("s{i}"),
                         title: format!("Title {i}"),
                         artist: format!("Artist {}", i % 3000),
@@ -306,11 +302,9 @@ pub(crate) mod tests {
                         duration: 120 + i % 400,
                         starred: i % 100 == 0,
                         ..Default::default()
-                    };
-                    st.execute(params![s.id, serde_json::to_string(&s).unwrap()]).unwrap();
-                }
-            }
-            tx.commit().unwrap();
+                })
+                .collect();
+            db::index(&mut core.db.lock(), &[], &[], &songs).unwrap();
         }
         let def = json!({ "match": { "rules": [
             { "field": "genre", "op": "is", "value": "jazz" }, { "field": "year", "op": "between", "value": [1990, 1999] },

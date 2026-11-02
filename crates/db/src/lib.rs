@@ -2,6 +2,7 @@
 //! app-wide tables. Background writes go through background.rs.
 
 pub mod background;
+pub mod items;
 
 use std::collections::HashSet;
 use std::sync::{Arc, Weak};
@@ -9,7 +10,6 @@ use std::sync::{Arc, Weak};
 use nori_model::*;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::{de::DeserializeOwned, Serialize};
 
 /// What an index row holds, stored as its number (`kind`); SQL text names songs as `kind=2`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +35,6 @@ PRAGMA busy_timeout=5000;
 ";
 
 const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS items(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, kind INTEGER NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, UNIQUE(server, kind, id));
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(text, tokenize='unicode61 remove_diacritics 2', prefix='2 3');
 CREATE TABLE IF NOT EXISTS cache(server TEXT NOT NULL, key TEXT NOT NULL, body BLOB NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(server, key)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS kv(server TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(server, key)) WITHOUT ROWID;
@@ -53,17 +52,6 @@ CREATE INDEX IF NOT EXISTS server_plays_at ON server_plays(server, at_ms);
 CREATE TABLE IF NOT EXISTS mix_excluded(server TEXT NOT NULL, song_id TEXT NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS autofill_picks(server TEXT NOT NULL, kind INTEGER NOT NULL, id TEXT NOT NULL, picked_ms INTEGER NOT NULL, PRIMARY KEY(server, kind, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS smart_playlists(server TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, json TEXT NOT NULL, updated_ms INTEGER NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS items_genre ON items(server, json_extract(json,'$.genre') COLLATE NOCASE) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_artist ON items(server, json_extract(json,'$.artistId')) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_year ON items(server, json_extract(json,'$.year')) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_duration ON items(server, json_extract(json,'$.duration')) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_created ON items(server, json_extract(json,'$.created')) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_plays ON items(server, json_extract(json,'$.playCount')) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_starred ON items(server, json_extract(json,'$.starred')) WHERE kind=2 AND json_extract(json,'$.starred')=1;
-CREATE INDEX IF NOT EXISTS items_rated ON items(server, json_extract(json,'$.userRating')) WHERE kind=2 AND json_extract(json,'$.userRating')>=4;
-CREATE INDEX IF NOT EXISTS items_title_natural ON items(server, json_extract(json,'$.title') COLLATE natural_order) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_artist_natural ON items(server, json_extract(json,'$.artist') COLLATE natural_order) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_album_natural ON items(server, json_extract(json,'$.album') COLLATE natural_order) WHERE kind=2;
 CREATE TABLE IF NOT EXISTS track_analysis(server TEXT NOT NULL, song_id TEXT NOT NULL, analysis_version INTEGER NOT NULL, duration_ms INTEGER NOT NULL, bpm REAL NOT NULL, bpm_confidence REAL NOT NULL, beat_offset_ms REAL NOT NULL, stability REAL NOT NULL, downbeat_phase INTEGER NOT NULL, downbeat_confidence REAL NOT NULL, lufs REAL NOT NULL, key INTEGER NOT NULL, key_confidence REAL NOT NULL, silence_start_ms INTEGER NOT NULL, silence_end_ms INTEGER NOT NULL, mixramp_start_ms INTEGER NOT NULL, mixramp_end_ms INTEGER NOT NULL, intro_end_ms INTEGER NOT NULL, outro_start_ms INTEGER NOT NULL, outro_vocal REAL NOT NULL, intro_vocal REAL NOT NULL, outro_centroid REAL NOT NULL, intro_centroid REAL NOT NULL, outro_bpm REAL NOT NULL, outro_bpm_confidence REAL NOT NULL, outro_beat_offset_ms REAL NOT NULL, outro_stability REAL NOT NULL, outro_downbeat_phase INTEGER NOT NULL, intro_bpm REAL NOT NULL, intro_bpm_confidence REAL NOT NULL, intro_beat_offset_ms REAL NOT NULL, intro_stability REAL NOT NULL, intro_downbeat_phase INTEGER NOT NULL, beats_per_bar INTEGER NOT NULL DEFAULT 0, drop_ms INTEGER NOT NULL DEFAULT 0, drop_runup_vocal REAL NOT NULL DEFAULT 0, drop_vocal REAL NOT NULL DEFAULT 0, exit_ms INTEGER NOT NULL DEFAULT 0, gap_ms INTEGER NOT NULL DEFAULT 0, gap_end_ms INTEGER NOT NULL DEFAULT 0, exit_vocal REAL NOT NULL DEFAULT 0, drop_runup_tonal_db REAL NOT NULL DEFAULT 0, intro_beats_per_bar INTEGER NOT NULL DEFAULT 0, outro_beats_per_bar INTEGER NOT NULL DEFAULT 0, intro_grid_source INTEGER NOT NULL DEFAULT 0, outro_grid_source INTEGER NOT NULL DEFAULT 0, analysed_ms INTEGER NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS vocal_curve(server TEXT NOT NULL, song_id TEXT NOT NULL, curve BLOB NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 ";
@@ -95,8 +83,10 @@ pub fn open(path: &str, server: &str) -> rusqlite::Result<Connection> {
     c.create_collation("natural_order", natural_cmp)?;
     drop_old_analysis(&c)?;
     c.execute_batch(APP_SCHEMA)?;
-    c.execute_batch(SCHEMA)?;
     drop_old_sort_indexes(&c)?;
+    items::migrate_from_json(&c)?;
+    c.execute_batch(items::TABLE)?;
+    c.execute_batch(SCHEMA)?;
     add_pending_tries(&c)?;
     drop_old_lyrics(&c)?;
     drop_old_pages(&c)?;
@@ -232,45 +222,21 @@ pub fn now_ms() -> i64 {
     nori_time::unix_ms()
 }
 
-/// Stores `item` as the row of `kind` and `id`; its rowid, none for an item the index does not keep.
-fn upsert<T: Serialize>(c: &Connection, kind: ItemKind, id: &str, text: &str, item: &T) -> rusqlite::Result<Option<i64>> {
-    // Provider items are not library rows.
-    if id.is_empty() || nori_model::is_provider_id(id) {
-        return Ok(None);
-    }
-    let json = serde_json::to_string(item).unwrap_or_default();
-    let old: Option<(i64, String)> = c
-        .prepare_cached("SELECT rowid, json FROM items WHERE server=sid() AND kind=?1 AND id=?2")?
-        .query_row(params![kind, id], |r| Ok((r.get(0)?, r.get(1)?)))
-        .optional()?;
-    match old {
-        Some((rowid, j)) if j == json => Ok(Some(rowid)),
-        Some((rowid, _)) => {
-            c.prepare_cached("UPDATE items SET json=?1 WHERE rowid=?2")?.execute(params![json, rowid])?;
-            c.prepare_cached("INSERT OR REPLACE INTO fts(rowid, text) VALUES(?1, ?2)")?.execute(params![rowid, text])?;
-            Ok(Some(rowid))
-        }
-        None => {
-            c.prepare_cached("INSERT INTO items(server, kind, id, json) VALUES(sid(), ?1, ?2, ?3)")?.execute(params![kind, id, json])?;
-            let rowid = c.last_insert_rowid();
-            c.prepare_cached("INSERT INTO fts(rowid, text) VALUES(?1, ?2)")?.execute(params![rowid, text])?;
-            Ok(Some(rowid))
-        }
-    }
-}
-
 /// Stores the items in the index; the rowids of those it keeps.
 pub fn index(c: &mut Connection, artists: &[Artist], albums: &[Album], songs: &[Song]) -> rusqlite::Result<Vec<i64>> {
     let tx = c.transaction()?;
     let mut rows = Vec::with_capacity(artists.len() + albums.len() + songs.len());
+    let st = items::Statements::of::<Artist>();
     for a in artists {
-        rows.extend(upsert(&tx, ItemKind::Artist, &a.id, &a.name, a)?);
+        rows.extend(items::upsert(&tx, &st, a)?);
     }
+    let st = items::Statements::of::<Album>();
     for a in albums.iter().filter(|a| !a.is_external) {
-        rows.extend(upsert(&tx, ItemKind::Album, &a.id, &format!("{} {}", a.name, a.artist), a)?);
+        rows.extend(items::upsert(&tx, &st, a)?);
     }
+    let st = items::Statements::of::<Song>();
     for s in songs.iter().filter(|s| !s.is_external) {
-        rows.extend(upsert(&tx, ItemKind::Song, &s.id, &format!("{} {} {}", s.title, s.artist, s.album), s)?);
+        rows.extend(items::upsert(&tx, &st, s)?);
     }
     tx.commit()?;
     Ok(rows)
@@ -317,18 +283,18 @@ pub fn search(c: &Connection, query: &str, limit: u32) -> rusqlite::Result<Searc
         }
     }
     let [artists, albums, songs] = kept;
-    Ok(SearchResult { artists: load(c, &artists)?, albums: load(c, &albums)?, songs: load(c, &songs)?, playlists: Vec::new() })
+    Ok(SearchResult {
+        artists: load(c, items::ARTIST, &artists, items::artist)?,
+        albums: load(c, items::ALBUM, &albums, items::album)?,
+        songs: load(c, items::SONG, &songs, items::song)?,
+        playlists: Vec::new(),
+    })
 }
 
-/// The items at `rowids`, in that order.
-fn load<T: DeserializeOwned>(c: &Connection, rowids: &[i64]) -> rusqlite::Result<Vec<T>> {
-    let mut st = c.prepare_cached("SELECT json FROM items WHERE rowid = ?1")?;
-    let mut items = Vec::with_capacity(rowids.len());
-    for rowid in rowids {
-        let json: String = st.query_row([rowid], |r| r.get(0))?;
-        items.extend(serde_json::from_str(&json).ok());
-    }
-    Ok(items)
+/// The items at `rowids`, in that order, read from `columns` by `read`.
+fn load<T>(c: &Connection, columns: &str, rowids: &[i64], read: fn(&rusqlite::Row, usize) -> rusqlite::Result<T>) -> rusqlite::Result<Vec<T>> {
+    let mut st = c.prepare_cached(&format!("SELECT {columns} FROM items i WHERE rowid = ?1"))?;
+    rowids.iter().map(|rowid| st.query_row([rowid], |r| read(r, 0))).collect()
 }
 
 pub fn count(c: &Connection, kind: ItemKind) -> rusqlite::Result<u32> {
@@ -470,6 +436,110 @@ mod tests {
         assert_eq!(search(&def, "airbag", 10).unwrap().songs.len(), 1);
         drop((def, x1));
         assert_eq!(search(&open(&path, "default").unwrap(), "airbag", 10).unwrap().songs.len(), 1, "persisted");
+    }
+
+    fn full_song() -> Song {
+        Song {
+            id: "s1".into(),
+            title: "Teardrop".into(),
+            album: "Mezzanine".into(),
+            artist: "Massive Attack".into(),
+            album_id: Some("al1".into()),
+            artist_id: Some("ar1".into()),
+            cover_art: Some("c1".into()),
+            duration: 329,
+            track: 3,
+            disc_number: 1,
+            year: 1998,
+            genre: Some("Trip Hop".into()),
+            suffix: "flac".into(),
+            content_type: "audio/flac".into(),
+            bit_rate: 900,
+            size: 40_000_000_000,
+            sampling_rate: 44_100,
+            bit_depth: 16,
+            user_rating: 5,
+            starred: true,
+            replay_gain: Some(ReplayGain { track_gain: Some(-6.5), album_peak: Some(0.98), ..ReplayGain::default() }),
+            artists: vec![ArtistRef { id: "ar1".into(), name: "Massive Attack".into() }, ArtistRef { id: "ar2".into(), name: "Elizabeth Fraser".into() }],
+            created: Some("2020-01-01T00:00:00Z".into()),
+            play_count: 12,
+            played: Some("2026-01-01T00:00:00Z".into()),
+            path: Some("m/t.flac".into()),
+            explicit_status: ExplicitStatus::Clean,
+            channel_count: 2,
+            music_brainz_id: Some("mb".into()),
+            bpm: 77,
+            comment: Some("a note".into()),
+            ..Song::default()
+        }
+        .dressed()
+    }
+
+    fn full_album() -> Album {
+        Album {
+            id: "al1".into(),
+            name: "Mezzanine".into(),
+            artist: "Massive Attack".into(),
+            artist_id: Some("ar1".into()),
+            cover_art: Some("c1".into()),
+            song_count: 11,
+            duration: 3800,
+            year: 1998,
+            genre: Some("Trip Hop".into()),
+            starred: true,
+            release_types: vec!["Album".into(), "Remastered".into()],
+            is_compilation: true,
+            user_rating: 4,
+            play_count: 3,
+            created: Some("2020".into()),
+            explicit_status: ExplicitStatus::Explicit,
+            music_brainz_id: Some("mb".into()),
+            ..Album::default()
+        }
+        .dressed()
+    }
+
+    fn full_artist() -> Artist {
+        Artist { id: "ar1".into(), name: "Massive Attack".into(), cover_art: Some("c".into()), artist_image_url: Some("u".into()), album_count: Some(5), starred: true, is_external: false }
+    }
+
+    #[test]
+    fn every_field_comes_back_from_its_column() {
+        let mut c = open("", "s").unwrap();
+        let bare = Song { id: "s2".into(), title: "Angel".into(), ..Song::default() }.dressed();
+        let (song, album, artist) = (full_song(), full_album(), full_artist());
+        index(&mut c, std::slice::from_ref(&artist), std::slice::from_ref(&album), &[song.clone(), bare.clone()]).unwrap();
+        let r = search(&c, "massive", 5).unwrap();
+        assert_eq!(r.songs, [song]);
+        assert_eq!(r.albums, [album]);
+        assert_eq!(r.artists, [artist]);
+        assert_eq!(search(&c, "angel", 5).unwrap().songs, [bare]);
+    }
+
+    #[test]
+    fn an_index_kept_as_json_moves_into_columns() {
+        let dir = nori_testdir::TempDir::new("db-json");
+        let path = dir.join("json.db").to_string_lossy().into_owned();
+        let (song, album, artist) = (full_song(), full_album(), full_artist());
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch("CREATE TABLE items(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, kind INTEGER NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, UNIQUE(server, kind, id));
+                CREATE VIRTUAL TABLE fts USING fts5(text, tokenize='unicode61 remove_diacritics 2', prefix='2 3');").unwrap();
+            for (rowid, kind, id, json, text) in [
+                (7, 2, "s1", serde_json::to_string(&song).unwrap(), "teardrop massive"),
+                (8, 1, "al1", serde_json::to_string(&album).unwrap(), "mezzanine massive"),
+                (9, 0, "ar1", serde_json::to_string(&artist).unwrap(), "massive attack"),
+            ] {
+                c.execute("INSERT INTO items VALUES(?1, 's', ?2, ?3, ?4)", params![rowid, kind, id, json]).unwrap();
+                c.execute("INSERT INTO fts(rowid, text) VALUES(?1, ?2)", params![rowid, text]).unwrap();
+            }
+        }
+        let c = open(&path, "s").unwrap();
+        let r = search(&c, "massive", 5).unwrap();
+        assert_eq!((r.songs, r.albums, r.artists), (vec![song], vec![album], vec![artist]));
+        let has_json: bool = c.prepare("PRAGMA table_info(items)").unwrap().query_map([], |r| r.get::<_, String>(1)).unwrap().any(|n| n.unwrap() == "json");
+        assert!(!has_json);
     }
 
     #[test]
