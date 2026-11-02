@@ -662,9 +662,10 @@ fn now_playing_comes_at_each_songs_first_frame_with_its_cover_once() {
     }).collect();
     let covers = d.did.iter().filter(|(_, x)| matches!(x, Did::Cover(_))).count();
     let ten = 441_000;
-    assert_eq!(nows.iter().map(|n| (n.0, n.1.as_str())).collect::<Vec<_>>(), [(0, "a1"), (ten, "a2"), (2 * ten, "b1")], "at each song's first frame");
-    assert!(nows[0].2.is_some() && nows[0].2 == nows[1].2, "an album's songs share a cover: {nows:?}");
-    assert!(nows[2].2.is_some() && nows[2].2 != nows[0].2, "another album's is its own: {nows:?}");
+    // The cast was picked before playing: the song loaded is shown first, before any audio.
+    assert_eq!(nows.iter().map(|n| (n.0, n.1.as_str())).collect::<Vec<_>>(), [(0, "a1"), (0, "a1"), (ten, "a2"), (2 * ten, "b1")], "the song loaded, then at each song's first frame");
+    assert!(nows[1].2.is_some() && nows[1].2 == nows[2].2, "an album's songs share a cover: {nows:?}");
+    assert!(nows[3].2.is_some() && nows[3].2 != nows[1].2, "another album's is its own: {nows:?}");
     assert_eq!(covers, 2, "each cover sent once");
     drop(d);
 
@@ -699,8 +700,8 @@ fn a_now_after_a_seek_says_where_it_went() {
     assert!(rig.wait_for(20, |d| d.nows.first().is_some_and(|n| n.1 == 0)), "the song's start is at 0: {:?}", rig.dev.lock().nows);
     assert!(rig.wait_for(20, |d| d.heard.len() > 44_100 * 3));
     rig.engine.seek(70_000);
-    assert!(rig.wait_for(10, |d| d.nows.len() > 1), "a Now after the seek: {:?}", rig.dev.lock().nows);
-    let (title, at_ms) = rig.dev.lock().nows[1].clone();
+    assert!(rig.wait_for(10, |d| d.nows.iter().any(|n| n.1 > 0)), "a Now after the seek: {:?}", rig.dev.lock().nows);
+    let (title, at_ms) = rig.dev.lock().nows.iter().find(|n| n.1 > 0).cloned().unwrap();
     assert_eq!(title, "a");
     assert!(at_ms.abs_diff(70_000) < 50, "at 70 s: {at_ms}");
 }

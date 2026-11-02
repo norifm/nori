@@ -47,7 +47,8 @@ struct Session {
     multicast: Mutex<Vec<bool>>,
     casts: Mutex<Vec<Option<Cast>>>,
     pressed: Mutex<Vec<nori_model::deciders::Press>>,
-    /// Told each cast change and press.
+    controls: Mutex<Vec<nori_plugins::Control>>,
+    /// Told each cast change, press and control.
     told: std::sync::Condvar,
 }
 
@@ -76,6 +77,10 @@ impl Side for Session {
     }
     fn pressed(&self, press: nori_model::deciders::Press) {
         self.pressed.lock().unwrap().push(press);
+        self.told.notify_all();
+    }
+    fn control(&self, c: nori_plugins::Control) {
+        self.controls.lock().unwrap().push(c);
         self.told.notify_all();
     }
 }
@@ -417,6 +422,13 @@ fn a_deep_sink_is_said_hello_and_its_buttons_are_media_buttons() {
     assert_eq!(*pressed, [nori_model::deciders::Press::Next]);
     drop(pressed);
     assert_eq!(rig.plugins.cast().unwrap().volume, Some(30), "the knob is the cast's volume");
+    out.clear();
+    Device::Seek { ms: 61_000 }.encode(&mut out);
+    device.write_all(&out).unwrap();
+    let controls = rig.session.controls.lock().unwrap();
+    let (controls, _) = rig.session.told.wait_timeout_while(controls, std::time::Duration::from_secs(5), |c| c.is_empty()).unwrap();
+    assert_eq!(*controls, [nori_plugins::Control::Seek { ms: 61_000 }], "the device's seek is the player's");
+    drop(controls);
     assert!(rig.plugins.cast_button(CastButton::VolumeUp));
     let volume = loop {
         let n = device.read(&mut buf).unwrap();

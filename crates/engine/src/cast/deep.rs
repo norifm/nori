@@ -728,6 +728,16 @@ impl AudioOutput for DeepOutput {
         self.shared.shows.is_some()
     }
 
+    fn shows(&mut self, id: &str, at_ms: i64) {
+        if self.shared.shows.is_none() || self.shared.st.lock().sent > 0 {
+            return;
+        }
+        // Before any audio: the device shows it at once, and the song's start is told again where it plays.
+        let mut out = Vec::new();
+        self.shared.now_playing(id, at_ms, &mut out);
+        self.shared.send(&out);
+    }
+
     fn song_at(&mut self, frame: u64, id: &str, at_ms: i64) {
         self.tell(|st| {
             st.marks.retain(|m| m.0 < frame);

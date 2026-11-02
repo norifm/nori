@@ -162,7 +162,7 @@ impl Deep {
     /// The device said `frame`.
     pub fn heard(&self, frame: Device) {
         let to = match frame {
-            Device::Press(_) | Device::Volume { .. } => &self.controls,
+            Device::Press(_) | Device::Volume { .. } | Device::Seek { .. } => &self.controls,
             _ => &self.engine,
         };
         if let Some(h) = to.lock().expect("not poisoned").as_ref() {
