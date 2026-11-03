@@ -166,6 +166,7 @@ impl Core {
             Ok(())
         };
         let _ = unbind();
+        self.set_playing(None);
         let effect = DeviceEffect { refresh: true, apply: Some(before), ..DeviceEffect::none() };
         self.settle(&output, Step { quiet: Some(true), loose: LooseChange::Clear, effect })
     }
@@ -244,16 +245,20 @@ impl Core {
     }
 
     fn arrive_as(&self, output: String, now: &Now) -> DeviceEffect {
+        self.keep_edits(now);
         let bound = self.profile_decided(&output);
         alog::info(&format!("device sound: {output} -> {}", bound.as_ref().map_or("nothing chosen", |p| p.name.as_str())));
         let loose = self.loose();
         let plan = self.arrival_plan(&output, bound.is_some(), now);
         let mut step = Step::none();
+        let mut playing = None;
         if plan.load_bound {
-            if let Some(sound) = bound.and_then(|b| sound_from(&b.json)) {
+            if let Some((name, sound)) = bound.and_then(|b| Some((b.name, sound_from(&b.json)?))) {
                 (step.effect.apply, step.loose) = loaded(sound, &now.sound, now.per_output, loose.is_some());
+                playing = Some(name);
             }
         }
+        self.set_playing(playing.as_deref());
         if plan.restore {
             if let Some(json) = loose {
                 step.loose = LooseChange::Clear;
@@ -265,9 +270,13 @@ impl Core {
 
     fn adopt_as(&self, output: &str, name: &str, preset: &str, live: bool, now: &Now) -> Result<Step, SoundError> {
         let sound = settings::import(now.sound.clone(), preset)?;
+        if live {
+            self.keep_edits(now);
+        }
         let created = self.save_bound(name, &sound, output)?;
         let (apply, loose) = if live { loaded(sound, &now.sound, now.per_output, self.loose().is_some()) } else { (None, LooseChange::Keep) };
         if live {
+            self.set_playing(Some(name));
             alog::info(&format!("device sound: applied AutoEQ {name} to {output}"));
         }
         Ok(Step { quiet: Some(false), loose, effect: DeviceEffect { refresh: true, apply, arrive: false, created } })
@@ -295,7 +304,9 @@ impl Core {
         let mut step = Step { quiet: Some(false), loose: LooseChange::Keep, effect: DeviceEffect { refresh: true, ..DeviceEffect::none() } };
         if live {
             if let Some(sound) = self.profiles()?.into_iter().find(|p| p.name == name).and_then(|p| sound_from(&p.json)) {
+                self.keep_edits(now);
                 (step.effect.apply, step.loose) = loaded(sound, &now.sound, now.per_output, self.loose().is_some());
+                self.set_playing(Some(&name));
             }
         }
         Ok(step)
@@ -336,6 +347,21 @@ impl Core {
             LooseChange::Store { json } => self.set_kv(LOOSE, Some(&json)),
             LooseChange::Clear => self.set_kv(LOOSE, None),
         }
+    }
+
+    /// Saves the sound playing into the profile it was loaded from, so edits made on a device stay its
+    /// own; called before another sound replaces it, and on the first arrival after the app starts.
+    fn keep_edits(&self, now: &Now) {
+        let Some(name) = self.kv(PLAYING).filter(|_| now.per_output) else { return };
+        let json = sound_json(&now.sound);
+        let Some(p) = self.profiles().ok().and_then(|ps| ps.into_iter().find(|p| p.name == name)).filter(|p| p.json != json) else { return };
+        if let Err(e) = self.profile_save(SoundProfile { json, ..p }) {
+            alog::info(&format!("device sound: could not keep the edits to {name}: {e}"));
+        }
+    }
+
+    fn set_playing(&self, profile: Option<&str>) {
+        self.set_kv(PLAYING, profile);
     }
 
     fn quiet_list(&self) -> Vec<String> {
@@ -441,6 +467,37 @@ pub(crate) mod tests {
             settings.put(settings.current().unwrap().with_sound(sound));
             let p = settings.current().unwrap();
             assert_eq!((p.replay_gain, p.crossfade_sec, p.mono), (GainMode::Off, 0, true), "{output}");
+        }
+    }
+
+    #[test]
+    fn edits_on_a_device_go_into_its_profile() {
+        use crate::settings::StoredPrefs;
+        for per_output in [true, false] {
+            let c = core();
+            let settings = &c.session.settings;
+            settings.open("").unwrap();
+            settings.put(StoredPrefs { profile_per_output: per_output, ..settings.current().unwrap() });
+            let warm = SoundSettings { mono: true, ..sound() };
+            c.profile_save(SoundProfile { name: "Warm".into(), json: sound_json(&warm), outputs: vec!["USB: K3".into()] }).unwrap();
+            let arrive = |output: &str| {
+                if let Some(sound) = c.device_arrive(output.into()).apply {
+                    settings.put(settings.current().unwrap().with_sound(sound));
+                }
+                settings.current().unwrap().sound()
+            };
+            arrive("USB: K3");
+            settings.put(StoredPrefs { balance: 0.5, ..settings.current().unwrap() });
+            let edited = settings.current().unwrap().sound();
+            // The app starting again on the same device, then music moving away and back.
+            for output in ["USB: K3", SPEAKER] {
+                arrive(output);
+            }
+            let kept = sound_from(&c.profile_for_output("USB: K3".into()).unwrap().unwrap().json).unwrap();
+            assert_eq!(kept == edited, per_output, "per output {per_output}");
+            if per_output {
+                assert_eq!(arrive("USB: K3"), edited);
+            }
         }
     }
 
