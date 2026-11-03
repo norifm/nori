@@ -444,7 +444,8 @@ pub struct App {
     fade: Fade,
     tickets: VecDeque<(CoverKey, Ticket)>,
     tick: Timer,
-    tick_ms: u64,
+    /// The pace the song plays at, for the seek bar's steps.
+    pace: f32,
     /// The window is off screen (minimized, covered): the seek bar, lyrics and playing bars stand still.
     hidden: bool,
     /// Motion is E-ink: the playing bars stand still.
@@ -693,7 +694,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             fade: Fade::default(),
             tickets: VecDeque::new(),
             tick: Timer::default(),
-            tick_ms: 0,
+            pace: 1.0,
             hidden: false,
             still: false,
             lyrics_viewed: false,
@@ -2568,6 +2569,22 @@ impl App {
         self.mark_playing();
     }
 
+    /// Moves the seek bar on, and again when it next moves a step on screen or its labels a second, as
+    /// Android's does (`nori_look::motion`).
+    fn seek_step(&mut self) {
+        let ui = self.ui();
+        let at = self.position_now();
+        position_shown(&ui, self.player.as_ref(), at as i32);
+        let width = match self.player.as_ref().filter(|_| !ui.get_full_player()) {
+            Some(p) => p.get_seek_width() * p.window().scale_factor(),
+            None => ui.get_full_seek_width() * ui.window().scale_factor(),
+        };
+        let step = nori_look::motion::step_px(ui.global::<Motion>().get_reduced());
+        let wait = nori_look::motion::wait_ms(at, ui.get_duration_ms() as i64, width, self.pace, step, 0.0);
+        let me = self.me.clone();
+        self.tick.start(TimerMode::SingleShot, Duration::from_millis(wait as u64), move || me.with(|a| a.seek_step()));
+    }
+
     /// Where the song shown is now: here, on the device playing or in the jam.
     fn position_now(&self) -> i64 {
         match (&self.playback, &self.session) {
@@ -4354,18 +4371,11 @@ impl App {
             ui.set_queue_from(queue_from(q.upcoming().map(|(_, s)| s)).into());
             self.queue = Some(q);
         }
-        // Seek bar timer: only while playing, quarter-pixel steps of the widest bar.
-        let step = pixel_ms(ui.get_duration_ms() as i64);
+        // The seek bar steps only while playing.
+        self.pace = now.pace;
         let ticks = playing && !self.hidden;
-        if ticks && (!self.tick.running() || self.tick_ms != step) {
-            self.tick_ms = step;
-            let me = self.me.clone();
-            self.tick.start(TimerMode::Repeated, Duration::from_millis(step), move || {
-                me.with(|a| {
-                    let ui = a.ui();
-                    position_shown(&ui, a.player.as_ref(), a.position_now() as i32);
-                });
-            });
+        if ticks && !self.tick.running() {
+            self.seek_step();
         } else if !ticks {
             self.tick.stop();
         }
@@ -4378,11 +4388,6 @@ fn position_shown(ui: &AppWindow, player: Option<&PlayerBar>, position_ms: i32) 
     ui.set_position_ms(position_ms);
     if ui.get_full_player() || player.is_none() { ui.set_display_position_ms(position_ms); }
     if let Some(player) = player.filter(|_| !ui.get_full_player()) { player.set_position_ms(position_ms); }
-}
-
-/// Seek bar step: a quarter pixel of the widest bar (~380 pt at 2x), clamped to 16..250 ms.
-fn pixel_ms(duration_ms: i64) -> u64 {
-    (duration_ms.max(1) as u64 / (760 * 4)).clamp(16, 250)
 }
 
 fn cards(it: impl Iterator<Item = Card>) -> ModelRc<Card> {

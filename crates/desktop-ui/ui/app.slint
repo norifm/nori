@@ -2386,6 +2386,8 @@ component OutputLine inherits Rectangle {
 // seek bar and both times under them; on the right the seal, the speaker (the devices; the jam in its place), lyrics,
 // the queue and the volume. A narrow pill drops the volume slider, then the panel buttons.
 component PlayerControls inherits Rectangle {
+    // The seek bar's width, which paces its steps.
+    out property <length> seek-width;
     in property <bool> has-song;
     in property <string> now-title;
     in property <string> now-artist;
@@ -2611,6 +2613,8 @@ component PlayerControls inherits Rectangle {
                 Bar {
                     horizontal-stretch: 1;
                     y: (parent.height - self.height) / 2;
+                    init => { root.seek-width = self.width; }
+                    changed width => { root.seek-width = self.width; }
                     value: root.duration-ms > 0 ? root.shown-ms / root.duration-ms : 0;
                     progress: true;
                     settling: 250ms;
@@ -5704,6 +5708,8 @@ export component AppWindow inherits Window {
     in property <bool> buffering;
     in property <int> position-ms;
     in property <int> display-position-ms: root.position-ms;
+    // The full player's seek bar width, which paces its steps.
+    out property <length> full-seek-width;
     in property <int> duration-ms;
     // A radio station or live stream plays: "Live" stands where the seek bar would.
     in property <bool> live;
@@ -8096,6 +8102,8 @@ export component AppWindow inherits Window {
                     property <int> dragged: -1;
                     Bar {
                         width: 100%;
+                        init => { root.full-seek-width = self.width; }
+                        changed width => { root.full-seek-width = self.width; }
                         thin: 5px;
                         thick: 8px;
                         playhead: true;
@@ -9289,6 +9297,7 @@ export component AppWindow inherits Window {
 // The player pill as a window of its own, laid over the blurred page by the compositor (compositor.rs).
 export component PlayerBar inherits Window {
     title: "nori player";
+    out property <length> seek-width: controls.seek-width;
     no-frame: true;
     preferred-width: 900px;
     preferred-height: 64px;
@@ -9344,7 +9353,7 @@ export component PlayerBar inherits Window {
         border-width: 1px;
         border-color: Theme.outline;
     }
-    PlayerControls {
+    controls := PlayerControls {
         width: parent.width;
         height: parent.height;
         room: root.room;
