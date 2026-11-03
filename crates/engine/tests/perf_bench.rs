@@ -2,7 +2,8 @@
 // CPU time and allocations, and the heap's peak (the test thread's own work left out). Not a check; compare revisions with
 // tools/perf-host.sh. `NORI_PERF=name,name` runs only those cases, `NORI_PERF_MINUTES` plays each that
 // long (for a profiler), `NORI_HEAP_STACKS=dir` writes where each case allocated to dir/<case>.folded
-// (tools/flame-engine.sh --heap). The queue repeats.
+// (tools/flame-engine.sh --heap), `NORI_WAKES=1` prints how long each sleep asked for and the runs of
+// short sleeps, when in the music (what keeps the engine awake). The queue repeats.
 //
 //   cargo test --release -p nori-engine --test engine perf_report -- --ignored --nocapture --test-threads=1
 
@@ -32,6 +33,7 @@ fn perf_measure(name: &str, rig: &Rig, minutes: u64, mut during: impl FnMut(&Rig
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2 * 2), "{name}: the music started");
     let (wakes, cpu, (allocs, bytes), heard) = (rig.time.clock.sleeps(), cpu_ms(), crate::perf_alloc::counts(), rig.heard.lock().len());
+    let naps = rig.time.clock.naps().len();
     crate::perf_alloc::restart_peak();
     let stacks = std::env::var_os("NORI_HEAP_STACKS").map(std::path::PathBuf::from);
     if stacks.is_some() {
@@ -55,7 +57,49 @@ fn perf_measure(name: &str, rig: &Rig, minutes: u64, mut during: impl FnMut(&Rig
         per((bytes2 - bytes) as f64 / 1024.0),
         crate::perf_alloc::peak() as f64 / 1e6,
     );
+    if std::env::var_os("NORI_WAKES").is_some() {
+        print!("{}", wake_report(name, &rig.time.clock.naps()[naps..]));
+    }
     rig.engine.stop();
+}
+
+/// Sleeps shorter than this, one after another, are a run that keeps the engine awake, ms.
+const SHORT_NAP_MS: u64 = 1_000;
+
+/// How long the engine's sleeps asked for, and its runs of short ones: when each began, how many, how
+/// long it lasted.
+pub(crate) fn wake_report(name: &str, naps: &[(i64, Option<u64>)]) -> String {
+    const BUCKETS: [(u64, &str); 5] = [(50, "<50ms"), (250, "<250ms"), (1_000, "<1s"), (5_000, "<5s"), (u64::MAX, ">=5s")];
+    let mut counts = [0usize; BUCKETS.len() + 1];
+    for &(_, ms) in naps {
+        counts[ms.map_or(BUCKETS.len(), |ms| BUCKETS.iter().position(|b| ms < b.0).expect("the last bucket takes all"))] += 1;
+    }
+    let mut out = format!("wakes: {name:<10}");
+    for (b, n) in BUCKETS.iter().zip(counts) {
+        out += &format!(" {}:{n}", b.1);
+    }
+    out += &format!(" until-told:{}\n", counts[BUCKETS.len()]);
+    let mut runs: Vec<(i64, usize, i64)> = Vec::new();
+    let mut start: Option<usize> = None;
+    for (k, &(_, ms)) in naps.iter().enumerate() {
+        let short = ms.is_some_and(|ms| ms < SHORT_NAP_MS);
+        match (short, start) {
+            (true, None) => start = Some(k),
+            (false, Some(s)) => {
+                runs.push((naps[s].0, k - s, naps[k].0 - naps[s].0));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        runs.push((naps[s].0, naps.len() - s, naps[naps.len() - 1].0 - naps[s].0));
+    }
+    runs.sort_by_key(|r| std::cmp::Reverse(r.1));
+    for (at, n, ms) in runs.iter().take(5).filter(|r| r.1 > 2) {
+        out += &format!("wakes: {name:<10}   {n:4} short sleeps from {:7.1} s for {:6.1} s\n", *at as f64 / 1000.0, *ms as f64 / 1000.0);
+    }
+    out
 }
 
 /// `pcm` (stereo at [`RATE`]) encoded by ffmpeg with `args` (output options); None without ffmpeg.
