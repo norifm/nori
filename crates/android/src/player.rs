@@ -1249,6 +1249,12 @@ impl Library for AndroidLibrary {
             return Ok(Located { source: Source::File(files), hint: None, duration_ms, estimated: false, from_second: None });
         }
         let hint = if download { None } else { key_format(&target.key).or_else(|| song.map(|s| s.suffix)).filter(|s| !s.is_empty()) };
+        // So is a song already whole in the stream cache (fetched ahead): streamed again, it was read back
+        // through JNI into memory.
+        if let Some(files) = (!download).then(|| cache_files(&self.bridge, &target.key, |j| j.streamed)).flatten() {
+            log(&format!("{id} opens from the {} files it was fetched into", files.len()));
+            return Ok(Located { source: Source::File(files), hint, duration_ms, estimated: false, from_second: None });
+        }
         log(&format!("{id} opens from {} as {}", target.key, hint.as_deref().unwrap_or("whatever it is")));
         let bytes = resolving(&client, Arc::new(JavaBytes { bridge: self.bridge.clone(), key: target.key, ahead: self.ahead.clone() }));
         Ok(Located { source: Source::Url { url: target.url, bytes }, hint, duration_ms, estimated: false, from_second: None })
