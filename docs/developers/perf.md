@@ -54,6 +54,8 @@ the method and the tools.
 | A plugin's decider: one call, a shuffle of 1000 songs | `cargo test --release -p nori-plugins --test deciders decider_calls_cost -- --ignored --nocapture` |
 | A plugin's audio stream | `cargo test --release -p nori-plugins --lib sink::tests::a_minute_sent -- --ignored --nocapture` |
 | Android, one device | `tools/perf-suite.sh <serial> <server-url>`; frames: `tools/open-bench.sh` |
+| Android, what the app costs as it is now: CPU, wakeups, frames, GCs, the threads that wake most | `tools/cost.sh LABEL [seconds]` |
+| Android, who wakes each of the app's threads (screen off: `adb shell input keyevent 223`) | `tools/wakers.py [seconds]` |
 
 `tools/flame.py` records with samply, writes `flame.svg`, the folded stacks and the profile, and prints
 the top functions by self and by total time; `--folded` reads stacks already made (`--unit bytes` for
