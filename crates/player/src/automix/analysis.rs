@@ -117,6 +117,8 @@ pub struct Analyzer {
     /// Bin range per flux band; bins are ascending so each band is contiguous.
     bands: Vec<(usize, usize)>,
     low_bins: usize,
+    /// The bins in the voice band (`VOCAL_LO_HZ..=VOCAL_HI_HZ`).
+    vocal_bins: std::ops::Range<usize>,
     prev: [f32; BANDS],
     prev_low: [f32; 8],
     level: [f32; BANDS],
@@ -170,6 +172,8 @@ impl Analyzer {
             bands[b].1 = i + 1;
         }
         let low_bins = ((LOW_HZ / bin_hz) as usize + 1).min(8);
+        let in_voice = |i: &usize| (VOCAL_LO_HZ..=VOCAL_HI_HZ).contains(&(*i as f64 * bin_hz));
+        let vocal_bins = (1..n / 2).find(in_voice).map_or(0..0, |lo| lo..(lo..n / 2).take_while(in_voice).last().map_or(lo, |hi| hi + 1));
 
         let cbin_hz = sr / cn as f64;
         let mut chroma_map = Vec::new();
@@ -222,6 +226,7 @@ impl Analyzer {
             scratch: vec![Complex32::default(); scratch_len],
             bands,
             low_bins,
+            vocal_bins,
             prev: [0.0; BANDS],
             prev_low: [0.0; 8],
             level: [0.0; BANDS],
@@ -386,21 +391,20 @@ impl Analyzer {
         let mut fsum = 0f64;
         let mut flux_low = 0f32;
         let bin_hz = self.sr / self.n as f64;
-        for (i, c) in self.buf[1..self.n / 2].iter().enumerate() {
+        for (bin, c) in self.buf[..self.n / 2].iter().enumerate().skip(1) {
             let p = c.norm_sqr();
             total += p;
-            let bin = i + 1;
-            let f = bin as f64 * bin_hz;
-            fsum += f * p as f64;
-            if (VOCAL_LO_HZ..=VOCAL_HI_HZ).contains(&f) {
-                vocal += p;
-            }
-            if bin < self.low_bins {
-                low += p;
-                let l = (1.0 + GAMMA * p.sqrt() * self.amp_norm).ln();
-                flux_low += (l - self.prev_low[bin]).max(0.0);
-                self.prev_low[bin] = l;
-            }
+            fsum += bin as f64 * bin_hz * p as f64;
+        }
+        for c in &self.buf[self.vocal_bins.clone()] {
+            vocal += c.norm_sqr();
+        }
+        for bin in 1..self.low_bins.min(self.n / 2) {
+            let p = self.buf[bin].norm_sqr();
+            low += p;
+            let l = (1.0 + GAMMA * p.sqrt() * self.amp_norm).ln();
+            flux_low += (l - self.prev_low[bin]).max(0.0);
+            self.prev_low[bin] = l;
         }
         let mut flux = 0f32;
         for (b, &(lo, hi)) in self.bands.iter().enumerate() {
