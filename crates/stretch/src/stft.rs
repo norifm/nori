@@ -50,6 +50,19 @@ impl Output {
         self.buffer[channel * block + i] / self.window_products[i]
     }
 
+    /// Writes the frame at the read position into `frame` (one sample per channel), clears it and moves on.
+    pub fn take_frame(&mut self, frame: &mut [f32]) {
+        let (block, at) = (self.block(), self.pos);
+        let product = self.window_products[at];
+        for (c, out) in frame.iter_mut().enumerate() {
+            let sample = &mut self.buffer[c * block + at];
+            *out = *sample / product;
+            *sample = 0.0;
+        }
+        self.window_products[at] = ALMOST_ZERO;
+        self.pos = if at + 1 == block { 0 } else { at + 1 };
+    }
+
     /// Moves the read position on, clearing what it passes.
     pub fn advance(&mut self, samples: usize) {
         let block = self.block();

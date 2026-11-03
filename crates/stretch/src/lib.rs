@@ -47,12 +47,6 @@ impl Prediction {
     }
 }
 
-#[derive(Clone, Copy)]
-struct MapPoint {
-    input_bin: f32,
-    freq_grad: f32,
-}
-
 /// Where the current block's steps are; a block's work is spread over the interval that reads its output.
 #[derive(Clone, Copy)]
 struct BlockProcess {
@@ -125,7 +119,6 @@ pub struct Stretch {
     stashed_output: Output,
     channel_bands: Vec<Band>,
     predictions: Vec<Prediction>,
-    output_map: Vec<MapPoint>,
     block: BlockProcess,
     process_spectrum_steps: usize,
     silence_counter: usize,
@@ -149,7 +142,6 @@ impl Stretch {
             stft,
             channel_bands: vec![Band::default(); bands * channels],
             predictions: vec![Prediction::default(); bands * channels],
-            output_map: (0..bands).map(|b| MapPoint { input_bin: b as f32, freq_grad: 1.0 }).collect(),
             block: BlockProcess::default(),
             process_spectrum_steps: 0,
             silence_counter: 0,
@@ -232,10 +224,7 @@ impl Stretch {
                 self.run_step(step);
             }
             self.block.samples_since_last += 1;
-            for c in 0..ch {
-                output[o * ch + c] = self.stashed_output.read(c, 0);
-            }
-            self.stashed_output.advance(1);
+            self.stashed_output.take_frame(&mut output[o * ch..(o + 1) * ch]);
         }
         self.copy_input(input, &mut copied, in_frames);
         self.prev_input_offset -= in_frames as i32;
@@ -427,24 +416,17 @@ impl Stretch {
     }
 
     /// The preliminary phase-vocoder prediction for one channel: each output bin moved on by its input's phase
-    /// change since the previous block.
+    /// change since the previous block. Output bin `b` reads input bin `b` (no transposition or formants).
     fn predict_from_previous(&mut self, c: usize) {
         let bands = self.bands;
         let bins = &mut self.channel_bands[c * bands..(c + 1) * bands];
         let predictions = &mut self.predictions[c * bands..(c + 1) * bands];
-        for b in 0..bands {
-            let map = self.output_map[b];
-            let low = map.input_bin.floor() as i32;
-            let frac = map.input_bin - low as f32;
-            let prediction = &mut predictions[b];
+        for (bin, prediction) in bins.iter_mut().zip(predictions) {
             let prev_energy = prediction.energy;
-            // Scaled by the local stretch of the frequency map.
-            prediction.energy = fractional(bins, low, frac, |b| b.input_energy) * map.freq_grad.max(0.0);
-            prediction.input = fractional(bins, low, frac, |b| b.input);
-            let prev_input = fractional(bins, low, frac, |b| b.prev_input);
-            let freq_twist = mul_conj(prediction.input, prev_input);
-            let phase = bins[b].output * freq_twist;
-            bins[b].output = phase / (prev_energy.max(prediction.energy) + NOISE_FLOOR);
+            prediction.energy = bin.input_energy;
+            prediction.input = bin.input;
+            let phase = bin.output * mul_conj(bin.input, bin.prev_input);
+            bin.output = phase / (prev_energy.max(prediction.energy) + NOISE_FLOOR);
         }
     }
 
@@ -466,7 +448,7 @@ impl Stretch {
         let predictions = &self.predictions[offset..offset + bands];
         let bins = &self.channel_bands[offset..offset + bands];
         let prediction = predictions[b];
-        let map = self.output_map[b];
+        let input_bin = b as f32;
         let mut phase = Complex32::default();
         let ib = b as i32;
 
@@ -476,26 +458,25 @@ impl Stretch {
                 Some((lo, hi)) => self.random.uniform(lo, hi),
                 None => time_factor,
             };
-            let down_input = fractional_at(bins, map.input_bin - tf, |b| b.input);
+            let down_input = fractional_at(bins, input_bin - tf, |b| b.input);
             phase += bins[b - 1].output * mul_conj(prediction.input, down_input);
             if ib >= long_step {
-                let long_down_input = fractional_at(bins, map.input_bin - long_step as f32 * tf, |b| b.input);
+                let long_down_input = fractional_at(bins, input_bin - long_step as f32 * tf, |b| b.input);
                 phase += bins[b - long_step as usize].output * mul_conj(prediction.input, long_down_input);
             }
         }
         // Downwards vertical steps.
         if b < bands - 1 {
             let up_prediction = predictions[b + 1];
-            let up_map = self.output_map[b + 1];
             let tf = match random {
                 Some((lo, hi)) => self.random.uniform(lo, hi),
                 None => time_factor,
             };
-            let down_input = fractional_at(bins, up_map.input_bin - tf, |b| b.input);
+            let down_input = fractional_at(bins, (b + 1) as f32 - tf, |b| b.input);
             phase += mul_conj(bins[b + 1].output, mul_conj(up_prediction.input, down_input));
             if ib < bands as i32 - long_step {
                 let up = b + long_step as usize;
-                let long_down_input = fractional_at(bins, self.output_map[up].input_bin - long_step as f32 * tf, |b| b.input);
+                let long_down_input = fractional_at(bins, up as f32 - long_step as f32 * tf, |b| b.input);
                 phase += mul_conj(bins[up].output, mul_conj(predictions[up].input, long_down_input));
             }
         }
