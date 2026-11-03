@@ -86,7 +86,8 @@ at O3. Check a change that depends on inlining or optimization level with `--pro
   (`NORI_WAKES=1`) is a timer firing on a guess that does not come true.
 - Plugins: a host call per buffer, not per sample; a plugin's events only while it listens.
 - Dependencies: two versions of one crate (`cargo tree -d`), a C or C++ library a small Rust port can
-  replace, a crate used for one function.
+  replace, a crate used for one function. A dependency's hot loop is changed in a copy under `vendor/`
+  (its NORI.md says what changed), with a digest of its output compared before and after.
 
 ## Reading
 
