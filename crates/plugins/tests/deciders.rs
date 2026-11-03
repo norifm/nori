@@ -71,3 +71,30 @@ fn a_decider_past_its_budget_keeps_noris_answer() {
     assert_eq!(plugins.leveling(&song("s", "fixture slow"), -2.0, &|_| true), None);
     assert!(asked.elapsed() < Duration::from_secs(2), "waited {:?}", asked.elapsed());
 }
+
+/// What a decider's call costs, from nori's side: a short one (the song shown) and a shuffle of a
+/// thousand songs, which lowers every song into the plugin. `cargo test --release -p nori-plugins --test
+/// deciders decider_calls_cost -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn decider_calls_cost() {
+    let dir = nori_testdir::TempDir::new("plugins-deciders-cost");
+    let (plugins, _) = common::plugged(&dir, "");
+    let nori = Shown { title: "t".into(), artist: "A".into(), album: "B".into() };
+    let shown = song("n", "fixture shown");
+    let calls = 2_000;
+    let at = Instant::now();
+    for _ in 0..calls {
+        assert!(plugins.now_playing(&shown, &nori, &|_| true).is_some());
+    }
+    println!("now playing: {:.1} µs a call", at.elapsed().as_secs_f64() * 1e6 / calls as f64);
+    let mut queue: Vec<Song> = (0..1_000).map(|i| Song { album: format!("Album {}", i / 10), duration: 200, ..song(&format!("song-{i}"), &format!("Title {i}")) }).collect();
+    queue[0].title = "fixture shuffle".into();
+    let order: Vec<u32> = (0..1_000).collect();
+    let rounds = 50;
+    let at = Instant::now();
+    for _ in 0..rounds {
+        assert!(plugins.shuffle(&queue, &order, &|_| true).is_some());
+    }
+    println!("shuffle of 1000 songs: {:.2} ms a call", at.elapsed().as_secs_f64() * 1e3 / rounds as f64);
+}
