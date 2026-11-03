@@ -34,7 +34,7 @@ impl ByteSource for Cached {
     fn open(&self, _: &str, from: u64) -> Result<Body, OpenError> {
         self.opens.fetch_add(1, Ordering::Relaxed);
         let rest = self.song[from as usize..].to_vec();
-        Ok(Body { start: from, len: Some(LEN as u64 + self.over), reader: Box::new(std::io::Cursor::new(rest)) })
+        Ok(Body { start: from, len: Some(self.song.len() as u64 + self.over), reader: Box::new(std::io::Cursor::new(rest)) })
     }
 
     fn files(&self, _: &str) -> Option<Vec<PathBuf>> {
@@ -127,4 +127,30 @@ fn a_song_over_its_cap_is_read_from_its_cache_entry_once_it_has_all_come() {
     again.read_exact(&mut start).unwrap();
     assert_eq!(start, song[..100], "the start, read again");
     assert_eq!(source.opens.load(Ordering::Relaxed), opens, "from the entry, not fetched again");
+}
+
+#[test]
+fn a_song_over_its_cap_moves_to_its_cache_files_once_it_has_all_come() {
+    let dir = nori_testdir::TempDir::new("on-disk-files-cap");
+    // 6 MB over a minute, a 2 MB cap: the memory copy is never whole (it keeps 1 MB behind the reader).
+    let song: Vec<u8> = (0..6_000_000).map(|i| (i * 7 % 251) as u8).collect();
+    let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+    std::fs::write(&a, &song[..4_000_000]).unwrap();
+    std::fs::write(&b, &song[4_000_000..]).unwrap();
+    let load = [5_000, 20_000, 0, 0, 2_000_000];
+    let source = Arc::new(Cached { song: song.clone(), over: 0, files: vec![a, b], opens: AtomicU32::new(0), asked: AtomicU32::new(0) });
+    let fetching = Arc::new(Fetching::timed(Virtual::default()));
+    let l = Loader::start_within(&fetching, source.clone(), "song".into(), load, Some(60_000), None, None, None, Waits::default());
+    let mut all = Vec::new();
+    l.reader().read_to_end(&mut all).unwrap();
+    assert!(all == song, "the song's bytes ({} of {})", all.len(), song.len());
+    assert!(l.complete());
+    let held = fetching.held();
+    assert_eq!((held.on_disk, l.held(), held.bytes), (1, 0, 0), "read from the files, nothing in memory: {held:?}");
+    let opens = source.opens.load(Ordering::Relaxed);
+    let mut again = l.reader();
+    let mut start = [0u8; 100];
+    again.read_exact(&mut start).unwrap();
+    assert_eq!(start, song[..100], "the start, read again");
+    assert_eq!(source.opens.load(Ordering::Relaxed), opens, "from the files, not fetched again");
 }
