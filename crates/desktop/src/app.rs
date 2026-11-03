@@ -5437,19 +5437,20 @@ mod tests {
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_devices_on(true);
         ui.show().unwrap();
-        // The tabs head the side sheet; their glyphs' tops sit above the names.
-        let glyph_tops = |panel: i32| {
+        // The tabs head the side sheet, wide gaps apart; each starts with its glyph, whatever weight its name is.
+        let glyph_places = |panel: i32| {
             ui.set_inspector(panel);
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
             let shot = ui.window().take_snapshot().unwrap();
-            let top = glyphs(&shot, 960..1250, 80..112).iter().map(|g| g.2).min().unwrap();
-            glyphs(&shot, 960..1250, top..top + 3).iter().map(|g| (g.0 + g.1) as f32 / 2.0).collect::<Vec<_>>()
+            let inks = glyphs(&shot, 960..1250, 80..112);
+            let firsts = inks.iter().enumerate().filter(|(i, g)| *i == 0 || g.0 > inks[i - 1].1 + 16);
+            firsts.map(|(_, g)| (g.0 + g.1) as f32 / 2.0).collect::<Vec<_>>()
         };
-        let devices = glyph_tops(3);
-        assert!(devices.len() >= 3, "{devices:?}");
+        let devices = glyph_places(3);
+        assert_eq!(devices.len(), 3, "{devices:?}");
         for panel in [2, 1] {
-            let lit = glyph_tops(panel);
+            let lit = glyph_places(panel);
             assert_eq!(lit.len(), devices.len(), "panel {panel}");
             assert!(lit.iter().zip(&devices).all(|(a, b)| (a - b).abs() <= 1.0), "panel {panel}: {lit:?} against {devices:?}");
         }
