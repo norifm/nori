@@ -446,6 +446,8 @@ pub struct App {
     tick: Timer,
     /// The pace the song plays at, for the seek bar's steps.
     pace: f32,
+    /// When the app started: the playing bars' clock counts from it.
+    started: std::time::Instant,
     /// The window is off screen (minimized, covered): the seek bar, lyrics and playing bars stand still.
     hidden: bool,
     /// Motion is E-ink: the playing bars stand still.
@@ -695,6 +697,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             tickets: VecDeque::new(),
             tick: Timer::default(),
             pace: 1.0,
+            started: std::time::Instant::now(),
             hidden: false,
             still: false,
             lyrics_viewed: false,
@@ -2575,6 +2578,7 @@ impl App {
         let ui = self.ui();
         let at = self.position_now();
         position_shown(&ui, self.player.as_ref(), at as i32);
+        ui.global::<crate::Playing>().set_clock(self.started.elapsed().as_secs_f32());
         let width = match self.player.as_ref().filter(|_| !ui.get_full_player()) {
             Some(p) => p.get_seek_width() * p.window().scale_factor(),
             None => ui.get_full_seek_width() * ui.window().scale_factor(),

@@ -2554,7 +2554,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     drawing.glyphs = rememberTimeGlyphs(MaterialTheme.typography.labelSmall)
     drawing.density = androidx.compose.ui.platform.LocalDensity.current
     drawing.thickness = with(drawing.density) { SEEK_THICKNESS.dp.toPx() }
-    val slot = rememberIsland(drawing, wanted = free && live && !eink && state.sleepAt <= 0L, overPage = false)
+    val slot = rememberIsland(drawing, wanted = free && live && !eink && state.sleepAt <= 0L, overPage = false, pace = IslandPace.PACES)
     // Handed back, what the island stepped the pace to is shown here at once.
     val wasApart = remember { booleanArrayOf(false) }
     androidx.compose.runtime.SideEffect {

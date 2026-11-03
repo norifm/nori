@@ -324,25 +324,20 @@ export global Motion {
     in property <bool> reduced;
 }
 
-// Whether the music is moving now (playing, not waiting for bytes): the playing bars move only then.
+// Whether the music is moving now (playing, not waiting for bytes): the playing bars move only then. Their
+// clock, in seconds, moves on with each seek bar step, so they move in the frames the seek bar draws.
 export global Playing {
     in property <bool> advancing;
+    in property <float> clock;
 }
 
 // The song playing's glyph, as Android's: four bars at speeds that never fall into step, moving with the
-// music and standing at rest while it waits or is paused. About thirty steps a second, and only while a
-// row with it is on screen.
+// music and standing at rest while it waits or is paused.
 component PlayingBars inherits Rectangle {
     in property <color> colour;
-    property <float> phase;
     property <length> bar: self.width / 7;
-    Timer {
-        interval: 34ms;
-        running: Playing.advancing;
-        triggered => { root.phase += 0.034; }
-    }
     for i in 4: Rectangle {
-        property <float> level: Playing.advancing ? 0.5 + 0.5 * sin((root.phase * (5.1 + i * 1.3) + i * 1.7) * 1rad) : [0.35, 0.8, 0.5, 0.65][i];
+        property <float> level: Playing.advancing ? 0.5 + 0.5 * sin((Playing.clock * (5.1 + i * 1.3) + i * 1.7) * 1rad) : [0.35, 0.8, 0.5, 0.65][i];
         x: i * root.bar * 2;
         width: root.bar;
         height: root.height * (0.28 + 0.72 * self.level);

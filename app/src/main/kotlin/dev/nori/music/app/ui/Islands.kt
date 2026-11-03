@@ -87,11 +87,48 @@ class Islands(context: Context, private val outer: Islands? = null) : ViewGroup(
         for (i in 0 until childCount) (getChildAt(i) as? IslandView)?.stop()
     }
 
-    internal fun take(): Island = Island(context).also { addView(it, LayoutParams(0, 0)) }
+    /** The window's islands: what every [IslandContent]'s islands share. */
+    private val root: Islands get() = outer ?: this
+
+    /** The island stepping often enough for others to step in its frames ([IslandPace.PACES]), while it does. */
+    private var pacer: Island? = null
+    private val followers = mutableListOf<Island>()
+
+    internal fun follow(island: Island, on: Boolean) {
+        root.followers.let { if (on) it.add(island) else it.remove(island) }
+    }
+
+    /** Whether a pacer steps, so a follower draws in its frames rather than asking for its own. */
+    internal fun paced(): Boolean = root.pacer != null
+
+    /** [island] steps every `wait` ms from now, or stops (-1): it paces the followers while that is often enough. */
+    internal fun paces(island: Island, wait: Long) {
+        val r = root
+        val now = if (wait in 0..FOLLOW_MAX_MS) island else null
+        if (now == null && r.pacer !== island) return
+        val was = r.pacer
+        r.pacer = now
+        // A pacer gone, they step on their own again.
+        if (was != null && now == null) r.followers.forEach { it.invalidate() }
+    }
+
+    /** The pacer stepped: the followers draw in the same frame. */
+    internal fun stepped() = root.followers.forEach { it.invalidate() }
+
+    internal fun take(): Island = Island(context, this).also { addView(it, LayoutParams(0, 0)) }
     /** Under every drawn island: what is drawn over the content goes over it. */
     internal fun take(host: IslandHost): IslandHost = host.also { addView(it, 0, LayoutParams(0, 0)) }
     internal fun give(island: View) = removeView(island)
 }
+
+/** A pacer stepping less often than this leaves its followers to step on their own, ms. */
+private const val FOLLOW_MAX_MS = 100L
+
+/**
+ * How an island's steps go with the others': the seek bar paces, and the playing bars, on screen with it,
+ * step in its frames rather than in frames of their own.
+ */
+enum class IslandPace { OWN, PACES, FOLLOWS }
 
 /** The islands over the window, or null where there are none (previews). */
 val LocalIslands = staticCompositionLocalOf<Islands?> { null }
@@ -135,10 +172,13 @@ private fun place(view: View, spot: IslandSpot, layer: IntArray, cut: Rect) {
  * to it ([IslandSlot.handOff]), told in that same drawing pass: the two never both draw the element, and
  * never neither, not even for the frame a hand-over happens in.
  */
-class Island internal constructor(context: Context) : View(context), IslandView {
+class Island internal constructor(context: Context, private val islands: Islands) : View(context), IslandView {
     override var slot: IslandSlot? = null
     private var margin = 0
-    private val step = Runnable { invalidate() }
+    private val step = Runnable {
+        invalidate()
+        if (slot?.pace == IslandPace.PACES) islands.stepped()
+    }
     private val cut = Rect()
     private val layer = IntArray(2)
 
@@ -155,23 +195,43 @@ class Island internal constructor(context: Context) : View(context), IslandView 
     override fun hide() {
         visibility = GONE
         removeCallbacks(step)
+        islands.paces(this, -1)
     }
 
     override fun stop() {
         slot?.told = false
         removeCallbacks(step)
+        islands.paces(this, -1)
         invalidate()
     }
 
     override fun handed() = invalidate()
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (slot?.pace == IslandPace.FOLLOWS) islands.follow(this, true)
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        removeCallbacks(step)
+        islands.follow(this, false)
+        islands.paces(this, -1)
+    }
+
     override fun onDraw(canvas: Canvas) {
         removeCallbacks(step)
         val slot = slot ?: return
-        if (!slot.told) return
+        if (!slot.told) return islands.paces(this, -1)
         val m = margin.toFloat()
         canvas.translate(m, m)
         val wait = slot.drawing?.draw(canvas, width - 2 * margin, height - 2 * margin) ?: -1L
+        when (slot.pace) {
+            IslandPace.PACES -> islands.paces(this, wait)
+            // With a pacer it is drawn in the pacer's frames.
+            IslandPace.FOLLOWS -> if (islands.paced()) return
+            IslandPace.OWN -> {}
+        }
         // Off the frame: an invalidate inside a frame's callbacks asks for a vsync that then draws nothing.
         if (wait >= 0) postDelayed(step, wait)
     }
@@ -286,6 +346,7 @@ class IslandSpot {
 /** An element's island: whether it is drawn there now ([apart]), and how to ask it to draw again ([poke]). */
 class IslandSlot internal constructor(private val islands: Islands?, private val make: (Islands) -> IslandView) {
     internal var drawing: IslandDrawing? = null
+    internal var pace = IslandPace.OWN
     /** The caller's own condition, as state like [clear]: a draw that reads [apart] is drawn again when either changes. */
     internal var wanted by mutableStateOf(false)
     internal var overPage = false
@@ -354,10 +415,11 @@ class IslandSlot internal constructor(private val islands: Islands?, private val
  * element, and draw nothing there while [IslandSlot.handOff], asked in the element's drawing.
  */
 @Composable
-fun rememberIsland(drawing: IslandDrawing, wanted: Boolean, overPage: Boolean, margin: Int = 0, within: Rect? = null): IslandSlot {
+fun rememberIsland(drawing: IslandDrawing, wanted: Boolean, overPage: Boolean, margin: Int = 0, within: Rect? = null, pace: IslandPace = IslandPace.OWN): IslandSlot {
     val islands = LocalIslands.current
     val slot = rememberSlot(islands, wanted, overPage, margin, within) { it.take() }
     slot.drawing = drawing
+    slot.pace = pace
     return slot
 }
 
