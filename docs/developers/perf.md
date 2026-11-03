@@ -56,6 +56,7 @@ the method and the tools.
 | Android, one device | `tools/perf-suite.sh <serial> <server-url>`; frames: `tools/open-bench.sh` |
 | Android, what the app costs as it is now: CPU, wakeups, frames, GCs, the threads that wake most | `tools/cost.sh LABEL [seconds]` |
 | Android, who wakes each of the app's threads (screen off: `adb shell input keyevent 223`) | `tools/wakers.py [seconds]` |
+| Android, the network while it plays: bytes received against each song opened (a song fetched twice shows) | `tools/net-check.py [seconds] [play]` |
 
 `tools/flame.py` records with samply, writes `flame.svg`, the folded stacks and the profile, and prints
 the top functions by self and by total time; `--folded` reads stacks already made (`--unit bytes` for
