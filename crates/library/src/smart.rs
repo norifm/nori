@@ -611,8 +611,13 @@ pub fn run(c: &Connection, def: &Def, downloaded: &[String], offset: usize, limi
             format!("{}, i.rowid", mixes::shuffled_order("i.rowid", cp.args.len() - 1, cp.args.len()))
         }
         Sort::By(f, descending) => {
-            let collate = if f.kind() == Kind::Text { " COLLATE natural_order" } else { "" };
-            format!("{}{collate}{}, i.rowid", f.def().2, if descending { " DESC" } else { "" })
+            // The title, album and artist keep their natural keys (nori_db::natural_key).
+            let key = match f {
+                Title | Album | Artist => format!("{}_key", f.def().2),
+                _ if f.kind() == Kind::Text => format!("{} COLLATE natural_order", f.def().2),
+                _ => f.def().2.to_string(),
+            };
+            format!("{key}{}, i.rowid", if descending { " DESC" } else { "" })
         }
     };
     // A LIMIT lets SQLite keep a top-N heap instead of sorting every match.

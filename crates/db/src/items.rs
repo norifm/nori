@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS items(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL
   user_rating INTEGER, starred INTEGER, is_external INTEGER, replay_gain BLOB, artists TEXT, created TEXT, play_count INTEGER, played TEXT,
   path TEXT, explicit_status INTEGER, channel_count INTEGER, music_brainz_id TEXT, bpm INTEGER, comment TEXT, name TEXT, song_count INTEGER,
   release_types TEXT, is_compilation INTEGER, artist_image_url TEXT, album_count INTEGER,
+  title_key BLOB, album_key BLOB, artist_key BLOB, name_key BLOB,
   UNIQUE(server, kind, id));
 CREATE INDEX IF NOT EXISTS items_genre ON items(server, genre COLLATE NOCASE) WHERE kind=2;
 CREATE INDEX IF NOT EXISTS items_artist ON items(server, artist_id) WHERE kind=2;
@@ -26,9 +27,9 @@ CREATE INDEX IF NOT EXISTS items_created ON items(server, created) WHERE kind=2;
 CREATE INDEX IF NOT EXISTS items_plays ON items(server, play_count) WHERE kind=2;
 CREATE INDEX IF NOT EXISTS items_starred ON items(server, starred) WHERE kind=2 AND starred=1;
 CREATE INDEX IF NOT EXISTS items_rated ON items(server, user_rating) WHERE kind=2 AND user_rating>=4;
-CREATE INDEX IF NOT EXISTS items_title_natural ON items(server, title COLLATE natural_order) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_artist_natural ON items(server, artist COLLATE natural_order) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_album_natural ON items(server, album COLLATE natural_order) WHERE kind=2;
+CREATE INDEX IF NOT EXISTS items_title_key ON items(server, title_key) WHERE kind=2;
+CREATE INDEX IF NOT EXISTS items_artist_key ON items(server, artist_key) WHERE kind=2;
+CREATE INDEX IF NOT EXISTS items_album_key ON items(server, album_key) WHERE kind=2;
 ";
 
 /// Downloaded songs: their columns as in `items`, and when each was queued and whether it finished.
@@ -206,6 +207,9 @@ pub trait Item {
     const KIND: ItemKind;
     /// The columns [`Item::values`] fills, in order.
     const COLUMNS: &'static [&'static str];
+    /// The columns, of [`Item::COLUMNS`], sorted in natural order: each has its [`crate::natural_key`] in
+    /// `<column>_key`.
+    const SORTED: &'static [&'static str];
     fn id(&self) -> &str;
     fn text(&self) -> String;
     fn values(&self) -> Vec<Value>;
@@ -218,6 +222,7 @@ impl Item for Song {
         "sampling_rate", "bit_depth", "user_rating", "starred", "is_external", "replay_gain", "artists", "created", "play_count", "played", "path", "explicit_status",
         "channel_count", "music_brainz_id", "bpm", "comment",
     ];
+    const SORTED: &'static [&'static str] = &["title", "album", "artist"];
     fn id(&self) -> &str {
         &self.id
     }
@@ -267,6 +272,7 @@ impl Item for Album {
         "name", "artist", "artist_id", "cover_art", "song_count", "duration", "year", "genre", "starred", "is_external", "release_types", "is_compilation", "user_rating",
         "play_count", "created", "explicit_status", "music_brainz_id",
     ];
+    const SORTED: &'static [&'static str] = &["name", "artist"];
     fn id(&self) -> &str {
         &self.id
     }
@@ -299,6 +305,7 @@ impl Item for Album {
 impl Item for Artist {
     const KIND: ItemKind = ItemKind::Artist;
     const COLUMNS: &'static [&'static str] = &["name", "cover_art", "artist_image_url", "album_count", "starred", "is_external"];
+    const SORTED: &'static [&'static str] = &["name"];
     fn id(&self) -> &str {
         &self.id
     }
@@ -326,18 +333,30 @@ pub(crate) struct Statements {
 
 impl Statements {
     pub(crate) fn of<T: Item>() -> Statements {
-        let cols = T::COLUMNS.join(", ");
-        let marks = (0..T::COLUMNS.len()).map(|k| format!("?{}", k + 3)).collect::<Vec<_>>().join(", ");
-        let sets = T::COLUMNS.iter().enumerate().map(|(k, c)| format!("{c}=?{}", k + 2)).collect::<Vec<_>>().join(", ");
+        let written: Vec<String> = T::COLUMNS.iter().map(|c| c.to_string()).chain(T::SORTED.iter().map(|c| format!("{c}_key"))).collect();
+        let marks = (0..written.len()).map(|k| format!("?{}", k + 3)).collect::<Vec<_>>().join(", ");
+        let sets = written.iter().enumerate().map(|(k, c)| format!("{c}=?{}", k + 2)).collect::<Vec<_>>().join(", ");
         Statements {
-            find: format!("SELECT rowid, {cols} FROM items WHERE server=sid() AND kind=?1 AND id=?2"),
+            find: format!("SELECT rowid, {} FROM items WHERE server=sid() AND kind=?1 AND id=?2", T::COLUMNS.join(", ")),
             update: format!("UPDATE items SET {sets} WHERE rowid=?1"),
-            insert: format!("INSERT INTO items(server, kind, id, {cols}) VALUES(sid(), ?1, ?2, {marks})"),
+            insert: format!("INSERT INTO items(server, kind, id, {}) VALUES(sid(), ?1, ?2, {marks})", written.join(", ")),
         }
     }
 }
 
-/// Stores `item`; its rowid, none for an item the index does not keep.
+/// `values` (of [`Item::COLUMNS`]) followed by the natural keys of [`Item::SORTED`].
+fn with_keys<T: Item>(mut values: Vec<Value>) -> Vec<Value> {
+    for col in T::SORTED {
+        let at = T::COLUMNS.iter().position(|c| c == col).expect("a sorted column is a column");
+        let key = match &values[at] {
+            Value::Text(t) => Value::Blob(crate::natural_key(t)),
+            _ => Value::Null,
+        };
+        values.push(key);
+    }
+    values
+}
+
 /// Whether the column read holds `value`.
 fn holds(read: rusqlite::types::ValueRef, value: &Value) -> bool {
     use rusqlite::types::ValueRef as R;
@@ -351,6 +370,7 @@ fn holds(read: rusqlite::types::ValueRef, value: &Value) -> bool {
     }
 }
 
+/// Stores `item`; its rowid, none for an item the index does not keep.
 pub(crate) fn upsert<T: Item>(c: &Connection, st: &Statements, item: &T) -> rusqlite::Result<Option<i64>> {
     let id = item.id();
     // Provider items are not library rows.
@@ -368,14 +388,14 @@ pub(crate) fn upsert<T: Item>(c: &Connection, st: &Statements, item: &T) -> rusq
         Some((rowid, true)) => Ok(Some(rowid)),
         Some((rowid, false)) => {
             let mut params = vec![Value::Integer(rowid)];
-            params.extend(values);
+            params.extend(with_keys::<T>(values));
             c.prepare_cached(&st.update)?.execute(rusqlite::params_from_iter(params))?;
             fts(rowid, "INSERT OR REPLACE INTO fts(rowid, text) VALUES(?1, ?2)")?;
             Ok(Some(rowid))
         }
         None => {
             let mut params = vec![Value::Integer(T::KIND as i64), Value::Text(id.to_string())];
-            params.extend(values);
+            params.extend(with_keys::<T>(values));
             c.prepare_cached(&st.insert)?.execute(rusqlite::params_from_iter(params))?;
             let rowid = c.last_insert_rowid();
             fts(rowid, "INSERT INTO fts(rowid, text) VALUES(?1, ?2)")?;

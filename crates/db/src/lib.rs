@@ -134,28 +134,65 @@ fn drop_old_sort_indexes(c: &Connection) -> rusqlite::Result<()> {
 }
 
 /// Text in the order people read it, SQL's `natural_order` collation: case aside, and a run of digits by its
-/// number, so "#2" comes before "#10".
+/// number, so "#2" comes before "#10". The order of [`natural_key`]s.
 pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
-    use std::cmp::Ordering;
-    let digits = |s: &str| s.len() - s.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-    let (mut a, mut b) = (a, b);
-    loop {
-        let (Some(p), Some(q)) = (a.chars().next(), b.chars().next()) else { return b.is_empty().cmp(&a.is_empty()) };
-        let (order, m, n) = if p.is_ascii_digit() && q.is_ascii_digit() {
-            let (m, n) = (digits(a), digits(b));
-            let (x, y) = (a[..m].trim_start_matches('0'), b[..n].trim_start_matches('0'));
-            (x.len().cmp(&y.len()).then_with(|| x.cmp(y)), m, n)
-        } else if p.is_ascii() && q.is_ascii() {
-            // What `to_lowercase` gives an ASCII letter, without its table.
-            (p.to_ascii_lowercase().cmp(&q.to_ascii_lowercase()), 1, 1)
-        } else {
-            (p.to_lowercase().cmp(q.to_lowercase()), p.len_utf8(), q.len_utf8())
-        };
-        if order != Ordering::Equal {
-            return order;
+    key_bytes(a).cmp(key_bytes(b))
+}
+
+/// `text`'s key in natural order: keys compare byte by byte as their texts do, so an index on them orders
+/// without calling back into Rust.
+pub fn natural_key(text: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(text.len() + 2);
+    key.extend(key_bytes(text));
+    key
+}
+
+/// The bytes of `text`'s natural key: each character lowercased in UTF-8 (whose bytes keep code point
+/// order), each run of digits as `0`, its length without leading zeros, then those digits. No character
+/// but a digit starts with a byte from `0` to `9`, so a number sits where its first digit would.
+fn key_bytes(text: &str) -> impl Iterator<Item = u8> + '_ {
+    let mut rest = text;
+    // A lowercased character is at most three of at most four bytes.
+    let mut pending = [0u8; 12];
+    let (mut at, mut len) = (0, 0);
+    let mut digits: &[u8] = &[];
+    std::iter::from_fn(move || loop {
+        if at < len {
+            at += 1;
+            return Some(pending[at - 1]);
         }
-        (a, b) = (&a[m..], &b[n..]);
-    }
+        if let Some((&d, more)) = digits.split_first() {
+            digits = more;
+            return Some(d);
+        }
+        let c = rest.chars().next()?;
+        (at, len) = (0, 1);
+        if c.is_ascii_digit() {
+            let run = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            let number = rest[..run].trim_start_matches('0');
+            pending[0] = b'0';
+            // One byte up to 254 digits; past that 255 and four more, which still sorts after.
+            match u8::try_from(number.len()).ok().filter(|&n| n < u8::MAX) {
+                Some(n) => (pending[1], len) = (n, 2),
+                None => {
+                    pending[1] = u8::MAX;
+                    pending[2..6].copy_from_slice(&u32::try_from(number.len()).unwrap_or(u32::MAX).to_be_bytes());
+                    len = 6;
+                }
+            }
+            digits = number.as_bytes();
+            rest = &rest[run..];
+        } else if c.is_ascii() {
+            pending[0] = c.to_ascii_lowercase() as u8;
+            rest = &rest[1..];
+        } else {
+            len = 0;
+            for l in c.to_lowercase() {
+                len += l.encode_utf8(&mut pending[len..]).len();
+            }
+            rest = &rest[c.len_utf8()..];
+        }
+    })
 }
 
 /// Adds the replay bookkeeping to a `pending` table from before it; its rows count as queued now.
@@ -365,6 +402,13 @@ mod tests {
         let mut mixed = ["Éclair", "eclair", "zebra", "émile", "Zoë", "zoe", "ÄB", "äa", "Ab"];
         mixed.sort_by(|a, b| natural_cmp(a, b));
         assert_eq!(mixed, ["Ab", "eclair", "zebra", "zoe", "Zoë", "äa", "ÄB", "Éclair", "émile"]);
+        // A number of 300 digits after one of 254, and a character whose lowercase is two.
+        let (short, long) = ("9".repeat(254), "1".repeat(300));
+        assert_eq!(natural_cmp(&short, &long), std::cmp::Ordering::Less);
+        assert_eq!(natural_cmp("\u{130}z", "iz"), std::cmp::Ordering::Greater);
+        for (a, b) in [("#2", "#10"), ("a1", "A01"), ("ÄB", "äa"), (short.as_str(), long.as_str())] {
+            assert_eq!(natural_key(a).cmp(&natural_key(b)), natural_cmp(a, b), "{a} against {b}");
+        }
     }
 
     #[test]
@@ -417,7 +461,7 @@ mod tests {
         }
         let c = open(&path, "s").unwrap();
         let indexes: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'items_title%'").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
-        assert_eq!(indexes, ["items_title_natural"]);
+        assert_eq!(indexes, ["items_title_key"]);
     }
 
     #[test]
@@ -553,6 +597,8 @@ mod tests {
         }
         let c = open(&path, "s").unwrap();
         let r = search(&c, "massive", 5).unwrap();
+        let keys: (Vec<u8>, Vec<u8>) = c.query_row("SELECT title_key, artist_key FROM items WHERE id='s1'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(keys, (natural_key(&song.title), natural_key(&song.artist)), "the sort keys are made");
         assert_eq!((r.songs, r.albums, r.artists), (vec![song], vec![album], vec![artist]));
         let has_json: bool = c.prepare("PRAGMA table_info(items)").unwrap().query_map([], |r| r.get::<_, String>(1)).unwrap().any(|n| n.unwrap() == "json");
         assert!(!has_json);

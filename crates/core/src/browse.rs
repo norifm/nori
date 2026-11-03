@@ -230,7 +230,7 @@ fn in_order(mut albums: Vec<crate::Album>, sort: AlbumSort) -> Vec<crate::Album>
 /// [`Core::browse_songs`]' query: offset ?1, limit ?2, and with `years` the range ?3..=?4.
 pub(crate) fn songs_sql(sort: &str, descending: bool, starred_only: bool, years: bool) -> String {
     let key = match sort {
-        "title" | "artist" | "album" => format!("{sort} COLLATE natural_order"),
+        "title" | "artist" | "album" => format!("{sort}_key"),
         "year" | "duration" | "created" => sort.to_string(),
         "playCount" => "play_count".to_string(),
         "userRating" => "user_rating".to_string(),
@@ -254,8 +254,7 @@ pub(crate) fn songs_sql(sort: &str, descending: bool, starred_only: bool, years:
 /// key's way turned when `reversed` except the year inside an artist's albums and the name breaking ties.
 fn albums_sql(sort: AlbumSort, reversed: bool) -> String {
     let (up, down) = if reversed { ("DESC", "ASC") } else { ("ASC", "DESC") };
-    let name = "name COLLATE natural_order";
-    let artist = "artist COLLATE natural_order";
+    let (name, artist) = ("name_key", "artist_key");
     let order = match sort {
         AlbumSort::ByName => format!("{name} {up}, {artist} {up}"),
         AlbumSort::ByArtist | AlbumSort::ArtistRows => format!("{artist} {up}, artist_id {up}, year, {name}"),

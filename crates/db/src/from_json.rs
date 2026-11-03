@@ -14,11 +14,18 @@ pub(crate) fn items(c: &Connection) -> rusqlite::Result<()> {
         return Ok(());
     }
     pack_gain(c)?;
-    let copy = |kind: ItemKind, cols: &[&str]| {
+    c.create_scalar_function("natural_key", 1, rusqlite::functions::FunctionFlags::SQLITE_UTF8 | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
+        Ok(ctx.get::<Option<String>>(0)?.map(|t| crate::natural_key(&t)))
+    })?;
+    let copy = |kind: ItemKind, cols: &[&str], sorted: &[&str]| {
+        let keys: Vec<String> = sorted.iter().map(|c| format!("{c}_key")).collect();
+        let key_values: Vec<String> = sorted.iter().map(|c| format!("natural_key({})", value(c))).collect();
         format!(
-            "INSERT INTO items(rowid, server, kind, id, {}) SELECT o.rowid, o.server, o.kind, o.id, {} FROM items_json o WHERE o.kind={};",
+            "INSERT INTO items(rowid, server, kind, id, {}, {}) SELECT o.rowid, o.server, o.kind, o.id, {}, {} FROM items_json o WHERE o.kind={};",
             cols.join(", "),
+            keys.join(", "),
             values(cols),
+            key_values.join(", "),
             kind as i64
         )
     };
@@ -28,9 +35,9 @@ pub(crate) fn items(c: &Connection) -> rusqlite::Result<()> {
         tx.execute_batch(&format!("DROP INDEX IF EXISTS {index};"))?;
     }
     tx.execute_batch(items::TABLE)?;
-    tx.execute_batch(&copy(ItemKind::Song, Song::COLUMNS))?;
-    tx.execute_batch(&copy(ItemKind::Album, Album::COLUMNS))?;
-    tx.execute_batch(&copy(ItemKind::Artist, Artist::COLUMNS))?;
+    tx.execute_batch(&copy(ItemKind::Song, Song::COLUMNS, Song::SORTED))?;
+    tx.execute_batch(&copy(ItemKind::Album, Album::COLUMNS, Album::SORTED))?;
+    tx.execute_batch(&copy(ItemKind::Artist, Artist::COLUMNS, Artist::SORTED))?;
     tx.execute_batch("DROP TABLE items_json;")?;
     tx.commit()
 }
