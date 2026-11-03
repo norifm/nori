@@ -50,7 +50,7 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val asking = MutableStateFlow(false)
     val offers: StateFlow<OffersUi> = combine(host.offersRead, asking) { read, loading -> OffersUi(loading, read?.offers.orEmpty(), read?.failed.orEmpty()) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, OffersUi(false, host.offersRead.value?.offers.orEmpty(), host.offersRead.value?.failed.orEmpty()))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), OffersUi(false, host.offersRead.value?.offers.orEmpty(), host.offersRead.value?.failed.orEmpty()))
 
     private val _query = MutableStateFlow("")
     /** What the browser's search says. */
@@ -62,15 +62,15 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The browser's offers: those found, by name. */
     val found: StateFlow<List<Offer>> = combine(offers, _query, _repoShown) { o, q, r -> offersFound(o.offers, q, r) }
-        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Plugins that would add a kind of profile if they were on. */
     val providerOffers: StateFlow<List<Offer>> = combine(offers, cards, nori.settings.prefs) { o, c, p -> providerOffers(o.offers, c, p.pluginsOff) }
-        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Updates waiting for plugins not kept at their version. */
     val updates: StateFlow<List<Offer>> = combine(offers, cards) { o, c -> offersToUpdate(o.offers, c) }
-        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** What the repos hold of plugin [id]: from its own repo when installed. */
     fun offerOf(id: String, card: PluginCard?): Offer? = offerFor(offers.value.offers, id, card)
