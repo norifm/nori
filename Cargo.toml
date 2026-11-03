@@ -78,7 +78,7 @@ i-slint-renderer-skia = { path = "vendor/i-slint-renderer-skia" }
 # What ships is small by default: most of the code runs on a tap (pages, the database, remote control,
 # lyrics, settings, the bindings), where its size costs more than its speed saves. The code the music,
 # its analysis and the covers run through stays fast: the player, the engine and the stretcher,
-# Android's AudioTrack writer, the decoders, the FFT and loudness, image decoding, and wasmtime's calls
+# Android's AudioTrack writer, the decoders, the FFT, image decoding, and wasmtime's calls
 # into plugins (their sound stages). The plugin compiler (Cranelift) runs only at install, so it is small too.
 [profile.dist.package.nori-player]
 opt-level = 3
@@ -156,9 +156,6 @@ opt-level = 3
 opt-level = 3
 
 [profile.dist.package.transpose]
-opt-level = 3
-
-[profile.dist.package.ebur128]
 opt-level = 3
 
 [profile.dist.package.image-webp]
