@@ -14,6 +14,8 @@ use nori_model::SoundProfile;
 
 /// `app_kv` key: the sound from before a bound device took over.
 pub const LOOSE: &str = "looseSound";
+/// `app_kv` key: the profile the sound playing was loaded from, which edits to it are saved into.
+pub const PLAYING: &str = "playingProfile";
 /// `app_kv` key: outputs never to be offered a curve, as a JSON list.
 pub const QUIET: &str = "quietOutputs";
 
