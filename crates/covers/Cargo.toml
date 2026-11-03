@@ -28,3 +28,5 @@ gif = { version = "0.14", default-features = false, features = ["std"] }
 nori-testdir = { path = "../testdir" }
 # The transport the loader tests stand in for the network with.
 async-trait = "0.1"
+# tests/perf.rs: a cover's colours after its decode.
+nori-look = { path = "../look" }
