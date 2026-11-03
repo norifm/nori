@@ -3,8 +3,8 @@
 #
 #   tools/flame-engine.sh [--heap] <case[,case]> [minutes=4] [out=build/flame/<case>]
 #
-# Cases: plain equalizer eq10 compressor mp3 flac speed silence gain gaineq change crossfade automix, and
-# stage: a plugin's sound stage through wasmtime (perf_stage.rs).
+# Cases: plain equalizer eq10 compressor mp3 flac opus vorbis aac alac speed silence gain gaineq change crossfade
+# automix, and stage: a plugin's sound stage through wasmtime (perf_stage.rs).
 # CPU (default): samples the engine's threads (nori-*, not the test making the music) with tools/flame.py:
 # flame.svg, stacks.folded, profile.json.gz. --heap: where the engine allocates, by bytes (a stack per
 # 64 KB a thread allocates): heap-<case>.svg and <case>.folded.

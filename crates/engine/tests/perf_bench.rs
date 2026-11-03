@@ -44,8 +44,10 @@ fn perf_measure(name: &str, rig: &Rig, minutes: u64, mut during: impl FnMut(&Rig
         during(rig, k);
         rig.run(15_000);
     }
-    let played = (rig.heard.lock().len() - heard) as f64 / 2.0 / RATE as f64 / 60.0;
-    let sound = sound_digest(&rig.heard.lock(), minutes);
+    // The card plays a song at its own rate (an Opus song at 48 kHz).
+    let rate = rig.card.lock().feed.as_ref().map_or(RATE, |f| f.format().rate);
+    let played = (rig.heard.lock().len() - heard) as f64 / 2.0 / rate as f64 / 60.0;
+    let sound = sound_digest(&rig.heard.lock(), minutes, rate);
     if let Some(dir) = stacks {
         crate::perf_alloc::write_stacks(&dir.join(format!("{name}.folded")), name);
     }
@@ -67,8 +69,8 @@ fn perf_measure(name: &str, rig: &Rig, minutes: u64, mut during: impl FnMut(&Rig
 
 /// FNV-1a over the first `minutes` of what the card heard: how much more it heard by the end depends on when
 /// the test thread looked, the music itself does not.
-fn sound_digest(heard: &[i16], minutes: u64) -> u64 {
-    let n = heard.len().min(minutes as usize * 60 * RATE as usize * 2);
+fn sound_digest(heard: &[i16], minutes: u64, rate: u32) -> u64 {
+    let n = heard.len().min(minutes as usize * 60 * rate as usize * 2);
     heard[..n].iter().fold(0xcbf2_9ce4_8422_2325, |h, s| (h ^ *s as u16 as u64).wrapping_mul(0x100_0000_01b3))
 }
 
@@ -148,8 +150,8 @@ fn perf_report() {
     perf_case("eq10", &one, perf_app(prefs_off()), with_sound(nori_engine::Sound { bands, ..Default::default() }), 4);
     let compressor = nori_engine::Sound { effects: Effects { compressor: Some(CompressorPreset::Light.settings()), ..Effects::default() }, limiter: true, ..Default::default() };
     perf_case("compressor", &one, perf_app(prefs_off()), with_sound(compressor), 4);
-    // Compressed, as a server keeps music: the decoder's cost.
-    for (name, args) in [("mp3", ["-c:a", "libmp3lame", "-b:a", "320k", "-f", "mp3"]), ("flac", ["-c:a", "flac", "-compression_level", "5", "-f", "flac"])] {
+    // Compressed, as a server keeps music or transcodes it (Opus): each decoder's cost.
+    for (name, hint, args) in [("mp3", "mp3", ["-c:a", "libmp3lame", "-b:a", "320k", "-f", "mp3"]), ("flac", "flac", ["-c:a", "flac", "-compression_level", "5", "-f", "flac"]), ("opus", "opus", ["-c:a", "libopus", "-b:a", "128k", "-f", "ogg"]), ("vorbis", "ogg", ["-c:a", "vorbis", "-strict", "-2", "-f", "ogg"]), ("aac", "m4a", ["-c:a", "aac", "-b:a", "256k", "-f", "ipod"]), ("alac", "m4a", ["-c:a", "alac", "-sample_fmt", "s16p", "-f", "ipod"])] {
         if !perf_wanted(name) {
             continue;
         }
@@ -158,7 +160,7 @@ fn perf_report() {
             continue;
         };
         let files = vec![("a".to_string(), file, (long.len() / 2) as i64 * 1000 / RATE as i64)];
-        perf_measure(name, &Rig::build(files, perf_app(prefs_off()), Settings::default(), Extra { hint: Some(name), ..Extra::default() }), 4, |_, _| {});
+        perf_measure(name, &Rig::build(files, perf_app(prefs_off()), Settings::default(), Extra { hint: Some(hint), ..Extra::default() }), 4, |_, _| {});
     }
     perf_case("speed", &one, perf_app(prefs_off()), Settings { speed: 1.2, pitch: 0.95, ..Settings::default() }, 4);
     perf_case("silence", &one, perf_app(prefs_off()), Settings { skip_silence: true, ..Settings::default() }, 4);
