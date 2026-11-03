@@ -2,8 +2,10 @@
 //! settings, their own settings kept as app values, logging in, the sound card (cpal) and the session
 //! opened over them.
 
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
+
+use nori_core::settings_store::Settings;
 
 use nori_core::remote::wire::DeviceKind;
 use nori_core::settings::SavedServer;
@@ -41,71 +43,118 @@ fn zone(tz: Option<String>, link: Option<String>) -> Option<String> {
     link?.split_once("zoneinfo/").map(|(_, z)| z.to_string())
 }
 
-/// The app's queue session over its settings: the client's object graph root, which every view reads.
-/// Global: the root of the client's own object graph (as Kotlin's `Nori`), made once a process.
-pub fn app() -> &'static Arc<nori_core::queue::Session> {
-    static APP: std::sync::OnceLock<Arc<nori_core::queue::Session>> = std::sync::OnceLock::new();
-    APP.get_or_init(|| Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new())))
+/// A desktop client's object graph root (as Kotlin's `Nori`): the queue session over the settings, which
+/// every view reads, and the plugins installed under the data directory, opened at the first ask.
+pub struct Root {
+    pub app: Arc<nori_core::queue::Session>,
+    data: PathBuf,
+    plugins: OnceLock<Plugged>,
+}
+
+impl Root {
+    pub fn new(data: &Path) -> Root {
+        Root { app: Arc::new(nori_core::queue::Session::new(Settings::new())), data: data.into(), plugins: OnceLock::new() }
+    }
+
+    pub fn data(&self) -> &Path {
+        &self.data
+    }
+
+    /// The plugins, laid over the settings, and the kinds of profile they and nori open.
+    pub fn plugins(&self) -> &Plugged {
+        self.plugins.get_or_init(|| {
+            let watched = Arc::new(Watched::default());
+            let _ = watched.settings.set(Arc::downgrade(&self.app.settings));
+            let host = nori_plugins::open(self.data.join("plugins"), self.app.settings.clone(), watched.clone());
+            let _ = watched.plugins.set(Arc::downgrade(&host));
+            // Watched only while an enabled plugin reaches devices or hears outputs connect (BlueZ and
+            // IOBluetooth are how the desktop hears them); elsewhere plugins' Bluetooth is unsupported.
+            #[cfg(target_os = "linux")]
+            host.use_bluetooth(Arc::new(crate::bluez::Bluez::new(Arc::downgrade(&host))), true);
+            #[cfg(target_os = "macos")]
+            host.use_bluetooth(Arc::new(crate::macbt::MacBluetooth::new(Arc::downgrade(&host))), true);
+            Plugged { kinds: nori_core::providers::Kinds::with_plugins(host.clone()), host, watched }
+        })
+    }
+
+    /// Installs (or updates) the plugin package or folder at `file` and turns it on.
+    pub fn install_plugin(&self, file: &Path) -> Result<(), String> {
+        let host = &self.plugins().host;
+        let installed = host.install(file).map_err(|e| format!("{}: {e:?}", file.display()))?;
+        host.turn(installed.id.clone(), true);
+        Ok(())
+    }
+
+    /// Updates the plugins at most once a day, off this thread, through the open profile's connection;
+    /// `done` hears each plugin updated and its new version, when any was.
+    pub fn update_plugins(&self, done: impl FnOnce(Vec<(String, String)>) + Send + 'static) {
+        let host = self.plugins().host.clone();
+        if !host.updates_due(nori_time::unix_ms()) {
+            return;
+        }
+        crate::spawn("nori-plugin-update", move || {
+            let updated = block_on(host.update(nori_time::unix_ms()));
+            if !updated.is_empty() {
+                done(updated.into_iter().map(|u| (u.id, u.to)).collect());
+            }
+        });
+    }
+
+    /// Saves a backup of the app's settings and plugins at `path`, sealed with `password`, off this
+    /// thread; `done` hears how it went.
+    pub fn make_backup(&self, path: PathBuf, password: String, done: impl FnOnce(Result<(), BackupFailure>) + Send + 'static) {
+        let (host, settings) = (self.plugins().host.clone(), self.app.settings.clone());
+        crate::spawn("nori-backup", move || {
+            let made = nori_core::backup::make(&settings, &host, &password).map_err(BackupFailure::Backup);
+            done(made.and_then(|file| std::fs::write(&path, file).map_err(|e| BackupFailure::File(e.to_string()))));
+        });
+    }
+
+    /// Restores the backup at `path` with `password`, off this thread; `done` hears what came back, for
+    /// the session to apply (`Session::backup_restored`).
+    pub fn restore_backup(&self, path: PathBuf, password: String, done: impl FnOnce(Result<nori_core::backup::Restored, BackupFailure>) + Send + 'static) {
+        let (host, settings) = (self.plugins().host.clone(), self.app.settings.clone());
+        crate::spawn("nori-restore", move || {
+            let file = std::fs::read(&path).map_err(|e| BackupFailure::File(e.to_string()));
+            done(file.and_then(|f| block_on(nori_core::backup::restore(&settings, &host, &f, &password)).map_err(BackupFailure::Backup)));
+        });
+    }
+
+    /// Why plugins are off at this start, with the names of those nori stopped in; None after the first ask.
+    pub fn safe_start(&self) -> Option<(nori_plugins::SafeStart, Vec<String>)> {
+        let host = &self.plugins().host;
+        let safe = host.take_safe_start()?;
+        let names = match &safe {
+            nori_plugins::SafeStart::Crashed { plugins } => {
+                let cards = host.cards("en".into());
+                plugins.iter().map(|id| cards.iter().find(|c| c.id == *id).map_or_else(|| id.clone(), |c| c.name.clone())).collect()
+            }
+            nori_plugins::SafeStart::AllOff => Vec::new(),
+        };
+        Some((safe, names))
+    }
+
+    /// Logs `draft` in and keeps it as the active profile, blocking ([`nori_core::providers::log_in`]).
+    pub fn log_in(&self, http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, NetError> {
+        block_on(nori_core::providers::log_in(&self.plugins().kinds, http, &self.app.settings, draft))
+    }
 }
 
 /// The client's own settings, kept as app values in the database under keys of its own.
 pub mod own {
-    pub fn text(key: &str) -> Option<String> {
-        super::app().settings.app_value(key).filter(|v| !v.is_empty())
+    use nori_core::settings_store::Settings;
+
+    pub fn text(settings: &Settings, key: &str) -> Option<String> {
+        settings.app_value(key).filter(|v| !v.is_empty())
     }
 
-    pub fn flag(key: &str, default: bool) -> bool {
-        super::app().settings.app_value(key).map_or(default, |v| v == "true")
+    pub fn flag(settings: &Settings, key: &str, default: bool) -> bool {
+        settings.app_value(key).map_or(default, |v| v == "true")
     }
 
-    pub fn number(key: &str, default: f32) -> f32 {
-        super::app().settings.app_value(key).and_then(|v| v.parse().ok()).unwrap_or(default)
+    pub fn number(settings: &Settings, key: &str, default: f32) -> f32 {
+        settings.app_value(key).and_then(|v| v.parse().ok()).unwrap_or(default)
     }
-
-    pub fn keep(key: &'static str, value: String) {
-        super::app().settings.keep_app_value(key, value);
-    }
-}
-
-/// The app's plugins, installed under `data`/plugins and laid over its settings, and the kinds of
-/// profile they and nori open. Opened once, at the first call.
-pub fn plugins(data: &Path) -> &'static Plugged {
-    static PLUGINS: std::sync::OnceLock<Plugged> = std::sync::OnceLock::new();
-    PLUGINS.get_or_init(|| {
-        let watched = Arc::new(Watched::default());
-        let host = nori_plugins::open(data.join("plugins"), app().settings.clone(), watched.clone());
-        let _ = watched.plugins.set(Arc::downgrade(&host));
-        // Watched only while an enabled plugin reaches devices or hears outputs connect (BlueZ and
-        // IOBluetooth are how the desktop hears them); elsewhere plugins' Bluetooth is unsupported.
-        #[cfg(target_os = "linux")]
-        host.use_bluetooth(Arc::new(crate::bluez::Bluez::new(Arc::downgrade(&host))), true);
-        #[cfg(target_os = "macos")]
-        host.use_bluetooth(Arc::new(crate::macbt::MacBluetooth::new(Arc::downgrade(&host))), true);
-        Plugged { kinds: nori_core::providers::Kinds::with_plugins(host.clone()), host, watched }
-    })
-}
-
-/// Installs (or updates) the plugin package or folder at `file` and turns it on.
-pub fn install_plugin(data: &Path, file: &Path) -> Result<(), String> {
-    let host = &plugins(data).host;
-    let installed = host.install(file).map_err(|e| format!("{}: {e:?}", file.display()))?;
-    host.turn(installed.id.clone(), true);
-    Ok(())
-}
-
-/// Updates the plugins at most once a day, off this thread, through the open profile's connection;
-/// `done` hears each plugin updated and its new version, when any was.
-pub fn update_plugins(data: &Path, done: impl FnOnce(Vec<(String, String)>) + Send + 'static) {
-    let host = plugins(data).host.clone();
-    if !host.updates_due(nori_time::unix_ms()) {
-        return;
-    }
-    crate::spawn("nori-plugin-update", move || {
-        let updated = block_on(host.update(nori_time::unix_ms()));
-        if !updated.is_empty() {
-            done(updated.into_iter().map(|u| (u.id, u.to)).collect());
-        }
-    });
 }
 
 /// Why a backup couldn't be made or restored: the backup's own reason, or its file's (the system's
@@ -114,40 +163,6 @@ pub fn update_plugins(data: &Path, done: impl FnOnce(Vec<(String, String)>) + Se
 pub enum BackupFailure {
     Backup(nori_core::backup::BackupError),
     File(String),
-}
-
-/// Saves a backup of the app's settings and plugins at `path`, sealed with `password`, off this
-/// thread; `done` hears how it went.
-pub fn make_backup(data: &Path, path: std::path::PathBuf, password: String, done: impl FnOnce(Result<(), BackupFailure>) + Send + 'static) {
-    let host = plugins(data).host.clone();
-    crate::spawn("nori-backup", move || {
-        let made = nori_core::backup::make(&app().settings, &host, &password).map_err(BackupFailure::Backup);
-        done(made.and_then(|file| std::fs::write(&path, file).map_err(|e| BackupFailure::File(e.to_string()))));
-    });
-}
-
-/// Restores the backup at `path` with `password`, off this thread; `done` hears what came back, for
-/// the session to apply (`Session::backup_restored`).
-pub fn restore_backup(data: &Path, path: std::path::PathBuf, password: String, done: impl FnOnce(Result<nori_core::backup::Restored, BackupFailure>) + Send + 'static) {
-    let host = plugins(data).host.clone();
-    crate::spawn("nori-restore", move || {
-        let file = std::fs::read(&path).map_err(|e| BackupFailure::File(e.to_string()));
-        done(file.and_then(|f| block_on(nori_core::backup::restore(&app().settings, &host, &f, &password)).map_err(BackupFailure::Backup)));
-    });
-}
-
-/// Why plugins are off at this start, with the names of those nori stopped in; None after the first ask.
-pub fn safe_start(data: &Path) -> Option<(nori_plugins::SafeStart, Vec<String>)> {
-    let host = &plugins(data).host;
-    let safe = host.take_safe_start()?;
-    let names = match &safe {
-        nori_plugins::SafeStart::Crashed { plugins } => {
-            let cards = host.cards("en".into());
-            plugins.iter().map(|id| cards.iter().find(|c| c.id == *id).map_or_else(|| id.clone(), |c| c.name.clone())).collect()
-        }
-        nori_plugins::SafeStart::AllOff => Vec::new(),
-    };
-    Some((safe, names))
 }
 
 /// The plugin host, the kinds of profile it adds, and what hears from it.
@@ -180,6 +195,8 @@ pub struct Watched {
     engine: std::sync::Mutex<Option<std::sync::Weak<nori_engine::Engine>>>,
     session: std::sync::Mutex<Option<std::sync::Weak<crate::session::Parts>>>,
     plugins: std::sync::OnceLock<std::sync::Weak<nori_plugins::Plugins>>,
+    /// The settings the plugins are laid over.
+    settings: OnceLock<std::sync::Weak<Settings>>,
     heard: std::sync::Mutex<Option<Hears>>,
     /// Told when a plugin's page or the devices plugins control changed ([`Watched::on_changed`]).
     changed: std::sync::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
@@ -274,8 +291,11 @@ impl nori_plugins::Client for Watched {
     /// The engine takes all of its settings again, whatever `effect` says.
     fn layer_changed(&self, _effect: u32) {
         let engine = self.engine.lock().expect("not poisoned").as_ref().and_then(std::sync::Weak::upgrade);
-        if let (Some(engine), Some(prefs)) = (engine, app().settings.current()) {
-            engine.set_settings(nori_engine::core::settings(&prefs, app().settings.layer()));
+        let settings = self.settings.get().and_then(std::sync::Weak::upgrade);
+        if let (Some(engine), Some(settings)) = (engine, settings) {
+            if let Some(prefs) = settings.current() {
+                engine.set_settings(nori_engine::core::settings(&prefs, settings.layer()));
+            }
         }
     }
     fn status(&self, id: String, row: String, words: String, args: Vec<String>) {
@@ -398,11 +418,6 @@ impl nori_plugins::Client for Watched {
     }
 }
 
-/// Logs `draft` in and keeps it as the active profile, blocking ([`nori_core::providers::log_in`]).
-pub fn log_in(data: &Path, http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, NetError> {
-    block_on(nori_core::providers::log_in(&plugins(data).kinds, http, &app().settings, draft))
-}
-
 /// The cpal device named `device` (else the system's default) at `volume` (0 to 1).
 fn card(device: Option<&str>) -> CpalOutput {
     match device {
@@ -413,7 +428,7 @@ fn card(device: Option<&str>) -> CpalOutput {
 
 /// A desktop session's opening.
 pub struct DesktopOpen<'a> {
-    pub data: &'a Path,
+    pub root: &'a Root,
     pub http: Arc<Http>,
     pub profile: SavedServer,
     /// The sound card by name; None for the system's default.
@@ -436,10 +451,10 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
     let set = level.clone();
     let volume = Level::new(o.volume, Some(Box::new(move |v| set.set(v))));
     let device = o.device.clone();
-    let plugged = plugins(o.data);
+    let plugged = o.root.plugins();
     let session = Session::open(Open {
-        queue: app().clone(),
-        data: o.data,
+        queue: o.root.app.clone(),
+        data: o.root.data(),
         http: o.http,
         profile: o.profile,
         output: Box::new(output),
