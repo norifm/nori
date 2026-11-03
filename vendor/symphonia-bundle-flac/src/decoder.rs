@@ -490,17 +490,22 @@ fn decode_linear(bs: &mut Bits<'_>, bps: u32, order: u32, buf: &mut [i32]) -> Re
             lpc_predict::<N>(order as usize, coeffs_n, coeff_shift as u32, buf);
         }
 
-        // Pick the best length linear predictor to use based on the order. Most FLAC streams use
-        // the subset format and have an order <= 12. Therefore, for orders <= 12, dispatch to
-        // predictors that roughly match the order. If a predictor is too long for a given order,
-        // then there will be wasted computations. On the other hand, it is not worth the code bloat
-        // to specialize for every order <= 12.
+        // NORI: most FLAC streams use the subset format and have an order <= 12. Each of those
+        // orders has a predictor of its own.
+        let shift = qlp_coeff_shift as u32;
         match order {
-            0..=4 => lpc::<4>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            5..=6 => lpc::<6>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            7..=8 => lpc::<8>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            9..=10 => lpc::<10>(order, &qlp_coeffs, qlp_coeff_shift, buf),
-            11..=12 => lpc::<12>(order, &qlp_coeffs, qlp_coeff_shift, buf),
+            1 => lpc_restore::<1>(&qlp_coeffs, shift, buf),
+            2 => lpc_restore::<2>(&qlp_coeffs, shift, buf),
+            3 => lpc_restore::<3>(&qlp_coeffs, shift, buf),
+            4 => lpc_restore::<4>(&qlp_coeffs, shift, buf),
+            5 => lpc_restore::<5>(&qlp_coeffs, shift, buf),
+            6 => lpc_restore::<6>(&qlp_coeffs, shift, buf),
+            7 => lpc_restore::<7>(&qlp_coeffs, shift, buf),
+            8 => lpc_restore::<8>(&qlp_coeffs, shift, buf),
+            9 => lpc_restore::<9>(&qlp_coeffs, shift, buf),
+            10 => lpc_restore::<10>(&qlp_coeffs, shift, buf),
+            11 => lpc_restore::<11>(&qlp_coeffs, shift, buf),
+            12 => lpc_restore::<12>(&qlp_coeffs, shift, buf),
             _ => lpc::<32>(order, &qlp_coeffs, qlp_coeff_shift, buf),
         };
     }
@@ -705,6 +710,47 @@ fn fixed_predict(order: u32, buf: &mut [i32]) {
         }
         _ => unreachable!(),
     };
+}
+
+/// NORI: Linear Predictive Coding (LPC) decoder of order `ORDER`. The coefficients are stored as for
+/// `lpc_predict`, the first at index 31. The first `ORDER` samples in `buf` are warm-up samples.
+///
+/// Each sample, once known, is added into the predictions of the `ORDER` samples after it, which are
+/// kept in registers with their residuals: the next sample then waits for one multiply-add and a
+/// shift.
+///
+/// `lpc_predict` adds a residual r to the prediction p >> s, as 32 bits: that is bits s..s + 32 of
+/// p + r * 2^s. Here every term is scaled by 2^(32 - s) and summed modulo 2^64, which keeps exactly
+/// those bits as the top 32: a shift by 32 gives the sample, already sign extended.
+fn lpc_restore<const ORDER: usize>(coeffs: &[i32; 32], shift: u32, buf: &mut [i32]) {
+    if buf.len() <= ORDER {
+        return;
+    }
+
+    // The coefficient for the sample k + 1 back, scaled.
+    let c: [i64; ORDER] = std::array::from_fn(|k| i64::from(coeffs[31 - k]) << (32 - shift));
+    let product = |k: usize, x: i64| c[k].wrapping_mul(x);
+
+    let (warm, samples) = buf.split_at_mut(ORDER);
+    let residual = |samples: &[i32], i: usize| samples.get(i).map_or(0, |&r| i64::from(r) << 32);
+
+    // What is known so far of the prediction of each of the next `ORDER` samples, with its residual:
+    // the first is whole.
+    let mut ahead: [i64; ORDER] = std::array::from_fn(|j| residual(samples, j));
+    for k in 0..ORDER {
+        for (j, sum) in ahead.iter_mut().enumerate().take(k + 1) {
+            *sum = sum.wrapping_add(product(k, i64::from(warm[ORDER - 1 + j - k])));
+        }
+    }
+
+    for i in 0..samples.len() {
+        let x = ahead[0] >> 32;
+        samples[i] = x as i32;
+        for j in 0..ORDER - 1 {
+            ahead[j] = ahead[j + 1].wrapping_add(product(j, x));
+        }
+        ahead[ORDER - 1] = residual(samples, i + ORDER).wrapping_add(product(ORDER - 1, x));
+    }
 }
 
 /// Generalized Linear Predictive Coding (LPC) decoder. The exact number of coefficients given is
