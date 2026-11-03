@@ -111,6 +111,8 @@ pub struct Analyzer {
     pow_norm: f32,
     amp_norm: f32,
     camp_norm: f32,
+    /// The windowed frame, transformed from here into `buf` or `cbuf` (in place, the FFT would copy).
+    input: Vec<Complex32>,
     buf: Vec<Complex32>,
     cbuf: Vec<Complex32>,
     scratch: Vec<Complex32>,
@@ -150,7 +152,7 @@ impl Analyzer {
         let mut planner = FftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(n);
         let cfft = planner.plan_fft_forward(cn);
-        let scratch_len = fft.get_inplace_scratch_len().max(cfft.get_inplace_scratch_len());
+        let scratch_len = fft.get_immutable_scratch_len().max(cfft.get_immutable_scratch_len());
         let (win, cwin) = (hann(n), hann(cn));
         let wsum: f32 = win.iter().sum();
         let w2: f32 = win.iter().map(|w| w * w).sum();
@@ -221,6 +223,7 @@ impl Analyzer {
             pow_norm: 2.0 / (n as f32 * w2),
             amp_norm: 2.0 / wsum,
             camp_norm: 2.0 / cwsum,
+            input: vec![Complex32::default(); cn],
             buf: vec![Complex32::default(); n],
             cbuf: vec![Complex32::default(); cn],
             scratch: vec![Complex32::default(); scratch_len],
@@ -371,8 +374,8 @@ impl Analyzer {
             // Split the two spectra: X_mid[k] = (Z[k] + Z*[n-k]) / 2, X_side[k] = (Z[k] - Z*[n-k]) / 2i. Only bins
             // 0..=n/2 are read later, so the mid is written over them in place.
             let n = self.n;
-            Self::window_pair_into(&self.ring, &self.side_ring, self.written, &self.win, &mut self.buf);
-            self.fft.process_with_scratch(&mut self.buf, &mut self.scratch);
+            Self::window_pair_into(&self.ring, &self.side_ring, self.written, &self.win, &mut self.input[..n]);
+            self.fft.process_immutable_with_scratch(&self.input[..n], &mut self.buf, &mut self.scratch);
             for k in 0..=n / 2 {
                 let (a, b) = (self.buf[k], self.buf[(n - k) & (n - 1)].conj());
                 self.buf[k] = (a + b) * 0.5;
@@ -380,8 +383,9 @@ impl Analyzer {
             }
             self.voice.frame_stereo(&self.buf, &self.side_buf);
         } else {
-            Self::window_into(&self.ring, self.written, &self.win, &mut self.buf);
-            self.fft.process_with_scratch(&mut self.buf, &mut self.scratch);
+            let n = self.n;
+            Self::window_into(&self.ring, self.written, &self.win, &mut self.input[..n]);
+            self.fft.process_immutable_with_scratch(&self.input[..n], &mut self.buf, &mut self.scratch);
             self.voice.frame(&self.buf);
         }
 
@@ -428,8 +432,8 @@ impl Analyzer {
             if self.hops == 0 {
                 self.f.chroma_t0 = (self.written as f64 - self.cn as f64 / 2.0) / self.sr;
             }
-            Self::window_into(&self.ring, self.written, &self.cwin, &mut self.cbuf);
-            self.cfft.process_with_scratch(&mut self.cbuf, &mut self.scratch);
+            Self::window_into(&self.ring, self.written, &self.cwin, &mut self.input);
+            self.cfft.process_immutable_with_scratch(&self.input, &mut self.cbuf, &mut self.scratch);
             let (lo, hi) = (self.pitch_map.first().map_or(0, |m| m.0 as usize), self.pitch_map.last().map_or(0, |m| m.0 as usize));
             for i in lo.min(self.tune_bins.0 - 1)..=hi.max(self.tune_bins.1 + 1).min(self.mags.len() - 1) {
                 self.mags[i] = self.cbuf[i].norm() * self.camp_norm;
