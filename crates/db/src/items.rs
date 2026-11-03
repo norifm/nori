@@ -338,6 +338,19 @@ impl Statements {
 }
 
 /// Stores `item`; its rowid, none for an item the index does not keep.
+/// Whether the column read holds `value`.
+fn holds(read: rusqlite::types::ValueRef, value: &Value) -> bool {
+    use rusqlite::types::ValueRef as R;
+    match (read, value) {
+        (R::Null, Value::Null) => true,
+        (R::Integer(a), Value::Integer(b)) => a == *b,
+        (R::Real(a), Value::Real(b)) => a == *b,
+        (R::Text(a), Value::Text(b)) => a == b.as_bytes(),
+        (R::Blob(a), Value::Blob(b)) => a == b.as_slice(),
+        _ => false,
+    }
+}
+
 pub(crate) fn upsert<T: Item>(c: &Connection, st: &Statements, item: &T) -> rusqlite::Result<Option<i64>> {
     let id = item.id();
     // Provider items are not library rows.
@@ -347,13 +360,13 @@ pub(crate) fn upsert<T: Item>(c: &Connection, st: &Statements, item: &T) -> rusq
     let values = item.values();
     let n = values.len();
     let mut find = c.prepare_cached(&st.find)?;
-    let old = find
-        .query_row(rusqlite::params![T::KIND, id], |r| Ok((r.get::<_, i64>(0)?, (1..=n).map(|k| r.get::<_, Value>(k)).collect::<rusqlite::Result<Vec<Value>>>()?)))
-        .optional()?;
+    // Each column compared where it is read: an unchanged row allocates nothing.
+    let same = |r: &rusqlite::Row| -> rusqlite::Result<bool> { Ok((1..=n).all(|k| r.get_ref(k).is_ok_and(|v| holds(v, &values[k - 1])))) };
+    let old = find.query_row(rusqlite::params![T::KIND, id], |r| Ok((r.get::<_, i64>(0)?, same(r)?))).optional()?;
     let fts = |rowid: i64, sql: &str| c.prepare_cached(sql)?.execute(rusqlite::params![rowid, item.text()]).map(|_| ());
     match old {
-        Some((rowid, was)) if was == values => Ok(Some(rowid)),
-        Some((rowid, _)) => {
+        Some((rowid, true)) => Ok(Some(rowid)),
+        Some((rowid, false)) => {
             let mut params = vec![Value::Integer(rowid)];
             params.extend(values);
             c.prepare_cached(&st.update)?.execute(rusqlite::params_from_iter(params))?;

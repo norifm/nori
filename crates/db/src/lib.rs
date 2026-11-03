@@ -520,6 +520,20 @@ mod tests {
     }
 
     #[test]
+    fn a_sync_that_changes_nothing_writes_nothing() {
+        let mut c = open("", "s").unwrap();
+        let bare = Song { id: "s2".into(), title: "Angel".into(), ..Song::default() }.dressed();
+        let (song, album, artist) = (full_song(), full_album(), full_artist());
+        let sync = |c: &mut Connection, songs: &[Song]| index(c, std::slice::from_ref(&artist), std::slice::from_ref(&album), songs).unwrap();
+        sync(&mut c, &[song.clone(), bare.clone()]);
+        let before = c.total_changes();
+        sync(&mut c, &[song.clone(), bare.clone()]);
+        assert_eq!(c.total_changes() - before, 0, "nothing written again");
+        sync(&mut c, &[song, Song { title: "Angels".into(), ..bare }]);
+        assert!(c.total_changes() > before, "a changed song is written");
+    }
+
+    #[test]
     fn an_index_kept_as_json_moves_into_columns() {
         let dir = nori_testdir::TempDir::new("db-json");
         let path = dir.join("json.db").to_string_lossy().into_owned();
