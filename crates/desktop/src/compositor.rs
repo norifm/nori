@@ -265,8 +265,9 @@ impl slint::platform::Platform for Platform {
         let g = &self.shared.gpu;
         #[cfg(target_os = "linux")]
         let renderer = g.renderer();
+        // A layer keeps its texture between frames, so a change repaints only what it touched.
         #[cfg(not(target_os = "linux"))]
-        let renderer = SkiaWGPU30Renderer::new(g.instance.clone(), g.adapter.clone(), g.device.clone(), g.queue.clone())?;
+        let renderer = SkiaWGPU30Renderer::retained(g.instance.clone(), g.adapter.clone(), g.device.clone(), g.queue.clone())?;
         #[cfg(not(target_os = "linux"))]
         renderer.set_resource_cache_limit(16 * 1024 * 1024);
         let layer = Rc::new_cyclic(|me: &Weak<Layer>| Layer {
@@ -1142,7 +1143,7 @@ impl Draw {
                 }
                 if let Some((t, _)) = layer.texture.borrow().as_ref() {
                     prepare_layer(&gpu, t, fresh);
-                    if let Err(e) = layer.renderer.render_to_texture(t) {
+                    if let Err(e) = layer.renderer.render_to_texture_kept(t, !fresh) {
                         nori_core::alog::info(&format!("a layer was not drawn: {e}"));
                     }
                 }
@@ -1249,6 +1250,10 @@ impl Draw {
 /// Skia writes outside wgpu's tracker; initialize first and restore its expected attachment state.
 #[cfg(not(target_os = "linux"))]
 fn prepare_layer(gpu: &Gpu, texture: &wgpu::Texture, fresh: bool) {
+    // Metal tracks no texture states: a kept texture needs nothing before Skia draws into it.
+    if !fresh && cfg!(target_os = "macos") {
+        return;
+    }
     let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Slint layer attachment") });
     if fresh {
         let view = texture.create_view(&Default::default());
@@ -1514,6 +1519,80 @@ mod tests {
         bar.set_position_ms(50_066);
         assert!(tick(16), "the step draws");
         assert!(!tick(16), "the frame after it has nothing new");
+    }
+
+    /// A seek step repaints the bar and its time, not the whole player, and leaves the pixels a whole
+    /// repaint would.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn a_seek_step_repaints_only_what_moved() {
+        struct TestPlatform { gpu: Rc<Gpu>, layers: Rc<RefCell<Vec<Rc<Layer>>>> }
+        impl slint::platform::Platform for TestPlatform {
+            fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
+                let gpu = &self.gpu;
+                let renderer = SkiaWGPU30Renderer::retained(gpu.instance.clone(), gpu.adapter.clone(), gpu.device.clone(), gpu.queue.clone())?;
+                let layer = Rc::new_cyclic(|me: &Weak<Layer>| Layer {
+                    window: slint::Window::new(me.clone() as Weak<dyn WindowAdapter>), renderer,
+                    size: Cell::new(PhysicalSize::new(1000, 64)), dirty: Cell::new(true),
+                    texture: RefCell::new(None), shared: Weak::new(),
+                });
+                self.layers.borrow_mut().push(layer.clone());
+                Ok(layer)
+            }
+        }
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+        let gpu = Rc::new(Gpu { instance, adapter, device, queue });
+        let layers = Rc::new(RefCell::new(Vec::new()));
+        slint::platform::set_platform(Box::new(TestPlatform { gpu: gpu.clone(), layers: layers.clone() })).unwrap();
+        use slint::ComponentHandle;
+        // The same player twice: one steps, the other is drawn whole where it got to.
+        let bars = [crate::PlayerBar::new().unwrap(), crate::PlayerBar::new().unwrap()];
+        for bar in &bars {
+            bar.window().dispatch_event(WindowEvent::Resized { size: LogicalSize::new(1000.0, 64.0) });
+            bar.set_room(1000.0);
+            bar.set_has_song(true);
+            bar.set_duration_ms(200_000);
+            bar.set_position_ms(50_000);
+            bar.show().unwrap();
+        }
+        let targets: Vec<wgpu::Texture> = (0..2).map(|_| gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("player"), size: wgpu::Extent3d { width: 1000, height: 64, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC, view_formats: &[],
+        })).collect();
+        let draw = |index: usize, kept: bool| {
+            prepare_layer(&gpu, &targets[index], !kept);
+            layers.borrow()[index].renderer.render_to_texture_kept(&targets[index], kept).unwrap()
+        };
+        assert_eq!(draw(0, false), 1.0, "a fresh texture is drawn whole");
+        bars[0].set_position_ms(50_066);
+        let share = draw(0, true);
+        assert!(share < 0.1, "a step repaints {:.0} % of the player", share * 100.0);
+        bars[1].set_position_ms(50_066);
+        draw(1, false);
+        // Rows padded to the copy alignment.
+        let row = 4096;
+        let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("players"), size: 2 * row * 64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
+        });
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        for (index, target) in targets.iter().enumerate() {
+            encoder.copy_texture_to_buffer(target.as_image_copy(), wgpu::TexelCopyBufferInfo {
+                buffer: &buffer, layout: wgpu::TexelCopyBufferLayout { offset: index as u64 * row * 64, bytes_per_row: Some(row as u32), rows_per_image: Some(64) },
+            }, target.size());
+        }
+        gpu.queue.submit([encoder.finish()]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| tx.send(result).unwrap());
+        gpu.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        rx.recv().unwrap().unwrap();
+        let pixels = buffer.slice(..).get_mapped_range().unwrap();
+        let (stepped, whole) = pixels.split_at(row as usize * 64);
+        let rows = |p: &[u8]| p.chunks(row as usize).flat_map(|r| r[..4000].to_vec()).collect::<Vec<u8>>();
+        let differ = rows(stepped).iter().zip(rows(whole)).filter(|(a, b)| **a != *b).count();
+        assert_eq!(differ, 0, "bytes the step left unlike a whole repaint");
     }
 
     #[test]
