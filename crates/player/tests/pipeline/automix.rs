@@ -129,6 +129,20 @@ fn analysis_kept_only_whole() {
 }
 
 #[test]
+fn a_song_measured_elsewhere_is_not_measured_again_as_it_plays() {
+    let mut p = Player::with_prefs(vec![song("a", 118.0), song("b", 118.0)], automix());
+    p.app.measure_playing = true;
+    p.measure_on_move = false;
+    p.play_from(0);
+    p.run_for(5_000);
+    // Measured ahead from its download meanwhile: the planner asks again.
+    p.app.analyses.insert("a".into(), measured("a", 118.0));
+    p.replan_ending();
+    assert!(p.run_until(70_000, |p| p.current_id().as_deref() == Some("b")), "{:?}", p.app.log);
+    assert!(!p.app.log.iter().any(|l| l.starts_with("analysed a")), "a measured once: {:?}", p.app.log);
+}
+
+#[test]
 fn unmeasured_fade_bar_waits() {
     // The first boundary on a phone that has never heard these songs: they were still on their way
     // when measuring ahead looked, so nothing is measured. The planner fades blind, and the page must

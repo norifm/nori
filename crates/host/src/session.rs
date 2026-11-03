@@ -386,7 +386,7 @@ impl Session {
         // `bridging`: a song the network cannot bring raises `Event::Bridge` (see `Handle::bridge`).
         let guest = nori_remote::is_guest_key(&o.profile.api_key);
         let rules = core.rules();
-        let app = CoreApp::new(core.session.clone()).per_device(core.clone()).bridging();
+        let app = CoreApp::new(core.session.clone(), analyses.clone()).per_device(core.clone()).bridging();
         // A guest plays its host's transitions.
         let app = match &store {
             Some(store) if rules.measures => app.measuring(Measurer::new(analyses.clone(), store.clone())),
