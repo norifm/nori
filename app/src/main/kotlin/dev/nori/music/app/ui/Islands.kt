@@ -172,7 +172,8 @@ class Island internal constructor(context: Context) : View(context), IslandView 
         val m = margin.toFloat()
         canvas.translate(m, m)
         val wait = slot.drawing?.draw(canvas, width - 2 * margin, height - 2 * margin) ?: -1L
-        if (wait >= 0) postOnAnimationDelayed(step, wait)
+        // Off the frame: an invalidate inside a frame's callbacks asks for a vsync that then draws nothing.
+        if (wait >= 0) postDelayed(step, wait)
     }
 }
 
