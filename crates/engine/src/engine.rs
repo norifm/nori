@@ -1618,7 +1618,6 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.release();
                 self.leave_offload();
                 self.p.sink.track.replace(card);
-                self.p.sink.kept_us = nori_player::burst::BUFFER_US + self.p.sink.track.depth_us();
                 // The device's own offload path waits out a cast whose device decodes; the cast's goes.
                 match offload {
                     Some(o) => {
