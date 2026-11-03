@@ -4028,7 +4028,7 @@ mod tests {
         prefs.active_server_id = "navidrome".into();
         settings.put(prefs);
         jam_joining(&settings);
-        crate::background::flush();
+        settings.writer.flush();
         let list = ServerList { servers: vec![own("navidrome"), own("youtube"), guest], active_server_id: "guest".into() };
         let back = jam_return(&settings, list);
         assert_eq!(back.active_server_id, "navidrome");

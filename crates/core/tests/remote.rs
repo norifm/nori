@@ -1072,7 +1072,7 @@ fn a_handoff_counts_one_listen() {
         assert_eq!(donor.submit_id, None, "the old device no longer owns the listen");
         assert_eq!(receiver.submit_id.as_deref(), Some("long"), "time heard on both devices qualifies");
         assert_eq!(receiver.submit_at, started, "the original start belongs to the same listen");
-        nori_core::background::flush();
+        desk.core.session.settings.writer.flush();
         assert!(phone.core.history_recent(10, None, true).unwrap().0.is_empty(), "the donor does not record the listen again");
         let history = desk.core.history_recent(10, None, true).unwrap().0;
         assert_eq!(history.len(), 1);

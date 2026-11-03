@@ -740,7 +740,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         if let Some(app) = me.upgrade() {
             stop(&app);
         }
-        nori_core::background::flush();
+        crate::session::app().settings.writer.flush();
     });
     ui.set_display_position_ms(ui.get_position_ms());
     h.with(|a| {

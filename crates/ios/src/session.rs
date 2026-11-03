@@ -1179,7 +1179,7 @@ mod tests {
         queue.settings.put(prefs);
         let pass = nori_core::remote::JamPass { url: "http://127.0.0.1:9".into(), api_key: nori_remote::guest_key("k"), kind: Default::default() };
         let guest = nori_host::jam_joined(&queue.settings, pass, "Jam");
-        nori_core::background::flush();
+        queue.settings.writer.flush();
         super::start_queue(dir.path(), queue.clone(), guest, Box::new(WavOutput::new(dir.path().join("heard.wav"), 2.0)), true, None).unwrap();
 
         let json = |p: *mut std::ffi::c_char| -> serde_json::Value {

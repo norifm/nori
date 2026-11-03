@@ -579,11 +579,11 @@ mod tests {
         c.session().settings.open(&dir.join("app.db").to_string_lossy()).unwrap();
         let UpdateCheck::Available { update, .. } = decide(&latest(), "0.4.0", &abis(&["arm64-v8a"]), None).unwrap() else { panic!("offered") };
         c.update_installing(update);
-        nori_db::background::flush();
+        c.session().settings.writer.flush();
         assert_eq!(c.update_changelog("0.4.0".into()), None, "not installed yet");
-        nori_db::background::flush();
+        c.session().settings.writer.flush();
         assert_eq!(c.update_changelog("0.5.0".into()).as_deref(), Some("The player is faster.\n\nFixed\n\n• A song that was cut off\n• Undo works"));
-        nori_db::background::flush();
+        c.session().settings.writer.flush();
         assert_eq!(c.update_changelog("0.5.0".into()), None, "only once");
     }
 

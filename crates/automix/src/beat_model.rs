@@ -112,7 +112,7 @@ impl ModelFile {
     }
 
     /// The switch changed. Turning it off deletes the model's directory.
-    pub fn switched(&self, on: bool) {
+    pub fn switched(&self, on: bool, writer: &nori_db::background::Writer) {
         let mut k = self.kept.lock();
         let was = std::mem::replace(&mut k.on, on);
         if was && !on {
@@ -120,7 +120,7 @@ impl ModelFile {
             if let Some(dir) = k.dir.clone() {
                 drop(k);
                 // Off the caller's thread: settings changes come from the UI.
-                nori_db::background::run(move || {
+                writer.run(move || {
                     let _ = std::fs::remove_dir_all(dir);
                 });
             }
@@ -141,11 +141,12 @@ mod tests {
         m.set_home(&dir.join("nori.db").to_string_lossy());
         assert_eq!(m.ready(), Some(dir.join("models").join(FILE_NAME)));
         assert_eq!(m.state(), State::Ready);
-        m.switched(true);
-        m.switched(true);
+        let writer = nori_db::background::Writer::default();
+        m.switched(true, &writer);
+        m.switched(true, &writer);
         assert!(dir.join("models").join(FILE_NAME).is_file());
-        m.switched(false);
-        nori_db::background::flush();
+        m.switched(false, &writer);
+        writer.flush();
         assert!(!dir.join("models").exists());
         assert_eq!((m.state(), m.ready()), (State::Absent, None));
 
@@ -155,8 +156,9 @@ mod tests {
         assert!(m.begin_download(), "a network failure is tried again");
         m.set_state(State::Failed(BeatFailure::WrongFile));
         assert!(!m.begin_download(), "a wrong file is not fetched again");
-        m.switched(true);
-        m.switched(false);
+        let writer = nori_db::background::Writer::default();
+        m.switched(true, &writer);
+        m.switched(false, &writer);
         assert!(m.begin_download());
     }
 }
