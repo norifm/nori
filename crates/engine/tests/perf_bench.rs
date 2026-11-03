@@ -1,5 +1,6 @@
 // Host perf report, included into tests/engine.rs for its rig: per minute of music, the engine's wakes,
-// CPU time and allocations, and the heap's peak (the test thread's own work left out). Not a check; compare revisions with
+// CPU time and allocations, and the heap's peak (the test thread's own work left out), and a digest of what
+// the card heard, equal when the sound is the same bit for bit. Not a check; compare revisions with
 // tools/perf-host.sh. `NORI_PERF=name,name` runs only those cases, `NORI_PERF_MINUTES` plays each that
 // long (for a profiler), `NORI_HEAP_STACKS=dir` writes where each case allocated to dir/<case>.folded
 // (tools/flame-engine.sh --heap), `NORI_WAKES=1` prints how long each sleep asked for and the runs of
@@ -44,13 +45,14 @@ fn perf_measure(name: &str, rig: &Rig, minutes: u64, mut during: impl FnMut(&Rig
         rig.run(15_000);
     }
     let played = (rig.heard.lock().len() - heard) as f64 / 2.0 / RATE as f64 / 60.0;
+    let sound = sound_digest(&rig.heard.lock(), minutes);
     if let Some(dir) = stacks {
         crate::perf_alloc::write_stacks(&dir.join(format!("{name}.folded")), name);
     }
     let (allocs2, bytes2) = crate::perf_alloc::counts();
     let per = |v: f64| v / played.max(1e-9);
     println!(
-        "perf: {name:<10} music {played:5.2} min | wakes/min {:7.1} | cpu ms/min {:8.1} | allocs/min {:9.0} | alloc KB/min {:9.0} | peak MB {:6.1}",
+        "perf: {name:<10} music {played:5.2} min | wakes/min {:7.1} | cpu ms/min {:8.1} | allocs/min {:9.0} | alloc KB/min {:9.0} | peak MB {:6.1} | sound {sound:016x}",
         per((rig.time.clock.sleeps() - wakes) as f64),
         per(cpu_ms() - cpu),
         per((allocs2 - allocs) as f64),
@@ -61,6 +63,13 @@ fn perf_measure(name: &str, rig: &Rig, minutes: u64, mut during: impl FnMut(&Rig
         print!("{}", wake_report(name, &rig.time.clock.naps()[naps..]));
     }
     rig.engine.stop();
+}
+
+/// FNV-1a over the first `minutes` of what the card heard: how much more it heard by the end depends on when
+/// the test thread looked, the music itself does not.
+fn sound_digest(heard: &[i16], minutes: u64) -> u64 {
+    let n = heard.len().min(minutes as usize * 60 * RATE as usize * 2);
+    heard[..n].iter().fold(0xcbf2_9ce4_8422_2325, |h, s| (h ^ *s as u16 as u64).wrapping_mul(0x100_0000_01b3))
 }
 
 /// Sleeps shorter than this, one after another, are a run that keeps the engine awake, ms.

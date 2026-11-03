@@ -12,8 +12,10 @@ the method and the tools.
 3. Take the widest bar in the profile. Make it smaller, or prove it is the floor; then take the next.
 4. Change the design, not the symptom: no caches added to hide a slow path, no flags steering other
    code. A faster design beats a cached slow one.
-5. Keep results equal. For a pure speedup, compare the output bit for bit before and after (dump it
-   from a test); where the output may change, say why and check it against a reference.
+5. Keep results equal. For a pure speedup, compare the output bit for bit before and after: the engine's
+   perf report ends each case with a digest of what the card heard, and `tools/perf-host.sh` says per case
+   whether two revisions sound the same; elsewhere dump the output from a test. Where the output may
+   change, say why and check it against a reference.
 6. Measure again with the same bench, and keep the bench.
 
 ## Rules for the data
@@ -42,12 +44,13 @@ the method and the tools.
 | Engine heap, by call site | `tools/flame-engine.sh --heap automix [minutes] [out]` |
 | Engine wakes, CPU, allocations per minute | `cargo test --release -p nori-engine --test engine perf_report -- --ignored --nocapture --test-threads=1` |
 | What keeps the engine awake | the same with `NORI_WAKES=1`: sleep lengths and runs of short sleeps |
-| This checkout against a release | `tools/perf-host.sh [rev]` |
+| This checkout against a release, and whether each case sounds the same | `tools/perf-host.sh [rev]` |
 | A plugin's sound stage | `cargo test --release -p nori-engine --test engine perf_stage -- --ignored --nocapture` |
 | Library index, sync, search, prune | `cargo test --release -p nori-db --test perf -- --ignored --nocapture` |
 | Cover decode and colors | `cargo test --release -p nori-covers --test perf -- --ignored --nocapture` |
 | AutoMix analysis of a minute | `cargo test --release -p nori-player --test analysis_perf -- --ignored --nocapture` |
 | Time stretch, the port against the C++ | `cargo test --release -p nori-stretch --test perf -- --ignored --nocapture` |
+| The time stretch's output, bit for bit (a digest to compare before and after) | `cargo test --release -p nori-stretch --test compare digest -- --ignored --nocapture` |
 | A plugin's decider: one call, a shuffle of 1000 songs | `cargo test --release -p nori-plugins --test deciders decider_calls_cost -- --ignored --nocapture` |
 | A plugin's audio stream | `cargo test --release -p nori-plugins --lib sink::tests::a_minute_sent -- --ignored --nocapture` |
 | Android, one device | `tools/perf-suite.sh <serial> <server-url>`; frames: `tools/open-bench.sh` |
