@@ -2592,8 +2592,9 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
             stepped[0] = now
             publish()
             if (wait < 0) break
-            if (wait > 0) kotlinx.coroutines.delay(wait.toLong())
-            now = androidx.compose.runtime.withFrameNanos { it }
+            // A wait is stepped off the frame: a state written inside a frame's callbacks asks for a vsync that
+            // then draws nothing.
+            now = if (wait > 0) { kotlinx.coroutines.delay(wait.toLong()); System.nanoTime() } else androidx.compose.runtime.withFrameNanos { it }
         }
     }
 
