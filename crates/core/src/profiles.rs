@@ -426,6 +426,25 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_device_arriving_keeps_leveling_and_crossfade() {
+        use crate::settings::{GainMode, StoredPrefs};
+        // Profiles and the kept sound saved while leveling was on and crossfade at 6 s.
+        let old = r#"{"mono":true,"replayGain":3,"crossfadeSec":6}"#;
+        let c = core();
+        c.profile_save(SoundProfile { name: "Warm".into(), json: old.into(), outputs: vec!["USB: K3".into()] }).unwrap();
+        c.set_loose(LooseChange::Store { json: old.into() });
+        let settings = &c.session.settings;
+        settings.open("").unwrap();
+        settings.put(StoredPrefs { replay_gain: GainMode::Off, crossfade_sec: 0, ..settings.current().unwrap() });
+        for output in ["USB: K3", SPEAKER] {
+            let sound = c.device_arrive(output.into()).apply.unwrap();
+            settings.put(settings.current().unwrap().with_sound(sound));
+            let p = settings.current().unwrap();
+            assert_eq!((p.replay_gain, p.crossfade_sec, p.mono), (GainMode::Off, 0, true), "{output}");
+        }
+    }
+
+    #[test]
     fn a_plugin_picks_a_profile_that_exists() {
         use crate::autofill::tests::Naming;
         let c = core();

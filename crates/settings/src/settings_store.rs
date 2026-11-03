@@ -977,7 +977,7 @@ mod tests {
         let json: String = db::open_app(&path).unwrap().query_row("SELECT json FROM profiles", [], |r| r.get(0)).unwrap();
         assert!(!crate::settings::legacy_profile(&json), "{json}");
         let s = crate::settings::sound_from(&json).unwrap();
-        assert_eq!((s.effects.headphone, s.effects.compressor_preset, s.replay_gain, s.crossfade_sec), (HeadphoneSound::Natural, CompressorPreset::Car, GainMode::Auto, 4));
+        assert_eq!((s.effects.headphone, s.effects.compressor_preset), (HeadphoneSound::Natural, CompressorPreset::Car));
         assert!(s.effects.compressor && s.eq_enabled && s.eq_graphic[0] > 2.0, "the bass boost on the equalizer");
         assert_eq!(crate::settings::sound_from(profile).unwrap(), s, "read the same before it is stored again");
     }

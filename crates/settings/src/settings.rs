@@ -472,7 +472,7 @@ pub struct StoredPrefs {
     pub active_server_id: String,
     // Between songs.
     /// Seconds; 0 is off. Equal power.
-    #[setting("crossfadeSec", clamped(0, 12), default = 0, show = K::Choice(&["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]), effect = APPLY_AUDIO | REPLAN, sound)]
+    #[setting("crossfadeSec", clamped(0, 12), default = 0, show = K::Choice(&["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]), effect = APPLY_AUDIO | REPLAN)]
     pub crossfade_sec: i32,
     /// Beat-matched transitions with every part of them on ([`StoredPrefs::transition_prefs`]).
     #[setting("autoMix", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO | REPLAN)]
@@ -545,7 +545,7 @@ pub struct StoredPrefs {
     #[setting("profilePerOutput", FLAG, default = true, show = K::Switch)]
     pub profile_per_output: bool,
     /// Volume leveling. Also decides whether songs may be turned up, hence the SOUND bit.
-    #[setting("replayGain", PICK_NEAREST, default = GainMode::Auto, show = K::Choice(GainMode::NAMES), effect = APPLY_GAIN | REPLAN | SOUND, sound)]
+    #[setting("replayGain", PICK_NEAREST, default = GainMode::Auto, show = K::Choice(GainMode::NAMES), effect = APPLY_GAIN | REPLAN | SOUND)]
     pub replay_gain: GainMode,
     /// The loudness songs are leveled to.
     #[setting("loudnessLevel", PICK, default = Level::Normal, show = K::Choice(Level::NAMES), effect = APPLY_GAIN)]
@@ -754,8 +754,6 @@ pub struct SoundSettings {
     pub limiter: bool,
     pub limiter_threshold_db: f32,
     pub effects: SoundEffects,
-    pub replay_gain: GainMode,
-    pub crossfade_sec: i32,
     pub hi_res: bool,
     pub max_rate: MaxRate,
     pub bit_perfect: bool,
@@ -974,8 +972,6 @@ pub fn sound_from(json: &str) -> Option<SoundSettings> {
             compressor_preset: CompressorPreset::nth(opt_i32(o, "compressorPreset")).unwrap_or(d.compressor_preset),
         }
         .held(),
-        replay_gain: GainMode::ALL[opt_i32(o, "replayGain").clamp(0, GainMode::ALL.len() as i32 - 1) as usize],
-        crossfade_sec: opt_i32(o, "crossfadeSec").clamp(0, 12),
         hi_res: opt_bool(o, "hiRes"),
         max_rate: MaxRate::nth(opt_i32(o, "maxRate")).unwrap_or(MaxRate::Auto),
         bit_perfect: opt_bool(o, "bitPerfect"),
@@ -1010,8 +1006,6 @@ pub fn sound_json(s: &SoundSettings) -> String {
     o.insert("volumeBoostDb".into(), (e.volume_boost_db as f64).into());
     o.insert("compressor".into(), e.compressor.into());
     o.insert("compressorPreset".into(), e.compressor_preset.ordinal().into());
-    o.insert("replayGain".into(), s.replay_gain.ordinal().into());
-    o.insert("crossfadeSec".into(), s.crossfade_sec.into());
     o.insert("hiRes".into(), s.hi_res.into());
     o.insert("maxRate".into(), s.max_rate.ordinal().into());
     o.insert("bitPerfect".into(), s.bit_perfect.into());
@@ -1074,9 +1068,9 @@ impl Old for Map<String, Value> {
 }
 
 /// Settings stored before 0.6.3 in their new form ([`migrate_sound`] for the sound part): the loudness
-/// target as the nearest level, the crossfade as the longer of its fades, the cover color switches as
-/// the choice that colors the same places, reduced motion or e-ink as the motion, and playlist
-/// descriptions as playlist notes.
+/// target as the nearest level, any leveling as automatic, the crossfade as the longer of its fades, the
+/// cover color switches as the choice that colors the same places, reduced motion or e-ink as the motion,
+/// and playlist descriptions as playlist notes.
 fn migrate(raw: &HashMap<String, PrefValue>, p: &mut StoredPrefs) {
     if let Some(lufs) = raw.number("loudnessTarget") {
         p.level = Level::nearest(lufs);
@@ -1095,19 +1089,18 @@ fn migrate(raw: &HashMap<String, PrefValue>, p: &mut StoredPrefs) {
         Motion::Full
     };
     p.playlist_notes = on("playlistDescriptions", true);
+    if p.replay_gain != GainMode::Off {
+        p.replay_gain = GainMode::Auto;
+    }
     let mut sound = p.sound();
     migrate_sound(raw, &mut sound);
     *p = p.clone().with_sound(sound);
 }
 
-/// The sound part of settings or a profile stored before 0.6.3 in its new form: any leveling as
-/// automatic, crossfeed as the natural headphone sound and the virtualizer as the wide one, the
-/// compressor's controls as the nearest preset, and bass boost as the equalizer's bass shelf at the
-/// same strength.
+/// The sound part of settings or a profile stored before 0.6.3 in its new form: crossfeed as the natural
+/// headphone sound and the virtualizer as the wide one, the compressor's controls as the nearest preset,
+/// and bass boost as the equalizer's bass shelf at the same strength.
 fn migrate_sound(old: &impl Old, s: &mut SoundSettings) {
-    if s.replay_gain != GainMode::Off {
-        s.replay_gain = GainMode::Auto;
-    }
     s.effects.headphone = if old.number("virtualizer").is_some_and(|v| v > 0.0) {
         HeadphoneSound::Wide
     } else if old.number("crossfeedDb").is_some_and(|v| v > 0.0) {
@@ -2157,8 +2150,6 @@ mod tests {
             limiter: true,
             limiter_threshold_db: -2.0,
             effects: SoundEffects { headphone: HeadphoneSound::Wide, volume_boost_db: 3.0, compressor: true, compressor_preset: CompressorPreset::Night },
-            replay_gain: GainMode::Album,
-            crossfade_sec: 4,
             hi_res: true,
             max_rate: MaxRate::Khz96,
             bit_perfect: false,
@@ -2171,8 +2162,6 @@ mod tests {
         assert_eq!(s.eq_bands, [], "the parametric equalizer starts with no bands");
         assert_eq!(s.limiter_threshold_db, -1.0);
         assert_eq!(s.eq_preamp_db, None);
-        assert_eq!(sound_from(r#"{"replayGain":7}"#).unwrap().replay_gain, GainMode::Auto);
-        assert_eq!(sound_from(r#"{"replayGain":-1}"#).unwrap().replay_gain, GainMode::Off);
         assert_eq!(s.max_rate, MaxRate::Auto, "a profile saved before the maximum rate: the device's own");
         assert_eq!(sound_from(r#"{"maxRate":9}"#).unwrap().max_rate, MaxRate::Auto);
         assert_eq!(sound_from(r#"{"eqPreampDb":"x"}"#), None, "a pre-amp that is not a number");
