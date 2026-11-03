@@ -696,8 +696,8 @@ impl Runner {
             app.heard(now.song);
         }
         if s.queue_stale(self.queue.as_ref()) {
-            let q = s.queue_shown(self.queue.as_ref().map(|q| &q.view));
-            app.queue = Some(q.view.clone());
+            let q = s.queue_shown(self.queue.as_ref());
+            app.queue = Some(nori_core::playlist::PlaylistView { songs: q.songs.to_vec(), ..q.view.clone() });
             self.queue = Some(q);
         }
         let here = matches!(self.playback, Playback::Here);

@@ -2185,7 +2185,7 @@ impl App {
         match list {
             0 => self.page_songs.get(i),
             1 => self.songs.get(i),
-            3 => self.queue.as_ref().and_then(|q| q.view.songs.get(i)),
+            3 => self.queue.as_ref().and_then(|q| q.songs.get(i)),
             4 => self.preview_song(i).and_then(|at| self.search_songs.get(at)),
             _ => self.search_songs.get(i),
         }
@@ -2276,7 +2276,7 @@ impl App {
         let (songs, origin) = match list {
             0 => (self.page_songs.clone(), self.page_fetch.as_ref().map(Fetch::origin)),
             1 => (self.songs.clone(), None),
-            3 => (self.queue.as_ref().map(|q| q.view.songs.clone()).unwrap_or_default(), None),
+            3 => (self.queue.as_ref().map(|q| q.songs.to_vec()).unwrap_or_default(), None),
             _ => (self.search_songs.clone(), None),
         };
         match how {
@@ -3720,7 +3720,7 @@ impl App {
     /// Takes the song at list index `index` out of the queue shown (here, or on the device playing), and
     /// offers its undo for a few seconds.
     fn remove_queued(&mut self, index: usize) {
-        let song = self.queue.as_ref().and_then(|q| q.view.songs.get(index).cloned());
+        let song = self.queue.as_ref().and_then(|q| q.songs.get(index).cloned());
         let Some(song) = song else { return };
         // It starts folding away at the click, not once the queue is read again.
         let m = &self.queue_rows;
@@ -4341,7 +4341,7 @@ impl App {
         let ui = self.ui();
         let now = s.now();
         // Copy the queue only when it changed.
-        let queue = s.queue_stale(self.queue.as_ref()).then(|| s.queue_shown(self.queue.as_ref().map(|q| &q.view)));
+        let queue = s.queue_stale(self.queue.as_ref()).then(|| s.queue_shown(self.queue.as_ref()));
         let playing = now.playing;
         ui.set_playing(playing);
         ui.set_mixing(now.mixing && now.state == State::Playing);
@@ -4367,7 +4367,7 @@ impl App {
             // Every song in play order, as Android's queue: those played (dimmed, above), the one playing, the rest.
             let now = q.rows.now;
             let rows = q.rows.order.iter().enumerate().filter_map(|(at, &i)| {
-                let s = q.view.songs.get(i as usize)?;
+                let s = q.songs.get(i as usize)?;
                 let at = at as i32;
                 Some(SongRow { by: q.by.get(&s.id).cloned().unwrap_or_default().into(), played: at < now, ..row(s, i as usize, at == now) })
             }).collect();
