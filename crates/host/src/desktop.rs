@@ -336,7 +336,7 @@ impl nori_plugins::Client for Watched {
             return;
         }
         if b.is_none() {
-            let Ok(daemon) = mdns_sd::ServiceDaemon::new() else { return };
+            let Some(daemon) = crate::remote::mdns_daemon() else { return };
             *b = Some(Browsing { daemon, kinds: Default::default() });
         }
         let browsing = b.as_mut().expect("made");

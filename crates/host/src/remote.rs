@@ -372,10 +372,23 @@ pub(crate) struct Mdns {
 #[cfg(feature = "desktop")]
 const SERVICE_TYPE: &str = "_nori._tcp.local.";
 
+/// How often an mDNS daemon looks for new network interfaces and addresses: a joined network is
+/// announced on within a minute, and the client does not wake every 5 s for it (the library's default).
+#[cfg(feature = "desktop")]
+const INTERFACES_CHECKED_S: u32 = 60;
+
+/// An mDNS daemon that looks at the network interfaces every [`INTERFACES_CHECKED_S`].
+#[cfg(feature = "desktop")]
+pub(crate) fn mdns_daemon() -> Option<mdns_sd::ServiceDaemon> {
+    let daemon = mdns_sd::ServiceDaemon::new().ok()?;
+    let _ = daemon.set_ip_check_interval(INTERFACES_CHECKED_S);
+    Some(daemon)
+}
+
 #[cfg(feature = "desktop")]
 impl Mdns {
     pub(crate) fn start() -> Option<Arc<Mdns>> {
-        let daemon = mdns_sd::ServiceDaemon::new().ok()?;
+        let daemon = mdns_daemon()?;
         Some(Arc::new(Mdns { daemon, remote: Default::default(), announced: Mutex::new(None) }))
     }
 
