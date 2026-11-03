@@ -39,7 +39,8 @@ impl KWeighting {
         let (a, b, s) = (self.a, self.b, &mut self.state);
         let mut sum = 0.0;
         for &v in x {
-            s[0] = v as f64 - a[1] * s[1] - a[2] * s[2] - a[3] * s[3] - a[4] * s[4];
+            // The newest state last: only its product waits on the sample before.
+            s[0] = v as f64 - a[4] * s[4] - a[3] * s[3] - a[2] * s[2] - a[1] * s[1];
             let y = b[0] * s[0] + b[1] * s[1] + b[2] * s[2] + b[3] * s[3] + b[4] * s[4];
             (s[4], s[3], s[2], s[1]) = (s[3], s[2], s[1], s[0]);
             sum += y * y;
