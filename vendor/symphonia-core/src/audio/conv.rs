@@ -528,7 +528,9 @@ impl_convert!(i32, i16, s, (s >> 16) as i16); // i16
 impl_convert!(i32, i24, s, i24::from(s >> 8)); // i24
 impl_convert!(i32, i32, s, s); // i32
 
-impl_convert!(i32, f32, s, (s as f64 / 2_147_483_648.0) as f32); // f32
+// NORI: in f32, which rounds the same: scaling by a power of two is exact, so rounding s then
+// scaling gives what rounding the exact s / 2^31 gives (checked for every i32).
+impl_convert!(i32, f32, s, s as f32 / 2_147_483_648.0); // f32
 impl_convert!(i32, f64, s, s as f64 / 2_147_483_648.0); // f64
 
 // u8 to ...
