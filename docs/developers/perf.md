@@ -52,6 +52,7 @@ the method and the tools.
 | Time stretch, the port against the C++ | `cargo test --release -p nori-stretch --test perf -- --ignored --nocapture` |
 | The time stretch's output, bit for bit (a digest to compare before and after) | `cargo test --release -p nori-stretch --test compare digest -- --ignored --nocapture` |
 | The FLAC and MP3 decoders' output, bit for bit (a digest per shape of song) | `cargo test --release -p nori-engine --test engine decoders::digest -- --ignored --nocapture` |
+| The Opus decoder's output, bit for bit (a digest per mode, rate and frame length) | `cargo test --release -p nori-engine --test engine decoders::opus_digest -- --ignored --nocapture` |
 | A plugin's decider: one call, a shuffle of 1000 songs | `cargo test --release -p nori-plugins --test deciders decider_calls_cost -- --ignored --nocapture` |
 | A plugin's audio stream | `cargo test --release -p nori-plugins --lib sink::tests::a_minute_sent -- --ignored --nocapture` |
 | Android, one device | `tools/perf-suite.sh <serial> <server-url>`; frames: `tools/open-bench.sh` |

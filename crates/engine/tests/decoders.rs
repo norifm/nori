@@ -4,6 +4,11 @@
 //! decoders' output is the same bit for bit. Tests pass without ffmpeg.
 //!
 //!   cargo test --release -p nori-engine --test engine decoders::digest -- --ignored --nocapture
+//!
+//! Opus has shapes of its own, through every mode (CELT, SILK, hybrid) and frame length: each decodes
+//! with no packet refused, and `opus_digest` prints their digest:
+//!
+//!   cargo test --release -p nori-engine --test engine decoders::opus_digest -- --ignored --nocapture
 
 use nori_player::decode::{Codec, Decoder};
 use symphonia::core::formats::probe::Hint;
@@ -109,7 +114,11 @@ fn decoded(file: Vec<u8>, extension: &str) -> (Vec<f32>, usize) {
     let track = reader.default_track(TrackType::Audio).unwrap();
     let (id, delay_known) = (track.id, track.delay.is_some());
     let params = track.codec_params.as_ref().and_then(|p| p.audio()).unwrap().clone();
-    let codec = if extension == "flac" { Codec::Flac } else { Codec::Mp3 };
+    let codec = match extension {
+        "flac" => Codec::Flac,
+        "opus" => Codec::Opus,
+        _ => Codec::Mp3,
+    };
     let channels = params.channels.as_ref().map_or(2, |c| c.count());
     let mut decoder = Decoder::new(codec, params.sample_rate.unwrap(), channels, params.extra_data.as_deref(), codec == Codec::Mp3 && delay_known).unwrap();
     let mut out = Vec::new();
@@ -154,4 +163,77 @@ fn digest() {
         println!("digest: {extension:4} {name:18} {hash:016x}");
     }
     println!("digest: all {all:016x}");
+}
+
+/// An Opus shape: name, channels, libopus's options. Music is CELT; speech rates are SILK (narrow, medium
+/// or wide band) or hybrid, and at 32k libopus switches between CELT and hybrid as the music changes. A
+/// packet holds 2.5 to 60 ms, in one to three frames; DTX sends silence as packets with no frame.
+const OPUS: &[(&str, usize, &[&str])] = &[
+    ("celt 128k", 2, &["-b:a", "128k"]),
+    ("celt 64k", 2, &["-b:a", "64k"]),
+    ("celt 256k", 2, &["-b:a", "256k"]),
+    ("celt 510k", 2, &["-b:a", "510k"]),
+    ("celt 128k mono", 1, &["-b:a", "128k"]),
+    ("celt 64k mono", 1, &["-b:a", "64k"]),
+    ("celt 32k", 2, &["-application", "lowdelay", "-b:a", "32k"]),
+    ("celt narrowband", 2, &["-application", "lowdelay", "-b:a", "24k", "-cutoff", "4000"]),
+    ("celt wideband", 1, &["-application", "lowdelay", "-b:a", "24k", "-cutoff", "8000"]),
+    ("celt 2.5 ms", 2, &["-b:a", "128k", "-frame_duration", "2.5"]),
+    ("celt 5 ms", 2, &["-b:a", "128k", "-frame_duration", "5"]),
+    ("celt 10 ms", 2, &["-b:a", "96k", "-frame_duration", "10"]),
+    ("celt 40 ms", 2, &["-b:a", "96k", "-frame_duration", "40"]),
+    ("celt 60 ms", 2, &["-b:a", "96k", "-frame_duration", "60"]),
+    ("celt cbr", 2, &["-b:a", "96k", "-vbr", "off"]),
+    ("celt constrained", 2, &["-b:a", "96k", "-vbr", "constrained"]),
+    ("silk nb", 1, &["-application", "voip", "-b:a", "8k"]),
+    ("silk mb", 1, &["-application", "voip", "-b:a", "12k", "-cutoff", "6000"]),
+    ("silk wb", 1, &["-application", "voip", "-b:a", "16k", "-cutoff", "8000"]),
+    ("silk stereo", 2, &["-application", "voip", "-b:a", "20k", "-cutoff", "8000"]),
+    ("silk 10 ms", 1, &["-application", "voip", "-b:a", "16k", "-cutoff", "8000", "-frame_duration", "10"]),
+    ("silk 40 ms", 1, &["-application", "voip", "-b:a", "16k", "-cutoff", "8000", "-frame_duration", "40"]),
+    ("silk 60 ms", 1, &["-application", "voip", "-b:a", "16k", "-cutoff", "8000", "-frame_duration", "60"]),
+    ("silk cbr", 1, &["-application", "voip", "-b:a", "16k", "-cutoff", "8000", "-vbr", "off"]),
+    ("silk fec", 1, &["-application", "voip", "-b:a", "24k", "-cutoff", "8000", "-fec", "1", "-packet_loss", "10"]),
+    ("silk dtx", 1, &["-application", "voip", "-b:a", "16k", "-cutoff", "8000", "-dtx", "1"]),
+    ("hybrid 16k", 1, &["-application", "voip", "-b:a", "16k"]),
+    ("hybrid stereo", 2, &["-application", "voip", "-b:a", "20k"]),
+    ("hybrid 10 ms", 1, &["-application", "voip", "-b:a", "16k", "-frame_duration", "10"]),
+    ("hybrid 40 ms", 2, &["-application", "voip", "-b:a", "20k", "-frame_duration", "40"]),
+    // Constant: opus-rs fails on most hybrid packets of three frames of different lengths.
+    ("hybrid 60 ms cbr", 1, &["-application", "voip", "-b:a", "16k", "-frame_duration", "60", "-vbr", "off"]),
+    ("voip 32k", 2, &["-application", "voip", "-b:a", "32k"]),
+    ("voip 32k mono", 1, &["-application", "voip", "-b:a", "32k", "-cutoff", "12000"]),
+];
+
+/// The music of [`signal`] in `channels`, encoded by libopus with `args` and decoded as the engine does.
+fn opus(channels: usize, args: &[&str]) -> (Vec<f32>, usize) {
+    let file = encoded(&signal(48_000, channels, 16), 48_000, channels, 16, &[args, &["-c:a", "libopus", "-f", "ogg"]].concat()).unwrap();
+    decoded(file, "opus")
+}
+
+#[test]
+fn opus_decodes_every_packet() {
+    if !ffmpeg() {
+        return;
+    }
+    for &(name, channels, args) in OPUS {
+        let (out, got) = opus(channels, args);
+        assert_eq!((got, out.len() >= 8 * 48_000 * channels), (channels, true), "{name}");
+    }
+}
+
+#[test]
+#[ignore]
+fn opus_digest() {
+    if !ffmpeg() {
+        return;
+    }
+    let mut all = 0xcbf2_9ce4_8422_2325u64;
+    for &(name, channels, args) in OPUS {
+        let (out, _) = opus(channels, args);
+        let hash = out.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, v| (h ^ v.to_bits() as u64).wrapping_mul(0x100_0000_01b3));
+        all = (all ^ hash).wrapping_mul(0x100_0000_01b3);
+        println!("digest: opus {name:18} {hash:016x}");
+    }
+    println!("digest: opus all {all:016x}");
 }
