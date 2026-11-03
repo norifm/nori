@@ -292,6 +292,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // See below, where it is latched.
     var held by remember { mutableStateOf<PagePalette?>(null) }
     val arrivingNow by androidx.compose.runtime.rememberUpdatedState(arriving)
+    val inViewNow by androidx.compose.runtime.rememberUpdatedState(inView)
     LaunchedEffect(tint) {
         // Still the last song's colours, which the song after it must not be given: colours worked out
         // for a song skipped past are dropped.
@@ -301,7 +302,9 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
         // A fade this change cut short is finished first, from where it had got to: starting the next
         // one from its end would put the page there in one frame.
         if (fadingFrom != null) {
-            if (!AppMotion.reduce && washFade.value < 1f) washFade.fadeByFrames(1f, stage.colourFadeMs * (1f - washFade.value))
+            if (washFade.value < 1f) {
+                if (!AppMotion.reduce && inViewNow) washFade.fadeByFrames(1f, stage.colourFadeMs * (1f - washFade.value)) else washFade.snapTo(1f)
+            }
             fadingFrom = null
         }
         if (found == palette) { shift.adopted = rowUrl; return@LaunchedEffect }
@@ -318,7 +321,8 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
         val carried = found != null && (held == found ||
             shift.amount > 0.9f && shift.towards == rowUrl && arrivingNow == found)
         val from = if (carried) null else (palette ?: neutral)
-        val fades = from != null && !AppMotion.reduce
+        // Behind the app, the page takes the new colours at once: a fade there was frames nobody saw.
+        val fades = from != null && !AppMotion.reduce && inViewNow
         // Back to its start before the colours change under it, not after. Taking the fade over from one
         // still running can wait a frame for it to let go, and on that frame the new colours were drawn
         // at the old fade's strength over the old ones: the page changed, went back, and changed again.
