@@ -297,9 +297,9 @@ impl Core {
 
     pub fn downloads(&self, done: bool) -> Result<Vec<Song>> {
         let c = self.db.lock();
-        let mut st = c.prepare_cached("SELECT json FROM downloads WHERE server=sid() AND done=?1 ORDER BY ts DESC")?;
-        let rows = st.query_map([done], |r| r.get::<_, String>(0))?;
-        Ok(rows.filter_map(|j| serde_json::from_str(&j.ok()?).ok()).collect())
+        let mut st = c.prepare_cached(&format!("SELECT {} FROM downloads i WHERE server=sid() AND done=?1 ORDER BY ts DESC", db::items::SONG))?;
+        let songs = st.query_map([done], |r| db::items::song(r, 0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(songs)
     }
 
     pub fn autoeq_search(&self, query: String, limit: u32) -> Result<Vec<AutoEqEntry>> {

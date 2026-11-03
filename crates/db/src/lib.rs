@@ -2,6 +2,7 @@
 //! app-wide tables. Background writes go through background.rs.
 
 pub mod background;
+mod from_json;
 pub mod items;
 
 use std::collections::HashSet;
@@ -39,7 +40,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(text, tokenize='unicode61 remo
 CREATE TABLE IF NOT EXISTS cache(server TEXT NOT NULL, key TEXT NOT NULL, body BLOB NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(server, key)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS kv(server TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(server, key)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS pending(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, endpoint TEXT NOT NULL, params TEXT NOT NULL, queued_ms INTEGER NOT NULL DEFAULT 0, tries INTEGER NOT NULL DEFAULT 0, tried_ms INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS downloads(server TEXT NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, ts INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(server, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS download_beats(server TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS autoeq(rowid INTEGER PRIMARY KEY, name TEXT NOT NULL, source TEXT NOT NULL, form TEXT NOT NULL, target TEXT NOT NULL, path TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS autoeq_missing(path TEXT PRIMARY KEY) WITHOUT ROWID;
@@ -84,8 +84,10 @@ pub fn open(path: &str, server: &str) -> rusqlite::Result<Connection> {
     drop_old_analysis(&c)?;
     c.execute_batch(APP_SCHEMA)?;
     drop_old_sort_indexes(&c)?;
-    items::migrate_from_json(&c)?;
+    from_json::items(&c)?;
+    from_json::downloads(&c)?;
     c.execute_batch(items::TABLE)?;
+    c.execute_batch(items::DOWNLOADS)?;
     c.execute_batch(SCHEMA)?;
     add_pending_tries(&c)?;
     drop_old_lyrics(&c)?;
@@ -540,6 +542,22 @@ mod tests {
         assert_eq!((r.songs, r.albums, r.artists), (vec![song], vec![album], vec![artist]));
         let has_json: bool = c.prepare("PRAGMA table_info(items)").unwrap().query_map([], |r| r.get::<_, String>(1)).unwrap().any(|n| n.unwrap() == "json");
         assert!(!has_json);
+    }
+
+    #[test]
+    fn downloads_kept_as_json_move_into_columns() {
+        let dir = nori_testdir::TempDir::new("db-downloads-json");
+        let path = dir.join("d.db").to_string_lossy().into_owned();
+        let song = full_song();
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch("CREATE TABLE downloads(server TEXT NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, ts INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(server, id)) WITHOUT ROWID;").unwrap();
+            c.execute("INSERT INTO downloads VALUES('s', 's1', ?1, 42, 1)", [serde_json::to_string(&song).unwrap()]).unwrap();
+        }
+        let c = open(&path, "s").unwrap();
+        let sql = format!("SELECT ts, done, {} FROM downloads i", items::SONG);
+        let (ts, done, back): (i64, bool, Song) = c.query_row(&sql, [], |r| Ok((r.get(0)?, r.get(1)?, items::song(r, 2)?))).unwrap();
+        assert_eq!((ts, done, back), (42, true, song));
     }
 
     #[test]

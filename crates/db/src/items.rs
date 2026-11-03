@@ -31,6 +31,29 @@ CREATE INDEX IF NOT EXISTS items_artist_natural ON items(server, artist COLLATE 
 CREATE INDEX IF NOT EXISTS items_album_natural ON items(server, album COLLATE natural_order) WHERE kind=2;
 ";
 
+/// Downloaded songs: their columns as in `items`, and when each was queued and whether it finished.
+pub(crate) const DOWNLOADS: &str = "
+CREATE TABLE IF NOT EXISTS downloads(server TEXT NOT NULL, id TEXT NOT NULL, ts INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0,
+  title TEXT, album TEXT, artist TEXT, album_id TEXT, artist_id TEXT, cover_art TEXT, duration INTEGER, track INTEGER, disc_number INTEGER,
+  year INTEGER, genre TEXT, suffix TEXT, content_type TEXT, bit_rate INTEGER, size INTEGER, sampling_rate INTEGER, bit_depth INTEGER,
+  user_rating INTEGER, starred INTEGER, is_external INTEGER, replay_gain BLOB, artists TEXT, created TEXT, play_count INTEGER, played TEXT,
+  path TEXT, explicit_status INTEGER, channel_count INTEGER, music_brainz_id TEXT, bpm INTEGER, comment TEXT,
+  PRIMARY KEY(server, id)) WITHOUT ROWID;
+";
+
+/// The statement that adds a download: id ?1, queued at ?2, then the song's columns.
+pub fn add_download_sql() -> String {
+    let marks = (0..Song::COLUMNS.len()).map(|k| format!("?{}", k + 3)).collect::<Vec<_>>().join(", ");
+    format!("INSERT INTO downloads(server, id, ts, {}) VALUES(sid(), ?1, ?2, {marks})", Song::COLUMNS.join(", "))
+}
+
+/// [`add_download_sql`]'s parameters for `song` queued at `ts`.
+pub fn download_params(song: &Song, ts: i64) -> Vec<Value> {
+    let mut p = vec![Value::Text(song.id.clone()), Value::Integer(ts)];
+    p.extend(song.values());
+    p
+}
+
 /// A song's columns, in [`song`]'s order; the query names the table `i`.
 pub const SONG: &str = "i.id, i.title, i.album, i.artist, i.album_id, i.artist_id, i.cover_art, i.duration, i.track, i.disc_number, i.year, i.genre, i.suffix, i.content_type, i.bit_rate, i.size, i.sampling_rate, i.bit_depth, i.user_rating, i.starred, i.is_external, i.replay_gain, i.artists, i.created, i.play_count, i.played, i.path, i.explicit_status, i.channel_count, i.music_brainz_id, i.bpm, i.comment";
 /// How many columns [`SONG`] is, for the ones a query selects after it.
@@ -179,7 +202,7 @@ fn int(n: impl Into<i64>) -> Value {
 }
 
 /// A record the index keeps: its kind, id, searched text and columns.
-pub(crate) trait Item {
+pub trait Item {
     const KIND: ItemKind;
     /// The columns [`Item::values`] fills, in order.
     const COLUMNS: &'static [&'static str];
@@ -346,73 +369,4 @@ pub(crate) fn upsert<T: Item>(c: &Connection, st: &Statements, item: &T) -> rusq
             Ok(Some(rowid))
         }
     }
-}
-
-/// Moves an index kept as JSON (one `json` column, before 0.8) into the columns, rowids kept so the
-/// search index still points at its rows. Remove once no install predates 0.8.
-pub(crate) fn migrate_from_json(c: &Connection) -> rusqlite::Result<()> {
-    let has_json = c.prepare("PRAGMA table_info(items)")?.query_map([], |r| r.get::<_, String>(1))?.any(|n| n.is_ok_and(|n| n == "json"));
-    if !has_json {
-        return Ok(());
-    }
-    // `o.json`: json_each has a hidden column of that name.
-    let j = |path: &str| format!("json_extract(o.json, '$.{path}')");
-    // The JSON names of each column, as the records were serialized (camelCase).
-    let camel = |c: &str| {
-        let mut out = String::new();
-        let mut up = false;
-        for ch in c.chars() {
-            if ch == '_' {
-                up = true;
-            } else if up {
-                out.extend(ch.to_uppercase());
-                up = false;
-            } else {
-                out.push(ch);
-            }
-        }
-        out
-    };
-    let value = |col: &str| match col {
-        // Written by nori's own serializer: booleans.
-        "starred" | "is_external" | "is_compilation" => format!("coalesce({}, 0)", j(&camel(col))),
-        "explicit_status" => format!("CASE {} WHEN 'clean' THEN 1 WHEN 'explicit' THEN 2 ELSE 0 END", j("explicitStatus")),
-        "replay_gain" => {
-            let f = |k: &str| format!("coalesce({}, 'NaN')", j(&format!("replayGain.{k}")));
-            // Packed by the gain function registered for the move.
-            format!("CASE WHEN {} IS NULL THEN NULL ELSE pack_gain({}, {}, {}, {}, {}, {}) END", j("replayGain"), f("trackGain"), f("albumGain"), f("trackPeak"), f("albumPeak"), f("baseGain"), f("fallbackGain"))
-        }
-        "artists" => "(SELECT group_concat(json_extract(value, '$.id') || char(31) || json_extract(value, '$.name'), char(30)) FROM json_each(o.json, '$.artists'))".to_string(),
-        "release_types" => "(SELECT group_concat(value, char(30)) FROM json_each(o.json, '$.releaseTypes'))".to_string(),
-        _ => j(&camel(col)),
-    };
-    c.create_scalar_function("pack_gain", 6, rusqlite::functions::FunctionFlags::SQLITE_UTF8, |ctx| {
-        let mut out = Vec::with_capacity(24);
-        for k in 0..6 {
-            let v = match ctx.get::<Value>(k)? {
-                Value::Real(f) => f as f32,
-                Value::Integer(n) => n as f32,
-                _ => f32::NAN,
-            };
-            out.extend(v.to_le_bytes());
-        }
-        Ok(out)
-    })?;
-    let copy = |kind: ItemKind, cols: &[&str]| format!(
-        "INSERT INTO items(rowid, server, kind, id, {}) SELECT o.rowid, o.server, o.kind, o.id, {} FROM items_json o WHERE o.kind={};",
-        cols.join(", "),
-        cols.iter().map(|c| value(c)).collect::<Vec<_>>().join(", "),
-        kind as i64
-    );
-    let tx = c.unchecked_transaction()?;
-    tx.execute_batch("ALTER TABLE items RENAME TO items_json;")?;
-    for index in ["items_genre", "items_artist", "items_year", "items_duration", "items_created", "items_plays", "items_starred", "items_rated", "items_title_natural", "items_artist_natural", "items_album_natural"] {
-        tx.execute_batch(&format!("DROP INDEX IF EXISTS {index};"))?;
-    }
-    tx.execute_batch(TABLE)?;
-    tx.execute_batch(&copy(ItemKind::Song, Song::COLUMNS))?;
-    tx.execute_batch(&copy(ItemKind::Album, Album::COLUMNS))?;
-    tx.execute_batch(&copy(ItemKind::Artist, Artist::COLUMNS))?;
-    tx.execute_batch("DROP TABLE items_json;")?;
-    tx.commit()
 }
