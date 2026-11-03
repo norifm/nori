@@ -827,7 +827,7 @@ component PlayPause inherits Rectangle {
         height: root.icon;
         opacity: root.playing || root.spinning ? 0 : 1;
         transform-scale: root.playing || root.spinning ? 0.8 : 1;
-        animate opacity, transform-scale { duration: root.swap; easing: ease-out; }
+        animate opacity, transform-scale { duration: root.swap; enabled: root.swap > 0ms; easing: ease-out; }
     }
     Icon {
         glyph: Icons.pause-solid;
@@ -836,7 +836,7 @@ component PlayPause inherits Rectangle {
         height: root.icon;
         opacity: root.playing && !root.spinning ? 1 : 0;
         transform-scale: root.playing && !root.spinning ? 1 : 0.8;
-        animate opacity, transform-scale { duration: root.swap; easing: ease-out; }
+        animate opacity, transform-scale { duration: root.swap; enabled: root.swap > 0ms; easing: ease-out; }
     }
     if root.spinning: Path {
         width: root.icon * 0.8;
@@ -878,7 +878,7 @@ component Seal inherits Rectangle {
         height: root.size;
         transform-rotation: root.liked ? -4deg : 0deg;
         transform-scale: root.scale;
-        animate transform-scale { duration: root.landing; easing: cubic-bezier(0.3, 1.9, 0.5, 1); }
+        animate transform-scale { duration: root.landing; enabled: root.landing > 0ms; easing: cubic-bezier(0.3, 1.9, 0.5, 1); }
     }
     // The next frame lets it settle: the scale is set to 1.5 at once, then run down to 1.
     settle := Timer {
@@ -912,8 +912,8 @@ component Fade inherits Rectangle {
     opacity: self.shown || Motion.reduced ? 1 : 0;
     x: self.shown || !self.push ? 0 : self.width * 0.3;
     background: self.push ? Theme.ground : transparent;
-    animate opacity { duration: root.span * 0.8; easing: ease-out; }
-    animate x { duration: root.span; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+    animate opacity { duration: root.span * 0.8; enabled: root.span > 0ms; easing: ease-out; }
+    animate x { duration: root.span; enabled: root.span > 0ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
     init => { self.shown = true; }
 }
 
@@ -978,12 +978,13 @@ component Bar inherits Rectangle {
     callback done(float);
     property <float> held: -1;
     property <float> shown: root.held >= 0 ? root.held : max(0, min(1, root.value));
-    animate shown { duration: root.held >= 0 ? 0ms : root.transition; easing: linear; }
+    // Off rather than 0 ms: a zero-length animation still reads the animation clock, so it draws again on the next frame.
+    animate shown { duration: root.transition; enabled: root.held < 0 && root.transition > 0ms; easing: linear; }
     height: 12px;
     Rectangle {
         y: (parent.height - self.height) / 2;
         height: root.hot ? root.thick : root.thin;
-        animate height { duration: Motion.reduced ? 0ms : 120ms; easing: ease-out; }
+        animate height { duration: Motion.reduced ? 0ms : 120ms; enabled: !Motion.reduced; easing: ease-out; }
         border-radius: self.height / 2;
         background: root.track;
         clip: true;
@@ -997,7 +998,7 @@ component Bar inherits Rectangle {
     }
     if root.playhead: Rectangle {
         property <length> d: root.hot ? 2.4 * root.thick : 1.4 * root.thin;
-        animate d { duration: Motion.reduced ? 0ms : 120ms; easing: ease-out; }
+        animate d { duration: Motion.reduced ? 0ms : 120ms; enabled: !Motion.reduced; easing: ease-out; }
         x: root.width * root.shown - self.d / 2;
         y: (parent.height - self.height) / 2;
         width: self.d;
@@ -1277,7 +1278,7 @@ component CardView inherits Rectangle {
         Rectangle {
             border-radius: parent.border-radius;
             background: touch.has-hover ? Theme.ground.with-alpha(0.25) : transparent;
-            animate background { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
+            animate background { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: ease-out; }
         }
     }
     Text {
@@ -1334,7 +1335,7 @@ component CardView inherits Rectangle {
         y: root.side - self.height - 10px;
         opacity: touch.has-hover || play-touch.has-hover ? 1 : 0;
         transform-scale: touch.has-hover || play-touch.has-hover ? 1 : 0.8;
-        animate opacity, transform-scale { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
+        animate opacity, transform-scale { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: ease-out; }
         width: 34px;
         height: 34px;
         border-radius: 17px;
@@ -1716,7 +1717,7 @@ component ShelfView inherits VerticalLayout {
             x: root.inset;
             width: root.seen;
             content-width: root.gap + root.shown * root.step;
-            animate content-x { duration: root.paging && !Motion.reduced ? 420ms : 0ms; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
+            animate content-x { duration: root.paging && !Motion.reduced ? 420ms : 0ms; enabled: root.paging && !Motion.reduced; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
             if root.loading: Rectangle {
                 for i in root.columns: Rectangle {
                     x: root.gap + i * root.step;
@@ -1762,7 +1763,7 @@ component ShelfView inherits VerticalLayout {
             border-width: 1px;
             border-color: Theme.outline;
             opacity: self.shown ? 1 : 0;
-            animate opacity { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
+            animate opacity { duration: Motion.reduced ? 0ms : 160ms; enabled: !Motion.reduced; easing: ease-out; }
             Icon {
                 glyph: b.glyph;
                 colour: Theme.text;
@@ -1800,14 +1801,14 @@ component PickCard inherits Rectangle {
     border-radius: 18px;
     clip: true;
     background: root.pick.page;
-    animate background { duration: Motion.reduced ? 0ms : 240ms; easing: ease-out; }
+    animate background { duration: Motion.reduced ? 0ms : 240ms; enabled: !Motion.reduced; easing: ease-out; }
     // A new mosaic fades in over the one it replaces: `faded` runs from the last change's count to this one's.
     property <image> under;
     property <image> over;
     property <int> changes;
     init => { root.over = root.picture; }
     property <float> faded: root.changes;
-    animate faded { duration: Motion.reduced ? 0ms : 240ms; easing: ease-out; }
+    animate faded { duration: Motion.reduced ? 0ms : 240ms; enabled: !Motion.reduced; easing: ease-out; }
     changed picture => {
         root.under = root.over;
         root.over = root.picture;
@@ -1817,7 +1818,7 @@ component PickCard inherits Rectangle {
         y: 0;
         height: root.width;
         background: root.pick.seed;
-        animate background { duration: Motion.reduced ? 0ms : 240ms; easing: ease-out; }
+        animate background { duration: Motion.reduced ? 0ms : 240ms; enabled: !Motion.reduced; easing: ease-out; }
         Image {
             width: root.width;
             height: root.width;
@@ -1855,7 +1856,7 @@ component PickCard inherits Rectangle {
     }
     Rectangle {
         background: touch.has-hover ? root.pick.page.with-alpha(0.15) : transparent;
-        animate background { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
+        animate background { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: ease-out; }
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -2007,7 +2008,7 @@ component SongLine inherits Rectangle {
     height: root.thumb ? 56px : 44px;
     border-radius: 7px;
     background: touch.has-hover ? Theme.hover : transparent;
-    animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
+    animate background { duration: Motion.reduced ? 0ms : 140ms; enabled: !Motion.reduced; easing: ease-out; }
     // A right press opens the song's menu where it was pressed, drawn as the app's own menus are.
     touch := TouchArea {
         double-clicked => { root.play(); }
@@ -2728,7 +2729,7 @@ component PanelRow inherits Rectangle {
     height: 52px;
     border-radius: 10px;
     background: rt.has-hover ? Theme.hover : transparent;
-    animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
+    animate background { duration: Motion.reduced ? 0ms : 140ms; enabled: !Motion.reduced; easing: ease-out; }
     rt := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
@@ -2743,7 +2744,7 @@ component PanelRow inherits Rectangle {
             height: 34px;
             border-radius: 17px;
             background: root.lit ? Theme.chosen : Theme.fill;
-            animate background { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
+            animate background { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: ease-out; }
             Icon {
                 glyph: root.icon;
                 colour: root.lit ? Theme.accent : Theme.text;
@@ -2893,14 +2894,14 @@ component RoundButton inherits Rectangle {
     height: 26px;
     border-radius: 13px;
     background: root.lit ? Theme.pill : (rt.has-hover ? Theme.chosen : Theme.fill);
-    animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
+    animate background { duration: Motion.reduced ? 0ms : 140ms; enabled: !Motion.reduced; easing: ease-out; }
     Icon {
         glyph: root.glyph;
         colour: root.lit ? Theme.pill-ink : Theme.text;
         width: 13px;
         height: 13px;
         transform-scale: rt.pressed ? 0.85 : 1;
-        animate transform-scale { duration: Motion.reduced ? 0ms : 220ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+        animate transform-scale { duration: Motion.reduced ? 0ms : 220ms; enabled: !Motion.reduced; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
     }
     rt := TouchArea {
         clicked => { root.clicked(); }
@@ -2917,10 +2918,10 @@ component Toggle inherits Rectangle {
     border-radius: 11px;
     background: root.on ? Theme.on : Theme.chosen;
     opacity: root.enabled ? 1 : 0.4;
-    animate background { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
+    animate background { duration: Motion.reduced ? 0ms : 160ms; enabled: !Motion.reduced; easing: ease-out; }
     Rectangle {
         x: root.on ? parent.width - self.width - 2px : 2px;
-        animate x { duration: Motion.reduced ? 0ms : 180ms; easing: cubic-bezier(0.3, 1.2, 0.6, 1); }
+        animate x { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: cubic-bezier(0.3, 1.2, 0.6, 1); }
         y: 2px;
         width: 18px;
         height: 18px;
@@ -2988,7 +2989,7 @@ component JamHeader inherits VerticalLayout {
             width: hl.preferred-width + 34px;
             border-radius: 13px;
             background: ha.has-hover ? Theme.chosen : Theme.fill;
-            animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
+            animate background { duration: Motion.reduced ? 0ms : 140ms; enabled: !Motion.reduced; easing: ease-out; }
             HorizontalLayout {
                 alignment: center;
                 spacing: 5px;
@@ -3511,7 +3512,7 @@ component QueueView inherits Rectangle {
                 property <length> caption-h: self.caption == "" ? 0 : 34px;
                 height: s.leaving || !self.opened ? 0 : self.caption-h + 54px;
                 opacity: s.leaving || !self.opened ? 0 : 1;
-                animate height, opacity { duration: Motion.reduced ? 0ms : 180ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+                animate height, opacity { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
                 clip: s.leaving || !self.opened;
                 z: i == root.drag-from ? 1 : 0;
                 property <bool> is-playing: s.playing;
@@ -3555,7 +3556,7 @@ component QueueView inherits Rectangle {
                 }
                 Rectangle {
                     y: qrow.caption-h + qrow.shift;
-                    animate y { duration: (i == root.drag-from && root.dragging) || root.landing || Motion.reduced ? 0ms : i == root.drag-from ? 120ms : 160ms; easing: ease-out; }
+                    animate y { duration: (i == root.drag-from && root.dragging) || root.landing || Motion.reduced ? 0ms : i == root.drag-from ? 120ms : 160ms; enabled: !((i == root.drag-from && root.dragging) || root.landing || Motion.reduced); easing: ease-out; }
                     height: 54px;
                     // Concentric with the cover: its 8 px corner and the 7 px around it.
                     border-radius: 15px;
@@ -3684,7 +3685,7 @@ component QueueView inherits Rectangle {
                         edit := Rectangle {
                             width: root.editable && qrow.hot && !s.playing ? 26px : 0;
                             clip: true;
-                            animate width { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
+                            animate width { duration: Motion.reduced ? 0ms : 160ms; enabled: !Motion.reduced; easing: ease-out; }
                             HorizontalLayout {
                                 alignment: end;
                                 rm := IconButton {
@@ -3916,7 +3917,7 @@ component SourceLine inherits Rectangle {
     z: root.held ? 1 : 0;
     plate := Rectangle {
         y: root.held ? RankDrag.dy : root.passed-down ? -RankDrag.tall : root.passed-up ? RankDrag.tall : 0;
-        animate y { duration: root.held || RankDrag.landing || Motion.reduced ? 0ms : 160ms; easing: ease-out; }
+        animate y { duration: root.held || RankDrag.landing || Motion.reduced ? 0ms : 160ms; enabled: !(root.held || RankDrag.landing || Motion.reduced); easing: ease-out; }
         height: root.height;
         background: root.held ? Theme.chosen : Theme.panel;
         border-top-left-radius: root.item.first || root.held ? 18px : 0;
@@ -5490,7 +5491,7 @@ component TopContent inherits Rectangle {
         Rectangle {
             y: (parent.height - self.height) / 2;
             width: input.has-focus ? (root.previewing ? (root.named ? SearchShape.wide : SearchShape.narrow) : root.named ? 280px : 220px) : root.named ? 180px : 36px;
-            animate width { duration: Motion.reduced ? 0ms : 200ms; easing: ease-out; }
+            animate width { duration: Motion.reduced ? 0ms : 200ms; enabled: !Motion.reduced; easing: ease-out; }
             height: 36px;
             border-radius: 18px;
             clip: true;
@@ -5719,7 +5720,7 @@ export component AppWindow inherits Window {
     in-out property <int> inspector;
     // How far the sheet on the right is in: it floats over the page, which stays where it is.
     property <float> panel-in: self.inspector != 0 ? 1 : 0;
-    animate panel-in { duration: Motion.reduced ? 0ms : 240ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+    animate panel-in { duration: Motion.reduced ? 0ms : 240ms; enabled: !Motion.reduced; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
     // Remote control is on: the devices button, and the places the music can play.
     in property <bool> devices-on;
     in property <[DeviceRow]> devices;
@@ -7025,7 +7026,7 @@ export component AppWindow inherits Window {
                                 source: root.art(root.page-art, 2, root.covers-rev);
                                 image-fit: cover;
                                 opacity: self.source.width > 0 ? 1 : 0;
-                                animate opacity { duration: Motion.reduced ? 0ms : 400ms; easing: ease-out; }
+                                animate opacity { duration: Motion.reduced ? 0ms : 400ms; enabled: !Motion.reduced; easing: ease-out; }
                             }
                             Rectangle {
                                 background: @linear-gradient(180deg, Theme.ground.with-alpha(0) 0%, Theme.ground.with-alpha(0) 45%, Theme.ground.with-alpha(0.7) 78%, Theme.ground 100%);
@@ -7358,7 +7359,7 @@ export component AppWindow inherits Window {
                     text: "Loading…";
                     color: Theme.dim;
                     opacity: self.said ? 1 : 0;
-                    animate opacity { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
+                    animate opacity { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: ease-out; }
                     Timer {
                         interval: 400ms;
                         running: !parent.said;
@@ -7421,7 +7422,7 @@ export component AppWindow inherits Window {
                 Glass {
                     x: (parent.width - self.width) / 2;
                     y: root.note != "" ? Chrome.top-room : -50px;
-                    animate y { duration: Motion.reduced ? 0ms : 260ms; easing: ease-out; }
+                    animate y { duration: Motion.reduced ? 0ms : 260ms; enabled: !Motion.reduced; easing: ease-out; }
                     width: min(parent.width - 40px, toast.preferred-width + 32px);
                     height: 32px;
                     radius: 16px;
@@ -7482,7 +7483,7 @@ export component AppWindow inherits Window {
                     width: parent.width - 48px;
                     text: root.lyrics-note != "" ? root.lyrics-note : "No lyrics";
                     opacity: root.lyrics-note-shown;
-                    animate opacity { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
+                    animate opacity { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: ease-out; }
                     color: Theme.dim;
                     font-size: 15px;
                     horizontal-alignment: center;
@@ -7493,7 +7494,7 @@ export component AppWindow inherits Window {
                     // words stay until then, so a change of song never jumps.
                     property <bool> came;
                     opacity: self.came && !root.lyrics-waiting ? 1 : 0;
-                    animate opacity { duration: Motion.reduced ? 0ms : 200ms; easing: ease-out; }
+                    animate opacity { duration: Motion.reduced ? 0ms : 200ms; enabled: !Motion.reduced; easing: ease-out; }
                     init => { self.came = true; }
                     y: 56px;
                     height: parent.height - 56px;
@@ -7508,7 +7509,7 @@ export component AppWindow inherits Window {
                             self.content-y = 0;
                         }
                     }
-                    animate content-y { duration: Motion.reduced ? 0ms : 560ms; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
+                    animate content-y { duration: Motion.reduced ? 0ms : 560ms; enabled: !Motion.reduced; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
                     // The line being sung rests a third of the way down, as on Android: the words start there and can
                     // run on until the last line is there too, clear of the fades at either edge.
                     sung := VerticalLayout {
@@ -7537,7 +7538,7 @@ export component AppWindow inherits Window {
                             // How lit the line is, fading as it changes: set when it changes (a change handler
                             // runs whether or not the line is drawn just then), so a line sung fades from white.
                             property <float> level;
-                            animate level { duration: Motion.reduced ? 0ms : 420ms; easing: ease-out; }
+                            animate level { duration: Motion.reduced ? 0ms : 420ms; enabled: !Motion.reduced; easing: ease-out; }
                             // Scrolled to when lit, and when the lyrics come in with this line already sung.
                             changed lit => {
                                 self.level = self.lit ? 1 : 0;
@@ -7572,7 +7573,7 @@ export component AppWindow inherits Window {
                                 opacity: side-line.shown;
                                 color: !root.lyric-sweeping ? (!root.lyrics-synced || side-line.lit ? Theme.text : Theme.text.with-alpha(0.36))
                                     : side-line.lit ? transparent : Theme.text.with-alpha(0.36 + (1 - 0.36) * side-line.level);
-                                animate color { duration: root.lyric-sweeping || Motion.reduced ? 0ms : 420ms; easing: ease-out; }
+                                animate color { duration: root.lyric-sweeping || Motion.reduced ? 0ms : 420ms; enabled: !(root.lyric-sweeping || Motion.reduced); easing: ease-out; }
                                 // The lit line filling without pieces to draw it (no face to measure in).
                                 if root.lyric-sweeping && side-line.lit && root.lyric-pieces-side.length == 0: StyledText {
                                     width: 100%;
@@ -7926,7 +7927,7 @@ export component AppWindow inherits Window {
         full-screen := Rectangle {
             opacity: root.full-player ? 1 : 0;
             visible: self.opacity > 0.01;
-            animate opacity { duration: Motion.reduced ? 0ms : 300ms; easing: ease-out; }
+            animate opacity { duration: Motion.reduced ? 0ms : 300ms; enabled: !Motion.reduced; easing: ease-out; }
             background: Theme.ground;
             Image {
                 width: 100%;
@@ -7935,7 +7936,7 @@ export component AppWindow inherits Window {
                 image-fit: cover;
                 visible: root.covers-tint;
                 opacity: root.wash-on-b ? 0 : 1;
-                animate opacity { duration: Motion.reduced ? 0ms : 800ms; easing: ease-in-out; }
+                animate opacity { duration: Motion.reduced ? 0ms : 800ms; enabled: !Motion.reduced; easing: ease-in-out; }
             }
             Image {
                 width: 100%;
@@ -7944,7 +7945,7 @@ export component AppWindow inherits Window {
                 image-fit: cover;
                 visible: root.covers-tint;
                 opacity: root.wash-on-b ? 1 : 0;
-                animate opacity { duration: Motion.reduced ? 0ms : 800ms; easing: ease-in-out; }
+                animate opacity { duration: Motion.reduced ? 0ms : 800ms; enabled: !Motion.reduced; easing: ease-in-out; }
             }
             // Swallows the clicks meant for the page underneath.
             TouchArea { }
@@ -7973,7 +7974,7 @@ export component AppWindow inherits Window {
             // The artwork and the controls in the left half; the panel in the right.
             property <length> side: min(460px, root.height - 330px, root.width / 2 - 120px);
             property <length> art-rise: root.full-player ? 0px : 30px;
-            animate art-rise { duration: Motion.reduced ? 0ms : 420ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+            animate art-rise { duration: Motion.reduced ? 0ms : 420ms; enabled: !Motion.reduced; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
             full-art := VerticalLayout {
                 x: root.width / 4 - parent.side / 2;
                 y: (root.height - self.preferred-height) / 2 + parent.art-rise;
@@ -7986,7 +7987,7 @@ export component AppWindow inherits Window {
                     border-radius: 8px;
                     source: root.sleeved ? root.sleeve : root.art(root.now-art, 1, root.covers-rev);
                     transform-scale: root.playing ? 1 : 0.9;
-                    animate transform-scale { duration: Motion.reduced ? 0ms : 500ms; easing: cubic-bezier(0.3, 1.35, 0.6, 1); }
+                    animate transform-scale { duration: Motion.reduced ? 0ms : 500ms; enabled: !Motion.reduced; easing: cubic-bezier(0.3, 1.35, 0.6, 1); }
                     RightPress {
                         menu(x, y) => { root.song-menu-at(x, y); }
                     }
@@ -8125,7 +8126,7 @@ export component AppWindow inherits Window {
                         letter-spacing: 1.4px;
                         horizontal-alignment: center;
                         opacity: root.mixing ? 1 : 0;
-                        animate opacity { duration: Motion.reduced ? 0ms : 360ms; }
+                        animate opacity { duration: Motion.reduced ? 0ms : 360ms; enabled: !Motion.reduced; }
                     }
                     Text {
                         text: "-" + root.clock(root.duration-ms - root.display-position-ms);
@@ -8222,7 +8223,7 @@ export component AppWindow inherits Window {
                 width: root.width / 2 - 100px;
                 text: root.lyrics-note != "" ? root.lyrics-note : "No lyrics for this song";
                 opacity: root.lyrics-note-shown;
-                animate opacity { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
+                animate opacity { duration: Motion.reduced ? 0ms : 180ms; enabled: !Motion.reduced; easing: ease-out; }
                 color: Theme.dim;
                 font-size: 26px;
                 font-weight: 700;
@@ -8233,7 +8234,7 @@ export component AppWindow inherits Window {
             full-lyrics := Flickable {
                 visible: root.full-panel == 2 && root.lyrics-lines.length > 0;
                 opacity: root.lyrics-waiting ? 0 : 1;
-                animate opacity { duration: Motion.reduced ? 0ms : 200ms; easing: ease-out; }
+                animate opacity { duration: Motion.reduced ? 0ms : 200ms; enabled: !Motion.reduced; easing: ease-out; }
                 property <bool> waiting: root.lyrics-waiting;
                 changed waiting => {
                     if !self.waiting {
@@ -8246,7 +8247,7 @@ export component AppWindow inherits Window {
                 y: 48px;
                 height: root.height - 48px - 56px;
                 content-height: full-sung.preferred-height;
-                animate content-y { duration: Motion.reduced ? 0ms : 640ms; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
+                animate content-y { duration: Motion.reduced ? 0ms : 640ms; enabled: !Motion.reduced; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
                 full-sung := VerticalLayout {
                     width: parent.width;
                     padding-top: root.height * 0.36 - 48px;
@@ -8262,7 +8263,7 @@ export component AppWindow inherits Window {
                         property <bool> aimed: i == clamp(root.lyrics-active, 0, root.lyrics-lines.length - 1);
                         // As the panel's: how lit, fading as it changes, whether or not the line is drawn just then.
                         property <float> level;
-                        animate level { duration: Motion.reduced ? 0ms : 500ms; easing: ease-out; }
+                        animate level { duration: Motion.reduced ? 0ms : 500ms; enabled: !Motion.reduced; easing: ease-out; }
                         function aim() {
                             full-lyrics.content-y = -(self.y - (root.height * 0.36 - 48px));
                             root.full-lyric-h = self.height;
@@ -8309,7 +8310,7 @@ export component AppWindow inherits Window {
                             // Unsung lines are the ink at 36 %, as the swept line's are, so the cover's colours show through.
                             color: !root.lyric-sweeping ? (!root.lyrics-synced || full-line.lit ? Theme.text : Theme.text.with-alpha(0.36))
                                 : full-line.lit ? transparent : Theme.text.with-alpha(0.36 + (1 - 0.36) * full-line.level);
-                            animate color { duration: root.lyric-sweeping || Motion.reduced ? 0ms : 500ms; easing: ease-out; }
+                            animate color { duration: root.lyric-sweeping || Motion.reduced ? 0ms : 500ms; enabled: !(root.lyric-sweeping || Motion.reduced); easing: ease-out; }
                             // The lit line filling without pieces to draw it (no face to measure in).
                             if root.lyric-sweeping && full-line.lit && root.lyric-pieces-full.length == 0: StyledText {
                                 width: 100%;
@@ -9084,7 +9085,7 @@ export component AppWindow inherits Window {
             property <bool> shown: root.search-preview-shown;
             x: Chrome.top-x + Chrome.top-w - 46px - self.width;
             y: Chrome.top-room - 12px + (self.shown ? 0px : -6px);
-            animate y { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
+            animate y { duration: Motion.reduced ? 0ms : 160ms; enabled: !Motion.reduced; easing: ease-out; }
             width: Chrome.top-w >= 880px ? SearchShape.wide : SearchShape.narrow;
             border-radius: Chrome.top-radius;
             // The pill's paper where nothing under it is blurred (Chrome's 88 %), and its outline.
@@ -9093,7 +9094,7 @@ export component AppWindow inherits Window {
             border-color: Theme.outline;
             height: min(hits.preferred-height, root.height - Chrome.top-room - Chrome.bottom-room + 12px);
             opacity: self.shown ? 1 : 0;
-            animate opacity { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
+            animate opacity { duration: Motion.reduced ? 0ms : 160ms; enabled: !Motion.reduced; easing: ease-out; }
             visible: self.opacity > 0.01;
             clip: true;
             TouchArea {}
