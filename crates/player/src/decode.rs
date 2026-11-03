@@ -29,6 +29,15 @@ impl Codec {
         self as i32 + 1
     }
 
+    /// Most frames one packet of a stream with setup `extra` decodes to: a FLAC stream says its largest
+    /// block.
+    fn frames_in(self, extra: Option<&[u8]>) -> usize {
+        match extra.map(stream_info) {
+            Some(&[_, _, hi, lo, ..]) if self == Codec::Flac && (hi, lo) != (0, 0) => u16::from_be_bytes([hi, lo]) as usize,
+            _ => self.max_frames(),
+        }
+    }
+
     /// Most frames one packet decodes to.
     pub fn max_frames(self) -> usize {
         match self {
@@ -277,6 +286,11 @@ pub struct Decoder {
     decoded: bool,
 }
 
+/// A FLAC stream's STREAMINFO from its setup: media3 prefixes it with "fLaC" and the block header.
+fn stream_info(setup: &[u8]) -> &[u8] {
+    if setup.starts_with(b"fLaC") && setup.len() >= 8 { &setup[8..] } else { setup }
+}
+
 impl Decoder {
     /// `extra` is the extractor's codec setup (STREAMINFO, AudioSpecificConfig, Vorbis headers, ALAC
     /// cookie, OpusHead). `delay_known`: an MP3 LAME header lets the platform trim the decoder delay.
@@ -309,7 +323,7 @@ impl Decoder {
             codec,
             channels,
             rate,
-            scratch: vec![0.0; codec.max_frames() * channels],
+            scratch: vec![0.0; codec.frames_in(extra) * channels],
             held: 0,
             from: 0,
             skip: if codec == Codec::Mp3 && !delay_known { MP3_DECODER_DELAY } else { 0 },
@@ -326,8 +340,7 @@ impl Decoder {
             params.with_channels(Channels::Positioned(p));
         }
         if let Some(e) = extra.filter(|e| !e.is_empty()) {
-            // media3 prefixes STREAMINFO with "fLaC" and the block header.
-            let e = if codec == Codec::Flac && e.starts_with(b"fLaC") && e.len() >= 8 { &e[8..] } else { e };
+            let e = if codec == Codec::Flac { stream_info(e) } else { e };
             params.with_extra_data(e.into());
         }
         // media3 trims encoder delay and padding itself.
@@ -687,7 +700,8 @@ mod tests {
         let mut e = b"fLaC\x80\x00\x00\x22".to_vec();
         e.extend_from_slice(&[0x10, 0x00, 0x10, 0x00, 0, 0, 0, 0, 0, 0, 0x0A, 0xC4, 0x42, 0xF0, 0, 0, 0, 0]);
         e.extend_from_slice(&[0u8; 16]);
-        assert!(Decoder::new(Codec::Flac, 44_100, 2, Some(&e), false).is_ok());
+        let d = Decoder::new(Codec::Flac, 44_100, 2, Some(&e), false).unwrap();
+        assert_eq!(d.scratch.len(), 4096 * 2, "room for the stream's largest block");
     }
 
     #[test]
