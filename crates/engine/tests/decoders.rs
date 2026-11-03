@@ -1,7 +1,8 @@
-//! FLAC and MP3 in the shapes music comes in, encoded by ffmpeg and decoded as the engine decodes them
-//! (symphonia's reader, `nori_player::decode::Decoder`). FLAC is lossless, so each shape decodes to what
-//! was encoded; `digest` prints a digest of every shape's output, equal before and after a change when the
-//! decoders' output is the same bit for bit. Tests pass without ffmpeg.
+//! The decoders in the shapes music comes in, encoded by ffmpeg and decoded as the engine decodes them
+//! (symphonia's reader, `nori_player::decode::Decoder`). FLAC and ALAC are lossless, so each shape decodes
+//! to what was encoded. The digests print a digest of every shape's output, equal before and after a
+//! change when the decoders' output is the same bit for bit: `digest` FLAC's and MP3's, `digest_alac`,
+//! `digest_vorbis` and `digest_aac` their own. Tests pass without ffmpeg.
 //!
 //!   cargo test --release -p nori-engine --test engine decoders::digest -- --ignored --nocapture
 //!
@@ -11,6 +12,7 @@
 //!   cargo test --release -p nori-engine --test engine decoders::opus_digest -- --ignored --nocapture
 
 use nori_player::decode::{Codec, Decoder};
+use symphonia::core::codecs::audio::well_known::{CODEC_ID_AAC, CODEC_ID_ALAC, CODEC_ID_FLAC, CODEC_ID_MP3, CODEC_ID_OPUS, CODEC_ID_VORBIS};
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
@@ -57,6 +59,61 @@ const MP3: &[(&str, u32, usize, &[&str])] = &[
     ("mpeg-2.5 11 kHz", 11_025, 2, &["-b:a", "32k"]),
     ("mpeg-2.5 8 kHz", 8_000, 1, &["-b:a", "8k"]),
 ];
+
+/// An ALAC shape: name, rate, channels, bits per sample, frames, ffmpeg's encoder options. ffmpeg's
+/// encoder makes packets of 4096 frames: the song's length sets the last one's.
+type AlacShape = (&'static str, u32, usize, u32, usize, &'static [&'static str]);
+
+const ALAC: &[AlacShape] = &[
+    ("16-bit", 44_100, 2, 16, 8 * 44_100, &[]),
+    ("16-bit mono", 44_100, 1, 16, 8 * 44_100, &[]),
+    ("16-bit 96 kHz", 96_000, 2, 16, 8 * 96_000, &[]),
+    ("24-bit", 96_000, 2, 24, 8 * 96_000, &["-sample_fmt", "s32p"]),
+    ("24-bit mono", 96_000, 1, 24, 8 * 96_000, &["-sample_fmt", "s32p"]),
+    ("24-bit 44.1 kHz", 44_100, 2, 24, 8 * 44_100, &["-sample_fmt", "s32p"]),
+    ("uncompressed", 44_100, 2, 16, 8 * 44_100, &["-compression_level", "0"]),
+    ("fixed order 6", 44_100, 2, 16, 8 * 44_100, &["-compression_level", "1"]),
+    ("orders 1-30", 44_100, 2, 16, 8 * 44_100, &["-min_prediction_order", "1", "-max_prediction_order", "30"]),
+    ("24-bit orders 1-30", 96_000, 2, 24, 8 * 96_000, &["-sample_fmt", "s32p", "-min_prediction_order", "1", "-max_prediction_order", "30"]),
+    ("last packet 1 frame", 44_100, 2, 16, 86 * 4096 + 1, &[]),
+    ("last packet 3 frames", 44_100, 1, 24, 86 * 4096 + 3, &["-sample_fmt", "s32p"]),
+    ("last packet 4095", 48_000, 2, 16, 92 * 4096 + 4095, &["-max_prediction_order", "30"]),
+    ("6 channels", 48_000, 6, 16, 8 * 48_000, &[]),
+    ("24-bit 6 channels", 48_000, 6, 24, 8 * 48_000, &["-sample_fmt", "s32p"]),
+];
+
+/// A Vorbis shape: name, rate, ffmpeg's encoder options. ffmpeg's own encoder makes stereo only.
+const VORBIS: &[(&str, u32, &[&str])] = &[
+    ("default", 44_100, &[]),
+    ("quality 0", 44_100, &["-q:a", "0"]),
+    ("quality 2", 44_100, &["-q:a", "2"]),
+    ("quality 5", 44_100, &["-q:a", "5"]),
+    ("quality 10", 44_100, &["-q:a", "10"]),
+    ("48 kHz", 48_000, &[]),
+    ("32 kHz", 32_000, &["-q:a", "3"]),
+    ("22 kHz", 22_050, &["-q:a", "3"]),
+    ("96 kHz", 96_000, &[]),
+];
+
+/// An AAC shape: name, rate, channels, ffmpeg's encoder options.
+const AAC: &[(&str, u32, usize, &[&str])] = &[
+    ("256k", 44_100, 2, &["-b:a", "256k"]),
+    ("128k", 44_100, 2, &["-b:a", "128k"]),
+    ("64k", 44_100, 2, &["-b:a", "64k"]),
+    ("320k 48 kHz", 48_000, 2, &["-b:a", "320k"]),
+    ("96k 32 kHz", 32_000, 2, &["-b:a", "96k"]),
+    ("mono 128k", 44_100, 1, &["-b:a", "128k"]),
+    ("mono 48k", 44_100, 1, &["-b:a", "48k"]),
+    ("fast coder", 44_100, 2, &["-b:a", "192k", "-aac_coder", "fast"]),
+    ("mid side", 48_000, 2, &["-b:a", "160k", "-aac_ms", "1", "-aac_is", "0", "-aac_pns", "0"]),
+];
+
+/// ffmpeg's output options per codec.
+const FLAC_OUT: &[&str] = &["-c:a", "flac", "-f", "flac"];
+const MP3_OUT: &[&str] = &["-c:a", "libmp3lame", "-f", "mp3"];
+const ALAC_OUT: &[&str] = &["-c:a", "alac", "-f", "ipod"];
+const VORBIS_OUT: &[&str] = &["-c:a", "vorbis", "-strict", "-2", "-f", "ogg"];
+const AAC_OUT: &[&str] = &["-c:a", "aac", "-f", "ipod"];
 
 /// Eight seconds of `bits`-bit samples, interleaved: music, silence, a quiet fade in steps of 4 (wasted
 /// bits), loud clipped music, full-scale noise, and a sine. Channels differ.
@@ -114,10 +171,14 @@ fn decoded(file: Vec<u8>, extension: &str) -> (Vec<f32>, usize) {
     let track = reader.default_track(TrackType::Audio).unwrap();
     let (id, delay_known) = (track.id, track.delay.is_some());
     let params = track.codec_params.as_ref().and_then(|p| p.audio()).unwrap().clone();
-    let codec = match extension {
-        "flac" => Codec::Flac,
-        "opus" => Codec::Opus,
-        _ => Codec::Mp3,
+    let codec = match params.codec {
+        CODEC_ID_FLAC => Codec::Flac,
+        CODEC_ID_MP3 => Codec::Mp3,
+        CODEC_ID_ALAC => Codec::Alac,
+        CODEC_ID_AAC => Codec::Aac,
+        CODEC_ID_VORBIS => Codec::Vorbis,
+        CODEC_ID_OPUS => Codec::Opus,
+        other => panic!("{other} is not decoded here"),
     };
     let channels = params.channels.as_ref().map_or(2, |c| c.count());
     let mut decoder = Decoder::new(codec, params.sample_rate.unwrap(), channels, params.extra_data.as_deref(), codec == Codec::Mp3 && delay_known).unwrap();
@@ -130,6 +191,15 @@ fn decoded(file: Vec<u8>, extension: &str) -> (Vec<f32>, usize) {
     (out, decoder.channels())
 }
 
+/// Asserts that `file` decodes to `pcm`, `bits`-bit samples in `channels`.
+fn assert_lossless(name: &str, file: Vec<u8>, extension: &str, pcm: &[i32], channels: usize, bits: u32) {
+    let (out, got) = decoded(file, extension);
+    assert_eq!(got, channels, "{name}");
+    let scale = 1.0 / (1u32 << (bits - 1)) as f32;
+    let wrong = out.iter().zip(pcm).position(|(&o, &s)| o != s as f32 * scale);
+    assert_eq!((out.len(), wrong), (pcm.len(), None), "{name}");
+}
+
 #[test]
 fn flac_decodes_to_what_was_encoded() {
     if !ffmpeg() {
@@ -137,13 +207,34 @@ fn flac_decodes_to_what_was_encoded() {
     }
     for &(name, rate, channels, bits, args) in FLAC {
         let pcm = signal(rate, channels, bits);
-        let file = encoded(&pcm, rate, channels, bits, &[args, &["-c:a", "flac", "-f", "flac"]].concat()).unwrap();
-        let (out, got) = decoded(file, "flac");
-        assert_eq!(got, channels, "{name}");
-        let scale = 1.0 / (1u32 << (bits - 1)) as f32;
-        let wrong = out.iter().zip(&pcm).position(|(&o, &s)| o != s as f32 * scale);
-        assert_eq!((out.len(), wrong), (pcm.len(), None), "{name}");
+        let file = encoded(&pcm, rate, channels, bits, &[args, FLAC_OUT].concat()).unwrap();
+        assert_lossless(name, file, "flac", &pcm, channels, bits);
     }
+}
+
+#[test]
+fn alac_decodes_to_what_was_encoded() {
+    if !ffmpeg() {
+        return;
+    }
+    for &(name, rate, channels, bits, frames, args) in ALAC {
+        let pcm = &signal(rate, channels, bits)[..frames * channels];
+        let file = encoded(pcm, rate, channels, bits, &[args, ALAC_OUT].concat()).unwrap();
+        assert_lossless(name, file, "m4a", pcm, channels, bits);
+    }
+}
+
+/// Prints a digest of what each file decodes to, a line per (codec, shape, the file's extension, file),
+/// and returns one of them all.
+fn digests<'a>(files: impl Iterator<Item = (&'a str, &'a str, &'a str, Vec<u8>)>) -> u64 {
+    let mut all = 0xcbf2_9ce4_8422_2325u64;
+    for (codec, name, extension, file) in files {
+        let (out, _) = decoded(file, extension);
+        let hash = out.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, v| (h ^ v.to_bits() as u64).wrapping_mul(0x100_0000_01b3));
+        all = (all ^ hash).wrapping_mul(0x100_0000_01b3);
+        println!("digest: {codec:4} {name:18} {hash:016x}");
+    }
+    all
 }
 
 #[test]
@@ -152,17 +243,42 @@ fn digest() {
     if !ffmpeg() {
         return;
     }
-    let mut all = 0xcbf2_9ce4_8422_2325u64;
-    let flac = FLAC.iter().map(|&(name, rate, channels, bits, args)| (name, "flac", rate, channels, bits, [args, &["-c:a", "flac", "-f", "flac"]].concat()));
-    let mp3 = MP3.iter().map(|&(name, rate, channels, args)| (name, "mp3", rate, channels, 16, [args, &["-c:a", "libmp3lame", "-f", "mp3"]].concat()));
-    for (name, extension, rate, channels, bits, args) in flac.chain(mp3) {
-        let file = encoded(&signal(rate, channels, bits), rate, channels, bits, &args).unwrap();
-        let (out, _) = decoded(file, extension);
-        let hash = out.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, v| (h ^ v.to_bits() as u64).wrapping_mul(0x100_0000_01b3));
-        all = (all ^ hash).wrapping_mul(0x100_0000_01b3);
-        println!("digest: {extension:4} {name:18} {hash:016x}");
+    let flac = FLAC.iter().map(|&(name, rate, channels, bits, args)| ("flac", name, "flac", encoded(&signal(rate, channels, bits), rate, channels, bits, &[args, FLAC_OUT].concat()).unwrap()));
+    let mp3 = MP3.iter().map(|&(name, rate, channels, args)| ("mp3", name, "mp3", encoded(&signal(rate, channels, 16), rate, channels, 16, &[args, MP3_OUT].concat()).unwrap()));
+    println!("digest: all {:016x}", digests(flac.chain(mp3)));
+}
+
+#[test]
+#[ignore]
+fn digest_alac() {
+    if !ffmpeg() {
+        return;
     }
-    println!("digest: all {all:016x}");
+    let alac = ALAC.iter().map(|&(name, rate, channels, bits, frames, args)| {
+        let pcm = &signal(rate, channels, bits)[..frames * channels];
+        ("alac", name, "m4a", encoded(pcm, rate, channels, bits, &[args, ALAC_OUT].concat()).unwrap())
+    });
+    println!("digest: alac all {:016x}", digests(alac));
+}
+
+#[test]
+#[ignore]
+fn digest_vorbis() {
+    if !ffmpeg() {
+        return;
+    }
+    let vorbis = VORBIS.iter().map(|&(name, rate, args)| ("vorbis", name, "ogg", encoded(&signal(rate, 2, 16), rate, 2, 16, &[args, VORBIS_OUT].concat()).unwrap()));
+    println!("digest: vorbis all {:016x}", digests(vorbis));
+}
+
+#[test]
+#[ignore]
+fn digest_aac() {
+    if !ffmpeg() {
+        return;
+    }
+    let aac = AAC.iter().map(|&(name, rate, channels, args)| ("aac", name, "m4a", encoded(&signal(rate, channels, 16), rate, channels, 16, &[args, AAC_OUT].concat()).unwrap()));
+    println!("digest: aac all {:016x}", digests(aac));
 }
 
 /// An Opus shape: name, channels, libopus's options. Music is CELT; speech rates are SILK (narrow, medium
