@@ -78,7 +78,7 @@ fn value(text: String) -> Value {
 
 impl Side for App {
     fn stored(&self, key: &str) -> Option<Value> {
-        self.settings.current().and_then(|p| value_of(&p, key)).map(value)
+        self.settings.with_prefs(|p| value_of(p, key)).flatten().map(value)
     }
 
     fn effective(&self, key: &str) -> Option<Value> {
