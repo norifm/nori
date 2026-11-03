@@ -2888,7 +2888,7 @@ impl App {
         self.motion = Some(crate::motion::play(
             artwork.url.clone(),
             kept,
-            move |image| frames.send(Msg::LoopFrame { song: id.clone(), image }),
+            move || frames.send(Msg::LoopFrame { song: id.clone() }),
             move |failed| {
                 nori_core::alog::info(&format!("moving cover: {failed:?}"));
                 let status = match failed {
@@ -3406,15 +3406,15 @@ impl App {
                 self.motion_follow();
             }
             Msg::Loop { .. } => {}
-            Msg::LoopFrame { song, image } => {
-                if let Some(playing) = &self.motion {
-                    playing.busy.store(false, std::sync::atomic::Ordering::Relaxed);
-                }
-                if Some(&song) == self.heard.as_ref() && self.motion.is_some() {
+            Msg::LoopFrame { song } => {
+                let Some(playing) = &self.motion else { return };
+                if Some(&song) == self.heard.as_ref() {
+                    let image = playing.shown.lock().expect("not poisoned");
                     let ui = self.ui();
                     ui.set_sleeve(self.compositor.picture(&image.pixels, image.width, image.height));
                     ui.set_sleeved(true);
                 }
+                playing.busy.store(false, std::sync::atomic::Ordering::Relaxed);
             }
             Msg::LoopFailed { song, artwork, status } => {
                 self.moving = None;

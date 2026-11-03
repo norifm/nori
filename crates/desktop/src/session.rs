@@ -99,7 +99,7 @@ pub enum Msg {
     /// A plugin's moving cover for `song`, which plays while the sleeve shows.
     Loop { song: nori_core::Song, artwork: nori_plugins::Artwork },
     /// A frame of the moving cover of song `song`.
-    LoopFrame { song: String, image: nori_covers::Image },
+    LoopFrame { song: String },
     /// The moving cover of `song` failed; with a status, its plugin hears it.
     LoopFailed { song: nori_core::Song, artwork: nori_plugins::Artwork, status: Option<u16> },
     /// A plugin's still sleeve for song `song`, drawn as its cover in Now Playing.
