@@ -35,6 +35,9 @@ the method and the tools.
 | what | command |
 |---|---|
 | CPU flame graph of any command | `python3 tools/flame.py -o build/flame/x -- <command>` |
+| An app that runs until quit, for a while | `python3 tools/flame.py -o build/flame/x --for 60 -- <command>` |
+| A window of an earlier profile; CPU each second by thread | `python3 tools/flame.py --profile build/flame/x/profile.json.gz --since 15 --until 55 [--thread name]`; `--per-second` |
+| The desktop client through every page, idle or playing | `tools/desktop-tour.py SOCKET [rounds] [pause] [album id]`, [Desktop profiling](desktop-performance.md) |
 | Engine CPU, per case | `tools/flame-engine.sh automix,mp3 [minutes] [out]` |
 | Engine heap, by call site | `tools/flame-engine.sh --heap automix [minutes] [out]` |
 | Engine wakes, CPU, allocations per minute | `cargo test --release -p nori-engine --test engine perf_report -- --ignored --nocapture --test-threads=1` |
@@ -68,6 +71,9 @@ at O3. Check a change that depends on inlining or optimization level with `--pro
   through a Rust callback, reads that could come through the memory map.
 - Network: requests the user did not ask for, requests that could go together while the radio is up,
   URLs that change so caches miss.
+- Frames: an interface draws only what changed, once. Count frames per second while music plays
+  with nothing on screen moving; a Slint animation of 0 ms still reads the animation clock and draws
+  again on the next tick, so an animation that is sometimes instant is turned off with `enabled`.
 - Wakeups: the engine sleeps for seconds between bursts while music plays; a run of short sleeps
   (`NORI_WAKES=1`) is a timer firing on a guess that does not come true.
 - Plugins: a host call per buffer, not per sample; a plugin's events only while it listens.

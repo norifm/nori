@@ -281,6 +281,7 @@ python3 tools/desktop-app.py do pause
 | `open` | `home`, `search`, `albums`, `artists`, `playlists`, `songs`, `settings`, `equalizer`, `fullscreen` |
 | `panel` | `none`, `queue`, `lyrics`, `devices` |
 | `do` | `play`, `pause`, `toggle`, `next`, `previous`, `close_fullscreen` |
+| `play_album` | an album's id |
 
 Each instance needs its own socket and data directory; an existing socket is never replaced. The
 socket is owner-only (0600) and removed on a normal exit. The reply is the UI's actual state; playback
