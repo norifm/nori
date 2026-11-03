@@ -2,7 +2,7 @@
 //! app-wide tables. Background writes go through background.rs.
 
 pub mod background;
-mod from_json;
+mod upgrade;
 pub mod items;
 
 use std::collections::HashSet;
@@ -27,12 +27,14 @@ impl rusqlite::ToSql for ItemKind {
 }
 
 /// One database for the app. Per-server rows carry the profile id in `server`; a connection filters by
-/// `sid()`, the id it was opened for. Profiles, AutoEQ and settings are app-wide.
+/// `sid()`, the id it was opened for. Profiles, AutoEQ and settings are app-wide. Pages are read mapped,
+/// not copied in by a system call each.
 const PRAGMAS: &str = "
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 PRAGMA temp_store=MEMORY;
 PRAGMA busy_timeout=5000;
+PRAGMA mmap_size=268435456;
 ";
 
 const SCHEMA: &str = "
@@ -84,9 +86,10 @@ pub fn open(path: &str, server: &str) -> rusqlite::Result<Connection> {
     drop_old_analysis(&c)?;
     c.execute_batch(APP_SCHEMA)?;
     drop_old_sort_indexes(&c)?;
-    from_json::items(&c)?;
-    from_json::downloads(&c)?;
+    upgrade::items(&c)?;
+    upgrade::downloads(&c)?;
     c.execute_batch(items::TABLE)?;
+
     c.execute_batch(items::DOWNLOADS)?;
     c.execute_batch(SCHEMA)?;
     add_pending_tries(&c)?;

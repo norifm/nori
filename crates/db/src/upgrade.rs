@@ -1,5 +1,5 @@
-//! Moves stores kept as JSON (before 0.8) into their columns, once, when the database opens. Remove this
-//! file and its calls in `open` once no install predates 0.8.
+//! Moves stores from before 0.8 into their current form, once, when the database opens: JSON into
+//! columns. Remove this file and its calls in `open` once no install predates 0.8.
 
 use nori_model::{Album, Artist, Song};
 use rusqlite::types::Value;
