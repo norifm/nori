@@ -1204,11 +1204,11 @@ impl Loader {
         false
     }
 
-    /// The whole song is in memory.
+    /// The whole song is at hand, in memory or on disk.
     pub fn complete(&self) -> bool {
         self.0.fetching.look();
         let s = self.0.state.lock();
-        s.base == 0 && s.at_end() && s.error.is_none()
+        (s.base == 0 || s.disk.is_some()) && s.at_end() && s.error.is_none()
     }
 
     /// An opening's thread starts: the clock counts it as taking bytes in while it is not blocked on them,
@@ -1545,9 +1545,9 @@ impl Loaded {
             s.burst_from = None;
             s.done = true;
             if let (Some(k), Some(len), None) = (run.keep.take(), s.len, &s.error) {
-                // Whole in the entry: read from there and drop the memory copy.
-                let whole = s.base == 0 && s.data.len() as u64 == len;
-                if let Some(file) = k.finish_open(len).filter(|_| whole) {
+                // Whole in the entry (it took every byte from the first, or a gap would have dropped it): read
+                // from there and drop the memory copy, all of the song or a window of one over its cap.
+                if let Some(file) = k.finish_open(len) {
                     s.data = VecDeque::new();
                     s.disk = Some(Arc::new([(file, len)]));
                 }
