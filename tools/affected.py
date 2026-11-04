@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """The crates a change can affect, as `-p` flags for cargo: those it touches and all that depend on them.
+`--tests` prints them as a nextest filter instead, for a run that builds the whole workspace (the
+dependencies then have the features the cached build gave them) and tests only these.
 
 Reads changed paths on stdin. Prints nothing when the whole workspace needs running: no paths, a list
 cut short, or a change every crate sees.
@@ -55,5 +57,7 @@ def affected(paths, dirs, users):
 
 if __name__ == "__main__":
     crates = affected([line.strip() for line in sys.stdin if line.strip()], *workspace())
-    if crates is not None:
+    if crates is not None and "--tests" in sys.argv[1:]:
+        print(" | ".join(f"package({c})" for c in sorted(crates)))
+    elif crates is not None:
         print(" ".join(f"-p {c}" for c in sorted(crates)))

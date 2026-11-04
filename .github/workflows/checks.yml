@@ -75,10 +75,14 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename') || files=
-          echo "crates=$(tools/affected.py <<< "$files")" >> "$GITHUB_OUTPUT"
+          echo "tests=$(tools/affected.py --tests <<< "$files")" >> "$GITHUB_OUTPUT"
+      # The whole workspace is built, so the dependencies match the cache master saved (building some
+      # crates gives them other features, and rebuilds them); only the affected crates' tests run.
       # Every test binary at once, not one after another; nextest runs no doctests.
-      - run: cargo nextest run ${{ steps.affected.outputs.crates || '--workspace' }}
-      - run: cargo test -j4 ${{ steps.affected.outputs.crates || '--workspace' }} --doc
+      - env:
+          TESTS: ${{ steps.affected.outputs.tests }}
+        run: cargo nextest run --workspace --no-tests=pass ${TESTS:+-E "$TESTS"}
+      - run: cargo test -j4 --workspace --doc
   clippy:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
