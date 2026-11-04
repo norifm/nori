@@ -140,4 +140,4 @@ jobs:
           key: android-debug
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - uses: ./.github/actions/android-toolchain
-      - run: ./gradlew :app:compileDebugKotlin -PrustTargets=arm64-v8a
+      - run: ./gradlew :app:compileDebugKotlin :core:testDebugUnitTest :app:testDebugUnitTest -PrustTargets=arm64-v8a
