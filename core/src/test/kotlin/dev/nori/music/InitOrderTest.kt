@@ -89,9 +89,9 @@ class InitOrderTest {
         )
     }
 
-    /** Nori hands [Downloads] `::core` and the sources, and its constructor starts a thread on them. */
+    /** Nori hands [Downloads] `::core` and the sources, and starts its thread on them with [Downloads.start]. */
     @Test fun whatTheDownloadsThreadReachesInNoriIsBuiltBeforeIt() =
-        check("Nori.kt", "Nori", Regex("""^    val downloads = Downloads\("""), listOf("core", "lazySources", "client"))
+        check("Nori.kt", "Nori", Regex("""^    init \{ downloads\.start\(\) \}"""), listOf("core", "lazySources", "client"))
 
     /**
      * The engine EnginePlayer starts calls its own player back through its RustBridge from its threads at
@@ -105,8 +105,4 @@ class InitOrderTest {
 
     @Test fun whatThePlayerMirrorCollectorReachesIsBuiltBeforeItStarts() =
         check("playback/PlayerConnection.kt", "PlayerConnection", Regex("""^    init \{"""), listOf("mirrored"))
-
-    /** Downloads' own `init` runs [publish] and [reconcile] on its pool before the rest of it is built. */
-    @Test fun whatDownloadsInitThreadReachesIsBuiltBeforeIt() =
-        check("downloads/Downloads.kt", "Downloads", Regex("""^    init \{"""), listOf("publish", "reconcile"))
 }
