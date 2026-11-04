@@ -1879,6 +1879,26 @@ fn exp_rotation1(x: &mut [f32], len: usize, stride: usize, c: f32, s: f32) {
 #[inline]
 fn exp_rotation1_scalar(x: &mut [f32], len: usize, stride: usize, c: f32, s: f32) {
     let ms = -s;
+    // NORI: with a stride of 1, each step's rotated sample is the next step's input: it stays in a
+    // register rather than going through memory.
+    if stride == 1 && len >= 3 {
+        let x = &mut x[..len];
+        let mut x1 = x[0];
+        for i in 0..len - 1 {
+            let x2 = x[i + 1];
+            x[i] = c * x1 + ms * x2;
+            x1 = c * x2 + s * x1;
+        }
+        x[len - 1] = x1;
+        let mut x2 = x[len - 2];
+        for i in (0..len - 2).rev() {
+            let x1 = x[i];
+            x[i + 1] = c * x2 + s * x1;
+            x2 = c * x1 + ms * x2;
+        }
+        x[0] = x2;
+        return;
+    }
     for i in 0..(len - stride) {
         let x1 = x[i];
         let x2 = x[i + stride];
