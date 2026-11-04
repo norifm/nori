@@ -78,6 +78,9 @@ When everything above is done; each behind a switch:
 - DSD output.
 - 32-bit integer output.
 - Web: lock-screen playback in iPhone Safari.
+- Android Baseline Profile: on the emulator (2026-11-03) a cold start to Home took 138 ms uncompiled,
+  127 ms with the profile ART builds from use and 129 ms fully compiled, so it would save at most about
+  10 ms of a fresh install's first starts; a macrobenchmark module and a device run per release to keep.
 
 ## Not planned
 

@@ -25,9 +25,9 @@ impl Core {
     pub fn downloaded_album(&self, id: String) -> crate::Result<Option<crate::AlbumDetail>> {
         let songs = {
             let c = self.db.lock();
-            let mut st = c.prepare_cached("SELECT json FROM downloads WHERE server=sid() AND done=1 AND json_extract(json, '$.albumId')=?1 ORDER BY ts DESC")?;
-            let rows = st.query_map([id], |r| r.get::<_, String>(0))?;
-            rows.filter_map(|j| serde_json::from_str(&j.ok()?).ok()).collect()
+            let mut st = c.prepare_cached(&format!("SELECT {} FROM downloads i WHERE server=sid() AND done=1 AND album_id=?1 ORDER BY ts DESC", crate::db::items::SONG))?;
+            let rows = st.query_map([id], |r| crate::db::items::song(r, 0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
         };
         Ok(crate::library::downloaded_album(songs))
     }
@@ -53,21 +53,17 @@ impl Core {
             t.follow_quality(self.download_kbps());
             t.know(&songs);
         });
-        let rows = songs.into_iter().map(|s| {
-            let json = serde_json::to_string(&s).unwrap_or_default();
-            (s.id, json)
-        });
-        self.queue_downloads(rows)
+        self.queue_downloads(songs)
     }
 
     /// Queues every indexed song, in index order ([`Core::download_queue`]).
     pub fn download_queue_library(&self) -> crate::Result<DownloadQueued> {
         self.downloads.with(|t| t.follow_quality(self.download_kbps()));
-        let rows: Vec<(String, String)> = {
+        let rows: Vec<crate::Song> = {
             let c = self.db.lock();
-            let mut st = c.prepare("SELECT id, json FROM items WHERE server=sid() AND kind=?1 ORDER BY rowid")?;
-            let rows = st.query_map([crate::db::ItemKind::Song], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            rows.filter_map(|r| r.ok()).collect()
+            let mut st = c.prepare(&format!("SELECT {} FROM items i WHERE server=sid() AND kind=?1 ORDER BY rowid", crate::db::items::SONG))?;
+            let rows = st.query_map([crate::db::ItemKind::Song], |r| crate::db::items::song(r, 0))?;
+            rows.collect::<rusqlite::Result<_>>()?
         };
         self.queue_downloads(rows)
     }
@@ -188,7 +184,7 @@ impl Core {
         self.session.settings.prefs(|p| p.download.bit_rate)
     }
 
-    fn queue_downloads(&self, rows: impl IntoIterator<Item = (String, String)>) -> crate::Result<DownloadQueued> {
+    fn queue_downloads(&self, rows: Vec<crate::Song>) -> crate::Result<DownloadQueued> {
         let q = queue_rows(&mut self.db.lock(), rows)?;
         let mut held = self.downloads.held();
         q.fresh.iter().for_each(|id| held.queued(id));
@@ -282,8 +278,8 @@ impl Core {
         let recent = self.downloads.with(|t| t.saved_ids());
         let done: Vec<crate::Song> = {
             let c = self.db.lock();
-            let mut st = c.prepare_cached("SELECT json FROM downloads WHERE server=sid() AND id=?1 AND done=1")?;
-            recent.iter().filter_map(|id| st.query_row([id], |r| r.get::<_, String>(0)).ok()).filter_map(|j| serde_json::from_str(&j).ok()).collect()
+            let mut st = c.prepare_cached(&format!("SELECT {} FROM downloads i WHERE server=sid() AND id=?1 AND done=1", crate::db::items::SONG))?;
+            recent.iter().filter_map(|id| st.query_row([id], |r| crate::db::items::song(r, 0)).ok()).collect()
         };
         let [active, queued, failed, finished] = self.downloads.with(|t| t.sections(&pending, &done, |s: &crate::Song| s.id.as_str()));
         Ok(DownloadSections { active, queued, failed, finished })

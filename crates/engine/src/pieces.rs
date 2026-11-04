@@ -1,5 +1,5 @@
 //! A song on disk in one or more files (media3's cache splits songs into pieces), read as one stream
-//! in large sequential reads, for measuring.
+//! in sequential reads.
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -7,8 +7,9 @@ use std::path::PathBuf;
 
 use symphonia::core::io::MediaSource;
 
-/// Bytes read from disk at a time; the demuxer's small reads are served from this buffer.
-pub(crate) const READ: usize = 512 * 1024;
+/// Bytes read from disk at a time; the demuxer's small reads are served from this buffer. The kernel
+/// reads ahead of sequential reads on its own.
+pub(crate) const READ: usize = 64 * 1024;
 
 /// A song's pieces in order, with their lengths, read through one buffer.
 pub struct Pieces<F = File> {
@@ -187,8 +188,9 @@ mod tests {
     fn pieces_read_as_one_stream() {
         let bytes = song(3 * READ + 12_345);
         let reads = Arc::new(Mutex::new(Vec::new()));
-        // Cut where media3 would, and at an odd place.
-        let mut p = cut(&bytes, &[1_000_000, 1_048_576 + 7], &reads);
+        // Cut inside a buffer, and just past one.
+        let cuts = [READ + 1_000, 2 * READ + 7];
+        let mut p = cut(&bytes, &cuts, &reads);
         let mut out = Vec::new();
         let mut step = [0u8; 4096];
         loop {
@@ -202,8 +204,11 @@ mod tests {
         let reads = reads.lock().unwrap();
         // One read per buffer, plus one per piece boundary.
         assert!(reads.len() <= bytes.len().div_ceil(READ) + 2, "{} reads for {} bytes: {:?}", reads.len(), bytes.len(), *reads);
-        let small = reads.iter().filter(|&&n| n < 64 * 1024).count();
-        assert!(small <= 3, "only a piece's end or the song's is read short: {:?}", *reads);
+        let ends = reads.iter().scan(0, |at, &n| {
+            *at += n;
+            Some(*at)
+        });
+        assert!(ends.into_iter().all(|e| e % READ == 0 || cuts.contains(&e) || e == bytes.len()), "only a piece's end or the song's is read short: {:?}", *reads);
     }
 
     #[test]

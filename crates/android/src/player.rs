@@ -1249,6 +1249,12 @@ impl Library for AndroidLibrary {
             return Ok(Located { source: Source::File(files), hint: None, duration_ms, estimated: false, from_second: None });
         }
         let hint = if download { None } else { key_format(&target.key).or_else(|| song.map(|s| s.suffix)).filter(|s| !s.is_empty()) };
+        // So is a song already whole in the stream cache (fetched ahead): streamed again, it was read back
+        // through JNI into memory.
+        if let Some(files) = (!download).then(|| cache_files(&self.bridge, &target.key, |j| j.streamed)).flatten() {
+            log(&format!("{id} opens from the {} files it was fetched into", files.len()));
+            return Ok(Located { source: Source::File(files), hint, duration_ms, estimated: false, from_second: None });
+        }
         log(&format!("{id} opens from {} as {}", target.key, hint.as_deref().unwrap_or("whatever it is")));
         let bytes = resolving(&client, Arc::new(JavaBytes { bridge: self.bridge.clone(), key: target.key, ahead: self.ahead.clone() }));
         Ok(Located { source: Source::Url { url: target.url, bytes }, hint, duration_ms, estimated: false, from_second: None })
@@ -1473,7 +1479,7 @@ extern "system" fn create(env: JNIEnv, _: JClass, bridge: JObject, current: jlon
     let can_offload = JAVA.get().is_some_and(|j| j.offload.is_some()) && sdk >= 29;
     let offloaded: Option<Box<dyn OffloadOutput>> = can_offload.then(|| Box::new(JavaOffload::new(bridge.clone(), offload.clone(), quiet.clone())) as Box<dyn OffloadOutput>);
     log(&format!("the engine starts: API {sdk}, {} output, {} MB of memory, offload {}", if float != 0 { "float" } else { "16-bit" }, config.memory_mb, if can_offload { "possible" } else { "not on this Android" }));
-    let app = CoreApp::new(queue.clone()).bridging();
+    let app = CoreApp::new(queue.clone(), analyses.clone()).bridging();
     let engine = Engine::start(library, app, CoreQueue(queue.clone()), Box::new(output), offloaded, config, move |e| tell.push(e));
     PLAYERS.add(Arc::new(Player { engine, bridge, shared, events, offload, stations, jumped: Mutex::new(None), looked_ms: AtomicI64::new(i64::MIN / 2), quiet, ahead, analyses, queue, current, sdk, float: float != 0 }))
 }

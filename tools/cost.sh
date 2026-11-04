@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # tools/cost.sh LABEL [SECONDS]: what the app costs on screen as it is now, from a debug build over adb:
 # CPU % of a core, wakeups/s (context switches of all its threads), frames/s and GCs/min over the window,
-# and the six busiest threads. Set ANDROID_SERIAL for the device. See docs/developers/building.md.
+# the six busiest threads, and the threads that woke most (a thread waking with little CPU still costs a
+# phone battery: wakeups/min). Set ANDROID_SERIAL for the device. See docs/developers/building.md.
 
 label=$1; secs=${2:-30}
 cd "$(dirname "$0")/.."; m=$(mktemp -d)
@@ -32,4 +33,6 @@ for t,(n,c,w) in b.items():
 cpu=sum(r[1] for r in rows)/secs*100; wk=sum(r[2] for r in rows)/secs
 print(f"{label}: CPU {cpu:.1f} %, wakeups {wk:.0f}/s, {f/secs:.1f} fps, GCs {max(0,g1-g0)*60/secs:.1f}/min")
 for n,c,w in sorted(rows,key=lambda r:-r[1])[:6]: print(f"    {n:18s} {c/secs*100:5.1f} % {w/secs:6.0f}/s")
+woke=sorted((r for r in rows if r[2]),key=lambda r:-r[2])[:8]
+if woke: print("  woke most: "+", ".join(f"{n} {w*60/secs:.0f}/min" for n,c,w in woke))
 PY

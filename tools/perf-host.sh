@@ -2,7 +2,8 @@
 # The engine's host perf report (crates/engine/tests/perf_bench.rs) for this checkout and for another
 # revision, side by side: minutes of music played on the test's clock, and per minute of it the engine's
 # wakes, the CPU time, and the allocations. No phone, no emulator: the numbers are this machine's, so only
-# a comparison made on it means anything.
+# a comparison made on it means anything. Last, per case, whether the two sound the same bit for bit (a
+# revision whose report has no digest is not compared).
 #
 #   tools/perf-host.sh [rev=the latest release tag] [runs=2]
 #
@@ -39,8 +40,22 @@ bench() {
     (cd "$1" && cargo test --release -j4 -p nori-engine --test engine perf_report -- --ignored --nocapture --test-threads=1 2>&1) | grep -o 'perf: .*'
 }
 
+report=$(mktemp "${TMPDIR:-/tmp}/nori-perf-report.XXXXXX")
 for side in "$rev:$tree" "working tree:$here"; do
     name=${side%%:*}; dir=${side#*:}
     echo "== $name"
-    for _ in $(seq "$runs"); do bench "$dir"; done
+    for _ in $(seq "$runs"); do bench "$dir" | sed "s/^/$name: /" | tee -a "$report" | sed "s/^$name: //"; done
 done
+echo "== sound"
+python3 - "$rev" "$report" <<'EOF'
+import re, sys
+rev, sounds = sys.argv[1], {}
+for line in open(sys.argv[2]):
+    m = re.match(r"(.*?): perf: (\S+) .*\| sound (\w+)", line)
+    if m:
+        sounds.setdefault(m[2], {}).setdefault(m[1], set()).add(m[3])
+for case, sides in sounds.items():
+    old, new = sides.get(rev, set()), sides.get("working tree", set())
+    print(f"{case:<10} " + ("the same" if old and old == new and len(new) == 1 else "differs" if old and new else "not compared"))
+EOF
+rm -f "$report"

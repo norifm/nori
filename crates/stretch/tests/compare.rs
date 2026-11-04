@@ -277,3 +277,33 @@ fn identical_channels_come_out_as_the_mono_signal() {
         assert!(d < 1e-3, "{ratio}: right {d:.2e} of the peak from left");
     }
 }
+
+/// A digest of the port's output over every input, channel count and ratio, flushes and resets included:
+/// the same before and after a change means the output is the same bit for bit. Not a check.
+///
+///   cargo test --release -p nori-stretch --test compare digest -- --ignored --nocapture
+#[test]
+#[ignore]
+fn digest() {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    let mut eat = |x: &[f32]| {
+        for v in x {
+            hash = (hash ^ v.to_bits() as u64).wrapping_mul(0x100_0000_01b3);
+        }
+    };
+    for ch in [1, 2] {
+        for (_, input) in INPUTS {
+            let x = input(ch);
+            for ratio in RATIOS.iter().chain(&[0.5, 1.071, 0.94]) {
+                let (mut rust, _) = engines(ch, RATE);
+                eat(&run(&mut rust, &x, ch, *ratio));
+                for k in 0..4 {
+                    rust.reset();
+                    eat(&run(&mut rust, &x[k * 19_000 * ch..(k * 19_000 + 8192) * ch], ch, *ratio));
+                }
+            }
+        }
+    }
+    println!("digest: {hash:016x}");
+}
+

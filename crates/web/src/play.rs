@@ -490,7 +490,7 @@ impl Nori {
                 .order
                 .iter()
                 .map(|&i| {
-                    let mut v = match shown.view.songs.get(i as usize).filter(|s| !s.id.is_empty()) {
+                    let mut v = match shown.songs.get(i as usize).filter(|s| !s.id.is_empty()) {
                         Some(s) => crate::pages::song(core, s),
                         None => json!({}),
                     };

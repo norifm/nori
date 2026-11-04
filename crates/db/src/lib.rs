@@ -2,6 +2,8 @@
 //! app-wide tables. Background writes go through background.rs.
 
 pub mod background;
+mod upgrade;
+pub mod items;
 
 use std::collections::HashSet;
 use std::sync::{Arc, Weak};
@@ -9,7 +11,6 @@ use std::sync::{Arc, Weak};
 use nori_model::*;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::{de::DeserializeOwned, Serialize};
 
 /// What an index row holds, stored as its number (`kind`); SQL text names songs as `kind=2`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,21 +27,21 @@ impl rusqlite::ToSql for ItemKind {
 }
 
 /// One database for the app. Per-server rows carry the profile id in `server`; a connection filters by
-/// `sid()`, the id it was opened for. Profiles, AutoEQ and settings are app-wide.
+/// `sid()`, the id it was opened for. Profiles, AutoEQ and settings are app-wide. Pages are read mapped,
+/// not copied in by a system call each.
 const PRAGMAS: &str = "
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 PRAGMA temp_store=MEMORY;
 PRAGMA busy_timeout=5000;
+PRAGMA mmap_size=268435456;
 ";
 
 const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS items(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, kind INTEGER NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, UNIQUE(server, kind, id));
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(text, tokenize='unicode61 remove_diacritics 2', prefix='2 3');
 CREATE TABLE IF NOT EXISTS cache(server TEXT NOT NULL, key TEXT NOT NULL, body BLOB NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(server, key)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS kv(server TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(server, key)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS pending(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, endpoint TEXT NOT NULL, params TEXT NOT NULL, queued_ms INTEGER NOT NULL DEFAULT 0, tries INTEGER NOT NULL DEFAULT 0, tried_ms INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS downloads(server TEXT NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, ts INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(server, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS download_beats(server TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS autoeq(rowid INTEGER PRIMARY KEY, name TEXT NOT NULL, source TEXT NOT NULL, form TEXT NOT NULL, target TEXT NOT NULL, path TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS autoeq_missing(path TEXT PRIMARY KEY) WITHOUT ROWID;
@@ -53,17 +54,6 @@ CREATE INDEX IF NOT EXISTS server_plays_at ON server_plays(server, at_ms);
 CREATE TABLE IF NOT EXISTS mix_excluded(server TEXT NOT NULL, song_id TEXT NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS autofill_picks(server TEXT NOT NULL, kind INTEGER NOT NULL, id TEXT NOT NULL, picked_ms INTEGER NOT NULL, PRIMARY KEY(server, kind, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS smart_playlists(server TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, json TEXT NOT NULL, updated_ms INTEGER NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS items_genre ON items(server, json_extract(json,'$.genre') COLLATE NOCASE) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_artist ON items(server, json_extract(json,'$.artistId')) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_year ON items(server, json_extract(json,'$.year')) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_duration ON items(server, json_extract(json,'$.duration')) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_created ON items(server, json_extract(json,'$.created')) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_plays ON items(server, json_extract(json,'$.playCount')) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_starred ON items(server, json_extract(json,'$.starred')) WHERE kind=2 AND json_extract(json,'$.starred')=1;
-CREATE INDEX IF NOT EXISTS items_rated ON items(server, json_extract(json,'$.userRating')) WHERE kind=2 AND json_extract(json,'$.userRating')>=4;
-CREATE INDEX IF NOT EXISTS items_title_natural ON items(server, json_extract(json,'$.title') COLLATE natural_order) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_artist_natural ON items(server, json_extract(json,'$.artist') COLLATE natural_order) WHERE kind=2;
-CREATE INDEX IF NOT EXISTS items_album_natural ON items(server, json_extract(json,'$.album') COLLATE natural_order) WHERE kind=2;
 CREATE TABLE IF NOT EXISTS track_analysis(server TEXT NOT NULL, song_id TEXT NOT NULL, analysis_version INTEGER NOT NULL, duration_ms INTEGER NOT NULL, bpm REAL NOT NULL, bpm_confidence REAL NOT NULL, beat_offset_ms REAL NOT NULL, stability REAL NOT NULL, downbeat_phase INTEGER NOT NULL, downbeat_confidence REAL NOT NULL, lufs REAL NOT NULL, key INTEGER NOT NULL, key_confidence REAL NOT NULL, silence_start_ms INTEGER NOT NULL, silence_end_ms INTEGER NOT NULL, mixramp_start_ms INTEGER NOT NULL, mixramp_end_ms INTEGER NOT NULL, intro_end_ms INTEGER NOT NULL, outro_start_ms INTEGER NOT NULL, outro_vocal REAL NOT NULL, intro_vocal REAL NOT NULL, outro_centroid REAL NOT NULL, intro_centroid REAL NOT NULL, outro_bpm REAL NOT NULL, outro_bpm_confidence REAL NOT NULL, outro_beat_offset_ms REAL NOT NULL, outro_stability REAL NOT NULL, outro_downbeat_phase INTEGER NOT NULL, intro_bpm REAL NOT NULL, intro_bpm_confidence REAL NOT NULL, intro_beat_offset_ms REAL NOT NULL, intro_stability REAL NOT NULL, intro_downbeat_phase INTEGER NOT NULL, beats_per_bar INTEGER NOT NULL DEFAULT 0, drop_ms INTEGER NOT NULL DEFAULT 0, drop_runup_vocal REAL NOT NULL DEFAULT 0, drop_vocal REAL NOT NULL DEFAULT 0, exit_ms INTEGER NOT NULL DEFAULT 0, gap_ms INTEGER NOT NULL DEFAULT 0, gap_end_ms INTEGER NOT NULL DEFAULT 0, exit_vocal REAL NOT NULL DEFAULT 0, drop_runup_tonal_db REAL NOT NULL DEFAULT 0, intro_beats_per_bar INTEGER NOT NULL DEFAULT 0, outro_beats_per_bar INTEGER NOT NULL DEFAULT 0, intro_grid_source INTEGER NOT NULL DEFAULT 0, outro_grid_source INTEGER NOT NULL DEFAULT 0, analysed_ms INTEGER NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS vocal_curve(server TEXT NOT NULL, song_id TEXT NOT NULL, curve BLOB NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 ";
@@ -95,8 +85,13 @@ pub fn open(path: &str, server: &str) -> rusqlite::Result<Connection> {
     c.create_collation("natural_order", natural_cmp)?;
     drop_old_analysis(&c)?;
     c.execute_batch(APP_SCHEMA)?;
-    c.execute_batch(SCHEMA)?;
     drop_old_sort_indexes(&c)?;
+    upgrade::items(&c)?;
+    upgrade::downloads(&c)?;
+    c.execute_batch(items::TABLE)?;
+
+    c.execute_batch(items::DOWNLOADS)?;
+    c.execute_batch(SCHEMA)?;
     add_pending_tries(&c)?;
     drop_old_lyrics(&c)?;
     drop_old_pages(&c)?;
@@ -142,25 +137,65 @@ fn drop_old_sort_indexes(c: &Connection) -> rusqlite::Result<()> {
 }
 
 /// Text in the order people read it, SQL's `natural_order` collation: case aside, and a run of digits by its
-/// number, so "#2" comes before "#10".
+/// number, so "#2" comes before "#10". The order of [`natural_key`]s.
 pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
-    use std::cmp::Ordering;
-    let digits = |s: &str| s.len() - s.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-    let (mut a, mut b) = (a, b);
-    loop {
-        let (Some(p), Some(q)) = (a.chars().next(), b.chars().next()) else { return b.is_empty().cmp(&a.is_empty()) };
-        let (order, m, n) = if p.is_ascii_digit() && q.is_ascii_digit() {
-            let (m, n) = (digits(a), digits(b));
-            let (x, y) = (a[..m].trim_start_matches('0'), b[..n].trim_start_matches('0'));
-            (x.len().cmp(&y.len()).then_with(|| x.cmp(y)), m, n)
-        } else {
-            (p.to_lowercase().cmp(q.to_lowercase()), p.len_utf8(), q.len_utf8())
-        };
-        if order != Ordering::Equal {
-            return order;
+    key_bytes(a).cmp(key_bytes(b))
+}
+
+/// `text`'s key in natural order: keys compare byte by byte as their texts do, so an index on them orders
+/// without calling back into Rust.
+pub fn natural_key(text: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(text.len() + 2);
+    key.extend(key_bytes(text));
+    key
+}
+
+/// The bytes of `text`'s natural key: each character lowercased in UTF-8 (whose bytes keep code point
+/// order), each run of digits as `0`, its length without leading zeros, then those digits. No character
+/// but a digit starts with a byte from `0` to `9`, so a number sits where its first digit would.
+fn key_bytes(text: &str) -> impl Iterator<Item = u8> + '_ {
+    let mut rest = text;
+    // A lowercased character is at most three of at most four bytes.
+    let mut pending = [0u8; 12];
+    let (mut at, mut len) = (0, 0);
+    let mut digits: &[u8] = &[];
+    std::iter::from_fn(move || loop {
+        if at < len {
+            at += 1;
+            return Some(pending[at - 1]);
         }
-        (a, b) = (&a[m..], &b[n..]);
-    }
+        if let Some((&d, more)) = digits.split_first() {
+            digits = more;
+            return Some(d);
+        }
+        let c = rest.chars().next()?;
+        (at, len) = (0, 1);
+        if c.is_ascii_digit() {
+            let run = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            let number = rest[..run].trim_start_matches('0');
+            pending[0] = b'0';
+            // One byte up to 254 digits; past that 255 and four more, which still sorts after.
+            match u8::try_from(number.len()).ok().filter(|&n| n < u8::MAX) {
+                Some(n) => (pending[1], len) = (n, 2),
+                None => {
+                    pending[1] = u8::MAX;
+                    pending[2..6].copy_from_slice(&u32::try_from(number.len()).unwrap_or(u32::MAX).to_be_bytes());
+                    len = 6;
+                }
+            }
+            digits = number.as_bytes();
+            rest = &rest[run..];
+        } else if c.is_ascii() {
+            pending[0] = c.to_ascii_lowercase() as u8;
+            rest = &rest[1..];
+        } else {
+            len = 0;
+            for l in c.to_lowercase() {
+                len += l.encode_utf8(&mut pending[len..]).len();
+            }
+            rest = &rest[c.len_utf8()..];
+        }
+    })
 }
 
 /// Adds the replay bookkeeping to a `pending` table from before it; its rows count as queued now.
@@ -229,45 +264,21 @@ pub fn now_ms() -> i64 {
     nori_time::unix_ms()
 }
 
-/// Stores `item` as the row of `kind` and `id`; its rowid, none for an item the index does not keep.
-fn upsert<T: Serialize>(c: &Connection, kind: ItemKind, id: &str, text: &str, item: &T) -> rusqlite::Result<Option<i64>> {
-    // Provider items are not library rows.
-    if id.is_empty() || nori_model::is_provider_id(id) {
-        return Ok(None);
-    }
-    let json = serde_json::to_string(item).unwrap_or_default();
-    let old: Option<(i64, String)> = c
-        .prepare_cached("SELECT rowid, json FROM items WHERE server=sid() AND kind=?1 AND id=?2")?
-        .query_row(params![kind, id], |r| Ok((r.get(0)?, r.get(1)?)))
-        .optional()?;
-    match old {
-        Some((rowid, j)) if j == json => Ok(Some(rowid)),
-        Some((rowid, _)) => {
-            c.prepare_cached("UPDATE items SET json=?1 WHERE rowid=?2")?.execute(params![json, rowid])?;
-            c.prepare_cached("INSERT OR REPLACE INTO fts(rowid, text) VALUES(?1, ?2)")?.execute(params![rowid, text])?;
-            Ok(Some(rowid))
-        }
-        None => {
-            c.prepare_cached("INSERT INTO items(server, kind, id, json) VALUES(sid(), ?1, ?2, ?3)")?.execute(params![kind, id, json])?;
-            let rowid = c.last_insert_rowid();
-            c.prepare_cached("INSERT INTO fts(rowid, text) VALUES(?1, ?2)")?.execute(params![rowid, text])?;
-            Ok(Some(rowid))
-        }
-    }
-}
-
 /// Stores the items in the index; the rowids of those it keeps.
 pub fn index(c: &mut Connection, artists: &[Artist], albums: &[Album], songs: &[Song]) -> rusqlite::Result<Vec<i64>> {
     let tx = c.transaction()?;
     let mut rows = Vec::with_capacity(artists.len() + albums.len() + songs.len());
+    let st = items::Statements::of::<Artist>();
     for a in artists {
-        rows.extend(upsert(&tx, ItemKind::Artist, &a.id, &a.name, a)?);
+        rows.extend(items::upsert(&tx, &st, a)?);
     }
+    let st = items::Statements::of::<Album>();
     for a in albums.iter().filter(|a| !a.is_external) {
-        rows.extend(upsert(&tx, ItemKind::Album, &a.id, &format!("{} {}", a.name, a.artist), a)?);
+        rows.extend(items::upsert(&tx, &st, a)?);
     }
+    let st = items::Statements::of::<Song>();
     for s in songs.iter().filter(|s| !s.is_external) {
-        rows.extend(upsert(&tx, ItemKind::Song, &s.id, &format!("{} {} {}", s.title, s.artist, s.album), s)?);
+        rows.extend(items::upsert(&tx, &st, s)?);
     }
     tx.commit()?;
     Ok(rows)
@@ -314,18 +325,18 @@ pub fn search(c: &Connection, query: &str, limit: u32) -> rusqlite::Result<Searc
         }
     }
     let [artists, albums, songs] = kept;
-    Ok(SearchResult { artists: load(c, &artists)?, albums: load(c, &albums)?, songs: load(c, &songs)?, playlists: Vec::new() })
+    Ok(SearchResult {
+        artists: load(c, items::ARTIST, &artists, items::artist)?,
+        albums: load(c, items::ALBUM, &albums, items::album)?,
+        songs: load(c, items::SONG, &songs, items::song)?,
+        playlists: Vec::new(),
+    })
 }
 
-/// The items at `rowids`, in that order.
-fn load<T: DeserializeOwned>(c: &Connection, rowids: &[i64]) -> rusqlite::Result<Vec<T>> {
-    let mut st = c.prepare_cached("SELECT json FROM items WHERE rowid = ?1")?;
-    let mut items = Vec::with_capacity(rowids.len());
-    for rowid in rowids {
-        let json: String = st.query_row([rowid], |r| r.get(0))?;
-        items.extend(serde_json::from_str(&json).ok());
-    }
-    Ok(items)
+/// The items at `rowids`, in that order, read from `columns` by `read`.
+fn load<T>(c: &Connection, columns: &str, rowids: &[i64], read: fn(&rusqlite::Row, usize) -> rusqlite::Result<T>) -> rusqlite::Result<Vec<T>> {
+    let mut st = c.prepare_cached(&format!("SELECT {columns} FROM items i WHERE rowid = ?1"))?;
+    rowids.iter().map(|rowid| st.query_row([rowid], |r| read(r, 0))).collect()
 }
 
 pub fn count(c: &Connection, kind: ItemKind) -> rusqlite::Result<u32> {
@@ -391,6 +402,16 @@ mod tests {
         let mut titles = ["#10", "track 2", "#2", "B", "Track 10", "a", "#1", "", "#01b", "a1", "A01"];
         titles.sort_by(|a, b| natural_cmp(a, b));
         assert_eq!(titles, ["", "#1", "#01b", "#2", "#10", "a", "a1", "A01", "B", "track 2", "Track 10"]);
+        let mut mixed = ["Éclair", "eclair", "zebra", "émile", "Zoë", "zoe", "ÄB", "äa", "Ab"];
+        mixed.sort_by(|a, b| natural_cmp(a, b));
+        assert_eq!(mixed, ["Ab", "eclair", "zebra", "zoe", "Zoë", "äa", "ÄB", "Éclair", "émile"]);
+        // A number of 300 digits after one of 254, and a character whose lowercase is two.
+        let (short, long) = ("9".repeat(254), "1".repeat(300));
+        assert_eq!(natural_cmp(&short, &long), std::cmp::Ordering::Less);
+        assert_eq!(natural_cmp("\u{130}z", "iz"), std::cmp::Ordering::Greater);
+        for (a, b) in [("#2", "#10"), ("a1", "A01"), ("ÄB", "äa"), (short.as_str(), long.as_str())] {
+            assert_eq!(natural_key(a).cmp(&natural_key(b)), natural_cmp(a, b), "{a} against {b}");
+        }
     }
 
     #[test]
@@ -443,7 +464,7 @@ mod tests {
         }
         let c = open(&path, "s").unwrap();
         let indexes: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'items_title%'").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
-        assert_eq!(indexes, ["items_title_natural"]);
+        assert_eq!(indexes, ["items_title_key"]);
     }
 
     #[test]
@@ -464,6 +485,142 @@ mod tests {
         assert_eq!(search(&def, "airbag", 10).unwrap().songs.len(), 1);
         drop((def, x1));
         assert_eq!(search(&open(&path, "default").unwrap(), "airbag", 10).unwrap().songs.len(), 1, "persisted");
+    }
+
+    fn full_song() -> Song {
+        Song {
+            id: "s1".into(),
+            title: "Teardrop".into(),
+            album: "Mezzanine".into(),
+            artist: "Massive Attack".into(),
+            album_id: Some("al1".into()),
+            artist_id: Some("ar1".into()),
+            cover_art: Some("c1".into()),
+            duration: 329,
+            track: 3,
+            disc_number: 1,
+            year: 1998,
+            genre: Some("Trip Hop".into()),
+            suffix: "flac".into(),
+            content_type: "audio/flac".into(),
+            bit_rate: 900,
+            size: 40_000_000_000,
+            sampling_rate: 44_100,
+            bit_depth: 16,
+            user_rating: 5,
+            starred: true,
+            replay_gain: Some(ReplayGain { track_gain: Some(-6.5), album_peak: Some(0.98), ..ReplayGain::default() }),
+            artists: vec![ArtistRef { id: "ar1".into(), name: "Massive Attack".into() }, ArtistRef { id: "ar2".into(), name: "Elizabeth Fraser".into() }],
+            created: Some("2020-01-01T00:00:00Z".into()),
+            play_count: 12,
+            played: Some("2026-01-01T00:00:00Z".into()),
+            path: Some("m/t.flac".into()),
+            explicit_status: ExplicitStatus::Clean,
+            channel_count: 2,
+            music_brainz_id: Some("mb".into()),
+            bpm: 77,
+            comment: Some("a note".into()),
+            ..Song::default()
+        }
+        .dressed()
+    }
+
+    fn full_album() -> Album {
+        Album {
+            id: "al1".into(),
+            name: "Mezzanine".into(),
+            artist: "Massive Attack".into(),
+            artist_id: Some("ar1".into()),
+            cover_art: Some("c1".into()),
+            song_count: 11,
+            duration: 3800,
+            year: 1998,
+            genre: Some("Trip Hop".into()),
+            starred: true,
+            release_types: vec!["Album".into(), "Remastered".into()],
+            is_compilation: true,
+            user_rating: 4,
+            play_count: 3,
+            created: Some("2020".into()),
+            explicit_status: ExplicitStatus::Explicit,
+            music_brainz_id: Some("mb".into()),
+            ..Album::default()
+        }
+        .dressed()
+    }
+
+    fn full_artist() -> Artist {
+        Artist { id: "ar1".into(), name: "Massive Attack".into(), cover_art: Some("c".into()), artist_image_url: Some("u".into()), album_count: Some(5), starred: true, is_external: false }
+    }
+
+    #[test]
+    fn every_field_comes_back_from_its_column() {
+        let mut c = open("", "s").unwrap();
+        let bare = Song { id: "s2".into(), title: "Angel".into(), ..Song::default() }.dressed();
+        let (song, album, artist) = (full_song(), full_album(), full_artist());
+        index(&mut c, std::slice::from_ref(&artist), std::slice::from_ref(&album), &[song.clone(), bare.clone()]).unwrap();
+        let r = search(&c, "massive", 5).unwrap();
+        assert_eq!(r.songs, [song]);
+        assert_eq!(r.albums, [album]);
+        assert_eq!(r.artists, [artist]);
+        assert_eq!(search(&c, "angel", 5).unwrap().songs, [bare]);
+    }
+
+    #[test]
+    fn a_sync_that_changes_nothing_writes_nothing() {
+        let mut c = open("", "s").unwrap();
+        let bare = Song { id: "s2".into(), title: "Angel".into(), ..Song::default() }.dressed();
+        let (song, album, artist) = (full_song(), full_album(), full_artist());
+        let sync = |c: &mut Connection, songs: &[Song]| index(c, std::slice::from_ref(&artist), std::slice::from_ref(&album), songs).unwrap();
+        sync(&mut c, &[song.clone(), bare.clone()]);
+        let before = c.total_changes();
+        sync(&mut c, &[song.clone(), bare.clone()]);
+        assert_eq!(c.total_changes() - before, 0, "nothing written again");
+        sync(&mut c, &[song, Song { title: "Angels".into(), ..bare }]);
+        assert!(c.total_changes() > before, "a changed song is written");
+    }
+
+    #[test]
+    fn an_index_kept_as_json_moves_into_columns() {
+        let dir = nori_testdir::TempDir::new("db-json");
+        let path = dir.join("json.db").to_string_lossy().into_owned();
+        let (song, album, artist) = (full_song(), full_album(), full_artist());
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch("CREATE TABLE items(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, kind INTEGER NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, UNIQUE(server, kind, id));
+                CREATE VIRTUAL TABLE fts USING fts5(text, tokenize='unicode61 remove_diacritics 2', prefix='2 3');").unwrap();
+            for (rowid, kind, id, json, text) in [
+                (7, 2, "s1", serde_json::to_string(&song).unwrap(), "teardrop massive"),
+                (8, 1, "al1", serde_json::to_string(&album).unwrap(), "mezzanine massive"),
+                (9, 0, "ar1", serde_json::to_string(&artist).unwrap(), "massive attack"),
+            ] {
+                c.execute("INSERT INTO items VALUES(?1, 's', ?2, ?3, ?4)", params![rowid, kind, id, json]).unwrap();
+                c.execute("INSERT INTO fts(rowid, text) VALUES(?1, ?2)", params![rowid, text]).unwrap();
+            }
+        }
+        let c = open(&path, "s").unwrap();
+        let r = search(&c, "massive", 5).unwrap();
+        let keys: (Vec<u8>, Vec<u8>) = c.query_row("SELECT title_key, artist_key FROM items WHERE id='s1'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!(keys, (natural_key(&song.title), natural_key(&song.artist)), "the sort keys are made");
+        assert_eq!((r.songs, r.albums, r.artists), (vec![song], vec![album], vec![artist]));
+        let has_json: bool = c.prepare("PRAGMA table_info(items)").unwrap().query_map([], |r| r.get::<_, String>(1)).unwrap().any(|n| n.unwrap() == "json");
+        assert!(!has_json);
+    }
+
+    #[test]
+    fn downloads_kept_as_json_move_into_columns() {
+        let dir = nori_testdir::TempDir::new("db-downloads-json");
+        let path = dir.join("d.db").to_string_lossy().into_owned();
+        let song = full_song();
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch("CREATE TABLE downloads(server TEXT NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, ts INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(server, id)) WITHOUT ROWID;").unwrap();
+            c.execute("INSERT INTO downloads VALUES('s', 's1', ?1, 42, 1)", [serde_json::to_string(&song).unwrap()]).unwrap();
+        }
+        let c = open(&path, "s").unwrap();
+        let sql = format!("SELECT ts, done, {} FROM downloads i", items::SONG);
+        let (ts, done, back): (i64, bool, Song) = c.query_row(&sql, [], |r| Ok((r.get(0)?, r.get(1)?, items::song(r, 2)?))).unwrap();
+        assert_eq!((ts, done, back), (42, true, song));
     }
 
     #[test]

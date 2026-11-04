@@ -93,11 +93,6 @@ pub fn record(c: &mut Connection, song: &Song, started_ms: i64, heard_ms: i64, t
     Ok(true)
 }
 
-/// A `plays` row as the history lists it; none when its song no longer reads.
-pub fn entry(json: String, started_ms: i64, heard_ms: i64, completed: bool, skipped: bool) -> Option<HistoryEntry> {
-    Some(HistoryEntry { song: serde_json::from_str(&json).ok()?, started_ms, heard_ms, completed, skipped })
-}
-
 fn tally(map: &mut HashMap<String, TopEntry>, key: String, id: &str, name: &str, song: &TopSong) {
     let t = map.entry(key).or_insert_with(|| TopEntry { id: id.to_string(), name: name.to_string(), ..Default::default() });
     // Songs arrive most played first, so the first cover seen is the one of the entry's top song.
@@ -145,13 +140,14 @@ fn summarize(c: &Connection, plays: &str, p: &[&dyn rusqlite::ToSql], top: u32) 
     let mut songs: Vec<TopSong> = Vec::new();
     {
         let mut st = c.prepare_cached(&format!(
-            "WITH p AS ({plays}) SELECT i.json, s.plays, s.skips, s.ms FROM
+            "WITH p AS ({plays}) SELECT s.plays, s.skips, s.ms, {} FROM
                (SELECT song_id, sum(skipped=0) plays, sum(skipped) skips, sum(heard_ms) ms FROM p GROUP BY song_id) s
-             LEFT JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=s.song_id ORDER BY s.plays DESC, s.ms DESC, s.song_id"
+             LEFT JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=s.song_id ORDER BY s.plays DESC, s.ms DESC, s.song_id",
+            db::items::SONG
         ))?;
         let mut rows = st.query(p)?;
         while let Some(r) = rows.next()? {
-            let (json, plays, skips, ms): (Option<String>, u32, u32, i64) = (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?);
+            let (plays, skips, ms, indexed): (u32, u32, i64, Option<String>) = (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?);
             out.plays += plays;
             out.skips += skips;
             out.listened_ms += ms;
@@ -159,9 +155,9 @@ fn summarize(c: &Connection, plays: &str, p: &[&dyn rusqlite::ToSql], top: u32) 
                 continue;
             }
             out.distinct_songs += 1;
-            // No json: the index was dropped (server change) after the listen. It still counts, it just has no name.
-            if let Some(song) = json.and_then(|j| serde_json::from_str::<Song>(&j).ok()) {
-                songs.push(TopSong { song, plays, listened_ms: ms });
+            // Not indexed: the index was dropped (server change) after the listen. It still counts, it just has no name.
+            if indexed.is_some() {
+                songs.push(TopSong { song: db::items::song(r, 3)?, plays, listened_ms: ms });
             }
         }
     }
@@ -208,12 +204,12 @@ fn summarize(c: &Connection, plays: &str, p: &[&dyn rusqlite::ToSql], top: u32) 
 
     out.first_play = c
         .prepare_cached(&format!(
-            "WITH p AS ({plays}) SELECT i.json, p.at, p.heard_ms, p.completed, p.skipped FROM p JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=p.song_id
-             WHERE p.skipped=0 ORDER BY p.at, p.row LIMIT 1"
+            "WITH p AS ({plays}) SELECT p.at, p.heard_ms, p.completed, p.skipped, {} FROM p JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=p.song_id
+             WHERE p.skipped=0 ORDER BY p.at, p.row LIMIT 1",
+            db::items::SONG
         ))?
-        .query_row(p, |r| Ok(entry(r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
-        .optional()?
-        .flatten();
+        .query_row(p, |r| Ok(HistoryEntry { song: db::items::song(r, 4)?, started_ms: r.get(0)?, heard_ms: r.get(1)?, completed: r.get(2)?, skipped: r.get(3)? }))
+        .optional()?;
     Ok(out)
 }
 

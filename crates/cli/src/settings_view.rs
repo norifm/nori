@@ -224,6 +224,8 @@ pub struct SettingsView {
 /// plugins.
 #[derive(Default, Clone)]
 pub struct Own {
+    /// The queue session over the settings.
+    pub shared: std::sync::Arc<nori_core::queue::Session>,
     pub mouse: bool,
     pub images: bool,
     /// The page is painted in the season's colors.
@@ -300,7 +302,7 @@ impl SettingsView {
     /// Every group's page, built if not cached.
     pub fn pages(&mut self, prefs: &StoredPrefs) -> &[Page] {
         if self.pages.is_none() {
-            let state = settings_model::state(prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
+            let state = settings_model::state(prefs, settings_model::Output::default(), &self.own.shared.settings.model);
             let today = Day::now();
             let alone = self.alone;
             self.pages = Some(match self.own.stack.last() {
@@ -1622,7 +1624,7 @@ mod tests {
     fn the_look_picks_a_season_and_follows_the_calendar_under_it() {
         let look = |season, theme| {
             let prefs = StoredPrefs { season, theme, ..StoredPrefs::default() };
-            let state = settings_model::state(&prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
+            let state = settings_model::state(&prefs, settings_model::Output::default(), &nori_core::settings_store::Settings::default().model);
             page(Gid::Core(SettingsPage::Look), &prefs, &state, &Facts::default(), &Own { paint: true, dark: true, ..Own::default() }, DAY).sections
         };
         // The seasons first, under their own title, each its value, whether it is worn and picked.
@@ -1668,7 +1670,7 @@ mod tests {
     #[test]
     fn a_guest_sees_only_this_computers_settings() {
         let prefs = StoredPrefs { servers: vec![nori_core::settings::SavedServer { id: "a".into(), ..Default::default() }], active_server_id: "a".into(), ..StoredPrefs::default() };
-        let state = settings_model::state(&prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
+        let state = settings_model::state(&prefs, settings_model::Output::default(), &nori_core::settings_store::Settings::default().model);
         let titles = |rules: nori_core::browse::ProfileRules| -> Vec<String> {
             let facts = Facts { folders: vec![MusicFolder { id: "1".into(), name: "A".into() }, MusicFolder { id: "2".into(), name: "B".into() }], rules, ..Facts::default() };
             let pages = GROUPS.iter().map(|g| page(g.id, &prefs, &state, &facts, &Own::default(), DAY));
@@ -1713,7 +1715,7 @@ mod tests {
     }
 
     fn every_row_with(prefs: &StoredPrefs, facts: &Facts) -> Vec<(&'static str, Row)> {
-        let state = settings_model::state(prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
+        let state = settings_model::state(prefs, settings_model::Output::default(), &nori_core::settings_store::Settings::default().model);
         GROUPS
             .iter()
             .flat_map(|g| page(g.id, prefs, &state, facts, &Own::default(), DAY).sections.into_iter().flat_map(move |s| s.rows.into_iter().map(move |r| (g.title, r))))
@@ -1806,7 +1808,7 @@ mod tests {
     fn music_folders_switch_from_all() {
         let server = nori_core::settings::SavedServer { id: "a".into(), ..Default::default() };
         let prefs = StoredPrefs { servers: vec![server], active_server_id: "a".into(), ..StoredPrefs::default() };
-        let state = settings_model::state(&prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
+        let state = settings_model::state(&prefs, settings_model::Output::default(), &nori_core::settings_store::Settings::default().model);
         let facts = Facts { folders: vec![MusicFolder { id: "1".into(), name: "A".into() }, MusicFolder { id: "2".into(), name: "B".into() }], ..Facts::default() };
         let page = page(Gid::Core(SettingsPage::Servers), &prefs, &state, &facts, &Own::default(), DAY);
         let folders = page.sections.iter().find(|s| s.rows.iter().any(|r| matches!(r, Row::Toggle { switch: Switch::Stores(n, _), .. } if n == "musicFolders"))).unwrap();

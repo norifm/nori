@@ -224,6 +224,39 @@ fn udp_socket(port: u16) -> std::io::Result<(UdpSocket, bool)> {
     Ok((socket.into(), any.is_ipv6()))
 }
 
+/// `group` joined on every interface that takes it: left to the system, it goes to the default route's
+/// interface, which may be a VPN's tunnel that takes no multicast.
+fn join_everywhere(socket: &UdpSocket, group: &Ipv6Addr) -> std::io::Result<()> {
+    let mut last = std::io::Error::from(std::io::ErrorKind::AddrNotAvailable);
+    let mut joined = false;
+    for index in interfaces() {
+        match socket.join_multicast_v6(group, index) {
+            Ok(()) => joined = true,
+            Err(e) => last = e,
+        }
+    }
+    if joined { Ok(()) } else { Err(last) }
+}
+
+/// The system's network interfaces, by index.
+fn interfaces() -> Vec<u32> {
+    // SAFETY: if_nameindex returns an array ended by a zero index, freed with if_freenameindex.
+    unsafe {
+        let list = libc::if_nameindex();
+        if list.is_null() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        let mut at = list;
+        while (*at).if_index != 0 {
+            out.push((*at).if_index);
+            at = at.add(1);
+        }
+        libc::if_freenameindex(list);
+        out
+    }
+}
+
 impl sockets::HostUdp for Host {
     fn bind(&mut self, port: u16) -> Result<Resource<Udp>, types::Error> {
         let (socket, dual) = udp_socket(port).map_err(failed)?;
@@ -245,7 +278,10 @@ impl sockets::HostUdp for Host {
         let lan = self.lan.clone();
         let udp = self.table.get_mut(&s).map_err(table)?;
         match ip {
+            // Apple's systems refuse an IPv4 group on an IPv6 socket, and take it by its mapped address.
+            IpAddr::V4(g) if udp.dual && cfg!(target_vendor = "apple") => udp.socket.join_multicast_v6(&g.to_ipv6_mapped(), 0),
             IpAddr::V4(g) => udp.socket.join_multicast_v4(&g, &Ipv4Addr::UNSPECIFIED),
+            IpAddr::V6(g) if interface == 0 => join_everywhere(&udp.socket, &g),
             IpAddr::V6(g) => udp.socket.join_multicast_v6(&g, interface),
         }
         .map_err(failed)?;

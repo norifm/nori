@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nori_core::cache_policy::{Page, Read};
+use nori_host::desktop::Root;
 use nori_core::client::{Client, NetProfile};
 use nori_core::overrides::Layer;
 use nori_core::settings::{GainMode, SavedServer, ServerKind, StoredPrefs};
@@ -84,7 +85,7 @@ fn gain_mode(v: &str) -> Option<GainMode> {
     [("off", GainMode::Off), ("track", GainMode::Track), ("album", GainMode::Album), ("auto", GainMode::Auto)].into_iter().find(|(n, _)| *n == v).map(|(_, m)| m)
 }
 
-fn args(argv: Vec<String>) -> Args {
+fn args(argv: Vec<String>) -> (Args, Root) {
     let env = |k: &str| std::env::var(k).ok();
     let mut a = Args {
         kind: ServerKind::Subsonic,
@@ -145,16 +146,17 @@ fn args(argv: Vec<String>) -> Args {
             _ => usage(),
         }
     }
+    let root = Root::new(&a.data);
     if let Some(file) = install {
-        nori_host::desktop::install_plugin(&a.data, &file).unwrap_or_else(|e| {
+        root.install_plugin(&file).unwrap_or_else(|e| {
             eprintln!("{e}");
             std::process::exit(1)
         });
     }
-    if !nori_host::desktop::plugins(&a.data).kinds.server_ready(a.profile()) {
+    if !root.plugins().kinds.server_ready(a.profile()) {
         usage();
     }
-    a
+    (a, root)
 }
 
 impl Args {
@@ -230,8 +232,8 @@ impl Cli {
     }
 
     fn queue(&mut self, songs: Vec<Song>, start_ms: i64) {
-        crate::backend::app().register(songs.clone());
-        crate::backend::app().set(songs.iter().map(|s| s.id.clone()).collect(), Some(0), false, None);
+        self.core.session.register(songs.clone());
+        self.core.session.set(songs.iter().map(|s| s.id.clone()).collect(), Some(0), false, None);
         *self.songs.lock().unwrap() = songs;
         self.engine.queue_changed();
         self.engine.play_at(0, start_ms);
@@ -247,11 +249,11 @@ impl Cli {
 
     /// The stored settings; a device's own sound may have been loaded since the last put.
     fn kept(&self) -> StoredPrefs {
-        crate::backend::app().settings.current().unwrap_or_else(|| self.prefs.clone())
+        self.core.session.settings.current().unwrap_or_else(|| self.prefs.clone())
     }
 
     fn put(&mut self, prefs: StoredPrefs) {
-        self.apply(crate::backend::app().settings.put(prefs));
+        self.apply(self.core.session.settings.put(prefs));
     }
 
     /// Reloads the stored settings and applies `effect` to the engine.
@@ -280,12 +282,12 @@ fn print_songs(songs: &[Song]) {
 }
 
 pub fn main(argv: Vec<String>) {
-    let a = args(argv);
+    let (a, root) = args(argv);
     std::fs::create_dir_all(&a.data).unwrap_or_else(|e| panic!("{}: {e}", a.data.display()));
     let db = a.data.join("nori.db").to_string_lossy().into_owned();
-    let core = Core::new(db.clone(), "cli".into(), crate::backend::app().clone()).unwrap_or_else(|e| panic!("the database: {e}"));
+    let core = Core::new(db.clone(), "cli".into(), root.app.clone()).unwrap_or_else(|e| panic!("the database: {e}"));
     let http = Http::new();
-    let kinds = nori_host::desktop::plugins(&a.data).kinds.clone();
+    let kinds = root.plugins().kinds.clone();
     kinds.set_transport(http.clone());
     core.use_kinds(kinds.clone());
     let profile = match a.offline {
@@ -312,13 +314,13 @@ pub fn main(argv: Vec<String>) {
     if (a.sign_in.is_some() || a.home) && a.search.is_none() {
         return;
     }
-    let mut prefs = crate::backend::app().settings.open(&db).unwrap_or_else(|e| panic!("the settings: {e}"));
+    let mut prefs = root.app.settings.open(&db).unwrap_or_else(|e| panic!("the settings: {e}"));
     prefs.crossfade_sec = a.crossfade.unwrap_or(prefs.crossfade_sec);
     prefs.auto_mix = a.automix;
     prefs.crossfade_keep_albums = !a.mix_albums;
     prefs.replay_gain = a.replay_gain.unwrap_or(prefs.replay_gain);
     prefs.hi_res = a.hi_res;
-    crate::backend::app().settings.put(prefs.clone());
+    root.app.settings.put(prefs.clone());
 
     let output: Box<dyn AudioOutput> = match (&a.wav, &a.device) {
         (Some(path), _) if a.hi_res => Box::new(WavOutput::new(path, a.pace).in_float()),
@@ -332,7 +334,7 @@ pub fn main(argv: Vec<String>) {
     let bytes = resolving(&client, audio.clone());
     let analyses = Analyses::of(client.clone());
     let downloader = Downloader::new(client.clone(), bytes.clone(), store.clone(), analyses.clone());
-    let app = CoreApp::new(core.session.clone()).measuring(Measurer::new(analyses.clone(), store.clone())).per_device(core.clone());
+    let app = CoreApp::new(core.session.clone(), analyses.clone()).measuring(Measurer::new(analyses.clone(), store.clone())).per_device(core.clone());
     let library = CoreLibrary { client: client.clone(), bytes, store: Some(store), analyses };
     let engine = Engine::start(library, app, CoreQueue(core.session.clone()), output, None, Config { memory_mb: 256, settings: settings(&prefs, Layer::default()), ..Config::default() }, move |e| {
         let _ = tx.send(e);
@@ -467,7 +469,7 @@ pub fn main(argv: Vec<String>) {
             // Any setting by name, as the settings screen sets it: `set eq true`.
             "set" => {
                 let (name, value) = rest.split_once(' ').unwrap_or((rest, ""));
-                match crate::backend::app().settings.edit_by_name(name, value) {
+                match cli.core.session.settings.edit_by_name(name, value) {
                     Some(c) => {
                         cli.apply(c.effect);
                         println!("{name} = {value}");
@@ -487,7 +489,7 @@ pub fn main(argv: Vec<String>) {
                     println!("no band {i}");
                     continue;
                 };
-                if let Some((effect, _)) = crate::backend::app().settings.edit_band(i, nori_core::settings::SoundBand { gain_db: db, ..b }) {
+                if let Some((effect, _)) = cli.core.session.settings.edit_band(i, nori_core::settings::SoundBand { gain_db: db, ..b }) {
                     cli.apply(effect);
                 }
             }

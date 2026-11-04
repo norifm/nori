@@ -1,7 +1,10 @@
 // Host perf report, included into tests/engine.rs for its rig: per minute of music, the engine's wakes,
-// CPU time and allocations, and the heap's peak (the test thread's own work left out). Not a check; compare revisions with
+// CPU time and allocations, and the heap's peak (the test thread's own work left out), and a digest of what
+// the card heard, equal when the sound is the same bit for bit. Not a check; compare revisions with
 // tools/perf-host.sh. `NORI_PERF=name,name` runs only those cases, `NORI_PERF_MINUTES` plays each that
-// long (for a profiler). The queue repeats.
+// long (for a profiler), `NORI_HEAP_STACKS=dir` writes where each case allocated to dir/<case>.folded
+// (tools/flame-engine.sh --heap), `NORI_WAKES=1` prints how long each sleep asked for and the runs of
+// short sleeps, when in the music (what keeps the engine awake). The queue repeats.
 //
 //   cargo test --release -p nori-engine --test engine perf_report -- --ignored --nocapture --test-threads=1
 
@@ -31,23 +34,83 @@ fn perf_measure(name: &str, rig: &Rig, minutes: u64, mut during: impl FnMut(&Rig
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2 * 2), "{name}: the music started");
     let (wakes, cpu, (allocs, bytes), heard) = (rig.time.clock.sleeps(), cpu_ms(), crate::perf_alloc::counts(), rig.heard.lock().len());
+    let naps = rig.time.clock.naps().len();
     crate::perf_alloc::restart_peak();
+    let stacks = std::env::var_os("NORI_HEAP_STACKS").map(std::path::PathBuf::from);
+    if stacks.is_some() {
+        crate::perf_alloc::sample_stacks();
+    }
     for k in 0..minutes * 4 {
         during(rig, k);
         rig.run(15_000);
     }
-    let played = (rig.heard.lock().len() - heard) as f64 / 2.0 / RATE as f64 / 60.0;
+    // The card plays a song at its own rate (an Opus song at 48 kHz).
+    let rate = rig.card.lock().feed.as_ref().map_or(RATE, |f| f.format().rate);
+    let played = (rig.heard.lock().len() - heard) as f64 / 2.0 / rate as f64 / 60.0;
+    let sound = sound_digest(&rig.heard.lock(), minutes, rate);
+    if let Some(dir) = stacks {
+        crate::perf_alloc::write_stacks(&dir.join(format!("{name}.folded")), name);
+    }
     let (allocs2, bytes2) = crate::perf_alloc::counts();
     let per = |v: f64| v / played.max(1e-9);
     println!(
-        "perf: {name:<10} music {played:5.2} min | wakes/min {:7.1} | cpu ms/min {:8.1} | allocs/min {:9.0} | alloc KB/min {:9.0} | peak MB {:6.1}",
+        "perf: {name:<10} music {played:5.2} min | wakes/min {:7.1} | cpu ms/min {:8.1} | allocs/min {:9.0} | alloc KB/min {:9.0} | peak MB {:6.1} | sound {sound:016x}",
         per((rig.time.clock.sleeps() - wakes) as f64),
         per(cpu_ms() - cpu),
         per((allocs2 - allocs) as f64),
         per((bytes2 - bytes) as f64 / 1024.0),
         crate::perf_alloc::peak() as f64 / 1e6,
     );
+    if std::env::var_os("NORI_WAKES").is_some() {
+        print!("{}", wake_report(name, &rig.time.clock.naps()[naps..]));
+    }
     rig.engine.stop();
+}
+
+/// FNV-1a over the first `minutes` of what the card heard: how much more it heard by the end depends on when
+/// the test thread looked, the music itself does not.
+fn sound_digest(heard: &[i16], minutes: u64, rate: u32) -> u64 {
+    let n = heard.len().min(minutes as usize * 60 * rate as usize * 2);
+    heard[..n].iter().fold(0xcbf2_9ce4_8422_2325, |h, s| (h ^ *s as u16 as u64).wrapping_mul(0x100_0000_01b3))
+}
+
+/// Sleeps shorter than this, one after another, are a run that keeps the engine awake, ms.
+const SHORT_NAP_MS: u64 = 1_000;
+
+/// How long the engine's sleeps asked for, and its runs of short ones: when each began, how many, how
+/// long it lasted.
+pub(crate) fn wake_report(name: &str, naps: &[(i64, Option<u64>)]) -> String {
+    const BUCKETS: [(u64, &str); 5] = [(50, "<50ms"), (250, "<250ms"), (1_000, "<1s"), (5_000, "<5s"), (u64::MAX, ">=5s")];
+    let mut counts = [0usize; BUCKETS.len() + 1];
+    for &(_, ms) in naps {
+        counts[ms.map_or(BUCKETS.len(), |ms| BUCKETS.iter().position(|b| ms < b.0).expect("the last bucket takes all"))] += 1;
+    }
+    let mut out = format!("wakes: {name:<10}");
+    for (b, n) in BUCKETS.iter().zip(counts) {
+        out += &format!(" {}:{n}", b.1);
+    }
+    out += &format!(" until-told:{}\n", counts[BUCKETS.len()]);
+    let mut runs: Vec<(i64, usize, i64)> = Vec::new();
+    let mut start: Option<usize> = None;
+    for (k, &(_, ms)) in naps.iter().enumerate() {
+        let short = ms.is_some_and(|ms| ms < SHORT_NAP_MS);
+        match (short, start) {
+            (true, None) => start = Some(k),
+            (false, Some(s)) => {
+                runs.push((naps[s].0, k - s, naps[k].0 - naps[s].0));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        runs.push((naps[s].0, naps.len() - s, naps[naps.len() - 1].0 - naps[s].0));
+    }
+    runs.sort_by_key(|r| std::cmp::Reverse(r.1));
+    for (at, n, ms) in runs.iter().take(5).filter(|r| r.1 > 2) {
+        out += &format!("wakes: {name:<10}   {n:4} short sleeps from {:7.1} s for {:6.1} s\n", *at as f64 / 1000.0, *ms as f64 / 1000.0);
+    }
+    out
 }
 
 /// `pcm` (stereo at [`RATE`]) encoded by ffmpeg with `args` (output options); None without ffmpeg.
@@ -87,8 +150,8 @@ fn perf_report() {
     perf_case("eq10", &one, perf_app(prefs_off()), with_sound(nori_engine::Sound { bands, ..Default::default() }), 4);
     let compressor = nori_engine::Sound { effects: Effects { compressor: Some(CompressorPreset::Light.settings()), ..Effects::default() }, limiter: true, ..Default::default() };
     perf_case("compressor", &one, perf_app(prefs_off()), with_sound(compressor), 4);
-    // Compressed, as a server keeps music: the decoder's cost.
-    for (name, args) in [("mp3", ["-c:a", "libmp3lame", "-b:a", "320k", "-f", "mp3"]), ("flac", ["-c:a", "flac", "-compression_level", "5", "-f", "flac"])] {
+    // Compressed, as a server keeps music or transcodes it (Opus): each decoder's cost.
+    for (name, hint, args) in [("mp3", "mp3", ["-c:a", "libmp3lame", "-b:a", "320k", "-f", "mp3"]), ("flac", "flac", ["-c:a", "flac", "-compression_level", "5", "-f", "flac"]), ("opus", "opus", ["-c:a", "libopus", "-b:a", "128k", "-f", "ogg"]), ("vorbis", "ogg", ["-c:a", "vorbis", "-strict", "-2", "-f", "ogg"]), ("aac", "m4a", ["-c:a", "aac", "-b:a", "256k", "-f", "ipod"]), ("alac", "m4a", ["-c:a", "alac", "-sample_fmt", "s16p", "-f", "ipod"])] {
         if !perf_wanted(name) {
             continue;
         }
@@ -97,7 +160,7 @@ fn perf_report() {
             continue;
         };
         let files = vec![("a".to_string(), file, (long.len() / 2) as i64 * 1000 / RATE as i64)];
-        perf_measure(name, &Rig::build(files, perf_app(prefs_off()), Settings::default(), Extra { hint: Some(name), ..Extra::default() }), 4, |_, _| {});
+        perf_measure(name, &Rig::build(files, perf_app(prefs_off()), Settings::default(), Extra { hint: Some(hint), ..Extra::default() }), 4, |_, _| {});
     }
     perf_case("speed", &one, perf_app(prefs_off()), Settings { speed: 1.2, pitch: 0.95, ..Settings::default() }, 4);
     perf_case("silence", &one, perf_app(prefs_off()), Settings { skip_silence: true, ..Settings::default() }, 4);

@@ -30,6 +30,11 @@ pub fn fixture(features: &str) -> PathBuf {
     static MADE: AtomicU32 = AtomicU32::new(0);
     let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixture");
     let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/plugin-fixture").join(if features.is_empty() { "plain" } else { features });
+    // Held over the build and the copy: cargo links the wasm again on every build, even one with nothing
+    // to do, so another test process building it would remove the file being copied.
+    std::fs::create_dir_all(&target).unwrap();
+    let lock = std::fs::File::create(target.join("lock")).unwrap();
+    lock.lock().unwrap();
     let status = Command::new(env!("CARGO"))
         .args(["build", "-q", "--release", "--target", "wasm32-wasip2", "--features", features, "--manifest-path"])
         .arg(here.join("Cargo.toml"))

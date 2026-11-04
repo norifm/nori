@@ -69,6 +69,14 @@ impl<Surface: crate::Surface + 'static> SkiaWGPURendererGeneric<Surface> {
         Self { renderer, _surface: std::marker::PhantomData }
     }
 
+    // NORI
+    #[cfg(feature = "wgpu-30")]
+    fn new_with_surface_retained(surface: Surface) -> Self {
+        let shared_context = SkiaSharedContext::default();
+        let renderer = SkiaRenderer::new_with_surface_retained(&shared_context, Box::new(surface));
+        Self { renderer, _surface: std::marker::PhantomData }
+    }
+
     // SkiaRenderer owns the surface as a trait object; downcast back to the concrete
     // type for the WGPU-specific fields and methods that `render_to_texture` needs.
     fn surface(&self) -> std::cell::Ref<'_, Surface> {
@@ -166,6 +174,27 @@ impl SkiaWGPU30Renderer {
         device: wgpu_30::Device,
         queue: wgpu_30::Queue,
     ) -> Result<Self, PlatformError> {
+        Self::offscreen(instance, adapter, device, queue, false)
+    }
+
+    /// NORI: [`new`](Self::new) for textures that keep their pixels between frames:
+    /// [`render_to_texture_kept`](Self::render_to_texture_kept) then repaints only what changed.
+    pub fn retained(
+        instance: wgpu_30::Instance,
+        adapter: wgpu_30::Adapter,
+        device: wgpu_30::Device,
+        queue: wgpu_30::Queue,
+    ) -> Result<Self, PlatformError> {
+        Self::offscreen(instance, adapter, device, queue, true)
+    }
+
+    fn offscreen(
+        instance: wgpu_30::Instance,
+        adapter: wgpu_30::Adapter,
+        device: wgpu_30::Device,
+        queue: wgpu_30::Queue,
+        retained: bool,
+    ) -> Result<Self, PlatformError> {
         use crate::wgpu_30_surface::{Backend, WGPUSurface};
 
         let backend = Backend::new(&adapter, &device)?;
@@ -174,9 +203,13 @@ impl SkiaWGPU30Renderer {
             PlatformError::from("Failed to create Skia graphics context from WGPU")
         })?;
 
-        Ok(Self::new_with_surface(WGPUSurface::new_offscreen(
-            instance, adapter, device, queue, backend, gr_context,
-        )))
+        let surface =
+            WGPUSurface::new_offscreen(instance, adapter, device, queue, backend, gr_context);
+        Ok(if retained {
+            Self::new_with_surface_retained(surface)
+        } else {
+            Self::new_with_surface(surface)
+        })
     }
 
     /// Render the scene to the given texture.
@@ -185,6 +218,17 @@ impl SkiaWGPU30Renderer {
     /// format. Supported formats depend on the GPU backend: `Rgba8Unorm` and `Rgba8UnormSrgb`
     /// are supported on all backends; `Bgra8Unorm` is additionally supported on Metal and Vulkan.
     pub fn render_to_texture(&self, texture: &wgpu_30::Texture) -> Result<(), PlatformError> {
+        self.render_to_texture_kept(texture, false).map(|_| ())
+    }
+
+    /// NORI: [`render_to_texture`](Self::render_to_texture) into a texture that still holds the last
+    /// frame this renderer drew (`kept`): a [`retained`](Self::retained) renderer then repaints only what
+    /// changed. Returns the share of the texture repainted.
+    pub fn render_to_texture_kept(
+        &self,
+        texture: &wgpu_30::Texture,
+        kept: bool,
+    ) -> Result<f32, PlatformError> {
         let surface = self.surface();
         self.renderer.invoke_rendering_notifier_setup(&*surface)?;
 
@@ -198,12 +242,12 @@ impl SkiaWGPU30Renderer {
         let window_adapter = self.renderer.window_adapter()?;
         let window = window_adapter.window();
 
-        self.renderer.render_to_canvas(
+        let dirty = self.renderer.render_to_canvas(
             skia_surface.canvas(),
             0.,
             (0., 0.),
             Some(gr_context),
-            0,
+            u8::from(kept),
             Some(&*surface),
             window,
             None,
@@ -211,7 +255,9 @@ impl SkiaWGPU30Renderer {
 
         surface.flush_and_submit(gr_context);
 
-        Ok(())
+        let size = window.size().to_logical(window.scale_factor());
+        let area = (size.width * size.height).max(1.);
+        Ok(dirty.map_or(1., |d| (d.iter().map(|r| r.area()).sum::<f32>() / area).min(1.)))
     }
 }
 

@@ -10,5 +10,9 @@ A drawn text reads its text, font, wrap, overflow, alignment and markdown flag i
 rendering repaints it when they change even after the text layout cache replaced its entry (an item
 measured in another wrap mode): without that, a retained layer kept an old title on screen.
 
+A wgpu 30 renderer can be made retained, as the OpenGL layers are: drawing into a texture that still
+holds its last frame repaints only what changed (`SkiaWGPU30Renderer::retained`,
+`render_to_texture_kept`), so a seek bar step repaints the bar, not the whole player.
+
 This crate is a workspace member so Bazel resolves its local source without absolute path repositories.
 Two style lints allow the existing upstream rendering callback signatures.

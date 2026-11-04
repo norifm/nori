@@ -40,8 +40,8 @@ pub fn palette(prefs: &StoredPrefs, system_dark: bool, today: Today) -> Palette 
 }
 
 /// A page with no cover: the palette's own, or a plugin's season (`Session::look`).
-pub fn plain(prefs: &StoredPrefs, system_dark: bool, today: Today) -> Look {
-    let p = crate::session::app().look(palette(prefs, system_dark, today), None, is_dark(prefs, system_dark));
+pub fn plain(shared: &nori_core::queue::Session, prefs: &StoredPrefs, system_dark: bool, today: Today) -> Look {
+    let p = shared.look(palette(prefs, system_dark, today), None, is_dark(prefs, system_dark));
     let r = theme::roles(p);
     let scheme = Scheme {
         background: r.background,
@@ -85,8 +85,8 @@ pub fn dye(prefs: &StoredPrefs, system_dark: bool, today: Today, c: &CoverColour
 }
 
 /// A page about a cover: the season's paper dyed with the cover, its roles laid out as the theme's are.
-pub fn cover(prefs: &StoredPrefs, system_dark: bool, today: Today, c: &CoverColours) -> Look {
-    let base = plain(prefs, system_dark, today);
+pub fn cover(shared: &nori_core::queue::Session, prefs: &StoredPrefs, system_dark: bool, today: Today, c: &CoverColours) -> Look {
+    let base = plain(shared, prefs, system_dark, today);
     let Some(dye) = dye(prefs, system_dark, today, c) else { return base };
     let page = dress::page(c.edge, c.background, c.on, c.accent, c.wash_edge);
     Look { table: dress::dyed(&page, &dye), ..base }
@@ -186,16 +186,16 @@ mod tests {
 
     #[test]
     fn midnight_is_a_black_page() {
-        let black = plain(&prefs(ThemeSeason::Autumn, ThemeMode::Midnight), false, OCTOBER);
+        let black = plain(&Default::default(), &prefs(ThemeSeason::Autumn, ThemeMode::Midnight), false, OCTOBER);
         assert_eq!(black.page(), nori_look::color::BLACK);
-        let night = plain(&prefs(ThemeSeason::Autumn, ThemeMode::Dark), false, OCTOBER);
+        let night = plain(&Default::default(), &prefs(ThemeSeason::Autumn, ThemeMode::Dark), false, OCTOBER);
         assert_eq!(night.page(), Season::Autumn.palette(true).page);
     }
 
     #[test]
     fn a_plain_page_is_the_palettes() {
         let p = Season::Spring.palette(true);
-        let look = plain(&prefs(ThemeSeason::Spring, ThemeMode::Dark), false, OCTOBER);
+        let look = plain(&Default::default(), &prefs(ThemeSeason::Spring, ThemeMode::Dark), false, OCTOBER);
         assert_eq!((look.page(), look.ink(), look.accent()), (p.page, p.ink, p.accent));
         assert_eq!(look.on, p.on);
     }
@@ -208,7 +208,7 @@ mod tests {
         };
         let prefs = prefs(ThemeSeason::Autumn, ThemeMode::Dark);
         let cover_colours = nori_look::cover::derive(&[0xFF20_5030], 1, 1, false);
-        let look = cover(&prefs, false, OCTOBER, &cover_colours);
+        let look = cover(&Default::default(), &prefs, false, OCTOBER, &cover_colours);
         let dyed = Dye::new(cover_colours.edge, Season::Autumn.palette(false), Season::Autumn.palette(true), true).palette();
         assert_eq!((look.page(), look.ink()), (dyed.page, dyed.ink));
         assert_ne!(look.page(), Season::Autumn.palette(true).page, "the paper takes the cover's colour");
@@ -221,13 +221,13 @@ mod tests {
     fn midnight_wears_no_cover_colors() {
         let cover_colours = nori_look::cover::derive(&[0xFF20_5030], 1, 1, false);
         let midnight = prefs(ThemeSeason::Autumn, ThemeMode::Midnight);
-        assert_eq!(cover(&midnight, false, OCTOBER, &cover_colours), plain(&midnight, false, OCTOBER));
+        assert_eq!(cover(&Default::default(), &midnight, false, OCTOBER, &cover_colours), plain(&Default::default(), &midnight, false, OCTOBER));
     }
 
     #[test]
     fn a_fade_runs_from_one_page_to_the_other() {
-        let light = plain(&prefs(ThemeSeason::Winter, ThemeMode::Light), false, OCTOBER);
-        let dark = plain(&prefs(ThemeSeason::Winter, ThemeMode::Dark), false, OCTOBER);
+        let light = plain(&Default::default(), &prefs(ThemeSeason::Winter, ThemeMode::Light), false, OCTOBER);
+        let dark = plain(&Default::default(), &prefs(ThemeSeason::Winter, ThemeMode::Dark), false, OCTOBER);
         assert_eq!(light.towards(&dark, 0.0).page(), light.page());
         assert_eq!(light.towards(&dark, 1.0), dark);
         let half = light.towards(&dark, 0.5).page();

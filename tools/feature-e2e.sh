@@ -183,8 +183,13 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   adb shell input keyevent 4
   check "the browser offers orbit" wait_until 30 on_screen 'text="Orbit"'
   adb exec-out screencap -p > "$shots/browser.png"
+  # This repo's orbit, not the official repo's beside it.
+  tapnode text 10.0.2.2
+  check "the repo's filter shows its orbit only" wait_until 10 off_screen 'text="Moving covers"'
   tapnode text Orbit
-  check "its page offers it" wait_until 10 on_screen 'text="Versions"'
+  # Its page, the browser gone: the browser's rows have Install buttons too.
+  offered() { on_screen 'text="Install"' && off_screen 'text="Get plugins"'; }
+  check "its page offers it" wait_until 10 offered
   tapnode text Install
   check "before installing, its sheet says what it may do" wait_until 30 on_screen 'Change the sound'
   check "and nothing is installed yet" plugin_is none
@@ -238,6 +243,7 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   adb exec-out screencap -p > "$shots/devices.png"
   adb shell input keyevent 4
   "$app" open plugins >/dev/null
+  wait_until 10 on_screen 'text="INSTALLED"'
   tapnode text Showcase
   check "its page shows a level's value with its unit" wait_until 10 on_screen 'Level · 0.00 dB'
   check "and a hint under it" on_screen 'Two decimals'

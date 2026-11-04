@@ -804,11 +804,6 @@ impl RingTrack {
         }
     }
 
-    /// What the device holds at most beyond the ring, µs ([`AudioOutput::depth_us`]).
-    pub(crate) fn depth_us(&self) -> i64 {
-        self.output.depth_us()
-    }
-
     /// Ring frames the device still plays of the stream before this ring, while it does.
     fn lead_frames(&mut self) -> Option<u64> {
         if !self.lead {
@@ -1335,6 +1330,10 @@ impl Track for RingTrack {
 
     fn ready_to_reopen(&self) -> bool {
         self.ring.as_ref().is_none_or(|r| r.unread() == 0) && (self.output.takes_formats() || !self.output.holding())
+    }
+
+    fn depth_us(&self) -> i64 {
+        self.output.depth_us()
     }
 
     fn marks_songs(&self) -> bool {

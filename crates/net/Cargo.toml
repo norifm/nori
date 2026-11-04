@@ -16,7 +16,7 @@ ffi = ["dep:uniffi", "nori-model/ffi"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 uniffi = { workspace = true, optional = true }
-md-5 = "0.11"
+md-5 = "0.10"
 # A network error can be the database's (a write kept for later could not be stored).
 rusqlite = { version = "0.40", features = ["bundled", "functions"] }
 parking_lot = "0.12"

@@ -278,12 +278,13 @@ impl Store {
         }
     }
 
-    /// Drops every cached copy of song `id`, at any quality (`<id>:<quality>` keys).
+    /// Drops every cached copy of song `id`, at any quality (`<id>:<quality>` keys): the order knows them
+    /// all once the cache was counted, without listing the folder.
     pub fn drop_copies(&self, id: &str) {
-        for (k, _) in self.entries() {
-            if k.rsplit_once(':').is_some_and(|(of, _)| of == id) {
-                self.remove(&k);
-            }
+        self.counted();
+        let keys = self.order.lock().copies(id);
+        for k in keys {
+            self.remove(&k);
         }
     }
 
@@ -595,6 +596,22 @@ mod tests {
         fs::write(s.download_part("b", "0"), [0u8; 50]).unwrap();
         put(&s, "c:0", 70);
         assert_eq!(s.download_bytes_of(&["a".into(), "b".into(), "c".into()]), 300);
+    }
+
+    #[test]
+    fn a_songs_copies_go_at_every_quality() {
+        let d = dir("store-copies");
+        let s = Store::open(d.path(), 1 << 20).unwrap();
+        put(&s, "a:0", 100);
+        put(&s, "b:0", 50);
+        drop(s);
+        // Copies from an earlier run, and one this run wrote.
+        let s = Store::open(d.path(), 1 << 20).unwrap();
+        put(&s, "a:192opus", 30);
+        s.drop_copies("a");
+        assert!(s.cached("a:0").is_none() && s.cached("a:192opus").is_none(), "every copy of a went");
+        assert!(s.cached("b:0").is_some(), "another song's stays");
+        assert_eq!(s.cache_bytes(), 50);
     }
 
     #[test]

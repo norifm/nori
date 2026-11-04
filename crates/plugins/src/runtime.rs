@@ -34,7 +34,8 @@ pub(crate) const CALL_FUEL: u64 = 20_000_000_000;
 /// The most memory a plugin instance may grow to.
 const MEMORY_CAP: usize = 256 << 20;
 
-/// The one engine, made at the first plugin compiled or loaded.
+/// The one engine, made at the first plugin compiled or loaded. Global: wasmtime shares one engine per
+/// process, and the compiled code kept on disk is valid only for its settings.
 pub(crate) fn engine() -> &'static Engine {
     static ENGINE: OnceLock<Engine> = OnceLock::new();
     ENGINE.get_or_init(|| {

@@ -3000,7 +3000,7 @@ fn offload_perf_report() {
     let rig = Rig::new(server, songs, app(), Some(fake.clone()), offload());
     rig.engine.play_at(0, 0);
     assert!(rig.wait(10, |r| r.engine.status().offloaded && r.engine.status().position_ms > 1_000), "{:?}", rig.engine.status());
-    let (wakes, cpu, allocs, at) = (rig.time.clock.sleeps(), crate::engine::cpu_ms(), crate::perf_alloc::counts().0, rig.now_ms());
+    let (wakes, cpu, allocs, at, naps) = (rig.time.clock.sleeps(), crate::engine::cpu_ms(), crate::perf_alloc::counts().0, rig.now_ms(), rig.time.clock.naps().len());
     rig.run(200_000);
     let minutes = (rig.now_ms() - at) as f64 / 60_000.0;
     let per = |v: f64| v / minutes;
@@ -3010,6 +3010,9 @@ fn offload_perf_report() {
         per(crate::engine::cpu_ms() - cpu),
         per((crate::perf_alloc::counts().0 - allocs) as f64),
     );
+    if std::env::var_os("NORI_WAKES").is_some() {
+        print!("{}", crate::engine::wake_report("offload", &rig.time.clock.naps()[naps..]));
+    }
     assert!(rig.engine.status().offloaded, "{:?}", rig.engine.status());
     rig.engine.stop();
 }

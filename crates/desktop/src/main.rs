@@ -67,7 +67,8 @@ fn main() -> Result<(), String> {
     std::fs::create_dir_all(&data).map_err(|e| format!("{}: {e}", data.display()))?;
     nori_host::keep_log(&data);
     let db = nori_host::db_path(&data);
-    let mut prefs = crate::session::app().settings.open(&db).map_err(|e| format!("the settings: {e}"))?;
+    let root = std::sync::Arc::new(nori_host::desktop::Root::new(&data));
+    let mut prefs = root.app.settings.open(&db).map_err(|e| format!("the settings: {e}"))?;
     // A server given on the command line is added if new, and made active.
     if let (Some(url), Some(user)) = (url, user) {
         let found = prefs.servers.iter().find(|s| s.url == url && s.user == user).map(|s| s.id.clone());
@@ -78,12 +79,12 @@ fn main() -> Result<(), String> {
         });
         prefs.servers.iter_mut().filter(|s| s.id == id && !password.is_empty()).for_each(|s| s.password = password.clone());
         prefs.active_server_id = id;
-        crate::session::app().settings.put(prefs);
+        root.app.settings.put(prefs);
     }
     let compositor = compositor::install()?;
     let ui = AppWindow::new().map_err(|e| e.to_string())?;
     // Held for the whole run: the exit hook only has a weak handle.
-    let _app = app::start(&ui, data, compositor);
+    let _app = app::start(&ui, root, compositor);
     #[cfg(all(feature = "test-control", unix))]
     let _control = control_socket.map(|path| control::start(path, ui.as_weak())).transpose()?;
     ui.run().map_err(|e| e.to_string())

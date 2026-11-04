@@ -195,6 +195,8 @@ bursts_continue() {
 # The app in the foreground, answering, logged in to this run's server.
 fixture_logged_in=0
 app_up() {
+  # A fresh install would ask first, and the prompt covers the app.
+  adb shell pm grant "$pkg" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
   "$app" wake >/dev/null
   "$app" launch >/dev/null
   wait_until 20 bash -c "'$app' state 2>/dev/null | grep -q '\"route\"'" || return 1

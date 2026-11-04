@@ -1,6 +1,6 @@
 //! The session behind the screen (nori-host's), its reports worded as [`Msg`]s, and the screens' reads.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use nori_core::settings::SavedServer;
 use nori_core::transport::NetError;
 use nori_core::{AlbumDetail, ArtistDetail, PlaylistDetail, Song};
 use nori_covers::memory::Image;
-pub use nori_host::desktop::app;
+pub use nori_host::desktop::Root;
 use nori_host::pages::{HomePart, PageAsk, PageFailed, PageGot, ShelfItems};
 pub use nori_host::pages::ALBUM_PAGE;
 pub use nori_host::session::{Audio, Chore};
@@ -203,8 +203,8 @@ pub struct Downloads {
 
 /// Logs `draft` in and keeps it as the active profile (blocking): the core checks it with its provider
 /// (a server is tried through its second address, then with legacy auth, which the profile then keeps).
-pub fn check_login(data: &Path, http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
-    nori_host::desktop::log_in(data, http, draft).map_err(|e| match net_error(&e) {
+pub fn check_login(root: &Root, http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
+    root.log_in(http, draft).map_err(|e| match net_error(&e) {
         e if e.is_empty() => "the server did not answer".to_string(),
         e => e,
     })
@@ -212,7 +212,7 @@ pub fn check_login(data: &Path, http: Arc<Http>, draft: SavedServer) -> Result<S
 
 /// The terminal client's own settings, stored in the core's `app_kv`.
 pub mod own {
-    pub use nori_host::desktop::own::{flag, keep, number, text};
+    pub use nori_host::desktop::own::{flag, number, text};
     pub const MOUSE: &str = "tui.mouse";
     pub const IMAGES: &str = "tui.images";
     pub const PAINT: &str = "tui.paint";
@@ -222,7 +222,7 @@ pub mod own {
 }
 
 pub struct Open<'a> {
-    pub data: &'a Path,
+    pub root: &'a Root,
     pub http: Arc<Http>,
     pub profile: SavedServer,
     pub device: Option<String>,
@@ -257,12 +257,12 @@ impl Session {
             let _ = tx.send(Msg::From(id, Box::new(worded(s))));
         });
         let host = nori_host::desktop::open(nori_host::desktop::DesktopOpen {
-            data: o.data,
+            root: o.root,
             http: o.http,
             profile: o.profile,
-            device: o.device.or_else(|| own::text(own::DEVICE)),
-            volume: own::number(own::VOLUME, 1.0),
-            covers: o.images.then(|| nori_covers::Config::new(o.data.join("covers"))),
+            device: o.device.or_else(|| own::text(&o.root.app.settings, own::DEVICE)),
+            volume: own::number(&o.root.app.settings, own::VOLUME, 1.0),
+            covers: o.images.then(|| nori_covers::Config::new(o.root.data().join("covers"))),
             offline: o.offline,
             mpris: o.mpris,
             kind: nori_core::remote::wire::DeviceKind::Terminal,

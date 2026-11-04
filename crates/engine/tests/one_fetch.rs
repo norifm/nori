@@ -124,7 +124,7 @@ impl Rig {
         let analyses = Analyses::of(client.clone());
         let measurer = Measurer::new(analyses.clone(), store.clone());
         let library = CoreLibrary { client: client.clone(), bytes: net.clone(), store: Some(store.clone()), analyses: analyses.clone() };
-        let app = CoreApp::new(core.session.clone()).measuring(measurer.clone());
+        let app = CoreApp::new(core.session.clone(), analyses.clone()).measuring(measurer.clone());
         let card = Card::new();
         let clock = Virtual::default();
         let engine = common::Running(Engine::start_on(library, app, CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 256, settings: settings(&prefs, Default::default()), ..Config::default() }, clock.clone(), |_| {}));

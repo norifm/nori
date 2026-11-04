@@ -292,6 +292,12 @@ impl Album {
     fn dress(&mut self) {
         self.subtitle = crate::lines::album_subtitle(&self.artist, self.year);
     }
+
+    /// `self` with derived fields filled, as a read returns it.
+    pub fn dressed(mut self) -> Self {
+        self.dress();
+        self
+    }
 }
 
 dressed!(Album);

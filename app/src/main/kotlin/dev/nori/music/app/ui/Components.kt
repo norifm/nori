@@ -503,7 +503,7 @@ fun PlayingBars(tint: Color, modifier: Modifier = Modifier, within: android.grap
     val seen = seen()
     val drawing = remember { BarsDrawing() }
     drawing.paint.color = tint.toArgb()
-    val slot = rememberIsland(drawing, wanted = moving && seen, overPage = true, within = within)
+    val slot = rememberIsland(drawing, wanted = moving && seen, overPage = true, within = within, pace = IslandPace.FOLLOWS)
     val head = LocalPinnedHead.current
     var hidden by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(moving, seen, slot.apart, hidden) {

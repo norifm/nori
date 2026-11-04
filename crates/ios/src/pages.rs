@@ -845,7 +845,7 @@ fn read(token: u64, kind: i32, arg: String) {
 fn queue_json(s: &nori_host::session::Session) -> Value {
     let q = s.queue_shown(None);
     let shown = q.heard().map_or(-1, |i| i as i32);
-    let mut v = queue_sections(&q.view.songs, &q.rows, q.view.repeat, q.view.shuffle, shown);
+    let mut v = queue_sections(&q.songs, &q.rows, q.view.repeat, q.view.shuffle, shown);
     if q.mirrored {
         v["head"]["remote"] = json!(true);
     }

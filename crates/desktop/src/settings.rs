@@ -585,8 +585,8 @@ fn service(id: &str) -> Option<(&'static str, &'static str)> {
 
 /// The groups of settings tab `tab`: each section's title and rows. Tab 0 adds the desktop's own:
 /// the output device and the version.
-fn groups(p: &StoredPrefs, f: &Facts, kinds: &Kinds, tab: i32, today: Today) -> Vec<(String, Vec<Row>)> {
-    let s = settings_model::state(p, settings_model::Output::default(), &crate::session::app().settings.model);
+fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, kinds: &Kinds, tab: i32, today: Today) -> Vec<(String, Vec<Row>)> {
+    let s = settings_model::state(p, settings_model::Output::default(), model);
     let facts = PageFacts {
         parts: f.rules.settings.clone(),
         folders: f.folders.iter().map(|(_, id)| id.clone()).collect(),
@@ -650,8 +650,8 @@ fn groups(p: &StoredPrefs, f: &Facts, kinds: &Kinds, tab: i32, today: Today) -> 
 }
 
 /// Rows of settings tab `tab`: each group's heading, then its rows with first and last marked.
-pub fn rows(p: &StoredPrefs, f: &Facts, kinds: &Kinds, tab: i32, today: Today) -> ModelRc<SettingRow> {
-    model(groups(p, f, kinds, tab, today), p, f, today)
+pub fn rows(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, kinds: &Kinds, tab: i32, today: Today) -> ModelRc<SettingRow> {
+    self::model(groups(model, p, f, kinds, tab, today), p, f, today)
 }
 
 /// `groups` as the page draws them: each heading, then its rows with first and last marked.
@@ -1394,7 +1394,7 @@ mod tests {
         let tab = tabs(&facts.rules.settings).iter().position(|p| *p == SettingsPage::Lyrics).unwrap() as i32;
         let today = Today { month: 10, day: 19, southern: false };
         let source = |p: &StoredPrefs, id: &str| {
-            let rows = rows(p, &facts, &Kinds::builtin(), tab, today);
+            let rows = rows(&Default::default(), p, &facts, &Kinds::builtin(), tab, today);
             let r = slint::Model::iter(&rows).find(|r| r.kind == RANKED && r.name == id).unwrap();
             (r.button.to_string(), r.keyed)
         };
@@ -1419,7 +1419,7 @@ mod tests {
         };
         let p = StoredPrefs { servers: vec![SavedServer { id: "a".into(), name: "Home".into(), ..Default::default() }], active_server_id: "a".into(), ..Default::default() };
         let today = Today { month: 10, day: 19, southern: false };
-        let usage = |f: &Facts| (0..8).flat_map(|tab| groups(&p, f, &Kinds::builtin(), tab, today)).flat_map(|(_, rows)| rows).find(|r| r.kind == USAGE).unwrap();
+        let usage = |f: &Facts| (0..8).flat_map(|tab| groups(&Default::default(), &p, f, &Kinds::builtin(), tab, today)).flat_map(|(_, rows)| rows).find(|r| r.kind == USAGE).unwrap();
         let both = usage(&facts(vec![("a".into(), 2 << 20), ("gone".into(), 1 << 20)]));
         assert_eq!(both.options[1].0, "5 downloads · 3.0 MB");
         assert_eq!(both.breakdown, ["Home · 2.0 MB", "A removed profile · 1.0 MB"]);
@@ -1448,7 +1448,7 @@ mod tests {
         use slint::Model;
         let facts = Facts::default();
         let look = tabs(&facts.rules.settings).iter().position(|p| *p == SettingsPage::Look).map_or(0, |i| i as i32);
-        let rows = rows(&StoredPrefs::default(), &facts, &Kinds::builtin(), look, OCTOBER);
+        let rows = rows(&Default::default(), &StoredPrefs::default(), &facts, &Kinds::builtin(), look, OCTOBER);
         let kinds: Vec<_> = rows.iter().map(|r| r.kind).collect();
         let at = kinds.iter().position(|k| *k == SEASONS).expect("a season row");
         assert_eq!(kinds[at - 1..at + 4], [HEADING, SEASONS, TOGGLE, HEADING, APPEARANCE_ROW], "the season under its heading, then the theme's");
@@ -1476,11 +1476,11 @@ mod tests {
         let f = Facts::default();
         let specs: Vec<String> = settings_model::specs().into_iter().map(|s| s.name).collect();
         for tab in 0..7 {
-            for (_, rows) in groups(&p, &f, &Kinds::builtin(), tab, OCTOBER) {
+            for (_, rows) in groups(&Default::default(), &p, &f, &Kinds::builtin(), tab, OCTOBER) {
                 for r in rows.iter().filter(|r| matches!(r.kind, TOGGLE | CHOICE) && r.name != DEVICE) {
                     let name = toggled(&r.name, r.on).0;
                     assert!(specs.iter().any(|s| s == name), "{name} is not a core setting");
-                    assert!(!setting_words(name, &settings_model::state(&p, settings_model::Output::default(), &crate::session::app().settings.model)).0.eq(name), "{name} has no words");
+                    assert!(!setting_words(name, &settings_model::state(&p, settings_model::Output::default(), &Default::default())).0.eq(name), "{name} has no words");
                 }
                 for r in rows.iter().filter(|r| r.kind == SLIDER) {
                     assert!(level_of(&r.name).is_some(), "{}", r.name);

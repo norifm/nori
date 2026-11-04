@@ -338,9 +338,9 @@ fn decoder() -> Result<Decoder, openh264::Error> {
     Decoder::with_api_config(OpenH264API::from_source(), DecoderConfig::new().flush_after_decode(Flush::NoFlush))
 }
 
-/// Decodes `video` over and over until `stop`, handing each frame to `show` when it is due. A frame the
-/// UI hasn't taken in time (`busy`) is left out.
-fn run(video: &Video, stop: &AtomicBool, busy: &AtomicBool, show: &(dyn Fn(Image) + Send + Sync)) -> Result<(), Failed> {
+/// Decodes `video` over and over until `stop`, writing each frame into `shown` when it is due and then
+/// calling `show`. A frame the UI hasn't taken in time (`busy`) is left out.
+fn run(video: &Video, stop: &AtomicBool, busy: &AtomicBool, shown: &Mutex<Image>, show: &(dyn Fn() + Send + Sync)) -> Result<(), Failed> {
     let failed = |e: openh264::Error| Failed::Unplayable(e.to_string());
     let mut unit = Vec::new();
     while !stop.load(Ordering::Relaxed) {
@@ -360,11 +360,16 @@ fn run(video: &Video, stop: &AtomicBool, busy: &AtomicBool, show: &(dyn Fn(Image
                 continue;
             }
             let (width, height) = frame.dimensions();
-            let mut pixels = vec![0; width * height * 4].into_boxed_slice();
-            frame.write_rgba8(&mut pixels);
+            {
+                let mut image = shown.lock().expect("not poisoned");
+                if (image.width, image.height) != (width as u32, height as u32) {
+                    *image = Image { width: width as u32, height: height as u32, pixels: vec![0; width * height * 4].into_boxed_slice() };
+                }
+                frame.write_rgba8(&mut image.pixels);
+            }
             std::thread::sleep(due.saturating_duration_since(Instant::now()));
             busy.store(true, Ordering::Relaxed);
-            show(Image { width: width as u32, height: height as u32, pixels });
+            show();
         }
     }
     Ok(())
@@ -373,8 +378,10 @@ fn run(video: &Video, stop: &AtomicBool, busy: &AtomicBool, show: &(dyn Fn(Image
 /// A loop playing; dropped, it stops.
 pub struct Playing {
     stop: Arc<AtomicBool>,
-    /// A frame is on its way to the UI.
+    /// The frame in `shown` is the UI's to take; the decoder writes the next only once this is cleared.
     pub busy: Arc<AtomicBool>,
+    /// The frame to show, one buffer for the whole loop.
+    pub shown: Arc<Mutex<Image>>,
 }
 
 impl Drop for Playing {
@@ -386,10 +393,11 @@ impl Drop for Playing {
 /// The video once fetched, kept for the song.
 pub type Kept = Arc<Mutex<Option<Arc<Video>>>>;
 
-/// Plays the loop at `url`: frames to `show`, a failure to `failed`.
-pub fn play(url: String, kept: Kept, show: impl Fn(Image) + Send + Sync + 'static, failed: impl Fn(Failed) + Send + 'static) -> Playing {
+/// Plays the loop at `url`: `show` once a frame is in [`Playing::shown`], a failure to `failed`.
+pub fn play(url: String, kept: Kept, show: impl Fn() + Send + Sync + 'static, failed: impl Fn(Failed) + Send + 'static) -> Playing {
     let (stop, busy) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
-    let (halt, wait) = (stop.clone(), busy.clone());
+    let shown = Arc::new(Mutex::new(Image { width: 0, height: 0, pixels: Box::default() }));
+    let (halt, wait, frame) = (stop.clone(), busy.clone(), shown.clone());
     nori_host::spawn("nori-motion", move || {
         let have = kept.lock().expect("not poisoned").clone();
         let video = match have.map_or_else(|| load(&url).map(Arc::new), Ok) {
@@ -397,11 +405,11 @@ pub fn play(url: String, kept: Kept, show: impl Fn(Image) + Send + Sync + 'stati
             Err(e) => return failed(e),
         };
         *kept.lock().expect("not poisoned") = Some(video.clone());
-        if let Err(e) = run(&video, &halt, &wait, &show) {
+        if let Err(e) = run(&video, &halt, &wait, &frame, &show) {
             failed(e);
         }
     });
-    Playing { stop, busy }
+    Playing { stop, busy, shown }
 }
 
 #[cfg(test)]

@@ -31,6 +31,24 @@ perf script -i build/desktop-cpu.data | stackcollapse-perf.pl | flamegraph.pl \
 - NVIDIA's proprietary libraries have incomplete symbols and unwinding: read the flat samples beside
   the call graph.
 
+On macOS, samply records the whole process; `tools/desktop-tour.py` gives it the same workload each
+time (a build with `--features test-control`; the socket path must be short, under `/tmp`):
+
+```sh
+cargo build -j4 --profile profiling -p nori-desktop --features test-control
+python3 tools/flame.py -o build/flame/desktop --for 60 -- \
+  target/profiling/nori-desktop --data "$DATA" --control-socket /tmp/nori-desk.sock &
+python3 tools/desktop-tour.py /tmp/nori-desk.sock 1 0.5 <album id>   # every page, then the album plays
+python3 tools/flame.py --profile build/flame/desktop/profile.json.gz --per-second
+python3 tools/flame.py --profile build/flame/desktop/profile.json.gz --since 15 --until 55 --thread nori-desktop
+```
+
+While a song plays the window draws one frame per seek bar step: a quarter pixel of the bar on screen,
+or the next second of its times (`nori_look::motion::wait_ms`, Android's rule), so an 80 s song steps
+about 27 times a second on a 2x display and a four-minute one 9. Each step repaints only the bar and
+its playhead, about 2 % of the player. Idle, the window costs under 1 ms a second, and mdns-sd checks
+the network interfaces once a minute.
+
 ## Memory
 
 - RSS: `/proc/$NORI_PID/smaps_rollup`, and `smaps` grouped by mapping. RSS includes code, shared
@@ -57,6 +75,8 @@ perf script -i build/desktop-cpu.data | stackcollapse-perf.pl | flamegraph.pl \
 | A hidden layer, or a page under the opaque fullscreen player, does not draw. | `fullscreen_does_not_draw_the_hidden_page` |
 | Linux draws every layer through one Skia OpenGL context, which owns its cover textures. Borrowed Vulkan images caused NVIDIA GPU faults. macOS uses wgpu with the `MemoryUsage` hint. Each Skia context has a 16 MiB resource cache. | `crates/desktop/src/compositor.rs`, `compositor/gl.rs`; `layers_resize_without_losing_pixels_or_blur` (X11, `--ignored`), `cover_pixels_survive_async_layers_and_mosaics` (macOS) |
 | On Linux with glibc, the mmap threshold is 256 KiB and the trim threshold 128 KiB, so freed cover and analysis buffers go back to the system. | `crates/desktop/src/main.rs` |
+| A change draws one frame: an animation that can be instant is turned off with `enabled` rather than given 0 ms, which would draw again on the next tick. The composite is one render pass, and uniforms are written only when they change. | `crates/desktop-ui/ui/app.slint`, `compositor.rs`; `a_seek_step_draws_the_player_once` (macOS) |
+| A layer keeps its texture between frames and repaints only what changed (`SkiaWGPU30Renderer::retained`, as the OpenGL layers do on Linux). | `compositor.rs`, `vendor/i-slint-renderer-skia`; `a_seek_step_repaints_only_what_moved` (macOS) |
 | Redraws coalesce at the monitor's refresh interval. With nothing to redraw there is no frame timer. Composited X11 presents Immediate; everything else uses AutoVsync. | `redraw_bursts_wait_for_the_next_frame` |
 | A window resize changes the layout at once; only opening and closing a panel animates. | `resizing_does_not_animate_layout` |
 | The seek bar follows playback in small steps without animating a whole layer. Large seeks and incoming volume changes animate. | `volume_and_seek_animate_between_updates` |
