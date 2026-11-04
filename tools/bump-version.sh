@@ -10,6 +10,7 @@
 #                          beta being the beta's number, 99 for the release itself (0.5.2-beta.3 -> 50203,
 #                          0.5.2 -> 50299): every beta installs over the last, the release over its betas
 #   Cargo.toml             the workspace version, and Cargo.lock's entries for the workspace crates
+#                          (and the test plugin's, crates/plugins/fixture/Cargo.lock)
 #
 # Left alone on purpose: the README's version badge reads the latest GitHub release by itself. Prints what
 # changed; commits nothing.
@@ -56,7 +57,9 @@ edit("Cargo.toml", [(r'(\[workspace\.package\][^\[]*?\nversion = )"[^"]+"', rf'\
 # write back at the next build.
 manifests = [(p / "Cargo.toml").read_text() for p in sorted((root / "crates").iterdir()) if (p / "Cargo.toml").exists()]
 members = [re.search(r'^name = "([^"]+)"', m, re.M).group(1) for m in manifests if re.search(r'^version\.workspace\s*=\s*true', m, re.M)]
-edit("Cargo.lock", [(rf'(\[\[package\]\]\nname = "{re.escape(m)}"\nversion = )"[^"]+"', rf'\g<1>"{new}"') for m in members])
+# The test plugin's own lock names the SDK it is built against.
+for lock in ["Cargo.lock", "crates/plugins/fixture/Cargo.lock"]:
+    edit(lock, [(rf'(\[\[package\]\]\nname = "{re.escape(m)}"\nversion = )"[^"]+"', rf'\g<1>"{new}"') for m in members])
 EOF
 # The Bazel BUILD files carry each crate's version.
 python3 "$(dirname "$0")/bazel/generate.py" >/dev/null && echo "  crates/*/BUILD.bazel"
