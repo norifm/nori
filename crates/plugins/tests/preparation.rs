@@ -14,7 +14,7 @@ use nori_player::types::{TrackAnalysis, TransitionKind};
 use nori_plugins::testing::FIXTURE;
 use nori_plugins::Value;
 
-use common::plugged;
+use common::{plugged, started};
 
 const FORMAT: Format = Format { rate: 44_100, channels: 2, encoding: Encoding::Pcm16 };
 
@@ -102,6 +102,7 @@ fn a_plugin_plans_the_transitions_out_of_its_songs() {
     let dir = nori_testdir::TempDir::new("plugins-plan");
     let (plugins, _) = plugged(&dir, "");
     plugins.set_songs(songs(&[("s1", "fixture one"), ("s2", "other")]));
+    started(&plugins);
     let mixing = plugins.mixing();
     let mut nori = nori_player::automix::plan::plan(None, None, 60_000, 60_000, &Default::default());
     (nori.kind, nori.out_start_ms, nori.duration_ms) = (TransitionKind::EqualPowerFade, 50_000, 6_000);
