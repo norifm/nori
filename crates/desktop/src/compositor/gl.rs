@@ -1425,6 +1425,7 @@ mod tests {
         // The player bar through the changes it sees in use, each drawn as the layers draw it (only what
         // changed, into the texture they keep) and drawn whole: the two must match after every one.
         let look = crate::look::plain(
+            &Default::default(),
             &nori_core::settings::StoredPrefs::default(),
             true,
             crate::look::Today { month: 10, day: 19, southern: false },
