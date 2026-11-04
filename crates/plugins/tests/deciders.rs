@@ -22,6 +22,8 @@ fn deciders_answer_for_what_they_mark_and_leave_the_rest_to_nori() {
     let dir = nori_testdir::TempDir::new("plugins-deciders");
     let (plugins, side) = common::plugged(&dir, "");
     assert!(plugins.deciding());
+    // The plugin's instance starts with its first call; this one waits for it, the deciders below don't.
+    assert_eq!(nori_tasks::block_on(plugins.queue_ended(None)), None);
 
     let marked = [song("a", "x"), song("b", "fixture shuffle"), song("c", "y")];
     assert_eq!(plugins.shuffle(&marked, &[1, 0, 2], &|o| anything(o)), Some(vec![1, 2, 0]));
@@ -57,7 +59,6 @@ fn deciders_answer_for_what_they_mark_and_leave_the_rest_to_nori() {
     assert_eq!(nori_tasks::block_on(plugins.autofill(&fill, &ids(&["n1"]), 15)), Some(ids(&["fx-1", "q2", "fx-2"])));
     assert_eq!(nori_tasks::block_on(plugins.autofill(&fill[..1], &ids(&["n1"]), 15)), None);
     assert_eq!(nori_tasks::block_on(plugins.queue_ended(Some(&song("e", "fixture end")))), Some(ids(&["fx-end"])));
-    assert_eq!(nori_tasks::block_on(plugins.queue_ended(None)), None);
 
     plugins.turn(nori_plugins::testing::FIXTURE.into(), false);
     assert!(!plugins.deciding(), "off: nothing is asked");
