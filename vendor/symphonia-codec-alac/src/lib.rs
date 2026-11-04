@@ -113,10 +113,32 @@ impl ElementChannel {
         })
     }
 
-    fn read_residuals(&mut self, bs: &mut Bits<'_>, out: &mut [i32]) -> Result<()> {
-        // NORI: read in one loop by `Bits::read_residuals`.
+    /// NORI: reads the residuals (`Bits::read_residuals`) and predicts the samples from them. In
+    /// mode 0 with orders 1 to 8, those encoders choose, each sample is predicted as its residual
+    /// is read (`decode_order`).
+    fn decode(&mut self, bs: &mut Bits<'_>, out: &mut [i32]) -> Result<()> {
         let golomb = Golomb { mb: self.mb, kb: self.kb, pb_factor: self.pb_factor, bps: self.bps };
-        Ok(bs.read_residuals(out, &golomb)?)
+        let (coeffs, shift, clip) = (&self.lpc_coeffs, self.shift, 32 - self.bps);
+        let read = match (self.mode, self.lpc_order) {
+            (0, 1) => decode_order::<1>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 2) => decode_order::<2>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 3) => decode_order::<3>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 4) => decode_order::<4>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 5) => decode_order::<5>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 6) => decode_order::<6>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 7) => decode_order::<7>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 8) => decode_order::<8>(bs, &golomb, coeffs, shift, clip, out),
+            _ => {
+                let mut slots = out.iter_mut();
+                bs.read_residuals(slots.len(), &golomb, |res| {
+                    if let Some(slot) = slots.next() {
+                        *slot = res;
+                    }
+                })?;
+                return self.predict(out);
+            }
+        };
+        Ok(read?)
     }
 
     fn predict(&mut self, out: &mut [i32]) -> Result<()> {
@@ -154,25 +176,10 @@ impl ElementChannel {
             out[i] = clip_msbs(out[i].wrapping_add(out[i - 1]), num_clip_bits);
         }
 
-        // NORI: orders 1 to 8, those encoders choose, have a predictor each.
-        let (coeffs, shift) = (&self.lpc_coeffs, self.shift);
-        match order {
-            1 => predict_order::<1>(coeffs, shift, num_clip_bits, out),
-            2 => predict_order::<2>(coeffs, shift, num_clip_bits, out),
-            3 => predict_order::<3>(coeffs, shift, num_clip_bits, out),
-            4 => predict_order::<4>(coeffs, shift, num_clip_bits, out),
-            5 => predict_order::<5>(coeffs, shift, num_clip_bits, out),
-            6 => predict_order::<6>(coeffs, shift, num_clip_bits, out),
-            7 => predict_order::<7>(coeffs, shift, num_clip_bits, out),
-            8 => predict_order::<8>(coeffs, shift, num_clip_bits, out),
-            _ => self.predict_any_order(order, num_clip_bits, out),
-        }
-        Ok(())
-    }
-
-    /// NORI: `predict`'s loop for any order, as symphonia has it.
-    fn predict_any_order(&mut self, order: usize, num_clip_bits: u32, out: &mut [i32]) {
         // Do the prediction.
+        //
+        // TODO: Orders for 4 and 8 are special-cased in the reference decoder. Consider using
+        // optimized versions for those cases like the FLAC decoder does.
         for i in 1 + order..out.len() {
             // Value of the output sample before prediction (the residual or difference).
             let mut res = out[i];
@@ -231,47 +238,65 @@ impl ElementChannel {
                 }
             }
         }
+
+        Ok(())
     }
 }
 
-/// NORI: `predict`'s loop for order `N`: the coefficients and the past samples stay in registers,
+/// NORI: reads a channel's residuals and, in mode 0 with order `N`, predicts each sample as its
+/// residual is read, as `predict` does: the coefficients and the last sample stay in registers,
 /// and the coefficients adapt without branching on the residual.
 #[inline(always)]
-fn predict_order<const N: usize>(coeffs: &[i32; 32], shift: u32, clip: u32, out: &mut [i32]) {
-    if out.len() <= N + 1 {
-        return;
-    }
-    // `c[j]` weighs `past[j]`, the `j`th oldest of the `N` samples before the one predicted; `top`
-    // is the sample before those.
+fn decode_order<const N: usize>(
+    bs: &mut Bits<'_>,
+    golomb: &Golomb,
+    coeffs: &[i32; 32],
+    shift: u32,
+    clip: u32,
+    out: &mut [i32],
+) -> std::io::Result<()> {
+    // `c[j]` weighs the `j`th oldest of the `N` samples before the one predicted.
     let mut c: [i32; N] = std::array::from_fn(|j| coeffs[N - 1 - j]);
-    let mut top = out[0];
-    let mut past: [i32; N] = std::array::from_fn(|j| out[1 + j]);
     let half: i32 = (1 << shift) >> 1;
-    for sample in &mut out[N + 1..] {
-        let res = *sample;
-        let diff: [i32; N] = std::array::from_fn(|j| top.wrapping_sub(past[j]));
-        // The newest sample's term comes last, as the next prediction waits for it.
-        let mut sum = half;
-        for j in 0..N {
-            sum = sum.wrapping_sub(c[j].wrapping_mul(diff[j]));
+    let (mut i, mut last) = (0, 0i32);
+    // Inlined into the loop reading the residuals, which keeps this state in registers.
+    bs.read_residuals(out.len(), golomb, #[inline(always)] |res| {
+        let next = if i > N {
+            // The sample before the `N` past ones, and the past ones' differences from it.
+            let older = &out[i - N - 1..i];
+            let top = older[0];
+            let diff: [i32; N] = std::array::from_fn(|j| top.wrapping_sub(if j + 1 < N { older[j + 1] } else { last }));
+            let mut sum = half;
+            for j in 0..N {
+                sum = sum.wrapping_sub(c[j].wrapping_mul(diff[j]));
+            }
+            // From the oldest, each coefficient steps by its difference's sign, against the
+            // residual's, until the residual less the steps' weighed differences is no longer of
+            // its sign.
+            let neg = res >> 31;
+            let mut live = -i32::from(res != 0);
+            let mut left = res;
+            for j in 0..N {
+                let sign = (diff[j] >> 31) + i32::from(diff[j] > 0);
+                let step = (sign ^ neg).wrapping_sub(neg);
+                c[j] = c[j].wrapping_sub(step & live);
+                left = left.wrapping_sub((j as i32 + 1).wrapping_mul(step.wrapping_mul(diff[j]) >> shift));
+                live &= -i32::from((left ^ neg) > neg);
+            }
+            clip_msbs(res.wrapping_add(top).wrapping_add(sum >> shift), clip)
         }
-        let next = clip_msbs(res.wrapping_add(top).wrapping_add(sum >> shift), clip);
-        *sample = next;
-        // From the oldest, each coefficient steps by its difference's sign, against the residual's,
-        // until the residual less the steps' weighed differences is no longer of its sign.
-        let neg = res >> 31;
-        let mut live = -i32::from(res != 0);
-        let mut left = res;
-        for j in 0..N {
-            let sign = (diff[j] >> 31) + i32::from(diff[j] > 0);
-            let step = (sign ^ neg).wrapping_sub(neg);
-            c[j] = c[j].wrapping_sub(step & live);
-            left = left.wrapping_sub((j as i32 + 1).wrapping_mul(step.wrapping_mul(diff[j]) >> shift));
-            live &= -i32::from((left ^ neg) > neg);
+        else if i == 0 {
+            // The warm-up: the first sample is its residual, each of the next N adds the one before.
+            res
         }
-        top = past[0];
-        past = std::array::from_fn(|j| if j + 1 < N { past[j + 1] } else { next });
-    }
+        else {
+            clip_msbs(res.wrapping_add(last), clip)
+        };
+        if let Some(slot) = out.get_mut(i) {
+            *slot = next;
+        }
+        (i, last) = (i + 1, next);
+    })
 }
 
 /// Apple Lossless Audio Codec (ALAC) decoder.
@@ -547,8 +572,8 @@ fn decode_sce_or_cpe(
             }
         }
 
-        elem0.read_residuals(bs, &mut out0[..num_samples])?;
-        elem0.predict(&mut out0[..num_samples])?;
+        // NORI: read and predicted together.
+        elem0.decode(bs, &mut out0[..num_samples])?;
 
         if let Some(out1) = out1.as_mut() {
             let elem1 = match elem1.as_mut() {
@@ -556,8 +581,7 @@ fn decode_sce_or_cpe(
                 None => return decode_error("alac: missing second channel element"),
             };
 
-            elem1.read_residuals(bs, &mut out1[..num_samples])?;
-            elem1.predict(&mut out1[..num_samples])?;
+            elem1.decode(bs, &mut out1[..num_samples])?;
 
             if mid_side_weight != 0 {
                 // mid_side_shift should not be bigger than 31 bits as we are shifting i32 to the right

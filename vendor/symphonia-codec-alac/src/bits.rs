@@ -113,15 +113,22 @@ impl<'a> Bits<'a> {
         Ok((value.wrapping_shl(32 - n) as i32).wrapping_shr(32 - n))
     }
 
-    /// Reads a channel's residuals into `out`, which holds zeros: a Golomb code each, but where the
-    /// history falls under 128 a code says how many zeros follow.
-    pub(crate) fn read_residuals(&mut self, out: &mut [i32], golomb: &Golomb) -> io::Result<()> {
+    /// Reads a channel's `n` residuals and hands each to `each`, in order: a Golomb code each, but
+    /// where the history falls under 128 a code says how many zeros follow.
+    #[inline(always)]
+    pub(crate) fn read_residuals(&mut self, n: usize, golomb: &Golomb, mut each: impl FnMut(i32)) -> io::Result<()> {
         let Golomb { mut mb, kb, pb_factor, bps } = *golomb;
         // A local copy, so the loop keeps the cache in registers; `self` reads near the end.
         let mut bits = *self;
         let mut sign_toggle = 0;
-        let mut i = 0;
-        while i < out.len() {
+        // Zeros of a run still to hand out. `each` is called in one place, so it is inlined.
+        let mut run = 0;
+        for i in 0..n {
+            if run > 0 {
+                run -= 1;
+                each(0);
+                continue;
+            }
             let k = lg3a(mb).min(kb);
             let code = match bits.read_golomb_cached(k, bps) {
                 Some(code) => code,
@@ -133,7 +140,6 @@ impl<'a> Bits<'a> {
                 }
             };
             let val = code.wrapping_add(sign_toggle);
-            out[i] = rice_code_to_signed(val);
             if val > 0xffff {
                 mb = 0xffff;
             }
@@ -144,8 +150,7 @@ impl<'a> Bits<'a> {
                 mb = mb.wrapping_add(pb_factor * val).wrapping_sub(pb_factor.wrapping_mul(mb) >> 9);
             }
             sign_toggle = 0;
-            i += 1;
-            if mb < 128 && i < out.len() {
+            if mb < 128 && i + 1 < n {
                 // This subtraction cannot overflow because mb is a u32 and < 128.
                 let k = (mb.leading_zeros() - 24 + ((mb + 16) >> 6)).min(kb);
                 let zeros = match bits.read_golomb_cached(k, 16) {
@@ -161,9 +166,9 @@ impl<'a> Bits<'a> {
                     sign_toggle = 1;
                 }
                 mb = 0;
-                // The run's samples are already zeros.
-                i += zeros as usize;
+                run = zeros;
             }
+            each(rice_code_to_signed(val));
         }
         *self = bits;
         Ok(())
