@@ -73,21 +73,11 @@ fn celt_sudiv(n: i32, d: i32) -> i32 {
     n / d
 }
 
+/// NORI: the floor of the square root through f64, which holds every u32 exactly and rounds its
+/// square root correctly: the same root the bit-by-bit loop found, for every u32.
 #[inline]
-fn isqrt32(mut val: u32) -> u32 {
-    let mut g = 0u32;
-    let mut bshift = ((32 - val.leading_zeros()) as i32 - 1) >> 1;
-    let mut b = 1u32 << bshift;
-    while bshift >= 0 {
-        let t = (((g << 1) + b) as u64) << bshift;
-        if t <= val as u64 {
-            g += b;
-            val -= t as u32;
-        }
-        b >>= 1;
-        bshift -= 1;
-    }
-    g
+fn isqrt32(val: u32) -> u32 {
+    (val as f64).sqrt() as u32
 }
 
 pub const SPREAD_NONE: i32 = 0;

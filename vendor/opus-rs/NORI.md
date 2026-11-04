@@ -12,6 +12,9 @@ Changes marked NORI keep every decoded sample the same, bit for bit, and the pub
   post-filter (`comb_filter_inplace`) makes eight samples a step: each reads only samples at least
   13 before it, which the steps before have made.
 - `lib.rs`: a stereo CELT frame is interleaved into the output a pair of samples at a time.
+- `bands.rs`: the integer square root a band split's angle is decoded with (`isqrt32`) is the floor
+  of f64's: a u32 is exact in f64 and its root rounded correctly, so they agree for every u32
+  (checked for all of them).
 
 The crate stays out of the workspace (`exclude` in the root Cargo.toml) and replaces the crates.io
 one through `[patch.crates-io]`. `cargo test --release -p nori-engine --test engine decoders::opus_digest
