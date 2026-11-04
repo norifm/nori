@@ -1687,12 +1687,12 @@ impl OpusDecoder {
                             0,
                             celt_end_band,
                         );
-                        for i in 0..sub_frame_size {
-                            for ch in 0..self.channels {
-                                let idx = out_start + i * self.channels + ch;
-                                output[idx] =
-                                    self.w_celt_planar[ch * sub_frame_size + i].clamp(-1.0, 1.0);
-                            }
+                        // NORI: the two channels interleaved pairwise, without an index per sample.
+                        let (left, right) = self.w_celt_planar[..needed].split_at(sub_frame_size);
+                        let pairs = output[out_start..out_end].chunks_exact_mut(2);
+                        for ((pair, &l), &r) in pairs.zip(left).zip(right) {
+                            pair[0] = l.clamp(-1.0, 1.0);
+                            pair[1] = r.clamp(-1.0, 1.0);
                         }
                     }
                 }
