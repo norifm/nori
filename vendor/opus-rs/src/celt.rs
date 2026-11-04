@@ -3070,6 +3070,77 @@ impl CeltEncoder {
     }
 }
 
+// NORI: the decoder's synthesis limit and de-emphasis offset.
+const SIG_SAT: f32 = 536870911.0;
+const VERY_SMALL: f32 = 1e-30f32;
+
+/// NORI: one step of libopus's de-emphasis: `x` with the filter's memory `m`, clamped to
+/// ±SIG_SAT when `CLAMP`, as an output sample (±1).
+#[inline(always)]
+fn deemphasis_step<const CLAMP: bool>(x: f32, m: &mut f32, coef: f32) -> f32 {
+    let mut val = x + VERY_SMALL + *m;
+    if CLAMP {
+        val = val.clamp(-SIG_SAT, SIG_SAT);
+    }
+    *m = val * coef;
+    val * (1.0 / 32768.0)
+}
+
+/// NORI: whether de-emphasizing `x` from memory `m` keeps every sample within ±SIG_SAT, so the
+/// clamp changes nothing. With a coefficient of at most 7/8, |m| stays within 8 times the largest
+/// of |x|, |m| and 1, and a sample within 9 times it.
+fn deemphasis_unclamped(x: &[f32], m: f32, coef: f32) -> bool {
+    let mut peak = [m.abs().max(1.0); 8];
+    let mut chunks = x.chunks_exact(8);
+    for chunk in &mut chunks {
+        for (p, v) in peak.iter_mut().zip(chunk) {
+            *p = p.max(v.abs());
+        }
+    }
+    for v in chunks.remainder() {
+        peak[0] = peak[0].max(v.abs());
+    }
+    let peak = peak.iter().fold(0.0f32, |a, &b| a.max(b));
+    coef.abs() <= 0.875 && peak <= SIG_SAT / 16.0
+}
+
+/// NORI: a mono frame's de-emphasis into `out`.
+fn deemphasis_mono(x: &[f32], out: &mut [f32], mem: &mut f32, coef: f32) {
+    let mut m = *mem;
+    if deemphasis_unclamped(x, m, coef) {
+        for (o, &x) in out.iter_mut().zip(x) {
+            *o = deemphasis_step::<false>(x, &mut m, coef);
+        }
+    } else {
+        for (o, &x) in out.iter_mut().zip(x) {
+            *o = deemphasis_step::<true>(x, &mut m, coef);
+        }
+    }
+    *mem = m;
+}
+
+/// NORI: a stereo frame's de-emphasis, the two channels' filters in one loop.
+fn deemphasis_stereo(x: [&[f32]; 2], out: [&mut [f32]; 2], mem: [&mut f32; 2], coef: f32) {
+    let [x0, x1] = x;
+    let [out0, out1] = out;
+    let n = x0.len().min(x1.len()).min(out0.len()).min(out1.len());
+    let (x0, x1, out0, out1) = (&x0[..n], &x1[..n], &mut out0[..n], &mut out1[..n]);
+    let (mut m0, mut m1) = (*mem[0], *mem[1]);
+    if deemphasis_unclamped(x0, m0, coef) && deemphasis_unclamped(x1, m1, coef) {
+        for i in 0..n {
+            out0[i] = deemphasis_step::<false>(x0[i], &mut m0, coef);
+            out1[i] = deemphasis_step::<false>(x1[i], &mut m1, coef);
+        }
+    } else {
+        for i in 0..n {
+            out0[i] = deemphasis_step::<true>(x0[i], &mut m0, coef);
+            out1[i] = deemphasis_step::<true>(x1[i], &mut m1, coef);
+        }
+    }
+    let [mem0, mem1] = mem;
+    (*mem0, *mem1) = (m0, m1);
+}
+
 pub struct CeltDecoder {
     mode: &'static CeltMode,
     channels: usize,
@@ -3629,7 +3700,6 @@ impl CeltDecoder {
                 );
             }
 
-            const SIG_SAT: f32 = 536870911.0;
             for i in 0..frame_size {
                 let v = &mut self.decode_mem[channel_mem_offset + out_syn_idx + i];
                 *v = v.clamp(-SIG_SAT, SIG_SAT);
@@ -3706,19 +3776,34 @@ impl CeltDecoder {
             }
             self.prefilter_mem[c * COMBFILTER_MAXPERIOD..(c + 1) * COMBFILTER_MAXPERIOD]
                 .copy_from_slice(&new_mem);
+        }
 
-            let coef = mode.preemph[0];
-            let mut m = self.preemph_mem[c];
-            const VERY_SMALL: f32 = 1e-30f32;
-            let ds = self.downsample;
-            if ds == 1 {
-                for i in 0..frame_size {
-                    let x = pcm_frame[i];
-                    let val = (x + VERY_SMALL + m).clamp(-SIG_SAT, SIG_SAT);
-                    pcm[c * api_frame_size + i] = val * (1.0 / 32768.0);
-                    m = val * coef;
-                }
+        // NORI: the de-emphasis runs once every channel is synthesized, reading each channel's frame
+        // from `decode_mem` (which holds it as `pcm_frame` did), so a stereo frame's two run side by side.
+        let coef = mode.preemph[0];
+        let out_syn_idx = DECODE_BUFFER_SIZE - frame_size;
+        let frame = |c: usize| {
+            let at = c * (DECODE_BUFFER_SIZE + overlap) + out_syn_idx;
+            &self.decode_mem[at..at + frame_size]
+        };
+        let ds = self.downsample;
+        if ds == 1 {
+            let (out0, out1) = pcm.split_at_mut(api_frame_size);
+            if channels == 1 {
+                deemphasis_mono(frame(0), &mut out0[..frame_size], &mut self.preemph_mem[0], coef);
             } else {
+                let (m0, m1) = self.preemph_mem.split_at_mut(1);
+                deemphasis_stereo(
+                    [frame(0), frame(1)],
+                    [&mut out0[..frame_size], &mut out1[..frame_size]],
+                    [&mut m0[0], &mut m1[0]],
+                    coef,
+                );
+            }
+        } else {
+            for c in 0..channels {
+                let pcm_frame = frame(c);
+                let mut m = self.preemph_mem[c];
                 // Run deemphasis IIR over all internal samples, but only write
                 // every downsample-th sample (libopus deemphasis() stride).
                 for i in 0..frame_size {
@@ -3729,8 +3814,8 @@ impl CeltDecoder {
                     }
                     m = val * coef;
                 }
+                self.preemph_mem[c] = m;
             }
-            self.preemph_mem[c] = m;
         }
 
         self.prefilter_period_old = self.prefilter_period;

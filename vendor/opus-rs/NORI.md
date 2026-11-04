@@ -5,6 +5,8 @@ Changes marked NORI keep every decoded sample the same, bit for bit, and the pub
 
 - `pvq.rs`: a pulse vector's index (`cwrsi`) is decoded reading the codebook table's rows directly
   when the table holds every entry the decoding can reach, as it does for each codebook CELT uses.
+- `celt.rs`: the de-emphasis runs once both channels of a frame are synthesized, the two filters in
+  one loop, and without its clamp when the frame's samples cannot reach the clamp's limit.
 
 The crate stays out of the workspace (`exclude` in the root Cargo.toml) and replaces the crates.io
 one through `[patch.crates-io]`. `cargo test --release -p nori-engine --test engine decoders::opus_digest
