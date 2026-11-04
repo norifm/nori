@@ -183,7 +183,8 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     /** Whether the queue has been handed back to media3 in this process; see [resume]. */
     @Volatile private var resumed = false
 
-    init {
+    /** Publishes the table and reconciles it with media3 on the pool; called once, when [Nori] is built. */
+    fun start() {
         io.execute {
             // Saved songs are read back from the download cache (their analysis, the beat model), whether or not
             // the playback service runs.
