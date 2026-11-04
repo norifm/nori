@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/android", "crates/automix", "crates/backup", "crates/cli", "crates/core", "crates/covers", "crates/db", "crates/desktop", "crates/desktop-ui", "crates/devices", "crates/engine", "crates/host", "crates/http", "crates/ios", "crates/library", "crates/look", "crates/lyrics", "crates/model", "crates/mpris", "crates/net", "crates/output-cpal", "crates/perf", "crates/player", "crates/plugin-index", "crates/plugin-sdk", "crates/plugins", "crates/queue", "crates/remote", "crates/settings", "crates/settings-derive", "crates/sink-protocol", "crates/sign-in-window", "crates/stretch", "crates/tasks", "crates/testdir", "crates/time", "crates/transfers", "crates/uniffi-bindgen", "crates/uniffi-jni-runtime", "crates/web"]
-exclude = ["vendor/i-slint-renderer-skia", "vendor/opus-rs", "vendor/symphonia-bundle-flac", "vendor/symphonia-bundle-mp3", "vendor/symphonia-codec-alac", "vendor/symphonia-core"]
+exclude = ["vendor/i-slint-renderer-skia", "vendor/opus-rs", "vendor/symphonia-bundle-flac", "vendor/symphonia-bundle-mp3", "vendor/symphonia-codec-alac", "vendor/symphonia-codec-vorbis", "vendor/symphonia-core"]
 
 [workspace.package]
 version = "0.7.2"
@@ -78,6 +78,7 @@ opus-rs = { path = "vendor/opus-rs" }
 symphonia-bundle-flac = { path = "vendor/symphonia-bundle-flac" }
 symphonia-bundle-mp3 = { path = "vendor/symphonia-bundle-mp3" }
 symphonia-codec-alac = { path = "vendor/symphonia-codec-alac" }
+symphonia-codec-vorbis = { path = "vendor/symphonia-codec-vorbis" }
 symphonia-core = { path = "vendor/symphonia-core" }
 
 # The web client's wasm (web/build.sh): small over fast, and a panic ends the worker (wasm has no unwinding).
