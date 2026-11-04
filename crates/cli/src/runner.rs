@@ -3,6 +3,8 @@
 
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
+
+use nori_host::desktop::Root;
 use std::time::Instant;
 
 use nori_core::remote::wire::Op;
@@ -119,6 +121,7 @@ fn query_picker() -> (Picker, bool) {
 
 struct Runner {
     o: Options,
+    root: Arc<Root>,
     http: Arc<Http>,
     tx: Sender<Msg>,
     session: Option<Session>,
@@ -152,7 +155,14 @@ pub fn run(o: Options) -> Result<(), String> {
     crate::term::stderr_to(&o.data.join("nori.log"));
     crate::term::hook_panics();
     let db = crate::backend::db_path(&o.data);
-    let mut prefs = crate::backend::app().settings.open(&db).map_err(|e| format!("the settings: {e}"))?;
+    let root = Arc::new(Root::new(&o.data));
+    let ran = run_with(o, &root, &db);
+    root.app.settings.writer.flush();
+    ran
+}
+
+fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
+    let mut prefs = root.app.settings.open(db).map_err(|e| format!("the settings: {e}"))?;
     // A server given on the command line is added (or found) and made active.
     if let Some((url, user, password)) = o.login.clone() {
         let found = prefs.servers.iter().find(|s| s.url == url && s.user == user).map(|s| s.id.clone());
@@ -163,19 +173,19 @@ pub fn run(o: Options) -> Result<(), String> {
         });
         prefs.servers.iter_mut().filter(|s| s.id == id && !password.is_empty()).for_each(|s| s.password = password.clone());
         prefs.active_server_id = id;
-        crate::backend::app().settings.put(prefs.clone());
+        root.app.settings.put(prefs.clone());
     }
     if let Some(file) = &o.install_plugin {
-        nori_host::desktop::install_plugin(&o.data, file)?;
+        root.install_plugin(file)?;
     }
     if let Some(kind) = o.provider.clone() {
         let list = nori_core::settings::ServerList { servers: prefs.servers.clone(), active_server_id: prefs.active_server_id.clone() };
         let form = SavedServer { id: nori_core::settings::new_server_id(), kind, ..Default::default() };
-        prefs = nori_core::providers::profile_activated(prefs, nori_host::desktop::plugins(&o.data).kinds.login_profile(list, form));
-        crate::backend::app().settings.put(prefs.clone());
+        prefs = nori_core::providers::profile_activated(prefs, root.plugins().kinds.login_profile(list, form));
+        root.app.settings.put(prefs.clone());
     }
-    let mouse = o.mouse.unwrap_or_else(|| own::flag(own::MOUSE, true));
-    let images = o.images.unwrap_or_else(|| own::flag(own::IMAGES, true));
+    let mouse = o.mouse.unwrap_or_else(|| own::flag(&root.app.settings, own::MOUSE, true));
+    let images = o.images.unwrap_or_else(|| own::flag(&root.app.settings, own::IMAGES, true));
     let mut terminal = crate::term::enter(mouse).map_err(|e| e.to_string())?;
     // Before the input thread starts: the query reply arrives on stdin.
     let (picker, kept_by_tmux) = match images {
@@ -193,41 +203,43 @@ pub fn run(o: Options) -> Result<(), String> {
     read_input(tx.clone());
     let mut app = App::new(prefs.clone());
     app.colors = Colors::detect(|k| std::env::var(k).ok());
-    app.paint = o.paint.unwrap_or_else(|| own::flag(own::PAINT, true));
+    app.paint = o.paint.unwrap_or_else(|| own::flag(&root.app.settings, own::PAINT, true));
     app.reduced_motion = std::env::var("NORI_REDUCE_MOTION").is_ok_and(|v| !v.is_empty() && v != "0");
     app.retheme();
     app.mouse = mouse;
     app.images = images;
     app.offline = o.offline;
-    app.volume = own::number(own::VOLUME, 1.0);
+    app.volume = own::number(&root.app.settings, own::VOLUME, 1.0);
     app.protocol = picker.as_ref().map_or("off", |p| protocol_name(p.protocol_type()));
     app.settings.own.data = o.data.display().to_string();
-    app.settings.own.kinds = nori_host::desktop::plugins(&o.data).kinds.clone();
-    app.settings.own.device = own::text(own::DEVICE).unwrap_or_default();
+    app.settings.own.kinds = root.plugins().kinds.clone();
+    app.settings.own.device = own::text(&root.app.settings, own::DEVICE).unwrap_or_default();
     let art = picker.clone().map(Art::new);
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
-    let mut r = Runner { http: Http::new(), tx, session: None, after_adding: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
+    app.shared = root.app.clone();
+    app.settings.own.shared = root.app.clone();
+    let mut r = Runner { root: root.clone(), http: Http::new(), tx, session: None, after_adding: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
     // Plugins reach the web before any profile opens; a session's own transport takes over.
     app.settings.own.kinds.set_transport(r.http.clone());
     let notices = r.tx.clone();
-    nori_host::desktop::plugins(&r.o.data).watched.hear(move |n| {
+    r.root.plugins().watched.hear(move |n| {
         let _ = notices.send(Msg::Note { text: n.words, error: n.problem });
     });
     let changed = r.tx.clone();
-    nori_host::desktop::plugins(&r.o.data).watched.on_changed(move || {
+    r.root.plugins().watched.on_changed(move || {
         let _ = changed.send(Msg::PluginsChanged);
     });
     let casts = r.tx.clone();
-    nori_host::desktop::plugins(&r.o.data).watched.hear_casts(move |c| {
+    r.root.plugins().watched.hear_casts(move |c| {
         let _ = casts.send(Msg::Cast(c));
         // What can be cast to leaves out what is cast to.
         let _ = casts.send(Msg::PluginsChanged);
     });
     let asks = r.tx.clone();
-    nori_host::desktop::plugins(&r.o.data).watched.sign_in_with(move |plugin, url| {
+    r.root.plugins().watched.sign_in_with(move |plugin, url| {
         let _ = asks.send(Msg::PluginSignIn { plugin, url });
     });
-    if let Some((safe, names)) = nori_host::desktop::safe_start(&r.o.data) {
+    if let Some((safe, names)) = r.root.safe_start() {
         app.say(crate::text::plugins_safe(&safe, &names), true);
     }
     match prefs.active_server().cloned() {
@@ -257,7 +269,7 @@ impl Runner {
         (self.playback, self.queue) = (Playback::Here, None);
         let name = nori_core::settings::label(&profile.name, &profile.url);
         let o = Open {
-            data: &self.o.data,
+            root: &self.root,
             http: self.http.clone(),
             profile,
             device: self.o.device.clone(),
@@ -281,7 +293,7 @@ impl Runner {
                 (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server, app.settings.own, app.colors, app.paint, app.reduced_motion) = keep;
                 app.retheme();
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
-                app.output = self.o.device.clone().or_else(|| own::text(own::DEVICE)).unwrap_or_default();
+                app.output = self.o.device.clone().or_else(|| own::text(&self.root.app.settings, own::DEVICE)).unwrap_or_default();
                 let added = self.after_adding.take();
                 match self.session.as_ref().and_then(|s| s.client.sign_in_step(added)) {
                     Some(SignInStep::Offer) => self.offer_sign_in(app),
@@ -369,7 +381,7 @@ impl Runner {
     /// The account sheet over the profile in use, as its provider has the account.
     fn offer_sign_in(&self, app: &mut App) {
         let Some(s) = &self.session else { return };
-        let Some(profile) = crate::backend::app().settings.current().and_then(|p| p.active_server().cloned()) else { return };
+        let Some(profile) = self.root.app.settings.current().and_then(|p| p.active_server().cloned()) else { return };
         if !app.settings.own.kinds.providers().iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
             return;
         }
@@ -382,9 +394,9 @@ impl Runner {
     /// Updates the plugins once a day. Called once the session (or the sign-in) is up, which ends the
     /// start for safe mode.
     fn update_plugins(&self) {
-        nori_host::desktop::plugins(&self.o.data).host.started();
+        self.root.plugins().host.started();
         let tx = self.tx.clone();
-        nori_host::desktop::update_plugins(&self.o.data, move |updated| {
+        self.root.update_plugins(move |updated| {
             let _ = tx.send(Msg::Updated(updated));
         });
     }
@@ -393,7 +405,7 @@ impl Runner {
     /// answers wait on files and the network, off this thread.
     fn plugin(&mut self, app: &mut App, c: crate::app::PluginCmd) {
         use crate::app::PluginCmd;
-        let host = nori_host::desktop::plugins(&self.o.data).host.clone();
+        let host = self.root.plugins().host.clone();
         let tx = self.tx.clone();
         match c {
             PluginCmd::Read => {}
@@ -469,7 +481,7 @@ impl Runner {
             PluginCmd::Noise(device, noise) => return host.set_noise(device, noise),
             PluginCmd::AllowMobileAssets(id) => host.allow_mobile_assets(id),
         }
-        let plugged = nori_host::desktop::plugins(&self.o.data);
+        let plugged = self.root.plugins();
         let host = &plugged.host;
         let mut cards = host.cards("en".into());
         let own = &mut app.settings.own;
@@ -504,7 +516,7 @@ impl Runner {
 
     /// The profile in use opened again, as signing in or out left it.
     fn reopen(&mut self, app: &mut App) {
-        let Some(profile) = crate::backend::app().settings.current().and_then(|p| p.active_server().cloned()) else { return };
+        let Some(profile) = self.root.app.settings.current().and_then(|p| p.active_server().cloned()) else { return };
         self.open(app, profile);
         app.go(View::Home);
     }
@@ -576,14 +588,14 @@ impl Runner {
             }
             // The guest profile opens in place of the user's own, which opens again on leaving.
             Msg::Joined(Ok(pass)) => {
-                let guest = nori_host::jam_joined(&crate::backend::app().settings, pass.clone(), crate::text::JAM_GUEST);
+                let guest = nori_host::jam_joined(&self.root.app.settings, pass.clone(), crate::text::JAM_GUEST);
                 prefs_changed(app);
                 self.open(app, guest);
                 app.go(View::Home);
                 return;
             }
             Msg::Left(said) => {
-                match nori_host::jam_left(&crate::backend::app().settings) {
+                match nori_host::jam_left(&self.root.app.settings) {
                     Some(p) => {
                         prefs_changed(app);
                         self.open(app, p);
@@ -618,7 +630,7 @@ impl Runner {
         let Some(s) = &self.session else { return };
         let remote = s.remote();
         let guest = s.guest;
-        let jams = guest || crate::backend::app().settings.prefs(|p| p.remote_control);
+        let jams = guest || self.root.app.settings.prefs(|p| p.remote_control);
         let d = &mut app.devices;
         // A guest's music is the jam's: it moves to no other device.
         d.on = remote.is_some() && !guest;
@@ -684,18 +696,18 @@ impl Runner {
             app.heard(now.song);
         }
         if s.queue_stale(self.queue.as_ref()) {
-            let q = s.queue_shown(self.queue.as_ref().map(|q| &q.view));
-            app.queue = Some(q.view.clone());
+            let q = s.queue_shown(self.queue.as_ref());
+            app.queue = Some(nori_core::playlist::PlaylistView { songs: q.songs.to_vec(), ..q.view.clone() });
             self.queue = Some(q);
         }
         let here = matches!(self.playback, Playback::Here);
         match &self.heard {
             Some(id) if here && app.transition_shown() => {
-                let note = crate::backend::app().planner.transition_note(id);
+                let note = self.root.app.planner.transition_note(id);
                 if note != app.transition {
                     app.transition = note;
                 }
-                app.mixed_in = if app.now.mixing { crate::backend::app().planner.transition_into(id) } else { None };
+                app.mixed_in = if app.now.mixing { self.root.app.planner.transition_into(id) } else { None };
             }
             _ if !here => {
                 app.transition = None;
@@ -744,13 +756,13 @@ impl Runner {
             }
             Cmd::Mouse(on) => {
                 crate::term::set_mouse(on);
-                own::keep(own::MOUSE, on.to_string());
+                self.root.app.settings.keep_app_value(own::MOUSE, on.to_string());
                 app.mouse = on;
                 app.settings.invalidate();
                 return;
             }
             Cmd::Device(name) => {
-                own::keep(own::DEVICE, name.clone());
+                self.root.app.settings.keep_app_value(own::DEVICE, name.clone());
                 app.settings.own.device = name.clone();
                 app.settings.invalidate();
                 let said = if name.is_empty() { "the system default".to_string() } else { name };
@@ -758,14 +770,14 @@ impl Runner {
                 return;
             }
             Cmd::Paint(on) => {
-                own::keep(own::PAINT, on.to_string());
+                self.root.app.settings.keep_app_value(own::PAINT, on.to_string());
                 app.paint = on;
                 app.retheme();
                 app.settings.invalidate();
                 return;
             }
             Cmd::Images(on) => {
-                own::keep(own::IMAGES, on.to_string());
+                self.root.app.settings.keep_app_value(own::IMAGES, on.to_string());
                 app.images = on;
                 app.settings.invalidate();
                 if on && self.art.is_none() {
@@ -784,13 +796,13 @@ impl Runner {
             Cmd::Plugin(c) => return self.plugin(app, c),
             Cmd::Backup { restore: false, path, password } => {
                 let tx = self.tx.clone();
-                return nori_host::desktop::make_backup(&self.o.data, path.into(), password, move |r| {
+                return self.root.make_backup(path.into(), password, move |r| {
                     let _ = tx.send(Msg::BackedUp(r));
                 });
             }
             Cmd::Backup { restore: true, path, password } => {
                 let tx = self.tx.clone();
-                return nori_host::desktop::restore_backup(&self.o.data, path.into(), password, move |r| {
+                return self.root.restore_backup(path.into(), password, move |r| {
                     let _ = tx.send(Msg::Restored(r.map(Box::new)));
                 });
             }
@@ -837,17 +849,17 @@ impl Runner {
                 return;
             }
             Cmd::JoinJam(link) => {
-                let (http, tx, remote) = (self.http.clone(), self.tx.clone(), self.session.as_ref().and_then(|s| s.remote()));
+                let (http, tx, remote, settings) = (self.http.clone(), self.tx.clone(), self.session.as_ref().and_then(|s| s.remote()), self.root.app.settings.clone());
                 nori_host::spawn("nori-jam-join", move || {
-                    let joined = nori_host::jam_join(http, &crate::backend::app().settings, link, &nori_host::device_name(), remote);
+                    let joined = nori_host::jam_join(http, &settings, link, &nori_host::device_name(), remote);
                     let _ = tx.send(Msg::Joined(joined.map_err(|e| crate::text::jam_join_failed(&e))));
                 });
                 return;
             }
             Cmd::Login(draft) => {
-                let (data, http, tx) = (self.o.data.clone(), self.http.clone(), self.tx.clone());
+                let (root, http, tx) = (self.root.clone(), self.http.clone(), self.tx.clone());
                 std::thread::spawn(move || {
-                    let _ = tx.send(Msg::LoggedIn(crate::backend::check_login(&data, http, *draft)));
+                    let _ = tx.send(Msg::LoggedIn(crate::backend::check_login(&root, http, *draft)));
                 });
                 return;
             }
@@ -855,7 +867,7 @@ impl Runner {
                 // The first screen has no session, and its plugins' switch still works.
                 let changed = match &self.session {
                     Some(s) => s.setting(&name, &value),
-                    None => crate::backend::app().settings.edit_by_name(&name, &value),
+                    None => self.root.app.settings.edit_by_name(&name, &value),
                 };
                 if changed.is_none() {
                     app.say(format!("{name}: not a setting"), true);
@@ -866,17 +878,17 @@ impl Runner {
                 return;
             }
             Cmd::Keep(pref) => {
-                let settings = &crate::backend::app().settings;
+                let settings = &self.root.app.settings;
                 let mut prefs = settings.current().unwrap_or_default();
                 prefs.list_prefs.insert(pref.key, pref.value);
                 settings.put(prefs);
                 return prefs_changed(app);
             }
             Cmd::SwitchServer(id) => {
-                let mut prefs = crate::backend::app().settings.current().unwrap_or_default();
+                let mut prefs = self.root.app.settings.current().unwrap_or_default();
                 let Some(p) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
                 prefs.active_server_id = id;
-                crate::backend::app().settings.put(prefs.clone());
+                self.root.app.settings.put(prefs.clone());
                 app.prefs_changed(prefs);
                 self.open(app, p);
                 app.go(View::Home);
@@ -901,7 +913,7 @@ impl Runner {
                 s.set_volume(v);
                 // A guest's volume is this computer's, while the player shows the jam.
                 if !matches!(self.playback, Playback::There(_)) {
-                    own::keep(own::VOLUME, s.volume().to_string());
+                    self.root.app.settings.keep_app_value(own::VOLUME, s.volume().to_string());
                 }
                 app.volume = v;
                 app.settings.invalidate();
@@ -1039,11 +1051,11 @@ impl Runner {
                     r.listen(on);
                 }
             }
-            Cmd::Level(level, v) => sound_edited(s, app, crate::backend::app().settings.edit_level(level, v).map(|(e, _)| e)),
-            Cmd::Graphic(i, gain) => sound_edited(s, app, crate::backend::app().settings.edit_graphic(i, gain).map(|(e, _)| e)),
-            Cmd::Band(i, band) => sound_edited(s, app, crate::backend::app().settings.edit_band(i, band).map(|(e, _)| e)),
+            Cmd::Level(level, v) => sound_edited(s, app, self.root.app.settings.edit_level(level, v).map(|(e, _)| e)),
+            Cmd::Graphic(i, gain) => sound_edited(s, app, self.root.app.settings.edit_graphic(i, gain).map(|(e, _)| e)),
+            Cmd::Band(i, band) => sound_edited(s, app, self.root.app.settings.edit_band(i, band).map(|(e, _)| e)),
             Cmd::Sound(tool) => {
-                let effect = match tool.tool().map(|t| crate::backend::app().settings.sound_tool(t)) {
+                let effect = match tool.tool().map(|t| self.root.app.settings.sound_tool(t)) {
                     Some(Ok(change)) => change.map(|c| c.effect),
                     Some(Err(e)) => {
                         app.say(format!("{e:?}"), true);
@@ -1116,7 +1128,7 @@ fn narrowed(app: &mut App) {
 }
 
 fn prefs_changed(app: &mut App) {
-    if let Some(p) = crate::backend::app().settings.current() {
+    if let Some(p) = app.shared.settings.current() {
         app.prefs_changed(p);
     }
 }

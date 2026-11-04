@@ -1618,7 +1618,6 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.release();
                 self.leave_offload();
                 self.p.sink.track.replace(card);
-                self.p.sink.kept_us = nori_player::burst::BUFFER_US + self.p.sink.track.depth_us();
                 // The device's own offload path waits out a cast whose device decodes; the cast's goes.
                 match offload {
                     Some(o) => {
@@ -2758,7 +2757,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
         let mix_from = self.p.mix_from();
         let mix_position_ms = self.p.mix_position_ms().unwrap_or(0);
-        // The place moves at the speed times the tempo a mix brings the song in at.
+        // The place moves at the speed times the tempo a mix brings the song in at; a song held while it
+        // is mixed out of runs on at 1 ms per ms (`Heard::id`).
+        let held = self.p.heard().id.is_some();
         let tempo = self.p.sink.pace_heard();
         let stretched = (tempo - 1.0).abs() > 1e-3;
         self.told.placed |= self.told.stretched && !stretched;
@@ -2768,7 +2769,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let on_cpu = self.state == State::Playing && !stalled && !switching;
         let mixing_was = self.write_status(i, self.sought().unwrap_or(ms), self.p.placed_at(), |s| {
             s.speed = speed;
-            s.pace = speed * tempo as f32;
+            s.pace = if held { 1.0 } else { speed * tempo as f32 };
             s.mixing = mixing;
             s.mix_from = mix_from;
             s.mix_position_ms = mix_position_ms;
@@ -2892,8 +2893,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             State::Playing => self.told.said,
             _ => None,
         };
-        // Where the music written will move the place away from what was said, it is looked at again.
-        if let (Some(o), false) = (off(self.told.said), self.offloading()) {
+        // Where the music written will move the place away from what was said, it is looked at again. A
+        // held song's place is not the music written's.
+        if let (Some(o), false) = (off(self.told.said), self.offloading() || self.p.heard().id.is_some()) {
             let within = self.p.until_next_song_us().map_or(i64::MAX, |u| (u as f64 / self.p.speed().0.max(0.1) as f64) as i64);
             let said_pace = self.told.said.map_or(1.0, |s| s.3);
             let starting = self.told.said.map_or(now, |s| s.2 + PLACE_STARTING_MS);

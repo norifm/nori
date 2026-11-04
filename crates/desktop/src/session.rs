@@ -1,7 +1,6 @@
 //! The open server profile (nori-host's session), its reports worded as [`Msg`]s for the UI thread, and
 //! the pages' reads.
 
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -16,7 +15,6 @@ use nori_covers::memory::Image;
 use nori_engine::Event;
 use nori_host::pages::{HomePart, PageAsk, PageFailed, PageGot};
 use nori_host::session::{Chore, Note, Said};
-pub use nori_host::desktop::app;
 pub use nori_host::Fetch;
 use nori_http::Http;
 use nori_look::cover::CoverColours;
@@ -101,7 +99,7 @@ pub enum Msg {
     /// A plugin's moving cover for `song`, which plays while the sleeve shows.
     Loop { song: nori_core::Song, artwork: nori_plugins::Artwork },
     /// A frame of the moving cover of song `song`.
-    LoopFrame { song: String, image: nori_covers::Image },
+    LoopFrame { song: String },
     /// The moving cover of `song` failed; with a status, its plugin hears it.
     LoopFailed { song: nori_core::Song, artwork: nori_plugins::Artwork, status: Option<u16> },
     /// A plugin's still sleeve for song `song`, drawn as its cover in Now Playing.
@@ -168,15 +166,15 @@ pub enum Data {
 
 /// Desktop-only settings, stored as app values in the database.
 pub mod own {
-    pub use nori_host::desktop::own::{keep, number, text};
+    pub use nori_host::desktop::own::{number, text};
     pub const VOLUME: &str = "desktop.volume";
     /// Output device name; empty for the system default.
     pub const DEVICE: &str = "desktop.device";
 }
 
 /// Logs `draft` in and keeps it as the active profile (blocking).
-pub fn check_login(data: &std::path::Path, http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
-    nori_host::desktop::log_in(data, http, draft).map_err(|e| net_error(&e))
+pub fn check_login(root: &nori_host::desktop::Root, http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
+    root.log_in(http, draft).map_err(|e| net_error(&e))
 }
 
 /// One open server profile; its messages come tagged with its id.
@@ -197,18 +195,19 @@ impl std::ops::Deref for Session {
 impl Session {
     /// Opens the profile without touching the network, so an unreachable server still opens.
     /// `mpris`: the process's media controls, driven by this session while it is open.
-    pub fn open(data: &Path, http: Arc<Http>, profile: SavedServer, tx: Tx, mpris: Option<Arc<nori_mpris::Mpris>>) -> Result<Session, String> {
+    pub fn open(root: &nori_host::desktop::Root, http: Arc<Http>, profile: SavedServer, tx: Tx, mpris: Option<Arc<nori_mpris::Mpris>>) -> Result<Session, String> {
         static IDS: AtomicU64 = AtomicU64::new(0);
         let id = IDS.fetch_add(1, Ordering::Relaxed);
         let to = tx.clone();
         let out = Arc::new(move |s: Said| to.send(Msg::From(id, Box::new(worded(s)))));
+        let settings = &root.app.settings;
         let o = nori_host::desktop::DesktopOpen {
-            data,
+            root,
             http,
             profile,
-            device: own::text(own::DEVICE),
-            volume: own::number(own::VOLUME, 1.0),
-            covers: Some(nori_covers::Config { memory_bytes: 0, ..nori_covers::Config::new(data.join("covers")) }),
+            device: own::text(settings, own::DEVICE),
+            volume: own::number(settings, own::VOLUME, 1.0),
+            covers: Some(nori_covers::Config { memory_bytes: 0, ..nori_covers::Config::new(root.data().join("covers")) }),
             offline: false,
             mpris,
             kind: DeviceKind::Desktop,
@@ -295,7 +294,7 @@ impl Session {
                 database_bytes: std::fs::metadata(&db).map(|m| m.len()).unwrap_or(0),
                 folders,
                 devices: CpalOutput::devices(),
-                device: own::text(own::DEVICE).unwrap_or_default(),
+                device: own::text(&core.session.settings, own::DEVICE).unwrap_or_default(),
                 syncing: false,
                 unsent: client.unsent().map_or((0, 0), |u| (u.waiting, u.dropped)),
                 rules: core.rules(),

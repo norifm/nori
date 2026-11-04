@@ -103,7 +103,7 @@ pub(crate) fn pick(dir: &Path, id: &str) -> Result<bool, String> {
         return Ok(false);
     };
     settings.put(profile_activated(prefs, profile));
-    nori_core::background::flush();
+    settings.writer.flush();
     Ok(true)
 }
 
@@ -114,7 +114,7 @@ pub(crate) fn remove(dir: &Path, id: &str) -> Result<(), String> {
     prefs.servers = list.servers;
     prefs.active_server_id = list.active_server_id;
     settings.put(prefs);
-    nori_core::background::flush();
+    settings.writer.flush();
     Ok(())
 }
 
@@ -234,7 +234,7 @@ pub(crate) fn login(dir: &Path, form: &Form) -> (i32, Option<String>) {
     };
     match block_on(log_in(&Kinds::builtin(), Http::new(), &settings, draft)) {
         Ok(_) => {
-            nori_core::background::flush();
+            settings.writer.flush();
             (LOGIN_OK, None)
         }
         Err(e) => fail(e),
@@ -329,7 +329,7 @@ mod tests {
     fn keep(dir: &Path, profile: SavedServer) -> Result<(), String> {
         let (settings, prefs) = opened(dir)?;
         settings.put(profile_activated(prefs, profile));
-        nori_core::background::flush();
+        settings.writer.flush();
         Ok(())
     }
 

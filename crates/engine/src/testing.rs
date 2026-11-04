@@ -30,6 +30,8 @@ struct State {
     bytes: bool,
     /// Sleeps so far, and the one whose byte wait was given up.
     sleeps: u64,
+    /// Each sleep: when (ms) and for how long it asked (ms; `None` until a command).
+    naps: Vec<(i64, Option<u64>)>,
     gave_up: u64,
     /// Servers waiting for the clock ([`Virtual::wait_until`]), and the times they wait for: the clock
     /// stops at each until its server ran.
@@ -105,6 +107,8 @@ impl Clock for Virtual {
         s.deadline_ns = ms.map(|ms| s.now_ns + ms as i64 * 1_000_000);
         s.bytes = bytes;
         s.sleeps += 1;
+        let at = s.now_ns / 1_000_000;
+        s.naps.push((at, ms));
         self.0.cv.notify_all();
         drop(s);
         std::thread::park();
@@ -272,6 +276,11 @@ impl Virtual {
     /// Sleeps so far.
     pub fn sleeps(&self) -> u64 {
         self.0.s.lock().sleeps
+    }
+
+    /// Each sleep since the clock started: when (ms) and for how long it asked.
+    pub fn naps(&self) -> Vec<(i64, Option<u64>)> {
+        self.0.s.lock().naps.clone()
     }
 
     /// When the engine asked to be woken.

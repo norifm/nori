@@ -173,6 +173,9 @@ internal class RustBridge(private val player: EnginePlayer) {
     fun cpu(awake: Boolean) = player.engineAwake(awake)
 }
 
+/** What one network read brings at most: an okio segment. */
+private const val SEGMENT = 8192
+
 /**
  * A song's bytes from [from] on, read by the Rust player's loader a buffer at a time. [length] is -1 when
  * unknown; [icy] is a station's stream's bytes of music between two announcements, 0 when it sends none.
@@ -196,17 +199,29 @@ class RustBody internal constructor(
     /**
      * Available bytes read into [buffer], at most [max]. The core controls buffering; waiting to fill
      * this buffer holds up decoding on a slow connection. -1 at the end, -2 when the connection broke.
+     * A network read brings at most one okio segment; one that filled it left more waiting, so reading
+     * goes on, and a fast connection crosses into Rust in large pieces rather than a call per 8 KiB.
      */
     fun read(max: Int): Int {
         if (broke) return -2
         val source = source ?: return -1
         val want = minOf(max, buffer.size)
+        var got = 0
         return try {
-            source.read(buffer, 0, want)
+            var last = source.read(buffer, 0, want)
+            if (last <= 0) return last
+            got = last
+            while (last >= SEGMENT && got < want) {
+                last = source.read(buffer, got, want - got)
+                if (last <= 0) break
+                got += last
+            }
+            got
         } catch (e: Exception) {
             dev.nori.music.NoriLog.w("rust player: the song's bytes stopped coming: $e")
             broke = true
-            -2
+            // What came before the break is still handed over; the next read says it broke.
+            if (got > 0) got else -2
         }
     }
 

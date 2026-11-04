@@ -320,19 +320,44 @@ impl Stages {
 
     /// Runs `data` (interleaved frames of `channels`, float or 16-bit) through the stages that are on, in place.
     pub(crate) fn run(&mut self, data: &mut [u8], float: bool, channels: usize) {
-        let width = if float { 4 } else { 2 };
         let channels = channels.max(1);
-        let frames = data.len() / width / channels;
+        let frames = data.len() / if float { 4 } else { 2 } / channels;
         // Only a longer block grows it.
         self.planar.resize(frames * channels, 0.0);
-        for (k, sample) in data.chunks_exact(width).enumerate() {
-            self.planar[(k % channels) * frames + k / channels] = sample_in(sample);
+        let planar = &mut self.planar[..frames * channels];
+        if float {
+            to_planar(data.as_chunks::<4>().0, planar, channels, f32::from_le_bytes);
+        } else {
+            to_planar(data.as_chunks::<2>().0, planar, channels, |b| i16::from_le_bytes(b) as f32 / 32768.0);
         }
         for l in self.live.iter_mut().filter(|l| l.on) {
-            l.stage.process(&mut self.planar[..frames * channels]);
+            l.stage.process(planar);
         }
-        for (k, sample) in data.chunks_exact_mut(width).enumerate() {
-            sample_out(sample, ceiling(self.planar[(k % channels) * frames + k / channels]));
+        if float {
+            from_planar(planar, data.as_chunks_mut::<4>().0, channels, |v| ceiling(v).to_le_bytes());
+        } else {
+            // Rounded as the chain rounds 16-bit samples.
+            from_planar(planar, data.as_chunks_mut::<2>().0, channels, |v| ((ceiling(v) * 32768.0).round().clamp(-32768.0, 32767.0) as i16).to_le_bytes());
+        }
+    }
+}
+
+/// Interleaved `samples` into `planar`, a channel after another.
+fn to_planar<const W: usize>(samples: &[[u8; W]], planar: &mut [f32], channels: usize, value: impl Fn([u8; W]) -> f32) {
+    let frames = planar.len() / channels;
+    for (c, lane) in planar.chunks_exact_mut(frames.max(1)).enumerate() {
+        for (v, frame) in lane.iter_mut().zip(samples.chunks_exact(channels)) {
+            *v = value(frame[c]);
+        }
+    }
+}
+
+/// `planar` back into interleaved `samples`.
+fn from_planar<const W: usize>(planar: &[f32], samples: &mut [[u8; W]], channels: usize, bytes: impl Fn(f32) -> [u8; W]) {
+    let frames = planar.len() / channels;
+    for (c, lane) in planar.chunks_exact(frames.max(1)).enumerate() {
+        for (&v, frame) in lane.iter().zip(samples.chunks_exact_mut(channels)) {
+            frame[c] = bytes(v);
         }
     }
 }
@@ -377,23 +402,6 @@ impl SongStages {
     }
 }
 
-/// One sample's bytes (16-bit or float, by their width) as a float.
-fn sample_in(b: &[u8]) -> f32 {
-    match *b {
-        [a, b] => i16::from_le_bytes([a, b]) as f32 / 32768.0,
-        [a, b, c, d] => f32::from_le_bytes([a, b, c, d]),
-        _ => 0.0,
-    }
-}
-
-/// `v` into one sample's bytes, rounded as the chain rounds 16-bit samples.
-fn sample_out(b: &mut [u8], v: f32) {
-    match b.len() {
-        2 => b.copy_from_slice(&((v * 32768.0).round().clamp(-32768.0, 32767.0) as i16).to_le_bytes()),
-        _ => b.copy_from_slice(&v.to_le_bytes()),
-    }
-}
-
 /// `x` bent smoothly down above [`CEILING_KNEE`], never past full scale.
 fn ceiling(x: f32) -> f32 {
     let a = x.abs();
@@ -407,6 +415,45 @@ fn ceiling(x: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Halves the first channel and turns the second over: shows which lane is which.
+    struct Lanes;
+
+    impl SoundStage for Lanes {
+        fn inputs(&mut self, _: &Inputs) {}
+        fn process(&mut self, planar: &mut [f32]) {
+            let (left, right) = planar.split_at_mut(planar.len() / 2);
+            left.iter_mut().for_each(|v| *v *= 0.5);
+            right.iter_mut().for_each(|v| *v = -*v);
+        }
+        fn reset(&mut self) {}
+        fn save(&mut self, _: &mut Vec<u8>) {}
+        fn restore(&mut self, _: &[u8]) {}
+    }
+
+    impl StageMaker for Lanes {
+        fn make(&self, _: u32, _: usize, _: &Inputs) -> Option<Box<dyn SoundStage>> {
+            Some(Box::new(Lanes))
+        }
+    }
+
+    #[test]
+    fn a_stage_sees_each_channel_as_its_own_lane() {
+        let mut stages = Stages::default();
+        let spec = StageSpec { maker: Arc::new(Lanes), slot: Slot::Master, rows: Vec::new() };
+        stages.build(&[spec], Around::default(), &no_facts(), 44_100, 2);
+        let frames = [(0.5f32, 0.25f32), (-0.5, 0.125), (0.75, -0.5)];
+
+        let mut float: Vec<u8> = frames.iter().flat_map(|&(l, r)| [l, r]).flat_map(f32::to_le_bytes).collect();
+        stages.run(&mut float, true, 2);
+        let out: Vec<f32> = float.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
+        assert_eq!(out, frames.iter().flat_map(|&(l, r)| [l * 0.5, -r]).collect::<Vec<_>>());
+
+        let mut pcm: Vec<u8> = frames.iter().flat_map(|&(l, r)| [l, r]).flat_map(|v| ((v * 32768.0) as i16).to_le_bytes()).collect();
+        stages.run(&mut pcm, false, 2);
+        let out: Vec<i16> = pcm.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b)).collect();
+        assert_eq!(out, [8192, -8192, -8192, -4096, 12288, 16384]);
+    }
 
     #[test]
     fn the_ceiling_keeps_quiet_samples_and_never_clips() {

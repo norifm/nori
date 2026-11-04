@@ -41,6 +41,7 @@
 //! lowered on both sides by the `lower_text` SQL function (SQLite folds ASCII only). Only the `limitMs`
 //! running total is kept in Rust while streaming the rowids.
 
+use nori_db as db;
 use nori_model::model::*;
 use nori_model::{CoreError, Result, SmartProblem};
 use rusqlite::{types::Value as Sql, Connection, OptionalExtension};
@@ -105,26 +106,26 @@ impl Field {
     /// (name in the JSON, type, SQL expression). Text expressions are nullable; the rest are not.
     fn def(self) -> (&'static str, Kind, &'static str) {
         match self {
-            Title => ("title", Kind::Text, "json_extract(i.json,'$.title')"),
-            Album => ("album", Kind::Text, "json_extract(i.json,'$.album')"),
-            Artist => ("artist", Kind::Text, "json_extract(i.json,'$.artist')"),
-            Genre => ("genre", Kind::Text, "json_extract(i.json,'$.genre')"),
-            Suffix => ("suffix", Kind::Text, "json_extract(i.json,'$.suffix')"),
-            Year => ("year", Kind::Num, "json_extract(i.json,'$.year')"),
-            Duration => ("duration", Kind::Num, "json_extract(i.json,'$.duration')"),
-            Track => ("track", Kind::Num, "json_extract(i.json,'$.track')"),
-            DiscNumber => ("discNumber", Kind::Num, "json_extract(i.json,'$.discNumber')"),
-            BitRate => ("bitRate", Kind::Num, "json_extract(i.json,'$.bitRate')"),
-            SampleRate => ("sampleRate", Kind::Num, "json_extract(i.json,'$.samplingRate')"),
-            BitDepth => ("bitDepth", Kind::Num, "json_extract(i.json,'$.bitDepth')"),
-            Size => ("size", Kind::Num, "json_extract(i.json,'$.size')"),
-            UserRating => ("userRating", Kind::Num, "json_extract(i.json,'$.userRating')"),
+            Title => ("title", Kind::Text, "i.title"),
+            Album => ("album", Kind::Text, "i.album"),
+            Artist => ("artist", Kind::Text, "i.artist"),
+            Genre => ("genre", Kind::Text, "i.genre"),
+            Suffix => ("suffix", Kind::Text, "i.suffix"),
+            Year => ("year", Kind::Num, "i.year"),
+            Duration => ("duration", Kind::Num, "i.duration"),
+            Track => ("track", Kind::Num, "i.track"),
+            DiscNumber => ("discNumber", Kind::Num, "i.disc_number"),
+            BitRate => ("bitRate", Kind::Num, "i.bit_rate"),
+            SampleRate => ("sampleRate", Kind::Num, "i.sampling_rate"),
+            BitDepth => ("bitDepth", Kind::Num, "i.bit_depth"),
+            Size => ("size", Kind::Num, "i.size"),
+            UserRating => ("userRating", Kind::Num, "i.user_rating"),
             PlayCount => ("playCount", Kind::Num, "coalesce(s.plays,0)"),
             SkipCount => ("skipCount", Kind::Num, "coalesce(s.skips,0)"),
-            ServerPlayCount => ("serverPlayCount", Kind::Num, "coalesce(json_extract(i.json,'$.playCount'),0)"),
+            ServerPlayCount => ("serverPlayCount", Kind::Num, "coalesce(i.play_count,0)"),
             LastPlayed => ("lastPlayed", Kind::DateMs, "coalesce(s.last_played_ms,0)"),
-            Added => ("added", Kind::DateIso, "coalesce(json_extract(i.json,'$.created'),'')"),
-            Starred => ("starred", Kind::Flag, "json_extract(i.json,'$.starred')"),
+            Added => ("added", Kind::DateIso, "coalesce(i.created,'')"),
+            Starred => ("starred", Kind::Flag, "i.starred"),
             IsDownloaded => ("isDownloaded", Kind::Flag, ""),
             ExcludedFromMixes => ("excludedFromMixes", Kind::Flag, ""),
         }
@@ -577,8 +578,7 @@ impl Compiler<'_> {
 
 /// The song of the index row `rowid`.
 fn song(c: &Connection, rowid: i64) -> rusqlite::Result<Option<Song>> {
-    let json: Option<String> = c.prepare_cached("SELECT json FROM items WHERE rowid=?1")?.query_row([rowid], |r| r.get(0)).optional()?;
-    Ok(json.and_then(|json| serde_json::from_str(&json).ok()))
+    c.prepare_cached(&format!("SELECT {} FROM items i WHERE rowid=?1", db::items::SONG))?.query_row([rowid], |r| db::items::song(r, 0)).optional()
 }
 
 /// CROSS JOIN pins the join order: without ANALYZE data the planner would still start from the index.
@@ -611,8 +611,13 @@ pub fn run(c: &Connection, def: &Def, downloaded: &[String], offset: usize, limi
             format!("{}, i.rowid", mixes::shuffled_order("i.rowid", cp.args.len() - 1, cp.args.len()))
         }
         Sort::By(f, descending) => {
-            let collate = if f.kind() == Kind::Text { " COLLATE natural_order" } else { "" };
-            format!("{}{collate}{}, i.rowid", f.def().2, if descending { " DESC" } else { "" })
+            // The title, album and artist keep their natural keys (nori_db::natural_key).
+            let key = match f {
+                Title | Album | Artist => format!("{}_key", f.def().2),
+                _ if f.kind() == Kind::Text => format!("{} COLLATE natural_order", f.def().2),
+                _ => f.def().2.to_string(),
+            };
+            format!("{key}{}, i.rowid", if descending { " DESC" } else { "" })
         }
     };
     // A LIMIT lets SQLite keep a top-N heap instead of sorting every match.
@@ -627,7 +632,7 @@ pub fn run(c: &Connection, def: &Def, downloaded: &[String], offset: usize, limi
     } else {
         String::new()
     };
-    let duration = if def.limit_ms.is_some() { "json_extract(i.json,'$.duration')" } else { "0" };
+    let duration = if def.limit_ms.is_some() { "i.duration" } else { "0" };
     let mut st = c.prepare_cached(&format!("SELECT i.rowid, {duration} {from} ORDER BY {order}{window}"))?;
     let mut rows = st.query(rusqlite::params_from_iter(cp.args))?;
 

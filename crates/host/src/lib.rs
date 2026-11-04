@@ -376,9 +376,9 @@ mod tests {
         let pass = |n: u8| JamPass { url: "http://friend".into(), api_key: nori_remote::guest_key(&format!("key{n}")), kind: ServerKind::Subsonic };
 
         let first = jam_joined(&settings, pass(1), "Jam");
-        nori_core::background::flush();
+        settings.writer.flush();
         let second = jam_joined(&settings, pass(2), "Jam");
-        nori_core::background::flush();
+        settings.writer.flush();
         let p = settings.current().unwrap();
         let ids: Vec<&str> = p.servers.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["home", "work", second.id.as_str()], "one guest profile, the latest");

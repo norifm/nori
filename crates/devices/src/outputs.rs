@@ -251,7 +251,6 @@ mod tests {
 
     #[test]
     fn known_outputs_persist() {
-        use nori_db::background;
 
         let dir = nori_testdir::TempDir::new("outputs");
         let path = dir.join("nori.db").display().to_string();
@@ -261,7 +260,7 @@ mod tests {
         assert_eq!(outputs_known(settings.clone()), std::slice::from_ref(&speaker), "the speaker the first time");
         let seen = outputs_refresh(settings.clone(), vec![8], vec!["Buds".into()], None, String::new(), vec![speaker.clone()], None);
         assert_eq!(seen.known.unwrap(), ["Bluetooth: Buds", speaker.as_str()]);
-        background::flush();
+        settings.writer.flush();
         let again = Settings::new();
         again.open(&path).unwrap();
         assert_eq!(outputs_known(again), ["Bluetooth: Buds", speaker.as_str()]);

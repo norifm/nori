@@ -5,7 +5,6 @@
 use std::sync::{Arc, Weak};
 
 use nori_db as db;
-use nori_db::background;
 use nori_model::{Listen, Song};
 use parking_lot::Mutex;
 use rusqlite::Connection;
@@ -138,7 +137,7 @@ impl Session {
         // The profile the song started in, not one opened since or while the write waits.
         if taste_model {
             if let (Some(song), Some(db)) = (done.clone(), left_in.upgrade()) {
-                background::run(move || {
+                self.settings.writer.run(move || {
                     let _ = nori_library::history::record(&mut db.lock(), &song, at, heard, tz_offset_ms, db::now_ms());
                 });
             }

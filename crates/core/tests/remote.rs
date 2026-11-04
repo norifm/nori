@@ -142,6 +142,8 @@ struct Relay {
     deaf: Mutex<Option<String>>,
     /// Requests to doors are refused, as by a device gone from the network; those under way still answer.
     doors_refuse: std::sync::atomic::AtomicBool,
+    /// The devices' network is metered (mobile data).
+    metered: std::sync::atomic::AtomicBool,
 }
 
 struct LatePoll {
@@ -196,7 +198,7 @@ impl Relay {
             lan: Mutex::default(),
             sim: Arc::new(Native::simulated("nori-remote-test", START_US).unwrap()),
             devices: Mutex::default(),
-            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: absent.into(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default(), late_poll: Mutex::new(None), deaf: Mutex::new(None), doors_refuse: Default::default() })
+            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: absent.into(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default(), late_poll: Mutex::new(None), deaf: Mutex::new(None), doors_refuse: Default::default(), metered: Default::default() })
     }
 
     /// Device `dev`'s times read `skew_us` ahead as the relay passes them on. Its states reach the relay
@@ -606,7 +608,11 @@ impl Transport for Relay {
     fn address_changed(&self) {}
 
     fn network(&self) -> nori_core::transport::Network {
-        nori_core::transport::Network::Unmetered
+        if self.metered.load(Ordering::Relaxed) {
+            nori_core::transport::Network::Metered
+        } else {
+            nori_core::transport::Network::Unmetered
+        }
     }
 }
 
@@ -1072,7 +1078,7 @@ fn a_handoff_counts_one_listen() {
         assert_eq!(donor.submit_id, None, "the old device no longer owns the listen");
         assert_eq!(receiver.submit_id.as_deref(), Some("long"), "time heard on both devices qualifies");
         assert_eq!(receiver.submit_at, started, "the original start belongs to the same listen");
-        nori_core::background::flush();
+        desk.core.session.settings.writer.flush();
         assert!(phone.core.history_recent(10, None, true).unwrap().0.is_empty(), "the donor does not record the listen again");
         let history = desk.core.history_recent(10, None, true).unwrap().0;
         assert_eq!(history.len(), 1);
@@ -1287,6 +1293,45 @@ fn a_jam_opened_while_a_poll_is_held_hears_its_first_request() {
     let asked = host.until("Gus's request", |r| r.jam_view().and_then(|v| v.pending.first().cloned()));
     assert_eq!((asked.from_name.as_str(), asked.song.id.as_str()), ("Gus", "s2"));
     relay.close();
+}
+
+/// A device that only serves, with nothing on its screen, polls the relay every few minutes on a metered
+/// network rather than after every answer, and at once again when something shows; unmetered, it polls
+/// after each. The account's other device changes once a minute, answering the polls held.
+#[test]
+fn out_of_sight_on_mobile_data_a_device_polls_the_relay_less() {
+    for metered in [false, true] {
+        let relay = Relay::new();
+        relay.metered.store(metered, Ordering::Relaxed);
+        let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+        let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+        phone.playing(&["s1", "s2"], 0);
+        desk.playing(&["s3"], 0);
+        phone.remote.clone().serve(true);
+        desk.remote.clone().serve(true);
+        phone.remote.clone().sight(Sight::Nothing);
+        relay.sim.pass(Duration::from_secs(60));
+        let id = phone.remote.id();
+        let polls = || relay.asked().iter().filter(|a| a.starts_with("noriRemote.poll") && a.ends_with(id.as_str())).count();
+        let before = polls();
+        for minute in 0..10 {
+            desk.remote.clone().played(Playing { playing: minute % 2 == 1, position_ms: 5_000, volume: Some(40), ..Default::default() });
+            relay.sim.pass(Duration::from_secs(60));
+        }
+        let ten_minutes = polls() - before;
+        if metered {
+            assert!((1..=3).contains(&ten_minutes), "{ten_minutes} polls in ten minutes on mobile data, out of sight");
+            phone.remote.clone().sight(Sight::Screen);
+            let shown = polls();
+            relay.sim.pass(Duration::from_secs(1));
+            assert!(polls() > shown, "in sight, it polls again at once");
+        } else {
+            assert!(ten_minutes >= 9, "{ten_minutes} polls in ten minutes, unmetered");
+        }
+        phone.remote.stop();
+        desk.remote.stop();
+        relay.close();
+    }
 }
 
 #[test]

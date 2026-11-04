@@ -265,8 +265,9 @@ impl slint::platform::Platform for Platform {
         let g = &self.shared.gpu;
         #[cfg(target_os = "linux")]
         let renderer = g.renderer();
+        // A layer keeps its texture between frames, so a change repaints only what it touched.
         #[cfg(not(target_os = "linux"))]
-        let renderer = SkiaWGPU30Renderer::new(g.instance.clone(), g.adapter.clone(), g.device.clone(), g.queue.clone())?;
+        let renderer = SkiaWGPU30Renderer::retained(g.instance.clone(), g.adapter.clone(), g.device.clone(), g.queue.clone())?;
         #[cfg(not(target_os = "linux"))]
         renderer.set_resource_cache_limit(16 * 1024 * 1024);
         let layer = Rc::new_cyclic(|me: &Weak<Layer>| Layer {
@@ -967,6 +968,8 @@ struct Draw {
 #[cfg(not(target_os = "linux"))]
 struct Group {
     buffer: wgpu::Buffer,
+    /// What the buffer holds, so an unchanged frame writes nothing.
+    uniforms: [u8; 96],
     a: wgpu::TextureView,
     b: wgpu::TextureView,
     binding: wgpu::BindGroup,
@@ -1140,7 +1143,7 @@ impl Draw {
                 }
                 if let Some((t, _)) = layer.texture.borrow().as_ref() {
                     prepare_layer(&gpu, t, fresh);
-                    if let Err(e) = layer.renderer.render_to_texture(t) {
+                    if let Err(e) = layer.renderer.render_to_texture_kept(t, !fresh) {
                         nori_core::alog::info(&format!("a layer was not drawn: {e}"));
                     }
                 }
@@ -1159,30 +1162,27 @@ impl Draw {
         }
         let pyramid = self.pyramid.as_ref().map(|p| p.all.clone());
         let full = uniforms([0.0, 0.0, w, h], [w, h, w, h], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
-        let g = self.group(d, &gpu.queue, &full, &page, pyramid.as_ref().unwrap_or(&page));
-        pass(&mut enc, &target, &self.copy, &g, true);
+        // One pass for the whole composite: every draw reads the layers and the pyramid, never the target.
+        let mut draws = vec![(&self.copy, self.group(d, &gpu.queue, &full, &page, pyramid.as_ref().unwrap_or(&page)))];
         if let (Some(f), Some(py)) = (focus, &pyramid) {
             let r = [f.region[0] * scale, f.region[1] * scale, f.region[2] * scale, f.region[3] * scale];
             let u = uniforms(r, [w, h, w, h], [0.0; 4], [0.0; 4], [f.band_top * scale, f.band_h * scale, f.pitch * scale, scale], [0.0; 4]);
-            let g = self.group(d, &gpu.queue, &u, &page, py);
-            pass(&mut enc, &target, &self.focus, &g, false);
+            draws.push((&self.focus, self.group(d, &gpu.queue, &u, &page, py)));
         }
         let [red, green, blue] = s.page_colour.get();
         for role in [Role::Top, Role::Player] {
             let (Some(view), Some(py), true) = (find(role), &pyramid, s.shown(role)) else { continue };
             let f = fade_of(role, win);
             let u = uniforms(f.strip.scaled(scale), [w, h, w, h], [0.0; 4], [red, green, blue, 0.0], [f.at, f.top as u8 as f32, 0.0, 0.0], [0.0; 4]);
-            let g = self.group(d, &gpu.queue, &u, &page, py);
-            pass(&mut enc, &target, &self.fade, &g, false);
+            draws.push((&self.fade, self.group(d, &gpu.queue, &u, &page, py)));
             let rect = pill_rect(role, win).scaled(scale);
             let u = uniforms(rect, [w, h, w, h], [pill_radius(role) * scale, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, blur_level(scale)], [0.0; 4], [0.0; 4]);
-            let g = self.group(d, &gpu.queue, &u, &page, py);
-            pass(&mut enc, &target, &self.pill, &g, false);
+            draws.push((&self.pill, self.group(d, &gpu.queue, &u, &page, py)));
             let u = uniforms(rect, [w, h, w, h], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
-            let g = self.group(d, &gpu.queue, &u, &view, &view);
-            pass(&mut enc, &target, &self.over, &g, false);
+            draws.push((&self.over, self.group(d, &gpu.queue, &u, &view, &view)));
         }
-        drop(layers);
+        pass(&mut enc, &target, &draws, true);
+        drop((draws, layers));
         gpu.queue.submit([enc.finish()]);
         gpu.queue.present(frame);
         self.groups.borrow_mut().truncate(self.next_group.get());
@@ -1206,17 +1206,20 @@ impl Draw {
             let (tw, th) = ((w >> k).max(1) as f32, (h >> k).max(1) as f32);
             let u = uniforms([0.0, 0.0, tw, th], [tw, th, tw, th], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
             let g = self.group(d, q, &u, from, from);
-            pass(enc, target, &self.down, &g, false);
+            pass(enc, target, &[(&self.down, g)], false);
         }
     }
 
-    fn group(&self, d: &wgpu::Device, q: &wgpu::Queue, u: &[u8], a: &wgpu::TextureView, b: &wgpu::TextureView) -> wgpu::BindGroup {
+    fn group(&self, d: &wgpu::Device, q: &wgpu::Queue, u: &[u8; 96], a: &wgpu::TextureView, b: &wgpu::TextureView) -> wgpu::BindGroup {
         let slot = self.next_group.get();
         self.next_group.set(slot + 1);
         let mut groups = self.groups.borrow_mut();
-        if let Some(group) = groups.get(slot) {
+        if let Some(group) = groups.get_mut(slot) {
             if &group.a == a && &group.b == b {
-                q.write_buffer(&group.buffer, 0, u);
+                if &group.uniforms != u {
+                    q.write_buffer(&group.buffer, 0, u);
+                    group.uniforms = *u;
+                }
                 return group.binding.clone();
             }
         }
@@ -1234,7 +1237,7 @@ impl Draw {
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(b) },
             ],
         });
-        let entry = Group { buffer: buf, a: a.clone(), b: b.clone(), binding: group.clone() };
+        let entry = Group { buffer: buf, uniforms: *u, a: a.clone(), b: b.clone(), binding: group.clone() };
         if slot == groups.len() {
             groups.push(entry);
         } else {
@@ -1247,6 +1250,10 @@ impl Draw {
 /// Skia writes outside wgpu's tracker; initialize first and restore its expected attachment state.
 #[cfg(not(target_os = "linux"))]
 fn prepare_layer(gpu: &Gpu, texture: &wgpu::Texture, fresh: bool) {
+    // Metal tracks no texture states: a kept texture needs nothing before Skia draws into it.
+    if !fresh && cfg!(target_os = "macos") {
+        return;
+    }
     let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Slint layer attachment") });
     if fresh {
         let view = texture.create_view(&Default::default());
@@ -1298,7 +1305,8 @@ fn texture(d: &wgpu::Device, w: u32, h: u32, label: &str) -> wgpu::Texture {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn pass(enc: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, pipeline: &wgpu::RenderPipeline, group: &wgpu::BindGroup, clear: bool) {
+/// Draws each pipeline over the target with its bind group, in order, in one render pass.
+fn pass(enc: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, draws: &[(&wgpu::RenderPipeline, wgpu::BindGroup)], clear: bool) {
     let mut p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: None,
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1312,9 +1320,11 @@ fn pass(enc: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, pipeline: &w
         occlusion_query_set: None,
         multiview_mask: None,
     });
-    p.set_pipeline(pipeline);
-    p.set_bind_group(0, group, &[]);
-    p.draw(0..4, 0..1);
+    for (pipeline, group) in draws {
+        p.set_pipeline(pipeline);
+        p.set_bind_group(0, group, &[]);
+        p.draw(0..4, 0..1);
+    }
 }
 
 /// Uniforms as glass.wgsl lays them out (six vec4s).
@@ -1455,6 +1465,134 @@ mod tests {
                 Text { x: 0px; y: 48px; height: 16px; text: "Cover"; color: white; }
             }
         }
+    }
+
+    /// A sub-pixel step of the seek bar draws the player once, not again on the next animation tick.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn a_seek_step_draws_the_player_once() {
+        struct TestPlatform { gpu: Rc<Gpu>, layer: Rc<RefCell<Option<Rc<Layer>>>>, clock: Rc<Cell<Duration>> }
+        impl slint::platform::Platform for TestPlatform {
+            fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
+                let gpu = &self.gpu;
+                let renderer = SkiaWGPU30Renderer::new(gpu.instance.clone(), gpu.adapter.clone(), gpu.device.clone(), gpu.queue.clone())?;
+                let layer = Rc::new_cyclic(|me: &Weak<Layer>| Layer {
+                    window: slint::Window::new(me.clone() as Weak<dyn WindowAdapter>), renderer,
+                    size: Cell::new(PhysicalSize::new(1000, 64)), dirty: Cell::new(true),
+                    texture: RefCell::new(None), shared: Weak::new(),
+                });
+                *self.layer.borrow_mut() = Some(layer.clone());
+                Ok(layer)
+            }
+            fn duration_since_start(&self) -> Duration {
+                self.clock.get()
+            }
+        }
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+        let gpu = Rc::new(Gpu { instance, adapter, device, queue });
+        let (layer, clock) = (Rc::new(RefCell::new(None)), Rc::new(Cell::new(Duration::ZERO)));
+        slint::platform::set_platform(Box::new(TestPlatform { gpu: gpu.clone(), layer: layer.clone(), clock: clock.clone() })).unwrap();
+        use slint::ComponentHandle;
+        let bar = crate::PlayerBar::new().unwrap();
+        bar.window().dispatch_event(WindowEvent::Resized { size: LogicalSize::new(1000.0, 64.0) });
+        bar.set_room(1000.0);
+        bar.set_has_song(true);
+        bar.set_duration_ms(200_000);
+        bar.set_position_ms(50_000);
+        bar.show().unwrap();
+        let layer = layer.borrow().clone().unwrap();
+        let target = texture(&gpu.device, 1000, 64, "player");
+        let tick = |ms: u64| {
+            clock.set(clock.get() + Duration::from_millis(ms));
+            slint::platform::update_timers_and_animations();
+            let drawn = layer.dirty.replace(false);
+            if drawn {
+                prepare_layer(&gpu, &target, false);
+                layer.renderer.render_to_texture(&target).unwrap();
+            }
+            drawn
+        };
+        tick(1000);
+        tick(1000);
+        bar.set_position_ms(50_066);
+        assert!(tick(16), "the step draws");
+        assert!(!tick(16), "the frame after it has nothing new");
+    }
+
+    /// A seek step repaints the bar and its time, not the whole player, and leaves the pixels a whole
+    /// repaint would.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn a_seek_step_repaints_only_what_moved() {
+        struct TestPlatform { gpu: Rc<Gpu>, layers: Rc<RefCell<Vec<Rc<Layer>>>> }
+        impl slint::platform::Platform for TestPlatform {
+            fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
+                let gpu = &self.gpu;
+                let renderer = SkiaWGPU30Renderer::retained(gpu.instance.clone(), gpu.adapter.clone(), gpu.device.clone(), gpu.queue.clone())?;
+                let layer = Rc::new_cyclic(|me: &Weak<Layer>| Layer {
+                    window: slint::Window::new(me.clone() as Weak<dyn WindowAdapter>), renderer,
+                    size: Cell::new(PhysicalSize::new(1000, 64)), dirty: Cell::new(true),
+                    texture: RefCell::new(None), shared: Weak::new(),
+                });
+                self.layers.borrow_mut().push(layer.clone());
+                Ok(layer)
+            }
+        }
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+        let gpu = Rc::new(Gpu { instance, adapter, device, queue });
+        let layers = Rc::new(RefCell::new(Vec::new()));
+        slint::platform::set_platform(Box::new(TestPlatform { gpu: gpu.clone(), layers: layers.clone() })).unwrap();
+        use slint::ComponentHandle;
+        // The same player twice: one steps, the other is drawn whole where it got to.
+        let bars = [crate::PlayerBar::new().unwrap(), crate::PlayerBar::new().unwrap()];
+        for bar in &bars {
+            bar.window().dispatch_event(WindowEvent::Resized { size: LogicalSize::new(1000.0, 64.0) });
+            bar.set_room(1000.0);
+            bar.set_has_song(true);
+            bar.set_duration_ms(200_000);
+            bar.set_position_ms(50_000);
+            bar.show().unwrap();
+        }
+        let targets: Vec<wgpu::Texture> = (0..2).map(|_| gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("player"), size: wgpu::Extent3d { width: 1000, height: 64, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC, view_formats: &[],
+        })).collect();
+        let draw = |index: usize, kept: bool| {
+            prepare_layer(&gpu, &targets[index], !kept);
+            layers.borrow()[index].renderer.render_to_texture_kept(&targets[index], kept).unwrap()
+        };
+        assert_eq!(draw(0, false), 1.0, "a fresh texture is drawn whole");
+        bars[0].set_position_ms(50_066);
+        let share = draw(0, true);
+        assert!(share < 0.1, "a step repaints {:.0} % of the player", share * 100.0);
+        bars[1].set_position_ms(50_066);
+        draw(1, false);
+        // Rows padded to the copy alignment.
+        let row = 4096;
+        let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("players"), size: 2 * row * 64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
+        });
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        for (index, target) in targets.iter().enumerate() {
+            encoder.copy_texture_to_buffer(target.as_image_copy(), wgpu::TexelCopyBufferInfo {
+                buffer: &buffer, layout: wgpu::TexelCopyBufferLayout { offset: index as u64 * row * 64, bytes_per_row: Some(row as u32), rows_per_image: Some(64) },
+            }, target.size());
+        }
+        gpu.queue.submit([encoder.finish()]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| tx.send(result).unwrap());
+        gpu.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        rx.recv().unwrap().unwrap();
+        let pixels = buffer.slice(..).get_mapped_range().unwrap();
+        let (stepped, whole) = pixels.split_at(row as usize * 64);
+        let rows = |p: &[u8]| p.chunks(row as usize).flat_map(|r| r[..4000].to_vec()).collect::<Vec<u8>>();
+        let differ = rows(stepped).iter().zip(rows(whole)).filter(|(a, b)| **a != *b).count();
+        assert_eq!(differ, 0, "bytes the step left unlike a whole repaint");
     }
 
     #[test]

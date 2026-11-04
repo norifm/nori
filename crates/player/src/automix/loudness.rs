@@ -1,8 +1,6 @@
 //! Level measurements: BS.1770 loudness, silence trims, hidden-track gaps and MixRamp points, all read from
 //! 100 ms blocks measured while the audio streams.
 
-use ebur128::{EbuR128, Mode};
-
 /// Block length for every level measurement.
 pub(crate) const BLOCK_MS: i64 = 100;
 /// Silence trim threshold, dBFS RMS.
@@ -10,14 +8,59 @@ pub(crate) const SILENCE_DB: f64 = -55.0;
 /// MixRamp threshold relative to integrated loudness, dB.
 pub(crate) const MIXRAMP_DB: f64 = -17.0;
 
-/// Streaming 100 ms block meter: each block's mean square, K-weighted (by ebur128) and plain.
-///
-/// ebur128's `Mode::I` is not used (75 % dearer); [`integrated`] gates the blocks to the same result.
+/// BS.1770's K-weighting: the head's shelf and the high-pass, as one fourth-order filter (libebur128's
+/// coefficients, MIT).
+struct KWeighting {
+    b: [f64; 5],
+    a: [f64; 5],
+    state: [f64; 5],
+}
+
+impl KWeighting {
+    #[allow(non_snake_case)]
+    fn new(rate: f64) -> Self {
+        let (f0, G, Q) = (1681.974450955533, 3.999843853973347, 0.7071752369554196);
+        let K = (std::f64::consts::PI * f0 / rate).tan();
+        let Vh = 10f64.powf(G / 20.0);
+        let Vb = Vh.powf(0.4996667741545416);
+        let a0 = 1.0 + K / Q + K * K;
+        let pb = [(Vh + Vb * K / Q + K * K) / a0, 2.0 * (K * K - Vh) / a0, (Vh - Vb * K / Q + K * K) / a0];
+        let pa = [1.0, 2.0 * (K * K - 1.0) / a0, (1.0 - K / Q + K * K) / a0];
+        let (f0, Q) = (38.13547087602444, 0.5003270373238773);
+        let K = (std::f64::consts::PI * f0 / rate).tan();
+        let rb = [1.0, -2.0, 1.0];
+        let ra = [1.0, 2.0 * (K * K - 1.0) / (1.0 + K / Q + K * K), (1.0 - K / Q + K * K) / (1.0 + K / Q + K * K)];
+        let product = |p: [f64; 3], r: [f64; 3]| [p[0] * r[0], p[0] * r[1] + p[1] * r[0], p[0] * r[2] + p[1] * r[1] + p[2] * r[0], p[1] * r[2] + p[2] * r[1], p[2] * r[2]];
+        KWeighting { b: product(pb, rb), a: product(pa, ra), state: [0.0; 5] }
+    }
+
+    /// The sum of the squares of `x` filtered.
+    fn sum_of_squares(&mut self, x: &[f32]) -> f64 {
+        let (a, b, s) = (self.a, self.b, &mut self.state);
+        let mut sum = 0.0;
+        for &v in x {
+            // The newest state last: only its product waits on the sample before.
+            s[0] = v as f64 - a[4] * s[4] - a[3] * s[3] - a[2] * s[2] - a[1] * s[1];
+            let y = b[0] * s[0] + b[1] * s[1] + b[2] * s[2] + b[3] * s[3] + b[4] * s[4];
+            (s[4], s[3], s[2], s[1]) = (s[3], s[2], s[1], s[0]);
+            sum += y * y;
+        }
+        // A decaying silence would otherwise run on in subnormals, slow on some CPUs.
+        for v in s.iter_mut().filter(|v| v.abs() < f64::EPSILON) {
+            *v = 0.0;
+        }
+        sum
+    }
+}
+
+/// Streaming 100 ms block meter: each block's mean square, K-weighted and plain. [`integrated`] gates the
+/// blocks.
 pub struct Meter {
-    r128: EbuR128,
+    k: KWeighting,
     /// Samples per block (100 ms).
     block: usize,
     n: usize,
+    acc_k: f64,
     acc_raw: f64,
     /// Mean square per block, K-weighted.
     pub blocks_k: Vec<f32>,
@@ -29,9 +72,10 @@ impl Meter {
     pub fn new(rate: f64, expected_blocks: usize) -> Self {
         let rate = (rate.round() as u32).clamp(16, 2_822_400);
         Meter {
-            r128: EbuR128::new(1, rate, Mode::M).expect("one channel at a rate ebur128 takes"),
+            k: KWeighting::new(rate as f64),
             block: (rate as usize + 5) / 10,
             n: 0,
+            acc_k: 0.0,
             acc_raw: 0.0,
             blocks_k: Vec::with_capacity(expected_blocks),
             blocks_raw: Vec::with_capacity(expected_blocks),
@@ -64,8 +108,7 @@ impl Meter {
     }
 
     fn add(&mut self, x: &[f32], raw: f64) {
-        // Fails only for an empty slice.
-        let _ = self.r128.add_frames_f32(x);
+        self.acc_k += self.k.sum_of_squares(x);
         self.acc_raw += raw;
         self.n += x.len();
     }
@@ -74,12 +117,9 @@ impl Meter {
         if self.n == 0 {
             return;
         }
-        let window_ms = (self.n as u64 * 1000 / self.r128.rate() as u64).max(1) as u32;
-        let lufs = self.r128.loudness_window(window_ms).unwrap_or(f64::NEG_INFINITY);
-        let ms = if lufs.is_finite() { 10f64.powf((lufs + 0.691) / 10.0) } else { 0.0 };
-        self.blocks_k.push(ms as f32);
+        self.blocks_k.push((self.acc_k / self.n as f64) as f32);
         self.blocks_raw.push((self.acc_raw / self.n as f64) as f32);
-        (self.acc_raw, self.n) = (0.0, 0);
+        (self.acc_k, self.acc_raw, self.n) = (0.0, 0.0, 0);
     }
 
     /// Closes a partial last block when at least a quarter full (a shorter one would read as a fade).
@@ -87,13 +127,13 @@ impl Meter {
         if self.n * 4 >= self.block {
             self.flush_block();
         }
-        (self.acc_raw, self.n) = (0.0, 0);
+        (self.acc_k, self.acc_raw, self.n) = (0.0, 0.0, 0);
     }
 
     /// Ready for the next song, keeping allocations.
     pub fn reset(&mut self) {
-        self.r128.reset();
-        (self.acc_raw, self.n) = (0.0, 0);
+        self.k.state = [0.0; 5];
+        (self.acc_k, self.acc_raw, self.n) = (0.0, 0.0, 0);
         self.blocks_k.clear();
         self.blocks_raw.clear();
     }
@@ -191,6 +231,7 @@ pub fn mixramp(blocks_k: &[f32], lufs: f64) -> Option<(i64, i64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ebur128::{EbuR128, Mode};
 
     fn meter(x: &[f32], rate: f64) -> Meter {
         let mut m = Meter::new(rate, 0);

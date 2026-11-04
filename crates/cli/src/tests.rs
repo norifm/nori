@@ -724,7 +724,7 @@ fn queue_panel_editing() {
 fn full_player_shows_the_song_and_the_mix() {
     let mut a = app();
     let next = song("s2", "Second", 180);
-    crate::backend::app().register(vec![next.clone()]);
+    a.shared.register(vec![next.clone()]);
     a.heard(Some(Song { year: 2020, suffix: "flac".into(), ..song("s1", "First", 200) }));
     a.now.state = State::Playing;
     a.now.mixing = true;
@@ -2682,10 +2682,10 @@ impl nori_plugins::Client for Quiet {
 
 /// An app on the first screen with the fixture plugin on, so its provider is a kind of profile.
 fn app_with_provider(dir: &nori_testdir::TempDir) -> App {
-    let plugins = nori_plugins::open(dir.join("plugins"), crate::backend::app().settings.clone(), std::sync::Arc::new(Quiet));
+    let mut a = app();
+    let plugins = nori_plugins::open(dir.join("plugins"), a.shared.settings.clone(), std::sync::Arc::new(Quiet));
     plugins.install(&nori_plugins::testing::fixture("")).unwrap();
     plugins.turn(nori_plugins::testing::FIXTURE.into(), true);
-    let mut a = app();
     a.settings.own.kinds = nori_core::providers::Kinds::with_plugins(plugins);
     a.view = View::Login;
     a
