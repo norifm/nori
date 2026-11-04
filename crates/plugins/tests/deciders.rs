@@ -22,8 +22,7 @@ fn deciders_answer_for_what_they_mark_and_leave_the_rest_to_nori() {
     let dir = nori_testdir::TempDir::new("plugins-deciders");
     let (plugins, side) = common::plugged(&dir, "");
     assert!(plugins.deciding());
-    // The plugin's instance starts with its first call; this one waits for it, the deciders below don't.
-    assert_eq!(nori_tasks::block_on(plugins.queue_ended(None)), None);
+    common::started(&plugins);
 
     let marked = [song("a", "x"), song("b", "fixture shuffle"), song("c", "y")];
     assert_eq!(plugins.shuffle(&marked, &[1, 0, 2], &|o| anything(o)), Some(vec![1, 2, 0]));

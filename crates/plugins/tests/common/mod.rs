@@ -3,6 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use nori_model::deciders::Deciders;
 use nori_plugins::testing::{fixture, FIXTURE};
 use nori_plugins::{Plugins, Side, Value};
 
@@ -35,4 +36,11 @@ pub fn plugged(dir: &nori_testdir::TempDir, features: &str) -> (Arc<Plugins>, Ar
     plugins.install(&fixture(features)).unwrap();
     plugins.turn(FIXTURE.into(), true);
     (plugins, side)
+}
+
+/// Waits for the plugin's instance to start. It starts with its first call, and a budgeted answer
+/// (a decider's, a transition's plan) doesn't wait for it.
+#[allow(dead_code)]
+pub fn started(plugins: &Plugins) {
+    assert_eq!(nori_tasks::block_on(plugins.queue_ended(None)), None);
 }
