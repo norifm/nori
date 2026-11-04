@@ -20,6 +20,7 @@ service, the screens and a force stop.
 
 CI on a push runs only the jobs it touches, and `tools/affected.py` narrows Rust's tests to the crates
 changed and those depending on them; a change to `Cargo.*`, `wit/`, `vendor/` or `.github/` runs everything.
+The Android job compiles the Kotlin and runs its unit tests.
 
 For the shared queue, nextest, Bazel and running several emulators, see
 [Building](building.md#faster-development-checks).
