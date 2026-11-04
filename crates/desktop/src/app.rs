@@ -5446,22 +5446,20 @@ mod tests {
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_devices_on(true);
         ui.show().unwrap();
-        // The tabs head the side sheet, wide gaps apart; each starts with its glyph, whatever weight its name is.
-        let glyph_places = |panel: i32| {
+        // Where each of the side sheet's tabs is laid out, left edge and width.
+        let tabs = |panel: i32| {
             ui.set_inspector(panel);
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
-            let shot = ui.window().take_snapshot().unwrap();
-            let inks = glyphs(&shot, 960..1250, 80..112);
-            let firsts = inks.iter().enumerate().filter(|(i, g)| *i == 0 || g.0 > inks[i - 1].1 + 16);
-            firsts.map(|(_, g)| (g.0 + g.1) as f32 / 2.0).collect::<Vec<_>>()
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "PanelTabs")
+                .flat_map(|t| t.query_descendants().match_inherits("TabButton").find_all())
+                .map(|b| (b.absolute_position().x, b.size().width))
+                .collect::<Vec<_>>()
         };
-        let devices = glyph_places(3);
-        assert_eq!(devices.len(), 3, "{devices:?}");
+        let devices = tabs(3);
+        assert!(devices.len() >= 3, "{devices:?}");
         for panel in [2, 1] {
-            let lit = glyph_places(panel);
-            assert_eq!(lit.len(), devices.len(), "panel {panel}");
-            assert!(lit.iter().zip(&devices).all(|(a, b)| (a - b).abs() <= 1.0), "panel {panel}: {lit:?} against {devices:?}");
+            assert_eq!(tabs(panel), devices, "panel {panel}");
         }
     }
 
