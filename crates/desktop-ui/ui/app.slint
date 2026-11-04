@@ -1487,6 +1487,8 @@ export global Scroll {
 // A page's scroll that Back returns to: it starts at `Scroll.want` once its content reaches that far (pages
 // fill in after they open) or the user scrolls it, and keeps `Scroll.at`. Off (`remember`), it is a plain one.
 component Remembered inherits Flickable {
+    // Up and down only: a long title or row is cut to the page, never scrolled sideways.
+    content-width: self.width;
     in property <bool> remember: true;
     property <bool> placed;
     property <int> asked: Scroll.asked;
@@ -2797,6 +2799,7 @@ component DevicesView inherits Rectangle {
     callback join-jam();
     callback show-pairing();
     Flickable {
+        content-width: self.width;
         VerticalLayout {
             alignment: start;
             padding-left: 10px;
@@ -4630,6 +4633,7 @@ component EqPlate inherits Rectangle {
 }
 
 component EqualizerPage inherits Flickable {
+    content-width: self.width;
     in property <bool> on;
     in property <bool> graphic;
     in property <int> count;
@@ -6165,6 +6169,7 @@ export component AppWindow inherits Window {
                             action(name) => { root.setting-action(name); }
                         }
                         Flickable {
+                            content-width: self.width;
                             height: min(provider-list.preferred-height, root.height - 220px);
                             content-height: provider-list.preferred-height;
                             provider-list := VerticalLayout {
@@ -6883,6 +6888,7 @@ export component AppWindow inherits Window {
                         background: Theme.hairline;
                     }
                     Flickable {
+                        content-width: self.width;
                         x: 301px;
                         y: Chrome.top-room;
                         width: parent.width - 301px;
@@ -7035,8 +7041,6 @@ export component AppWindow inherits Window {
                         }
 
                         page-flick := Remembered {
-                            // Up and down only: a long title or row is cut to the page, never scrolled sideways.
-                            content-width: self.width;
                             content-height: detail.preferred-height;
                             detail := VerticalLayout {
                                 width: parent.width;
@@ -7232,6 +7236,7 @@ export component AppWindow inherits Window {
                     Flickable {
                         // A mouse's press and drag is the lyrics services' handles'; the wheel and touch still scroll.
                         mouse-drag-pan-enabled: false;
+                        content-width: self.width;
                         content-height: prefs.preferred-height;
                         property <int> page-seen: root.plugin-page-seen;
                         changed page-seen => { self.content-y = 0; }
@@ -7499,6 +7504,7 @@ export component AppWindow inherits Window {
                     init => { self.came = true; }
                     y: 56px;
                     height: parent.height - 56px;
+                    content-width: self.width;
                     // As tall as where the last line ends, as laid out: the layout's own sum counts a wrapped line
                     // as one row, and long lyrics stopped scrolling before their end.
                     property <length> end;
@@ -8249,6 +8255,7 @@ export component AppWindow inherits Window {
                 width: root.width / 2 - 140px;
                 y: 48px;
                 height: root.height - 48px - 56px;
+                content-width: self.width;
                 content-height: full-sung.preferred-height;
                 animate content-y { duration: Motion.reduced ? 0ms : 640ms; enabled: !Motion.reduced; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
                 full-sung := VerticalLayout {
@@ -8454,6 +8461,7 @@ export component AppWindow inherits Window {
                         typed(name, text) => { root.setting-typed(name, text); }
                     }
                     Flickable {
+                        content-width: self.width;
                         content-height: plugin-list.preferred-height;
                         property <int> page-seen: root.plugin-page-seen;
                         changed page-seen => { self.content-y = 0; }
@@ -8684,6 +8692,7 @@ export component AppWindow inherits Window {
                         font-weight: 700;
                     }
                     Flickable {
+                        content-width: self.width;
                         vertical-stretch: 1;
                         min-height: min(lines.preferred-height, 120px);
                         preferred-height: lines.preferred-height;
@@ -8774,6 +8783,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     Flickable {
+                        content-width: self.width;
                         vertical-stretch: 1;
                         min-height: min(choices.preferred-height, 120px);
                         preferred-height: choices.preferred-height;
@@ -9102,6 +9112,7 @@ export component AppWindow inherits Window {
             clip: true;
             TouchArea {}
             Flickable {
+                content-width: self.width;
                 content-height: hits.preferred-height;
                 hits := VerticalLayout {
                     padding: MenuShape.inset;
