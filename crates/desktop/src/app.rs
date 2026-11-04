@@ -5464,6 +5464,43 @@ mod tests {
     }
 
     #[test]
+    fn a_sideways_scroll_leaves_the_lyrics_in_place() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        // A row wider than either view, as one measured a hair narrower than the window draws it.
+        let row = "All that I want is a little bit of buh-duh-dabba-dabba-dabba";
+        let line = crate::SungLine { text: row.into(), backing: SharedString::default(), right: false, background: false };
+        ui.set_lyrics_lines(ModelRc::new(VecModel::from(vec![line])));
+        let rows = || ModelRc::new(VecModel::from(vec![SharedString::from(row)]));
+        ui.set_lyrics_side_rows(rows());
+        ui.set_lyrics_full_rows(rows());
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+        };
+        ui.set_full_panel(2);
+        for (view, inspector, full) in [("side", 2, false), ("Now Playing", 0, true)] {
+            ui.set_inspector(inspector);
+            ui.set_full_player(full);
+            settle();
+            let text = || {
+                let found: Vec<_> = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, row).map(|t| t.absolute_position()).collect();
+                assert_eq!(found.len(), 1, "{view}");
+                found[0]
+            };
+            let before = text();
+            let position = slint::LogicalPosition::new(before.x + 40.0, before.y + 10.0);
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled { position, delta_x: -200.0, delta_y: 0.0 });
+            settle();
+            assert_eq!(text(), before, "{view}");
+        }
+    }
+
+    #[test]
     fn the_pills_seal_matches_the_output_beside_it() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
