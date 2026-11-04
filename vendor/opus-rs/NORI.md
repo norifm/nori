@@ -8,7 +8,9 @@ Changes marked NORI keep every decoded sample the same, bit for bit, and the pub
   The spreading rotation with a stride of one (`exp_rotation1_scalar`) carries the sample each step
   hands the next in a register rather than through memory.
 - `celt.rs`: the de-emphasis runs once both channels of a frame are synthesized, the two filters in
-  one loop, and without its clamp when the frame's samples cannot reach the clamp's limit.
+  one loop, and without its clamp when the frame's samples cannot reach the clamp's limit. The
+  post-filter (`comb_filter_inplace`) makes eight samples a step: each reads only samples at least
+  13 before it, which the steps before have made.
 - `lib.rs`: a stereo CELT frame is interleaved into the output a pair of samples at a time.
 
 The crate stays out of the workspace (`exclude` in the root Cargo.toml) and replaces the crates.io

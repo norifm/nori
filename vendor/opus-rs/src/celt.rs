@@ -1304,7 +1304,23 @@ fn comb_filter_inplace(
         inner_overlap = 0;
     }
 
+    // NORI: eight outputs a step while eight remain. An output reads samples at least 13 before
+    // it (both periods are at least 15), already filtered, so the steps make what the loops after
+    // them make sample by sample.
     let mut i = 0;
+    while i + 8 <= inner_overlap.min(n) {
+        let idx = y_idx + i;
+        let (past, out) = buf.split_at_mut(idx);
+        let (r0, r1) = (&past[idx - t0 - 2..idx - t0 + 10], &past[idx - t1 - 2..idx - t1 + 10]);
+        let (w, out) = (&window[i..i + 8], &mut out[..8]);
+        for j in 0..8 {
+            let f = w[j] * w[j];
+            out[j] = out[j]
+                + (1.0 - f) * (g00 * r0[j + 2] + g01 * (r0[j + 3] + r0[j + 1]) + g02 * (r0[j + 4] + r0[j]))
+                + f * (g10 * r1[j + 2] + g11 * (r1[j + 3] + r1[j + 1]) + g12 * (r1[j + 4] + r1[j]));
+        }
+        i += 8;
+    }
     while i < inner_overlap && i < n {
         let idx = y_idx + i;
         let f = window[i] * window[i];
@@ -1326,6 +1342,15 @@ fn comb_filter_inplace(
     }
 
     // Constant region: only new filter (t1, g1)
+    while i + 8 <= n {
+        let idx = y_idx + i;
+        let (past, out) = buf.split_at_mut(idx);
+        let (r1, out) = (&past[idx - t1 - 2..idx - t1 + 10], &mut out[..8]);
+        for j in 0..8 {
+            out[j] = out[j] + g10 * r1[j + 2] + g11 * (r1[j + 3] + r1[j + 1]) + g12 * (r1[j + 4] + r1[j]);
+        }
+        i += 8;
+    }
     while i < n {
         let idx = y_idx + i;
         let s = buf[idx];
