@@ -327,6 +327,20 @@ pub enum SignInResult {
     Unreachable { reason: String },
 }
 
+/// What a saved profile of a plugin's kind waits for before it opens here ([`Kinds::waits`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum ProfileWait {
+    /// Its plugin installed.
+    Install,
+    /// Its plugin, installed, turned on.
+    TurnOn,
+    /// The switch over every plugin turned back on.
+    PluginsOn,
+    /// A client that runs no plugins: it never opens here.
+    NoPlugins,
+}
+
 /// The kinds of profile this app opens: a Subsonic server's, and the providers of its enabled plugins.
 /// A client makes one ([`Kinds::builtin`] where it has no plugins) and asks it about profiles to add;
 /// each [`Core`] it opens uses it.
@@ -440,6 +454,27 @@ impl Kinds {
     /// What the app offers over saved `profile`; `guest` when it is a jam guest's.
     pub fn rules_of(&self, profile: SavedServer, guest: bool) -> ProfileRules {
         self.or_subsonic(&profile.kind).rules(&profile, guest)
+    }
+
+    /// What saved `profile` waits for before it opens here; None for one that opens. A LAN jam's guest
+    /// profile opens through its host, whatever its kind.
+    pub fn waits(&self, profile: SavedServer) -> Option<ProfileWait> {
+        let ServerKind::Plugin { id } = profile.kind else { return None };
+        if nori_remote::lan::guest_secret(&profile.api_key).is_some() {
+            return None;
+        }
+        #[cfg(feature = "plugins")]
+        if let Some(p) = &self.plugins {
+            let has = |list: Vec<nori_plugins::Installed>| list.iter().any(|i| i.manifest.id == id);
+            return match has(p.installed()) {
+                false => Some(ProfileWait::Install),
+                true if has(p.running()) => None,
+                true if p.all_off() => Some(ProfileWait::PluginsOn),
+                true => Some(ProfileWait::TurnOn),
+            };
+        }
+        let _ = id;
+        Some(ProfileWait::NoPlugins)
     }
 
     /// Whether the add form can be sent.
@@ -798,12 +833,14 @@ mod tests {
     }
 
     /// A plugin's kind without the plugin has no provider: it is not offered, its form is never
-    /// ready, and a profile saved with it does not open.
+    /// ready, and a profile saved with it does not open (a LAN jam guest's opens through its host).
     #[test]
     fn a_kind_without_its_plugin_has_no_provider() {
         let k = Kinds::builtin();
         assert_eq!(k.providers().into_iter().map(|p| p.kind).collect::<Vec<_>>(), vec![ServerKind::Subsonic]);
         let missing = ServerKind::Plugin { id: "fm.nori.youtube-music".into() };
+        let guest = SavedServer { api_key: nori_remote::guest_key("lan-secret"), ..saved("g", missing.clone(), "http://10.0.0.2:4000", "") };
+        assert_eq!([k.waits(saved("p", missing.clone(), "", "")), k.waits(saved("s", ServerKind::Subsonic, "", "")), k.waits(guest)], [Some(ProfileWait::NoPlugins), None, None]);
         assert!(!k.server_ready(saved("p", missing.clone(), "", "")));
         let core = Core::new(String::new(), "k".into(), Default::default()).unwrap();
         assert!(core.configure_profile(saved("p", missing, "https://x", "u")).is_err());

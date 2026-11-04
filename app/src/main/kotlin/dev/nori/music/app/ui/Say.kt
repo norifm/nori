@@ -408,6 +408,24 @@ class Say(private val r: Resources) {
     val pluginFromFile: String get() = r.getString(R.string.plugins_from_file)
     val pluginUnsigned: String get() = r.getString(R.string.plugins_unsigned)
     val providerChoose: String get() = r.getString(R.string.provider_choose)
+    /** Why a profile of plugin [name]'s kind doesn't open ([wait]). */
+    fun profileWaits(name: String, wait: dev.nori.music.ffi.ProfileWait): String = r.getString(
+        when (wait) {
+            dev.nori.music.ffi.ProfileWait.INSTALL -> R.string.profile_waits_install
+            dev.nori.music.ffi.ProfileWait.TURN_ON -> R.string.profile_waits_turn_on
+            dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> R.string.profile_waits_plugins_on
+            dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> R.string.profile_waits_no_plugins
+        },
+        name,
+    )
+    /** The button that opens it; none where nothing here can. */
+    fun profileWaitAction(name: String, wait: dev.nori.music.ffi.ProfileWait): String? = when (wait) {
+        dev.nori.music.ffi.ProfileWait.INSTALL -> r.getString(R.string.profile_wait_install, name)
+        dev.nori.music.ffi.ProfileWait.TURN_ON -> r.getString(R.string.profile_wait_turn_on, name)
+        dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> r.getString(R.string.profile_wait_plugins_on)
+        dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> null
+    }
+    val addServer: String get() = r.getString(R.string.settings_add_server)
     val providerGuest: String get() = r.getString(R.string.provider_guest)
     val providerSubsonicAbout: String get() = r.getString(R.string.provider_subsonic_about)
     val pluginsEvery: String get() = r.getString(R.string.plugins_every)

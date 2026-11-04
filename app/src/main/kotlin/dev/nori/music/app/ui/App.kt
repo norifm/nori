@@ -276,6 +276,11 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             LoginScreen(settings)
             return@Crossfade
         }
+        val wait by settings.profileWait.collectAsStateWithLifecycle()
+        wait?.let {
+            WaitingProfile(settings, it)
+            return@Crossfade
+        }
         // A provider account's name (its `user`) brings its library and hearts.
         val account = prefs.server?.user.orEmpty()
         val reported by settings.reportedRules.collectAsStateWithLifecycle()

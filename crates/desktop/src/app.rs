@@ -461,6 +461,8 @@ pub struct App {
     plugged: crate::settings::Plugged,
     /// The plugin its install sheet shows.
     preview: Option<nori_plugins::PluginPreview>,
+    /// The profile in use while its plugin doesn't run here, opened once it does.
+    waiting: Option<SavedServer>,
     /// The kind of profile the sign-in form adds, and what follows once it is.
     login_kind: nori_core::settings::ServerKind,
     after_adding: Option<AfterAdding>,
@@ -704,6 +706,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             facts: crate::settings::Facts::default(),
             plugged: Default::default(),
             preview: None,
+            waiting: None,
             login_kind: nori_core::settings::ServerKind::Subsonic,
             after_adding: None,
             plugin_menus: Default::default(),
@@ -1251,6 +1254,11 @@ impl App {
         ui.set_account_initial(who.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default().into());
         ui.set_account(who.into());
         ui.set_server(where_.into());
+        self.waiting = self.kinds().waits(profile.clone()).map(|_| profile.clone());
+        if self.waiting.is_some() {
+            // The first screen, where its plugin's row installs it or turns it on.
+            return self.choose_provider();
+        }
         match Session::open(&self.root, self.http.clone(), profile, self.tx.clone(), self.mpris.clone()) {
             Ok(s) => {
                 s.check();
@@ -2708,11 +2716,31 @@ impl App {
         self.plugged.choosing = false;
     }
 
-    /// Turns on plugin `id`, chosen from the first screen, and opens its form.
+    /// Turns on plugin `id`, chosen from the first screen, and opens its form, unless the profile waiting
+    /// for it opened instead.
     fn provider_turned_on(&mut self, id: String) {
         self.plugin_host().turn(id.clone(), true);
         self.plugins_read();
-        self.provider_chosen(nori_core::settings::ServerKind::Plugin { id });
+        if self.plugged.choosing {
+            self.provider_chosen(nori_core::settings::ServerKind::Plugin { id });
+        }
+    }
+
+    /// Opens the waiting profile once its plugin runs.
+    fn open_waiting(&mut self) {
+        match self.waiting.clone() {
+            Some(profile) if self.kinds().waits(profile.clone()).is_none() => self.open(profile),
+            _ => {}
+        }
+    }
+
+    /// Why the waiting profile doesn't open, in its plugin's name.
+    fn waiting_line(&self) -> Option<String> {
+        let profile = self.waiting.as_ref()?;
+        let nori_core::settings::ServerKind::Plugin { id } = &profile.kind else { return None };
+        let wait = self.kinds().waits(profile.clone())?;
+        let name = nori_plugins::plugin_display_name(id.clone(), self.plugged.cards.clone(), self.plugged.offers().to_vec());
+        Some(words::profile_waits(&name, wait))
     }
 
     /// Takes down the sheet over the first screen.
@@ -2777,6 +2805,7 @@ impl App {
         menus.set_playlist(labels(2));
         self.devices_shown();
         self.plugins_shown();
+        self.open_waiting();
     }
 
     /// Draws Settings › Plugins and the page over it as they stand, asking what they show for the first time.
@@ -2809,6 +2838,9 @@ impl App {
         ui.set_plugin_top(crate::settings::plugin_top(&self.plugged, prefs.plugins_off));
         if self.plugged.choosing {
             ui.set_provider_rows(crate::settings::provider_rows(&self.plugged, self.kinds(), &prefs, &self.facts, crate::look::Today::now()));
+            if let Some(line) = self.waiting_line() {
+                ui.set_login_error(line.into());
+            }
         }
         self.settings_shown();
     }

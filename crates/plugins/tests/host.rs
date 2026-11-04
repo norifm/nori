@@ -331,6 +331,8 @@ fn an_offer_says_where_it_stands_and_shows_its_readme() {
     serve("0.1.0");
     assert_eq!(states(), [(own.to_string(), OfferState::New), (other.to_string(), OfferState::New)]);
     let offer = nori_tasks::block_on(plugins.offers()).offers.into_iter().find(|o| o.repo.url == own).unwrap();
+    let name = |id: &str| nori_plugins::plugin_display_name(id.into(), plugins.cards("en".into()), vec![offer.clone()]);
+    assert_eq!([name(ID), name("fm.nori.elsewhere")], ["Test", "fm.nori.elsewhere"], "not installed: as its repo names it, else its id");
     let said = vec![nori_plugins::ReadmeBlock::Text { text: "Hello".into() }];
     assert_eq!(nori_tasks::block_on(plugins.readme(ID.into(), Some(offer.clone()))), said, "before it is installed, from its repo");
     assert_eq!(nori_tasks::block_on(plugins.icon(ID.into(), Some(offer.clone()))).as_deref(), Some(&b"\x89PNG\r\n\x1a\nimage"[..]));

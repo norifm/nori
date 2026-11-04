@@ -91,7 +91,9 @@ pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
         .iter()
         .map(|s| {
             let active = s.id == prefs.active_server_id;
-            serde_json::json!({ "id": s.id, "label": label(s), "url": s.url, "active": active, "kind": s.kind.id() })
+            // A plugin's profile never opens here: the iPod runs none.
+            let waits = Kinds::builtin().waits(s.clone()).is_some();
+            serde_json::json!({ "id": s.id, "label": label(s), "url": s.url, "active": active, "kind": s.kind.id(), "waits": waits })
         })
         .collect())
 }
@@ -355,6 +357,16 @@ mod tests {
         let left = servers(dir.path()).unwrap();
         assert_eq!(left.len(), 1);
         assert_eq!((&left[0]["id"], &left[0]["active"]), (&serde_json::json!("two"), &serde_json::json!(true)));
+    }
+
+    /// A plugin's profile is listed as one that never opens here; a server's opens.
+    #[test]
+    fn a_plugin_profile_is_listed_as_waiting() {
+        let dir = nori_testdir::TempDir::new("ios-waits");
+        keep(dir.path(), profile("one", "ada")).unwrap();
+        keep(dir.path(), SavedServer { kind: ServerKind::Plugin { id: "fm.nori.youtube-music".into() }, ..profile("two", "") }).unwrap();
+        let waits: Vec<_> = servers(dir.path()).unwrap().iter().map(|s| (s["id"].clone(), s["waits"].clone())).collect();
+        assert_eq!(waits, [(serde_json::json!("one"), serde_json::json!(false)), (serde_json::json!("two"), serde_json::json!(true))]);
     }
 
     #[test]

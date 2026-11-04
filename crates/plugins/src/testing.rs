@@ -13,6 +13,30 @@ pub const FIXTURE: &str = "fm.nori.test";
 /// Its id built with the `second` feature.
 pub const SECOND: &str = "fm.nori.test.second";
 
+/// A client of the plugin host that ignores what it is told.
+pub struct Quiet;
+
+impl crate::Client for Quiet {
+    fn layer_changed(&self, _: u32) {}
+    fn devices_changed(&self) {}
+    fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
+    fn shown(&self, _: String, _: String, _: bool, _: bool) {}
+    fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}
+    fn browse(&self, _: String, _: bool) {}
+    fn multicast(&self, _: bool) {}
+    fn streaming(&self, _: bool) {}
+    fn pressed(&self, _: nori_model::deciders::Press) {}
+    fn cast(&self, _: Option<crate::Cast>) {}
+    fn control(&self, _: crate::Control) {}
+    fn sign_in(&self, _: String, _: String) -> bool {
+        false
+    }
+    fn wake(&self, _: Vec<crate::WakeEvent>) {}
+    fn commands(&self, _: Vec<crate::Command>) {}
+    fn watch_screen(&self, _: bool) {}
+    fn asset(&self, _: String, _: String, _: crate::AssetState) {}
+}
+
 /// Marks `plugins` as calling plugin `id` from now on, as when nori stops in one of its calls.
 pub fn stop_in_a_call(plugins: &crate::Plugins, id: &str) {
     plugins.marks.mark(id, crate::safe::Caller::Worker).set(crate::safe::CALLING, 1);

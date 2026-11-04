@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -391,6 +392,23 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     init {
         viewModelScope.launch { nori.plugins.refresh() }
+    }
+
+    /** What the profile in use waits for before it opens: its plugin (the core's `Kinds::waits`); null when it opens. */
+    val profileWait: StateFlow<dev.nori.music.ffi.ProfileWait?> =
+        combine(prefs.map { it.server to it.pluginsOff }.distinctUntilChanged(), nori.plugins.cards) { (server, _), _ -> server }
+            .map { server -> server?.let { withContext(Dispatchers.IO) { nori.plugins.kinds.waits(it) } } }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    init {
+        // Its plugin running now, the profile opens again, with it.
+        viewModelScope.launch {
+            var waited = false
+            profileWait.collect { wait ->
+                if (waited && wait == null) prefs.value.server?.let(nori::activate)
+                waited = wait != null
+            }
+        }
     }
 
     /** Whether the add form [p] can be sent (its provider's say). */
