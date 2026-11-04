@@ -1456,6 +1456,47 @@ impl Remote {
             self.keep_polling();
         }
     }
+
+    /// [`Self::played`], with the playback `read` under the remote's lock: reports from several threads
+    /// apply in the order they were read, so an older one never overwrites a newer one.
+    pub fn played_read(self: Arc<Self>, read: impl FnOnce() -> Playing) {
+        // The report belongs to call entry, before waiting for the session lock.
+        let now = self.now();
+        let (publish, started, shown, cancelled, playing) = {
+            let mut i = self.inner.lock();
+            let playing = read();
+            let started = playing.playing && !i.playing.playing;
+            // A guest listening along paused or played here: its controls say so.
+            let shown = i.listen.is_some() && playing.playing != i.playing.playing;
+            if started {
+                i.handed_to = None;
+            }
+
+            if playing.playing || i.playing.playing {
+                i.played_last = Some(now);
+            }
+            let moved_here = started || (!i.playing.playing && (playing.index != i.playing.index || (playing.position_ms - i.playing.position_ms).abs() > POSITION_SLACK_MS));
+            let cancelled = moved_here && i.taking.take().is_some();
+            i.playing = playing;
+            i.playing_at = Some(now);
+            (i.serving || i.hosted.is_some(), started && i.mirror.is_some(), shown, cancelled, playing.playing)
+        };
+        if playing {
+            self.clone().discover_active(false);
+        }
+        if started {
+            self.set_active(None, Becomes::Followed);
+        }
+        if publish {
+            self.publish();
+        }
+        if cancelled {
+            self.keep_polling();
+        }
+        if shown {
+            self.shown.changed();
+        }
+    }
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -1641,42 +1682,7 @@ impl Remote {
     /// The platform's playback changed (play, pause, seek, another song, the queue, the volume). Music
     /// starting here makes this the active device again.
     pub fn played(self: Arc<Self>, playing: Playing) {
-
-        // The report belongs to call entry, before waiting for the session lock.
-        let now = self.now();
-        let (publish, started, shown, cancelled) = {
-            let mut i = self.inner.lock();
-            let started = playing.playing && !i.playing.playing;
-            // A guest listening along paused or played here: its controls say so.
-            let shown = i.listen.is_some() && playing.playing != i.playing.playing;
-            if started {
-                i.handed_to = None;
-            }
-
-            if playing.playing || i.playing.playing {
-                i.played_last = Some(now);
-            }
-            let moved_here = started || (!i.playing.playing && (playing.index != i.playing.index || (playing.position_ms - i.playing.position_ms).abs() > POSITION_SLACK_MS));
-            let cancelled = moved_here && i.taking.take().is_some();
-            i.playing = playing;
-            i.playing_at = Some(now);
-            (i.serving || i.hosted.is_some(), started && i.mirror.is_some(), shown, cancelled)
-        };
-        if playing.playing {
-            self.clone().discover_active(false);
-        }
-        if started {
-            self.set_active(None, Becomes::Followed);
-        }
-        if publish {
-            self.publish();
-        }
-        if cancelled {
-            self.keep_polling();
-        }
-        if shown {
-            self.shown.changed();
-        }
+        self.played_read(|| playing);
     }
 
     /// The device is on a network again: a poll that failed is asked again now, not after its wait.
