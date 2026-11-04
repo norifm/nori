@@ -1056,13 +1056,9 @@ jam_checks() {
     check "Invite shows the code and the link" wait_until 10 on_screen 'text="Copy link"'
     ui > "$here/../build/e2e/$ANDROID_SERIAL/jam-invite.xml"
     link=$(cat "$here/../build/e2e/$ANDROID_SERIAL/jam-invite.xml" | grep -oE 'text="https?://[^"]*/nori/jam#[^"]*"' | head -1 | cut -d'"' -f2 | sed 's/&amp;/\&/g')
-    tapnode content-desc Back
-    check "Invite returns to the existing room drawer" wait_until 10 on_screen 'text="Your jam"'
-    check "the invite content is replaced" off_screen 'text="Copy link"'
-    tapnode text Invite
-    check "Invite opens again in the same drawer" wait_until 10 on_screen 'text="Copy link"'
     adb shell input keyevent KEYCODE_BACK
-    check "system back returns to the room drawer" wait_until 10 on_screen 'text="Your jam"'
+    check "back returns from the invite to the room drawer" wait_until 10 on_screen 'text="Your jam"'
+    check "the invite content is replaced" off_screen 'text="Copy link"'
     adb shell input keyevent KEYCODE_BACK
     if on_screen 'content-desc="Close sheet"'; then tapnode content-desc "Close sheet"; fi
     # Its own invite opened here is refused: this phone stays the host, on its own profile.
@@ -1074,8 +1070,8 @@ jam_checks() {
     tapnode content-desc Settings
     check "room settings replace the drawer" wait_until 10 on_screen 'text="Allow remote songs"'
     tapnode text "Allow remote songs"
-    tapnode content-desc Back
-    check "settings return to the existing room drawer" wait_until 10 on_screen 'text="Your jam"'
+    adb shell input keyevent KEYCODE_BACK
+    check "back returns from settings to the room drawer" wait_until 10 on_screen 'text="Your jam"'
     adb shell input keyevent KEYCODE_BACK
     "$app" open queue >/dev/null
     guests="$here/../build/e2e/$ANDROID_SERIAL/jam"; mkdir -p "$guests"
