@@ -154,10 +154,25 @@ impl ElementChannel {
             out[i] = clip_msbs(out[i].wrapping_add(out[i - 1]), num_clip_bits);
         }
 
+        // NORI: orders 1 to 8, those encoders choose, have a predictor each.
+        let (coeffs, shift) = (&self.lpc_coeffs, self.shift);
+        match order {
+            1 => predict_order::<1>(coeffs, shift, num_clip_bits, out),
+            2 => predict_order::<2>(coeffs, shift, num_clip_bits, out),
+            3 => predict_order::<3>(coeffs, shift, num_clip_bits, out),
+            4 => predict_order::<4>(coeffs, shift, num_clip_bits, out),
+            5 => predict_order::<5>(coeffs, shift, num_clip_bits, out),
+            6 => predict_order::<6>(coeffs, shift, num_clip_bits, out),
+            7 => predict_order::<7>(coeffs, shift, num_clip_bits, out),
+            8 => predict_order::<8>(coeffs, shift, num_clip_bits, out),
+            _ => self.predict_any_order(order, num_clip_bits, out),
+        }
+        Ok(())
+    }
+
+    /// NORI: `predict`'s loop for any order, as symphonia has it.
+    fn predict_any_order(&mut self, order: usize, num_clip_bits: u32, out: &mut [i32]) {
         // Do the prediction.
-        //
-        // TODO: Orders for 4 and 8 are special-cased in the reference decoder. Consider using
-        // optimized versions for those cases like the FLAC decoder does.
         for i in 1 + order..out.len() {
             // Value of the output sample before prediction (the residual or difference).
             let mut res = out[i];
@@ -216,8 +231,46 @@ impl ElementChannel {
                 }
             }
         }
+    }
+}
 
-        Ok(())
+/// NORI: `predict`'s loop for order `N`: the coefficients and the past samples stay in registers,
+/// and the coefficients adapt without branching on the residual.
+#[inline(always)]
+fn predict_order<const N: usize>(coeffs: &[i32; 32], shift: u32, clip: u32, out: &mut [i32]) {
+    if out.len() <= N + 1 {
+        return;
+    }
+    // `c[j]` weighs `past[j]`, the `j`th oldest of the `N` samples before the one predicted; `top`
+    // is the sample before those.
+    let mut c: [i32; N] = std::array::from_fn(|j| coeffs[N - 1 - j]);
+    let mut top = out[0];
+    let mut past: [i32; N] = std::array::from_fn(|j| out[1 + j]);
+    let half: i32 = (1 << shift) >> 1;
+    for sample in &mut out[N + 1..] {
+        let res = *sample;
+        let diff: [i32; N] = std::array::from_fn(|j| top.wrapping_sub(past[j]));
+        // The newest sample's term comes last, as the next prediction waits for it.
+        let mut sum = half;
+        for j in 0..N {
+            sum = sum.wrapping_sub(c[j].wrapping_mul(diff[j]));
+        }
+        let next = clip_msbs(res.wrapping_add(top).wrapping_add(sum >> shift), clip);
+        *sample = next;
+        // From the oldest, each coefficient steps by its difference's sign, against the residual's,
+        // until the residual less the steps' weighed differences is no longer of its sign.
+        let neg = res >> 31;
+        let mut live = -i32::from(res != 0);
+        let mut left = res;
+        for j in 0..N {
+            let sign = (diff[j] >> 31) + i32::from(diff[j] > 0);
+            let step = (sign ^ neg).wrapping_sub(neg);
+            c[j] = c[j].wrapping_sub(step & live);
+            left = left.wrapping_sub((j as i32 + 1).wrapping_mul(step.wrapping_mul(diff[j]) >> shift));
+            live &= -i32::from((left ^ neg) > neg);
+        }
+        top = past[0];
+        past = std::array::from_fn(|j| if j + 1 < N { past[j + 1] } else { next });
     }
 }
 
