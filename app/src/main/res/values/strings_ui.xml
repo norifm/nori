@@ -239,6 +239,13 @@
     <string name="provider_no_session">These aren’t a signed-in session’s cookies. Copy them while signed in.</string>
     <string name="provider_refused">%1$s didn’t accept these cookies. Sign in again in a private window and copy them anew.</string>
     <string name="provider_unreachable">Couldn’t reach %1$s. Nothing changed.</string>
+    <string name="profile_waits_install">This profile plays from %1$s, a plugin that isn’t installed.</string>
+    <string name="profile_waits_turn_on">This profile plays from %1$s, a plugin that’s off.</string>
+    <string name="profile_waits_plugins_on">This profile plays from %1$s, a plugin, and plugins are off.</string>
+    <string name="profile_waits_no_plugins">This profile plays from %1$s, a plugin, which can’t run here.</string>
+    <string name="profile_wait_install">Install %1$s</string>
+    <string name="profile_wait_turn_on">Turn on %1$s</string>
+    <string name="profile_wait_plugins_on">Turn on plugins</string>
     <string name="user">User</string>
     <string name="password">Password</string>
     <string name="connecting">Connecting…</string>

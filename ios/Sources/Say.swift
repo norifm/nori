@@ -254,6 +254,7 @@ enum Say {
     static let servers = "Servers"
     static let none = "None"
     static let addServer = "Add a server"
+    static let profileWaitsNoPlugins = "Plays from a plugin, which can’t run here"
     static func forgetServer(_ name: String) -> String { "Forget \(name)?" }
     static let forgetServerNote = "Its downloads stay on this iPod until you add it again."
     static let forget = "Forget"

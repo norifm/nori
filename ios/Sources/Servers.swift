@@ -8,6 +8,8 @@ final class ServersPage: UITableViewController {
         let label: String
         let url: String
         let active: Bool
+        /// A plugin's profile, which never opens here.
+        let waits: Bool
     }
 
     private var servers: [Saved] = []
@@ -31,7 +33,8 @@ final class ServersPage: UITableViewController {
             let saved = rows.map {
                 Saved(id: $0["id"] as? String ?? "",
                       label: ($0["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? Say.provider($0["kind"] as? String ?? "").name,
-                      url: $0["url"] as? String ?? "", active: $0["active"] as? Bool ?? false)
+                      url: $0["url"] as? String ?? "", active: $0["active"] as? Bool ?? false,
+                      waits: $0["waits"] as? Bool ?? false)
             }
             DispatchQueue.main.async {
                 self.servers = saved
@@ -57,7 +60,7 @@ final class ServersPage: UITableViewController {
         }
         let s = servers[indexPath.row]
         cell.textLabel?.text = s.label
-        cell.detailTextLabel?.text = s.url
+        cell.detailTextLabel?.text = s.waits ? Say.profileWaitsNoPlugins : s.url
         cell.accessoryType = s.active ? .checkmark : .none
         cell.tintColor = Theme.accent
         return cell

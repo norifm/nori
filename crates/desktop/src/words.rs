@@ -107,6 +107,16 @@ pub const INSTALLED: &str = "Installed";
 pub const PLUGIN_INSTALLED: &str = "Plugin installed";
 pub const GET_PLUGINS: &str = "Get plugins";
 pub const PROVIDER_CHOOSE: &str = "Choose a provider";
+/// Why a profile of plugin `name`'s kind doesn't open here.
+pub fn profile_waits(name: &str, wait: nori_core::providers::ProfileWait) -> String {
+    use nori_core::providers::ProfileWait as W;
+    match wait {
+        W::Install => format!("This profile plays from {name}, a plugin that isn’t installed."),
+        W::TurnOn => format!("This profile plays from {name}, a plugin that’s off."),
+        W::PluginsOn => format!("This profile plays from {name}, a plugin, and plugins are off."),
+        W::NoPlugins => format!("This profile plays from {name}, a plugin, which can’t run here."),
+    }
+}
 pub const PROVIDER_SUBSONIC_ABOUT: &str = "Navidrome and other servers";
 pub const CONTINUE_AS_GUEST: &str = "Continue as guest";
 /// The button that adds a provider and opens its sign-in.

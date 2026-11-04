@@ -395,6 +395,10 @@ impl LibrarySection {
     };
 }
 
+/// The kind YouTube Music profiles were stored under while it was built in, before it became a plugin.
+const BUILT_IN_YOUTUBE_MUSIC: &str = "youtubeMusic";
+const YOUTUBE_MUSIC_PLUGIN: &str = "fm.nori.youtube-music";
+
 /// What a saved profile plays from: the provider it opens with (nori-core's providers/).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -419,6 +423,7 @@ impl ServerKind {
     pub fn from_id(id: &str) -> Option<ServerKind> {
         match id {
             "subsonic" => Some(ServerKind::Subsonic),
+            BUILT_IN_YOUTUBE_MUSIC => Some(ServerKind::Plugin { id: YOUTUBE_MUSIC_PLUGIN.into() }),
             // Only a plugin's id has a dot.
             p if p.contains('.') => Some(ServerKind::Plugin { id: p.to_string() }),
             _ => None,
@@ -671,11 +676,10 @@ pub(crate) const SPECIAL_SPECS: &[(&str, K)] = &[
 ];
 
 const SERVERS: Custom<Vec<SavedServer>> = Custom {
-    // An unreadable list, or a server without an id, loses the whole list; a profile of a kind nori no
-    // longer has (YouTube Music before it was a plugin) is dropped alone.
+    // An unreadable list, or a server without an id, loses the whole list.
     load: |t, _| {
         t.and_then(|json| serde_json::from_str::<Value>(json).ok())
-            .and_then(|v| v.as_array().map(|a| a.iter().filter(|s| kind_kept(s)).map(server_from).collect::<Option<Vec<_>>>()))
+            .and_then(|v| v.as_array().map(|a| a.iter().map(server_from).collect::<Option<Vec<_>>>()))
             .flatten()
             .unwrap_or_default()
     },
@@ -1147,21 +1151,19 @@ fn with_bass_boost(s: SoundSettings, db: f32) -> SoundSettings {
     }
 }
 
-/// Whether a stored server's kind is one nori has; absent in profiles saved before there were kinds.
-fn kind_kept(v: &Value) -> bool {
-    v.get("kind").and_then(Value::as_str).is_none_or(|k| ServerKind::from_id(k).is_some())
-}
-
 /// One server from the stored list; None without an id.
 fn server_from(v: &Value) -> Option<SavedServer> {
     let o = v.as_object()?;
+    // Absent in profiles saved before there were kinds.
+    let kind = o.get("kind").and_then(Value::as_str);
     Some(SavedServer {
         id: text(o.get("id")?),
-        kind: o.get("kind").and_then(Value::as_str).and_then(ServerKind::from_id).unwrap_or_default(),
+        kind: kind.and_then(ServerKind::from_id).unwrap_or_default(),
         name: opt_string(o, "name"),
         url: opt_string(o, "url"),
         alt_url: opt_string(o, "altUrl"),
-        user: opt_string(o, "user"),
+        // The built-in YouTube Music's account stayed with it: the plugin signs in again.
+        user: if kind == Some(BUILT_IN_YOUTUBE_MUSIC) { String::new() } else { opt_string(o, "user") },
         password: opt_string(o, "password"),
         api_key: opt_string(o, "apiKey"),
         legacy_auth: opt_bool(o, "legacyAuth"),
@@ -2457,17 +2459,25 @@ mod tests {
     }
 
     /// Every kind is stored under its own name and read back; a profile saved before there were kinds
-    /// is a server's, and one of a kind nori no longer has is dropped alone.
+    /// is a server's.
     #[test]
     fn kinds_are_stored_by_name() {
         for kind in [ServerKind::Subsonic, ServerKind::Plugin { id: "fm.nori.youtube-music".into() }] {
-            let p = SavedServer { id: "p".into(), kind, ..SavedServer::default() };
+            let p = SavedServer { id: "p".into(), kind, user: "u".into(), ..SavedServer::default() };
             assert_eq!(server_from(&server_json(&p)), Some(p));
         }
         assert_eq!(server_from(&serde_json::json!({"id": "a", "url": "https://x"})).unwrap().kind, ServerKind::Subsonic, "saved before kinds");
-        let stored = serde_json::json!([{"id": "a", "kind": "youtubeMusic"}, {"id": "b", "kind": "subsonic"}]).to_string();
+    }
+
+    /// A profile of the built-in YouTube Music is the plugin's, keeping its id and name; its account
+    /// stayed behind, so it opens signed out.
+    #[test]
+    fn built_in_youtube_music_becomes_the_plugin() {
+        let stored = serde_json::json!([{"id": "a", "kind": "youtubeMusic", "name": "Mine", "user": "me"}, {"id": "b", "kind": "subsonic", "user": "u"}]).to_string();
         let kept = (SERVERS.load)(Some(&stored), Vec::new());
-        assert_eq!(kept.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec!["b"], "the built-in YouTube Music is gone; its profile goes, the rest stay");
+        let plugin = ServerKind::Plugin { id: "fm.nori.youtube-music".into() };
+        let read: Vec<_> = kept.iter().map(|s| (s.id.as_str(), &s.kind, s.name.as_str(), s.user.as_str())).collect();
+        assert_eq!(read, vec![("a", &plugin, "Mine", ""), ("b", &ServerKind::Subsonic, "", "u")]);
     }
 
     fn sound() -> SoundSettings {

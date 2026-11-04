@@ -127,6 +127,8 @@ struct Runner {
     session: Option<Session>,
     /// What follows the profile about to open, when it was just added.
     after_adding: Option<AfterAdding>,
+    /// The profile in use while its plugin doesn't run here, opened once it does.
+    waiting: Option<SavedServer>,
     /// The lyrics panel was shown when last told to the session ([`Session::lyrics_view`]).
     lyrics_viewed: bool,
     /// Media controls for the process; each session drives them while open.
@@ -218,7 +220,7 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
     app.shared = root.app.clone();
     app.settings.own.shared = root.app.clone();
-    let mut r = Runner { root: root.clone(), http: Http::new(), tx, session: None, after_adding: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
+    let mut r = Runner { root: root.clone(), http: Http::new(), tx, session: None, after_adding: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
     // Plugins reach the web before any profile opens; a session's own transport takes over.
     app.settings.own.kinds.set_transport(r.http.clone());
     let notices = r.tx.clone();
@@ -267,6 +269,11 @@ impl Runner {
             s.close();
         }
         (self.playback, self.queue) = (Playback::Here, None);
+        self.waiting = self.root.plugins().kinds.waits(profile.clone()).map(|_| profile.clone());
+        if self.waiting.is_some() {
+            // The first screen, where its plugin's line installs it or turns it on.
+            return app.session_ended();
+        }
         let name = nori_core::settings::label(&profile.name, &profile.url);
         let o = Open {
             root: &self.root,
@@ -429,7 +436,11 @@ impl Runner {
             PluginCmd::Turn(id, on) => host.turn(id, on),
             PluginCmd::TurnOnChosen(id) => {
                 host.turn(id.clone(), true);
-                app.provider_chosen(nori_core::settings::ServerKind::Plugin { id });
+                let kind = nori_core::settings::ServerKind::Plugin { id };
+                // The profile waiting for it opens below, instead of a new one's form.
+                if self.waiting.as_ref().is_none_or(|p| p.kind != kind) {
+                    app.provider_chosen(kind);
+                }
             }
             PluginCmd::Place(id, at) => host.place(id, at),
             PluginCmd::Uninstall(id) => {
@@ -512,6 +523,21 @@ impl Runner {
         app.settings.invalidate();
         app.cmds.extend(app.settings.readme_wanted());
         app.dirty = true;
+        self.waited(app);
+    }
+
+    /// The waiting profile opened once its plugin runs; until then the first screen says why it waits.
+    fn waited(&mut self, app: &mut App) {
+        let Some(profile) = self.waiting.clone() else { return };
+        let nori_core::settings::ServerKind::Plugin { id } = &profile.kind else { return };
+        match self.root.plugins().kinds.waits(profile.clone()) {
+            None => self.open(app, profile),
+            Some(wait) => {
+                let own = &app.settings.own;
+                let name = nori_plugins::plugin_display_name(id.clone(), own.plugins.clone(), own.offers().to_vec());
+                app.login.error = Some(crate::text::profile_waits(&name, wait));
+            }
+        }
     }
 
     /// The profile in use opened again, as signing in or out left it.

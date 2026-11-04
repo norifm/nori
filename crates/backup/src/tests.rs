@@ -37,28 +37,6 @@ impl Transport for Web {
     }
 }
 
-struct Quiet;
-
-impl nori_plugins::Client for Quiet {
-    fn layer_changed(&self, _: u32) {}
-    fn devices_changed(&self) {}
-    fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
-    fn shown(&self, _: String, _: String, _: bool, _: bool) {}
-    fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}
-    fn browse(&self, _: String, _: bool) {}
-    fn multicast(&self, _: bool) {}
-    fn streaming(&self, _: bool) {}
-    fn pressed(&self, _: nori_model::deciders::Press) {}
-    fn cast(&self, _: Option<nori_plugins::Cast>) {}
-    fn control(&self, _: nori_plugins::Control) {}
-    fn sign_in(&self, _: String, _: String) -> bool {
-        false
-    }
-    fn wake(&self, _: Vec<nori_plugins::WakeEvent>) {}
-    fn commands(&self, _: Vec<nori_plugins::Command>) {}
-    fn watch_screen(&self, _: bool) {}
-    fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {}
-}
 
 /// The fixture built with `features` as a `.noriplugin`, and its sha256.
 fn package(features: &str) -> (Vec<u8>, String) {
@@ -88,7 +66,7 @@ impl Device {
         let dir = nori_testdir::TempDir::new(name);
         let settings = Settings::new();
         settings.open(&dir.join("nori.db").display().to_string()).unwrap();
-        let plugins = nori_plugins::open(dir.join("plugins"), settings.clone(), Arc::new(Quiet));
+        let plugins = nori_plugins::open(dir.join("plugins"), settings.clone(), Arc::new(nori_plugins::testing::Quiet));
         let web = Arc::new(Web::default());
         plugins.set_transport(Some(web.clone()));
         Device { _dir: dir, settings, plugins, web }

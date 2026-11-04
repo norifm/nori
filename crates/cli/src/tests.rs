@@ -2658,32 +2658,11 @@ fn the_first_screen_opens_the_plugins() {
     assert_eq!(a.view, View::Settings);
 }
 
-struct Quiet;
-impl nori_plugins::Client for Quiet {
-    fn layer_changed(&self, _: u32) {}
-    fn devices_changed(&self) {}
-    fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
-    fn shown(&self, _: String, _: String, _: bool, _: bool) {}
-    fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}
-    fn browse(&self, _: String, _: bool) {}
-    fn multicast(&self, _: bool) {}
-    fn streaming(&self, _: bool) {}
-    fn pressed(&self, _: nori_core::deciders::Press) {}
-    fn cast(&self, _: Option<nori_plugins::Cast>) {}
-    fn control(&self, _: nori_plugins::Control) {}
-    fn sign_in(&self, _: String, _: String) -> bool {
-        false
-    }
-    fn wake(&self, _: Vec<nori_plugins::WakeEvent>) {}
-    fn commands(&self, _: Vec<nori_plugins::Command>) {}
-    fn watch_screen(&self, _: bool) {}
-    fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {}
-}
 
 /// An app on the first screen with the fixture plugin on, so its provider is a kind of profile.
 fn app_with_provider(dir: &nori_testdir::TempDir) -> App {
     let mut a = app();
-    let plugins = nori_plugins::open(dir.join("plugins"), a.shared.settings.clone(), std::sync::Arc::new(Quiet));
+    let plugins = nori_plugins::open(dir.join("plugins"), a.shared.settings.clone(), std::sync::Arc::new(nori_plugins::testing::Quiet));
     plugins.install(&nori_plugins::testing::fixture("")).unwrap();
     plugins.turn(nori_plugins::testing::FIXTURE.into(), true);
     a.settings.own.kinds = nori_core::providers::Kinds::with_plugins(plugins);
