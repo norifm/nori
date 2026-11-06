@@ -89,7 +89,7 @@ fn play_radio(song: Song) -> i32 {
         Ok(songs) if songs.is_empty() => 0,
         Ok(songs) => {
             let n = i32::try_from(songs.len()).unwrap_or(i32::MAX);
-            with_session(|s| s.play(songs, 0, false, None)).map_or(0, |()| n)
+            with_session(|s| s.play_radio(songs)).map_or(0, |()| n)
         }
         Err(_) => -1,
     }

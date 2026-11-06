@@ -332,7 +332,7 @@ impl Nori {
         let songs = client.radio(id).await.map_err(error)?;
         let n = songs.len();
         if n > 0 {
-            self.with(|h| h.play(songs, 0, false, None));
+            self.with(|h| h.play_radio(songs));
         }
         Ok(n)
     }
