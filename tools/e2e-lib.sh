@@ -126,12 +126,12 @@ fields() { state | python3 -c "
 import sys,json;d=json.load(sys.stdin)
 for k in sys.argv[1:]: print(d.get(k,''))" "$@" 2>/dev/null; }
 
-# `wait_for <field> <value> <timeout s>`: until the field reads the value (a leading ! waits for it to read
-# anything else, and >N / <N for a number past N). Fails after the timeout, saying what it last read.
-WAITED=""
 # The bridge takes the login; "no ui" until the screen is up.
 logged_in_asked() { [ "$("$app" login "$APP_URL|$USER|$PASS")" = ok ]; }
 
+# `wait_for <field> <value> <timeout s>`: until the field reads the value (a leading ! waits for it to read
+# anything else, and >N / <N for a number past N). Fails after the timeout, saying what it last read.
+WAITED=""
 wait_for() {
   local f="$1" want="$2" limit="$3" v="" end=$(( $(date +%s) + $3 ))
   while :; do
