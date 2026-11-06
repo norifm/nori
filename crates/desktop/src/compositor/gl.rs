@@ -1525,7 +1525,7 @@ mod tests {
                     "live and starred".into()
                 }
                 18 => {
-                    bar.set_inspector(next(4) as i32);
+                    bar.set_inspector([crate::Panel::None, crate::Panel::Queue, crate::Panel::Lyrics, crate::Panel::Devices][next(4) as usize]);
                     bar.set_devices_on(next(2) == 0);
                     bar.set_covers_rev(bar.get_covers_rev() + 1);
                     "inspector, devices, covers".into()
@@ -1553,8 +1553,8 @@ mod tests {
         let page_layer = layers.borrow().last().unwrap().clone();
         let art = cover.clone();
         page.on_art(move |id, _, _| if id.is_empty() { slint::Image::default() } else { art.clone() });
-        page.set_view(6);
-        page.set_page_kind(1);
+        page.set_view(crate::View::Page);
+        page.set_page_kind(crate::PageLayout::Artist);
         page.set_page_title("Linkin Park".into());
         page.set_page_caption("74 releases".into());
         let rows: Vec<crate::SongRow> = (0..30)
