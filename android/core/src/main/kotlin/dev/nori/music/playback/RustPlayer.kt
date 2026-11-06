@@ -934,7 +934,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     @Suppress("DEPRECATION")
     private val wakeLock = context.getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "nori:engine").apply { setReferenceCounted(false) }
 
-    /** Music is wanted and can come ([follow]): the CPU lock is held for it, unless the engine lets the CPU sleep. */
+    /** Music plays, or is on its way ([follow]): the CPU lock is held for it, unless the engine lets the CPU sleep. */
     @Volatile private var wantsCpu = false
     /**
      * The engine said it can let the CPU sleep (nori-engine's `Event::Awake(false)`): the songs are on the
@@ -955,22 +955,25 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     }
 
     /**
-     * The receiver and the CPU lock are held exactly while music is wanted, as ExoPlayer's WAKE_MODE_LOCAL -
-     * and can come: an output that would not open leaves the player wanting music it cannot play, and
-     * held on through that, the lock kept the phone awake for nothing. Released, nothing is wanted: a
-     * late word of the engine as it stops changes nothing.
+     * The receiver is held exactly while music is wanted, as ExoPlayer's WAKE_MODE_LOCAL - and can come: an
+     * output that would not open leaves the player wanting music it cannot play. It stays while a call holds
+     * the music: headphones pulled out then must not let it come back on the speaker. The CPU lock is held
+     * only while the music plays: held by a call, the engine is paused like any pause, and the focus coming
+     * back wakes the main thread by itself. Released, nothing is wanted: a late word of the engine as it
+     * stops changes nothing.
      */
     private fun follow() {
-        val playing = h != 0L && want.playWhenReady && prepared && error == null && engineState != EngineState.ENDED
-        if (playing && !listening) {
+        val comes = h != 0L && prepared && error == null && engineState != EngineState.ENDED
+        val wanted = comes && want.playWhenReady
+        if (wanted && !listening) {
             val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
             if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(noisy, filter, Context.RECEIVER_NOT_EXPORTED) else context.registerReceiver(noisy, filter)
             listening = true
-        } else if (!playing && listening) {
+        } else if (!wanted && listening) {
             context.unregisterReceiver(noisy)
             listening = false
         }
-        wantsCpu = playing
+        wantsCpu = comes && want == Want.PLAYING
         holdCpu()
     }
 
