@@ -145,8 +145,7 @@ pub fn queue_offer(saved: PlayQueue, by: &str, here: Option<&str>, playing: bool
 
 /// Whether an offer of a queue at the song `offered` is still worth showing on a device that shows the song
 /// `here` (its own, or another device's it controls) and is `playing` or not.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn offer_stands(offered: &str, here: Option<String>, playing: bool) -> bool {
+pub(crate) fn offer_stands(offered: &str, here: Option<String>, playing: bool) -> bool {
     !playing && here.as_deref() != Some(offered)
 }
 

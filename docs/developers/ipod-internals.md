@@ -70,7 +70,7 @@ mode or sheet presentation controller.
 | `lyrics.rs` | The core's `LyricClock` behind a handle the lyrics page holds |
 | `theme.rs` | The `theme` and `season` settings worn on the device's date and zone, and pages dyed with a cover |
 | `account.rs` | The login form (`providers`, `log_in`) and saved servers |
-| `offer.rs` | The queue another device left on the server, offered on Home (`Client::queue_offer`) |
+| `offer.rs` | The queue another device left on the server, offered on Home (`offer::Offered`) |
 | `remote.rs` | Remote control: Bonjour through the app, the devices the music can move to |
 | `jam.rs` | A jam this iPod is a guest in |
 

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use nori_core::browse::{AlbumSort, HistoryAfter, LibrarySection, ProfileRules};
 use nori_core::paged::Paged;
 use nori_core::library::QueueOffer;
+use nori_core::offer::Offered;
 use nori_core::providers::{AfterAdding, FirstStep};
 use nori_core::menus::{DownloadAct, PageAction, PageKind, SongDownload};
 use nori_core::mixes::board::{MixSheet, MixTile};
@@ -133,8 +134,8 @@ pub enum Cmd {
     RedrawMix(String),
     /// Keeps a mix as a playlist, its name made from `title` by the core.
     SaveMix { title: String, songs: Vec<Song> },
-    /// Asks for the queue another device left, for a player `playing` or not and showing the song `shown`.
-    LookForOffer { playing: bool, shown: Option<String> },
+    /// Asks for the queue another device left, against what the player shows.
+    LookForOffer,
     /// Plays the queue offered where it was left, and does not offer it again.
     TakeOffer(QueueOffer),
     DismissOffer(QueueOffer),
@@ -473,7 +474,7 @@ pub struct Home {
     /// For you: the favorites, then the mixes.
     pub mixes: Vec<MixTile>,
     /// The queue left on the server, offered to carry on here (`Client::queue_offer`).
-    pub offer: Option<QueueOffer>,
+    pub offer: Offered,
     pub error: Option<String>,
     pub asked: bool,
     /// Selection over [`Home::lines`].
@@ -518,7 +519,7 @@ impl Home {
 
     pub fn lines(&self) -> Vec<HomeLine> {
         let mut out = Vec::new();
-        if self.offer.is_some() {
+        if self.offer.shown().is_some() {
             out.push(HomeLine::Offer);
         }
         let shelves = std::iter::once(ShelfAt::ForYou).chain((0..self.rows.len()).map(ShelfAt::Row));
@@ -551,14 +552,6 @@ impl Home {
         let lines = self.lines();
         if lines.get(self.sel.at) == Some(&HomeLine::Gap) {
             self.sel.at = if down && self.sel.at + 1 < lines.len() { self.sel.at + 1 } else { self.sel.at.saturating_sub(1) };
-        }
-    }
-
-    /// The offered song, playing here or the player showing it, takes the offer away (`offer_stands`).
-    fn offer_still(&mut self, here: Option<String>, playing: bool) {
-        let gone = self.offer.as_ref().is_some_and(|o| !o.songs.get(o.index as usize).is_some_and(|s| nori_core::library::offer_stands(&s.id, here.clone(), playing)));
-        if gone {
-            self.offer = None;
         }
     }
 }
@@ -1546,11 +1539,8 @@ impl App {
                     self.home.sel = Sel::default();
                     self.cmds.push(Cmd::Load(Req::Home));
                 }
-                // Each time Home comes into sight, the queue another device left; a jam guest's is the host's.
-                if self.rules.account {
-                    let (playing, shown) = (self.now.state == State::Playing, self.song.as_ref().map(|s| s.id.clone()));
-                    self.cmds.push(Cmd::LookForOffer { playing, shown });
-                }
+                // Each time Home comes into sight, the queue another device left.
+                self.cmds.push(Cmd::LookForOffer);
             }
             View::Albums if matches!(l.albums, Load::Idle) => {
                 l.albums = Load::Loading;
@@ -1759,9 +1749,8 @@ impl App {
                 }
             }
             Msg::Offer(offer) => {
-                self.home.offer = offer;
                 let (here, playing) = (self.song.as_ref().map(|s| s.id.clone()), self.now.state == State::Playing);
-                self.home.offer_still(here, playing);
+                self.home.offer.found(offer, here, playing);
             }
             Msg::LoggedIn(r) => {
                 self.login.busy = false;
@@ -1844,7 +1833,7 @@ impl App {
                 }
                 // Music started: Home lets the offer go.
                 let here = self.song.as_ref().map(|s| s.id.clone());
-                self.home.offer_still(here, s == State::Playing);
+                self.home.offer.still(here, s == State::Playing);
             }
             Event::Song { .. } | Event::Looped { .. } => {}
             Event::Error { id, message } => {
@@ -1879,7 +1868,7 @@ impl App {
         let changed = self.song.as_ref().map(|s| &s.id) != song.as_ref().map(|s| &s.id);
         self.song = song;
         // The player came to show the song offered.
-        self.home.offer_still(self.song.as_ref().map(|s| s.id.clone()), self.now.state == State::Playing);
+        self.home.offer.still(self.song.as_ref().map(|s| s.id.clone()), self.now.state == State::Playing);
         if !changed {
             return;
         }
@@ -3248,7 +3237,7 @@ impl App {
     /// Plays the queue offered where it was left (`take`), or turns it down; either way it is not offered
     /// again (`queue_offer_done`).
     fn take_offer(&mut self, take: bool) {
-        if let Some(offer) = self.home.offer.take() {
+        if let Some(offer) = self.home.offer.close() {
             self.cmds.push(if take { Cmd::TakeOffer(offer) } else { Cmd::DismissOffer(offer) });
             self.home.settle(true);
         }

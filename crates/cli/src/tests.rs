@@ -1836,7 +1836,7 @@ fn home_offers_the_queue_left_and_the_mixes() {
     let mut a = app();
     a.rules = nori_core::browse::profile_rules(false);
     a.go(View::Home);
-    assert!(a.cmds.contains(&Cmd::LookForOffer { playing: false, shown: None }), "{:?}", a.cmds);
+    assert!(a.cmds.contains(&Cmd::LookForOffer), "{:?}", a.cmds);
     let songs = vec![song("o1", "Left Off", 200), song("o2", "Next Up", 200)];
     let offer = QueueOffer { by: QueueBy::Nori, songs: songs.clone(), index: 1, position_ms: 42_000 };
     a.handle(Msg::Offer(Some(offer.clone())));
@@ -1853,7 +1853,7 @@ fn home_offers_the_queue_left_and_the_mixes() {
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds, [Cmd::TakeOffer(offer.clone())]);
-    assert!(a.home.offer.is_none() && a.home.line() == Some(crate::app::HomeLine::Shelf(crate::app::ShelfAt::ForYou)));
+    assert!(a.home.offer.shown().is_none() && a.home.line() == Some(crate::app::HomeLine::Shelf(crate::app::ShelfAt::ForYou)));
     a.handle(Msg::Offer(Some(offer.clone())));
     key(&mut a, KeyCode::Char('g'));
     key(&mut a, KeyCode::Char('d'));
@@ -1861,7 +1861,7 @@ fn home_offers_the_queue_left_and_the_mixes() {
     // An offer whose song is playing here is gone.
     a.handle(Msg::Offer(Some(offer)));
     a.heard(Some(song("o2", "Next Up", 200)));
-    assert!(a.home.offer.is_none(), "the player shows its song");
+    assert!(a.home.offer.shown().is_none(), "the player shows its song");
     // A mix opens as a page.
     key(&mut a, KeyCode::Char('g'));
     key(&mut a, KeyCode::Down);

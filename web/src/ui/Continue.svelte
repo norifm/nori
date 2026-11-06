@@ -1,7 +1,7 @@
 <script lang="ts">
   // The queue another device or app left on the server, offered at the top of Home as Android offers it:
   // a card on the season's paper dyed with the song's cover, the song, where it stands, Resume and a close.
-  // Taken or closed, that queue is not offered again (the core's `queue_offer_done`).
+  // The core keeps it while it stands; taken or closed, that queue is not offered again.
   import { ask } from "../rpc";
   import { coverLook } from "../state/coverLook";
   import { player } from "../state/player.svelte";
@@ -16,6 +16,12 @@
   let vars = $state("");
   // Asked each time Home is drawn, while nothing plays here.
   void ask<string>("queue_offer", player.playing, player.song?.id ?? null).then((j) => (offer = JSON.parse(j)), () => {});
+  // Music started, or the player came to show the offered song: the core lets the offer go.
+  $effect(() => {
+    const here = player.song?.id ?? null;
+    const playing = player.playing;
+    if (offer) void ask<boolean>("queue_offer_still", here, playing).then((s) => !s && (offer = null));
+  });
   const song = $derived(offer?.songs[offer.index]);
   $effect(() => {
     void looks.rev;
@@ -23,13 +29,14 @@
     if (src) void coverLook(src).then((l) => (vars = l?.vars ?? ""));
   });
 
-  function done(o: Offer) {
+  function done() {
     offer = null;
-    void ask("queue_offer_done", JSON.stringify(o.songs), o.index, o.positionMs);
+    void ask("queue_offer_close");
   }
 
+  /** Plays the offer from its song and place; started here, in the click, for the sound card. */
   async function take(o: Offer) {
-    done(o);
+    done();
     await player.play(o.songs, o.index, false, "", "");
     await player.seek(o.positionMs);
   }
@@ -52,7 +59,7 @@
       title={W.close}
       onclick={(e) => {
         e.stopPropagation();
-        done(o);
+        done();
       }}><Icon name="xmark" /></button
     >
   </div>

@@ -69,6 +69,8 @@ pub struct Nori {
     client: std::cell::RefCell<Option<Arc<Client>>>,
     #[cfg(feature = "engine")]
     live: play::Live,
+    /// The queue Home offers (`offer::Offered`).
+    offered: std::cell::RefCell<nori_core::offer::Offered>,
     /// Each album grid's pages, by the grid's number; the oldest fall off.
     grids: std::cell::RefCell<std::collections::VecDeque<(u32, nori_core::paged::Paged<u32>)>>,
 }
@@ -100,6 +102,7 @@ impl Nori {
             search: nori_core::search::SearchSession::new(),
             #[cfg(not(feature = "engine"))]
             client: Default::default(),
+            offered: Default::default(),
             grids: Default::default(),
         })
     }
@@ -247,22 +250,28 @@ impl Nori {
     }
 
     /// The queue another device or app left on the server, offered while nothing plays here
-    /// (`Client::queue_offer`; `playing` and `shown`, the song the player shows, are the player's):
-    /// `{ songs, index, positionMs }` (the songs as a page reads them), or null.
+    /// (`Client::queue_offer`; `playing` and `shown`, the song the player shows, are the player's), kept
+    /// while it stands (`offer::Offered`): `{ songs, index, positionMs }` (the songs as a page reads
+    /// them), or null.
     pub async fn queue_offer(&self, playing: bool, shown: Option<String>) -> Result<String, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        let Some(o) = client.queue_offer(playing, shown).await.map_err(error)? else { return Ok("null".into()) };
+        let found = client.queue_offer(playing, shown.clone()).await.map_err(error)?;
+        let mut offered = self.offered.borrow_mut();
+        let Some(o) = offered.found(found, shown, playing) else { return Ok("null".into()) };
         let songs: Vec<Value> = o.songs.iter().map(|s| pages::song(client.core(), s)).collect();
         Ok(json!({ "songs": songs, "index": o.index, "positionMs": o.position_ms }).to_string())
     }
 
-    /// The offer of `songs` (JSON) from `index`, `position_ms` in, was taken or turned down: that queue is
-    /// not offered again (`Client::queue_offer_done`, which keeps where it stands, not who left it).
-    pub fn queue_offer_done(&self, songs: String, index: u32, position_ms: f64) -> Result<(), JsValue> {
-        let client = self.client().ok_or_else(|| error("not signed in"))?;
-        let songs: Vec<nori_core::Song> = serde_json::from_str(&songs).map_err(error)?;
-        client.queue_offer_done(nori_core::library::QueueOffer { by: nori_core::library::QueueBy::Nori, songs, index, position_ms: position_ms as u64 });
-        Ok(())
+    /// The player shows `here` and is `playing` or not: whether the offer still stands; one that does
+    /// not is let go.
+    pub fn queue_offer_still(&self, here: Option<String>, playing: bool) -> bool {
+        self.offered.borrow_mut().still(here, playing)
+    }
+
+    /// The offer was taken up or turned down: that queue is not offered again (`Client::queue_offer_done`).
+    pub fn queue_offer_close(&self) {
+        let (Some(o), Some(client)) = (self.offered.borrow_mut().close(), self.client()) else { return };
+        client.queue_offer_done(o);
     }
 
     /// Cover `id`'s address for `px` square.

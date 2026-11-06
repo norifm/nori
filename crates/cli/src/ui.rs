@@ -481,7 +481,7 @@ fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let App { home, hits, marks, rules, .. } = app;
     let h = &*home;
     let row = |i: usize, w: usize| match lines[i] {
-        HomeLine::Offer => offer_line(h.offer.as_ref(), w, t),
+        HomeLine::Offer => offer_line(h.offer.shown(), w, t),
         HomeLine::Shelf(at) => {
             let (title, _) = h.shelf(at).unwrap_or_default();
             let more = if h.count(at) > crate::app::HOME_ENTRIES { crate::text::SHOW_ALL } else { "" };
@@ -499,7 +499,7 @@ fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     list(f, area, &mut sel, lines.len(), ListRef::Home, hits, t, focused, &row);
     home.sel = sel;
     // The offer's own words act on it too.
-    if let Some(r) = app.hits.iter().find(|(_, h)| *h == Hit::Row(ListRef::Home, 0)).map(|(r, _)| *r).filter(|_| app.home.offer.is_some() && sel.top == 0) {
+    if let Some(r) = app.hits.iter().find(|(_, h)| *h == Hit::Row(ListRef::Home, 0)).map(|(r, _)| *r).filter(|_| app.home.offer.shown().is_some() && sel.top == 0) {
         let words = [(Span::styled(crate::text::RESUME, bold().fg(t.ink)), Button::Resume), (Span::styled(crate::text::CLOSE, t.dim()), Button::Dismiss)];
         let w: u16 = words.iter().map(|(s, _)| s.width() as u16 + 3).sum::<u16>() - 3;
         let at = Rect { x: r.x + r.width.saturating_sub(w + 2), width: w, ..r };

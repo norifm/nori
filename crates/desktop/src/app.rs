@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use nori_core::browse::AlbumSort;
 use nori_core::lyrics_follow::LyricsNow;
 use nori_core::menus::PageKind;
+use nori_core::offer::Offered;
 use nori_core::paged::Paged;
 use nori_core::search::{SearchShown, SearchView};
 use nori_core::settings::SavedServer;
@@ -434,7 +435,7 @@ pub struct App {
     /// The page shown, set with `page_fetch`.
     page: Option<PageShown>,
     /// The queue another device or app left on the server, offered at the top of Home (the core's `queue_offer`).
-    offer: Option<nori_core::library::QueueOffer>,
+    offer: Offered,
     /// Home's mixes, whose cards take their first cover's colors once known.
     mixes: Vec<nori_core::mixes::board::MixTile>,
     songs: Vec<Song>,
@@ -703,7 +704,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             page_songs_all: false,
             page_fetch: None,
             page: None,
-            offer: None,
+            offer: Offered::default(),
             mixes: Vec::new(),
             songs: Vec::new(),
             search_songs: Vec::new(),
@@ -1877,18 +1878,17 @@ impl App {
 
     /// Asks whether another device or app left a queue worth carrying on here, as Home comes into sight.
     fn look_for_offer(&self) {
-        let Some(s) = self.session.as_ref().filter(|s| s.rules().account) else { return };
-        let (client, tx, playing, here) = (s.client.clone(), self.tx.clone(), self.ui().get_playing(), self.heard.clone());
+        let Some(s) = &self.session else { return };
+        let (h, tx) = (nori_host::session::Handle::clone(s), self.tx.clone());
         nori_host::spawn("nori-queue-offer", move || {
-            let offer = nori_core::transport::block_on(client.queue_offer(playing, here)).ok().flatten();
-            tx.send(Msg::Offer(offer));
+            tx.send(Msg::Offer(h.queue_offer()));
         });
     }
 
     /// Home's Continue card: the offered song, where it stands in its queue, and its cover.
     fn offer_shown(&self) {
         let ui = self.ui();
-        let song = self.offer.as_ref().and_then(|o| o.songs.get(o.index as usize).map(|s| (o, s)));
+        let song = self.offer.shown().and_then(|o| o.songs.get(o.index as usize).map(|s| (o, s)));
         ui.set_offer_shown(song.is_some());
         if let Some((o, s)) = song {
             ui.set_offer_title(s.title.as_str().into());
@@ -1900,12 +1900,8 @@ impl App {
     /// The offered queue taken up (played from its song and place) or turned down: either way it is not
     /// offered again.
     fn close_offer(&mut self, take: bool) {
-        let (Some(o), Some(s)) = (self.offer.take(), &self.session) else { return };
-        s.client.queue_offer_done(o.clone());
-        if take {
-            s.play(o.songs, o.index as usize, false, None);
-            s.seek(o.position_ms as i64);
-        }
+        let (Some(o), Some(s)) = (self.offer.close(), &self.session) else { return };
+        s.queue_offer_closed(o, take);
         self.offer_shown();
     }
 
@@ -3359,7 +3355,7 @@ impl App {
             Msg::Shared(Some(link)) => self.copy(link),
             Msg::Offer(offer) => {
                 let (playing, here) = (self.ui().get_playing(), self.heard.clone());
-                self.offer = offer.filter(|o| o.songs.get(o.index as usize).is_some_and(|s| nori_core::library::offer_stands(&s.id, here, playing)));
+                self.offer.found(offer, here, playing);
                 self.offer_shown();
             }
             Msg::Shared(None) => self.say(words::SHARE_FAILED, true),
@@ -4389,6 +4385,10 @@ impl App {
         self.lyrics_seen();
         if now.song.as_ref().map(|s| &s.id) != self.heard.as_ref() {
             self.song_shown(now.song.clone());
+        }
+        // Music started, or the player came to show the offered song: Home lets the offer go.
+        if self.offer.shown().is_some() && !self.offer.still(self.heard.clone(), playing) {
+            self.offer_shown();
         }
         ui.set_now_starred(self.song.as_ref().is_some_and(|s| self.starred(s)));
         if !matches!(self.playback, Playback::Here) {

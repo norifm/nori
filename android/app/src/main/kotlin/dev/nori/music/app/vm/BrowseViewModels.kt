@@ -87,6 +87,8 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
     // The app was opened: a good moment to replay whatever was starred, rated or played while offline.
     init { viewModelScope.launch { runCatching { nori.library.flushPending() } } }
 
+    /** What the core decides of the offer (`offer::Offered`); [offer] is what it shows. */
+    private val offered by lazy { dev.nori.music.ffi.library.HomeOffer() }
     private val _offer = MutableStateFlow<dev.nori.music.ffi.library.QueueOffer?>(null)
     /** The queue another device or app left on the server, offered at the top of the page; null for none. */
     val offer: StateFlow<dev.nori.music.ffi.library.QueueOffer?> = _offer
@@ -94,23 +96,19 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
     init {
         // Music started, or the player came to show the offered song (another device's it controls, found
         // after the page asked): the page lets the offer go.
-        viewModelScope.launch { nori.player.state.collect { s -> _offer.value?.let { if (!stands(it, s)) _offer.value = null } } }
+        viewModelScope.launch { nori.player.state.collect { s -> if (_offer.value != null && !offered.still(s.current?.id, s.playing)) _offer.value = null } }
     }
 
-    /** Asked each time the page comes into sight; a jam guest's Home is the host's, and offers nothing. */
+    /** Asked each time the page comes into sight; a jam guest's Home is the host's, and the core offers nothing. */
     fun lookForOffer() {
-        if (!nori.rules.account) return
         val asked = nori.player.state.value
         viewModelScope.launch {
-            val offer = runCatching { nori.library.queueOffer(asked.playing, asked.current?.id) }.getOrNull()
-            _offer.value = offer?.takeIf { stands(it, nori.player.state.value) }
+            _offer.value = withContext(Dispatchers.IO) {
+                val found = runCatching { nori.library.queueOffer(asked.playing, asked.current?.id) }.getOrNull()
+                val now = nori.player.state.value
+                found.takeIf { offered.found(found, now.current?.id, now.playing) }
+            }
         }
-    }
-
-    /** Whether [offer] still stands against what the player [state] shows (the core's `offer_stands`). */
-    private fun stands(offer: dev.nori.music.ffi.library.QueueOffer, state: dev.nori.music.playback.PlayerState): Boolean {
-        val offered = offer.songs.getOrNull(offer.index.toInt())?.id ?: return false
-        return dev.nori.music.ffi.library.offerStands(offered, state.current?.id, state.playing)
     }
 
     /** Plays the offered queue where it was left. */
@@ -121,7 +119,7 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
 
     fun dismissOffer() { closeOffer() }
 
-    private fun closeOffer(): dev.nori.music.ffi.library.QueueOffer? = _offer.value?.also {
+    private fun closeOffer(): dev.nori.music.ffi.library.QueueOffer? = offered.end()?.also {
         _offer.value = null
         nori.library.queueOfferDone(it)
     }

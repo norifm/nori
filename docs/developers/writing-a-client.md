@@ -245,6 +245,11 @@ of this; Android's `PlaybackService` calls the same functions.
   pauses (`typed_with_index`, `answer`); its `SearchView` says where the answer stands as one
   `SearchShown` (blank, asking, failed, found, nothing found). On the host: `search_typed`,
   `search_server` (reported as `Said::Search`) and `search_server_now` (on the caller's thread).
+- **Home's queue offer**: `offer::Offered` keeps a look's answer (`Client::queue_offer`, which asks
+  nothing for a profile without an account) while it stands against what the player shows, lets it go
+  once music starts or the player shows its song, and hands it over once when taken up or turned down
+  (`HomeOffer` for Android). On the host `Handle::queue_offer` asks against what the player shows, and
+  `Handle::queue_offer_closed` marks it done and, taken, plays it from its song and place.
 - **A favorite**: `Client::star` marks it at once and puts the old mark back if the server refuses.
 - **Fetching ahead**: `Client::precache_targets` names the songs after the next (the `songs_ahead_wifi`
   and `songs_ahead_mobile` settings; never a provider's song). The engine fetches them whole, one after

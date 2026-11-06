@@ -8,6 +8,7 @@ pub mod car;
 pub mod history;
 pub mod library;
 pub mod m3u;
+pub mod offer;
 pub mod menus;
 pub mod mixes;
 pub mod paged;
