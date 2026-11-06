@@ -99,8 +99,8 @@ pub struct Watch {
     outputs: Vec<(String, Progress)>,
     heard: Option<(String, i64)>,
     shown: Option<String>,
-    differ_since: Option<i64>,
-    differ_said: bool,
+    /// Shown and heard songs differ.
+    differ: Off,
     /// The screen is not visible, so it is not compared (it does not update).
     hidden: bool,
     skips: Option<Skips>,
@@ -114,7 +114,7 @@ pub struct Watch {
     silent_said: bool,
 }
 
-/// Tracks how long a position has been off, reporting once per episode.
+/// Tracks how long something has been off, reporting once per episode.
 #[derive(Default, Clone, Copy)]
 struct Off {
     since: Option<i64>,
@@ -122,18 +122,18 @@ struct Off {
 }
 
 impl Off {
-    /// True once when `far` has held for longer than [`DIFFER_MS`].
-    fn follow(&mut self, now: i64, far: bool) -> bool {
-        if !far {
+    /// How long `off` has held, once when that is longer than [`DIFFER_MS`].
+    fn follow(&mut self, now: i64, off: bool) -> Option<i64> {
+        if !off {
             *self = Off::default();
-            return false;
+            return None;
         }
         let since = *self.since.get_or_insert(now);
         if self.said || now - since <= DIFFER_MS {
-            return false;
+            return None;
         }
         self.said = true;
-        true
+        Some(now - since)
     }
 }
 
@@ -241,12 +241,12 @@ impl Watch {
     pub fn visible(&mut self, now: i64, on: bool) -> Option<Break> {
         if !on {
             self.hidden = true;
-            self.differ_since = None;
+            self.differ.since = None;
             return None;
         }
         if self.hidden {
             self.hidden = false;
-            self.differ_since = None;
+            self.differ.since = None;
         }
         self.compare(now)
     }
@@ -254,31 +254,22 @@ impl Watch {
     /// "shown-heard": shown and heard songs differ for longer than [`DIFFER_MS`].
     pub fn compare(&mut self, now: i64) -> Option<Break> {
         let (Some((heard, _)), Some(shown)) = (&self.heard, &self.shown) else {
-            self.differ_since = None;
+            self.differ.since = None;
             return None;
         };
         if self.hidden {
             return None;
         }
-        if heard == shown {
-            self.differ_since = None;
-            self.differ_said = false;
-            return None;
-        }
-        let since = *self.differ_since.get_or_insert(now);
-        if self.differ_said || now - since <= DIFFER_MS {
-            return None;
-        }
-        self.differ_said = true;
-        Some(Break::new("shown-heard", format!("the screen showed {shown} while {heard} was heard, for {} ms", now - since)))
+        let ms = self.differ.follow(now, heard != shown)?;
+        Some(Break::new("shown-heard", format!("the screen showed {shown} while {heard} was heard, for {ms} ms")))
     }
 
     /// "place": while playing, the seek bar (`shown_ms`) or controller (`word_ms`) position is more than
     /// [`PLACE_MS`] from the engine's for over [`DIFFER_MS`]. `engine_ms` < 0: unknown, not judged.
     pub fn place(&mut self, now: i64, playing: bool, shown_ms: i64, engine_ms: i64, word_ms: i64) -> Option<Break> {
         let judged = playing && engine_ms >= 0;
-        let bar = self.bar_off.follow(now, judged && (shown_ms - engine_ms).abs() > PLACE_MS);
-        let word = self.word_off.follow(now, judged && (word_ms - engine_ms).abs() > PLACE_MS);
+        let bar = self.bar_off.follow(now, judged && (shown_ms - engine_ms).abs() > PLACE_MS).is_some();
+        let word = self.word_off.follow(now, judged && (word_ms - engine_ms).abs() > PLACE_MS).is_some();
         let s = |ms: i64| format!("{:.1} s", ms as f64 / 1000.0);
         if bar {
             return Some(Break::new("place", format!("the seek bar showed {} while the engine was at {} (the controller's word {})", s(shown_ms), s(engine_ms), s(word_ms))));

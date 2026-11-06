@@ -1,7 +1,7 @@
 //! The session a plugin reaches, its hooks, timers, cache, assets, wakes and commands, over the test
 //! plugin (fixture/src/hooked.rs) on a simulated clock.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use nori_model::Song;
 use nori_net::transport::{Exchange, Network, Transport, TransportError, TransportResponse};
@@ -76,6 +76,16 @@ fn song(id: &str) -> Song {
 #[derive(Default)]
 struct Shelf {
     rev: Mutex<u64>,
+    /// Lyrics are held back while this is set, until [`Shelf::give_lyrics`].
+    lyrics_held: Mutex<bool>,
+    lyrics_given: Condvar,
+}
+
+impl Shelf {
+    fn give_lyrics(&self) {
+        *self.lyrics_held.lock().unwrap() = false;
+        self.lyrics_given.notify_all();
+    }
 }
 
 impl Library for Shelf {
@@ -119,6 +129,7 @@ impl Library for Shelf {
         Ok(format!("{method}?{}", params.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("&")).into_bytes())
     }
     fn synced_lyrics(&self, s: &Song) -> Option<Vec<(u32, String)>> {
+        drop(self.lyrics_given.wait_while(self.lyrics_held.lock().unwrap(), |held| *held).unwrap());
         (s.id == "c").then(|| vec![(0, "one".into()), (1000, "two".into()), (2500, "three".into())])
     }
 }
@@ -275,6 +286,17 @@ fn lyric_lines_wake_as_they_are_reached_while_the_song_plays() {
     r.plugins.played(Moment { playing: true, index: Some(2), song: Some("c".into()), position_ms: 2000, ..Default::default() });
     r.pass(500);
     assert_eq!(r.heard(), ["started", "lyric 2 three"], "from where it plays again");
+}
+
+#[test]
+fn lyric_lines_wake_after_a_seek_made_while_their_lyrics_came() {
+    let r = Rig::on("plugins-lyrics-seek");
+    *r.shelf.lyrics_held.lock().unwrap() = true;
+    r.plugins.played(Moment { playing: true, index: Some(2), song: Some("c".into()), position_ms: 0, ..Default::default() });
+    r.plugins.played(Moment { playing: true, index: Some(2), song: Some("c".into()), position_ms: 1000, ..Default::default() });
+    r.shelf.give_lyrics();
+    r.until_heard("lyric 1 two");
+    assert_eq!(r.heard(), ["started", "song C", "lyric 1 two"], "from where it was sought to");
 }
 
 impl Rig {

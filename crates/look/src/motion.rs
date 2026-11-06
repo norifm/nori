@@ -57,20 +57,34 @@ fn ease(t: f32) -> f32 {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SeekPace {
     bar: f32,
-    /// Bar position where the current glide started.
-    glide_from: Option<f32>,
-    glide_s: f32,
+    glide: Option<Glide>,
     /// Song position at the last step, 0..1.
     target: f32,
     /// Position and duration the labels show.
     at_ms: i64,
     duration_ms: i64,
-    /// Position and duration of the labels fading out.
-    fade_from: Option<(i64, i64)>,
-    fade_s: f32,
+    /// The labels fading out.
+    fade: Option<Fade>,
     synced: bool,
     /// How far the bar moves per redraw while it keeps up: [`DRAW_PX`], or [`REDUCED_DRAW_PX`].
     step_px: f32,
+}
+
+/// The bar gliding to the song after a jump.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Glide {
+    /// Bar position where it started.
+    from: f32,
+    s: f32,
+}
+
+/// Labels fading out after a jump.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Fade {
+    /// Position and duration they show.
+    at_ms: i64,
+    duration_ms: i64,
+    s: f32,
 }
 
 impl Default for SeekPace {
@@ -95,7 +109,7 @@ fn times(position_ms: i64, duration_ms: i64) -> (i64, i64) {
 
 impl SeekPace {
     pub const fn new() -> Self {
-        SeekPace { bar: 0.0, glide_from: None, glide_s: 0.0, target: 0.0, at_ms: 0, duration_ms: 0, fade_from: None, fade_s: 0.0, synced: false, step_px: DRAW_PX }
+        SeekPace { bar: 0.0, glide: None, target: 0.0, at_ms: 0, duration_ms: 0, fade: None, synced: false, step_px: DRAW_PX }
     }
 
     /// A pace for reduced motion: the bar steps a whole pixel at a time.
@@ -134,35 +148,31 @@ impl SeekPace {
         let predicted = self.at_ms + played_ms;
         if duration_ms != self.duration_ms || (position_ms - predicted).abs() >= JUMP_MS {
             if times(self.at_ms, self.duration_ms) != times(position_ms, duration_ms) {
-                self.fade_from = Some((self.at_ms, self.duration_ms));
-                self.fade_s = 0.0;
+                self.fade = Some(Fade { at_ms: self.at_ms, duration_ms: self.duration_ms, s: 0.0 });
             }
-        } else if self.fade_from.is_some() {
-            self.fade_s += dt;
+        } else if let Some(f) = &mut self.fade {
+            f.s += dt;
         }
-        if self.fade_s >= GLIDE_S {
-            self.fade_from = None;
-        }
+        self.fade = self.fade.filter(|f| f.s < GLIDE_S);
         self.at_ms = position_ms.max(0);
         self.duration_ms = duration_ms;
 
         // Bar: a jump starts a glide from the drawn position (restarting any glide in progress).
         let gap_px = (target - self.bar) * width;
-        let gliding = self.glide_from.is_some();
+        let gliding = self.glide.is_some();
         let jumped_again = gliding && ((target - self.target) * width).abs() > JUMP_PX + expected_px;
-        if gliding && !jumped_again {
-            self.glide_s += dt;
+        if let Some(g) = self.glide.as_mut().filter(|_| !jumped_again) {
+            g.s += dt;
         }
         self.target = target;
         if jumped_again || !gliding && gap_px.abs() > JUMP_PX + expected_px {
-            self.glide_from = Some(self.bar);
-            self.glide_s = 0.0;
+            self.glide = Some(Glide { from: self.bar, s: 0.0 });
         }
-        if let Some(from) = self.glide_from {
-            let t = self.glide_s / GLIDE_S;
+        if let Some(Glide { from, s }) = self.glide {
+            let t = s / GLIDE_S;
             if t >= 1.0 {
                 self.bar = target;
-                self.glide_from = None;
+                self.glide = None;
             } else {
                 // The glide's end follows the moving song.
                 self.bar = from + (target - from) * ease(t);
@@ -171,7 +181,7 @@ impl SeekPace {
         } else if gap_px.abs() >= self.step_px / 2.0 {
             self.bar = target;
         }
-        if self.fade_from.is_some() {
+        if self.fade.is_some() {
             return 0;
         }
         if rate <= 0.0 {
@@ -192,7 +202,7 @@ impl SeekPace {
 
     /// Whether a glide or fade is in progress.
     pub fn moving(&self) -> bool {
-        self.glide_from.is_some() || self.fade_from.is_some()
+        self.glide.is_some() || self.fade.is_some()
     }
 
     /// Label times (elapsed, remaining) in whole seconds.
@@ -202,7 +212,7 @@ impl SeekPace {
 
     /// Outgoing label times and the incoming labels' eased opacity, during a cross-fade.
     pub fn fading(&self) -> Option<((i64, i64), f32)> {
-        self.fade_from.map(|(at, duration)| (times(at, duration), ease(self.fade_s / GLIDE_S)))
+        self.fade.map(|f| (times(f.at_ms, f.duration_ms), ease(f.s / GLIDE_S)))
     }
 
     /// Opacity of the current labels, 0..1.

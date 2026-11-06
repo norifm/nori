@@ -6,7 +6,7 @@ use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex};
 
 use nori_net::transport::{Exchange, Network, Transport, TransportError, TransportResponse};
-use nori_plugins::testing::{fixture, FIXTURE as ID};
+use nori_plugins::testing::{fixture, FIXTURE as ID, SECOND};
 use nori_plugins::{Card, Cast, CastButton, CastKind, Hook, Media, Moment, Plugins, Service, Side, Sink, Value};
 
 /// Serves each action's setup at `/lan/<action>`.
@@ -498,6 +498,28 @@ fn served_audio_reaches_each_device_that_fetches_it() {
     rig.act("cast-end");
     assert_eq!(last(&sinks).as_deref(), Some("here"));
     assert_eq!(rig.plugins.cast(), None);
+}
+
+#[test]
+fn a_plugin_stopping_audio_another_took_over_leaves_it_playing() {
+    let rig = Rig::new("plugins-lan-two");
+    rig.plugins.install(&fixture("second")).unwrap();
+    rig.plugins.turn(SECOND.into(), true);
+    let sinks = cards(&rig.plugins);
+    rig.act("cast-serve");
+    let speaker = TcpListener::bind("127.0.0.1:0").unwrap();
+    rig.web.serve("cast-socket", format!("127.0.0.1:{}", speaker.local_addr().unwrap().port()));
+    rig.plugins.act(SECOND.into(), "cast-socket".into());
+    let w = rig.plugins.worker(SECOND).unwrap();
+    assert_eq!(nori_tasks::block_on(w.call(|_, _| Ok(1))), Some(1));
+    let (_heard, _) = speaker.accept().unwrap();
+    let pumped = sink(&sinks);
+    assert_eq!(pumped.rate, Some(48_000), "the second plugin's sink took the music");
+
+    rig.act("cast-end");
+    assert!(Arc::ptr_eq(&sink(&sinks), &pumped), "the music stays in the second plugin's sink");
+    rig.plugins.turn(SECOND.into(), false);
+    assert_eq!(last(&sinks).as_deref(), Some("here"));
 }
 
 #[test]

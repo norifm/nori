@@ -1057,12 +1057,11 @@ struct Timeline {
     run: Option<(Vec<String>, HashMap<String, PrefValue>)>,
     song: Option<String>,
     ahead: Vec<(String, PerfFormat)>,
-    /// Open output key and whether it is offloaded.
-    track: Option<(i64, bool)>,
+    /// The open output.
+    track: Option<Opened>,
     /// Last underrun reading: output key, count, time.
     underruns: Option<(i64, i32, i64)>,
-    /// Start of the current offloaded period, and offloaded time accumulated this stretch.
-    offloaded_from: Option<i64>,
+    /// Offloaded time accumulated this stretch.
     offloaded_ms: i64,
     /// Settings' offload block reason at the stretch start (outer None: not yet recorded).
     why_at_start: Option<Option<&'static str>>,
@@ -1071,6 +1070,13 @@ struct Timeline {
     lock_ms: i64,
     /// [`DATA_REQUESTS`] at the stretch start.
     requests_at_start: i64,
+}
+
+#[derive(Clone, Copy)]
+enum Opened {
+    Pcm,
+    /// Since the start of the current offloaded period, or of the stretch if later.
+    Offloaded { from: i64 },
 }
 
 /// Global because the FFI entry points that feed it carry no handle.
@@ -1134,7 +1140,7 @@ impl Timeline {
             PerfNote::Service { running } => {
                 self.push(t, "service", if running { "the player service started" } else { "the player service ended" }.into())
             }
-            PerfNote::Output { key, output } => self.output(t, key, output, settings_why),
+            PerfNote::Output { output, .. } => self.output(t, output, settings_why),
             PerfNote::Underruns { key, count } => self.underruns(t, key, count),
             PerfNote::Error { message } => self.push(t, "error", message.chars().take(400).collect()),
             PerfNote::Shallow { on } => {
@@ -1152,33 +1158,43 @@ impl Timeline {
         }
     }
 
-    fn output(&mut self, t: i64, key: i64, output: Option<PerfOutput>, settings_why: Option<&str>) {
-        let was = self.track.is_some_and(|(_, off)| off);
+    fn output(&mut self, t: i64, output: Option<PerfOutput>, settings_why: Option<&str>) {
+        let was = self.track;
         let Some(o) = output else {
-            if self.track.take().is_some() {
-                self.offload_ends(t);
+            if let Some(was) = self.track.take() {
+                self.offload_ends(was, t);
                 self.push(t, "output", "let go".into());
             }
             return;
         };
-        let again = self.track.replace((key, o.offloaded)).is_some();
         let line = output_line(&o);
         let line = line.strip_prefix("output: ").unwrap_or(&line);
-        self.push(t, "output", format!("{} {line}", if again { "reopened:" } else { "opened:" }));
-        if o.offloaded && !was {
-            self.offloaded_from = Some(t);
-            self.push(t, "offload", "entered: the audio chip decodes".into());
-        } else if !o.offloaded && was {
-            self.offload_ends(t);
-            let why = if !o.pcm_why.is_empty() { o.pcm_why.as_str() } else { settings_why.unwrap_or("the platform opened the output for PCM") };
-            self.push(t, "offload", format!("left: {why}"));
+        self.push(t, "output", format!("{} {line}", if was.is_some() { "reopened:" } else { "opened:" }));
+        self.track = Some(match (was, o.offloaded) {
+            (Some(Opened::Offloaded { from }), true) => Opened::Offloaded { from },
+            (_, true) => {
+                self.push(t, "offload", "entered: the audio chip decodes".into());
+                Opened::Offloaded { from: t }
+            }
+            (Some(was @ Opened::Offloaded { .. }), false) => {
+                self.offload_ends(was, t);
+                let why = if !o.pcm_why.is_empty() { o.pcm_why.as_str() } else { settings_why.unwrap_or("the platform opened the output for PCM") };
+                self.push(t, "offload", format!("left: {why}"));
+                Opened::Pcm
+            }
+            (_, false) => Opened::Pcm,
+        });
+    }
+
+    fn offload_ends(&mut self, was: Opened, t: i64) {
+        if let Opened::Offloaded { from } = was {
+            self.offloaded_ms += (t - from).max(0);
         }
     }
 
-    fn offload_ends(&mut self, t: i64) {
-        if let Some(from) = self.offloaded_from.take() {
-            self.offloaded_ms += (t - from).max(0);
-        }
+    /// Offloaded time in `start..end`.
+    fn offloaded(&self, start: i64, end: i64) -> i64 {
+        self.offloaded_ms + if let Some(Opened::Offloaded { from }) = self.track { (end - from.max(start)).max(0) } else { 0 }
     }
 
     /// Records an underrun reading; an increase is an event citing the previous reading's time.
@@ -1222,10 +1238,10 @@ impl Timeline {
     /// Ends the stretch `start..end`: returns its events and dropped count (empty unless `kept`; dropped
     /// stretches pass events on) and its offloaded time.
     fn close(&mut self, start: i64, end: i64, kept: bool) -> (Vec<PerfEvent>, i64, i64) {
-        let off = self.offloaded_ms + self.offloaded_from.map_or(0, |f| (end - f.max(start)).max(0));
+        let off = self.offloaded(start, end);
         self.offloaded_ms = 0;
-        if self.offloaded_from.is_some() {
-            self.offloaded_from = Some(end);
+        if let Some(Opened::Offloaded { from }) = &mut self.track {
+            *from = end;
         }
         self.run = None;
         if !kept {
@@ -1252,8 +1268,7 @@ impl Timeline {
 
     /// Like `close` without modifying anything (for the live stretch).
     fn so_far(&self, start: i64, now: i64) -> (Vec<PerfEvent>, i64, i64) {
-        let off = self.offloaded_ms + self.offloaded_from.map_or(0, |f| (now - f.max(start)).max(0));
-        (self.events.clone(), self.dropped, off)
+        (self.events.clone(), self.dropped, self.offloaded(start, now))
     }
 
     /// Clears the current stretch.

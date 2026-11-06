@@ -23,7 +23,7 @@ pub struct Maker {
 
 impl StageMaker for Maker {
     fn make(&self, rate: u32, channels: usize, inputs: &Inputs) -> Option<Box<dyn SoundStage>> {
-        let mut s = Stage { id: self.id.clone(), component: self.component.clone(), mark: self.mark.clone(), live: None, rate, channels, inputs: inputs.clone(), bypassed: false };
+        let mut s = Stage { id: self.id.clone(), component: self.component.clone(), mark: self.mark.clone(), run: Run::Bypassed, rate, channels, inputs: inputs.clone() };
         s.start();
         Some(Box::new(s))
     }
@@ -43,12 +43,16 @@ struct Stage {
     id: String,
     component: Component,
     mark: Mark,
-    live: Option<Live>,
+    run: Run,
     rate: u32,
     channels: usize,
     inputs: Inputs,
-    /// It trapped or ran over: samples pass as they are until the next reset.
-    bypassed: bool,
+}
+
+enum Run {
+    Live(Live),
+    /// It would not start, trapped or ran over: samples pass as they are until the next reset.
+    Bypassed,
 }
 
 /// `name` of the sound-stage export.
@@ -71,8 +75,13 @@ where
 impl Stage {
     /// A fresh instance, configured; bypassed when one can't be made.
     fn start(&mut self) {
-        self.live = self.mark.calling(|| self.instantiate()).map_err(|e| nori_model::alog::info(&format!("plugin {}: its sound stage can't start: {e}", self.id))).ok();
-        self.bypassed = self.live.is_none();
+        self.run = match self.mark.calling(|| self.instantiate()) {
+            Ok(live) => Run::Live(live),
+            Err(e) => {
+                nori_model::alog::info(&format!("plugin {}: its sound stage can't start: {e}", self.id));
+                Run::Bypassed
+            }
+        };
     }
 
     fn instantiate(&self) -> wasmtime::Result<Live> {
@@ -111,18 +120,16 @@ impl Stage {
         }
     }
 
-    /// Runs `call` with a block's fuel; a trap or running out bypasses the stage.
+    /// Runs `call` with a block's fuel; a trap or running out bypasses the stage, letting its instance
+    /// (which can't be entered again) go.
     fn guarded<R>(&mut self, call: impl FnOnce(&mut Live) -> wasmtime::Result<R>) -> Option<R> {
-        if self.bypassed {
-            return None;
-        }
-        let live = self.live.as_mut()?;
+        let Run::Live(live) = &mut self.run else { return None };
         let r = self.mark.calling(|| live.store.set_fuel(BLOCK_FUEL).and_then(|_| call(live)));
         match r {
             Ok(r) => Some(r),
             Err(e) => {
                 nori_model::alog::info(&format!("plugin {}: its sound stage stopped for this song: {e}", self.id));
-                self.bypassed = true;
+                self.run = Run::Bypassed;
                 None
             }
         }
@@ -150,8 +157,7 @@ impl SoundStage for Stage {
     }
 
     fn reset(&mut self) {
-        // After a trap an instance can't be entered again: a fresh one.
-        if self.bypassed {
+        if let Run::Bypassed = self.run {
             self.start();
             return;
         }
