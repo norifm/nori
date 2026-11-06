@@ -226,8 +226,14 @@ of this; Android's `PlaybackService` calls the same functions.
 - **A screen's read**: `Client::read_cached(read, PageShown)` hands the stored answer at once and the
   server's when it differs. A failure is an error only when nothing was stored.
 - **Lyrics**: `Client::lyrics_for(id, LyricsShown)` is the whole order: the server's, the services'
-  race, then none. `lyrics_replaces` and `nori_look::lyrics::matching_line` handle a better answer
-  arriving. Lyrics carry `offset_ms`, which `lyrics_clock` applies.
+  race, then none. What a lyrics view shows for the song heard is `lyrics_follow::LyricsHeard`'s
+  `LyricsNow` (no song, looking, shown, failed): the client says which song is heard (`hear`), runs the
+  lookup it is told to (`fetch`) while a view is open and hands its answers in (`answer`, `ended`); it
+  keeps only a better answer for the song heard, and the last few songs' words, so a song come back to
+  starts from them and one whose lookup ended is not looked up again. On the host this is
+  `Handle::lyrics_heard`, `lyrics_view`, `lyrics_refresh` and `lyrics_nudge`, each change a
+  `Said::Lyrics`. `nori_look::lyrics::matching_line` handles a better answer arriving. Lyrics carry
+  `offset_ms`, which `lyrics_clock` applies.
 - **A song taken out of the queue**: the last one taken out on its own goes back where it was for
   `nori_queue::undo::UNDO_MS` (`Stage::undo_ms`); `Session::put_back` (`playlist_restore`) refuses it
   after that. A client offering the undo shows it that long; one that shows none calls `Session::undo`.

@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import dev.nori.music.app.vm.ActionsViewModel
 import dev.nori.music.app.vm.CardItem
+import dev.nori.music.data.wordsOf
 import dev.nori.music.ffi.model.Artist
 import dev.nori.music.ffi.model.Playlist
 import dev.nori.music.ffi.model.Song
@@ -251,8 +252,8 @@ private fun SheetRows(head: Boolean = false, content: @Composable androidx.compo
 }
 
 /** Song [id]'s lyrics as [l] has them, when it has words. */
-private fun hasWords(l: dev.nori.music.data.ForSong<dev.nori.music.app.vm.Load<dev.nori.music.data.FoundLyrics>>, id: String): Boolean =
-    (l.of(id, dev.nori.music.app.vm.Load.Loading) as? dev.nori.music.app.vm.Load.Ready)?.data?.lyrics?.lines?.isNotEmpty() == true
+private fun hasWords(l: dev.nori.music.ffi.lyrics.LyricsNow, id: String): Boolean =
+    (l as? dev.nori.music.ffi.lyrics.LyricsNow.Shown)?.let { it.song == id && it.pick.lyrics.lines.isNotEmpty() } == true
 
 /**
  * The playing song's lyrics: where they came from, how finely they are timed, who set their timing and
@@ -261,7 +262,7 @@ private fun hasWords(l: dev.nori.music.data.ForSong<dev.nori.music.app.vm.Load<d
 @Composable
 private fun LyricsSheet(player: dev.nori.music.app.vm.PlayerViewModel, id: String) {
     val l by player.lyrics.collectAsState()
-    val found = (l.of(id, dev.nori.music.app.vm.Load.Loading) as? dev.nori.music.app.vm.Load.Ready)?.data ?: return
+    val found = remember(l, id) { l.wordsOf(id) } ?: return
     val lyrics = found.lyrics
     val pluginNames by player.pluginNames.collectAsState()
     Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {

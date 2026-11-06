@@ -14,7 +14,7 @@ use nori_core::covers::CoverNet;
 use nori_core::library::StarsShown;
 use nori_core::profiles::{CurveNotice, DeviceCurve, DeviceEffect};
 use nori_core::playlist::{Hand, QueueEdit};
-use nori_core::race::{LyricsPick, LyricsShown};
+use nori_core::lyrics_follow::LyricsNow;
 use nori_core::rules::{queue_keep, BridgeStep, QueueMoment};
 use nori_core::search::{SearchSession, SearchView};
 use nori_core::settings::{SavedServer, SettingChange, StoredPrefs};
@@ -35,8 +35,8 @@ use nori_remote::wire::Op;
 /// What a session reports from any thread.
 pub enum Said {
     Engine(Event),
-    /// One of possibly several lyrics answers for `song`, each better than the last.
-    Lyrics { song: String, pick: LyricsPick },
+    /// What the lyrics view shows changed ([`Handle::lyrics_heard`]).
+    Lyrics(LyricsNow),
     Search(SearchView),
     Note(Note),
     /// The reachability check made when a session opens.
@@ -202,17 +202,6 @@ impl Transport for Offline {
     }
 }
 
-struct Shown {
-    song: String,
-    out: Out,
-}
-
-impl LyricsShown for Shown {
-    fn show(&self, pick: LyricsPick) {
-        (self.out)(Said::Lyrics { song: self.song.clone(), pick });
-    }
-}
-
 /// The core's star marks moved: the client reads its hearts again, and other devices see the queue's.
 struct Hearts {
     out: Out,
@@ -304,6 +293,7 @@ pub struct Parts {
     pub covers: Option<Arc<Loader>>,
     level: Arc<Level>,
     search: Arc<SearchSession>,
+    pub(crate) lyrics: crate::lyrics::Lyrics,
     pub offline: bool,
     /// The process's media controls while this session drives them.
     #[cfg(feature = "desktop")]
@@ -322,7 +312,7 @@ pub struct Parts {
     /// The AutoEQ notice said last, waiting for an answer.
     curve: parking_lot::Mutex<Option<CurveNotice>>,
     tasks: Arc<dyn Tasks>,
-    out: Out,
+    pub(crate) out: Out,
     /// The plugin host the session's kinds come with, told what plays.
     #[cfg(feature = "desktop")]
     pub(crate) plugins: Option<Arc<nori_plugins::Plugins>>,
@@ -423,6 +413,7 @@ impl Session {
             covers,
             level,
             search: SearchSession::new(),
+            lyrics: Default::default(),
             offline: o.offline,
             #[cfg(feature = "desktop")]
             media,
@@ -485,7 +476,7 @@ impl Handle {
     }
 
     /// Runs `work` among the session's tasks.
-    fn run(&self, work: impl std::future::Future<Output = ()> + Send + 'static) {
+    pub(crate) fn run(&self, work: impl std::future::Future<Output = ()> + Send + 'static) {
         self.tasks.spawn(Box::pin(work));
     }
 
@@ -1059,23 +1050,6 @@ impl Handle {
         if let Some(p) = self.core.session.settings.current() {
             self.apply(effect, &p);
         }
-    }
-
-    /// A lyrics view opened or closed: the core warms the songs ahead's lyrics only while one is open.
-    pub fn lyrics_view(&self, open: bool) {
-        self.client.lyrics_view(open);
-        if open {
-            let client = self.client.clone();
-            self.run(async move { client.lyrics_prefetch().await });
-        }
-    }
-
-    /// Fetches lyrics for `song`; each better answer arrives as [`Said::Lyrics`].
-    pub fn lyrics(&self, song: String) {
-        let (client, out) = (self.client.clone(), self.out.clone());
-        self.run(async move {
-            let _ = client.lyrics_for(song.clone(), Arc::new(Shown { song, out })).await;
-        });
     }
 
     /// Requests cover `id` at `px` square: the core's rendition for that size is fetched
@@ -1694,7 +1668,7 @@ mod carry_on;
 
 /// A session's opening for a test: online, playing into `output`, reporting nowhere.
 #[cfg(test)]
-fn test_open<'a>(queue: Arc<nori_core::queue::Session>, data: &'a Path, profile: SavedServer, output: Box<dyn AudioOutput>) -> Open<'a> {
+pub(crate) fn test_open<'a>(queue: Arc<nori_core::queue::Session>, data: &'a Path, profile: SavedServer, output: Box<dyn AudioOutput>) -> Open<'a> {
     Open {
         queue,
         data,

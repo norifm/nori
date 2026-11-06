@@ -114,7 +114,7 @@ files. Only a comparison on the same machine means anything. On a phone, use
 - the stream bridge handing available bytes to Rust before the next network read (`RustBodyTest`), and
   telling a read past the end from a dropped network (`PastEndTest`);
 - releasing the player after a long pause (`LongPauseTest`);
-- a song's lyrics following only that song's playhead (`ForSongTest`);
+- a song's lyrics following only that song's playhead (`HeardTest`);
 - release code reaching the test bridge only through `TestDriver` (`TestBridgeTest`);
 - the perf self test's logic (`SelfTestLogicTest`);
 - `InitOrderTest`: fails when a field a constructor's thread reads is declared after the line that

@@ -16,6 +16,7 @@ use nori_core::pages::release_groups;
 use nori_core::mixes::board::{MixLookup, MixTile, FAVOURITES_MIX};
 use nori_core::stage::QueueRows;
 use nori_core::{Album, Artist, Genre, Lyrics, OriginKind, PageOrigin, Playlist, SearchResult, Song};
+use nori_core::lyrics_follow::LyricsNow;
 use nori_covers::loader::Ticket;
 use nori_engine::State;
 use nori_host::session::{read_pages, Chore};
@@ -104,7 +105,6 @@ struct List {
 
 static LISTS: Mutex<VecDeque<List>> = Mutex::new(VecDeque::new());
 static TICKETS: Mutex<Vec<(u64, Ticket)>> = Mutex::new(Vec::new());
-static LYRICS: Mutex<Option<(String, Lyrics)>> = Mutex::new(None);
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -1378,17 +1378,12 @@ pub extern "C" fn nori_ios_cover_cancel(token: u64) {
     drop(gone);
 }
 
-/// Keeps the newest lyrics answer for `song`, for [`nori_ios_lyrics_page`].
-pub(crate) fn lyrics_arrived(song: &str, lyrics: &Lyrics) {
-    *lock(&LYRICS) = Some((song.to_string(), lyrics.clone()));
-}
-
-/// The lyrics held for `song`, if they are the last that came.
+/// The words the session's lyrics view shows for `song`, if they are its.
 pub(crate) fn held_lyrics(song: &str) -> Option<Lyrics> {
-    lock(&LYRICS).as_ref().filter(|(id, _)| id == song).map(|(_, l)| l.clone())
+    with_session(|s| s.lyrics_now().words_of(song).map(|p| p.lyrics.clone())).flatten()
 }
 
-/// Asks for `song`'s lyrics; each better answer is a lyrics report.
+/// The lyrics view opened on `song`: its lyrics are looked up, each change a lyrics report.
 ///
 /// # Safety
 /// `song` is NUL-terminated UTF-8.
@@ -1398,18 +1393,27 @@ pub unsafe extern "C" fn nori_ios_lyrics(song: *const c_char) {
     if song.is_empty() {
         return;
     }
-    with_session(|s| s.lyrics(song));
+    with_session(|s| {
+        s.lyrics_heard(Some(song));
+        s.lyrics_view(true);
+    });
 }
 
-/// The lyrics last found for `song`, as JSON to free; NULL when none came yet.
+/// The lyrics view closed.
+#[no_mangle]
+pub extern "C" fn nori_ios_lyrics_closed() {
+    with_session(|s| s.lyrics_view(false));
+}
+
+/// What the lyrics view shows for `song`, as JSON to free (no lines when there are none, or the lookup
+/// failed); NULL while they are looked up.
 ///
 /// # Safety
 /// `song` is NUL-terminated UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_lyrics_page(song: *const c_char) -> *mut c_char {
     let song = c_text(song);
-    let held: std::sync::MutexGuard<'_, Option<(String, Lyrics)>> = lock(&LYRICS);
-    let Some((id, l)) = held.as_ref().filter(|(id, _)| *id == song) else {
+    let Some(now) = with_session(|s| s.lyrics_now()).filter(|n| n.song() == Some(song.as_str())) else {
         return std::ptr::null_mut();
     };
     let lines: Vec<Value> = l
@@ -1417,8 +1421,14 @@ pub unsafe extern "C" fn nori_ios_lyrics_page(song: *const c_char) -> *mut c_cha
         .iter()
         .map(|line| json!({ "s": line.start_ms, "e": line.end_ms, "t": line.text }))
         .collect();
-    owned(&json!({ "id": id, "synced": l.synced, "offset": l.timing.offset_ms(), "lines": lines }))
+    owned(&json!({ "id": song, "synced": l.synced, "offset": l.timing.offset_ms(), "lines": lines }))
 }
+    let failed = Lyrics::default();
+    let l = match &now {
+        LyricsNow::Shown { pick, .. } => &pick.lyrics,
+        LyricsNow::Failed { .. } => &failed,
+        LyricsNow::NoSong | LyricsNow::Looking { .. } => return std::ptr::null_mut(),
+    };
 
 /// A long list's orders as JSON to free: `now` the one it is in, `all` every one in the menu's order
 /// (albums by [`AlbumSort::name`], songs by [`song_sorts`] name, both for the client to word), and `ways`

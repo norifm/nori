@@ -246,8 +246,10 @@ void nori_ios_on_cover(NoriCoverFn cb);
 void nori_ios_cover(uint64_t token, const char *id, uint32_t px);
 void nori_ios_cover_cancel(uint64_t token);
 
-/// Asks for lyrics; a lyrics report says when an answer came, then read it as JSON (free it).
+/// The lyrics view opened on a song and closed; a lyrics report says what it shows changed, then read
+/// it as JSON (free it).
 void nori_ios_lyrics(const char *song);
+void nori_ios_lyrics_closed(void);
 char *nori_ios_lyrics_page(const char *song);
 
 /// The lyrics page's clock (crates/ios/src/lyrics.rs): which line is lit, how far it is sung, and when

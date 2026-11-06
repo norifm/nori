@@ -679,8 +679,9 @@ impl Runner {
         app.follow_now(Now { state: now.state, position_ms: now.position_ms, at: now.at, speed: now.pace, mixing: now.mixing, buffering: now.buffering });
         let id = now.song.as_ref().map(|s| s.id.clone());
         if id != self.heard {
-            self.heard = id;
+            self.heard = id.clone();
             app.heard(now.song);
+            app.lyrics_now(s.lyrics_heard(id));
         }
         if s.queue_stale(self.queue.as_ref()) {
             let q = s.queue_shown(self.queue.as_ref().map(|q| &q.view));
@@ -709,7 +710,7 @@ impl Runner {
 
     /// Advances the lyrics clock and schedules its next wake.
     fn lyrics_step(&self, app: &mut App) {
-        let Some(l) = &app.lyrics else {
+        let Some(l) = app.lyrics.found() else {
             app.lyrics_wake = None;
             return;
         };
@@ -1062,7 +1063,7 @@ impl Runner {
             Cmd::SearchServer(q) => {
                 s.search_server(q);
             }
-            Cmd::Lyrics(id) => s.lyrics(id),
+            Cmd::LyricsRefresh => s.lyrics_refresh(),
             Cmd::Cover(art) => {
                 if let Some(t) = s.cover(art, COVER_PX) {
                     self.tickets.push(t);

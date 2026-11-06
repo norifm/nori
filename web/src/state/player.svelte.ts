@@ -7,7 +7,7 @@ import { ask, facts } from "../rpc";
 import workletUrl from "../worklet.ts?worker&url";
 import { ui } from "./ui.svelte";
 import { W } from "../words";
-import type { Now, Shown, Song, Whole } from "./types";
+import type { LyricsNow, Now, Song, Whole } from "./types";
 
 /** Where the song was at a moment of the page's clock, and how fast it runs on from there (0: it holds). */
 export type Anchor = { ms: number; at: number; pace: number; length: number };
@@ -17,8 +17,9 @@ export type Anchor = { ms: number; at: number; pace: number; length: number };
 class Player {
   now = $state.raw<Now | null>(null);
   anchor = $state.raw<Anchor>({ ms: 0, at: 0, pace: 0, length: 0 });
-  /** The lyrics shown, and the lit line and how much of it is sung. */
-  shown = $state.raw<Shown | null>(null);
+  /** What the lyrics view shows, the lyrics found among it, and the lit line and how much of it is sung. */
+  lyrics = $state.raw<LyricsNow | null>(null);
+  shown = $derived(this.lyrics?.state === "shown" ? this.lyrics : null);
   line = $state(-1);
   /** How much of the lit line is sung; -1 when its words do not light up one by one. */
   sung = $state(-1);
@@ -202,10 +203,25 @@ class Player {
     }
   }
 
-  /** Asks for the lyrics of the song playing, unless they are shown. */
-  wantLyrics() {
-    const id = this.song?.id;
-    if (id && this.shown?.song !== id && rpc.player) void ask("lyrics", id);
+  /** The lyrics views in sight: the session looks lyrics up only while one is. */
+  private lyricsViews = 0;
+
+  /** A lyrics view came in sight (`open`) or left it. */
+  lyricsView(open: boolean) {
+    this.lyricsViews += open ? 1 : -1;
+    if (this.lyricsViews === (open ? 1 : 0)) this.tellLyrics();
+  }
+
+  /** Tells the session the song heard, while a lyrics view is in sight. */
+  lyricsHeard() {
+    if (this.lyricsViews > 0 && rpc.player) void ask("lyrics_heard", this.song?.id ?? null);
+  }
+
+  /** Tells the session the song heard and whether a lyrics view is in sight. */
+  private tellLyrics() {
+    if (!rpc.player) return;
+    this.lyricsHeard();
+    void ask("lyrics_view", this.lyricsViews > 0);
   }
 
   /** The lyrics' state now, lit; ms until it changes (0: not until the position jumps). */
@@ -233,6 +249,7 @@ class Player {
   listen() {
     rpc.onPlayerUp(() => {
       this.up = true;
+      if (this.lyricsViews > 0) this.tellLyrics();
       void this.refresh();
     });
     rpc.onRestart(() => {
@@ -242,16 +259,17 @@ class Player {
       facts.restartedAt = { song, ms: Math.round(at) };
       void (async () => {
         if (song) await ask("carry_on", song, Math.round(at), was);
+        if (this.lyricsViews > 0) this.tellLyrics();
         await this.refresh();
       })();
     });
     rpc.onSaid((s) => {
       if (s.kind === "engine" || s.kind === "remote" || s.kind === "starred") void this.refresh();
       else if (s.kind === "lyrics") {
-        const shown = s as unknown as Shown;
-        if (shown.song !== this.shown?.song) this.line = -1;
-        this.shown = { song: shown.song, lyrics: shown.lyrics, origin: shown.origin, timing: shown.timing };
-        facts.lyrics = { song: shown.song, lines: shown.lyrics.lines?.length ?? 0, synced: shown.lyrics.synced, timing: shown.timing };
+        const now = s as unknown as LyricsNow;
+        if (now.song !== this.shown?.song) this.line = -1;
+        this.lyrics = now.state === "shown" ? { state: "shown", song: now.song, lyrics: now.lyrics, origin: now.origin, timing: now.timing } : { state: now.state, song: now.song };
+        if (now.state === "shown") facts.lyrics = { song: now.song, lines: now.lyrics.lines?.length ?? 0, synced: now.lyrics.synced, timing: now.timing };
       } else if (s.kind === "note") {
         const n = s.note as { what: string; songs?: number; next?: boolean };
         if (n.what === "queued") ui.say(W.queued(n.songs ?? 0, !!n.next));

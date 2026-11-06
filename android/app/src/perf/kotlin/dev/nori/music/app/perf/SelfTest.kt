@@ -1,5 +1,6 @@
 package dev.nori.music.app.perf
 
+import dev.nori.music.data.songId
 import android.app.Application
 import android.content.Intent
 import android.media.AudioFormat
@@ -14,7 +15,6 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import dev.nori.music.Nori
-import dev.nori.music.app.vm.Load
 import dev.nori.music.app.vm.PlayerViewModel
 import dev.nori.music.data.CoverLoader
 import dev.nori.music.ffi.model.PlayQueue
@@ -686,14 +686,13 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
             val seen = java.util.concurrent.CopyOnWriteArrayList<LyricsSeen>()
             val vm = ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory.getInstance(app))[PlayerViewModel::class.java]
             val watching = scope!!.launch {
-                vm.lyrics.collect { f ->
-                    val v = f.value
-                    val ready = (v as? Load.Ready)?.data
-                    val lines = ready?.lyrics?.lines.orEmpty()
+                vm.lyrics.collect { now ->
+                    val shown = now as? dev.nori.music.ffi.lyrics.LyricsNow.Shown
+                    val lines = shown?.pick?.lyrics?.lines.orEmpty()
                     seen += LyricsSeen(
-                        SystemClock.elapsedRealtime(), f.songId, st.current?.id, v is Load.Loading,
-                        ready?.let { lyricsRank(lines.size, it.lyrics.synced, it.lyrics.wordTimed) } ?: 0, v is Load.Failed,
-                        ready?.let { "${it.source}:${lines.size}:${lines.joinToString("\n") { l -> l.text }.hashCode()}" }.orEmpty(),
+                        SystemClock.elapsedRealtime(), now.songId, st.current?.id, now is dev.nori.music.ffi.lyrics.LyricsNow.Looking,
+                        shown?.let { lyricsRank(lines.size, it.pick.lyrics.synced, it.pick.lyrics.wordTimed) } ?: 0, now is dev.nori.music.ffi.lyrics.LyricsNow.Failed,
+                        shown?.let { "${it.pick.origin}:${lines.size}:${lines.joinToString("\n") { l -> l.text }.hashCode()}" }.orEmpty(),
                     )
                 }
             }

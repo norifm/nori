@@ -145,7 +145,6 @@ fn deliver_one(said: Said) {
         Said::Engine(Event::Song { index, .. }) => {
             with_session(|s| crate::pages::warm_around(s, *index));
         }
-        Said::Lyrics { song, pick } => crate::pages::lyrics_arrived(song, &pick.lyrics),
         Said::JamEnded { host } => return crate::jam::left(Some(host.clone())),
         _ => {}
     }
@@ -219,9 +218,9 @@ fn pack(said: &Said) -> Packed {
     };
     match said {
         Said::Engine(e) => pack_event(&mut p, e),
-        Said::Lyrics { song, .. } => {
+        Said::Lyrics(now) => {
             p.kind = REPORT_LYRICS;
-            p.id = c(song);
+            p.id = c(now.song().unwrap_or_default());
         }
         Said::Search(view) => {
             p.kind = REPORT_SEARCH;

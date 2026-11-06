@@ -30,7 +30,7 @@ use ratatui::layout::{Position, Rect};
 use crate::art::{Colors, Theme};
 use crate::backend::{Data, Downloads, Fetch, Msg, Req, ALBUM_PAGE};
 use crate::keys::{action, Action, Scope};
-use crate::lyrics::SongLyrics;
+use crate::lyrics::Words;
 use crate::settings_view::{Alone, Chore, Opened, SettingsView, Switch};
 
 /// The page's root view, under any opened album, artist or playlist pages.
@@ -161,7 +161,8 @@ pub enum Cmd {
     Tuning(bool),
     SearchTyped(String),
     SearchServer(String),
-    Lyrics(String),
+    /// The song heard's lyrics looked up again.
+    LyricsRefresh,
     /// The playing song cover by id, and the colors the player wears from it.
     Cover(String),
     Login(Box<SavedServer>),
@@ -254,7 +255,7 @@ impl Cmd {
             Cmd::Download(songs) => format!("download {} songs", songs.len()),
             Cmd::Login(p) => format!("log in to {}", p.url),
             Cmd::Cover(art) => format!("cover {art}"),
-            Cmd::Lyrics(id) => format!("lyrics {id}"),
+            Cmd::LyricsRefresh => "lyrics refresh".into(),
             Cmd::Toggle => "toggle".into(),
             Cmd::Next => "next".into(),
             Cmd::Previous => "previous".into(),
@@ -1261,8 +1262,7 @@ pub struct App {
     pub settings: SettingsView,
     pub eq_sel: Sel,
     pub login: Login,
-    pub lyrics: Option<SongLyrics>,
-    pub lyrics_for: Option<String>,
+    pub lyrics: Words,
     pub lyrics_sel: Option<usize>,
     pub lyrics_wake: Option<Instant>,
     pub overlay: Option<Overlay>,
@@ -1647,7 +1647,7 @@ impl App {
                 d.sel.at = active.map_or(0, |i| d.rows().iter().position(|r| *r == DeviceRow::Device(i)).unwrap_or(0));
                 d.settle(true);
             }
-            Panel::Lyrics => self.want_lyrics(),
+            Panel::Lyrics => self.lyrics_wake = Some(Instant::now()),
             Panel::Playing => {}
         }
     }
@@ -1659,7 +1659,7 @@ impl App {
         self.full = true;
         self.focus = Focus::Panel;
         if self.panel == Panel::Lyrics {
-            self.want_lyrics();
+            self.lyrics_wake = Some(Instant::now());
         }
     }
 
@@ -1689,14 +1689,13 @@ impl App {
         self.open_full();
     }
 
-    fn want_lyrics(&mut self) {
-        let Some(id) = self.song.as_ref().map(|s| s.id.clone()) else { return };
-        if self.lyrics_for.as_deref() != Some(&id) {
-            self.lyrics_for = Some(id.clone());
-            self.lyrics = None;
-            self.lyrics_sel = None;
-            self.cmds.push(Cmd::Lyrics(id));
+    /// What the session's lyrics view shows now (`Handle::lyrics_heard`); another song's, still on its
+    /// way, is let go.
+    pub fn lyrics_now(&mut self, now: nori_core::lyrics_follow::LyricsNow) {
+        if now.song() != self.song.as_ref().map(|s| s.id.as_str()) {
+            return;
         }
+        self.lyrics = Words::of(now, self.now.position(Instant::now()));
         self.lyrics_wake = Some(Instant::now());
     }
 
@@ -1730,13 +1729,7 @@ impl App {
                     }
                 }
             }
-            Msg::Lyrics { song, pick } => {
-                if self.lyrics_for.as_deref() == Some(&song) && self.lyrics.as_ref().is_none_or(|l| l.replaced_by(&pick)) {
-                    let pos = self.now.position(Instant::now());
-                    self.lyrics = Some(SongLyrics::new(pick, pos));
-                    self.lyrics_wake = Some(Instant::now());
-                }
-            }
+            Msg::Lyrics(now) => self.lyrics_now(now),
             Msg::Search(v) => {
                 if v.query == self.search.text.trim() {
                     self.search.view = Some(v);
@@ -1896,12 +1889,7 @@ impl App {
         if let Some(art) = art {
             self.cmds.push(Cmd::Cover(art));
         }
-        if self.lyrics_shown() {
-            self.want_lyrics();
-        } else {
-            self.lyrics = None;
-            self.lyrics_for = None;
-        }
+        self.lyrics_sel = None;
     }
 
     fn data(&mut self, req: Req, r: Result<Data, String>) {
@@ -2654,7 +2642,7 @@ impl App {
             Action::Back => self.back(),
             Action::Refresh => self.refresh(),
             Action::Sooner | Action::Later | Action::Unnudge => {
-                if let Some(l) = &self.lyrics {
+                if let Some(l) = self.lyrics.found() {
                     let dir = match a {
                         Action::Sooner => 1,
                         Action::Later => -1,
@@ -2839,8 +2827,7 @@ impl App {
 
     fn refresh(&mut self) {
         if self.lyrics_focused() {
-            self.lyrics_for = None;
-            return self.want_lyrics();
+            return self.cmds.push(Cmd::LyricsRefresh);
         }
         if let Some(p) = self.page() {
             self.cmds.extend(p.req().map(Cmd::Load));
@@ -3622,7 +3609,7 @@ impl App {
     // ---- lyrics ----
 
     fn lyrics_action(&mut self, a: Action) {
-        let Some(l) = &self.lyrics else { return };
+        let Some(l) = self.lyrics.found() else { return };
         let len = l.pick.lyrics.lines.len();
         // `active` is past the end after the last line.
         let active = (l.clock.shown().active.max(0) as usize).min(len.saturating_sub(1));
@@ -3794,8 +3781,8 @@ impl App {
                 }
             }
             ListRef::Lyrics => {
-                let len = self.lyrics.as_ref().map_or(0, |l| l.pick.lyrics.lines.len());
-                let at = self.lyrics_sel.unwrap_or_else(|| self.lyrics.as_ref().map_or(0, |l| l.clock.shown().active.max(0) as usize));
+                let len = self.lyrics.found().map_or(0, |l| l.pick.lyrics.lines.len());
+                let at = self.lyrics_sel.unwrap_or_else(|| self.lyrics.found().map_or(0, |l| l.clock.shown().active.max(0) as usize));
                 self.lyrics_sel = Some((at as isize + d * 3).clamp(0, len.saturating_sub(1) as isize) as usize);
             }
             ListRef::Picker => {

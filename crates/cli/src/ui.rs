@@ -24,6 +24,7 @@ use nori_core::browse::AlbumSort;
 use crate::app::{App, Button, DeviceRow, Focus, HomeLine, Hit, Item, LibLine, ListRef, Load, Overlay, Page, Panel, Place, QueueRow, SearchRow, Sel, View, LOGIN_FIELDS, PANELS};
 use crate::art::{Art, Theme};
 use crate::keys::{Scope, BINDINGS};
+use crate::lyrics::Words;
 use crate::settings_view::{self, EqRow, Line as SLine, SettingsView};
 use crate::text::clock;
 
@@ -1402,13 +1403,11 @@ pub(crate) fn wrap(s: &str, w: usize) -> Vec<String> {
 }
 
 fn lyrics(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
-    let Some(l) = &app.lyrics else {
-        let text = match (&app.song, &app.lyrics_for) {
-            (None, _) => "Nothing playing",
-            (Some(_), Some(_)) => "Looking for lyrics…",
-            _ => "No lyrics",
-        };
-        return empty(f, area, t, text);
+    let l = match &app.lyrics {
+        Words::Found(l) => l,
+        Words::Looking => return empty(f, area, t, "Looking for lyrics…"),
+        Words::Failed => return empty(f, area, t, "No lyrics"),
+        Words::Nothing => return empty(f, area, t, if app.song.is_some() { "No lyrics" } else { "Nothing playing" }),
     };
     if l.pick.lyrics.lines.is_empty() {
         return empty(f, area, t, "No lyrics for this song");

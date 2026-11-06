@@ -8,6 +8,7 @@ mod bluez;
 mod btids;
 #[cfg(feature = "desktop")]
 pub mod desktop;
+mod lyrics;
 #[cfg(all(feature = "desktop", target_os = "macos"))]
 mod macbt;
 pub mod pages;

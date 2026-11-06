@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use nori_core::look::clock_on;
+use nori_core::lyrics_follow::LyricsNow;
 use nori_core::race::LyricsPick;
 use nori_core::rules::QueueMoment;
 use nori_core::settings::SavedServer;
@@ -222,11 +223,23 @@ impl Nori {
         Ok(())
     }
 
-    /// Keeps `pick` as song `song`'s lyrics shown, its clock at the position now, and tells the page.
-    fn show_lyrics(&self, song: String, pick: LyricsPick) {
-        let at = self.position_now();
-        self.live.tell.say(&json!({ "kind": "lyrics", "song": song, "lyrics": pick.lyrics, "origin": format!("{:?}", pick.origin), "timing": timing(pick.lyrics.timing) }));
-        *self.live.lyrics.borrow_mut() = Some((song, pick.clone(), clock_on(&pick.lyrics, at)));
+    /// Tells the page what the lyrics view shows, keeping the words found on a clock at the position now:
+    /// `{ kind: "lyrics", song, state: "looking" | "failed" | "shown", lyrics, origin, timing }`.
+    fn show_lyrics(&self, now: LyricsNow) {
+        let (song, state) = match now {
+            LyricsNow::Shown { song, pick } => {
+                let at = self.position_now();
+                self.live.tell.say(&json!({ "kind": "lyrics", "song": song, "state": "shown", "lyrics": pick.lyrics, "origin": format!("{:?}", pick.origin), "timing": timing(pick.lyrics.timing) }));
+                let clock = clock_on(&pick.lyrics, at);
+                *self.live.lyrics.borrow_mut() = Some((song, pick, clock));
+                return;
+            }
+            LyricsNow::Looking { song } => (Some(song), "looking"),
+            LyricsNow::Failed { song } => (Some(song), "failed"),
+            LyricsNow::NoSong => (None, "none"),
+        };
+        *self.live.lyrics.borrow_mut() = None;
+        self.live.tell.say(&json!({ "kind": "lyrics", "song": song, "state": state }));
     }
 
     /// Where the song the player shows is now.
@@ -277,8 +290,8 @@ impl Nori {
     fn drain(&self) {
         let said = std::mem::take(&mut *self.live.said.lock());
         for s in said {
-            if let Said::Lyrics { song, pick } = &s {
-                self.show_lyrics(song.clone(), pick.clone());
+            if let Said::Lyrics(now) = s {
+                self.show_lyrics(now);
                 continue;
             }
             if let Some(v) = told(&s) {
@@ -441,9 +454,16 @@ impl Nori {
         Ok(())
     }
 
-    /// Asks for `song`'s lyrics; they come as a `lyrics` report.
-    pub fn lyrics(&self, song: String) {
-        self.with(|h| h.lyrics(song));
+    /// `song` is the one the player shows; what its lyrics view shows comes as `lyrics` reports.
+    pub fn lyrics_heard(&self, song: Option<String>) {
+        if let Some(now) = self.with(|h| h.lyrics_heard(song)) {
+            self.show_lyrics(now);
+        }
+    }
+
+    /// A lyrics view came in sight or left it: the song heard's lyrics are looked up only while one is.
+    pub fn lyrics_view(&self, open: bool) {
+        self.with(|h| h.lyrics_view(open));
     }
 
     /// The lyrics' state at the position now: `{ song, active, glide, swept, sung, wait }` (`swept`: the
@@ -480,9 +500,7 @@ impl Nori {
     /// The lyrics shown a step sooner (`dir` > 0) or later (< 0), or back to the sync check's timing
     /// (0); kept for those words. They come again as a `lyrics` report.
     pub fn lyrics_nudge(&self, dir: i32) {
-        let Some((song, pick, _)) = self.live.lyrics.borrow_mut().take() else { return };
-        let Some(pick) = self.with(|h| h.core.lyrics_nudge(song.clone(), pick, dir)) else { return };
-        self.show_lyrics(song, pick);
+        self.with(|h| h.lyrics_nudge(dir));
     }
 
     /// What the player shows playing (`nori_host::player`): this browser's playback, the account's
@@ -818,7 +836,7 @@ fn told(s: &Said) -> Option<Value> {
     Some(match s {
         Said::Engine(e) => json!({ "kind": "engine", "event": format!("{e:?}") }),
         // Told with its timing as it is kept (`Nori::show_lyrics`).
-        Said::Lyrics { .. } => return None,
+        Said::Lyrics(_) => return None,
         Said::Search(_) => return None,
         Said::Note(n) => json!({ "kind": "note", "note": note(n) }),
         Said::Reachable(r) => json!({ "kind": "reachable", "ok": r.is_ok() }),

@@ -76,6 +76,8 @@ export type Lyrics = { synced: boolean; word_timed: boolean; lines: LyricLine[] 
 export type Timing = { kind: "NotChecked" | "DoesNotFit" | "Unsure" | "Automatic" | "Yours"; ms: number; automatic?: number | null };
 /** The lyrics shown for a song, where they came from and how they are timed. */
 export type Shown = { song: string; lyrics: Lyrics; origin: string; timing: Timing };
+/** What the session's lyrics view shows for the song heard (`LyricsNow`): looked up, failed, found. */
+export type LyricsNow = { song: string | null; state: "looking" | "failed" | "none" } | ({ state: "shown" } & Shown);
 
 export type Jam = {
   start: "Offered" | "Starting" | "Hosting" | "Unsupported" | "Unavailable";

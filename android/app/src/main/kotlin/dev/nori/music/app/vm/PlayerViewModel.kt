@@ -1,14 +1,16 @@
 package dev.nori.music.app.vm
 
 import android.app.Application
-import dev.nori.music.ffi.model.Lyrics
-import dev.nori.music.data.FoundLyrics
-import dev.nori.music.data.followSong
-import dev.nori.music.ffi.settings.LyricsOrigin
-import dev.nori.music.net.said
+import dev.nori.music.data.wordsOf
+import dev.nori.music.ffi.lyrics.LyricsEnd
+import dev.nori.music.ffi.lyrics.LyricsHeard
+import dev.nori.music.ffi.lyrics.LyricsNow
+import dev.nori.music.ffi.lyrics.LyricsPick
 import dev.nori.music.playback.PlayerState
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -77,45 +79,35 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     /** Just the play/pause flag, for the same reason: the marked row's bars move only while it sounds. */
     val advancing: StateFlow<Boolean> = state.map { it.advancing }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    private val lyricsKept = dev.nori.music.data.SongAnswers<Load<FoundLyrics>>()
+    /** The lyrics of the song heard, as the core follows them (`LyricsHeard`); made on first use, off the main thread. */
+    private val lyricsHeard by lazy { LyricsHeard() }
 
-    /** The lyrics shown last retimed, and the song they are for. */
-    private val lyricsRetimed = kotlinx.coroutines.flow.MutableStateFlow<dev.nori.music.data.ForSong<FoundLyrics>?>(null)
+    /** The words shown, retimed by the listener ([nudgeLyrics]). */
+    private val lyricsRetimed = kotlinx.coroutines.flow.MutableSharedFlow<LyricsNow>(extraBufferCapacity = 1)
 
     /**
      * Lyrics of whatever is heard (the page's song, [PlayerState.current]); fetched only while a lyrics
-     * view is collecting. Each song starts from Loading, so the view shows its loader and then the new
-     * words, instead of holding the last song's lyrics on screen while the next ones are fetched.
+     * view is collecting. What each song shows first, whether it is looked up, which answers replace
+     * the words, and which songs' words are kept are the core's (`LyricsHeard`): a song come back to
+     * starts from its words, and one whose lookup had ended is not looked up again.
      *
-     * Every answer names the song it is for, and the view shows it only under that song
-     * ([dev.nori.music.data.ForSong.of]): the last answer outlives the collecting, and a panel opened
-     * again after the song changed must not be handed the old song's words. Because of that tag the
-     * last answer is kept when the panel stops watching: under the same song it is the right one, and
-     * the panel opened again shows it at once instead of the loader and a lookup all over again.
-     *
-     * The answers of the last few songs are kept too ([lyricsKept]): a song come back to - the panel
-     * reopened after the upstream stopped, or the song heard for a moment again around a skip - starts
-     * from its words, and is not looked up again once its lookup had finished. The same words read again
-     * are equal and not handed on as new ones, which faded them out and in and reset their clock.
+     * Every value names the song it is for, and the view shows it only under that song: the last value
+     * outlives the collecting, and a panel opened again after the song changed must not be handed the
+     * old song's words.
      */
-    val lyrics: StateFlow<dev.nori.music.data.ForSong<Load<FoundLyrics>>> = kotlinx.coroutines.flow.combine(lyricsFound(), lyricsRetimed) { found, retimed ->
-        // The words on screen, given the timing the listener just set: the same words only.
-        val words = (found.value as? Load.Ready)?.data
-        if (retimed != null && retimed.songId == found.songId && words?.source == retimed.value.source && words.lyrics.lines == retimed.value.lyrics.lines) {
-            dev.nori.music.data.ForSong(found.songId, Load.Ready(retimed.value))
-        } else found
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), dev.nori.music.data.ForSong(null, Load.Loading))
+    val lyrics: StateFlow<LyricsNow> = kotlinx.coroutines.flow.merge(lyricsFound(), lyricsRetimed)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LyricsNow.NoSong)
 
     /**
      * The lyrics shown for [songId] a step sooner ([dir] > 0) or later (< 0), or back to the core's
      * timing (0); the core keeps it for those words.
      */
     fun nudgeLyrics(songId: String, dir: Int) {
-        val found = (lyrics.value.of(songId, Load.Loading) as? Load.Ready)?.data ?: return
+        val found = lyrics.value.wordsOf(songId) ?: return
         viewModelScope.launch {
             val retimed = nori.library.lyricsNudge(songId, found, dir)
-            lyricsKept.replace(songId, Load.Ready(retimed))
-            lyricsRetimed.value = dev.nori.music.data.ForSong(songId, retimed)
+            val pick = LyricsPick(retimed.lyrics, retimed.source)
+            if (kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { lyricsHeard.retimed(songId, pick) }) lyricsRetimed.tryEmit(LyricsNow.Shown(songId, pick))
         }
     }
 
@@ -125,15 +117,28 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
         if (open) viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { nori.client.lyricsPrefetch() } }
     }
 
-    private fun lyricsFound() = state.map { it.current }
-        .followSong(
-            id = { it.id },
-            loading = Load.Loading,
-            none = { Load.Ready(FoundLyrics(dev.nori.music.ffi.library.lyricsNone(), LyricsOrigin.Server)) },
-            failed = { Load.Failed(it.said ?: it.javaClass.simpleName) },
-            answers = lyricsKept,
-            keep = { it is Load.Ready && it.data.lyrics.lines.isNotEmpty() },
-        ) { song -> (dev.nori.music.app.testLyrics(song) ?: nori.library.lyricsFor(song)).map<FoundLyrics, Load<FoundLyrics>> { Load.Ready(it) } }
+    private fun lyricsFound() = state.map { it.current }.distinctUntilChanged { a, b -> a?.id == b?.id }
+        .flatMapLatest { song ->
+            kotlinx.coroutines.flow.flow {
+                emit(lyricsHeard.hear(song?.id))
+                if (song == null) return@flow
+                val id = lyricsHeard.fetch() ?: return@flow
+                var failed = false
+                val end = try {
+                    (dev.nori.music.app.testLyrics(song) ?: nori.library.lyricsFor(song))
+                        .catch { failed = true }
+                        .collect { f ->
+                            val pick = LyricsPick(f.lyrics, f.source)
+                            if (lyricsHeard.answer(id, pick)) emit(LyricsNow.Shown(id, pick))
+                        }
+                    if (failed) LyricsEnd.FAILED else LyricsEnd.DONE
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    lyricsHeard.ended(id, LyricsEnd.STOPPED)
+                    throw e
+                }
+                lyricsHeard.ended(id, end)?.let { emit(it) }
+            }
+        }.flowOn(kotlinx.coroutines.Dispatchers.IO)
 
     /**
      * The sleeve a plugin gives the song playing (the artwork slot), or null for nori's own cover. Asked

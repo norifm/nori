@@ -692,7 +692,10 @@ final class LyricsCard: UITableViewController {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    deinit { nori_ios_lyric_free(clock) }
+    deinit {
+        nori_ios_lyric_free(clock)
+        nori_ios_lyrics_closed()
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()

@@ -764,19 +764,23 @@ fn full_player_shows_the_song_and_the_mix() {
 
 #[test]
 fn lyrics_panel() {
+    use nori_core::lyrics_follow::LyricsNow;
     use nori_core::{LyricLine, LyricWord, Lyrics};
     let mut a = app();
     a.heard(Some(song("s1", "First", 200)));
     key(&mut a, KeyCode::Char('L'));
-    assert!(a.cmds.contains(&Cmd::Lyrics("s1".into())));
+    a.handle(Msg::Lyrics(LyricsNow::Looking { song: "s1".into() }));
+    assert!(draw(&mut a, 160, 30).contains("Looking for lyrics"));
     let words = vec![LyricWord { start_ms: 1000, end_ms: 1500, start: 0, end: 5 }, LyricWord { start_ms: 1500, end_ms: 2000, start: 6, end: 11 }];
     let lines = vec![
         LyricLine { start_ms: 1000, end_ms: 2000, text: "Hello world".into(), words, ..Default::default() },
         LyricLine { start_ms: 3000, end_ms: 4000, text: "Second line".into(), ..Default::default() },
     ];
     let pick = nori_core::race::LyricsPick { lyrics: Lyrics { synced: true, word_timed: true, lines, ..Default::default() }, origin: nori_core::lyrics_sources::LyricsOrigin::Server };
-    a.handle(Msg::Lyrics { song: "s1".into(), pick });
-    let l = a.lyrics.as_ref().unwrap();
+    a.handle(Msg::Lyrics(LyricsNow::Shown { song: "s0".into(), pick: pick.clone() }));
+    assert!(a.lyrics.found().is_none(), "another song's words");
+    a.handle(Msg::Lyrics(LyricsNow::Shown { song: "s1".into(), pick }));
+    let l = a.lyrics.found().unwrap();
     l.advance(1250, true, true);
     let s = draw(&mut a, 160, 30);
     assert!(s.contains("Hello world") && s.contains("Second line"), "{s}");

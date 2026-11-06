@@ -68,7 +68,8 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.vm.ActionsViewModel
-import dev.nori.music.app.vm.Load
+import dev.nori.music.data.songId
+import dev.nori.music.data.wordsOf
 import dev.nori.music.app.vm.PlayerViewModel
 import dev.nori.music.app.vm.SettingsViewModel
 import dev.nori.music.look.CoverLook
@@ -106,7 +107,8 @@ fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean,
     // Only the words of the song on the page: an answer for any other song (the one before, handed over
     // as the panel opens, or still on its way out as the song changes) is the loader until the right
     // one comes.
-    val load = loaded.of(playerState.current?.id, Load.Loading)
+    val current = playerState.current?.id
+    val looking = loaded.songId != current || loaded is dev.nori.music.ffi.lyrics.LyricsNow.Looking
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.prefs.collectAsStateWithLifecycle()
     val shown = LocalPlayerShown.current
@@ -127,10 +129,10 @@ fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean,
         // Loading, nothing found, or the words - each fades into the next rather than replacing it, the
         // words included: they rise out of the loader instead of appearing in one frame. A new song goes
         // back through the loader, so the last song's lyrics never sit on screen under the new title.
-        val found = (load as? Load.Ready)?.data?.takeIf { it.lyrics.lines.isNotEmpty() }
+        val found = remember(loaded, current) { loaded.wordsOf(current) }
         // The perf build's watch hears which song's lyrics went up; no other build has a recorder.
-        dev.nori.music.app.PerfHooks.recorder?.let { r -> LaunchedEffect(found) { if (found != null) loaded.songId?.let(r::lyricsShown) } }
-        val phase: Any = found?.let { Words(loaded.songId, it) } ?: if (load is Load.Loading) LyricsPhase.LOADING else LyricsPhase.NONE
+        dev.nori.music.app.PerfHooks.recorder?.let { r -> LaunchedEffect(found) { if (found != null) current?.let(r::lyricsShown) } }
+        val phase: Any = found?.let { Words(current, it) } ?: if (looking) LyricsPhase.LOADING else LyricsPhase.NONE
         // Where the words on screen are, so finer words for the same song take their place line for line.
         val anchor = remember { LyricsAnchor() }
         FrameCrossfade(

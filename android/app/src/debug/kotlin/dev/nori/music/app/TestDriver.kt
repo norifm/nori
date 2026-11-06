@@ -30,6 +30,10 @@ fun testLyrics(song: Song): Flow<FoundLyrics>? = TestHooks.lyrics?.invoke(song)
 /** The lyrics panel logs every reading it takes (tag norilyrics) while a check has asked for it. */
 val traceLyrics: Boolean get() = TestHooks.traceLyrics
 
+/** The lyrics found that [now] shows for song [id], lines or none. */
+private fun shownLyrics(now: dev.nori.music.ffi.lyrics.LyricsNow, id: String?): FoundLyrics? =
+    (now as? dev.nori.music.ffi.lyrics.LyricsNow.Shown)?.takeIf { it.song == id }?.let { FoundLyrics(it.pick.lyrics, it.pick.origin) }
+
 /** The test bridge's handles, live for as long as the signed-in app is on screen. See TestHooks. */
 @Composable
 fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, settings: SettingsViewModel, actions: ActionsViewModel, player: PlayerViewModel, devices: () -> Unit) {
@@ -80,10 +84,10 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 """"dspActive":${dev.nori.music.playback.Equalizer.inChain},"gainReductionDb":${dev.nori.music.playback.Equalizer.meterDb},"compressionDb":${dev.nori.music.playback.Equalizer.compressionDb},"soundBypass":${p.soundBypass},""" +
                 """"output":"${settings.currentOutput.value}","offload":${p.offload},"offloadWanted":${dev.nori.music.playback.PlaybackService.offloadWanted},"autoMix":${p.autoMix},"theme":"${p.theme}",""" +
                 """"autoFill":${p.autoFill},"autoMixBetterBeats":${p.autoMixBetterBeats},"scrobble":${p.scrobble},"lyricsOnline":${p.lyricsOnline},""" +
-                """"lyricsAnswerSong":"${TestActions.lastLyrics?.songId.orEmpty()}","lyricsAnswerLines":${TestActions.lastLyrics?.value?.lyrics?.lines?.size ?: 0},""" +
-                """"lyricsAnswerTiming":"${TestActions.lastLyrics?.value?.lyrics?.timing?.let(::timingWords).orEmpty()}",""" +
+                """"lyricsAnswerSong":"${TestActions.lastLyrics?.first.orEmpty()}","lyricsAnswerLines":${TestActions.lastLyrics?.second?.lyrics?.lines?.size ?: 0},""" +
+                """"lyricsAnswerTiming":"${TestActions.lastLyrics?.second?.lyrics?.timing?.let(::timingWords).orEmpty()}",""" +
                 // The timing of the words the player shows, whoever set it (`LyricsTiming`).
-                """"lyricsShownTiming":"${(player2.lyrics.value.of(st.current?.id, dev.nori.music.app.vm.Load.Loading) as? dev.nori.music.app.vm.Load.Ready)?.data?.lyrics?.timing?.let(::timingWords).orEmpty()}",""" +
+                """"lyricsShownTiming":"${shownLyrics(player2.lyrics.value, st.current?.id)?.lyrics?.timing?.let(::timingWords).orEmpty()}",""" +
                 // The player answers from its own engine and output.
                 dev.nori.music.playback.PlaybackService.rustPlayer.let { r ->
                     """"engine":"rust","mixing":${r?.mixing ?: false},"offloaded":${r?.offloaded ?: false},"""
@@ -107,7 +111,7 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                     """"dac":"${d.device.orEmpty()}","bitPerfect":${d.bitPerfect},"dacModes":${d.modes.size},""" +
                         """"dacBlocked":"${d.blockedBy?.let { dev.nori.music.app.vm.dacBlockWords(context.resources, it) }.orEmpty()}","dacTrack":"${d.track?.let { dev.nori.music.app.vm.dacTrackWords(context.resources, it) }.orEmpty()}","""
                 } +
-                (TestActions.lastLyrics?.takeIf { it.songId == st.current?.id }?.value ?: (player2.lyrics.value.of(st.current?.id, dev.nori.music.app.vm.Load.Loading) as? dev.nori.music.app.vm.Load.Ready)?.data)?.let { f ->
+                (TestActions.lastLyrics?.takeIf { it.first == st.current?.id }?.second ?: shownLyrics(player2.lyrics.value, st.current?.id))?.let { f ->
                     """"lyricsSong":"${st.current?.id.orEmpty()}","lyricLines":${f.lyrics.lines.size},"lyricsSynced":${f.lyrics.synced},""" +
                         """"lyricsWordTimed":${f.lyrics.wordTimed},"lyricsWordLines":${f.lyrics.lines.count { it.words.isNotEmpty() }},"lyricsSource":"${sourceName(f.source)}","""
                 }.orEmpty() +

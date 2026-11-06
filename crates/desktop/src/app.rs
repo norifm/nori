@@ -9,6 +9,7 @@ use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use nori_core::browse::AlbumSort;
+use nori_core::lyrics_follow::LyricsNow;
 use nori_core::menus::PageKind;
 use nori_core::search::SearchView;
 use nori_core::settings::SavedServer;
@@ -2414,25 +2415,47 @@ impl App {
         }
     }
 
-    /// The lyrics shown a step sooner (`dir` > 0), later (< 0) or back to the check's timing (0).
+    /// The lyrics shown a step sooner (`dir` > 0), later (< 0) or back to the check's timing (0); they
+    /// come back as [`Msg::Lyrics`].
     fn lyrics_nudge(&mut self, dir: i32) {
-        let (Some(l), Some(s), Some(id)) = (&self.lyrics, &self.session, self.heard.clone()) else { return };
-        let pick = s.core.lyrics_nudge(id, l.pick().clone(), dir);
-        self.show_lyrics(pick);
-        self.lyrics_sheet(false);
+        if let Some(s) = &self.session {
+            s.lyrics_nudge(dir);
+        }
     }
 
-    /// Shows `pick` as the song playing's lyrics.
-    fn show_lyrics(&mut self, pick: nori_core::race::LyricsPick) {
-        let l = crate::lyrics::SongLyrics::new(pick, self.position_now(), self.lyric_faces.clone());
+    /// Shows what the session's lyrics view shows for the song heard; another song's is let go.
+    fn lyrics_now(&mut self, now: LyricsNow) {
+        if now.song() != self.heard.as_deref() {
+            return;
+        }
         let ui = self.ui();
-        ui.set_lyrics_lines(l.lines());
-        ui.set_lyrics_lane(l.lane());
-        ui.set_lyrics_synced(l.synced());
-        ui.set_lyrics_note(if l.is_empty() { "No lyrics for this song".into() } else { l.credit(&|id| self.plugin_name(id)).into() });
-        ui.set_lyrics_waiting(false);
-        self.lyrics = Some(l);
-        self.lyrics_step(true);
+        match now {
+            LyricsNow::Shown { pick, .. } => {
+                let l = crate::lyrics::SongLyrics::new(pick, self.position_now(), self.lyric_faces.clone());
+                ui.set_lyrics_lines(l.lines());
+                ui.set_lyrics_lane(l.lane());
+                ui.set_lyrics_synced(l.synced());
+                ui.set_lyrics_note(if l.is_empty() { "No lyrics for this song".into() } else { l.credit(&|id| self.plugin_name(id)).into() });
+                ui.set_lyrics_waiting(false);
+                self.lyrics = Some(l);
+                self.lyrics_sheet(false);
+                self.lyrics_step(true);
+            }
+            // The last song's lines stay (faded out while waiting) until this one's come.
+            LyricsNow::Looking { .. } => {
+                self.lyrics = None;
+                ui.set_lyrics_active(-1);
+                ui.set_lyrics_note("Looking for lyrics…".into());
+                ui.set_lyrics_waiting(true);
+            }
+            LyricsNow::Failed { .. } | LyricsNow::NoSong => {
+                self.lyrics = None;
+                ui.set_lyrics_lines(ModelRc::default());
+                ui.set_lyrics_active(-1);
+                ui.set_lyrics_note(if self.heard.is_some() { "No lyrics for this song".into() } else { "".into() });
+                ui.set_lyrics_waiting(false);
+            }
+        }
     }
 
     /// Asks the server for a link to song `id`, copied when it comes.
@@ -3294,11 +3317,7 @@ impl App {
                     self.show_search(v);
                 }
             }
-            Msg::Lyrics { song, pick } => {
-                if self.heard.as_deref() == Some(song.as_str()) && self.lyrics.as_ref().is_none_or(|l| l.replaced_by(&pick)) {
-                    self.show_lyrics(pick);
-                }
-            }
+            Msg::Lyrics(now) => self.lyrics_now(now),
             Msg::Facts(f) => {
                 self.facts = *f;
                 self.settings_shown();
@@ -4270,16 +4289,9 @@ impl App {
             let _ = cover_image(&self.art, &self.me, art.as_str().into(), 1);
         }
         self.mark_playing();
-        self.lyrics = None;
-        // The last song's lines stay (faded out while waiting) until this one's come; none without a song.
-        if self.song.is_none() {
-            ui.set_lyrics_lines(ModelRc::default());
-        }
-        ui.set_lyrics_active(-1);
-        ui.set_lyrics_note(if self.song.is_some() { "Looking for lyrics…".into() } else { "".into() });
-        ui.set_lyrics_waiting(self.song.is_some());
-        if let (Some(s), Some(id), true) = (&self.session, &self.heard, self.lyrics_viewed) {
-            s.lyrics(id.clone());
+        if changed {
+            let now = self.session.as_ref().map_or(LyricsNow::NoSong, |s| s.lyrics_heard(self.heard.clone()));
+            self.lyrics_now(now);
         }
     }
 
@@ -4292,10 +4304,8 @@ impl App {
             return;
         }
         self.lyrics_viewed = viewed;
-        let Some(s) = &self.session else { return };
-        s.lyrics_view(viewed);
-        if let (true, None, Some(id)) = (viewed, &self.lyrics, &self.heard) {
-            s.lyrics(id.clone());
+        if let Some(s) = &self.session {
+            s.lyrics_view(viewed);
         }
     }
 

@@ -1,10 +1,12 @@
 //! Lyrics: the server's and the lyrics services' answers read into one shape (lyrics.rs, formats.rs,
 //! json.rs), the services (services.rs, lrclib.rs), asked together and ranked (race.rs,
-//! trust.rs, fit.rs, credits.rs, sync.rs), and the lyrics page's clock handles (look.rs).
+//! trust.rs, fit.rs, credits.rs, sync.rs), what is shown for the song heard (follow.rs), and the lyrics
+//! page's clock handles (look.rs).
 
 pub mod credits;
 pub mod fit;
 pub mod formats;
+pub mod follow;
 pub mod json;
 pub mod look;
 pub mod lrclib;

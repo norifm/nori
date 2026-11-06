@@ -24,8 +24,8 @@ import kotlinx.coroutines.withContext
  * (a mock DAC, made-up lyrics) straight at the core's objects.
  */
 object TestActions {
-    /** The last lyrics `do lyrics` asked for, so the state dump can report what arrived. */
-    @Volatile var lastLyrics: dev.nori.music.data.ForSong<FoundLyrics>? = null
+    /** The last lyrics `do lyrics` asked for and their song, so the state dump can report what arrived. */
+    @Volatile var lastLyrics: Pair<String, FoundLyrics>? = null
         private set
 
     /**
@@ -171,7 +171,7 @@ object TestActions {
                 val song = songs.firstOrNull() ?: nori.player.state.value.current ?: return@attempt
                 // The flow emits each better answer, then the same words checked once the song is measured,
                 // as the screen shows them; it ends when nothing more can come.
-                nori.library.lyricsFor(song).collect { lastLyrics = dev.nori.music.data.ForSong(song.id, it) }
+                nori.library.lyricsFor(song).collect { lastLyrics = song.id to it }
             }
             "seek" -> nori.player.seekTo(ref.toLongOrNull() ?: 0L)
             // "tracelyrics on|off": the lyrics panel logs each reading it takes and the moment it shows (tag norilyrics).

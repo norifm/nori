@@ -14,12 +14,20 @@ import androidx.core.content.ContextCompat
 import dev.nori.music.Nori
 import dev.nori.music.app.R
 import dev.nori.music.app.widget.Widgets.tint
+import dev.nori.music.ffi.lyrics.LyricsEnd
+import dev.nori.music.ffi.lyrics.LyricsHeard
+import dev.nori.music.ffi.lyrics.LyricsNow
+import dev.nori.music.ffi.lyrics.LyricsPick
 import dev.nori.music.ffi.lyrics.widgetLines
-import dev.nori.music.ffi.model.Lyrics
 import dev.nori.music.look.CoverLook
 import dev.nori.music.playback.PlaybackService
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** The line being sung, large, and the next one under it, on the song's own colours. See [LyricsLine]. */
@@ -55,10 +63,12 @@ internal object LyricsLine {
     private var app: Context? = null
     private val next = Runnable { app?.let(::line) }
 
-    /** The song the lyrics are for, and what was found: null while looking, or when there are none. */
+    /** The lyrics of the song heard, as the core follows them; made on first use, off the main thread. */
+    private val heard by lazy { LyricsHeard() }
+
+    /** The song drawn, what its lyrics are, and the lookup running for it. */
     private var song: String? = null
-    private var lyrics: Lyrics? = null
-    private var looked = false
+    private var now: LyricsNow = LyricsNow.NoSong
     private var looking: Job? = null
 
     /** The screen's turning on and off, watched while a lyrics widget is placed. */
@@ -94,27 +104,45 @@ internal object LyricsLine {
         val id = Widgets.now(context).id
         if (id != song) {
             song = id
-            lyrics = null
-            looked = id == null
+            now = if (id == null) LyricsNow.NoSong else LyricsNow.Looking(id)
             looking?.cancel()
             looking = null
         }
-        if (id != null && !looked && looking == null && on(context)) looking = Widgets.scope.launch { look(context, id) }
+        if (id != null && now is LyricsNow.Looking && looking == null && on(context)) looking = Widgets.scope.launch { look(context, id) }
         return true
+    }
+
+    /** What the core says song [id]'s lyrics are; each change drawn while it is the song drawn. */
+    private fun show(context: Context, id: String, shown: LyricsNow) {
+        if (song != id) return
+        now = shown
+        line(context)
     }
 
     private suspend fun look(context: Context, id: String) {
         val library = Nori.get(context).library
-        runCatching {
-            val s = library.song(id)
-            // Each better answer as it comes, the server's first; a service that never answers is let go.
-            if (s != null) withTimeoutOrNull(30_000) { library.lyricsFor(s).collect { if (song == id) { lyrics = it.lyrics; line(context) } } }
+        val first = withContext(Dispatchers.IO) { heard.hear(id) }
+        // Kept words come at once; a song whose lookup had ended is not looked up again.
+        if (first !is LyricsNow.Looking) show(context, id, first)
+        val fetch = withContext(Dispatchers.IO) { heard.fetch() }
+        if (fetch != null) {
+            var failed = false
+            try {
+                val s = try { library.song(id) } catch (e: CancellationException) { throw e } catch (e: Exception) { failed = true; null }
+                // Each better answer as it comes, the server's first; a service that never answers is let go.
+                if (s != null) withTimeoutOrNull(30_000) {
+                    library.lyricsFor(s).catch { failed = true }.collect { f ->
+                        val pick = LyricsPick(f.lyrics, f.source)
+                        if (withContext(Dispatchers.IO) { heard.answer(id, pick) }) show(context, id, LyricsNow.Shown(id, pick))
+                    }
+                }
+            } catch (e: CancellationException) {
+                withContext(NonCancellable + Dispatchers.IO) { heard.ended(id, LyricsEnd.STOPPED) }
+                throw e
+            }
+            withContext(Dispatchers.IO) { heard.ended(id, if (failed) LyricsEnd.FAILED else LyricsEnd.DONE) }?.let { show(context, id, it) }
         }
-        if (song == id) {
-            looked = true
-            looking = null
-            line(context)
-        }
+        if (song == id) looking = null
     }
 
     fun stop(context: Context) {
@@ -129,7 +157,8 @@ internal object LyricsLine {
 
     private fun words(context: Context): Words {
         val p = Widgets.now(context)
-        val l = lyrics
+        val l = (now as? LyricsNow.Shown)?.pick?.lyrics
+        val looked = now !is LyricsNow.Looking
         if (p.id == null) return Words(context.getString(R.string.nothing_playing), "", true, null)
         val shown = l?.let { widgetLines(it, p.positionNow(), p.speed) }
         if (l == null || shown == null) return Words(if (looked) context.getString(R.string.note_no_lyrics) else NOTE, "", looked, null)

@@ -4,6 +4,7 @@
   // change comes; nothing runs while the song holds or the page is hidden. The lines glide to keep the
   // sung one in place, by a transform the browser draws; a wheel or a drag browses them until the next
   // line. In the full player the lines away from the sung one go soft. A click on a line plays from it.
+  import { untrack } from "svelte";
   import { player } from "../state/player.svelte";
   import { W } from "../words";
 
@@ -13,6 +14,7 @@
   let box = $state<HTMLDivElement>();
   let height = $state(0);
   const shown = $derived(player.shown && player.shown.song === player.song?.id ? player.shown : null);
+  const failed = $derived(player.lyrics?.state === "failed" && player.lyrics.song === player.song?.id);
   const synced = $derived(!!shown?.lyrics.synced);
   /** Lines play from where they are sung on a click, unless a jam guest asks the host for all it plays. */
   const taps = $derived(synced && !player.now?.asks);
@@ -20,8 +22,13 @@
   const rest = $derived(look === "full" ? 0.36 : look === "side" ? 1 / 3 : 0.38);
 
   $effect(() => {
+    untrack(() => player.lyricsView(true));
+    return () => player.lyricsView(false);
+  });
+
+  $effect(() => {
     void player.song?.id;
-    player.wantLyrics();
+    player.lyricsHeard();
   });
 
   $effect(() => {
@@ -113,7 +120,9 @@
   onpointerup={() => (dragFrom = null)}
   onpointercancel={() => (dragFrom = null)}
 >
-  {#if !shown}
+  {#if failed}
+    <p class="none">{W.noLyrics}</p>
+  {:else if !shown}
     <p class="none">{W.lyricsLoading}</p>
   {:else if shown.lyrics.lines.length === 0}
     <p class="none">{W.noLyrics}</p>
