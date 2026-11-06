@@ -38,9 +38,9 @@ jobs:
             platform: linux-x86_64
           - runner: ubuntu-22.04-arm
             platform: linux-aarch64
-          - runner: ${{ inputs.macos_on_linux && 'ubuntu-22.04' || 'macos-15' }}
+          - runner: ${{ inputs.macos_on_linux && 'ubuntu-22.04' || 'macos-26' }}
             platform: macos-aarch64
-          - runner: ${{ inputs.macos_on_linux && 'ubuntu-22.04' || 'macos-15' }}
+          - runner: ${{ inputs.macos_on_linux && 'ubuntu-22.04' || 'macos-26' }}
             platform: macos-x86_64
     runs-on: ${{ matrix.runner }}
     env:

@@ -444,8 +444,11 @@ their last use, so GitHub never has to evict one a job still restores. The test 
 whole workspace and runs only the affected crates' tests (`tools/affected.py --tests`): building some
 crates resolves the dependencies' features differently and rebuilds them instead of using the cache.
 
-Mac builds in the workflows run on Apple Silicon; the Intel package is checked under Rosetta. The
-`macos_on_linux` input builds them on Linux instead and skips running them.
+Mac builds in the workflows run on Apple Silicon (the `macos-26` runner); the Intel package is checked under
+Rosetta. macOS draws the window buttons and other system chrome in its current look (Liquid Glass) only for
+apps linked against the macOS 26 SDK or newer (`vtool -show-build` shows `sdk`), so a release never builds
+on an older runner. The `macos_on_linux` input builds them on Linux instead and skips running them; those
+link an older SDK and keep the older look.
 
 Workers can hand their artifacts to one publisher. Put the APK, the IPA and every desktop package
 with its checksum manifest (keeping host subdirectories) in one directory, then, from the matching
