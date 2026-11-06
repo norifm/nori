@@ -180,34 +180,38 @@ type Answer = Result<TransportResponse, TransportError>;
 
 /// A core request on a thread of its own. Its future waits without blocking the caller; dropped before
 /// the answer, it shuts the request's socket, so a held poll ends at once rather than when it is answered.
-#[derive(Default)]
 struct Call(Mutex<CallState>);
 
-#[derive(Default)]
-struct CallState {
-    answer: Option<Answer>,
-    waker: Option<Waker>,
-    /// The socket the request uses now.
-    socket: Option<TcpStream>,
-    given_up: bool,
+enum CallState {
+    /// The request runs; `socket` is the one it uses now.
+    Running { waker: Option<Waker>, socket: Option<TcpStream> },
+    Answered(Answer),
+    /// The answer was handed to the future.
+    Delivered,
+    /// The future was dropped before the answer.
+    GivenUp,
 }
 
 impl Call {
     fn run(request: impl FnOnce() -> Answer + Send + 'static) -> Waiting {
-        let call = Arc::new(Call::default());
+        let call = Arc::new(Call(Mutex::new(CallState::Running { waker: None, socket: None })));
         let on = call.clone();
         let spawned = std::thread::Builder::new().name("nori-http".into()).spawn(move || {
             CALL.with(|c| *c.borrow_mut() = Some(on.clone()));
             let answer = request();
             let mut s = on.state();
-            s.socket = None;
-            s.answer = Some(answer);
-            if let Some(w) = s.waker.take() {
-                w.wake();
+            match std::mem::replace(&mut *s, CallState::Answered(answer)) {
+                CallState::Running { waker, .. } => {
+                    drop(s);
+                    if let Some(w) = waker {
+                        w.wake();
+                    }
+                }
+                given_up => *s = given_up,
             }
         });
         if let Err(e) = spawned {
-            call.state().answer = Some(Err(TransportError::Failed { kind: FailureKind::Other, detail: Some(e.to_string()) }));
+            *call.state() = CallState::Answered(Err(TransportError::Failed { kind: FailureKind::Other, detail: Some(e.to_string()) }));
         }
         Waiting(call)
     }
@@ -218,12 +222,13 @@ impl Call {
 
     /// The request goes on over `stream`; Err once it was given up.
     fn uses(&self, stream: &TcpStream) -> io::Result<()> {
-        let mut s = self.state();
-        if s.given_up {
-            return Err(io::Error::new(io::ErrorKind::Interrupted, "given up"));
+        match &mut *self.state() {
+            CallState::Running { socket, .. } => {
+                *socket = Some(stream.try_clone()?);
+                Ok(())
+            }
+            _ => Err(io::Error::new(io::ErrorKind::Interrupted, "given up")),
         }
-        s.socket = Some(stream.try_clone()?);
-        Ok(())
     }
 }
 
@@ -235,10 +240,14 @@ impl Future for Waiting {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Answer> {
         let mut s = self.0.state();
-        match s.answer.take() {
-            Some(a) => Poll::Ready(a),
-            None => {
-                s.waker = Some(cx.waker().clone());
+        match std::mem::replace(&mut *s, CallState::Delivered) {
+            CallState::Answered(a) => Poll::Ready(a),
+            CallState::Running { socket, .. } => {
+                *s = CallState::Running { waker: Some(cx.waker().clone()), socket };
+                Poll::Pending
+            }
+            other => {
+                *s = other;
                 Poll::Pending
             }
         }
@@ -248,11 +257,11 @@ impl Future for Waiting {
 impl Drop for Waiting {
     fn drop(&mut self) {
         let mut s = self.0.state();
-        if s.answer.is_none() {
-            s.given_up = true;
-            if let Some(socket) = s.socket.take() {
+        if let CallState::Running { socket, .. } = &mut *s {
+            if let Some(socket) = socket.take() {
                 let _ = socket.shutdown(Shutdown::Both);
             }
+            *s = CallState::GivenUp;
         }
     }
 }
