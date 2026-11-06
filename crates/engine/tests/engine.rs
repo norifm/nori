@@ -1480,7 +1480,7 @@ fn gain_boost_uses_float_limiter() {
     let rig = Rig::with_app(&[("a", &a), ("b", &b)], app, Settings { gain_boost_db: nori_player::gain::BOOST_MAX_DB, ..Settings::default() });
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(30, Rig::ended), "{:?}", rig.events.lock());
-    assert!(rig.engine.status().chain, "the limiter is in the path");
+    assert!(rig.engine.status().chain(), "the limiter is in the path");
     let heard = rig.heard.lock().clone();
     // The limiter's look-ahead delays the music by 5 ms.
     let delay = 220 * 2;
@@ -1532,7 +1532,7 @@ fn hi_res_keeps_24_bits() {
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(30, Rig::ended), "{:?}", rig.events.lock());
     let heard = rig.heard_f.lock().clone();
-    assert!(rig.engine.status().chain, "{:?}", rig.engine.status());
+    assert!(rig.engine.status().chain(), "{:?}", rig.engine.status());
     // The chain over 24 bits, and over the song cut to 16 bits.
     let chain = |x: &[f32]| {
         let mut eq = nori_player::dsp::Equalizer::new(RATE, 2);
@@ -3189,7 +3189,7 @@ fn eq_chain_stays_through_changes() {
     let rig = Rig::build(files, sim::App::new(), loud_eq(), Extra { float: true, ..Extra::default() });
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(10, |r| r.heard_f.lock().len() > RATE as usize * 2 * 2));
-    assert!(rig.engine.status().chain && rig.engine.status().on_cpu, "{:?}", rig.engine.status());
+    assert!(rig.engine.status().chain() && rig.engine.status().on_cpu(), "{:?}", rig.engine.status());
     let steps = [
         Settings { auto_mix: true, ..loud_eq() },
         Settings { auto_mix: true, crossfade_s: 6, ..loud_eq() },
@@ -3202,9 +3202,9 @@ fn eq_chain_stays_through_changes() {
         rig.engine.set_settings(s);
         rig.run(1_000);
         let st = rig.engine.status();
-        assert!(st.state == State::Playing && st.index == Some(0) && st.on_cpu, "{k}: {st:?}");
+        assert!(st.state == State::Playing && st.index == Some(0) && st.on_cpu(), "{k}: {st:?}");
         // Hi-res keeps it too, in float.
-        assert!(st.chain, "{k}: a second after the change the chain is in the path: {st:?}");
+        assert!(st.chain(), "{k}: a second after the change the chain is in the path: {st:?}");
     }
     rig.engine.stop();
 }

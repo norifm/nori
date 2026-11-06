@@ -1662,7 +1662,7 @@ extern "system" fn remote_played(_: JNIEnv, _: JClass, h: jlong, remote: jlong, 
 }
 /// Whether the sound chain processes the samples.
 extern "system" fn chain_in(h: jlong) -> jboolean {
-    player(h).is_some_and(|p| p.engine.status_with(|s| s.chain)) as jboolean
+    player(h).is_some_and(|p| p.engine.status_with(|s| s.chain())) as jboolean
 }
 
 /// `Status::pace`: song ms per real ms.
@@ -1722,7 +1722,7 @@ impl nori_core::remote::Follower for Along {
 
 /// `Status::on_cpu`.
 extern "system" fn on_cpu(h: jlong) -> jboolean {
-    player(h).is_some_and(|p| p.engine.status_with(|s| s.on_cpu)) as jboolean
+    player(h).is_some_and(|p| p.engine.status_with(|s| s.on_cpu())) as jboolean
 }
 
 /// Limiter gain reduction on the last buffer, dB.
@@ -1823,7 +1823,7 @@ extern "system" fn offload_event(h: jlong, kind: jint) {
 }
 
 extern "system" fn offloaded(h: jlong) -> jboolean {
-    player(h).is_some_and(|p| p.engine.status_with(|s| s.offloaded)) as jboolean
+    player(h).is_some_and(|p| p.engine.status_with(|s| s.offloaded())) as jboolean
 }
 
 /// Whether settings and output allow offload.

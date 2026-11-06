@@ -227,13 +227,10 @@ pub struct Status {
     pub releases: u64,
     /// A switch is waiting out its dip: the position is still the old one.
     pub switching: bool,
-    /// The sound chain is in the samples' path; means something only while `on_cpu`.
-    pub chain: bool,
-    pub on_cpu: bool,
+    pub path: Path,
     /// What the limiter and the compressor took off the last buffer, dB.
     pub gain_reduction_db: f32,
     pub compression_db: f32,
-    pub offloaded: bool,
     /// The settings allow offload, as last applied.
     pub offload_wanted: bool,
     /// Why the music is on the CPU rather than offloaded, for a report.
@@ -264,11 +261,9 @@ impl Default for Status {
             underruns: 0,
             releases: 0,
             switching: false,
-            chain: false,
-            on_cpu: false,
+            path: Path::Idle,
             gain_reduction_db: 0.0,
             compression_db: 0.0,
-            offloaded: false,
             offload_wanted: false,
             pcm_why: None,
             awake: true,
@@ -278,7 +273,43 @@ impl Default for Status {
     }
 }
 
+/// The path the music takes to the ear.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Path {
+    /// Nothing is placed on either, or the output was let go.
+    Idle,
+    /// The CPU makes it, through the engine's output. `chain`: the sound chain is in the samples' path;
+    /// `heard`: it plays, not waiting for bytes or a switch.
+    Cpu { chain: bool, heard: bool },
+    /// The output's own decoder plays the song's file.
+    Offloaded,
+}
+
+impl Path {
+    /// The same path with nothing heard on it.
+    fn unheard(self) -> Path {
+        match self {
+            Path::Cpu { chain, .. } => Path::Cpu { chain, heard: false },
+            p => p,
+        }
+    }
+}
+
 impl Status {
+    /// The music heard is made on the CPU.
+    pub fn on_cpu(&self) -> bool {
+        matches!(self.path, Path::Cpu { heard: true, .. })
+    }
+
+    /// The sound chain is in the samples' path.
+    pub fn chain(&self) -> bool {
+        matches!(self.path, Path::Cpu { chain: true, .. })
+    }
+
+    pub fn offloaded(&self) -> bool {
+        self.path == Path::Offloaded
+    }
+
     /// The position now: the last reading moved on at its pace while playing and heard.
     pub fn position_now(&self) -> i64 {
         self.positions_at(Instant::now(), self.buffering).0
@@ -2819,8 +2850,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 // Let go: the place last reported stands.
                 let mut s = self.status.lock();
                 s.releases = self.releases;
-                s.offloaded = false;
-                s.on_cpu = false;
+                s.path = Path::Idle;
                 return;
             };
             // A place chosen while paused is where the player is, to the screen; a cast's device's
@@ -2832,7 +2862,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             let there = self.away.as_ref().map(|a| (a.playing, ms + if a.playing { now - a.since } else { 0 }));
             self.write_status(i, there.map_or(ms, |t| t.1), Instant::now(), |s| {
                 s.switching = false;
-                s.on_cpu = false;
+                s.path = s.path.unheard();
                 if let Some((playing, _)) = there {
                     s.state = if playing { State::Playing } else { State::Paused };
                     s.buffering = false;
@@ -2852,7 +2882,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
         if self.p.current().is_none() {
             self.unstall();
-            self.status.lock().on_cpu = false;
+            let mut s = self.status.lock();
+            s.path = s.path.unheard();
             return;
         }
         let track = &self.p.sink.track;
@@ -2884,7 +2915,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         self.told.stretched = stretched;
         let (speed, underruns, switching) = (self.p.speed().0, self.p.sink.track.underruns(), self.dip.is_some());
         let (chain, meter, compression) = (self.p.sink.chain_in(), self.p.sink.meter_db(), self.p.sink.compression_db());
-        let on_cpu = self.state() == State::Playing && !stalled && !switching;
+        let heard = self.state() == State::Playing && !stalled && !switching;
         let mixing_was = self.write_status(i, self.sought().unwrap_or(ms), self.p.placed_at(), |s| {
             s.speed = speed;
             s.pace = speed * tempo as f32;
@@ -2893,11 +2924,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             s.mix_position_ms = mix_position_ms;
             s.underruns = underruns;
             s.switching = switching;
-            s.chain = chain;
-            s.on_cpu = on_cpu;
+            s.path = Path::Cpu { chain, heard };
             s.gain_reduction_db = meter;
             s.compression_db = compression;
-            s.offloaded = false;
             s.buffering = stalled;
         });
         if stall_changed {
@@ -2934,11 +2963,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             s.mixing = false;
             s.mix_from = None;
             s.switching = switching;
-            s.chain = false;
-            s.on_cpu = false;
+            s.path = Path::Offloaded;
             s.gain_reduction_db = 0.0;
             s.compression_db = 0.0;
-            s.offloaded = true;
         });
         self.say_changes(now, i, ms, other, looped, mixing_was, false);
     }
