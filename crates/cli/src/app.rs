@@ -664,7 +664,7 @@ impl Search {
     /// The results as one list: songs, albums, artists, playlists, each under a title.
     pub fn rows(&self) -> Vec<SearchRow<'_>> {
         let mut out = Vec::new();
-        let Some(r) = self.view.as_ref().and_then(|v| v.shown.as_ref()) else { return out };
+        let Some(r) = self.view.as_ref().and_then(|v| v.answer.result()) else { return out };
         if !r.songs.is_empty() {
             out.push(SearchRow::Title("Songs", r.songs.len()));
             out.extend(r.songs.iter().map(SearchRow::Song));

@@ -1069,12 +1069,7 @@ impl Handle {
 
     /// Searches the offline index for the typed text.
     pub fn search_typed(&self, text: &str) -> SearchView {
-        let view = self.search.typed(text.to_string());
-        if view.query.is_empty() {
-            return view;
-        }
-        let limit = nori_core::browse::library_sizes().local_search;
-        self.search.local(self.core.clone(), view.query.clone(), limit).ok().flatten().unwrap_or(view)
+        self.search.typed_with_index(self.core.clone(), text.to_string())
     }
 
     /// Searches the server in the background. `error` words a failure for the results.
@@ -1085,16 +1080,19 @@ impl Handle {
         let _ = self.core.search_remember_recent(query.clone());
         let (search, client, out) = (self.search.clone(), self.client.clone(), self.out.clone());
         self.run(async move {
-            match search.ask(client, query.clone()).await {
-                Ok(Some(v)) => out(Said::Search(v)),
-                Ok(None) => {}
-                Err(e) => {
-                    if let Some(v) = search.failed(query, Some(error(&e))) {
-                        out(Said::Search(v));
-                    }
-                }
+            if let Some(v) = search.answer(client, query, error).await {
+                out(Said::Search(v));
             }
         });
+    }
+
+    /// The server's answer to `query` on the caller's thread, as [`Handle::search_server`] reports it;
+    /// None offline or when stale.
+    pub fn search_server_now(&self, query: String, error: fn(&NetError) -> String) -> Option<SearchView> {
+        if self.offline || query.trim().is_empty() {
+            return None;
+        }
+        block_on(self.search.answer(self.client.clone(), query, error))
     }
 
     /// Signs the profile's account in with `answer` (cookies pasted from a browser); signed in, the

@@ -151,19 +151,47 @@ pub struct SearchView {
     pub text: String,
     /// The query that is asked: the text trimmed. Empty for none.
     pub query: String,
-    /// The answer narrowed to the scope; None with no query (the recent searches show instead).
-    pub shown: Option<SearchResult>,
-    /// The answer is the server's rather than the offline index's.
-    pub from_server: bool,
-    /// The server is being asked.
-    pub searching: bool,
-    /// The server could not be asked; the offline answer stays on screen.
-    pub error: Option<SearchFallback>,
+    pub answer: SearchShown,
     pub scope: SearchScope,
     /// The scope chips are offered: there are provider items, or a scope other than everything is on.
     pub scopes_offered: bool,
-    /// The server answered with nothing at all.
-    pub nothing_found: bool,
+}
+
+/// Where the answer on the search screen stands, narrowed to the scope.
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum SearchShown {
+    /// No query: the recent searches show instead.
+    #[default]
+    Blank,
+    /// The server is being asked; the offline index's answer shows meanwhile, if it has one.
+    Asking { index: Option<SearchResult> },
+    /// The server could not be asked; the index's answer stays.
+    Failed { index: Option<SearchResult>, fallback: SearchFallback },
+    /// The server's answer.
+    Found { result: SearchResult },
+    /// The server answered with nothing.
+    NothingFound,
+}
+
+impl SearchShown {
+    /// The results on screen.
+    pub fn result(&self) -> Option<&SearchResult> {
+        match self {
+            SearchShown::Asking { index } | SearchShown::Failed { index, .. } => index.as_ref(),
+            SearchShown::Found { result } => Some(result),
+            SearchShown::Blank | SearchShown::NothingFound => None,
+        }
+    }
+
+    /// [`SearchShown::result`], taken.
+    pub fn into_result(self) -> Option<SearchResult> {
+        match self {
+            SearchShown::Asking { index } | SearchShown::Failed { index, .. } => index,
+            SearchShown::Found { result } => Some(result),
+            SearchShown::Blank | SearchShown::NothingFound => None,
+        }
+    }
 }
 
 /// Where the answer to the field's query stands.
@@ -216,21 +244,25 @@ impl Session {
     /// What the screen shows now.
     pub fn view(&self) -> SearchView {
         let split = self.answer.split();
-        let shown = split.map(|s| s.shown(self.scope));
         let has_providers = split.is_some_and(|s| s.providers.is_some());
-        let from_server = matches!(self.answer, Answer::Server(_));
-        let empty = shown.as_ref().is_some_and(|r| r.songs.is_empty() && r.albums.is_empty() && r.artists.is_empty() && r.playlists.is_empty());
+        let shown = |s: &Option<SearchSplit>| s.as_ref().map(|s| s.shown(self.scope));
+        let answer = match &self.answer {
+            Answer::Blank => SearchShown::Blank,
+            Answer::Asking(index) => SearchShown::Asking { index: shown(index) },
+            Answer::Failed { index, fallback } => SearchShown::Failed { index: shown(index), fallback: fallback.clone() },
+            Answer::Server(split) => {
+                let result = split.shown(self.scope);
+                if result.songs.is_empty() && result.albums.is_empty() && result.artists.is_empty() && result.playlists.is_empty() {
+                    SearchShown::NothingFound
+                } else {
+                    SearchShown::Found { result }
+                }
+            }
+        };
         SearchView {
             text: self.text.clone(),
             query: self.query().to_string(),
-            nothing_found: from_server && empty,
-            shown,
-            from_server,
-            searching: matches!(self.answer, Answer::Asking(_)),
-            error: match &self.answer {
-                Answer::Failed { fallback, .. } => Some(fallback.clone()),
-                _ => None,
-            },
+            answer,
             scope: self.scope,
             scopes_offered: has_providers || self.scope != SearchScope::Everything,
         }

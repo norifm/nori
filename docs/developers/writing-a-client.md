@@ -237,6 +237,10 @@ of this; Android's `PlaybackService` calls the same functions.
 - **A song taken out of the queue**: the last one taken out on its own goes back where it was for
   `nori_queue::undo::UNDO_MS` (`Stage::undo_ms`); `Session::put_back` (`playlist_restore`) refuses it
   after that. A client offering the undo shows it that long; one that shows none calls `Session::undo`.
+- **Search**: `SearchSession` answers each keystroke from the offline index and the server once typing
+  pauses (`typed_with_index`, `answer`); its `SearchView` says where the answer stands as one
+  `SearchShown` (blank, asking, failed, found, nothing found). On the host: `search_typed`,
+  `search_server` (reported as `Said::Search`) and `search_server_now` (on the caller's thread).
 - **A favorite**: `Client::star` marks it at once and puts the old mark back if the server refuses.
 - **Fetching ahead**: `Client::precache_targets` names the songs after the next (the `songs_ahead_wifi`
   and `songs_ahead_mobile` settings; never a provider's song). The engine fetches them whole, one after

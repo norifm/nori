@@ -35,6 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.vm.ActionsViewModel
 import dev.nori.music.app.vm.SearchViewModel
+import dev.nori.music.app.vm.results
 import androidx.compose.runtime.remember
 
 @Composable
@@ -56,9 +57,12 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         )
         // Its room is kept whether or not it shows, so the results do not move as the server answers.
         androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(2.dp)) {
-            if (ui.searching) LinearProgressIndicator(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.onSurface, trackColor = MaterialTheme.colorScheme.outlineVariant)
+            if (ui.answer is dev.nori.music.ffi.library.SearchShown.Asking) LinearProgressIndicator(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.onSurface, trackColor = MaterialTheme.colorScheme.outlineVariant)
         }
-        ui.error?.let { Text(it, Modifier.padding(horizontal = Space.gutter), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        (ui.answer as? dev.nori.music.ffi.library.SearchShown.Failed)?.let { f ->
+            val said = remember(f) { say.searchFallback(f.fallback.reason) }
+            Text(said, Modifier.padding(horizontal = Space.gutter), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
 
         // As far below the field as the library's chips are below its title, the progress line's room counted.
         if (ui.scopesOffered) LazyRow(Modifier.bleedsToEdges().padding(top = 8.dp), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -67,7 +71,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         // Back from a search comes back to this page's start, not to the tab before it.
         val focus = androidx.compose.ui.platform.LocalFocusManager.current
         androidx.activity.compose.BackHandler(ui.query.isNotEmpty()) { vm.setQuery(""); focus.clearFocus() }
-        val r = ui.shown
+        val r = ui.answer.results
         // A new search starts with its best few songs again.
         var allSongs by androidx.compose.runtime.remember(ui.query) { androidx.compose.runtime.mutableStateOf(false) }
         if (r == null) {
@@ -150,7 +154,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
                 )
             }
             if (shown < r.songs.size) item(key = "songs-all") { TextAction(say.showAll, { allSongs = true }, Modifier.padding(horizontal = 8.dp)) }
-            if (ui.nothingFound) item { EmptyNote(Note.NOTHING_FOUND) }
+            if (ui.answer is dev.nori.music.ffi.library.SearchShown.NothingFound) item { EmptyNote(Note.NOTHING_FOUND) }
         }
     }
 }

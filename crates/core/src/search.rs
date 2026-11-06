@@ -83,6 +83,27 @@ impl SearchSession {
     }
 }
 
+impl SearchSession {
+    /// [`SearchSession::typed`], then the index's answer to the query at once ([`SearchSession::local`]).
+    pub fn typed_with_index(&self, core: std::sync::Arc<Core>, text: String) -> SearchView {
+        let view = self.typed(text);
+        if view.query.is_empty() {
+            return view;
+        }
+        let limit = crate::browse::library_sizes().local_search;
+        self.local(core, view.query.clone(), limit).ok().flatten().unwrap_or(view)
+    }
+
+    /// [`SearchSession::ask`], a failure kept as the fallback `reason` words: the view to show, None when
+    /// it is stale.
+    pub async fn answer(&self, client: std::sync::Arc<crate::client::Client>, query: String, reason: fn(&crate::transport::NetError) -> String) -> Option<SearchView> {
+        match self.ask(client, query.clone()).await {
+            Ok(v) => v,
+            Err(e) => self.failed(query, Some(reason(&e))),
+        }
+    }
+}
+
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
     /// Remembers `query` and returns the history; None (not remembered) when too short.
@@ -124,30 +145,33 @@ pub(crate) mod tests {
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
         let s = SearchSession::new();
         let v = s.typed(" dogs ".into());
-        assert_eq!((v.query.as_str(), v.searching, v.shown.is_none()), ("dogs", true, true));
+        assert_eq!(v.query, "dogs");
+        assert!(matches!(v.answer, SearchShown::Asking { index: None }));
         assert!(s.local(core.clone(), "dog".into(), 30).unwrap().is_none(), "stale");
         assert!(s.local(core.clone(), "dogs".into(), 30).unwrap().is_some());
         let v = s.server("dogs".into(), result()).unwrap();
-        assert!(v.from_server && !v.searching && v.scopes_offered && !v.nothing_found);
-        assert_eq!(v.shown.as_ref().unwrap().songs.len(), 3);
+        assert!(v.scopes_offered);
+        let SearchShown::Found { result: found } = &v.answer else { panic!("{:?}", v.answer) };
+        assert_eq!(found.songs.len(), 3);
         assert!(s.local(core, "dogs".into(), 30).unwrap().is_none(), "server answer stands");
-        assert_eq!(s.scope(SearchScope::Providers).shown.unwrap().songs.len(), 1);
-        assert_eq!(s.scope(SearchScope::Library).shown.unwrap().songs.len(), 2);
+        assert_eq!(s.scope(SearchScope::Providers).answer.result().unwrap().songs.len(), 1);
+        assert_eq!(s.scope(SearchScope::Library).answer.result().unwrap().songs.len(), 2);
         assert!(s.server("cats".into(), result()).is_none());
         s.typed("cats".into());
         let failed = s.failed("cats".into(), Some("timeout".into())).unwrap();
-        assert_eq!(failed.error, Some(SearchFallback { reason: Some("timeout".into()) }));
-        assert!(!failed.searching && !failed.from_server && failed.shown.is_some(), "the last answer stays");
+        let SearchShown::Failed { index, fallback } = &failed.answer else { panic!("{:?}", failed.answer) };
+        assert_eq!(*fallback, SearchFallback { reason: Some("timeout".into()) });
+        assert!(index.is_some(), "the last answer stays");
         let v = s.typed("  ".into());
-        assert!(v.shown.is_none() && !v.searching && v.error.is_none());
+        assert!(matches!(v.answer, SearchShown::Blank));
         assert!(!s.scope(SearchScope::Everything).scopes_offered);
         let none = s.typed("x".into());
-        assert!(!none.nothing_found);
+        assert!(matches!(none.answer, SearchShown::Asking { .. }));
         let v = s.server("x".into(), SearchResult::default()).unwrap();
-        assert!(v.nothing_found);
+        assert!(matches!(v.answer, SearchShown::NothingFound));
         let only_playlists = SearchResult { playlists: vec![crate::Playlist { id: "yt-VLa".into(), ..Default::default() }], ..Default::default() };
-        assert!(!s.server("x".into(), only_playlists).unwrap().nothing_found);
-        assert_eq!(s.scope(SearchScope::Library).shown.unwrap().songs.len(), 0);
+        assert!(matches!(s.server("x".into(), only_playlists).unwrap().answer, SearchShown::Found { .. }));
+        assert_eq!(s.scope(SearchScope::Library).answer.result().map_or(0, |r| r.songs.len()), 0);
 
         // Short queries are not remembered.
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
@@ -168,7 +192,7 @@ pub(crate) mod tests {
         s.server("dogs".into(), result()).unwrap();
         assert!(s.failed("dogs".into(), Some("timeout".into())).is_none());
         let v = s.scope(SearchScope::Everything);
-        assert!(v.from_server && v.error.is_none() && v.shown.unwrap().songs.len() == 3);
+        assert!(matches!(&v.answer, SearchShown::Found { result } if result.songs.len() == 3));
     }
 
     #[test]
@@ -178,12 +202,12 @@ pub(crate) mod tests {
         s.server("dogs".into(), result()).unwrap();
         let v = s.typed("dogs ".into());
         assert_eq!(v.text, "dogs ");
-        assert!(v.from_server && !v.searching, "the query is the same, so nothing asks it again");
+        assert!(matches!(v.answer, SearchShown::Found { .. }), "the query is the same, so nothing asks it again");
 
         s.typed("cats".into());
         s.failed("cats".into(), None).unwrap();
         let v = s.typed(" cats".into());
-        assert!(v.error.is_some() && !v.searching);
+        assert!(matches!(v.answer, SearchShown::Failed { .. }));
     }
 
     #[test]

@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use nori_core::client::Starrable;
 use nori_core::stars::StarMarks;
+use nori_core::search::SearchShown;
 use nori_core::Song;
 use nori_engine::State;
 use ratatui::layout::{Alignment, Rect};
@@ -23,8 +24,8 @@ use nori_core::browse::AlbumSort;
 
 use crate::app::{App, Button, DeviceRow, Focus, HomeLine, Hit, Item, LibLine, ListRef, Load, Overlay, Page, Panel, Place, QueueRow, SearchRow, Sel, View, LOGIN_FIELDS, PANELS};
 use crate::art::{Art, Theme};
-use crate::keys::{Scope, BINDINGS};
 use crate::lyrics::Words;
+use crate::keys::{Scope, BINDINGS};
 use crate::settings_view::{self, EqRow, Line as SLine, SettingsView};
 use crate::text::clock;
 
@@ -677,12 +678,12 @@ fn search(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     put(f, Paragraph::new(prompt), field);
     app.hits.push((field, Hit::SearchField));
     let view = s.view.as_ref();
-    let (words, style) = match view {
-        Some(v) if v.error.is_some() => (crate::text::search_fallback(v.error.as_ref().and_then(|e| e.reason.as_deref())), Style::default().fg(Color::LightRed)),
-        Some(v) if v.searching => ("Asking the server…".to_string(), t.dim()),
-        Some(v) if v.nothing_found => ("Nothing found".to_string(), t.dim()),
-        Some(v) if !v.query.is_empty() => ((if v.from_server { "From the server" } else { "From the offline index · the server is asked when you pause" }).to_string(), t.dim()),
-        _ => ("Songs, albums and artists, from the library".to_string(), t.dim()),
+    let (words, style) = match view.map(|v| &v.answer) {
+        Some(SearchShown::Failed { fallback, .. }) => (crate::text::search_fallback(fallback.reason.as_deref()), Style::default().fg(Color::LightRed)),
+        Some(SearchShown::Asking { .. }) => ("Asking the server…".to_string(), t.dim()),
+        Some(SearchShown::NothingFound) => ("Nothing found".to_string(), t.dim()),
+        Some(SearchShown::Found { .. }) => ("From the server".to_string(), t.dim()),
+        Some(SearchShown::Blank) | None => ("Songs, albums and artists, from the library".to_string(), t.dim()),
     };
     text(f, row_of(area, 1), &words, style);
     let body = below(area, 3);

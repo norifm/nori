@@ -17,6 +17,7 @@ use nori_core::mixes::board::{MixLookup, MixTile, FAVOURITES_MIX};
 use nori_core::stage::QueueRows;
 use nori_core::{Album, Artist, Genre, Lyrics, OriginKind, PageOrigin, Playlist, SearchResult, Song};
 use nori_core::lyrics_follow::LyricsNow;
+use nori_core::search::SearchShown;
 use nori_covers::loader::Ticket;
 use nori_engine::State;
 use nori_host::session::{read_pages, Chore};
@@ -183,8 +184,18 @@ fn with_download_marks(s: &nori_host::session::Session, mut v: Value) -> Value {
 }
 
 fn send_error(token: u64, e: &nori_core::transport::NetError) {
+    send(token, &failure(e));
+}
+
+/// A failure as a page's answer says it: its code and detail.
+fn failure(e: &nori_core::transport::NetError) -> Value {
     let (code, detail) = crate::account::fail(e.clone());
-    send(token, &json!({ "error": code, "detail": detail.unwrap_or_default() }));
+    json!({ "error": code, "detail": detail.unwrap_or_default() })
+}
+
+/// A failed server search, kept as its fallback's reason in the page's own words ([`failure`]).
+fn search_failure(e: &nori_core::transport::NetError) -> String {
+    failure(e).to_string()
 }
 
 fn cover(c: &Option<String>) -> &str {
@@ -819,20 +830,16 @@ fn read(token: u64, kind: i32, arg: String) {
                 let recent = core.search_history().unwrap_or_default();
                 return send(token, &json!({ "recent": recent, "sections": [] }));
             }
-            if let Some(r) = &view.shown {
+            if let Some(r) = view.answer.result() {
                 send(token, &found(token, r, false));
             }
-            let read = Read::Search {
-                query: view.query.clone(),
-                songs: 40,
-                albums: 20,
-                artists: 10,
-            };
-            match nori_core::transport::block_on(client.read_now(read)) {
-                Ok(Page::Found { v }) => send(token, &found(token, &v, true)),
-                Ok(_) => {}
-                Err(e) if view.shown.is_none() => send_error(token, &e),
-                Err(_) => {}
+            let Some(answered) = with_session(|s| s.search_server_now(view.query.clone(), search_failure)).flatten() else { return };
+            match answered.answer {
+                SearchShown::Found { result } => send(token, &found(token, &result, true)),
+                SearchShown::NothingFound => send(token, &found(token, &SearchResult::default(), true)),
+                // The index found nothing either: the page says why, as `send_error` would.
+                SearchShown::Failed { index: None, fallback } => send(token, &serde_json::from_str(&fallback.reason.unwrap_or_default()).unwrap_or(Value::Null)),
+                SearchShown::Failed { .. } | SearchShown::Asking { .. } | SearchShown::Blank => {}
             }
         }
         _ => send(token, &json!({ "sections": [] })),
@@ -1416,6 +1423,12 @@ pub unsafe extern "C" fn nori_ios_lyrics_page(song: *const c_char) -> *mut c_cha
     let Some(now) = with_session(|s| s.lyrics_now()).filter(|n| n.song() == Some(song.as_str())) else {
         return std::ptr::null_mut();
     };
+    let failed = Lyrics::default();
+    let l = match &now {
+        LyricsNow::Shown { pick, .. } => &pick.lyrics,
+        LyricsNow::Failed { .. } => &failed,
+        LyricsNow::NoSong | LyricsNow::Looking { .. } => return std::ptr::null_mut(),
+    };
     let lines: Vec<Value> = l
         .lines
         .iter()
@@ -1423,12 +1436,6 @@ pub unsafe extern "C" fn nori_ios_lyrics_page(song: *const c_char) -> *mut c_cha
         .collect();
     owned(&json!({ "id": song, "synced": l.synced, "offset": l.timing.offset_ms(), "lines": lines }))
 }
-    let failed = Lyrics::default();
-    let l = match &now {
-        LyricsNow::Shown { pick, .. } => &pick.lyrics,
-        LyricsNow::Failed { .. } => &failed,
-        LyricsNow::NoSong | LyricsNow::Looking { .. } => return std::ptr::null_mut(),
-    };
 
 /// A long list's orders as JSON to free: `now` the one it is in, `all` every one in the menu's order
 /// (albums by [`AlbumSort::name`], songs by [`song_sorts`] name, both for the client to word), and `ways`

@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use nori_core::browse::AlbumSort;
 use nori_core::lyrics_follow::LyricsNow;
 use nori_core::menus::PageKind;
-use nori_core::search::SearchView;
+use nori_core::search::{SearchShown, SearchView};
 use nori_core::settings::SavedServer;
 use nori_core::Song;
 use nori_covers::loader::Ticket;
@@ -2120,13 +2120,18 @@ impl App {
         // Nothing typed: the searches made before, newest first.
         let blank = v.query.trim().is_empty();
         ui.set_search_blank(blank);
-        ui.set_search_nothing(v.nothing_found && !v.searching && v.error.is_none());
+        ui.set_search_nothing(matches!(v.answer, SearchShown::NothingFound));
         ui.set_search_query(v.query.trim().into());
         if blank {
             let recent = self.session.as_ref().and_then(|s| s.core.search_history().ok()).unwrap_or_default();
             ui.set_recent_searches(ModelRc::new(VecModel::from(recent.into_iter().map(SharedString::from).collect::<Vec<_>>())));
         }
-        let found = v.shown.unwrap_or_default();
+        let busy = matches!(v.answer, SearchShown::Asking { .. });
+        let note = match &v.answer {
+            SearchShown::Failed { fallback, .. } => format!("The server could not be searched ({}); these are from the offline index", fallback.reason.clone().unwrap_or_default()),
+            _ => String::new(),
+        };
+        let found = v.answer.into_result().unwrap_or_default();
         self.search_preview = nori_core::search::search_preview(&found);
         ui.set_search_preview(ModelRc::new(VecModel::from(preview_cards(&self.search_preview, &found))));
         ui.set_search_preview_at(-1);
@@ -2139,12 +2144,7 @@ impl App {
             self.search_songs_all = false;
         }
         self.show_search_songs();
-        ui.set_search_busy(v.searching);
-        let note = if let Some(e) = v.error {
-            format!("The server could not be searched ({}); these are from the offline index", e.reason.unwrap_or_default())
-        } else {
-            String::new()
-        };
+        ui.set_search_busy(busy);
         ui.set_search_note(note.into());
     }
 

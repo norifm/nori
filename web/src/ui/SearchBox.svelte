@@ -6,7 +6,7 @@
   // page, which shows the answer itself.
   import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
-  import { ask, read } from "../rpc";
+  import { ask } from "../rpc";
   import { go, route, searchFor } from "../state/route.svelte";
   import { player } from "../state/player.svelte";
   import type { Album, Artist, Playlist, Song } from "../state/types";
@@ -16,7 +16,7 @@
 
   type Kind = "artists" | "albums" | "playlists" | "songs";
   type Line = { line: "head"; kind: Kind } | { line: "artist" | "album" | "playlist" | "song"; at: number } | { line: "all" };
-  type Found = { artists: Artist[]; albums: Album[]; playlists: Playlist[]; songs: Song[]; preview: Line[] };
+  type Found = { state: "blank" | "asking" | "failed" | "found" | "nothing"; artists: Artist[]; albums: Album[]; playlists: Playlist[]; songs: Song[]; preview: Line[] };
   let query = $state("");
   // The search page's query, however it was reached (typed, a link, Back).
   $effect(() => {
@@ -29,41 +29,27 @@
   let at = $state(-1);
   let box = $state<HTMLDivElement>();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let asked = 0;
   const still = () => document.documentElement.classList.contains("still");
 
-  function typed() {
+  /** What the core's search session shows now; null (stale) changes nothing. */
+  function show(v: Found | null) {
+    if (!v) return;
+    found = v.state === "blank" ? null : v;
+    at = -1;
+  }
+
+  // The offline index at once, then the server's answer once the typing pauses. Which answer still
+  // stands is the core's search session's.
+  async function typed() {
     clearTimeout(timer);
     const q = query.trim();
-    // A read still out when the box is cleared is no longer wanted.
-    const mine = ++asked;
-    if (!q) {
-      found = null;
-      open = false;
-      return;
-    }
-    open = true;
-    let answered = false;
-    // The offline index at once, as the desktop's search; then the server's better answer.
-    void read<Found | null>({ kind: "searchIndex", query: q })
-      .then((p) => {
-        if (mine !== asked || answered || !p) return;
-        found = p;
-        at = -1;
-      })
-      .catch(() => {});
-    void ask<number>("search_delay", q).then((ms) => {
-      if (mine !== asked) return;
-      timer = setTimeout(async () => {
-        const p = await read<Found>({ kind: "search", query: q }).catch(() => null);
-        if (mine !== asked || !p) return;
-        answered = true;
-        // A server that finds nothing for a letter or two takes nothing from what the index found.
-        if (!p.preview?.length && found?.preview?.length) return;
-        found = p;
-        at = -1;
-      }, ms);
-    });
+    open = !!q;
+    show(JSON.parse(await ask<string>("search_typed", query).catch(() => "null")));
+    if (!q) return;
+    const ms = await ask<number>("search_delay", q);
+    if (query.trim() !== q) return;
+    clearTimeout(timer);
+    timer = setTimeout(async () => show(JSON.parse(await ask<string>("search_ask", q).catch(() => "null"))), ms);
   }
 
   const shown = $derived(open && !!found && route.top !== "search");

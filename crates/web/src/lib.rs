@@ -63,6 +63,8 @@ pub struct Nori {
     app: Arc<nori_core::queue::Session>,
     /// The databases are kept in the origin's private file system, not in memory.
     stored: bool,
+    /// The search box's: what it holds and the answers it has had.
+    search: Arc<nori_core::search::SearchSession>,
     #[cfg(not(feature = "engine"))]
     client: std::cell::RefCell<Option<Arc<Client>>>,
     #[cfg(feature = "engine")]
@@ -90,6 +92,7 @@ impl Nori {
             live: play::Live::new(tell, wake),
             app,
             stored: kept.is_ok(),
+            search: nori_core::search::SearchSession::new(),
             #[cfg(not(feature = "engine"))]
             client: Default::default(),
         })
@@ -110,6 +113,11 @@ impl Nori {
 
     fn active(&self) -> Option<SavedServer> {
         self.app.settings.prefs(|p| p.active_server().cloned())
+    }
+
+    /// The account signed in, whose own playlists it may change; None for a profile without one.
+    fn user(&self) -> Option<String> {
+        self.active().filter(|_| self.rules().account).map(|p| p.user)
     }
 
     /// Signs in to `url` and keeps the profile, the active one from now on (`providers::log_in`).
@@ -157,14 +165,31 @@ impl Nori {
     /// Reads a page (`{ kind, ... }`, see `pages::Ask`): its JSON.
     pub async fn read(&self, ask: String) -> Result<String, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        let user = self.active().filter(|_| self.rules().account).map(|p| p.user);
-        pages::read(&client, &ask, user.as_deref()).await.map_err(error)
+        pages::read(&client, &ask, self.user().as_deref()).await.map_err(error)
     }
 
     /// Fills the offline index when the profile keeps one and it is empty, as the session does.
     pub async fn sync_index(&self) -> Result<(), JsValue> {
         let Some(client) = self.client().filter(|c| self.rules().indexed && c.core().index_size().map_or(true, |s| s.songs == 0)) else { return Ok(()) };
         client.sync_library().await.map(|_| ()).map_err(|e| error(e.to_string()))
+    }
+
+    /// The search box now holds `text`: what it shows, the offline index's answer at once
+    /// (`pages::search_view`).
+    pub fn search_typed(&self, text: String) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let view = self.search.typed_with_index(client.core().clone(), text);
+        Ok(pages::search_view(client.core(), view, self.user().as_deref()))
+    }
+
+    /// The server's answer to `query` as the box shows it (`search_typed`); null when the box holds
+    /// another query by then.
+    pub async fn search_ask(&self, query: String) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        Ok(match self.search.answer(client.clone(), query, |e| e.to_string()).await {
+            Some(view) => pages::search_view(client.core(), view, self.user().as_deref()),
+            None => "null".into(),
+        })
     }
 
     /// How long live search waits for `query` before asking the server, ms.
@@ -525,6 +550,7 @@ fn settings_row(r: &settings_pages::SettingsRow) -> Option<Value> {
 #[wasm_bindgen]
 impl Nori {
     fn enter(&self, profile: SavedServer) -> Result<(), JsValue> {
+        self.leave();
         let core = nori_core::Core::new(db(), nori_core::settings::server_db_id(&profile.id), self.app.clone()).map_err(error)?;
         core.configure(nori_core::server_config(&profile)).map_err(error)?;
         let client = Client::new(core, Arc::new(Fetch(())), nori_core::covers::CoverNet::new());
@@ -539,6 +565,8 @@ impl Nori {
 
     fn leave(&self) {
         *self.client.borrow_mut() = None;
+        // One profile's answers are not another's.
+        self.search.typed(String::new());
     }
 
     /// An account's: the core module opens no guest's profile.

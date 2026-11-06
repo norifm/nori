@@ -1164,7 +1164,7 @@ fn search_results_list() {
         artists: vec![nori_core::Artist { id: "ar-1".into(), name: "The Ones".into(), ..Default::default() }],
         playlists: vec![nori_core::Playlist { id: "yt-VLone".into(), name: "One Mix".into(), comment: Some("Ann • 17 views".into()), ..Default::default() }],
     };
-    a.search.view = Some(nori_core::search::SearchView { query: "one".into(), shown: Some(found), from_server: true, ..Default::default() });
+    a.search.view = Some(nori_core::search::SearchView { query: "one".into(), answer: nori_core::search::SearchShown::Found { result: found }, ..Default::default() });
     key(&mut a, KeyCode::Enter);
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Songs") && s.contains("One Album") && s.contains("The Ones") && s.contains("From the server"), "{s}");
@@ -1790,7 +1790,7 @@ fn the_main_screens() {
         a.go(View::Search);
         chars(a, "blue");
         let found = nori_core::SearchResult { songs: tracks[..2].to_vec(), albums: albums[..2].to_vec(), artists: vec![nori_core::Artist { id: "ar-1".into(), name: "John Coltrane".into(), album_count: Some(12), ..Default::default() }], playlists: vec![] };
-        a.search.view = Some(nori_core::search::SearchView { query: "blue".into(), shown: Some(found), from_server: true, ..Default::default() });
+        a.search.view = Some(nori_core::search::SearchView { query: "blue".into(), answer: nori_core::search::SearchShown::Found { result: found }, ..Default::default() });
         out.push(shot(a, "search"));
         out
     };

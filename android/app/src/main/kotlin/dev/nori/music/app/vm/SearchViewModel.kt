@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import dev.nori.music.ffi.model.SearchResult
 import dev.nori.music.ffi.library.SearchScope
 import dev.nori.music.ffi.SearchSession
+import dev.nori.music.ffi.library.SearchShown
 import dev.nori.music.ffi.library.SearchView
 import dev.nori.music.net.said
 import kotlinx.coroutines.CancellationException
@@ -22,22 +23,28 @@ import kotlinx.coroutines.withContext
 /** What the search screen shows: the core's view of the search (`search.rs`), and the recent searches. */
 data class SearchUi(
     val query: String = "",
-    /** The answer narrowed to the scope; null with no query, when the recent searches show instead. */
-    val shown: SearchResult? = null,
-    val searching: Boolean = false,
-    val error: String? = null,
+    /** Where the answer stands, narrowed to the scope. */
+    val answer: SearchShown = SearchShown.Blank,
     val scope: SearchScope = SearchScope.EVERYTHING,
     val scopesOffered: Boolean = false,
-    val nothingFound: Boolean = false,
     val history: List<String> = emptyList(),
 ) {
     // Not the view's text: the field is set only as typed ([SearchViewModel.setQuery]), and a view answering
     // an earlier keystroke would put that keystroke's text back over newer typing.
-    internal fun with(v: SearchView) = copy(
-        shown = v.shown, searching = v.searching, error = v.error?.let { dev.nori.music.app.ui.say.searchFallback(it.reason) }, scope = v.scope,
-        scopesOffered = v.scopesOffered, nothingFound = v.nothingFound,
-    )
+    internal fun with(v: SearchView) = copy(answer = v.answer, scope = v.scope, scopesOffered = v.scopesOffered)
 }
+
+/** The results the answer puts on screen: none before there are any (the recent searches show), none at all when the server found nothing. */
+val SearchShown.results: SearchResult?
+    get() = when (this) {
+        SearchShown.Blank -> null
+        is SearchShown.Asking -> index
+        is SearchShown.Failed -> index
+        is SearchShown.Found -> result
+        SearchShown.NothingFound -> NO_RESULTS
+    }
+
+private val NO_RESULTS = SearchResult(artists = emptyList(), albums = emptyList(), songs = emptyList(), playlists = emptyList())
 
 /**
  * Live search in two layers. Every keystroke is answered at once from the offline index; once typing

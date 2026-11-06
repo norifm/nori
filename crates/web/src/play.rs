@@ -252,6 +252,8 @@ impl Nori {
         if let Some(o) = self.live.open.borrow_mut().take() {
             o.host.close();
         }
+        // One profile's answers are not another's.
+        self.search.typed(String::new());
     }
 
     /// What the app offers over the profile open.
