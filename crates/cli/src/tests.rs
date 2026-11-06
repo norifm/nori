@@ -438,7 +438,7 @@ fn the_library_has_its_places_and_orders() {
     let year = orders[2];
     assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Albums { sort: year, favorites: true, offset: 0 })));
     a.handle(Msg::Data(Req::Albums { sort: year, favorites: true, offset: 0 }, Ok(Data::Albums(albums[..1].to_vec()))));
-    assert!(!a.library.albums_more, "the favorites come whole");
+    assert!(!a.library.album_pages.more(), "the favorites come whole");
     assert!(draw(&mut a, 120, 30).contains("Favorites only   Sort by  Year"));
 
     // The songs: the core's sorts, round; the favorites a filter over any of them.
@@ -1884,8 +1884,17 @@ fn home_offers_the_queue_left_and_the_mixes() {
     a.cmds.clear();
     key(&mut a, KeyCode::Char('G'));
     assert_eq!(a.cmds, [Cmd::Load(Req::Row { row, offset: 60 })]);
+    // A page that fails keeps what is listed, and is asked for again as the selection moves on.
+    a.handle(Msg::Data(Req::Row { row, offset: 60 }, Err("offline".into())));
+    assert!(draw(&mut a, 120, 30).contains("New 59"));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Up);
+    assert_eq!(a.cmds, [Cmd::Load(Req::Row { row, offset: 60 })]);
+    a.cmds.clear();
+    key(&mut a, KeyCode::Down);
+    assert!(a.cmds.is_empty(), "one page on its way: {:?}", a.cmds);
     a.handle(Msg::Data(Req::Row { row, offset: 60 }, Ok(Data::Row(vec![Item::Album(album("n60", "New 60"))], true))));
-    assert!(matches!(a.page(), Some(crate::app::Page::Row { items, more: false, .. }) if items.len() == 61));
+    assert!(matches!(a.page(), Some(crate::app::Page::Row { items, pages, .. }) if items.len() == 61 && !pages.more()));
 }
 
 /// A page's head, as the phone's: its title with the seal, who made it with Play and Shuffle, then the

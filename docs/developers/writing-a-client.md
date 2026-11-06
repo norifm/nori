@@ -225,6 +225,10 @@ of this; Android's `PlaybackService` calls the same functions.
   apply the bridge's edit, skip, or stop); `Core::bridge_parked` brings the parked queue back.
 - **A screen's read**: `Client::read_cached(read, PageShown)` hands the stored answer at once and the
   server's when it differs. A failure is an error only when nothing was stored.
+- **A list read a page at a time**: `paged::Paged` (over the list's cursor; `paged::Pages` counts pages,
+  for Android) says which page to read next: one on its way at a time, none after the last, a page
+  answered twice (stored, then the server's) taken again, and a page that failed read again with the next
+  ask rather than ending the list. A list read again from the top (`reset`) drops the page on its way.
 - **Lyrics**: `Client::lyrics_for(id, LyricsShown)` is the whole order: the server's, the services'
   race, then none. What a lyrics view shows for the song heard is `lyrics_follow::LyricsHeard`'s
   `LyricsNow` (no song, looking, shown, failed): the client says which song is heard (`hear`), runs the

@@ -326,6 +326,12 @@ final class Core {
         return t
     }
 
+    /// The next page of the list read with `token`, if the core says one is to be read.
+    func readMore(_ kind: Int32, _ arg: String, token: UInt64, answer: @escaping (PageAnswer) -> Void) {
+        pages[token] = answer
+        arg.withCString { nori_ios_read_more(token, kind, $0) }
+    }
+
     /// Measures cover `id`'s page colors (`nori_ios_cover_look`) on the season's paper; `done` runs on the
     /// main thread with them, or with nil for a cover that does not load. Measured once per cover and look.
     func coverLook(_ id: String, done: @escaping (PageLook?) -> Void) {

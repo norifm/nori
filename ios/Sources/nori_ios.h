@@ -166,7 +166,8 @@ void nori_ios_remote_pick(const char *id);
 #define NORI_NOTE_CURVE_FAILED 16
 
 /// Pages for `nori_ios_read`. `arg`: the id for album/artist/playlist/mix, the name for a genre, the
-/// query for search, the offset for songs and albums (or NORI_ALBUMS_FAVORITES); empty otherwise.
+/// query for search, NORI_ALBUMS_FAVORITES for the favorite albums; empty otherwise. A list answers `more`
+/// while pages may follow (`nori_ios_read_more`).
 #define NORI_PAGE_HOME 1
 #define NORI_PAGE_ALBUMS 2
 #define NORI_PAGE_ARTISTS 3
@@ -185,7 +186,7 @@ void nori_ios_remote_pick(const char *id);
 #define NORI_PAGE_SMARTS 16
 #define NORI_PAGE_SMART 17
 #define NORI_PAGE_DOWNLOADED_ALBUM 18
-/// A Home row in full: `arg` its shelf's key, then "\n" and an offset for a page past the first.
+/// A Home row in full: `arg` its shelf's key.
 #define NORI_PAGE_HOME_ROW 19
 /// NORI_PAGE_ALBUMS' `arg` for the favorite albums only, in the order chosen, all on one page.
 #define NORI_ALBUMS_FAVORITES "favorites"
@@ -194,6 +195,9 @@ void nori_ios_remote_pick(const char *id);
 typedef void (*NoriPageFn)(uint64_t token, const char *json);
 void nori_ios_on_page(NoriPageFn cb);
 void nori_ios_read(uint64_t token, int32_t kind, const char *arg);
+/// The list read with `token` (`kind`, its `arg` without an offset) nears its end: its next page comes to
+/// the page callback, unless one is on its way or the last is in. A page that failed is read again.
+void nori_ios_read_more(uint64_t token, int32_t kind, const char *arg);
 
 /// Taps on a page's songs, by the token it was read with.
 void nori_ios_play_list(uint64_t token, int32_t index, int32_t shuffle);

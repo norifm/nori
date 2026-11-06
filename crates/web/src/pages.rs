@@ -143,9 +143,25 @@ fn shown_page(core: &nori_core::Core, found: nori_core::SearchResult, user: Opti
 /// None for a profile without an account's things.
 pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<String, String> {
     let ask = serde_json::from_str::<Ask>(ask).map_err(|e| e.to_string())?;
+    Ok(read_value(client, ask, user).await?.to_string())
+}
+
+/// Albums asked per page of the album grid, as the desktop's (`nori_host::pages::ALBUM_PAGE`, not in
+/// `core.wasm`).
+const GRID_PAGE: i32 = 500;
+
+/// A page of the album grid from `offset` in `sort`'s order (with `favorites`, the starred albums whole):
+/// its JSON, and where the page after it starts (`browse::next_album_page`).
+pub async fn album_page(client: &Client, sort: String, favorites: bool, offset: u32, user: Option<&str>) -> Result<(Value, Option<u32>), String> {
+    let mut v = read_value(client, Ask::Albums { sort, size: GRID_PAGE, offset: offset as i32, favorites }, user).await?;
+    let next = v.as_object_mut().and_then(|m| m.remove("next")).and_then(|n| n.as_u64()).map(|n| n as u32);
+    Ok((v, next))
+}
+
+async fn read_value(client: &Client, ask: Ask, user: Option<&str>) -> Result<Value, String> {
     if let Ask::Genre { name } = ask {
         let v = client.genre_songs(name).await.map_err(|e| e.to_string())?;
-        return Ok(page(client.core(), Page::Songs { v }, user).to_string());
+        return Ok(page(client.core(), Page::Songs { v }, user));
     }
     let paged = match &ask {
         Ask::Albums { sort, size, offset, favorites } => Some((album_sort(sort)?, *favorites, *offset as u32, *size as u32)),
@@ -159,13 +175,13 @@ pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<Stri
     client.read_each(ask.read()?, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
     let core = client.core();
     let p = match (last, paged) {
-        (None, _) => return Ok(Value::Null.to_string()),
+        (None, _) => return Ok(Value::Null),
         (Some(Page::StarredPage { v }), Some((sort, true, ..))) => Page::Albums { v: nori_core::browse::favorites_in_order(v.albums, sort, false) },
         (Some(p), _) => p,
     };
     // A search's answer ranked as every client's is, with the field's preview of it.
     if let (Some(query), Page::Found { v }) = (query, &p) {
-        return Ok(found_page(core, v.clone(), &query, user).to_string());
+        return Ok(found_page(core, v.clone(), &query, user));
     }
     let got = match &p {
         Page::Albums { v } => v.len() as u32,
@@ -175,7 +191,7 @@ pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<Stri
     if let (Some((sort, favorites, offset, asked)), Value::Object(m)) = (paged, &mut v) {
         m.insert("next".into(), json!(nori_core::browse::next_album_page(sort, favorites, offset, asked, got)));
     }
-    Ok(v.to_string())
+    Ok(v)
 }
 
 /// The season's paper the mix cards are dyed on: light, dark, and whether the dark is worn.

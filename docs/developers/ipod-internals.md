@@ -64,6 +64,7 @@ mode or sheet presentation controller.
 | `session.rs` | The one open `nori_host::Session` in a process-wide slot (C entry points carry no handle); reports to Swift as `NoriReport` on a thread the library owns; the controls; background, foreground and memory warnings |
 | `output.rs` | `IosOutput` over a `Sink`, and the render callback |
 | `pages.rs` | Every page through `nori_ios_read(token, kind, arg)`, answered as JSON; song lists kept under the token, so play, enqueue and download name a token and an index; covers, lyrics, settings, the equalizer |
+| `paging.rs` | A list's next page through `nori_ios_read_more(token, kind, arg)`, as the core's `paged::Paged` for that token decides |
 | `menu.rs` | The song menu (`menus::song_menu`), playlists, the sleep timer |
 | `sound.rs` | Each output's sound and the AutoEQ browser, through the core's `device_*` calls |
 | `lyrics.rs` | The core's `LyricClock` behind a handle the lyrics page holds |

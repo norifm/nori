@@ -26,6 +26,7 @@ use nori_host::Fetch;
 use nori_core::settings::HomeRow;
 use serde_json::{json, Value};
 
+use crate::paging;
 use crate::session::{c_text, server, with_session};
 
 pub const PAGE_HOME: i32 = 1;
@@ -404,12 +405,15 @@ fn song_letters(sort: &str) -> Option<&'static str> {
 /// A page of an album grid from `offset`, or with `favorites` the starred albums whole in `sort`'s order:
 /// more follow while pages come full (`browse::next_album_page`).
 fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, favorites: bool, genre: Option<String>, offset: i32) {
+    if offset == 0 {
+        paging::first(token);
+    }
     let read = if favorites {
         Read::StarredItems
     } else {
         Read::AlbumList { kind: sort, size: ALBUM_PAGE, offset, genre }
     };
-    pages(client, token, read, &|p| {
+    let read = pages_sent(client, token, read, &|p| {
         let v = match p {
             Page::Albums { v } => v,
             Page::StarredPage { v } => favorites_in_order(v.albums, sort, false),
@@ -421,12 +425,15 @@ fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, f
             vec![section("albums", true, lettered(v.iter().map(album_json).collect(), album_letters(sort)))]
         };
         Some(json!({
-            "more": next_album_page(sort, favorites, offset as u32, ALBUM_PAGE as u32, v.len() as u32).is_some(),
-            "next": offset + v.len() as i32, "from": offset,
+            "more": paging::answered(token, offset as u32, next_album_page(sort, favorites, offset as u32, ALBUM_PAGE as u32, v.len() as u32)),
+            "from": offset,
             "letters": album_letters(sort).is_some(),
             "sections": sections,
         }))
     });
+    if !read {
+        paging::failed(token, offset as u32);
+    }
 }
 
 /// Albums in [`AlbumSort::ArtistRows`] order as a shelf per artist (`browse::artist_rows`), each titled
@@ -489,22 +496,29 @@ fn home_row(token: u64, client: &nori_core::client::Client, core: &nori_core::Co
         return send(token, &json!({ "sections": [], "from": offset }));
     };
     let key = shelf_key(row);
-    let more = |got: usize| home_row_more(shelf.clone(), got as u32);
+    if offset == 0 {
+        paging::first(token);
+    }
+    // Whether more may follow a page from `offset` that brought `got`.
+    let more = |got: usize| paging::answered(token, offset, home_row_more(shelf.clone(), got as u32).then_some(offset + got as u32));
     match shelf.clone() {
         HomeShelf::Albums { sort, size, follows_stars } => {
-            pages(client, token, shelf_albums_read(sort, size, follows_stars, offset), &|p| match p {
+            let read = pages_sent(client, token, shelf_albums_read(sort, size, follows_stars, offset), &|p| match p {
                 Page::Albums { v } => Some(json!({
-                    "more": more(v.len()), "next": offset + v.len() as u32, "from": offset,
+                    "more": more(v.len()), "from": offset,
                     "sections": [section(key, true, v.iter().map(album_json).collect())],
                 })),
                 _ => None,
             });
+            if !read {
+                paging::failed(token, offset);
+            }
         }
         HomeShelf::Songs { sort, descending, limit } => {
             let songs = core.browse_songs(sort, descending, false, 0, 0, offset, limit).unwrap_or_default();
             let from = if offset == 0 { None } else { extend_list(token, &songs) }.unwrap_or(0);
             let v = json!({
-                "more": more(songs.len()), "next": offset + songs.len() as u32, "from": offset,
+                "more": more(songs.len()), "from": offset,
                 "sections": [songs_section(key, &songs, from)],
             });
             if offset == 0 {
@@ -558,6 +572,16 @@ fn pages(
     read: Read,
     make: &dyn Fn(Page) -> Option<Value>,
 ) {
+    pages_sent(client, token, read, make);
+}
+
+/// Sends each page `read` brings as `make` draws it; false when it failed (the failure is sent).
+fn pages_sent(
+    client: &nori_core::client::Client,
+    token: u64,
+    read: Read,
+    make: &dyn Fn(Page) -> Option<Value>,
+) -> bool {
     let mut any = false;
     let r = read_pages(client, read, |p| {
         if let Some(v) = make(p) {
@@ -568,11 +592,15 @@ fn pages(
     match r {
         Ok(()) if !any => send(token, &json!({ "sections": [] })),
         Ok(()) => {}
-        Err(e) => send_error(token, &e),
+        Err(e) => {
+            send_error(token, &e);
+            return false;
+        }
     }
+    true
 }
 
-fn read(token: u64, kind: i32, arg: String) {
+pub(crate) fn read(token: u64, kind: i32, arg: String) {
     let Some((client, core)) = server() else {
         send(token, &json!({ "closed": true }));
         return;
@@ -730,6 +758,9 @@ fn read(token: u64, kind: i32, arg: String) {
         }),
         PAGE_SONGS => {
             let offset = arg.parse().unwrap_or(0);
+            if offset == 0 {
+                paging::first(token);
+            }
             let sort = song_sort_saved(list_prefs());
             match nori_core::transport::block_on(client.songs_listed(sort.clone(), false, false, 0, 0, offset)) {
                 Ok(p) => {
@@ -740,16 +771,19 @@ fn read(token: u64, kind: i32, arg: String) {
                         rows["items"].as_array().cloned().unwrap_or_default(),
                         song_letters(&sort),
                     ));
+                    let more = paging::answered(token, offset, (!p.exhausted).then_some(offset + p.songs.len() as u32));
                     let v = json!({
-                        "more": !p.exhausted, "next": offset as usize + p.songs.len(),
-                        "from": from, "letters": song_letters(&sort).is_some(), "sections": [rows],
+                        "more": more, "from": from, "letters": song_letters(&sort).is_some(), "sections": [rows],
                     });
                     if kept.is_none() {
                         keep_list(token, p.songs, None);
                     }
                     send(token, &v);
                 }
-                Err(e) => send_error(token, &e),
+                Err(e) => {
+                    paging::failed(token, offset);
+                    send_error(token, &e);
+                }
             }
         }
         PAGE_DOWNLOADS => {

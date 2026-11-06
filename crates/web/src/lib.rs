@@ -69,7 +69,12 @@ pub struct Nori {
     client: std::cell::RefCell<Option<Arc<Client>>>,
     #[cfg(feature = "engine")]
     live: play::Live,
+    /// Each album grid's pages, by the grid's number; the oldest fall off.
+    grids: std::cell::RefCell<std::collections::VecDeque<(u32, nori_core::paged::Paged<u32>)>>,
 }
+
+/// Album grids whose pages are kept.
+const KEPT_GRIDS: usize = 8;
 
 #[wasm_bindgen]
 impl Nori {
@@ -95,6 +100,7 @@ impl Nori {
             search: nori_core::search::SearchSession::new(),
             #[cfg(not(feature = "engine"))]
             client: Default::default(),
+            grids: Default::default(),
         })
     }
 
@@ -166,6 +172,49 @@ impl Nori {
     pub async fn read(&self, ask: String) -> Result<String, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
         pages::read(&client, &ask, self.user().as_deref()).await.map_err(error)
+    }
+
+    /// The next page of album grid `list` in `sort`'s order (with `favorites`, the starred albums, whole):
+    /// `{ albums, more }`, or null when none is to be read (one on its way, or the last in). `first` reads
+    /// the grid from its first page again. A page that failed is read again with the next call.
+    pub async fn album_page(&self, list: u32, sort: String, favorites: bool, first: bool) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let offset = {
+            let mut grids = self.grids.borrow_mut();
+            if first {
+                grids.retain(|(l, _)| *l != list);
+                grids.push_back((list, nori_core::paged::Paged::new(0)));
+                while grids.len() > KEPT_GRIDS {
+                    grids.pop_front();
+                }
+            }
+            match grids.iter_mut().find(|(l, _)| *l == list).and_then(|(_, p)| p.ask()) {
+                Some(offset) => offset,
+                None => return Ok("null".into()),
+            }
+        };
+        let user = self.active().filter(|_| self.rules().account).map(|p| p.user);
+        let read = pages::album_page(&client, sort, favorites, offset, user.as_deref()).await;
+        let mut grids = self.grids.borrow_mut();
+        let pages = grids.iter_mut().find(|(l, _)| *l == list).map(|(_, p)| p);
+        match read {
+            Ok((mut v, next)) => {
+                let more = pages.is_some_and(|p| {
+                    p.answered(&offset, next);
+                    p.more()
+                });
+                if let Value::Object(m) = &mut v {
+                    m.insert("more".into(), more.into());
+                }
+                Ok(v.to_string())
+            }
+            Err(e) => {
+                if let Some(p) = pages {
+                    p.failed(&offset);
+                }
+                Err(error(e))
+            }
+        }
     }
 
     /// Fills the offline index when the profile keeps one and it is empty, as the session does.

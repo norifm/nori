@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use nori_core::browse::AlbumSort;
 use nori_core::lyrics_follow::LyricsNow;
 use nori_core::menus::PageKind;
+use nori_core::paged::Paged;
 use nori_core::search::{SearchShown, SearchView};
 use nori_core::settings::SavedServer;
 use nori_core::Song;
@@ -460,10 +461,12 @@ pub struct App {
     home_rows: Vec<nori_core::settings::HomeRow>,
     /// The saved profile the sign-in form edits; None while it adds one.
     editing: Option<SavedServer>,
-    /// The album list's pages asked for, to this offset, its order, and whether only the favorites.
-    albums_asked: u32,
+    /// The album list's pages, its order, and whether only the favorites.
+    album_pages: Paged<u32>,
     album_sort: AlbumSort,
     albums_favorites: bool,
+    /// The songs list's pages.
+    song_pages: Paged<u32>,
     /// The player pill and the top pill: windows of their own, laid over the blurred page.
     player: Option<PlayerBar>,
     top: Option<TopBar>,
@@ -619,17 +622,21 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
 }
 
 /// The album list once its page from `offset` came (`page`), and the page to ask for next: while pages
-/// come full and new, each once (`asked`: the pages asked for, to this offset).
-fn albums_paged(list: &mut Vec<nori_core::Album>, sort: AlbumSort, favorites: bool, offset: u32, page: &[nori_core::Album], asked: &mut u32) -> Option<u32> {
-    list.truncate(offset as usize);
-    if nori_core::browse::album_page_repeats(list, page) {
+/// come full and new, each once (`pages`).
+fn albums_paged(list: &mut Vec<nori_core::Album>, pages: &mut Paged<u32>, sort: AlbumSort, favorites: bool, offset: u32, page: &[nori_core::Album]) -> Option<u32> {
+    let kept = &list[..list.len().min(offset as usize)];
+    // A server that ignores the offset would bring the same page without end.
+    let repeats = nori_core::browse::album_page_repeats(kept, page);
+    let next = nori_core::browse::next_album_page(sort, favorites, offset, nori_host::pages::ALBUM_PAGE, page.len() as u32).filter(|_| !repeats);
+    if !pages.answered(&offset, next) {
         return None;
     }
-    list.extend_from_slice(page);
+    list.truncate(offset as usize);
+    if !repeats {
+        list.extend_from_slice(page);
+    }
     // Every page is read at once here.
-    let next = nori_core::browse::next_album_page(sort, favorites, offset, nori_host::pages::ALBUM_PAGE, page.len() as u32).filter(|&n| *asked < n)?;
-    *asked = next;
-    Some(next)
+    pages.ask()
 }
 
 /// The profile the sign-in form saves from its fields (name, address, user, password) for provider `info`:
@@ -713,7 +720,8 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             shelves,
             home_rows: Vec::new(),
             editing: None,
-            albums_asked: 0,
+            album_pages: Paged::new(0),
+            song_pages: Paged::new(0),
             album_sort: AlbumSort::ByName,
             albums_favorites: false,
             backdrop: None,
@@ -1384,20 +1392,24 @@ impl App {
                 self.home_req()
             }
             View::Albums => {
-                self.albums_asked = 0;
                 self.album_sort = nori_core::browse::album_sort_saved(crate::session::app().settings.current().unwrap_or_default().list_prefs);
                 self.show_album_sorts();
-                Some(Req::Page(PageAsk::Albums { sort: self.album_sort, offset: 0, favorites: self.albums_favorites }))
+                self.album_pages.reset();
+                let (sort, favorites) = (self.album_sort, self.albums_favorites);
+                self.album_pages.ask().map(|offset| Req::Page(PageAsk::Albums { sort, offset, favorites }))
             }
             View::Artists => Some(Req::Page(PageAsk::Artists)),
             View::Playlists => Some(Req::Page(PageAsk::Playlists)),
             View::Favorites => {
                 self.songs.clear();
+                // The favorites come whole.
+                self.song_pages.end();
                 Some(Req::Page(PageAsk::Favorites))
             }
             View::Songs => {
                 self.songs.clear();
-                Some(Req::Page(PageAsk::Songs { offset: 0 }))
+                self.song_pages.reset();
+                self.song_pages.ask().map(|offset| Req::Page(PageAsk::Songs { offset }))
             }
             View::Settings => {
                 self.settings_shown();
@@ -1626,7 +1638,7 @@ impl App {
         let d = match r {
             Ok(d) => d,
             Err(e) => {
-                if shown {
+                if self.page_failed(&req) && shown {
                     ui.set_failed(e.into());
                 }
                 return;
@@ -1666,7 +1678,7 @@ impl App {
                 if (sort, favorites) != (self.album_sort, self.albums_favorites) {
                     return;
                 }
-                if let Some(next) = albums_paged(&mut self.lists.albums, sort, favorites, offset, &v, &mut self.albums_asked) {
+                if let Some(next) = albums_paged(&mut self.lists.albums, &mut self.album_pages, sort, favorites, offset, &v) {
                     self.on_session(|s| s.load(Req::Page(PageAsk::Albums { sort, offset: next, favorites })));
                 }
                 self.narrowed();
@@ -1697,8 +1709,13 @@ impl App {
                 ui.set_songs(self.rows(&self.songs, false));
             }
             Data::Page(PageGot::Songs { songs: v, exhausted }) => {
+                let Req::Page(PageAsk::Songs { offset }) = req else { return };
+                if !self.song_pages.answered(&offset, (!exhausted).then_some(offset + v.len() as u32)) {
+                    return;
+                }
+                self.songs.truncate(offset as usize);
                 self.songs.extend(v);
-                ui.set_more_songs(!exhausted);
+                ui.set_more_songs(self.song_pages.more());
                 ui.set_songs(self.rows(&self.songs, false));
             }
             // Page details apply only if that page is still shown.
@@ -2038,11 +2055,29 @@ impl App {
 
     /// Reads the album list again from the top, in its order and filter.
     fn reload_albums(&mut self) {
-        self.albums_asked = 0;
         self.lists.albums.clear();
         self.narrowed();
         self.show_album_sorts();
-        self.load(Req::Page(PageAsk::Albums { sort: self.album_sort, offset: 0, favorites: self.albums_favorites }));
+        self.album_pages.reset();
+        if let Some(offset) = self.album_pages.ask() {
+            self.load(Req::Page(PageAsk::Albums { sort: self.album_sort, offset, favorites: self.albums_favorites }));
+        }
+    }
+
+    /// Page `req` could not be read. A paged list's later page is asked for again as the list goes on
+    /// (scrolled, or opened again) and keeps what it lists; true when the failure is to be shown.
+    fn page_failed(&mut self, req: &Req) -> bool {
+        match req {
+            Req::Page(PageAsk::Albums { offset, .. }) => {
+                self.album_pages.failed(offset);
+                *offset == 0
+            }
+            Req::Page(PageAsk::Songs { offset }) => {
+                self.song_pages.failed(offset);
+                *offset == 0
+            }
+            _ => true,
+        }
     }
 
     /// Shows an artist beside the Artists list.
@@ -2075,12 +2110,9 @@ impl App {
     }
 
     fn more_songs(&mut self) {
-        let req = Req::Page(PageAsk::Songs { offset: self.songs.len() as u32 });
-        // Scrolling asks again as the list nears its end: the page already on its way is asked for once.
-        if self.ui().get_loading() && self.want.contains(&req) {
-            return;
+        if let Some(offset) = self.song_pages.ask() {
+            self.load(Req::Page(PageAsk::Songs { offset }));
         }
-        self.load(req);
     }
 
     fn search_edited(&mut self, text: &str) {
@@ -4679,20 +4711,30 @@ mod tests {
     fn albums_come_page_after_page() {
         let page = |from: usize, n: usize| (from..from + n).map(|i| nori_core::Album { id: i.to_string(), ..Default::default() }).collect::<Vec<_>>();
         let full = nori_host::pages::ALBUM_PAGE as usize;
-        let (mut list, mut asked) = (Vec::new(), 0);
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, false, 0, &page(0, full), &mut asked), Some(full as u32));
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, false, 0, &page(0, full), &mut asked), None, "the server's copy of the first page");
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, false, full as u32, &page(full, 100), &mut asked), None, "the last page");
+        let fresh = || {
+            let mut pages = Paged::new(0);
+            pages.ask();
+            (Vec::new(), pages)
+        };
+        let (mut list, mut pages) = fresh();
+        assert_eq!(albums_paged(&mut list, &mut pages, AlbumSort::ByName, false, 0, &page(0, full)), Some(full as u32));
+        assert_eq!(albums_paged(&mut list, &mut pages, AlbumSort::ByName, false, 0, &page(0, full)), None, "the server's copy of the first page");
+        assert_eq!(albums_paged(&mut list, &mut pages, AlbumSort::ByName, false, full as u32, &page(full, 100)), None, "the last page");
         assert_eq!(list.len(), full + 100);
         assert_eq!(list.last().map(|c| c.id.to_string()), Some((full + 99).to_string()));
-        let (mut list, mut asked) = (Vec::new(), 0);
-        albums_paged(&mut list, AlbumSort::ByName, false, 0, &page(0, full), &mut asked);
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, false, full as u32, &page(0, full), &mut asked), None, "a server that ignores the offset");
+        let (mut list, mut pages) = fresh();
+        albums_paged(&mut list, &mut pages, AlbumSort::ByName, false, 0, &page(0, full));
+        assert_eq!(albums_paged(&mut list, &mut pages, AlbumSort::ByName, false, full as u32, &page(0, full)), None, "a server that ignores the offset");
         assert_eq!(list.len(), full);
-        let (mut list, mut asked) = (Vec::new(), 0);
-        assert_eq!(albums_paged(&mut list, AlbumSort::Random, false, 0, &page(0, full), &mut asked), None, "a random order is one page");
-        let (mut list, mut asked) = (Vec::new(), 0);
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, true, 0, &page(0, full), &mut asked), None, "the favorites come whole");
+        assert!(!pages.more());
+        let (mut list, mut pages) = fresh();
+        albums_paged(&mut list, &mut pages, AlbumSort::ByName, false, 0, &page(0, full));
+        pages.failed(&(full as u32));
+        assert_eq!(pages.ask(), Some(full as u32), "a page that failed is asked again");
+        let (mut list, mut pages) = fresh();
+        assert_eq!(albums_paged(&mut list, &mut pages, AlbumSort::Random, false, 0, &page(0, full)), None, "a random order is one page");
+        let (mut list, mut pages) = fresh();
+        assert_eq!(albums_paged(&mut list, &mut pages, AlbumSort::ByName, true, 0, &page(0, full)), None, "the favorites come whole");
     }
 
     #[test]

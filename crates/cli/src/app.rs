@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use nori_core::browse::{AlbumSort, HistoryAfter, LibrarySection, ProfileRules};
+use nori_core::paged::Paged;
 use nori_core::library::QueueOffer;
 use nori_core::providers::{AfterAdding, FirstStep};
 use nori_core::menus::{DownloadAct, PageAction, PageKind, SongDownload};
@@ -381,9 +382,9 @@ pub enum Page {
     Playlist { id: String, detail: Load<Box<PlaylistDetail>>, sel: Sel },
     /// One of the core's mixes, or the favorites.
     Mix { id: String, detail: Load<Box<MixSheet>>, sel: Sel },
-    /// All of a Home shelf's entries: a library row's read a page at a time (`more` while there may be more),
-    /// a feed's or For you's as Home has them.
-    Row { title: String, items: Vec<Item>, row: Option<HomeRow>, more: bool, sel: Sel },
+    /// All of a Home shelf's entries: a library row's read a page at a time from an offset, a feed's or For
+    /// you's as Home has them.
+    Row { title: String, items: Vec<Item>, row: Option<HomeRow>, pages: Paged<u32>, sel: Sel },
 }
 
 impl Page {
@@ -564,7 +565,8 @@ impl Home {
 
 pub struct Library {
     pub albums: Load<Vec<Album>>,
-    pub albums_more: bool,
+    /// The albums' pages, from an offset.
+    pub album_pages: Paged<u32>,
     pub albums_sel: Sel,
     /// The albums' order, whether only the favorites are listed, and in Artist order where each artist's
     /// shelf starts (`browse::artist_rows`).
@@ -575,7 +577,7 @@ pub struct Library {
     pub artists_sel: Sel,
     pub playlists: Load<Vec<Playlist>>,
     pub songs: Load<Vec<Song>>,
-    pub songs_more: bool,
+    pub song_pages: Paged<u32>,
     pub songs_sel: Sel,
     /// The songs' order, one of `browse::song_sorts`, and whether only the favorites are listed.
     pub song_sort: String,
@@ -584,9 +586,9 @@ pub struct Library {
     /// The starred songs.
     pub favorites: Load<Vec<Song>>,
     pub favorites_sel: Sel,
-    /// What this device played, newest first, and where the next page starts.
+    /// What this device played, newest first, a page after the place the last one ended.
     pub history: Load<Vec<HistoryEntry>>,
-    pub history_next: Option<HistoryAfter>,
+    pub history_pages: Paged<Option<HistoryAfter>>,
     pub history_sel: Sel,
     /// What the downloads weigh, once weighed.
     pub downloads_bytes: Option<i64>,
@@ -596,7 +598,7 @@ impl Default for Library {
     fn default() -> Self {
         Library {
             albums: Load::Idle,
-            albums_more: false,
+            album_pages: Paged::new(0),
             albums_sel: Sel::default(),
             album_sort: nori_core::browse::album_sort_saved(Default::default()),
             albums_favorites: false,
@@ -605,7 +607,7 @@ impl Default for Library {
             artists_sel: Sel::default(),
             playlists: Load::Idle,
             songs: Load::Idle,
-            songs_more: false,
+            song_pages: Paged::new(0),
             songs_sel: Sel::default(),
             song_sort: nori_core::browse::song_sort_saved(Default::default()),
             songs_favorites: false,
@@ -613,7 +615,7 @@ impl Default for Library {
             favorites: Load::Idle,
             favorites_sel: Sel::default(),
             history: Load::Idle,
-            history_next: None,
+            history_pages: Paged::new(None),
             history_sel: Sel::default(),
             downloads_bytes: None,
         }
@@ -1554,7 +1556,8 @@ impl App {
                 l.albums = Load::Loading;
                 // The order it was left in (`album_sort_saved`).
                 l.album_sort = nori_core::browse::album_sort_saved(self.prefs.list_prefs.clone());
-                self.cmds.push(Cmd::Load(Req::Albums { sort: l.album_sort, favorites: l.albums_favorites, offset: 0 }));
+                l.album_pages.reset();
+                self.cmds.extend(l.album_pages.ask().map(|offset| Cmd::Load(Req::Albums { sort: l.album_sort, favorites: l.albums_favorites, offset })));
             }
             View::Artists if matches!(l.artists, Load::Idle) => {
                 l.artists = Load::Loading;
@@ -1563,11 +1566,13 @@ impl App {
             View::Songs if matches!(l.songs, Load::Idle) => {
                 l.songs = Load::Loading;
                 l.song_sort = nori_core::browse::song_sort_saved(self.prefs.list_prefs.clone());
-                self.cmds.push(Cmd::Load(Req::Songs { sort: l.song_sort.clone(), starred: l.songs_favorites, offset: 0 }));
+                l.song_pages.reset();
+                self.cmds.extend(l.song_pages.ask().map(|offset| Cmd::Load(Req::Songs { sort: l.song_sort.clone(), starred: l.songs_favorites, offset })));
             }
             View::History if matches!(l.history, Load::Idle) => {
                 l.history = Load::Loading;
-                self.cmds.push(Cmd::Load(Req::History(None)));
+                l.history_pages.reset();
+                self.cmds.extend(l.history_pages.ask().map(|after| Cmd::Load(Req::History(after))));
             }
             View::Playlists if matches!(l.playlists, Load::Idle) => {
                 l.playlists = Load::Loading;
@@ -1914,7 +1919,9 @@ impl App {
             (Req::Albums { sort, favorites, .. }, _) if (sort, favorites) != (self.library.album_sort, self.library.albums_favorites) => self.dirty = false,
             (Req::Albums { sort, favorites, offset }, Ok(Data::Albums(v))) => {
                 let l = &mut self.library;
-                l.albums_more = nori_core::browse::next_album_page(sort, favorites, offset, ALBUM_PAGE, v.len() as u32).is_some();
+                if !l.album_pages.answered(&offset, nori_core::browse::next_album_page(sort, favorites, offset, ALBUM_PAGE, v.len() as u32)) {
+                    return self.dirty = false;
+                }
                 match &mut l.albums {
                     Load::Ready(have) if offset > 0 => {
                         have.truncate(offset as usize);
@@ -1927,7 +1934,14 @@ impl App {
                 }
                 self.onto_entries(View::Albums);
             }
-            (Req::Albums { .. }, Err(e)) => self.library.albums = Load::Failed(e),
+            (Req::Albums { offset, .. }, Err(e)) => {
+                let l = &mut self.library;
+                l.album_pages.failed(&offset);
+                // A later page's failure keeps what is listed; scrolling on asks for it again.
+                if offset == 0 {
+                    l.albums = Load::Failed(e);
+                }
+            }
             (Req::Artists, Ok(Data::Artists(v))) => {
                 self.library.artists = Load::Ready(v);
                 self.onto_entries(View::Artists);
@@ -1942,7 +1956,9 @@ impl App {
             (Req::Favorites, Err(e)) => self.library.favorites = Load::Failed(e),
             (Req::Songs { ref sort, starred, .. }, _) if (sort, starred) != (&self.library.song_sort, self.library.songs_favorites) => self.dirty = false,
             (Req::Songs { offset, .. }, Ok(Data::Songs(v, exhausted))) => {
-                self.library.songs_more = !exhausted;
+                if !self.library.song_pages.answered(&offset, (!exhausted).then_some(offset + v.len() as u32)) {
+                    return self.dirty = false;
+                }
                 match &mut self.library.songs {
                     Load::Ready(have) if offset > 0 => {
                         have.truncate(offset as usize);
@@ -1952,17 +1968,31 @@ impl App {
                 }
                 self.onto_entries(View::Songs);
             }
-            (Req::Songs { .. }, Err(e)) => self.library.songs = Load::Failed(e),
+            (Req::Songs { offset, .. }, Err(e)) => {
+                let l = &mut self.library;
+                l.song_pages.failed(&offset);
+                if offset == 0 {
+                    l.songs = Load::Failed(e);
+                }
+            }
             (Req::History(after), Ok(Data::History(page))) => {
                 let l = &mut self.library;
-                l.history_next = page.next;
+                if !l.history_pages.answered(&after, page.next.map(Some)) {
+                    return self.dirty = false;
+                }
                 let songs = page.entries;
                 match &mut l.history {
                     Load::Ready(have) if after.is_some() => have.extend(songs),
                     slot => *slot = Load::Ready(songs),
                 }
             }
-            (Req::History(_), Err(e)) => self.library.history = Load::Failed(e),
+            (Req::History(after), Err(e)) => {
+                let l = &mut self.library;
+                l.history_pages.failed(&after);
+                if after.is_none() {
+                    l.history = Load::Failed(e);
+                }
+            }
             (Req::DownloadsSize, Ok(Data::DownloadsSize(bytes))) => self.library.downloads_bytes = Some(bytes),
             (Req::DownloadsSize, Err(_)) => self.dirty = false,
             (Req::Downloads, Ok(Data::Downloads(d))) => {
@@ -1981,18 +2011,16 @@ impl App {
             (Req::Facts, Ok(Data::Facts(f))) => self.settings.set_facts(*f),
             (Req::Facts, Err(_)) => {}
             (Req::Row { row, offset }, r) => {
-                let Some(Page::Row { items, more, .. }) = self.pages.iter_mut().rev().find(|p| matches!(p, Page::Row { row: Some(at), .. } if *at == row)) else { return self.dirty = false };
+                let Some(Page::Row { items, pages, .. }) = self.pages.iter_mut().rev().find(|p| matches!(p, Page::Row { row: Some(at), .. } if *at == row)) else { return self.dirty = false };
                 match r {
                     Ok(Data::Row(v, done)) => {
-                        if offset == 0 {
-                            *items = v;
-                        } else {
-                            items.truncate(offset as usize);
-                            items.extend(v);
+                        if !pages.answered(&offset, (!done).then_some(offset + v.len() as u32)) {
+                            return self.dirty = false;
                         }
-                        *more = !done;
+                        items.truncate(offset as usize);
+                        items.extend(v);
                     }
-                    _ => *more = false,
+                    _ => pages.failed(&offset),
                 }
             }
             (req, r) => {
@@ -2829,7 +2857,11 @@ impl App {
         if self.lyrics_focused() {
             return self.cmds.push(Cmd::LyricsRefresh);
         }
-        if let Some(p) = self.page() {
+        if let Some(p) = self.pages.last_mut() {
+            if let Page::Row { pages, row: Some(_), .. } = p {
+                pages.reset();
+                pages.ask();
+            }
             self.cmds.extend(p.req().map(Cmd::Load));
             return;
         }
@@ -2958,11 +2990,10 @@ impl App {
             return;
         }
         // A Home row in full, a page at a time.
-        if let Some(Page::Row { items, row: Some(row), more: more @ true, sel, .. }) = self.pages.last_mut() {
+        if let Some(Page::Row { items, row: Some(row), pages, sel, .. }) = self.pages.last_mut() {
             if sel.at + 30 >= items.len() {
-                *more = false;
-                let (row, offset) = (*row, items.len() as u32);
-                self.cmds.push(Cmd::Load(Req::Row { row, offset }));
+                let row = *row;
+                self.cmds.extend(pages.ask().map(|offset| Cmd::Load(Req::Row { row, offset })));
             }
             return;
         }
@@ -2973,24 +3004,20 @@ impl App {
         match self.view {
             View::Albums => {
                 let len = l.albums.ready().map_or(0, Vec::len);
-                if l.albums_sel.at + 50 >= len && l.albums_more {
-                    l.albums_more = false;
-                    self.cmds.push(Cmd::Load(Req::Albums { sort: l.album_sort, favorites: l.albums_favorites, offset: len as u32 }));
+                if l.albums_sel.at + 50 >= len {
+                    self.cmds.extend(l.album_pages.ask().map(|offset| Cmd::Load(Req::Albums { sort: l.album_sort, favorites: l.albums_favorites, offset })));
                 }
             }
             View::Songs => {
                 let len = l.songs.ready().map_or(0, Vec::len);
-                if l.songs_sel.at + 50 >= len && l.songs_more {
-                    l.songs_more = false;
-                    self.cmds.push(Cmd::Load(Req::Songs { sort: l.song_sort.clone(), starred: l.songs_favorites, offset: len as u32 }));
+                if l.songs_sel.at + 50 >= len {
+                    self.cmds.extend(l.song_pages.ask().map(|offset| Cmd::Load(Req::Songs { sort: l.song_sort.clone(), starred: l.songs_favorites, offset })));
                 }
             }
             View::History => {
                 let len = l.history.ready().map_or(0, Vec::len);
                 if l.history_sel.at + 30 >= len {
-                    if let Some(after) = l.history_next.take() {
-                        self.cmds.push(Cmd::Load(Req::History(Some(after))));
-                    }
+                    self.cmds.extend(l.history_pages.ask().map(|after| Cmd::Load(Req::History(after))));
                 }
             }
             _ => {}
@@ -3206,11 +3233,13 @@ impl App {
         match self.view {
             View::Albums => {
                 (l.albums, l.album_shelves, l.albums_sel) = (Load::Loading, Vec::new(), Sel::default());
-                self.cmds.push(Cmd::Load(Req::Albums { sort: l.album_sort, favorites: l.albums_favorites, offset: 0 }));
+                l.album_pages.reset();
+                self.cmds.extend(l.album_pages.ask().map(|offset| Cmd::Load(Req::Albums { sort: l.album_sort, favorites: l.albums_favorites, offset })));
             }
             View::Songs => {
                 (l.songs, l.songs_sel) = (Load::Loading, Sel::default());
-                self.cmds.push(Cmd::Load(Req::Songs { sort: l.song_sort.clone(), starred: l.songs_favorites, offset: 0 }));
+                l.song_pages.reset();
+                self.cmds.extend(l.song_pages.ask().map(|offset| Cmd::Load(Req::Songs { sort: l.song_sort.clone(), starred: l.songs_favorites, offset })));
             }
             _ => {}
         }
@@ -3237,7 +3266,14 @@ impl App {
             ShelfAt::Row(i) => self.home.rows.get(i).and_then(|r| r.as_ref()).and_then(|s| s.row),
             ShelfAt::ForYou => None,
         };
-        self.open_page(Page::Row { title, items, row, more: false, sel: Sel::default() });
+        let mut pages = Paged::new(0);
+        // A library row's first page is asked as it opens; a shelf from elsewhere has no pages.
+        if row.is_some() {
+            pages.ask();
+        } else {
+            pages.end();
+        }
+        self.open_page(Page::Row { title, items, row, pages, sel: Sel::default() });
     }
 
     /// A song picked from a list, per the `tap_action` setting (not offered here; default PlayList).

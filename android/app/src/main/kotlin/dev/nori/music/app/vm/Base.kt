@@ -4,10 +4,10 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.nori.music.Nori
+import dev.nori.music.ffi.library.Pages
 import dev.nori.music.net.said
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
@@ -80,45 +80,37 @@ abstract class NoriViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 /**
- * A list read a page at a time in [scope]: one page on its way at a time, none asked for after the last,
- * and a page that could not be read asked for again with the next [next] (a scroll back to the end).
+ * A list read a page at a time in [scope], as the core's paging decides (`paged::Pages`): one page on its
+ * way at a time, none asked for after the last, and a page that could not be read asked for again with
+ * the next [next] (a scroll back to the end).
  */
 class Pager(private val scope: CoroutineScope) {
-    private sealed interface Paging {
-        data object More : Paging
-        class Reading(val job: Job) : Paging
-        data object Read : Paging
-    }
-
-    private var paging: Paging = Paging.More
+    private val pages = Pages()
+    private var reading: Job? = null
 
     /** Reads the next page with [read], which says whether more come after it. */
     fun next(read: suspend () -> Boolean) {
-        if (paging != Paging.More) return
-        // Lazy: a page answered at once (a stored one) settles after this, not before.
-        val job = scope.launch(start = CoroutineStart.LAZY) {
-            val more = try {
-                read()
+        val page = pages.ask() ?: return
+        reading = scope.launch {
+            try {
+                pages.answered(page, read())
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                true
+                pages.failed(page)
             }
-            // A reset meanwhile stands.
-            if ((paging as? Paging.Reading)?.job === coroutineContext[Job]) paging = if (more) Paging.More else Paging.Read
         }
-        paging = Paging.Reading(job)
-        job.start()
     }
 
     /** From the first page again; a page on its way is dropped. */
-    fun reset() = settle(Paging.More)
+    fun reset() {
+        reading?.cancel()
+        pages.reset()
+    }
 
     /** Nothing more to read; a page on its way is dropped. */
-    fun end() = settle(Paging.Read)
-
-    private fun settle(to: Paging) {
-        (paging as? Paging.Reading)?.job?.cancel()
-        paging = to
+    fun end() {
+        reading?.cancel()
+        pages.end()
     }
 }

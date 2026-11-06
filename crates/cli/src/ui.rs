@@ -553,9 +553,9 @@ fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused:
     let seals = &*marks;
     let marks = Marks::of(marks, rules, devices);
     let (loaded, more, one, many) = match view {
-        View::Albums => (state(&l.albums), l.albums_more, "album", "albums"),
+        View::Albums => (state(&l.albums), l.album_pages.more(), "album", "albums"),
         View::Artists => (state(&l.artists), false, "artist", "artists"),
-        View::Songs => (state(&l.songs), l.songs_more, "song", "songs"),
+        View::Songs => (state(&l.songs), l.song_pages.more(), "song", "songs"),
         _ => (state(&l.playlists), false, "playlist", "playlists"),
     };
     let (order, favorites) = match view {

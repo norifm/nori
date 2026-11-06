@@ -4,7 +4,7 @@
   // per artist under their name and how many, the name a way to the artist. `head` goes above (a page's
   // places and orders).
   import type { Snippet } from "svelte";
-  import { ask, read } from "../rpc";
+  import { ask } from "../rpc";
   import { reading } from "../state/library.svelte";
   import { href } from "../state/route.svelte";
   import type { Album } from "../state/types";
@@ -13,10 +13,12 @@
   import Icon from "./Icon.svelte";
 
   let { sort, favorites = false, top, head }: { sort: string; favorites?: boolean; top: string; head?: Snippet } = $props();
-  const page = (offset: number) => read<{ albums?: Album[]; next: number | null }>({ kind: "albums", sort, favorites, size: 500, offset });
+  /** This grid's pages, as the core reads them (`album_page`): `first` from the top again; null when none is to be read. */
+  const list = ++grids;
+  const page = async (first: boolean) => JSON.parse(await ask<string>("album_page", list, sort, favorites, first)) as { albums?: Album[]; more: boolean } | null;
   // The page's name for a check: it does not change while the grid is shown.
   // svelte-ignore state_referenced_locally
-  const first = reading(top, () => page(0));
+  const first = reading(top, () => page(true));
   /** The pages after the first. */
   let rest = $state.raw<Album[]>([]);
   $effect(() => {
@@ -26,11 +28,12 @@
     void (async () => {
       // An album the server moved between two pages comes once.
       const seen = new Set(p?.albums?.map((a) => a.id));
-      for (let next = p?.next; next != null && !gone; ) {
-        const more = await page(next);
-        if (gone) return;
-        rest = [...rest, ...(more.albums ?? []).filter((a) => !seen.has(a.id) && !!seen.add(a.id))];
-        next = more.next;
+      // A page that fails ends the reading here; the grid shown again reads it again.
+      for (let more = p?.more; more && !gone; ) {
+        const next = await page(false).catch(() => null);
+        if (gone || !next) return;
+        rest = [...rest, ...(next.albums ?? []).filter((a) => !seen.has(a.id) && !!seen.add(a.id))];
+        more = next.more;
       }
     })();
     return () => {
@@ -50,6 +53,11 @@
     };
   });
   const shelves = $derived(starts.map((s, i) => albums.slice(s, starts[i + 1] ?? albums.length)));
+</script>
+
+<script lang="ts" module>
+  /** Grids made so far, each its own list of pages in the core. */
+  let grids = 0;
 </script>
 
 {@render head?.()}

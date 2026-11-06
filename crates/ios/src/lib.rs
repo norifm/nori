@@ -17,6 +17,7 @@ mod menu;
 mod offer;
 mod output;
 mod pages;
+mod paging;
 mod remote;
 mod session;
 mod sound;
