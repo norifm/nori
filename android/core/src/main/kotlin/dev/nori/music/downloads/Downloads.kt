@@ -183,16 +183,6 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     /** Whether the queue has been handed back to media3 in this process; see [resume]. */
     @Volatile private var resumed = false
 
-    init {
-        io.execute {
-            // Saved songs are read back from the download cache (their analysis, the beat model), whether or not
-            // the playback service runs.
-            val saved = dev.nori.music.playback.MeasureBridge({ id -> dev.nori.music.playback.AutoMixPrefetch.files(sources.downloadCache, sources.downloadKey(id)) })
-            runCatching { dev.nori.music.playback.MeasureJni.processStart(saved, analyses()) }.onFailure { Log.w(TAG, "downloads will not be read back", it) }
-            publish(); reconcile()
-        }
-    }
-
     /** The table's counts, from the core's memory of it: nothing is read or copied, however many songs it holds. */
     private fun publish() {
         val c = core
@@ -725,6 +715,17 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         internal const val TAG = "noridl"
         /** How long a batch's result stays when nothing failed; one that failed stays until tapped. */
         private const val RESULT_TIMEOUT_MS = 8_000L
+    }
+
+    // Last, once every field above exists: the thread it starts reaches them.
+    init {
+        io.execute {
+            // Saved songs are read back from the download cache (their analysis, the beat model), whether or not
+            // the playback service runs.
+            val saved = dev.nori.music.playback.MeasureBridge({ id -> dev.nori.music.playback.AutoMixPrefetch.files(sources.downloadCache, sources.downloadKey(id)) })
+            runCatching { dev.nori.music.playback.MeasureJni.processStart(saved, analyses()) }.onFailure { Log.w(TAG, "downloads will not be read back", it) }
+            publish(); reconcile()
+        }
     }
 }
 
