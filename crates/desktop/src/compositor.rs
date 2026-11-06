@@ -610,16 +610,22 @@ fn layout_layers(s: &Shared) {
     let logical = LogicalSize::new(phys.width as f32 / scale, phys.height as f32 / scale);
     for (layer, role) in s.layers.borrow().iter() {
         let Some(role) = role.get() else { continue };
-        let (_, size) = place(role, logical);
-        let px = PhysicalSize::new((size.width * scale).round().max(1.0) as u32, (size.height * scale).round().max(1.0) as u32);
-        if layer.window.scale_factor() != scale {
-            layer.window.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: scale });
-        }
-        if layer.size.get() != px {
-            layer.size.set(px);
-            layer.window.dispatch_event(WindowEvent::Resized { size });
-            layer.dirty.set(true);
-        }
+        fit_layer(layer, place(role, logical).1, scale);
+    }
+}
+
+/// Gives a layer its logical size at `scale`. Slint keeps a window's logical size across a scale change, so a
+/// changed scale needs the size again even when the physical size is the same.
+fn fit_layer(layer: &Layer, size: LogicalSize, scale: f32) {
+    let px = PhysicalSize::new((size.width * scale).round().max(1.0) as u32, (size.height * scale).round().max(1.0) as u32);
+    let rescaled = layer.window.scale_factor() != scale;
+    if rescaled {
+        layer.window.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: scale });
+    }
+    if rescaled || layer.size.get() != px {
+        layer.size.set(px);
+        layer.window.dispatch_event(WindowEvent::Resized { size });
+        layer.dirty.set(true);
     }
 }
 
@@ -1674,6 +1680,41 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A window moved to a screen of another scale keeps its physical size here, so its layers' logical size changes
+    /// with the scale alone.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn a_layer_takes_the_logical_size_of_a_new_scale() {
+        slint::slint! {
+            export component RoomWindow inherits Window {
+                out property <length> room: root.width;
+            }
+        }
+        struct TestPlatform(Rc<Layer>);
+        impl slint::platform::Platform for TestPlatform {
+            fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
+                Ok(self.0.clone())
+            }
+        }
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+        let renderer = SkiaWGPU30Renderer::new(instance, adapter, device, queue).unwrap();
+        let layer = Rc::new_cyclic(|me: &Weak<Layer>| Layer {
+            window: slint::Window::new(me.clone() as Weak<dyn WindowAdapter>), renderer,
+            size: Cell::new(PhysicalSize::new(1, 1)), dirty: Cell::new(true),
+            texture: RefCell::new(None), shared: Weak::new(),
+        });
+        slint::platform::set_platform(Box::new(TestPlatform(layer.clone()))).unwrap();
+        use slint::ComponentHandle;
+        let ui = RoomWindow::new().unwrap();
+        ui.show().unwrap();
+        fit_layer(&layer, LogicalSize::new(1000.0, 700.0), 1.0);
+        assert_eq!(ui.get_room(), 1000.0);
+        fit_layer(&layer, LogicalSize::new(500.0, 350.0), 2.0);
+        assert_eq!(ui.get_room(), 500.0);
     }
 
     #[test]
