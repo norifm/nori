@@ -418,7 +418,7 @@ fn worded(s: Said) -> Msg {
             Note::NothingToPlay => note("Nothing to play".into(), false),
             Note::SongsFailed(e) => note(format!("Could not load the songs: {}", net_error(&e)), true),
             Note::NothingToPutBack => note("Nothing to put back".into(), false),
-            Note::Downloading(n) => note(format!("Downloading {n} songs"), false),
+            Note::Downloading(n) => note(format!("Downloading {}", count(n as u64, "song", "songs")), false),
             Note::DownloadFailed(e) => note(format!("Could not download: {e}"), true),
             Note::StarFailed(e) => note(format!("Could not change the favorite: {}", net_error(&e)), true),
             Note::Indexing => note("Filling the offline index…".into(), false),
