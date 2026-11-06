@@ -401,10 +401,10 @@ private fun Mosaic(urls: List<String>, modifier: Modifier) {
 
 /** The line over a page's songs: [label] quiet at the left, [actions] at the right, a hairline under. */
 @Composable
-internal fun ListHead(label: String, actions: (@Composable RowScope.() -> Unit)?, edge: androidx.compose.ui.unit.Dp = Space.gutter, hairlineEnd: androidx.compose.ui.unit.Dp = Space.gutter) {
+internal fun ListHead(label: String, actions: (@Composable RowScope.() -> Unit)?, edge: androidx.compose.ui.unit.Dp = Space.gutter, actionsEnd: androidx.compose.ui.unit.Dp = Space.tight, hairlineEnd: androidx.compose.ui.unit.Dp = Space.gutter) {
     val look = LocalLook.current
     Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = edge, end = Space.tight), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = edge, end = actionsEnd), verticalAlignment = Alignment.CenterVertically) {
             LookText(
                 label, { look.color(CoverLook.ON_VARIANT) }, Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp), maxLines = 1, overflow = TextOverflow.Ellipsis,
