@@ -82,11 +82,12 @@ profile, feature set and target keeps its own artifacts. `cargo clean`, or `carg
 ### Devices
 
 `tools/emulator.sh <avd> <port>` starts an existing arm64 AVD headless, with host graphics and four
-CPUs. Use a distinct even port per emulator. Create the AVDs in Android Studio first.
+CPUs. Use a distinct even port per emulator. Create the AVDs in Android Studio first; an AVD runs once
+at a time, so each emulator needs its own (`emulator -list-avds` names them).
 
 ```sh
-tools/emulator.sh a16 5554
-tools/emulator.sh a16b 5556
+tools/emulator.sh first-avd 5554
+tools/emulator.sh second-avd 5556
 export NORI_E2E_SERVER=local
 export NORI_E2E_DEVICES=emulator-5554,emulator-5556
 tools/device-check.sh --install app/build/outputs/apk/debug/app-debug.apk smoke
