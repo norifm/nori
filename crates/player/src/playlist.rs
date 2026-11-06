@@ -380,7 +380,8 @@ impl Playlist {
         for o in self.order.iter_mut() {
             *o = shift(*o);
         }
-        self.parked = self.parked.filter(|&h| h < self.ids.len());
+        // Parked only while the bridge's songs are in.
+        self.parked = self.parked.filter(|&h| h < self.ids.len() && self.bridging());
         if self.ids.is_empty() {
             self.cur = None;
             self.shuffling = false;
@@ -905,6 +906,17 @@ mod tests {
         assert_eq!((list(&p), p.current()), (vec!["c", "d", "b", "a"], Some(3)));
         p.move_range(2, 4, 0);
         assert_eq!((list(&p), p.current()), (vec!["b", "a", "c", "d"], Some(1)));
+    }
+
+    #[test]
+    fn removing_the_bridge_unparks() {
+        let mut p = Playlist::default();
+        p.set(ids(&["a", "b", "c"]), Some(1), false, 0);
+        p.bridge(ids(&["x"]));
+        p.remove(1, 2);
+        assert_eq!((p.parked_id(), p.current_id()), (None, Some("b")));
+        assert_eq!(p.bridge(ids(&["y"])).and_then(|s| s.seek), Some(1), "a later failure bridges from the song playing");
+        assert_eq!((list(&p), p.current_id(), p.parked_id()), (vec!["a", "y", "b", "c"], Some("y"), Some("b")));
     }
 
     #[test]
