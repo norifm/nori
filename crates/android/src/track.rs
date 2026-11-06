@@ -382,6 +382,58 @@ struct Fade {
     ms: i32,
 }
 
+/// What the writer does with the track next.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Fill {
+    /// Filling to full after a start or flush.
+    Filling,
+    /// Topped up when it falls to its low mark.
+    Steady,
+    /// A starts-when-full track stopped at the end of the music, playing out.
+    PlayedOut,
+    /// The track failed and no other would open: nothing more is done.
+    Dead,
+}
+
+/// How much the track holds.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Depth {
+    /// All it was opened with.
+    Deep {
+        /// Underrun count at the last top-up ([`Writer::watch_deep`]).
+        underruns: Option<u64>,
+        /// "engine is late" already logged, until full again.
+        late_logged: bool,
+    },
+    /// Deep, held at [`PRIMING_US`] after a flush until a starts-when-full track starts.
+    Priming,
+    /// A fraction of a second, sized by [`Needs`].
+    Shallow,
+}
+
+impl Depth {
+    const DEEP: Depth = Depth::Deep { underruns: None, late_logged: false };
+}
+
+/// The clock re-reads after a start ([`SETTLE_MS`]).
+#[derive(Clone, Copy)]
+struct Settle {
+    started_ns: i64,
+    /// Readings done.
+    done: usize,
+}
+
+/// How a top-up ended.
+enum TopUp {
+    Full,
+    /// The ring had no more to give.
+    RingEmpty,
+    /// The track failed and another was opened.
+    Reopened,
+    /// The track failed and no other would open.
+    Dead,
+}
+
 /// The writer thread's state; [`Writer::step`] runs once per wake.
 pub(crate) struct Writer<R: Ring> {
     ring: R,
@@ -395,10 +447,6 @@ pub(crate) struct Writer<R: Ring> {
     allocated: u64,
     /// Why the track could not be reopened, for [`AudioOutput::failed`].
     failure: Arc<Mutex<Option<String>>>,
-    /// No track: nothing more is done.
-    dead: bool,
-    /// Just reopened: refill on the next fill tick.
-    revived: bool,
     clock: Arc<Clock>,
     bytes: Arc<AtomicU64>,
     channels: usize,
@@ -418,26 +466,16 @@ pub(crate) struct Writer<R: Ring> {
     /// (offset, len) of staged bytes not yet taken.
     staged: (usize, usize),
     playing: bool,
-    /// Filling to full after a start or flush.
-    filling: bool,
-    /// Stopped at the end of the music, playing out.
-    drained: bool,
+    fill: Fill,
+    depth: Depth,
     volume: f32,
     fade: Option<Fade>,
-    started_ns: i64,
-    /// Settle readings ([`SETTLE_MS`]) done since the last start.
-    settled: usize,
+    /// Clock re-reads still due since the last start.
+    settle: Option<Settle>,
     /// Next wait while the ring is empty.
     starved_ms: u64,
-    shallow: bool,
-    wants_shallow: bool,
+    /// What a shallow track needs on this output; kept while deep.
     needs: Needs,
-    /// Holding [`PRIMING_US`] after a flush until a starts-when-full track starts.
-    priming: bool,
-    /// Deep: underrun count at the last top-up ([`Writer::watch_deep`]).
-    deep_underruns: Option<u64>,
-    /// Deep: "engine is late" already logged, until full again.
-    late_logged: bool,
 }
 
 impl<R: Ring> Writer<R> {
@@ -454,8 +492,6 @@ impl<R: Ring> Writer<R> {
             asked: reopen.frames,
             allocated: opened.frames,
             failure: reopen.failure,
-            dead: false,
-            revived: false,
             clock,
             bytes,
             channels: format.channels,
@@ -468,19 +504,13 @@ impl<R: Ring> Writer<R> {
             starts_full: opened.starts_full,
             staged: (0, 0),
             playing: false,
-            filling: true,
-            drained: false,
+            fill: Fill::Filling,
+            depth: Depth::DEEP,
             volume: 1.0,
             fade: None,
-            started_ns: 0,
-            settled: SETTLE_MS.len(),
+            settle: None,
             starved_ms: FILL_TICK_MS,
-            shallow: false,
-            wants_shallow: false,
             needs: Needs::default(),
-            priming: false,
-            deep_underruns: None,
-            late_logged: false,
         }
     }
 
@@ -494,16 +524,15 @@ impl<R: Ring> Writer<R> {
         self.low = low_mark(frames, self.rate);
     }
 
-    /// Resizes in place to shallow ([`shallow_marks`]) or deep, as the engine wants; buffered audio keeps
-    /// playing.
-    fn resize(&mut self) {
-        self.shallow = self.wants_shallow;
-        self.priming = false;
-        if self.shallow {
+    /// Resizes in place to shallow ([`shallow_marks`]) or deep; buffered audio keeps playing.
+    fn resize(&mut self, shallow: bool) {
+        if shallow {
+            self.depth = Depth::Shallow;
             self.look_at_route();
             self.make_shallow(None);
             return;
         }
+        self.depth = Depth::DEEP;
         let got = self.sink.resize(self.allocated);
         log(&format!("deep again in place: {} ms of the {} ms opened", self.ms(got), self.ms(self.allocated)));
         self.holds(got);
@@ -587,9 +616,10 @@ impl<R: Ring> Writer<R> {
 
     /// Deep: logs underruns since the last top-up (not counting fills after a start or flush).
     fn watch_deep(&mut self, now_ns: i64) {
+        let Depth::Deep { underruns, .. } = &mut self.depth else { return };
         let now = self.sink.underruns();
-        let was = std::mem::replace(&mut self.deep_underruns, now);
-        if self.filling {
+        let was = std::mem::replace(underruns, now);
+        if self.fill == Fill::Filling {
             return;
         }
         if let (Some(n), Some(was)) = (now, was) {
@@ -603,13 +633,12 @@ impl<R: Ring> Writer<R> {
     /// One wake: applies the engine's commands and tops the track up. Returns ms to sleep; None to sleep
     /// until unparked.
     pub(crate) fn step(&mut self, now_ns: i64, c: &mut Control) -> Option<u64> {
-        if self.dead {
+        if self.fill == Fill::Dead {
             return None;
         }
         let now_ms = now_ns / 1_000_000;
-        self.wants_shallow = c.shallow;
-        if self.shallow != self.wants_shallow {
-            self.resize();
+        if (self.depth == Depth::Shallow) != c.shallow {
+            self.resize(c.shallow);
         }
         let mut wake: Option<u64> = None;
         let mut at = |ms: u64| wake = Some(wake.map_or(ms, |w| w.min(ms)));
@@ -651,15 +680,15 @@ impl<R: Ring> Writer<R> {
         if !self.playing {
             return wake;
         }
-        if self.settled < SETTLE_MS.len() {
-            let due = self.started_ns + SETTLE_MS[self.settled] * 1_000_000;
-            if now_ns >= due {
-                self.settled += 1;
+        if let Some(mut settle) = self.settle {
+            if now_ns >= settle.started_ns + SETTLE_MS[settle.done] * 1_000_000 {
+                settle.done += 1;
                 self.read_clock(now_ns);
             }
-            if let Some(ms) = SETTLE_MS.get(self.settled) {
-                at(((self.started_ns + ms * 1_000_000 - now_ns).max(0) / 1_000_000) as u64 + 1);
-            }
+            self.settle = SETTLE_MS.get(settle.done).map(|ms| {
+                at(((settle.started_ns + ms * 1_000_000 - now_ns).max(0) / 1_000_000) as u64 + 1);
+                settle
+            });
         }
         if let Some(ms) = self.fill(now_ns) {
             at(ms);
@@ -667,25 +696,25 @@ impl<R: Ring> Writer<R> {
         wake
     }
 
-    /// Plays, fills to full, and schedules the settle readings.
+    /// Plays, fills to full (a played out track has nothing more to take), and schedules the settle
+    /// readings.
     fn start(&mut self, now_ns: i64) {
         self.sink.play();
         self.clock.run(now_ns);
-        self.filling = true;
-        self.started_ns = now_ns;
-        self.settled = 0;
+        if self.fill == Fill::Steady {
+            self.fill = Fill::Filling;
+        }
+        self.settle = Some(Settle { started_ns: now_ns, done: 0 });
         self.starved_ms = FILL_TICK_MS;
     }
 
     /// The track is empty (flushed or new): resets counts and refills, playing if it was.
     fn refill_from_empty(&mut self, now_ns: i64) {
         self.staged = (0, 0);
-        self.drained = false;
+        self.fill = Fill::Filling;
         self.clock.reset(now_ns);
         if self.playing {
             self.start(now_ns);
-        } else {
-            self.filling = true;
         }
     }
 
@@ -700,10 +729,10 @@ impl<R: Ring> Writer<R> {
         self.ring.rewind(self.clock.latency_frames(now_ns));
         self.stale += self.clock.in_track(now_ns);
         self.sink.flush();
-        if self.starts_full && !self.shallow && !self.priming {
+        if self.starts_full && matches!(self.depth, Depth::Deep { .. }) {
             let got = self.sink.resize(self.frames(PRIMING_US).min(self.allocated));
             self.holds(got);
-            self.priming = true;
+            self.depth = Depth::Priming;
         }
         self.refill_from_empty(now_ns);
     }
@@ -726,7 +755,7 @@ impl<R: Ring> Writer<R> {
     /// Perf build: reports presented vs given frames (nori_perf::invariants).
     fn report_to_perf_watch(&self, presented: u64) {
         if nori_perf::invariants::on() {
-            nori_perf::invariants::track_seen(mono_ns() / 1_000_000, self.playing && !self.dead, self.clock.given(), presented, self.rate);
+            nori_perf::invariants::track_seen(mono_ns() / 1_000_000, self.playing && self.fill != Fill::Dead, self.clock.given(), presented, self.rate);
         }
     }
 
@@ -745,69 +774,71 @@ impl<R: Ring> Writer<R> {
         let ms = |frames: u64, rate: u32| frames * 1000 / rate.max(1) as u64;
         // Timed by what the track holds, not by what was pulled: staged leftovers can't play.
         let fill = self.clock.in_track(now_ns);
-        if self.drained {
-            if self.ring.available() == 0 {
-                return None;
+        match self.fill {
+            Fill::PlayedOut if self.ring.available() == 0 => return None,
+            // Music arrived after the end played out (the queue grew): restart from empty.
+            Fill::PlayedOut => self.restart(now_ns),
+            Fill::Steady if fill > self.low => {
+                self.read_clock_for_perf_watch();
+                return Some(ms(fill - self.low, self.rate) + 1);
             }
-            // Music arrived after the end drained (the queue grew): restart from empty.
-            self.restart(now_ns);
-        } else if !self.filling && fill > self.low {
-            self.read_clock_for_perf_watch();
-            return Some(ms(fill - self.low, self.rate) + 1);
+            _ => {}
         }
         self.read_clock(now_ns);
-        if self.priming && self.playing && self.sink.heard(true).is_some_and(|(frames, _)| frames > 0) {
+        if self.depth == Depth::Priming && self.playing && self.sink.heard(true).is_some_and(|(frames, _)| frames > 0) {
             // Started: back to the full size.
             let got = self.sink.resize(self.allocated);
             self.holds(got);
-            self.priming = false;
-            self.filling = true;
+            self.depth = Depth::DEEP;
+            self.fill = Fill::Filling;
         }
-        if self.shallow && self.playing {
-            if self.filling {
+        if self.playing {
+            match (self.depth, self.fill) {
                 // Underruns while filling from empty don't count.
-                self.needs.underruns = self.sink.underruns();
-            } else {
-                self.watch_output(now_ns);
+                (Depth::Shallow, Fill::Filling) => self.needs.underruns = self.sink.underruns(),
+                (Depth::Shallow, _) => self.watch_output(now_ns),
+                _ => self.watch_deep(now_ns),
             }
-        } else if self.playing {
-            self.watch_deep(now_ns);
         }
-        let full = self.top_up(now_ns);
-        if self.dead {
-            return None;
-        }
-        if std::mem::take(&mut self.revived) {
-            return Some(FILL_TICK_MS);
+        match self.top_up(now_ns) {
+            TopUp::Dead => return None,
+            TopUp::Reopened => return Some(FILL_TICK_MS),
+            TopUp::Full => {
+                if let Depth::Deep { late_logged: late_logged @ true, .. } = &mut self.depth {
+                    *late_logged = false;
+                    log("full again");
+                }
+                self.fill = Fill::Steady;
+                self.starved_ms = FILL_TICK_MS;
+                // At least a fill tick: a "full" track below its low mark would otherwise spin.
+                let fill = self.clock.in_track(now_ns);
+                return Some((ms(fill.saturating_sub(self.low), self.rate) + 1).max(FILL_TICK_MS));
+            }
+            TopUp::RingEmpty => {}
         }
         let fill = self.clock.in_track(now_ns);
-        if full {
-            if std::mem::take(&mut self.late_logged) {
-                log("full again");
-            }
-            self.filling = false;
-            self.starved_ms = FILL_TICK_MS;
-            // At least a fill tick: a "full" track below its low mark would otherwise spin.
-            return Some((ms(fill.saturating_sub(self.low), self.rate) + 1).max(FILL_TICK_MS));
-        }
         if self.ring.ending() && self.ring.available() == 0 {
             // All music is in the track: a starts-when-full track is told to play out; look again when done.
-            self.filling = false;
-            if self.starts_full && !self.drained {
+            self.fill = if self.starts_full {
                 self.sink.stop();
-                self.drained = true;
-            }
+                Fill::PlayedOut
+            } else {
+                Fill::Steady
+            };
             return Some(ms(self.clock.latency_frames(now_ns), self.rate) + 1);
         }
         // The ring ran out before the track filled: between bursts the track has plenty; otherwise poll
         // with back-off.
-        if !self.filling && fill > self.low {
+        if self.fill == Fill::Steady && fill > self.low {
             return Some(ms(fill - self.low, self.rate) + 1);
         }
-        if !self.filling && !self.shallow && !self.late_logged && fill < self.frames(LATE_US) {
-            // Deep and low with an empty ring: the engine is behind (network or CPU).
-            self.late_logged = true;
-            log(&format!("down to {} ms with nothing more to give it: the engine is late", ms(fill, self.rate)));
+        let late = self.fill == Fill::Steady && fill < self.frames(LATE_US);
+        if let Depth::Deep { late_logged: late_logged @ false, .. } = &mut self.depth {
+            if late {
+                // Deep and low with an empty ring: the engine is behind (network or CPU).
+                *late_logged = true;
+                log(&format!("down to {} ms with nothing more to give it: the engine is late", ms(fill, self.rate)));
+            }
         }
         let mut wait = self.starved_ms;
         self.starved_ms = (self.starved_ms * 2).min(STARVED_MAX_MS);
@@ -819,22 +850,24 @@ impl<R: Ring> Writer<R> {
         Some(wait)
     }
 
-    /// Moves as much of the ring into the track as fits. True when the track is full.
-    fn top_up(&mut self, now_ns: i64) -> bool {
+    /// Moves as much of the ring into the track as fits.
+    fn top_up(&mut self, now_ns: i64) -> TopUp {
         let fb = self.frame_bytes();
         // 24-bit samples are pulled as floats and packed in place: a chunk is as many frames as floats fit.
         let chunk_frames = CHUNK_BYTES / if self.packed { self.channels * 4 } else { fb };
         loop {
-            if self.staged.1 > 0 && !self.write_staged(now_ns) {
-                return true;
+            if self.staged.1 > 0 {
+                if let Some(ended) = self.write_staged(now_ns) {
+                    return ended;
+                }
             }
             let room = self.capacity.saturating_sub(self.clock.latency_frames(now_ns));
             if room == 0 {
-                return true;
+                return TopUp::Full;
             }
             let n = (room as usize).min(self.ring.available()).min(chunk_frames);
             if n == 0 {
-                return false;
+                return TopUp::RingEmpty;
             }
             let got = self.pull(n);
             // A pull that found a flush emptied the track and was given back, to be pulled again.
@@ -843,11 +876,11 @@ impl<R: Ring> Writer<R> {
                 continue;
             }
             if got == 0 {
-                return false;
+                return TopUp::RingEmpty;
             }
             self.staged = (0, got * fb);
-            if !self.write_staged(now_ns) {
-                return true;
+            if let Some(ended) = self.write_staged(now_ns) {
+                return ended;
             }
         }
     }
@@ -879,15 +912,12 @@ impl<R: Ring> Writer<R> {
         self.sink.release();
     }
 
-    /// Writes what is staged. False when the track is full or died.
-    fn write_staged(&mut self, now_ns: i64) -> bool {
+    /// Writes what is staged; how the top-up ends when the track took less than all of it or failed.
+    fn write_staged(&mut self, now_ns: i64) -> Option<TopUp> {
         let (from, len) = self.staged;
         let taken = match self.sink.write(from, len) {
             Ok(n) => n.min(len),
-            Err(code) => {
-                self.reopen(now_ns, code);
-                return false;
-            }
+            Err(code) => return Some(self.reopen(now_ns, code)),
         };
         let fb = self.frame_bytes();
         self.clock.update(|c| c.given += (taken / fb) as u64);
@@ -895,8 +925,9 @@ impl<R: Ring> Writer<R> {
         self.staged = if taken < len { (from + taken, len - taken) } else { (0, 0) };
         if taken < len {
             self.refused(now_ns);
+            return Some(TopUp::Full);
         }
-        taken == len
+        None
     }
 
     /// The track refused data it claimed room for: it holds less than it says. Its current fill becomes
@@ -916,9 +947,9 @@ impl<R: Ring> Writer<R> {
         }
     }
 
-    /// A write failed with `code`: the track is dead. Opens a new one and refills it from the ring (what
-    /// the old one held is lost); if that fails, tells the engine.
-    fn reopen(&mut self, now_ns: i64, code: i32) {
+    /// A write failed with `code`: the track is dead. Opens a new one, deep or shallow as before, and
+    /// refills it from the ring (what the old one held is lost); if that fails, tells the engine.
+    fn reopen(&mut self, now_ns: i64, code: i32) -> TopUp {
         log(&format!("the AudioTrack failed a write ({code}): opening another"));
         self.release();
         let opened = open_fitting(&mut **self.opener.lock(), self.format, self.float, self.asked);
@@ -928,23 +959,24 @@ impl<R: Ring> Writer<R> {
                 log_if_smaller(o.frames, self.asked, self.rate);
                 self.allocated = o.frames;
                 self.holds(o.frames);
-                // Opened deep: shallow again if wanted, underruns counted afresh.
-                self.shallow = false;
-                self.needs.underruns = None;
-                if self.wants_shallow {
-                    self.resize();
+                // A new track: opened deep, its underruns counted afresh, unprimed.
+                let shallow = self.depth == Depth::Shallow;
+                self.depth = Depth::DEEP;
+                if shallow {
+                    self.resize(true);
                 }
                 self.starts_full = o.starts_full;
                 self.stale = 0;
-                self.revived = true;
                 self.sink.set_volume(self.volume);
                 self.refill_from_empty(now_ns);
+                TopUp::Reopened
             }
             Err(e) => {
                 log(&format!("the AudioTrack would not open again: {e}"));
                 *self.failure.lock() = Some(e);
-                self.dead = true;
+                self.fill = Fill::Dead;
                 self.ring.wake_engine();
+                TopUp::Dead
             }
         }
     }
@@ -2059,6 +2091,29 @@ mod tests {
         let t = s.track.lock();
         assert_eq!(t.reopened, 1);
         assert_eq!((t.capacity, t.size), (track_frames(RATE, false), track_frames(RATE, true)));
+        drop(t);
+
+        // A starts-when-full track that dies while primed is a new track: the next flush primes it.
+        let mut s = Sim::new(600, false, true);
+        s.play();
+        s.run(4_000);
+        {
+            let mut r = s.ring.lock();
+            r.kept(Engine::Timer { cap: RATE as usize / 2, every: 100 * MS });
+            r.flush(-0.25);
+        }
+        s.track.lock().dead = true;
+        s.wake();
+        assert_eq!(s.track.lock().reopened, 1);
+        s.run(20);
+        s.ring.lock().flush(0.25);
+        s.wake();
+        let flushed = s.now();
+        while s.track.lock().played == 0 && s.now() - flushed < 5_000 * MS {
+            s.run(5);
+        }
+        let silent = (s.now() - flushed) / MS;
+        assert!(silent <= 60, "heard again {silent} ms after the flush");
     }
 
     #[test]
