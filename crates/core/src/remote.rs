@@ -609,11 +609,8 @@ struct Listen {
 /// What this device knows of the active device it mirrors.
 struct Mirrored {
     id: String,
-    /// Its state as it last arrived.
-    heard: Option<DeviceState>,
-    /// When `heard` arrived, on this device's clock.
-    arrived: i64,
-    /// That state with this device's own commands since then foreseen in it.
+    known: Known,
+    /// Its state as known with this device's own commands since then foreseen in it.
     shown: Option<DeviceState>,
     /// When `shown`'s position was right, on this device's clock: as it arrived, or was foreseen here.
     at: i64,
@@ -633,6 +630,17 @@ struct Mirrored {
     /// Its state (instance, seq) when playback was handed to it: a hand-off said in that state or an
     /// older one came before, and is not followed.
     handed_at: Option<(Option<u64>, u64)>,
+}
+
+/// What is known of the mirrored device's own state.
+// One per device mirrored; boxed, each state heard would allocate.
+#[allow(clippy::large_enum_variant)]
+enum Known {
+    Nothing,
+    /// Nothing heard from it yet: what this device handed it shows.
+    Handed,
+    /// Its state as it last arrived, and when (this device's clock).
+    Heard { state: DeviceState, arrived: i64 },
 }
 
 /// Whether the mirrored device is there.
@@ -687,7 +695,7 @@ fn song_at(state: &DeviceState) -> Option<&str> {
 
 impl Mirrored {
     fn new(id: String, now: i64) -> Mirrored {
-        Mirrored { id, heard: None, arrived: 0, shown: None, at: now, device_at: None, clock: ClockSync::default(), pages: Vec::new(), asking: None, taken: Vec::new(), foreseen: Vec::new(), presence: Presence::Answering { unanswered: 0 }, handed_at: None }
+        Mirrored { id, known: Known::Nothing, shown: None, at: now, device_at: None, clock: ClockSync::default(), pages: Vec::new(), asking: None, taken: Vec::new(), foreseen: Vec::new(), presence: Presence::Answering { unanswered: 0 }, handed_at: None }
     }
 
     /// A state arrived from the device (`at`: when, on this device's clock). It ends the foresight of
@@ -695,11 +703,11 @@ impl Mirrored {
     /// when it is the one already heard.
     fn heard(&mut self, state: &DeviceState, at: i64, me: &str) -> bool {
         // Shown what this device handed it (`handed`), its state from before the hand-off is old news.
-        let handed_here = self.heard.is_none() && self.shown.is_some();
+        let handed_here = matches!(self.known, Known::Handed);
         if handed_here && self.handed_at.is_some_and(|h| (state.instance, state.seq) <= h) {
             return false;
         }
-        if let Some(last) = &self.heard {
+        if let Some(last) = self.last() {
             if state.instance == last.instance {
                 if state.seq < last.seq || state == last {
                     return false;
@@ -739,11 +747,18 @@ impl Mirrored {
                 *slot = Some(e.clone());
             }
         }
-        self.heard = Some(state.clone());
-        self.arrived = at;
+        self.known = Known::Heard { state: state.clone(), arrived: at };
         self.show();
         self.reached();
         true
+    }
+
+    /// Its state as it last arrived.
+    fn last(&self) -> Option<&DeviceState> {
+        match &self.known {
+            Known::Heard { state, .. } => Some(state),
+            Known::Nothing | Known::Handed => None,
+        }
     }
 
     /// Playback was handed to it by command `id` as `state` at `at` (this device's clock): shown so until
@@ -751,6 +766,9 @@ impl Mirrored {
     fn handed(&mut self, id: u64, state: Box<DeviceState>, at: i64) {
         let change = Change::Handed { state, at };
         self.foreseen.push(Foreseen { id, until: Some(at + FORESEEN_US), change });
+        if let Known::Nothing = self.known {
+            self.known = Known::Handed;
+        }
         self.show();
     }
 
@@ -782,10 +800,10 @@ impl Mirrored {
     /// `shown`: the state heard, with the commands foreseen over it.
     fn show(&mut self) {
         // Nothing heard from it yet: what it was handed stays shown.
-        if self.heard.is_some() {
-            self.shown = self.heard.clone();
-            self.at = self.arrived;
-            self.device_at = self.heard.as_ref().and_then(|s| s.at_us);
+        if let Known::Heard { state, arrived } = &self.known {
+            self.shown = Some(state.clone());
+            self.at = *arrived;
+            self.device_at = state.at_us;
         }
         let foreseen = std::mem::take(&mut self.foreseen);
         for f in &foreseen {
@@ -3567,7 +3585,7 @@ impl Remote {
             let heard = i.state_of(&id).map(|(s, at)| (s.clone(), at.unwrap_or_else(|| self.now())));
             let me = self.id.clone();
             let m = i.active.mirror_mut().expect("mirrored");
-            if let (Some((st, _)), Some(last)) = (&heard, &m.heard) {
+            if let (Some((st, _)), Some(last)) = (&heard, m.last()) {
                 liked = liked_since(last, st);
             }
             let moved = match heard {
@@ -4470,7 +4488,7 @@ mod tests {
         assert!(m.shown.as_ref().unwrap().playing);
         assert!(!m.heard(&DeviceState { seq: 81, ..old }, 2, "me"));
         assert!(!m.heard(&DeviceState { seq: 90, ..Default::default() }, 3, "me"));
-        assert_eq!(m.heard.as_ref().unwrap().instance, Some(2));
+        assert_eq!(m.last().unwrap().instance, Some(2));
         let mut fresh = Mirrored::new("desk".into(), clock::now_us());
         fresh.heard(&restarted, 0, "me");
         assert!(!fresh.heard(&DeviceState { instance: Some(1), seq: 100, ..Default::default() }, 1, "me"));
