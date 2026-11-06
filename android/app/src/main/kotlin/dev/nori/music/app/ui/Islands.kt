@@ -115,9 +115,11 @@ class Islands(context: Context, private val outer: Islands? = null) : ViewGroup(
     /** The pacer stepped: the followers draw in the same frame. */
     internal fun stepped() = root.followers.forEach { it.invalidate() }
 
-    internal fun take(): Island = Island(context, this).also { addView(it, LayoutParams(0, 0)) }
+    // Each is given its slot before it is added: adding it attaches it, and an island joins the pacer's
+    // followers as it attaches, by its slot's pace.
+    internal fun take(slot: IslandSlot): Island = Island(context, this).also { it.slot = slot; addView(it, LayoutParams(0, 0)) }
     /** Under every drawn island: what is drawn over the content goes over it. */
-    internal fun take(host: IslandHost): IslandHost = host.also { addView(it, 0, LayoutParams(0, 0)) }
+    internal fun take(host: IslandHost, slot: IslandSlot): IslandHost = host.also { it.slot = slot; addView(it, 0, LayoutParams(0, 0)) }
     internal fun give(island: View) = removeView(island)
 }
 
@@ -344,7 +346,7 @@ class IslandSpot {
 }
 
 /** An element's island: whether it is drawn there now ([apart]), and how to ask it to draw again ([poke]). */
-class IslandSlot internal constructor(private val islands: Islands?, private val make: (Islands) -> IslandView) {
+class IslandSlot internal constructor(private val islands: Islands?, private val make: (Islands, IslandSlot) -> IslandView) {
     internal var drawing: IslandDrawing? = null
     internal var pace = IslandPace.OWN
     /** The caller's own condition, as state like [clear]: a draw that reads [apart] is drawn again when either changes. */
@@ -396,7 +398,7 @@ class IslandSlot internal constructor(private val islands: Islands?, private val
     internal fun sync() {
         val i = islands ?: return
         if (wanted) {
-            val view = island ?: make(i).also { island = it; it.slot = this }
+            val view = island ?: make(i, this).also { island = it }
             if (placedOnce) view.place(spot)
             (view as View).invalidate()
         } else { told = false; island?.hide() }
@@ -417,14 +419,14 @@ class IslandSlot internal constructor(private val islands: Islands?, private val
 @Composable
 fun rememberIsland(drawing: IslandDrawing, wanted: Boolean, overPage: Boolean, margin: Int = 0, within: Rect? = null, pace: IslandPace = IslandPace.OWN): IslandSlot {
     val islands = LocalIslands.current
-    val slot = rememberSlot(islands, wanted, overPage, margin, within) { it.take() }
+    val slot = rememberSlot(islands, wanted, overPage, margin, within) { i, s -> i.take(s) }
     slot.drawing = drawing
     slot.pace = pace
     return slot
 }
 
 @Composable
-private fun rememberSlot(islands: Islands?, wanted: Boolean, overPage: Boolean, margin: Int, within: Rect?, make: (Islands) -> IslandView): IslandSlot {
+private fun rememberSlot(islands: Islands?, wanted: Boolean, overPage: Boolean, margin: Int, within: Rect?, make: (Islands, IslandSlot) -> IslandView): IslandSlot {
     val slot = remember(islands) { IslandSlot(islands, make) }
     (wanted && islands != null).let { if (slot.wanted != it) slot.wanted = it }
     slot.overPage = overPage
@@ -453,7 +455,7 @@ fun IslandContent(modifier: Modifier, content: @Composable () -> Unit) {
     val parent = rememberCompositionContext()
     val host = remember(islands) { IslandHost(islands.context, parent, islands) }
     SideEffect { host.content.value = content }
-    val slot = rememberSlot(islands, wanted = true, overPage = false, margin = 0, within = null) { it.take(host) }
+    val slot = rememberSlot(islands, wanted = true, overPage = false, margin = 0, within = null) { i, s -> i.take(host, s) }
     Box(modifier.island(slot).then(HostPlaceElement(slot, host)))
 }
 

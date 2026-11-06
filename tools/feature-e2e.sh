@@ -920,6 +920,33 @@ if want queue-panel; then section "the song playing, tapped in the queue"
   tapnode text "$(field title)"
   check "goes back to the player" wait_until 10 off_screen 'content-desc="Shuffle"'
   check "and stays where it was" test "$(field positionMs)" = "$at"
+  # The playing row's bars are drawn by an island of their own that steps with the seek bar's (Islands.kt):
+  # one that never joined the seek bar's steps stood still while the music played.
+  "$app" do pause >/dev/null; check "plays again" wait_for playing True 5
+  "$app" open queue >/dev/null
+  check "the queue opens again" wait_until 10 on_screen 'content-desc="Shuffle"'
+  shots="$here/../build/e2e/$ANDROID_SERIAL/queue"; mkdir -p "$shots"
+  # The playing row's cover, left of its title (the first on screen; the player's own is below it), from two
+  # screenshots taken one after the other: whether they differ.
+  bars_moved() {
+    local tree a b
+    tree=$(ui) || return 2
+    adb exec-out screencap -p > "$shots/bars-a.png"; adb exec-out screencap -p > "$shots/bars-b.png"
+    python3 - "$tree" "$(field title)" "$shots/bars-a.png" "$shots/bars-b.png" <<'PY'
+import re, sys
+from PIL import Image
+tree, title, a, b = sys.argv[1:]
+m = re.search(r'text="' + re.escape(title) + r'"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', tree)
+if not m: sys.exit(2)
+l, t, r, bottom = map(int, m.groups())
+box = (0, max(0, t - (bottom - t)), l, bottom + (bottom - t))
+sys.exit(0 if Image.open(a).crop(box).tobytes() != Image.open(b).crop(box).tobytes() else 1)
+PY
+  }
+  bars_still() { bars_moved; [ $? = 1 ]; }
+  check "the playing row's bars move while it plays" wait_until 5 bars_moved
+  "$app" do pause >/dev/null; check "paused again" wait_for playing False 5
+  check "and stand still while paused" wait_until 5 bars_still
 fi
 
 remote_checks() {
