@@ -201,6 +201,23 @@ fn stopped_song_follows_queue_edits() {
 }
 
 #[test]
+fn seek_ends_a_stop() {
+    let s = songs(2, 3.0);
+    let mut p = Player::new(queue(&s));
+    p.tracks.broken = vec!["s1".into()];
+    p.play_from(0);
+    assert!(p.run_until(6_000, |p| p.stopped_at() == Some(1)));
+    p.tracks.broken.clear();
+    // In the song the seek bar shows: s0, heard to its end.
+    p.seek(1_000);
+    assert_eq!(p.stopped_at(), None);
+    p.resume();
+    let heard = p.sink.heard_frames;
+    p.run_for(6_000);
+    assert_eq!((p.sink.heard_frames - heard) as usize, frames(5.0), "s0 from 1 s, then s1");
+}
+
+#[test]
 fn repeat_all_and_one_gapless() {
     let s = songs(2, 3.0);
     let mut p = Player::new(queue(&s));
