@@ -945,6 +945,14 @@ struct Run {
     taker: Option<Listening>,
 }
 
+impl Run {
+    /// The open body is let go, ending its burst.
+    fn let_go(&mut self, s: &mut State) {
+        self.open = false;
+        s.burst_from = None;
+    }
+}
+
 /// A rangeless answer to a request from `asked`, read from `at` up to it.
 struct Skip {
     asked: u64,
@@ -1558,8 +1566,7 @@ impl Loaded {
             s.restart = s.piece_running_out(low);
         }
         if let Some(at) = s.restart.take() {
-            run.open = false;
-            s.burst_from = None;
+            run.let_go(s);
             if s.opening > 0 && !s.data.is_empty() {
                 let data = std::mem::take(&mut s.data);
                 let base = s.base;
@@ -1578,8 +1585,7 @@ impl Loaded {
         }
         let w = s.window(run.load, run.duration_ms);
         if s.at_end() {
-            run.open = false;
-            s.burst_from = None;
+            run.let_go(s);
             s.ended();
             if let (Some(k), Some(len), false) = (run.keep.take(), s.len, s.failed()) {
                 // Whole in the entry: read from there and drop the memory copy.
@@ -1610,8 +1616,7 @@ impl Loaded {
             return Next::Open(s.end());
         }
         // At the high mark: closed until the reader nears the low mark.
-        run.open = false;
-        s.burst_from = None;
+        run.let_go(s);
         Next::Wait
     }
 
@@ -1683,8 +1688,7 @@ impl Loaded {
         match got {
             // A clean end is the real end, whatever was promised.
             Ok([]) => {
-                run.open = false;
-                s.burst_from = None;
+                run.let_go(&mut s);
                 if s.end() == from && s.restart.is_none() {
                     s.ended();
                     s.ends_at(from);
@@ -1713,8 +1717,7 @@ impl Loaded {
             // it is a failure, so a server that answers and then breaks or never sends gives up after a
             // few.
             Err(e) => {
-                run.open = false;
-                s.burst_from = None;
+                run.let_go(&mut s);
                 let stalled = self.cancel.timed_out();
                 if stalled || !run.brought {
                     run.failures += 1;
