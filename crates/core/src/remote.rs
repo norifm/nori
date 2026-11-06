@@ -2579,7 +2579,7 @@ fn keep_pairing(settings: &Settings, secret: &str) -> bool {
 
 fn lan_secret(client: &Client) -> Option<String> {
     if let Some((_, secret)) = client.core.lan_jam.read().as_ref() { return Some(secret.clone()); }
-    if let Some((_, secret)) = client.core.account.read().as_ref() { return Some(secret.clone()); }
+    if let Some(account) = client.core.account.read().as_ref() { return Some(account.proof().to_string()); }
     let settings = &client.core.session.settings;
     let db = settings.app_db()?;
     let db = db.lock();
@@ -2883,7 +2883,7 @@ impl Remote {
     }
 
     fn account_tag(&self) -> Option<String> {
-        let user = self.client.core.account.read().as_ref().map(|(user, _)| user.clone()).unwrap_or_else(|| "youtube".into());
+        let user = self.client.core.account.read().as_ref().map(|a| a.user.clone()).unwrap_or_else(|| "youtube".into());
         lan_secret(&self.client).map(|secret| lan::account_tag(&user, &secret))
     }
 
