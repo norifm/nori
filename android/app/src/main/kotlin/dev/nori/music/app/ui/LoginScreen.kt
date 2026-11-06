@@ -34,7 +34,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.nori.music.app.vm.LoginUi
 import dev.nori.music.app.vm.SettingsViewModel
+import dev.nori.music.app.vm.SignInFlow
 import dev.nori.music.ffi.AccountState
 import dev.nori.music.ffi.FormField as Field
 import dev.nori.music.ffi.ProviderInfo
@@ -87,7 +89,7 @@ private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, signed: (Stri
         Text(words.pasteHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FormField(answer, { answer = it }, label = { Text(words.pasteLabel) }, minLines = 3, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth().testTag("pasted"))
         // The sign-in page shows its own failures.
-        ui.failed?.takeIf { !ui.page }?.let { Text(say.signIn(words, it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("sign-in-failed")) }
+        ui.failed?.takeIf { ui.flow !is SignInFlow.Page }?.let { Text(say.signIn(words, it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("sign-in-failed")) }
         PillButton(
             if (ui.busy) say.connecting else say.signInAction, null, { vm.signIn(answer) },
             Modifier.fillMaxWidth().testTag("sign-in"), enabled = !ui.busy && answer.isNotBlank(),
@@ -130,7 +132,7 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
     var headers by remember { mutableStateOf(dev.nori.music.ffi.settings.serverHeadersText(p.headers)) }
     var certPassword by remember { mutableStateOf("") }
     val pickCert = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) p = vm.importClientCert(p, uri, certPassword) }
-    LaunchedEffect(ui.done) { if (ui.done) { vm.clearLoginResult(); onClose?.invoke() } }
+    LaunchedEffect(ui) { if (ui == LoginUi.Done) { vm.clearLoginResult(); onClose?.invoke() } }
 
     // Reading the form - the headers typed, the addresses trimmed, whether it can be sent, the schemes
     // offered for an address typed without one - is the core's (settings.rs, providers).
@@ -194,22 +196,22 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
             )
             if (adding && words.hint.isNotEmpty()) Text(words.hint, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (!asksNothing) info?.fields?.filter { !it.advanced }?.forEach { Ask(it.what) }
-            ui.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            (ui as? LoginUi.Failed)?.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (signsIn) {
                 PillButton(
-                    if (ui.busy) say.connecting else words.account.pageButton, null,
+                    if ((ui == LoginUi.Busy)) say.connecting else words.account.pageButton, null,
                     { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.SIGN_IN) },
-                    Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect-sign-in"), prominent = true, enabled = !ui.busy && ready,
+                    Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect-sign-in"), prominent = true, enabled = !(ui == LoginUi.Busy) && ready,
                 )
                 PillButton(
                     say.providerGuest, null, { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.GUEST) },
-                    Modifier.fillMaxWidth().testTag("connect-guest"), enabled = !ui.busy && ready,
+                    Modifier.fillMaxWidth().testTag("connect-guest"), enabled = !(ui == LoginUi.Busy) && ready,
                 )
             } else PillButton(
-                if (ui.busy) say.connecting else if (adding) words.add else say.save, null,
+                if ((ui == LoginUi.Busy)) say.connecting else if (adding) words.add else say.save, null,
                 { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers)) },
                 Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect"), prominent = true,
-                enabled = !ui.busy && ready,
+                enabled = !(ui == LoginUi.Busy) && ready,
             )
             // Signing in is the profile in use's: its core asks the provider.
             if (info != null && info.signIn.isNotEmpty() && !adding && p.id == vm.prefs.value.activeServerId) AccountPart(vm, info) { name -> p = p.copy(user = name) }
