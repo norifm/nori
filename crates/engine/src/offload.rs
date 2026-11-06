@@ -324,6 +324,18 @@ enum Eos {
     Due,
 }
 
+/// The open track.
+#[derive(Debug, Clone, Copy)]
+struct Track {
+    coded: Coded,
+    /// It joins songs gaplessly.
+    gapless: bool,
+    /// Its size, bytes.
+    bytes: usize,
+    /// Told to play since opened or paused, with songs on it: Android takes an end of stream only then.
+    started: bool,
+}
+
 /// What is written to the track next.
 #[derive(Default)]
 enum Writer {
@@ -391,8 +403,7 @@ struct Run {
 /// The engine's offload path: the track, the songs written to it, and the one being written.
 pub(crate) struct Offload {
     out: Box<dyn OffloadOutput>,
-    /// The track's format, whether it joins gaplessly, and its size in bytes.
-    open: Option<(Coded, bool, usize)>,
+    open: Option<Track>,
     supported: Vec<(Coded, Support)>,
     t: Run,
     /// Bytes gathered for one write (allocated once).
@@ -406,8 +417,6 @@ pub(crate) struct Offload {
     /// Bytes asked for at open, until the grant is noted.
     granted: Option<usize>,
     playing: bool,
-    /// Told to play since opened or paused: Android takes an end of stream only then.
-    started: bool,
     /// The song playback stops after (the sleep timer).
     pub stop_after: Option<usize>,
     gain: f32,
@@ -442,7 +451,6 @@ impl Offload {
             ask_gap_ms: 0,
             granted: None,
             playing: false,
-            started: false,
             stop_after: None,
             gain: 1.0,
             level: 1.0,
@@ -469,12 +477,25 @@ impl Offload {
 
     /// A track is playing, so this path's watchdog judges stalls ([`Offload::stuck`]).
     pub(crate) fn watching(&self) -> bool {
-        self.playing && self.started && self.open.is_some() && !self.t.placed.is_empty()
+        self.started()
+    }
+
+    /// The open track was told to play (and plays, with songs on it).
+    fn started(&self) -> bool {
+        self.open.is_some_and(|t| t.started)
+    }
+
+    /// Tells the open track to play.
+    fn start_track(&mut self) {
+        if let Some(t) = self.open.as_mut() {
+            t.started = true;
+            self.out.play();
+        }
     }
 
     /// The open track's format.
     pub(crate) fn track(&self) -> Option<Coded> {
-        self.open.map(|o| o.0)
+        self.open.map(|t| t.coded)
     }
 
     /// Whether the output decodes `coded`, asked once per format per output device.
@@ -542,10 +563,9 @@ impl Offload {
             // After an end of stream Android's track is stopping until it presents it; flushed then, it
             // refuses non-blocking writes. Like media3, open a new track instead.
             self.out.close();
-            self.started = false;
-        } else if self.open.is_some() {
+        } else if let Some(t) = self.open.as_mut() {
             self.out.pause();
-            self.started = false;
+            t.started = false;
             self.out.flush();
         }
         self.t = Run::default();
@@ -556,7 +576,7 @@ impl Offload {
     /// notes it and releases the track. Returns the place (queue index, ms).
     pub(crate) fn leave(&mut self, now_ms: i64) -> Option<(usize, i64)> {
         self.now_ms = now_ms;
-        if self.playing && self.started && !self.t.placed.is_empty() {
+        if self.started() {
             self.read_head();
         }
         self.note_left();
@@ -586,7 +606,6 @@ impl Offload {
         self.empty();
         if self.open.take().is_some() {
             self.out.close();
-            self.started = false;
         }
         self.playing = false;
         self.stop_after = None;
@@ -603,8 +622,7 @@ impl Offload {
         self.t.play_clock = None;
         if self.open.is_some() && !self.t.placed.is_empty() {
             self.t.resumed = true;
-            self.out.play();
-            self.started = true;
+            self.start_track();
             if self.t.eos == Eos::Due {
                 self.end_stream();
             }
@@ -620,9 +638,9 @@ impl Offload {
             self.gain = f.to;
             self.volume();
         }
-        if self.open.is_some() {
+        if let Some(t) = self.open.as_mut() {
             self.out.pause();
-            self.started = false;
+            t.started = false;
         }
     }
 
@@ -659,7 +677,7 @@ impl Offload {
     }
 
     fn rate(&self) -> u32 {
-        self.open.map_or(48_000, |o| o.0.rate).max(1)
+        self.open.map_or(48_000, |t| t.coded.rate).max(1)
     }
 
     /// The furthest the count can be by the clock: the last sensible reading moved on by the time since.
@@ -753,7 +771,7 @@ impl Offload {
 
     /// Music the track can hold, µs, from its size and the bitrate so far.
     fn holds_us(&self) -> i64 {
-        let Some((_, _, bytes)) = self.open else { return TRACK_US };
+        let Some(Track { bytes, .. }) = self.open else { return TRACK_US };
         if self.t.written_bytes == 0 || self.t.written_frames == 0 {
             return (bytes as i128 * 8_000_000 / GUESS_BPS as i128) as i64;
         }
@@ -778,7 +796,7 @@ impl Offload {
     /// moving, returns why the CPU takes over and whether the place follows the clock (the platform kept
     /// asking, so it played) rather than the last count (a real stall).
     fn stuck(&mut self) -> Option<(String, bool)> {
-        if !self.playing || !self.started || self.t.placed.is_empty() || self.open.is_none() {
+        if !self.started() {
             return None;
         }
         let now = self.now_ms;
@@ -942,7 +960,7 @@ impl Offload {
         }
         // Asked for more: top up whatever the count says.
         let asked = self.open.is_some() && self.out.data_requested();
-        if self.t.play_clock.is_none() && self.playing && self.started {
+        if self.t.play_clock.is_none() && self.started() {
             self.t.play_clock = Some((now_ms, self.t.heard_at));
         }
         self.read_head();
@@ -982,7 +1000,7 @@ impl Offload {
         self.called_back = true;
         self.t.asks = self.t.asks.saturating_add(1);
         self.t.asked_ms = Some(now_ms);
-        if self.playing && self.started {
+        if self.started() {
             if let Some(last) = self.t.last_ask_ms.replace(now_ms) {
                 self.ask_gap_ms = self.ask_gap_ms.max(now_ms - last);
             }
@@ -1016,7 +1034,7 @@ impl Offload {
     /// Whether nothing is due before the platform's next ask: playing and fed, nothing opening, fading
     /// or pending, and no boundary within [`Offload::awake_before_ms`].
     pub(crate) fn lets_cpu_sleep(&self) -> bool {
-        if !self.playing || !self.started || self.t.placed.is_empty() || self.open.is_none() || matches!(self.t.writer, Writer::Starting { .. }) || self.t.waiting || self.fade.is_some() {
+        if !self.started() || self.t.waiting || self.fade.is_some() {
             return false;
         }
         if self.t.strikes > 0 || self.t.eos == Eos::Due || self.t.head.lower.is_some() || self.t.stamp.lower.is_some() {
@@ -1078,17 +1096,16 @@ impl Offload {
         }
         let Some(song) = r.coded().cloned() else { return to_pcm };
         let coded = song.coded;
-        if self.open.is_none_or(|o| o.0 != coded) {
+        if self.open.is_none_or(|t| t.coded != coded) {
             if self.open.take().is_some() {
                 self.out.close();
-                self.started = false;
             }
             let bps = if song.bitrate > 0 { song.bitrate } else { GUESS_BPS };
             let bytes = ((bps as i128 * TRACK_US as i128 / 8_000_000) as usize).clamp(MIN_BYTES, MAX_BYTES);
             match self.out.open(coded, bytes) {
                 Ok(held) => {
                     let gapless = self.support(coded) == Support::Gapless;
-                    self.open = Some((coded, gapless, held.max(1)));
+                    self.open = Some(Track { coded, gapless, bytes: held.max(1), started: false });
                     self.granted = Some(bytes);
                 }
                 Err(_) => {
@@ -1097,7 +1114,7 @@ impl Offload {
                 }
             }
         }
-        let gapless = self.open.is_some_and(|o| o.1);
+        let gapless = self.open.is_some_and(|t| t.gapless);
         self.gapped = (!gapless && (song.delay != 0 || song.padding != 0)).then(|| {
             let said = self.out.said(coded).map(|s| format!(" ({s})")).unwrap_or_default();
             format!("its encoder delay of {} and padding of {} heard as a moment of near silence at its ends: no song of its album joins it, and the output does not do gapless offload{said}", song.delay, song.padding)
@@ -1117,7 +1134,7 @@ impl Offload {
             return Some(self.fallback());
         }
         if let Some(asked) = self.granted.take() {
-            let held = self.open.map_or(0, |o| o.2);
+            let held = self.open.map_or(0, |t| t.bytes);
             let (holds, low) = (self.holds_us() / 1000, self.low_us() / 1000);
             self.note(format!(
                 "the platform granted a track of {} KB of the {} KB asked: {holds} ms of this song, topped up when the platform asks for more (about every {low} ms if its chip buffers nothing of its own)",
@@ -1126,8 +1143,7 @@ impl Offload {
             ));
         }
         if self.playing {
-            self.out.play();
-            self.started = true;
+            self.start_track();
             self.t.clock = Some((self.now_ms, self.t.heard_at));
             self.t.clock_lag_ms = 0;
             self.t.play_clock = self.t.clock;
@@ -1209,7 +1225,7 @@ impl Offload {
                 Err(_) => None,
             };
             let (id, level) = queue.read(|q| (q.ids()[n].clone(), gain(q, n)));
-            let joins = nori_player::gain::offload_allows(level) && self.open.is_some_and(|(c, gapless, _)| gapless && song.as_ref().is_some_and(|s| s.coded == c));
+            let joins = nori_player::gain::offload_allows(level) && self.open.is_some_and(|t| t.gapless && song.as_ref().is_some_and(|s| s.coded == t.coded));
             let Some(song) = song.filter(|_| joins) else {
                 // Another format or not offloadable: decided once the track plays out.
                 self.close(Tail::Then(n));
@@ -1257,7 +1273,7 @@ impl Offload {
         if self.t.eos == Eos::Closed {
             return;
         }
-        if !self.playing || !self.started || self.open.is_none() {
+        if !self.started() {
             self.t.eos = Eos::Due;
             return;
         }
@@ -1342,7 +1358,7 @@ impl Offload {
             at(if end > 0 { end + 5 } else { END_LOOK_MS });
         }
         // The watchdog.
-        if let Some(since) = self.t.moved_ms.filter(|_| self.started && self.in_track_us() > END_SLACK_US) {
+        if let Some(since) = self.t.moved_ms.filter(|_| self.started() && self.in_track_us() > END_SLACK_US) {
             at((self.watch_at(since) - self.now_ms).max(0) + 1);
         }
         d
