@@ -57,9 +57,8 @@ pub struct Playlist {
     seqs: Vec<u64>,
     last_seq: u64,
     hand: Vec<Hand>,
-    /// Play order while shuffling (list indexes); empty otherwise.
-    order: Vec<usize>,
-    shuffling: bool,
+    /// The play order while shuffling (list indexes, each once); `None`: list order.
+    order: Option<Vec<usize>>,
     /// Shuffle shown as on: shuffling, or a list pre-shuffled before queueing (weighted shuffle).
     lit: bool,
     cur: Option<usize>,
@@ -90,8 +89,7 @@ impl Playlist {
             seqs: Vec::new(),
             last_seq: 0,
             hand: Vec::new(),
-            order: Vec::new(),
-            shuffling: false,
+            order: None,
             lit: false,
             cur: None,
             parked: None,
@@ -131,10 +129,10 @@ impl Playlist {
         self.cur.and_then(|i| self.ids.get(i)).map(String::as_str)
     }
     pub fn shuffling(&self) -> bool {
-        self.shuffling
+        self.order.is_some()
     }
     pub fn lit(&self) -> bool {
-        self.lit || self.shuffling
+        self.lit || self.shuffling()
     }
     pub fn repeat(&self) -> u8 {
         self.repeat
@@ -157,28 +155,26 @@ impl Playlist {
 
     /// The play order when shuffling.
     pub fn shuffle_order(&self) -> Option<&[usize]> {
-        self.shuffling.then_some(self.order.as_slice())
+        self.order.as_deref()
     }
 
     /// The list indexes in the order they play.
     pub fn play_order(&self) -> impl Iterator<Item = usize> + '_ {
-        let (walk, n) = if self.shuffling { (Some(&self.order), self.order.len()) } else { (None, self.ids.len()) };
-        (0..n).map(move |k| walk.map_or(k, |o| o[k]))
+        let n = self.order.as_ref().map_or(self.ids.len(), Vec::len);
+        (0..n).map(move |k| self.order.as_ref().map_or(k, |o| o[k]))
     }
 
     fn position(&self, i: usize) -> Option<usize> {
-        if self.shuffling {
-            self.order.iter().position(|&o| o == i)
-        } else {
-            (i < self.ids.len()).then_some(i)
+        match &self.order {
+            Some(order) => order.iter().position(|&o| o == i),
+            None => (i < self.ids.len()).then_some(i),
         }
     }
 
     fn at_position(&self, p: usize) -> Option<usize> {
-        if self.shuffling {
-            self.order.get(p).copied()
-        } else {
-            (p < self.ids.len()).then_some(p)
+        match &self.order {
+            Some(order) => order.get(p).copied(),
+            None => (p < self.ids.len()).then_some(p),
         }
     }
 
@@ -252,7 +248,6 @@ impl Playlist {
         self.taken = None;
         self.hand = vec![Hand::No; n];
         self.parked = None;
-        self.shuffling = shuffling && n > 0;
         self.lit = shuffling;
         self.cur = match (n, start) {
             (0, _) => None,
@@ -264,10 +259,7 @@ impl Playlist {
             }
             (_, None) => Some(0),
         };
-        self.order = match (self.shuffling, self.cur) {
-            (true, Some(c)) => shuffle_around(n, c, &vec![false; n], seed),
-            _ => Vec::new(),
-        };
+        self.order = self.cur.filter(|_| shuffling).map(|c| shuffle_around(n, c, &vec![false; n], seed));
         self.rev += 1;
         self.cur
     }
@@ -278,8 +270,8 @@ impl Playlist {
         let n = ids.len();
         let at = self.set(ids, Some(start), true, seed);
         let mut seen = vec![false; n];
-        if order.len() == n && order.iter().all(|&i| i < n && !std::mem::replace(&mut seen[i], true)) {
-            self.order = order;
+        if let Some(o) = self.order.as_mut().filter(|_| order.len() == n && order.iter().all(|&i| i < n && !std::mem::replace(&mut seen[i], true))) {
+            *o = order;
         }
         at
     }
@@ -296,10 +288,10 @@ impl Playlist {
             return at;
         };
         let flags: Vec<bool> = self.hand.iter().map(|h| h.by_user()).collect();
-        let p = place(self.ids.len(), cur, &flags, self.shuffling.then_some(self.order.as_slice()), hand == Hand::Last, count);
+        let p = place(self.ids.len(), cur, &flags, self.order.as_deref(), hand == Hand::Last, count);
         self.splice(p.at, ids, hand);
         if let Some(o) = p.order {
-            self.order = o;
+            self.order = Some(o);
         }
         self.rev += 1;
         p.at
@@ -326,13 +318,13 @@ impl Playlist {
         let at = at.min(self.ids.len());
         let count = ids.len();
         self.splice(at, ids, hand);
-        if self.shuffling {
-            for o in self.order.iter_mut() {
+        if let Some(order) = self.order.as_mut() {
+            for o in order.iter_mut() {
                 if *o >= at {
                     *o += count;
                 }
             }
-            self.order.extend(at..at + count);
+            order.extend(at..at + count);
         }
         self.rev += 1;
     }
@@ -376,16 +368,17 @@ impl Playlist {
         self.seqs.drain(from..to);
         self.list_rev += 1;
         self.hand.drain(from..to);
-        self.order.retain(|&o| !gone(o));
-        for o in self.order.iter_mut() {
-            *o = shift(*o);
+        if let Some(order) = self.order.as_mut() {
+            order.retain(|&o| !gone(o));
+            for o in order.iter_mut() {
+                *o = shift(*o);
+            }
         }
         // Parked only while the bridge's songs are in.
         self.parked = self.parked.filter(|&h| h < self.ids.len() && self.bridging());
         if self.ids.is_empty() {
             self.cur = None;
-            self.shuffling = false;
-            self.order.clear();
+            self.order = None;
         }
         self.rev += 1;
     }
@@ -410,7 +403,7 @@ impl Playlist {
     /// Snapshot of the song at `at` for [`Playlist::restore`].
     pub fn taken(&self, at: usize) -> Option<Taken> {
         let id = self.ids.get(at)?.clone();
-        Some(Taken { id, at, hand: self.hand(at), turn: if self.shuffling { self.position(at) } else { None } })
+        Some(Taken { id, at, hand: self.hand(at), turn: self.order.as_ref().and_then(|_| self.position(at)) })
     }
 
     /// Puts a removed song back at its list index (clamped) and play order position, with its marks. The
@@ -419,14 +412,14 @@ impl Playlist {
         let at = t.at.min(self.ids.len());
         let was_empty = self.ids.is_empty();
         self.splice(at, vec![t.id.clone()], t.hand);
-        if self.shuffling {
-            for o in self.order.iter_mut() {
+        if let Some(order) = self.order.as_mut() {
+            for o in order.iter_mut() {
                 if *o >= at {
                     *o += 1;
                 }
             }
-            let turn = t.turn.unwrap_or(self.order.len()).min(self.order.len());
-            self.order.insert(turn, at);
+            let turn = t.turn.unwrap_or(order.len()).min(order.len());
+            order.insert(turn, at);
         }
         if was_empty {
             self.cur = Some(0);
@@ -457,7 +450,7 @@ impl Playlist {
         self.list_rev += 1;
         self.cur = self.cur.map(|c| map[c]);
         self.parked = self.parked.map(|h| map[h]);
-        for o in self.order.iter_mut() {
+        for o in self.order.iter_mut().flatten() {
             *o = map[*o];
         }
         self.rev += 1;
@@ -466,19 +459,18 @@ impl Playlist {
     /// Turns shuffle on ([`shuffle_around`]) or off (list order).
     pub fn set_shuffle(&mut self, on: bool, seed: u64) {
         self.lit = on;
-        if on == self.shuffling {
+        if on == self.shuffling() {
             return;
         }
-        self.shuffling = on && !self.ids.is_empty();
         let flags: Vec<bool> = self.hand.iter().map(|h| h.by_user()).collect();
-        self.order = match (self.shuffling, self.cur) {
-            (true, Some(c)) => shuffle_around(self.ids.len(), c, &flags, seed),
+        self.order = match (on && !self.ids.is_empty(), self.cur) {
+            (true, Some(c)) => Some(shuffle_around(self.ids.len(), c, &flags, seed)),
             (true, None) => {
                 let mut all: Vec<usize> = (0..self.ids.len()).collect();
                 shuffle(&mut all, seed);
-                all
+                Some(all)
             }
-            _ => Vec::new(),
+            (false, _) => None,
         };
         self.rev += 1;
     }
@@ -488,10 +480,10 @@ impl Playlist {
     pub fn reorder(&mut self, order: Vec<usize>) -> bool {
         let n = self.ids.len();
         let mut seen = vec![false; n];
-        if !self.shuffling || order.len() != n || !order.iter().all(|&i| i < n && !std::mem::replace(&mut seen[i], true)) {
+        let Some(o) = self.order.as_mut().filter(|_| order.len() == n && order.iter().all(|&i| i < n && !std::mem::replace(&mut seen[i], true))) else {
             return false;
-        }
-        self.order = order;
+        };
+        *o = order;
         self.rev += 1;
         true
     }
@@ -520,14 +512,14 @@ impl Playlist {
         let count = ids.len();
         let pos = self.position(before);
         self.splice(before, ids, Hand::Bridge);
-        if self.shuffling {
-            for o in self.order.iter_mut() {
+        if let Some(order) = self.order.as_mut() {
+            for o in order.iter_mut() {
                 if *o >= before {
                     *o += count;
                 }
             }
-            let pos = pos.unwrap_or(self.order.len());
-            self.order.splice(pos..pos, before..before + count);
+            let pos = pos.unwrap_or(order.len());
+            order.splice(pos..pos, before..before + count);
         }
         if starting {
             self.parked = Some(before + count);
