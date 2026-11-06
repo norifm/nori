@@ -391,10 +391,8 @@ impl Plugins {
     /// any may while none is, or while the one installed has no pinned key.
     pub(crate) fn admits(&self, id: &str, key: Option<&str>) -> Result<(), Refusal> {
         let list = self.installed.lock().expect("not poisoned");
-        match list.iter().find(|i| i.manifest.id == id).and_then(|i| i.key.as_deref()) {
-            Some(pinned) if Some(pinned) != key => Err(Refusal::OtherKey),
-            _ => Ok(()),
-        }
+        let pinned = list.iter().find(|i| i.manifest.id == id).and_then(|i| i.key.as_deref());
+        if nori_plugin_index::package::admits(pinned, key) { Ok(()) } else { Err(Refusal::OtherKey) }
     }
 
     /// [`Plugins::install`] of a package from `repo`, which it is updated from from now on, signed by

@@ -9,8 +9,8 @@ import { ui } from "../state/ui.svelte";
 import * as db from "./db";
 import { overridesIn, type Call, type Start } from "./runner";
 import { stageModule } from "./stage";
-import type { Code, Installed, Read, Row, Value, WebPlugin } from "./types";
-import { numbers, witValue } from "./types";
+import type { Code, Installed, Read, Row, Value, Version, WebPlugin } from "./types";
+import { numbers, Refused, witValue } from "./types";
 
 /** What says a plugin is installed, read at the page's start so none costs nothing. */
 const MARK = "nori-plugins";
@@ -253,15 +253,18 @@ class Plugins {
     for (const i of this.installed) if (this.runs(i) && i.plugin.points.includes("slots")) void this.runningOf(i.plugin.id)?.call("slots", "artworkFailed", song(s), status).catch(() => {});
   }
 
-  /** What a package says of itself, nothing kept. */
-  async read(pack: Uint8Array, sha256?: string): Promise<Read> {
+  /** What a package says of itself, nothing kept; refused when its plugin pinned another key than
+   * `listed`'s (a file has none). */
+  async read(pack: Uint8Array, listed?: Version): Promise<Read> {
     const { read } = await import("./install");
-    return read(pack, this.proxied, sha256);
+    const got = await read(pack, this.proxied, listed);
+    if (!(await ask<boolean>("plugin_admits", this.find(got.plugin.id)?.key ?? "", got.key ?? ""))) throw new Refused("OtherKey");
+    return got;
   }
 
   /** Keeps a package read, standing as the core says (`standing::installed_over`): an update keeps its
    * standing and values. Installing `fromFile` leaves its repo behind. */
-  async install({ plugin, wasm, icon, readme }: Read, fromFile = false) {
+  async install({ plugin, wasm, icon, readme, key }: Read, fromFile = false) {
     const { transpile } = await import("./install");
     const code = await transpile(wasm);
     const id = plugin.id;
@@ -270,7 +273,7 @@ class Plugins {
     const next = Math.max(-1, ...this.installed.map((x) => x.at ?? 0)) + 1;
     const s = JSON.parse(await ask<string>("plugin_installed_over", standing ?? "", next)) as { on: boolean; held: boolean; place: number };
     this.stop(id);
-    const i: Installed = { plugin, on: s.on, values: had ? $state.snapshot(had.values) : {}, icon, readme, held: s.held, fromFile, at: s.place };
+    const i: Installed = { plugin, on: s.on, values: had ? $state.snapshot(had.values) : {}, icon, readme, held: s.held, fromFile, key: had?.key ?? key, at: s.place };
     await db.saveCode(id, code);
     await db.save(i);
     this.installed = had ? this.installed.map((x) => (x.plugin.id === id ? i : x)) : [...this.installed, i];

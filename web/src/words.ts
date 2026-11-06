@@ -190,6 +190,11 @@ export const W = {
   pluginInstall: "Install",
   pluginInstalling: "Installing…",
   pluginInstallFailed: "Couldn’t install it. Nothing changed.",
+  pluginRefused: {
+    NotListed: "It isn’t the package its repo lists. Nothing changed.",
+    Signature: "Its signature doesn’t match its author’s key. Nothing changed.",
+    OtherKey: "It isn’t signed by the author it was installed from. Remove the plugin to install it.",
+  },
   pluginsInstallFile: "Install from file",
   pluginFromFile: "From a file",
   pluginFromFileLine: "Installed from a file",

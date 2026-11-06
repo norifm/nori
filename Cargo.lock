@@ -5268,9 +5268,11 @@ dependencies = [
 name = "nori-plugin-index"
 version = "0.8.0-beta.1"
 dependencies = [
+ "ed25519-dalek",
  "pulldown-cmark",
  "serde",
  "serde_json",
+ "sha2",
  "wasmparser 0.261.0",
 ]
 

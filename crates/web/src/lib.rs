@@ -468,7 +468,7 @@ impl Nori {
     /// The plugins nori's own repo lists, each with what stops it in a browser (`web_fit`; `proxied`: this
     /// page's server carries a plugin's requests), how it stands against `installed` (`[{ id, version,
     /// held, fromFile }]`) and its versions of this API, newest first: `[{ id, name, about, icon, readme,
-    /// source, versions: [{ version, released, url, sha256 }], state, waiting, fit }]`.
+    /// source, versions: [{ version, released, url, sha256, key, signature }], state, waiting, fit }]`.
     pub async fn plugin_offers(&self, proxied: bool, installed: String) -> Result<String, JsValue> {
         let installed: Vec<PluginHere> = serde_json::from_str(&installed).map_err(error)?;
         let from = nori_plugin_index::OFFICIAL;
@@ -491,7 +491,10 @@ impl Nori {
                     (_, true) => "Update",
                     _ => "Installed",
                 };
-                let listed: Vec<Value> = versions.iter().map(|v| json!({ "version": v.version, "released": v.released, "url": at(&v.url), "sha256": v.sha256.to_ascii_lowercase() })).collect();
+                let listed: Vec<Value> = versions
+                    .iter()
+                    .map(|v| json!({ "version": v.version, "released": v.released, "url": at(&v.url), "sha256": v.sha256.to_ascii_lowercase(), "key": v.key, "signature": v.signature }))
+                    .collect();
                 json!({ "id": l.id, "name": l.name, "about": l.about, "icon": l.icon.as_deref().map(at), "readme": l.readme.as_deref().map(at), "source": l.source, "versions": listed, "state": state, "waiting": update && here.is_some_and(|h| !h.held), "fit": nori_plugin_index::web_fit(l, proxied) })
             })
             .collect();
@@ -508,6 +511,22 @@ impl Nori {
     /// `markdown` as the blocks a page draws (`readme::Block`).
     pub fn plugin_readme(&self, markdown: String) -> Result<String, JsValue> {
         serde_json::to_string(&nori_plugin_index::readme::blocks(&markdown)).map_err(error)
+    }
+
+    /// Why package `pack` doesn't install as `listed` (`package::Listed` as JSON): `NotListed` or
+    /// `Signature`; empty when it may (`package::checked`).
+    pub fn plugin_check(&self, pack: Vec<u8>, listed: String) -> Result<String, JsValue> {
+        let listed: nori_plugin_index::package::Listed = serde_json::from_str(&listed).map_err(error)?;
+        Ok(nori_plugin_index::package::checked(&pack, &listed).err().map(|r| format!("{r:?}")).unwrap_or_default())
+    }
+
+    /// Whether a version signed by `key` may replace a plugin that pinned `pinned` (empty: none), as
+    /// `package::admits` says.
+    pub fn plugin_admits(&self, pinned: String, key: String) -> bool {
+        fn some(s: &str) -> Option<&str> {
+            (!s.is_empty()).then_some(s)
+        }
+        nori_plugin_index::package::admits(some(&pinned), some(&key))
     }
 
     /// A package's `plugin.wasm` and English strings as the page installs it (`WebPlugin`, as JSON).

@@ -481,7 +481,8 @@ with the plugin's store. Nothing of this loads while no plugin is installed: `no
   addresses only, and it answers `?ping` with `X-Plugin-Http: 1`). A plugin's hosts are checked in
   `runner.ts` before a request goes. Without that route (a static host) a plugin that names hosts is
   greyed `OtherSites`, and packages, whose GitHub releases have no CORS either, install from a file.
-- Signatures aren't checked in a browser, only a repo package's sha256.
+- A package installs on the same terms as natively (`nori_plugin_index::package`): its sha256 and
+  signature are checked in the worker, and the key it pins is kept with the installed plugin.
 - A moving cover's HLS plays through hls.js, loaded only then: Apple's video hosts allow any origin.
 
 ### Repos and signatures
@@ -507,7 +508,8 @@ A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
   are installed (`provider_offers`).
 - `key` is the author's ed25519 public key, `signature` that key's signature over the package's SHA-256
   (the 32 raw bytes, not the hex). Both or neither; one without the other, or a signature that doesn't
-  verify (`verify_strict`), refuses the version (`Refusal::Signature`).
+  verify (`verify_strict`), refuses the version (`Refusal::Signature`; the rule is
+  `nori_plugin_index::package`, for both plugin hosts).
 - The first signed version installed pins its key (`index.json`'s `key` beside the plugin). From then
   on every version must be signed by that key: another key, an unsigned version, or a file is
   refused (`Refusal::OtherKey`) until the user removes the plugin and installs it again.
