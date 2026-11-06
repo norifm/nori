@@ -8,7 +8,7 @@ import org.junit.Test
 
 class TransportTest {
     @Test fun focusActsMoveWhatIsWanted() {
-        // was, focus, act -> now.
+        // was, focus, act -> now; decided for the presses there are.
         val table = listOf(
             Triple(Want.PLAYING, Focus.LOST, FocusAct.PAUSE) to Want.PAUSED,
             Triple(Want.PLAYING, Focus.LOST_TRANSIENT, FocusAct.PAUSE) to Want.HELD_BY_CALL,
@@ -21,8 +21,15 @@ class TransportTest {
         )
         for ((given, now) in table) {
             val (was, focus, act) = given
-            assertEquals("$was $focus $act", now, was.afterFocus(focus, act))
+            assertEquals("$was $focus $act", now, was.afterFocus(focus, act, decidedAt = 4, asked = 4))
         }
+    }
+
+    @Test fun aPauseDecidedBeforePlayWasPressedIsNotTaken() {
+        // Lost for good while playing; play pressed (the focus granted again) before the core's pause came back.
+        assertEquals(Want.PLAYING, Want.PLAYING.afterFocus(Focus.LOST, FocusAct.PAUSE, decidedAt = 1, asked = 2))
+        // Paused by hand while a call's end was decided: the resume does not play.
+        assertEquals(Want.PAUSED, Want.PAUSED.afterFocus(Focus.GAINED, FocusAct.RESUME, decidedAt = 1, asked = 2))
     }
 
     @Test fun followingCodesDecodeBothBits() {

@@ -264,6 +264,8 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     private var prepared = false
     private var want = Want.PAUSED
     private var whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
+    /** Plays and pauses asked for so far: a focus change decided before the last one is stale ([Want.afterFocus]). */
+    private var presses = 0
     private var engineState = EngineState.IDLE
     private var repeat = Player.REPEAT_MODE_OFF
     private var shuffle = false
@@ -531,6 +533,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         // Every change of "wants to play" is in the log with its cause: a page that reads paused over music
         // playing is told apart from the engine's word, a call, or headphones.
         if (playWhenReady != want.playWhenReady) dev.nori.music.NoriLog.i("rust player: ${if (playWhenReady) "play" else "pause"} asked for")
+        presses++
         // Played while the host is paused, this phone joins it once it plays (the engine says so then).
         want = if (!playWhenReady || following && led?.playing != true) Want.PAUSED else Want.PLAYING
         whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
@@ -892,17 +895,18 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         }
         if (focus == Focus.LOST) focused = false
         val wanted = want
+        val at = presses
         focusing.execute {
             val act = nori.session.audioFocus(focus, wanted.playWhenReady, wanted == Want.HELD_BY_CALL)
-            main.post { onFocus(focus, act) }
+            main.post { onFocus(focus, act, at) }
         }
     }
 
-    /** [act] for [focus] ([Want.afterFocus]). Ducking the system does itself. */
-    private fun onFocus(focus: Focus, act: FocusAct) {
+    /** [act] for [focus], decided after [decidedAt] presses ([Want.afterFocus]). Ducking the system does itself. */
+    private fun onFocus(focus: Focus, act: FocusAct, decidedAt: Int) {
         val was = want
-        want = was.afterFocus(focus, act)
-        dev.nori.music.NoriLog.i("rust player: audio focus $focus: $act, wanted $was, now $want")
+        want = was.afterFocus(focus, act, decidedAt, presses)
+        dev.nori.music.NoriLog.i("rust player: audio focus $focus: $act${if (decidedAt != presses) ", asked for something since" else ""}, wanted $was, now $want")
         if (was == Want.PLAYING && want != Want.PLAYING) RustPlayerJni.pause(h)
         if (was != Want.PAUSED && want == Want.PAUSED) whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
         if (was == Want.HELD_BY_CALL && want == Want.PLAYING) start()

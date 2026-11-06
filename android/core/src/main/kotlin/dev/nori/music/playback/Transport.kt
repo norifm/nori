@@ -15,8 +15,13 @@ internal enum class Want {
     val suppression: Int get() =
         if (this == HELD_BY_CALL) Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS else Player.PLAYBACK_SUPPRESSION_REASON_NONE
 
-    /** [act], which the core decided for [focus]: a pause is for good after a loss, a hold until the focus is back otherwise. */
-    fun afterFocus(focus: Focus, act: FocusAct): Want = when {
+    /**
+     * [act], which the core decided for [focus] when [decidedAt] plays and pauses had been asked for, taken
+     * now that [asked] have: a pause is for good after a loss, a hold until the focus is back otherwise.
+     * A play or pause asked meanwhile stands: the act was decided for a state that is gone.
+     */
+    fun afterFocus(focus: Focus, act: FocusAct, decidedAt: Int, asked: Int): Want = when {
+        decidedAt != asked -> this
         act == FocusAct.PAUSE && this != PAUSED -> if (focus == Focus.LOST) PAUSED else HELD_BY_CALL
         act == FocusAct.RESUME && this == HELD_BY_CALL -> PLAYING
         else -> this
