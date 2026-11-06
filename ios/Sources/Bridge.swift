@@ -259,6 +259,8 @@ final class Core {
     private(set) var rules = Rules()
     /// The jam this iPod is a guest in, read as it changes.
     private(set) var jam: Jam?
+    /// An invite opened before a session was: joined once one is.
+    var inviteWaiting: String?
 
     /// Whether the song is one this guest asked for and the host has yet to take.
     func isAsked(_ item: Item) -> Bool { item.kind == "song" && jam?.asked.contains(item.id) == true }
@@ -405,8 +407,8 @@ final class Core {
         refresh()
         readJam()
         NotificationCenter.default.post(name: .noriOpened, object: nil)
-        if let link = JamJoin.waiting {
-            JamJoin.waiting = nil
+        if let link = inviteWaiting {
+            inviteWaiting = nil
             JamJoin.join(link)
         }
     }

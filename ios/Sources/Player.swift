@@ -669,6 +669,13 @@ final class LyricCell: UITableViewCell {
     required init?(coder: NSCoder) { fatalError() }
 }
 
+/// What paces the lyrics: a display link while a word fills, a one-shot timer between.
+private enum Pacer {
+    case still
+    case timer(Timer)
+    case link(CADisplayLink)
+}
+
 /// The song's lyrics; the sung line lit and, with word times, filled word by word. Paced by the core's
 /// clock: a display link only while a word fills, a one-shot timer between, nothing while paused,
 /// waiting for bytes, out of sight or locked. A line tapped seeks there.
@@ -680,8 +687,7 @@ final class LyricsCard: UITableViewController {
     private var sweeps = false
     private var active = -1
     private var sung: CGFloat = 0
-    private var pacer: Timer?
-    private var link: CADisplayLink?
+    private var pacer = Pacer.still
     private var heights: [CGFloat] = []
     private let unsung = CGFloat(nori_ios_lyric_unsung())
 
@@ -763,10 +769,12 @@ final class LyricsCard: UITableViewController {
     }
 
     @objc private func stop() {
-        pacer?.invalidate()
-        pacer = nil
-        link?.invalidate()
-        link = nil
+        switch pacer {
+        case .timer(let t): t.invalidate()
+        case .link(let l): l.invalidate()
+        case .still: break
+        }
+        pacer = .still
     }
 
     @objc private func frame() { tick(force: false) }
@@ -780,22 +788,22 @@ final class LyricsCard: UITableViewController {
         // While bytes are on their way, or paused, the place stands still: nothing runs.
         guard now.playing, !now.buffering, step.wait > 0 else { return stop() }
         if sweeps && step.still == 0 {
-            pacer?.invalidate()
-            pacer = nil
-            if link == nil {
-                let l = CADisplayLink(target: self, selector: #selector(frame))
+            let l: CADisplayLink
+            if case .link(let running) = pacer {
+                l = running
+            } else {
+                stop()
+                l = CADisplayLink(target: self, selector: #selector(frame))
                 l.add(to: .main, forMode: .common)
-                link = l
+                pacer = .link(l)
             }
-            link?.preferredFramesPerSecond = max(1, 60 / Int(step.wait))
+            l.preferredFramesPerSecond = max(1, 60 / Int(step.wait))
         } else {
-            link?.invalidate()
-            link = nil
-            pacer?.invalidate()
+            stop()
             let t = Timer(timeInterval: Double(step.wait) / 1000, repeats: false) { [weak self] _ in self?.tick(force: false) }
             t.tolerance = 0.01
             RunLoop.main.add(t, forMode: .common)
-            pacer = t
+            pacer = .timer(t)
         }
     }
 
@@ -854,12 +862,18 @@ final class LyricsCard: UITableViewController {
     }
 }
 
+/// The lock screen's picture: the cover asked for, then its artwork once it came.
+private enum Art {
+    case none
+    case asked(String)
+    case shown(String, MPMediaItemArtwork)
+}
+
 /// The lock screen, Control Center, the EarPods clicker and Bluetooth controls; the system volume
 /// fed to loudness compensation.
 final class NowPlaying: NSObject {
     static let shared = NowPlaying()
-    private var artworkFor = ""
-    private var artwork: MPMediaItemArtwork?
+    private var art = Art.none
     private var volumeWatch: NSKeyValueObservation?
 
     func start() {
@@ -904,22 +918,27 @@ final class NowPlaying: NSObject {
             MPNowPlayingInfoPropertyPlaybackQueueIndex: max(0, now.index),
             MPNowPlayingInfoPropertyPlaybackQueueCount: now.length,
         ]
-        if artworkFor == song.cover {
-            if artwork == nil, let image = CoverCache.any(song.cover) {
-                artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        switch art {
+        case .shown(song.cover, let artwork):
+            info[MPMediaItemPropertyArtwork] = artwork
+        case .asked(song.cover):
+            if let image = CoverCache.any(song.cover) {
+                let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                art = .shown(song.cover, artwork)
+                info[MPMediaItemPropertyArtwork] = artwork
             }
-            if let artwork { info[MPMediaItemPropertyArtwork] = artwork }
-        } else if !song.cover.isEmpty {
+        case _ where song.cover.isEmpty:
+            break
+        default:
             let id = song.cover
-            artworkFor = id
-            artwork = nil
+            art = .asked(id)
             // At the player card's own size, kept in the cache: the card then opens on its picture.
             let px = PlayerCard.coverPx
             _ = Core.shared.cover(id, px: px) { [weak self] image in
                 guard let image else { return }
                 CoverCache.put(image, id, px)
-                guard let self, self.artworkFor == id else { return }
-                self.artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                guard let self, case .asked(id) = self.art else { return }
+                self.art = .shown(id, MPMediaItemArtwork(boundsSize: image.size) { _ in image })
                 self.changed()
             }
         }
