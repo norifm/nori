@@ -386,6 +386,13 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             publish(player, events.contains(Player.EVENT_TIMELINE_CHANGED))
         }
 
+        // The music stopped by itself at a song's end: the sleep timer's end of a song, if set, is spent (the player's `pauseAtEndOfItem`).
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM && _state.value.sleepAtEndOfTrack) {
+                _state.value = _state.value.copy(sleepAtEndOfTrack = false)
+            }
+        }
+
         override fun onPlayerError(error: PlaybackException) {
             // The platform only sorts its error into the core's kinds (media3's audio output codes are the
             // 5000s), and says it in its own words, not the exception's.
@@ -461,6 +468,8 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             bridging = view?.bridging ?: old.bridging,
             waiting = p.playWhenReady && PlaybackService.rustPlayer?.waiting == true,
             origin = PlaylistJni.origin(nori.sessionHandle), playingOn = null, playingOnKind = null,
+            // The sleep timer's alarm has fired (its pause is this event): no longer counted down.
+            sleepAt = old.sleepAt.takeIf { it > SystemClock.elapsedRealtime() } ?: 0L,
         )
     }
 
