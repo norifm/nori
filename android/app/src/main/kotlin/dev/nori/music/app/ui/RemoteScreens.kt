@@ -78,7 +78,15 @@ internal fun refusal(r: Refusal): String = words(
  * picker), and the jam: "Start a Jam", or "Your Jam" with End while one is on. Up only while remote control
  * or jams are on.
  */
-private enum class RoomPage { MAIN, INVITE, SETTINGS, PAIR, DEVICE }
+/** The devices sheet's page: the devices, a hosted jam's invite or settings, pairing, or a controlled device's page. */
+private sealed interface RoomPage {
+    data object Main : RoomPage
+    data object Invite : RoomPage
+    data object Settings : RoomPage
+    data object Pair : RoomPage
+    /** The page of the controlled device [id]. */
+    data class Device(val id: String) : RoomPage
+}
 
 @Composable
 fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jams: Boolean, remote: Boolean, sound: dev.nori.music.app.vm.SettingsViewModel) {
@@ -106,29 +114,28 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
             onDismiss()
         }
         val hosted = jam?.takeIf { it.hosting }
-        var page by remember(hosted?.link) { mutableStateOf(RoomPage.MAIN) }
-        BackHandler(page != RoomPage.MAIN) { page = RoomPage.MAIN }
+        var page by remember(hosted?.link) { mutableStateOf<RoomPage>(RoomPage.Main) }
+        BackHandler(page != RoomPage.Main) { page = RoomPage.Main }
         val controlled by plugins.controlled.collectAsStateWithLifecycle()
         val output by sound.currentOutput.collectAsStateWithLifecycle()
         // The headphones playing now, when a plugin controls them; their page while it is open.
         val here = remember(controlled, output) { dev.nori.music.ffi.plugins.controlledOutput(controlled, dev.nori.music.ffi.devices.outputLook(output).name) }
-        var shownDevice by remember { mutableStateOf<String?>(null) }
-        val pageDevice = controlled.firstOrNull { it.id == shownDevice }
+        val pageDevice = (page as? RoomPage.Device)?.let { p -> controlled.firstOrNull { it.id == p.id } }
         // Its page goes with the device.
-        LaunchedEffect(pageDevice == null) { if (pageDevice == null && page == RoomPage.DEVICE) page = RoomPage.MAIN }
+        LaunchedEffect(pageDevice == null) { if (pageDevice == null && page is RoomPage.Device) page = RoomPage.Main }
         Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
-            if (page == RoomPage.DEVICE && pageDevice != null) {
+            if (pageDevice != null) {
                 SheetTitle(pageDevice.name)
                 ControlledDevicePage(plugins, pageDevice)
-            } else if (page == RoomPage.PAIR && pairing != null) {
+            } else if (page == RoomPage.Pair && pairing != null) {
                 SheetTitle(words(R.string.pair_devices))
-                PairingBody(pairing!!, vm) { page = RoomPage.MAIN }
-            } else if (hosted != null && page != RoomPage.MAIN) {
-                SheetTitle(words(if (page == RoomPage.INVITE) R.string.jam_invite_title else R.string.settings))
-                if (page == RoomPage.INVITE) hosted.link?.let { InviteBody(it) } else JamSettings(hosted)
+                PairingBody(pairing!!, vm) { page = RoomPage.Main }
+            } else if (hosted != null && (page == RoomPage.Invite || page == RoomPage.Settings)) {
+                SheetTitle(words(if (page == RoomPage.Invite) R.string.jam_invite_title else R.string.settings))
+                if (page == RoomPage.Invite) hosted.link?.let { InviteBody(it) } else JamSettings(hosted)
             } else {
                 SheetTitle(words(R.string.devices_title))
-                here?.let { d -> DeviceControls(plugins, d, Modifier.padding(bottom = 12.dp)) { shownDevice = d.id; page = RoomPage.DEVICE } }
+                here?.let { d -> DeviceControls(plugins, d, Modifier.padding(bottom = 12.dp)) { page = RoomPage.Device(d.id) } }
                 val more = hosted == null && (devices.isNotEmpty() || reached.isNotEmpty())
                 GroupCard {
                     DeviceRow(words(R.string.devices_this), kindIcon(DeviceKind.PHONE), null, mirror == null && cast == null, divider = cast != null || targets.isNotEmpty() || more) { pick(null) }
@@ -175,7 +182,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                 // player's button has it idle: a filled glyph is one lit in the accent.
                 GroupCard(Modifier.padding(top = 12.dp)) {
                     SheetRow(words(R.string.devices_output), Iconoir.SoundHigh, divider = pairing != null || offered || (jams && hosted != null), onClick = onOutput)
-                    if (pairing != null) SheetRow(words(R.string.pair_devices), Iconoir.SmartphoneDevice, divider = offered || (jams && hosted != null), onClick = { page = RoomPage.PAIR })
+                    if (pairing != null) SheetRow(words(R.string.pair_devices), Iconoir.SmartphoneDevice, divider = offered || (jams && hosted != null), onClick = { page = RoomPage.Pair })
                     if (offered) SheetRow(words(R.string.jam_start), Iconoir.Community, divider = false, onClick = vm::jamStart)
                     if (jams && hosted != null) YourJam(hosted.members.count { it.role != Role.HOST }, { onDismiss(); nav.player(Panel.QUEUE) }, vm::jamEnd)
                 }
@@ -189,7 +196,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                     )
                 }
                 AnimatedVisibility(jams && hosted != null, enter = AppMotion.grow(), exit = AppMotion.shrink()) {
-                    hosted?.let { JamControls(it, { page = RoomPage.INVITE }, { page = RoomPage.SETTINGS }) }
+                    hosted?.let { JamControls(it, { page = RoomPage.Invite }, { page = RoomPage.Settings }) }
                 }
                 // Plugins' rows for this phone's devices, after nori's own.
                 PluginDeviceSections(viewModel(), sound)
