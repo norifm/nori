@@ -121,7 +121,7 @@ What `tools/ios-build/build.sh` does:
    carries its own `Dispatch` module, which clashes with the SDK's, so the build assembles one from its
    `shims` and `clang` and the iOS parts.
 4. **Resources**: the launch image (`UILaunchImages`, so no Interface Builder), the icons, Inter and
-   Literata (`UIAppFonts`), and the license texts from `app/src/main/assets/licences`.
+   Literata (`UIAppFonts`), and the license texts from `android/app/src/main/assets/licences`.
 5. **Signing**: `ldid -S ios/entitlements.plist`, then `Payload/nori.app` zipped as the `.ipa`.
    `tools/release.sh` builds the same `.ipa` beside the APK (`--no-ipod` leaves it out).
 

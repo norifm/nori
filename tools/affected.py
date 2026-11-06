@@ -14,9 +14,9 @@ LISTED = 300
 EVERYWHERE = ("Cargo.", "vendor/", "wit/", ".cargo/", ".config/", ".github/", "tools/affected.py")
 # Read by one crate's build or tests from outside it.
 READ_BY = {
-    "core/": "nori-android",
-    "app/src/main/assets/": "nori-settings",
-    "app/src/main/res/font/": "nori-desktop",
+    "android/core/": "nori-android",
+    "android/app/src/main/assets/": "nori-settings",
+    "android/app/src/main/res/font/": "nori-desktop",
     "docs/brand/": "nori-desktop",
 }
 # Its tests look at every crate.

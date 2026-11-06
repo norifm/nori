@@ -14,7 +14,7 @@ import org.junit.Test
  * or a single `item`.
  */
 class SongListsTest {
-    private val ui = listOf(File("src/main/kotlin/dev/nori/music/app/ui"), File("app/src/main/kotlin/dev/nori/music/app/ui")).first { it.isDirectory }
+    private val ui = listOf(File("src/main/kotlin/dev/nori/music/app/ui"), File("android/app/src/main/kotlin/dev/nori/music/app/ui")).first { it.isDirectory }
 
     private val lazy = Regex("""\b(items|itemsIndexed)\s*\(""")
     private val eager = Regex("""\.forEach(Indexed)?\s*\{|\bitem\s*\(|\brepeat\s*\(|\bfor\s*\(""")

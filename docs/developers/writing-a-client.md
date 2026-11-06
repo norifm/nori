@@ -1,6 +1,6 @@
 # Writing a client
 
-Applies to nori 0.7: the Android app (`app/`, `core/`), the terminal (`crates/cli`), the desktop
+Applies to nori 0.7: the Android app (`android/app/`, `android/core/`), the terminal (`crates/cli`), the desktop
 (`crates/desktop`), the iPod touch (`crates/ios`, `ios/`) and the web client in progress (`crates/web`,
 `web/`).
 
@@ -175,7 +175,7 @@ eviction order) and downloads. A browser keeps none (`keeps_music: false`).
 - **Words**: labels, captions, counts and plurals, times, sizes, decibels. The core hands over counts,
   seconds and kinds (`PlaybackError`, `SongAction`, `MixName`, `ReleaseKind`, `NetError` and the like).
   Numbers go through `nori_model::numbers`. Android's words are `strings.xml` and `strings_ui.xml` (read
-  through `app/ui/Say.kt`), the terminal's `crates/cli/src/text.rs`, the desktop's
+  through `android/app/.../ui/Say.kt`), the terminal's `crates/cli/src/text.rs`, the desktop's
   `crates/desktop/src/words.rs`, the iPod's `ios/Sources/Say.swift`.
 - **Settings**: `settings_pages` gives a client (`SettingsClient`: `Phone`, `Desktop`, `Terminal`,
   `Web`) its pages, sections and rows, each with its spec, value, and whether it is shown and enabled.
@@ -241,7 +241,7 @@ of this; Android's `PlaybackService` calls the same functions.
 
 | | Session | Sound | HTTP | Covers | Media controls |
 |---|---|---|---|---|---|
-| Android | the core and `nori-engine` from Kotlin | AudioTrack (`crates/android/src/track.rs`), MediaCodec for HE-AAC, offload, bit-perfect USB | OkHttp (`core/.../net/Http.kt`) | `CoverPixels` paints Bitmaps; `CoverLoader` keeps them | media3 session and notification, Android Auto, widget |
+| Android | the core and `nori-engine` from Kotlin | AudioTrack (`crates/android/src/track.rs`), MediaCodec for HE-AAC, offload, bit-perfect USB | OkHttp (`android/core/.../net/Http.kt`) | `CoverPixels` paints Bitmaps; `CoverLoader` keeps them | media3 session and notification, Android Auto, widget |
 | Terminal | `nori-host` | cpal | `nori-http` | RGBA through ratatui-image (kitty, sixel, iTerm2, half blocks) | MPRIS, macOS Now Playing |
 | Desktop | `nori-host` | cpal | `nori-http` | RGBA in Slint | MPRIS, macOS Now Playing |
 | iPod | `nori-host` behind a C ABI | AURemoteIO ([iPod internals](ipod-internals.md)) | `nori-http` | RGBA handed to `CGImage` without a copy | `MPRemoteCommandCenter`, `MPNowPlayingInfoCenter` |

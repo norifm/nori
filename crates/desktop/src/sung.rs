@@ -47,7 +47,7 @@ pub struct Laid {
 }
 
 /// Inter, which app.slint bundles and draws every text in: the pieces are measured in the face they are drawn in.
-const INTER: &[u8] = include_bytes!("../../../app/src/main/res/font/inter.ttf");
+const INTER: &[u8] = include_bytes!("../../../android/app/src/main/res/font/inter.ttf");
 
 /// Inter, read from the same file the window draws with, at the two weights lines are drawn in. Made once:
 /// each variation is a new typeface, and Skia keeps a font face and glyph cache for every typeface.

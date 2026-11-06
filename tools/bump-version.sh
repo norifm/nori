@@ -6,7 +6,7 @@
 #                                           its versionCode is its stamp in minutes since 1970 (UTC), so each
 #                                           nightly installs over the last
 #
-#   app/build.gradle.kts   versionName, and versionCode as major*1000000 + minor*10000 + patch*100 + beta,
+#   android/app/build.gradle.kts   versionName, and versionCode as major*1000000 + minor*10000 + patch*100 + beta,
 #                          beta being the beta's number, 99 for the release itself (0.5.2-beta.3 -> 50203,
 #                          0.5.2 -> 50299): every beta installs over the last, the release over its betas
 #   Cargo.toml             the workspace version, and Cargo.lock's entries for the workspace crates
@@ -19,7 +19,7 @@ new="${1:-}"
 [[ "$new" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-beta\.([1-9][0-9]?)|-nightly\.[0-9]{12})?$ ]] || { echo "usage: tools/bump-version.sh <major.minor.patch>[-beta.<1-98>|-nightly.<yyyymmddhhmm>]" >&2; exit 2; }
 beta=${BASH_REMATCH[5]:-99}
 [ "$beta" -le 98 ] || [ -z "${BASH_REMATCH[5]}" ] || { echo "a beta number goes up to 98" >&2; exit 2; }
-old=$(grep -oE 'versionName = "[^"]+"' "$root/app/build.gradle.kts" | head -1 | cut -d'"' -f2)
+old=$(grep -oE 'versionName = "[^"]+"' "$root/android/app/build.gradle.kts" | head -1 | cut -d'"' -f2)
 if [[ "$new" == *-nightly.* ]]; then
   code=$(python3 -c 'import datetime, sys; print(int(datetime.datetime.strptime(sys.argv[1], "%Y%m%d%H%M").replace(tzinfo=datetime.timezone.utc).timestamp()) // 60)' "${new##*-nightly.}")
 else
@@ -45,7 +45,7 @@ def edit(path, subs):
     else:
         print(f"  {path}: nothing to change")
 
-edit("app/build.gradle.kts", [
+edit("android/app/build.gradle.kts", [
     (r'versionName = "[^"]+"', f'versionName = "{new}"'),
     (r'versionCode = \d+', f'versionCode = {code}'),
 ])

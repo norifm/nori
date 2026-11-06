@@ -11,7 +11,7 @@ name = "norimusic"
 
 [features]
 # Beat This! beat detection through tract (nori-engine's feature). On in debug and perf builds, off in release
-# unless asked (core/build.gradle.kts): it adds 15.5 MB to the arm64 library.
+# unless asked (android/core/build.gradle.kts): it adds 15.5 MB to the arm64 library.
 neural-beats = ["nori-engine/neural-beats"]
 
 [dependencies]

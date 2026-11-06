@@ -100,7 +100,7 @@ print(digest.hexdigest())
 PYSHA
 }
 
-code_version() { sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1; }
+code_version() { sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' android/app/build.gradle.kts | head -1; }
 # a > b, as versions (0.3.10 is after 0.3.9, 0.5.2 after 0.5.2-beta.3)
 newer() {
   python3 - "$1" "$2" <<'PY'
@@ -340,7 +340,7 @@ build_apk() {
   local abi
   for abi in "${abis[@]}"; do
     [ -f "$out/nori-music-$version-$abi.apk" ] && continue
-    ./gradlew :app:assembleRelease -PrustTargets="$abi" ${JNI_LIBS[@]+"${JNI_LIBS[@]}"} -q && cp app/build/outputs/apk/release/app-release.apk "$out/nori-music-$version-$abi.apk" || return 1
+    ./gradlew :app:assembleRelease -PrustTargets="$abi" ${JNI_LIBS[@]+"${JNI_LIBS[@]}"} -q && cp android/app/build/outputs/apk/release/app-release.apk "$out/nori-music-$version-$abi.apk" || return 1
   done
 }
 build_ipod() {

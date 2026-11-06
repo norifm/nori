@@ -123,11 +123,11 @@ val rustEnvironment = listOf("RUSTFLAGS", "RUSTUP_TOOLCHAIN", "CC", "CXX", "CFLA
     .zip(providers.environmentVariablesPrefixedBy("CC_")) { flags, cc -> "$flags\n${cc.toSortedMap()}" }
     .zip(providers.environmentVariablesPrefixedBy("CXX_")) { flags, cxx -> "$flags\n${cxx.toSortedMap()}" }
 val cargoHome = providers.environmentVariable("CARGO_HOME").orElse("${System.getProperty("user.home")}/.cargo")
-val cargoInputs = files("../Cargo.toml", "../Cargo.lock", "../.cargo/config", "../.cargo/config.toml", "../rust-toolchain.toml", "../rust-toolchain", cargoHome.map { "$it/config" }, cargoHome.map { "$it/config.toml" })
-val nativeInputs = fileTree("../crates") { exclude("**/.DS_Store", "**/tests/**", "**/benches/**", "**/examples/**") }
+val cargoInputs = files(cargoRoot.resolve("Cargo.toml"), cargoRoot.resolve("Cargo.lock"), cargoRoot.resolve(".cargo/config"), cargoRoot.resolve(".cargo/config.toml"), cargoRoot.resolve("rust-toolchain.toml"), cargoRoot.resolve("rust-toolchain"), cargoHome.map { "$it/config" }, cargoHome.map { "$it/config.toml" })
+val nativeInputs = fileTree(cargoRoot.resolve("crates")) { exclude("**/.DS_Store", "**/tests/**", "**/benches/**", "**/examples/**") }
 // Source bindings read the exported crates, their configuration and the generator.
 val bindingCrates = listOf("android", "core", "model", "db", "net", "library", "automix", "settings", "lyrics", "devices", "queue", "transfers", "perf", "remote", "look", "plugins", "backup", "uniffi-bindgen")
-val bindingInputs = fileTree("../crates") {
+val bindingInputs = fileTree(cargoRoot.resolve("crates")) {
     bindingCrates.forEach { include("$it/src/**", "$it/Cargo.toml", "$it/uniffi.toml", "$it/build.rs") }
     include("*/Cargo.toml")
 }

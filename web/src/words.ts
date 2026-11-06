@@ -1,4 +1,4 @@
-// Every word the web client shows, as the Android app words it (app/src/main/res/values). The core says
+// Every word the web client shows, as the Android app words it (android/app/src/main/res/values). The core says
 // what happened; the words are the client's.
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);

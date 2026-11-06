@@ -64,7 +64,7 @@ jobs:
         with:
           name: jni-${{ matrix.abi }}
           overwrite: true
-          path: core/build/rust/jniLibs/
+          path: android/core/build/rust/jniLibs/
           if-no-files-found: error
   android:
     needs: [resolve, android-rust]

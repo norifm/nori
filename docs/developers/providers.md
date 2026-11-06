@@ -78,7 +78,7 @@ A client's only per-provider code is its words, one entry per kind:
 
 | client | where |
 |---|---|
-| Android | `providerStrings` in `app/src/main/kotlin/dev/nori/music/app/ui/Say.kt` (string resources) |
+| Android | `providerStrings` in `android/app/src/main/kotlin/dev/nori/music/app/ui/Say.kt` (string resources) |
 | desktop | `words::provider` in `crates/desktop/src/words.rs` |
 | terminal | `text::provider` in `crates/cli/src/text.rs` |
 | iPod | `Say.provider` in `ios/Sources/Say.swift` |

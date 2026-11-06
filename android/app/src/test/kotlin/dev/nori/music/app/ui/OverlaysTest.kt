@@ -11,7 +11,7 @@ import org.junit.Test
  * and anything composed as `if (open) AlertDialog(...)` is gone the frame `open` turns false.
  */
 class OverlaysTest {
-    private val ui = listOf(File("src/main/kotlin/dev/nori/music/app/ui"), File("app/src/main/kotlin/dev/nori/music/app/ui")).first { it.isDirectory }
+    private val ui = listOf(File("src/main/kotlin/dev/nori/music/app/ui"), File("android/app/src/main/kotlin/dev/nori/music/app/ui")).first { it.isDirectory }
 
     private val raw = Regex("""\b(AlertDialog|BasicAlertDialog|ModalBottomSheet|DatePickerDialog|TimePickerDialog)\s*\(|window\.Dialog\s*\(|\bDialog\s*\(\s*(\{|onDismissRequest)""")
 
@@ -26,10 +26,10 @@ class OverlaysTest {
     }
 
     @Test fun `the dialog windows have no animation or dim of their own`() {
-        val res = listOf(File("src/main/res/values/themes.xml"), File("app/src/main/res/values/themes.xml")).first { it.isFile }.readText()
+        val res = listOf(File("src/main/res/values/themes.xml"), File("android/app/src/main/res/values/themes.xml")).first { it.isFile }.readText()
         assertTrue(res.contains("""<item name="android:windowAnimationStyle">@null</item>"""))
         assertTrue(res.contains("""<item name="android:backgroundDimEnabled">false</item>"""))
-        val manifest = listOf(File("src/main/AndroidManifest.xml"), File("app/src/main/AndroidManifest.xml")).first { it.isFile }.readText()
+        val manifest = listOf(File("src/main/AndroidManifest.xml"), File("android/app/src/main/AndroidManifest.xml")).first { it.isFile }.readText()
         assertTrue(manifest.contains("""android:theme="@style/Theme.Nori""""))
     }
 }

@@ -7,7 +7,7 @@ there. The clients draw, hold the words and wire the operating system.
 
 ```
 ┌──────────── clients: drawing, words, OS hooks ─────────────────┐
-│ Android (app/, core/)  desktop  terminal  iPod (ios/)  web     │
+│ Android (android/)     desktop  terminal  iPod (ios/)  web     │
 ├──────────── nori-host: the session the other clients share ────┤
 │ nori-engine: the player on its own thread, in bursts           │
 ├──────────── nori-core: a Core per profile, the Client ─────────┤
@@ -29,7 +29,7 @@ there. The clients draw, hold the words and wire the operating system.
 
 | client | language | where |
 |---|---|---|
-| Android | Kotlin, Compose | `app/` (UI), `core/` (media3 service, downloads, no UI), `crates/android` |
+| Android | Kotlin, Compose | `android/app/` (UI), `android/core/` (media3 service, downloads, no UI), `crates/android` |
 | desktop | Rust, Slint | `crates/desktop`, `crates/desktop-ui` |
 | terminal | Rust, ratatui | `crates/cli` |
 | iPod touch | Swift, UIKit | `ios/`, `crates/ios` |

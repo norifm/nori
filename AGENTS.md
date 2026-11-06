@@ -89,8 +89,8 @@ via nori-core):
 
 The other languages:
 
-- Android, Kotlin: `core/src/main/kotlin/dev/nori/music/` is the library with no UI (media3 service,
-  `playback/RustPlayer.kt`, downloads, the `Nori.kt` object graph). `app/src/main/kotlin/dev/nori/music/app/`
+- Android, Kotlin: `android/core/src/main/kotlin/dev/nori/music/` is the library with no UI (media3 service,
+  `playback/RustPlayer.kt`, downloads, the `Nori.kt` object graph). `android/app/src/main/kotlin/dev/nori/music/app/`
   is UI only: `vm/` ViewModels, `ui/` Compose (`ui/Design.kt` shapes, `ui/Say.kt` words).
 - iPod, Swift: `ios/Sources/`, `Bridge.swift` and `nori_ios.h` over crates/ios, `Say.swift` words.
 - Web, Svelte: `web/src/` (`pages/` screens, `ui/` parts, `state/`, `words.ts`, `rpc.ts` to the worker in
@@ -131,7 +131,7 @@ asks; `docs/research/plugins.md` is the plugin plan.
   resources (`strings.xml`, `strings_ui.xml`, read via `ui/Say.kt`), `crates/cli/src/text.rs`,
   the desktop's `words.rs`. Logs, perf report and self test are English.
 - `ui/` reads ViewModel state and calls ViewModel functions only; it may call the core's pure
-  functions. It never touches `Nori`, media3, OkHttp or core state. `core/` never knows a UI exists.
+  functions. It never touches `Nori`, media3, OkHttp or core state. `android/core/` never knows a UI exists.
 - FFI calls are coarse (one response or page per call). Per-buffer work uses raw JNI on direct buffers.
 - JNI doors are registered with `RegisterNatives` in `crates/android/src/lib.rs`, not exported by
   `Java_` names. Primitive-only signatures are `@CriticalNative` (no env/class params), short
@@ -139,7 +139,7 @@ asks; `docs/research/plugins.md` is the plugin plan.
   only convert; logic belongs in the core.
 - A new crate gets its row in Layout (`crates/testdir/tests/agents_map.rs` checks the map). A new core crate
   also goes into `crates/android/build.rs`'s list, nori-android's dependencies and
-  nori-core's `ffi` feature, and `core/build.gradle.kts`'s binding inputs if it exports an interface.
+  nori-core's `ffi` feature, and `android/core/build.gradle.kts`'s binding inputs if it exports an interface.
 - A new setting: one `StoredPrefs` field with its `#[setting(...)]` line (crates/settings), then its row
   in the app's `vm/SettingsPages.kt` + `strings.xml` (+ `INDEX` entry if searchable) and, if it makes
   sense, `crates/cli/src/settings_view.rs`. `tests/stored_format.rs` guards the stored format

@@ -414,7 +414,7 @@ service UUID, a vendor id; one matches when all it gives matches), and only thos
 lists them, and a channel opens to no other. The install sheet says it reaches Bluetooth devices.
 
 - **The platform's Bluetooth** is the client's `Bluetooth` (`crates/plugins/src/bluetooth.rs`), given with
-  `Plugins::use_bluetooth`: Android's `BluetoothSocket` and `BluetoothGatt` (`core/.../PluginBluetooth.kt`),
+  `Plugins::use_bluetooth`: Android's `BluetoothSocket` and `BluetoothGatt` (`android/core/.../PluginBluetooth.kt`),
   BlueZ over the system bus on Linux (`crates/host/src/bluez.rs`, zbus as the media controls; RFCOMM
   through a client `Profile1`), and on macOS IOBluetooth for classic devices and RFCOMM and CoreBluetooth
   for GATT (`crates/host/src/macbt/`). There a device is its classic address (a device only on LE, its
