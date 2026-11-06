@@ -79,11 +79,9 @@ enum Say {
     }
 
     static func songs(_ n: Int) -> String { n == 1 ? "1 song" : "\(n) songs" }
-    /// "1 songs" too: where a count stands with others ("2019 · 1 songs · 3:20"), as Android's.
-    static func songsPlural(_ n: Int) -> String { "\(n) songs" }
     static func releases(_ n: Int) -> String { n == 1 ? "1 release" : "\(n) releases" }
     /// A list head's "12 songs · 48:10".
-    static func listCaption(_ n: Int, _ seconds: Int) -> String { songsPlural(n) + " · " + Fmt.clock(ms: seconds * 1000) }
+    static func listCaption(_ n: Int, _ seconds: Int) -> String { songs(n) + " · " + Fmt.clock(ms: seconds * 1000) }
     /// An artist's shelf by its `ReleaseKind` code, a tagged one by the server's tag.
     static func release(_ kind: Int, _ tag: String) -> String {
         switch kind {
