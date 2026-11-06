@@ -607,6 +607,28 @@ impl Window {
     }
 }
 
+/// What came of the fetch from where it last started.
+#[derive(Default)]
+enum Outcome {
+    /// More bytes may come.
+    #[default]
+    Fetching,
+    /// Loaded to the end.
+    Ended,
+    /// Given up, and why.
+    Failed(String, Failure),
+}
+
+/// Whose failure a fetch given up was.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Failure {
+    Network,
+    /// The server answered with an error status or a refusal.
+    Server,
+    /// The loader itself died (panicked): the song's failure.
+    Loader,
+}
+
 #[derive(Default)]
 struct State {
     /// Bytes `base..base + data.len()` of the resource; what the reader left behind goes from the front
@@ -616,13 +638,7 @@ struct State {
     /// The whole song on disk, in pieces read in order, read instead of `data` (then empty).
     disk: Option<Arc<[(File, u64)]>>,
     len: Option<u64>,
-    /// Loaded to the end.
-    done: bool,
-    error: Option<String>,
-    /// Whether the server answered the last try (an error status or a refusal).
-    answered: bool,
-    /// The loader itself died (panicked): the song's failure, not the network's.
-    died: bool,
+    outcome: Outcome,
     /// Where the demuxer reads.
     reader_at: u64,
     /// The reader wants bytes from here, outside what is kept.
@@ -677,6 +693,29 @@ struct State {
 }
 
 impl State {
+    /// No more bytes come from the fetch under way: it ended or failed.
+    fn done(&self) -> bool {
+        !matches!(self.outcome, Outcome::Fetching)
+    }
+
+    fn error(&self) -> Option<&str> {
+        match &self.outcome {
+            Outcome::Failed(why, _) => Some(why),
+            _ => None,
+        }
+    }
+
+    fn failed(&self) -> bool {
+        matches!(self.outcome, Outcome::Failed(..))
+    }
+
+    /// The fetch reached the end, unless it failed before.
+    fn ended(&mut self) {
+        if !self.failed() {
+            self.outcome = Outcome::Ended;
+        }
+    }
+
     /// The resource ends at `at`, shortening a promised length.
     fn ends_at(&mut self, at: u64) {
         match self.len {
@@ -748,7 +787,7 @@ impl State {
     fn ready_from(&self, at: u64, now: Instant) -> bool {
         let (end, window) = self.held_run(at);
         let held = end - at;
-        self.error.is_some() || self.closed || held >= self.ready_bytes() || self.len.is_some_and(|l| end >= l) || (held > 0 && window && (self.done || self.in_time(held, now)))
+        self.failed() || self.closed || held >= self.ready_bytes() || self.len.is_some_and(|l| end >= l) || (held > 0 && window && (self.done() || self.in_time(held, now)))
     }
 
     /// Bytes ahead that make a read ready: [`READY`], or the window's high mark when that is less (no
@@ -786,23 +825,23 @@ impl State {
     }
 
     fn at_end(&self) -> bool {
-        self.done || self.len.is_some_and(|l| self.end() >= l)
+        self.done() || self.len.is_some_and(|l| self.end() >= l)
     }
 
     /// Every byte of the song, as long as its length says, is in `data`.
     fn whole_in_memory(&self) -> bool {
-        self.disk.is_none() && self.base == 0 && self.at_end() && self.error.is_none() && self.len == Some(self.data.len() as u64)
+        self.disk.is_none() && self.base == 0 && self.at_end() && !self.failed() && self.len == Some(self.data.len() as u64)
     }
 
     /// No bytes are coming in: all are here, the fetch failed, or it holds its window's high mark until
     /// the reader nears the low.
     fn settled(&self) -> bool {
-        self.at_end() || self.error.is_some() || self.closed || self.window.is_some_and(|w| self.ahead() >= self.within_budget(w).high)
+        self.at_end() || self.failed() || self.closed || self.window.is_some_and(|w| self.ahead() >= self.within_budget(w).high)
     }
 
     /// The first answer said the song's length ([`Loader::wait_sized`]); None until it came.
     fn sized(&self) -> Option<bool> {
-        self.first_sized.or((self.error.is_some() || self.closed || self.done).then_some(false))
+        self.first_sized.or((self.failed() || self.closed || self.done()).then_some(false))
     }
 
     /// Whether an opening blocked on `a` goes on; one awaiting bytes looks again at every change.
@@ -817,7 +856,7 @@ impl State {
     /// Whether the whole song is in memory: None while it may yet be; false when it never will be
     /// (failed, or larger than one burst).
     fn whole(&self) -> Option<bool> {
-        if self.error.is_some() || self.closed {
+        if self.failed() || self.closed {
             return Some(false);
         }
         if self.base == 0 && self.at_end() {
@@ -834,7 +873,7 @@ impl State {
         if let Some(at) = self.in_piece {
             return self.ready_from(at, now);
         }
-        self.at_end() || self.error.is_some() || self.ahead() >= if self.live { LIVE_READY } else { self.ready_bytes() } || self.in_time(self.ahead(), now)
+        self.at_end() || self.failed() || self.ahead() >= if self.live { LIVE_READY } else { self.ready_bytes() } || self.in_time(self.ahead(), now)
     }
 
     /// The running burst's rate, bytes per ms, once it ran for [`RATE_MS`].
@@ -904,6 +943,14 @@ struct Run {
     go_on: bool,
     keep: Option<Writer>,
     taker: Option<Listening>,
+}
+
+impl Run {
+    /// The open body is let go, ending its burst.
+    fn let_go(&mut self, s: &mut State) {
+        self.open = false;
+        s.burst_from = None;
+    }
 }
 
 /// A rangeless answer to a request from `asked`, read from `at` up to it.
@@ -1102,7 +1149,7 @@ impl Loader {
     pub fn fetching(&self) -> bool {
         self.0.fetching.look();
         let s = self.0.state.lock();
-        !s.closed && s.error.is_none() && !s.at_end()
+        !s.closed && !s.failed() && !s.at_end()
     }
 
     /// A live stream at `url` among `fetching`'s, loaded while held.
@@ -1136,7 +1183,7 @@ impl Loader {
         if s.disk.is_some() {
             w.push_str(", read from the disk");
         }
-        if s.done {
+        if s.done() {
             w.push_str(", loaded to its end");
         }
         if let Some(at) = s.restart {
@@ -1151,7 +1198,7 @@ impl Loader {
         if !s.ready(self.0.now()) {
             w.push_str(", not ready");
         }
-        if let Some(e) = &s.error {
+        if let Some(e) = s.error() {
             w.push_str(&format!(", gave up: {e}"));
         }
         if s.closed {
@@ -1208,7 +1255,7 @@ impl Loader {
     pub fn complete(&self) -> bool {
         self.0.fetching.look();
         let s = self.0.state.lock();
-        s.base == 0 && s.at_end() && s.error.is_none()
+        s.base == 0 && s.at_end() && !s.failed()
     }
 
     /// An opening's thread starts: the clock counts it as taking bytes in while it is not blocked on them,
@@ -1338,14 +1385,13 @@ impl Loader {
 
     /// Why the loader gave up, if it did.
     pub fn error(&self) -> Option<String> {
-        self.0.state.lock().error.clone()
+        self.0.state.lock().error().map(str::to_owned)
     }
 
     /// Whether the loader gave up for the network: not for the server's error status, and not because
     /// the loader itself died.
     pub fn failed_on_network(&self) -> bool {
-        let s = self.0.state.lock();
-        s.error.is_some() && !s.answered && !s.died
+        matches!(self.0.state.lock().outcome, Outcome::Failed(_, Failure::Network))
     }
 
     /// Whether a read would not block; if not, `engine` is woken when it would not.
@@ -1520,8 +1566,7 @@ impl Loaded {
             s.restart = s.piece_running_out(low);
         }
         if let Some(at) = s.restart.take() {
-            run.open = false;
-            s.burst_from = None;
+            run.let_go(s);
             if s.opening > 0 && !s.data.is_empty() {
                 let data = std::mem::take(&mut s.data);
                 let base = s.base;
@@ -1533,18 +1578,16 @@ impl Loaded {
             }
             s.base = at;
             s.data.clear();
-            s.done = false;
-            s.error = None;
+            s.outcome = Outcome::Fetching;
             // A gap: neither the cache entry nor the taker can continue.
             run.keep = None;
             run.taker = None;
         }
         let w = s.window(run.load, run.duration_ms);
         if s.at_end() {
-            run.open = false;
-            s.burst_from = None;
-            s.done = true;
-            if let (Some(k), Some(len), None) = (run.keep.take(), s.len, &s.error) {
+            run.let_go(s);
+            s.ended();
+            if let (Some(k), Some(len), false) = (run.keep.take(), s.len, s.failed()) {
                 // Whole in the entry: read from there and drop the memory copy.
                 let whole = s.base == 0 && s.data.len() as u64 == len;
                 if let Some(file) = k.finish_open(len).filter(|_| whole) {
@@ -1553,7 +1596,7 @@ impl Loaded {
                 }
             }
             if let Some(t) = run.taker.take() {
-                t.end(s.error.is_none());
+                t.end(!s.failed());
             }
             self.wake(s);
             return Next::Wait;
@@ -1573,8 +1616,7 @@ impl Loaded {
             return Next::Open(s.end());
         }
         // At the high mark: closed until the reader nears the low mark.
-        run.open = false;
-        s.burst_from = None;
+        run.let_go(s);
         Next::Wait
     }
 
@@ -1614,7 +1656,7 @@ impl Loaded {
                         // Somewhere before `from`: unknown until the bytes run out.
                         None => s.not_at(from),
                     }
-                    s.done = true;
+                    s.ended();
                     run.failures = 0;
                     run.go_on = false;
                 }
@@ -1628,9 +1670,8 @@ impl Loaded {
                 // fetching an unobtainable song), or one that said no, only keeps the player waiting.
                 if run.failures > RETRIES || matches!(e, OpenError::TimedOut | OpenError::Refused(_)) {
                     let mut s = self.state.lock();
-                    s.answered = matches!(e, OpenError::Status(_) | OpenError::Refused(_));
-                    s.error = Some(e.to_string());
-                    s.done = true;
+                    let by = if matches!(e, OpenError::Status(_) | OpenError::Refused(_)) { Failure::Server } else { Failure::Network };
+                    s.outcome = Outcome::Failed(e.to_string(), by);
                     self.wake(&mut s);
                     return None;
                 }
@@ -1647,10 +1688,9 @@ impl Loaded {
         match got {
             // A clean end is the real end, whatever was promised.
             Ok([]) => {
-                run.open = false;
-                s.burst_from = None;
+                run.let_go(&mut s);
                 if s.end() == from && s.restart.is_none() {
-                    s.done = true;
+                    s.ended();
                     s.ends_at(from);
                 }
             }
@@ -1677,14 +1717,12 @@ impl Loaded {
             // it is a failure, so a server that answers and then breaks or never sends gives up after a
             // few.
             Err(e) => {
-                run.open = false;
-                s.burst_from = None;
+                run.let_go(&mut s);
                 let stalled = self.cancel.timed_out();
                 if stalled || !run.brought {
                     run.failures += 1;
                     if run.failures > RETRIES {
-                        s.error = Some(if stalled { OpenError::TimedOut.to_string() } else { e });
-                        s.done = true;
+                        s.outcome = Outcome::Failed(if stalled { OpenError::TimedOut.to_string() } else { e }, Failure::Network);
                     } else if !stalled {
                         return Some(self.resting(run.failures));
                     }
@@ -1843,8 +1881,7 @@ impl Loaded {
     fn retry_or_end(&self, failures: u32, why: String) -> bool {
         if failures > RETRIES {
             let mut s = self.state.lock();
-            s.error = Some(why);
-            s.done = true;
+            s.outcome = Outcome::Failed(why, Failure::Network);
             self.wake(&mut s);
             return false;
         }
@@ -1854,11 +1891,11 @@ impl Loaded {
     /// The loader thread died (panicked): readers are told the song failed and the engine is woken.
     fn gave_up(&self, why: &str) {
         let mut s = self.state.lock();
-        if s.error.is_none() && !s.at_end() {
-            s.error = Some(why.to_string());
-            s.died = true;
+        if s.at_end() {
+            s.ended();
+        } else {
+            s.outcome = Outcome::Failed(why.to_string(), Failure::Loader);
         }
-        s.done = true;
         s.restart = None;
         self.notify(&mut s);
         self.wake(&mut s);
@@ -1959,8 +1996,8 @@ impl Read for LoadedReader {
                 return Ok(n);
             }
             if s.at_end() && self.pos >= end && s.restart.is_none() {
-                if let Some(e) = &s.error {
-                    return Err(io::Error::other(e.clone()));
+                if let Some(e) = s.error() {
+                    return Err(io::Error::other(e.to_owned()));
                 }
                 return Ok(0);
             }
@@ -2663,6 +2700,49 @@ mod tests {
         assert_eq!(*s.0.lock(), 1, "asked once");
     }
 
+    /// A song refused where it was sought and sought back is fetched again; the network failing that
+    /// fetch is the network's failure, whatever the server said before.
+    #[test]
+    fn a_failure_after_a_refusal_and_a_seek_is_the_networks() {
+        struct NoThereThenDown(Mutex<Vec<u64>>);
+        struct Zeros;
+        impl Read for Zeros {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                buf.fill(0);
+                Ok(buf.len())
+            }
+        }
+        struct Reset;
+        impl Read for Reset {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::ConnectionReset, "reset"))
+            }
+        }
+        impl ByteSource for NoThereThenDown {
+            fn open(&self, _: &str, from: u64) -> Result<Body, OpenError> {
+                let mut opens = self.0.lock();
+                opens.push(from);
+                match opens.len() {
+                    1 => Ok(Body { start: from, len: None, reader: Box::new(Zeros) }),
+                    2 => Err(OpenError::Refused("a preview only".into())),
+                    _ => Ok(Body { start: from, len: None, reader: Box::new(Reset) }),
+                }
+            }
+        }
+        let s = Arc::new(NoThereThenDown(Mutex::new(Vec::new())));
+        let l = Loader::start_within(&Arc::default(), s.clone(), "song".into(), LOAD, Some(3_000), None, None, None, Waits { stall_ms: 20_000, retry_ms: 1 });
+        let mut r = l.reader();
+        read(&mut r, 16);
+        let far = 1 << 40;
+        r.seek(SeekFrom::Start(far)).unwrap();
+        assert!(r.read(&mut [0u8; 16]).is_err());
+        assert!(!l.failed_on_network(), "refused there");
+        r.seek(SeekFrom::Start(0)).unwrap();
+        assert!(r.read(&mut [0u8; 16]).is_err());
+        assert_eq!(s.0.lock()[..3], [0, far, 0], "fetched again from the start");
+        assert!(l.failed_on_network(), "{:?}", l.error());
+    }
+
     #[test]
     fn let_go_songs_stop() {
         struct Down(Signal, Arc<Signal>);
@@ -2714,7 +2794,7 @@ mod tests {
         }
         let s = Arc::new(Resets(Mutex::new(0)));
         let l = Loader::start_within(&Arc::default(), s.clone(), "song".into(), LOAD, Some(3_000), None, None, None, Waits { stall_ms: 20_000, retry_ms: 1 });
-        until(&l, "the song fails", |s| s.done);
+        until(&l, "the song fails", State::done);
         assert!(l.error().is_some(), "failed");
         assert_eq!(*s.0.lock(), RETRIES + 1, "asked once and again {RETRIES} times");
     }
@@ -2751,7 +2831,7 @@ mod tests {
         for (bytes, breaks) in [(0, false), (0, true), (1, false)] {
             let s = Arc::new(Closes(Mutex::new(0), bytes, breaks));
             let l = Loader::live(&Arc::default(), s.clone(), "radio".into(), Waits { stall_ms: 20_000, retry_ms: 1 });
-            until(&l, "the station fails", |s| s.done);
+            until(&l, "the station fails", State::done);
             assert!(l.error().is_some(), "failed ({bytes} bytes, breaks {breaks})");
             assert_eq!(*s.0.lock(), RETRIES + 1, "asked once and again {RETRIES} times ({bytes} bytes, breaks {breaks})");
         }

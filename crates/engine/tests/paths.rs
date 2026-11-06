@@ -922,6 +922,32 @@ fn offload_follows_settings_both_ways() {
     rig.engine.stop();
 }
 
+/// Offload allowed while a pause fades out on the CPU: the fade is heard to its end, and the pause holds.
+#[test]
+fn offload_allowed_while_a_pause_fades_keeps_the_fade() {
+    let Some(d) = encoder() else { return };
+    let a = mp3(&d, "a", 60, 440);
+    let server = Arc::new(Server::default());
+    serve(&server, &[("a", &a)]);
+    let fake = Fake::new(MP3_ONLY);
+    let songs = vec![("a".into(), "mp3".into(), 60_000)];
+    let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let fading = Settings { fade_ms: 2_000, ..offload() };
+    let rig = Rig::new(server, songs, app(), Some(fake.clone()), Settings { sound: eq, ..fading.clone() });
+    let secs = |r: &Rig| r.card.opened.lock().last().map_or(0.0, |f| r.card.heard.lock().len() as f64 / f.channels as f64 / f.rate as f64);
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait(10, |r| secs(r) > 4.0), "the CPU plays a");
+    rig.engine.pause();
+    rig.run(200);
+    let heard = secs(&rig);
+    rig.engine.set_settings(fading);
+    rig.run(4_000);
+    let more = secs(&rig) - heard;
+    assert!(more > 1.5, "the fade plays out: {more:.2} s more of it");
+    assert_eq!(rig.engine.status().state, State::Paused);
+    assert!(!rig.events.lock().iter().any(|e| matches!(e, Event::Stopped { .. })), "{:?}", rig.events.lock());
+}
+
 #[test]
 fn cpu_song_between_offloaded() {
     let Some(d) = encoder() else { return };
