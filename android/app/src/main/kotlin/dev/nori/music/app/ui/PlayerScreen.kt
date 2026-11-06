@@ -2554,7 +2554,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     drawing.glyphs = rememberTimeGlyphs(MaterialTheme.typography.labelSmall)
     drawing.density = androidx.compose.ui.platform.LocalDensity.current
     drawing.thickness = with(drawing.density) { SEEK_THICKNESS.dp.toPx() }
-    val slot = rememberIsland(drawing, wanted = free && live && !eink && state.sleepAt <= 0L, overPage = false, pace = IslandPace.PACES)
+    val slot = rememberIsland(drawing, wanted = free && live && !eink && state.sleep !is dev.nori.music.ffi.queue.Sleep.At, overPage = false, pace = IslandPace.PACES)
     // Handed back, what the island stepped the pace to is shown here at once.
     val wasApart = remember { booleanArrayOf(false) }
     androidx.compose.runtime.SideEffect {
@@ -2675,7 +2675,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
                 },
         )
         val mixing = vm.mixing.collectAsStateWithLifecycle()
-        SeekTimes(times, fadingFrom, fade, dragging, drag, held, if (eink) einkShown else null, durationMs, state.error, state.sleepAtEndOfTrack, state.sleepAt, mixing, drawing.glyphs!!, slot, { drawing.left = it.placeInWindow() }, { drawing.right = it.placeInWindow(); drawing.rightWidth = it.size.width })
+        SeekTimes(times, fadingFrom, fade, dragging, drag, held, if (eink) einkShown else null, durationMs, state.error, state.sleep !is dev.nori.music.ffi.queue.Sleep.Off && state.sleep !is dev.nori.music.ffi.queue.Sleep.At, (state.sleep as? dev.nori.music.ffi.queue.Sleep.At)?.atMs ?: 0L, mixing, drawing.glyphs!!, slot, { drawing.left = it.placeInWindow() }, { drawing.right = it.placeInWindow(); drawing.rightWidth = it.size.width })
     }
 }
 
@@ -2724,7 +2724,7 @@ private fun SeekTimes(
         // keeps the minutes current; otherwise nothing here reads them. How the timer reads is
         // nori-core's (`words_sleep`), asked only while one is set.
         //
-        // elapsedRealtime, not wall clock: sleepAt is set from SystemClock (PlayerConnection),
+        // elapsedRealtime, not wall clock: the sleep timer's time is on SystemClock's (PlaybackService),
         // and subtracting one from the other gives a number about fifty years wide, which the
         // rounding then turned into a cheerful "1 min" for every timer ever set.
         if (sleepAt > 0) times.longValue

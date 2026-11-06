@@ -151,9 +151,18 @@ eviction order) and downloads. A browser keeps none (`keeps_music: false`).
 - Media controls and now playing: `nori-mpris` on Linux and macOS, the media session on Android,
   `MPRemoteCommandCenter` and `MPNowPlayingInfoCenter` on the iPod. Update them on events, never on a
   timer.
-- Audio focus and interruptions, headphones pulled out, route changes. The client notices; the engine
-  and the core decide (`pause`, `pause_now`, the device's sound profile).
+- Audio focus and interruptions: forward each change to `Engine::focus` (`nori_player::focus`). The engine
+  keeps the focus state beside its play state (held by a call, lost for good, ducked), asks a plugin
+  (`audio-focus`), pauses and resumes, and says `Event::Focus` with where the focus holds the music. A
+  platform with a focus to ask for (Android's) gives the engine a `FocusRequest`, which the engine asks
+  before playing and gives back on a pause.
+- Media keys and the lock screen: `Handle::media_key` (a toggle or a skip is the core's
+  `media_button`, a plugin's word).
+- Headphones pulled out, route changes. The client notices; the engine and the core decide (`pause`,
+  `pause_now`, the device's sound profile).
 - Going to the background: save the queue (`QueueMoment::Closing`).
+- A long pause: the engine lets its output go and says `Event::LongPause` (never while listening along to
+  a paused jam host); a platform that keeps a playback session in the foreground lets it go then.
 - Downloads on the platform's threads or jobs, when the core says to.
 - Platform-only features may live wholly in their client (Android Auto, widgets, the lock screen); what
   they show still comes from the core.
@@ -219,6 +228,16 @@ of this; Android's `PlaybackService` calls the same functions.
 - **A song arrives**: `queue::Session::song_arrived` answers `SongSteps`: when to save the queue, songs to
   fetch for its end (autofill), the offline bridge's step, when to measure what is on the device, and the
   sleep timer's last song.
+- **The sleep timer**: `queue::Session::sleep_pick(choice, now_ms)` sets a `Sleep` (`Off`, `At`,
+  `EndOfSong`, `AfterSongs`) and answers whether the engine pauses at this song's end and the alarm to
+  arm; the alarm going off asks `sleep_due`, the engine's `Event::Stopped` ends a song's-end timer
+  (`sleep_stopped`), and the player shows `sleep()`. On the host `Handle::sleep_pick` does all of it,
+  its time waited for by a task.
+- **Where the music plays**: `destination(remote, cast)` answers one `Destination` (here, hosting or
+  not; a plugin's cast; another device mirrored; a jam guest's jam), the order of the answers written
+  once (`destination_of`, which a client gives what it last heard of each part). On the host, `Handle::destination`.
+- **A jam guest's pick**: `Remote::jam_play` and `jam_add` send an admin's pick to the host's queue and
+  ask the host for a guest's (`Picked`, which the client words).
 - **The queue kept**: `rules::queue_keep(QueueMoment)` says whether to save now or after a delay
   (`Core::playlist_save`) and whether to hand the queue to the server (`Client::playlist_push`).
 - **A song the network would not bring**: `Core::bridge_take` answers `BridgeTake` (jump to a download,

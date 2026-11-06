@@ -427,11 +427,8 @@ final class Core {
     private func reported(kind: Int32, id: String, text: String, flag: Int32, count: Int32, ms: Int64) {
         switch kind {
         case NORI_REPORT_STATE, NORI_REPORT_SONG, NORI_REPORT_LOOPED, NORI_REPORT_POSITION, NORI_REPORT_BUFFERING,
-             NORI_REPORT_MIXING, NORI_REPORT_PLACED:
+             NORI_REPORT_MIXING, NORI_REPORT_PLACED, NORI_REPORT_STOPPED:
             refresh()
-        case NORI_REPORT_STOPPED:
-            refresh()
-            SleepTimer.shared.stopped()
         case NORI_REPORT_REMOTE:
             refresh()
             readJam()

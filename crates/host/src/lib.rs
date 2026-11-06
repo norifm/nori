@@ -15,7 +15,9 @@ pub mod player;
 #[cfg(feature = "desktop")]
 mod plugged;
 pub mod remote;
+mod destination;
 pub mod session;
+mod sleep;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};

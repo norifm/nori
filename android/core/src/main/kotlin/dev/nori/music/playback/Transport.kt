@@ -1,8 +1,6 @@
 package dev.nori.music.playback
 
 import androidx.media3.common.Player
-import dev.nori.music.ffi.model.Focus
-import dev.nori.music.ffi.model.FocusAct
 
 /** What the listener wants of [EnginePlayer]'s music: media3's playWhenReady with its suppression. */
 internal enum class Want {
@@ -16,14 +14,13 @@ internal enum class Want {
         if (this == HELD_BY_CALL) Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS else Player.PLAYBACK_SUPPRESSION_REASON_NONE
 
     /**
-     * [act], which the core decided for [focus] when [decidedAt] plays and pauses had been asked for, taken
-     * now that [asked] have: a pause is for good after a loss, a hold until the focus is back otherwise.
-     * A play or pause asked meanwhile stands: the act was decided for a state that is gone.
+     * What is wanted once the engine says where the audio focus holds the music (nori-engine's
+     * `Event::Focus`; [hold] 0 nothing, 1 a call for a while, 2 for good, a refused play too).
      */
-    fun afterFocus(focus: Focus, act: FocusAct, decidedAt: Int, asked: Int): Want = when {
-        decidedAt != asked -> this
-        act == FocusAct.PAUSE && this != PAUSED -> if (focus == Focus.LOST) PAUSED else HELD_BY_CALL
-        act == FocusAct.RESUME && this == HELD_BY_CALL -> PLAYING
+    fun held(hold: Int): Want = when {
+        hold == 1 && this != PAUSED -> HELD_BY_CALL
+        hold == 2 -> PAUSED
+        hold == 0 && this == HELD_BY_CALL -> PLAYING
         else -> this
     }
 }

@@ -94,9 +94,9 @@ class Remotes(private val context: Context, private val nori: Nori) {
 
     /**
      * The playback service's: the queue the core set for a jam guest listening along (its host's songs)
-     * becomes the player's; `true` when the listening just began, and the player starts.
+     * becomes the player's.
      */
-    @Volatile var onGuestQueue: ((Boolean) -> Unit)? = null
+    @Volatile var onGuestQueue: (() -> Unit)? = null
         set(f) {
             field = f
             // A service come up after the listening began takes the queue now.
@@ -178,12 +178,11 @@ class Remotes(private val context: Context, private val nori: Nori) {
         if (j?.listening == dev.nori.music.ffi.Listening.PLAYING) {
             // The queue as the follower set it in the session, not as last saved.
             val rev = PlaylistJni.rev(nori.sessionHandle)
-            val began = guestQueue == null
-            if (began || rev != guestRev) {
+            if (guestQueue == null || rev != guestRev) {
                 guestRev = rev
                 val ids = nori.session.playlistNow().songs.map { it.id }
                 val take = onGuestQueue
-                if (ids.isNotEmpty() && ids != guestQueue && take != null) { guestQueue = ids; main.post { take(began) } }
+                if (ids.isNotEmpty() && ids != guestQueue && take != null) { guestQueue = ids; main.post(take) }
             }
         } else {
             guestQueue = null
@@ -240,6 +239,11 @@ class Remotes(private val context: Context, private val nori: Nori) {
     private fun work(f: () -> Unit) = worker.execute { runCatching(f).onFailure { dev.nori.music.NoriLog.w("remote: ${it.message}") } }
 
     /** The remote for the profile in use, built when asked for and switched on; null otherwise. Off the main thread. */
+    /** Where the music plays (the core's `destination_of`), from [mirror] and [jam] as last shown and this phone's plugin cast [cast]. */
+    fun destination(cast: dev.nori.music.ffi.plugins.Cast?): dev.nori.music.ffi.Destination = dev.nori.music.ffi.destinationOf(
+        isGuest(), mirror.value?.name, cast?.let { dev.nori.music.ffi.Casting(it.device, it.kind == dev.nori.music.ffi.plugins.CastKind.SINK) }, jam.value?.hosting == true,
+    )
+
     private fun current(): Remote? = synchronized(this) {
         if (!wanted()) {
             drop()
@@ -417,7 +421,6 @@ class Remotes(private val context: Context, private val nori: Nori) {
     }
 
     /** Asks the host of the jam this phone is a guest in for [song]. */
-    fun request(song: dev.nori.music.ffi.model.Song) = ask({ it.jamAct(Op.Request(song)) })
 
     /** Everything else a screen asks, on the worker; [then] gets the answer back on the main thread. */
     fun <T> ask(f: (Remote) -> T, then: (T) -> Unit = {}) = work {

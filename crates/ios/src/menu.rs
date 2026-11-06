@@ -270,35 +270,21 @@ pub unsafe extern "C" fn nori_ios_playlist_delete(playlist: *const c_char) -> i3
 }
 
 /// The sleep timer's choices as JSON to free: `[{minutes, end, songs}]`, all zeros for "Off" (first,
-/// while one is `running`).
+/// while one runs).
 #[no_mangle]
-pub extern "C" fn nori_ios_sleep_choices(running: i32) -> *mut c_char {
-    let rows: Vec<Value> = sleep_choices(running != 0)
+pub extern "C" fn nori_ios_sleep_choices() -> *mut c_char {
+    let running = with_session(|s| s.sleep() != nori_core::sleep::Sleep::Off).unwrap_or(false);
+    let rows: Vec<Value> = sleep_choices(running)
         .iter()
         .map(|c| json!({ "minutes": c.minutes, "end": c.end_of_track, "songs": c.songs }))
         .collect();
     owned(&Value::Array(rows))
 }
 
-/// Pauses after `songs` songs or at the end of this one; 0 and 0 cancel that kind of timer.
+/// Sets the sleep timer to one of its choices (all zeros: off).
 #[no_mangle]
-pub extern "C" fn nori_ios_sleep_set(songs: u32, end_of_track: i32) {
-    with_session(|s| {
-        let pause = s.core.session.sleep_set(songs, end_of_track != 0);
-        s.engine.pause_at_end(pause);
-    });
-}
-
-/// A timer of `minutes`: `[delay ms, slack ms]` as JSON to free, for the client's one-shot timer.
-#[no_mangle]
-pub extern "C" fn nori_ios_sleep_delay(minutes: u32) -> *mut c_char {
-    owned(&json!(nori_core::rules::sleep_delay(minutes)))
-}
-
-/// The client's sleep timer ran out: playback pauses.
-#[no_mangle]
-pub extern "C" fn nori_ios_sleep_now() {
-    with_session(|s| s.engine.pause());
+pub extern "C" fn nori_ios_sleep_set(minutes: u32, end_of_track: i32, songs: u32) {
+    with_session(|s| s.sleep_pick(nori_core::menus::SleepChoice { minutes, end_of_track: end_of_track != 0, songs }));
 }
 
 #[cfg(test)]

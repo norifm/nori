@@ -196,6 +196,10 @@ impl App for CoreApp {
         self.session.playing();
     }
 
+    fn audio_focus(&mut self, focus: nori_player::focus::Focus, nori: nori_player::focus::FocusAct) -> nori_player::focus::FocusAct {
+        self.session.decide_focus(focus, nori)
+    }
+
     fn transitions_off(&mut self, off: bool) {
         self.session.planner.transition_setup(off);
     }

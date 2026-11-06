@@ -1591,6 +1591,14 @@ fn kept_device_id(c: &rusqlite::Connection, key: &str, shared: bool) -> rusqlite
 }
 
 impl Remote {
+    /// What [`crate::destination`] needs of the remote control, without building the mirror: whether this
+    /// is a jam guest's profile, the mirrored device's name, and whether this device hosts a jam.
+    pub(crate) fn whereabouts(&self) -> (bool, Option<String>, bool) {
+        let i = self.inner.lock();
+        let mirrored = i.active.mirror().filter(|m| m.shown.is_some()).and_then(|m| i.who(&m.id)).map(|(name, _)| name);
+        (self.me.kind == DeviceKind::Guest, mirrored, i.hosted().is_some())
+    }
+
     /// [`Self::pick`]; `cast`: to carry a cast through it.
     fn pick_for(self: Arc<Self>, device: Option<String>, cast: bool) {
         self.clone().discover_active(false);

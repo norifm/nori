@@ -1,5 +1,5 @@
 //! The queue the app plays: list and order (playlist.rs), songs by id (queue.rs), transport rules
-//! (rules.rs), what plugins decide instead (deciders.rs), refilling (autofill.rs), the offline bridge (bridge.rs), the audible song (heard.rs), play
+//! (rules.rs), the sleep timer (sleep.rs), what plugins decide instead (deciders.rs), refilling (autofill.rs), the offline bridge (bridge.rs), the audible song (heard.rs), play
 //! counting (scrobble.rs) and play actions (actions.rs).
 
 use std::sync::Arc;
@@ -17,6 +17,7 @@ pub mod playlist;
 pub mod queue;
 pub mod rules;
 pub mod scrobble;
+pub mod sleep;
 
 /// One app's queue: the list, the songs by id, what the transport rules remember, the refill and the
 /// play counting, with the settings, the open profile's database and the transition planner they use.

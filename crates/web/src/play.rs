@@ -308,6 +308,19 @@ impl Nori {
         self.with(|h| h.toggle());
     }
 
+    /// The sleep timer's choices (JSON): `[{minutes, end, songs}]`, all zeros for "Off" (first, while one
+    /// runs).
+    pub fn sleep_choices(&self) -> String {
+        let running = self.with(|h| h.sleep() != nori_core::sleep::Sleep::Off).unwrap_or(false);
+        let rows: Vec<Value> = nori_core::menus::sleep_choices(running).iter().map(|c| json!({ "minutes": c.minutes, "end": c.end_of_track, "songs": c.songs })).collect();
+        Value::from(rows).to_string()
+    }
+
+    /// Sets the sleep timer to one of its choices (all zeros: off).
+    pub fn sleep_pick(&self, minutes: u32, end: bool, songs: u32) {
+        self.with(|h| h.sleep_pick(nori_core::menus::SleepChoice { minutes, end_of_track: end, songs }));
+    }
+
     /// The page went out of sight, where a browser may close it without a word: the queue is kept as
     /// it is when an app closes (`rules::queue_keep`).
     pub fn hidden(&self) {
@@ -726,16 +739,16 @@ impl Nori {
 /// Moving the music between the account's devices ("Play on"), through the relay.
 #[wasm_bindgen]
 impl Nori {
-    /// The account's other devices: `{ on, me, active, list: [{ id, name, kind, playing, nearby, refused }] }`; `on`
+    /// The account's other devices: `{ on, me, here, active, list: [{ id, name, kind, playing, nearby, refused }] }`; `on`
     /// while the music can move (remote control on, not a jam guest), `me` this browser's id as the
-    /// others know it, `active` the id of the device playing while it is another one, `refused` why a device
+    /// others know it, `here` whether the music plays in this browser (`nori_core::destination`), `active` the id of the device playing while it is another one, `refused` why a device
     /// did not do the last thing asked of it (a `Refusal`, camelCase) or null. `kinds` (JSON `{ phone, desktop, terminal, guest }`) words the
     /// kinds that tell devices of one name apart.
     pub fn devices(&self, kinds: String) -> String {
         let words: Kinds = serde_json::from_str(&kinds).unwrap_or_default();
         self.with(|h| {
             let remote = h.remote().filter(|_| !h.guest);
-            let Some(r) = remote else { return json!({ "on": false, "active": null, "list": [] }).to_string() };
+            let Some(r) = remote else { return json!({ "on": false, "here": true, "active": null, "list": [] }).to_string() };
             let devices = r.devices();
             let words = nori_core::remote::KindWords { phone: words.phone, desktop: words.desktop, terminal: words.terminal, guest: words.guest };
             let names = nori_core::remote::device_names(devices.clone(), r.me(), words);
@@ -744,9 +757,10 @@ impl Nori {
                 .zip(names)
                 .map(|(d, name)| json!({ "id": d.id, "name": name, "kind": format!("{:?}", d.kind), "playing": d.state.as_ref().is_some_and(|s| s.playing), "nearby": d.nearby, "refused": d.refused }))
                 .collect();
-            json!({ "on": true, "me": r.id(), "active": h.elsewhere().map(|e| e.mirror.id), "list": list }).to_string()
+            let here = matches!(h.destination(), nori_core::destination::Destination::Here { .. });
+            json!({ "on": true, "me": r.id(), "here": here, "active": h.elsewhere().map(|e| e.mirror.id), "list": list }).to_string()
         })
-        .unwrap_or_else(|| json!({ "on": false, "active": null, "list": [] }).to_string())
+        .unwrap_or_else(|| json!({ "on": false, "here": true, "active": null, "list": [] }).to_string())
     }
 
     /// Moves the music to device `id`, or here ("").

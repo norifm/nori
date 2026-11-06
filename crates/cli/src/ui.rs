@@ -1190,6 +1190,7 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
 fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
     let rows = app.devices.rows();
     let body = Rect { height: area.height.min(rows.len() as u16), ..area };
+    let here = matches!(app.devices.destination(app.guest()), nori_core::destination::Destination::Here { .. });
     let App { devices, hits, .. } = app;
     let d = &*devices;
     let active = d.active.as_ref().map(|(id, _)| id.as_str());
@@ -1199,7 +1200,6 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
     let mut sel = d.sel;
     list(f, body, &mut sel, rows.len(), ListRef::Devices, hits, t, focused, &|i, w| match rows[i] {
         DeviceRow::Here => {
-            let here = active.is_none() && d.cast.is_none();
             Line::from(vec![tick(here), name(crate::text::THIS_COMPUTER, here)])
         }
         DeviceRow::Cast => {

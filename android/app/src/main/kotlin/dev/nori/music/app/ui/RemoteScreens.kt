@@ -102,6 +102,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         val jam by vm.jam.collectAsStateWithLifecycle()
         val relay by vm.relay.collectAsStateWithLifecycle()
         val mirror by vm.mirror.collectAsStateWithLifecycle()
+        val destination by vm.destination.collectAsStateWithLifecycle()
         val pairing by vm.pairingLink.collectAsStateWithLifecycle()
         val unsupported = relay == dev.nori.music.ffi.RelaySupport.UNSUPPORTED
         val cast by sound.pluginCast.collectAsStateWithLifecycle()
@@ -138,11 +139,11 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                 here?.let { d -> DeviceControls(plugins, d, Modifier.padding(bottom = 12.dp)) { page = RoomPage.Device(d.id) } }
                 val more = hosted == null && (devices.isNotEmpty() || reached.isNotEmpty())
                 GroupCard {
-                    DeviceRow(words(R.string.devices_this), kindIcon(DeviceKind.PHONE), null, mirror == null && cast == null, divider = cast != null || targets.isNotEmpty() || more) { pick(null) }
+                    DeviceRow(words(R.string.devices_this), kindIcon(DeviceKind.PHONE), null, destination is dev.nori.music.ffi.Destination.Here, divider = cast != null || targets.isNotEmpty() || more) { pick(null) }
                     // A plugin's device, playing: picking this phone above ends the cast.
                     cast?.let { c ->
                         val what = words(if (c.kind == dev.nori.music.ffi.plugins.CastKind.SINK) R.string.devices_casting else R.string.devices_cast_target)
-                        DeviceRow(c.device, castIcon(c.look), what, true, divider = targets.isNotEmpty() || more, trailing = c.volume?.let { "$it %" }) {}
+                        DeviceRow(c.device, castIcon(c.look), what, destination is dev.nori.music.ffi.Destination.Cast, divider = targets.isNotEmpty() || more, trailing = c.volume?.let { "$it %" }) {}
                     }
                     // What plugins found on the network, as any other place the music can go.
                     targets.forEachIndexed { k, t ->

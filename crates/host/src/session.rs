@@ -321,7 +321,7 @@ pub struct Parts {
     discovery: Option<Arc<dyn nori_core::remote::Discovery>>,
     /// The AutoEQ notice said last, waiting for an answer.
     curve: parking_lot::Mutex<Option<CurveNotice>>,
-    tasks: Arc<dyn Tasks>,
+    pub(crate) tasks: Arc<dyn Tasks>,
     out: Out,
     /// The plugin host the session's kinds come with, told what plays.
     #[cfg(feature = "desktop")]
@@ -485,7 +485,7 @@ impl Handle {
     }
 
     /// Runs `work` among the session's tasks.
-    fn run(&self, work: impl std::future::Future<Output = ()> + Send + 'static) {
+    pub(crate) fn run(&self, work: impl std::future::Future<Output = ()> + Send + 'static) {
         self.tasks.spawn(Box::pin(work));
     }
 
@@ -496,6 +496,7 @@ impl Handle {
         #[cfg(feature = "desktop")]
         self.plugins_heard(e);
         self.followed(e);
+        self.sleep_heard(e);
     }
 
     /// Tells the media controls the song or state changed.
@@ -662,7 +663,6 @@ impl Handle {
     }
 
     /// Plays; a queue restored but never started starts where it was.
-    #[cfg(feature = "desktop")]
     pub(crate) fn resume(&self) {
         if self.there(Press::Play) {
             return;
@@ -674,7 +674,6 @@ impl Handle {
     }
 
     /// Pauses, on the device playing.
-    #[cfg(feature = "desktop")]
     pub(crate) fn halt(&self) {
         if !self.there(Press::Pause) {
             self.engine.pause();
@@ -1571,12 +1570,8 @@ impl Handle {
         }
         let start = picked.and_then(|id| songs.iter().position(|s| s.id == id)).unwrap_or(0);
         if self.guest {
-            let Some(r) = self.remotes.get() else { return };
-            if r.jam_controls().is_some_and(|c| !c.asks) {
-                let repeat = r.jam_playing().map_or(0, |m| m.repeat);
-                r.jam_press(Op::Replace { songs, index: start as u32, position_ms: 0, play: true, order: None, shuffle, repeat, transfer: None, listen: None, mix: None });
-            } else {
-                self.ask(songs.into_iter().skip(start).take(1).collect());
+            if let Some(r) = self.remotes.get() {
+                r.jam_play(songs, start as u32, shuffle);
             }
             return;
         }
@@ -1595,12 +1590,8 @@ impl Handle {
     /// [`Handle::enqueue_here`] on the device playing: the active device while it is another one.
     fn add(&self, songs: Vec<Song>, next: bool) {
         if self.guest {
-            let Some(r) = self.remotes.get() else { return };
-            let songs = queueable(songs);
-            if r.jam_controls().is_some_and(|c| !c.asks) {
-                r.jam_press(Op::Add { songs, next });
-            } else {
-                self.ask(songs);
+            if let Some(r) = self.remotes.get() {
+                r.jam_add(queueable(songs), next);
             }
             return;
         }
@@ -1611,13 +1602,6 @@ impl Handle {
         }
     }
 
-    /// A jam guest asks the host for `songs`, each a request of its own.
-    fn ask(&self, songs: Vec<Song>) {
-        let Some(r) = self.remotes.get() else { return };
-        for song in songs {
-            r.clone().jam_act(Op::Request { song });
-        }
-    }
 
     pub(crate) fn enqueue_here(&self, songs: Vec<Song>, next: bool) {
         let songs = queueable(songs);

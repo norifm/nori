@@ -243,29 +243,57 @@ impl Handle {
     }
 }
 
+/// A key of the system's media controls (a headset, the lock screen, MPRIS).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaKey {
+    Play,
+    Pause,
+    Toggle,
+    Next,
+    Previous,
+}
+
+impl Handle {
+    /// Media key `key` pressed: the session's own controls, so it reaches what the player shows; a toggle
+    /// or a skip does what the core says (`Session::media_button`, a plugin's word).
+    pub fn media_key(&self, key: MediaKey) {
+        use nori_core::deciders::Press;
+        #[cfg(feature = "desktop")]
+        self.heard_press(match key {
+            MediaKey::Play => nori_plugins::Press::Play,
+            MediaKey::Pause => nori_plugins::Press::Pause,
+            MediaKey::Toggle => nori_plugins::Press::PlayPause,
+            MediaKey::Next => nori_plugins::Press::Next,
+            MediaKey::Previous => nori_plugins::Press::Previous,
+        });
+        match key {
+            MediaKey::Play => self.resume(),
+            MediaKey::Pause => self.halt(),
+            MediaKey::Toggle => self.pressed(Press::PlayPause),
+            MediaKey::Next => self.pressed(Press::Next),
+            MediaKey::Previous => self.pressed(Press::Previous),
+        }
+    }
+}
+
 /// The media keys and the system's media controls: the session's own controls, so they reach what the
 /// player shows.
 #[cfg(feature = "desktop")]
 impl nori_mpris::Controls for Handle {
     fn play(&self) {
-        self.heard_press(nori_plugins::Press::Play);
-        self.resume();
+        self.media_key(MediaKey::Play);
     }
     fn pause(&self) {
-        self.heard_press(nori_plugins::Press::Pause);
-        self.halt();
+        self.media_key(MediaKey::Pause);
     }
     fn toggle(&self) {
-        self.heard_press(nori_plugins::Press::PlayPause);
-        self.pressed(nori_core::deciders::Press::PlayPause);
+        self.media_key(MediaKey::Toggle);
     }
     fn next(&self) {
-        self.heard_press(nori_plugins::Press::Next);
-        self.pressed(nori_core::deciders::Press::Next);
+        self.media_key(MediaKey::Next);
     }
     fn previous(&self) {
-        self.heard_press(nori_plugins::Press::Previous);
-        self.pressed(nori_core::deciders::Press::Previous);
+        self.media_key(MediaKey::Previous);
     }
     fn seek(&self, ms: i64) {
         Handle::seek(self, ms);

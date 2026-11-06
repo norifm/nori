@@ -958,6 +958,7 @@ impl Runner {
                 let states = s.download_states(&ids.iter().map(String::as_str).collect::<Vec<_>>());
                 app.knows_downloads(ids, states);
             }
+            Cmd::Sleep(choice) => s.sleep_pick(choice),
             Cmd::ExcludeFromMixes(id, on) => match s.core.mix_excluded_set(id.clone(), on) {
                 Ok(()) if on => _ = app.excluded.insert(id),
                 Ok(()) => _ = app.excluded.remove(&id),

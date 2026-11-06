@@ -422,7 +422,7 @@ pub fn main(argv: Vec<String>) {
                 Event::Waiting(on) => println!("{}", if on { "waiting for the network" } else { "trying again" }),
                 Event::Mixing(on) => println!("{}", if on { "mixing" } else { "mixed" }),
                 Event::Placed { index, ms } => println!("  {} at {} (another path)", shown(index), clock(ms)),
-                Event::Awake(_) | Event::Following(_) => {}
+                Event::Awake(_) | Event::Following(_) | Event::LongPause | Event::Focus(_) => {}
             }
         }
     });

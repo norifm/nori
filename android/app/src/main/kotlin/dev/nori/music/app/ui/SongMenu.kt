@@ -329,7 +329,7 @@ private fun SleepChoices(player: dev.nori.music.app.vm.PlayerViewModel, onDone: 
     val state by player.state.collectAsState()
     Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
         SectionTitle(say.sleepTimer)
-        val running = state.sleepAt > 0 || state.sleepAtEndOfTrack
+        val running = state.sleep !is dev.nori.music.ffi.queue.Sleep.Off
         // The choices are the core's (`menus::sleep_choices`); "Off" is all zeros.
         val choices = remember(running) { dev.nori.music.ffi.library.sleepChoices(running) }
         val words = remember(choices) { choices.map(say::sleepChoice) }

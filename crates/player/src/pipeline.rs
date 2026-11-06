@@ -99,6 +99,10 @@ pub trait App: Host {
     }
     /// Audio is coming out: resets the failure run.
     fn playing(&mut self) {}
+    /// What a change of the audio focus does where nori would do `nori`; a plugin may answer instead.
+    fn audio_focus(&mut self, _focus: crate::focus::Focus, nori: crate::focus::FocusAct) -> crate::focus::FocusAct {
+        nori
+    }
     /// ReplayGain for index `index` of `list`, the queue as the player holds it (capped by
     /// [`Player::gain_max`]), applied per song by [`TransitionEngine::set_gain`].
     fn gain(&mut self, _list: &Playlist, _index: usize) -> f32 {

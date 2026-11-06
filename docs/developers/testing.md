@@ -114,7 +114,6 @@ files. Only a comparison on the same machine means anything. On a phone, use
 - the player's cover across fast skips and out-of-order loads (`CoverTurnTest`, `CoverFetchTest`);
 - the stream bridge handing available bytes to Rust before the next network read (`RustBodyTest`), and
   telling a read past the end from a dropped network (`PastEndTest`);
-- releasing the player after a long pause (`LongPauseTest`);
 - a song's lyrics following only that song's playhead (`ForSongTest`);
 - release code reaching the test bridge only through `TestDriver` (`TestBridgeTest`);
 - the perf self test's logic (`SelfTestLogicTest`);

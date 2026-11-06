@@ -36,7 +36,7 @@ mod no_alloc;
 pub mod testing;
 
 pub use clock::{Clock, Monotonic};
-pub use engine::{Config, Driven, Engine, Event, Followed, Lead, OutputFacts, Path, Settings, State, Status, REMAKE_LEAD_MS};
+pub use engine::{Config, Driven, Engine, Event, Followed, FocusRequest, Lead, OutputFacts, Path, Settings, State, Status, REMAKE_LEAD_MS};
 pub use offload::{Coded, Coding, OffloadOutput, OnCpu, Support};
 pub use library::{FromSecond, Library, Located, Source, Sources};
 pub use nori_player::decode::Platform;

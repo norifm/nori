@@ -12,7 +12,7 @@ import type { Devices, Jam } from "./types";
 class Remote {
   /** The jam; null before the player runs. */
   jam = $state.raw<Jam | null>(null);
-  devices = $state.raw<Devices>({ on: false, active: null, list: [] });
+  devices = $state.raw<Devices>({ on: false, here: true, active: null, list: [] });
   private keys = ["", ""];
 
   /** Reads the jam and the devices; each drawn again only when it changed. */

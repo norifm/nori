@@ -33,8 +33,10 @@ use crate::output::{AudioOutput, Device, RingTrack, WAKE_LOW_US};
 use crate::panic_words;
 use crate::source::{Fetching, Held};
 
+mod focus;
 mod follow;
 
+pub use focus::FocusRequest;
 use follow::{Following, Here, Led};
 use nori_player::engine::{Plan, Plans};
 
@@ -161,6 +163,12 @@ pub enum Event {
     Awake(bool),
     /// Following another device ([`Engine::follow`]), or not any more (None).
     Following(Option<Followed>),
+    /// Paused for [`Config::idle_release_ms`]: the output and the song's bytes are let go, and the
+    /// platform may let its playback session go too. Not while listening along to a paused leader,
+    /// whose play is this device's too.
+    LongPause,
+    /// Where the audio focus holds the music now ([`Engine::focus`]); said again when a play is refused.
+    Focus(nori_player::focus::Hold),
 }
 
 /// How this engine follows another device's playback.
@@ -388,6 +396,8 @@ enum Command {
     Back,
     /// The device is on a network again.
     NetworkBack,
+    Focus(nori_player::focus::Focus),
+    AskFocus(Box<dyn FocusRequest>),
     Stop,
 }
 
@@ -586,6 +596,17 @@ impl Engine {
     /// The device is on a network again: a song waiting for it is tried now.
     pub fn network_back(&self) {
         self.send(Command::NetworkBack);
+    }
+
+    /// The system's audio focus changed (a call, another player, an iOS interruption): the engine pauses,
+    /// ducks or plays on as its focus state says.
+    pub fn focus(&self, change: nori_player::focus::Focus) {
+        self.send(Command::Focus(change));
+    }
+
+    /// Asks the platform's audio focus of `request` before playing, and gives it back on pause.
+    pub fn ask_focus_of(&self, request: Box<dyn FocusRequest>) {
+        self.send(Command::AskFocus(request));
     }
 
     pub fn toggle(&self) {
@@ -998,6 +1019,7 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     around: nori_player::stage::Around,
     /// Sends [`Command::Prepared`], for the plugins' preparation.
     prepared: Arc<dyn Fn() + Send + Sync>,
+    focus: focus::Focused,
 }
 
 impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E, C> {
@@ -1044,6 +1066,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             away: None,
             around: nori_player::stage::Around::default(),
             prepared,
+            focus: focus::Focused::default(),
         };
         w.apply(config.settings);
         w
@@ -1609,6 +1632,18 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn command(&mut self, c: Command) {
         let now = self.now();
         self.p.clock(now);
+        // The audio focus first: a play it refuses does nothing (counted still), and a pause gives it back.
+        match c {
+            Command::Focus(change) => return self.focus_changed(change, now),
+            Command::AskFocus(request) => return self.ask_focus_of(request),
+            Command::Play | Command::Toggle if (matches!(c, Command::Play) || self.toggles_to_play()) && !self.focus_play() => {
+                self.plays += matches!(c, Command::Play) as u64;
+                return;
+            }
+            Command::Pause(_) | Command::Release => self.focus_paused(),
+            Command::Toggle if !self.toggles_to_play() => self.focus_paused(),
+            _ => {}
+        }
         // Following another device, its place rules: this one's own skips and seeks do nothing (counted
         // still); its pause holds the listening here, and play joins the leader again where it is.
         if let Some(f) = self.following.as_mut() {
@@ -1635,6 +1670,15 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             return;
         }
         self.obey(c, now);
+    }
+
+    /// Whether a toggle now plays, rather than pauses.
+    fn toggles_to_play(&self) -> bool {
+        match (&self.following, &self.away) {
+            (Some(f), _) => !(self.state() == State::Playing && !f.held),
+            (None, Some(a)) => !a.playing,
+            (None, None) => self.state() != State::Playing,
+        }
     }
 
     /// Carries out `c` as this engine's own command.
@@ -1780,7 +1824,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.leave(now);
                 self.obey_away(Command::Elsewhere(playing, ms), now);
             }
-            Command::Back | Command::Look | Command::Stop => {}
+            Command::Back | Command::Look | Command::Stop | Command::Focus(_) | Command::AskFocus(_) => {}
         }
     }
 
@@ -1902,6 +1946,10 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         };
         f.mix_place = mix_place;
         let sped = std::mem::replace(&mut f.speed, (speed, pitch)) != (speed, pitch);
+        // Listening along plays by itself: the focus is asked for as a play's is, refused it holds.
+        if !was && !self.focus_play() {
+            self.following.as_mut().expect("following").hold(true);
+        }
         let plans = Plans::Led(mix.map(|(id, plan)| (id, Box::new(plan))));
         let replan = self.p.engine.plans != plans;
         self.p.engine.plans = plans;
@@ -2554,6 +2602,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn due(&mut self, now: i64) {
         if self.idle_at.is_some_and(|t| now >= t) {
             self.release();
+            if self.state() == State::Paused && self.following.as_ref().is_none_or(|f| f.held) {
+                (self.events)(Event::LongPause);
+            }
         }
         if matches!(self.playback, Playback::Waiting { retry_at } if now >= retry_at) {
             self.try_again();

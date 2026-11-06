@@ -1948,6 +1948,37 @@ fn page_heads_offer_what_the_core_says() {
     assert!(matches!(a.selected(), Some(Item::Album(al)) if al.id == "a1"));
 }
 
+/// The full player's menu has the sleep timer: its choices are the core's, "Off" first while one runs,
+/// and a pick goes to the session.
+#[test]
+fn the_players_menu_sets_the_sleep_timer() {
+    use crate::menu::{MenuAct, MenuLine};
+    use nori_core::menus::{SleepChoice, SongAction};
+    let mut a = app();
+    a.song = Some(song("1", "One", 200));
+    a.full = true;
+    let pick = |a: &mut App, line: MenuLine| {
+        key(a, KeyCode::Char('m'));
+        let Some(Overlay::Menu { lines, folded, sel, .. }) = &mut a.overlay else { panic!("no menu") };
+        if !lines.contains(&line) {
+            let more = lines.iter().position(|l| *l == MenuLine::More).expect("more");
+            lines.splice(more..=more, folded.drain(..));
+        }
+        sel.at = lines.iter().position(|l| *l == line).unwrap_or_else(|| panic!("{line:?} in {lines:?}"));
+        key(a, KeyCode::Enter);
+    };
+    pick(&mut a, MenuLine::Act(MenuAct::Song(SongAction::SleepTimer)));
+    let Some(Overlay::Picker { options, .. }) = &a.overlay else { panic!("no choices") };
+    assert_eq!(options[0].0, "15 minutes", "nothing to turn off");
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sleep(SleepChoice { minutes: 30, end_of_track: false, songs: 0 })));
+    a.shared.sleep_pick(SleepChoice { minutes: 30, end_of_track: false, songs: 0 }, 0);
+    pick(&mut a, MenuLine::Act(MenuAct::Song(SongAction::SleepTimer)));
+    let Some(Overlay::Picker { options, .. }) = &a.overlay else { panic!("no choices") };
+    assert_eq!(options[0].0, "Off", "a timer runs");
+}
+
 /// m opens the menu of what is selected: a song's lines as the core lists them, the less used under More,
 /// then on a page the page's own; an album's Play, Play next and Add to queue. Enter does the line.
 #[test]

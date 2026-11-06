@@ -533,10 +533,8 @@ pub struct App {
     jam_hosting: bool,
     /// The song whose menu opened the playlist picker.
     menu_song: Option<Song>,
-    /// The sleep timer's choices as offered, its time, and whether one runs.
+    /// The sleep timer's choices as offered.
     sleep_choices: Vec<nori_core::menus::SleepChoice>,
-    sleep_timer: Timer,
-    sleeping: bool,
     /// Whose playback the player shows and controls, as last read.
     playback: Playback,
     /// A jam guest's controls by its role: what the player offers, and whether it paused here.
@@ -763,8 +761,6 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             jam_hosting: false,
             menu_song: None,
             sleep_choices: Vec::new(),
-            sleep_timer: Timer::default(),
-            sleeping: false,
             playback: Playback::Here,
             jam_controls: None,
             asked: HashSet::new(),
@@ -2332,7 +2328,8 @@ impl App {
         match how {
             16 => self.lyrics_sheet(true),
             17 => {
-                self.sleep_choices = nori_core::menus::sleep_choices(self.sleeping);
+                let running = self.session.as_ref().is_some_and(|s| s.sleep() != nori_core::sleep::Sleep::Off);
+                self.sleep_choices = nori_core::menus::sleep_choices(running);
                 let ui = self.ui();
                 ui.set_sleep_choices(ModelRc::new(VecModel::from(self.sleep_choices.iter().map(|c| SharedString::from(words::sleep_choice(c))).collect::<Vec<_>>())));
                 ui.invoke_show_sleep();
@@ -2389,24 +2386,10 @@ impl App {
         }
     }
 
-    /// The sleep timer's choice `i`: a time counts down here; a number of songs, or this one's end, is
-    /// the queue's to count (`sleep_set`).
+    /// The sleep timer's choice `i`.
     fn sleep(&mut self, i: usize) {
         let Some(c) = self.sleep_choices.get(i).copied() else { return };
-        self.sleep_timer.stop();
-        let pause = self.session.as_ref().is_some_and(|s| s.core.session.sleep_set(c.songs, c.end_of_track));
-        self.on_session(|s| s.engine.pause_at_end(pause));
-        self.sleeping = c.minutes > 0 || c.songs > 0 || c.end_of_track;
-        if c.minutes > 0 {
-            let delay = nori_core::rules::sleep_delay(c.minutes)[0];
-            let weak = self.me.clone();
-            self.sleep_timer.start(TimerMode::SingleShot, Duration::from_millis(delay.max(0) as u64), move || {
-                weak.with(|a| {
-                    a.sleeping = false;
-                    a.on_session(|s| s.engine.pause());
-                })
-            });
-        }
+        self.on_session(|s| s.sleep_pick(c));
     }
 
     /// Fills the lyrics' sheet from the lyrics shown, opening it when `open`.
@@ -3327,8 +3310,6 @@ impl App {
                     }
                     Event::Error { message, .. } => self.say(&format!("Could not play: {message}"), true),
                     Event::Waiting(true) => self.say("Waiting for the server…", true),
-                    // A sleep timer of songs, or this one's end, stops playback by itself.
-                    Event::Stopped { .. } if self.sleeping && !self.sleep_timer.running() => self.sleeping = false,
                     _ => {}
                 }
                 self.follow();
@@ -3818,7 +3799,8 @@ impl App {
             return;
         }
         let active = self.there().map(|e| e.mirror.id.as_str());
-        let mut rows = vec![words::device_row(None, active.is_none() && cast.is_none())];
+        let here = matches!(nori_core::destination::destination(remote.clone(), cast.as_ref().map(Into::into)), nori_core::destination::Destination::Here { .. });
+        let mut rows = vec![words::device_row(None, here)];
         rows.extend(cast.as_ref().map(words::cast_row));
         rows.extend(targets.iter().map(words::target_row));
         if let Some(r) = remote {
@@ -3845,16 +3827,19 @@ impl App {
     /// computer's output as the core's `output_look` reads it (this computer until the first song opens one).
     fn output_shown(&self) {
         use nori_core::outputs::{output_look, OutputGlyph};
-        let (elsewhere, glyph, name) = match (self.there(), self.cast()) {
-            (Some(e), _) => (true, words::device_glyph(e.mirror.kind), e.mirror.name.clone()),
-            (None, Some(c)) => (true, if c.look == nori_plugins::CastLook::Headphones { 1 } else { 3 }, c.device),
+        use nori_core::destination::Destination;
+        let remote = self.session.as_ref().and_then(|s| s.remote());
+        let cast = self.cast();
+        let (elsewhere, glyph, name) = match (nori_core::destination::destination(remote, cast.as_ref().map(Into::into)), self.there(), cast) {
+            (Destination::Mirroring { .. }, Some(e), _) => (true, words::device_glyph(e.mirror.kind), e.mirror.name.clone()),
+            (Destination::Cast { .. }, _, Some(c)) => (true, if c.look == nori_plugins::CastLook::Headphones { 1 } else { 3 }, c.device),
             // Headphones a plugin controls by their own name, with their battery.
-            (None, None) if self.output_device().is_some() => {
+            _ if self.output_device().is_some() => {
                 let d = self.output_device().expect("just found");
                 (false, 2, d.level.map_or_else(|| d.name.clone(), |l| words::with_level(&d.name, l)))
             }
-            (None, None) if self.output.is_empty() => (false, 0, words::THIS_COMPUTER.to_string()),
-            (None, None) => {
+            _ if self.output.is_empty() => (false, 0, words::THIS_COMPUTER.to_string()),
+            _ => {
                 let look = output_look(self.output.clone());
                 let glyph = match look.glyph {
                     OutputGlyph::Phone => 0,

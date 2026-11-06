@@ -131,7 +131,8 @@ pub extern "C" fn nori_ios_remote_devices() -> *mut c_char {
         let r = s.remote()?;
         let active = s.elsewhere().map(|e| e.mirror.id);
         let devices: Vec<Value> = r.devices().iter().map(|d| device_json(d, active.as_ref() == Some(&d.id))).collect();
-        Some(owned(&json!({ "here": active.is_none(), "devices": devices })))
+        let here = matches!(s.destination(), nori_core::destination::Destination::Here { .. });
+        Some(owned(&json!({ "here": here, "devices": devices })))
     })
     .flatten()
     .unwrap_or(std::ptr::null_mut())

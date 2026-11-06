@@ -6,6 +6,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
+pub use nori_player::focus::{Focus, FocusAct};
 use nori_player::outputs::OutputPort;
 
 use crate::Song;
@@ -47,33 +48,6 @@ pub enum ButtonAct {
     PlayPause,
     Next,
     Previous,
-    Nothing,
-}
-
-/// A change of the system's audio focus.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum Focus {
-    /// Another player took it for good.
-    Lost,
-    /// A call or a voice prompt, for a while.
-    LostTransient,
-    /// Another sound plays over the music for a while.
-    Duck,
-    Gained,
-}
-
-/// What a focus change does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum FocusAct {
-    /// Paused: for good after [`Focus::Lost`], until the focus comes back otherwise.
-    Pause,
-    /// Played on, quieter (the system lowers it).
-    Duck,
-    KeepPlaying,
-    /// What a focus loss paused plays again.
-    Resume,
     Nothing,
 }
 

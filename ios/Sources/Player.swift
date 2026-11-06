@@ -878,17 +878,11 @@ final class NowPlaying: NSObject {
 
     func start() {
         let c = MPRemoteCommandCenter.shared()
-        c.playCommand.addTarget { _ in
-            if !Core.shared.now.playing { nori_ios_toggle() }
-            return .success
-        }
-        c.pauseCommand.addTarget { _ in
-            if Core.shared.now.playing { nori_ios_toggle() }
-            return .success
-        }
-        c.togglePlayPauseCommand.addTarget { _ in nori_ios_toggle(); return .success }
-        c.nextTrackCommand.addTarget { _ in nori_ios_next(); return .success }
-        c.previousTrackCommand.addTarget { _ in nori_ios_previous(); return .success }
+        c.playCommand.addTarget { _ in nori_ios_media_key(0); return .success }
+        c.pauseCommand.addTarget { _ in nori_ios_media_key(1); return .success }
+        c.togglePlayPauseCommand.addTarget { _ in nori_ios_media_key(2); return .success }
+        c.nextTrackCommand.addTarget { _ in nori_ios_media_key(3); return .success }
+        c.previousTrackCommand.addTarget { _ in nori_ios_media_key(4); return .success }
         c.changePlaybackPositionCommand.addTarget { event in
             guard let e = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             nori_ios_seek(Int64(e.positionTime * 1000))
