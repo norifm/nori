@@ -2501,15 +2501,23 @@ struct Sends {
 #[derive(Default)]
 struct Queued {
     waiting: VecDeque<Out>,
+    sender: Sending,
+}
+
+/// Where the sender is.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum Sending {
+    #[default]
+    Open,
     /// Nothing more comes: the sender ends once the waiting ones went.
-    closed: bool,
-    ended: bool,
+    Closed,
+    Ended,
 }
 
 impl Sends {
     /// Until the sender ended.
     async fn ended(&self) {
-        self.changed.until(|| self.queue.lock().ended).await;
+        self.changed.until(|| self.queue.lock().sender == Sending::Ended).await;
     }
 }
 
@@ -2525,7 +2533,7 @@ impl Outbox {
 
 impl Drop for Outbox {
     fn drop(&mut self) {
-        self.0.queue.lock().closed = true;
+        self.0.queue.lock().sender = Sending::Closed;
         self.0.changed.notify();
     }
 }
@@ -2537,7 +2545,7 @@ async fn send_all(sends: Arc<Sends>, client: Arc<Client>, who: Vec<(String, Stri
         let changed = sends.changed.notified();
         let (next, closed) = {
             let mut q = sends.queue.lock();
-            (q.waiting.pop_front(), q.closed)
+            (q.waiting.pop_front(), q.sender == Sending::Closed)
         };
         match next {
             Some(o) => deliver(&client, &who, o).await,
@@ -2545,7 +2553,7 @@ async fn send_all(sends: Arc<Sends>, client: Arc<Client>, who: Vec<(String, Stri
             None => changed.await,
         }
     }
-    sends.queue.lock().ended = true;
+    sends.queue.lock().sender = Sending::Ended;
     sends.changed.notify();
 }
 
