@@ -1327,7 +1327,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     /// output takes it over where the ear is, behind a dip.
     fn follow_offload_now(&mut self) {
         let Some(i) = self.h.entering.as_ref().map(|e| e.0) else { return };
-        if !self.offload_wanted() || self.p.current() != Some(i) || !self.p.playing() || self.offloading() {
+        if !self.offload_wanted() || self.p.current() != Some(i) || !self.p.playing() || self.pausing() || self.offloading() {
             self.h.entering = None;
             return;
         }
@@ -2191,7 +2191,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         } else if !self.p.playing() && self.p.current().is_some() && self.parked.as_ref().is_none_or(|p| !p.is_chosen()) {
             // Paused on the CPU: let go, so play opens the song where the output decodes it.
             self.let_go();
-        } else if let Some(i) = self.p.current().filter(|_| self.p.playing() && !self.offloading()) {
+        } else if let Some(i) = self.p.current().filter(|_| self.p.playing() && !self.pausing() && !self.offloading()) {
             self.h.entering = Some((i, self.p.tracks.open_packets(&self.p.id_at(i), 0, true)));
         }
     }
