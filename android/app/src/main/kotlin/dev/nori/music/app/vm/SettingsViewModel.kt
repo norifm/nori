@@ -99,12 +99,29 @@ data class AutoEqUi(
     val query: String = "",
     val hits: List<AutoEqHit> = emptyList(),
     val tooShort: Boolean = true,
-    val busy: Boolean = false,
-    val applied: String? = null,
-    val error: String? = null,
     val countWords: String = "",
     val searchWords: String = "",
-)
+    /** The list's download or a curve being applied: one at a time, with how the last one ended. */
+    val task: AutoEqTask = AutoEqTask.Idle,
+) {
+    val busy: Boolean get() = task is AutoEqTask.Downloading || task is AutoEqTask.Applying
+    val applied: String? get() = when (val t = task) {
+        is AutoEqTask.Applied -> t.name
+        is AutoEqTask.Applying -> t.applied
+        is AutoEqTask.Downloading -> t.applied
+        AutoEqTask.Idle, is AutoEqTask.Failed -> null
+    }
+    val error: String? get() = (task as? AutoEqTask.Failed)?.error
+}
+
+/** While one is under way, the curve applied before it is still said. */
+sealed interface AutoEqTask {
+    data object Idle : AutoEqTask
+    data class Downloading(val applied: String?) : AutoEqTask
+    data class Applying(val applied: String?) : AutoEqTask
+    data class Applied(val name: String) : AutoEqTask
+    data class Failed(val error: String) : AutoEqTask
+}
 
 /**
  * One output device in the equalizer's device list: [name] is what it calls itself, [kind] where it is
@@ -713,7 +730,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
             is dev.nori.music.ffi.devices.CurveNotice.Offer -> try {
                 devices.accept(src)
             } catch (e: Exception) {
-                _autoEq.update { it.copy(error = describeConnectionError(e)) }
+                _autoEq.update { it.copy(task = AutoEqTask.Failed(describeConnectionError(e))) }
             }
             is dev.nori.music.ffi.devices.CurveNotice.Applied -> devices.undo(src)
         }
@@ -747,12 +764,13 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     fun downloadAutoEqIndex() = viewModelScope.launch {
         // Asked for by name, with a button: that is the consent, on any network. The lookups switch and
         // "Keep the AutoEQ list" are for what the app fetches on its own, not for a download the user started.
-        _autoEq.update { it.copy(busy = true, error = null) }
-        _autoEq.value = try {
+        _autoEq.update { it.copy(task = AutoEqTask.Downloading(it.applied)) }
+        try {
             val n = withContext(Dispatchers.IO) { nori.client.autoeqUpdate(true, nori.http.metered) }
-            AutoEqUi().counted(n ?: withContext(Dispatchers.IO) { nori.core.autoeqCount() })
+            _autoEq.value = AutoEqUi().counted(n ?: withContext(Dispatchers.IO) { nori.core.autoeqCount() })
         } catch (e: Exception) {
-            AutoEqUi(error = describeConnectionError(e))
+            // The list held before stays.
+            _autoEq.update { it.copy(task = AutoEqTask.Failed(describeConnectionError(e))) }
         }
     }
 
@@ -772,7 +790,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     /** Fetches one headphone's parametric preset and makes it the current curve. */
     fun applyAutoEq(entry: AutoEqEntry) = viewModelScope.launch {
-        _autoEq.update { it.copy(busy = true, error = null) }
+        _autoEq.update { it.copy(task = AutoEqTask.Applying(it.applied)) }
         try {
             // The parametric preset, or the graphic curve fitted with parametric filters when that is all
             // AutoEQ has (the core's autoeq_curve and parse_eq_preset); null when it has neither.
@@ -780,14 +798,14 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
             if (text == null) {
                 // The core has taken it out of the list: the search and the count say so at once.
                 val n = withContext(Dispatchers.IO) { runCatching { nori.core.autoeqCount() }.getOrDefault(0u) }
-                _autoEq.update { it.counted(n).copy(busy = false, error = dev.nori.music.app.ui.say.autoeqNoCurve) }
+                _autoEq.update { it.counted(n).copy(task = AutoEqTask.Failed(dev.nori.music.app.ui.say.autoeqNoCurve)) }
                 searchAutoEq(_autoEq.value.query)
                 return@launch
             }
             withContext(Dispatchers.IO) { import(text) }
-            _autoEq.update { it.copy(busy = false, applied = entry.name) }
+            _autoEq.update { it.copy(task = AutoEqTask.Applied(entry.name)) }
         } catch (e: Exception) {
-            _autoEq.update { it.copy(busy = false, error = describeConnectionError(e)) }
+            _autoEq.update { it.copy(task = AutoEqTask.Failed(describeConnectionError(e))) }
         }
     }
 
