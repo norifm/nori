@@ -1347,7 +1347,7 @@ fn devices_panel() {
     key(&mut a, KeyCode::Esc);
 
     a.devices.on = true;
-    a.devices.jams = true;
+    a.devices.jam_start = Some(nori_core::remote::JamStart::Offered);
     a.devices.list = vec![device("desk", "Desk", DeviceKind::Desktop, Some("Wish")), device("pixel", "Pixel", DeviceKind::Phone, None)];
     key(&mut a, KeyCode::Char('C'));
     assert_eq!((a.full, a.panel, a.focus), (true, Panel::Devices, Focus::Panel));
@@ -1428,7 +1428,7 @@ fn another_device_playing_shows_in_the_player_bar() {
 fn jam_header_and_requests_in_the_queue() {
     let mut a = app();
     a.devices.on = true;
-    a.devices.jams = true;
+    a.devices.jam_start = Some(nori_core::remote::JamStart::Hosting);
     a.devices.jam = Some(jam());
     a.devices.added.insert("s2".into(), "Gus".into());
     a.queue = Some(queue_of(5, 1));
@@ -1489,11 +1489,11 @@ fn a_jam_starts_around_the_song_picked() {
     a.cmds.clear();
     key(&mut a, KeyCode::Char('i'));
     assert!(a.cmds.is_empty() && a.note.as_ref().is_some_and(|n| n.0 == crate::text::JAMS_OFF), "jams off");
-    a.devices = crate::app::Devices { on: true, jams_unsupported: true, ..Default::default() };
+    a.devices = crate::app::Devices { on: true, jam_start: Some(nori_core::remote::JamStart::Unsupported), ..Default::default() };
     key(&mut a, KeyCode::Char('i'));
     assert!(a.cmds.is_empty() && a.note.as_ref().is_some_and(|n| n.0 == crate::text::JAM_UNSUPPORTED), "no relay");
 
-    a.devices = crate::app::Devices { on: true, jams: true, ..Default::default() };
+    a.devices = crate::app::Devices { on: true, jam_start: Some(nori_core::remote::JamStart::Offered), ..Default::default() };
     key(&mut a, KeyCode::Char('i'));
     let origin = Some(nori_core::PageOrigin::new(nori_core::OriginKind::Songs, ""));
     assert_eq!(a.cmds, [Cmd::Play { songs, start: 1, shuffle: false, from: origin }, Cmd::JamStart]);
@@ -2702,7 +2702,7 @@ fn the_kind_chosen_reaches_its_form() {
     assert!(s.contains("Choose a provider") && s.contains("OpenSubsonic") && s.contains("Navidrome and other servers") && s.contains("Test") && !s.contains("Server address"), "{s}");
     key(&mut a, KeyCode::Down);
     key(&mut a, KeyCode::Enter);
-    assert_eq!(a.login.kind, Some(ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() }));
+    assert_eq!(a.login.page.kind(), Some(&ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() }));
     let s = draw(&mut a, 100, 40);
     dump("login-plugin-kind", &s);
     assert!(s.contains("From a plugin") && !s.contains("Server address"), "{s}");
@@ -2710,7 +2710,7 @@ fn the_kind_chosen_reaches_its_form() {
     // its page shows, with why.
     assert!(a.cmds.is_empty() && a.login.error.is_some() && !a.login_choosing());
     key(&mut a, KeyCode::Esc);
-    assert_eq!((a.login.kind.clone(), a.login.error.clone(), a.quit), (None, None, false), "back chooses again");
+    assert_eq!((a.login.page.clone(), a.login.error.clone(), a.quit), (crate::app::LoginPage::Choosing, None, false), "back chooses again");
     key(&mut a, KeyCode::Up);
     a.login.focus = 3;
     key(&mut a, KeyCode::Enter);
@@ -2745,7 +2745,7 @@ fn nothing_to_ask_adds_at_once() {
     a.login = Default::default();
     let web = vec![SignIn::WebPage { start_url: "https://a.example".into() }];
     a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: web.clone() });
-    assert!(!a.login.adding_now && a.login.error.is_none(), "not added yet");
+    assert!(!matches!(a.login.page, crate::app::LoginPage::Adding(_)) && a.login.error.is_none(), "not added yet");
     // A name is nothing to ask there.
     let name = vec![nori_core::providers::FieldSpec { what: nori_core::providers::FormField::Name, advanced: false }];
     a.provider_opened(&ProviderInfo { kind, fields: name, sign_in: web });
@@ -2785,7 +2785,7 @@ fn every_plugin_off_leads_a_provider_to_the_switch() {
     a.view = View::Login;
     key(&mut a, KeyCode::Down);
     key(&mut a, KeyCode::Enter);
-    assert!(a.settings.alone && a.login.offered.is_none(), "the plugins' page, not the offer's");
+    assert_eq!(a.settings.alone, crate::settings_view::Alone::Plugins, "the plugins' page, not the offer's");
 }
 
 /// A form is titled with its provider, not nori.
@@ -2847,11 +2847,11 @@ fn choosing_an_offer_installs_or_turns_it_on() {
     a.login.choice.at = 2;
 
     key(&mut a, KeyCode::Enter);
-    assert_eq!((a.view, a.login.offered.clone()), (View::Settings, Some(id.clone())), "its page");
+    assert_eq!((a.view, a.settings.alone.clone()), (View::Settings, crate::settings_view::Alone::Offer(id.clone())), "its page");
     let s = draw(&mut a, 140, 40);
     assert!(s.contains("Radio about"), "{s}");
     key(&mut a, KeyCode::Esc);
-    assert_eq!((a.view, a.login.offered.clone()), (View::Login, None), "back chooses again");
+    assert_eq!((a.view, a.settings.alone.clone()), (View::Login, crate::settings_view::Alone::No), "back chooses again");
 
     key(&mut a, KeyCode::Enter);
     a.cmds.clear();
@@ -2860,7 +2860,7 @@ fn choosing_an_offer_installs_or_turns_it_on() {
     a.handle(Msg::Installed(Ok(id.clone())));
     assert_eq!(a.view, View::Login);
     assert!(a.cmds.contains(&Cmd::Plugin(PluginCmd::TurnOnChosen(id.clone()))), "{:?}", a.cmds);
-    assert!(!a.settings.deep() && !a.settings.alone && a.login.offered.is_none());
+    assert!(!a.settings.deep() && a.settings.alone == crate::settings_view::Alone::No);
 
     a.cmds.clear();
     a.settings.own.plugins = vec![card(&id, "Radio", Vec::new())];
@@ -2870,7 +2870,7 @@ fn choosing_an_offer_installs_or_turns_it_on() {
 
     // Its kind isn't there (every plugin off): the first screen stays.
     a.provider_chosen(nori_core::settings::ServerKind::Plugin { id });
-    assert_eq!(a.login.kind, None);
+    assert_eq!(a.login.page, crate::app::LoginPage::Choosing);
 }
 
 #[test]

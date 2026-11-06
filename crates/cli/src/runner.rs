@@ -621,9 +621,10 @@ impl Runner {
         // A guest's music is the jam's: it moves to no other device.
         d.on = remote.is_some() && !guest;
         d.pairing = remote.as_ref().and_then(|r| r.pairing_link());
-        let start = remote.as_ref().map(|r| r.jam_start());
-        d.jams = jams && d.on && (start == Some(JamStart::Offered) || remote.as_ref().is_some_and(|r| r.jam_view().is_some()));
-        d.jams_unsupported = d.on && start == Some(JamStart::Unsupported);
+        d.jam_start = remote.as_ref().filter(|_| d.on).map(|r| match r.jam_start() {
+            JamStart::Offered | JamStart::Starting | JamStart::Hosting if !jams => JamStart::Unavailable,
+            start => start,
+        });
         d.list = remote.as_ref().filter(|_| d.on).map(|r| r.devices()).unwrap_or_default();
         d.reached = remote.as_ref().filter(|_| d.on).map(|r| r.outputs()).unwrap_or_default();
         if let Some(r) = &remote {
