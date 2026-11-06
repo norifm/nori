@@ -50,11 +50,14 @@ fun NoriTheme(prefs: StoredPrefs, look: suspend (Palette, Boolean) -> Palette? =
         val scale = uiScale(widthDp)
         if (scale == 1f) systemDensity else androidx.compose.ui.unit.Density(systemDensity.density * scale, systemDensity.fontScale)
     }
+    val statusBar = remember { StatusBarLooks() }
+    androidx.compose.runtime.SideEffect { statusBar.app = dressed }
     androidx.compose.runtime.CompositionLocalProvider(
         androidx.compose.ui.platform.LocalDensity provides density, LocalLook provides dressed, LocalPapers provides papers,
+        LocalStatusBarLooks provides statusBar,
     ) {
         // The status bar's icons follow the theme, not the system's dark mode the window was started in.
-        SystemBarIcons(dressed)
+        StatusBarIconsFollow(statusBar)
         MaterialTheme(colorScheme = scheme, typography = NoriTypography, content = content)
     }
 }
