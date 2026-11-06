@@ -1225,7 +1225,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.p.sink.track.release();
             }
             let going = self.going();
-            let Some(off) = self.off.as_mut() else { return };
+            let off = self.off.as_mut().expect("offload is wanted only with an offload output");
             let playing = off.playing() || going;
             let i = off.start(i, ms, &mut self.p.tracks, &self.p.queue);
             if playing {
