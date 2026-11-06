@@ -105,18 +105,18 @@ fun SongMenu(
             val labels = remember(items) { items.map { say.songAction(it.action) } }
             val at = { place: dev.nori.music.ffi.library.SongMenuPlace -> items.indices.filter { items[it].place == place } }
             @Composable fun titleGlyph(n: Int) = when (val a = items[n].action) {
-                is dev.nori.music.ffi.library.SongAction.Favourite -> GlyphButton(if (a.on) Kanji.Seal else Kanji.Sealed, labels[n], lit = !a.on) { actions.star(song, a.on) }
-                else -> GlyphButton(Iconoir.InfoCircle, labels[n], quiet = true) { stage = MenuStage.DETAILS }
+                is dev.nori.music.ffi.library.SongAction.Favourite -> SheetGlyph(if (a.on) Kanji.Seal else Kanji.Sealed, labels[n], lit = !a.on) { actions.star(song, a.on) }
+                else -> SheetGlyph(Iconoir.InfoCircle, labels[n]) { stage = MenuStage.DETAILS }
             }
             @Composable fun glyph(n: Int) = when (val a = items[n].action) {
-                dev.nori.music.ffi.library.SongAction.Lyrics -> GlyphButton(Iconoir.QuoteMessage, labels[n], Modifier.alpha(if (items[n].enabled) 1f else 0.38f), enabled = items[n].enabled, quiet = true) { stage = MenuStage.LYRICS }
-                dev.nori.music.ffi.library.SongAction.SleepTimer -> GlyphButton(Iconoir.HalfMoon, labels[n], quiet = true) { stage = MenuStage.SLEEP }
-                dev.nori.music.ffi.library.SongAction.RemoveDownload -> GlyphButton(Iconoir.Trash, labels[n], quiet = true) { actions.removeDownloads(listOf(song.id)); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.StopDownload -> GlyphButton(Iconoir.Xmark, labels[n], quiet = true) { actions.cancelDownloads(listOf(song)); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.Download -> GlyphButton(Iconoir.Download, labels[n], quiet = true) { actions.download(listOf(song)); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.Radio -> GlyphButton(Iconoir.AntennaSignal, labels[n], quiet = true) { actions.startRadio(song); onDismiss() }
-                is dev.nori.music.ffi.library.SongAction.ExcludeFromMixes -> GlyphButton(Iconoir.Prohibition, labels[n], lit = !a.on, quiet = true) { actions.excludeFromMixes(song, a.on); excluded = a.on }
-                else -> GlyphButton(Iconoir.ShareIos, labels[n], quiet = true) { actions.share(song.id); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.Lyrics -> SheetGlyph(Iconoir.QuoteMessage, labels[n], Modifier.alpha(if (items[n].enabled) 1f else 0.38f), enabled = items[n].enabled, quiet = true) { stage = MenuStage.LYRICS }
+                dev.nori.music.ffi.library.SongAction.SleepTimer -> SheetGlyph(Iconoir.HalfMoon, labels[n], quiet = true) { stage = MenuStage.SLEEP }
+                dev.nori.music.ffi.library.SongAction.RemoveDownload -> SheetGlyph(Iconoir.Trash, labels[n], quiet = true) { actions.removeDownloads(listOf(song.id)); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.StopDownload -> SheetGlyph(Iconoir.Xmark, labels[n], quiet = true) { actions.cancelDownloads(listOf(song)); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.Download -> SheetGlyph(Iconoir.Download, labels[n], quiet = true) { actions.download(listOf(song)); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.Radio -> SheetGlyph(Iconoir.AntennaSignal, labels[n], quiet = true) { actions.startRadio(song); onDismiss() }
+                is dev.nori.music.ffi.library.SongAction.ExcludeFromMixes -> SheetGlyph(Iconoir.Prohibition, labels[n], lit = !a.on, quiet = true) { actions.excludeFromMixes(song, a.on); excluded = a.on }
+                else -> SheetGlyph(Iconoir.ShareIos, labels[n], quiet = true) { actions.share(song.id); onDismiss() }
             }
             @Composable fun line(n: Int, divider: Boolean) = when (items[n].action) {
                 dev.nori.music.ffi.library.SongAction.PlayNext -> Item(labels[n], Iconoir.PlaylistPlay, divider = divider) { actions.playNext(listOf(song)); onDismiss() }
@@ -138,7 +138,7 @@ fun SongMenu(
             }
             SheetRows(head = true) {}
             // The album page's way of saying it, in its own case: "FLAC 16/44.1", "MP3 320 kbps".
-            ListHead(remember(song) { say.quality(song) }.orEmpty(), { at(dev.nori.music.ffi.library.SongMenuPlace.GLYPHS).forEach { glyph(it) } }, edge = SHEET_EDGE, hairlineEnd = 0.dp)
+            ListHead(remember(song) { say.quality(song) }.orEmpty(), { at(dev.nori.music.ffi.library.SongMenuPlace.GLYPHS).forEach { glyph(it) } }, edge = SHEET_EDGE, actionsEnd = SHEET_EDGE, hairlineEnd = 0.dp)
             val lines = at(dev.nori.music.ffi.library.SongMenuPlace.LINE)
             val main = lines.filter { !items[it].more }
             val folded = lines.filter { items[it].more }
@@ -152,6 +152,13 @@ fun SongMenu(
         }
     }
 }
+
+/** A glyph of the song menu, in the columns the title's and the line under it share. */
+@Composable
+private fun SheetGlyph(
+    icon: ImageVector, description: String, modifier: Modifier = Modifier,
+    enabled: Boolean = true, lit: Boolean = false, quiet: Boolean = false, onClick: () -> Unit,
+) = GlyphButton(icon, description, modifier.size(SHEET_GLYPH), enabled = enabled, lit = lit, quiet = quiet, onClick = onClick)
 
 /**
  * The song's artists, then its album: each name in [names] in ink, opening its page through [open]; what
@@ -455,3 +462,5 @@ private fun SelectedCount(n: Int, modifier: Modifier) {
 private val SHEET_EDGE = 16.dp
 /** A menu sheet's line: Android's 48 dp touch target, so a long menu fits the screen. */
 private val SHEET_ROW = 48.dp
+/** Narrower than a page's glyphs, so six leave the line under the head room for the format. */
+private val SHEET_GLYPH = 44.dp
