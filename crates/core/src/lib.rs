@@ -26,6 +26,8 @@ pub mod library;
 pub mod stage;
 pub mod update;
 pub mod remote;
+pub mod jam_pick;
+pub mod destination;
 pub mod providers;
 #[cfg(feature = "neural-beats")]
 pub mod model_download;
@@ -43,12 +45,12 @@ pub use nori_model::{alog, deciders, heap, lines, model, numbers, CoreError, Sma
 pub use nori_backup as backup;
 pub use nori_automix::beat_model;
 pub use nori_devices::{autoeq, outputs};
-pub use nori_library::{menus, pages, rows, stars};
-pub use nori_lyrics::{formats, look, lrclib, lyrics, services};
+pub use nori_library::{menus, offer, paged, pages, rows, stars};
+pub use nori_lyrics::{follow as lyrics_follow, formats, look, lrclib, lyrics, services};
 pub use nori_net::{api, transport};
 pub use nori_perf::perf_log;
-pub use nori_queue::{heard, rules, scrobble};
-pub use nori_queue::deciders::{button_act, focus_act};
+pub use nori_queue::{heard, rules, scrobble, sleep, tuning, undo};
+pub use nori_queue::deciders::button_act;
 pub use nori_settings::{credits, dsp, lyrics_sources, overrides, settings, settings_model, settings_pages, settings_store};
 pub use nori_settings::settings::parse_eq_preset;
 pub use nori_model::model::*;
@@ -84,6 +86,36 @@ pub struct Param {
     pub value: String,
 }
 
+/// A Subsonic account's user and what it signs in with.
+pub(crate) struct Account {
+    pub(crate) user: String,
+    pub(crate) secret: Secret,
+}
+
+pub(crate) enum Secret {
+    /// An API key.
+    Key(String),
+    /// A password, which Navidrome's own API also logs in with.
+    Password(String),
+}
+
+impl Account {
+    /// What the LAN's remote control proves the account with.
+    pub(crate) fn proof(&self) -> &str {
+        match &self.secret {
+            Secret::Key(s) | Secret::Password(s) => s,
+        }
+    }
+
+    /// The user and password Navidrome's own API logs in with; None with an API key.
+    pub(crate) fn login(&self) -> Option<(String, String)> {
+        match &self.secret {
+            Secret::Password(p) => Some((self.user.clone(), p.clone())),
+            Secret::Key(_) => None,
+        }
+    }
+}
+
 #[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct Core {
     /// Also its session's profile database while this is the newest core.
@@ -106,13 +138,12 @@ pub struct Core {
     home: Mutex<Option<Vec<FeedShelf>>>,
     /// The queue this core saves and restores and its clients fill.
     pub session: Arc<nori_queue::Session>,
-    /// The user and the Subsonic secret (password or API key) the LAN's remote control proves the account
-    /// with; None for a jam guest.
-    account: RwLock<Option<(String, String)>>,
-    /// Endpoint and scoped credential of a temporary LAN jam guest.
+    /// The Subsonic account the LAN's remote control proves with; None for a guest or a provider's
+    /// profile.
+    account: RwLock<Option<Account>>,
+    /// Endpoint and scoped credential of a temporary LAN jam guest: set exactly while the provider is the
+    /// jam host's ([`providers::hosted::HostedProvider`]).
     lan_jam: RwLock<Option<(String, String)>>,
-    /// The user and password Navidrome's own API logs in with; None with an API key.
-    native_login: RwLock<Option<(String, String)>>,
     /// What the app offers over the profile (a jam guest's: the host's library, read only).
     rules: RwLock<browse::ProfileRules>,
     /// Told the rules whenever they change ([`Core::watch_rules`]).
@@ -229,7 +260,6 @@ impl Core {
             home: Mutex::default(),
             session,
             account: RwLock::new(None), lan_jam: RwLock::new(None),
-            native_login: RwLock::new(None),
             rules: RwLock::new(browse::profile_rules(false)),
             rules_shown: RwLock::new(None),
             provider: RwLock::default(),

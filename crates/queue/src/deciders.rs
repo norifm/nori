@@ -54,18 +54,6 @@ pub fn button_act(press: Press) -> ButtonAct {
     }
 }
 
-/// What a focus change does on its own: a loss pauses what wants to play (for good, or until the focus
-/// is back), a duck plays on under the other sound, and a gain resumes what a loss `held`.
-pub fn focus_act(focus: Focus, wants_play: bool, held: bool) -> FocusAct {
-    match focus {
-        Focus::Lost | Focus::LostTransient if wants_play => FocusAct::Pause,
-        Focus::Lost | Focus::LostTransient => FocusAct::Nothing,
-        Focus::Duck => FocusAct::Duck,
-        Focus::Gained if held => FocusAct::Resume,
-        Focus::Gained => FocusAct::Nothing,
-    }
-}
-
 /// Whether `order` is a permutation of `0..n` that starts where `nori`'s does (the song playing).
 fn fits_shuffle(order: &[u32], nori: &[u32]) -> bool {
     let mut seen = vec![false; nori.len()];
@@ -96,6 +84,12 @@ impl Session {
         }
     }
 
+    /// What a change of the audio focus does where nori would do `nori` (`nori_player::focus`): a
+    /// plugin's answer, or nori's.
+    pub fn decide_focus(&self, focus: Focus, nori: FocusAct) -> FocusAct {
+        self.deciders().and_then(|d| d.audio_focus(focus, nori)).unwrap_or(nori)
+    }
+
     /// `nori` (a linear gain) for song `id`, or a plugin's gain within nori's range.
     pub(crate) fn decide_leveling(&self, id: &str, nori: f32) -> f32 {
         let Some(d) = self.deciders() else { return nori };
@@ -117,13 +111,6 @@ impl Session {
     pub fn media_button(&self, press: Press) -> ButtonAct {
         let nori = button_act(press);
         self.deciders().and_then(|d| d.media_button(press, nori)).unwrap_or(nori)
-    }
-
-    /// What a change of the audio focus does to a player that `wants_play`, with playing `held` by an
-    /// earlier loss.
-    pub fn audio_focus(&self, focus: Focus, wants_play: bool, held: bool) -> FocusAct {
-        let nori = focus_act(focus, wants_play, held);
-        self.deciders().and_then(|d| d.audio_focus(focus, nori)).unwrap_or(nori)
     }
 
     /// What the notification, lock screen and media controls show for queued song `id` in place of its
@@ -237,13 +224,8 @@ mod tests {
     }
 
     #[test]
-    fn nori_alone_answers_by_its_own_rules() {
+    fn a_press_does_what_nori_says_alone() {
         assert_eq!([Press::PlayPause, Press::Double, Press::Triple, Press::Long].map(button_act), [ButtonAct::PlayPause, ButtonAct::Next, ButtonAct::Previous, ButtonAct::Nothing]);
-        assert_eq!(focus_act(Focus::Lost, true, false), FocusAct::Pause);
-        assert_eq!(focus_act(Focus::LostTransient, false, false), FocusAct::Nothing);
-        assert_eq!(focus_act(Focus::Duck, true, false), FocusAct::Duck);
-        assert_eq!(focus_act(Focus::Gained, true, true), FocusAct::Resume);
-        assert_eq!(focus_act(Focus::Gained, true, false), FocusAct::Nothing);
     }
 
     #[test]
@@ -290,7 +272,7 @@ mod tests {
         let s = queued(1, 0);
         deciding(&s, Fake { on: true, act: Some(ButtonAct::PlayPause), focus: Some(FocusAct::KeepPlaying), shown: Some(Shown { title: "T".into(), ..Default::default() }), ..Default::default() });
         assert_eq!(s.media_button(Press::Next), ButtonAct::PlayPause);
-        assert_eq!(s.audio_focus(Focus::LostTransient, true, false), FocusAct::KeepPlaying);
+        assert_eq!(s.decide_focus(Focus::LostTransient, FocusAct::Pause), FocusAct::KeepPlaying);
         assert_eq!(s.now_playing("q0".into()).map(|s| s.title).as_deref(), Some("T"));
         let s = queued(1, 0);
         deciding(&s, Fake { on: true, shown: Some(Shown { title: " ".into(), ..Default::default() }), ..Default::default() });

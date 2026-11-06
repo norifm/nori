@@ -86,6 +86,16 @@ final class SoundPage: UITableViewController {
         load()
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        nori_ios_sound_page(2, 1)
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        nori_ios_sound_page(2, 0)
+    }
+
     private func load() {
         DispatchQueue.global(qos: .userInitiated).async {
             let d = takenJSON(nori_ios_devices()) as? [String: Any] ?? [:]
@@ -322,6 +332,16 @@ final class AutoEqPage: UITableViewController, UISearchBarDelegate {
         search.delegate = self
         search.sizeToFit()
         query("")
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        nori_ios_sound_page(1, 1)
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        nori_ios_sound_page(1, 0)
     }
 
     func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) { query(searchText) }

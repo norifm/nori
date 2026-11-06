@@ -11,9 +11,8 @@ class PageController: UITableViewController {
     private(set) var answer: PageAnswer?
     /// Each table section: a list, a shelf (one row), or a grid (two prints a row).
     private var rows: [(section: Section, layout: Layout)] = []
+    /// More pages may follow the list (the core's paging, `nori_ios_read_more`).
     private var more = false
-    private var nextPage = 0
-    private var loadingMore = false
     /// The list runs in the order of a name: the table shows the A–Z index.
     private var letters = false
     /// An index letter not loaded yet: pages load until it is.
@@ -189,14 +188,12 @@ class PageController: UITableViewController {
             return
         }
         if token != 0 { Core.shared.forget(token) }
-        loadingMore = false
         wantedLetter = nil
         token = Core.shared.read(kind, arg) { [weak self] a in self?.took(a, appending: false) }
     }
 
     func took(_ a: PageAnswer, appending: Bool) {
         finishRefresh()
-        loadingMore = false
         if a.raw["closed"] != nil {
             showEmpty(Say.noServer, Say.noServerDetail)
             return
@@ -209,7 +206,6 @@ class PageController: UITableViewController {
             return
         }
         more = a.raw["more"] as? Bool ?? false
-        nextPage = a.raw["next"] as? Int ?? 0
         letters = a.raw["letters"] as? Bool ?? false
         if appending, var extra = Optional(a.sections.filter { !$0.items.isEmpty }), !extra.isEmpty, let last = rows.indices.last {
             // A page can answer twice (cached, then the server's): it replaces what it sent before. Its first
@@ -427,10 +423,8 @@ class PageController: UITableViewController {
     }
 
     private func loadMore() {
-        guard more, !loadingMore else { return }
-        loadingMore = true
-        let page = kind == NORI_PAGE_GENRE || kind == NORI_PAGE_HOME_ROW ? "\(arg)\n\(nextPage)" : "\(nextPage)"
-        Core.shared.read(kind, page, token: token) { [weak self] a in self?.took(a, appending: true) }
+        guard more else { return }
+        Core.shared.readMore(kind, arg, token: token) { [weak self] a in self?.took(a, appending: true) }
     }
 
     private func layout(for s: Section) -> Layout {

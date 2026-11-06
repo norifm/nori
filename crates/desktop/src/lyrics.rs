@@ -2,7 +2,7 @@
 //! line is active and when to check again.
 
 use nori_core::lyrics_sources::LyricsOrigin;
-use nori_core::race::{lyrics_replaces, LyricsPick};
+use nori_core::race::LyricsPick;
 use nori_look::lyrics::LyricClock;
 use slint::{ModelRc, SharedString, VecModel};
 
@@ -65,11 +65,6 @@ impl SongLyrics {
             LyricsOrigin::Server => String::new(),
             other => format!("Lyrics from {}", crate::words::lyrics_origin(other, plugin_name)),
         }
-    }
-
-    /// Whether `next` should replace these (`lyrics_replaces`).
-    pub fn replaced_by(&self, next: &LyricsPick) -> bool {
-        lyrics_replaces(Some(&self.pick), next)
     }
 
     /// State at `position_ms`: active line, fill progress, and when to call again. `shown`: a view shows

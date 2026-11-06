@@ -13,9 +13,9 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent.parent
-KOTLIN = ROOT / "app/src/main/kotlin/dev/nori/music/app/ui/Iconoir.kt"
-CORE = ROOT / "core/src/main/res/drawable"
-APP = ROOT / "app/src/main/res/drawable"
+KOTLIN = ROOT / "android/app/src/main/kotlin/dev/nori/music/app/ui/Iconoir.kt"
+CORE = ROOT / "android/core/src/main/res/drawable"
+APP = ROOT / "android/app/src/main/res/drawable"
 
 # Kotlin name: (Iconoir icon, style, flips in right-to-left layouts)
 GLYPHS = {
@@ -127,7 +127,7 @@ DRAWABLES = {
 
 NS = "{http://www.w3.org/2000/svg}"
 
-# Drawn to the seal's height (core/src/main/res/drawable/seal_outline.xml, a square frame, 3 to 21) and
+# Drawn to the seal's height (android/core/src/main/res/drawable/seal_outline.xml, a square frame, 3 to 21) and
 # centred on it, line width unchanged, so a device glyph beside the seal is as tall and as heavy. A glyph too
 # wide for that stops at [WIDEST], its line still inside the box.
 FITTED = {"SmartphoneDevice", "Headset", "Bluetooth", "Airplay", "Computer", "Terminal"}
@@ -276,7 +276,7 @@ def xml_part(p, colour):
 
 SWIFT = ROOT / "ios/Sources/Iconoir.swift"
 SEALS = {"seal": CORE / "seal.xml", "sealOutline": CORE / "seal_outline.xml"}
-KANJI = ROOT / "app/src/main/kotlin/dev/nori/music/app/ui/Kanji.kt"
+KANJI = ROOT / "android/app/src/main/kotlin/dev/nori/music/app/ui/Kanji.kt"
 
 
 def arc_cubics(x0, y0, rx, ry, phi, large, sweep, x1, y1):
@@ -706,7 +706,7 @@ def write_slint(shapes):
     lines = [f'    // {icon}{" (solid)" if style == "solid" else ""}\n    out property <Glyph> {kebab(name)}: {slint_glyph(shapes[name])};'
              for name, (icon, style, _) in GLYPHS.items()]
     for name, file, what in (("seal", "seal", "a favorite"), ("seal-outline", "seal_outline", "not a favorite")):
-        lines.append(f"    // nori's seal, {what} (core/src/main/res/drawable/{file}.xml, upright)\n"
+        lines.append(f"    // nori's seal, {what} (android/core/src/main/res/drawable/{file}.xml, upright)\n"
                      f"    out property <Glyph> {name}: {slint_glyph(drawable_parts(CORE / f'{file}.xml'))};")
     lines.append(slint_seasons())
     SLINT.write_text(SLINT_HEAD + "\n".join(lines) + "\n}\n")

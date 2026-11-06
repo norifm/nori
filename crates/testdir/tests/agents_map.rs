@@ -47,7 +47,7 @@ fn every_workspace_crate_is_in_the_layout_table() {
 
 #[test]
 fn paths_named_in_agents_md_exist() {
-    const TOP: [&str; 8] = ["crates/", "tools/", "docs/", "app/", "core/", "ios/", "web/", "vendor/"];
+    const TOP: [&str; 7] = ["crates/", "tools/", "docs/", "android/", "ios/", "web/", "vendor/"];
     let text = agents();
     let missing: Vec<_> = text
         .split(['`', '(', ')', ' ', '\n', '\''])

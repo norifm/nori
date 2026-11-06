@@ -90,10 +90,10 @@ swiftc \
 # The launch screen is a plain image (UILaunchImages): nothing of Interface Builder's tooling is needed.
 cp ios/Launch-568h@2x.png ios/AppIcon*.png "$app/"
 # The licence texts the credits page shows, kept once, with Android's.
-cp -R app/src/main/assets/licences "$app/licences"
+cp -R android/app/src/main/assets/licences "$app/licences"
 # Inter and Literata, Android's own files (UIAppFonts in Info.plist).
 mkdir -p "$app/fonts"
-cp app/src/main/res/font/inter.ttf app/src/main/res/font/literata.ttf "$app/fonts/"
+cp android/app/src/main/res/font/inter.ttf android/app/src/main/res/font/literata.ttf "$app/fonts/"
 sed -e "s/NORI_VERSION/$NORI_VERSION/" -e "s/NORI_BUILD/$NORI_BUILD/" ios/Info.plist |
   python3 -c 'import plistlib, sys; sys.stdout.buffer.write(plistlib.dumps(plistlib.loads(sys.stdin.buffer.read()), fmt=plistlib.FMT_BINARY))' \
   > "$app/Info.plist"

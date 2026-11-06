@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use nori_core::client::Starrable;
 use nori_core::stars::StarMarks;
+use nori_core::search::SearchShown;
 use nori_core::Song;
 use nori_engine::State;
 use ratatui::layout::{Alignment, Rect};
@@ -23,6 +24,7 @@ use nori_core::browse::AlbumSort;
 
 use crate::app::{App, Button, DeviceRow, Focus, HomeLine, Hit, Item, LibLine, ListRef, Load, Overlay, Page, Panel, Place, QueueRow, SearchRow, Sel, View, LOGIN_FIELDS, PANELS};
 use crate::art::{Art, Theme};
+use crate::lyrics::Words;
 use crate::keys::{Scope, BINDINGS};
 use crate::settings_view::{self, EqRow, Line as SLine, SettingsView};
 use crate::text::clock;
@@ -479,7 +481,7 @@ fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let App { home, hits, marks, rules, .. } = app;
     let h = &*home;
     let row = |i: usize, w: usize| match lines[i] {
-        HomeLine::Offer => offer_line(h.offer.as_ref(), w, t),
+        HomeLine::Offer => offer_line(h.offer.shown(), w, t),
         HomeLine::Shelf(at) => {
             let (title, _) = h.shelf(at).unwrap_or_default();
             let more = if h.count(at) > crate::app::HOME_ENTRIES { crate::text::SHOW_ALL } else { "" };
@@ -497,7 +499,7 @@ fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     list(f, area, &mut sel, lines.len(), ListRef::Home, hits, t, focused, &row);
     home.sel = sel;
     // The offer's own words act on it too.
-    if let Some(r) = app.hits.iter().find(|(_, h)| *h == Hit::Row(ListRef::Home, 0)).map(|(r, _)| *r).filter(|_| app.home.offer.is_some() && sel.top == 0) {
+    if let Some(r) = app.hits.iter().find(|(_, h)| *h == Hit::Row(ListRef::Home, 0)).map(|(r, _)| *r).filter(|_| app.home.offer.shown().is_some() && sel.top == 0) {
         let words = [(Span::styled(crate::text::RESUME, bold().fg(t.ink)), Button::Resume), (Span::styled(crate::text::CLOSE, t.dim()), Button::Dismiss)];
         let w: u16 = words.iter().map(|(s, _)| s.width() as u16 + 3).sum::<u16>() - 3;
         let at = Rect { x: r.x + r.width.saturating_sub(w + 2), width: w, ..r };
@@ -551,9 +553,9 @@ fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused:
     let seals = &*marks;
     let marks = Marks::of(marks, rules, devices);
     let (loaded, more, one, many) = match view {
-        View::Albums => (state(&l.albums), l.albums_more, "album", "albums"),
+        View::Albums => (state(&l.albums), l.album_pages.more(), "album", "albums"),
         View::Artists => (state(&l.artists), false, "artist", "artists"),
-        View::Songs => (state(&l.songs), l.songs_more, "song", "songs"),
+        View::Songs => (state(&l.songs), l.song_pages.more(), "song", "songs"),
         _ => (state(&l.playlists), false, "playlist", "playlists"),
     };
     let (order, favorites) = match view {
@@ -676,12 +678,12 @@ fn search(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     put(f, Paragraph::new(prompt), field);
     app.hits.push((field, Hit::SearchField));
     let view = s.view.as_ref();
-    let (words, style) = match view {
-        Some(v) if v.error.is_some() => (crate::text::search_fallback(v.error.as_ref().and_then(|e| e.reason.as_deref())), Style::default().fg(Color::LightRed)),
-        Some(v) if v.searching => ("Asking the server…".to_string(), t.dim()),
-        Some(v) if v.nothing_found => ("Nothing found".to_string(), t.dim()),
-        Some(v) if !v.query.is_empty() => ((if v.from_server { "From the server" } else { "From the offline index · the server is asked when you pause" }).to_string(), t.dim()),
-        _ => ("Songs, albums and artists, from the library".to_string(), t.dim()),
+    let (words, style) = match view.map(|v| &v.answer) {
+        Some(SearchShown::Failed { fallback, .. }) => (crate::text::search_fallback(fallback.reason.as_deref()), Style::default().fg(Color::LightRed)),
+        Some(SearchShown::Asking { .. }) => ("Asking the server…".to_string(), t.dim()),
+        Some(SearchShown::NothingFound) => ("Nothing found".to_string(), t.dim()),
+        Some(SearchShown::Found { .. }) => ("From the server".to_string(), t.dim()),
+        Some(SearchShown::Blank) | None => ("Songs, albums and artists, from the library".to_string(), t.dim()),
     };
     text(f, row_of(area, 1), &words, style);
     let body = below(area, 3);
@@ -1102,7 +1104,7 @@ fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) 
         v.skip_titles(true);
     }
     // The groups down the left when wide enough.
-    let body = if body.width >= 96 && !v.alone && !v.deep() {
+    let body = if body.width >= 96 && v.alone == settings_view::Alone::No && !v.deep() {
         let at = v.group_at();
         for (g, group) in settings_view::GROUPS.iter().enumerate() {
             let r = Rect { x: body.x, y: body.y + g as u16, width: 18, height: 1 };
@@ -1190,6 +1192,7 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
 fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
     let rows = app.devices.rows();
     let body = Rect { height: area.height.min(rows.len() as u16), ..area };
+    let here = matches!(app.devices.destination(app.guest()), nori_core::destination::Destination::Here { .. });
     let App { devices, hits, .. } = app;
     let d = &*devices;
     let active = d.active.as_ref().map(|(id, _)| id.as_str());
@@ -1199,7 +1202,6 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
     let mut sel = d.sel;
     list(f, body, &mut sel, rows.len(), ListRef::Devices, hits, t, focused, &|i, w| match rows[i] {
         DeviceRow::Here => {
-            let here = active.is_none() && d.cast.is_none();
             Line::from(vec![tick(here), name(crate::text::THIS_COMPUTER, here)])
         }
         DeviceRow::Cast => {
@@ -1236,7 +1238,7 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
     });
     devices.sel = sel;
     let mut y = body.y + body.height + 1;
-    let notes = [(devices.jams_unsupported, crate::text::JAM_UNSUPPORTED)];
+    let notes = [(devices.jam_start == Some(nori_core::remote::JamStart::Unsupported), crate::text::JAM_UNSUPPORTED)];
     for (_, note) in notes.into_iter().filter(|(on, _)| *on) {
         for l in wrap(note, area.width as usize) {
             if y >= area.y + area.height {
@@ -1402,13 +1404,11 @@ pub(crate) fn wrap(s: &str, w: usize) -> Vec<String> {
 }
 
 fn lyrics(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
-    let Some(l) = &app.lyrics else {
-        let text = match (&app.song, &app.lyrics_for) {
-            (None, _) => "Nothing playing",
-            (Some(_), Some(_)) => "Looking for lyrics…",
-            _ => "No lyrics",
-        };
-        return empty(f, area, t, text);
+    let l = match &app.lyrics {
+        Words::Found(l) => l,
+        Words::Looking => return empty(f, area, t, "Looking for lyrics…"),
+        Words::Failed => return empty(f, area, t, "No lyrics"),
+        Words::Nothing => return empty(f, area, t, if app.song.is_some() { "No lyrics" } else { "Nothing playing" }),
     };
     if l.pick.lyrics.lines.is_empty() {
         return empty(f, area, t, "No lyrics for this song");
@@ -1822,7 +1822,7 @@ fn provider_choice(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     hits.push((pr, Hit::Button(Button::LoginPlugins)));
     y += 2;
     let keys = if servers > 0 { crate::text::PROVIDER_SAVED_KEYS } else { crate::text::PROVIDER_KEYS };
-    let msg = match &login.error {
+    let msg = match login.flow.failure().map(crate::text::add_failure) {
         Some(e) => Span::styled(format!("  {e}"), Style::default().fg(Color::LightRed)),
         None => Span::styled(format!("  {keys}"), t.dim()),
     };
@@ -1874,7 +1874,7 @@ fn sign_in_form(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         y += 2;
     }
     let sign_in = format!(" {} ", crate::text::provider_sign_in(&name));
-    let button = if l.busy { " Connecting… " } else if account { sign_in.as_str() } else { " Connect " };
+    let button = if l.flow.busy() { " Connecting… " } else if account { sign_in.as_str() } else { " Connect " };
     let br = Rect { x: inner.x + if account { 2 } else { 18 }, y, width: button.width() as u16, height: 1 };
     put(f, Paragraph::new(Span::styled(button, t.select(true))), br);
     app.hits.push((br, Hit::Button(if account { Button::LoginSignIn } else { Button::Connect })));
@@ -1885,7 +1885,7 @@ fn sign_in_form(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         app.hits.push((gr, Hit::Button(Button::LoginGuest)));
     }
     y += 2;
-    let msg = match &l.error {
+    let msg = match l.flow.failure().map(crate::text::add_failure) {
         Some(e) => Span::styled(format!("  {e}"), Style::default().fg(Color::LightRed)),
         None => Span::styled(format!("  {}", if account { crate::text::ACCOUNT_KEYS } else { crate::text::LOGIN_KEYS }), t.dim()),
     };
@@ -1989,7 +1989,9 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             ];
             put(f, Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner });
         }
-        Overlay::Account { kind, user, ended, pasting, text: typed, error, busy } => {
+        Overlay::Account { kind, user, pasting, text: typed, flow, window_failed } => {
+            let ended = flow.shown == (nori_core::providers::flow::SignInShown::Offered { ended: true });
+            let busy = flow.busy();
             let w = 76.min(area.width);
             let iw = w.saturating_sub(4).max(1) as usize;
             let name = crate::text::provider_of(kinds, kind).name;
@@ -2004,12 +2006,17 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
                 let dots = "•".repeat(typed.chars().count().min(iw.saturating_sub(1)));
                 said.push((format!("{dots}▏"), Style::default().fg(t.ink)));
             } else {
-                let why = if *busy { crate::text::SIGNING_IN.into() } else if *ended { crate::text::signed_out_again(&name) } else { crate::text::SIGN_IN_WHY.into() };
+                let why = if busy { crate::text::SIGNING_IN.into() } else if ended { crate::text::signed_out_again(&name) } else { crate::text::SIGN_IN_WHY.into() };
                 said.push((why, Style::default().fg(t.ink)));
-                said.push(((if *ended { crate::text::SIGN_IN_KEYS_ENDED } else { crate::text::SIGN_IN_KEYS }).into(), t.dim()));
+                said.push(((if ended { crate::text::SIGN_IN_KEYS_ENDED } else { crate::text::SIGN_IN_KEYS }).into(), t.dim()));
             }
+            let error = match &flow.attempt {
+                _ if *window_failed => Some(crate::text::SIGN_IN_WINDOW_FAILED.to_string()),
+                nori_core::providers::flow::SignInAttempt::Failed { result } => Some(crate::text::sign_in(&name, result)),
+                _ => None,
+            };
             if let Some(e) = error {
-                said.push((e.clone(), Style::default().fg(Color::LightRed)));
+                said.push((e, Style::default().fg(Color::LightRed)));
             }
             let rows: usize = said.iter().map(|(l, _)| l.chars().count().div_ceil(iw).max(1)).sum::<usize>() + said.len() - 1;
             let r = centred(area, w, rows as u16 + 3);

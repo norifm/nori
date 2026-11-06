@@ -751,8 +751,6 @@ pub struct Plugged {
     pub choosing: bool,
     /// The switch over every plugin (the `pluginsOff` setting) is on.
     pub all_off: bool,
-    /// The plugin whose page the first screen opened; installed, it is turned on and its form opens.
-    pub offered: Option<String>,
 }
 
 impl Plugged {
@@ -816,12 +814,6 @@ impl Plugged {
         if self.readme_asked.as_ref().is_some_and(|a| a.0 == id) {
             self.readme = blocks;
         }
-    }
-
-    /// Back a page; true when that left the plugin offered, whose sheet then closes.
-    pub fn back(&mut self) -> bool {
-        self.stack.pop();
-        self.stack.is_empty() && self.offered.take().is_some()
     }
 
     /// What a plugin's kind says of itself; nori's own kinds are worded by the client.
@@ -1750,16 +1742,6 @@ mod tests {
         assert!(p.icons_wanted().is_empty());
         p.choosing = true;
         assert_eq!(p.icons_wanted().iter().map(|w| w.0.as_str()).collect::<Vec<_>>(), ["a.new"]);
-    }
-
-    /// Back from the page of the plugin offered closes the sheet; back in the sheet's own pages doesn't.
-    #[test]
-    fn back_from_the_offer_closes_its_sheet() {
-        let mut p = Plugged { stack: vec![PluginPage::Plugin("a.new".into())], offered: Some("a.new".into()), ..Default::default() };
-        assert!(p.back());
-        assert_eq!(p.offered, None);
-        let mut p = Plugged { stack: vec![PluginPage::Browser, PluginPage::Plugin("a.new".into())], ..Default::default() };
-        assert!(!p.back() && !p.back(), "the plus's list stays");
     }
 
     /// The first screen's row names parse back to what they do.

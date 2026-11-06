@@ -27,6 +27,7 @@ use nori_core::client::CurrentClient;
 use nori_core::queue::is_radio;
 use nori_engine::core::{ahead_songs, key_format, measuring_ahead, resolving, settings, Analyses, CoreApp, CoreQueue};
 use nori_engine::{Body, ByteSource, Cancel, Coded, Coding, Config, Device, Engine, Event, Library, Located, OffloadOutput, OpenError, OutputFacts, OutputFormat, Source, State, Support};
+use nori_player::focus::{Focus, Hold};
 use nori_player::transitions::WindowSong;
 use parking_lot::Mutex;
 
@@ -57,6 +58,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"mixing", c"(J)Z", mixing),
         native!(c"waiting", c"(J)Z", waiting),
         native!(c"networkBack", c"(J)V", network_back),
+        native!(c"focus", c"(JI)V", focus),
         native!(c"remotePlayed", c"(JJI)V", remote_played),
         native!(c"chainIn", c"(J)Z", chain_in),
         native!(c"onCpu", c"(J)Z", on_cpu),
@@ -96,6 +98,7 @@ struct Java {
     forget: JMethodID,
     signal: JMethodID,
     cpu: JMethodID,
+    focus: JMethodID,
     offload_support: JMethodID,
     open_offload: JMethodID,
     body_read: JMethodID,
@@ -185,6 +188,7 @@ fn look_up(env: &mut JNIEnv) -> jni::errors::Result<Java> {
         forget: env.get_method_id(&bridge, "forget", "(Ljava/lang/String;)Ljava/lang/String;")?,
         signal: env.get_method_id(&bridge, "signal", "()V")?,
         cpu: env.get_method_id(&bridge, "cpu", "(Z)V")?,
+        focus: env.get_method_id(&bridge, "focus", "(Z)Z")?,
         offload_support: env.get_method_id(&bridge, "offloadSupport", "(III)I")?,
         open_offload: env.get_method_id(&bridge, "openOffload", "(IIII)Landroid/media/AudioTrack;")?,
         body_read: env.get_method_id(&body, "read", "(I)I")?,
@@ -554,33 +558,43 @@ struct JavaOffload {
     bridge: Bridge,
     events: Arc<OffloadEvents>,
     quiet: Arc<Quiet>,
-    track: Option<GlobalRef>,
-    buffer: Option<GlobalRef>,
+    open: Option<OpenTrack>,
+    /// Made once and never resized, so it outlives every buffer over it.
     staging: Vec<u8>,
-    /// The open track's buffer size in bytes: no write moves more.
+    timestamp: Option<GlobalRef>,
+    /// The platform's answer for each format asked about, for the log.
+    said: Vec<(Coded, String)>,
+}
+
+/// An open offloaded AudioTrack.
+struct OpenTrack {
+    track: GlobalRef,
+    /// A direct buffer over the staging memory.
+    buffer: GlobalRef,
+    /// Its buffer size in bytes: no write moves more.
     held: usize,
     rate: u32,
-    timestamp: Option<GlobalRef>,
-    /// Last timestamp (frames presented, ns) and whether the platform gave it since playback last
-    /// started; only a fresh one is extrapolated by the clock.
-    stamp: Option<(u64, i64, bool)>,
+    /// The last timestamp read.
+    stamp: Option<Stamp>,
     playing: bool,
     /// Last open, flush or play: older timestamps are ignored.
     since_ns: i64,
     /// The play head past the platform's 32 bits.
     head: HeadCount,
-    /// The platform's answer for each format asked about, for the log.
-    said: Vec<(Coded, String)>,
 }
 
-impl JavaOffload {
-    fn new(bridge: Bridge, events: Arc<OffloadEvents>, quiet: Arc<Quiet>) -> JavaOffload {
-        JavaOffload { bridge, events, quiet, track: None, buffer: None, staging: Vec::new(), held: 0, rate: 1, timestamp: None, stamp: None, playing: false, since_ns: 0, head: HeadCount::default(), said: Vec::new() }
-    }
+#[derive(Clone, Copy)]
+struct Stamp {
+    frames: u64,
+    ns: i64,
+    /// Given by the platform since playback last started: only a fresh one is extrapolated by the clock.
+    fresh: bool,
+}
 
+impl OpenTrack {
     /// The last timestamp, extrapolated by the clock while playing and fresh.
     fn stamped_now(&self) -> Option<u64> {
-        let (frames, ns, fresh) = self.stamp?;
+        let Stamp { frames, ns, fresh } = self.stamp?;
         if !self.playing || !fresh {
             return Some(frames);
         }
@@ -588,10 +602,21 @@ impl JavaOffload {
         Some(frames + run as u64)
     }
 
+    /// Holds the position now until the platform gives a timestamp again.
+    fn hold(&mut self) {
+        self.stamp = self.stamped_now().map(|frames| Stamp { frames, ns: mono_ns(), fresh: false });
+    }
+}
+
+impl JavaOffload {
+    fn new(bridge: Bridge, events: Arc<OffloadEvents>, quiet: Arc<Quiet>) -> JavaOffload {
+        JavaOffload { bridge, events, quiet, open: None, staging: Vec::new(), timestamp: None, said: Vec::new() }
+    }
+
     fn void(&mut self, m: impl FnOnce(&Java) -> JMethodID) {
-        let Some(track) = &self.track else { return };
+        let Some(open) = &self.open else { return };
         let Some((java, mut env)) = env() else { return };
-        call_void(&mut env, track, m(java), &[]);
+        call_void(&mut env, &open.track, m(java), &[]);
     }
 }
 
@@ -675,19 +700,15 @@ impl OffloadOutput for JavaOffload {
             }
             // A compressed track counts its buffer in bytes.
             let held = call_int(env, &track, java.track.buffer_frames, &[]).unwrap_or(0).max(0) as usize;
-            // SAFETY: `staging` is made once and never resized, so it outlives every buffer over it.
+            // SAFETY: `staging` outlives every buffer over it ([`JavaOffload::staging`]).
             let buffer = unsafe { env.new_direct_byte_buffer(staging, OFFLOAD_CHUNK) }?;
             Ok(Some((env.new_global_ref(&track)?, env.new_global_ref(&buffer)?, held)))
         });
         cleared(&mut env);
         let Ok(Some((track, buffer, held))) = opened else { return Err("the offloaded AudioTrack would not open".into()) };
         self.quiet.opened(&mut env, java, track.as_obj());
-        self.track = Some(track);
-        self.buffer = Some(buffer);
-        self.rate = coded.rate.max(1);
-        (self.stamp, self.head) = (None, HeadCount::default());
-        self.playing = false;
-        self.since_ns = mono_ns();
+        let held = if held > 0 { held } else { bytes };
+        self.open = Some(OpenTrack { track, buffer, held, rate: coded.rate.max(1), stamp: None, playing: false, since_ns: mono_ns(), head: HeadCount::default() });
         if self.timestamp.is_none() {
             // SAFETY: AudioTimestamp's no-argument constructor.
             let made = unsafe { env.new_object_unchecked(<&JClass>::from(java.timestamp.as_obj()), java.timestamp_new, &[]) };
@@ -698,19 +719,18 @@ impl OffloadOutput for JavaOffload {
         self.events.ended.store(false, Ordering::Release);
         self.events.wants.store(false, Ordering::Release);
         *self.events.engine.lock() = Some(std::thread::current());
-        self.held = if held > 0 { held } else { bytes };
-        log(&format!("offloaded {:?} track: {} KB of the {} KB asked", coded.coding, self.held / 1024, bytes / 1024));
-        Ok(self.held)
+        log(&format!("offloaded {:?} track: {} KB of the {} KB asked", coded.coding, held / 1024, bytes / 1024));
+        Ok(held)
     }
 
     fn write(&mut self, data: &[u8], _frames: u64) -> Result<usize, i32> {
-        let (Some(track), Some(buffer)) = (&self.track, &self.buffer) else { return Err(ERROR_DEAD_OBJECT) };
+        let Some(open) = &self.open else { return Err(ERROR_DEAD_OBJECT) };
         let Some((java, mut env)) = env() else { return Ok(0) };
         let mut done = 0;
         while done < data.len() {
-            let n = (data.len() - done).min(self.staging.len()).min(self.held.max(1));
+            let n = (data.len() - done).min(self.staging.len()).min(open.held.max(1));
             self.staging[..n].copy_from_slice(&data[done..done + n]);
-            let k = match write_direct(&mut env, java, track, buffer, 0, n as i32) {
+            let k = match write_direct(&mut env, java, &open.track, &open.buffer, 0, n as i32) {
                 Ok(k) => k.min(n),
                 // Bytes taken before the error count; the error surfaces on the next write.
                 Err(_) if done > 0 => return Ok(done),
@@ -725,69 +745,73 @@ impl OffloadOutput for JavaOffload {
     }
 
     fn delay_padding(&mut self, delay: u32, padding: u32) {
-        let (Some(track), Some((java, mut env))) = (&self.track, env()) else { return };
+        let (Some(open), Some((java, mut env))) = (&self.open, env()) else { return };
         let Some(m) = java.offload.as_ref().map(|o| o.delay_padding) else { return };
         let args = [JValue::Int(delay.min(i32::MAX as u32) as i32).as_jni(), JValue::Int(padding.min(i32::MAX as u32) as i32).as_jni()];
-        call_void(&mut env, track, m, &args);
+        call_void(&mut env, &open.track, m, &args);
     }
 
     /// `setOffloadEndOfStream` throws unless playing: false then, and the engine retries once it plays.
     fn end_of_stream(&mut self) -> bool {
         // A previous end of stream's presentation is not this one's.
         self.events.ended.store(false, Ordering::Release);
-        let (Some(track), Some((java, mut env))) = (&self.track, env()) else { return false };
+        let (Some(open), Some((java, mut env))) = (&self.open, env()) else { return false };
         let Some(m) = java.offload.as_ref().map(|o| o.end_of_stream) else { return false };
-        call_void(&mut env, track, m, &[])
+        call_void(&mut env, &open.track, m, &[])
     }
 
     fn play(&mut self) {
         self.void(|j| j.track.play);
+        let Some(open) = &mut self.open else { return };
         // Hold the paused position until the platform gives a timestamp for this play.
-        self.stamp = self.stamped_now().map(|f| (f, mono_ns(), false));
-        self.playing = true;
-        self.since_ns = mono_ns();
+        open.hold();
+        open.playing = true;
+        open.since_ns = mono_ns();
     }
 
     fn pause(&mut self) {
         self.void(|j| j.track.pause);
-        self.stamp = self.stamped_now().map(|f| (f, mono_ns(), false));
-        self.playing = false;
+        let Some(open) = &mut self.open else { return };
+        open.hold();
+        open.playing = false;
     }
 
     fn flush(&mut self) {
         self.events.ended.store(false, Ordering::Release);
         self.void(|j| j.track.flush);
-        (self.stamp, self.head) = (None, HeadCount::default());
-        self.since_ns = mono_ns();
+        let Some(open) = &mut self.open else { return };
+        (open.stamp, open.head) = (None, HeadCount::default());
+        open.since_ns = mono_ns();
     }
 
     fn set_volume(&mut self, volume: f32) {
-        let (Some(track), Some((java, mut env))) = (&self.track, env()) else { return };
-        self.quiet.set_volume(&mut env, java, track, volume);
+        let (Some(open), Some((java, mut env))) = (&self.open, env()) else { return };
+        self.quiet.set_volume(&mut env, java, &open.track, volume);
     }
 
     /// Frames presented since open or flush (restarts at a gapless join). None when the call failed, which
     /// the engine must not read as 0.
     fn head(&mut self) -> Option<u64> {
-        let (Some(track), Some((java, mut env))) = (&self.track, env()) else { return None };
-        call_int(&mut env, track, java.track.head, &[]).map(|raw| self.head.read(raw as u32))
+        let (Some(open), Some((java, mut env))) = (&mut self.open, env()) else { return None };
+        call_int(&mut env, &open.track, java.track.head, &[]).map(|raw| open.head.read(raw as u32))
     }
 
     /// `getTimestamp`, which works where an offloaded play head does not (Galaxy S22), extrapolated by the
     /// clock between readings as media3 does.
     fn timestamp(&mut self) -> Option<u64> {
-        if self.playing {
-            if let (Some(track), Some(stamp), Some((java, mut env))) = (&self.track, &self.timestamp, env()) {
+        let open = self.open.as_mut()?;
+        if open.playing {
+            if let (Some(stamp), Some((java, mut env))) = (&self.timestamp, env()) {
                 // Only a reading taken after the last open/flush/play and not in the future is a new anchor
                 // (the platform may return a stale one after a flush).
-                if let Some((frames, ns)) = read_timestamp(&mut env, java, track, stamp).filter(|&(_, ns)| ns > self.since_ns && ns <= mono_ns()) {
-                    if self.stamp.is_none_or(|(_, last, fresh)| !fresh || ns > last) {
-                        self.stamp = Some((frames.max(0) as u64, ns, true));
+                if let Some((frames, ns)) = read_timestamp(&mut env, java, &open.track, stamp).filter(|&(_, ns)| ns > open.since_ns && ns <= mono_ns()) {
+                    if open.stamp.is_none_or(|last| !last.fresh || ns > last.ns) {
+                        open.stamp = Some(Stamp { frames: frames.max(0) as u64, ns, fresh: true });
                     }
                 }
             }
         }
-        self.stamped_now()
+        open.stamped_now()
     }
 
     fn data_requested(&mut self) -> bool {
@@ -810,15 +834,11 @@ impl OffloadOutput for JavaOffload {
     }
 
     fn close(&mut self) {
-        if self.track.is_some() {
+        if self.open.is_some() {
             self.void(|j| j.track.release);
             log("offloaded track released");
         }
-        self.track = None;
-        self.buffer = None;
-        self.stamp = None;
-        self.playing = false;
-        self.since_ns = mono_ns();
+        self.open = None;
     }
 }
 
@@ -1324,6 +1344,8 @@ const EVENT_PLACED: i32 = 10;
 const EVENT_LANDED: i32 = 11;
 const EVENT_FOLLOWING: i32 = 12;
 const EVENT_WAITING: i32 = 13;
+const EVENT_LONG_PAUSE: i32 = 14;
+const EVENT_FOCUS: i32 = 15;
 
 impl Events {
     fn push(&self, e: Event) {
@@ -1342,6 +1364,8 @@ impl Events {
             Event::Placed { index, ms } => log(&format!("song {index} goes on at {ms} ms on another path")),
             Event::Following(f) => log(&format!("following: {f:?}")),
             Event::Waiting(on) => log(if *on { "the network would not bring the song: waits for it" } else { "no longer waits for the network" }),
+            Event::LongPause => log("paused a long while: output released"),
+            Event::Focus(hold) => log(&format!("audio focus: {hold:?}")),
             _ => {}
         }
         let jumps = match &e {
@@ -1373,6 +1397,9 @@ impl Events {
             Event::Waiting(on) => (EVENT_WAITING, on as i32, String::new()),
             // -1: not following; else bit 0 the music plays there, bit 1 held here.
             Event::Following(f) => (EVENT_FOLLOWING, f.map_or(-1, |f| f.playing as i32 | (f.held as i32) << 1), String::new()),
+            Event::LongPause => (EVENT_LONG_PAUSE, -1, String::new()),
+            // 0 nothing holds it (or a duck, which the system does itself), 1 held by a call, 2 paused for good.
+            Event::Focus(hold) => (EVENT_FOCUS, match hold { Hold::Free | Hold::Ducked => 0, Hold::Held => 1, Hold::Lost => 2 }, String::new()),
         };
         let first = {
             let mut q = self.queue.lock();
@@ -1481,6 +1508,7 @@ extern "system" fn create(env: JNIEnv, _: JClass, bridge: JObject, current: jlon
     log(&format!("the engine starts: API {sdk}, {} output, {} MB of memory, offload {}", if float != 0 { "float" } else { "16-bit" }, config.memory_mb, if can_offload { "possible" } else { "not on this Android" }));
     let app = CoreApp::new(queue.clone(), analyses.clone()).bridging();
     let engine = Engine::start(library, app, CoreQueue(queue.clone()), Box::new(output), offloaded, config, move |e| tell.push(e));
+    engine.ask_focus_of(Box::new(PlatformFocus(bridge.clone())));
     PLAYERS.add(Arc::new(Player { engine, bridge, shared, events, offload, stations, jumped: Mutex::new(None), looked_ms: AtomicI64::new(i64::MIN / 2), quiet, ahead, analyses, queue, current, sdk, float: float != 0 }))
 }
 
@@ -1529,6 +1557,40 @@ extern "system" fn pause_now(h: jlong) {
     if let Some(p) = player(h) {
         log("headphones gone: pause at once");
         p.engine.pause_now();
+    }
+}
+
+/// The system's audio focus changed: 0 lost, 1 lost for a while, 2 another sound over it, 3 gained.
+extern "system" fn focus(h: jlong, change: jint) {
+    let change = match change {
+        0 => Focus::Lost,
+        1 => Focus::LostTransient,
+        2 => Focus::Duck,
+        3 => Focus::Gained,
+        _ => return,
+    };
+    if let Some(p) = player(h) {
+        p.engine.focus(change);
+    }
+}
+
+/// `RustBridge.focus`: the player's AudioManager focus, asked for (true; whether granted) or given back.
+struct PlatformFocus(Bridge);
+
+impl PlatformFocus {
+    fn call(&self, take: bool) -> bool {
+        let Some((java, mut env)) = env() else { return false };
+        call_bool(&mut env, self.0.obj(), java.focus, &[JValue::Bool(take as jboolean).as_jni()]).unwrap_or(false)
+    }
+}
+
+impl nori_engine::FocusRequest for PlatformFocus {
+    fn request(&mut self) -> bool {
+        self.call(true)
+    }
+
+    fn abandon(&mut self) {
+        self.call(false);
     }
 }
 
@@ -1652,7 +1714,7 @@ extern "system" fn remote_played(_: JNIEnv, _: JClass, h: jlong, remote: jlong, 
 }
 /// Whether the sound chain processes the samples.
 extern "system" fn chain_in(h: jlong) -> jboolean {
-    player(h).is_some_and(|p| p.engine.status_with(|s| s.chain)) as jboolean
+    player(h).is_some_and(|p| p.engine.status_with(|s| s.chain())) as jboolean
 }
 
 /// `Status::pace`: song ms per real ms.
@@ -1712,7 +1774,7 @@ impl nori_core::remote::Follower for Along {
 
 /// `Status::on_cpu`.
 extern "system" fn on_cpu(h: jlong) -> jboolean {
-    player(h).is_some_and(|p| p.engine.status_with(|s| s.on_cpu)) as jboolean
+    player(h).is_some_and(|p| p.engine.status_with(|s| s.on_cpu())) as jboolean
 }
 
 /// Limiter gain reduction on the last buffer, dB.
@@ -1813,7 +1875,7 @@ extern "system" fn offload_event(h: jlong, kind: jint) {
 }
 
 extern "system" fn offloaded(h: jlong) -> jboolean {
-    player(h).is_some_and(|p| p.engine.status_with(|s| s.offloaded)) as jboolean
+    player(h).is_some_and(|p| p.engine.status_with(|s| s.offloaded())) as jboolean
 }
 
 /// Whether settings and output allow offload.

@@ -151,29 +151,87 @@ pub struct SearchView {
     pub text: String,
     /// The query that is asked: the text trimmed. Empty for none.
     pub query: String,
-    /// The answer narrowed to the scope; None with no query (the recent searches show instead).
-    pub shown: Option<SearchResult>,
-    /// The answer is the server's rather than the offline index's.
-    pub from_server: bool,
-    /// The server is being asked.
-    pub searching: bool,
-    /// The server could not be asked; the offline answer stays on screen.
-    pub error: Option<SearchFallback>,
+    pub answer: SearchShown,
     pub scope: SearchScope,
     /// The scope chips are offered: there are provider items, or a scope other than everything is on.
     pub scopes_offered: bool,
-    /// The server answered with nothing at all.
-    pub nothing_found: bool,
+}
+
+/// Where the answer on the search screen stands, narrowed to the scope.
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum SearchShown {
+    /// No query: the recent searches show instead.
+    #[default]
+    Blank,
+    /// The server is being asked; the offline index's answer shows meanwhile, if it has one.
+    Asking { index: Option<SearchResult> },
+    /// The server could not be asked; the index's answer stays.
+    Failed { index: Option<SearchResult>, fallback: SearchFallback },
+    /// The server's answer.
+    Found { result: SearchResult },
+    /// The server answered with nothing.
+    NothingFound,
+}
+
+impl SearchShown {
+    /// The results on screen.
+    pub fn result(&self) -> Option<&SearchResult> {
+        match self {
+            SearchShown::Asking { index } | SearchShown::Failed { index, .. } => index.as_ref(),
+            SearchShown::Found { result } => Some(result),
+            SearchShown::Blank | SearchShown::NothingFound => None,
+        }
+    }
+
+    /// [`SearchShown::result`], taken.
+    pub fn into_result(self) -> Option<SearchResult> {
+        match self {
+            SearchShown::Asking { index } | SearchShown::Failed { index, .. } => index,
+            SearchShown::Found { result } => Some(result),
+            SearchShown::Blank | SearchShown::NothingFound => None,
+        }
+    }
+}
+
+/// Where the answer to the field's query stands.
+#[derive(Default)]
+pub enum Answer {
+    /// The field is blank: the recent searches show instead.
+    #[default]
+    Blank,
+    /// The server is being asked; the index's answer shows meanwhile (the previous query's until it has one).
+    Asking(Option<SearchSplit>),
+    /// The server could not be asked; the index's answer stays.
+    Failed { index: Option<SearchSplit>, fallback: SearchFallback },
+    /// The server's answer, which nothing else replaces for the same query.
+    Server(SearchSplit),
+}
+
+impl Answer {
+    fn split(&self) -> Option<&SearchSplit> {
+        match self {
+            Answer::Blank => None,
+            Answer::Asking(split) | Answer::Failed { index: split, .. } => split.as_ref(),
+            Answer::Server(split) => Some(split),
+        }
+    }
+
+    /// The answer shown, taken out, leaving [`Answer::Blank`].
+    pub fn take_split(&mut self) -> Option<SearchSplit> {
+        match std::mem::take(self) {
+            Answer::Blank => None,
+            Answer::Asking(split) | Answer::Failed { index: split, .. } => split,
+            Answer::Server(split) => Some(split),
+        }
+    }
 }
 
 /// What the search field holds and what answers it has had: the state of the core's `SearchSession`.
 #[derive(Default)]
 pub struct Session {
     pub text: String,
-    pub split: Option<SearchSplit>,
-    pub from_server: bool,
-    pub searching: bool,
-    pub error: Option<SearchFallback>,
+    pub answer: Answer,
     pub scope: SearchScope,
 }
 
@@ -185,17 +243,26 @@ impl Session {
 
     /// What the screen shows now.
     pub fn view(&self) -> SearchView {
-        let shown = self.split.as_ref().map(|s| s.shown(self.scope));
-        let has_providers = self.split.as_ref().is_some_and(|s| s.providers.is_some());
-        let empty = shown.as_ref().is_some_and(|r| r.songs.is_empty() && r.albums.is_empty() && r.artists.is_empty() && r.playlists.is_empty());
+        let split = self.answer.split();
+        let has_providers = split.is_some_and(|s| s.providers.is_some());
+        let shown = |s: &Option<SearchSplit>| s.as_ref().map(|s| s.shown(self.scope));
+        let answer = match &self.answer {
+            Answer::Blank => SearchShown::Blank,
+            Answer::Asking(index) => SearchShown::Asking { index: shown(index) },
+            Answer::Failed { index, fallback } => SearchShown::Failed { index: shown(index), fallback: fallback.clone() },
+            Answer::Server(split) => {
+                let result = split.shown(self.scope);
+                if result.songs.is_empty() && result.albums.is_empty() && result.artists.is_empty() && result.playlists.is_empty() {
+                    SearchShown::NothingFound
+                } else {
+                    SearchShown::Found { result }
+                }
+            }
+        };
         SearchView {
             text: self.text.clone(),
             query: self.query().to_string(),
-            nothing_found: self.from_server && empty,
-            shown,
-            from_server: self.from_server,
-            searching: self.searching,
-            error: self.error.clone(),
+            answer,
             scope: self.scope,
             scopes_offered: has_providers || self.scope != SearchScope::Everything,
         }

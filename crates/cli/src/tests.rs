@@ -438,7 +438,7 @@ fn the_library_has_its_places_and_orders() {
     let year = orders[2];
     assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::Albums { sort: year, favorites: true, offset: 0 })));
     a.handle(Msg::Data(Req::Albums { sort: year, favorites: true, offset: 0 }, Ok(Data::Albums(albums[..1].to_vec()))));
-    assert!(!a.library.albums_more, "the favorites come whole");
+    assert!(!a.library.album_pages.more(), "the favorites come whole");
     assert!(draw(&mut a, 120, 30).contains("Favorites only   Sort by  Year"));
 
     // The songs: the core's sorts, round; the favorites a filter over any of them.
@@ -703,10 +703,7 @@ fn queue_panel_editing() {
     key(&mut a, KeyCode::Char('d'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Remove(2)));
     key(&mut a, KeyCode::Char('u'));
-    assert_eq!(a.cmds.last(), Some(&Cmd::Restore("s2".into())), "u puts it back");
-    let sent = a.cmds.len();
-    key(&mut a, KeyCode::Char('u'));
-    assert_eq!(a.cmds.len(), sent, "once");
+    assert_eq!(a.cmds.last(), Some(&Cmd::Undo), "u puts it back");
     key(&mut a, KeyCode::Char('K'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Move(2, 1)));
     key(&mut a, KeyCode::Enter);
@@ -767,19 +764,23 @@ fn full_player_shows_the_song_and_the_mix() {
 
 #[test]
 fn lyrics_panel() {
+    use nori_core::lyrics_follow::LyricsNow;
     use nori_core::{LyricLine, LyricWord, Lyrics};
     let mut a = app();
     a.heard(Some(song("s1", "First", 200)));
     key(&mut a, KeyCode::Char('L'));
-    assert!(a.cmds.contains(&Cmd::Lyrics("s1".into())));
+    a.handle(Msg::Lyrics(LyricsNow::Looking { song: "s1".into() }));
+    assert!(draw(&mut a, 160, 30).contains("Looking for lyrics"));
     let words = vec![LyricWord { start_ms: 1000, end_ms: 1500, start: 0, end: 5 }, LyricWord { start_ms: 1500, end_ms: 2000, start: 6, end: 11 }];
     let lines = vec![
         LyricLine { start_ms: 1000, end_ms: 2000, text: "Hello world".into(), words, ..Default::default() },
         LyricLine { start_ms: 3000, end_ms: 4000, text: "Second line".into(), ..Default::default() },
     ];
     let pick = nori_core::race::LyricsPick { lyrics: Lyrics { synced: true, word_timed: true, lines, ..Default::default() }, origin: nori_core::lyrics_sources::LyricsOrigin::Server };
-    a.handle(Msg::Lyrics { song: "s1".into(), pick });
-    let l = a.lyrics.as_ref().unwrap();
+    a.handle(Msg::Lyrics(LyricsNow::Shown { song: "s0".into(), pick: pick.clone() }));
+    assert!(a.lyrics.found().is_none(), "another song's words");
+    a.handle(Msg::Lyrics(LyricsNow::Shown { song: "s1".into(), pick }));
+    let l = a.lyrics.found().unwrap();
     l.advance(1250, true, true);
     let s = draw(&mut a, 160, 30);
     assert!(s.contains("Hello world") && s.contains("Second line"), "{s}");
@@ -797,7 +798,7 @@ fn equalizer_screen() {
     a.prefs.eq_graphic[2] = 12.0;
     a.prefs.eq_graphic[5] = -6.0;
     a.go(View::Equalizer);
-    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Tuning(_))), "opening it leaves the output as it is");
+    assert_eq!(a.cmds.last(), Some(&Cmd::SoundPage(nori_core::tuning::SoundPage::Equalizer, true)), "the session is told it is in sight");
     let s = draw(&mut a, 160, 44);
     assert!(s.contains("●") && s.contains("0 dB") && s.contains("1k") && s.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)) && s.contains(" Presets ") && !s.contains("▾") && s.contains("Equalizer on") && s.contains("Limiter"), "{s}");
     dump("equalizer", &s);
@@ -834,22 +835,18 @@ fn equalizer_screen() {
     let on = hit_rect(&a, Hit::Row(ListRef::Eq, 0));
     click(&mut a, on.x + 2, on.y);
     assert_eq!(a.cmds.last(), Some(&Cmd::Setting("eq".into(), "false".into())));
-    // The first sound really changed there asks for the shallow buffer, once.
-    assert!(a.sound_edited());
-    assert!(!a.sound_edited());
-    a.go(View::Home);
-    assert!(a.cmds.contains(&Cmd::Tuning(false)));
-    // Left without changing anything: nothing to ask back.
+    // Leaving it says so, and going on to Settings shows its Sound group before the equalizer leaves.
     a.cmds.clear();
-    a.go(View::Equalizer);
+    a.go(View::Settings);
+    use nori_core::tuning::SoundPage;
+    assert_eq!(a.cmds[..2], [Cmd::SoundPage(SoundPage::Sound, true), Cmd::SoundPage(SoundPage::Equalizer, false)], "{:?}", a.cmds);
+    a.cmds.clear();
     a.go(View::Home);
-    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Tuning(_))), "{:?}", a.cmds);
-    // With the equalizer off its page's limiter and balance are still heard: the same.
-    a.prefs.eq_enabled = false;
+    assert_eq!(a.cmds.iter().filter(|c| matches!(c, Cmd::SoundPage(..))).collect::<Vec<_>>(), [&Cmd::SoundPage(SoundPage::Sound, false)]);
+    a.cmds.clear();
+    a.go(View::Albums);
+    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::SoundPage(..))), "{:?}", a.cmds);
     a.go(View::Equalizer);
-    assert!(a.sound_edited());
-    a.go(View::Home);
-    assert!(a.cmds.contains(&Cmd::Tuning(false)));
     // The parametric one draws its own bands, and d takes the one chosen out.
     let mut p = StoredPrefs { eq_enabled: true, eq_mode: nori_core::settings::EqMode::Parametric, ..StoredPrefs::default() };
     p.eq_bands = (0..3).map(|i| nori_core::settings::SoundBand { kind: nori_core::EqKind::Peaking, freq: 100.0 * 10f32.powi(i), gain_db: 0.0, q: 1.0, channel: nori_core::settings::BandChannel::Both }).collect();
@@ -938,7 +935,9 @@ fn a_signed_out_like_says_where_to_sign_in() {
 }
 
 fn account(user: &str, ended: bool) -> Overlay {
-    Overlay::Account { kind: nori_core::settings::ServerKind::Plugin { id: "dev.example.music".into() }, user: user.into(), ended, pasting: false, text: String::new(), error: None, busy: false }
+    let mut flow = nori_core::providers::flow::SignInFlow::default();
+    flow.on(nori_core::providers::flow::SignInEvent::Offer { ended });
+    Overlay::Account { kind: nori_core::settings::ServerKind::Plugin { id: "dev.example.music".into() }, user: user.into(), pasting: false, text: String::new(), flow, window_failed: false }
 }
 
 /// The account sheet signs in with the provider's page, or with cookies pasted; an ended session's can
@@ -950,7 +949,7 @@ fn the_account_sheet_signs_in_and_out() {
     let s = draw(&mut a, 100, 30);
     assert!(s.contains("Sign in to dev.example.music") && s.contains("dev.example.music signed you out") && s.contains("don't show again"), "{s}");
     key(&mut a, KeyCode::Enter);
-    assert!(matches!(a.cmds.last(), Some(Cmd::SignInWindow)) && matches!(a.overlay, Some(Overlay::Account { busy: true, .. })));
+    assert!(matches!(a.cmds.last(), Some(Cmd::SignInWindow)) && matches!(&a.overlay, Some(Overlay::Account { flow, .. }) if flow.busy()));
     key(&mut a, KeyCode::Char('p'));
     assert!(matches!(a.overlay, Some(Overlay::Account { pasting: false, .. })), "no keys while the window is open");
     a.handle(Msg::SignedIn(nori_core::providers::SignInResult::Refused));
@@ -1163,7 +1162,7 @@ fn search_results_list() {
         artists: vec![nori_core::Artist { id: "ar-1".into(), name: "The Ones".into(), ..Default::default() }],
         playlists: vec![nori_core::Playlist { id: "yt-VLone".into(), name: "One Mix".into(), comment: Some("Ann • 17 views".into()), ..Default::default() }],
     };
-    a.search.view = Some(nori_core::search::SearchView { query: "one".into(), shown: Some(found), from_server: true, ..Default::default() });
+    a.search.view = Some(nori_core::search::SearchView { query: "one".into(), answer: nori_core::search::SearchShown::Found { result: found }, ..Default::default() });
     key(&mut a, KeyCode::Enter);
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Songs") && s.contains("One Album") && s.contains("The Ones") && s.contains("From the server"), "{s}");
@@ -1347,7 +1346,7 @@ fn devices_panel() {
     key(&mut a, KeyCode::Esc);
 
     a.devices.on = true;
-    a.devices.jams = true;
+    a.devices.jam_start = Some(nori_core::remote::JamStart::Offered);
     a.devices.list = vec![device("desk", "Desk", DeviceKind::Desktop, Some("Wish")), device("pixel", "Pixel", DeviceKind::Phone, None)];
     key(&mut a, KeyCode::Char('C'));
     assert_eq!((a.full, a.panel, a.focus), (true, Panel::Devices, Focus::Panel));
@@ -1428,7 +1427,7 @@ fn another_device_playing_shows_in_the_player_bar() {
 fn jam_header_and_requests_in_the_queue() {
     let mut a = app();
     a.devices.on = true;
-    a.devices.jams = true;
+    a.devices.jam_start = Some(nori_core::remote::JamStart::Hosting);
     a.devices.jam = Some(jam());
     a.devices.added.insert("s2".into(), "Gus".into());
     a.queue = Some(queue_of(5, 1));
@@ -1464,7 +1463,7 @@ fn jam_header_and_requests_in_the_queue() {
     at(&mut a, crate::app::QueueRow::Ask(1));
     key(&mut a, KeyCode::Char('d'));
     assert_eq!(a.cmds.last(), Some(&Cmd::JamDecide(12, false)));
-    assert!(a.taken.is_none(), "a refusal is no song taken out");
+    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Remove(_))), "a refusal is no song taken out");
     at(&mut a, crate::app::QueueRow::End);
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.last(), Some(&Cmd::JamEnd));
@@ -1489,11 +1488,11 @@ fn a_jam_starts_around_the_song_picked() {
     a.cmds.clear();
     key(&mut a, KeyCode::Char('i'));
     assert!(a.cmds.is_empty() && a.note.as_ref().is_some_and(|n| n.0 == crate::text::JAMS_OFF), "jams off");
-    a.devices = crate::app::Devices { on: true, jams_unsupported: true, ..Default::default() };
+    a.devices = crate::app::Devices { on: true, jam_start: Some(nori_core::remote::JamStart::Unsupported), ..Default::default() };
     key(&mut a, KeyCode::Char('i'));
     assert!(a.cmds.is_empty() && a.note.as_ref().is_some_and(|n| n.0 == crate::text::JAM_UNSUPPORTED), "no relay");
 
-    a.devices = crate::app::Devices { on: true, jams: true, ..Default::default() };
+    a.devices = crate::app::Devices { on: true, jam_start: Some(nori_core::remote::JamStart::Offered), ..Default::default() };
     key(&mut a, KeyCode::Char('i'));
     let origin = Some(nori_core::PageOrigin::new(nori_core::OriginKind::Songs, ""));
     assert_eq!(a.cmds, [Cmd::Play { songs, start: 1, shuffle: false, from: origin }, Cmd::JamStart]);
@@ -1789,7 +1788,7 @@ fn the_main_screens() {
         a.go(View::Search);
         chars(a, "blue");
         let found = nori_core::SearchResult { songs: tracks[..2].to_vec(), albums: albums[..2].to_vec(), artists: vec![nori_core::Artist { id: "ar-1".into(), name: "John Coltrane".into(), album_count: Some(12), ..Default::default() }], playlists: vec![] };
-        a.search.view = Some(nori_core::search::SearchView { query: "blue".into(), shown: Some(found), from_server: true, ..Default::default() });
+        a.search.view = Some(nori_core::search::SearchView { query: "blue".into(), answer: nori_core::search::SearchShown::Found { result: found }, ..Default::default() });
         out.push(shot(a, "search"));
         out
     };
@@ -1835,7 +1834,7 @@ fn home_offers_the_queue_left_and_the_mixes() {
     let mut a = app();
     a.rules = nori_core::browse::profile_rules(false);
     a.go(View::Home);
-    assert!(a.cmds.contains(&Cmd::LookForOffer { playing: false, shown: None }), "{:?}", a.cmds);
+    assert!(a.cmds.contains(&Cmd::LookForOffer), "{:?}", a.cmds);
     let songs = vec![song("o1", "Left Off", 200), song("o2", "Next Up", 200)];
     let offer = QueueOffer { by: QueueBy::Nori, songs: songs.clone(), index: 1, position_ms: 42_000 };
     a.handle(Msg::Offer(Some(offer.clone())));
@@ -1852,7 +1851,7 @@ fn home_offers_the_queue_left_and_the_mixes() {
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds, [Cmd::TakeOffer(offer.clone())]);
-    assert!(a.home.offer.is_none() && a.home.line() == Some(crate::app::HomeLine::Shelf(crate::app::ShelfAt::ForYou)));
+    assert!(a.home.offer.shown().is_none() && a.home.line() == Some(crate::app::HomeLine::Shelf(crate::app::ShelfAt::ForYou)));
     a.handle(Msg::Offer(Some(offer.clone())));
     key(&mut a, KeyCode::Char('g'));
     key(&mut a, KeyCode::Char('d'));
@@ -1860,7 +1859,7 @@ fn home_offers_the_queue_left_and_the_mixes() {
     // An offer whose song is playing here is gone.
     a.handle(Msg::Offer(Some(offer)));
     a.heard(Some(song("o2", "Next Up", 200)));
-    assert!(a.home.offer.is_none(), "the player shows its song");
+    assert!(a.home.offer.shown().is_none(), "the player shows its song");
     // A mix opens as a page.
     key(&mut a, KeyCode::Char('g'));
     key(&mut a, KeyCode::Down);
@@ -1883,8 +1882,17 @@ fn home_offers_the_queue_left_and_the_mixes() {
     a.cmds.clear();
     key(&mut a, KeyCode::Char('G'));
     assert_eq!(a.cmds, [Cmd::Load(Req::Row { row, offset: 60 })]);
+    // A page that fails keeps what is listed, and is asked for again as the selection moves on.
+    a.handle(Msg::Data(Req::Row { row, offset: 60 }, Err("offline".into())));
+    assert!(draw(&mut a, 120, 30).contains("New 59"));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Up);
+    assert_eq!(a.cmds, [Cmd::Load(Req::Row { row, offset: 60 })]);
+    a.cmds.clear();
+    key(&mut a, KeyCode::Down);
+    assert!(a.cmds.is_empty(), "one page on its way: {:?}", a.cmds);
     a.handle(Msg::Data(Req::Row { row, offset: 60 }, Ok(Data::Row(vec![Item::Album(album("n60", "New 60"))], true))));
-    assert!(matches!(a.page(), Some(crate::app::Page::Row { items, more: false, .. }) if items.len() == 61));
+    assert!(matches!(a.page(), Some(crate::app::Page::Row { items, pages, .. }) if items.len() == 61 && !pages.more()));
 }
 
 /// A page's head, as the phone's: its title with the seal, who made it with Play and Shuffle, then the
@@ -1946,6 +1954,37 @@ fn page_heads_offer_what_the_core_says() {
     assert!(lines[at + 1].starts_with("Long Player") && lines[at + 2].starts_with("Singles") && lines[at + 3].starts_with("Short One"), "{s}");
     assert!(s.contains("2 releases") && s.contains("Download everything   Add to queue"), "{s}");
     assert!(matches!(a.selected(), Some(Item::Album(al)) if al.id == "a1"));
+}
+
+/// The full player's menu has the sleep timer: its choices are the core's, "Off" first while one runs,
+/// and a pick goes to the session.
+#[test]
+fn the_players_menu_sets_the_sleep_timer() {
+    use crate::menu::{MenuAct, MenuLine};
+    use nori_core::menus::{SleepChoice, SongAction};
+    let mut a = app();
+    a.song = Some(song("1", "One", 200));
+    a.full = true;
+    let pick = |a: &mut App, line: MenuLine| {
+        key(a, KeyCode::Char('m'));
+        let Some(Overlay::Menu { lines, folded, sel, .. }) = &mut a.overlay else { panic!("no menu") };
+        if !lines.contains(&line) {
+            let more = lines.iter().position(|l| *l == MenuLine::More).expect("more");
+            lines.splice(more..=more, folded.drain(..));
+        }
+        sel.at = lines.iter().position(|l| *l == line).unwrap_or_else(|| panic!("{line:?} in {lines:?}"));
+        key(a, KeyCode::Enter);
+    };
+    pick(&mut a, MenuLine::Act(MenuAct::Song(SongAction::SleepTimer)));
+    let Some(Overlay::Picker { options, .. }) = &a.overlay else { panic!("no choices") };
+    assert_eq!(options[0].0, "15 minutes", "nothing to turn off");
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sleep(SleepChoice { minutes: 30, end_of_track: false, songs: 0 })));
+    a.shared.sleep_pick(SleepChoice { minutes: 30, end_of_track: false, songs: 0 }, 0);
+    pick(&mut a, MenuLine::Act(MenuAct::Song(SongAction::SleepTimer)));
+    let Some(Overlay::Picker { options, .. }) = &a.overlay else { panic!("no choices") };
+    assert_eq!(options[0].0, "Off", "a timer runs");
 }
 
 /// m opens the menu of what is selected: a song's lines as the core lists them, the less used under More,
@@ -2085,6 +2124,8 @@ fn no_plugins_offers_the_browser_then_repos_and_a_file() {
     assert!(!s.contains("Add repo"), "repos are a page of their own:\n{s}");
 
     follow(&mut a, "Get plugins");
+    // Leaving Settings' own groups for the plugins' pages tells the session (`Cmd::SoundPage`).
+    a.cmds.retain(|c| !matches!(c, Cmd::SoundPage(..)));
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Look)), "the browser asks the repos");
     let s = draw(&mut a, 140, 40);
     assert!(s.contains("Looking…") && s.contains("[ Install from a file ]") && s.contains("esc back"), "{s}");
@@ -2276,6 +2317,8 @@ fn the_browser_searches_narrows_and_opens_the_offer_shown() {
     let s = draw(&mut a, 140, 300);
     assert!(s.contains("UPDATES") && s.contains("1.0.0 → 2.0.0"), "an update waits on the list:\n{s}");
     follow(&mut a, "Get plugins");
+    // Leaving Settings' own groups for the plugins' pages tells the session (`Cmd::SoundPage`).
+    a.cmds.retain(|c| !matches!(c, Cmd::SoundPage(..)));
     assert!(a.cmds.is_empty(), "what was read isn't asked again");
     let s = draw(&mut a, 140, 40);
     dump("plugins-browser", &s);
@@ -2310,6 +2353,7 @@ fn the_browser_searches_narrows_and_opens_the_offer_shown() {
 
     select_row(&mut a, |r| matches!(r, Row::Offer { title, .. } if title == "Gain"));
     key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::SoundPage(nori_core::tuning::SoundPage::Plugin, true)), "a plugin's page is a sound page");
     assert!(matches!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Readme(id, Some(_)))) if id == "dev.example.gain"), "its README, off the UI's way");
     let s = draw(&mut a, 140, 60);
     dump("plugins-offer-page", &s);
@@ -2327,6 +2371,8 @@ fn the_browser_searches_narrows_and_opens_the_offer_shown() {
     key(&mut a, KeyCode::Char('d'));
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::RemoveRepo(friend.url.clone()))));
+    assert_eq!(a.cmds, [Cmd::SoundPage(nori_core::tuning::SoundPage::Plugin, false)], "the plugin's page left");
+    a.cmds.clear();
     let add = |a: &mut App| {
         select_row(a, |r| matches!(r, Row::Button { title, .. } if title == "Add repo"));
         key(a, KeyCode::Enter);
@@ -2358,6 +2404,8 @@ fn an_offered_plugins_page_shows_its_readme() {
     select_row(&mut a, |r| matches!(r, Row::Offer { .. }));
     key(&mut a, KeyCode::Enter);
     let id = "dev.example.lyrics-plus";
+    // Leaving Settings' own groups for the plugins' pages tells the session (`Cmd::SoundPage`).
+    a.cmds.retain(|c| !matches!(c, Cmd::SoundPage(..)));
     assert!(matches!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Readme(..)))));
     a.settings.readme_came("dev.example.elsewhere", vec![ReadmeBlock::Text { text: "Not this".into() }]);
     a.settings.readme_came(id, vec![
@@ -2681,15 +2729,15 @@ fn the_kind_chosen_reaches_its_form() {
     assert!(s.contains("Choose a provider") && s.contains("OpenSubsonic") && s.contains("Navidrome and other servers") && s.contains("Test") && !s.contains("Server address"), "{s}");
     key(&mut a, KeyCode::Down);
     key(&mut a, KeyCode::Enter);
-    assert_eq!(a.login.kind, Some(ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() }));
+    assert_eq!(a.login.flow.kind(), Some(&ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() }));
     let s = draw(&mut a, 100, 40);
     dump("login-plugin-kind", &s);
     assert!(s.contains("From a plugin") && !s.contains("Server address"), "{s}");
     // The test plugin asks nothing and has no sign-in, so it is added at once; it can never be sent, so
     // its page shows, with why.
-    assert!(a.cmds.is_empty() && a.login.error.is_some() && !a.login_choosing());
+    assert!(a.cmds.is_empty() && a.login.flow.failure().is_some() && !a.login_choosing());
     key(&mut a, KeyCode::Esc);
-    assert_eq!((a.login.kind.clone(), a.login.error.clone(), a.quit), (None, None, false), "back chooses again");
+    assert_eq!((a.login.flow.clone(), a.quit), (Default::default(), false), "back chooses again");
     key(&mut a, KeyCode::Up);
     a.login.focus = 3;
     key(&mut a, KeyCode::Enter);
@@ -2713,8 +2761,8 @@ fn nothing_to_ask_adds_at_once() {
     let dir = nori_testdir::TempDir::new("cli-login-add-now");
     let mut a = app_with_provider(&dir);
     let kind = ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() };
-    a.login.busy = true;
-    a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: Vec::new() });
+    use nori_core::providers::flow::{AddFlow, AddPage, AddSend};
+    a.login.flow = AddFlow { page: AddPage::Adding { kind: kind.clone() }, send: AddSend::Sending { added: Some(nori_core::providers::AfterAdding::Remind) } };
     let s = draw(&mut a, 100, 40);
     assert!(s.contains("Choose a provider") && !s.contains("Connect"), "no lone button:\n{s}");
     a.handle(Msg::LoggedIn(Err("no way".into())));
@@ -2724,7 +2772,7 @@ fn nothing_to_ask_adds_at_once() {
     a.login = Default::default();
     let web = vec![SignIn::WebPage { start_url: "https://a.example".into() }];
     a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: web.clone() });
-    assert!(!a.login.adding_now && a.login.error.is_none(), "not added yet");
+    assert!(!a.login.flow.choosing() && a.login.flow.failure().is_none(), "not added yet");
     // A name is nothing to ask there.
     let name = vec![nori_core::providers::FieldSpec { what: nori_core::providers::FormField::Name, advanced: false }];
     a.provider_opened(&ProviderInfo { kind, fields: name, sign_in: web });
@@ -2734,19 +2782,20 @@ fn nothing_to_ask_adds_at_once() {
 /// On the account page Enter signs in and g goes on as a guest.
 #[test]
 fn the_account_pages_keys_say_how_it_goes_on() {
-    use nori_core::providers::{AfterAdding, ProviderInfo, SignIn};
+    use nori_core::providers::{ProviderInfo, SignIn};
     use nori_core::settings::ServerKind;
     let dir = nori_testdir::TempDir::new("cli-login-account-keys");
-    for (code, after) in [(KeyCode::Enter, AfterAdding::SignIn), (KeyCode::Char('g'), AfterAdding::Guest)] {
+    for code in [KeyCode::Enter, KeyCode::Char('g')] {
         let mut a = app_with_provider(&dir);
         let kind = ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() };
         a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: vec![SignIn::WebPage { start_url: "https://a.example".into() }] });
         let page = draw(&mut a, 100, 40);
         dump("login-account", &page);
         assert!(page.contains("Continue as guest"), "{page}");
-        assert_eq!(a.login.after, None, "waits for a key");
+        assert_eq!(a.login.flow.failure(), None, "waits for a key");
         key(&mut a, code);
-        assert_eq!(a.login.after, Some(after));
+        // The test plugin's profile is never ready: the key sent it, and it was turned back.
+        assert_eq!(a.login.flow.failure(), Some(&nori_core::providers::flow::AddFailure::Missing));
     }
 }
 
@@ -2764,7 +2813,7 @@ fn every_plugin_off_leads_a_provider_to_the_switch() {
     a.view = View::Login;
     key(&mut a, KeyCode::Down);
     key(&mut a, KeyCode::Enter);
-    assert!(a.settings.alone && a.login.offered.is_none(), "the plugins' page, not the offer's");
+    assert_eq!(a.settings.alone, crate::settings_view::Alone::Plugins, "the plugins' page, not the offer's");
 }
 
 /// A form is titled with its provider, not nori.
@@ -2826,11 +2875,11 @@ fn choosing_an_offer_installs_or_turns_it_on() {
     a.login.choice.at = 2;
 
     key(&mut a, KeyCode::Enter);
-    assert_eq!((a.view, a.login.offered.clone()), (View::Settings, Some(id.clone())), "its page");
+    assert_eq!((a.view, a.settings.alone.clone()), (View::Settings, crate::settings_view::Alone::Offer(id.clone())), "its page");
     let s = draw(&mut a, 140, 40);
     assert!(s.contains("Radio about"), "{s}");
     key(&mut a, KeyCode::Esc);
-    assert_eq!((a.view, a.login.offered.clone()), (View::Login, None), "back chooses again");
+    assert_eq!((a.view, a.settings.alone.clone()), (View::Login, crate::settings_view::Alone::No), "back chooses again");
 
     key(&mut a, KeyCode::Enter);
     a.cmds.clear();
@@ -2839,7 +2888,7 @@ fn choosing_an_offer_installs_or_turns_it_on() {
     a.handle(Msg::Installed(Ok(id.clone())));
     assert_eq!(a.view, View::Login);
     assert!(a.cmds.contains(&Cmd::Plugin(PluginCmd::TurnOnChosen(id.clone()))), "{:?}", a.cmds);
-    assert!(!a.settings.deep() && !a.settings.alone && a.login.offered.is_none());
+    assert!(!a.settings.deep() && a.settings.alone == crate::settings_view::Alone::No);
 
     a.cmds.clear();
     a.settings.own.plugins = vec![card(&id, "Radio", Vec::new())];
@@ -2849,7 +2898,7 @@ fn choosing_an_offer_installs_or_turns_it_on() {
 
     // Its kind isn't there (every plugin off): the first screen stays.
     a.provider_chosen(nori_core::settings::ServerKind::Plugin { id });
-    assert_eq!(a.login.kind, None);
+    assert_eq!(a.login.flow, Default::default());
 }
 
 #[test]

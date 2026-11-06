@@ -16,6 +16,8 @@ use nori_core::pages::release_groups;
 use nori_core::mixes::board::{MixLookup, MixTile, FAVOURITES_MIX};
 use nori_core::stage::QueueRows;
 use nori_core::{Album, Artist, Genre, Lyrics, OriginKind, PageOrigin, Playlist, SearchResult, Song};
+use nori_core::lyrics_follow::LyricsNow;
+use nori_core::search::SearchShown;
 use nori_covers::loader::Ticket;
 use nori_engine::State;
 use nori_host::session::{read_pages, Chore};
@@ -24,6 +26,7 @@ use nori_host::Fetch;
 use nori_core::settings::HomeRow;
 use serde_json::{json, Value};
 
+use crate::paging;
 use crate::session::{c_text, server, with_session};
 
 pub const PAGE_HOME: i32 = 1;
@@ -104,7 +107,6 @@ struct List {
 
 static LISTS: Mutex<VecDeque<List>> = Mutex::new(VecDeque::new());
 static TICKETS: Mutex<Vec<(u64, Ticket)>> = Mutex::new(Vec::new());
-static LYRICS: Mutex<Option<(String, Lyrics)>> = Mutex::new(None);
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -183,8 +185,18 @@ fn with_download_marks(s: &nori_host::session::Session, mut v: Value) -> Value {
 }
 
 fn send_error(token: u64, e: &nori_core::transport::NetError) {
+    send(token, &failure(e));
+}
+
+/// A failure as a page's answer says it: its code and detail.
+fn failure(e: &nori_core::transport::NetError) -> Value {
     let (code, detail) = crate::account::fail(e.clone());
-    send(token, &json!({ "error": code, "detail": detail.unwrap_or_default() }));
+    json!({ "error": code, "detail": detail.unwrap_or_default() })
+}
+
+/// A failed server search, kept as its fallback's reason in the page's own words ([`failure`]).
+fn search_failure(e: &nori_core::transport::NetError) -> String {
+    failure(e).to_string()
 }
 
 fn cover(c: &Option<String>) -> &str {
@@ -393,12 +405,15 @@ fn song_letters(sort: &str) -> Option<&'static str> {
 /// A page of an album grid from `offset`, or with `favorites` the starred albums whole in `sort`'s order:
 /// more follow while pages come full (`browse::next_album_page`).
 fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, favorites: bool, genre: Option<String>, offset: i32) {
+    if offset == 0 {
+        paging::first(token);
+    }
     let read = if favorites {
         Read::StarredItems
     } else {
         Read::AlbumList { kind: sort, size: ALBUM_PAGE, offset, genre }
     };
-    pages(client, token, read, &|p| {
+    let read = pages_sent(client, token, read, &|p| {
         let v = match p {
             Page::Albums { v } => v,
             Page::StarredPage { v } => favorites_in_order(v.albums, sort, false),
@@ -410,12 +425,15 @@ fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, f
             vec![section("albums", true, lettered(v.iter().map(album_json).collect(), album_letters(sort)))]
         };
         Some(json!({
-            "more": next_album_page(sort, favorites, offset as u32, ALBUM_PAGE as u32, v.len() as u32).is_some(),
-            "next": offset + v.len() as i32, "from": offset,
+            "more": paging::answered(token, offset as u32, next_album_page(sort, favorites, offset as u32, ALBUM_PAGE as u32, v.len() as u32)),
+            "from": offset,
             "letters": album_letters(sort).is_some(),
             "sections": sections,
         }))
     });
+    if !read {
+        paging::failed(token, offset as u32);
+    }
 }
 
 /// Albums in [`AlbumSort::ArtistRows`] order as a shelf per artist (`browse::artist_rows`), each titled
@@ -478,22 +496,29 @@ fn home_row(token: u64, client: &nori_core::client::Client, core: &nori_core::Co
         return send(token, &json!({ "sections": [], "from": offset }));
     };
     let key = shelf_key(row);
-    let more = |got: usize| home_row_more(shelf.clone(), got as u32);
+    if offset == 0 {
+        paging::first(token);
+    }
+    // Whether more may follow a page from `offset` that brought `got`.
+    let more = |got: usize| paging::answered(token, offset, home_row_more(shelf.clone(), got as u32).then_some(offset + got as u32));
     match shelf.clone() {
         HomeShelf::Albums { sort, size, follows_stars } => {
-            pages(client, token, shelf_albums_read(sort, size, follows_stars, offset), &|p| match p {
+            let read = pages_sent(client, token, shelf_albums_read(sort, size, follows_stars, offset), &|p| match p {
                 Page::Albums { v } => Some(json!({
-                    "more": more(v.len()), "next": offset + v.len() as u32, "from": offset,
+                    "more": more(v.len()), "from": offset,
                     "sections": [section(key, true, v.iter().map(album_json).collect())],
                 })),
                 _ => None,
             });
+            if !read {
+                paging::failed(token, offset);
+            }
         }
         HomeShelf::Songs { sort, descending, limit } => {
             let songs = core.browse_songs(sort, descending, false, 0, 0, offset, limit).unwrap_or_default();
             let from = if offset == 0 { None } else { extend_list(token, &songs) }.unwrap_or(0);
             let v = json!({
-                "more": more(songs.len()), "next": offset + songs.len() as u32, "from": offset,
+                "more": more(songs.len()), "from": offset,
                 "sections": [songs_section(key, &songs, from)],
             });
             if offset == 0 {
@@ -547,6 +572,16 @@ fn pages(
     read: Read,
     make: &dyn Fn(Page) -> Option<Value>,
 ) {
+    pages_sent(client, token, read, make);
+}
+
+/// Sends each page `read` brings as `make` draws it; false when it failed (the failure is sent).
+fn pages_sent(
+    client: &nori_core::client::Client,
+    token: u64,
+    read: Read,
+    make: &dyn Fn(Page) -> Option<Value>,
+) -> bool {
     let mut any = false;
     let r = read_pages(client, read, |p| {
         if let Some(v) = make(p) {
@@ -557,11 +592,15 @@ fn pages(
     match r {
         Ok(()) if !any => send(token, &json!({ "sections": [] })),
         Ok(()) => {}
-        Err(e) => send_error(token, &e),
+        Err(e) => {
+            send_error(token, &e);
+            return false;
+        }
     }
+    true
 }
 
-fn read(token: u64, kind: i32, arg: String) {
+pub(crate) fn read(token: u64, kind: i32, arg: String) {
     let Some((client, core)) = server() else {
         send(token, &json!({ "closed": true }));
         return;
@@ -719,6 +758,9 @@ fn read(token: u64, kind: i32, arg: String) {
         }),
         PAGE_SONGS => {
             let offset = arg.parse().unwrap_or(0);
+            if offset == 0 {
+                paging::first(token);
+            }
             let sort = song_sort_saved(list_prefs());
             match nori_core::transport::block_on(client.songs_listed(sort.clone(), false, false, 0, 0, offset)) {
                 Ok(p) => {
@@ -729,16 +771,19 @@ fn read(token: u64, kind: i32, arg: String) {
                         rows["items"].as_array().cloned().unwrap_or_default(),
                         song_letters(&sort),
                     ));
+                    let more = paging::answered(token, offset, (!p.exhausted).then_some(offset + p.songs.len() as u32));
                     let v = json!({
-                        "more": !p.exhausted, "next": offset as usize + p.songs.len(),
-                        "from": from, "letters": song_letters(&sort).is_some(), "sections": [rows],
+                        "more": more, "from": from, "letters": song_letters(&sort).is_some(), "sections": [rows],
                     });
                     if kept.is_none() {
                         keep_list(token, p.songs, None);
                     }
                     send(token, &v);
                 }
-                Err(e) => send_error(token, &e),
+                Err(e) => {
+                    paging::failed(token, offset);
+                    send_error(token, &e);
+                }
             }
         }
         PAGE_DOWNLOADS => {
@@ -819,20 +864,16 @@ fn read(token: u64, kind: i32, arg: String) {
                 let recent = core.search_history().unwrap_or_default();
                 return send(token, &json!({ "recent": recent, "sections": [] }));
             }
-            if let Some(r) = &view.shown {
+            if let Some(r) = view.answer.result() {
                 send(token, &found(token, r, false));
             }
-            let read = Read::Search {
-                query: view.query.clone(),
-                songs: 40,
-                albums: 20,
-                artists: 10,
-            };
-            match nori_core::transport::block_on(client.read_now(read)) {
-                Ok(Page::Found { v }) => send(token, &found(token, &v, true)),
-                Ok(_) => {}
-                Err(e) if view.shown.is_none() => send_error(token, &e),
-                Err(_) => {}
+            let Some(answered) = with_session(|s| s.search_server_now(view.query.clone(), search_failure)).flatten() else { return };
+            match answered.answer {
+                SearchShown::Found { result } => send(token, &found(token, &result, true)),
+                SearchShown::NothingFound => send(token, &found(token, &SearchResult::default(), true)),
+                // The index found nothing either: the page says why, as `send_error` would.
+                SearchShown::Failed { index: None, fallback } => send(token, &serde_json::from_str(&fallback.reason.unwrap_or_default()).unwrap_or(Value::Null)),
+                SearchShown::Failed { .. } | SearchShown::Asking { .. } | SearchShown::Blank => {}
             }
         }
         _ => send(token, &json!({ "sections": [] })),
@@ -1378,17 +1419,12 @@ pub extern "C" fn nori_ios_cover_cancel(token: u64) {
     drop(gone);
 }
 
-/// Keeps the newest lyrics answer for `song`, for [`nori_ios_lyrics_page`].
-pub(crate) fn lyrics_arrived(song: &str, lyrics: &Lyrics) {
-    *lock(&LYRICS) = Some((song.to_string(), lyrics.clone()));
-}
-
-/// The lyrics held for `song`, if they are the last that came.
+/// The words the session's lyrics view shows for `song`, if they are its.
 pub(crate) fn held_lyrics(song: &str) -> Option<Lyrics> {
-    lock(&LYRICS).as_ref().filter(|(id, _)| id == song).map(|(_, l)| l.clone())
+    with_session(|s| s.lyrics_now().words_of(song).map(|p| p.lyrics.clone())).flatten()
 }
 
-/// Asks for `song`'s lyrics; each better answer is a lyrics report.
+/// The lyrics view opened on `song`: its lyrics are looked up, each change a lyrics report.
 ///
 /// # Safety
 /// `song` is NUL-terminated UTF-8.
@@ -1398,26 +1434,41 @@ pub unsafe extern "C" fn nori_ios_lyrics(song: *const c_char) {
     if song.is_empty() {
         return;
     }
-    with_session(|s| s.lyrics(song));
+    with_session(|s| {
+        s.lyrics_heard(Some(song));
+        s.lyrics_view(true);
+    });
 }
 
-/// The lyrics last found for `song`, as JSON to free; NULL when none came yet.
+/// The lyrics view closed.
+#[no_mangle]
+pub extern "C" fn nori_ios_lyrics_closed() {
+    with_session(|s| s.lyrics_view(false));
+}
+
+/// What the lyrics view shows for `song`, as JSON to free (no lines when there are none, or the lookup
+/// failed); NULL while they are looked up.
 ///
 /// # Safety
 /// `song` is NUL-terminated UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_lyrics_page(song: *const c_char) -> *mut c_char {
     let song = c_text(song);
-    let held: std::sync::MutexGuard<'_, Option<(String, Lyrics)>> = lock(&LYRICS);
-    let Some((id, l)) = held.as_ref().filter(|(id, _)| *id == song) else {
+    let Some(now) = with_session(|s| s.lyrics_now()).filter(|n| n.song() == Some(song.as_str())) else {
         return std::ptr::null_mut();
+    };
+    let failed = Lyrics::default();
+    let l = match &now {
+        LyricsNow::Shown { pick, .. } => &pick.lyrics,
+        LyricsNow::Failed { .. } => &failed,
+        LyricsNow::NoSong | LyricsNow::Looking { .. } => return std::ptr::null_mut(),
     };
     let lines: Vec<Value> = l
         .lines
         .iter()
         .map(|line| json!({ "s": line.start_ms, "e": line.end_ms, "t": line.text }))
         .collect();
-    owned(&json!({ "id": id, "synced": l.synced, "offset": l.timing.offset_ms(), "lines": lines }))
+    owned(&json!({ "id": song, "synced": l.synced, "offset": l.timing.offset_ms(), "lines": lines }))
 }
 
 /// A long list's orders as JSON to free: `now` the one it is in, `all` every one in the menu's order
@@ -1619,11 +1670,17 @@ fn sound_tool(tool: nori_core::settings_store::SoundTool) -> i32 {
     .unwrap_or(0)
 }
 
-/// The equalizer screen is in sight (`in_sight`) and was touched: the output's short buffer follows
-/// the core's rule.
+/// Sound page `page` (0 the equalizer, 1 AutoEQ's presets, 2 Settings › Sound) came in sight (`shown`
+/// 1) or left it; a change made on one is then heard at once (`nori_core::tuning`).
 #[no_mangle]
-pub extern "C" fn nori_ios_tuning(in_sight: i32, touched: i32) {
-    with_session(|s| s.engine.set_shallow(nori_core::rules::sound_tuning(in_sight != 0, touched != 0)));
+pub extern "C" fn nori_ios_sound_page(page: i32, shown: i32) {
+    use nori_core::tuning::SoundPage;
+    let page = match page {
+        0 => SoundPage::Equalizer,
+        1 => SoundPage::AutoEq,
+        _ => SoundPage::Sound,
+    };
+    with_session(|s| s.sound_page(page, shown != 0));
 }
 
 /// Keeps `query` in the recent searches: the user picked a result or pressed search.

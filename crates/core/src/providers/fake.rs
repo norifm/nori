@@ -20,6 +20,8 @@ struct Fake {
     hearts: Mutex<Vec<String>>,
     /// Home feeds read; each answers with another shelf, as a service's feed does.
     feeds: Mutex<u32>,
+    /// The source ended the session; and whether the client was told to stop reminding of it.
+    ended: Mutex<(bool, bool)>,
 }
 
 fn rules(signed_in: bool) -> ProfileRules {
@@ -104,7 +106,18 @@ impl Provider for Fake {
     }
 
     fn account(&self, _: &Client) -> AccountState {
+        if self.ended.lock().0 {
+            return AccountState::Ended;
+        }
         if self.signed_in.lock().is_some() { AccountState::SignedIn } else { AccountState::SignedOut }
+    }
+
+    fn reminds_to_sign_in(&self, _: &Client) -> bool {
+        *self.ended.lock() == (true, false)
+    }
+
+    fn stop_reminding(&self, _: &Client) {
+        self.ended.lock().1 = true;
     }
 }
 
@@ -130,6 +143,18 @@ mod tests {
         core.install(ServerKind::default(), provider.clone());
         core.provider().configure(&core, &SavedServer::default()).unwrap();
         (Client::new(core, Arc::new(Wire::default()), Default::default()), provider)
+    }
+
+    #[test]
+    fn signing_in_is_offered_again_once_the_session_ended_until_told_to_stop() {
+        use crate::providers::flow::SignInEvent;
+        let (c, fake) = fake();
+        assert_eq!(c.sign_in_due(None), None);
+        fake.ended.lock().0 = true;
+        assert_eq!(c.sign_in_due(None), Some(SignInEvent::Offer { ended: true }));
+        c.stop_reminding();
+        assert_eq!(c.sign_in_due(None), None);
+        assert_eq!(c.sign_in_due(Some(super::super::AfterAdding::Remind)), None, "it signs in by pasting, not on a page: nothing follows adding");
     }
 
     /// Search and an album's page come from the provider and are indexed; what it has nothing for is

@@ -140,12 +140,12 @@ impl Core {
         self.starts_transcodes.store(false, Ordering::Relaxed);
         let key = config.api_key.unwrap_or_default();
         self.set_rules(browse::profile_rules(nori_remote::is_guest_key(&key)));
-        *self.native_login.write() = key.is_empty().then(|| (config.user.clone(), config.password.clone()));
-        *self.account.write() = match (key.is_empty(), nori_remote::is_guest_key(&key)) {
-            (true, _) => Some((config.user, config.password)),
-            (false, false) => Some((config.user, key)),
+        let secret = match (key.is_empty(), nori_remote::is_guest_key(&key)) {
+            (true, _) => Some(crate::Secret::Password(config.password)),
+            (false, false) => Some(crate::Secret::Key(key)),
             (false, true) => None,
         };
+        *self.account.write() = secret.map(|secret| crate::Account { user: config.user, secret });
         Ok(base)
     }
 }

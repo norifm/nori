@@ -9,8 +9,11 @@ use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use nori_core::browse::AlbumSort;
+use nori_core::lyrics_follow::LyricsNow;
 use nori_core::menus::PageKind;
-use nori_core::search::SearchView;
+use nori_core::offer::Offered;
+use nori_core::paged::Paged;
+use nori_core::search::{SearchShown, SearchView};
 use nori_core::settings::SavedServer;
 use nori_core::Song;
 use nori_covers::loader::Ticket;
@@ -28,9 +31,10 @@ use nori_host::player::{Playback, QueueShown};
 use crate::settings::{Act, Target};
 use crate::sung::Part;
 use crate::words;
-use nori_core::providers::{AfterAdding, SignInStep};
+use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, AddPage, SignInEvent, SignInFlow, SignInShown};
+use nori_core::providers::AfterAdding;
 
-use crate::{AppWindow, ArtistLink, Card, Credits, Detail, LoginKind, LyricPiece, Motion, Pick, PlayerBar, Shelf, SongGo, SongRow, TopBar};
+use crate::{AppWindow, ArtistLink, Card, Credits, Detail, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, Shelf, SongGo, SongRow, TopBar, View};
 
 /// Cover fetch sizes, px square.
 const SMALL_PX: u32 = 256;
@@ -45,21 +49,6 @@ const PENDING_KEPT: usize = 1000;
 const GONE: Duration = Duration::from_millis(1500);
 /// How long a row leaving the queue takes to fold away (app.slint's QueueView).
 const QUEUE_FOLD_MS: u64 = 180;
-/// How long the undo of a song taken out of the queue is offered.
-const UNDO_MS: u64 = 5_000;
-
-// View indices, as app.slint numbers them.
-const HOME: i32 = 0;
-const SEARCH: i32 = 1;
-const ALBUMS: i32 = 2;
-const ARTISTS: i32 = 3;
-const PLAYLISTS: i32 = 4;
-const SONGS: i32 = 5;
-const PAGE: i32 = 6;
-const LOGIN: i32 = 7;
-const SETTINGS: i32 = 8;
-const EQUALIZER: i32 = 9;
-const FAVORITES: i32 = 12;
 
 /// The way back from the page shown: the pages opened from one another before it, and the tab the first
 /// of them was opened from, each with where it was scrolled; and the pages Back left, for Forward.
@@ -68,7 +57,7 @@ struct PageTrail {
     /// The page shown, and those before it, oldest first.
     shown: Option<PageAsk>,
     before: Vec<(PageAsk, f32)>,
-    tab: i32,
+    tab: View,
     tab_at: f32,
     /// The pages Back left, the nearest last.
     ahead: Vec<(PageAsk, f32)>,
@@ -78,14 +67,14 @@ struct PageTrail {
 #[derive(Debug, PartialEq)]
 enum Back {
     Page(PageAsk),
-    Tab(i32),
+    Tab(View),
 }
 
 impl PageTrail {
     /// `ask` is shown, opened from tab `from` (or from the page shown, when `from` is the page view) scrolled
     /// to `at`.
-    fn opened(&mut self, ask: PageAsk, from: i32, at: f32) {
-        if from == PAGE {
+    fn opened(&mut self, ask: PageAsk, from: View, at: f32) {
+        if from == View::Page {
             self.before.extend(self.shown.take().map(|page| (page, at)));
         } else {
             self.before.clear();
@@ -127,8 +116,8 @@ impl PageTrail {
 
 /// The view Back returns to from a page opened on `view`. Search keeps its field and answer while a page
 /// is open, so Back finds them as they were.
-fn opened_from(view: i32) -> i32 {
-    if view == LOGIN { HOME } else { view }
+fn opened_from(view: View) -> View {
+    if view == View::Login { View::Home } else { view }
 }
 
 /// Weak handle to the app for callbacks and timers.
@@ -177,8 +166,11 @@ struct Art {
     mosaics: HashMap<Vec<String>, Mosaic>,
     /// Page colours of large covers, by cover id.
     colours: HashMap<String, Rc<CoverColours>>,
+    /// The covers waiting for a ticket (`wanted`) or for their ticket's answer (`tickets`).
     asked: HashSet<CoverKey>,
     wanted: Vec<CoverKey>,
+    /// Pending cover requests, oldest first; dropping a ticket cancels the fetch.
+    tickets: VecDeque<(CoverKey, Ticket)>,
     /// When a pending cover was last looked up; stale ones are off screen.
     missing: HashMap<CoverKey, Instant>,
 }
@@ -195,10 +187,42 @@ impl Mosaic {
 }
 
 impl Art {
+    /// Requests the covers found missing with `request`, which gives no ticket when none can be fetched
+    /// now: those are forgotten, to be asked again when next drawn. Requests for covers off screen since
+    /// `now - GONE` are cancelled.
+    fn ask(&mut self, now: Instant, mut request: impl FnMut(&CoverKey) -> Option<Ticket>) {
+        let wanted = std::mem::take(&mut self.wanted);
+        let (asked, missing) = (&mut self.asked, &mut self.missing);
+        self.tickets.retain(|(k, _)| {
+            let shown = missing.get(k).is_some_and(|t| now.duration_since(*t) < GONE);
+            if !shown {
+                asked.remove(k);
+                missing.remove(k);
+            }
+            shown
+        });
+        // The loader serves newest first; reversed so the top left of a frame comes first.
+        for k in wanted.into_iter().rev() {
+            match request(&k) {
+                Some(t) => self.tickets.push_back((k, t)),
+                None => {
+                    self.asked.remove(&k);
+                }
+            }
+        }
+        // Dropping a ticket cancels it; the cover may be requested again.
+        while self.tickets.len() > PENDING_KEPT {
+            let (k, _) = self.tickets.pop_front().expect("longer than the limit");
+            self.asked.remove(&k);
+            self.missing.remove(&k);
+        }
+    }
+
     fn insert(&mut self, key: CoverKey, image: Image, colours: Option<Box<CoverColours>>, now: Instant) {
         let id = key.id.clone();
         let large = key.size != CoverSize::Card;
         self.missing.remove(&key);
+        self.tickets.retain(|(k, _)| *k != key);
         if !large {
             for (covers, mosaic) in &mut self.mosaics {
                 if covers.contains(&id) {
@@ -347,10 +371,10 @@ fn colour(argb: u32) -> Color {
 /// The cross-fade of the look, 340 ms as Android's chrome has it: run by a timer only while it lasts.
 #[derive(Default)]
 struct Fade {
-    from: Option<crate::look::Look>,
+    /// The look it fades from, and when it began.
+    from: Option<(crate::look::Look, Instant)>,
     /// What was painted last.
     shown: Option<crate::look::Look>,
-    began: Option<Instant>,
     timer: Timer,
 }
 
@@ -358,16 +382,33 @@ const FADE: Duration = Duration::from_millis(340);
 
 impl Fade {
     fn start(&mut self, from: crate::look::Look) {
-        self.from = Some(from);
-        self.began = Some(Instant::now());
+        self.from = Some((from, Instant::now()));
     }
 
     /// The look on the way to `to` now, and whether it has arrived.
     fn at(&self, to: &crate::look::Look) -> (crate::look::Look, bool) {
-        let (Some(from), Some(began)) = (&self.from, self.began) else { return (to.clone(), true) };
+        let Some((from, began)) = &self.from else { return (to.clone(), true) };
         let t = (began.elapsed().as_secs_f32() / FADE.as_secs_f32()).min(1.0);
         (from.towards(to, t * t * (3.0 - 2.0 * t)), t >= 1.0)
     }
+}
+
+/// A song's moving cover, and what plays it while the sleeve shows.
+struct Moving {
+    song: Song,
+    artwork: nori_plugins::Artwork,
+    kept: crate::motion::Kept,
+    playing: Option<crate::motion::Playing>,
+}
+
+/// The page shown (the page view's, or the artist beside the Artists list), and what its read brought.
+enum PageShown {
+    Album,
+    Artist,
+    /// The playlist, once read, while the profile may change it (the core's `playlist_editable`).
+    Playlist(Option<nori_core::Playlist>),
+    /// The mix's id and name, once read: it can be drawn again and kept as a playlist.
+    Mix(Option<(String, String)>),
 }
 
 pub struct App {
@@ -393,12 +434,10 @@ pub struct App {
     /// The artist page's Show all pressed: every song listed, not the first few.
     page_songs_all: bool,
     page_fetch: Option<Fetch>,
-    /// The mix shown, its id and its name: it can be drawn again and kept as a playlist.
-    page_mix: Option<(String, String)>,
-    /// The playlist shown, while the profile may change it (the core's `playlist_editable`).
-    page_playlist: Option<nori_core::Playlist>,
+    /// The page shown, set with `page_fetch`.
+    page: Option<PageShown>,
     /// The queue another device or app left on the server, offered at the top of Home (the core's `queue_offer`).
-    offer: Option<nori_core::library::QueueOffer>,
+    offer: Offered,
     /// Home's mixes, whose cards take their first cover's colors once known.
     mixes: Vec<nori_core::mixes::board::MixTile>,
     songs: Vec<Song>,
@@ -418,17 +457,19 @@ pub struct App {
     profiles: Vec<nori_core::SoundProfile>,
     /// The sign-in window's process while it is open (nori-sign-in).
     sign_in_window: Option<nori_sign_in_window::SignInWindow>,
-    /// The read the shown page waits for.
-    want: Option<Req>,
+    /// The reads the view shown waits for: their answers end its loading and show their failure.
+    want: Vec<Req>,
     shelves: Rc<VecModel<Shelf>>,
     /// The rows of the shelves shown.
     home_rows: Vec<nori_core::settings::HomeRow>,
     /// The saved profile the sign-in form edits; None while it adds one.
     editing: Option<SavedServer>,
-    /// The album list's pages asked for, to this offset, its order, and whether only the favorites.
-    albums_asked: u32,
+    /// The album list's pages, its order, and whether only the favorites.
+    album_pages: Paged<u32>,
     album_sort: AlbumSort,
     albums_favorites: bool,
+    /// The songs list's pages.
+    song_pages: Paged<u32>,
     /// The player pill and the top pill: windows of their own, laid over the blurred page.
     player: Option<PlayerBar>,
     top: Option<TopBar>,
@@ -442,7 +483,6 @@ pub struct App {
     /// The look worn (or fading in), and the cross-fade to it.
     look: Option<crate::look::Look>,
     fade: Fade,
-    tickets: VecDeque<(CoverKey, Ticket)>,
     tick: Timer,
     /// The pace the song plays at, for the seek bar's steps.
     pace: f32,
@@ -461,24 +501,24 @@ pub struct App {
     plugged: crate::settings::Plugged,
     /// The plugin its install sheet shows.
     preview: Option<nori_plugins::PluginPreview>,
+    /// The page adding a profile shows and the profile on its way (the core's).
+    add: AddFlow,
+    /// The account sheet and the last sign-in (the core's).
+    sign_in: SignInFlow,
     /// The profile in use while its plugin doesn't run here, opened once it does.
     waiting: Option<SavedServer>,
-    /// The kind of profile the sign-in form adds, and what follows once it is.
-    login_kind: nori_core::settings::ServerKind,
-    after_adding: Option<AfterAdding>,
     /// The plugins' menu actions by `Card::kind` ([`MENU_KINDS`]).
     plugin_menus: [Vec<nori_plugins::MenuEntry>; 4],
     /// The song whose details are shown, for the plugins' lines that come after.
     details_song: Option<String>,
     /// The plugin's still sleeve being fetched for the song playing.
     sleeve: Option<Ticket>,
-    /// The song playing's moving cover, and what plays it while the sleeve shows.
-    moving: Option<(Song, nori_plugins::Artwork, crate::motion::Kept)>,
-    motion: Option<crate::motion::Playing>,
+    /// The song playing's moving cover.
+    moving: Option<Moving>,
     /// Now Playing was open when last seen: its opening asks the plugins' status lines.
     full_seen: bool,
-    /// The engine is in its shallow equalizer-tuning buffer.
-    tuning: bool,
+    /// The sound page the session was last told is in sight.
+    sound_page: Option<nori_core::tuning::SoundPage>,
     lyrics: Option<crate::lyrics::SongLyrics>,
     lyrics_timer: Timer,
     /// Active lyric line pieces in the side panel and Now Playing, and its backing vocals', updated in
@@ -499,10 +539,8 @@ pub struct App {
     jam_hosting: bool,
     /// The song whose menu opened the playlist picker.
     menu_song: Option<Song>,
-    /// The sleep timer's choices as offered, its time, and whether one runs.
+    /// The sleep timer's choices as offered.
     sleep_choices: Vec<nori_core::menus::SleepChoice>,
-    sleep_timer: Timer,
-    sleeping: bool,
     /// Whose playback the player shows and controls, as last read.
     playback: Playback,
     /// A jam guest's controls by its role: what the player offers, and whether it paused here.
@@ -592,17 +630,21 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
 }
 
 /// The album list once its page from `offset` came (`page`), and the page to ask for next: while pages
-/// come full and new, each once (`asked`: the pages asked for, to this offset).
-fn albums_paged(list: &mut Vec<nori_core::Album>, sort: AlbumSort, favorites: bool, offset: u32, page: &[nori_core::Album], asked: &mut u32) -> Option<u32> {
-    list.truncate(offset as usize);
-    if nori_core::browse::album_page_repeats(list, page) {
+/// come full and new, each once (`pages`).
+fn albums_paged(list: &mut Vec<nori_core::Album>, pages: &mut Paged<u32>, sort: AlbumSort, favorites: bool, offset: u32, page: &[nori_core::Album]) -> Option<u32> {
+    let kept = &list[..list.len().min(offset as usize)];
+    // A server that ignores the offset would bring the same page without end.
+    let repeats = nori_core::browse::album_page_repeats(kept, page);
+    let next = nori_core::browse::next_album_page(sort, favorites, offset, nori_host::pages::ALBUM_PAGE, page.len() as u32).filter(|_| !repeats);
+    if !pages.answered(&offset, next) {
         return None;
     }
-    list.extend_from_slice(page);
+    list.truncate(offset as usize);
+    if !repeats {
+        list.extend_from_slice(page);
+    }
     // Every page is read at once here.
-    let next = nori_core::browse::next_album_page(sort, favorites, offset, nori_host::pages::ALBUM_PAGE, page.len() as u32).filter(|&n| *asked < n)?;
-    *asked = next;
-    Some(next)
+    pages.ask()
 }
 
 /// The profile the sign-in form saves from its fields (name, address, user, password) for provider `info`:
@@ -668,9 +710,8 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             page_songs: Vec::new(),
             page_songs_all: false,
             page_fetch: None,
-            page_mix: None,
-            page_playlist: None,
-            offer: None,
+            page: None,
+            offer: Offered::default(),
             mixes: Vec::new(),
             songs: Vec::new(),
             search_songs: Vec::new(),
@@ -683,20 +724,20 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             feed_songs: Vec::new(),
             profiles: Vec::new(),
             sign_in_window: None,
-            want: None,
+            want: Vec::new(),
             shelves,
             home_rows: Vec::new(),
             editing: None,
-            albums_asked: 0,
+            album_pages: Paged::new(0),
+            song_pages: Paged::new(0),
             album_sort: AlbumSort::ByName,
             albums_favorites: false,
             backdrop: None,
             page_cover: None,
             now_cover: None,
-            trail: PageTrail { tab: HOME, ..Default::default() },
+            trail: PageTrail { tab: View::Home, ..Default::default() },
             look: None,
             fade: Fade::default(),
-            tickets: VecDeque::new(),
             tick: Timer::default(),
             pace: 1.0,
             started: std::time::Instant::now(),
@@ -706,18 +747,17 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             facts: crate::settings::Facts::default(),
             plugged: Default::default(),
             preview: None,
+            add: AddFlow::default(),
+            sign_in: SignInFlow::default(),
             waiting: None,
-            login_kind: nori_core::settings::ServerKind::Subsonic,
-            after_adding: None,
             plugin_menus: Default::default(),
             details_song: None,
             sleeve: None,
             moving: None,
-            motion: None,
             full_seen: false,
             lists: Lists::default(),
             find: String::new(),
-            tuning: false,
+            sound_page: None,
             lyrics: None,
             lyrics_timer: Timer::default(),
             pieces: [Rc::new(VecModel::default()), Rc::new(VecModel::default())],
@@ -733,8 +773,6 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             jam_hosting: false,
             menu_song: None,
             sleep_choices: Vec::new(),
-            sleep_timer: Timer::default(),
-            sleeping: false,
             playback: Playback::Here,
             jam_controls: None,
             asked: HashSet::new(),
@@ -806,7 +844,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
         a.compositor.on_wake(move || wake.with(|a| a.repaint()));
         let prefs = a.root.app.settings.current().unwrap_or_default();
         match prefs.active_server().cloned() {
-            Some(p) => a.open(p),
+            Some(p) => a.open(p, None),
             None => {
                 a.choose_provider();
                 a.update_plugins();
@@ -819,7 +857,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
 /// Where Now Playing's synced lyrics are sharp: the band of the line they are scrolled to, the next one before the
 /// first is sung and the last once all are. None while they are not shown or scrolled by hand.
 fn lyrics_focus(ui: &AppWindow) -> Option<Focus> {
-    if !ui.get_full_player() || ui.get_full_panel() != 2 || ui.get_lyrics_lines().row_count() == 0 || !ui.get_lyrics_synced() || ui.get_full_lyrics_browsed() {
+    if !ui.get_full_player() || ui.get_full_panel() != Panel::Lyrics || ui.get_lyrics_lines().row_count() == 0 || !ui.get_lyrics_synced() || ui.get_full_lyrics_browsed() {
         return None;
     }
     let size = ui.window().size().to_logical(ui.window().scale_factor());
@@ -838,15 +876,15 @@ fn menu_actions(ui: &AppWindow, compositor: &Compositor) {
     on("previous", |m| m.invoke_previous());
     on("shuffle", |m| m.invoke_toggle_shuffle());
     on("repeat", |m| m.invoke_cycle_repeat());
-    on("home", |m| m.invoke_go(HOME));
-    on("albums", |m| m.invoke_go(ALBUMS));
-    on("artists", |m| m.invoke_go(ARTISTS));
-    on("songs", |m| m.invoke_go(SONGS));
-    on("search", |m| m.invoke_go(SEARCH));
-    on("settings", |m| m.invoke_go(SETTINGS));
+    on("home", |m| m.invoke_go(View::Home));
+    on("albums", |m| m.invoke_go(View::Albums));
+    on("artists", |m| m.invoke_go(View::Artists));
+    on("songs", |m| m.invoke_go(View::Songs));
+    on("search", |m| m.invoke_go(View::Search));
+    on("settings", |m| m.invoke_go(View::Settings));
     on("join-jam", |m| m.set_join_open(true));
-    on("queue", |m| m.set_inspector(if m.get_inspector() == 1 { 0 } else { 1 }));
-    on("lyrics", |m| m.set_inspector(if m.get_inspector() == 2 { 0 } else { 2 }));
+    on("queue", |m| m.set_inspector(if m.get_inspector() == Panel::Queue { Panel::None } else { Panel::Queue }));
+    on("lyrics", |m| m.set_inspector(if m.get_inspector() == Panel::Lyrics { Panel::None } else { Panel::Lyrics }));
     on("full", |m| {
         if m.get_has_song() {
             m.set_full_player(!m.get_full_player());
@@ -870,10 +908,9 @@ fn open_in_browser(url: &str) {
 }
 
 /// A kind of profile as its page shows it: `about`, the plugin's own words, in place of the note.
-fn login_form(kinds: &nori_core::providers::Kinds, info: &nori_core::providers::ProviderInfo, about: Option<&str>, adding: bool) -> LoginKind {
+fn login_form(kinds: &nori_core::providers::Kinds, info: &nori_core::providers::ProviderInfo, about: Option<&str>, step: nori_core::providers::FirstStep) -> LoginKind {
     use nori_core::providers::{FirstStep, FormField};
     let w = words::provider_of(kinds, &info.kind);
-    let step = if adding { info.first_step() } else { FirstStep::Form };
     let asks = |what| step == FirstStep::Form && info.fields.iter().any(|f| f.what == what && !f.advanced);
     let account = step == FirstStep::Account;
     LoginKind {
@@ -1042,6 +1079,9 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_sign_in_window, h, |a| a.sign_in_window());
     on!(ui.on_sign_out, h, |a| a.sign_out());
     on!(ui.on_sign_in_quiet, h, |a| a.sign_in_quiet());
+    on!(ui.on_signin_closed, h, |a| {
+        a.sign_in_on(SignInEvent::Close);
+    });
     on!(ui.on_open_sign_in_page, h, |a| a.open_sign_in_page());
     on!(jam.on_listen, h, |a, on| {
         if let Some(r) = a.session.as_ref().and_then(|s| s.remote()) {
@@ -1068,7 +1108,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_login, h, |a| a.login(AfterAdding::Remind));
     on!(ui.on_cancel_login, h, |a| {
         a.editing = None;
-        a.go(HOME);
+        a.go(View::Home);
     });
     on!(ui.on_find_edited, h, |a, t| {
         a.find = t.to_string();
@@ -1080,7 +1120,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_open_accounts, h, |a| {
         let accounts = crate::settings::tabs(&a.facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Servers);
         a.ui().set_settings_tab(accounts.unwrap_or(0) as i32);
-        a.go(SETTINGS);
+        a.go(View::Settings);
     });
     on!(ui.on_clear_queue, h, |a| {
         a.on_session(|s| s.clear_upcoming());
@@ -1106,7 +1146,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         if t == crate::settings::tabs(&a.facts.rules.settings).len() as i32 {
             a.plugins_look();
         }
-        a.untune(SETTINGS);
+        a.follow_sound_page(View::Settings);
         a.settings_shown();
     });
     on!(ui.on_setting_toggled, h, |a, name, on| match crate::settings::PluginAct::of(&name) {
@@ -1138,7 +1178,6 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_source_moved, h, |a, id, by| a.source_moved(&id, by));
     on!(ui.on_eq_set, h, |a, name, value| {
         a.setting(&name, &value);
-        a.tune();
     });
     on!(ui.on_eq_typed, h, |a, i, field, text| {
         use nori_core::settings::BandField;
@@ -1245,7 +1284,8 @@ impl App {
         ui.set_note_action("".into());
     }
 
-    fn open(&mut self, profile: SavedServer) {
+    /// Opens `profile`; `added` says what follows when it was just added.
+    fn open(&mut self, profile: SavedServer, added: Option<AfterAdding>) {
         if let Some(s) = self.session.take() {
             s.close();
         }
@@ -1281,61 +1321,74 @@ impl App {
                 self.playback = Playback::Here;
                 self.follow();
                 self.jam_shown();
-                self.go(HOME);
-                let added = self.after_adding.take();
-                match self.session.as_ref().and_then(|s| s.client.sign_in_step(added)) {
-                    Some(SignInStep::Offer) => self.offer_sign_in(),
-                    Some(SignInStep::Open) => {
-                        self.offer_sign_in();
+                self.go(View::Home);
+                match self.session.as_ref().and_then(|s| s.client.sign_in_due(added)) {
+                    Some(offer @ SignInEvent::Offer { .. }) => self.offer_sign_in(offer),
+                    Some(_) => {
+                        self.offer_sign_in(SignInEvent::Offer { ended: false });
                         self.sign_in_window();
                     }
-                    Some(SignInStep::StopReminding) => self.on_session(|s| s.client.stop_reminding()),
                     None => {}
                 }
                 if !self.account() {
                     // A jam guest's: the host's library, and the jam in the queue panel.
-                    ui.set_inspector(1);
+                    ui.set_inspector(Panel::Queue);
                 }
             }
-            Err(e) => {
+            Err(said) => {
                 self.choose_provider();
-                ui.set_login_error(e.into());
+                self.add_on(AddEvent::Unopened { said });
             }
         }
     }
 
     fn login(&mut self, after: AfterAdding) {
         let ui = self.ui();
-        let Some(info) = self.kinds().providers().into_iter().find(|i| i.kind == self.login_kind) else { return };
+        let Some(info) = self.add.kind().and_then(|k| self.kinds().providers().into_iter().find(|i| i.kind == *k)) else { return };
         let form = [ui.get_login_name(), ui.get_login_url(), ui.get_login_user(), ui.get_login_password()].map(|t| t.to_string());
         let draft = login_draft(&info, self.editing.clone(), form);
-        if !self.kinds().server_ready(draft.clone()) {
-            return self.login_failed("The server's address and a user name, please.");
-        }
+        let ready = self.kinds().server_ready(draft.clone());
         let prefs = self.root.app.settings.current().unwrap_or_default();
         let list = nori_core::settings::ServerList { servers: prefs.servers, active_server_id: prefs.active_server_id };
-        self.after_adding = self.kinds().adds_profile(list, draft.clone()).then_some(after);
-        ui.set_login_busy(true);
-        ui.set_login_error("".into());
-        let (root, http, tx) = (self.root.clone(), self.http.clone(), self.tx.clone());
-        std::thread::spawn(move || tx.send(Msg::LoggedIn(session::check_login(&root, http, draft))));
+        let added = self.kinds().adds_profile(list, draft.clone()).then_some(after);
+        if let AddDo::Send { .. } = self.add_on(AddEvent::Send { ready, added }) {
+            let (root, http, tx) = (self.root.clone(), self.http.clone(), self.tx.clone());
+            std::thread::spawn(move || tx.send(Msg::LoggedIn(session::check_login(&root, http, draft))));
+        }
     }
 
-    /// Adding failed: the page of the kind, with why.
-    fn login_failed(&mut self, why: &str) {
+    /// Takes `event` on the pages of adding a profile and shows where that leaves them.
+    fn add_on(&mut self, event: AddEvent) -> AddDo {
+        let then = self.add.on(event);
         let ui = self.ui();
-        ui.set_login_error(why.into());
-        ui.set_login_choosing(false);
-        self.plugged.choosing = false;
-        self.after_adding = None;
+        ui.set_login_choosing(self.add.choosing());
+        ui.set_login_busy(self.add.busy());
+        ui.set_login_error(self.add.failure().map_or("", words::add_failure).into());
+        self.plugged.choosing = self.add.choosing() && ui.get_view() == View::Login;
+        then
     }
 
-    fn go(&mut self, view: i32) {
+    /// Takes `event` on the account sheet and shows where that leaves it; false for an answer not to send.
+    fn sign_in_on(&mut self, event: SignInEvent) -> bool {
+        let send = self.sign_in.on(event);
+        let ui = self.ui();
+        ui.set_signin_open(self.sign_in.shown != SignInShown::Closed);
+        ui.set_signin_busy(self.sign_in.busy());
+        ui.set_signin_ended(self.sign_in.shown == SignInShown::Offered { ended: true });
+        let error = match &self.sign_in.attempt {
+            nori_core::providers::flow::SignInAttempt::Failed { result } => words::sign_in_failed(result),
+            _ => String::new(),
+        };
+        ui.set_signin_error(error.into());
+        send
+    }
+
+    fn go(&mut self, view: View) {
         self.go_at(view, 0.0);
     }
 
     /// Shows tab `view` scrolled to `at`.
-    fn go_at(&mut self, view: i32, at: f32) {
+    fn go_at(&mut self, view: View, at: f32) {
         self.start_at(at);
         // A new page starts unfiltered.
         if !self.find.is_empty() {
@@ -1343,53 +1396,57 @@ impl App {
             self.ui().set_find_text("".into());
             self.narrowed();
         }
-        self.untune(view);
+        self.follow_sound_page(view);
         self.plugged.stack.clear();
-        self.plugged.choosing &= view == LOGIN;
+        self.plugged.choosing &= view == View::Login;
         let ui = self.ui();
         ui.set_failed("".into());
         ui.set_loading(false);
-        if view == LOGIN {
+        self.want.clear();
+        if view == View::Login {
             ui.set_can_cancel_login(self.session.is_some());
-            ui.set_login_error("".into());
-            ui.set_view(LOGIN);
+            ui.set_view(View::Login);
             return;
         }
         ui.set_view(view);
         // The search page's field is the top pill's.
         if let Some(top) = &self.top {
-            if view == SEARCH { top.invoke_focus_search() } else { top.invoke_end_search() }
+            if view == View::Search { top.invoke_focus_search() } else { top.invoke_end_search() }
         }
-        if view == SEARCH && self.top.as_ref().is_none_or(|t| t.get_search_text().trim().is_empty()) {
+        if view == View::Search && self.top.as_ref().is_none_or(|t| t.get_search_text().trim().is_empty()) {
             self.search_edited("");
         }
         let req = match view {
-            HOME => {
+            View::Home => {
                 self.look_for_offer();
                 self.home_req()
             }
-            ALBUMS => {
-                self.albums_asked = 0;
+            View::Albums => {
                 self.album_sort = nori_core::browse::album_sort_saved(self.root.app.settings.current().unwrap_or_default().list_prefs);
                 self.show_album_sorts();
-                Some(Req::Page(PageAsk::Albums { sort: self.album_sort, offset: 0, favorites: self.albums_favorites }))
+                self.album_pages.reset();
+                let (sort, favorites) = (self.album_sort, self.albums_favorites);
+                self.album_pages.ask().map(|offset| Req::Page(PageAsk::Albums { sort, offset, favorites }))
             }
-            ARTISTS => Some(Req::Page(PageAsk::Artists)),
-            PLAYLISTS => Some(Req::Page(PageAsk::Playlists)),
-            FAVORITES => {
+            View::Artists => Some(Req::Page(PageAsk::Artists)),
+            View::Playlists => Some(Req::Page(PageAsk::Playlists)),
+            View::Favorites => {
                 self.songs.clear();
+                // The favorites come whole.
+                self.song_pages.end();
                 Some(Req::Page(PageAsk::Favorites))
             }
-            SONGS => {
+            View::Songs => {
                 self.songs.clear();
-                Some(Req::Page(PageAsk::Songs { offset: 0 }))
+                self.song_pages.reset();
+                self.song_pages.ask().map(|offset| Req::Page(PageAsk::Songs { offset }))
             }
-            SETTINGS => {
+            View::Settings => {
                 self.settings_shown();
                 self.on_session(|s| s.facts());
                 None
             }
-            EQUALIZER => {
+            View::Equalizer => {
                 self.settings_shown();
                 None
             }
@@ -1403,7 +1460,9 @@ impl App {
     fn load(&mut self, req: Req) {
         let Some(s) = &self.session else { return };
         self.ui().set_loading(true);
-        self.want = Some(req.clone());
+        if !self.want.contains(&req) {
+            self.want.push(req.clone());
+        }
         s.load(req);
     }
 
@@ -1443,21 +1502,23 @@ impl App {
         let ui = self.ui();
         self.page_songs.clear();
         self.page_songs_all = false;
-        self.page_fetch = Some(match &ask {
-            PageAsk::Album(id) => Fetch::Album(id.clone()),
-            PageAsk::Artist(id) => Fetch::Artist(id.clone()),
-            PageAsk::Playlist(id) => Fetch::Playlist(id.clone()),
-            PageAsk::Mix(id) => Fetch::Mix(id.clone()),
+        let (fetch, page) = match &ask {
+            PageAsk::Album(id) => (Fetch::Album(id.clone()), PageShown::Album),
+            PageAsk::Artist(id) => (Fetch::Artist(id.clone()), PageShown::Artist),
+            PageAsk::Playlist(id) => (Fetch::Playlist(id.clone()), PageShown::Playlist(None)),
+            PageAsk::Mix(id) => (Fetch::Mix(id.clone()), PageShown::Mix(None)),
             _ => return,
-        });
+        };
+        (self.page_fetch, self.page) = (Some(fetch), Some(page));
+        self.want.clear();
         ui.set_page_id(match &ask {
             PageAsk::Album(id) | PageAsk::Artist(id) | PageAsk::Playlist(id) | PageAsk::Mix(id) => id.as_str().into(),
             _ => "".into(),
         });
         ui.set_page_kind(match &ask {
-            PageAsk::Album(_) => 0,
-            PageAsk::Artist(_) => 1,
-            _ => 2,
+            PageAsk::Album(_) => PageLayout::Album,
+            PageAsk::Artist(_) => PageLayout::Artist,
+            _ => PageLayout::List,
         });
         ui.set_page_mix(matches!(ask, PageAsk::Mix(_)));
         ui.set_page_title("".into());
@@ -1469,12 +1530,11 @@ impl App {
         ui.set_page_acts(ModelRc::default());
         ui.set_page_can_save(false);
         ui.set_page_editable(false);
-        self.page_mix = None;
-        self.page_playlist = None;
         ui.set_page_songs(ModelRc::default());
         ui.set_page_shelves(ModelRc::default());
         self.page_colours(None);
-        ui.set_view(PAGE);
+        self.follow_sound_page(View::Page);
+        ui.set_view(View::Page);
         ui.set_failed("".into());
         self.mirror();
         self.load(Req::Page(ask));
@@ -1534,7 +1594,7 @@ impl App {
         let (dark, today) = (self.compositor.system_dark(), crate::look::Today::now());
         let cover = if ui.get_full_player() {
             self.now_cover.as_ref()
-        } else if ui.get_view() == PAGE {
+        } else if ui.get_view() == View::Page {
             self.page_cover.as_ref()
         } else {
             None
@@ -1602,14 +1662,14 @@ impl App {
 
     fn data(&mut self, req: Req, r: Result<Data, String>) {
         let ui = self.ui();
-        let shown = self.want.as_ref() == Some(&req);
+        let shown = self.want.contains(&req);
         if shown {
             ui.set_loading(false);
         }
         let d = match r {
             Ok(d) => d,
             Err(e) => {
-                if shown {
+                if self.page_failed(&req) && shown {
                     ui.set_failed(e.into());
                 }
                 return;
@@ -1649,7 +1709,7 @@ impl App {
                 if (sort, favorites) != (self.album_sort, self.albums_favorites) {
                     return;
                 }
-                if let Some(next) = albums_paged(&mut self.lists.albums, sort, favorites, offset, &v, &mut self.albums_asked) {
+                if let Some(next) = albums_paged(&mut self.lists.albums, &mut self.album_pages, sort, favorites, offset, &v) {
                     self.on_session(|s| s.load(Req::Page(PageAsk::Albums { sort, offset: next, favorites })));
                 }
                 self.narrowed();
@@ -1680,8 +1740,13 @@ impl App {
                 ui.set_songs(self.rows(&self.songs, false));
             }
             Data::Page(PageGot::Songs { songs: v, exhausted }) => {
+                let Req::Page(PageAsk::Songs { offset }) = req else { return };
+                if !self.song_pages.answered(&offset, (!exhausted).then_some(offset + v.len() as u32)) {
+                    return;
+                }
+                self.songs.truncate(offset as usize);
                 self.songs.extend(v);
-                ui.set_more_songs(!exhausted);
+                ui.set_more_songs(self.song_pages.more());
                 ui.set_songs(self.rows(&self.songs, false));
             }
             // Page details apply only if that page is still shown.
@@ -1723,8 +1788,9 @@ impl App {
                 ui.set_page_sub(nori_core::pages::playlist_description(d.playlist.comment.clone(), notes).unwrap_or_default().into());
                 ui.set_page_caption(if d.songs.is_empty() { String::new() } else { words::songs_caption(d.songs.len(), d.seconds) }.into());
                 self.set_page_art(d.playlist.cover_art.clone());
-                self.page_playlist = Some(d.playlist).filter(|p| self.editable(p));
-                ui.set_page_editable(self.page_playlist.is_some());
+                let editable = Some(d.playlist).filter(|p| self.editable(p));
+                ui.set_page_editable(editable.is_some());
+                self.page = Some(PageShown::Playlist(editable));
                 self.page_songs = d.songs;
                 self.page_actions(PageKind::Playlist);
                 self.show_page_songs();
@@ -1736,7 +1802,7 @@ impl App {
                 ui.set_page_can_save(self.session.as_ref().is_some_and(|s| s.rules().account) && !m.songs.is_empty());
                 self.set_page_art(m.covers.first().cloned());
                 self.page_songs = m.songs;
-                self.page_mix = Some((m.id.clone(), words::mix_name(m.name).to_string()));
+                self.page = Some(PageShown::Mix(Some((m.id.clone(), words::mix_name(m.name).to_string()))));
                 self.page_actions(PageKind::Mix { refreshable: m.refreshable });
                 self.show_page_songs();
             }
@@ -1795,12 +1861,11 @@ impl App {
             _ => {}
         }
         if act != 5 {
-            let kind = self.ui().get_page_kind();
-            self.page_actions(match (kind, &self.page_mix) {
-                (0, _) => PageKind::Album,
-                (1, _) => PageKind::Artist,
-                (_, Some(_)) => PageKind::Mix { refreshable: true },
-                _ => PageKind::Playlist,
+            self.page_actions(match &self.page {
+                Some(PageShown::Album) => PageKind::Album,
+                Some(PageShown::Artist) => PageKind::Artist,
+                Some(PageShown::Mix(Some(_))) => PageKind::Mix { refreshable: true },
+                Some(PageShown::Mix(None) | PageShown::Playlist(_)) | None => PageKind::Playlist,
             });
         }
         self.mark_playing();
@@ -1843,18 +1908,17 @@ impl App {
 
     /// Asks whether another device or app left a queue worth carrying on here, as Home comes into sight.
     fn look_for_offer(&self) {
-        let Some(s) = self.session.as_ref().filter(|s| s.rules().account) else { return };
-        let (client, tx, playing, here) = (s.client.clone(), self.tx.clone(), self.ui().get_playing(), self.heard.clone());
+        let Some(s) = &self.session else { return };
+        let (h, tx) = (nori_host::session::Handle::clone(s), self.tx.clone());
         nori_host::spawn("nori-queue-offer", move || {
-            let offer = nori_core::transport::block_on(client.queue_offer(playing, here)).ok().flatten();
-            tx.send(Msg::Offer(offer));
+            tx.send(Msg::Offer(h.queue_offer()));
         });
     }
 
     /// Home's Continue card: the offered song, where it stands in its queue, and its cover.
     fn offer_shown(&self) {
         let ui = self.ui();
-        let song = self.offer.as_ref().and_then(|o| o.songs.get(o.index as usize).map(|s| (o, s)));
+        let song = self.offer.shown().and_then(|o| o.songs.get(o.index as usize).map(|s| (o, s)));
         ui.set_offer_shown(song.is_some());
         if let Some((o, s)) = song {
             ui.set_offer_title(s.title.as_str().into());
@@ -1866,18 +1930,15 @@ impl App {
     /// The offered queue taken up (played from its song and place) or turned down: either way it is not
     /// offered again.
     fn close_offer(&mut self, take: bool) {
-        let (Some(o), Some(s)) = (self.offer.take(), &self.session) else { return };
-        s.client.queue_offer_done(o.clone());
-        if take {
-            s.play(o.songs, o.index as usize, false, None);
-            s.seek(o.position_ms as i64);
-        }
+        let (Some(o), Some(s)) = (self.offer.close(), &self.session) else { return };
+        s.queue_offer_closed(o, take);
         self.offer_shown();
     }
 
     /// The mix shown drawn again, then shown anew.
     fn redraw_mix(&self) {
-        let (Some((id, _)), Some(s)) = (self.page_mix.clone(), &self.session) else { return };
+        let (Some(PageShown::Mix(Some((id, _)))), Some(s)) = (&self.page, &self.session) else { return };
+        let id = id.clone();
         let (client, core, tx) = (s.client.clone(), s.core.clone(), self.tx.clone());
         nori_host::spawn("nori-mix-redraw", move || {
             nori_core::transport::block_on(client.mix_ensure(id.clone(), true));
@@ -1890,7 +1951,8 @@ impl App {
     /// The mix shown kept on the account as a playlist, named by the core (`saved_mix_name`): "nori <mix>",
     /// counted on when that is taken.
     fn save_mix(&self) {
-        let (Some((_, title)), Some(s)) = (self.page_mix.clone(), &self.session) else { return };
+        let (Some(PageShown::Mix(Some((_, title)))), Some(s)) = (&self.page, &self.session) else { return };
+        let title = title.clone();
         let (client, tx) = (s.client.clone(), self.tx.clone());
         let ids: Vec<String> = self.page_songs.iter().map(|s| s.id.clone()).collect();
         nori_host::spawn("nori-mix-save", move || {
@@ -1921,9 +1983,9 @@ impl App {
     /// The page's songs as listed: an artist's first few until Show all (`songs_shown`).
     fn show_page_songs(&self) {
         let ui = self.ui();
-        let all = self.page_songs_all || ui.get_page_kind() != 1;
+        let all = self.page_songs_all || ui.get_page_kind() != PageLayout::Artist;
         let n = nori_core::browse::songs_shown(self.page_songs.len() as u32, all) as usize;
-        ui.set_page_songs(self.rows(&self.page_songs[..n], ui.get_page_kind() != 1));
+        ui.set_page_songs(self.rows(&self.page_songs[..n], ui.get_page_kind() != PageLayout::Artist));
         ui.set_page_songs_more(n < self.page_songs.len());
     }
 
@@ -2019,25 +2081,45 @@ impl App {
 
     /// Reads the album list again from the top, in its order and filter.
     fn reload_albums(&mut self) {
-        self.albums_asked = 0;
         self.lists.albums.clear();
         self.narrowed();
         self.show_album_sorts();
-        self.load(Req::Page(PageAsk::Albums { sort: self.album_sort, offset: 0, favorites: self.albums_favorites }));
+        self.album_pages.reset();
+        if let Some(offset) = self.album_pages.ask() {
+            self.load(Req::Page(PageAsk::Albums { sort: self.album_sort, offset, favorites: self.albums_favorites }));
+        }
+    }
+
+    /// Page `req` could not be read. A paged list's later page is asked for again as the list goes on
+    /// (scrolled, or opened again) and keeps what it lists; true when the failure is to be shown.
+    fn page_failed(&mut self, req: &Req) -> bool {
+        match req {
+            Req::Page(PageAsk::Albums { offset, .. }) => {
+                self.album_pages.failed(offset);
+                *offset == 0
+            }
+            Req::Page(PageAsk::Songs { offset }) => {
+                self.song_pages.failed(offset);
+                *offset == 0
+            }
+            _ => true,
+        }
     }
 
     /// Shows an artist beside the Artists list.
     fn choose_artist(&mut self, id: String) {
         let ui = self.ui();
         ui.set_artist_chosen(id.as_str().into());
-        ui.set_page_kind(1);
+        ui.set_page_kind(PageLayout::Artist);
         ui.set_page_id(id.as_str().into());
         ui.set_page_title("".into());
         ui.set_page_caption("".into());
         ui.set_page_shelves(ModelRc::default());
         self.page_songs.clear();
         self.page_songs_all = false;
-        self.page_fetch = Some(Fetch::Artist(id.clone()));
+        (self.page_fetch, self.page) = (Some(Fetch::Artist(id.clone())), Some(PageShown::Artist));
+        // The artist chosen before is no longer shown.
+        self.want.retain(|r| !matches!(r, Req::Page(PageAsk::Artist(_))));
         self.load(Req::Page(PageAsk::Artist(id)));
         // Keep the list visible while the artist loads.
         ui.set_loading(false);
@@ -2054,19 +2136,16 @@ impl App {
     }
 
     fn more_songs(&mut self) {
-        let req = Req::Page(PageAsk::Songs { offset: self.songs.len() as u32 });
-        // Scrolling asks again as the list nears its end: the page already on its way is asked for once.
-        if self.ui().get_loading() && self.want.as_ref() == Some(&req) {
-            return;
+        if let Some(offset) = self.song_pages.ask() {
+            self.load(Req::Page(PageAsk::Songs { offset }));
         }
-        self.load(req);
     }
 
     fn search_edited(&mut self, text: &str) {
         let Some(s) = &self.session else { return };
         // Away from the search page, what it finds shows in the field's preview.
         let ui = self.ui();
-        if ui.get_view() != SEARCH {
+        if ui.get_view() != View::Search {
             ui.set_search_preview_open(!text.trim().is_empty());
         }
         let view = s.search_typed(text);
@@ -2099,13 +2178,18 @@ impl App {
         // Nothing typed: the searches made before, newest first.
         let blank = v.query.trim().is_empty();
         ui.set_search_blank(blank);
-        ui.set_search_nothing(v.nothing_found && !v.searching && v.error.is_none());
+        ui.set_search_nothing(matches!(v.answer, SearchShown::NothingFound));
         ui.set_search_query(v.query.trim().into());
         if blank {
             let recent = self.session.as_ref().and_then(|s| s.core.search_history().ok()).unwrap_or_default();
             ui.set_recent_searches(ModelRc::new(VecModel::from(recent.into_iter().map(SharedString::from).collect::<Vec<_>>())));
         }
-        let found = v.shown.unwrap_or_default();
+        let busy = matches!(v.answer, SearchShown::Asking { .. });
+        let note = match &v.answer {
+            SearchShown::Failed { fallback, .. } => format!("The server could not be searched ({}); these are from the offline index", fallback.reason.clone().unwrap_or_default()),
+            _ => String::new(),
+        };
+        let found = v.answer.into_result().unwrap_or_default();
         self.search_preview = nori_core::search::search_preview(&found);
         ui.set_search_preview(ModelRc::new(VecModel::from(preview_cards(&self.search_preview, &found))));
         ui.set_search_preview_at(-1);
@@ -2118,12 +2202,7 @@ impl App {
             self.search_songs_all = false;
         }
         self.show_search_songs();
-        ui.set_search_busy(v.searching);
-        let note = if let Some(e) = v.error {
-            format!("The server could not be searched ({}); these are from the offline index", e.reason.unwrap_or_default())
-        } else {
-            String::new()
-        };
+        ui.set_search_busy(busy);
         ui.set_search_note(note.into());
     }
 
@@ -2145,7 +2224,7 @@ impl App {
         } else {
             ui.set_search_preview_open(false);
             self.trail.left();
-            self.go(SEARCH);
+            self.go(View::Search);
         }
     }
 
@@ -2165,7 +2244,7 @@ impl App {
             Some(PreviewLine::Song { at }) => self.song(2, at as usize, -1),
             Some(PreviewLine::All) => {
                 self.trail.left();
-                self.go(SEARCH);
+                self.go(View::Search);
             }
             Some(PreviewLine::Head { .. }) | None => {}
         }
@@ -2215,12 +2294,12 @@ impl App {
         // The page's own songs are list 0: their menu leaves out the page's album or artist.
         let ui = self.ui();
         let page = (list == 0).then(|| ui.get_page_id().to_string()).filter(|id| !id.is_empty()).and_then(|id| match ui.get_page_kind() {
-            0 => Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, id)),
-            1 => Some(nori_core::PageOrigin::new(nori_core::OriginKind::Artist, id)),
-            _ => None,
+            PageLayout::Album => Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, id)),
+            PageLayout::Artist => Some(nori_core::PageOrigin::new(nori_core::OriginKind::Artist, id)),
+            PageLayout::List => None,
         });
         let mut lines = self.menu_lines(one, false, page);
-        if list == 0 && self.page_playlist.is_some() {
+        if list == 0 && self.page_playlist().is_some() {
             let at = lines.iter().position(|l| l.kind == 7).map_or(lines.len(), |p| p + 1);
             lines.insert(at, SongGo { title: words::REMOVE_FROM_PLAYLIST.into(), kind: 18, id: SharedString::default(), more: false, enabled: true, filled: false });
         }
@@ -2296,7 +2375,8 @@ impl App {
         match how {
             16 => self.lyrics_sheet(true),
             17 => {
-                self.sleep_choices = nori_core::menus::sleep_choices(self.sleeping);
+                let running = self.session.as_ref().is_some_and(|s| s.sleep() != nori_core::sleep::Sleep::Off);
+                self.sleep_choices = nori_core::menus::sleep_choices(running);
                 let ui = self.ui();
                 ui.set_sleep_choices(ModelRc::new(VecModel::from(self.sleep_choices.iter().map(|c| SharedString::from(words::sleep_choice(c))).collect::<Vec<_>>())));
                 ui.invoke_show_sleep();
@@ -2353,24 +2433,10 @@ impl App {
         }
     }
 
-    /// The sleep timer's choice `i`: a time counts down here; a number of songs, or this one's end, is
-    /// the queue's to count (`sleep_set`).
+    /// The sleep timer's choice `i`.
     fn sleep(&mut self, i: usize) {
         let Some(c) = self.sleep_choices.get(i).copied() else { return };
-        self.sleep_timer.stop();
-        let pause = self.session.as_ref().is_some_and(|s| s.core.session.sleep_set(c.songs, c.end_of_track));
-        self.on_session(|s| s.engine.pause_at_end(pause));
-        self.sleeping = c.minutes > 0 || c.songs > 0 || c.end_of_track;
-        if c.minutes > 0 {
-            let delay = nori_core::rules::sleep_delay(c.minutes)[0];
-            let weak = self.me.clone();
-            self.sleep_timer.start(TimerMode::SingleShot, Duration::from_millis(delay.max(0) as u64), move || {
-                weak.with(|a| {
-                    a.sleeping = false;
-                    a.on_session(|s| s.engine.pause());
-                })
-            });
-        }
+        self.on_session(|s| s.sleep_pick(c));
     }
 
     /// Fills the lyrics' sheet from the lyrics shown, opening it when `open`.
@@ -2387,25 +2453,47 @@ impl App {
         }
     }
 
-    /// The lyrics shown a step sooner (`dir` > 0), later (< 0) or back to the check's timing (0).
+    /// The lyrics shown a step sooner (`dir` > 0), later (< 0) or back to the check's timing (0); they
+    /// come back as [`Msg::Lyrics`].
     fn lyrics_nudge(&mut self, dir: i32) {
-        let (Some(l), Some(s), Some(id)) = (&self.lyrics, &self.session, self.heard.clone()) else { return };
-        let pick = s.core.lyrics_nudge(id, l.pick().clone(), dir);
-        self.show_lyrics(pick);
-        self.lyrics_sheet(false);
+        if let Some(s) = &self.session {
+            s.lyrics_nudge(dir);
+        }
     }
 
-    /// Shows `pick` as the song playing's lyrics.
-    fn show_lyrics(&mut self, pick: nori_core::race::LyricsPick) {
-        let l = crate::lyrics::SongLyrics::new(pick, self.position_now(), self.lyric_faces.clone());
+    /// Shows what the session's lyrics view shows for the song heard; another song's is let go.
+    fn lyrics_now(&mut self, now: LyricsNow) {
+        if now.song() != self.heard.as_deref() {
+            return;
+        }
         let ui = self.ui();
-        ui.set_lyrics_lines(l.lines());
-        ui.set_lyrics_lane(l.lane());
-        ui.set_lyrics_synced(l.synced());
-        ui.set_lyrics_note(if l.is_empty() { "No lyrics for this song".into() } else { l.credit(&|id| self.plugin_name(id)).into() });
-        ui.set_lyrics_waiting(false);
-        self.lyrics = Some(l);
-        self.lyrics_step(true);
+        match now {
+            LyricsNow::Shown { pick, .. } => {
+                let l = crate::lyrics::SongLyrics::new(pick, self.position_now(), self.lyric_faces.clone());
+                ui.set_lyrics_lines(l.lines());
+                ui.set_lyrics_lane(l.lane());
+                ui.set_lyrics_synced(l.synced());
+                ui.set_lyrics_note(if l.is_empty() { "No lyrics for this song".into() } else { l.credit(&|id| self.plugin_name(id)).into() });
+                ui.set_lyrics_waiting(false);
+                self.lyrics = Some(l);
+                self.lyrics_sheet(false);
+                self.lyrics_step(true);
+            }
+            // The last song's lines stay (faded out while waiting) until this one's come.
+            LyricsNow::Looking { .. } => {
+                self.lyrics = None;
+                ui.set_lyrics_active(-1);
+                ui.set_lyrics_note("Looking for lyrics…".into());
+                ui.set_lyrics_waiting(true);
+            }
+            LyricsNow::Failed { .. } | LyricsNow::NoSong => {
+                self.lyrics = None;
+                ui.set_lyrics_lines(ModelRc::default());
+                ui.set_lyrics_active(-1);
+                ui.set_lyrics_note(if self.heard.is_some() { "No lyrics for this song".into() } else { "".into() });
+                ui.set_lyrics_waiting(false);
+            }
+        }
     }
 
     /// Asks the server for a link to song `id`, copied when it comes.
@@ -2451,16 +2539,24 @@ impl App {
         }
     }
 
+    /// The playlist shown, while the profile may change it.
+    fn page_playlist(&self) -> Option<&nori_core::Playlist> {
+        match &self.page {
+            Some(PageShown::Playlist(p)) => p.as_ref(),
+            _ => None,
+        }
+    }
+
     /// Takes entry `index` out of the playlist shown.
     fn remove_from_playlist(&self, index: usize) {
-        let Some(p) = &self.page_playlist else { return };
+        let Some(p) = self.page_playlist() else { return };
         let write = nori_core::client::Write::RemoveFromPlaylist { id: p.id.clone(), index: index as i32 };
         self.playlist_write(write, words::removed_from_playlist(&p.name), PlaylistChange::Changed(p.id.clone()));
     }
 
     /// Names the playlist shown `name`.
     fn rename_playlist(&self, name: &str) {
-        let (Some(p), name) = (&self.page_playlist, name.trim()) else { return };
+        let (Some(p), name) = (self.page_playlist(), name.trim()) else { return };
         if name.is_empty() {
             return;
         }
@@ -2472,7 +2568,7 @@ impl App {
     /// Deletes the playlist shown, once its sheet asked.
     fn delete_playlist(&self) {
         self.ui().set_delete_open(false);
-        let Some(p) = &self.page_playlist else { return };
+        let Some(p) = self.page_playlist() else { return };
         self.playlist_write(nori_core::client::Write::DeletePlaylist { id: p.id.clone() }, words::playlist_deleted(&p.name), PlaylistChange::Deleted(p.id.clone()));
     }
 
@@ -2494,8 +2590,8 @@ impl App {
     fn playlist_changed(&mut self, text: &str, change: PlaylistChange) {
         self.say(text, false);
         self.on_session(|s| s.load(Req::Page(PageAsk::Playlists)));
-        let on_page = self.ui().get_view() == PAGE;
-        let shown = |id: &str| on_page && self.page_playlist.as_ref().is_some_and(|p| p.id == id);
+        let on_page = self.ui().get_view() == View::Page;
+        let shown = |id: &str| on_page && self.page_playlist().is_some_and(|p| p.id == id);
         match change {
             PlaylistChange::Changed(id) if shown(&id) => self.load(Req::Page(PageAsk::Playlist(id))),
             PlaylistChange::Deleted(id) if shown(&id) => self.back(),
@@ -2553,9 +2649,9 @@ impl App {
     fn star_page(&self) {
         let ui = self.ui();
         let kind = match ui.get_page_kind() {
-            0 => nori_core::client::Starrable::Album,
-            1 => nori_core::client::Starrable::Artist,
-            _ => return,
+            PageLayout::Album => nori_core::client::Starrable::Album,
+            PageLayout::Artist => nori_core::client::Starrable::Artist,
+            PageLayout::List => return,
         };
         let on = !ui.get_page_starred();
         ui.set_page_starred(on);
@@ -2566,7 +2662,7 @@ impl App {
     /// Flips `s`'s heart, once: through the device playing while it has the song, else here.
     fn star(&mut self, s: &Song) {
         if self.session.as_ref().is_some_and(|x| !x.rules().stars && x.rules().stars_after_sign_in) {
-            return self.offer_sign_in();
+            return self.ask_sign_in();
         }
         let on = !self.starred(s);
         self.on_session(|x| x.star_song(s.id.clone(), on, self.there()));
@@ -2625,13 +2721,10 @@ impl App {
     /// Joins the jam `link` invites to, as a guest profile of its own.
     /// Signs the account of the profile in use in with cookies pasted from a browser.
     fn sign_in(&mut self, answer: String) {
-        let Some(s) = &self.session else { return };
-        let ui = self.ui();
-        if answer.trim().is_empty() || ui.get_signin_busy() {
+        if self.session.is_none() || answer.trim().is_empty() || !self.sign_in_on(SignInEvent::Sent) {
             return;
         }
-        ui.set_signin_busy(true);
-        ui.set_signin_error("".into());
+        let Some(s) = &self.session else { return };
         let (h, tx) = ((***s).clone(), self.tx.clone());
         nori_host::spawn("nori-sign-in", move || tx.send(Msg::SignedIn(h.sign_in(answer))));
     }
@@ -2645,21 +2738,20 @@ impl App {
         let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
         let providers = self.kinds().providers();
         if id == prefs.active_server_id && providers.iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
-            return self.offer_sign_in();
+            return self.ask_sign_in();
         }
         let ui = self.ui();
         if let Some(info) = providers.iter().find(|i| i.kind == profile.kind).or(providers.first()) {
-            ui.set_login_form(login_form(self.kinds(), info, self.plugged.about_of(&info.kind), false));
-            self.login_kind = info.kind.clone();
+            ui.set_login_form(login_form(self.kinds(), info, self.plugged.about_of(&info.kind), nori_core::providers::FirstStep::Form));
+            self.add_on(AddEvent::Edit { kind: info.kind.clone() });
         }
-        ui.set_login_choosing(false);
         ui.set_login_adding(false);
         ui.set_login_name(profile.name.as_str().into());
         ui.set_login_url(profile.url.as_str().into());
         ui.set_login_user(profile.user.as_str().into());
         ui.set_login_password("".into());
         self.editing = Some(profile);
-        self.go(LOGIN);
+        self.go(View::Login);
     }
 
     /// The account changed under the open profile: its seals and downloads follow, and a session the
@@ -2668,24 +2760,30 @@ impl App {
         let Some(s) = self.session.as_ref() else { return };
         let Some(state) = s.account_changed() else { return };
         let rules = s.rules();
+        let offer = s.client.sign_in_due(None);
         let ui = self.ui();
         ui.set_downloads(rules.downloads);
         ui.set_page_can_star(rules.account && rules.stars);
         ui.set_favorites_offered(rules.stars);
         match state {
-            nori_core::providers::AccountState::Ended => self.offer_sign_in(),
-            nori_core::providers::AccountState::SignedIn => ui.set_signin_open(false),
+            nori_core::providers::AccountState::Ended => {
+                if let Some(offer) = offer {
+                    self.offer_sign_in(offer);
+                }
+            }
+            nori_core::providers::AccountState::SignedIn => {
+                self.sign_in_on(SignInEvent::Close);
+            }
             nori_core::providers::AccountState::SignedOut => {}
         }
     }
 
     /// The first screen: what a new profile plays from.
     fn choose_provider(&mut self) {
-        self.plugged.choosing = true;
         let ui = self.ui();
         ui.set_provider_top(crate::settings::provider_top());
-        ui.set_login_choosing(true);
-        self.go(LOGIN);
+        self.go(View::Login);
+        self.add_on(AddEvent::Start);
         self.plugins_look();
         self.plugins_shown();
     }
@@ -2693,20 +2791,19 @@ impl App {
     /// `kind`'s page, or, with nothing to ask, the kind added at once from the first screen; a kind that
     /// can't be added now stays there.
     fn provider_chosen(&mut self, kind: nori_core::settings::ServerKind) {
-        let ui = self.ui();
-        if ui.get_login_busy() {
+        if self.add.busy() {
             return;
         }
         let Some(info) = self.kinds().providers().into_iter().find(|i| i.kind == kind) else { return };
-        ui.set_login_form(login_form(self.kinds(), &info, self.plugged.about_of(&kind), true));
+        let then = self.add_on(AddEvent::Chose { info: info.clone() });
+        // Asking nothing, its page shows only if adding it at once fails.
+        let step = self.add.step().unwrap_or(nori_core::providers::FirstStep::AddNow);
+        let ui = self.ui();
+        ui.set_login_form(login_form(self.kinds(), &info, self.plugged.about_of(&kind), step));
         ui.set_login_adding(true);
-        ui.set_login_error("".into());
-        self.login_kind = kind;
-        if info.first_step() == nori_core::providers::FirstStep::AddNow {
-            return self.login(AfterAdding::Remind);
+        if then == AddDo::Connect {
+            self.login(AfterAdding::Remind);
         }
-        ui.set_login_choosing(false);
-        self.plugged.choosing = false;
     }
 
     /// Turns on plugin `id`, chosen from the first screen, and opens its form, unless the profile waiting
@@ -2722,7 +2819,7 @@ impl App {
     /// Opens the waiting profile once its plugin runs.
     fn open_waiting(&mut self) {
         match self.waiting.clone() {
-            Some(profile) if self.kinds().waits(profile.clone()).is_none() => self.open(profile),
+            Some(profile) if self.kinds().waits(profile.clone()).is_none() => self.open(profile, None),
             _ => {}
         }
     }
@@ -2738,7 +2835,9 @@ impl App {
 
     /// Takes down the sheet over the first screen.
     fn close_plugins(&mut self) {
-        self.plugged.offered = None;
+        if let AddPage::Offered { .. } = self.add.page {
+            self.add_on(AddEvent::Back);
+        }
         self.plugged.stack.clear();
         self.ui().set_plugins_open(false);
         self.plugins_shown();
@@ -2895,7 +2994,6 @@ impl App {
     fn ask_sleeve(&mut self, song: Song) {
         self.sleeve = None;
         self.moving = None;
-        self.motion = None;
         self.ui().set_sleeved(false);
         if !self.plugins_fill(nori_plugins::Place::Artwork) {
             return;
@@ -2921,19 +3019,20 @@ impl App {
     fn motion_follow(&mut self) {
         let ui = self.ui();
         let shows = !self.hidden && ui.get_full_player() && ui.get_playing() && !ui.global::<Motion>().get_reduced();
+        let Some(moving) = &mut self.moving else { return };
         if !shows {
-            self.motion = None;
+            moving.playing = None;
             return;
         }
-        if self.motion.is_some() {
+        if moving.playing.is_some() {
             return;
         }
-        let Some((song, artwork, kept)) = self.moving.clone() else { return };
+        let (song, artwork) = (moving.song.clone(), moving.artwork.clone());
         let (frames, fails) = (self.tx.clone(), self.tx.clone());
         let id = song.id.clone();
-        self.motion = Some(crate::motion::play(
+        moving.playing = Some(crate::motion::play(
             artwork.url.clone(),
-            kept,
+            moving.kept.clone(),
             move || frames.send(Msg::LoopFrame { song: id.clone() }),
             move |failed| {
                 nori_core::alog::info(&format!("moving cover: {failed:?}"));
@@ -3053,12 +3152,18 @@ impl App {
             PluginAct::Browser => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Browser)),
             PluginAct::Repos => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Repos)),
             PluginAct::Page(id) => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Plugin(id))),
-            PluginAct::Back if self.plugged.back() => return self.close_plugins(),
-            PluginAct::Back => return self.plugin_pages(|_| {}),
+            PluginAct::Back => {
+                self.plugged.stack.pop();
+                // Back from the page of the plugin the first screen offered closes its sheet.
+                if self.plugged.stack.is_empty() && matches!(self.add.page, AddPage::Offered { .. }) {
+                    return self.close_plugins();
+                }
+                return self.plugin_pages(|_| {});
+            }
             PluginAct::Choose(kind) => return self.provider_chosen(kind),
             PluginAct::TurnOn(id) => return self.provider_turned_on(id),
             PluginAct::OfferPage(id) => {
-                self.plugged.offered = Some(id.clone());
+                self.add_on(AddEvent::OfferOpened { plugin: id.clone() });
                 self.ui().set_plugins_open(true);
                 return self.plugin_pages(|s| *s = vec![crate::settings::PluginPage::Plugin(id)]);
             }
@@ -3142,23 +3247,28 @@ impl App {
     }
 
     /// The ended session's sheet no longer comes back at start.
-    fn sign_in_quiet(&self) {
+    fn sign_in_quiet(&mut self) {
         self.on_session(|s| s.client.stop_reminding());
-        self.ui().set_signin_open(false);
+        self.sign_in_on(SignInEvent::Close);
     }
 
-    fn offer_sign_in(&mut self) {
-        use nori_core::providers::AccountState;
-        let ended = self.session.as_ref().is_some_and(|s| s.client.account() == AccountState::Ended);
+    /// The account sheet, as asked for: the account's row, a seal tapped while signed out.
+    fn ask_sign_in(&mut self) {
+        if let Some(offer) = self.session.as_ref().map(|s| s.client.sign_in_offer()) {
+            self.offer_sign_in(offer);
+        }
+    }
+
+    /// The account sheet, opened by `offer`.
+    fn offer_sign_in(&mut self, offer: SignInEvent) {
         let Some(profile) = self.root.app.settings.current().and_then(|p| p.active_server().cloned()) else { return };
+        self.sign_in_on(offer);
+        let ended = self.sign_in.shown == SignInShown::Offered { ended: true };
         let user = if ended { String::new() } else { profile.user.clone() };
         let ui = self.ui();
         ui.set_signin_user(user.into());
         ui.set_signin_service(words::provider_of(self.kinds(), &profile.kind).name.into());
         ui.set_signin_pasting(false);
-        ui.set_signin_error("".into());
-        ui.set_signin_ended(ended);
-        ui.set_signin_open(true);
     }
 
     /// The provider's own sign-in page in a window of its own (this program again, `--sign-in`: the system's
@@ -3181,19 +3291,19 @@ impl App {
             Some(start) => nori_sign_in_window::SignInWindow::open_at(self.kinds().clone(), kind, title, start, done),
             None => nori_sign_in_window::SignInWindow::open(self.kinds().clone(), kind, title, done),
         };
-        let ui = self.ui();
         let Some(window) = window else {
+            let ui = self.ui();
             ui.set_signin_pasting(true);
             ui.set_signin_error(words::SIGN_IN_WINDOW_FAILED.into());
             return;
         };
-        ui.set_signin_busy(true);
+        self.sign_in_on(SignInEvent::Sent);
         self.sign_in_window = Some(window);
     }
 
     fn sign_out(&mut self) {
         self.on_session(|s| s.sign_out());
-        self.ui().set_signin_open(false);
+        self.sign_in_on(SignInEvent::SignedOut);
         self.reopen();
     }
 
@@ -3202,7 +3312,7 @@ impl App {
     fn reopen(&mut self) {
         if let Some(p) = self.root.app.settings.current().and_then(|p| p.active_server().cloned()) {
             let view = self.ui().get_view();
-            self.open(p);
+            self.open(p, None);
             self.go(view);
         }
     }
@@ -3235,7 +3345,7 @@ impl App {
         ui.set_join_open(false);
         ui.set_join_link("".into());
         let guest = nori_host::jam_joined(&self.root.app.settings, pass, words::JAM_GUEST);
-        self.open(guest);
+        self.open(guest, None);
     }
 
     /// Leaves the jam this guest is in, at once; the relay is told on the way.
@@ -3252,7 +3362,7 @@ impl App {
         self.playback = Playback::Here;
         self.asked.clear();
         match back {
-            Some(p) => self.open(p),
+            Some(p) => self.open(p, None),
             None => {
                 if let Some(s) = self.session.take() {
                     s.close();
@@ -3273,7 +3383,7 @@ impl App {
                     Event::Output { name } => {
                         self.output = name.clone();
                         self.output_shown();
-                        if self.ui().get_view() == EQUALIZER {
+                        if self.ui().get_view() == View::Equalizer {
                             self.eq_extras();
                         }
                     }
@@ -3283,8 +3393,6 @@ impl App {
                     }
                     Event::Error { message, .. } => self.say(&format!("Could not play: {message}"), true),
                     Event::Waiting(true) => self.say("Waiting for the server…", true),
-                    // A sleep timer of songs, or this one's end, stops playback by itself.
-                    Event::Stopped { .. } if self.sleeping && !self.sleep_timer.running() => self.sleeping = false,
                     _ => {}
                 }
                 self.follow();
@@ -3296,15 +3404,11 @@ impl App {
             }
             Msg::Cover { key, image, colours } => self.cover(key, &image, colours),
             Msg::Search(v) => {
-                if self.ui().get_view() == SEARCH {
+                if self.ui().get_view() == View::Search {
                     self.show_search(v);
                 }
             }
-            Msg::Lyrics { song, pick } => {
-                if self.heard.as_deref() == Some(song.as_str()) && self.lyrics.as_ref().is_none_or(|l| l.replaced_by(&pick)) {
-                    self.show_lyrics(pick);
-                }
-            }
+            Msg::Lyrics(now) => self.lyrics_now(now),
             Msg::Facts(f) => {
                 self.facts = *f;
                 self.settings_shown();
@@ -3314,7 +3418,7 @@ impl App {
             Msg::Shared(Some(link)) => self.copy(link),
             Msg::Offer(offer) => {
                 let (playing, here) = (self.ui().get_playing(), self.heard.clone());
-                self.offer = offer.filter(|o| o.songs.get(o.index as usize).is_some_and(|s| nori_core::library::offer_stands(&s.id, here, playing)));
+                self.offer.found(offer, here, playing);
                 self.offer_shown();
             }
             Msg::Shared(None) => self.say(words::SHARE_FAILED, true),
@@ -3334,7 +3438,7 @@ impl App {
             }
             Msg::Jam(Ok(())) => {
                 // The jam shows in the queue panel.
-                self.ui().set_inspector(1);
+                self.ui().set_inspector(Panel::Queue);
                 self.jam_shown();
             }
             Msg::Jam(Err(e)) => self.say(&format!("{} ({e})", words::JAM_FAILED), true),
@@ -3350,7 +3454,7 @@ impl App {
                 self.follow();
                 self.mark_playing();
                 // The Favorites tab lists what is liked now: a like from the player or a row joins or leaves it.
-                if self.ui().get_view() == FAVORITES {
+                if self.ui().get_view() == View::Favorites {
                     self.load(Req::Page(PageAsk::Favorites));
                     // Read again in place: the list stays while it comes.
                     self.ui().set_loading(false);
@@ -3376,7 +3480,6 @@ impl App {
                         Ok(change) => {
                             if let Some(change) = change {
                                 self.on_session(|s| s.applied(change.effect));
-                                self.tune();
                             }
                             words::autoeq_applied(&name)
                         }
@@ -3401,7 +3504,7 @@ impl App {
                 match r {
                     Ok(id) => {
                         self.say(words::PLUGIN_INSTALLED, false);
-                        if self.plugged.offered.as_ref() == Some(&id) {
+                        if self.add.page == (AddPage::Offered { plugin: id.clone() }) {
                             self.close_plugins();
                             self.provider_turned_on(id);
                         }
@@ -3411,7 +3514,7 @@ impl App {
             }
             // What it is and may reach, before it is installed.
             Msg::PluginPreview(Ok(p)) => {
-                self.confirm(&words::install_version(&p.card.name, &p.card.version), &words::preview_note(&p, self.plugged.offered.as_ref() == Some(&p.card.id) || !self.plugged.cards.iter().any(|c| c.id == p.card.id)).join("\n\n"), words::INSTALL, crate::settings::PluginAct::InstallPreview);
+                self.confirm(&words::install_version(&p.card.name, &p.card.version), &words::preview_note(&p, self.add.page == (AddPage::Offered { plugin: p.card.id.clone() }) || !self.plugged.cards.iter().any(|c| c.id == p.card.id)).join("\n\n"), words::INSTALL, crate::settings::PluginAct::InstallPreview);
                 self.preview = Some(p);
             }
             Msg::PluginPreview(Err(e)) => self.say(&words::plugin_refused(&e), true),
@@ -3448,12 +3551,12 @@ impl App {
             }
             Msg::Sleeve { .. } => {}
             Msg::Loop { song, artwork } if Some(&song.id) == self.heard.as_ref() => {
-                self.moving = Some((song, artwork, Default::default()));
+                self.moving = Some(Moving { song, artwork, kept: Default::default(), playing: None });
                 self.motion_follow();
             }
             Msg::Loop { .. } => {}
             Msg::LoopFrame { song } => {
-                let Some(playing) = &self.motion else { return };
+                let Some(playing) = self.moving.as_ref().and_then(|m| m.playing.as_ref()) else { return };
                 if Some(&song) == self.heard.as_ref() {
                     let image = playing.shown.lock().expect("not poisoned");
                     let ui = self.ui();
@@ -3463,8 +3566,10 @@ impl App {
                 playing.busy.store(false, std::sync::atomic::Ordering::Relaxed);
             }
             Msg::LoopFailed { song, artwork, status } => {
-                self.moving = None;
-                self.motion = None;
+                // A failure of the song before leaves the new one's loop playing.
+                if Some(&song.id) == self.heard.as_ref() {
+                    self.moving = None;
+                }
                 if let Some(status) = status {
                     let host = self.plugin_host().clone();
                     nori_host::spawn("nori-plugin-artwork", move || host.artwork_failed(artwork, song, status));
@@ -3495,7 +3600,6 @@ impl App {
             },
             Msg::Restored(Ok(r)) => {
                 self.on_session(|s| s.backup_restored(&r.settings));
-                self.tune();
                 self.settings_shown();
                 self.jam_shown();
                 self.plugins_read();
@@ -3510,82 +3614,50 @@ impl App {
             Msg::PluginSignIn { plugin, url } => self.sign_in_page(nori_core::settings::ServerKind::Plugin { id: plugin }, Some(url)),
             Msg::SignInWindowDone(pid, r) => {
                 self.sign_in_window.take_if(|w| w.id() == pid);
-                let ui = self.ui();
-                ui.set_signin_busy(false);
-                match r {
-                    nori_core::providers::SignInResult::SignedIn { .. } => {
-                        ui.set_signin_open(false);
-                        self.reopen();
-                    }
-                    failed => ui.set_signin_error(words::sign_in_failed(&failed).into()),
+                let signed_in = matches!(r, nori_core::providers::SignInResult::SignedIn { .. });
+                self.sign_in_on(SignInEvent::Answered { result: r });
+                if signed_in {
+                    self.reopen();
                 }
             }
             Msg::SignedIn(r) => {
-                let ui = self.ui();
-                ui.set_signin_busy(false);
-                match r {
-                    nori_core::providers::SignInResult::SignedIn { .. } => {
-                        ui.set_signin_open(false);
-                        ui.set_signin_text("".into());
-                        self.reopen();
-                    }
-                    failed => ui.set_signin_error(words::sign_in_failed(&failed).into()),
+                let signed_in = matches!(r, nori_core::providers::SignInResult::SignedIn { .. });
+                self.sign_in_on(SignInEvent::Answered { result: r });
+                if signed_in {
+                    self.ui().set_signin_text("".into());
+                    self.reopen();
                 }
             }
-            Msg::LoggedIn(r) => {
-                let ui = self.ui();
-                ui.set_login_busy(false);
-                match r {
-                    Ok(p) => {
-                        self.editing = None;
-                        ui.set_login_password("".into());
-                        self.open(p);
-                    }
-                    Err(e) => self.login_failed(&e),
+            Msg::LoggedIn(r) => match r {
+                Ok(p) => {
+                    let added = match self.add_on(AddEvent::Accepted) {
+                        AddDo::Open { added } => added,
+                        _ => None,
+                    };
+                    self.editing = None;
+                    self.ui().set_login_password("".into());
+                    self.open(p, added);
                 }
-            }
+                Err(said) => {
+                    self.add_on(AddEvent::Refused { said });
+                }
+            },
         }
     }
 
     /// Requests the covers found missing while drawing.
     fn ask_covers(&mut self) {
-        let mut art = self.art.borrow_mut();
-        let a = &mut *art;
-        let wanted = std::mem::take(&mut a.wanted);
-        let Some(s) = &self.session else {
-            // No session yet: forget them so they are requested again later.
-            a.asked.clear();
-            return;
-        };
-        // Cancel requests for covers no longer on screen.
-        let now = Instant::now();
-        self.tickets.retain(|(k, _)| {
-            let shown = a.missing.get(k).is_some_and(|t| now.duration_since(*t) < GONE);
-            if !shown {
-                a.asked.remove(k);
-                a.missing.remove(k);
-            }
-            shown
-        });
-        // The loader serves newest first; reversed so the top left of a frame comes first.
-        for k in wanted.into_iter().rev() {
+        let (session, mixes) = (self.session.as_ref(), &self.mixes);
+        self.art.borrow_mut().ask(Instant::now(), |k| {
             // A mix card's first cover brings its colors, which the card wears.
-            let colours = k.size != CoverSize::Card || self.mixes.iter().any(|m| m.covers.first() == Some(&k.id));
-            let Some(t) = s.cover(k.clone(), cover_px(k.size), colours) else { continue };
-            self.tickets.push_back((k, t));
-        }
-        // Dropping a ticket cancels it; the cover may be requested again.
-        while self.tickets.len() > PENDING_KEPT {
-            let (k, _) = self.tickets.pop_front().expect("longer than the limit");
-            a.asked.remove(&k);
-            a.missing.remove(&k);
-        }
+            let colours = k.size != CoverSize::Card || mixes.iter().any(|m| m.covers.first() == Some(&k.id));
+            session?.cover(k.clone(), cover_px(k.size), colours)
+        });
     }
 
     fn cover(&mut self, key: CoverKey, image: &Picture, colours: Option<Box<CoverColours>>) {
         let id = key.id.clone();
         let large = key.size != CoverSize::Card;
-        self.tickets.retain(|(k, _)| *k != key);
         let picture = self.compositor.picture(&image.pixels, image.width, image.height);
         self.art.borrow_mut().insert(key, picture, colours, Instant::now());
         let ui = self.ui();
@@ -3598,7 +3670,7 @@ impl App {
             if ui.get_now_art() == id.as_str() {
                 self.now_colours(&id, c.as_deref());
             }
-            if ui.get_view() == PAGE && ui.get_page_art() == id.as_str() {
+            if ui.get_view() == View::Page && ui.get_page_art() == id.as_str() {
                 self.page_colours(c.as_deref());
             }
         }
@@ -3649,7 +3721,7 @@ impl App {
     /// Positions the pills; hidden over Now Playing and the login page.
     fn place_player(&self) {
         let ui = self.ui();
-        let shown = !ui.get_full_player() && ui.get_view() != LOGIN;
+        let shown = !ui.get_full_player() && ui.get_view() != View::Login;
         self.compositor.show_pills(shown && self.top.is_some(), shown && self.player.is_some());
         let chrome = ui.global::<crate::Chrome>();
         let (top, player) = self.compositor.pills();
@@ -3671,8 +3743,8 @@ impl App {
         let at = self.position_now();
         let playing = ui.get_playing();
         let Some(l) = &mut self.lyrics else { return };
-        let full = ui.get_full_player() && ui.get_full_panel() == 2;
-        let side = ui.get_inspector() == 2;
+        let full = ui.get_full_player() && ui.get_full_panel() == Panel::Lyrics;
+        let side = ui.get_inspector() == Panel::Lyrics;
         let now = l.advance(at, full || side, force);
         ui.set_lyrics_active(now.active);
         ui.set_lyric_sweeping(now.sweeping);
@@ -3759,7 +3831,7 @@ impl App {
         self.ui().set_queue_undo(words::removed(&song.title).into());
         self.removed = Some(song.id);
         let weak = self.me.clone();
-        self.undo_timer.start(TimerMode::SingleShot, Duration::from_millis(UNDO_MS), move || {
+        self.undo_timer.start(TimerMode::SingleShot, Duration::from_millis(nori_core::undo::UNDO_MS as u64), move || {
             weak.with(|a| {
                 a.removed = None;
                 a.ui().set_queue_undo("".into());
@@ -3798,7 +3870,8 @@ impl App {
             return;
         }
         let active = self.there().map(|e| e.mirror.id.as_str());
-        let mut rows = vec![words::device_row(None, active.is_none() && cast.is_none())];
+        let here = matches!(nori_core::destination::destination(remote.clone(), cast.as_ref().map(Into::into)), nori_core::destination::Destination::Here { .. });
+        let mut rows = vec![words::device_row(None, here)];
         rows.extend(cast.as_ref().map(words::cast_row));
         rows.extend(targets.iter().map(words::target_row));
         if let Some(r) = remote {
@@ -3825,16 +3898,19 @@ impl App {
     /// computer's output as the core's `output_look` reads it (this computer until the first song opens one).
     fn output_shown(&self) {
         use nori_core::outputs::{output_look, OutputGlyph};
-        let (elsewhere, glyph, name) = match (self.there(), self.cast()) {
-            (Some(e), _) => (true, words::device_glyph(e.mirror.kind), e.mirror.name.clone()),
-            (None, Some(c)) => (true, if c.look == nori_plugins::CastLook::Headphones { 1 } else { 3 }, c.device),
+        use nori_core::destination::Destination;
+        let remote = self.session.as_ref().and_then(|s| s.remote());
+        let cast = self.cast();
+        let (elsewhere, glyph, name) = match (nori_core::destination::destination(remote, cast.as_ref().map(Into::into)), self.there(), cast) {
+            (Destination::Mirroring { .. }, Some(e), _) => (true, words::device_glyph(e.mirror.kind), e.mirror.name.clone()),
+            (Destination::Cast { .. }, _, Some(c)) => (true, if c.look == nori_plugins::CastLook::Headphones { 1 } else { 3 }, c.device),
             // Headphones a plugin controls by their own name, with their battery.
-            (None, None) if self.output_device().is_some() => {
+            _ if self.output_device().is_some() => {
                 let d = self.output_device().expect("just found");
                 (false, 2, d.level.map_or_else(|| d.name.clone(), |l| words::with_level(&d.name, l)))
             }
-            (None, None) if self.output.is_empty() => (false, 0, words::THIS_COMPUTER.to_string()),
-            (None, None) => {
+            _ if self.output.is_empty() => (false, 0, words::THIS_COMPUTER.to_string()),
+            _ => {
                 let look = output_look(self.output.clone());
                 let glyph = match look.glyph {
                     OutputGlyph::Phone => 0,
@@ -3924,7 +4000,7 @@ impl App {
         ui.set_season_detail(seasons.detail.into());
         ui.set_appearance_pick(crate::settings::appearance_pick(&prefs));
         let view = ui.get_view();
-        if view == SETTINGS {
+        if view == View::Settings {
             // The core's pages, then Plugins.
             let mut tabs: Vec<SharedString> = crate::settings::tabs(&self.facts.rules.settings).into_iter().map(|p| SharedString::from(crate::settings::tab_name(p))).collect();
             let plugins_tab = tabs.len() as i32;
@@ -3939,7 +4015,7 @@ impl App {
                 crate::settings::rows(&self.root.app.settings.model, &prefs, &self.facts, self.kinds(), tab, today)
             });
         }
-        if view == EQUALIZER {
+        if view == View::Equalizer {
             crate::eq::fill(&ui, &prefs);
             self.eq_extras();
         }
@@ -3953,8 +4029,6 @@ impl App {
         };
         if changed.is_none() {
             self.say(&format!("{name}: not a setting"), true);
-        } else {
-            self.tune();
         }
         self.settings_shown();
         self.jam_shown();
@@ -4042,26 +4116,36 @@ impl App {
         }
     }
 
-    /// Enters the engine's shallow buffer after a change on a sound page (`rules::sound_tuning`).
-    fn tune(&mut self) {
-        if !self.tuning && nori_core::rules::sound_tuning(self.sound_page(self.ui().get_view()), true) {
-            self.tuning = true;
-            self.on_session(|s| s.engine.set_shallow(true));
+    /// Tells the session when the sound page in sight changes as `view` shows; the new one first, so
+    /// the buffer holds from one to the next.
+    fn follow_sound_page(&mut self, view: View) {
+        let now = self.sound_page_of(view);
+        if now == self.sound_page {
+            return;
         }
+        let was = std::mem::replace(&mut self.sound_page, now);
+        self.on_session(|s| {
+            if let Some(page) = now {
+                s.sound_page(page, true);
+            }
+            if let Some(page) = was {
+                s.sound_page(page, false);
+            }
+        });
     }
 
-    /// Gives the deep buffer back unless `view` is a sound page.
-    fn untune(&mut self, view: i32) {
-        if self.tuning && !self.sound_page(view) {
-            self.tuning = false;
-            self.on_session(|s| s.engine.set_shallow(false));
+    /// The equalizer page (with its AutoEQ search), Settings on its Sound tab, or the plugins' tab.
+    fn sound_page_of(&self, view: View) -> Option<nori_core::tuning::SoundPage> {
+        use nori_core::tuning::SoundPage;
+        match view {
+            View::Equalizer => Some(SoundPage::Equalizer),
+            View::Settings => {
+                let tabs = crate::settings::tabs(&self.facts.rules.settings);
+                let tab = self.ui().get_settings_tab() as usize;
+                if tab == tabs.len() { Some(SoundPage::Plugin) } else { tabs.get(tab).copied().and_then(SoundPage::of_settings) }
+            }
+            _ => None,
         }
-    }
-
-    /// The equalizer page, or Settings on its Sound tab: where a sound change is heard at once.
-    fn sound_page(&self, view: i32) -> bool {
-        view == EQUALIZER
-            || view == SETTINGS && crate::settings::tabs(&self.facts.rules.settings).get(self.ui().get_settings_tab() as usize) == Some(&nori_core::settings_pages::SettingsPage::Sound)
     }
 
     /// Edits a level in place; redraws the page when the slider is released.
@@ -4069,7 +4153,6 @@ impl App {
         let Some(level) = crate::settings::level_of(name) else { return };
         if let Some((effect, _)) = self.root.app.settings.edit_level(level, v) {
             self.on_session(|s| s.applied(effect));
-            self.tune();
         }
         if last {
             self.settings_shown();
@@ -4082,7 +4165,6 @@ impl App {
         let settings = self.root.app.settings.clone();
         if let Some(effect) = settings.edit_point(i, point) {
             self.on_session(|s| s.applied(effect));
-            self.tune();
         }
         if last {
             self.settings_shown();
@@ -4096,7 +4178,6 @@ impl App {
     fn eq_typed(&mut self, i: u32, field: nori_core::settings::BandField, text: &str) {
         if let Some(effect) = self.root.app.settings.edit_typed(i, field, text) {
             self.on_session(|s| s.applied(effect));
-            self.tune();
         }
         self.settings_shown();
     }
@@ -4126,7 +4207,6 @@ impl App {
         match self.root.app.settings.sound_tool(tool) {
             Ok(Some(change)) => {
                 self.on_session(|s| s.applied(change.effect));
-                self.tune();
             }
             Ok(None) => {}
             Err(e) => self.say(&format!("{e:?}"), true),
@@ -4200,7 +4280,6 @@ impl App {
         let Some(prefs) = store.current() else { return };
         let effect = store.put(prefs.with_sound(sound));
         self.on_session(|s| s.applied(effect));
-        self.tune();
         self.settings_shown();
     }
 
@@ -4235,7 +4314,7 @@ impl App {
 
     fn setting_action(&mut self, name: &str) {
         match Act::of(name) {
-            Some(Act::Equalizer) => self.go(EQUALIZER),
+            Some(Act::Equalizer) => self.go(View::Equalizer),
             Some(Act::AddServer) => {
                 self.editing = None;
                 let ui = self.ui();
@@ -4250,7 +4329,7 @@ impl App {
                 let Some(p) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
                 prefs.active_server_id = id;
                 self.root.app.settings.put(prefs);
-                self.open(p);
+                self.open(p, None);
             }
             Some(Act::Edit(id)) => self.edit_profile(id),
             Some(Act::Backup { restore }) => self.ask_field(words::backup_path(restore), name, false),
@@ -4276,7 +4355,6 @@ impl App {
                 None => {
                     self.sleeve = None;
                     self.moving = None;
-                    self.motion = None;
                     ui.set_sleeved(false);
                 }
             }
@@ -4300,16 +4378,9 @@ impl App {
             let _ = cover_image(&self.art, &self.me, art.as_str().into(), 1);
         }
         self.mark_playing();
-        self.lyrics = None;
-        // The last song's lines stay (faded out while waiting) until this one's come; none without a song.
-        if self.song.is_none() {
-            ui.set_lyrics_lines(ModelRc::default());
-        }
-        ui.set_lyrics_active(-1);
-        ui.set_lyrics_note(if self.song.is_some() { "Looking for lyrics…".into() } else { "".into() });
-        ui.set_lyrics_waiting(self.song.is_some());
-        if let (Some(s), Some(id), true) = (&self.session, &self.heard, self.lyrics_viewed) {
-            s.lyrics(id.clone());
+        if changed {
+            let now = self.session.as_ref().map_or(LyricsNow::NoSong, |s| s.lyrics_heard(self.heard.clone()));
+            self.lyrics_now(now);
         }
     }
 
@@ -4317,27 +4388,25 @@ impl App {
     /// the songs ahead meanwhile.
     fn lyrics_seen(&mut self) {
         let ui = self.ui();
-        let viewed = !self.hidden && (ui.get_full_player() && ui.get_full_panel() == 2 || ui.get_inspector() == 2);
+        let viewed = !self.hidden && (ui.get_full_player() && ui.get_full_panel() == Panel::Lyrics || ui.get_inspector() == Panel::Lyrics);
         if viewed == self.lyrics_viewed {
             return;
         }
         self.lyrics_viewed = viewed;
-        let Some(s) = &self.session else { return };
-        s.lyrics_view(viewed);
-        if let (true, None, Some(id)) = (viewed, &self.lyrics, &self.heard) {
-            s.lyrics(id.clone());
+        if let Some(s) = &self.session {
+            s.lyrics_view(viewed);
         }
     }
 
     /// The back button: the page this one was opened from, else the tab it was opened on; Home from a
     /// page of its own.
     fn back(&mut self) {
-        if self.ui().get_view() == SETTINGS && !self.plugged.stack.is_empty() {
+        if self.ui().get_view() == View::Settings && !self.plugged.stack.is_empty() {
             return self.plugin_act(crate::settings::PluginAct::Back);
         }
-        if self.ui().get_view() != PAGE {
+        if self.ui().get_view() != View::Page {
             self.trail.left();
-            return self.go(HOME);
+            return self.go(View::Home);
         }
         match self.trail.back(self.ui().global::<crate::Scroll>().get_at()) {
             (Back::Page(page), at) => self.show_page(page, at),
@@ -4370,13 +4439,17 @@ impl App {
         let playing = now.playing;
         ui.set_playing(playing);
         ui.set_mixing(now.mixing && now.state == State::Playing);
-        if ui.get_view() == PAGE {
+        if ui.get_view() == View::Page {
             self.hero_shown();
         }
         position_shown(&ui, self.player.as_ref(), now.position_now() as i32);
         self.lyrics_seen();
         if now.song.as_ref().map(|s| &s.id) != self.heard.as_ref() {
             self.song_shown(now.song.clone());
+        }
+        // Music started, or the player came to show the offered song: Home lets the offer go.
+        if self.offer.shown().is_some() && !self.offer.still(self.heard.clone(), playing) {
+            self.offer_shown();
         }
         ui.set_now_starred(self.song.as_ref().is_some_and(|s| self.starred(s)));
         if !matches!(self.playback, Playback::Here) {
@@ -4579,7 +4652,7 @@ fn queue_from<'a>(upcoming: impl Iterator<Item = &'a Song>) -> String {
 
 /// Whether a devices panel shows: the full player's, or the side sheet's beside the pages.
 fn devices_open(ui: &AppWindow) -> bool {
-    if ui.get_full_player() { ui.get_full_panel() == 3 } else { ui.get_inspector() == 3 }
+    if ui.get_full_player() { ui.get_full_panel() == Panel::Devices } else { ui.get_inspector() == Panel::Devices }
 }
 
 fn devices_set(ui: &AppWindow, rows: Vec<crate::DeviceRow>) {
@@ -4623,19 +4696,19 @@ mod tests {
     fn back_retraces_pages_then_the_tab() {
         let (artist, album) = (PageAsk::Artist("ar".into()), PageAsk::Album("al".into()));
         let mut trail = PageTrail::default();
-        trail.opened(artist.clone(), FAVORITES, 300.0);
-        trail.opened(album.clone(), PAGE, 120.0);
+        trail.opened(artist.clone(), View::Favorites, 300.0);
+        trail.opened(album.clone(), View::Page, 120.0);
         assert_eq!(trail.back(40.0), (Back::Page(artist.clone()), 120.0), "the album opened from the artist goes back to it, scrolled as it was");
-        assert_eq!(trail.back(0.0), (Back::Tab(FAVORITES), 300.0), "then where the artist was opened from");
+        assert_eq!(trail.back(0.0), (Back::Tab(View::Favorites), 300.0), "then where the artist was opened from");
         assert_eq!(trail.forward(10.0), Some((artist, 0.0)), "forward retraces the pages back left");
         assert_eq!(trail.forward(0.0), Some((album, 40.0)));
         assert_eq!(trail.forward(0.0), None);
-        trail.opened(PageAsk::Album("x".into()), HOME, 0.0);
-        assert_eq!(trail.back(0.0).0, Back::Tab(HOME), "a page opened from a tab forgets the pages before");
+        trail.opened(PageAsk::Album("x".into()), View::Home, 0.0);
+        assert_eq!(trail.back(0.0).0, Back::Tab(View::Home), "a page opened from a tab forgets the pages before");
         trail.left();
         assert_eq!(trail.forward(0.0), None, "a tab chosen forgets the pages ahead");
-        trail.opened(PageAsk::Artist("ar".into()), opened_from(SEARCH), 0.0);
-        assert_eq!(trail.back(0.0).0, Back::Tab(SEARCH), "an artist found by search goes back to the search");
+        trail.opened(PageAsk::Artist("ar".into()), opened_from(View::Search), 0.0);
+        assert_eq!(trail.back(0.0).0, Back::Tab(View::Search), "an artist found by search goes back to the search");
     }
 
     #[test]
@@ -4645,7 +4718,7 @@ mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
-        ui.set_view(HOME);
+        ui.set_view(View::Home);
         ui.set_picks_loaded(true);
         ui.set_offer_shown(true);
         ui.set_offer_line("The Weeknd · 9 of 22".into());
@@ -4673,7 +4746,7 @@ mod tests {
         let scroll = ui.global::<crate::Scroll>();
         scroll.set_want(600.0);
         scroll.set_asked(1);
-        ui.set_view(HOME);
+        ui.set_view(View::Home);
         ui.set_picks_loaded(true);
         ui.show().unwrap();
         ui.window().take_snapshot().unwrap();
@@ -4712,20 +4785,30 @@ mod tests {
     fn albums_come_page_after_page() {
         let page = |from: usize, n: usize| (from..from + n).map(|i| nori_core::Album { id: i.to_string(), ..Default::default() }).collect::<Vec<_>>();
         let full = nori_host::pages::ALBUM_PAGE as usize;
-        let (mut list, mut asked) = (Vec::new(), 0);
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, false, 0, &page(0, full), &mut asked), Some(full as u32));
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, false, 0, &page(0, full), &mut asked), None, "the server's copy of the first page");
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, false, full as u32, &page(full, 100), &mut asked), None, "the last page");
+        let fresh = || {
+            let mut pages = Paged::new(0);
+            pages.ask();
+            (Vec::new(), pages)
+        };
+        let (mut list, mut pages) = fresh();
+        assert_eq!(albums_paged(&mut list, &mut pages, AlbumSort::ByName, false, 0, &page(0, full)), Some(full as u32));
+        assert_eq!(albums_paged(&mut list, &mut pages, AlbumSort::ByName, false, 0, &page(0, full)), None, "the server's copy of the first page");
+        assert_eq!(albums_paged(&mut list, &mut pages, AlbumSort::ByName, false, full as u32, &page(full, 100)), None, "the last page");
         assert_eq!(list.len(), full + 100);
         assert_eq!(list.last().map(|c| c.id.to_string()), Some((full + 99).to_string()));
-        let (mut list, mut asked) = (Vec::new(), 0);
-        albums_paged(&mut list, AlbumSort::ByName, false, 0, &page(0, full), &mut asked);
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, false, full as u32, &page(0, full), &mut asked), None, "a server that ignores the offset");
+        let (mut list, mut pages) = fresh();
+        albums_paged(&mut list, &mut pages, AlbumSort::ByName, false, 0, &page(0, full));
+        assert_eq!(albums_paged(&mut list, &mut pages, AlbumSort::ByName, false, full as u32, &page(0, full)), None, "a server that ignores the offset");
         assert_eq!(list.len(), full);
-        let (mut list, mut asked) = (Vec::new(), 0);
-        assert_eq!(albums_paged(&mut list, AlbumSort::Random, false, 0, &page(0, full), &mut asked), None, "a random order is one page");
-        let (mut list, mut asked) = (Vec::new(), 0);
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, true, 0, &page(0, full), &mut asked), None, "the favorites come whole");
+        assert!(!pages.more());
+        let (mut list, mut pages) = fresh();
+        albums_paged(&mut list, &mut pages, AlbumSort::ByName, false, 0, &page(0, full));
+        pages.failed(&(full as u32));
+        assert_eq!(pages.ask(), Some(full as u32), "a page that failed is asked again");
+        let (mut list, mut pages) = fresh();
+        assert_eq!(albums_paged(&mut list, &mut pages, AlbumSort::Random, false, 0, &page(0, full)), None, "a random order is one page");
+        let (mut list, mut pages) = fresh();
+        assert_eq!(albums_paged(&mut list, &mut pages, AlbumSort::ByName, true, 0, &page(0, full)), None, "the favorites come whole");
     }
 
     #[test]
@@ -4743,6 +4826,18 @@ mod tests {
             assert!(!art.images.contains_key(&CoverKey { id: "0".into(), size }));
             assert!(art.images.contains_key(&CoverKey { id: (limit + 19).to_string(), size }));
         }
+    }
+
+    #[test]
+    fn a_cover_with_no_ticket_is_asked_again_when_drawn() {
+        let mut art = Art::default();
+        let now = Instant::now();
+        let key = CoverKey { id: "a".into(), size: CoverSize::Card };
+        art.asked.insert(key.clone());
+        art.wanted.push(key.clone());
+        art.missing.insert(key.clone(), now);
+        art.ask(now, |_| None);
+        assert!(!art.asked.contains(&key), "not fetched, so the next draw asks for it again");
     }
 
     #[test]
@@ -4849,7 +4944,7 @@ mod tests {
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_full_player(true);
-        ui.set_full_panel(2);
+        ui.set_full_panel(Panel::Lyrics);
         ui.set_lyrics_synced(true);
         ui.set_lyrics_lines(ModelRc::new(VecModel::from((0..6).map(|i| crate::SungLine { text: format!("line {i}").into(), ..Default::default() }).collect::<Vec<_>>())));
         ui.show().unwrap();
@@ -4878,7 +4973,7 @@ mod tests {
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_lyrics_synced(true);
-        ui.set_inspector(2);
+        ui.set_inspector(Panel::Lyrics);
         ui.show().unwrap();
         // How many pixel rows of the panel a lyric line takes: drawn, against the line with no words.
         let tall = |text: &str| {
@@ -4907,7 +5002,7 @@ mod tests {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        for (view, full, panel) in [(HOME, false, 0), (ALBUMS, false, 1), (HOME, true, 1), (HOME, true, 2)] {
+        for (view, full, panel) in [(View::Home, false, Panel::None), (View::Albums, false, Panel::Queue), (View::Home, true, Panel::Queue), (View::Home, true, Panel::Lyrics)] {
             let ui = window();
             ui.window().set_size(slint::PhysicalSize::new(1280, 820));
             ui.set_view(view);
@@ -4940,12 +5035,12 @@ mod tests {
                 slint::platform::update_timers_and_animations();
                 let settled = ui.window().take_snapshot().unwrap();
                 let changed = immediate.as_slice().iter().zip(settled.as_slice()).filter(|(a, b)| a != b).count();
-                assert_eq!(changed, 0, "resize {width}x{height}, view {view}, full {full}, panel {panel} must be laid out immediately");
+                assert_eq!(changed, 0, "resize {width}x{height}, view {view:?}, full {full}, panel {panel:?} must be laid out immediately");
             }
             if full {
                 continue;
             }
-            ui.set_inspector(if panel == 0 { 1 } else { 0 });
+            ui.set_inspector(if panel == Panel::None { Panel::Queue } else { Panel::None });
             let start = ui.window().take_snapshot().unwrap();
             i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
             slint::platform::update_timers_and_animations();
@@ -4967,7 +5062,7 @@ mod tests {
         let drawn = |song: SongRow| {
             let ui = window();
             ui.window().set_size(slint::PhysicalSize::new(1280, 820));
-            ui.set_view(PAGE);
+            ui.set_view(View::Page);
             ui.set_page_songs(ModelRc::new(VecModel::from(vec![song])));
             ui.show().unwrap();
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
@@ -4990,7 +5085,7 @@ mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
-        ui.set_view(PAGE);
+        ui.set_view(View::Page);
         let menu = vec![
             crate::SongGo { kind: 0, title: "Favorite".into(), enabled: true, ..Default::default() },
             crate::SongGo { kind: 1, title: "Go to album".into(), id: "al".into(), enabled: true, ..Default::default() },
@@ -5158,7 +5253,7 @@ mod tests {
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_has_song(true);
-        ui.set_inspector(1);
+        ui.set_inspector(Panel::Queue);
         let row = |i: i32, playing: i32| SongRow { title: format!("Song {i}").into(), index: i, playing: i == playing, played: i < playing, ..Default::default() };
         let queue = Rc::new(VecModel::from((0..40).map(|i| row(i, 0)).collect::<Vec<_>>()));
         ui.set_queue(ModelRc::from(queue.clone()));
@@ -5200,7 +5295,7 @@ mod tests {
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_has_song(true);
-        ui.set_inspector(1);
+        ui.set_inspector(Panel::Queue);
         let rows: Vec<SongRow> = (0..6).map(|i| SongRow { title: format!("Song {i}").into(), index: 100 + i, playing: i == 0, ..Default::default() }).collect();
         ui.set_queue(ModelRc::new(VecModel::from(rows)));
         let menu = vec![crate::SongGo { kind: 5, title: "Play next".into(), enabled: true, ..Default::default() }];
@@ -5303,7 +5398,7 @@ mod tests {
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_has_song(true);
-        ui.set_inspector(1);
+        ui.set_inspector(Panel::Queue);
         let row = |i: i32, n: i32| SongRow { title: format!("Song {n}").into(), index: i, playing: i == 0, ..Default::default() };
         let queue = Rc::new(VecModel::from((0..6).map(|i| row(i, i)).collect::<Vec<_>>()));
         ui.set_queue(ModelRc::from(queue.clone()));
@@ -5357,7 +5452,7 @@ mod tests {
         ui.global::<crate::Chrome>().set_top_w(900.0);
         let facts = crate::settings::Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() };
         let tab = crate::settings::tabs(&facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Lyrics).unwrap() as i32;
-        ui.set_view(SETTINGS);
+        ui.set_view(View::Settings);
         ui.set_settings(crate::settings::rows(&Default::default(), &nori_core::settings::StoredPrefs::default(), &facts, &nori_core::providers::Kinds::builtin(), tab, crate::look::Today { month: 10, day: 19, southern: false }));
         let moved = Rc::new(RefCell::new(Vec::new()));
         let seen = moved.clone();
@@ -5390,7 +5485,7 @@ mod tests {
         let ui = window();
         ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
         ui.global::<crate::Jam>().set_on(true);
-        ui.set_view(ALBUMS);
+        ui.set_view(View::Albums);
         ui.set_albums(cards((0..4).map(|i| Card { id: i.to_string().into(), title: "Album".into(), ..Default::default() })));
         let opened = Rc::new(RefCell::new(Vec::new()));
         let seen = opened.clone();
@@ -5412,7 +5507,7 @@ mod tests {
         i_slint_backend_testing::init_no_event_loop();
         let ui = window();
         ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
-        ui.set_view(ALBUMS);
+        ui.set_view(View::Albums);
         ui.set_albums(cards((0..24).map(|i| Card { id: i.to_string().into(), title: "Album".into(), ..Default::default() })));
         let opened = Rc::new(RefCell::new(Vec::new()));
         let seen = opened.clone();
@@ -5430,7 +5525,7 @@ mod tests {
         };
         click();
         assert_eq!(*opened.borrow(), ["11"], "the card is there");
-        ui.set_inspector(1);
+        ui.set_inspector(Panel::Queue);
         click();
         assert_eq!(*opened.borrow(), ["11"], "the queue sheet over it takes the press");
     }
@@ -5497,7 +5592,7 @@ mod tests {
         ui.set_devices_on(true);
         ui.show().unwrap();
         // Where each of the side sheet's tabs is laid out, left edge and width.
-        let tabs = |panel: i32| {
+        let tabs = |panel: Panel| {
             ui.set_inspector(panel);
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
@@ -5506,10 +5601,10 @@ mod tests {
                 .map(|b| (b.absolute_position().x, b.size().width))
                 .collect::<Vec<_>>()
         };
-        let devices = tabs(3);
+        let devices = tabs(Panel::Devices);
         assert!(devices.len() >= 3, "{devices:?}");
-        for panel in [2, 1] {
-            assert_eq!(tabs(panel), devices, "panel {panel}");
+        for panel in [Panel::Lyrics, Panel::Queue] {
+            assert_eq!(tabs(panel), devices, "panel {panel:?}");
         }
     }
 
@@ -5532,8 +5627,8 @@ mod tests {
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
         };
-        ui.set_full_panel(2);
-        for (view, inspector, full) in [("side", 2, false), ("Now Playing", 0, true)] {
+        ui.set_full_panel(Panel::Lyrics);
+        for (view, inspector, full) in [("side", Panel::Lyrics, false), ("Now Playing", Panel::None, true)] {
             ui.set_inspector(inspector);
             ui.set_full_player(full);
             settle();
@@ -5734,7 +5829,7 @@ mod tests {
         ui.set_provider_rows(provider_rows(&plugged, &nori_core::providers::Kinds::builtin(), &prefs, &facts, crate::look::Today::now()));
         ui.set_provider_top(provider_top());
         ui.set_login_choosing(true);
-        ui.set_view(LOGIN);
+        ui.set_view(View::Login);
         let did = Rc::new(RefCell::new(Vec::new()));
         let seen = did.clone();
         ui.on_setting_action(move |name| seen.borrow_mut().push(name.to_string()));
@@ -5791,9 +5886,9 @@ mod tests {
         use nori_core::settings::ServerKind;
         let info = |fields, sign_in| ProviderInfo { kind: ServerKind::Plugin { id: "a.b".into() }, fields, sign_in };
         let web = || vec![SignIn::WebPage { start_url: "https://a.example".into() }];
-        let page = login_form(&Kinds::builtin(), &info(Vec::new(), web()), Some("Music from A"), true);
+        let page = login_form(&Kinds::builtin(), &info(Vec::new(), web()), Some("Music from A"), nori_core::providers::FirstStep::Account);
         assert_eq!((page.guest.as_str(), page.sign_in.as_str(), page.note.as_str()), (words::CONTINUE_AS_GUEST, "Sign in to a.b", "Music from A"));
-        let form = login_form(&Kinds::builtin(), &info(vec![FieldSpec { what: FormField::Address, advanced: false }], web()), None, true);
+        let form = login_form(&Kinds::builtin(), &info(vec![FieldSpec { what: FormField::Address, advanced: false }], web()), None, nori_core::providers::FirstStep::Form);
         assert_eq!((form.guest.as_str(), form.asks_address, form.name.as_str()), ("", true, "a.b"), "titled with the provider");
     }
 
@@ -5834,7 +5929,7 @@ mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
-        ui.set_view(ALBUMS);
+        ui.set_view(View::Albums);
         ui.set_albums(ModelRc::new(VecModel::from(vec![crate::Card { art: "page".into(), ..Default::default() }; 50])));
         ui.set_now_art("playing".into());
         let requests = Rc::new(RefCell::new(Vec::<String>::new()));
@@ -5867,7 +5962,7 @@ mod tests {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        for view in [ALBUMS, HOME, 10] {
+        for view in [View::Albums, View::Home, View::Shelf] {
             let ui = window();
             ui.window().set_size(slint::PhysicalSize::new(1280, 820));
             ui.set_view(view);
@@ -5889,11 +5984,11 @@ mod tests {
             ui.window().take_snapshot().unwrap();
             assert!(requests.borrow().iter().any(|id| id == "0"));
             let initial = requests.borrow().iter().filter(|id| id.as_str() == "0").count();
-            let position = slint::LogicalPosition::new(600.0, if view == HOME { 250.0 } else { 400.0 });
-            let (delta_x, delta_y) = if view == HOME { (-6000.0, 0.0) } else { (0.0, -3000.0) };
+            let position = slint::LogicalPosition::new(600.0, if view == View::Home { 250.0 } else { 400.0 });
+            let (delta_x, delta_y) = if view == View::Home { (-6000.0, 0.0) } else { (0.0, -3000.0) };
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled { position, delta_x, delta_y });
             ui.window().take_snapshot().unwrap();
-            assert!(requests.borrow().iter().any(|id| id.parse::<usize>().is_ok_and(|i| i > 20)), "later albums are drawn in view {view}: {:?}", requests.borrow());
+            assert!(requests.borrow().iter().any(|id| id.parse::<usize>().is_ok_and(|i| i > 20)), "later albums are drawn in view {view:?}: {:?}", requests.borrow());
             ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled { position, delta_x: -delta_x, delta_y: -delta_y });
             ui.window().take_snapshot().unwrap();
             assert!(requests.borrow().iter().filter(|id| id.as_str() == "0").count() > initial, "returning to a row must load it again after its offscreen component was released");
@@ -5905,7 +6000,7 @@ mod tests {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        for view in [10, 11] {
+        for view in [View::Shelf, View::ForYou] {
             let ui = window();
             ui.window().set_size(slint::PhysicalSize::new(1280, 820));
             ui.set_picks_loaded(true);
@@ -5915,7 +6010,7 @@ mod tests {
                 title: "Recently played".into(), loaded: true,
                 cards: cards((0..100).map(|i| Card { id: i.to_string().into(), art: i.to_string().into(), ..Default::default() })),
             }])));
-            if view == 11 {
+            if view == View::ForYou {
                 ui.set_picks(ModelRc::new(VecModel::from((0..100).map(|i| crate::Pick {
                     id: i.to_string().into(), covers: ModelRc::new(VecModel::from(vec![i.to_string().into()])), ..Default::default()
                 }).collect::<Vec<_>>())));
@@ -5923,7 +6018,7 @@ mod tests {
             let weak = ui.as_weak();
             ui.on_go(move |view| weak.unwrap().set_view(view));
             let weak = ui.as_weak();
-            ui.on_back(move || weak.unwrap().set_view(HOME));
+            ui.on_back(move || weak.unwrap().set_view(View::Home));
             let requests = Rc::new(RefCell::new(Vec::new()));
             let seen = requests.clone();
             ui.on_art(move |id, _, _| { seen.borrow_mut().push(id.to_string()); Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::new(16, 16)) });
@@ -5956,7 +6051,7 @@ mod tests {
                 slint::platform::WindowEvent::PointerPressed { position, button: slint::platform::PointerEventButton::Left },
                 slint::platform::WindowEvent::PointerReleased { position, button: slint::platform::PointerEventButton::Left },
             ] { ui.window().dispatch_event(event); }
-            assert_eq!(ui.get_view(), HOME, "the back button returns to Home");
+            assert_eq!(ui.get_view(), View::Home, "the back button returns to Home");
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
             ui.window().take_snapshot().unwrap();
@@ -5968,7 +6063,7 @@ mod tests {
         i_slint_backend_testing::init_no_event_loop();
         let ui = window();
         ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
-        ui.set_view(HOME);
+        ui.set_view(View::Home);
         ui.set_picks_loaded(true);
         let shelf = || Shelf { loaded: true, cards: cards((0..12).map(|i| Card { id: i.to_string().into(), ..Default::default() })), ..Default::default() };
         let shelves = Rc::new(VecModel::from(vec![shelf()]));
@@ -6000,7 +6095,7 @@ mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
-        ui.set_view(HOME);
+        ui.set_view(View::Home);
         ui.set_picks_loaded(true);
         ui.set_shelves(ModelRc::new(VecModel::from(vec![Shelf {
             loaded: true, cards: cards((0..60).map(|i| Card { id: i.to_string().into(), art: i.to_string().into(), ..Default::default() })), ..Default::default()
@@ -6029,7 +6124,7 @@ mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1800, 1100));
-        ui.set_view(HOME);
+        ui.set_view(View::Home);
         ui.set_picks_loaded(true);
         ui.set_picks(ModelRc::new(VecModel::from((0..6).map(|i| crate::Pick {
             seed: Color::from_rgb_u8(255, 0, 0), page: Color::from_rgb_u8(0, 0, 255),
@@ -6083,8 +6178,8 @@ mod tests {
         drop(cache);
         assert!(!requested.borrow().iter().any(|id| id.starts_with("queue-")), "the closed queue must not request artwork");
         for full in [false, true] {
-            ui.set_inspector(if full { 0 } else { 1 });
-            ui.set_full_panel(1);
+            ui.set_inspector(if full { Panel::None } else { Panel::Queue });
+            ui.set_full_panel(Panel::Queue);
             ui.set_full_player(full);
             ui.window().take_snapshot().unwrap();
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
@@ -6105,7 +6200,7 @@ mod tests {
             load_covers();
             assert!(requested.borrow().contains("queue-499"), "scrolling the queue loads its last cover, full={full}");
             ui.set_full_player(false);
-            ui.set_inspector(0);
+            ui.set_inspector(Panel::None);
             ui.window().take_snapshot().unwrap();
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
@@ -6129,11 +6224,11 @@ mod tests {
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
         let ui = window();
-        for (full, panel, inspector, open) in [(false, 2, 3, true), (false, 3, 1, false), (true, 3, 0, true), (true, 2, 3, false)] {
+        for (full, panel, inspector, open) in [(false, Panel::Lyrics, Panel::Devices, true), (false, Panel::Devices, Panel::Queue, false), (true, Panel::Devices, Panel::None, true), (true, Panel::Lyrics, Panel::Devices, false)] {
             ui.set_full_player(full);
             ui.set_full_panel(panel);
             ui.set_inspector(inspector);
-            assert_eq!(devices_open(&ui), open, "full {full}, panel {panel}, inspector {inspector}");
+            assert_eq!(devices_open(&ui), open, "full {full}, panel {panel:?}, inspector {inspector:?}");
         }
     }
 
@@ -6143,8 +6238,8 @@ mod tests {
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
         let ui = window();
-        ui.set_view(HOME);
-        ui.set_inspector(3);
+        ui.set_view(View::Home);
+        ui.set_inspector(Panel::Devices);
         ui.set_picks_loaded(true);
         let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(16, 16);
         pixels.make_mut_slice().fill(Rgba8Pixel { r: 255, g: 255, b: 255, a: 255 });
@@ -6186,7 +6281,7 @@ mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
-        ui.set_view(HOME);
+        ui.set_view(View::Home);
         ui.set_picks_loaded(true);
         let images: Vec<Image> = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)].into_iter().map(|(r, g, b)| {
             let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(16, 16);
@@ -6252,8 +6347,8 @@ mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
-        ui.set_view(PAGE);
-        ui.set_page_kind(2);
+        ui.set_view(View::Page);
+        ui.set_page_kind(PageLayout::List);
         ui.set_page_title("Road trip".into());
         ui.set_page_editable(true);
         let did = Rc::new(RefCell::new(Vec::new()));

@@ -5,6 +5,8 @@ use std::ffi::c_char;
 
 use nori_look::lyrics::{line_strength, LyricClock, UNSUNG};
 
+use nori_core::Lyrics;
+
 use crate::pages::held_lyrics;
 use crate::session::c_text;
 
@@ -31,9 +33,11 @@ pub struct LyricStep {
 /// `song` is NUL-terminated UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_lyric_clock(song: *const c_char, position_ms: i64) -> *mut LyricClock {
-    held_lyrics(&c_text(song)).map_or(std::ptr::null_mut(), |l| {
-        Box::into_raw(Box::new(nori_core::look::clock_on(&l, position_ms)))
-    })
+    clock_on(held_lyrics(&c_text(song)).as_ref(), position_ms)
+}
+
+fn clock_on(lyrics: Option<&Lyrics>, position_ms: i64) -> *mut LyricClock {
+    lyrics.map_or(std::ptr::null_mut(), |l| Box::into_raw(Box::new(nori_core::look::clock_on(l, position_ms))))
 }
 
 /// # Safety
@@ -112,8 +116,7 @@ pub extern "C" fn nori_ios_lyric_unsung() -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nori_core::{LyricLine, LyricWord, Lyrics};
-    use std::ffi::CString;
+    use nori_core::{LyricLine, LyricWord};
 
     fn timed() -> Lyrics {
         let word = |start_ms, end_ms, start, end| LyricWord { start_ms, end_ms, start, end };
@@ -142,9 +145,7 @@ mod tests {
 
     #[test]
     fn the_clock_lights_the_sung_line_and_fills_it_word_by_word() {
-        crate::pages::lyrics_arrived("w", &timed());
-        let song = CString::new("w").unwrap();
-        let c = unsafe { nori_ios_lyric_clock(song.as_ptr(), 0) };
+        let c = clock_on(Some(&timed()), 0);
         assert!(!c.is_null());
         assert_eq!(unsafe { nori_ios_lyric_sweeps(c) }, 1);
         let mid = step(c, 1_500);
@@ -153,7 +154,6 @@ mod tests {
         assert_eq!(step(c, 5_200).active, 1);
         assert_eq!(unsafe { nori_ios_lyric_tap(c, 1) }, 5_000);
         unsafe { nori_ios_lyric_free(c) };
-        let other = CString::new("other").unwrap();
-        assert!(unsafe { nori_ios_lyric_clock(other.as_ptr(), 0) }.is_null());
+        assert!(clock_on(None, 0).is_null());
     }
 }

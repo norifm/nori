@@ -1097,6 +1097,7 @@ fn a_guests_output_let_go_comes_back_in_step() {
     jam.host.engine.pause();
     jam.run(6 * 60_000);
     assert_eq!(g.status().releases, 2, "let go after the idle time");
+    assert!(!jam.guests[0].rig.events.lock().iter().any(|(_, e)| *e == Event::LongPause), "the host's pause is no long pause here");
     jam.host.engine.play();
     // The host's own word on its place, its card opened again, is up to a block of the card's off what
     // the card plays (it starts at its next pull), and the guest plays where the word says.

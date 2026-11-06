@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use nori_core::look::clock_on;
+use nori_core::lyrics_follow::LyricsNow;
 use nori_core::race::LyricsPick;
 use nori_core::rules::QueueMoment;
 use nori_core::settings::SavedServer;
@@ -222,11 +223,23 @@ impl Nori {
         Ok(())
     }
 
-    /// Keeps `pick` as song `song`'s lyrics shown, its clock at the position now, and tells the page.
-    fn show_lyrics(&self, song: String, pick: LyricsPick) {
-        let at = self.position_now();
-        self.live.tell.say(&json!({ "kind": "lyrics", "song": song, "lyrics": pick.lyrics, "origin": format!("{:?}", pick.origin), "timing": timing(pick.lyrics.timing) }));
-        *self.live.lyrics.borrow_mut() = Some((song, pick.clone(), clock_on(&pick.lyrics, at)));
+    /// Tells the page what the lyrics view shows, keeping the words found on a clock at the position now:
+    /// `{ kind: "lyrics", song, state: "looking" | "failed" | "shown", lyrics, origin, timing }`.
+    fn show_lyrics(&self, now: LyricsNow) {
+        let (song, state) = match now {
+            LyricsNow::Shown { song, pick } => {
+                let at = self.position_now();
+                self.live.tell.say(&json!({ "kind": "lyrics", "song": song, "state": "shown", "lyrics": pick.lyrics, "origin": format!("{:?}", pick.origin), "timing": timing(pick.lyrics.timing) }));
+                let clock = clock_on(&pick.lyrics, at);
+                *self.live.lyrics.borrow_mut() = Some((song, pick, clock));
+                return;
+            }
+            LyricsNow::Looking { song } => (Some(song), "looking"),
+            LyricsNow::Failed { song } => (Some(song), "failed"),
+            LyricsNow::NoSong => (None, "none"),
+        };
+        *self.live.lyrics.borrow_mut() = None;
+        self.live.tell.say(&json!({ "kind": "lyrics", "song": song, "state": state }));
     }
 
     /// Where the song the player shows is now.
@@ -239,6 +252,8 @@ impl Nori {
         if let Some(o) = self.live.open.borrow_mut().take() {
             o.host.close();
         }
+        // One profile's answers are not another's.
+        self.search.typed(String::new());
     }
 
     /// What the app offers over the profile open.
@@ -269,8 +284,8 @@ impl Nori {
     fn drain(&self) {
         let said = std::mem::take(&mut *self.live.said.lock());
         for s in said {
-            if let Said::Lyrics { song, pick } = &s {
-                self.show_lyrics(song.clone(), pick.clone());
+            if let Said::Lyrics(now) = s {
+                self.show_lyrics(now);
                 continue;
             }
             if let Some(v) = told(&s) {
@@ -306,6 +321,19 @@ impl Nori {
 
     pub fn toggle(&self) {
         self.with(|h| h.toggle());
+    }
+
+    /// The sleep timer's choices (JSON): `[{minutes, end, songs}]`, all zeros for "Off" (first, while one
+    /// runs).
+    pub fn sleep_choices(&self) -> String {
+        let running = self.with(|h| h.sleep() != nori_core::sleep::Sleep::Off).unwrap_or(false);
+        let rows: Vec<Value> = nori_core::menus::sleep_choices(running).iter().map(|c| json!({ "minutes": c.minutes, "end": c.end_of_track, "songs": c.songs })).collect();
+        Value::from(rows).to_string()
+    }
+
+    /// Sets the sleep timer to one of its choices (all zeros: off).
+    pub fn sleep_pick(&self, minutes: u32, end: bool, songs: u32) {
+        self.with(|h| h.sleep_pick(nori_core::menus::SleepChoice { minutes, end_of_track: end, songs }));
     }
 
     /// The page went out of sight, where a browser may close it without a word: the queue is kept as
@@ -375,13 +403,26 @@ impl Nori {
         Ok(n)
     }
 
+    /// The worker before this one crashed `ms` into `song`, playing or not: the session goes on from there
+    /// (`Session::carry_on`).
+    pub fn carry_on(&self, song: String, ms: f64, playing: bool) {
+        self.with(|h| h.carry_on(&song, ms as i64, playing));
+    }
+
     /// Plays the queue's song at `index`.
     pub fn jump(&self, index: usize) {
         self.with(|h| h.jump(index));
     }
 
-    pub fn remove(&self, index: usize) {
+    /// Takes the song at `index` out; answers how long its undo is offered, ms ([`Nori::put_back`]).
+    pub fn remove(&self, index: usize) -> f64 {
         self.with(|h| h.remove(index));
+        nori_core::undo::UNDO_MS as f64
+    }
+
+    /// Puts back song `id`, just taken out, where it was.
+    pub fn put_back(&self, id: String) {
+        self.with(|h| h.put_back(&id));
     }
 
     pub fn move_song(&self, from: usize, to: usize) {
@@ -419,9 +460,16 @@ impl Nori {
         Ok(())
     }
 
-    /// Asks for `song`'s lyrics; they come as a `lyrics` report.
-    pub fn lyrics(&self, song: String) {
-        self.with(|h| h.lyrics(song));
+    /// `song` is the one the player shows; what its lyrics view shows comes as `lyrics` reports.
+    pub fn lyrics_heard(&self, song: Option<String>) {
+        if let Some(now) = self.with(|h| h.lyrics_heard(song)) {
+            self.show_lyrics(now);
+        }
+    }
+
+    /// A lyrics view came in sight or left it: the song heard's lyrics are looked up only while one is.
+    pub fn lyrics_view(&self, open: bool) {
+        self.with(|h| h.lyrics_view(open));
     }
 
     /// The lyrics' state at the position now: `{ song, active, glide, swept, sung, wait }` (`swept`: the
@@ -458,9 +506,7 @@ impl Nori {
     /// The lyrics shown a step sooner (`dir` > 0) or later (< 0), or back to the sync check's timing
     /// (0); kept for those words. They come again as a `lyrics` report.
     pub fn lyrics_nudge(&self, dir: i32) {
-        let Some((song, pick, _)) = self.live.lyrics.borrow_mut().take() else { return };
-        let Some(pick) = self.with(|h| h.core.lyrics_nudge(song.clone(), pick, dir)) else { return };
-        self.show_lyrics(song, pick);
+        self.with(|h| h.lyrics_nudge(dir));
     }
 
     /// What the player shows playing (`nori_host::player`): this browser's playback, the account's
@@ -726,16 +772,16 @@ impl Nori {
 /// Moving the music between the account's devices ("Play on"), through the relay.
 #[wasm_bindgen]
 impl Nori {
-    /// The account's other devices: `{ on, me, active, list: [{ id, name, kind, playing, nearby, refused }] }`; `on`
+    /// The account's other devices: `{ on, me, here, active, list: [{ id, name, kind, playing, nearby, refused }] }`; `on`
     /// while the music can move (remote control on, not a jam guest), `me` this browser's id as the
-    /// others know it, `active` the id of the device playing while it is another one, `refused` why a device
+    /// others know it, `here` whether the music plays in this browser (`nori_core::destination`), `active` the id of the device playing while it is another one, `refused` why a device
     /// did not do the last thing asked of it (a `Refusal`, camelCase) or null. `kinds` (JSON `{ phone, desktop, terminal, guest }`) words the
     /// kinds that tell devices of one name apart.
     pub fn devices(&self, kinds: String) -> String {
         let words: Kinds = serde_json::from_str(&kinds).unwrap_or_default();
         self.with(|h| {
             let remote = h.remote().filter(|_| !h.guest);
-            let Some(r) = remote else { return json!({ "on": false, "active": null, "list": [] }).to_string() };
+            let Some(r) = remote else { return json!({ "on": false, "here": true, "active": null, "list": [] }).to_string() };
             let devices = r.devices();
             let words = nori_core::remote::KindWords { phone: words.phone, desktop: words.desktop, terminal: words.terminal, guest: words.guest };
             let names = nori_core::remote::device_names(devices.clone(), r.me(), words);
@@ -744,9 +790,10 @@ impl Nori {
                 .zip(names)
                 .map(|(d, name)| json!({ "id": d.id, "name": name, "kind": format!("{:?}", d.kind), "playing": d.state.as_ref().is_some_and(|s| s.playing), "nearby": d.nearby, "refused": d.refused }))
                 .collect();
-            json!({ "on": true, "me": r.id(), "active": h.elsewhere().map(|e| e.mirror.id), "list": list }).to_string()
+            let here = matches!(h.destination(), nori_core::destination::Destination::Here { .. });
+            json!({ "on": true, "me": r.id(), "here": here, "active": h.elsewhere().map(|e| e.mirror.id), "list": list }).to_string()
         })
-        .unwrap_or_else(|| json!({ "on": false, "active": null, "list": [] }).to_string())
+        .unwrap_or_else(|| json!({ "on": false, "here": true, "active": null, "list": [] }).to_string())
     }
 
     /// Moves the music to device `id`, or here ("").
@@ -788,7 +835,7 @@ fn told(s: &Said) -> Option<Value> {
     Some(match s {
         Said::Engine(e) => json!({ "kind": "engine", "event": format!("{e:?}") }),
         // Told with its timing as it is kept (`Nori::show_lyrics`).
-        Said::Lyrics { .. } => return None,
+        Said::Lyrics(_) => return None,
         Said::Search(_) => return None,
         Said::Note(n) => json!({ "kind": "note", "note": note(n) }),
         Said::Reachable(r) => json!({ "kind": "reachable", "ok": r.is_ok() }),

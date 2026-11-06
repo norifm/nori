@@ -3,7 +3,7 @@
 
 import { $init, generate } from "@bytecodealliance/jco-transpile/component";
 import { ask } from "../rpc";
-import type { Code, Read, WebPlugin } from "./types";
+import { Refused, type Code, type Read, type Refusal, type Version, type WebPlugin } from "./types";
 
 /** A package is a zip; these are the files of it nori uses. */
 const WANTED = ["plugin.wasm", "strings/en.toml", "icon.png", "README.md"];
@@ -36,11 +36,6 @@ async function unzip(zip: Uint8Array): Promise<Map<string, Uint8Array>> {
   return files;
 }
 
-async function sha256(bytes: Uint8Array) {
-  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 export async function transpile(wasm: Uint8Array): Promise<Code> {
   await $init;
   const made = generate(wasm, { name: "plugin", instantiation: { tag: "async" }, noTypescript: true, noNodejsCompat: true, base64Cutoff: 0, tlaCompat: false });
@@ -53,9 +48,13 @@ export async function transpile(wasm: Uint8Array): Promise<Code> {
   return { js, cores };
 }
 
-/** What a package says of itself, for its sheet; refused when it isn't what the repo said (`sha256`). */
-export async function read(pack: Uint8Array, proxied: boolean, want?: string): Promise<Read> {
-  if (want && (await sha256(pack)) !== want) throw new Error("the package isn't what the repo lists");
+/** What a package says of itself, for its sheet; refused when it isn't the version its repo lists, signed
+ * as listed (`plugin_check`). */
+export async function read(pack: Uint8Array, proxied: boolean, listed?: Version): Promise<Read> {
+  if (listed) {
+    const why = await ask<string>("plugin_check", pack, JSON.stringify({ sha256: listed.sha256, key: listed.key, signature: listed.signature }));
+    if (why) throw new Refused(why as Refusal);
+  }
   const files = await unzip(pack);
   const wasm = files.get("plugin.wasm");
   if (!wasm) throw new Error("no plugin.wasm in the package");
@@ -64,5 +63,5 @@ export async function read(pack: Uint8Array, proxied: boolean, want?: string): P
   const png = files.get("icon.png");
   const icon = png && `data:image/png;base64,${btoa(String.fromCharCode(...png))}`;
   const readme = files.get("README.md");
-  return { plugin, wasm, icon, readme: readme && new TextDecoder().decode(readme) };
+  return { plugin, wasm, icon, readme: readme && new TextDecoder().decode(readme), key: listed?.key ?? undefined };
 }

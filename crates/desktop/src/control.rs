@@ -38,9 +38,9 @@ enum Panel { None, Queue, Lyrics, Devices }
 
 #[derive(Serialize)]
 struct State {
-    view: i32,
+    view: String,
     fullscreen: bool,
-    panel: i32,
+    panel: String,
     playing: bool,
     buffering: bool,
     animating: bool,
@@ -64,13 +64,17 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
         Command::Open(view) => {
             ui.set_full_player(false);
             ui.invoke_go(match view {
-                View::Home => 0, View::Search => 1, View::Albums => 2, View::Artists => 3,
-                View::Playlists => 4, View::Songs => 5, View::Settings => 8, View::Equalizer => 9,
+                View::Home => crate::View::Home, View::Search => crate::View::Search, View::Albums => crate::View::Albums,
+                View::Artists => crate::View::Artists, View::Playlists => crate::View::Playlists, View::Songs => crate::View::Songs,
+                View::Settings => crate::View::Settings, View::Equalizer => crate::View::Equalizer,
                 View::Fullscreen => unreachable!(),
             });
         }
         Command::Panel(panel) => {
-            ui.set_inspector(match panel { Panel::None => 0, Panel::Queue => 1, Panel::Lyrics => 2, Panel::Devices => 3 });
+            ui.set_inspector(match panel {
+                Panel::None => crate::Panel::None, Panel::Queue => crate::Panel::Queue,
+                Panel::Lyrics => crate::Panel::Lyrics, Panel::Devices => crate::Panel::Devices,
+            });
             ui.invoke_player_changed();
         }
         Command::PlayAlbum(id) => ui.invoke_play_album(id.into()),
@@ -88,7 +92,7 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
         },
     }
     State {
-        view: ui.get_view(), fullscreen: ui.get_full_player(), panel: ui.get_inspector(),
+        view: format!("{:?}", ui.get_view()), fullscreen: ui.get_full_player(), panel: format!("{:?}", ui.get_inspector()),
         playing: ui.get_playing(), buffering: ui.get_buffering(), animating: ui.window().has_active_animations(), position_ms: ui.get_position_ms(),
         duration_ms: ui.get_duration_ms(), title: ui.get_now_title().to_string(),
         artist: ui.get_now_artist().to_string(), note: ui.get_note().to_string(), note_error: ui.get_note_error(),
@@ -164,9 +168,9 @@ mod tests {
         ui.on_previous(move || previous.set(previous.get() - 1));
         ui.set_has_song(true);
         ui.set_now_title("Silence".into());
-        assert_eq!(dispatch(&ui, Command::Open(View::Albums)).view, 2);
+        assert_eq!(dispatch(&ui, Command::Open(View::Albums)).view, "Albums");
         assert!(dispatch(&ui, Command::Open(View::Fullscreen)).fullscreen);
-        assert_eq!(dispatch(&ui, Command::Panel(Panel::Queue)).panel, 1);
+        assert_eq!(dispatch(&ui, Command::Panel(Panel::Queue)).panel, "Queue");
         assert!(dispatch(&ui, Command::Do(Action::Play)).playing);
         assert!(dispatch(&ui, Command::Do(Action::Play)).playing);
         dispatch(&ui, Command::Do(Action::Next));

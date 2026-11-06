@@ -894,6 +894,31 @@ fn active_discovery_follows_the_playing_device() {
     relay.close();
 }
 
+/// Where the music plays, one answer for every client: another device mirrored outranks a plugin's
+/// cast, which outranks this device; a jam guest's profile plays its jam; a host plays here.
+#[test]
+fn the_destination_ranks_mirror_cast_and_here() {
+    use nori_core::destination::{destination, Casting, Destination};
+    let speaker = || Some(Casting { device: "Speaker".into(), sink: true });
+    assert_eq!(destination(None, None), Destination::Here { hosting: false }, "remote control off");
+    assert_eq!(destination(None, speaker()), Destination::Cast { device: "Speaker".into(), sink: true });
+    let relay = Relay::new();
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    desk.playing(&["s1", "s2"], 1);
+    desk.remote.clone().serve(true);
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    assert_eq!(destination(Some(phone.remote.clone()), speaker()), Destination::Cast { device: "Speaker".into(), sink: true });
+    phone.remote.clone().discover_active(true);
+    phone.until("the desktop playing", |r| r.active());
+    assert_eq!(destination(Some(phone.remote.clone()), speaker()), Destination::Mirroring { device: "Desk".into() });
+    let link = opened(&desk);
+    assert_eq!(destination(Some(desk.remote.clone()), None), Destination::Here { hosting: true });
+    let pass = joined(&relay, link, "Gus".into());
+    let gus = Device::new(&relay, ServerConfig { url: pass.url, api_key: Some(pass.api_key), ..Default::default() }, DeviceKind::Guest, "Gus");
+    assert_eq!(destination(Some(gus.remote.clone()), None), Destination::Guest);
+    relay.close();
+}
+
 #[test]
 fn only_the_device_playing_shows_a_song() {
     let relay = Relay::new();
@@ -1271,6 +1296,26 @@ fn a_jam_takes_requests_through_its_host() {
 
     let provider_asked: Vec<String> = relay.asked().into_iter().filter(|a| a.contains("ext-")).collect();
     assert!(provider_asked.is_empty(), "the relay never looked the provider song up: {provider_asked:?}");
+    relay.close();
+}
+
+#[test]
+fn a_host_that_stops_serving_still_shows_its_jams_queue() {
+    let relay = Relay::new();
+    let host = Device::account(&relay, DeviceKind::Phone, "Host");
+    host.remote.clone().serve(true);
+    host.playing(&["s1", "s2"], 0);
+    opened(&host);
+    host.until("the queue", |r| r.jam_view()?.queue);
+    host.remote.clone().serve(false);
+    let queue = host.remote.jam_view().and_then(|v| v.queue).map(|q| q.entries.len());
+    assert_eq!(queue, Some(2));
+
+    // Serving again, the account's room hears the state anew though nothing but time moved.
+    let listed = || relay.hub.lock().rooms.iter().filter(|(_, r)| !r.jam).flat_map(|(_, r)| &r.members).any(|m| m.id == host.remote.id() && m.state.is_some());
+    eventually(&relay, "the host gone from the account's room", || !listed());
+    host.remote.clone().serve(true);
+    eventually(&relay, "the host listed again", listed);
     relay.close();
 }
 
@@ -2969,6 +3014,40 @@ fn jam_controls_reach_by_role() {
         dee.remote.jam_added().get("s4").map(String::as_str),
         Some("Dee")
     );
+    relay.close();
+}
+
+/// A jam guest's pick by its role (`jam_play`, `jam_add`): a plain guest's is asked of the host, the
+/// song it would start; an admin's goes straight into the jam's queue.
+#[test]
+fn a_jam_pick_is_asked_or_sent_by_role() {
+    use nori_core::jam_pick::Picked;
+    let relay = Relay::new();
+    let host = Device::account(&relay, DeviceKind::Phone, "Host");
+    host.playing(&["s1", "s2"], 0);
+    let link = opened(&host);
+    host.remote.clone().jam_along(true);
+    let guest_of = |name: &str| {
+        let pass = joined(&relay, link.clone(), name.into());
+        let d = Device::new(&relay, ServerConfig { url: pass.url, api_key: Some(pass.api_key), ..Default::default() }, DeviceKind::Guest, name);
+        d.remote.follow_with(Some(Arc::new(Leads::default())));
+        d.remote.clone().listen(true);
+        d
+    };
+    let (gus, dee) = (guest_of("Gus"), guest_of("Dee"));
+    host.remote.clone().played(Playing { playing: true, position_ms: 30_000, index: Some(0), ..Default::default() });
+    let dee_id = dee.until("the jam", |r| r.jam_view().filter(|v| v.members.len() == 3)).you;
+    host.remote.clone().jam_act(Op::Promote { member: dee_id, admin: true });
+    dee.until("Dee's role", |r| r.jam_controls().filter(|c| !c.asks));
+    gus.until("Gus's controls", |r| r.jam_controls());
+    let song = |id: &str| Song { id: id.into(), title: id.into(), ..Default::default() };
+
+    assert_eq!(gus.remote.clone().jam_play(vec![song("s7"), song("s8")], 1, false), Picked::Asked { title: "s8".into() });
+    host.until("Gus's request", |r| r.jam_view().filter(|v| v.pending.len() == 1 && v.pending[0].song.id == "s8"));
+    assert!(host.ops.try_recv().is_err(), "asked, not played");
+
+    assert_eq!(dee.remote.clone().jam_add(vec![song("s9")], true), Picked::Sent);
+    assert_eq!(host.told(), Op::Add { songs: vec![song("s9")], next: true });
     relay.close();
 }
 

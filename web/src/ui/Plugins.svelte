@@ -8,7 +8,7 @@
   import { ui } from "../state/ui.svelte";
   import { W } from "../words";
   import type { Installed, Offer, Read, Readme, Row, Value, Version } from "../plugins/types";
-  import { valueOf } from "../plugins/types";
+  import { Refused, valueOf } from "../plugins/types";
   import Icon from "./Icon.svelte";
   import Page from "./Page.svelte";
 
@@ -77,10 +77,10 @@
   };
 
   /** Reads a package, shows what it is and may reach, and installs it when the user agrees. */
-  async function get(key: string, pack: () => Promise<Uint8Array>, sha256?: string, fromFile = false) {
+  async function get(key: string, pack: () => Promise<Uint8Array>, listed?: Version, fromFile = false) {
     busy = key;
     try {
-      const read: Read = await host!.read(await pack(), sha256);
+      const read: Read = await host!.read(await pack(), listed);
       const p = read.plugin;
       if (p.blocks.length > 0) ui.say(p.blocks.map((b) => W.webBlocks[b] ?? b).join(", "));
       else {
@@ -94,12 +94,12 @@
       }
     } catch (e) {
       console.warn(`plugin install: ${e}`);
-      ui.say(W.pluginInstallFailed);
+      ui.say(e instanceof Refused ? W.pluginRefused[e.why] : W.pluginInstallFailed);
     }
     busy = "";
   }
 
-  const getVersion = (o: Offer, v: Version) => void get(o.id, () => host!.download(v.url), v.sha256);
+  const getVersion = (o: Offer, v: Version) => void get(o.id, () => host!.download(v.url), v);
 
   function fromFile(e: Event) {
     const file = (e.target as HTMLInputElement).files?.[0];

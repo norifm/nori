@@ -66,9 +66,17 @@ pub(crate) struct Live {
 /// A song's synced lyrics: each line's start ms and words.
 type Lines = Arc<Vec<(u32, String)>>;
 
-/// The synced lyrics of the songs heard, by id; None while being fetched or for a song without.
+/// The synced lyrics of the songs heard, by id.
 #[derive(Default)]
-struct Lyrics(HashMap<String, Option<Lines>>);
+struct Lyrics(HashMap<String, SongLyrics>);
+
+#[derive(Clone)]
+enum SongLyrics {
+    /// Being fetched; followed when they come if the lyric turn is still `turn`.
+    Fetching { turn: u64 },
+    Without,
+    Lines(Lines),
+}
 
 /// How far a position said may be from where the last moment ran on to and still be on course.
 const ON_COURSE_MS: u64 = 1000;
@@ -138,36 +146,42 @@ impl Plugins {
         }
     }
 
-    fn lyric_lines(&self, song: &str) -> Option<Option<Lines>> {
-        self.live.lyrics.lock().expect("not poisoned").0.get(song).cloned()
-    }
-
     /// Wakes at the next lyric line of the moment's song while it plays; fetches its lyrics first.
     fn follow_lyrics(&self) {
         let turn = self.live.lyric_turn.fetch_add(1, Ordering::Relaxed) + 1;
         self.lyrics_changed.notify();
         let (m, at) = self.live.moment.lock().expect("not poisoned").clone();
         let (Some(id), true) = (m.song.clone(), m.playing) else { return };
-        let lines = match self.lyric_lines(&id) {
-            Some(Some(lines)) => lines,
-            Some(None) => return,
+        let mut lyrics = self.live.lyrics.lock().expect("not poisoned");
+        let lines = match lyrics.0.get_mut(&id) {
+            Some(SongLyrics::Lines(lines)) => lines.clone(),
+            Some(SongLyrics::Without) => return,
+            Some(SongLyrics::Fetching { turn: followed }) => {
+                *followed = turn;
+                return;
+            }
             None => {
-                self.live.lyrics.lock().expect("not poisoned").0.insert(id.clone(), None);
+                lyrics.0.insert(id.clone(), SongLyrics::Fetching { turn });
+                drop(lyrics);
                 let (me, library) = (self.me.clone(), self.library());
                 let fetch = move || {
                     let song = library.as_ref().and_then(|l| l.songs(std::slice::from_ref(&id)).ok()?.into_iter().next());
                     let lines = song.and_then(|s| library?.synced_lyrics(&s)).filter(|l| !l.is_empty()).map(Arc::new);
                     let Some(p) = me.upgrade() else { return };
                     let had = lines.is_some();
-                    p.live.lyrics.lock().expect("not poisoned").0.insert(id, lines);
-                    if had && p.live.lyric_turn.load(Ordering::Relaxed) == turn {
-                        p.follow_lyrics();
+                    let came = lines.map_or(SongLyrics::Without, SongLyrics::Lines);
+                    let was = p.live.lyrics.lock().expect("not poisoned").0.insert(id, came);
+                    if let (true, Some(SongLyrics::Fetching { turn })) = (had, was) {
+                        if p.live.lyric_turn.load(Ordering::Relaxed) == turn {
+                            p.follow_lyrics();
+                        }
                     }
                 };
                 let _ = std::thread::Builder::new().name("nori-plugin-lyrics".into()).spawn(fetch);
                 return;
             }
         };
+        drop(lyrics);
         let (tasks, me, changed) = (self.tasks(), self.me.clone(), self.lyrics_changed.clone());
         let task = async move {
             let gone = || me.upgrade().is_none_or(|p| p.live.lyric_turn.load(Ordering::Relaxed) != turn);

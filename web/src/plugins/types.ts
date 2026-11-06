@@ -33,11 +33,23 @@ export type WebPlugin = {
   blocks: string[];
 };
 
-/** A package read, not yet installed. */
-export type Read = { plugin: WebPlugin; wasm: Uint8Array; icon?: string; readme?: string };
+/** A package read, not yet installed; `key`, its author's as its repo lists it (none for a file). */
+export type Read = { plugin: WebPlugin; wasm: Uint8Array; icon?: string; readme?: string; key?: string };
 
 export type Fit = { state: "Supported" | "Unknown" } | { state: "Blocked"; blocks: string[] };
-export type Version = { version: string; released: string | null; url: string; sha256: string };
+/** `key` and `signature`: its author's ed25519 key and signature, both or neither. */
+export type Version = { version: string; released: string | null; url: string; sha256: string; key: string | null; signature: string | null };
+
+/** Why a package doesn't install: it isn't the one listed, its signature doesn't verify, or its plugin
+ * pinned another author's key (`package::checked`, `package::admits`). */
+export type Refusal = "NotListed" | "Signature" | "OtherKey";
+
+/** A package that doesn't install, and why. */
+export class Refused extends Error {
+  constructor(readonly why: Refusal) {
+    super(`refused: ${why}`);
+  }
+}
 /** What the repo lists of a plugin (`plugin_offers`): `waiting`, an update for one not kept at its version. */
 export type Offer = {
   id: string;
@@ -68,6 +80,8 @@ export type Installed = {
   /** Kept at its version: no update is offered. */
   held?: boolean;
   fromFile?: boolean;
+  /** The key its first signed version pinned: every version after must be signed by it. */
+  key?: string;
   /** Its place in the order plugins apply in. */
   at?: number;
 };

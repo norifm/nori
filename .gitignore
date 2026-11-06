@@ -1,7 +1,7 @@
 /target
 /build
-/app/build
-/core/build
+/android/app/build
+/android/core/build
 /.gradle
 /.kotlin
 /local.properties

@@ -783,7 +783,7 @@ fn a_seek_while_offloaded_flushes_and_goes_on_from_its_frame() {
     let a = music(44_100, 60.0, 23);
     let rig = Rig::new(vec![flac("f", 44_100, &a)], prefs_off(), Settings::default(), caps(), None);
     rig.engine.play_at(0, 0);
-    assert!(rig.wait_for(20, |d| d.played > 44_100 * 3), "{:?} {:?} {:?}", { let d = rig.dev.lock(); (d.depth_ms, d.received, d.wants, d.owed, d.playing, d.held.len()) }, rig.engine.status().pcm_why, rig.engine.status().offloaded);
+    assert!(rig.wait_for(20, |d| d.played > 44_100 * 3), "{:?} {:?} {:?}", { let d = rig.dev.lock(); (d.depth_ms, d.received, d.wants, d.owed, d.playing, d.held.len()) }, rig.engine.status().pcm_why, rig.engine.status().offloaded());
     let before = rig.dev.lock().packets.len();
     rig.engine.seek(31_000);
     assert!(rig.wait_for(10, |d| d.packets.len() > before + 100_000));

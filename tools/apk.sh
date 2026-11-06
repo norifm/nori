@@ -19,13 +19,13 @@ for arg in "$@"; do
     *) abis="$arg" ;;
   esac
 done
-version=$(grep -oE 'versionName = "[^"]+"' "$root/app/build.gradle.kts" | head -1 | cut -d'"' -f2)
+version=$(grep -oE 'versionName = "[^"]+"' "$root/android/app/build.gradle.kts" | head -1 | cut -d'"' -f2)
 out="$root/build/nori-music-$version-${abis//,/+}.apk"
 
 echo "building $version for $abis …"
 (cd "$root" && ./gradlew :app:assembleRelease -PrustTargets="$abis" -q)
 mkdir -p "$root/build"
-cp "$root/app/build/outputs/apk/release/app-release.apk" "$out"
+cp "$root/android/app/build/outputs/apk/release/app-release.apk" "$out"
 
 size=$(du -h "$out" | cut -f1)
 echo "$out  ($size)"

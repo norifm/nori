@@ -36,6 +36,32 @@ typedef struct NoriReport {
     const char *text;
 } NoriReport;
 
+/// `NoriReport.kind`, as crates/ios/src/session.rs's `REPORT_` constants say what each carries.
+#define NORI_REPORT_STATE 1
+#define NORI_REPORT_SONG 2
+#define NORI_REPORT_LOOPED 3
+#define NORI_REPORT_POSITION 4
+#define NORI_REPORT_ERROR 5
+#define NORI_REPORT_OUTPUT 6
+#define NORI_REPORT_BUFFERING 7
+#define NORI_REPORT_STOPPED 8
+#define NORI_REPORT_NOTE 9
+#define NORI_REPORT_REACHABLE 10
+#define NORI_REPORT_LYRICS 11
+#define NORI_REPORT_SEARCH 12
+#define NORI_REPORT_TITLE 13
+#define NORI_REPORT_MIXING 14
+#define NORI_REPORT_BRIDGE 15
+#define NORI_REPORT_PLACED 16
+#define NORI_REPORT_AWAKE 17
+#define NORI_REPORT_REMOTE 18
+#define NORI_REPORT_VOLUME 19
+#define NORI_REPORT_JAM_JOINED 20
+#define NORI_REPORT_JAM_LEFT 21
+#define NORI_REPORT_CURVE 22
+#define NORI_REPORT_STARRED 23
+#define NORI_REPORT_WAITING 24
+
 typedef void (*NoriReportFn)(const NoriReport *report);
 
 /// Where reports go, delivered on a thread the library owns. NULL clears it. The callback may call
@@ -57,6 +83,9 @@ void nori_ios_toggle(void);
 void nori_ios_next(void);
 void nori_ios_previous(void);
 void nori_ios_seek(int64_t ms);
+/// A media key (the lock screen, Control Center, a headset): 0 play, 1 pause, 2 play or pause, 3 next,
+/// 4 previous.
+void nori_ios_media_key(int32_t key);
 
 /// The next repeat mode after the one shown: off, all, one.
 void nori_ios_cycle_repeat(void);
@@ -69,6 +98,8 @@ void nori_ios_clear_upcoming(void);
 
 /// Puts back a removed song. `id` is NUL-terminated.
 void nori_ios_put_back(const char *id);
+/// How long the undo of a removed song is offered, ms.
+int64_t nori_ios_undo_ms(void);
 
 void nori_ios_move(int32_t from, int32_t to);
 
@@ -138,7 +169,8 @@ void nori_ios_remote_pick(const char *id);
 #define NORI_NOTE_CURVE_FAILED 16
 
 /// Pages for `nori_ios_read`. `arg`: the id for album/artist/playlist/mix, the name for a genre, the
-/// query for search, the offset for songs and albums (or NORI_ALBUMS_FAVORITES); empty otherwise.
+/// query for search, NORI_ALBUMS_FAVORITES for the favorite albums; empty otherwise. A list answers `more`
+/// while pages may follow (`nori_ios_read_more`).
 #define NORI_PAGE_HOME 1
 #define NORI_PAGE_ALBUMS 2
 #define NORI_PAGE_ARTISTS 3
@@ -157,7 +189,7 @@ void nori_ios_remote_pick(const char *id);
 #define NORI_PAGE_SMARTS 16
 #define NORI_PAGE_SMART 17
 #define NORI_PAGE_DOWNLOADED_ALBUM 18
-/// A Home row in full: `arg` its shelf's key, then "\n" and an offset for a page past the first.
+/// A Home row in full: `arg` its shelf's key.
 #define NORI_PAGE_HOME_ROW 19
 /// NORI_PAGE_ALBUMS' `arg` for the favorite albums only, in the order chosen, all on one page.
 #define NORI_ALBUMS_FAVORITES "favorites"
@@ -166,6 +198,9 @@ void nori_ios_remote_pick(const char *id);
 typedef void (*NoriPageFn)(uint64_t token, const char *json);
 void nori_ios_on_page(NoriPageFn cb);
 void nori_ios_read(uint64_t token, int32_t kind, const char *arg);
+/// The list read with `token` (`kind`, its `arg` without an offset) nears its end: its next page comes to
+/// the page callback, unless one is on its way or the last is in. A page that failed is read again.
+void nori_ios_read_more(uint64_t token, int32_t kind, const char *arg);
 
 /// Taps on a page's songs, by the token it was read with.
 void nori_ios_play_list(uint64_t token, int32_t index, int32_t shuffle);
@@ -218,8 +253,10 @@ void nori_ios_on_cover(NoriCoverFn cb);
 void nori_ios_cover(uint64_t token, const char *id, uint32_t px);
 void nori_ios_cover_cancel(uint64_t token);
 
-/// Asks for lyrics; a lyrics report says when an answer came, then read it as JSON (free it).
+/// The lyrics view opened on a song and closed; a lyrics report says what it shows changed, then read
+/// it as JSON (free it).
 void nori_ios_lyrics(const char *song);
+void nori_ios_lyrics_closed(void);
 char *nori_ios_lyrics_page(const char *song);
 
 /// The lyrics page's clock (crates/ios/src/lyrics.rs): which line is lit, how far it is sung, and when
@@ -285,8 +322,9 @@ int32_t nori_ios_set(const char *name, const char *value);
 char *nori_ios_equalizer(void);
 int32_t nori_ios_eq_point(uint32_t index, float pos, float gain_db, float q, int32_t kind, int32_t channel);
 int32_t nori_ios_eq_band(uint32_t index, float pos, float gain_db);
-/// The equalizer screen is in sight and was touched: the short output buffer follows the core's rule.
-void nori_ios_tuning(int32_t in_sight, int32_t touched);
+/// Sound page `page` (0 the equalizer, 1 AutoEQ's presets, 2 Settings › Sound) came in sight (`shown`
+/// 1) or left it; a change made on one is then heard at once.
+void nori_ios_sound_page(int32_t page, int32_t shown);
 
 /// Outputs and their sound (crates/ios/src/sound.rs), JSON to free:
 /// {current, rows: [{output, port, name, current, choice, profile}]}.
@@ -304,7 +342,7 @@ int32_t nori_ios_device_assign(const char *output, int32_t choice, const char *p
 int32_t nori_ios_device_adopt(const char *output, const char *name, const char *source,
                               const char *form, const char *target, const char *path);
 void nori_ios_device_forget(const char *output);
-/// The answer to the last AutoEQ report (22): the curve offered applied, or the one applied undone.
+/// The answer to the last AutoEQ report (NORI_REPORT_CURVE): the curve offered applied, or the one applied undone.
 void nori_ios_curve_answer(void);
 
 /// The AutoEQ list's hits, JSON to free: {short, count, hits: [{name, source, form, target, path}]}.
@@ -341,12 +379,10 @@ int32_t nori_ios_tap_song(uint64_t token, int32_t index);
 #define NORI_SWIPE_DOWNLOAD 4
 int32_t nori_ios_row_swipe(int32_t left, int32_t starred);
 int32_t nori_ios_playlist_delete(const char *playlist);
-/// The sleep timer: its choices as JSON to free [{minutes, end, songs}]; songs or end of track (0, 0
-/// cancel); a minutes timer's [delay ms, slack ms] as JSON to free; and the pause when it runs out.
-char *nori_ios_sleep_choices(int32_t running);
-void nori_ios_sleep_set(uint32_t songs, int32_t end_of_track);
-char *nori_ios_sleep_delay(uint32_t minutes);
-void nori_ios_sleep_now(void);
+/// The sleep timer (the core's): its choices as JSON to free [{minutes, end, songs}], and one set (all
+/// zeros: off).
+char *nori_ios_sleep_choices(void);
+void nori_ios_sleep_set(uint32_t minutes, int32_t end_of_track, uint32_t songs);
 
 void nori_ios_remember(const char *query);
 void nori_ios_sync(void);
@@ -391,7 +427,7 @@ char *nori_ios_rules(void);
 /// ids], asks: [{t, s, c}], listening: 0 only shown, 1 playing here, 2 the host lets no one, 3 the server
 /// lets no guest, 4 the host's songs don't play on this device}. Its asks are its own requests the host has yet to take.
 char *nori_ios_jam(void);
-/// Joins the jam invite `link` is to, its guest profile named `name`. NORI_JOIN_STARTED: report 20 says
+/// Joins the jam invite `link` is to, its guest profile named `name`. NORI_JOIN_STARTED: NORI_REPORT_JAM_JOINED says
 /// how it went (flag 1 joined: open the active profile; flag 2: the jam has ended; flag 0: index a
 /// NORI_LOGIN_* code, text its detail).
 int32_t nori_ios_jam_join(const char *link, const char *name);

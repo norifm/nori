@@ -39,7 +39,7 @@ pub enum MenuAct {
 
 /// Song actions this client has no screen or work for: they are not listed.
 fn offered(a: &SongAction) -> bool {
-    !matches!(a, SongAction::StopDownload | SongAction::AddToLibrary | SongAction::SleepTimer | SongAction::Share | SongAction::Details)
+    !matches!(a, SongAction::StopDownload | SongAction::AddToLibrary | SongAction::Share | SongAction::Details)
 }
 
 impl App {
@@ -88,7 +88,7 @@ impl App {
         };
         let starred = self.starred(Starrable::Song, &song.id, song.starred);
         let download = self.downloaded.get(&song.id).copied().unwrap_or(SongDownload::None);
-        let lyrics = self.lyrics.as_ref().is_some_and(|l| !l.pick.lyrics.lines.is_empty()) && self.lyrics_for.as_deref() == Some(&song.id);
+        let lyrics = self.lyrics.found().is_some_and(|l| !l.pick.lyrics.lines.is_empty()) && self.song.as_ref().is_some_and(|s| s.id == song.id);
         let r = &self.rules;
         let items = nori_core::menus::song_menu(song.clone(), starred, self.excluded.contains(&song.id), download, player, lyrics, r.stars, r.account, r.downloads, r.radio, self.guest(), page);
         let mut lines = Vec::with_capacity(items.len() + 1);
@@ -175,7 +175,8 @@ impl App {
             SongAction::Lyrics => self.set_panel(Panel::Lyrics),
             SongAction::Radio => self.cmds.push(Cmd::PlayFetch(Fetch::Radio(s.id), false)),
             SongAction::ExcludeFromMixes { on } => self.cmds.push(Cmd::ExcludeFromMixes(s.id, on)),
-            SongAction::StopDownload | SongAction::AddToLibrary | SongAction::SleepTimer | SongAction::Share | SongAction::Details => {}
+            SongAction::SleepTimer => self.pick_sleep(),
+            SongAction::StopDownload | SongAction::AddToLibrary | SongAction::Share | SongAction::Details => {}
         }
     }
 
@@ -188,6 +189,16 @@ impl App {
             self.cmds.push(Cmd::Load(crate::backend::Req::Playlists));
         }
         self.overlay = Some(Overlay::Picker { title: crate::text::ADD_TO_PLAYLIST.into(), options, sel: Sel::default(), target: Target::Playlist(songs) });
+    }
+}
+
+impl App {
+    /// The sleep timer's choices ("Off" first while one runs).
+    fn pick_sleep(&mut self) {
+        let running = self.shared.sleep() != nori_core::sleep::Sleep::Off;
+        let choices = nori_core::menus::sleep_choices(running);
+        let options = choices.iter().enumerate().map(|(i, c)| (crate::text::sleep_choice(c), i.to_string())).collect();
+        self.overlay = Some(Overlay::Picker { title: crate::text::SLEEP_TIMER.into(), options, sel: Sel::default(), target: Target::Sleep(choices) });
     }
 }
 

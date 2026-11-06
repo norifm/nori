@@ -20,6 +20,8 @@ pub(crate) struct Queue {
     origin: Option<PageOrigin>,
     /// Bumped by each new queue, so pages re-check [`playlist_from`] only then.
     origin_gen: u32,
+    /// When the song an undo would put back was taken out, ms (`undo.rs`).
+    pub(crate) taken_at: Option<i64>,
 }
 
 impl Queue {
@@ -28,7 +30,7 @@ impl Queue {
         self.origin_gen = self.origin_gen.wrapping_add(1);
     }
 
-    fn change(&self, at: Option<usize>) -> QueueChange {
+    pub(crate) fn change(&self, at: Option<usize>) -> QueueChange {
         QueueChange { at: at.map(|a| a as u32), shuffled: self.list.shuffle_order().is_some() }
     }
 }
@@ -390,17 +392,15 @@ impl Session {
     /// plays the next.
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_remove"))]
     pub fn remove(&self, from: u32, to: u32) -> QueueChange {
-        self.edit(|p| {
-            p.remove_undoably(from as usize, to as usize);
-            p.current()
-        })
+        self.remove_at(from, to, nori_db::now_ms())
     }
 
-    /// Undo: puts back `id` if it is the last song removed on its own (same index, shuffle turn and
-    /// hand). `at` is None when it is not; the caller then inserts it itself.
+    /// Undo: puts back `id` if it is the last song removed on its own, less than
+    /// [`crate::undo::UNDO_MS`] ago (same index, shuffle turn and hand). `at` is None when it is not;
+    /// the caller then inserts it itself.
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_restore"))]
     pub fn restore(&self, id: String) -> QueueChange {
-        self.edit(|p| p.restore_taken(&id))
+        self.restore_at(&id, nori_db::now_ms())
     }
 
     #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_move"))]

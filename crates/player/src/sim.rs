@@ -655,7 +655,7 @@ impl pipeline::Track for AudioTrack {
 impl Sink<AudioTrack> {
     /// The AudioTrack plays `us` of the clock.
     pub fn advance(&mut self, us: i64) {
-        let quiet = self.source_ended && !self.pending();
+        let quiet = self.source_ended() && !self.pending();
         self.track.advance(us, quiet);
     }
 }

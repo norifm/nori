@@ -30,8 +30,6 @@ pub enum Ask {
     Songs { offset: i32, count: i32 },
     Starred,
     Search { query: String },
-    /// The offline index's answer to `query`, at once; null with nothing there.
-    SearchIndex { query: String },
 }
 
 fn album_sort(name: &str) -> Result<AlbumSort, String> {
@@ -53,7 +51,6 @@ impl Ask {
             Ask::Songs { offset, count } => Read::SongPage { offset, count },
             Ask::Starred => Read::StarredItems,
             Ask::Search { query } => Read::Search { query, songs: 40, albums: 20, artists: 20 },
-            Ask::SearchIndex { .. } => return Err("read from the index, not the server".into()),
         })
     }
 }
@@ -109,7 +106,29 @@ pub async fn change(client: &Client, change: Change) -> Result<(), String> {
 
 /// A search's answer `result`, ranked as every client's is, with the field's preview of it.
 fn found_page(core: &nori_core::Core, result: nori_core::SearchResult, query: &str, user: Option<&str>) -> Value {
-    let found = nori_core::search::search_split(result, query).everything;
+    shown_page(core, nori_core::search::search_split(result, query).everything, user)
+}
+
+/// What the search box shows of the search session's `view`: `{ state, artists, albums, playlists, songs,
+/// preview }` for the results on screen, `state` one of `blank`, `asking`, `failed`, `found`, `nothing`.
+pub fn search_view(core: &nori_core::Core, view: nori_core::search::SearchView, user: Option<&str>) -> String {
+    use nori_core::search::SearchShown;
+    let state = match &view.answer {
+        SearchShown::Blank => "blank",
+        SearchShown::Asking { .. } => "asking",
+        SearchShown::Failed { .. } => "failed",
+        SearchShown::Found { .. } => "found",
+        SearchShown::NothingFound => "nothing",
+    };
+    let mut v = shown_page(core, view.answer.into_result().unwrap_or_default(), user);
+    if let Value::Object(m) = &mut v {
+        m.insert("state".into(), json!(state));
+    }
+    v.to_string()
+}
+
+/// Results already ranked and split, as a page reads them, with the field's preview of them.
+fn shown_page(core: &nori_core::Core, found: nori_core::SearchResult, user: Option<&str>) -> Value {
     let mut v = page(core, Page::Found { v: found.clone() }, user);
     if let Value::Object(m) = &mut v {
         m.insert("playlists".into(), found.playlists.iter().map(|p| playlist(core, p, user)).collect());
@@ -124,17 +143,25 @@ fn found_page(core: &nori_core::Core, result: nori_core::SearchResult, query: &s
 /// None for a profile without an account's things.
 pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<String, String> {
     let ask = serde_json::from_str::<Ask>(ask).map_err(|e| e.to_string())?;
-    if let Ask::SearchIndex { query } = &ask {
-        let limit = nori_core::browse::library_sizes().local_search;
-        let found = client.core().local_search(query.clone(), limit).map_err(|e| e.to_string())?;
-        if found.artists.is_empty() && found.albums.is_empty() && found.songs.is_empty() {
-            return Ok(Value::Null.to_string());
-        }
-        return Ok(found_page(client.core(), found, query, user).to_string());
-    }
+    Ok(read_value(client, ask, user).await?.to_string())
+}
+
+/// Albums asked per page of the album grid, as the desktop's (`nori_host::pages::ALBUM_PAGE`, not in
+/// `core.wasm`).
+const GRID_PAGE: i32 = 500;
+
+/// A page of the album grid from `offset` in `sort`'s order (with `favorites`, the starred albums whole):
+/// its JSON, and where the page after it starts (`browse::next_album_page`).
+pub async fn album_page(client: &Client, sort: String, favorites: bool, offset: u32, user: Option<&str>) -> Result<(Value, Option<u32>), String> {
+    let mut v = read_value(client, Ask::Albums { sort, size: GRID_PAGE, offset: offset as i32, favorites }, user).await?;
+    let next = v.as_object_mut().and_then(|m| m.remove("next")).and_then(|n| n.as_u64()).map(|n| n as u32);
+    Ok((v, next))
+}
+
+async fn read_value(client: &Client, ask: Ask, user: Option<&str>) -> Result<Value, String> {
     if let Ask::Genre { name } = ask {
         let v = client.genre_songs(name).await.map_err(|e| e.to_string())?;
-        return Ok(page(client.core(), Page::Songs { v }, user).to_string());
+        return Ok(page(client.core(), Page::Songs { v }, user));
     }
     let paged = match &ask {
         Ask::Albums { sort, size, offset, favorites } => Some((album_sort(sort)?, *favorites, *offset as u32, *size as u32)),
@@ -148,13 +175,13 @@ pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<Stri
     client.read_each(ask.read()?, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
     let core = client.core();
     let p = match (last, paged) {
-        (None, _) => return Ok(Value::Null.to_string()),
+        (None, _) => return Ok(Value::Null),
         (Some(Page::StarredPage { v }), Some((sort, true, ..))) => Page::Albums { v: nori_core::browse::favorites_in_order(v.albums, sort, false) },
         (Some(p), _) => p,
     };
     // A search's answer ranked as every client's is, with the field's preview of it.
     if let (Some(query), Page::Found { v }) = (query, &p) {
-        return Ok(found_page(core, v.clone(), &query, user).to_string());
+        return Ok(found_page(core, v.clone(), &query, user));
     }
     let got = match &p {
         Page::Albums { v } => v.len() as u32,
@@ -164,7 +191,7 @@ pub async fn read(client: &Client, ask: &str, user: Option<&str>) -> Result<Stri
     if let (Some((sort, favorites, offset, asked)), Value::Object(m)) = (paged, &mut v) {
         m.insert("next".into(), json!(nori_core::browse::next_album_page(sort, favorites, offset, asked, got)));
     }
-    Ok(v.to_string())
+    Ok(v)
 }
 
 /// The season's paper the mix cards are dyed on: light, dark, and whether the dark is worn.

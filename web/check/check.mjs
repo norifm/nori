@@ -152,6 +152,13 @@ async function pane(name, p = page) {
   await p.waitForSelector(`#side #${name}`);
 }
 
+/** Closes the side pane a phase left open: it floats over the page's own buttons. */
+async function noPane(p = page) {
+  const open = await p.$("#bar [data-pane][aria-pressed=true]");
+  if (open) await open.click();
+  await p.waitForFunction(() => !document.querySelector("#bar [data-pane][aria-pressed=true]"));
+}
+
 if (!only || only.includes("lyrics")) {
   await playAlbum(album("Sung Album"));
   await pane("lyrics");
@@ -433,6 +440,7 @@ if (!only || only.includes("edit")) {
   };
   const playlistNamed = async (name) => (await read({ kind: "playlists" })).playlists.find((p) => p.name === name);
   const name = `Check ${Date.now() % 100000}`;
+  await noPane();
   await hash("#/playlists", "playlists");
   await page.click("#new-playlist");
   await named(name);
@@ -532,9 +540,12 @@ if (!only || only.includes("tabs")) {
   await second.click("#use-here");
   // A tab in the background draws no frames: polled by time.
   await page.waitForFunction(() => window.nori.movedAway, { timeout: 30000, polling: 250 });
+  // A call after that fails at once: no worker is left to answer it.
+  const after = await page.evaluate(() => Promise.race([window.ask("now").then(() => "answered", () => "failed"), new Promise((r) => setTimeout(() => r("hung"), 5000))]));
+  expect(after === "failed", `a call after another tab took over fails, not hangs (${after})`);
   await second.waitForFunction(() => window.nori.page === "home", { timeout: 60000 });
   const stored = await second.evaluate(() => window.nori.stored);
-  report.tabs = { secondSawElsewhere: true, firstMovedAway: true, secondHome: true, secondStored: stored };
+  report.tabs = { secondSawElsewhere: true, firstMovedAway: true, callAfter: after, secondHome: true, secondStored: stored };
   expect(stored, "the tab that took over keeps the databases in OPFS");
   await second.close();
   await page.bringToFront();

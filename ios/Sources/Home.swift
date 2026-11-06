@@ -14,14 +14,14 @@ final class HomePage: PageController {
         NotificationCenter.default.addObserver(self, selector: #selector(stands), name: .noriNow, object: nil)
     }
 
-    /// Each time the page comes into sight; a jam guest's Home is the host's, and offers nothing.
+    /// Each time the page comes into sight; a jam guest's Home is the host's, and the core offers nothing.
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         lookForOffer()
     }
 
     @objc private func lookForOffer() {
-        guard Core.shared.isOpen, !Core.shared.now.jam, view.window != nil, card == nil else { return }
+        guard Core.shared.isOpen, view.window != nil, card == nil else { return }
         DispatchQueue.global(qos: .utility).async {
             let offer = takenJSON(nori_ios_queue_offer()) as? [String: Any]
             DispatchQueue.main.async { [weak self] in

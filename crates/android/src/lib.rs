@@ -257,7 +257,7 @@ mod tests {
     fn kotlin() -> Vec<(std::path::PathBuf, String)> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut out = Vec::new();
-        let mut dirs = vec![root.join("core/src/main/kotlin"), root.join("app/src/main/kotlin")];
+        let mut dirs = vec![root.join("android/core/src/main/kotlin"), root.join("android/app/src/main/kotlin")];
         while let Some(d) = dirs.pop() {
             for e in std::fs::read_dir(&d).unwrap().flatten() {
                 let p = e.path();

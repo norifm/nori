@@ -9,6 +9,7 @@ mod plugin;
 #[cfg(feature = "plugins")]
 mod plugged;
 pub(crate) mod hosted;
+pub mod flow;
 #[cfg(test)]
 mod fake;
 #[cfg(test)]
@@ -203,7 +204,7 @@ impl ProviderInfo {
     }
 
     /// What a profile of this kind just added goes on to about its account.
-    pub fn after_adding(&self, after: AfterAdding) -> Option<SignInStep> {
+    pub(crate) fn after_adding(&self, after: AfterAdding) -> Option<SignInStep> {
         if !self.signs_in_on_a_page() {
             return None;
         }
@@ -213,18 +214,6 @@ impl ProviderInfo {
             AfterAdding::Guest => SignInStep::StopReminding,
         })
     }
-}
-
-/// [`ProviderInfo::first_step`], owned.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn provider_first_step(info: ProviderInfo) -> FirstStep {
-    info.first_step()
-}
-
-/// [`ProviderInfo::after_adding`], owned.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn provider_after_adding(info: ProviderInfo, after: AfterAdding) -> Option<SignInStep> {
-    info.after_adding(after)
 }
 
 /// What choosing a kind of profile on the first screen leads to.
@@ -252,10 +241,9 @@ pub enum AfterAdding {
     Guest,
 }
 
-/// What a client does about the account of a profile just added.
+/// What follows about the account of a profile just added ([`flow::SignInEvent`] says it to the client).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum SignInStep {
+pub(crate) enum SignInStep {
     /// Offers signing in, which can be skipped.
     Offer,
     /// Opens the sign-in page.
@@ -591,13 +579,11 @@ pub(crate) fn resolved_song(scheme: &str, address: &str) -> Option<(u32, String)
 pub(crate) struct Installed {
     pub(crate) kind: ServerKind,
     pub(crate) provider: Arc<dyn Provider>,
-    /// It is a LAN jam host's, answering for `kind` ([`hosted::HostedProvider`]).
-    hosted: bool,
 }
 
 impl Default for Installed {
     fn default() -> Self {
-        Installed { kind: ServerKind::Subsonic, provider: Arc::new(subsonic::Subsonic), hosted: false }
+        Installed { kind: ServerKind::Subsonic, provider: Arc::new(subsonic::Subsonic) }
     }
 }
 
@@ -615,13 +601,13 @@ impl Core {
 
     /// Makes `provider` the profile's, for `kind`.
     pub(crate) fn install(&self, kind: ServerKind, provider: Arc<dyn Provider>) {
-        *self.provider.write() = Installed { kind, provider, hosted: false };
+        *self.provider.write() = Installed { kind, provider };
     }
 
     /// Makes `kind`'s provider the profile's, unless it is already: its state (a session, streams
-    /// resolved) lasts as long as the profile.
+    /// resolved) lasts as long as the profile. A LAN jam host's answering for `kind` is not it.
     pub(crate) fn install_kind(&self, kind: ServerKind) -> nori_model::Result<Arc<dyn Provider>> {
-        let installed = { let i = self.provider.read(); i.kind == kind && !i.hosted };
+        let installed = self.provider.read().kind == kind && self.lan_jam.read().is_none();
         if !installed {
             let p = self.kinds.read().provider(&kind).ok_or_else(|| crate::CoreError::Api { code: 0, reason: format!("no provider here for {}", kind.id()) })?;
             self.install(kind, p);
@@ -636,15 +622,19 @@ impl Core {
     /// whatever kind, through its host ([`hosted::HostedProvider`]). Clears the library when the profile
     /// now names another server, user or kind.
     pub fn configure_profile(&self, profile: SavedServer) -> nori_model::Result<()> {
-        let lan_jam = nori_remote::lan::guest_secret(&profile.api_key).map(|secret| (profile.url.clone(), secret.to_string()));
-        let hosted = lan_jam.is_some();
-        *self.lan_jam.write() = lan_jam;
-        let provider = if hosted {
-            let provider: Arc<dyn Provider> = Arc::new(hosted::HostedProvider { kind: profile.kind.clone() });
-            *self.provider.write() = Installed { kind: profile.kind.clone(), provider: provider.clone(), hosted: true };
-            provider
-        } else {
-            self.install_kind(profile.kind.clone())?
+        let provider = match nori_remote::lan::guest_secret(&profile.api_key) {
+            Some(secret) => {
+                *self.lan_jam.write() = Some((profile.url.clone(), secret.to_string()));
+                let provider: Arc<dyn Provider> = Arc::new(hosted::HostedProvider { kind: profile.kind.clone() });
+                *self.provider.write() = Installed { kind: profile.kind.clone(), provider: provider.clone() };
+                provider
+            }
+            None => {
+                // Installed while the jam's credential still says whether the host's provider is in.
+                let provider = self.install_kind(profile.kind.clone())?;
+                *self.lan_jam.write() = None;
+                provider
+            }
         };
         provider.configure(self, &profile)
     }
@@ -676,15 +666,6 @@ impl Core {
 }
 
 impl Client {
-    /// What the session just opened does about its account: `added` says how a profile just added was
-    /// asked for; any other reminds if the session ended.
-    pub fn sign_in_step(&self, added: Option<AfterAdding>) -> Option<SignInStep> {
-        match added {
-            Some(after) => self.core.provider().info().after_adding(after),
-            None => self.reminds_to_sign_in().then_some(SignInStep::Offer),
-        }
-    }
-
     /// What opens the profile's stream addresses at the URLs they are served at; None when they are
     /// URLs already.
     pub fn stream_resolver(self: &Arc<Self>) -> Option<Arc<dyn ResolveStream>> {

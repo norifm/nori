@@ -7,7 +7,7 @@
 set -uo pipefail
 export ANDROID_SERIAL=$1; url=$2; user=${3:-admin}; pass=${4:-admin}
 here="$(cd "$(dirname "$0")" && pwd)"; pkg=dev.nori.music; ui="$here/ui.sh"; out="$here/../build/perf-results.md"
-apk="$here/../app/build/outputs/apk/release/app-release.apk"
+apk="$here/../android/app/build/outputs/apk/release/app-release.apk"
 model=$(adb shell getprop ro.product.model | tr -d '\r'); rel=$(adb shell getprop ro.build.version.release | tr -d '\r'); abi=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')
 size=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); w=${size%x*}; h=${size#*x}
 say() { echo "== $*" >&2; }

@@ -3,11 +3,11 @@
 // worker); this reads it and asks.
 
 import * as rpc from "../rpc";
-import { ask, facts } from "../rpc";
+import { ask, facts, unlessElsewhere } from "../rpc";
 import workletUrl from "../worklet.ts?worker&url";
 import { ui } from "./ui.svelte";
 import { W } from "../words";
-import type { Now, Shown, Song, Whole } from "./types";
+import type { LyricsNow, Now, Song, Whole } from "./types";
 
 /** Where the song was at a moment of the page's clock, and how fast it runs on from there (0: it holds). */
 export type Anchor = { ms: number; at: number; pace: number; length: number };
@@ -17,8 +17,9 @@ export type Anchor = { ms: number; at: number; pace: number; length: number };
 class Player {
   now = $state.raw<Now | null>(null);
   anchor = $state.raw<Anchor>({ ms: 0, at: 0, pace: 0, length: 0 });
-  /** The lyrics shown, and the lit line and how much of it is sung. */
-  shown = $state.raw<Shown | null>(null);
+  /** What the lyrics view shows, the lyrics found among it, and the lit line and how much of it is sung. */
+  lyrics = $state.raw<LyricsNow | null>(null);
+  shown = $derived(this.lyrics?.state === "shown" ? this.lyrics : null);
   line = $state(-1);
   /** How much of the lit line is sung; -1 when its words do not light up one by one. */
   sung = $state(-1);
@@ -32,9 +33,8 @@ class Player {
   /** Another device plays: the controls reach it, nothing plays here. */
   elsewhere = $derived(!!this.now?.device);
 
-  private audio?: AudioContext;
-  private made?: Promise<void>;
-  private node?: AudioWorkletNode;
+  /** The sound card, from the first Play: its context, and its worklet once added (when `made` settles). */
+  private sound?: { ctx: AudioContext; made: Promise<void>; node?: AudioWorkletNode };
   /** Told when there is a sound card: plugins' sound stages go in it. */
   onCard: () => void = () => {};
   /** `now` as last drawn, without its position: drawn again only when the rest changes. */
@@ -48,24 +48,31 @@ class Player {
 
   /** The sound card, once it is made. */
   card() {
-    return this.audio && this.node ? { ctx: this.audio, node: this.node } : null;
+    const s = this.sound;
+    return s?.node ? { ctx: s.ctx, node: s.node } : null;
   }
 
   /** The sound card, made on the first Play (a browser starts audio only after a click on the page):
    * an AudioWorklet the player worker feeds over its own port. */
   soundCard(): Promise<void> {
-    if (this.audio) {
-      void this.audio.resume();
-      return this.made!;
+    if (this.sound) {
+      void this.sound.ctx.resume();
+      return this.sound.made;
     }
-    const ctx = (this.audio = new AudioContext({ latencyHint: "playback" }));
+    const ctx = new AudioContext({ latencyHint: "playback" });
     void ctx.resume();
-    ctx.onstatechange = () => (this.held = ctx.state === "suspended" && this.now?.state === "Playing");
-    this.made = (async () => {
+    ctx.onstatechange = () => this.heldNow();
+    this.sound = { ctx, made: this.attach(ctx) };
+    return this.sound.made;
+  }
+
+  /** Adds the worklet to `ctx`, the sound card being made, and joins it to the player worker. */
+  private async attach(ctx: AudioContext) {
+    try {
       await ctx.audioWorklet.addModule(workletUrl);
       const node = new AudioWorkletNode(ctx, "nori-out", { outputChannelCount: [2] });
       node.connect(ctx.destination);
-      this.node = node;
+      this.sound!.node = node;
       this.onCard();
       facts.rate = ctx.sampleRate;
       // The sound card's clock, which the worklet's times are on.
@@ -78,18 +85,22 @@ class Player {
         return { port: line.port2, rate: ctx.sampleRate, ear: ctx.baseLatency + (ctx.outputLatency || 0) };
       });
       if (ui.toast === W.loadingPlayer) ui.say("");
-    })().catch((e) => {
+    } catch (e) {
       // A failed setup is made again by the next Play.
-      this.audio = this.made = this.node = undefined;
+      this.sound = undefined;
       void ctx.close();
       throw e;
-    });
-    return this.made;
+    }
+  }
+
+  /** The browser holds the sound card while the session plays here. */
+  private heldNow() {
+    this.held = this.sound?.ctx.state === "suspended" && this.now?.state === "Playing";
   }
 
   /** A click anywhere lets a held sound card play. */
   unhold() {
-    if (this.audio?.state === "suspended") void this.audio.resume();
+    if (this.sound?.ctx.state === "suspended") void this.sound.ctx.resume();
   }
 
   /** Plays `songs` from `start`; `kind` and `id` name the page they are the list of. Call from a click. */
@@ -142,6 +153,22 @@ class Player {
     await this.refresh();
   }
 
+  /** Takes song `q` out of the queue and offers its undo for as long as the core keeps it. */
+  async remove(q: { index: number; id?: string; title?: string }) {
+    if (!rpc.player) return;
+    const ms = await ask<number>("remove", q.index);
+    await this.refresh();
+    if (q.id) ui.offerUndo(q.id, q.title ?? q.id, ms);
+  }
+
+  /** The undo offered: the song goes back where it was. */
+  async putBack() {
+    const u = ui.takeUndo();
+    if (!u || !rpc.player) return;
+    await ask("put_back", u.id);
+    await this.refresh();
+  }
+
   async seek(ms: number) {
     // Shown there at once; the session's answer follows.
     this.anchor = { ...this.anchor, ms, at: performance.now() };
@@ -163,10 +190,10 @@ class Player {
     this.key = key;
     const before = this.now?.id;
     this.now = n;
-    this.held = this.audio?.state === "suspended" && n?.state === "Playing";
+    this.heldNow();
     if (n?.id !== before) this.songChanged();
     // Music handed over from another device plays here: the sound card is made for it.
-    if (n?.state === "Playing" && !n.device && !n.jam && !this.audio) void this.soundCard().catch(() => {});
+    if (n?.state === "Playing" && !n.device && !n.jam && !this.sound) void this.soundCard().catch(() => {});
   }
 
   private songChanged() {
@@ -176,10 +203,25 @@ class Player {
     }
   }
 
-  /** Asks for the lyrics of the song playing, unless they are shown. */
-  wantLyrics() {
-    const id = this.song?.id;
-    if (id && this.shown?.song !== id && rpc.player) void ask("lyrics", id);
+  /** The lyrics views in sight: the session looks lyrics up only while one is. */
+  private lyricsViews = 0;
+
+  /** A lyrics view came in sight (`open`) or left it. */
+  lyricsView(open: boolean) {
+    this.lyricsViews += open ? 1 : -1;
+    if (this.lyricsViews === (open ? 1 : 0)) this.tellLyrics();
+  }
+
+  /** Tells the session the song heard, while a lyrics view is in sight. */
+  lyricsHeard() {
+    if (this.lyricsViews > 0 && rpc.player) void ask("lyrics_heard", this.song?.id ?? null).catch(unlessElsewhere);
+  }
+
+  /** Tells the session the song heard and whether a lyrics view is in sight. */
+  private tellLyrics() {
+    if (!rpc.player) return;
+    this.lyricsHeard();
+    void ask("lyrics_view", this.lyricsViews > 0).catch(unlessElsewhere);
   }
 
   /** The lyrics' state now, lit; ms until it changes (0: not until the position jumps). */
@@ -207,7 +249,8 @@ class Player {
   listen() {
     rpc.onPlayerUp(() => {
       this.up = true;
-      void this.refresh();
+      if (this.lyricsViews > 0) this.tellLyrics();
+      void this.refresh().catch(unlessElsewhere);
     });
     rpc.onRestart(() => {
       // The player worker crashed and started again over the saved queue: it plays on if it played.
@@ -215,18 +258,18 @@ class Player {
       ui.say(W.restarted);
       facts.restartedAt = { song, ms: Math.round(at) };
       void (async () => {
+        if (song) await ask("carry_on", song, Math.round(at), was);
+        if (this.lyricsViews > 0) this.tellLyrics();
         await this.refresh();
-        if (song && this.now?.id === song) await this.control("seek", at);
-        if (was && this.now?.state !== "Playing") await this.control("toggle");
       })();
     });
     rpc.onSaid((s) => {
-      if (s.kind === "engine" || s.kind === "remote" || s.kind === "starred") void this.refresh();
+      if (s.kind === "engine" || s.kind === "remote" || s.kind === "starred") void this.refresh().catch(unlessElsewhere);
       else if (s.kind === "lyrics") {
-        const shown = s as unknown as Shown;
-        if (shown.song !== this.shown?.song) this.line = -1;
-        this.shown = { song: shown.song, lyrics: shown.lyrics, origin: shown.origin, timing: shown.timing };
-        facts.lyrics = { song: shown.song, lines: shown.lyrics.lines?.length ?? 0, synced: shown.lyrics.synced, timing: shown.timing };
+        const now = s as unknown as LyricsNow;
+        if (now.song !== this.shown?.song) this.line = -1;
+        this.lyrics = now.state === "shown" ? { state: "shown", song: now.song, lyrics: now.lyrics, origin: now.origin, timing: now.timing } : { state: now.state, song: now.song };
+        if (now.state === "shown") facts.lyrics = { song: now.song, lines: now.lyrics.lines?.length ?? 0, synced: now.lyrics.synced, timing: now.timing };
       } else if (s.kind === "note") {
         const n = s.note as { what: string; songs?: number; next?: boolean };
         if (n.what === "queued") ui.say(W.queued(n.songs ?? 0, !!n.next));
@@ -236,7 +279,7 @@ class Player {
     // What the sound card heard, asked for when read (the headless check's), so nothing is sent while playing.
     facts.heard = async () => {
       const heard = rpc.player ? await ask<rpc.Heard | null>("heard") : null;
-      return heard && { seconds: heard.played / (this.audio?.sampleRate ?? 48000), dry: heard.dry, dryAt: heard.dryAt, peak: heard.peak, silences: heard.silences, lastLoud: heard.lastLoud, soundAt: heard.soundAt, freshAt: heard.freshAt };
+      return heard && { seconds: heard.played / (this.sound?.ctx.sampleRate ?? 48000), dry: heard.dry, dryAt: heard.dryAt, peak: heard.peak, silences: heard.silences, lastLoud: heard.lastLoud, soundAt: heard.soundAt, freshAt: heard.freshAt };
     };
     if ("mediaSession" in navigator) {
       const m = navigator.mediaSession;

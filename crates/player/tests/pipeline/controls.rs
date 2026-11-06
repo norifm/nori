@@ -174,6 +174,50 @@ fn failing_songs() {
 }
 
 #[test]
+fn jump_drops_a_failure_found_ahead() {
+    let s = songs(5, 12.0);
+    let mut p = Player::new(queue(&s));
+    p.tracks.broken = vec!["s1".into()];
+    p.play_from(0);
+    // s0 is read to its end and s1 found broken, not yet reached.
+    p.run_for(9_000);
+    p.jump(3, 0);
+    p.run_for(14_000);
+    assert!(!p.app.log.iter().any(|l| l.starts_with("s1 will not play")), "{:?}", p.app.log);
+    let after: Vec<usize> = p.changes.iter().map(|c| c.1).skip_while(|&i| i != 3).collect();
+    assert_eq!(after, [3, 4], "s4 follows s3");
+}
+
+#[test]
+fn stopped_song_follows_queue_edits() {
+    let s = songs(2, 3.0);
+    let mut p = Player::new(queue(&s));
+    p.tracks.broken = vec!["s1".into()];
+    p.play_from(0);
+    assert!(p.run_until(6_000, |p| p.stopped_at().is_some()));
+    p.queue.live.insert(0, vec!["s0".into()], Hand::No);
+    p.queue_changed();
+    assert_eq!(p.stopped_at(), Some(2), "play tries the failed song again");
+}
+
+#[test]
+fn seek_ends_a_stop() {
+    let s = songs(2, 3.0);
+    let mut p = Player::new(queue(&s));
+    p.tracks.broken = vec!["s1".into()];
+    p.play_from(0);
+    assert!(p.run_until(6_000, |p| p.stopped_at() == Some(1)));
+    p.tracks.broken.clear();
+    // In the song the seek bar shows: s0, heard to its end.
+    p.seek(1_000);
+    assert_eq!(p.stopped_at(), None);
+    p.resume();
+    let heard = p.sink.heard_frames;
+    p.run_for(6_000);
+    assert_eq!((p.sink.heard_frames - heard) as usize, frames(5.0), "s0 from 1 s, then s1");
+}
+
+#[test]
 fn repeat_all_and_one_gapless() {
     let s = songs(2, 3.0);
     let mut p = Player::new(queue(&s));

@@ -54,7 +54,7 @@ def package(binaries, output, version, system, arch):
                         "[Desktop Entry]\nType=Application\nName=nori\nExec=nori-desktop\nIcon=/usr/share/pixmaps/nori-desktop.png\nTerminal=false\nCategories=AudioVideo;Audio;Player;\n")
                     icon = deb / "usr/share/pixmaps"
                     icon.mkdir(parents=True)
-                    shutil.copy2(ROOT / "app/src/main/res/drawable-xxxhdpi/nori_mark.png", icon / "nori-desktop.png")
+                    shutil.copy2(ROOT / "android/app/src/main/res/drawable-xxxhdpi/nori_mark.png", icon / "nori-desktop.png")
                 doc = deb / f"usr/share/doc/nori-{client}"
                 doc.mkdir(parents=True)
                 shutil.copy2(ROOT / "LICENSE", doc / "copyright")

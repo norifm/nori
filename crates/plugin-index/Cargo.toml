@@ -3,7 +3,7 @@ name = "nori-plugin-index"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "A plugin repo's index.json and what stops a plugin running in a browser: no plugin host here, so it builds for the web"
+description = "A plugin repo's index.json, what stops a plugin running in a browser, and whether a package may install: no plugin host here, so it builds for the web"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -11,3 +11,6 @@ serde_json = "1"
 wasmparser = "0.261"
 # A plugin's README.
 pulldown-cmark = { version = "0.13", default-features = false }
+# A package's check at install: its sha256, and its author's signature.
+sha2 = "0.10"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }

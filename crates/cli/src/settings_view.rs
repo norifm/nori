@@ -216,8 +216,28 @@ pub struct SettingsView {
     pub facts_asked: bool,
     /// State shown by the terminal's own rows.
     pub own: Own,
-    /// Only the plugins' group, opened from the first screen before any profile.
-    pub alone: bool,
+    pub alone: Alone,
+}
+
+/// Whether the page is the plugins' group on its own, opened from the first screen before any profile.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub enum Alone {
+    /// Every group, of the profile open.
+    #[default]
+    No,
+    Plugins,
+    /// From plugin `id`'s page, which a provider line offered: installed, it turns on and its form opens.
+    Offer(String),
+}
+
+impl Alone {
+    /// The plugin whose page the first screen opened.
+    pub fn offer(&self) -> Option<&str> {
+        match self {
+            Alone::Offer(id) => Some(id),
+            Alone::No | Alone::Plugins => None,
+        }
+    }
 }
 
 /// What the page shows beyond the settings: the terminal's own state, the kinds of profile and the
@@ -304,7 +324,7 @@ impl SettingsView {
         if self.pages.is_none() {
             let state = settings_model::state(prefs, settings_model::Output::default(), &self.own.shared.settings.model);
             let today = Day::now();
-            let alone = self.alone;
+            let alone = self.alone != Alone::No;
             self.pages = Some(match self.own.stack.last() {
                 Some((PluginPage::Browser, _)) => vec![Page { title: text::GET_PLUGINS.into(), summary: String::new(), sections: browser(&self.own) }],
                 Some((PluginPage::Repos, _)) => vec![Page { title: text::REPOS.into(), summary: String::new(), sections: repos_page(&self.own) }],

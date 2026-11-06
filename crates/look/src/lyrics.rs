@@ -61,8 +61,25 @@ pub(crate) const LAND_EARLY_MS: i64 = 1_000;
 pub(crate) const LAND_HOLD_MS: i64 = 1_500;
 /// for this long into the tapped line.
 pub(crate) const LANDING_MS: i64 = 3_000;
-/// `landing` value when no tap is being landed (an atomic, so no `Option`).
-const NOT_LANDING: i64 = i64::MIN;
+/// The start of the tapped line while a tap is landed; an atomic, so the UI thread shares it.
+struct Landing(AtomicI64);
+
+impl Landing {
+    /// Stored while no tap is landed.
+    const NONE: i64 = i64::MIN;
+
+    fn none() -> Landing {
+        Landing(AtomicI64::new(Self::NONE))
+    }
+
+    fn at(&self) -> Option<i64> {
+        Some(self.0.load(Relaxed)).filter(|&at| at != Self::NONE)
+    }
+
+    fn set(&self, at: Option<i64>) {
+        self.0.store(at.unwrap_or(Self::NONE), Relaxed);
+    }
+}
 
 /// How long a manually scrolled view stays before returning to the active line.
 pub const READING_MS: i64 = 4_000;
@@ -407,8 +424,7 @@ pub struct LyricClock {
     nudge: AtomicI64,
     /// How much later than the song the lyric times run; added to the playhead with the nudge.
     offset: i64,
-    /// Start of the tapped line while landing, else [`NOT_LANDING`].
-    landing: AtomicI64,
+    landing: Landing,
 }
 
 impl LyricClock {
@@ -418,7 +434,7 @@ impl LyricClock {
 
     /// A clock for lyrics whose times run `offset_ms` later than the song (`Lyrics::offset_ms`).
     pub fn with_offset(timing: LyricTiming, position_ms: i64, offset_ms: i64) -> Self {
-        LyricClock { timing, shown: AtomicI64::new(position_ms + offset_ms), nudge: AtomicI64::new(0), offset: offset_ms, landing: AtomicI64::new(NOT_LANDING) }
+        LyricClock { timing, shown: AtomicI64::new(position_ms + offset_ms), nudge: AtomicI64::new(0), offset: offset_ms, landing: Landing::none() }
     }
 
     pub fn timing(&self) -> &LyricTiming {
@@ -474,7 +490,7 @@ impl LyricClock {
     pub fn tap(&self, line: usize) -> i64 {
         let Some(&start) = self.timing.starts.get(line) else { return self.shown.load(Relaxed).max(0) };
         self.shown.store(start, Relaxed);
-        self.landing.store(start, Relaxed);
+        self.landing.set(Some(start));
         (start - self.offset - self.nudge.load(Relaxed)).max(0)
     }
 
@@ -488,19 +504,16 @@ impl LyricClock {
             return;
         }
         self.shown.store(start, Relaxed);
-        self.landing.store(start, Relaxed);
+        self.landing.set(Some(start));
     }
 
     /// The moment to show for position `t`, applying tap landing.
     fn landed(&self, t: i64) -> i64 {
-        let at = self.landing.load(Relaxed);
-        if at == NOT_LANDING {
-            return t;
-        }
+        let Some(at) = self.landing.at() else { return t };
         let shown = self.shown.load(Relaxed);
         if t >= shown {
             if t - at > LANDING_MS {
-                self.landing.store(NOT_LANDING, Relaxed);
+                self.landing.set(None);
             }
             return t;
         }
@@ -508,7 +521,7 @@ impl LyricClock {
             return shown;
         }
         // Far from the landing: a different seek.
-        self.landing.store(NOT_LANDING, Relaxed);
+        self.landing.set(None);
         t
     }
 

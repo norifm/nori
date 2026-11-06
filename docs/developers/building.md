@@ -46,7 +46,7 @@ Gradle properties for the Android build:
 
 The native library and the generated bindings are cacheable Gradle outputs, keyed by sources, features,
 profile, compiler, NDK and build environment. The binding inputs are the crates in `bindingCrates` in
-`core/build.gradle.kts`; extend that list when adding an FFI crate.
+`android/core/build.gradle.kts`; extend that list when adding an FFI crate.
 
 ### The shared queue
 
@@ -90,7 +90,7 @@ tools/emulator.sh first-avd 5554
 tools/emulator.sh second-avd 5556
 export NORI_E2E_SERVER=local
 export NORI_E2E_DEVICES=emulator-5554,emulator-5556
-tools/device-check.sh --install app/build/outputs/apk/debug/app-debug.apk smoke
+tools/device-check.sh --install android/app/build/outputs/apk/debug/app-debug.apk smoke
 tools/device-check.sh audio --only tuning,restart
 ```
 
@@ -164,7 +164,7 @@ with its own sign-in, settings and downloads.
 ```sh
 ./gradlew :app:assemblePerf -PrustTargets=arm64-v8a    # a phone
 ./gradlew :app:assemblePerf -PrustTargets=x86_64       # an x86_64 emulator
-adb install -r app/build/outputs/apk/perf/app-perf.apk
+adb install -r android/app/build/outputs/apk/perf/app-perf.apk
 ```
 
 The APK is signed with the Android debug key. It can also be sent to the phone and opened there. The
@@ -224,7 +224,7 @@ Under each stretch:
 are the whole phone's; CPU, wakeups, allocations and PSS are the app's.
 
 The core (crates/perf) files each stretch under its state, does the arithmetic and writes every word
-on the page and in the report; Android only reads the counters (`app/src/perf`).
+on the page and in the report; Android only reads the counters (`android/app/src/perf`).
 
 ### Invariant breaks
 
@@ -267,7 +267,7 @@ Press "Start fresh" before a series and share the report after each run.
   app's own log, the crash buffer, the last uncaught exception and the process's last 400 logcat lines
   (60 000 characters at most). Columns are aligned for a monospaced font.
 - **Run call benchmark** and **Run cover benchmark**: the same code as the debug build's `bench` and
-  `coverbench` test commands (`app/src/bench`). They time crossings into the core against the same
+  `coverbench` test commands (`android/app/src/bench`). They time crossings into the core against the same
   work in Kotlin, and the core's cover decoding ([Writing a client](writing-a-client.md)). Browse some
   albums first so covers are cached. Their cost lands in the stretch under way.
 - **Run self test**: plays songs from the library (downloads first) and checks playback, the controls,

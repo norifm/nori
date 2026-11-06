@@ -99,6 +99,10 @@ pub trait App: Host {
     }
     /// Audio is coming out: resets the failure run.
     fn playing(&mut self) {}
+    /// What a change of the audio focus does where nori would do `nori`; a plugin may answer instead.
+    fn audio_focus(&mut self, _focus: crate::focus::Focus, nori: crate::focus::FocusAct) -> crate::focus::FocusAct {
+        nori
+    }
     /// ReplayGain for index `index` of `list`, the queue as the player holds it (capped by
     /// [`Player::gain_max`]), applied per song by [`TransitionEngine::set_gain`].
     fn gain(&mut self, _list: &Playlist, _index: usize) -> f32 {
@@ -195,15 +199,23 @@ struct Period {
     serial: u64,
 }
 
+/// How far a [`Reader`] has read its song.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Bytes {
+    Flowing,
+    /// The last turn found the next buffer's bytes still missing.
+    Missing,
+    /// Read to its end.
+    Ended,
+}
+
 /// The song being read and its start in renderer time.
 struct Reader<R> {
     index: usize,
     offset_us: i64,
     r: R,
     pos: usize,
-    ended: bool,
-    /// The last turn found the next buffer's bytes still missing.
-    waiting: bool,
+    bytes: Bytes,
     /// The song slot's stages, each buffer read through them once.
     stages: Option<SongStages>,
     /// Where plugins hear the song as it is read, and the buffer it is converted in.
@@ -221,14 +233,14 @@ struct Opening<R> {
 
 impl<R: Reading> Reader<R> {
     fn new(index: usize, offset_us: i64, r: R, stages: Option<SongStages>, tap: Option<Box<dyn Tap>>) -> Reader<R> {
-        Reader { index, offset_us, r, pos: 0, ended: false, waiting: false, stages, tap, heard: Vec::new() }
+        Reader { index, offset_us, r, pos: 0, bytes: Bytes::Flowing, stages, tap, heard: Vec::new() }
     }
 
     /// Decodes the next buffer: heard by the tap as it is, then run through the song slot's stages.
     fn fill(&mut self) -> bool {
         self.pos = 0;
         let got = self.r.fill();
-        self.ended = !got;
+        self.bytes = if got { Bytes::Flowing } else { Bytes::Ended };
         match (got, self.tap.as_mut()) {
             (true, Some(t)) => {
                 // Only a longer buffer grows it.
@@ -261,6 +273,98 @@ impl<R: Reading> Reader<R> {
     fn left(&self) -> bool {
         self.pos < self.buffer().len()
     }
+
+    fn ended(&self) -> bool {
+        self.bytes == Bytes::Ended
+    }
+}
+
+/// A song that will not play, found ahead of playback: queue index, kind, reason.
+type Failure = (usize, PlaybackError, String);
+
+/// What follows the song being read.
+enum After<R> {
+    Unopened,
+    /// The next song, opened once this one was read to its end; `waited`: the last turn would have
+    /// moved on to it but its first bytes were missing.
+    Opened { index: usize, r: R, waited: bool },
+    /// The song read or the next will not play: raised once everything before it has played.
+    Failed(Failure),
+}
+
+/// A song being read, what follows it, and the audible song opened again to make its ending anew
+/// ([`Player::replan_ending`]).
+struct Read<R> {
+    reader: Reader<R>,
+    after: After<R>,
+    remaking: Option<Opening<R>>,
+}
+
+/// Whether the player makes music and plays it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Paused,
+    /// Paused, the music made ready for a start at a set moment.
+    Priming,
+    Playing,
+}
+
+/// Why playback stopped at a failed song.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Halt {
+    /// The failure rules stopped it.
+    Stop,
+    /// It failed for lack of network and the offline bridge takes over.
+    Bridge,
+    /// It failed for lack of network with no bridge: it waits for the network.
+    Wait,
+}
+
+/// Where reading is.
+enum Head<R> {
+    Idle,
+    /// A song to read after a jump or seek, still opening.
+    Opening(Opening<R>),
+    Reading(Read<R>),
+    /// Stopped at failed song `index`, `ms` into it; nothing is read until a jump or seek.
+    Stopped { index: usize, ms: i64, halt: Halt },
+}
+
+impl<R> Head<R> {
+    fn read(&self) -> Option<&Read<R>> {
+        match self {
+            Head::Reading(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    fn read_mut(&mut self) -> Option<&mut Read<R>> {
+        match self {
+            Head::Reading(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    fn reader(&self) -> Option<&Reader<R>> {
+        self.read().map(|r| &r.reader)
+    }
+
+    fn reader_mut(&mut self) -> Option<&mut Reader<R>> {
+        self.read_mut().map(|r| &mut r.reader)
+    }
+
+    /// The song being read or opening.
+    fn index(&self) -> Option<usize> {
+        match self {
+            Head::Reading(r) => Some(r.reader.index),
+            Head::Opening(o) => Some(o.index),
+            _ => None,
+        }
+    }
+
+    fn failed(&self) -> bool {
+        self.read().is_some_and(|r| matches!(r.after, After::Failed(_)))
+    }
 }
 
 /// The player: a queue, one song read at a time, and the transition engine in front of the output.
@@ -280,36 +384,25 @@ pub struct Player<S: Songs, T: Track, A: App, Q: Queue> {
     pub gain_off: bool,
     /// Maximum gain: 1 unless float output with the limiter allows boosting (`nori_player::gain`).
     pub gain_max: f32,
-    reading: Option<Reader<S::Reading>>,
+    head: Head<S::Reading>,
     /// The next song last prefetched ([`Songs::upcoming`]), and whether it waits for the song read to
     /// have its bytes first ([`Player::fetch_when_free`]).
     upcoming: Option<String>,
     fetch_after: bool,
-    /// A song to read after a jump or seek, still opening.
-    opening: Option<Opening<S::Reading>>,
-    /// The audible song opened again to make its ending anew ([`Player::replan_ending`]).
-    remaking: Option<Opening<S::Reading>>,
     /// Where the song being read started; cleared once the clock passes it (audio is audible).
     heard_from: Option<i64>,
-    /// The song after the one being read, opened when that one is read to its end.
-    next: Option<(usize, Result<S::Reading, String>)>,
     periods: Vec<Period>,
-    playing: bool,
+    mode: Mode,
     /// Renderer position: from a seek or start, then from the engine once the output has a clock.
     position_us: Option<i64>,
     /// When `position_us` was read or set: a turn reads it before it renders, which takes a while.
     placed_at: Instant,
     current: Option<usize>,
-    source_ended: bool,
     /// Song changes with their time; the platform drains them.
     pub changes: Vec<(i64, usize)>,
     /// Failed songs (id, reason); the platform drains them.
     pub failures: Vec<(String, String)>,
     pub errors: ErrorRun,
-    /// A failure found while reading ahead (or mid-song), raised when playback reaches it.
-    failed: Option<(usize, PlaybackError, String)>,
-    /// Playback stopped at this failed song, and where in it, ms; nothing is read until a jump.
-    stopped: Option<(usize, i64)>,
     /// Stop at the end of this song ([`Player::pause_at_end`]).
     stop_after: Option<usize>,
     /// The last turn hit [`BUFFERS_PER_TURN`] with the output still taking.
@@ -321,14 +414,8 @@ pub struct Player<S: Songs, T: Track, A: App, Q: Queue> {
     serials: u64,
     /// Repeat-one loops heard.
     pub loops: u32,
-    /// A song failed for lack of network and the offline bridge takes over.
-    pub bridge: bool,
-    /// A song failed for lack of network with no bridge: the player waits on it for the network.
-    pub waiting: bool,
     /// Queue entries as last seen, to map indexes across edits.
     seqs: Vec<u64>,
-    /// Music is made while paused, ready for a start at a set moment.
-    pub priming: bool,
     /// Plugins' song-slot stages, made for each song read.
     song_stages: Vec<StageSpec>,
     /// What plugins make of the songs read, and made.
@@ -352,34 +439,25 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             measure_on_move: true,
             gain_off: false,
             gain_max: 1.0,
-            reading: None,
+            head: Head::Idle,
             upcoming: None,
             fetch_after: false,
-            opening: None,
-            remaking: None,
             heard_from: None,
-            next: None,
             periods: Vec::new(),
-            playing: false,
+            mode: Mode::Paused,
             position_us: None,
             placed_at: Instant::now(),
             current: None,
-            source_ended: false,
             changes: Vec::new(),
             failures: Vec::new(),
             errors: ErrorRun::new(),
-            failed: None,
-            stopped: None,
             stop_after: None,
             hungry: false,
             heard_period: None,
             on_serial: None,
             serials: 0,
             loops: 0,
-            bridge: false,
-            waiting: false,
             seqs: Vec::new(),
-            priming: false,
             song_stages: Vec::new(),
             preparing: None,
             facts: Vec::new(),
@@ -410,7 +488,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             return;
         };
         // Already reading the next song: re-read the rest of this one so nothing follows it.
-        if self.reading.as_ref().is_some_and(|r| r.index != c) {
+        if self.head.reader().is_some_and(|r| r.index != c) {
             let at = self.position_ms();
             self.jump(c, at);
         }
@@ -467,31 +545,27 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// Starts reading song `i` (opened as `r`) from `from_ms` at `offset_us`, after a flush: now if
     /// ready, else once it is. False when it failed at once.
     fn begin(&mut self, i: usize, from_ms: i64, offset_us: i64, mut r: S::Reading) -> bool {
-        self.reading = None;
-        self.next = None;
-        self.opening = None;
-        self.remaking = None;
+        self.head = Head::Idle;
         // A seek within the same song keeps its stream's identity.
         let serial = self.serial_for(i);
         self.periods = vec![Period { index: i, offset_us, duration_us: 0, gain: 1.0, serial }];
         self.on_serial = Some(serial);
         self.place(offset_us + from_ms * 1000);
-        self.source_ended = false;
         self.heard_period = None;
         if r.ready() {
             return self.start_reading(i, from_ms, offset_us, r);
         }
-        self.opening = Some(Opening { index: i, from_ms, offset_us, r });
+        self.head = Head::Opening(Opening { index: i, from_ms, offset_us, r });
         true
     }
 
     /// Starts reading the opening song once it is ready.
     fn opened(&mut self) {
-        let Some(o) = self.opening.as_mut() else { return };
+        let Head::Opening(o) = &mut self.head else { return };
         if !o.r.ready() {
             return;
         }
-        let o = self.opening.take().expect("checked");
+        let Head::Opening(o) = std::mem::replace(&mut self.head, Head::Idle) else { unreachable!("matched above") };
         self.start_reading(o.index, o.from_ms, o.offset_us, o.r);
     }
 
@@ -499,7 +573,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// If its ending was made otherwise and can still change, it is made again from where the old and
     /// new endings part. A mix already audible plays out as it began.
     pub fn replan_ending(&mut self) {
-        if self.playing {
+        if self.playing() {
             self.follow_clock();
         }
         self.engine.replan();
@@ -532,9 +606,11 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// Opens song `i` again at `ms`, to read on from there once it is open ([`Player::remade`]).
     fn remake_from(&mut self, i: usize, ms: i64) {
         let Some(offset_us) = self.periods.iter().rev().find(|p| p.index == i).map(|p| p.offset_us) else { return };
-        match self.tracks.open(&self.id_at(i), ms) {
-            Ok(r) => self.remaking = Some(Opening { index: i, from_ms: ms, offset_us, r }),
-            Err(why) => self.app.log(&format!("{} would not open again ({why}): its ending plays as it was made", self.id_at(i))),
+        let id = self.id_at(i);
+        let Some(read) = self.head.read_mut() else { return };
+        match self.tracks.open(&id, ms) {
+            Ok(r) => read.remaking = Some(Opening { index: i, from_ms: ms, offset_us, r }),
+            Err(why) => self.app.log(&format!("{id} would not open again ({why}): its ending plays as it was made")),
         }
         self.remade();
     }
@@ -542,11 +618,11 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// The song opened again is open: the output from there on is dropped, if the output can still
     /// replace it, and the song read on from there for the transition engine to make what follows.
     fn remade(&mut self) {
-        let Some(o) = self.remaking.as_mut() else { return };
-        if !o.r.ready() {
+        let Some(read) = self.head.read_mut() else { return };
+        if !read.remaking.as_mut().is_some_and(|o| o.r.ready()) {
             return;
         }
-        let o = self.remaking.take().expect("checked");
+        let o = read.remaking.take().expect("checked");
         let Some(period) = self.periods.iter().rev().find(|p| p.offset_us == o.offset_us).copied() else { return };
         let format = o.r.format();
         let frame = o.from_ms * format.rate as i64 / 1000;
@@ -558,15 +634,11 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         self.call(|e, _, a| e.flush(a));
         self.burst.restart();
         self.periods.retain(|p| p.offset_us <= o.offset_us);
-        self.opening = None;
-        self.next = None;
-        self.failed = None;
-        self.source_ended = false;
         self.sink.track.source_bits(o.r.bits());
         let song = self.facts_for(period.serial);
         let stages = SongStages::new(&self.song_stages, self.sink.settings().around, &song, format);
         // Read again: its tap heard it the first time.
-        self.reading = Some(Reader::new(o.index, o.offset_us, o.r, stages, None));
+        self.head = Head::Reading(Read { reader: Reader::new(o.index, o.offset_us, o.r, stages, None), after: After::Unopened, remaking: None });
         self.configure(o.index, period.serial, format);
         self.engine.set_output_stream_offset_us(o.offset_us);
         self.engine.set_gain(period.gain);
@@ -581,17 +653,15 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         }
         let (format, duration_us) = (r.format(), r.duration_us());
         self.sink.track.source_bits(r.bits());
-        self.next = None;
         let gain = self.song_gain(i);
         let serial = self.serial_for(i);
         self.facts.clear();
         let song = self.tell(i, serial, gain, from_ms);
         let reader = self.reader(i, offset_us, r, &song, from_ms);
-        self.reading = Some(reader);
+        self.head = Head::Reading(Read { reader, after: After::Unopened, remaking: None });
         self.periods = vec![Period { index: i, offset_us, duration_us, gain, serial }];
         self.place(offset_us + from_ms * 1000);
         self.heard_from = self.position_us;
-        self.source_ended = false;
         self.configure(i, serial, format);
         self.engine.set_output_stream_offset_us(offset_us);
         self.engine.set_gain(gain);
@@ -646,7 +716,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         }
         self.song_stages = specs;
         let around = self.sink.settings().around;
-        if let Some(s) = self.reading.as_mut().and_then(|r| r.stages.as_mut()) {
+        if let Some(s) = self.head.reader_mut().and_then(|r| r.stages.as_mut()) {
             s.apply(&self.song_stages, around);
         }
     }
@@ -672,7 +742,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             if let Some((input, output)) = self.sink.retell(&was, &now) {
                 self.app.spliced("song's facts", Splice { input, output });
             }
-            if let Some(s) = self.reading.as_mut().filter(|r| r.index == i).and_then(|r| r.stages.as_mut()) {
+            if let Some(s) = self.head.reader_mut().filter(|r| r.index == i).and_then(|r| r.stages.as_mut()) {
                 s.song(&now);
             }
         }
@@ -710,7 +780,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             self.burst.restart();
             self.sink.fill();
         }
-        if let Some(i) = self.reading.as_ref().map(|r| r.index) {
+        if let Some(i) = self.head.reader().map(|r| r.index) {
             let gain = match self.periods.iter().rev().find(|p| p.index == i) {
                 Some(p) => p.gain,
                 None => self.song_gain(i),
@@ -748,7 +818,6 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     }
 
     fn jump_opened(&mut self, i: usize, from_ms: i64, opened: Option<(String, S::Reading, i64)>) {
-        self.stopped = None;
         self.stop_after = None;
         let i = self.playable(i);
         let id = self.id_at(i);
@@ -773,7 +842,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     pub fn resume(&mut self) {
         self.burst.restart();
         self.sink.play();
-        self.playing = true;
+        self.mode = Mode::Playing;
         self.follow_clock();
     }
 
@@ -782,29 +851,54 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// been a burst ago, and what is done now (a pause, a report) goes from where the music is.
     pub fn clock(&mut self, now_ms: i64) {
         self.now_ms = now_ms;
-        if self.playing {
+        if self.playing() {
             self.follow_clock();
         }
     }
 
+    /// Pauses; music made ready while paused ([`Player::prime`]) goes on being made.
     pub fn pause(&mut self) {
         // The last turn may have been a burst ago.
-        if self.playing {
+        if self.playing() {
             self.follow_clock();
         }
         self.burst.restart();
         self.sink.pause();
-        self.playing = false;
+        self.stop_playing();
+    }
+
+    /// Pauses, and makes the music ready while paused for a start at a set moment ([`Player::resume`]).
+    pub fn prime(&mut self) {
+        self.pause();
+        self.mode = Mode::Priming;
+    }
+
+    /// No music is made ready any more; playing goes on.
+    pub fn unprime(&mut self) {
+        if self.mode == Mode::Priming {
+            self.mode = Mode::Paused;
+        }
+    }
+
+    fn stop_playing(&mut self) {
+        if self.mode == Mode::Playing {
+            self.mode = Mode::Paused;
+        }
     }
 
     pub fn playing(&self) -> bool {
-        self.playing
+        self.mode == Mode::Playing
+    }
+
+    /// Music is made while paused, ready for a start at a set moment ([`Player::prime`]).
+    pub fn priming(&self) -> bool {
+        self.mode == Mode::Priming
     }
 
     /// Frees everything a long pause does not need and returns (queue index, ms) to [`Player::jump`]
     /// back to.
     pub fn release(&mut self) -> Option<(usize, i64)> {
-        let ended = self.source_ended;
+        let ended = self.sink.source_ended();
         if let Some(now) = self.call(|e, d, a| e.position_us(d, a, ended)) {
             self.place(now);
         }
@@ -812,12 +906,9 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         self.call(|e, _, a| e.reset(a));
         self.burst.restart();
         self.sink.reset();
-        self.reading = None;
-        self.opening = None;
-        self.remaking = None;
-        self.next = None;
-        self.failed = None;
-        self.source_ended = false;
+        if !matches!(self.head, Head::Stopped { .. }) {
+            self.head = Head::Idle;
+        }
         at
     }
 
@@ -923,18 +1014,17 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             }
             _ => {
                 self.app.log(&format!("{id} will not play: stopped"));
-                self.bridge = decided == OnError::Bridge;
-                self.waiting = decided == OnError::Wait;
+                let halt = match decided {
+                    OnError::Bridge => Halt::Bridge,
+                    OnError::Wait => Halt::Wait,
+                    _ => Halt::Stop,
+                };
                 let ms = if self.current == Some(i) { self.position_ms() } else { 0 };
-                self.stopped = Some((i, ms));
+                self.head = Head::Stopped { index: i, ms, halt };
                 self.call(|e, _, a| e.reset(a));
                 self.sink.flush();
                 self.sink.pause();
-                self.playing = false;
-                self.reading = None;
-                self.opening = None;
-                self.remaking = None;
-                self.next = None;
+                self.stop_playing();
             }
         }
     }
@@ -968,26 +1058,34 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             let at = |i: usize| moved(i).unwrap_or_else(|| i.min(new.len().saturating_sub(1)));
             ahead_of = self.current.map(|c| moved(c).or(queue_current).unwrap_or_else(|| at(c)));
             self.current = self.current.map(at);
-            if let Some(r) = self.reading.as_mut() {
-                r.index = at(r.index);
-            }
-            for o in [self.opening.as_mut(), self.remaking.as_mut()].into_iter().flatten() {
-                o.index = at(o.index);
+            match &mut self.head {
+                Head::Reading(read) => {
+                    read.reader.index = at(read.reader.index);
+                    if let Some(o) = read.remaking.as_mut() {
+                        o.index = at(o.index);
+                    }
+                }
+                Head::Opening(o) => o.index = at(o.index),
+                Head::Stopped { index, .. } => *index = at(*index),
+                Head::Idle => {}
             }
             for p in self.periods.iter_mut() {
                 p.index = at(p.index);
             }
             self.stop_after = self.stop_after.map(at);
-            let after = self.reading.as_ref().and_then(|r| self.next_of(r.index));
-            // A pending failure only stands while its song is still the one read or the next (by id,
-            // not by position).
-            let reading = self.reading.as_ref().map(|r| r.index);
-            self.failed = self.failed.take().and_then(|(i, kind, why)| {
-                moved(i).filter(|k| Some(*k) == reading || Some(*k) == after).map(|k| (k, kind, why))
-            });
-            match self.next.as_mut() {
-                Some(n) if moved(n.0).is_some_and(|i| Some(i) == after) => n.0 = after.expect("checked"),
-                _ => self.next = None,
+            let reading = self.head.reader().map(|r| r.index);
+            let after = reading.and_then(|r| self.next_of(r));
+            if let Some(read) = self.head.read_mut() {
+                // What was found or opened ahead only stands while its song is still the one read or the
+                // next (by entry, not by position).
+                read.after = match std::mem::replace(&mut read.after, After::Unopened) {
+                    After::Failed((i, kind, why)) => match moved(i).filter(|k| Some(*k) == reading || Some(*k) == after) {
+                        Some(k) => After::Failed((k, kind, why)),
+                        None => After::Unopened,
+                    },
+                    After::Opened { index, r, waited } if moved(index).is_some_and(|i| Some(i) == after) => After::Opened { index: after.expect("checked"), r, waited },
+                    _ => After::Unopened,
+                };
             }
         }
         self.sync_queue();
@@ -1011,7 +1109,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// The reader moved past `cur` into a song that no longer follows it (queue edited after the
     /// ending was made).
     fn read_astray(&self, cur: usize) -> bool {
-        let Some(r) = self.reading.as_ref().map(|r| r.index).or(self.opening.as_ref().map(|o| o.index)) else { return false };
+        let Some(r) = self.head.index() else { return false };
         r != cur && Some(r) != self.next_of(cur)
     }
 
@@ -1060,7 +1158,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// Prefetches the song after the current one once the song read has its bytes ([`Reading::fetched`]):
     /// on a slow link they would share it.
     fn fetch_when_free(&mut self) {
-        if !self.fetch_after || self.opening.is_some() || self.reading.as_mut().is_some_and(|r| !r.r.fetched()) {
+        if !self.fetch_after || matches!(self.head, Head::Opening(_)) || self.head.reader_mut().is_some_and(|r| !r.r.fetched()) {
             return;
         }
         self.fetch_after = false;
@@ -1084,12 +1182,23 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
 
     /// The failed song playback stopped at, until the next jump.
     pub fn stopped_at(&self) -> Option<usize> {
-        self.stopped.map(|(i, _)| i)
+        self.stopped_place().map(|(i, _)| i)
     }
 
     /// [`Player::stopped_at`], and the place in it heard last, ms.
     pub fn stopped_place(&self) -> Option<(usize, i64)> {
-        self.stopped
+        match self.head {
+            Head::Stopped { index, ms, .. } => Some((index, ms)),
+            _ => None,
+        }
+    }
+
+    /// Why playback stopped at [`Player::stopped_at`].
+    pub fn stopped_for(&self) -> Option<Halt> {
+        match self.head {
+            Head::Stopped { halt, .. } => Some(halt),
+            _ => None,
+        }
     }
 
     pub fn current_id(&self) -> Option<String> {
@@ -1141,9 +1250,9 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// The seek bar's song and position.
     pub fn bar(&mut self) -> Seen {
         let pos = self.position_ms();
-        let now = PlayerNow { now_ms: self.now_ms, playing: self.playing, on: self.on_serial, position_ms: pos };
+        let now = PlayerNow { now_ms: self.now_ms, playing: self.playing(), on: self.on_serial, position_ms: pos };
         let periods = &self.periods;
-        let after = self.reading.as_ref().and_then(|r| self.next_of(r.index));
+        let after = self.head.reader().and_then(|r| self.next_of(r.index));
         let placed = |p: &Period| (p.index, if p.duration_us > 0 { p.duration_us / 1000 } else { i64::MAX });
         let find = |s: StreamAt| match s {
             StreamAt::Serial(s) => periods.iter().find(|p| p.serial == s).map(placed),
@@ -1187,7 +1296,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         if self.engine.heard().id.is_some() {
             if let Some(i) = self.bar().index {
                 let heard = self.engine.heard();
-                let since = if self.playing { (self.now_ms - heard.at_ms).max(0) } else { 0 };
+                let since = if self.playing() { (self.now_ms - heard.at_ms).max(0) } else { 0 };
                 let ms = (heard.us + since * 1000) / 1000;
                 return Some((i, ms));
             }
@@ -1199,7 +1308,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// out (`Some(None)`: gapless), also `Some(None)` while still reading it past `start_us`. `None`
     /// while a plan starting at `start_us` can still be taken up.
     fn ending_made(&self, cur: usize, start_us: Option<i64>) -> Option<Option<crate::engine::Plan>> {
-        let reading = self.reading.as_ref().filter(|r| r.index == cur);
+        let reading = self.head.reader().filter(|r| r.index == cur);
         if let Some(made) = self.serial_at(cur).and_then(|s| self.engine.made(s)) {
             if self.engine.holding() || reading.is_none() {
                 return Some(made.cloned());
@@ -1211,12 +1320,12 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
 
     /// The last song has been read to its end and handed out.
     pub fn source_ended(&self) -> bool {
-        self.source_ended
+        self.sink.source_ended()
     }
 
     /// Everything has played.
     pub fn ended(&self) -> bool {
-        self.source_ended && self.sink.drained()
+        self.sink.source_ended() && self.sink.drained()
     }
 
     /// The last turn hit its buffer budget with the output still taking: turn again at once.
@@ -1227,43 +1336,46 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// State summary for diagnostics.
     pub fn words(&self) -> String {
         let id = |i: usize| self.queue.read(|q| q.ids().get(i).cloned()).unwrap_or_else(|| "?".into());
-        let mut w = format!("{} on {}", if self.playing { "playing" } else { "paused" }, self.current.map_or("nothing".into(), |i| format!("{i} ({})", id(i))));
+        let mode = match self.mode {
+            Mode::Paused => "paused",
+            Mode::Priming => "priming",
+            Mode::Playing => "playing",
+        };
+        let mut w = format!("{mode} on {}", self.current.map_or("nothing".into(), |i| format!("{i} ({})", id(i))));
         if self.position_us.is_some() {
             w.push_str(&format!(" at {} ms", self.position_ms()));
         }
-        match &self.reading {
-            Some(r) => {
+        match &self.head {
+            Head::Reading(read) => {
+                let r = &read.reader;
                 w.push_str(&format!("; reading {} ({}) at {} ms", r.index, id(r.index), r.r.at_us() / 1000));
-                if r.ended {
-                    w.push_str(", read to its end");
-                }
-                if r.waiting {
-                    w.push_str(", waiting for its bytes");
+                match r.bytes {
+                    Bytes::Ended => w.push_str(", read to its end"),
+                    Bytes::Missing => w.push_str(", waiting for its bytes"),
+                    Bytes::Flowing => {}
                 }
                 if r.left() {
                     w.push_str(", a buffer in hand");
                 }
+                match &read.after {
+                    After::Opened { index, waited, .. } => {
+                        w.push_str(&format!("; next {index} ({}) opened", id(*index)));
+                        if *waited {
+                            w.push_str(", waiting for its bytes");
+                        }
+                    }
+                    After::Failed((n, _, why)) => w.push_str(&format!("; {n} ({}) failed: {why}", id(*n))),
+                    After::Unopened => {}
+                }
             }
-            None => w.push_str("; reading nothing"),
-        }
-        if let Some(o) = &self.opening {
-            w.push_str(&format!("; opening {} ({}) from {} ms", o.index, id(o.index), o.from_ms));
-        }
-        match &self.next {
-            Some((n, Ok(_))) => w.push_str(&format!("; next {n} ({}) opened", id(*n))),
-            Some((n, Err(why))) => w.push_str(&format!("; next {n} ({}) would not open: {why}", id(*n))),
-            None => {}
-        }
-        if let Some((n, _, why)) = &self.failed {
-            w.push_str(&format!("; {n} ({}) failed: {why}", id(*n)));
-        }
-        if let Some((n, _)) = self.stopped {
-            w.push_str(&format!("; stopped at {n}"));
+            Head::Opening(o) => w.push_str(&format!("; opening {} ({}) from {} ms", o.index, id(o.index), o.from_ms)),
+            Head::Stopped { index, .. } => w.push_str(&format!("; stopped at {index}")),
+            Head::Idle => w.push_str("; reading nothing"),
         }
         if let Some(n) = self.stop_after {
             w.push_str(&format!("; stopping after {n}"));
         }
-        if self.source_ended {
+        if self.sink.source_ended() {
             w.push_str("; the queue read to its end");
         }
         if self.hungry {
@@ -1275,7 +1387,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
 
     /// The song being read or opening.
     pub fn reading_index(&self) -> Option<usize> {
-        self.reading.as_ref().map(|r| r.index).or(self.opening.as_ref().map(|o| o.index))
+        self.head.index()
     }
 
     /// Playing from a start, jump or seek whose first sample the output's clock has not passed yet.
@@ -1285,12 +1397,19 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
 
     /// The song being read is waiting for bytes or still opening.
     pub fn starved(&self) -> bool {
-        self.opening.is_some() || self.reading.as_ref().is_some_and(|r| !r.left() && !r.ended && r.waiting)
+        match &self.head {
+            Head::Opening(_) => true,
+            Head::Reading(read) => !read.reader.left() && read.reader.bytes == Bytes::Missing,
+            _ => false,
+        }
     }
 
     /// Reading is blocked on bytes: [`Player::starved`], a song opened again for its ending, or the next song's first bytes.
     pub fn waiting_for_bytes(&self) -> bool {
-        self.starved() || self.remaking.is_some() || (self.failed.is_none() && self.next.as_ref().is_some_and(|(_, n)| n.is_ok()) && self.reading.as_ref().is_some_and(|r| r.ended && r.waiting && !r.left()))
+        self.starved()
+            || self.head.read().is_some_and(|read| {
+                read.remaking.is_some() || (matches!(read.after, After::Opened { waited: true, .. }) && read.reader.ended() && !read.reader.left())
+            })
     }
 
     /// One render turn at `now_ms`: reads the clock and offers audio until the output refuses.
@@ -1298,24 +1417,25 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         self.now_ms = now_ms;
         self.opened();
         self.remade();
-        if !self.playing && !self.priming {
+        if self.mode == Mode::Paused {
             return;
         }
-        if self.playing {
+        if self.playing() {
             self.follow_clock();
         }
         self.fetch_when_free();
         self.render();
         // A pending failure is raised once everything before it has played.
-        if self.failed.is_some() && self.ended() {
-            let (n, kind, why) = self.failed.take().expect("checked");
+        if self.head.failed() && self.ended() {
+            let read = self.head.read_mut().expect("checked");
+            let After::Failed((n, kind, why)) = std::mem::replace(&mut read.after, After::Unopened) else { unreachable!("checked") };
             self.fail(n, kind, why);
         }
     }
 
     /// Updates the position and current song from the output's clock.
     fn follow_clock(&mut self) {
-        let ended = self.source_ended;
+        let ended = self.sink.source_ended();
         if let Some(at) = self.call(|e, d, a| e.position_us(d, a, ended)) {
             self.place(at);
             if let Some(p) = self.periods.iter().rev().find(|p| at >= p.offset_us).copied() {
@@ -1348,8 +1468,8 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
                 break;
             }
             self.hungry = k + 1 == BUFFERS_PER_TURN;
-            let Player { engine, sink, burst, app, reading, now_ms, .. } = self;
-            let r = reading.as_mut().expect("a buffer is ready");
+            let Player { engine, sink, burst, app, head, now_ms, .. } = self;
+            let r = head.reader_mut().expect("a buffer is ready");
             app.clock(*now_ms);
             let mut fed = Fed::new(sink, burst, *now_ms);
             let pts = r.offset_us + r.r.at_us();
@@ -1360,33 +1480,32 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
                 return;
             }
         }
-        if self.reading.as_ref().is_some_and(|r| r.ended) && (self.at_queue_end() || self.failed.is_some()) && !self.source_ended {
+        if self.head.reader().is_some_and(|r| r.ended()) && (self.at_queue_end() || self.head.failed()) && !self.sink.source_ended() {
             if self.call(|e, d, a| e.play_to_end_of_stream(d, a)) {
-                self.source_ended = true;
                 self.sink.end_of_stream();
-                self.sink.source_ended = true;
             }
-        } else if self.source_ended {
+        } else if self.sink.source_ended() {
             self.call(|e, d, _| e.queue_empty(d));
             self.sink.fill();
         }
     }
 
     fn at_queue_end(&self) -> bool {
-        self.reading.as_ref().is_some_and(|r| self.next_of(r.index).is_none())
+        self.head.reader().is_some_and(|r| self.next_of(r.index).is_none())
     }
 
     /// Ensures a buffer is in hand, moving on to the next song once this one is read and its end is
     /// within [`READ_AHEAD_US`].
     fn ensure_buffer(&mut self) -> bool {
         loop {
-            let Some(r) = self.reading.as_mut() else { return false };
+            let Some(read) = self.head.read_mut() else { return false };
+            let r = &mut read.reader;
             if r.left() {
                 return true;
             }
-            if !r.ended {
-                r.waiting = !r.r.ready();
-                if r.waiting {
+            if !r.ended() {
+                if !r.r.ready() {
+                    r.bytes = Bytes::Missing;
                     return false;
                 }
                 if r.fill() {
@@ -1394,41 +1513,36 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
                 }
                 // Bytes stopped for good: fail once what was read has played.
                 if let Some((kind, why)) = r.r.error() {
-                    if self.failed.is_none() {
-                        self.failed = Some((r.index, kind, why));
-                    }
+                    read.after = After::Failed((r.index, kind, why));
                 }
             }
-            let (i, end) = (r.index, r.offset_us + r.r.duration_us());
-            if self.failed.is_some() {
+            let (i, end) = (read.reader.index, read.reader.offset_us + read.reader.r.duration_us());
+            if matches!(read.after, After::Failed(_)) {
                 return false;
             }
             let Some(n) = self.next_of(i) else { return false };
+            let Player { head, tracks, queue, position_us, .. } = self;
+            let read = head.read_mut().expect("reading");
             // Open the next song now, so failures show early and fetching gets the most time.
-            if self.next.as_ref().is_none_or(|(at, _)| *at != n) {
-                let opened = self.tracks.open(&self.id_at(n), 0);
-                self.next = Some((n, opened));
+            if !matches!(read.after, After::Opened { index, .. } if index == n) {
+                read.after = match tracks.open(&queue.read(|q| q.ids()[n].clone()), 0) {
+                    Ok(r) => After::Opened { index: n, r, waited: false },
+                    Err(why) => After::Failed((n, PlaybackError::Other, why)),
+                };
             }
-            let failed = match self.next.as_mut() {
-                Some((_, Err(why))) => Some((PlaybackError::Other, why.clone())),
-                Some((_, Ok(r))) => r.ready().then(|| r.error()).flatten(),
-                None => None,
-            };
-            if let Some((kind, why)) = failed {
-                self.failed = Some((n, kind, why));
-                self.next = None;
+            let After::Opened { r: next, waited, .. } = &mut read.after else { return false };
+            if let Some((kind, why)) = next.ready().then(|| next.error()).flatten() {
+                read.after = After::Failed((n, kind, why));
                 return false;
             }
-            if self.position_us.is_none_or(|pos| pos < end - READ_AHEAD_US) {
+            if position_us.is_none_or(|pos| pos < end - READ_AHEAD_US) {
                 return false;
             }
-            if self.next.as_mut().is_some_and(|(_, r)| r.as_mut().is_ok_and(|r| !r.ready())) {
-                if let Some(r) = self.reading.as_mut() {
-                    r.waiting = true;
-                }
+            if !next.ready() {
+                *waited = true;
                 return false;
             }
-            let Some((_, Ok(next))) = self.next.take() else { unreachable!("an opened song is waiting") };
+            let After::Opened { r: next, .. } = std::mem::replace(&mut read.after, After::Unopened) else { unreachable!("matched above") };
             let (format, duration_us) = (next.format(), next.duration_us());
             self.sink.track.source_bits(next.bits());
             let gain = self.song_gain(n);
@@ -1440,7 +1554,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             self.engine.set_output_stream_offset_us(end);
             self.engine.set_gain(gain);
             self.engine.set_song(song);
-            self.reading = Some(reader);
+            self.head.read_mut().expect("reading").reader = reader;
             self.periods.push(Period { index: n, offset_us: end, duration_us, gain, serial });
         }
     }

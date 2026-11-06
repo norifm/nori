@@ -7,8 +7,15 @@ export { Icons }
 // Its colour scheme follows the theme (look.rs), for the std widgets and any text without a colour of its own.
 export { Palette }
 // The Android app's typefaces, from its resources.
-import "../../../app/src/main/res/font/inter.ttf";
-import "../../../app/src/main/res/font/literata.ttf";
+import "../../../android/app/src/main/res/font/inter.ttf";
+import "../../../android/app/src/main/res/font/literata.ttf";
+
+// The main window's views. `shelf` is one of Home's shelves shown whole, `for-you` Home's picks.
+export enum View { home, search, albums, artists, playlists, songs, page, login, settings, equalizer, shelf, for-you, favorites }
+// A panel beside the player: the inspector on the right, or Now Playing's beside the artwork.
+export enum Panel { none, queue, lyrics, devices }
+// How the page view lays out what it shows: an album's, an artist's, or a list's (a playlist or a mix).
+export enum PageLayout { album, artist, list }
 
 export struct Card {
     id: string,
@@ -2401,7 +2408,7 @@ component PlayerControls inherits Rectangle {
     in property <bool> shuffle;
     in property <int> repeat;
     in property <float> volume: 1;
-    in property <int> inspector;
+    in property <Panel> inspector;
     in property <int> covers-rev;
     in property <bool> devices-on;
     // The jam this computer hosts, as the strip beside the song says it ("Jam · 2 listening"); empty for none.
@@ -2425,7 +2432,7 @@ component PlayerControls inherits Rectangle {
     callback set-volume(float);
     callback toggle-shuffle();
     callback cycle-repeat();
-    callback set-inspector(int);
+    callback set-inspector(Panel);
     callback open-full();
     // The song playing's menu and its album's, which open in the main window, at `x` in the pill.
     callback song-menu(length);
@@ -2506,7 +2513,7 @@ component PlayerControls inherits Rectangle {
                         vertical-alignment: center;
                         TouchArea {
                             mouse-cursor: pointer;
-                            clicked => { root.set-inspector(root.playing-on != "" ? 3 : 1); }
+                            clicked => { root.set-inspector(root.playing-on != "" ? Panel.devices : Panel.queue); }
                         }
                     }
                 }
@@ -2648,8 +2655,8 @@ component PlayerControls inherits Rectangle {
                 y: (parent.height - self.height) / 2;
                 height: 34px;
                 icon: 20px;
-                idle: root.inspector == 3 ? Theme.accent : Theme.dim;
-                clicked => { root.set-inspector(root.inspector == 3 ? 0 : 3); }
+                idle: root.inspector == Panel.devices ? Theme.accent : Theme.dim;
+                clicked => { root.set-inspector(root.inspector == Panel.devices ? Panel.none : Panel.devices); }
             }
             if root.has-song && !root.guest: Seal {
                 y: (parent.height - self.height) / 2;
@@ -2660,21 +2667,21 @@ component PlayerControls inherits Rectangle {
                 muted: Theme.dim;
                 clicked => { root.star(); }
             }
-            if root.roomy || root.inspector == 2: IconButton {
+            if root.roomy || root.inspector == Panel.lyrics: IconButton {
                 y: (parent.height - self.height) / 2;
                 glyph: Icons.quote-message;
-                lit: root.inspector == 2;
+                lit: root.inspector == Panel.lyrics;
                 quiet: true;
                 size: 34px;
-                clicked => { root.set-inspector(root.inspector == 2 ? 0 : 2); }
+                clicked => { root.set-inspector(root.inspector == Panel.lyrics ? Panel.none : Panel.lyrics); }
             }
-            if root.roomy || root.inspector == 1: IconButton {
+            if root.roomy || root.inspector == Panel.queue: IconButton {
                 y: (parent.height - self.height) / 2;
                 glyph: Icons.playlist;
-                lit: root.inspector == 1;
+                lit: root.inspector == Panel.queue;
                 quiet: true;
                 size: 34px;
-                clicked => { root.set-inspector(root.inspector == 1 ? 0 : 1); }
+                clicked => { root.set-inspector(root.inspector == Panel.queue ? Panel.none : Panel.queue); }
             }
             if root.wide && !root.guest: IconButton {
                 y: (parent.height - self.height) / 2;
@@ -3373,30 +3380,30 @@ component JamHeader inherits VerticalLayout {
 // The panels beside the song: with remote control on, the other devices; lyrics; the queue. The one showing
 // is lit. In the order of the player pill's buttons for them.
 component PanelTabs inherits HorizontalLayout {
-    in property <int> current;
+    in property <Panel> current;
     in property <bool> devices;
-    callback picked(int);
+    callback picked(Panel);
     spacing: 2px;
     if root.devices: TabButton {
         text: "Devices";
         icon: Output.shown;
         named: true;
-        current: root.current == 3;
-        clicked => { root.picked(3); }
+        current: root.current == Panel.devices;
+        clicked => { root.picked(Panel.devices); }
     }
     TabButton {
         text: "Lyrics";
         icon: Icons.quote-message;
         named: true;
-        current: root.current == 2;
-        clicked => { root.picked(2); }
+        current: root.current == Panel.lyrics;
+        clicked => { root.picked(Panel.lyrics); }
     }
     TabButton {
         text: "Queue";
         icon: Icons.playlist;
         named: true;
-        current: root.current == 1;
-        clicked => { root.picked(1); }
+        current: root.current == Panel.queue;
+        clicked => { root.picked(Panel.queue); }
     }
 }
 
@@ -5398,12 +5405,12 @@ component TitleStrip inherits TouchArea {
 
 // The top pill's content: Home, then the library's sections; the search on the right, then the settings.
 component TopContent inherits Rectangle {
-    in property <int> view;
-    in property <int> page-kind;
+    in property <View> view;
+    in property <PageLayout> page-kind;
     // A jam guest's: the host's library, without the account's playlists and favorites.
     in property <bool> guest;
     in-out property <string> search-text;
-    callback go(int);
+    callback go(View);
     callback open-menu();
     callback search-edited(string);
     // The search field took or gave up the keys.
@@ -5433,8 +5440,8 @@ component TopContent inherits Rectangle {
             text: "Home";
             icon: Icons.home-simple;
             named: root.named;
-            current: root.view == 0 || root.view == 10 || root.view == 11;
-            clicked => { root.go(0); }
+            current: root.view == View.home || root.view == View.shelf || root.view == View.for-you;
+            clicked => { root.go(View.home); }
         }
         Rectangle {
             width: 9px;
@@ -5449,40 +5456,40 @@ component TopContent inherits Rectangle {
             text: "Albums";
             icon: Icons.compact-disc;
             named: root.named;
-            current: root.view == 2 || (root.view == 6 && root.page-kind == 0);
-            clicked => { root.go(2); }
+            current: root.view == View.albums || (root.view == View.page && root.page-kind == PageLayout.album);
+            clicked => { root.go(View.albums); }
         }
         TabButton {
             y: (parent.height - self.height) / 2;
             text: "Artists";
             icon: Icons.user;
             named: root.named;
-            current: root.view == 3 || (root.view == 6 && root.page-kind == 1);
-            clicked => { root.go(3); }
+            current: root.view == View.artists || (root.view == View.page && root.page-kind == PageLayout.artist);
+            clicked => { root.go(View.artists); }
         }
         TabButton {
             y: (parent.height - self.height) / 2;
             text: "Songs";
             icon: Icons.music-note;
             named: root.named;
-            current: root.view == 5;
-            clicked => { root.go(5); }
+            current: root.view == View.songs;
+            clicked => { root.go(View.songs); }
         }
         if !root.guest: TabButton {
             y: (parent.height - self.height) / 2;
             text: "Playlists";
             icon: Icons.playlist;
             named: root.named;
-            current: root.view == 4 || (root.view == 6 && root.page-kind == 2);
-            clicked => { root.go(4); }
+            current: root.view == View.playlists || (root.view == View.page && root.page-kind == PageLayout.list);
+            clicked => { root.go(View.playlists); }
         }
         if !root.guest: TabButton {
             y: (parent.height - self.height) / 2;
             text: "Favorites";
             icon: Icons.seal-outline;
             named: root.named;
-            current: root.view == 12;
-            clicked => { root.go(12); }
+            current: root.view == View.favorites;
+            clicked => { root.go(View.favorites); }
         }
         Rectangle {
             horizontal-stretch: 1;
@@ -5507,7 +5514,7 @@ component TopContent inherits Rectangle {
                 Icon {
                     y: (parent.height - self.height) / 2;
                     glyph: Icons.search;
-                    colour: input.has-focus || root.view == 1 ? Theme.accent : Theme.dim;
+                    colour: input.has-focus || root.view == View.search ? Theme.accent : Theme.dim;
                     width: 18px;
                     height: 18px;
                 }
@@ -5555,14 +5562,14 @@ component TopContent inherits Rectangle {
                 mouse-cursor: text;
                 clicked => {
                     input.focus();
-                    if root.search-text != "" && root.view != 1 { root.search-edited(root.search-text); }
+                    if root.search-text != "" && root.view != View.search { root.search-edited(root.search-text); }
                 }
             }
         }
         IconButton {
             y: (parent.height - self.height) / 2;
             glyph: Icons.settings;
-            lit: root.view == 8 || root.view == 9;
+            lit: root.view == View.settings || root.view == View.equalizer;
             quiet: true;
             size: 36px;
             clicked => { root.open-menu(); }
@@ -5599,7 +5606,7 @@ export component AppWindow inherits Window {
 
 
     // 0 home, 1 search, 2 albums, 3 artists, 4 playlists, 5 songs, 6 a page (album, artist, playlist), 7 login.
-    in-out property <int> view: 0;
+    in-out property <View> view: View.home;
     in property <string> server;
     in property <string> greeting;
     in property <bool> loading;
@@ -5656,7 +5663,7 @@ export component AppWindow inherits Window {
     in property <bool> search-busy;
 
     // The page open: 0 album, 1 artist, 2 playlist, and its id (the sidebar marks a playlist's).
-    in property <int> page-kind;
+    in property <PageLayout> page-kind;
     in property <string> page-id;
     in property <string> page-title;
     in property <string> page-sub;
@@ -5720,9 +5727,9 @@ export component AppWindow inherits Window {
     in property <bool> wash-on-b;
     // The inspector on the right: 0 shut, 1 Playing Next, 2 lyrics, 3 the other devices. It keeps showing
     // the last one while it slides away.
-    in-out property <int> inspector;
+    in-out property <Panel> inspector;
     // How far the sheet on the right is in: it floats over the page, which stays where it is.
-    property <float> panel-in: self.inspector != 0 ? 1 : 0;
+    property <float> panel-in: self.inspector != Panel.none ? 1 : 0;
     animate panel-in { duration: Motion.reduced ? 0ms : 240ms; enabled: !Motion.reduced; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
     // Remote control is on: the devices button, and the places the music can play.
     in property <bool> devices-on;
@@ -5737,9 +5744,9 @@ export component AppWindow inherits Window {
     callback forget-devices();
     // "Playing on <device>" while another device plays: the player shows and controls it.
     in property <string> playing-on;
-    property <int> shown-panel: 1;
+    property <Panel> shown-panel: Panel.queue;
     changed inspector => {
-        if self.inspector != 0 {
+        if self.inspector != Panel.none {
             self.shown-panel = self.inspector;
         }
         self.player-changed();
@@ -5747,7 +5754,7 @@ export component AppWindow inherits Window {
     in-out property <bool> full-player;
     // What Now Playing shows beside the artwork: 1 the queue, 2 the lyrics, 3 the other devices; and how tall the line
     // sung is (the compositor keeps it sharp).
-    in-out property <int> full-panel: 2;
+    in-out property <Panel> full-panel: Panel.lyrics;
     out property <length> full-lyric-h: 60px;
     // Where the line sung is on the window now, as the lyrics scroll to it: the compositor's sharp band
     // follows it. Scrolled by hand, every line is sharp until the next one is sung.
@@ -5821,8 +5828,8 @@ export component AppWindow inherits Window {
     callback open-accounts();
     in-out property <string> find-text;
     // The library list shown has nothing in it.
-    property <bool> list-empty: (root.view == 2 && root.albums.length == 0) || (root.view == 3 && root.artists.length == 0) || (root.view == 4 && root.playlists.length == 0) || ((root.view == 5 || root.view == 12) && root.songs.length == 0);
-    property <string> list-name: root.view == 10 ? root.shelves[root.shown-shelf].title : root.view == 11 ? "For you" : root.view == 2 ? "Albums" : root.view == 3 ? "Artists" : root.view == 4 ? "Playlists" : root.view == 5 ? "Songs" : root.view == 12 ? "Favorites" : root.view == 6 && root.page-kind == 0 ? "Album" : root.view == 6 && root.page-kind == 2 ? (root.page-mix ? "Mix" : "Playlist") : "";
+    property <bool> list-empty: (root.view == View.albums && root.albums.length == 0) || (root.view == View.artists && root.artists.length == 0) || (root.view == View.playlists && root.playlists.length == 0) || ((root.view == View.songs || root.view == View.favorites) && root.songs.length == 0);
+    property <string> list-name: root.view == View.shelf ? root.shelves[root.shown-shelf].title : root.view == View.for-you ? "For you" : root.view == View.albums ? "Albums" : root.view == View.artists ? "Artists" : root.view == View.playlists ? "Playlists" : root.view == View.songs ? "Songs" : root.view == View.favorites ? "Favorites" : root.view == View.page && root.page-kind == PageLayout.album ? "Album" : root.view == View.page && root.page-kind == PageLayout.list ? (root.page-mix ? "Mix" : "Playlist") : "";
     callback find-edited(string);
     // The artist chosen on the Artists page.
     in property <string> artist-chosen;
@@ -6006,6 +6013,8 @@ export component AppWindow inherits Window {
     // The source ended the session: the sheet can be asked not to come back at start.
     in property <bool> signin-ended;
     callback sign-in-quiet();
+    // The sheet closed with its scrim or Close.
+    callback signin-closed();
     in-out property <string> join-link;
     in property <string> join-error;
     in property <bool> join-busy;
@@ -6037,7 +6046,7 @@ export component AppWindow inherits Window {
     // The form adds a profile, so back chooses again; it isn't editing one.
     in property <bool> login-adding;
 
-    callback go(int);
+    callback go(View);
     callback back();
     callback open-album(string);
     callback open-artist(string);
@@ -6072,7 +6081,7 @@ export component AppWindow inherits Window {
     in-out property <int> search-preview-at: -1;
     callback search-preview-pick(int);
     // The preview shows: the top pill widens its field to it.
-    out property <bool> search-preview-shown: root.search-preview-open && root.view != 1 && (root.search-preview.length > 0 || root.search-nothing);
+    out property <bool> search-preview-shown: root.search-preview-open && root.view != View.search && (root.search-preview.length > 0 || root.search-nothing);
     callback search-preview-changed();
     changed search-preview-shown => { root.search-preview-changed(); }
     // From the top pill's field: the arrows' step through the preview, and Enter.
@@ -6149,7 +6158,7 @@ export component AppWindow inherits Window {
             background: Theme.ground;
         }
 
-        if root.view == 7 && root.login-choosing: Rectangle {
+        if root.view == View.login && root.login-choosing: Rectangle {
             TitleStrip {
                 y: 0;
                 drag => { root.drag-window(); }
@@ -6197,7 +6206,7 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.view == 7 && !root.login-choosing: Rectangle {
+        if root.view == View.login && !root.login-choosing: Rectangle {
             TitleStrip {
                 y: 0;
                 drag => { root.drag-window(); }
@@ -6309,7 +6318,7 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.view != 7: Rectangle {
+        if root.view != View.login: Rectangle {
             visible: full-screen.opacity < 1;
             // The page; it runs up under the top pill and under the player pill, and gives the panel its room.
             Rectangle {
@@ -6318,7 +6327,7 @@ export component AppWindow inherits Window {
                 clip: true;
 
 
-                if root.view == 0: Fade {
+                if root.view == View.home: Fade {
                     home-scroll := Remembered {
                         content-height: home.preferred-height;
                         home := VerticalLayout {
@@ -6430,7 +6439,7 @@ export component AppWindow inherits Window {
                             if !root.picks-loaded || root.picks.length > 0: picks-shelf := ShelfView {
                                 title: "For you";
                                 more: true;
-                                show-all => { root.go(11); }
+                                show-all => { root.go(View.for-you); }
                                 count: root.picks.length;
                                 loading: !root.picks-loaded;
                                 least: 200px;
@@ -6453,7 +6462,7 @@ export component AppWindow inherits Window {
                                 if !shelf.loaded || shelf.cards.length > 0: albums-shelf := ShelfView {
                                     title: shelf.title;
                                     more: true;
-                                    show-all => { root.shown-shelf = index; root.go(10); }
+                                    show-all => { root.shown-shelf = index; root.go(View.shelf); }
                                     count: shelf.cards.length;
                                     loading: !shelf.loaded;
                                     live: home-row.on-screen;
@@ -6499,7 +6508,7 @@ export component AppWindow inherits Window {
                 }
 
                 // What the top pill's search field found; the field is the pill's.
-                if root.view == 1: Fade {
+                if root.view == View.search: Fade {
                     // The server is still being asked: a sliver sweeping under the top pill, over the page.
                     if root.search-busy: Rectangle {
                         y: Chrome.top-room - 6px;
@@ -6688,7 +6697,7 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if root.view == 2 && root.albums-in-rows: Fade {
+                if root.view == View.albums && root.albums-in-rows: Fade {
                     rows-scroll := Remembered {
                         property <int> columns: max(2, floor((self.width - 64px + 22px) / 198px));
                         property <length> side: (self.width - 64px - (self.columns - 1) * 22px) / self.columns;
@@ -6745,18 +6754,18 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if (root.view == 2 && !root.albums-in-rows) || root.view == 4 || root.view == 10: Fade {
-                    push: root.view == 10;
+                if (root.view == View.albums && !root.albums-in-rows) || root.view == View.playlists || root.view == View.shelf: Fade {
+                    push: root.view == View.shelf;
                     Grid {
                         title: root.list-name;
-                        orders: root.view == 2 ? root.album-sorts : [];
+                        orders: root.view == View.albums ? root.album-sorts : [];
                         ways: root.album-sort-ways;
                         order: root.album-sort;
                         ordered(i) => { root.album-sort-chosen(i); }
-                        filter: root.view == 2 && root.favorites-offered ? "Favorites" : "";
+                        filter: root.view == View.albums && root.favorites-offered ? "Favorites" : "";
                         filtered: root.albums-favorites;
                         filter-toggled => { root.albums-favorites-toggled(); }
-                        cards: root.view == 10 ? root.shelves[root.shown-shelf].cards : root.view == 2 ? root.albums : root.playlists;
+                        cards: root.view == View.shelf ? root.shelves[root.shown-shelf].cards : root.view == View.albums ? root.albums : root.playlists;
                         rev: root.covers-rev;
                         art(a, s, r) => { return root.art(a, s, r); }
                         // A shelf's cards open as what each is (a source's feed mixes kinds).
@@ -6765,7 +6774,7 @@ export component AppWindow inherits Window {
                                 root.open-artist(c.id);
                             } else if c.kind == 3 {
                                 root.shelf-song(root.shown-shelf, c.id);
-                            } else if (root.view == 2 || root.view == 10) && c.kind == 0 {
+                            } else if (root.view == View.albums || root.view == View.shelf) && c.kind == 0 {
                                 root.open-album(c.id);
                             } else {
                                 root.open-playlist(c.id);
@@ -6776,7 +6785,7 @@ export component AppWindow inherits Window {
                                 root.shelf-song(root.shown-shelf, c.id);
                             } else if c.kind == 1 {
                                 root.play-artist(c.id);
-                            } else if (root.view == 2 || root.view == 10) && c.kind == 0 {
+                            } else if (root.view == View.albums || root.view == View.shelf) && c.kind == 0 {
                                 root.play-album(c.id);
                             } else {
                                 root.play-playlist(c.id);
@@ -6787,7 +6796,7 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if root.view == 11: Fade {
+                if root.view == View.for-you: Fade {
                     push: true;
                     picks-grid := Remembered {
                         property <int> columns: max(2, floor((self.width - 64px + 22px) / 222px));
@@ -6824,7 +6833,7 @@ export component AppWindow inherits Window {
                 }
 
                 // Artists as Music lists them: every artist down the left, the one chosen on the right.
-                if root.view == 3: Fade {
+                if root.view == View.artists: Fade {
                     Text {
                         x: 32px;
                         y: Chrome.top-room + 8px;
@@ -6954,10 +6963,10 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if root.view == 5 || root.view == 12: Fade {
+                if root.view == View.songs || root.view == View.favorites: Fade {
                     VerticalLayout {
                         Heading {
-                            title: root.view == 12 ? "Favorites" : "Songs";
+                            title: root.view == View.favorites ? "Favorites" : "Songs";
                         }
                         HorizontalLayout {
                             padding-left: 24px;
@@ -6998,7 +7007,7 @@ export component AppWindow inherits Window {
 
                 // An album, an artist, a playlist or a mix, as iOS 27 draws its artist pages: the picture dissolves
                 // into the page, and the page wears the season's paper dyed with it.
-                if root.view == 6: Fade {
+                if root.view == View.page: Fade {
                     push: true;
                     Rectangle {
                         // The cover's own wash across the top, running out into the page's dyed paper, as Android's
@@ -7019,7 +7028,7 @@ export component AppWindow inherits Window {
                         }
                         // An artist: the picture across the page's whole width, drifting up slower than the page
                         // as it scrolls, and dissolving into the page's colour.
-                        if root.page-kind == 1: Rectangle {
+                        if root.page-kind == PageLayout.artist: Rectangle {
                             y: max(-self.height, page-flick.content-y * 0.45);
                             width: parent.width;
                             height: max(420px, root.height * 0.64);
@@ -7048,7 +7057,7 @@ export component AppWindow inherits Window {
                                 padding-bottom: 100px;
                                 spacing: 26px;
                                 // An artist: the name and the play button over the bottom of the picture.
-                                if root.page-kind == 1: VerticalLayout {
+                                if root.page-kind == PageLayout.artist: VerticalLayout {
                                     spacing: 16px;
                                     Rectangle {
                                         height: max(420px, root.height * 0.64) - Chrome.top-room - 8px - 170px;
@@ -7078,7 +7087,7 @@ export component AppWindow inherits Window {
                                 }
                                 // An album, a playlist or a mix: the artwork beside its title, as the Mac lays them out;
                                 // a mix's four covers two by two.
-                                if root.page-kind != 1: HorizontalLayout {
+                                if root.page-kind != PageLayout.artist: HorizontalLayout {
                                     spacing: 28px;
                                     alignment: start;
                                     Art {
@@ -7114,7 +7123,7 @@ export component AppWindow inherits Window {
                                         }
                                         PageActions {
                                             alignment: start;
-                                            seal: root.page-can-star && root.page-kind == 0;
+                                            seal: root.page-can-star && root.page-kind == PageLayout.album;
                                             liked: root.page-starred;
                                             shuffle-lit: root.page-shuffle-lit;
                                             pausing: root.page-pausing;
@@ -7172,7 +7181,7 @@ export component AppWindow inherits Window {
                                         background: Theme.hairline;
                                     }
                                 }
-                                if root.page-kind == 1: ReleaseShelves {
+                                if root.page-kind == PageLayout.artist: ReleaseShelves {
                                     shelves: root.page-shelves;
                                     titled: true;
                                     rev: root.covers-rev;
@@ -7182,14 +7191,14 @@ export component AppWindow inherits Window {
                                     queue(c, next) => { root.queue-card(0, c.id, next); }
                                     jam(c) => { root.jam-play(0, c.id); }
                                 }
-                                if root.page-kind == 1 && root.page-songs.length > 0: SectionTitle {
+                                if root.page-kind == PageLayout.artist && root.page-songs.length > 0: SectionTitle {
                                     text: "Songs";
                                 }
                                 // Only the rows on screen (and a few either side) are made: a playlist of thousands
                                 // opens as fast as one of ten.
                                 song-rows := Rectangle {
                                     // A playlist's and an artist's songs come from many albums: each row shows its cover and album.
-                                    property <bool> mixed: root.page-kind != 0;
+                                    property <bool> mixed: root.page-kind != PageLayout.album;
                                     property <length> row-h: self.mixed ? 56px : 44px;
                                     // Their column heads, right over the rows.
                                     property <length> head: self.mixed && root.page-songs.length > 0 ? 28px : 0;
@@ -7230,7 +7239,7 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if root.view == 8: Fade {
+                if root.view == View.settings: Fade {
                     Flickable {
                         // A mouse's press and drag is the lyrics services' handles'; the wheel and touch still scroll.
                         mouse-drag-pan-enabled: false;
@@ -7310,7 +7319,7 @@ export component AppWindow inherits Window {
 
                 // The equalizer, as the Android app's: the switch, graphic or parametric, the bands, the presets,
                 // the pre-amp, then the output.
-                if root.view == 9: Fade {
+                if root.view == View.equalizer: Fade {
                     EqualizerPage {
                         on: root.eq-on;
                         graphic: root.eq-graphic;
@@ -7346,7 +7355,7 @@ export component AppWindow inherits Window {
                         profile-apply(i) => { root.eq-profile-apply(i); }
                         profile-delete(i) => { root.eq-profile-delete(i); }
                         profile-save(name) => { root.eq-profile-save(name); }
-                        back => { root.go(8); }
+                        back => { root.go(View.settings); }
                         set(name, value) => { root.eq-set(name, value); }
                         level(name, v, last) => { root.setting-slid(name, v, last); }
                         band(i, x, db, q, kind, channel, last) => { root.eq-band(i, x, db, q, kind, channel, last); }
@@ -7372,11 +7381,11 @@ export component AppWindow inherits Window {
                 }
                 // A list that came back empty, or that the filter left nothing of.
                 if !root.loading && root.failed == "" && root.list-empty: EmptyNote {
-                    x: root.view == 3 ? 300px + (parent.width - 300px) * 0.15 : parent.width * 0.2;
-                    width: root.view == 3 ? (parent.width - 300px) * 0.7 : parent.width * 0.6;
-                    icon: root.find-text != "" ? Icons.search : root.view == 2 ? Icons.compact-disc : root.view == 3 ? Icons.user : root.view == 4 ? Icons.playlist : root.view == 12 ? Icons.seal-outline : Icons.music-note;
-                    title: root.find-text != "" ? "Nothing matches" : root.view == 2 ? "No albums" : root.view == 3 ? "No artists" : root.view == 4 ? "No playlists" : root.view == 12 ? "No favorites" : "No songs";
-                    line: root.find-text != "" ? "Nothing here has “" + root.find-text + "” in its name." : root.view == 12 ? "Songs you mark with the seal gather here." : root.view == 4 ? "Playlists you make or save gather here." : "Your library has none yet.";
+                    x: root.view == View.artists ? 300px + (parent.width - 300px) * 0.15 : parent.width * 0.2;
+                    width: root.view == View.artists ? (parent.width - 300px) * 0.7 : parent.width * 0.6;
+                    icon: root.find-text != "" ? Icons.search : root.view == View.albums ? Icons.compact-disc : root.view == View.artists ? Icons.user : root.view == View.playlists ? Icons.playlist : root.view == View.favorites ? Icons.seal-outline : Icons.music-note;
+                    title: root.find-text != "" ? "Nothing matches" : root.view == View.albums ? "No albums" : root.view == View.artists ? "No artists" : root.view == View.playlists ? "No playlists" : root.view == View.favorites ? "No favorites" : "No songs";
+                    line: root.find-text != "" ? "Nothing here has “" + root.find-text + "” in its name." : root.view == View.favorites ? "Songs you mark with the seal gather here." : root.view == View.playlists ? "Playlists you make or save gather here." : "Your library has none yet.";
                 }
                 if root.failed != "" && !root.loading: Text {
                     width: 60%;
@@ -7395,7 +7404,7 @@ export component AppWindow inherits Window {
 
                 // Back, on a page that was opened from another: a disc under the top pill's left, where Android
                 // has its arrow.
-                if root.view == 6 || root.view == 10 || root.view == 11: Rectangle {
+                if root.view == View.page || root.view == View.shelf || root.view == View.for-you: Rectangle {
                     x: 20px;
                     y: Chrome.top-room + 6px;
                     width: 40px;
@@ -7411,7 +7420,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 // A field that narrows what the page lists.
-                if root.list-name != "" && root.view < 6 && root.view != 1: Field {
+                if root.list-name != "" && (root.view == View.albums || root.view == View.artists || root.view == View.playlists || root.view == View.songs): Field {
                     x: parent.width - self.width - 32px;
                     y: Chrome.top-room + 14px;
                     width: 226px;
@@ -7477,10 +7486,10 @@ export component AppWindow inherits Window {
                     y: 10px;
                     current: root.shown-panel;
                     devices: root.devices-on;
-                    picked(p) => { root.inspector = root.inspector == p ? 0 : p; }
+                    picked(p) => { root.inspector = root.inspector == p ? Panel.none : p; }
                 }
                 // Under the tabs, the panel showing.
-                if root.shown-panel == 2 && (root.lyrics-lines.length == 0 || root.lyrics-waiting): Text {
+                if root.shown-panel == Panel.lyrics && (root.lyrics-lines.length == 0 || root.lyrics-waiting): Text {
                     y: 56px;
                     height: 120px;
                     x: 24px;
@@ -7493,7 +7502,7 @@ export component AppWindow inherits Window {
                     horizontal-alignment: center;
                     wrap: word-wrap;
                 }
-                if root.shown-panel == 2 && root.lyrics-lines.length > 0: lyric-flick := Flickable {
+                if root.shown-panel == Panel.lyrics && root.lyrics-lines.length > 0: lyric-flick := Flickable {
                     // A song's lyrics fade in, and out while the next song's are looked for: the last song's
                     // words stay until then, so a change of song never jumps.
                     property <bool> came;
@@ -7641,14 +7650,14 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                if root.shown-panel == 3: DevicesView {
+                if root.shown-panel == Panel.devices: DevicesView {
                     y: 56px;
                     height: parent.height - 56px;
                     devices: root.devices;
                     pairing-link: root.pairing-link;
                     forget-devices => { root.forget-devices(); }
                     pick(id) => { root.pick-device(id); }
-                    open-jam => { root.inspector = 1; }
+                    open-jam => { root.inspector = Panel.queue; }
                     join-jam => { root.join-open = true; }
                     show-pairing => { root.pairing-open = true; }
                     for r in root.device-plugin-rows: SettingLine {
@@ -7660,7 +7669,7 @@ export component AppWindow inherits Window {
                         typed(name, text) => { root.setting-typed(name, text); }
                     }
                 }
-                if root.shown-panel == 1 && root.panel-in > 0: QueueView {
+                if root.shown-panel == Panel.queue && root.panel-in > 0: QueueView {
                     y: 56px;
                     height: parent.height - 56px;
                     queue: root.queue;
@@ -7881,7 +7890,7 @@ export component AppWindow inherits Window {
                         text: "Equalizer";
                         clicked => {
                             gear.close();
-                            root.go(9);
+                            root.go(View.equalizer);
                         }
                     }
                     MenuRow {
@@ -7889,7 +7898,7 @@ export component AppWindow inherits Window {
                         text: "Settings";
                         clicked => {
                             gear.close();
-                            root.go(8);
+                            root.go(View.settings);
                         }
                     }
                     Rectangle {
@@ -8066,7 +8075,7 @@ export component AppWindow inherits Window {
                                     mouse-cursor: pointer;
                                     clicked => {
                                         root.full-player = false;
-                                        root.inspector = 3;
+                                        root.inspector = Panel.devices;
                                     }
                                 }
                             }
@@ -8225,7 +8234,7 @@ export component AppWindow inherits Window {
             }
 
             // The lyrics: big, the line sung at a fixed height and sharp, the rest soft and dim.
-            if root.full-panel == 2 && (root.lyrics-lines.length == 0 || root.lyrics-waiting): Text {
+            if root.full-panel == Panel.lyrics && (root.lyrics-lines.length == 0 || root.lyrics-waiting): Text {
                 x: root.width / 2 + 20px;
                 width: root.width / 2 - 100px;
                 text: root.lyrics-note != "" ? root.lyrics-note : "No lyrics for this song";
@@ -8239,7 +8248,7 @@ export component AppWindow inherits Window {
             // Kept inside the part the compositor blurs (clear of the pills above and below). Always there, so
             // the window can say where the line sung is; its lines only while shown.
             full-lyrics := Flickable {
-                visible: root.full-panel == 2 && root.lyrics-lines.length > 0;
+                visible: root.full-panel == Panel.lyrics && root.lyrics-lines.length > 0;
                 opacity: root.lyrics-waiting ? 0 : 1;
                 animate opacity { duration: Motion.reduced ? 0ms : 200ms; enabled: !Motion.reduced; easing: ease-out; }
                 property <bool> waiting: root.lyrics-waiting;
@@ -8376,7 +8385,7 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-            if full-screen.visible && root.full-panel == 1: QueueView {
+            if full-screen.visible && root.full-panel == Panel.queue: QueueView {
                 x: root.width / 2 + 10px;
                 width: root.width / 2 - 70px;
                 y: 84px;
@@ -8404,7 +8413,7 @@ export component AppWindow inherits Window {
                 devices: root.devices-on;
                 picked(p) => { root.full-panel = p; }
             }
-            if full-screen.visible && root.full-panel == 3: DevicesView {
+            if full-screen.visible && root.full-panel == Panel.devices: DevicesView {
                 x: root.width / 2 + 10px;
                 width: root.width / 2 - 70px;
                 y: 64px;
@@ -8413,7 +8422,7 @@ export component AppWindow inherits Window {
                 pairing-link: root.pairing-link;
                 forget-devices => { root.forget-devices(); }
                 pick(id) => { root.pick-device(id); }
-                open-jam => { root.full-panel = 1; }
+                open-jam => { root.full-panel = Panel.queue; }
                 join-jam => { root.join-open = true; }
                 show-pairing => { root.pairing-open = true; }
                 for r in root.device-plugin-rows: SettingLine {
@@ -8977,7 +8986,7 @@ export component AppWindow inherits Window {
         if root.signin-open: Rectangle {
             background: Theme.ground.with-alpha(0.6);
             TouchArea {
-                clicked => { root.signin-open = false; }
+                clicked => { root.signin-closed(); }
             }
             MenuSheet {
                 x: (parent.width - self.width) / 2;
@@ -9078,7 +9087,7 @@ export component AppWindow inherits Window {
                         }
                         SmallButton {
                             text: "Close";
-                            clicked => { root.signin-open = false; }
+                            clicked => { root.signin-closed(); }
                         }
                     }
                 }
@@ -9326,7 +9335,7 @@ export component PlayerBar inherits Window {
     in property <bool> shuffle;
     in property <int> repeat;
     in property <float> volume: 1;
-    in property <int> inspector;
+    in property <Panel> inspector;
     in property <int> covers-rev;
     in property <bool> devices-on;
     in property <string> jam;
@@ -9345,7 +9354,7 @@ export component PlayerBar inherits Window {
     callback set-volume(float);
     callback toggle-shuffle();
     callback cycle-repeat();
-    callback set-inspector(int);
+    callback set-inspector(Panel);
     callback open-full();
     // The song playing's menu and its album's, which open in the main window, at `x` in the pill.
     callback song-menu(length);
@@ -9414,12 +9423,12 @@ export component TopBar inherits Window {
     default-font-family: Type.body;
     // The pill's width (app.rs keeps it from the compositor's), which the tabs' names depend on.
     in property <length> room;
-    in property <int> view;
-    in property <int> page-kind;
+    in property <View> view;
+    in property <PageLayout> page-kind;
     in property <bool> guest;
     in property <bool> previewing;
     in-out property <string> search-text;
-    callback go(int);
+    callback go(View);
     callback open-menu();
     callback search-edited(string);
     callback typing(bool);

@@ -21,13 +21,7 @@ use parking_lot::Mutex;
 pub struct CpalOutput {
     /// Device name; None is the system default.
     wanted: Option<String>,
-    device: Option<Device>,
-    config: Option<(StreamConfig, SampleFormat)>,
-    /// Period range the device supports, frames.
-    periods: Option<(u32, u32)>,
-    /// The engine's side of the stream. Only the playing stream's callback locks it.
-    feed: Option<Arc<Mutex<Feed>>>,
-    stream: Option<Stream>,
+    state: State,
     playing: bool,
     /// When what the device took has been heard, on [`clock_us`].
     heard: Arc<Heard>,
@@ -35,6 +29,26 @@ pub struct CpalOutput {
     failed: Arc<Mutex<Option<String>>>,
     watch: Option<Arc<DeviceWatch>>,
     volume: Volume,
+}
+
+#[derive(Default)]
+enum State {
+    #[default]
+    Closed,
+    Opened(Opened),
+    Started {
+        opened: Opened,
+        /// The engine's side of the stream. Only the playing stream's callback locks it.
+        feed: Arc<Mutex<Feed>>,
+        stream: Stream,
+    },
+}
+
+/// The device and the stream config chosen for it.
+struct Opened {
+    device: Device,
+    config: StreamConfig,
+    format: SampleFormat,
 }
 
 /// This output's clock for [`Heard`], µs from an arbitrary base.
@@ -233,16 +247,14 @@ impl CpalOutput {
     /// The stream stopped for good: the engine is told ([`AudioOutput::failed`]) and woken to hear it.
     fn fail(&self, why: String) {
         *self.failed.lock() = Some(why);
-        if let Some(feed) = &self.feed {
+        if let State::Started { feed, .. } = &self.state {
             feed.lock().wake_engine();
         }
     }
 
-    /// Drops the current stream, then builds a new one from the current config and feed, playing if
-    /// the engine wants it playing.
-    fn rebuild(&mut self) -> Result<(), String> {
-        self.stream = None;
-        let (Some(device), Some((config, format)), Some(feed)) = (&self.device, &self.config, &self.feed) else { return Err("not open".into()) };
+    /// A paused stream on `opened` pulling `feed`.
+    fn build(&self, opened: &Opened, feed: &Arc<Mutex<Feed>>) -> Result<Stream, String> {
+        let Opened { device, config, format } = opened;
         // Only follows the default device; a named device stays put.
         let watch = self.watch.clone().filter(|_| self.wanted.is_none());
         let (failed, stopped) = (self.failed.clone(), feed.clone());
@@ -255,15 +267,10 @@ impl CpalOutput {
             kind => stream_failed(kind, e.to_string(), &failed, || stopped.lock().wake_engine()),
         };
         let (feed, volume, heard) = (feed.clone(), self.volume.clone(), self.heard.clone());
-        let stream = match format {
+        match format {
             SampleFormat::F32 => build_stream(device, *config, feed, volume, heard, on_error, Feed::pull, |s, v| s * v),
             _ => build_stream(device, *config, feed, volume, heard, on_error, Feed::pull_i16, |s, v| (s as f32 * v) as i16),
-        }?;
-        if self.playing {
-            stream.play().map_err(|e| e.to_string())?;
         }
-        self.stream = Some(stream);
-        Ok(())
     }
 }
 
@@ -284,38 +291,56 @@ impl AudioOutput for CpalOutput {
         if rank(format).is_none() {
             return Err(format!("the device only takes {format:?} samples"));
         }
-        self.periods = match *chosen.buffer_size() {
+        let periods = match *chosen.buffer_size() {
             cpal::SupportedBufferSize::Range { min, max } if max >= min => Some((min, max)),
             _ => None,
         };
-        let buffer_size = buffer_size(chosen.sample_rate(), PERIOD_MS, self.periods);
+        let buffer_size = buffer_size(chosen.sample_rate(), PERIOD_MS, periods);
         let config = StreamConfig { channels: chosen.channels(), sample_rate: chosen.sample_rate(), buffer_size };
         let got = OutputFormat { rate: config.sample_rate, channels: config.channels as usize, bits: 0 };
         if let (Some(w), Some(d)) = (&self.watch, describe(&device)) {
             w(d);
         }
-        self.device = Some(device);
-        self.config = Some((config, format));
+        self.state = State::Opened(Opened { device, config, format });
         Ok(got)
     }
 
     fn start(&mut self, feed: Feed) -> Result<(), String> {
+        let opened = match std::mem::take(&mut self.state) {
+            State::Closed => return Err("not open".into()),
+            State::Opened(opened) | State::Started { opened, .. } => opened,
+        };
         self.heard.follow(feed.pulled());
-        self.feed = Some(Arc::new(Mutex::new(feed)));
-        self.rebuild()
+        let feed = Arc::new(Mutex::new(feed));
+        let built = self.build(&opened, &feed).and_then(|stream| {
+            if self.playing {
+                stream.play().map_err(|e| e.to_string())?;
+            }
+            Ok(stream)
+        });
+        match built {
+            Ok(stream) => {
+                self.state = State::Started { opened, feed, stream };
+                Ok(())
+            }
+            Err(e) => {
+                self.state = State::Opened(opened);
+                Err(e)
+            }
+        }
     }
 
     fn pause(&mut self) {
         self.playing = false;
-        if let Some(s) = &self.stream {
-            let _ = s.pause();
+        if let State::Started { stream, .. } = &self.state {
+            let _ = stream.pause();
         }
     }
 
     fn resume(&mut self) {
         self.playing = true;
-        if let Some(s) = &self.stream {
-            if let Err(e) = s.play() {
+        if let State::Started { stream, .. } = &self.state {
+            if let Err(e) = stream.play() {
                 self.fail(e.to_string());
             }
         }
@@ -343,9 +368,7 @@ impl AudioOutput for CpalOutput {
     }
 
     fn close(&mut self) {
-        self.stream = None;
-        self.feed = None;
-        self.device = None;
+        self.state = State::Closed;
         self.playing = false;
     }
 }

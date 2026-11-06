@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use nori_core::cache_policy::{Page, Read};
-use nori_core::race::LyricsPick;
+use nori_core::lyrics_follow::LyricsNow;
 use nori_core::search::SearchView;
 use nori_core::settings::SavedServer;
 use nori_core::transport::NetError;
@@ -40,8 +40,8 @@ pub enum Msg {
     Data(Req, Result<Data, String>),
     /// A decoded cover by key, with derived colours when asked for.
     Cover { art: String, image: Arc<Image>, colours: Option<Box<CoverColours>> },
-    /// One of possibly several lyrics answers for `song`, each better than the last.
-    Lyrics { song: String, pick: LyricsPick },
+    /// What the lyrics panel shows changed.
+    Lyrics(LyricsNow),
     Search(SearchView),
     /// A status bar message.
     Note { text: String, error: bool },
@@ -106,7 +106,7 @@ impl Msg {
             Msg::Engine(e) => format!("engine {e:?}"),
             Msg::Data(req, r) => format!("data {req:?} {}", if r.is_ok() { "ok" } else { "failed" }),
             Msg::Cover { art, image, colours } => format!("cover {art} {}x{}{}", image.width, image.height, if colours.is_some() { " with colours" } else { "" }),
-            Msg::Lyrics { song, .. } => format!("lyrics for {song}"),
+            Msg::Lyrics(now) => format!("lyrics for {:?}", now.song()),
             Msg::Search(v) => format!("search results for {:?}", v.query),
             Msg::Note { text, error } => format!("note {text:?} error={error}"),
             Msg::Cast(c) => format!("cast {c:?}"),
@@ -410,7 +410,7 @@ fn worded(s: Said) -> Msg {
         Said::Volume(v) => Msg::Volume(v),
         Said::Curve(n) => note(crate::text::curve_notice(&n), false),
         Said::Engine(e) => Msg::Engine(e),
-        Said::Lyrics { song, pick } => Msg::Lyrics { song, pick },
+        Said::Lyrics(now) => Msg::Lyrics(now),
         Said::Search(v) => Msg::Search(v),
         Said::Reachable(r) => Msg::Reachable(r.map_err(|e| unreachable(&e))),
         Said::Note(n) => match n {

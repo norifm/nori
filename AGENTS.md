@@ -72,7 +72,7 @@ via nori-core):
 | perf | perf recorder bookkeeping and report (tooling, English) |
 | plugins | the plugin host: installing, compiling (wasmtime, Cranelift) and running plugins, their stores, overrides laid over the settings, sound stages, and the page a client draws (docs/developers/plugins.md) |
 | sink-protocol | the frames between nori and a deep cast sink (a speaker taking bursts on credit), both directions, `no_std` for its firmware |
-| plugin-index | a plugin repo's `index.json` and what stops a plugin running in a browser (`web_blocks`), pure, for every client |
+| plugin-index | a plugin repo's `index.json`, what stops a plugin running in a browser (`web_blocks`) and whether a package may install (its sha256, signature and pinned key), pure, for every client |
 | plugin-sdk | for plugin authors: `wit/` as Rust, a trait per extension point (build.rs writes them), the manifest kept in the wasm, `plugin!` |
 | android | Android only: the `norimusic` cdylib, uniffi scaffolding, JNI doors, AudioTrack writer (track.rs), playback path (player.rs) |
 | http, output-cpal, mpris | desktop: ureq transport, cpal output, Linux media controls |
@@ -89,8 +89,8 @@ via nori-core):
 
 The other languages:
 
-- Android, Kotlin: `core/src/main/kotlin/dev/nori/music/` is the library with no UI (media3 service,
-  `playback/RustPlayer.kt`, downloads, the `Nori.kt` object graph). `app/src/main/kotlin/dev/nori/music/app/`
+- Android, Kotlin: `android/core/src/main/kotlin/dev/nori/music/` is the library with no UI (media3 service,
+  `playback/RustPlayer.kt`, downloads, the `Nori.kt` object graph). `android/app/src/main/kotlin/dev/nori/music/app/`
   is UI only: `vm/` ViewModels, `ui/` Compose (`ui/Design.kt` shapes, `ui/Say.kt` words).
 - iPod, Swift: `ios/Sources/`, `Bridge.swift` and `nori_ios.h` over crates/ios, `Say.swift` words.
 - Web, Svelte: `web/src/` (`pages/` screens, `ui/` parts, `state/`, `words.ts`, `rpc.ts` to the worker in
@@ -131,7 +131,7 @@ asks; `docs/research/plugins.md` is the plugin plan.
   resources (`strings.xml`, `strings_ui.xml`, read via `ui/Say.kt`), `crates/cli/src/text.rs`,
   the desktop's `words.rs`. Logs, perf report and self test are English.
 - `ui/` reads ViewModel state and calls ViewModel functions only; it may call the core's pure
-  functions. It never touches `Nori`, media3, OkHttp or core state. `core/` never knows a UI exists.
+  functions. It never touches `Nori`, media3, OkHttp or core state. `android/core/` never knows a UI exists.
 - FFI calls are coarse (one response or page per call). Per-buffer work uses raw JNI on direct buffers.
 - JNI doors are registered with `RegisterNatives` in `crates/android/src/lib.rs`, not exported by
   `Java_` names. Primitive-only signatures are `@CriticalNative` (no env/class params), short
@@ -139,7 +139,7 @@ asks; `docs/research/plugins.md` is the plugin plan.
   only convert; logic belongs in the core.
 - A new crate gets its row in Layout (`crates/testdir/tests/agents_map.rs` checks the map). A new core crate
   also goes into `crates/android/build.rs`'s list, nori-android's dependencies and
-  nori-core's `ffi` feature, and `core/build.gradle.kts`'s binding inputs if it exports an interface.
+  nori-core's `ffi` feature, and `android/core/build.gradle.kts`'s binding inputs if it exports an interface.
 - A new setting: one `StoredPrefs` field with its `#[setting(...)]` line (crates/settings), then its row
   in the app's `vm/SettingsPages.kt` + `strings.xml` (+ `INDEX` entry if searchable) and, if it makes
   sense, `crates/cli/src/settings_view.rs`. `tests/stored_format.rs` guards the stored format

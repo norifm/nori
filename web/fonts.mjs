@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import subsetFont from "subset-font";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const source = join(here, "../app/src/main/res/font");
+const source = join(here, "../android/app/src/main/res/font");
 const out = join(here, "src/fonts");
 
 // What a browser turns on itself, and the tabular digits the times use.

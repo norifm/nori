@@ -5,7 +5,7 @@
   // the next song puts them, and come and go folding.
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
-  import { beside, pointer } from "../state/ui.svelte";
+  import { beside, pointer, ui } from "../state/ui.svelte";
   import { W } from "../words";
   import type { QueueSong, Song } from "../state/types";
   import Cover from "./Cover.svelte";
@@ -14,7 +14,7 @@
   import { sortable } from "./sortable";
   import { flip } from "svelte/animate";
   import { cubicOut } from "svelte/easing";
-  import { slide } from "svelte/transition";
+  import { fade, slide } from "svelte/transition";
 
   const n = $derived(player.now);
   const rows = $derived(n?.queue ?? []);
@@ -85,6 +85,7 @@
 </script>
 
 <JamQueue />
+<div class="box">
 <ol class="queue" id="queue" bind:this={list} onscrollend={rested} use:sortable={{ moved: (from, to) => move(rows[from].index, rows[to].index), whole: true }}>
   {#each items as item (item.key)}
     {@const q = item.q}
@@ -113,7 +114,7 @@
           <button class="tool" data-still aria-label={W.more} title={W.more} onclick={(e) => void songMenu(q as Song, beside(e), { play: () => jump(q) })}><Icon name="more-horiz" /></button>
         {/if}
         {#if at !== current}
-          <button class="tool" data-still aria-label={W.remove} title={W.remove} onclick={() => void player.control("remove", q.index)}><Icon name="xmark" /></button>
+          <button class="tool" data-still aria-label={W.remove} title={W.remove} onclick={() => void player.remove(q)}><Icon name="xmark" /></button>
         {/if}
       {:else}{item.head}{/if}
     </li>
@@ -121,8 +122,42 @@
     <li class="none">{W.nothingPlaying}</li>
   {/each}
 </ol>
+{#if ui.undo}
+  <!-- The song just taken out, while the core still puts it back. -->
+  <div class="undo" role="status" in:fade={{ duration: still() ? 0 : 180 }} out:fade={{ duration: still() ? 0 : 120 }}>
+    <span class="clip">{W.removed(ui.undo.title)}</span>
+    <button onclick={() => void player.putBack()}>{W.undo}</button>
+  </div>
+{/if}
+</div>
 
 <style>
+  .box {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+  .undo {
+    position: absolute;
+    left: 50%;
+    bottom: 12px;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: min(320px, calc(100% - 24px));
+    padding: 6px 10px 6px 14px;
+    border-radius: 24px;
+    background: var(--surface);
+    border: var(--hairline) solid var(--hair);
+    font-size: 13px;
+  }
+  .undo button {
+    font-weight: 600;
+    font-size: 15px;
+  }
   .queue {
     position: relative;
     list-style: none;

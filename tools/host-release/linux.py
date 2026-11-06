@@ -38,7 +38,7 @@ def package(binaries, output, version, arch, parts):
     with tempfile.TemporaryDirectory(prefix="nori-linux-") as temporary:
         work = Path(temporary)
         icon = work / "nori.png"
-        run("convert", ROOT / "app/src/main/res/drawable-xxxhdpi/nori_mark.png", "-resize", "512x512", icon)
+        run("convert", ROOT / "android/app/src/main/res/drawable-xxxhdpi/nori_mark.png", "-resize", "512x512", icon)
         desktop = work / f"{APP_ID}.desktop"
         desktop.write_text("[Desktop Entry]\nType=Application\nName=nori\nExec=nori-desktop\nIcon=nori\nTerminal=false\nCategories=AudioVideo;Audio;Player;\n")
         made = []

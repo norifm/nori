@@ -400,8 +400,8 @@ no enabled plugin exports the point (`Deciders::deciding`), no input is built an
 | leveling | the song's ReplayGain (`Session::queue_gain`), once per song and gain; not while leveling is off | 250 ms | finite, -60 dB to nori's boost ceiling |
 | sound-profile | an output arrives (`Core::device_arrive`) | 250 ms | a saved profile, or none |
 | now-playing | Android's notification and lock screen (as a song starts), MPRIS on the desktop and terminal; once per song | 250 ms | a title |
-| media-button | Android's media buttons (taken from media3 only while a plugin decides), MPRIS play-pause, next and previous | 50 ms | an act of the enum; `plugin` runs its lifecycle `action("media-button")` and the player does nothing |
-| audio-focus | Android's focus changes (`Session::audio_focus`, nori's rule `focus_act`) | 50 ms | an act of the enum |
+| media-button | Android's media buttons (taken from media3 only while a plugin decides), MPRIS and the iPod's play-pause, next and previous (`Handle::media_key`) | 50 ms | an act of the enum; `plugin` runs its lifecycle `action("media-button")` and the player does nothing |
+| audio-focus | a focus change (Android's focus, an iOS interruption), on the engine's thread in order with the presses (`nori_player::focus`, nori's rule `focus_act`) | 50 ms | an act of the enum, carried out only where it fits the focus state (a resume only of what a loss held) |
 | look | the season's palette with no cover: Android's theme, the desktop's plain pages, the terminal's theme | 250 ms | contrast (`nori_look::theme::readable`) |
 
 `mixes` is AutoMix's (AutoMix seams). On Android double and triple presses stay media3's own (it counts
@@ -414,7 +414,7 @@ service UUID, a vendor id; one matches when all it gives matches), and only thos
 lists them, and a channel opens to no other. The install sheet says it reaches Bluetooth devices.
 
 - **The platform's Bluetooth** is the client's `Bluetooth` (`crates/plugins/src/bluetooth.rs`), given with
-  `Plugins::use_bluetooth`: Android's `BluetoothSocket` and `BluetoothGatt` (`core/.../PluginBluetooth.kt`),
+  `Plugins::use_bluetooth`: Android's `BluetoothSocket` and `BluetoothGatt` (`android/core/.../PluginBluetooth.kt`),
   BlueZ over the system bus on Linux (`crates/host/src/bluez.rs`, zbus as the media controls; RFCOMM
   through a client `Profile1`), and on macOS IOBluetooth for classic devices and RFCOMM and CoreBluetooth
   for GATT (`crates/host/src/macbt/`). There a device is its classic address (a device only on LE, its
@@ -451,9 +451,11 @@ A plugin's covers are URLs with `{size}` where the pixels go; the core fills it 
 
 `preview_file(path)` and `preview_version(version)` (fetched and checked against its sha256 and its
 signature) read a package's manifest and words without installing it, for the sheet that shows what it
-is and may reach before the user installs it (`install_preview`). A plugin new here turns on once
-installed, on every client (`Plugins::install_as`, the web's `install` in `host.svelte.ts`): one that can't
-start stays installed and on, its failure logged. An update keeps its switch, and a restore sets it itself.
+is and may reach before the user installs it (`install_preview`). What an install keeps is one rule for
+both hosts, `nori_plugin_index::standing::installed_over` (`Plugins::install_as`, and the web's `install`
+in `host.svelte.ts` through `plugin_installed_over`): a plugin new here goes last and turns on, one that
+can't start stays installed and on, its failure logged; an update keeps its switch, its being held, its
+place and its values, and a restore sets them itself.
 
 ### In a browser
 
@@ -479,7 +481,8 @@ with the plugin's store. Nothing of this loads while no plugin is installed: `no
   addresses only, and it answers `?ping` with `X-Plugin-Http: 1`). A plugin's hosts are checked in
   `runner.ts` before a request goes. Without that route (a static host) a plugin that names hosts is
   greyed `OtherSites`, and packages, whose GitHub releases have no CORS either, install from a file.
-- Signatures aren't checked in a browser, only a repo package's sha256.
+- A package installs on the same terms as natively (`nori_plugin_index::package`): its sha256 and
+  signature are checked in the worker, and the key it pins is kept with the installed plugin.
 - A moving cover's HLS plays through hls.js, loaded only then: Apple's video hosts allow any origin.
 
 ### Repos and signatures
@@ -505,7 +508,8 @@ A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
   are installed (`provider_offers`).
 - `key` is the author's ed25519 public key, `signature` that key's signature over the package's SHA-256
   (the 32 raw bytes, not the hex). Both or neither; one without the other, or a signature that doesn't
-  verify (`verify_strict`), refuses the version (`Refusal::Signature`).
+  verify (`verify_strict`), refuses the version (`Refusal::Signature`; the rule is
+  `nori_plugin_index::package`, for both plugin hosts).
 - The first signed version installed pins its key (`index.json`'s `key` beside the plugin). From then
   on every version must be signed by that key: another key, an unsigned version, or a file is
   refused (`Refusal::OtherKey`) until the user removes the plugin and installs it again.

@@ -2,18 +2,18 @@ nori — Copyright (c) 2026 norifm, GNU Affero General Public License v3.0 or la
 
 Third-party content bundled with nori
 
-Font (app/src/main/res/font/inter.ttf)
+Font (android/app/src/main/res/font/inter.ttf)
   Inter — Copyright (c) 2016 The Inter Project Authors, SIL Open Font License 1.1
-  (full text: app/src/main/assets/licences/OFL-1.1.txt)
+  (full text: android/app/src/main/assets/licences/OFL-1.1.txt)
 
-Icons (app/src/main/kotlin/dev/nori/music/app/ui/Iconoir.kt, the widget, shortcut and car drawables,
+Icons (android/app/src/main/kotlin/dev/nori/music/app/ui/Iconoir.kt, the widget, shortcut and car drawables,
   the desktop's crates/desktop-ui/ui/icons.slint)
-  Iconoir — Copyright (c) 2021 Luca Burgio, MIT (full text: app/src/main/assets/licences/MIT.txt)
+  Iconoir — Copyright (c) 2021 Luca Burgio, MIT (full text: android/app/src/main/assets/licences/MIT.txt)
 
 Beat model network (built into the Rust core with `neural-beats`, crates/player/models/beat-this-small0.graph.onnx)
   Beat This! (Foscarin, Schlüter and Widmer, ISMIR 2024; https://github.com/CPJKU/beat_this) — Copyright (c)
     2024 Institute of Computational Perception, JKU Linz, Austria, MIT (code and weights; full text:
-    app/src/main/assets/licences/MIT.txt). The small0 model's graph, exported by tools/beat-this/export.py
+    android/app/src/main/assets/licences/MIT.txt). The small0 model's graph, exported by tools/beat-this/export.py
     from the authors' code, with no weights in it. The weights are not bundled or hosted by nori: with
     "Better beat detection" on, the core fetches the authors' small0 checkpoint from their server
     (cloud.cp.jku.at), checks it and converts it on the device.
@@ -73,4 +73,4 @@ Fetched only when asked for, not bundled
     belongs to its artists and labels
 
 Every entry, with its copyright holder and the full licence text, is in the app under
-Settings -> About -> Licences. The texts themselves are in app/src/main/assets/licences/.
+Settings -> About -> Licences. The texts themselves are in android/app/src/main/assets/licences/.

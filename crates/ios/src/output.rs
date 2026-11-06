@@ -126,6 +126,7 @@ fn device_render() -> &'static Arc<Render> {
 static RESET: AtomicBool = AtomicBool::new(false);
 static WATCH: Mutex<Option<Arc<DeviceWatch>>> = Mutex::new(None);
 static LOST: AtomicBool = AtomicBool::new(false);
+/// The interruption not yet taken, as [`Interrupt::code`] packs it; 0 for none.
 static INTERRUPT: AtomicU8 = AtomicU8::new(0);
 
 /// The audio unit's render callback. `ahead_us`: how long after this call the buffer's first frame
@@ -201,33 +202,69 @@ pub extern "C" fn nori_ios_media_reset() {
 /// The shim's interruption. `began` non-zero starts it; `resume` is the session's should-resume.
 #[no_mangle]
 pub extern "C" fn nori_ios_interruption(began: i32, resume: i32) {
-    let code = if began != 0 {
-        1
-    } else if resume != 0 {
-        2
+    let now = if began != 0 {
+        Interrupt::Began
     } else {
-        3
+        Interrupt::Ended { resume: resume != 0 }
     };
-    INTERRUPT.store(code, Ordering::Release);
+    let mut was = INTERRUPT.load(Ordering::Acquire);
+    while let Err(seen) = INTERRUPT.compare_exchange_weak(
+        was,
+        Interrupt::after(Interrupt::from_code(was), now).code(),
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
+        was = seen;
+    }
     #[cfg(target_os = "ios")]
     crate::session::audio_changed();
 }
 
-/// An audio interruption, as the session reported it.
+/// An audio interruption, as the session reported it since last asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Interrupt {
     Began,
     Ended { resume: bool },
+    /// It began and ended before it was asked for: the unit was stopped all the same.
+    BeganAndEnded { resume: bool },
+}
+
+impl Interrupt {
+    const BEGAN: u8 = 1;
+    const ENDED: u8 = 2;
+    const RESUME: u8 = 4;
+
+    /// What is pending once `now` is told after `was`: a beginning forgets an end before it.
+    fn after(was: Option<Interrupt>, now: Interrupt) -> Interrupt {
+        match (was, now) {
+            (Some(Interrupt::Began | Interrupt::BeganAndEnded { .. }), Interrupt::Ended { resume }) => Interrupt::BeganAndEnded { resume },
+            (_, now) => now,
+        }
+    }
+
+    fn code(self) -> u8 {
+        let resume = |r: bool| if r { Self::RESUME } else { 0 };
+        match self {
+            Interrupt::Began => Self::BEGAN,
+            Interrupt::Ended { resume: r } => Self::ENDED | resume(r),
+            Interrupt::BeganAndEnded { resume: r } => Self::BEGAN | Self::ENDED | resume(r),
+        }
+    }
+
+    fn from_code(code: u8) -> Option<Interrupt> {
+        let resume = code & Self::RESUME != 0;
+        match (code & Self::BEGAN != 0, code & Self::ENDED != 0) {
+            (true, false) => Some(Interrupt::Began),
+            (false, true) => Some(Interrupt::Ended { resume }),
+            (true, true) => Some(Interrupt::BeganAndEnded { resume }),
+            (false, false) => None,
+        }
+    }
 }
 
 /// The interruption stored by [`nori_ios_interruption`], once.
 pub fn take_interruption() -> Option<Interrupt> {
-    match INTERRUPT.swap(0, Ordering::AcqRel) {
-        1 => Some(Interrupt::Began),
-        2 => Some(Interrupt::Ended { resume: true }),
-        3 => Some(Interrupt::Ended { resume: false }),
-        _ => None,
-    }
+    Interrupt::from_code(INTERRUPT.swap(0, Ordering::AcqRel))
 }
 
 /// Headphones or a Bluetooth device went away since last asked.
@@ -257,17 +294,30 @@ pub struct IosOutput<C: Clock = HostClock> {
     pub(crate) render: Arc<Render>,
     /// The process's one card: its render state is [`device_render`]'s and the shim's notifications reach it.
     device: bool,
-    format: Option<OutputFormat>,
+    card: Card,
     channels: usize,
     io_ms: u32,
     shallow: bool,
-    opened: bool,
-    playing: bool,
     watch: Option<Arc<DeviceWatch>>,
     failed: Option<String>,
     /// [`IosOutput::note_reset`]: a reset the next [`AudioOutput::failed`] reopens for.
     reset: bool,
-    feed: Option<Box<Feed>>,
+}
+
+/// The audio unit as the engine left it.
+enum Card {
+    Closed,
+    /// Opened at `format`; `feed` is what the render callback plays, once started.
+    Open { format: OutputFormat, feed: Option<Box<Feed>>, playing: bool },
+}
+
+impl Card {
+    fn format(&self) -> Option<OutputFormat> {
+        match self {
+            Card::Closed => None,
+            Card::Open { format, .. } => Some(*format),
+        }
+    }
 }
 
 impl<C: Clock> IosOutput<C> {
@@ -277,16 +327,13 @@ impl<C: Clock> IosOutput<C> {
             clock,
             render: Arc::new(Render::new()),
             device: false,
-            format: None,
+            card: Card::Closed,
             channels: 2,
             io_ms: DEEP_IO_MS,
             shallow: false,
-            opened: false,
-            playing: false,
             watch: None,
             failed: None,
             reset: false,
-            feed: None,
         }
     }
 
@@ -309,34 +356,38 @@ impl<C: Clock> IosOutput<C> {
         }
     }
 
+    /// Unpublishes the feed: the unit is stopped first.
     fn clear_feed(&mut self) {
         self.render.feed.store(std::ptr::null_mut(), Ordering::Release);
         *self.render.engine.lock().unwrap_or_else(|p| p.into_inner()) = None;
-        self.feed = None;
     }
 
     /// Opens again after a reset. One attempt: the engine reads the error from [`AudioOutput::failed`].
     fn reopen(&mut self) -> Result<(), String> {
-        let Some(fmt) = self.format else {
+        let Some(fmt) = self.card.format() else {
             return Ok(());
         };
         self.sink.stop();
         let g = self.sink.open(fmt.rate, fmt.channels, self.io_ms)?;
         self.took(g);
-        if self.playing {
+        if matches!(self.card, Card::Open { playing: true, .. }) {
             self.sink.start()?;
         }
         Ok(())
     }
 
+    /// The unit opened as `g` grants; a feed started stays.
     fn took(&mut self, g: Grant) {
         self.io_ms = g.io_ms;
-        self.opened = true;
-        self.format = Some(OutputFormat {
+        let format = OutputFormat {
             rate: g.rate,
             channels: self.channels,
             bits: 0,
-        });
+        };
+        self.card = match std::mem::replace(&mut self.card, Card::Closed) {
+            Card::Open { feed, playing, .. } => Card::Open { format, feed, playing },
+            Card::Closed => Card::Open { format, feed: None, playing: false },
+        };
         self.render.rate.store(g.rate, Ordering::Relaxed);
         self.render
             .channels
@@ -374,11 +425,9 @@ impl<C: Clock> IosOutput<C> {
     fn shutdown(&mut self) {
         self.sink.stop();
         self.clear_feed();
-        if self.opened {
+        if !matches!(std::mem::replace(&mut self.card, Card::Closed), Card::Closed) {
             self.sink.close();
-            self.opened = false;
         }
-        self.playing = false;
         if self.device {
             *WATCH.lock().unwrap_or_else(|p| p.into_inner()) = None;
         }
@@ -398,10 +447,13 @@ impl<C: Clock> AudioOutput for IosOutput<C> {
         self.channels = want.channels.max(1);
         let g = self.sink.open(want.rate, self.channels, self.io_ms)?;
         self.took(g);
-        Ok(self.format.expect("just opened"))
+        Ok(self.card.format().expect("just opened"))
     }
 
     fn start(&mut self, feed: Feed) -> Result<(), String> {
+        let Some(format) = self.card.format() else {
+            return Err("the output started before it opened".into());
+        };
         // Starts paused: the engine resumes when it wants sound.
         self.sink.stop();
         self.clear_feed();
@@ -411,18 +463,21 @@ impl<C: Clock> AudioOutput for IosOutput<C> {
         self.render
             .feed
             .store(&mut *feed as *mut Feed, Ordering::Release);
-        self.feed = Some(feed);
-        self.playing = false;
+        self.card = Card::Open { format, feed: Some(feed), playing: false };
         Ok(())
     }
 
     fn pause(&mut self) {
-        self.playing = false;
+        if let Card::Open { playing, .. } = &mut self.card {
+            *playing = false;
+        }
         self.sink.stop();
     }
 
     fn resume(&mut self) {
-        self.playing = true;
+        if let Card::Open { playing, .. } = &mut self.card {
+            *playing = true;
+        }
         if let Err(e) = self.sink.start() {
             self.failed = Some(e);
         }
@@ -454,7 +509,7 @@ impl<C: Clock> AudioOutput for IosOutput<C> {
         }
         self.shallow = on;
         self.io_ms = if on { SHALLOW_IO_MS } else { DEEP_IO_MS };
-        if self.opened {
+        if !matches!(self.card, Card::Closed) {
             if let Err(e) = self.apply_io() {
                 self.failed = Some(e);
             }
@@ -921,6 +976,19 @@ mod tests {
     }
 
     #[test]
+    fn a_reset_after_closing_leaves_the_unit_closed() {
+        let sim = Sim::new();
+        let clock = Manual(Arc::new(AtomicU64::new(0)));
+        let mut out = opened(&sim, &clock);
+        out.resume();
+        out.close();
+        out.note_reset();
+        assert!(out.failed().is_none());
+        let s = sim.lock();
+        assert_eq!((s.opens.len(), s.starts), (1, 1), "nothing opened or started again");
+    }
+
+    #[test]
     fn render_does_not_allocate() {
         let render = Render::new();
         let mut out = [0.5f32; 256];
@@ -941,6 +1009,12 @@ mod tests {
         nori_ios_interruption(0, 1);
         assert_eq!(take_interruption(), Some(Interrupt::Ended { resume: true }));
         assert_eq!(take_interruption(), None);
+        nori_ios_interruption(1, 0);
+        nori_ios_interruption(0, 0);
+        assert_eq!(take_interruption(), Some(Interrupt::BeganAndEnded { resume: false }), "both, before either was asked for");
+        nori_ios_interruption(0, 1);
+        nori_ios_interruption(1, 0);
+        assert_eq!(take_interruption(), Some(Interrupt::Began), "an end before a beginning is over");
         // The route callback also tells a watcher, when the device output has set one.
         let seen = Arc::new(Mutex::new(None));
         let got = seen.clone();

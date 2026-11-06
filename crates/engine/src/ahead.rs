@@ -73,20 +73,29 @@ pub struct Ahead {
 #[derive(Default)]
 struct Plan {
     songs: Vec<AheadSong>,
-    /// Set while there is work.
-    keeping: Option<Arc<dyn Keeping>>,
-    bytes: Option<Arc<dyn ByteSource>>,
-    takers: Option<Takers>,
     /// Keys fetched or given up on for this list: each is fetched once, so songs that do not fit the
     /// cache together never go round pushing each other out.
     tried: HashSet<String>,
     /// Keys the player took over.
     taken: HashSet<String>,
+    /// The fetch thread, while it runs.
+    run: Option<Run>,
+}
+
+/// What the fetch thread fetches into and through.
+struct Run {
+    keeping: Arc<dyn Keeping>,
+    bytes: Arc<dyn ByteSource>,
+    takers: Option<Takers>,
     /// The key being fetched and its request, cancelled as soon as it is unwanted (a hung server never
     /// sends the next chunk).
-    current: Option<String>,
-    request: Cancel,
-    running: bool,
+    fetching: Option<(String, Cancel)>,
+}
+
+impl Plan {
+    fn fetching(&self) -> Option<&(String, Cancel)> {
+        self.run.as_ref()?.fetching.as_ref()
+    }
 }
 
 type Job = (AheadSong, Arc<dyn Keeping>, Arc<dyn ByteSource>, Option<Takers>, Cancel);
@@ -110,36 +119,34 @@ impl Ahead {
             plan.taken.clear();
         }
         self.asked.fetch_add(1, Ordering::AcqRel);
-        if plan.current.as_ref().is_some_and(|k| !plan.songs.iter().any(|s| &s.key == k)) {
-            plan.request.call_off(false);
+        if let Some((_, request)) = plan.fetching().filter(|(k, _)| !plan.songs.iter().any(|s| &s.key == k)) {
+            request.call_off(false);
         }
         if plan.songs.is_empty() {
             return;
         }
-        plan.keeping = Some(keeping);
-        plan.bytes = Some(bytes);
-        plan.takers = takers;
-        if plan.running {
+        if let Some(run) = plan.run.as_mut() {
+            (run.keeping, run.bytes, run.takers) = (keeping, bytes, takers);
             return;
         }
-        plan.running = true;
+        plan.run = Some(Run { keeping, bytes, takers, fetching: None });
         drop(plan);
         let me = self.clone();
         if std::thread::Builder::new().name("nori-precache".into()).spawn(move || me.run()).is_err() {
-            self.plan.lock().running = false;
+            self.plan.lock().run = None;
             self.cv.notify_all();
         }
     }
 
     /// Whether a fetch thread runs.
     pub fn busy(&self) -> bool {
-        self.plan.lock().running
+        self.plan.lock().run.is_some()
     }
 
     /// Blocks until no fetch thread runs.
     pub fn wait(&self) {
         let mut plan = self.plan.lock();
-        while plan.running {
+        while plan.run.is_some() {
             self.cv.wait(&mut plan);
         }
     }
@@ -151,34 +158,38 @@ impl Ahead {
         if !plan.taken.contains(key) {
             plan.taken.insert(key.to_string());
         }
-        if plan.current.as_deref() == Some(key) {
+        if let Some((_, request)) = plan.fetching().filter(|(k, _)| k == key) {
             self.asked.fetch_add(1, Ordering::AcqRel);
             // A hung request would never reach its next chunk.
-            plan.request.call_off(false);
+            request.call_off(false);
         }
-        while plan.current.as_deref() == Some(key) {
+        while plan.fetching().is_some_and(|(k, _)| k == key) {
             self.cv.wait(&mut plan);
         }
     }
 
     /// The first song asked for that is not kept, busy, taken or tried. None ends the thread.
     fn next(&self) -> Option<Job> {
-        let (candidates, keeping, bytes, takers, asked) = {
+        let (candidates, run, asked) = {
             let plan = self.plan.lock();
             let c: Vec<AheadSong> = plan.songs.iter().filter(|s| !plan.tried.contains(&s.key) && !plan.taken.contains(&s.key)).cloned().collect();
-            (c, plan.keeping.clone(), plan.bytes.clone(), plan.takers.clone(), self.asked.load(Ordering::Acquire))
+            let run = plan.run.as_ref().map(|r| (r.keeping.clone(), r.bytes.clone(), r.takers.clone()));
+            (c, run, self.asked.load(Ordering::Acquire))
         };
         // Without the lock: on Android the keeping calls into the platform.
-        let found = keeping.as_ref().and_then(|k| candidates.into_iter().find(|s| !k.kept(&s.key) && !k.busy(&s.key)));
+        let found = run.as_ref().and_then(|(k, _, _)| candidates.into_iter().find(|s| !k.kept(&s.key) && !k.busy(&s.key)));
         let mut plan = self.plan.lock();
-        match (found, keeping, bytes) {
-            (Some(song), Some(k), Some(b)) if plan.songs.contains(&song) && !plan.taken.contains(&song.key) => {
-                plan.current = Some(song.key.clone());
-                plan.request = Cancel::stalling_after(&self.fetching, Waits::default().stall_ms);
-                Some((song, k, b, takers, plan.request.clone()))
+        let wanted = found.as_ref().is_some_and(|song| plan.songs.contains(song) && !plan.taken.contains(&song.key));
+        match (found, run) {
+            (Some(song), Some((k, b, takers))) if wanted => {
+                let request = Cancel::stalling_after(&self.fetching, Waits::default().stall_ms);
+                if let Some(r) = plan.run.as_mut() {
+                    r.fetching = Some((song.key.clone(), request.clone()));
+                }
+                Some((song, k, b, takers, request))
             }
             // The list changed meanwhile.
-            (Some(_), Some(_), Some(_)) => {
+            (Some(_), Some(_)) => {
                 drop(plan);
                 self.next()
             }
@@ -188,10 +199,7 @@ impl Ahead {
                 self.next()
             }
             _ => {
-                plan.running = false;
-                plan.keeping = None;
-                plan.bytes = None;
-                plan.takers = None;
+                plan.run = None;
                 self.cv.notify_all();
                 None
             }
@@ -208,7 +216,9 @@ impl Ahead {
         while let Some((song, keeping, bytes, takers, request)) = self.next() {
             self.fetch(&*keeping, &*bytes, &song, takers.as_ref(), &request);
             let mut plan = self.plan.lock();
-            plan.current = None;
+            if let Some(r) = plan.run.as_mut() {
+                r.fetching = None;
+            }
             plan.tried.insert(song.key);
             self.cv.notify_all();
         }

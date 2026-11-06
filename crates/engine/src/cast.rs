@@ -21,7 +21,7 @@ pub use deep::{CastOffload, DeepOutput, NowUs, Pump, Pumped, Shown, Shows};
 /// output that sends songs' own packets ([`crate::Engine::set_card`]). `shows`: what its device shows
 /// of each song, if it shows any.
 pub fn card(sink: Arc<Sink>, shows: Option<Arc<dyn Shows>>) -> (Box<dyn AudioOutput>, Option<Box<dyn OffloadOutput>>) {
-    match sink.deep.clone() {
+    match sink.connection().cloned() {
         Some(d) => {
             let now: NowUs = Arc::new(|| nori_time::monotonic().as_micros() as i64);
             let (out, off) = DeepOutput::new(d, sink.rate, sink.channels, shows, now);

@@ -365,7 +365,7 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
         undoText.text = Say.queueRemoved(item.title.isEmpty ? item.id : item.title)
         undoBar.isHidden = false
         undoTimer?.invalidate()
-        undoTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: false) { [weak self] _ in self?.undoBar.isHidden = true }
+        undoTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(nori_ios_undo_ms()) / 1000, repeats: false) { [weak self] _ in self?.undoBar.isHidden = true }
     }
 
     /// The core puts the song back where it was (`put_back`).

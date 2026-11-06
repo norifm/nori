@@ -5,7 +5,7 @@
 //!
 //! Needs the model: `NORI_BEAT_THIS=<beat-this-small0-v1.onnx> cargo test -p nori-player --features neural-beats
 //! --test neural_memory -- --nocapture` (the export with its weights in it, as the app's build makes it for the
-//! assets: core/build/generated/beatModel). Without it, or without the feature, the test says so and passes.
+//! assets: android/core/build/generated/beatModel). Without it, or without the feature, the test says so and passes.
 
 #![cfg(feature = "neural-beats")]
 

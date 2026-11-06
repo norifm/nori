@@ -7,7 +7,7 @@ on:
       - crates/**
       - Cargo.toml
       - Cargo.lock
-      - app/src/main/res/font/**
+      - android/app/src/main/res/font/**
       - .github/workflows/web.yml
   workflow_dispatch:
 concurrency:
