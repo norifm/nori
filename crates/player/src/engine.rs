@@ -959,13 +959,15 @@ impl TransitionEngine {
     pub fn handle_discontinuity<D: Downstream, H: Host>(&mut self, down: &mut D, host: &mut H) {
         let p = self.plan().cloned();
         let ending = self.flight.plan_for.clone().or_else(|| self.playing_id.clone());
+        if p.is_some() && self.out.is_some() && matches!(self.flight.phase, Phase::Hold(h) if h.len > 0) {
+            // The incoming stream, announced before this: its format is armed so stretch and skip are
+            // measured in its own domain. One that cannot be converted lets the hold go unmixed.
+            self.arm_staged_for(host, self.current_id.clone(), false);
+        }
         let mixed = matches!(self.flight.phase, Phase::Hold(h) if h.len > 0) && self.out.is_some();
         self.flight.made = ending.map(|id| (id.serial, if mixed { p.clone() } else { None }));
         match (self.flight.phase, p, self.out) {
             (Phase::Hold(h), Some(mut p), Some(out)) if h.len > 0 => {
-                // The incoming stream, announced before this: its format is armed so stretch and skip are
-                // measured in its own domain.
-                self.arm_staged_for(host, self.current_id.clone(), false);
                 self.flight.mix_source_id = self.current_id.clone();
                 self.playing_id = self.current_id.clone();
                 let late = h.late_us.clamp(0, p.duration_us());
@@ -1003,16 +1005,11 @@ impl TransitionEngine {
                 } else {
                     MixOut::Once { read: 0 }
                 };
-                // Let go above (a format that could not be converted): nothing held is left to mix.
-                let len = match self.flight.phase {
-                    Phase::Hold(h) => h.len,
-                    _ => 0,
-                };
                 self.flight.mixed_end_us = None;
                 self.flight.mix_from_us = None;
                 self.flight.resync_next = true;
                 self.flight.measure_next = true;
-                self.flight.phase = Phase::Mix { len, out: mix_out };
+                self.flight.phase = Phase::Mix { len: h.len, out: mix_out };
             }
             _ => {
                 self.abandon_transition(host);
@@ -1844,6 +1841,31 @@ mod tests {
         let window = 2 * RATE as usize;
         let after = &s[(passed + window) * 2..];
         assert!(after.chunks(2).enumerate().all(|(i, f)| f == [((window + i) % 20_000) as i16; 2]), "the incoming song goes on right where the window ends");
+    }
+
+    /// The next song is in a format the output cannot be converted to (six channels): the held ending
+    /// plays out once and the next song plays alone, from its start, in its own format.
+    #[test]
+    fn unconvertible_next_song_plays_after_the_hold() {
+        const F6: Format = Format { channels: 6, ..FMT };
+        for looped in [false, true] {
+            let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+            let mut p = fade("b", 1_000_000);
+            p.mixer.out_loop_ms = looped.then_some(500);
+            h.plans.insert("a".into(), p);
+            e.configure(&mut d, &mut h, stream("a", FMT));
+            feed(&mut e, &mut d, &mut h, &tone(8000, 3.0), 0);
+            e.configure(&mut d, &mut h, stream("b", F6));
+            e.handle_discontinuity(&mut d, &mut h);
+            let b: Vec<u8> = (0..RATE as usize * 6).flat_map(|_| (-8000i16).to_le_bytes()).collect();
+            feed_in(&mut e, &mut d, &mut h, &b, F6, 3_000_000);
+            assert_eq!(d.configured.last(), Some(&F6), "looped {looped}: the output follows b");
+            let s = d.samples();
+            let a = s.len() - RATE as usize * 6;
+            assert!(a >= RATE as usize * 2, "looped {looped}: a plays up to its ending");
+            assert!(s[..a].iter().all(|&v| v == 8000), "looped {looped}: a plays once, as it was held");
+            assert!(s[a..].iter().all(|&v| v == -8000), "looped {looped}: then all of b, alone");
+        }
     }
 
     /// A song mixed into itself (queued twice): the second copy is a stream of its own, whose ending is
