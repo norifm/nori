@@ -95,6 +95,8 @@ void nori_ios_clear_upcoming(void);
 
 /// Puts back a removed song. `id` is NUL-terminated.
 void nori_ios_put_back(const char *id);
+/// How long the undo of a removed song is offered, ms.
+int64_t nori_ios_undo_ms(void);
 
 void nori_ios_move(int32_t from, int32_t to);
 

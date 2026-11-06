@@ -3167,8 +3167,6 @@ private val QUEUE_NOW_VEIL = Color.Black.copy(alpha = 0.4f)
 
 /** How long the rows wait for a move to reach the queue before they give it up. */
 private const val QUEUE_LANDING_MS = 1_000L
-/** How long the undo is offered for. */
-private const val UNDO_MS = 5_000L
 
 /**
  * "Removed “song” · Undo", a small pill over the foot of the queue for a few seconds after a song is taken
@@ -3183,7 +3181,7 @@ private fun UndoPill(undo: QueueUndo<Song>, plain: Boolean, modifier: Modifier, 
     if (now != null) last = now
     LaunchedEffect(now) {
         val t = now ?: return@LaunchedEffect
-        kotlinx.coroutines.delay(UNDO_MS)
+        kotlinx.coroutines.delay(stage.undoMs)
         undo.expire(t)
     }
     LaunchedEffect(now != null) {

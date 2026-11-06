@@ -711,6 +711,12 @@ pub unsafe extern "C" fn nori_ios_put_back(id: *const c_char) {
     with_session(|s| s.put_back(&id));
 }
 
+/// How long the undo of a song taken out of the queue is offered, ms (`nori_queue::undo::UNDO_MS`).
+#[no_mangle]
+pub extern "C" fn nori_ios_undo_ms() -> i64 {
+    nori_core::undo::UNDO_MS
+}
+
 #[no_mangle]
 pub extern "C" fn nori_ios_move(from: i32, to: i32) {
     if from >= 0 && to >= 0 {

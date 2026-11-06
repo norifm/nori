@@ -45,8 +45,6 @@ const PENDING_KEPT: usize = 1000;
 const GONE: Duration = Duration::from_millis(1500);
 /// How long a row leaving the queue takes to fold away (app.slint's QueueView).
 const QUEUE_FOLD_MS: u64 = 180;
-/// How long the undo of a song taken out of the queue is offered.
-const UNDO_MS: u64 = 5_000;
 
 /// The way back from the page shown: the pages opened from one another before it, and the tab the first
 /// of them was opened from, each with where it was scrolled; and the pages Back left, for Forward.
@@ -3732,7 +3730,7 @@ impl App {
         self.ui().set_queue_undo(words::removed(&song.title).into());
         self.removed = Some(song.id);
         let weak = self.me.clone();
-        self.undo_timer.start(TimerMode::SingleShot, Duration::from_millis(UNDO_MS), move || {
+        self.undo_timer.start(TimerMode::SingleShot, Duration::from_millis(nori_core::undo::UNDO_MS as u64), move || {
             weak.with(|a| {
                 a.removed = None;
                 a.ui().set_queue_undo("".into());

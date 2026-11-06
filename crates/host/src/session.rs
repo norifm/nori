@@ -822,6 +822,15 @@ impl Handle {
         }
     }
 
+    /// Undoes the last removal here while its undo is on offer (`nori_queue::undo`), for a client that
+    /// shows no undo of its own.
+    pub fn undo(&self) {
+        match self.core.session.undoable().filter(|_| self.elsewhere().is_none()) {
+            Some(u) => self.put_back(&u.id),
+            None => self.note(Note::NothingToPutBack),
+        }
+    }
+
     /// Moves the song at list index `from` to `to`, on the device playing.
     pub fn move_song(&self, from: usize, to: usize) {
         if !self.there(Press::Move { from: from as u32, to: to as u32 }) {

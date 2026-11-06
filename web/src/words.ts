@@ -88,6 +88,8 @@ export const W = {
   playNext: "Play next",
   addToQueue: "Add to queue",
   remove: "Remove",
+  removed: (title: string) => `Removed “${title}”`,
+  undo: "Undo",
   more: "More",
   cancel: "Cancel",
   done: "Done",

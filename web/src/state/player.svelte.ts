@@ -152,6 +152,22 @@ class Player {
     await this.refresh();
   }
 
+  /** Takes song `q` out of the queue and offers its undo for as long as the core keeps it. */
+  async remove(q: { index: number; id?: string; title?: string }) {
+    if (!rpc.player) return;
+    const ms = await ask<number>("remove", q.index);
+    await this.refresh();
+    if (q.id) ui.offerUndo(q.id, q.title ?? q.id, ms);
+  }
+
+  /** The undo offered: the song goes back where it was. */
+  async putBack() {
+    const u = ui.takeUndo();
+    if (!u || !rpc.player) return;
+    await ask("put_back", u.id);
+    await this.refresh();
+  }
+
   async seek(ms: number) {
     // Shown there at once; the session's answer follows.
     this.anchor = { ...this.anchor, ms, at: performance.now() };

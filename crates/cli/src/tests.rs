@@ -703,10 +703,7 @@ fn queue_panel_editing() {
     key(&mut a, KeyCode::Char('d'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Remove(2)));
     key(&mut a, KeyCode::Char('u'));
-    assert_eq!(a.cmds.last(), Some(&Cmd::Restore("s2".into())), "u puts it back");
-    let sent = a.cmds.len();
-    key(&mut a, KeyCode::Char('u'));
-    assert_eq!(a.cmds.len(), sent, "once");
+    assert_eq!(a.cmds.last(), Some(&Cmd::Undo), "u puts it back");
     key(&mut a, KeyCode::Char('K'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Move(2, 1)));
     key(&mut a, KeyCode::Enter);
@@ -1464,7 +1461,7 @@ fn jam_header_and_requests_in_the_queue() {
     at(&mut a, crate::app::QueueRow::Ask(1));
     key(&mut a, KeyCode::Char('d'));
     assert_eq!(a.cmds.last(), Some(&Cmd::JamDecide(12, false)));
-    assert!(a.taken.is_none(), "a refusal is no song taken out");
+    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Remove(_))), "a refusal is no song taken out");
     at(&mut a, crate::app::QueueRow::End);
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.last(), Some(&Cmd::JamEnd));

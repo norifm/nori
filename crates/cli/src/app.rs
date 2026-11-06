@@ -114,8 +114,8 @@ pub enum Cmd {
     Volume(f32),
     Jump(usize),
     Remove(usize),
-    /// Undo the last removal (`playlist_restore`).
-    Restore(String),
+    /// Undo the last removal while it is on offer (`Session::undo`).
+    Undo,
     Move(usize, usize),
     Shuffle(bool),
     /// The next repeat mode after the one shown.
@@ -1255,8 +1255,6 @@ pub struct App {
     pub shown: Shown,
     pub queue: Option<PlaylistView>,
     pub queue_sel: Sel,
-    /// Id of the song last removed from the queue, for undo.
-    pub taken: Option<String>,
     pub downloads: Load<Box<Downloads>>,
     pub downloads_sel: Sel,
     pub downloads_at: Option<Instant>,
@@ -2732,11 +2730,7 @@ impl App {
                 Some(QueueRow::Song(i)) if self.queue.as_ref().is_some_and(|q| nori_core::stage::mirrored_queue_rows(q.len, false, q.index).kept.contains(&(i as u32))) => {
                     self.dirty = false
                 }
-                Some(QueueRow::Song(i)) => {
-                    // Another device's queue has its own undo.
-                    self.taken = self.queue.as_ref().filter(|_| self.devices.active.is_none()).and_then(|q| q.songs.get(i)).map(|s| s.id.clone());
-                    self.cmds.push(Cmd::Remove(i));
-                }
+                Some(QueueRow::Song(i)) => self.cmds.push(Cmd::Remove(i)),
                 Some(row) => match row.ask().and_then(|k| self.ask_request(k)) {
                     Some(request) => self.cmds.push(Cmd::JamDecide(request, false)),
                     None => self.dirty = false,
@@ -2754,10 +2748,7 @@ impl App {
                 None => self.dirty = false,
             },
             Action::Menu => self.open_menu(),
-            Action::Undo if self.queue_in_focus() => match self.taken.take() {
-                Some(id) => self.cmds.push(Cmd::Restore(id)),
-                None => self.say("Nothing to put back", false),
-            },
+            Action::Undo if self.queue_in_focus() => self.cmds.push(Cmd::Undo),
             Action::Undo => self.dirty = false,
             Action::MoveUp | Action::MoveDown if self.view == View::Settings && !self.queue_in_focus() => match self.settings.plugin_move(a == Action::MoveUp) {
                 Some(c) => self.cmds.push(c),

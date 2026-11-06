@@ -228,6 +228,9 @@ of this; Android's `PlaybackService` calls the same functions.
 - **Lyrics**: `Client::lyrics_for(id, LyricsShown)` is the whole order: the server's, the services'
   race, then none. `lyrics_replaces` and `nori_look::lyrics::matching_line` handle a better answer
   arriving. Lyrics carry `offset_ms`, which `lyrics_clock` applies.
+- **A song taken out of the queue**: the last one taken out on its own goes back where it was for
+  `nori_queue::undo::UNDO_MS` (`Stage::undo_ms`); `Session::put_back` (`playlist_restore`) refuses it
+  after that. A client offering the undo shows it that long; one that shows none calls `Session::undo`.
 - **A favorite**: `Client::star` marks it at once and puts the old mark back if the server refuses.
 - **Fetching ahead**: `Client::precache_targets` names the songs after the next (the `songs_ahead_wifi`
   and `songs_ahead_mobile` settings; never a provider's song). The engine fetches them whole, one after

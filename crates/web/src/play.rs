@@ -389,8 +389,15 @@ impl Nori {
         self.with(|h| h.jump(index));
     }
 
-    pub fn remove(&self, index: usize) {
+    /// Takes the song at `index` out; answers how long its undo is offered, ms ([`Nori::put_back`]).
+    pub fn remove(&self, index: usize) -> f64 {
         self.with(|h| h.remove(index));
+        nori_core::undo::UNDO_MS as f64
+    }
+
+    /// Puts back song `id`, just taken out, where it was.
+    pub fn put_back(&self, id: String) {
+        self.with(|h| h.put_back(&id));
     }
 
     pub fn move_song(&self, from: usize, to: usize) {
