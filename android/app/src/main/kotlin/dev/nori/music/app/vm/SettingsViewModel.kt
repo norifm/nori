@@ -25,6 +25,7 @@ import dev.nori.music.ffi.model.NamedPreset
 import dev.nori.music.ffi.model.AutoEqEntry
 import dev.nori.music.ffi.settings.SoundException
 import dev.nori.music.ffi.model.SoundProfile
+import dev.nori.music.settings.serverList
 import dev.nori.music.settings.sound
 import dev.nori.music.settings.withSound
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +37,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
@@ -47,49 +49,19 @@ import dev.nori.music.update.Updates
 /** settings_store.rs `CACHE_LIMIT`: the stream cache size changed. */
 private const val CACHE_LIMIT = 32u
 
-/** A profile being added or saved: nothing asked yet, on its way, why it failed, or done (the form closes and clears it). */
-sealed interface LoginUi {
-    data object Idle : LoginUi
-    data object Busy : LoginUi
-    data class Failed(val error: String) : LoginUi
-    data object Done : LoginUi
-}
-
 /**
  * The account of the profile in use, for a provider that signs it in apart from its form
- * (`ProviderInfo.sign_in`): where it stands (null until asked), what is shown for signing in, and the
- * last sign-in.
+ * (`ProviderInfo.sign_in`): where it stands (null until asked), and what is shown for signing in with the
+ * last sign-in (the core's `SignInFlow`, one dialog at a time).
  */
 data class AccountUi(
     val account: dev.nori.music.ffi.AccountState? = null,
-    val flow: SignInFlow = SignInFlow.Closed,
-    val attempt: SignInAttempt = SignInAttempt.Idle,
+    val flow: dev.nori.music.ffi.SignInFlow = dev.nori.music.ffi.SignInFlow(dev.nori.music.ffi.SignInShown.Closed, dev.nori.music.ffi.SignInAttempt.Idle),
 ) {
-    val busy: Boolean get() = attempt == SignInAttempt.Busy
-    val failed: dev.nori.music.ffi.SignInResult? get() = (attempt as? SignInAttempt.Failed)?.result
-
-    /** Offering signing in, unless the page is open already: one dialog at a time. */
-    fun offered(ended: Boolean): AccountUi = if (flow is SignInFlow.Page) this else copy(flow = SignInFlow.Offered(ended))
+    val busy: Boolean get() = flow.attempt == dev.nori.music.ffi.SignInAttempt.Busy
+    val failed: dev.nori.music.ffi.SignInResult? get() = (flow.attempt as? dev.nori.music.ffi.SignInAttempt.Failed)?.result
 }
 
-/** What is shown for signing in: nothing, the offer, or the provider's sign-in page; one at a time. */
-sealed interface SignInFlow {
-    data object Closed : SignInFlow
-    /** A profile just added offers it, or a session the provider [ended]. */
-    data class Offered(val ended: Boolean) : SignInFlow
-    /** The page, starting at [start] when the provider's plugin asked for it there; null: the provider's own start. */
-    data class Page(val start: String?) : SignInFlow
-}
-
-/** The last sign-in: none (or its failure left), on its way, or why it failed. */
-sealed interface SignInAttempt {
-    data object Idle : SignInAttempt
-    data object Busy : SignInAttempt
-    data class Failed(val result: dev.nori.music.ffi.SignInResult) : SignInAttempt
-
-    /** Its failure left for a fresh try; one on its way goes on. */
-    fun cleared(): SignInAttempt = if (this is Failed) Idle else this
-}
 /**
  * The AutoEQ list: how many headphones it holds ([countWords] and [searchWords] say so), the query and
  * its hits, and whether the query is still too short to search (the core's `autoeq_too_short`).
@@ -181,8 +153,12 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         }
     }
     val dac: StateFlow<DacState> = nori.dac.state
-    private val _login = MutableStateFlow<LoginUi>(LoginUi.Idle)
-    val login: StateFlow<LoginUi> = _login
+    /** Adding or editing a profile: the page shown and the profile on its way (the core's `AddFlow`). */
+    private val _add = MutableStateFlow(dev.nori.music.ffi.AddFlow(dev.nori.music.ffi.AddPage.Choosing, dev.nori.music.ffi.AddSend.Idle))
+    val add: StateFlow<dev.nori.music.ffi.AddFlow> = _add
+    private val _added = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** A profile sent was saved: the form closes. */
+    val added: kotlinx.coroutines.flow.SharedFlow<Unit> = _added
     private val _sync = MutableStateFlow(SyncUi())
     val sync: StateFlow<SyncUi> = _sync
 
@@ -453,26 +429,33 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     fun rules() = nori.rules
 
+    /** Takes [event] on the account's sign-in; false for an answer not to send (one is on its way). */
+    private fun signInOn(event: dev.nori.music.ffi.SignInEvent): Boolean {
+        val step = dev.nori.music.ffi.signInFlowOn(_account.value.flow, event)
+        _account.update { it.copy(flow = step.flow) }
+        return step.send
+    }
+
     // A provider's plugin asks for its sign-in page (its `sign-in.open`): the page opens at that address.
     init {
         viewModelScope.launch {
-            nori.plugins.signIns.collect { (_, url) -> _account.update { it.copy(flow = SignInFlow.Page(url), attempt = it.attempt.cleared()) } }
+            nori.plugins.signIns.collect { (_, url) -> signInOn(dev.nori.music.ffi.SignInEvent.Open(url)) }
         }
     }
 
     // Each time the open profile's rules change (it opened, or its account changed under it), a session the
-    // provider ended offers to sign in again, until told not to.
+    // provider ended offers to sign in again, until told not to (the core's `sign_in_due`).
     init {
         viewModelScope.launch {
             nori.reportedRules.collect { reported ->
-                if (reported != null && nori.remindsToSignIn()) _account.update { it.offered(ended = true) }
+                if (reported != null) nori.signInDue(null)?.let(::signInOn)
             }
         }
     }
 
     /** The ended session's offer no longer comes back at start. */
     fun stopReminding() {
-        skipSignIn()
+        signInOn(dev.nori.music.ffi.SignInEvent.Close)
         viewModelScope.launch { nori.stopReminding() }
     }
 
@@ -482,19 +465,11 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     /** Signs the profile in use in with [answer]: a sign-in page's cookies, or what was pasted. */
     fun signIn(answer: String) {
-        if (_account.value.busy) return
-        _account.update { it.copy(attempt = SignInAttempt.Busy) }
+        if (!signInOn(dev.nori.music.ffi.SignInEvent.Sent)) return
         viewModelScope.launch {
             val r = nori.signIn(answer)
-            val failed = r.takeIf { it !is dev.nori.music.ffi.SignInResult.SignedIn }
             val account = nori.account()
-            // Signed in, the sign-in page has done its work; a failure stays on it to be tried again.
-            _account.update {
-                it.copy(
-                    account = account, attempt = failed?.let(SignInAttempt::Failed) ?: SignInAttempt.Idle,
-                    flow = if (failed == null && it.flow is SignInFlow.Page) SignInFlow.Closed else it.flow,
-                )
-            }
+            _account.update { it.copy(account = account, flow = dev.nori.music.ffi.signInFlowOn(it.flow, dev.nori.music.ffi.SignInEvent.Answered(r)).flow) }
         }
     }
 
@@ -504,44 +479,62 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     /** Opens the provider's sign-in page, from the account's row or a just-added profile's offer. */
-    fun openSignInPage() = _account.update { it.copy(flow = SignInFlow.Page(null), attempt = it.attempt.cleared()) }
+    fun openSignInPage() { signInOn(dev.nori.music.ffi.SignInEvent.Open(null)) }
 
-    fun closeSignInPage() = _account.update { it.copy(flow = if (it.flow is SignInFlow.Page) SignInFlow.Closed else it.flow, attempt = it.attempt.cleared()) }
+    fun closeSignInPage() { signInOn(dev.nori.music.ffi.SignInEvent.Close) }
 
     /** Leaves the sign-in page's failure for a fresh page. */
-    fun retrySignIn() = _account.update { it.copy(attempt = it.attempt.cleared()) }
+    fun retrySignIn() { signInOn(dev.nori.music.ffi.SignInEvent.Retry) }
 
-    fun skipSignIn() = _account.update { if (it.flow is SignInFlow.Offered) it.copy(flow = SignInFlow.Closed) else it }
+    fun skipSignIn() { signInOn(dev.nori.music.ffi.SignInEvent.Close) }
 
     /** Offers signing in, as a seal tapped while signed out does. */
-    fun offerSignIn() = viewModelScope.launch {
-        val ended = nori.account() == dev.nori.music.ffi.AccountState.ENDED
-        _account.update { it.offered(ended) }
+    fun offerSignIn() = viewModelScope.launch { signInOn(nori.signInOffer()) }
+
+    /** Takes [event] on the pages of adding a profile; says what to do next. */
+    fun addOn(event: dev.nori.music.ffi.AddEvent): dev.nori.music.ffi.AddDo {
+        val step = dev.nori.music.ffi.addFlowOn(_add.value, event)
+        _add.value = step.flow
+        return step.then
+    }
+
+    /** The form opens: a new profile chooses its kind first; [editing] a saved one shows its form. */
+    fun openLogin(editing: SavedServer?) {
+        addOn(if (editing == null) dev.nori.music.ffi.AddEvent.Start else dev.nori.music.ffi.AddEvent.Edit(editing.kind))
+    }
+
+    /**
+     * [kind] chosen on the first screen, once its provider is listed (a plugin just turned on comes a
+     * moment later). One that asks nothing is sent at once, as [profile].
+     */
+    fun chooseKind(kind: dev.nori.music.ffi.settings.ServerKind, profile: () -> SavedServer) {
+        viewModelScope.launch {
+            val info = providers.map { all -> all.firstOrNull { it.kind == kind } }.filterNotNull().first()
+            if (addOn(dev.nori.music.ffi.AddEvent.Chose(info)) == dev.nori.music.ffi.AddDo.Connect) login(profile())
+        }
     }
 
     fun login(profile: SavedServer, afterAdding: dev.nori.music.ffi.AfterAdding = dev.nori.music.ffi.AfterAdding.REMIND) {
-        if (_login.value == LoginUi.Busy) return
-        _login.value = LoginUi.Busy
-        val saved = prefs.value.servers.map { it.id }
+        if (_add.value.send is dev.nori.music.ffi.AddSend.Sending) return
         viewModelScope.launch {
-            _login.value = try {
-                val accepted = nori.login(profile)
-                val step = provider(accepted.kind)?.takeIf { accepted.id !in saved }?.let { dev.nori.music.ffi.providerAfterAdding(it, afterAdding) }
-                when (step) {
-                    // A new profile, in use now: the account shown so far was the last one's.
-                    dev.nori.music.ffi.SignInStep.OFFER -> _account.value = AccountUi(flow = SignInFlow.Offered(ended = false))
-                    dev.nori.music.ffi.SignInStep.OPEN -> _account.value = AccountUi(flow = SignInFlow.Page(null))
-                    dev.nori.music.ffi.SignInStep.STOP_REMINDING -> nori.stopReminding()
-                    null -> {}
-                }
-                LoginUi.Done
+            val (ready, adds) = withContext(Dispatchers.IO) {
+                nori.plugins.kinds.serverReady(profile) to nori.plugins.kinds.addsProfile(prefs.value.serverList(), profile)
+            }
+            if (addOn(dev.nori.music.ffi.AddEvent.Send(ready, afterAdding.takeIf { adds })) !is dev.nori.music.ffi.AddDo.Send) return@launch
+            try {
+                nori.login(profile)
+                val opened = addOn(dev.nori.music.ffi.AddEvent.Accepted) as? dev.nori.music.ffi.AddDo.Open
+                val added = opened?.added
+                // A new profile, in use now: the account shown so far was the last one's.
+                if (added != null) _account.value = AccountUi()
+                nori.signInDue(added)?.let(::signInOn)
+                _added.tryEmit(Unit)
             } catch (e: Exception) {
-                LoginUi.Failed(describeConnectionError(e))
+                addOn(dev.nori.music.ffi.AddEvent.Refused(describeConnectionError(e)))
             }
         }
     }
 
-    fun clearLoginResult() { _login.value = LoginUi.Idle }
     fun switchServer(profile: SavedServer) = nori.activate(profile)
     fun updateServer(profile: SavedServer) = nori.updateServer(profile)
     fun removeServer(id: String) = nori.removeServer(id)

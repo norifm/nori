@@ -9,6 +9,7 @@ mod plugin;
 #[cfg(feature = "plugins")]
 mod plugged;
 pub(crate) mod hosted;
+pub mod flow;
 #[cfg(test)]
 mod fake;
 #[cfg(test)]
@@ -203,7 +204,7 @@ impl ProviderInfo {
     }
 
     /// What a profile of this kind just added goes on to about its account.
-    pub fn after_adding(&self, after: AfterAdding) -> Option<SignInStep> {
+    pub(crate) fn after_adding(&self, after: AfterAdding) -> Option<SignInStep> {
         if !self.signs_in_on_a_page() {
             return None;
         }
@@ -213,18 +214,6 @@ impl ProviderInfo {
             AfterAdding::Guest => SignInStep::StopReminding,
         })
     }
-}
-
-/// [`ProviderInfo::first_step`], owned.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn provider_first_step(info: ProviderInfo) -> FirstStep {
-    info.first_step()
-}
-
-/// [`ProviderInfo::after_adding`], owned.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn provider_after_adding(info: ProviderInfo, after: AfterAdding) -> Option<SignInStep> {
-    info.after_adding(after)
 }
 
 /// What choosing a kind of profile on the first screen leads to.
@@ -252,10 +241,9 @@ pub enum AfterAdding {
     Guest,
 }
 
-/// What a client does about the account of a profile just added.
+/// What follows about the account of a profile just added ([`flow::SignInEvent`] says it to the client).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum SignInStep {
+pub(crate) enum SignInStep {
     /// Offers signing in, which can be skipped.
     Offer,
     /// Opens the sign-in page.
@@ -641,15 +629,6 @@ impl Core {
 }
 
 impl Client {
-    /// What the session just opened does about its account: `added` says how a profile just added was
-    /// asked for; any other reminds if the session ended.
-    pub fn sign_in_step(&self, added: Option<AfterAdding>) -> Option<SignInStep> {
-        match added {
-            Some(after) => self.core.provider().info().after_adding(after),
-            None => self.reminds_to_sign_in().then_some(SignInStep::Offer),
-        }
-    }
-
     /// What opens the profile's stream addresses at the URLs they are served at; None when they are
     /// URLs already.
     pub fn stream_resolver(self: &Arc<Self>) -> Option<Arc<dyn ResolveStream>> {

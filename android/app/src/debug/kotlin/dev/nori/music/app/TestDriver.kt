@@ -65,7 +65,7 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 else settings.newProfile().copy(url = url, user = user, password = pass)
             // Logins come back to back (the app's start, then a section's): one still busy would drop the next.
             scope.launch {
-                settings.login.first { it != dev.nori.music.app.vm.LoginUi.Busy }
+                settings.add.first { it.send !is dev.nori.music.ffi.AddSend.Sending }
                 settings.login(profile)
             }
         }
@@ -123,7 +123,7 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 settings.update.value.let { u ->
                     """"update":"${u::class.simpleName}","updateLine":"${dev.nori.music.app.vm.updateWords(context.resources, u, BuildConfig.VERSION_NAME, settings.installsUpdates).replace("\"", "'")}","""
                 } +
-                """"loggedIn":${p.loggedIn},"server":"${p.server?.url.orEmpty()}","kind":"${p.server?.kind?.let { dev.nori.music.app.ui.kindTag(it) }.orEmpty()}","signInOffer":${settings.account.value.flow is dev.nori.music.app.vm.SignInFlow.Offered},"signInPage":${settings.account.value.flow is dev.nori.music.app.vm.SignInFlow.Page},"loginError":"${(settings.login.value as? dev.nori.music.app.vm.LoginUi.Failed)?.error.orEmpty().replace("\"", "'")}"}"""
+                """"loggedIn":${p.loggedIn},"server":"${p.server?.url.orEmpty()}","kind":"${p.server?.kind?.let { dev.nori.music.app.ui.kindTag(it) }.orEmpty()}","signInOffer":${settings.account.value.flow.shown is dev.nori.music.ffi.SignInShown.Offered},"signInPage":${settings.account.value.flow.shown is dev.nori.music.ffi.SignInShown.Page},"loginError":"${(settings.add.value.send as? dev.nori.music.ffi.AddSend.Failed)?.why?.let(dev.nori.music.app.ui.say::addFailure).orEmpty().replace("\"", "'")}"}"""
         }
         // An app crossfading out (a jam joined or left) goes after the one coming in took the hooks over.
         onDispose {

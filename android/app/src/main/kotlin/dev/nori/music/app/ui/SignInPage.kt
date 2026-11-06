@@ -37,7 +37,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.SettingsViewModel
-import dev.nori.music.app.vm.SignInFlow
 import dev.nori.music.ffi.SignIn
 import kotlinx.coroutines.launch
 import dev.nori.music.ffi.settings.ServerKind
@@ -53,7 +52,7 @@ fun SignInFlow(vm: SettingsViewModel, kind: ServerKind) {
     val providers by vm.providers.collectAsStateWithLifecycle()
     val words = providerWords(vm, kind).account
     val start = providers.firstOrNull { it.kind == kind }?.signIn?.firstNotNullOfOrNull { (it as? SignIn.WebPage)?.startUrl } ?: return
-    NoriDialog(ui.flow as? SignInFlow.Offered, vm::skipSignIn) { offered ->
+    NoriDialog(ui.flow.shown as? dev.nori.music.ffi.SignInShown.Offered, vm::skipSignIn) { offered ->
         AlertCard(
             confirmButton = { TextAction(words.pageButton, vm::openSignInPage, Modifier.testTag("offer-sign-in")) },
             dismissButton = {
@@ -71,7 +70,7 @@ fun SignInFlow(vm: SettingsViewModel, kind: ServerKind) {
             },
         )
     }
-    NoriDialog(ui.flow as? SignInFlow.Page, vm::closeSignInPage, DialogStyle.Page) { page -> SignInSheet(vm, kind, page.start ?: start, words) }
+    NoriDialog(ui.flow.shown as? dev.nori.music.ffi.SignInShown.Page, vm::closeSignInPage, DialogStyle.Page) { page -> SignInSheet(vm, kind, page.start ?: start, words) }
 }
 
 /** The sign-in page as a sheet: Cancel and the title over the provider's page, then the core's answer. */

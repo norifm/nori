@@ -9,6 +9,7 @@ use nori_core::browse::{AlbumSort, HistoryAfter, LibrarySection, ProfileRules};
 use nori_core::paged::Paged;
 use nori_core::library::QueueOffer;
 use nori_core::offer::Offered;
+use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, SignInEvent, SignInFlow};
 use nori_core::providers::{AfterAdding, FirstStep};
 use nori_core::menus::{DownloadAct, PageAction, PageKind, SongDownload};
 use nori_core::mixes::board::{MixSheet, MixTile};
@@ -698,53 +699,14 @@ pub struct Login {
     /// Name, address, user, password.
     pub fields: [String; 4],
     pub focus: usize,
-    pub error: Option<String>,
-    pub busy: bool,
     /// Selection in the saved servers list.
     pub sel: Sel,
     /// Whether the saved servers list has the keys.
     pub on_list: bool,
-    pub page: LoginPage,
+    /// The page shown and the profile on its way (the core's).
+    pub flow: AddFlow,
     /// Selection among the first screen's providers ([`App::provider_lines`]).
     pub choice: Sel,
-    /// How the profile being added was asked for; None for one already saved.
-    pub after: Option<AfterAdding>,
-}
-
-/// Which page of adding a profile shows.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub enum LoginPage {
-    /// The first screen: what a new profile plays from.
-    #[default]
-    Choosing,
-    /// `kind` has nothing to ask and is being added at once: the first screen stays unless that fails.
-    Adding(ServerKind),
-    /// `kind`'s page, as its [`ProviderInfo::first_step`] says.
-    Provider { kind: ServerKind, step: FirstStep },
-}
-
-impl LoginPage {
-    /// The kind of profile added, once chosen.
-    pub fn kind(&self) -> Option<&ServerKind> {
-        match self {
-            LoginPage::Choosing => None,
-            LoginPage::Adding(kind) | LoginPage::Provider { kind, .. } => Some(kind),
-        }
-    }
-
-    /// Adding at once failed: the kind's own page shows, with why.
-    fn stop_adding(&mut self) {
-        if let LoginPage::Adding(kind) = self {
-            *self = LoginPage::Provider { kind: kind.clone(), step: FirstStep::AddNow };
-        }
-    }
-
-    fn step(&self) -> Option<FirstStep> {
-        match self {
-            LoginPage::Provider { step, .. } => Some(*step),
-            _ => None,
-        }
-    }
 }
 
 /// A line of the first screen.
@@ -1055,7 +1017,8 @@ pub enum Overlay {
     Join { text: String, error: Option<String>, busy: bool },
     /// The profile's account with a provider: who is signed in (empty: no one), whether the provider
     /// ended the session, cookies being pasted, why signing in failed, and a sign-in under way.
-    Account { kind: nori_core::settings::ServerKind, user: String, ended: bool, pasting: bool, text: String, error: Option<String>, busy: bool },
+    /// `flow` is the core's; `window_failed`, that the sign-in window would not open.
+    Account { kind: nori_core::settings::ServerKind, user: String, pasting: bool, text: String, flow: SignInFlow, window_failed: bool },
 }
 
 /// What a picker sets.
@@ -1749,10 +1712,8 @@ impl App {
                 self.home.offer.found(offer, here, playing);
             }
             Msg::LoggedIn(r) => {
-                self.login.busy = false;
-                if let Err(e) = r {
-                    self.login.error = Some(e);
-                    self.login.page.stop_adding();
+                if let Err(said) = r {
+                    self.login.flow.on(AddEvent::Refused { said });
                 }
             }
             Msg::Reachable(r) => self.unreachable = r.err(),
@@ -1775,18 +1736,20 @@ impl App {
                 _ => self.say(e.clone(), true),
             },
             // The runner opens these, and the profiles a jam is joined and left with.
-            Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { .. }) => self.overlay = None,
-            Msg::SignedIn(r) => {
-                let kind = self.prefs.active_server().map(|p| p.kind.clone()).unwrap_or_default();
-                let said = crate::text::sign_in(&self.provider_words(&kind).name, &r);
-                match &mut self.overlay {
-                    Some(Overlay::Account { error, busy, .. }) => {
-                        *error = Some(said);
-                        *busy = false;
+            Msg::SignedIn(r) => match &mut self.overlay {
+                Some(Overlay::Account { flow, .. }) => {
+                    flow.on(SignInEvent::Answered { result: r });
+                    if flow.shown == nori_core::providers::flow::SignInShown::Closed {
+                        self.overlay = None;
                     }
-                    _ => self.say(said, true),
                 }
-            }
+                _ if matches!(r, nori_core::providers::SignInResult::SignedIn { .. }) => {}
+                _ => {
+                    let kind = self.prefs.active_server().map(|p| p.kind.clone()).unwrap_or_default();
+                    let said = crate::text::sign_in(&self.provider_words(&kind).name, &r);
+                    self.say(said, true);
+                }
+            },
             Msg::Preview(Ok(p)) => {
                 let turns_on = self.settings.alone.offer() == Some(p.card.id.as_str()) || !self.settings.own.plugins.iter().any(|c| c.id == p.card.id);
                 self.overlay = Some(preview_sheet(p, turns_on));
@@ -2157,7 +2120,7 @@ impl App {
 
     fn paste(&mut self, text: &str) {
         let text: String = text.chars().filter(|c| !c.is_control()).collect();
-        if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Account { text: t, pasting: true, busy: false, .. }) = &mut self.overlay {
+        if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Account { text: t, pasting: true, .. }) = &mut self.overlay {
             t.push_str(&text);
         } else if self.view == View::Login {
             if !self.login_choosing() {
@@ -2225,20 +2188,20 @@ impl App {
 
     /// The form's provider.
     pub fn login_info(&self) -> Option<nori_core::providers::ProviderInfo> {
-        let kind = self.login.page.kind()?;
+        let kind = self.login.flow.kind()?;
         self.settings.own.kinds.providers().into_iter().find(|i| i.kind == *kind)
     }
 
     /// Which of `LOGIN_FIELDS` the kind chosen asks.
     pub fn login_fields(&self) -> Vec<usize> {
-        let Some(info) = self.login_info().filter(|_| self.login.page.step() == Some(FirstStep::Form)) else { return Vec::new() };
+        let Some(info) = self.login_info().filter(|_| self.login.flow.step() == Some(FirstStep::Form)) else { return Vec::new() };
         (0..4).filter(|&i| info.fields.iter().any(|f| f.what == LOGIN_ASKS[i])).collect()
     }
 
     /// The first screen: what a new profile plays from, the repos asked what they offer.
     pub fn choose_provider(&mut self) {
         self.view = View::Login;
-        self.login.page = LoginPage::Choosing;
+        self.login.flow.on(AddEvent::Start);
         self.cmds.push(Cmd::Plugin(PluginCmd::Read));
         if matches!(self.settings.own.shelf, crate::settings_view::Shelf::Unasked) {
             self.cmds.push(Cmd::Plugin(PluginCmd::Look));
@@ -2254,26 +2217,21 @@ impl App {
 
     /// See [`App::provider_chosen`].
     pub(crate) fn provider_opened(&mut self, info: &nori_core::providers::ProviderInfo) {
-        let (kind, step) = (info.kind.clone(), info.first_step());
-        self.login.page = match step {
-            FirstStep::AddNow => LoginPage::Adding(kind),
-            step => LoginPage::Provider { kind, step },
-        };
+        let then = self.login.flow.on(AddEvent::Chose { info: info.clone() });
         self.login.focus = self.login_fields().first().copied().unwrap_or(0);
-        self.login.error = None;
-        if step == FirstStep::AddNow {
+        if then == AddDo::Connect {
             self.connect(AfterAdding::Remind);
         }
     }
 
     /// Whether the first screen shows.
     pub fn login_choosing(&self) -> bool {
-        matches!(self.login.page, LoginPage::Choosing | LoginPage::Adding(_))
+        self.login.flow.choosing()
     }
 
     /// The account page shows: a provider with an account and nothing to fill.
     pub fn login_account(&self) -> bool {
-        self.login.page.step() == Some(FirstStep::Account)
+        self.login.flow.step() == Some(FirstStep::Account)
     }
 
     /// The first screen's line `at`: a kind's form, a plugin off turned on, or the page of one not installed.
@@ -2329,7 +2287,7 @@ impl App {
                     self.cmds.push(Cmd::SwitchServer(s.id.clone()));
                 }
             }
-            KeyCode::Enter if !l.busy => {
+            KeyCode::Enter if !l.flow.busy() => {
                 let at = l.choice.at;
                 self.provider_open(at);
             }
@@ -2364,8 +2322,7 @@ impl App {
             KeyCode::Enter if !last => l.focus = fields[at.map_or(0, |i| i + 1)],
             KeyCode::Enter => self.connect(AfterAdding::Remind),
             KeyCode::Esc => {
-                l.page = LoginPage::Choosing;
-                l.error = None;
+                l.flow.on(AddEvent::Back);
             }
             KeyCode::Backspace if at.is_some() => {
                 l.fields[l.focus].pop();
@@ -2376,9 +2333,6 @@ impl App {
     }
 
     fn connect(&mut self, after: AfterAdding) {
-        if self.login.busy {
-            return;
-        }
         let Some(info) = self.login_info() else { return };
         let asked = self.login_fields();
         let l = &mut self.login;
@@ -2387,15 +2341,11 @@ impl App {
         let url = if url.is_empty() || url.contains("://") { url } else { format!("https://{url}") };
         let draft = SavedServer { id: nori_core::settings::new_server_id(), kind: info.kind.clone(), name: typed(0).trim().to_string(), url, user: typed(2).trim().to_string(), password: typed(3), ..Default::default() };
         let list = nori_core::settings::ServerList { servers: self.prefs.servers.clone(), active_server_id: self.prefs.active_server_id.clone() };
-        l.after = self.settings.own.kinds.adds_profile(list, draft.clone()).then_some(after);
-        if !self.settings.own.kinds.server_ready(draft.clone()) {
-            l.error = Some(crate::text::LOGIN_MISSING.into());
-            l.page.stop_adding();
-            return;
+        let added = self.settings.own.kinds.adds_profile(list, draft.clone()).then_some(after);
+        let ready = self.settings.own.kinds.server_ready(draft.clone());
+        if let AddDo::Send { .. } = l.flow.on(AddEvent::Send { ready, added }) {
+            self.cmds.push(Cmd::Login(Box::new(draft)));
         }
-        l.error = None;
-        l.busy = true;
-        self.cmds.push(Cmd::Login(Box::new(draft)));
     }
 
     fn overlay_key(&mut self, k: KeyEvent) {
@@ -2445,12 +2395,14 @@ impl App {
                 KeyCode::Char('q') => self.overlay = None,
                 _ => {}
             },
-            Overlay::Account { busy: true, .. } | Overlay::Join { busy: true, .. } if k.code != KeyCode::Esc => self.dirty = false,
-            Overlay::Account { pasting: true, text, error, busy, .. } => match k.code {
+            Overlay::Join { busy: true, .. } if k.code != KeyCode::Esc => self.dirty = false,
+            Overlay::Account { flow, .. } if flow.busy() && k.code != KeyCode::Esc => self.dirty = false,
+            Overlay::Account { pasting: true, text, flow, window_failed, .. } => match k.code {
                 KeyCode::Enter if !text.trim().is_empty() => {
-                    *busy = true;
-                    *error = None;
-                    self.cmds.push(Cmd::SignIn(text.trim().to_string()));
+                    *window_failed = false;
+                    if flow.on(SignInEvent::Sent) {
+                        self.cmds.push(Cmd::SignIn(text.trim().to_string()));
+                    }
                 }
                 KeyCode::Esc => {
                     if let Some(Overlay::Account { pasting, .. }) = &mut self.overlay {
@@ -2464,18 +2416,20 @@ impl App {
                 KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
                 _ => {}
             },
-            Overlay::Account { user, ended, pasting, error, busy, .. } => match k.code {
+            Overlay::Account { user, pasting, flow, window_failed, .. } => match k.code {
                 KeyCode::Enter if !user.is_empty() => {
                     self.cmds.push(Cmd::SignOut);
                     self.overlay = None;
                 }
                 KeyCode::Enter => {
-                    *busy = true;
-                    *error = None;
-                    self.cmds.push(Cmd::SignInWindow);
+                    *window_failed = false;
+                    flow.on(SignInEvent::Retry);
+                    if flow.on(SignInEvent::Sent) {
+                        self.cmds.push(Cmd::SignInWindow);
+                    }
                 }
                 KeyCode::Char('p') if user.is_empty() => *pasting = true,
-                KeyCode::Char('d') if *ended => {
+                KeyCode::Char('d') if flow.shown == (nori_core::providers::flow::SignInShown::Offered { ended: true }) => {
                     self.cmds.push(Cmd::StopReminding);
                     self.overlay = None;
                 }

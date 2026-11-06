@@ -307,8 +307,14 @@ class Nori private constructor(private val context: Context) {
 
     suspend fun account(): dev.nori.music.ffi.AccountState = withContext(Dispatchers.IO) { client.account() }
 
-    /** The account's session ended and it is to be said at start (the core's `reminds_to_sign_in`). */
-    suspend fun remindsToSignIn(): Boolean = withContext(Dispatchers.IO) { client.remindsToSignIn() }
+    /**
+     * What to show about the account now (the core's `Client::sign_in_due`): [added] says how a profile
+     * just opened was added; otherwise signing in again is offered when its session ended.
+     */
+    suspend fun signInDue(added: dev.nori.music.ffi.AfterAdding?): dev.nori.music.ffi.SignInEvent? = withContext(Dispatchers.IO) { client.signInDue(added) }
+
+    /** Signing in offered when asked: the account's row, a seal tapped while signed out. */
+    suspend fun signInOffer(): dev.nori.music.ffi.SignInEvent = withContext(Dispatchers.IO) { client.signInOffer() }
 
     suspend fun stopReminding() = withContext(Dispatchers.IO) { client.stopReminding() }
 

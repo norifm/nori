@@ -250,6 +250,10 @@ of this; Android's `PlaybackService` calls the same functions.
   once music starts or the player shows its song, and hands it over once when taken up or turned down
   (`HomeOffer` for Android). On the host `Handle::queue_offer` asks against what the player shows, and
   `Handle::queue_offer_closed` marks it done and, taken, plays it from its song and place.
+- **Adding a profile and signing its account in**: `providers::flow`: `AddFlow` is the pages of adding
+  one, `SignInFlow` the sign-in shown, one dialog at a time; `Client::sign_in_due` says what follows a
+  profile opening or its account changing, the offer again after the provider ended the session included
+  ([Providers](providers.md)).
 - **A favorite**: `Client::star` marks it at once and puts the old mark back if the server refuses.
 - **Fetching ahead**: `Client::precache_targets` names the songs after the next (the `songs_ahead_wifi`
   and `songs_ahead_mobile` settings; never a provider's song). The engine fetches them whole, one after

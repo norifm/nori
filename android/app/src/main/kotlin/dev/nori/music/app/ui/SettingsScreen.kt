@@ -414,7 +414,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
             "downloads" -> nav.downloads()
             // Asks first whether the beat model reads them too, as Download does.
             "analyse-downloads" -> actions?.analyseDownloads()
-            "add-server" -> editing = vm.newProfile()
+            "add-server" -> { vm.openLogin(null); editing = vm.newProfile() }
             "backup" -> saveBackup.launch(dev.nori.music.ffi.backup.backupFileName())
             "restore" -> openBackup.launch(arrayOf("*/*"))
             // A page of its own inside this one (the lyrics sources), as the row names it.
@@ -488,7 +488,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                         }
                         // A jam guest switches between the profiles; changing them is not its to do.
                         if (dev.nori.music.ffi.settings.SettingsPart.SERVER_OPTIONS in LocalRules.current.settings) {
-                            TextAction(say.edit, { editing = p.servers.firstOrNull { it.id == row.id } })
+                            TextAction(say.edit, { editing = p.servers.firstOrNull { it.id == row.id }?.also(vm::openLogin) })
                             TextAction(say.remove, { vm.removeServer(row.id) }, destructive = true)
                         }
                     }

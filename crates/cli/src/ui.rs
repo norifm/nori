@@ -1822,7 +1822,7 @@ fn provider_choice(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     hits.push((pr, Hit::Button(Button::LoginPlugins)));
     y += 2;
     let keys = if servers > 0 { crate::text::PROVIDER_SAVED_KEYS } else { crate::text::PROVIDER_KEYS };
-    let msg = match &login.error {
+    let msg = match login.flow.failure().map(crate::text::add_failure) {
         Some(e) => Span::styled(format!("  {e}"), Style::default().fg(Color::LightRed)),
         None => Span::styled(format!("  {keys}"), t.dim()),
     };
@@ -1874,7 +1874,7 @@ fn sign_in_form(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         y += 2;
     }
     let sign_in = format!(" {} ", crate::text::provider_sign_in(&name));
-    let button = if l.busy { " Connecting… " } else if account { sign_in.as_str() } else { " Connect " };
+    let button = if l.flow.busy() { " Connecting… " } else if account { sign_in.as_str() } else { " Connect " };
     let br = Rect { x: inner.x + if account { 2 } else { 18 }, y, width: button.width() as u16, height: 1 };
     put(f, Paragraph::new(Span::styled(button, t.select(true))), br);
     app.hits.push((br, Hit::Button(if account { Button::LoginSignIn } else { Button::Connect })));
@@ -1885,7 +1885,7 @@ fn sign_in_form(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         app.hits.push((gr, Hit::Button(Button::LoginGuest)));
     }
     y += 2;
-    let msg = match &l.error {
+    let msg = match l.flow.failure().map(crate::text::add_failure) {
         Some(e) => Span::styled(format!("  {e}"), Style::default().fg(Color::LightRed)),
         None => Span::styled(format!("  {}", if account { crate::text::ACCOUNT_KEYS } else { crate::text::LOGIN_KEYS }), t.dim()),
     };
@@ -1989,7 +1989,9 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             ];
             put(f, Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner });
         }
-        Overlay::Account { kind, user, ended, pasting, text: typed, error, busy } => {
+        Overlay::Account { kind, user, pasting, text: typed, flow, window_failed } => {
+            let ended = flow.shown == (nori_core::providers::flow::SignInShown::Offered { ended: true });
+            let busy = flow.busy();
             let w = 76.min(area.width);
             let iw = w.saturating_sub(4).max(1) as usize;
             let name = crate::text::provider_of(kinds, kind).name;
@@ -2004,12 +2006,17 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
                 let dots = "•".repeat(typed.chars().count().min(iw.saturating_sub(1)));
                 said.push((format!("{dots}▏"), Style::default().fg(t.ink)));
             } else {
-                let why = if *busy { crate::text::SIGNING_IN.into() } else if *ended { crate::text::signed_out_again(&name) } else { crate::text::SIGN_IN_WHY.into() };
+                let why = if busy { crate::text::SIGNING_IN.into() } else if ended { crate::text::signed_out_again(&name) } else { crate::text::SIGN_IN_WHY.into() };
                 said.push((why, Style::default().fg(t.ink)));
-                said.push(((if *ended { crate::text::SIGN_IN_KEYS_ENDED } else { crate::text::SIGN_IN_KEYS }).into(), t.dim()));
+                said.push(((if ended { crate::text::SIGN_IN_KEYS_ENDED } else { crate::text::SIGN_IN_KEYS }).into(), t.dim()));
             }
+            let error = match &flow.attempt {
+                _ if *window_failed => Some(crate::text::SIGN_IN_WINDOW_FAILED.to_string()),
+                nori_core::providers::flow::SignInAttempt::Failed { result } => Some(crate::text::sign_in(&name, result)),
+                _ => None,
+            };
             if let Some(e) = error {
-                said.push((e.clone(), Style::default().fg(Color::LightRed)));
+                said.push((e, Style::default().fg(Color::LightRed)));
             }
             let rows: usize = said.iter().map(|(l, _)| l.chars().count().div_ceil(iw).max(1)).sum::<usize>() + said.len() - 1;
             let r = centred(area, w, rows as u16 + 3);

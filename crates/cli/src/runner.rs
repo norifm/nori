@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use nori_core::remote::wire::Op;
-use nori_core::providers::{AfterAdding, SignInStep};
+use nori_core::providers::flow::{AddDo, AddEvent, SignInEvent};
+use nori_core::providers::AfterAdding;
 use nori_core::remote::JamStart;
 use nori_core::settings::SavedServer;
 use nori_host::player::{Playback, QueueShown};
@@ -281,16 +282,11 @@ impl Runner {
                 app.retheme();
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
                 app.output = self.o.device.clone().or_else(|| own::text(own::DEVICE)).unwrap_or_default();
-                match self.session.as_ref().and_then(|s| s.client.sign_in_step(added)) {
-                    Some(SignInStep::Offer) => self.offer_sign_in(app),
-                    Some(SignInStep::Open) => {
-                        self.offer_sign_in(app);
+                match self.session.as_ref().and_then(|s| s.client.sign_in_due(added)) {
+                    Some(offer @ SignInEvent::Offer { .. }) => self.offer_sign_in(app, offer),
+                    Some(_) => {
+                        self.offer_sign_in(app, SignInEvent::Offer { ended: false });
                         self.carry(app, Cmd::SignInWindow);
-                    }
-                    Some(SignInStep::StopReminding) => {
-                        if let Some(s) = &self.session {
-                            s.client.stop_reminding();
-                        }
                     }
                     None => {}
                 }
@@ -299,9 +295,9 @@ impl Runner {
                 self.update_plugins();
                 self.plugin(app, crate::app::PluginCmd::Read);
             }
-            Err(e) => {
+            Err(said) => {
                 app.session_ended();
-                app.login.error = Some(e);
+                app.login.flow.on(AddEvent::Unopened { said });
             }
         }
     }
@@ -359,21 +355,22 @@ impl Runner {
         let Some(state) = s.account_changed() else { return };
         app.rules = s.rules();
         app.dirty = true;
-        if state == nori_core::providers::AccountState::Ended {
-            self.offer_sign_in(app);
+        if let Some(offer) = s.client.sign_in_due(None).filter(|_| state == nori_core::providers::AccountState::Ended) {
+            self.offer_sign_in(app, offer);
         }
     }
 
-    /// The account sheet over the profile in use, as its provider has the account.
-    fn offer_sign_in(&self, app: &mut App) {
-        let Some(s) = &self.session else { return };
+    /// The account sheet over the profile in use, as its provider has the account, opened by `offer`.
+    fn offer_sign_in(&self, app: &mut App, offer: SignInEvent) {
         let Some(profile) = crate::backend::app().settings.current().and_then(|p| p.active_server().cloned()) else { return };
         if !app.settings.own.kinds.providers().iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
             return;
         }
-        let ended = s.client.account() == nori_core::providers::AccountState::Ended;
+        let mut flow = nori_core::providers::flow::SignInFlow::default();
+        flow.on(offer);
+        let ended = flow.shown == (nori_core::providers::flow::SignInShown::Offered { ended: true });
         let user = if ended { String::new() } else { profile.user };
-        app.overlay = Some(crate::app::Overlay::Account { kind: profile.kind, user, ended, pasting: false, text: String::new(), error: None, busy: false });
+        app.overlay = Some(crate::app::Overlay::Account { kind: profile.kind, user, pasting: false, text: String::new(), flow, window_failed: false });
         app.dirty = true;
     }
 
@@ -598,7 +595,10 @@ impl Runner {
                 return app.say(said.clone(), false);
             }
             Msg::LoggedIn(Ok(p)) => {
-                let added = app.login.after;
+                let added = match app.login.flow.on(AddEvent::Accepted) {
+                    AddDo::Open { added } => added,
+                    _ => None,
+                };
                 prefs_changed(app);
                 self.open(app, p.clone(), added);
                 app.go(View::Home);
@@ -780,7 +780,10 @@ impl Runner {
                 app.say(if on { "Covers on (from the next song; restart to fetch covers again)" } else { "Covers off" }, false);
                 return;
             }
-            Cmd::OfferSignIn => return self.offer_sign_in(app),
+            Cmd::OfferSignIn => {
+                let Some(offer) = self.session.as_ref().map(|s| s.client.sign_in_offer()) else { return };
+                return self.offer_sign_in(app, offer);
+            }
             Cmd::Plugin(c) => return self.plugin(app, c),
             Cmd::Backup { restore: false, path, password } => {
                 let tx = self.tx.clone();
@@ -795,7 +798,7 @@ impl Runner {
                 });
             }
             Cmd::SignInWindow => {
-                let (Some(s), Some(crate::app::Overlay::Account { kind, pasting, error, busy, .. })) = (&self.session, &mut app.overlay) else { return };
+                let (Some(s), Some(crate::app::Overlay::Account { kind, pasting, flow, window_failed, .. })) = (&self.session, &mut app.overlay) else { return };
                 #[cfg(feature = "sign-in-window")]
                 {
                     if self.sign_in_window.as_mut().is_some_and(|w| w.open_now()) {
@@ -807,13 +810,15 @@ impl Runner {
                         let _ = tx.send(Msg::SignedIn(h.sign_in(cookies)));
                     });
                     if self.sign_in_window.is_some() {
+                        // Its cookies are the answer: one is on its way (already so when a key opened it).
+                        flow.on(SignInEvent::Sent);
                         return;
                     }
                 }
                 let _ = (s, kind);
                 *pasting = true;
-                *busy = false;
-                *error = Some(crate::text::SIGN_IN_WINDOW_FAILED.into());
+                flow.on(SignInEvent::Unsent);
+                *window_failed = true;
                 return;
             }
             Cmd::SignIn(cookies) => {

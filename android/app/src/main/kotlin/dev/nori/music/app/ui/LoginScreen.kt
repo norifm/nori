@@ -34,9 +34,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.nori.music.app.vm.LoginUi
 import dev.nori.music.app.vm.SettingsViewModel
-import dev.nori.music.app.vm.SignInFlow
 import dev.nori.music.ffi.AccountState
 import dev.nori.music.ffi.FormField as Field
 import dev.nori.music.ffi.ProviderInfo
@@ -89,7 +87,7 @@ private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, signed: (Stri
         Text(words.pasteHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FormField(answer, { answer = it }, label = { Text(words.pasteLabel) }, minLines = 3, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth().testTag("pasted"))
         // The sign-in page shows its own failures.
-        ui.failed?.takeIf { ui.flow !is SignInFlow.Page }?.let { Text(say.signIn(words, it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("sign-in-failed")) }
+        ui.failed?.takeIf { ui.flow.shown !is dev.nori.music.ffi.SignInShown.Page }?.let { Text(say.signIn(words, it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("sign-in-failed")) }
         PillButton(
             if (ui.busy) say.connecting else say.signInAction, null, { vm.signIn(answer) },
             Modifier.fillMaxWidth().testTag("sign-in"), enabled = !ui.busy && answer.isNotBlank(),
@@ -122,7 +120,7 @@ private fun Check(title: String, detail: String, value: Boolean, onChange: (Bool
  */
 @Composable
 fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: (() -> Unit)? = null) {
-    val ui by vm.login.collectAsStateWithLifecycle()
+    val add by vm.add.collectAsStateWithLifecycle()
     var p by remember { mutableStateOf(initial ?: vm.newProfile()) }
     val adding = remember { initial == null || vm.prefs.value.servers.none { it.id == initial.id } }
     val providers by vm.providers.collectAsStateWithLifecycle()
@@ -132,7 +130,10 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
     var headers by remember { mutableStateOf(dev.nori.music.ffi.settings.serverHeadersText(p.headers)) }
     var certPassword by remember { mutableStateOf("") }
     val pickCert = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) p = vm.importClientCert(p, uri, certPassword) }
-    LaunchedEffect(ui) { if (ui == LoginUi.Done) { vm.clearLoginResult(); onClose?.invoke() } }
+    LaunchedEffect(vm) { vm.added.collect { onClose?.invoke() } }
+    // Gone, the next form starts afresh (the core's `AddFlow`).
+    androidx.compose.runtime.DisposableEffect(vm) { onDispose { vm.addOn(dev.nori.music.ffi.AddEvent.Start) } }
+    val busy = add.send is dev.nori.music.ffi.AddSend.Sending
 
     // Reading the form - the headers typed, the addresses trimmed, whether it can be sent, the schemes
     // offered for an address typed without one - is the core's (settings.rs, providers).
@@ -169,25 +170,21 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
         }
     }
 
-    // A new profile starts by choosing what it plays from; back from its form chooses again.
-    var choosing by remember { mutableStateOf(adding) }
-    androidx.activity.compose.BackHandler(adding && !choosing) { choosing = true }
-    if (choosing) {
-        ProviderChoice(vm, onClose) { kind -> p = p.copy(kind = kind); choosing = false }
+    // A new profile starts by choosing what it plays from; back from its form chooses again. One with
+    // nothing to ask is added as soon as it's chosen, its page showing only a failure (the core's `AddFlow`).
+    val page = add.page
+    androidx.activity.compose.BackHandler(adding && page is dev.nori.music.ffi.AddPage.Provider) { vm.addOn(dev.nori.music.ffi.AddEvent.Back) }
+    if (adding && page !is dev.nori.music.ffi.AddPage.Provider) {
+        ProviderChoice(vm, onClose) { kind ->
+            p = p.copy(kind = kind)
+            vm.chooseKind(kind) { dev.nori.music.ffi.settings.serverFromForm(p, headers) }
+        }
         return
     }
-    // Nothing to ask: an account's provider offers signing in or going on as a guest, and one with no
-    // account is added as soon as it's chosen, its page showing only a failure.
-    val step = info?.takeIf { adding }?.let { dev.nori.music.ffi.providerFirstStep(it) } ?: dev.nori.music.ffi.FirstStep.FORM
+    // Nothing to ask: an account's provider offers signing in or going on as a guest.
+    val step = (page as? dev.nori.music.ffi.AddPage.Provider)?.step ?: dev.nori.music.ffi.FirstStep.FORM
     val asksNothing = step != dev.nori.music.ffi.FirstStep.FORM
     val signsIn = step == dev.nori.music.ffi.FirstStep.ACCOUNT
-    var added by remember(p.kind) { mutableStateOf(false) }
-    LaunchedEffect(info, ready) {
-        if (asksNothing && !signsIn && !added && ready) {
-            added = true
-            vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers))
-        }
-    }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), Arrangement.spacedBy(12.dp)) {
             Text(
@@ -196,22 +193,22 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
             )
             if (adding && words.hint.isNotEmpty()) Text(words.hint, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (!asksNothing) info?.fields?.filter { !it.advanced }?.forEach { Ask(it.what) }
-            (ui as? LoginUi.Failed)?.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            (add.send as? dev.nori.music.ffi.AddSend.Failed)?.why?.let { Text(say.addFailure(it), color = MaterialTheme.colorScheme.error) }
             if (signsIn) {
                 PillButton(
-                    if ((ui == LoginUi.Busy)) say.connecting else words.account.pageButton, null,
+                    if (busy) say.connecting else words.account.pageButton, null,
                     { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.SIGN_IN) },
-                    Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect-sign-in"), prominent = true, enabled = !(ui == LoginUi.Busy) && ready,
+                    Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect-sign-in"), prominent = true, enabled = !busy && ready,
                 )
                 PillButton(
                     say.providerGuest, null, { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.GUEST) },
-                    Modifier.fillMaxWidth().testTag("connect-guest"), enabled = !(ui == LoginUi.Busy) && ready,
+                    Modifier.fillMaxWidth().testTag("connect-guest"), enabled = !busy && ready,
                 )
             } else PillButton(
-                if ((ui == LoginUi.Busy)) say.connecting else if (adding) words.add else say.save, null,
+                if (busy) say.connecting else if (adding) words.add else say.save, null,
                 { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers)) },
                 Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect"), prominent = true,
-                enabled = !(ui == LoginUi.Busy) && ready,
+                enabled = !busy && ready,
             )
             // Signing in is the profile in use's: its core asks the provider.
             if (info != null && info.signIn.isNotEmpty() && !adding && p.id == vm.prefs.value.activeServerId) AccountPart(vm, info) { name -> p = p.copy(user = name) }
@@ -237,20 +234,22 @@ private fun ProviderChoice(vm: SettingsViewModel, onClose: (() -> Unit)?, choose
     val offers by plugins.providerOffers.collectAsStateWithLifecycle()
     val cards by plugins.cards.collectAsStateWithLifecycle()
     var more by remember { mutableStateOf(false) }
-    var offered by remember { mutableStateOf<String?>(null) }
+    // The page of a plugin a repo offers, open to install it (the core's `AddPage::Offered`).
+    val offered = (vm.add.collectAsStateWithLifecycle().value.page as? dev.nori.music.ffi.AddPage.Offered)?.plugin
     val allOff = vm.prefs.collectAsStateWithLifecycle().value.pluginsOff
     LaunchedEffect(Unit) { plugins.loadOffers() }
     // Installed from its page, it goes on and its form opens.
     LaunchedEffect(cards, offered) {
         val id = offered ?: return@LaunchedEffect
-        if (cards.any { it.id == id }) { plugins.turn(id, true); offered = null; choose(ServerKind.Plugin(id)) }
+        if (cards.any { it.id == id }) { plugins.turn(id, true); choose(ServerKind.Plugin(id)) }
     }
     NoriDialog(more, { more = false }, DialogStyle.Page) {
         Surface(Modifier.fillMaxSize()) { Column(Modifier.systemBarsPadding()) { PluginsPages(plugins, vm) } }
     }
-    NoriDialog(offered != null, { offered = null }, DialogStyle.Page) {
+    val back = { vm.addOn(dev.nori.music.ffi.AddEvent.Back); Unit }
+    NoriDialog(offered != null, back, DialogStyle.Page) {
         Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.systemBarsPadding()) { offered?.let { PluginPage(plugins, vm, it) { offered = null } } }
+            Column(Modifier.systemBarsPadding()) { offered?.let { PluginPage(plugins, vm, it, back) } }
         }
     }
     Surface(Modifier.fillMaxSize()) {
@@ -273,7 +272,7 @@ private fun ProviderChoice(vm: SettingsViewModel, onClose: (() -> Unit)?, choose
                             // With every plugin off none could run: it leads to the switch.
                             allOff -> more = true
                             cards.any { it.id == o.id } -> { plugins.turn(o.id, true); choose(ServerKind.Plugin(o.id)) }
-                            else -> offered = o.id
+                            else -> vm.addOn(dev.nori.music.ffi.AddEvent.OfferOpened(o.id))
                         }
                     }
                 }

@@ -849,6 +849,14 @@ pub fn sign_in_failed(r: &nori_core::providers::SignInResult) -> String {
     }
 }
 
+/// Why a profile was not added: the form's gap, or the refusal as worded when it came.
+pub fn add_failure(f: &nori_core::providers::flow::AddFailure) -> &str {
+    match f {
+        nori_core::providers::flow::AddFailure::Missing => "The server's address and a user name, please.",
+        nori_core::providers::flow::AddFailure::Refused { said } => said,
+    }
+}
+
 pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window could not open here. Paste cookies from a browser instead.";
 
 /// A song's title as shown: "Untitled" for one that has none (some uploads have a blank one).

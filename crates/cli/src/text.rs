@@ -45,6 +45,14 @@ pub fn sign_in(name: &str, r: &SignInResult) -> String {
 
 pub const INSTALL_FROM_FILE: &str = "Install from a file";
 pub const LOGIN_MISSING: &str = "Fill in what's asked first";
+
+/// Why a profile was not added: the form's gap, or the refusal as worded when it came.
+pub fn add_failure(f: &nori_core::providers::flow::AddFailure) -> &str {
+    match f {
+        nori_core::providers::flow::AddFailure::Missing => LOGIN_MISSING,
+        nori_core::providers::flow::AddFailure::Refused { said } => said,
+    }
+}
 pub const LOGIN_KEYS: &str = "tab next field · enter connect · esc choose again";
 pub const PROVIDER_CHOOSE: &str = "Choose a provider";
 pub const CONTINUE_AS_GUEST: &str = "Continue as guest";

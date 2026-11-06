@@ -6009,6 +6009,8 @@ export component AppWindow inherits Window {
     // The source ended the session: the sheet can be asked not to come back at start.
     in property <bool> signin-ended;
     callback sign-in-quiet();
+    // The sheet closed with its scrim or Close.
+    callback signin-closed();
     in-out property <string> join-link;
     in property <string> join-error;
     in property <bool> join-busy;
@@ -8972,7 +8974,7 @@ export component AppWindow inherits Window {
         if root.signin-open: Rectangle {
             background: Theme.ground.with-alpha(0.6);
             TouchArea {
-                clicked => { root.signin-open = false; }
+                clicked => { root.signin-closed(); }
             }
             MenuSheet {
                 x: (parent.width - self.width) / 2;
@@ -9073,7 +9075,7 @@ export component AppWindow inherits Window {
                         }
                         SmallButton {
                             text: "Close";
-                            clicked => { root.signin-open = false; }
+                            clicked => { root.signin-closed(); }
                         }
                     }
                 }

@@ -417,6 +417,11 @@ class Say(private val r: Resources) {
     val user: String = r.getString(R.string.user)
     val password: String = r.getString(R.string.password)
     val connecting: String = r.getString(R.string.connecting)
+    /** Why a profile was not added: the form's gap, or the refusal as worded when it came. */
+    fun addFailure(f: dev.nori.music.ffi.AddFailure): String = when (f) {
+        dev.nori.music.ffi.AddFailure.Missing -> r.getString(R.string.login_missing)
+        is dev.nori.music.ffi.AddFailure.Refused -> f.said
+    }
     val connect: String = r.getString(R.string.connect)
     val hideAdvanced: String = r.getString(R.string.hide_advanced)
     val advanced: String = r.getString(R.string.advanced)

@@ -31,7 +31,8 @@ use nori_host::player::{Playback, QueueShown};
 use crate::settings::{Act, Target};
 use crate::sung::Part;
 use crate::words;
-use nori_core::providers::{AfterAdding, SignInStep};
+use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, AddPage, SignInEvent, SignInFlow, SignInShown};
+use nori_core::providers::AfterAdding;
 
 use crate::{AppWindow, ArtistLink, Card, Credits, Detail, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, Shelf, SongGo, SongRow, TopBar, View};
 
@@ -496,8 +497,10 @@ pub struct App {
     plugged: crate::settings::Plugged,
     /// The plugin its install sheet shows.
     preview: Option<nori_plugins::PluginPreview>,
-    /// The kind of profile the sign-in form adds.
-    login_kind: nori_core::settings::ServerKind,
+    /// The page adding a profile shows and the profile on its way (the core's).
+    add: AddFlow,
+    /// The account sheet and the last sign-in (the core's).
+    sign_in: SignInFlow,
     /// The plugins' menu actions by `Card::kind` ([`MENU_KINDS`]).
     plugin_menus: [Vec<nori_plugins::MenuEntry>; 4],
     /// The song whose details are shown, for the plugins' lines that come after.
@@ -739,7 +742,8 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             facts: crate::settings::Facts::default(),
             plugged: Default::default(),
             preview: None,
-            login_kind: nori_core::settings::ServerKind::Subsonic,
+            add: AddFlow::default(),
+            sign_in: SignInFlow::default(),
             plugin_menus: Default::default(),
             details_song: None,
             sleeve: None,
@@ -899,10 +903,9 @@ fn open_in_browser(url: &str) {
 }
 
 /// A kind of profile as its page shows it: `about`, the plugin's own words, in place of the note.
-fn login_form(kinds: &nori_core::providers::Kinds, info: &nori_core::providers::ProviderInfo, about: Option<&str>, adding: bool) -> LoginKind {
+fn login_form(kinds: &nori_core::providers::Kinds, info: &nori_core::providers::ProviderInfo, about: Option<&str>, step: nori_core::providers::FirstStep) -> LoginKind {
     use nori_core::providers::{FirstStep, FormField};
     let w = words::provider_of(kinds, &info.kind);
-    let step = if adding { info.first_step() } else { FirstStep::Form };
     let asks = |what| step == FirstStep::Form && info.fields.iter().any(|f| f.what == what && !f.advanced);
     let account = step == FirstStep::Account;
     LoginKind {
@@ -1071,6 +1074,9 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_sign_in_window, h, |a| a.sign_in_window());
     on!(ui.on_sign_out, h, |a| a.sign_out());
     on!(ui.on_sign_in_quiet, h, |a| a.sign_in_quiet());
+    on!(ui.on_signin_closed, h, |a| {
+        a.sign_in_on(SignInEvent::Close);
+    });
     on!(ui.on_open_sign_in_page, h, |a| a.open_sign_in_page());
     on!(jam.on_listen, h, |a, on| {
         if let Some(r) = a.session.as_ref().and_then(|s| s.remote()) {
@@ -1306,13 +1312,12 @@ impl App {
                 self.follow();
                 self.jam_shown();
                 self.go(View::Home);
-                match self.session.as_ref().and_then(|s| s.client.sign_in_step(added)) {
-                    Some(SignInStep::Offer) => self.offer_sign_in(),
-                    Some(SignInStep::Open) => {
-                        self.offer_sign_in();
+                match self.session.as_ref().and_then(|s| s.client.sign_in_due(added)) {
+                    Some(offer @ SignInEvent::Offer { .. }) => self.offer_sign_in(offer),
+                    Some(_) => {
+                        self.offer_sign_in(SignInEvent::Offer { ended: false });
                         self.sign_in_window();
                     }
-                    Some(SignInStep::StopReminding) => self.on_session(|s| s.client.stop_reminding()),
                     None => {}
                 }
                 if !self.account() {
@@ -1320,36 +1325,52 @@ impl App {
                     ui.set_inspector(Panel::Queue);
                 }
             }
-            Err(e) => {
+            Err(said) => {
                 self.choose_provider();
-                ui.set_login_error(e.into());
+                self.add_on(AddEvent::Unopened { said });
             }
         }
     }
 
     fn login(&mut self, after: AfterAdding) {
         let ui = self.ui();
-        let Some(info) = self.kinds().providers().into_iter().find(|i| i.kind == self.login_kind) else { return };
+        let Some(info) = self.add.kind().and_then(|k| self.kinds().providers().into_iter().find(|i| i.kind == *k)) else { return };
         let form = [ui.get_login_name(), ui.get_login_url(), ui.get_login_user(), ui.get_login_password()].map(|t| t.to_string());
         let draft = login_draft(&info, self.editing.clone(), form);
-        if !self.kinds().server_ready(draft.clone()) {
-            return self.login_failed("The server's address and a user name, please.");
-        }
+        let ready = self.kinds().server_ready(draft.clone());
         let prefs = crate::session::app().settings.current().unwrap_or_default();
         let list = nori_core::settings::ServerList { servers: prefs.servers, active_server_id: prefs.active_server_id };
         let added = self.kinds().adds_profile(list, draft.clone()).then_some(after);
-        ui.set_login_busy(true);
-        ui.set_login_error("".into());
-        let (data, http, tx) = (self.data.clone(), self.http.clone(), self.tx.clone());
-        std::thread::spawn(move || tx.send(Msg::LoggedIn(session::check_login(&data, http, draft), added)));
+        if let AddDo::Send { .. } = self.add_on(AddEvent::Send { ready, added }) {
+            let (data, http, tx) = (self.data.clone(), self.http.clone(), self.tx.clone());
+            std::thread::spawn(move || tx.send(Msg::LoggedIn(session::check_login(&data, http, draft))));
+        }
     }
 
-    /// Adding failed: the page of the kind, with why.
-    fn login_failed(&mut self, why: &str) {
+    /// Takes `event` on the pages of adding a profile and shows where that leaves them.
+    fn add_on(&mut self, event: AddEvent) -> AddDo {
+        let then = self.add.on(event);
         let ui = self.ui();
-        ui.set_login_error(why.into());
-        ui.set_login_choosing(false);
-        self.plugged.choosing = false;
+        ui.set_login_choosing(self.add.choosing());
+        ui.set_login_busy(self.add.busy());
+        ui.set_login_error(self.add.failure().map_or("", words::add_failure).into());
+        self.plugged.choosing = self.add.choosing() && ui.get_view() == View::Login;
+        then
+    }
+
+    /// Takes `event` on the account sheet and shows where that leaves it; false for an answer not to send.
+    fn sign_in_on(&mut self, event: SignInEvent) -> bool {
+        let send = self.sign_in.on(event);
+        let ui = self.ui();
+        ui.set_signin_open(self.sign_in.shown != SignInShown::Closed);
+        ui.set_signin_busy(self.sign_in.busy());
+        ui.set_signin_ended(self.sign_in.shown == SignInShown::Offered { ended: true });
+        let error = match &self.sign_in.attempt {
+            nori_core::providers::flow::SignInAttempt::Failed { result } => words::sign_in_failed(result),
+            _ => String::new(),
+        };
+        ui.set_signin_error(error.into());
+        send
     }
 
     fn go(&mut self, view: View) {
@@ -1374,7 +1395,6 @@ impl App {
         self.want.clear();
         if view == View::Login {
             ui.set_can_cancel_login(self.session.is_some());
-            ui.set_login_error("".into());
             ui.set_view(View::Login);
             return;
         }
@@ -2652,7 +2672,7 @@ impl App {
     /// Flips `s`'s heart, once: through the device playing while it has the song, else here.
     fn star(&mut self, s: &Song) {
         if self.session.as_ref().is_some_and(|x| !x.rules().stars && x.rules().stars_after_sign_in) {
-            return self.offer_sign_in();
+            return self.ask_sign_in();
         }
         let on = !self.starred(s);
         self.on_session(|x| x.star_song(s.id.clone(), on, self.there()));
@@ -2694,13 +2714,10 @@ impl App {
     /// Joins the jam `link` invites to, as a guest profile of its own.
     /// Signs the account of the profile in use in with cookies pasted from a browser.
     fn sign_in(&mut self, answer: String) {
-        let Some(s) = &self.session else { return };
-        let ui = self.ui();
-        if answer.trim().is_empty() || ui.get_signin_busy() {
+        if self.session.is_none() || answer.trim().is_empty() || !self.sign_in_on(SignInEvent::Sent) {
             return;
         }
-        ui.set_signin_busy(true);
-        ui.set_signin_error("".into());
+        let Some(s) = &self.session else { return };
         let (h, tx) = ((***s).clone(), self.tx.clone());
         nori_host::spawn("nori-sign-in", move || tx.send(Msg::SignedIn(h.sign_in(answer))));
     }
@@ -2714,14 +2731,13 @@ impl App {
         let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
         let providers = self.kinds().providers();
         if id == prefs.active_server_id && providers.iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
-            return self.offer_sign_in();
+            return self.ask_sign_in();
         }
         let ui = self.ui();
         if let Some(info) = providers.iter().find(|i| i.kind == profile.kind).or(providers.first()) {
-            ui.set_login_form(login_form(self.kinds(), info, self.plugged.about_of(&info.kind), false));
-            self.login_kind = info.kind.clone();
+            ui.set_login_form(login_form(self.kinds(), info, self.plugged.about_of(&info.kind), nori_core::providers::FirstStep::Form));
+            self.add_on(AddEvent::Edit { kind: info.kind.clone() });
         }
-        ui.set_login_choosing(false);
         ui.set_login_adding(false);
         ui.set_login_name(profile.name.as_str().into());
         ui.set_login_url(profile.url.as_str().into());
@@ -2737,24 +2753,30 @@ impl App {
         let Some(s) = self.session.as_ref() else { return };
         let Some(state) = s.account_changed() else { return };
         let rules = s.rules();
+        let offer = s.client.sign_in_due(None);
         let ui = self.ui();
         ui.set_downloads(rules.downloads);
         ui.set_page_can_star(rules.account && rules.stars);
         ui.set_favorites_offered(rules.stars);
         match state {
-            nori_core::providers::AccountState::Ended => self.offer_sign_in(),
-            nori_core::providers::AccountState::SignedIn => ui.set_signin_open(false),
+            nori_core::providers::AccountState::Ended => {
+                if let Some(offer) = offer {
+                    self.offer_sign_in(offer);
+                }
+            }
+            nori_core::providers::AccountState::SignedIn => {
+                self.sign_in_on(SignInEvent::Close);
+            }
             nori_core::providers::AccountState::SignedOut => {}
         }
     }
 
     /// The first screen: what a new profile plays from.
     fn choose_provider(&mut self) {
-        self.plugged.choosing = true;
         let ui = self.ui();
         ui.set_provider_top(crate::settings::provider_top());
-        ui.set_login_choosing(true);
         self.go(View::Login);
+        self.add_on(AddEvent::Start);
         self.plugins_look();
         self.plugins_shown();
     }
@@ -2762,20 +2784,19 @@ impl App {
     /// `kind`'s page, or, with nothing to ask, the kind added at once from the first screen; a kind that
     /// can't be added now stays there.
     fn provider_chosen(&mut self, kind: nori_core::settings::ServerKind) {
-        let ui = self.ui();
-        if ui.get_login_busy() {
+        if self.add.busy() {
             return;
         }
         let Some(info) = self.kinds().providers().into_iter().find(|i| i.kind == kind) else { return };
-        ui.set_login_form(login_form(self.kinds(), &info, self.plugged.about_of(&kind), true));
+        let then = self.add_on(AddEvent::Chose { info: info.clone() });
+        // Asking nothing, its page shows only if adding it at once fails.
+        let step = self.add.step().unwrap_or(nori_core::providers::FirstStep::AddNow);
+        let ui = self.ui();
+        ui.set_login_form(login_form(self.kinds(), &info, self.plugged.about_of(&kind), step));
         ui.set_login_adding(true);
-        ui.set_login_error("".into());
-        self.login_kind = kind;
-        if info.first_step() == nori_core::providers::FirstStep::AddNow {
-            return self.login(AfterAdding::Remind);
+        if then == AddDo::Connect {
+            self.login(AfterAdding::Remind);
         }
-        ui.set_login_choosing(false);
-        self.plugged.choosing = false;
     }
 
     /// Turns on plugin `id`, chosen from the first screen, and opens its form.
@@ -2787,7 +2808,9 @@ impl App {
 
     /// Takes down the sheet over the first screen.
     fn close_plugins(&mut self) {
-        self.plugged.offered = None;
+        if let AddPage::Offered { .. } = self.add.page {
+            self.add_on(AddEvent::Back);
+        }
         self.plugged.stack.clear();
         self.ui().set_plugins_open(false);
         self.plugins_shown();
@@ -3098,12 +3121,18 @@ impl App {
             PluginAct::Browser => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Browser)),
             PluginAct::Repos => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Repos)),
             PluginAct::Page(id) => return self.plugin_pages(|s| s.push(crate::settings::PluginPage::Plugin(id))),
-            PluginAct::Back if self.plugged.back() => return self.close_plugins(),
-            PluginAct::Back => return self.plugin_pages(|_| {}),
+            PluginAct::Back => {
+                self.plugged.stack.pop();
+                // Back from the page of the plugin the first screen offered closes its sheet.
+                if self.plugged.stack.is_empty() && matches!(self.add.page, AddPage::Offered { .. }) {
+                    return self.close_plugins();
+                }
+                return self.plugin_pages(|_| {});
+            }
             PluginAct::Choose(kind) => return self.provider_chosen(kind),
             PluginAct::TurnOn(id) => return self.provider_turned_on(id),
             PluginAct::OfferPage(id) => {
-                self.plugged.offered = Some(id.clone());
+                self.add_on(AddEvent::OfferOpened { plugin: id.clone() });
                 self.ui().set_plugins_open(true);
                 return self.plugin_pages(|s| *s = vec![crate::settings::PluginPage::Plugin(id)]);
             }
@@ -3187,23 +3216,28 @@ impl App {
     }
 
     /// The ended session's sheet no longer comes back at start.
-    fn sign_in_quiet(&self) {
+    fn sign_in_quiet(&mut self) {
         self.on_session(|s| s.client.stop_reminding());
-        self.ui().set_signin_open(false);
+        self.sign_in_on(SignInEvent::Close);
     }
 
-    fn offer_sign_in(&mut self) {
-        use nori_core::providers::AccountState;
-        let ended = self.session.as_ref().is_some_and(|s| s.client.account() == AccountState::Ended);
+    /// The account sheet, as asked for: the account's row, a seal tapped while signed out.
+    fn ask_sign_in(&mut self) {
+        if let Some(offer) = self.session.as_ref().map(|s| s.client.sign_in_offer()) {
+            self.offer_sign_in(offer);
+        }
+    }
+
+    /// The account sheet, opened by `offer`.
+    fn offer_sign_in(&mut self, offer: SignInEvent) {
         let Some(profile) = crate::session::app().settings.current().and_then(|p| p.active_server().cloned()) else { return };
+        self.sign_in_on(offer);
+        let ended = self.sign_in.shown == SignInShown::Offered { ended: true };
         let user = if ended { String::new() } else { profile.user.clone() };
         let ui = self.ui();
         ui.set_signin_user(user.into());
         ui.set_signin_service(words::provider_of(self.kinds(), &profile.kind).name.into());
         ui.set_signin_pasting(false);
-        ui.set_signin_error("".into());
-        ui.set_signin_ended(ended);
-        ui.set_signin_open(true);
     }
 
     /// The provider's own sign-in page in a window of its own (this program again, `--sign-in`: the system's
@@ -3226,19 +3260,19 @@ impl App {
             Some(start) => nori_sign_in_window::SignInWindow::open_at(self.kinds().clone(), kind, title, start, done),
             None => nori_sign_in_window::SignInWindow::open(self.kinds().clone(), kind, title, done),
         };
-        let ui = self.ui();
         let Some(window) = window else {
+            let ui = self.ui();
             ui.set_signin_pasting(true);
             ui.set_signin_error(words::SIGN_IN_WINDOW_FAILED.into());
             return;
         };
-        ui.set_signin_busy(true);
+        self.sign_in_on(SignInEvent::Sent);
         self.sign_in_window = Some(window);
     }
 
     fn sign_out(&mut self) {
         self.on_session(|s| s.sign_out());
-        self.ui().set_signin_open(false);
+        self.sign_in_on(SignInEvent::SignedOut);
         self.reopen();
     }
 
@@ -3441,7 +3475,7 @@ impl App {
                 match r {
                     Ok(id) => {
                         self.say(words::PLUGIN_INSTALLED, false);
-                        if self.plugged.offered.as_ref() == Some(&id) {
+                        if self.add.page == (AddPage::Offered { plugin: id.clone() }) {
                             self.close_plugins();
                             self.provider_turned_on(id);
                         }
@@ -3451,7 +3485,7 @@ impl App {
             }
             // What it is and may reach, before it is installed.
             Msg::PluginPreview(Ok(p)) => {
-                self.confirm(&words::install_version(&p.card.name, &p.card.version), &words::preview_note(&p, self.plugged.offered.as_ref() == Some(&p.card.id) || !self.plugged.cards.iter().any(|c| c.id == p.card.id)).join("\n\n"), words::INSTALL, crate::settings::PluginAct::InstallPreview);
+                self.confirm(&words::install_version(&p.card.name, &p.card.version), &words::preview_note(&p, self.add.page == (AddPage::Offered { plugin: p.card.id.clone() }) || !self.plugged.cards.iter().any(|c| c.id == p.card.id)).join("\n\n"), words::INSTALL, crate::settings::PluginAct::InstallPreview);
                 self.preview = Some(p);
             }
             Msg::PluginPreview(Err(e)) => self.say(&words::plugin_refused(&e), true),
@@ -3552,40 +3586,34 @@ impl App {
             Msg::PluginSignIn { plugin, url } => self.sign_in_page(nori_core::settings::ServerKind::Plugin { id: plugin }, Some(url)),
             Msg::SignInWindowDone(pid, r) => {
                 self.sign_in_window.take_if(|w| w.id() == pid);
-                let ui = self.ui();
-                ui.set_signin_busy(false);
-                match r {
-                    nori_core::providers::SignInResult::SignedIn { .. } => {
-                        ui.set_signin_open(false);
-                        self.reopen();
-                    }
-                    failed => ui.set_signin_error(words::sign_in_failed(&failed).into()),
+                let signed_in = matches!(r, nori_core::providers::SignInResult::SignedIn { .. });
+                self.sign_in_on(SignInEvent::Answered { result: r });
+                if signed_in {
+                    self.reopen();
                 }
             }
             Msg::SignedIn(r) => {
-                let ui = self.ui();
-                ui.set_signin_busy(false);
-                match r {
-                    nori_core::providers::SignInResult::SignedIn { .. } => {
-                        ui.set_signin_open(false);
-                        ui.set_signin_text("".into());
-                        self.reopen();
-                    }
-                    failed => ui.set_signin_error(words::sign_in_failed(&failed).into()),
+                let signed_in = matches!(r, nori_core::providers::SignInResult::SignedIn { .. });
+                self.sign_in_on(SignInEvent::Answered { result: r });
+                if signed_in {
+                    self.ui().set_signin_text("".into());
+                    self.reopen();
                 }
             }
-            Msg::LoggedIn(r, added) => {
-                let ui = self.ui();
-                ui.set_login_busy(false);
-                match r {
-                    Ok(p) => {
-                        self.editing = None;
-                        ui.set_login_password("".into());
-                        self.open(p, added);
-                    }
-                    Err(e) => self.login_failed(&e),
+            Msg::LoggedIn(r) => match r {
+                Ok(p) => {
+                    let added = match self.add_on(AddEvent::Accepted) {
+                        AddDo::Open { added } => added,
+                        _ => None,
+                    };
+                    self.editing = None;
+                    self.ui().set_login_password("".into());
+                    self.open(p, added);
                 }
-            }
+                Err(said) => {
+                    self.add_on(AddEvent::Refused { said });
+                }
+            },
         }
     }
 
@@ -5777,9 +5805,9 @@ mod tests {
         use nori_core::settings::ServerKind;
         let info = |fields, sign_in| ProviderInfo { kind: ServerKind::Plugin { id: "a.b".into() }, fields, sign_in };
         let web = || vec![SignIn::WebPage { start_url: "https://a.example".into() }];
-        let page = login_form(&Kinds::builtin(), &info(Vec::new(), web()), Some("Music from A"), true);
+        let page = login_form(&Kinds::builtin(), &info(Vec::new(), web()), Some("Music from A"), nori_core::providers::FirstStep::Account);
         assert_eq!((page.guest.as_str(), page.sign_in.as_str(), page.note.as_str()), (words::CONTINUE_AS_GUEST, "Sign in to a.b", "Music from A"));
-        let form = login_form(&Kinds::builtin(), &info(vec![FieldSpec { what: FormField::Address, advanced: false }], web()), None, true);
+        let form = login_form(&Kinds::builtin(), &info(vec![FieldSpec { what: FormField::Address, advanced: false }], web()), None, nori_core::providers::FirstStep::Form);
         assert_eq!((form.guest.as_str(), form.asks_address, form.name.as_str()), ("", true, "a.b"), "titled with the provider");
     }
 

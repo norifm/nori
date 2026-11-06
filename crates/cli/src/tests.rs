@@ -935,7 +935,9 @@ fn a_signed_out_like_says_where_to_sign_in() {
 }
 
 fn account(user: &str, ended: bool) -> Overlay {
-    Overlay::Account { kind: nori_core::settings::ServerKind::Plugin { id: "dev.example.music".into() }, user: user.into(), ended, pasting: false, text: String::new(), error: None, busy: false }
+    let mut flow = nori_core::providers::flow::SignInFlow::default();
+    flow.on(nori_core::providers::flow::SignInEvent::Offer { ended });
+    Overlay::Account { kind: nori_core::settings::ServerKind::Plugin { id: "dev.example.music".into() }, user: user.into(), pasting: false, text: String::new(), flow, window_failed: false }
 }
 
 /// The account sheet signs in with the provider's page, or with cookies pasted; an ended session's can
@@ -947,7 +949,7 @@ fn the_account_sheet_signs_in_and_out() {
     let s = draw(&mut a, 100, 30);
     assert!(s.contains("Sign in to dev.example.music") && s.contains("dev.example.music signed you out") && s.contains("don't show again"), "{s}");
     key(&mut a, KeyCode::Enter);
-    assert!(matches!(a.cmds.last(), Some(Cmd::SignInWindow)) && matches!(a.overlay, Some(Overlay::Account { busy: true, .. })));
+    assert!(matches!(a.cmds.last(), Some(Cmd::SignInWindow)) && matches!(&a.overlay, Some(Overlay::Account { flow, .. }) if flow.busy()));
     key(&mut a, KeyCode::Char('p'));
     assert!(matches!(a.overlay, Some(Overlay::Account { pasting: false, .. })), "no keys while the window is open");
     a.handle(Msg::SignedIn(nori_core::providers::SignInResult::Refused));
@@ -2717,15 +2719,15 @@ fn the_kind_chosen_reaches_its_form() {
     assert!(s.contains("Choose a provider") && s.contains("OpenSubsonic") && s.contains("Navidrome and other servers") && s.contains("Test") && !s.contains("Server address"), "{s}");
     key(&mut a, KeyCode::Down);
     key(&mut a, KeyCode::Enter);
-    assert_eq!(a.login.page.kind(), Some(&ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() }));
+    assert_eq!(a.login.flow.kind(), Some(&ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() }));
     let s = draw(&mut a, 100, 40);
     dump("login-plugin-kind", &s);
     assert!(s.contains("From a plugin") && !s.contains("Server address"), "{s}");
     // The test plugin asks nothing and has no sign-in, so it is added at once; it can never be sent, so
     // its page shows, with why.
-    assert!(a.cmds.is_empty() && a.login.error.is_some() && !a.login_choosing());
+    assert!(a.cmds.is_empty() && a.login.flow.failure().is_some() && !a.login_choosing());
     key(&mut a, KeyCode::Esc);
-    assert_eq!((a.login.page.clone(), a.login.error.clone(), a.quit), (crate::app::LoginPage::Choosing, None, false), "back chooses again");
+    assert_eq!((a.login.flow.clone(), a.quit), (Default::default(), false), "back chooses again");
     key(&mut a, KeyCode::Up);
     a.login.focus = 3;
     key(&mut a, KeyCode::Enter);
@@ -2749,8 +2751,8 @@ fn nothing_to_ask_adds_at_once() {
     let dir = nori_testdir::TempDir::new("cli-login-add-now");
     let mut a = app_with_provider(&dir);
     let kind = ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() };
-    a.login.busy = true;
-    a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: Vec::new() });
+    use nori_core::providers::flow::{AddFlow, AddPage, AddSend};
+    a.login.flow = AddFlow { page: AddPage::Adding { kind: kind.clone() }, send: AddSend::Sending { added: Some(nori_core::providers::AfterAdding::Remind) } };
     let s = draw(&mut a, 100, 40);
     assert!(s.contains("Choose a provider") && !s.contains("Connect"), "no lone button:\n{s}");
     a.handle(Msg::LoggedIn(Err("no way".into())));
@@ -2760,7 +2762,7 @@ fn nothing_to_ask_adds_at_once() {
     a.login = Default::default();
     let web = vec![SignIn::WebPage { start_url: "https://a.example".into() }];
     a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: web.clone() });
-    assert!(!matches!(a.login.page, crate::app::LoginPage::Adding(_)) && a.login.error.is_none(), "not added yet");
+    assert!(!a.login.flow.choosing() && a.login.flow.failure().is_none(), "not added yet");
     // A name is nothing to ask there.
     let name = vec![nori_core::providers::FieldSpec { what: nori_core::providers::FormField::Name, advanced: false }];
     a.provider_opened(&ProviderInfo { kind, fields: name, sign_in: web });
@@ -2770,19 +2772,20 @@ fn nothing_to_ask_adds_at_once() {
 /// On the account page Enter signs in and g goes on as a guest.
 #[test]
 fn the_account_pages_keys_say_how_it_goes_on() {
-    use nori_core::providers::{AfterAdding, ProviderInfo, SignIn};
+    use nori_core::providers::{ProviderInfo, SignIn};
     use nori_core::settings::ServerKind;
     let dir = nori_testdir::TempDir::new("cli-login-account-keys");
-    for (code, after) in [(KeyCode::Enter, AfterAdding::SignIn), (KeyCode::Char('g'), AfterAdding::Guest)] {
+    for code in [KeyCode::Enter, KeyCode::Char('g')] {
         let mut a = app_with_provider(&dir);
         let kind = ServerKind::Plugin { id: nori_plugins::testing::FIXTURE.into() };
         a.provider_opened(&ProviderInfo { kind: kind.clone(), fields: Vec::new(), sign_in: vec![SignIn::WebPage { start_url: "https://a.example".into() }] });
         let page = draw(&mut a, 100, 40);
         dump("login-account", &page);
         assert!(page.contains("Continue as guest"), "{page}");
-        assert_eq!(a.login.after, None, "waits for a key");
+        assert_eq!(a.login.flow.failure(), None, "waits for a key");
         key(&mut a, code);
-        assert_eq!(a.login.after, Some(after));
+        // The test plugin's profile is never ready: the key sent it, and it was turned back.
+        assert_eq!(a.login.flow.failure(), Some(&nori_core::providers::flow::AddFailure::Missing));
     }
 }
 
@@ -2885,7 +2888,7 @@ fn choosing_an_offer_installs_or_turns_it_on() {
 
     // Its kind isn't there (every plugin off): the first screen stays.
     a.provider_chosen(nori_core::settings::ServerKind::Plugin { id });
-    assert_eq!(a.login.page, crate::app::LoginPage::Choosing);
+    assert_eq!(a.login.flow, Default::default());
 }
 
 #[test]

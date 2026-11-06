@@ -241,6 +241,7 @@
     <string name="user">User</string>
     <string name="password">Password</string>
     <string name="connecting">Connecting…</string>
+    <string name="login_missing">Fill in what\'s asked first.</string>
     <string name="connect">Connect</string>
     <string name="hide_advanced">Hide advanced</string>
     <string name="advanced">Advanced</string>
