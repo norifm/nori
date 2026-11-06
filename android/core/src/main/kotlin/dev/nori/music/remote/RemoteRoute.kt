@@ -19,7 +19,11 @@ import dev.nori.music.ffi.remote.Op
 
 /** The mirrored device and transfer choices in Android's output picker, while the media session is engaged. */
 object RemoteRoute {
-    internal data class Shown(val id: String, val name: String, val volume: Int?, val devices: List<Pair<String, String>>)
+    /**
+     * What the picker shows. [refused] is the device's refusal of the last command: a session released in
+     * the picker asks for the music here, and when the device refuses, the changed value brings the session back.
+     */
+    internal data class Shown(val id: String, val name: String, val volume: Int?, val refused: dev.nori.music.ffi.remote.Refusal?, val devices: List<Pair<String, String>>)
     /** The system creates the provider, so its current routes are kept for the next binding. */
     private var shown: Shown? = null
     /** The provider while the system has it bound: it is the system's to make, so it is reached through here. */
@@ -37,7 +41,7 @@ object RemoteRoute {
     /** Shows the device mirrored now and the account's other devices. Main thread. */
     fun show(context: Context, device: Mirror?, devices: List<RemoteDevice> = emptyList()) {
         if (Build.VERSION.SDK_INT < 30) return
-        val next = device?.let { Shown(it.id, it.name, it.volume?.toInt(), devices.map { d -> d.id to d.name }) }
+        val next = device?.let { Shown(it.id, it.name, it.volume?.toInt(), it.refused, devices.map { d -> d.id to d.name }) }
         if (next == shown) return
         shown = next
         provider?.show(next)
