@@ -667,6 +667,27 @@ fn a_start_that_never_finished_starts_once_with_every_plugin_off() {
 }
 
 #[test]
+fn a_plugin_turned_on_ends_a_safe_start() {
+    let dir = nori_testdir::TempDir::new("plugins-start-turned-on");
+    let open = || {
+        nori_plugins::testing::marks_released(dir.path());
+        Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()))
+    };
+    let first = open();
+    first.install(&fixture("")).unwrap();
+    first.turn(ID.into(), false);
+    drop(first);
+    left_on(dir.path(), ID);
+    drop(open());
+
+    let safe = open();
+    safe.turn(ID.into(), true);
+    assert_eq!(safe.running().len(), 1);
+    assert_eq!(safe.take_safe_start(), None, "nothing is off to say");
+    assert!(!safe.report().contains("safe mode"), "{}", safe.report());
+}
+
+#[test]
 fn the_switch_turns_every_plugin_off_and_reports_say_so() {
     let dir = nori_testdir::TempDir::new("plugins-all-off");
     let session = Arc::new(Session::default());
