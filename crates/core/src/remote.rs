@@ -1033,7 +1033,11 @@ struct Inner {
     ending_foresight: bool,
     /// Bumped to end the running time keeper (each runs while its generation is current).
     timing: u64,
+    /// This device's state as last published, and when.
     published: Option<(DeviceState, i64)>,
+    /// The relay or a jam's room has not heard this device's state: the next one goes out though only
+    /// time moved.
+    unsaid: bool,
     /// The last published state's [`DeviceState::seq`].
     seq: u64,
     next_id: u64,
@@ -1528,7 +1532,7 @@ impl Remote {
             }
             let before = i.browsing();
             i.serving = on;
-            i.published = None;
+            i.unsaid = true;
             // A held poll saying this device serves says so again as it ends: it is asked anew.
             if !on && i.relay_polling {
                 i.end_relay_poll();
@@ -1887,7 +1891,7 @@ impl Remote {
             i.relay = RelaySupport::Supported;
             remember_hosted(&self.client.core.session.settings, &opened.invite);
             i.hosted = Some(Hosted { jam: Jam::new(opened.room, opened.invite, self.id.clone(), self.me.name.clone()), link: link.clone(), along: true });
-            i.published = None;
+            i.unsaid = true;
             // A poll held from before listens to the account's room only: polled again, now with the jam's.
             i.end_relay_poll();
             self.cancel.notify();
@@ -2814,7 +2818,7 @@ impl Remote {
             }), Box::new(move |ask| asks.upgrade().ok_or(lan::Unanswered::Failed)?.answer_guest(ask)));
             remember_hosted(&self.client.core.session.settings, &invite);
             i.hosted = Some(Hosted { jam: Jam::new("lan-jam".into(), invite, self.id.clone(), self.me.name.clone()), link: link.clone(), along: true });
-            i.published = None;
+            i.unsaid = true;
             link
         };
         self.retime();
@@ -3163,7 +3167,7 @@ impl Remote {
             // Commands are heard from the first answer on: only then is this device's state said to the
             // relay, so no controller or guest sends it one before it can hear it.
             if i.since.is_none() && (i.serving || i.hosted.is_some()) || i.serving && unlisted {
-                i.published = None;
+                i.unsaid = true;
                 republish = true;
             }
             i.since = Some(a.seq);
@@ -3825,11 +3829,10 @@ impl Remote {
         let (state, serving, jam_room, relay) = {
             let mut i = self.inner.lock();
             let mut state = self.state_now(&i);
-            if let Some((last, _)) = &i.published {
-                if same_but_time(last, &state) {
-                    return;
-                }
+            if !i.unsaid && i.published.as_ref().is_some_and(|(last, _)| same_but_time(last, &state)) {
+                return;
             }
+            i.unsaid = false;
             i.seq += 1;
             state.seq = i.seq;
             i.published = Some((state.clone(), self.now()));

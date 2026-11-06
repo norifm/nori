@@ -1269,6 +1269,26 @@ fn a_jam_takes_requests_through_its_host() {
 }
 
 #[test]
+fn a_host_that_stops_serving_still_shows_its_jams_queue() {
+    let relay = Relay::new();
+    let host = Device::account(&relay, DeviceKind::Phone, "Host");
+    host.remote.clone().serve(true);
+    host.playing(&["s1", "s2"], 0);
+    opened(&host);
+    host.until("the queue", |r| r.jam_view()?.queue);
+    host.remote.clone().serve(false);
+    let queue = host.remote.jam_view().and_then(|v| v.queue).map(|q| q.entries.len());
+    assert_eq!(queue, Some(2));
+
+    // Serving again, the account's room hears the state anew though nothing but time moved.
+    let listed = || relay.hub.lock().rooms.iter().filter(|(_, r)| !r.jam).flat_map(|(_, r)| &r.members).any(|m| m.id == host.remote.id() && m.state.is_some());
+    eventually(&relay, "the host gone from the account's room", || !listed());
+    host.remote.clone().serve(true);
+    eventually(&relay, "the host listed again", listed);
+    relay.close();
+}
+
+#[test]
 fn a_jam_opened_while_a_poll_is_held_hears_its_first_request() {
     let relay = Relay::new();
     let host = Device::account(&relay, DeviceKind::Phone, "Host");
