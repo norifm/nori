@@ -1689,6 +1689,9 @@ fn monotonic_ms() -> i64 {
 #[path = "refill_tests.rs"]
 mod refill_tests;
 
+#[path = "carry_on.rs"]
+mod carry_on;
+
 /// A session's opening for a test: online, playing into `output`, reporting nowhere.
 #[cfg(test)]
 fn test_open<'a>(queue: Arc<nori_core::queue::Session>, data: &'a Path, profile: SavedServer, output: Box<dyn AudioOutput>) -> Open<'a> {

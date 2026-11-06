@@ -82,6 +82,7 @@ pub mod wit {
 }
 
 use nori_player::stage::StageSpec;
+use nori_plugin_index::standing::{installed_over, Standing};
 use serde::{Deserialize, Serialize};
 
 /// An installed plugin.
@@ -384,17 +385,18 @@ impl Plugins {
     pub(crate) fn install_as(&self, from: &Path, repo: Option<String>, key: Option<String>, when_new: WhenNew) -> Result<Arc<Manifest>, Refusal> {
         let manifest = Arc::new(package::install(from, &self.dir, |m| self.admits(&m.id, key.as_deref()))?);
         let mut list = self.installed.lock().expect("not poisoned");
-        let new = match list.iter_mut().find(|i| i.manifest.id == manifest.id) {
-            Some(i) => {
+        let at = list.iter().position(|i| i.manifest.id == manifest.id);
+        let had = at.map(|p| Standing { on: list[p].enabled, held: list[p].held, place: p as u32 });
+        let standing = installed_over(had, list.len() as u32, when_new == WhenNew::On);
+        match at {
+            Some(p) => {
+                let i = &mut list[p];
                 (i.manifest, i.repo) = (manifest.clone(), repo);
                 i.key = i.key.take().or(key);
-                false
             }
-            None => {
-                list.push(Installed { manifest: manifest.clone(), enabled: false, repo, held: false, key });
-                true
-            }
-        };
+            // Turned on below, which starts it.
+            None => list.push(Installed { manifest: manifest.clone(), enabled: false, repo, held: standing.held, key }),
+        }
         self.keep(&list);
         let on = list.iter().any(|i| i.manifest.id == manifest.id && i.enabled);
         drop(list);
@@ -406,7 +408,7 @@ impl Plugins {
             self.side.laid(&manifest.id);
         }
         self.refresh();
-        if new && when_new == WhenNew::On {
+        if at.is_none() && standing.on {
             self.turn(manifest.id.clone(), true);
         }
         Ok(manifest)

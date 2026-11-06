@@ -241,9 +241,8 @@ class Player {
       ui.say(W.restarted);
       facts.restartedAt = { song, ms: Math.round(at) };
       void (async () => {
+        if (song) await ask("carry_on", song, Math.round(at), was);
         await this.refresh();
-        if (song && this.now?.id === song) await this.control("seek", at);
-        if (was && this.now?.state !== "Playing") await this.control("toggle");
       })();
     });
     rpc.onSaid((s) => {

@@ -384,6 +384,12 @@ impl Nori {
         Ok(n)
     }
 
+    /// The worker before this one crashed `ms` into `song`, playing or not: the session goes on from there
+    /// (`Session::carry_on`).
+    pub fn carry_on(&self, song: String, ms: f64, playing: bool) {
+        self.with(|h| h.carry_on(&song, ms as i64, playing));
+    }
+
     /// Plays the queue's song at `index`.
     pub fn jump(&self, index: usize) {
         self.with(|h| h.jump(index));

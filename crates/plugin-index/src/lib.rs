@@ -3,6 +3,7 @@
 
 pub mod readme;
 pub mod section;
+pub mod standing;
 
 use section::Section;
 use serde::{Deserialize, Serialize};

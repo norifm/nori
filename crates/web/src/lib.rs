@@ -433,6 +433,13 @@ impl Nori {
         serde_json::to_string(&plugin).map_err(error)
     }
 
+    /// The standing of a plugin installed over one with standing `had` (`{ on, held, place }` as JSON;
+    /// empty for a new plugin, placed at `next_place`), as JSON (`standing::installed_over`).
+    pub fn plugin_installed_over(&self, had: String, next_place: u32) -> Result<String, JsValue> {
+        let had = (!had.is_empty()).then(|| serde_json::from_str(&had)).transpose().map_err(error)?;
+        serde_json::to_string(&nori_plugin_index::standing::installed_over(had, next_place, true)).map_err(error)
+    }
+
     /// Settings page `name` as a browser draws it: `[{ id, rows: [row] }]`, each row `{ item, shown,
     /// enabled, depth }` with `item` `{ kind: "setting", name, type, options, min, max, value, chips }`
     /// or `{ kind: "note", note }`. Words are the page's.
