@@ -26,6 +26,7 @@ pub mod dsp;
 #[cfg(feature = "std")]
 pub mod engine;
 pub mod eqfit;
+pub mod focus;
 pub mod gain;
 pub mod graphic;
 pub mod outputs;

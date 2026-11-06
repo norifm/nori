@@ -1,5 +1,5 @@
 //! The queue the app plays: list and order (playlist.rs), songs by id (queue.rs), transport rules
-//! (rules.rs), what plugins decide instead (deciders.rs), refilling (autofill.rs), the offline bridge (bridge.rs), the audible song (heard.rs), play
+//! (rules.rs), the sleep timer (sleep.rs), what plugins decide instead (deciders.rs), refilling (autofill.rs), the offline bridge (bridge.rs), the audible song (heard.rs), play
 //! counting (scrobble.rs), play actions (actions.rs), the buffer while sound pages are tuned (tuning.rs) and
 //! the undo of a song taken out (undo.rs).
 
@@ -18,6 +18,7 @@ pub mod playlist;
 pub mod queue;
 pub mod rules;
 pub mod scrobble;
+pub mod sleep;
 pub mod tuning;
 pub mod undo;
 

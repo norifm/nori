@@ -30,13 +30,18 @@ impl LyricsCache for Core {
 
 #[derive(Default)]
 pub(crate) struct Prefetch {
+    /// Queue entries already warmed, of those last asked for.
+    warmed: Vec<u64>,
+    /// While a lyrics view is open: only then are the songs ahead warmed.
+    view: Option<Viewed>,
+}
+
+/// An open lyrics view's warm-up.
+#[derive(Default)]
+struct Viewed {
     /// The queue entries asked for, in order.
     entries: Vec<u64>,
-    /// Those of them already warmed.
-    warmed: Vec<u64>,
     cancel: Option<futures_util::future::AbortHandle>,
-    /// A lyrics view is open: only then are the songs ahead warmed.
-    viewed: bool,
 }
 
 // A cancelled caller releases its entries so a later visit can warm them again.
@@ -48,20 +53,20 @@ struct PrefetchRun<'a> {
 impl PrefetchRun<'_> {
     fn warmed(&self, entry: u64) {
         let mut work = self.work.lock();
-        if work.entries == self.entries { work.warmed.push(entry); }
+        if work.view.as_ref().is_some_and(|v| v.entries == self.entries) { work.warmed.push(entry); }
     }
 
     fn finish(self) {
-        let mut work = self.work.lock();
-        if work.entries == self.entries { work.cancel = None; }
+        if let Some(v) = self.work.lock().view.as_mut().filter(|v| v.entries == self.entries) { v.cancel = None; }
     }
 }
 
 impl Drop for PrefetchRun<'_> {
     fn drop(&mut self) {
-        let mut work = self.work.lock();
-        if work.entries == self.entries && work.cancel.take().is_some() {
-            work.entries.clear();
+        if let Some(v) = self.work.lock().view.as_mut().filter(|v| v.entries == self.entries) {
+            if v.cancel.take().is_some() {
+                v.entries.clear();
+            }
         }
     }
 }
@@ -97,12 +102,10 @@ impl Client {
     /// is fetched ahead and a running warm-up stops. Cheap: called from the main thread, in order.
     pub fn lyrics_view(&self, open: bool) {
         let mut work = self.prefetch.lock();
-        work.viewed = open;
-        if !open {
-            if let Some(cancel) = work.cancel.take() {
-                cancel.abort();
-            }
-            work.entries.clear();
+        if open {
+            work.view.get_or_insert_default();
+        } else if let Some(cancel) = work.view.take().and_then(|v| v.cancel) {
+            cancel.abort();
         }
     }
 
@@ -110,21 +113,24 @@ impl Client {
     /// another, without publishing them to a screen; only while a lyrics view is open ([`Client::lyrics_view`]).
     pub async fn lyrics_prefetch(&self) {
         use futures_util::future::{AbortHandle, Abortable};
-        if !self.prefetch.lock().viewed {
+        if self.prefetch.lock().view.is_none() {
             return;
         }
         let next = self.core.session.lyrics_ahead(self.metered());
         let entries: Vec<u64> = next.iter().map(|(entry, _)| *entry).collect();
         let (old, todo, registration) = {
-            let mut work = self.prefetch.lock();
-            if work.entries == entries { return; }
+            let mut guard = self.prefetch.lock();
+            let work = &mut *guard;
+            // Closed meanwhile: nothing is warmed.
+            let Some(view) = work.view.as_mut() else { return };
+            if view.entries == entries { return; }
             work.warmed.retain(|e| entries.contains(e));
             let todo: Vec<(u64, String)> = next.into_iter().filter(|(e, _)| !work.warmed.contains(e)).collect();
-            work.entries = entries.clone();
-            let old = work.cancel.take();
+            view.entries = entries.clone();
+            let old = view.cancel.take();
             let registration = (!todo.is_empty()).then(|| {
                 let (cancel, registration) = AbortHandle::new_pair();
-                work.cancel = Some(cancel);
+                view.cancel = Some(cancel);
                 registration
             });
             (old, todo, registration)

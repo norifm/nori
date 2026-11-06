@@ -259,6 +259,8 @@ final class Core {
     private(set) var rules = Rules()
     /// The jam this iPod is a guest in, read as it changes.
     private(set) var jam: Jam?
+    /// An invite opened before a session was: joined once one is.
+    var inviteWaiting: String?
 
     /// Whether the song is one this guest asked for and the host has yet to take.
     func isAsked(_ item: Item) -> Bool { item.kind == "song" && jam?.asked.contains(item.id) == true }
@@ -411,8 +413,8 @@ final class Core {
         refresh()
         readJam()
         NotificationCenter.default.post(name: .noriOpened, object: nil)
-        if let link = JamJoin.waiting {
-            JamJoin.waiting = nil
+        if let link = inviteWaiting {
+            inviteWaiting = nil
             JamJoin.join(link)
         }
     }
@@ -431,11 +433,8 @@ final class Core {
     private func reported(kind: Int32, id: String, text: String, flag: Int32, count: Int32, ms: Int64) {
         switch kind {
         case NORI_REPORT_STATE, NORI_REPORT_SONG, NORI_REPORT_LOOPED, NORI_REPORT_POSITION, NORI_REPORT_BUFFERING,
-             NORI_REPORT_MIXING, NORI_REPORT_PLACED:
+             NORI_REPORT_MIXING, NORI_REPORT_PLACED, NORI_REPORT_STOPPED:
             refresh()
-        case NORI_REPORT_STOPPED:
-            refresh()
-            SleepTimer.shared.stopped()
         case NORI_REPORT_REMOTE:
             refresh()
             readJam()

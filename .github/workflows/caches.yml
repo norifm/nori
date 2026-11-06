@@ -1,0 +1,26 @@
+name: Caches
+# After a run that saves caches, the ones it replaced go (tools/ci-caches.py): the repository stays under
+# GitHub's 10 GB, so GitHub never evicts a cache a job still restores.
+on:
+  workflow_run:
+    workflows: [Checks, Nightly, Full release, Web image]
+    types: [completed]
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+concurrency: caches
+permissions:
+  actions: write
+jobs:
+  prune:
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: tools/ci-caches.py
+          sparse-checkout-cone-mode: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: tools/ci-caches.py

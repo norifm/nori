@@ -318,6 +318,9 @@ class Nori private constructor(private val context: Context) {
 
     suspend fun stopReminding() = withContext(Dispatchers.IO) { client.stopReminding() }
 
+    // Last: the downloads thread opens the core, whose plugins may call back into any field above.
+    init { downloads.start() }
+
     companion object {
         @Volatile private var instance: Nori? = null
         fun get(context: Context): Nori = instance ?: synchronized(this) { instance ?: Nori(context.applicationContext).also { instance = it } }

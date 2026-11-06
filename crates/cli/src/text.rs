@@ -75,6 +75,16 @@ pub fn through(device: &str) -> String {
 }
 
 pub const PLUGIN_INSTALLED: &str = "Plugin installed";
+/// Why a profile of plugin `name`'s kind doesn't open here.
+pub fn profile_waits(name: &str, wait: nori_core::providers::ProfileWait) -> String {
+    use nori_core::providers::ProfileWait as W;
+    match wait {
+        W::Install => format!("This profile plays from {name}, a plugin that isn’t installed."),
+        W::TurnOn => format!("This profile plays from {name}, a plugin that’s off."),
+        W::PluginsOn => format!("This profile plays from {name}, a plugin, and plugins are off."),
+        W::NoPlugins => format!("This profile plays from {name}, a plugin, which can’t run here."),
+    }
+}
 pub const GET_PLUGINS: &str = "Get plugins";
 pub const SEARCH_PLUGINS: &str = "Search plugins";
 pub const ALL: &str = "All";
@@ -692,6 +702,17 @@ pub const FOR_YOU: &str = "For you";
 pub const SAVE_AS_PLAYLIST: &str = "Save as playlist";
 pub const NEW_PLAYLIST: &str = "New playlist";
 pub const ADD_TO_PLAYLIST: &str = "Add to playlist";
+pub const SLEEP_TIMER: &str = "Sleep timer";
+
+/// One of the sleep timer's choices: "30 minutes", "End of track", "After 3 songs", or "Off" (all zeros).
+pub fn sleep_choice(c: &nori_core::menus::SleepChoice) -> String {
+    match c {
+        c if c.end_of_track => "End of track".into(),
+        c if c.songs > 0 => format!("After {} songs", c.songs),
+        c if c.minutes > 0 => format!("{} minutes", c.minutes),
+        _ => "Off".into(),
+    }
+}
 pub const MORE: &str = "More";
 
 /// Songs added to a playlist: "Added to Road trip".
@@ -717,12 +738,11 @@ pub fn song_action(a: &nori_core::menus::SongAction) -> String {
         SongAction::AddToLibrary => "Add to library".into(),
         SongAction::Lyrics => "Lyrics".into(),
         SongAction::SleepTimer => "Sleep timer…".into(),
-        SongAction::StartRadio => "Start radio from this song".into(),
-        SongAction::InstantMix => "Instant mix".into(),
-        SongAction::ExcludeFromMixes => "Exclude from mixes".into(),
+        SongAction::Radio => "Radio".into(),
+        SongAction::ExcludeFromMixes { on: true } => "Exclude from mixes".into(),
+        SongAction::ExcludeFromMixes { on: false } => "Include in mixes".into(),
         SongAction::Share => "Share link".into(),
         SongAction::Details => "Details".into(),
-        SongAction::StartJam => JAM_START.into(),
     }
 }
 

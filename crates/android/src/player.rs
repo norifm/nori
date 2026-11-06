@@ -27,6 +27,7 @@ use nori_core::client::CurrentClient;
 use nori_core::queue::is_radio;
 use nori_engine::core::{ahead_songs, key_format, measuring_ahead, resolving, settings, Analyses, CoreApp, CoreQueue};
 use nori_engine::{Body, ByteSource, Cancel, Coded, Coding, Config, Device, Engine, Event, Library, Located, OffloadOutput, OpenError, OutputFacts, OutputFormat, Source, State, Support};
+use nori_player::focus::{Focus, Hold};
 use nori_player::transitions::WindowSong;
 use parking_lot::Mutex;
 
@@ -57,6 +58,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"mixing", c"(J)Z", mixing),
         native!(c"waiting", c"(J)Z", waiting),
         native!(c"networkBack", c"(J)V", network_back),
+        native!(c"focus", c"(JI)V", focus),
         native!(c"remotePlayed", c"(JJI)V", remote_played),
         native!(c"chainIn", c"(J)Z", chain_in),
         native!(c"onCpu", c"(J)Z", on_cpu),
@@ -96,6 +98,7 @@ struct Java {
     forget: JMethodID,
     signal: JMethodID,
     cpu: JMethodID,
+    focus: JMethodID,
     offload_support: JMethodID,
     open_offload: JMethodID,
     body_read: JMethodID,
@@ -185,6 +188,7 @@ fn look_up(env: &mut JNIEnv) -> jni::errors::Result<Java> {
         forget: env.get_method_id(&bridge, "forget", "(Ljava/lang/String;)Ljava/lang/String;")?,
         signal: env.get_method_id(&bridge, "signal", "()V")?,
         cpu: env.get_method_id(&bridge, "cpu", "(Z)V")?,
+        focus: env.get_method_id(&bridge, "focus", "(Z)Z")?,
         offload_support: env.get_method_id(&bridge, "offloadSupport", "(III)I")?,
         open_offload: env.get_method_id(&bridge, "openOffload", "(IIII)Landroid/media/AudioTrack;")?,
         body_read: env.get_method_id(&body, "read", "(I)I")?,
@@ -1265,6 +1269,12 @@ impl Library for AndroidLibrary {
             return Ok(Located { source: Source::File(files), hint: None, duration_ms, estimated: false, from_second: None });
         }
         let hint = if download { None } else { key_format(&target.key).or_else(|| song.map(|s| s.suffix)).filter(|s| !s.is_empty()) };
+        // So is a song already whole in the stream cache (fetched ahead): streamed again, it was read back
+        // through JNI into memory.
+        if let Some(files) = (!download).then(|| cache_files(&self.bridge, &target.key, |j| j.streamed)).flatten() {
+            log(&format!("{id} opens from the {} files it was fetched into", files.len()));
+            return Ok(Located { source: Source::File(files), hint, duration_ms, estimated: false, from_second: None });
+        }
         log(&format!("{id} opens from {} as {}", target.key, hint.as_deref().unwrap_or("whatever it is")));
         let bytes = resolving(&client, Arc::new(JavaBytes { bridge: self.bridge.clone(), key: target.key, ahead: self.ahead.clone() }));
         Ok(Located { source: Source::Url { url: target.url, bytes }, hint, duration_ms, estimated: false, from_second: None })
@@ -1334,6 +1344,8 @@ const EVENT_PLACED: i32 = 10;
 const EVENT_LANDED: i32 = 11;
 const EVENT_FOLLOWING: i32 = 12;
 const EVENT_WAITING: i32 = 13;
+const EVENT_LONG_PAUSE: i32 = 14;
+const EVENT_FOCUS: i32 = 15;
 
 impl Events {
     fn push(&self, e: Event) {
@@ -1352,6 +1364,8 @@ impl Events {
             Event::Placed { index, ms } => log(&format!("song {index} goes on at {ms} ms on another path")),
             Event::Following(f) => log(&format!("following: {f:?}")),
             Event::Waiting(on) => log(if *on { "the network would not bring the song: waits for it" } else { "no longer waits for the network" }),
+            Event::LongPause => log("paused a long while: output released"),
+            Event::Focus(hold) => log(&format!("audio focus: {hold:?}")),
             _ => {}
         }
         let jumps = match &e {
@@ -1383,6 +1397,9 @@ impl Events {
             Event::Waiting(on) => (EVENT_WAITING, on as i32, String::new()),
             // -1: not following; else bit 0 the music plays there, bit 1 held here.
             Event::Following(f) => (EVENT_FOLLOWING, f.map_or(-1, |f| f.playing as i32 | (f.held as i32) << 1), String::new()),
+            Event::LongPause => (EVENT_LONG_PAUSE, -1, String::new()),
+            // 0 nothing holds it (or a duck, which the system does itself), 1 held by a call, 2 paused for good.
+            Event::Focus(hold) => (EVENT_FOCUS, match hold { Hold::Free | Hold::Ducked => 0, Hold::Held => 1, Hold::Lost => 2 }, String::new()),
         };
         let first = {
             let mut q = self.queue.lock();
@@ -1489,8 +1506,9 @@ extern "system" fn create(env: JNIEnv, _: JClass, bridge: JObject, current: jlon
     let can_offload = JAVA.get().is_some_and(|j| j.offload.is_some()) && sdk >= 29;
     let offloaded: Option<Box<dyn OffloadOutput>> = can_offload.then(|| Box::new(JavaOffload::new(bridge.clone(), offload.clone(), quiet.clone())) as Box<dyn OffloadOutput>);
     log(&format!("the engine starts: API {sdk}, {} output, {} MB of memory, offload {}", if float != 0 { "float" } else { "16-bit" }, config.memory_mb, if can_offload { "possible" } else { "not on this Android" }));
-    let app = CoreApp::new(queue.clone()).bridging();
+    let app = CoreApp::new(queue.clone(), analyses.clone()).bridging();
     let engine = Engine::start(library, app, CoreQueue(queue.clone()), Box::new(output), offloaded, config, move |e| tell.push(e));
+    engine.ask_focus_of(Box::new(PlatformFocus(bridge.clone())));
     PLAYERS.add(Arc::new(Player { engine, bridge, shared, events, offload, stations, jumped: Mutex::new(None), looked_ms: AtomicI64::new(i64::MIN / 2), quiet, ahead, analyses, queue, current, sdk, float: float != 0 }))
 }
 
@@ -1539,6 +1557,40 @@ extern "system" fn pause_now(h: jlong) {
     if let Some(p) = player(h) {
         log("headphones gone: pause at once");
         p.engine.pause_now();
+    }
+}
+
+/// The system's audio focus changed: 0 lost, 1 lost for a while, 2 another sound over it, 3 gained.
+extern "system" fn focus(h: jlong, change: jint) {
+    let change = match change {
+        0 => Focus::Lost,
+        1 => Focus::LostTransient,
+        2 => Focus::Duck,
+        3 => Focus::Gained,
+        _ => return,
+    };
+    if let Some(p) = player(h) {
+        p.engine.focus(change);
+    }
+}
+
+/// `RustBridge.focus`: the player's AudioManager focus, asked for (true; whether granted) or given back.
+struct PlatformFocus(Bridge);
+
+impl PlatformFocus {
+    fn call(&self, take: bool) -> bool {
+        let Some((java, mut env)) = env() else { return false };
+        call_bool(&mut env, self.0.obj(), java.focus, &[JValue::Bool(take as jboolean).as_jni()]).unwrap_or(false)
+    }
+}
+
+impl nori_engine::FocusRequest for PlatformFocus {
+    fn request(&mut self) -> bool {
+        self.call(true)
+    }
+
+    fn abandon(&mut self) {
+        self.call(false);
     }
 }
 
@@ -1662,7 +1714,7 @@ extern "system" fn remote_played(_: JNIEnv, _: JClass, h: jlong, remote: jlong, 
 }
 /// Whether the sound chain processes the samples.
 extern "system" fn chain_in(h: jlong) -> jboolean {
-    player(h).is_some_and(|p| p.engine.status_with(|s| s.chain)) as jboolean
+    player(h).is_some_and(|p| p.engine.status_with(|s| s.chain())) as jboolean
 }
 
 /// `Status::pace`: song ms per real ms.
@@ -1722,7 +1774,7 @@ impl nori_core::remote::Follower for Along {
 
 /// `Status::on_cpu`.
 extern "system" fn on_cpu(h: jlong) -> jboolean {
-    player(h).is_some_and(|p| p.engine.status_with(|s| s.on_cpu)) as jboolean
+    player(h).is_some_and(|p| p.engine.status_with(|s| s.on_cpu())) as jboolean
 }
 
 /// Limiter gain reduction on the last buffer, dB.
@@ -1823,7 +1875,7 @@ extern "system" fn offload_event(h: jlong, kind: jint) {
 }
 
 extern "system" fn offloaded(h: jlong) -> jboolean {
-    player(h).is_some_and(|p| p.engine.status_with(|s| s.offloaded)) as jboolean
+    player(h).is_some_and(|p| p.engine.status_with(|s| s.offloaded())) as jboolean
 }
 
 /// Whether settings and output allow offload.

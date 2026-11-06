@@ -1192,6 +1192,7 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
 fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
     let rows = app.devices.rows();
     let body = Rect { height: area.height.min(rows.len() as u16), ..area };
+    let here = matches!(app.devices.destination(app.guest()), nori_core::destination::Destination::Here { .. });
     let App { devices, hits, .. } = app;
     let d = &*devices;
     let active = d.active.as_ref().map(|(id, _)| id.as_str());
@@ -1201,7 +1202,6 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
     let mut sel = d.sel;
     list(f, body, &mut sel, rows.len(), ListRef::Devices, hits, t, focused, &|i, w| match rows[i] {
         DeviceRow::Here => {
-            let here = active.is_none() && d.cast.is_none();
             Line::from(vec![tick(here), name(crate::text::THIS_COMPUTER, here)])
         }
         DeviceRow::Cast => {
@@ -1256,7 +1256,7 @@ fn mix_lines(app: &App, w: usize, t: &Theme) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     // While mixing, `song` is the louder of the two.
     if app.now.mixing {
-        let from = app.mixed_in.as_ref().and_then(|n| crate::backend::app().song(&n.outgoing_id)).map(|s| s.title);
+        let from = app.mixed_in.as_ref().and_then(|n| app.shared.song(&n.outgoing_id)).map(|s| s.title);
         let heard = match &from {
             Some(from) => format!("Mixing in from “{from}”"),
             None => "Mixing into the next".to_string(),
@@ -1267,7 +1267,7 @@ fn mix_lines(app: &App, w: usize, t: &Theme) -> Vec<Line<'static>> {
         }
     }
     if let Some(n) = &app.transition {
-        let next = crate::backend::app().song(&n.incoming_id).map(|s| s.title).unwrap_or_default();
+        let next = app.shared.song(&n.incoming_id).map(|s| s.title).unwrap_or_default();
         lines.push(Line::from(Span::styled(fit(&format!("Next: “{next}”"), w).into_owned(), Style::default().fg(t.ink))));
         lines.push(Line::from(Span::styled(fit(&format!("  {}", how_mixed(n)), w).into_owned(), t.dim())));
         if !n.reason.is_empty() {

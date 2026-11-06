@@ -137,7 +137,7 @@ class PlaybackService : MediaLibraryService() {
     private lateinit var controls: Controls
     /** The session's player while another device plays (Remotes.mirror): this phone controls that one. */
     private lateinit var elsewhere: dev.nori.music.remote.RemoteDevicePlayer
-    /** The session's player while a plugin casts (PluginHost.cast): the cast's device controlled through [controls]. Made at the first cast: it follows [controls] from then on. */
+    /** The session's player while a plugin casts (PluginHost.cast): the cast's device controlled through [controls]. Made at the first cast; between casts it follows nothing. */
     private var casting: CastPlayer? = null
     /** What the session shows: [controls], [elsewhere] while another device plays, or [casting] while a plugin casts. */
     private val shown: Player get() = session.player
@@ -157,20 +157,7 @@ class PlaybackService : MediaLibraryService() {
     /** How many tabs the car shows at its root, as it last said (Android Auto: four). */
     @Volatile private var rootLimit = 4
     private val saveQueue = Runnable { persistQueue(push = false) }
-    /**
-     * Paused for a long while: the player stops. The output goes, so the phone sleeps; the session goes
-     * idle, so nothing holds the service in the foreground and its notification can be swiped away. The
-     * queue and the place in the song are saved first; play, a media button or onPlaybackResumption (once
-     * the service is gone) picks them up (nori_player::transport::IDLE_RELEASE_MS).
-     */
-    private val idleRelease = Runnable {
-        if (LongPause.releases(player.playWhenReady, player.playbackState)) {
-            dev.nori.music.NoriLog.i("paused a long while: output released")
-            persistQueue(push = false)
-            player.stop()
-        }
-    }
-    private val sleepAlarm = AlarmManager.OnAlarmListener { player.pause() }
+    private val sleepAlarm = AlarmManager.OnAlarmListener { if (nori.session.sleepDue(SystemClock.elapsedRealtime())) player.pause() }
     /**
      * The network turning unmetered, for the AutoEQ list, and coming back, for the remote's relay poll and a
      * refill that failed meanwhile. One registration for the service's life; a change that leaves the
@@ -216,6 +203,13 @@ class PlaybackService : MediaLibraryService() {
         // core handed a failure to the bridge.
         offlineBridge = OfflineBridge(this, player, { nori.core }, { nori.client }, nori.session, scope, ::applyEdit, ::skipAfterError)
         player.onBridge = ::bridge
+        // Paused a long while: the session goes idle, so nothing holds the service in the foreground and its
+        // notification can be swiped away. The queue and the place are saved first; play, a media button or
+        // onPlaybackResumption (once the service is gone) picks them up.
+        player.onLongPause = {
+            persistQueue(push = false)
+            player.stop()
+        }
         player.addListener(listener)
         nori.widgets.onPlaced = ::announce
 
@@ -314,14 +308,16 @@ class PlaybackService : MediaLibraryService() {
     private fun casted(c: dev.nori.music.ffi.plugins.Cast?) {
         if (c != null) (casting ?: CastPlayer(controls, nori.plugins).also { casting = it }).show(c)
         pickPlayer()
+        // Once the session shows this phone again: the cast's player follows nothing until the next.
+        if (c == null) casting?.hide()
         refreshButtons()
     }
 
-    /** The session's player: another device's while one plays, else the cast's while a plugin casts, else this phone's. */
+    /** The session's player, by where the music plays (the core's `destination`): another device's, the cast's, or this phone's. */
     private fun pickPlayer() {
-        val want = when {
-            nori.remotes.mirror.value != null -> elsewhere
-            nori.plugins.cast.value != null -> casting ?: controls
+        val want = when (nori.remotes.destination(nori.plugins.cast.value)) {
+            is dev.nori.music.ffi.Destination.Mirroring -> elsewhere
+            is dev.nori.music.ffi.Destination.Cast -> casting ?: controls
             else -> controls
         }
         if (session.player !== want) session.player = want
@@ -366,7 +362,6 @@ class PlaybackService : MediaLibraryService() {
         keepQueue(dev.nori.music.ffi.queue.QueueMoment.CLOSING)
         getSystemService(AlarmManager::class.java).cancel(sleepAlarm)
         main.removeCallbacks(measure)
-        main.removeCallbacks(idleRelease)
         runCatching { connectivity.unregisterNetworkCallback(network) }
         analyser.release()
         offlineBridge?.abandon()
@@ -412,7 +407,7 @@ class PlaybackService : MediaLibraryService() {
             // seconds in, whatever is whole on the device and not measured yet is measured from there.
             main.removeCallbacks(measure)
             main.postDelayed(measure, steps.precacheAfterMs)
-            if (steps.pauseAtEnd) pauseAtEnd(true)
+            if (steps.pauseAtEnd) player.pauseAtEnd(true)
         }
 
         // A seek moves the lyrics widget's line; the song's own playing on is worked out from the last announce.
@@ -434,9 +429,6 @@ class PlaybackService : MediaLibraryService() {
             observer?.playing(isPlaying)
             announce()
             scrobbler.onPlaying(isPlaying)
-            main.removeCallbacks(idleRelease)
-            // Not while the jam's host is paused: its play is this player's too.
-            if (LongPause.arms(isPlaying, player.playWhenReady, player.playbackState) && !player.hostPaused) main.postDelayed(idleRelease, timings.idleReleaseMs)
         }
 
         /**
@@ -544,11 +536,6 @@ class PlaybackService : MediaLibraryService() {
         session.setMediaButtonPreferences(buttons)
     }
 
-    /** Pause once the song playing ends (the sleep timer's "end of this song"). */
-    private fun pauseAtEnd(on: Boolean) {
-        player.pauseAtEndOfItem = on
-    }
-
     /** Tells the remote control (if it is on) the player changed; a null check otherwise. */
     private fun remoteState() {
         nori.remotes.played(player::remotePlayed)
@@ -645,7 +632,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun play() = jam(dev.nori.music.ffi.remote.Op.Play) {
-            // Let go after a long pause (see idleRelease): opened again here.
+            // Let go after a long pause (onLongPause): opened again here.
             if (wrappedPlayer.playbackState == Player.STATE_IDLE && wrappedPlayer.mediaItemCount > 0) wrappedPlayer.prepare()
             super.play()
         }
@@ -872,18 +859,15 @@ class PlaybackService : MediaLibraryService() {
     /**
      * A jam guest listening along: the host's songs its follower queued in the core become the player's
      * (straight, not through [controls], whose controls the guest's role routes), each saying whose jam it
-     * is under the song. As the listening [began] the player plays: the engine follows the host, and the
-     * session, the notification and the lock screen show it as any music playing here.
+     * is under the song. The engine plays along by itself (its following event says so), and the session,
+     * the notification and the lock screen show it as any music playing here.
      */
-    private fun guestQueue(began: Boolean) {
+    private fun guestQueue() {
         val q = nori.session.playlistNow()
         if (q.songs.isEmpty()) return
         val host = nori.remotes.jam.value?.members?.firstOrNull { it.role == dev.nori.music.ffi.remote.Role.HOST }?.name
         val jam = host?.let { getString(R.string.jam_sub, it) }
         player.showFollowingQueue(held(q.songs).map { it.inJam(jam) }, q.index.toInt())
-        if (!began) return
-        if (player.playbackState == Player.STATE_IDLE) player.prepare()
-        player.play()
     }
 
     /** Songs as the player's items, handed to the core in one call (see MediaItems.toMediaItems). */
@@ -970,13 +954,11 @@ class PlaybackService : MediaLibraryService() {
             if (command.customAction == CMD_SLEEP) {
                 val alarms = getSystemService(AlarmManager::class.java)
                 alarms.cancel(sleepAlarm)
-                // The songs still to go are counted in the core (rules.rs sleep_set, sleep_song_changed).
-                pauseAtEnd(nori.session.sleepSet(args.getInt(ARG_SONGS).coerceAtLeast(0).toUInt(), args.getBoolean(ARG_END_OF_TRACK)))
-                val minutes = args.getInt(ARG_MINUTES)
+                val choice = dev.nori.music.ffi.library.SleepChoice(args.getInt(ARG_MINUTES).coerceAtLeast(0).toUInt(), args.getBoolean(ARG_END_OF_TRACK), args.getInt(ARG_SONGS).coerceAtLeast(0).toUInt())
+                val plan = nori.session.sleepPick(choice, SystemClock.elapsedRealtime())
+                player.pauseAtEnd(plan.pauseAtEnd)
                 // An alarm, not a Handler: with offloaded playback the CPU sleeps and uptime stops counting.
-                if (minutes > 0) dev.nori.music.ffi.queue.sleepDelay(minutes.toUInt()).let { (delay, slack) ->
-                    alarms.setWindow(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + delay, slack, "nori.sleep", sleepAlarm, main)
-                }
+                plan.alarm?.let { alarms.setWindow(AlarmManager.ELAPSED_REALTIME_WAKEUP, it.atMs, it.windowMs, "nori.sleep", sleepAlarm, main) }
             }
             if (command.customAction == CMD_FAVOURITE || command.customAction == CMD_UNFAVOURITE) {
                 // Only while the heart shows (a song of the library is playing; the core's call).
@@ -1226,16 +1208,6 @@ interface PlaybackObserver {
 
     /** The player took its CPU wake lock ([held]) or let it go. From any thread. */
     fun wakeLock(held: Boolean) {}
-}
-
-/**
- * The long pause's rule: paused (not playing, not wanting to) and not already
- * let go, the release is armed for `IDLE_RELEASE_MS`; when it fires, the player is stopped only if it is
- * still paused and not already idle.
- */
-internal object LongPause {
-    fun arms(isPlaying: Boolean, playWhenReady: Boolean, state: Int): Boolean = !isPlaying && releases(playWhenReady, state)
-    fun releases(playWhenReady: Boolean, state: Int): Boolean = !playWhenReady && state != Player.STATE_IDLE
 }
 
 /**

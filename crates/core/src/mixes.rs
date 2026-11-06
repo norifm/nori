@@ -8,6 +8,14 @@ pub use nori_library::mixes::*;
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
+    /// The songs left out of every mix.
+    pub fn mix_excluded_songs(&self) -> Result<Vec<String>> {
+        let c = self.db.lock();
+        let mut q = c.prepare_cached("SELECT song_id FROM mix_excluded WHERE server=sid()")?;
+        let ids = q.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(ids)
+    }
+
     /// Excludes a song from (or restores it to) every mix.
     pub fn mix_excluded_set(&self, song_id: String, excluded: bool) -> Result<()> {
         let c = self.db.lock();
@@ -198,6 +206,15 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn excluding_a_song_can_be_undone() {
+        let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        core.mix_excluded_set("a".into(), true).unwrap();
+        assert_eq!(core.mix_excluded_songs().unwrap(), ["a"]);
+        core.mix_excluded_set("a".into(), false).unwrap();
+        assert!(core.mix_excluded_songs().unwrap().is_empty());
+    }
+
+    #[test]
     fn excluded_songs_stay_out_of_mixes() {
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
         let all = library(&core);
@@ -225,15 +242,15 @@ pub(crate) mod tests {
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
         let c = core.db.lock();
         let plan = |cond: &str| -> String {
-            let sql = format!("EXPLAIN QUERY PLAN SELECT i.json FROM items i LEFT JOIN song_stats s ON s.server=i.server AND s.song_id=i.id WHERE {SONGS} AND {cond}");
+            let sql = format!("EXPLAIN QUERY PLAN SELECT i.id FROM items i LEFT JOIN song_stats s ON s.server=i.server AND s.song_id=i.id WHERE {SONGS} AND {cond}");
             let mut st = c.prepare(&sql).unwrap();
             let rows = st.query_map([], |r| r.get::<_, String>(3)).unwrap();
             rows.map(|r| r.unwrap()).collect::<Vec<_>>().join("\n")
         };
-        assert!(plan("json_extract(i.json,'$.genre')='x' COLLATE NOCASE").contains("items_genre"));
-        assert!(plan("json_extract(i.json,'$.artistId')='x'").contains("items_artist"));
-        assert!(plan("json_extract(i.json,'$.year') BETWEEN 1 AND 2").contains("items_year"));
-        assert!(plan("json_extract(i.json,'$.starred')=1").contains("items_starred"));
-        assert!(plan("json_extract(i.json,'$.userRating')>=4").contains("items_rated"));
+        assert!(plan("i.genre='x' COLLATE NOCASE").contains("items_genre"));
+        assert!(plan("i.artist_id='x'").contains("items_artist"));
+        assert!(plan("i.year BETWEEN 1 AND 2").contains("items_year"));
+        assert!(plan("i.starred=1").contains("items_starred"));
+        assert!(plan("i.user_rating>=4").contains("items_rated"));
     }
 }

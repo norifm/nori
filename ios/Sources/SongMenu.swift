@@ -46,10 +46,8 @@ enum SongMenu {
         case 9: parts = Iconoir.folderPlus
         case 10: parts = Iconoir.halfMoon
         case 11: parts = Iconoir.antennaSignal
-        case 12: parts = Iconoir.sparks
         case 13: parts = Iconoir.prohibition
         case 14: parts = Iconoir.shareIos
-        case 18: parts = Iconoir.community
         default: parts = Iconoir.infoCircle
         }
         return Glyph.draw(parts, 20)
@@ -74,13 +72,14 @@ enum SongMenu {
             _ = nori_ios_song_act(token, i, 9, 1)
             Toast.show(Say.serverDownloading)
         case 10:
-            SleepTimer.shared.pick(from: host)
-        case 11, 12:
-            off({ nori_ios_song_act(token, i, Int32(a), 0) }) { n in
+            SleepTimer.pick(from: host)
+        case 11:
+            off({ nori_ios_song_act(token, i, 11, 0) }) { n in
                 if n < 0 { Toast.show(Say.failed) } else if n == 0, let words = Say.note(NORI_NOTE_NOTHING_TO_PLAY, 0) { Toast.show(words) }
             }
         case 13:
-            off({ nori_ios_song_act(token, i, 13, 0) }) { done in Toast.show(done == 1 ? Say.excludedFromMixes : Say.failed) }
+            let on = item["on"] as? Bool ?? true
+            off({ nori_ios_song_act(token, i, 13, on ? 1 : 0) }) { done in Toast.show(done == 1 ? (on ? Say.excludedFromMixes : Say.backInMixes) : Say.failed) }
         case 14:
             share(token: token, index: index, from: host)
         case 15:
@@ -161,56 +160,19 @@ enum SongMenu {
     }
 }
 
-/// The sleep timer: after some minutes (a one-shot timer here, its length the core's), or after songs or
-/// at the end of this one (the core and the engine count those).
-final class SleepTimer {
-    static let shared = SleepTimer()
-
-    private enum State {
-        case off
-        /// The client's one-shot timer pauses when it fires.
-        case timed(Timer)
-        /// The core and the engine count songs, or wait for this one's end, and stop playback.
-        case counted
-    }
-
-    private var state = State.off
-
-    func pick(from host: UIViewController) {
-        let running: Bool
-        if case .off = state { running = false } else { running = true }
-        guard let choices = takenJSON(nori_ios_sleep_choices(running ? 1 : 0)) as? [[String: Any]] else { return }
+/// The sleep timer's choices; the timer itself is the core's.
+enum SleepTimer {
+    static func pick(from host: UIViewController) {
+        guard let choices = takenJSON(nori_ios_sleep_choices()) as? [[String: Any]] else { return }
         let sheet = Sheet(Say.sleepTimer)
         for c in choices {
             let minutes = c["minutes"] as? Int ?? 0
             let end = c["end"] as? Bool ?? false
             let songs = c["songs"] as? Int ?? 0
             sheet.add(Say.sleepChoice(minutes: minutes, end: end, songs: songs)) {
-                self.set(minutes: minutes, end: end, songs: songs)
+                nori_ios_sleep_set(UInt32(minutes), end ? 1 : 0, UInt32(songs))
             }
         }
         sheet.show(from: host)
-    }
-
-    /// Playback stopped by itself: a counted timer has done its work.
-    func stopped() {
-        if case .counted = state { state = .off }
-    }
-
-    private func set(minutes: Int, end: Bool, songs: Int) {
-        if case .timed(let t) = state { t.invalidate() }
-        state = .off
-        nori_ios_sleep_set(UInt32(songs), end ? 1 : 0)
-        if end || songs > 0 {
-            state = .counted
-        }
-        guard minutes > 0, let delay = takenJSON(nori_ios_sleep_delay(UInt32(minutes))) as? [Int], delay.count == 2 else { return }
-        let t = Timer(timeInterval: Double(delay[0]) / 1000, repeats: false) { [weak self] _ in
-            nori_ios_sleep_now()
-            self?.state = .off
-        }
-        t.tolerance = Double(delay[1]) / 1000
-        RunLoop.main.add(t, forMode: .common)
-        state = .timed(t)
     }
 }

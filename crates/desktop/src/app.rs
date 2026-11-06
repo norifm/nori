@@ -1,9 +1,9 @@
 //! Window state and UI callbacks, on Slint's event loop thread. Worker results arrive as [`Msg`]s through
 //! the inbox ([`session::Tx`]). The only repeating timer is the seek bar's, and only while playing.
 
+use nori_host::desktop::Root;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
@@ -419,7 +419,8 @@ pub struct App {
     inbox: mpsc::Receiver<Msg>,
     /// Media controls for the process; each session drives them while open.
     mpris: Option<Arc<nori_mpris::Mpris>>,
-    data: PathBuf,
+    /// The queue session over the settings, and the plugins.
+    root: Arc<Root>,
     http: Arc<Http>,
     session: Option<Session>,
     art: Rc<RefCell<Art>>,
@@ -483,7 +484,10 @@ pub struct App {
     look: Option<crate::look::Look>,
     fade: Fade,
     tick: Timer,
-    tick_ms: u64,
+    /// The pace the song plays at, for the seek bar's steps.
+    pace: f32,
+    /// When the app started: the playing bars' clock counts from it.
+    started: std::time::Instant,
     /// The window is off screen (minimized, covered): the seek bar, lyrics and playing bars stand still.
     hidden: bool,
     /// Motion is E-ink: the playing bars stand still.
@@ -501,6 +505,8 @@ pub struct App {
     add: AddFlow,
     /// The account sheet and the last sign-in (the core's).
     sign_in: SignInFlow,
+    /// The profile in use while its plugin doesn't run here, opened once it does.
+    waiting: Option<SavedServer>,
     /// The plugins' menu actions by `Card::kind` ([`MENU_KINDS`]).
     plugin_menus: [Vec<nori_plugins::MenuEntry>; 4],
     /// The song whose details are shown, for the plugins' lines that come after.
@@ -533,10 +539,8 @@ pub struct App {
     jam_hosting: bool,
     /// The song whose menu opened the playlist picker.
     menu_song: Option<Song>,
-    /// The sleep timer's choices as offered, its time, and whether one runs.
+    /// The sleep timer's choices as offered.
     sleep_choices: Vec<nori_core::menus::SleepChoice>,
-    sleep_timer: Timer,
-    sleeping: bool,
     /// Whose playback the player shows and controls, as last read.
     playback: Playback,
     /// A jam guest's controls by its role: what the player offers, and whether it paused here.
@@ -667,7 +671,7 @@ fn home_shelves(rows: &[nori_core::settings::HomeRow]) -> Vec<Shelf> {
 }
 
 /// Builds the app state and wires the window. Keep the returned app alive while the window runs.
-pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCell<App>> {
+pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefCell<App>> {
     let shelves = Rc::new(VecModel::from(Vec::new()));
     ui.set_shelves(ModelRc::from(shelves.clone()));
     ui.set_greeting(words::LISTEN_NOW.into());
@@ -695,7 +699,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             tx,
             inbox,
             mpris: nori_mpris::Mpris::for_app(&format!("nori.desktop{}", std::process::id())).ok().map(Arc::new),
-            data,
+            root,
             http: Http::new(),
             session: None,
             art,
@@ -735,7 +739,8 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             look: None,
             fade: Fade::default(),
             tick: Timer::default(),
-            tick_ms: 0,
+            pace: 1.0,
+            started: std::time::Instant::now(),
             hidden: false,
             still: false,
             lyrics_viewed: false,
@@ -744,6 +749,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             preview: None,
             add: AddFlow::default(),
             sign_in: SignInFlow::default(),
+            waiting: None,
             plugin_menus: Default::default(),
             details_song: None,
             sleeve: None,
@@ -767,8 +773,6 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             jam_hosting: false,
             menu_song: None,
             sleep_choices: Vec::new(),
-            sleep_timer: Timer::default(),
-            sleeping: false,
             playback: Playback::Here,
             jam_controls: None,
             asked: HashSet::new(),
@@ -777,12 +781,12 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
     let h = app.borrow().me.clone();
     wire(ui, &h);
     app.borrow().output_shown();
-    let me = Rc::downgrade(&app);
+    let (me, root) = (Rc::downgrade(&app), app.borrow().root.clone());
     app.borrow().compositor.on_exit(move || {
         if let Some(app) = me.upgrade() {
             stop(&app);
         }
-        nori_core::background::flush();
+        root.app.settings.writer.flush();
     });
     ui.set_display_position_ms(ui.get_position_ms());
     h.with(|a| {
@@ -825,20 +829,20 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         // Plugins reach the web before any profile opens; a session's own transport takes over.
         a.kinds().set_transport(a.http.clone());
         let tx = a.tx.clone();
-        nori_host::desktop::plugins(&a.data).watched.hear(move |n| tx.send(Msg::Note { text: n.words, error: n.problem }));
+        a.root.plugins().watched.hear(move |n| tx.send(Msg::Note { text: n.words, error: n.problem }));
         let tx = a.tx.clone();
-        nori_host::desktop::plugins(&a.data).watched.on_changed(move || tx.send(Msg::PluginsChanged));
+        a.root.plugins().watched.on_changed(move || tx.send(Msg::PluginsChanged));
         let tx = a.tx.clone();
-        nori_host::desktop::plugins(&a.data).watched.hear_casts(move |_| tx.send(Msg::Cast));
+        a.root.plugins().watched.hear_casts(move |_| tx.send(Msg::Cast));
         let tx = a.tx.clone();
-        nori_host::desktop::plugins(&a.data).watched.sign_in_with(move |plugin, url| tx.send(Msg::PluginSignIn { plugin, url }));
-        if let Some((safe, names)) = nori_host::desktop::safe_start(&a.data) {
+        a.root.plugins().watched.sign_in_with(move |plugin, url| tx.send(Msg::PluginSignIn { plugin, url }));
+        if let Some((safe, names)) = a.root.safe_start() {
             a.say(&words::plugins_safe(&safe, &names), true);
         }
         a.plugins_read();
         let wake = a.me.clone();
         a.compositor.on_wake(move || wake.with(|a| a.repaint()));
-        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let prefs = a.root.app.settings.current().unwrap_or_default();
         match prefs.active_server().cloned() {
             Some(p) => a.open(p, None),
             None => {
@@ -890,8 +894,9 @@ fn menu_actions(ui: &AppWindow, compositor: &Compositor) {
 
 /// The app is quitting: saves the volume and queue, stops the engine.
 fn stop(app: &RefCell<App>) {
+    let settings = app.borrow().root.app.settings.clone();
     if let Some(s) = app.borrow_mut().session.take() {
-        session::own::keep(session::own::VOLUME, s.volume().to_string());
+        settings.keep_app_value(session::own::VOLUME, s.volume().to_string());
         s.close();
     }
 }
@@ -1192,7 +1197,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         let ui = a.ui();
         ui.set_eq_curve_w(w);
         ui.set_eq_curve_h(hh);
-        if let Some(p) = crate::session::app().settings.current() {
+        if let Some(p) = a.root.app.settings.current() {
             crate::eq::curve_only(&ui, &p);
         }
     });
@@ -1239,7 +1244,7 @@ impl App {
         match target {
             Target::Device => {
                 // The output opens with the engine, so a new device applies from the next start.
-                session::own::keep(session::own::DEVICE, v.clone());
+                self.root.app.settings.keep_app_value(session::own::DEVICE, v.clone());
                 self.facts.device = v;
                 self.say("The new output is used from the next start", false);
                 self.settings_shown();
@@ -1289,7 +1294,12 @@ impl App {
         ui.set_account_initial(who.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default().into());
         ui.set_account(who.into());
         ui.set_server(where_.into());
-        match Session::open(&self.data, self.http.clone(), profile, self.tx.clone(), self.mpris.clone()) {
+        self.waiting = self.kinds().waits(profile.clone()).map(|_| profile.clone());
+        if self.waiting.is_some() {
+            // The first screen, where its plugin's row installs it or turns it on.
+            return self.choose_provider();
+        }
+        match Session::open(&self.root, self.http.clone(), profile, self.tx.clone(), self.mpris.clone()) {
             Ok(s) => {
                 s.check();
                 ui.set_volume(s.volume());
@@ -1338,12 +1348,12 @@ impl App {
         let form = [ui.get_login_name(), ui.get_login_url(), ui.get_login_user(), ui.get_login_password()].map(|t| t.to_string());
         let draft = login_draft(&info, self.editing.clone(), form);
         let ready = self.kinds().server_ready(draft.clone());
-        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.current().unwrap_or_default();
         let list = nori_core::settings::ServerList { servers: prefs.servers, active_server_id: prefs.active_server_id };
         let added = self.kinds().adds_profile(list, draft.clone()).then_some(after);
         if let AddDo::Send { .. } = self.add_on(AddEvent::Send { ready, added }) {
-            let (data, http, tx) = (self.data.clone(), self.http.clone(), self.tx.clone());
-            std::thread::spawn(move || tx.send(Msg::LoggedIn(session::check_login(&data, http, draft))));
+            let (root, http, tx) = (self.root.clone(), self.http.clone(), self.tx.clone());
+            std::thread::spawn(move || tx.send(Msg::LoggedIn(session::check_login(&root, http, draft))));
         }
     }
 
@@ -1412,7 +1422,7 @@ impl App {
                 self.home_req()
             }
             View::Albums => {
-                self.album_sort = nori_core::browse::album_sort_saved(crate::session::app().settings.current().unwrap_or_default().list_prefs);
+                self.album_sort = nori_core::browse::album_sort_saved(self.root.app.settings.current().unwrap_or_default().list_prefs);
                 self.show_album_sorts();
                 self.album_pages.reset();
                 let (sort, favorites) = (self.album_sort, self.albums_favorites);
@@ -1539,7 +1549,7 @@ impl App {
     /// The page's cover, whose colors the page wears, or none. Its header is the cover's own wash, undyed, as
     /// Android's page shows the cover itself and lets it melt into the dyed page; none where pages wear no cover.
     fn page_colours(&mut self, c: Option<&CoverColours>) {
-        let tinted = crate::session::app().settings.prefs(|p| p.theme.covers_tint_pages());
+        let tinted = self.root.app.settings.prefs(|p| p.theme.covers_tint_pages());
         self.ui().set_page_wash(c.filter(|_| tinted).map(|c| wash(c, None)).unwrap_or_default());
         self.page_cover = c.cloned();
         self.repaint();
@@ -1573,14 +1583,14 @@ impl App {
 
     /// A cover's wash on the season's paper, as its page is dyed; none where pages wear no cover.
     fn dyed_wash(&self, c: &CoverColours) -> Option<Image> {
-        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.current().unwrap_or_default();
         crate::look::dye(&prefs, self.compositor.system_dark(), crate::look::Today::now(), c).map(|d| wash(c, Some(&d)))
     }
 
     /// The look of the page the app is on: the season's, or a cover's.
     fn page_look(&self) -> crate::look::Look {
         let ui = self.ui();
-        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.current().unwrap_or_default();
         let (dark, today) = (self.compositor.system_dark(), crate::look::Today::now());
         let cover = if ui.get_full_player() {
             self.now_cover.as_ref()
@@ -1590,15 +1600,15 @@ impl App {
             None
         };
         match cover {
-            Some(c) => crate::look::cover(&prefs, dark, today, c),
-            None => crate::look::plain(&prefs, dark, today),
+            Some(c) => crate::look::cover(&self.root.app, &prefs, dark, today, c),
+            None => crate::look::plain(&self.root.app, &prefs, dark, today),
         }
     }
 
     /// Dresses every window in the page's look, cross-fading from the one worn unless motion is reduced.
     fn repaint(&mut self) {
         let want = self.page_look();
-        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.current().unwrap_or_default();
         self.ui().set_covers_tint(prefs.theme.covers_tint_pages());
         // nori's Motion setting, as on Android: animations run unless it asks for less.
         let motion = prefs.motion;
@@ -1774,7 +1784,7 @@ impl App {
             }
             Data::Page(PageGot::Playlist(d)) if shown => {
                 ui.set_page_title(d.playlist.name.as_str().into());
-                let notes = crate::session::app().settings.prefs(|p| p.playlist_notes);
+                let notes = self.root.app.settings.prefs(|p| p.playlist_notes);
                 ui.set_page_sub(nori_core::pages::playlist_description(d.playlist.comment.clone(), notes).unwrap_or_default().into());
                 ui.set_page_caption(if d.songs.is_empty() { String::new() } else { words::songs_caption(d.songs.len(), d.seconds) }.into());
                 self.set_page_art(d.playlist.cover_art.clone());
@@ -1865,7 +1875,7 @@ impl App {
     /// `mix_card_colours`), or once its first cover's colors are known with those, as the mix's page wears them.
     fn show_picks(&self) {
         use nori_core::mixes::board::{mix_card_colours, mix_tile_colours};
-        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.current().unwrap_or_default();
         let (dark, today) = (self.compositor.system_dark(), crate::look::Today::now());
         let papers = crate::look::papers(&prefs, dark, today);
         let art = self.art.borrow();
@@ -1876,7 +1886,7 @@ impl App {
                 let card = mix_card_colours(t.id.clone(), papers.light, papers.dark, papers.dark_theme);
                 let (page, ink) = match t.covers.first().and_then(|c| art.colours.get(c)) {
                     Some(c) => {
-                        let look = crate::look::cover(&prefs, dark, today, c);
+                        let look = crate::look::cover(&self.root.app, &prefs, dark, today, c);
                         (look.page(), look.ink())
                     }
                     None => (card.page, card.ink),
@@ -2054,7 +2064,7 @@ impl App {
         if sort == self.album_sort {
             return;
         }
-        let settings = &crate::session::app().settings;
+        let settings = &self.root.app.settings;
         let mut prefs = settings.current().unwrap_or_default();
         let kept = nori_core::browse::album_sort_kept(sort);
         prefs.list_prefs.insert(kept.key, kept.value);
@@ -2262,7 +2272,7 @@ impl App {
         match list {
             0 => self.page_songs.get(i),
             1 => self.songs.get(i),
-            3 => self.queue.as_ref().and_then(|q| q.view.songs.get(i)),
+            3 => self.queue.as_ref().and_then(|q| q.songs.get(i)),
             4 => self.preview_song(i).and_then(|at| self.search_songs.get(at)),
             _ => self.search_songs.get(i),
         }
@@ -2304,33 +2314,29 @@ impl App {
     /// `one`'s menu as the core lists it (menus.rs's `song_menu`); `player`: opened from the player, `page`
     /// the album or artist page it is opened on.
     fn menu_lines(&self, one: Song, player: bool, page: Option<nori_core::PageOrigin>) -> Vec<SongGo> {
-        use nori_core::menus::{song_menu, JamOffer, SongAction as A, SongDownload};
+        use nori_core::menus::{song_menu, SongAction as A, SongDownload};
         let Some(s) = self.session.as_ref() else { return Vec::new() };
-        let ui = self.ui();
-        let jam = ui.global::<crate::Jam>();
-        let offer = if s.rules().asks { Some(JamOffer::Guest) } else { (jam.get_on() && !jam.get_hosting()).then_some(JamOffer::Start) };
         let starred = self.heart(&one);
         let download = if s.rules().downloads { s.download_state(&one.id) } else { SongDownload::None };
         let lyrics = player && self.lyrics.as_ref().is_some_and(|l| !l.is_empty());
-        let items = song_menu(one, starred.unwrap_or_default(), download, player, lyrics, starred.is_some(), s.rules().account, s.rules().downloads, s.rules().radio, offer, page);
+        let excluded = s.core.mix_excluded_songs().is_ok_and(|ids| ids.contains(&one.id));
+        let items = song_menu(one, starred.unwrap_or_default(), excluded, download, player, lyrics, starred.is_some(), s.rules().account, s.rules().downloads, s.rules().radio, s.rules().asks, page);
         let lines = items.into_iter().map(|m| {
             let (kind, id) = match &m.action {
                 A::Favourite { .. } => (0, String::new()),
                 A::GoToAlbum { id } => (1, id.clone()),
                 A::GoToArtist { id, .. } => (2, id.clone()),
                 A::Download => (3, String::new()),
-                A::StartRadio => (4, String::new()),
+                A::Radio => (4, String::new()),
                 A::PlayNext => (5, String::new()),
                 A::AddToQueue => (6, String::new()),
                 A::AddToPlaylist => (7, String::new()),
                 A::RemoveDownload => (8, String::new()),
                 A::StopDownload => (9, String::new()),
                 A::AddToLibrary => (10, String::new()),
-                A::InstantMix => (11, String::new()),
-                A::ExcludeFromMixes => (12, String::new()),
+                A::ExcludeFromMixes { on } => (if *on { 12 } else { 19 }, String::new()),
                 A::Share => (13, String::new()),
                 A::Details => (14, String::new()),
-                A::StartJam => (15, String::new()),
                 A::Lyrics => (16, String::new()),
                 A::SleepTimer => (17, String::new()),
             };
@@ -2353,13 +2359,12 @@ impl App {
         let (songs, origin) = match list {
             0 => (self.page_songs.clone(), self.page_fetch.as_ref().map(Fetch::origin)),
             1 => (self.songs.clone(), None),
-            3 => (self.queue.as_ref().map(|q| q.view.songs.clone()).unwrap_or_default(), None),
+            3 => (self.queue.as_ref().map(|q| q.songs.to_vec()).unwrap_or_default(), None),
             _ => (self.search_songs.clone(), None),
         };
         match how {
             -1 if list == 3 => self.on_session(|s| s.jump(i)),
             -1 => self.on_session(|s| s.play(songs, i, false, origin)),
-            15 => self.on_session(|s| s.start_jam(songs, i)),
             18 => self.remove_from_playlist(i),
             _ => self.song_act(one, how),
         }
@@ -2368,10 +2373,10 @@ impl App {
     /// The player's menu line `how` (`SongGo::kind`), for the song playing.
     fn player_act(&mut self, how: i32) {
         match how {
-            15 => self.on_session(|s| s.jam_open()),
             16 => self.lyrics_sheet(true),
             17 => {
-                self.sleep_choices = nori_core::menus::sleep_choices(self.sleeping);
+                let running = self.session.as_ref().is_some_and(|s| s.sleep() != nori_core::sleep::Sleep::Off);
+                self.sleep_choices = nori_core::menus::sleep_choices(running);
                 let ui = self.ui();
                 ui.set_sleep_choices(ModelRc::new(VecModel::from(self.sleep_choices.iter().map(|c| SharedString::from(words::sleep_choice(c))).collect::<Vec<_>>())));
                 ui.invoke_show_sleep();
@@ -2402,11 +2407,10 @@ impl App {
             }
             8 | 9 => self.on_session(|s| s.download_remove(&one.id)),
             10 => self.on_session(|s| s.star(nori_core::client::Starrable::Song, one.id, true)),
-            11 => self.on_session(|s| s.play_later(Fetch::InstantMix(one.id), false)),
-            12 => {
-                let done = self.session.as_ref().is_some_and(|s| s.core.mix_excluded_set(one.id, true).is_ok());
+            12 | 19 => {
+                let done = self.session.as_ref().is_some_and(|s| s.core.mix_excluded_set(one.id, how == 12).is_ok());
                 if done {
-                    self.say(words::EXCLUDED_FROM_MIXES, false);
+                    self.say(if how == 12 { words::EXCLUDED_FROM_MIXES } else { words::BACK_IN_MIXES }, false);
                 }
             }
             13 => self.share(one.id),
@@ -2429,24 +2433,10 @@ impl App {
         }
     }
 
-    /// The sleep timer's choice `i`: a time counts down here; a number of songs, or this one's end, is
-    /// the queue's to count (`sleep_set`).
+    /// The sleep timer's choice `i`.
     fn sleep(&mut self, i: usize) {
         let Some(c) = self.sleep_choices.get(i).copied() else { return };
-        self.sleep_timer.stop();
-        let pause = self.session.as_ref().is_some_and(|s| s.core.session.sleep_set(c.songs, c.end_of_track));
-        self.on_session(|s| s.engine.pause_at_end(pause));
-        self.sleeping = c.minutes > 0 || c.songs > 0 || c.end_of_track;
-        if c.minutes > 0 {
-            let delay = nori_core::rules::sleep_delay(c.minutes)[0];
-            let weak = self.me.clone();
-            self.sleep_timer.start(TimerMode::SingleShot, Duration::from_millis(delay.max(0) as u64), move || {
-                weak.with(|a| {
-                    a.sleeping = false;
-                    a.on_session(|s| s.engine.pause());
-                })
-            });
-        }
+        self.on_session(|s| s.sleep_pick(c));
     }
 
     /// Fills the lyrics' sheet from the lyrics shown, opening it when `open`.
@@ -2527,7 +2517,7 @@ impl App {
 
     /// Whether the profile may change `p` (the core's `playlist_editable`), signed in as its user.
     fn editable(&self, p: &nori_core::Playlist) -> bool {
-        let user = crate::session::app().settings.current().and_then(|prefs| prefs.active_server().map(|sv| sv.user.clone())).unwrap_or_default();
+        let user = self.root.app.settings.current().and_then(|prefs| prefs.active_server().map(|sv| sv.user.clone())).unwrap_or_default();
         nori_core::menus::playlist_editable(p, &user, self.account())
     }
 
@@ -2679,6 +2669,23 @@ impl App {
         self.mark_playing();
     }
 
+    /// Moves the seek bar on, and again when it next moves a step on screen or its labels a second, as
+    /// Android's does (`nori_look::motion`).
+    fn seek_step(&mut self) {
+        let ui = self.ui();
+        let at = self.position_now();
+        position_shown(&ui, self.player.as_ref(), at as i32);
+        ui.global::<crate::Playing>().set_clock(self.started.elapsed().as_secs_f32());
+        let width = match self.player.as_ref().filter(|_| !ui.get_full_player()) {
+            Some(p) => p.get_seek_width() * p.window().scale_factor(),
+            None => ui.get_full_seek_width() * ui.window().scale_factor(),
+        };
+        let step = nori_look::motion::step_px(ui.global::<Motion>().get_reduced());
+        let wait = nori_look::motion::wait_ms(at, ui.get_duration_ms() as i64, width, self.pace, step, 0.0);
+        let me = self.me.clone();
+        self.tick.start(TimerMode::SingleShot, Duration::from_millis(wait as u64), move || me.with(|a| a.seek_step()));
+    }
+
     /// Where the song shown is now: here, on the device playing or in the jam.
     fn position_now(&self) -> i64 {
         match (&self.playback, &self.session) {
@@ -2727,7 +2734,7 @@ impl App {
     /// A server row's Edit: the profile in use's account sheet where its provider signs in to one, else
     /// the profile in the sign-in form, saved over itself.
     fn edit_profile(&mut self, id: String) {
-        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.current().unwrap_or_default();
         let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
         let providers = self.kinds().providers();
         if id == prefs.active_server_id && providers.iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
@@ -2799,11 +2806,31 @@ impl App {
         }
     }
 
-    /// Turns on plugin `id`, chosen from the first screen, and opens its form.
+    /// Turns on plugin `id`, chosen from the first screen, and opens its form, unless the profile waiting
+    /// for it opened instead.
     fn provider_turned_on(&mut self, id: String) {
         self.plugin_host().turn(id.clone(), true);
         self.plugins_read();
-        self.provider_chosen(nori_core::settings::ServerKind::Plugin { id });
+        if self.plugged.choosing {
+            self.provider_chosen(nori_core::settings::ServerKind::Plugin { id });
+        }
+    }
+
+    /// Opens the waiting profile once its plugin runs.
+    fn open_waiting(&mut self) {
+        match self.waiting.clone() {
+            Some(profile) if self.kinds().waits(profile.clone()).is_none() => self.open(profile, None),
+            _ => {}
+        }
+    }
+
+    /// Why the waiting profile doesn't open, in its plugin's name.
+    fn waiting_line(&self) -> Option<String> {
+        let profile = self.waiting.as_ref()?;
+        let nori_core::settings::ServerKind::Plugin { id } = &profile.kind else { return None };
+        let wait = self.kinds().waits(profile.clone())?;
+        let name = nori_plugins::plugin_display_name(id.clone(), self.plugged.cards.clone(), self.plugged.offers().to_vec());
+        Some(words::profile_waits(&name, wait))
     }
 
     /// Takes down the sheet over the first screen.
@@ -2817,13 +2844,13 @@ impl App {
     }
 
     /// The kinds of profile this computer opens: nori's own and its plugins'.
-    fn kinds(&self) -> &'static Arc<nori_core::providers::Kinds> {
-        &nori_host::desktop::plugins(&self.data).kinds
+    fn kinds(&self) -> &Arc<nori_core::providers::Kinds> {
+        &self.root.plugins().kinds
     }
 
     /// The sign-in page of the profile in use's provider, in the browser.
     fn open_sign_in_page(&self) {
-        let Some(kind) = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.kind.clone())) else { return };
+        let Some(kind) = self.root.app.settings.current().and_then(|p| p.active_server().map(|sv| sv.kind.clone())) else { return };
         let page = self.kinds().providers().into_iter().find(|i| i.kind == kind).and_then(|i| {
             i.sign_in.into_iter().find_map(|s| match s {
                 nori_core::providers::SignIn::WebPage { start_url } => Some(start_url),
@@ -2835,26 +2862,26 @@ impl App {
         }
     }
 
-    fn plugin_host(&self) -> &'static Arc<nori_plugins::Plugins> {
-        &nori_host::desktop::plugins(&self.data).host
+    fn plugin_host(&self) -> &Arc<nori_plugins::Plugins> {
+        &self.root.plugins().host
     }
 
     /// Reads the plugins and repos again.
     fn plugins_read(&mut self) {
-        let host = self.plugin_host();
+        let host = self.plugin_host().clone();
         let mut cards = host.cards("en".into());
         // What was installed since the repos were asked shows as installed.
         if let crate::settings::Shelf::Read(offers) = &mut self.plugged.shelf {
             host.offers_stand(&mut offers.offers);
         }
-        let watched = &nori_host::desktop::plugins(&self.data).watched;
+        let watched = self.root.plugins().watched.clone();
         self.plugged.off = watched.as_said(&mut cards);
         self.plugged.assets = cards.iter().map(|c| (c.id.clone(), host.assets(c.id.clone()))).filter(|(_, a)| !a.is_empty()).collect();
         self.plugged.cards = cards;
         self.plugged.repos = host.repos();
         self.plugin_menus = MENU_KINDS.map(|k| host.menu_entries(k, "en".into()));
         let ui = self.ui();
-        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.current().unwrap_or_default();
         let today = crate::look::Today::now();
         self.plugged.controlled = host.controlled("en".into());
         for d in &mut self.plugged.controlled {
@@ -2870,11 +2897,12 @@ impl App {
         menus.set_playlist(labels(2));
         self.devices_shown();
         self.plugins_shown();
+        self.open_waiting();
     }
 
     /// Draws Settings › Plugins and the page over it as they stand, asking what they show for the first time.
     fn plugins_shown(&mut self) {
-        self.plugged.all_off = crate::session::app().settings.current().unwrap_or_default().plugins_off;
+        self.plugged.all_off = self.root.app.settings.current().unwrap_or_default().plugins_off;
         let host = self.plugin_host().clone();
         if let Some((id, offer)) = self.plugged.readme_wanted() {
             let tx = self.tx.clone();
@@ -2897,11 +2925,14 @@ impl App {
             });
         }
         let ui = self.ui();
-        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.current().unwrap_or_default();
         ui.set_plugin_rows(crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, crate::look::Today::now()));
         ui.set_plugin_top(crate::settings::plugin_top(&self.plugged, prefs.plugins_off));
         if self.plugged.choosing {
             ui.set_provider_rows(crate::settings::provider_rows(&self.plugged, self.kinds(), &prefs, &self.facts, crate::look::Today::now()));
+            if let Some(line) = self.waiting_line() {
+                ui.set_login_error(line.into());
+            }
         }
         self.settings_shown();
     }
@@ -3002,7 +3033,7 @@ impl App {
         moving.playing = Some(crate::motion::play(
             artwork.url.clone(),
             moving.kept.clone(),
-            move |image| frames.send(Msg::LoopFrame { song: id.clone(), image }),
+            move || frames.send(Msg::LoopFrame { song: id.clone() }),
             move |failed| {
                 nori_core::alog::info(&format!("moving cover: {failed:?}"));
                 let status = match failed {
@@ -3033,11 +3064,11 @@ impl App {
             Act::Backup { restore } if !text.trim().is_empty() => self.ask_field(words::BACKUP_PASSWORD, &crate::settings::backup_password(restore, text.trim()), true),
             Act::BackupPassword { restore: false, path } => {
                 let tx = self.tx.clone();
-                nori_host::desktop::make_backup(&self.data, path.into(), text, move |r| tx.send(Msg::BackedUp(r)));
+                self.root.make_backup(path.into(), text, move |r| tx.send(Msg::BackedUp(r)));
             }
             Act::BackupPassword { restore: true, path } => {
                 let tx = self.tx.clone();
-                nori_host::desktop::restore_backup(&self.data, path.into(), text, move |r| tx.send(Msg::Restored(r.map(Box::new))));
+                self.root.restore_backup(path.into(), text, move |r| tx.send(Msg::Restored(r.map(Box::new))));
             }
             _ => {}
         }
@@ -3062,9 +3093,9 @@ impl App {
     /// Updates the plugins once a day, from the open profile's connection. Called once the window is up
     /// with its session (or the sign-in), which ends the start for safe mode.
     fn update_plugins(&self) {
-        nori_host::desktop::plugins(&self.data).host.started();
+        self.root.plugins().host.started();
         let tx = self.tx.clone();
-        nori_host::desktop::update_plugins(&self.data, move |updated| tx.send(Msg::PluginsUpdated(updated)));
+        self.root.update_plugins(move |updated| tx.send(Msg::PluginsUpdated(updated)));
     }
 
     /// Sets a plugin's row, or switches the plugin or its version's hold, to `v`.
@@ -3230,7 +3261,7 @@ impl App {
 
     /// The account sheet, opened by `offer`.
     fn offer_sign_in(&mut self, offer: SignInEvent) {
-        let Some(profile) = crate::session::app().settings.current().and_then(|p| p.active_server().cloned()) else { return };
+        let Some(profile) = self.root.app.settings.current().and_then(|p| p.active_server().cloned()) else { return };
         self.sign_in_on(offer);
         let ended = self.sign_in.shown == SignInShown::Offered { ended: true };
         let user = if ended { String::new() } else { profile.user.clone() };
@@ -3243,7 +3274,7 @@ impl App {
     /// The provider's own sign-in page in a window of its own (this program again, `--sign-in`: the system's
     /// web view); where that cannot start, the sheet unfolds pasting with why.
     fn sign_in_window(&mut self) {
-        let Some(kind) = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.kind.clone())) else { return };
+        let Some(kind) = self.root.app.settings.current().and_then(|p| p.active_server().map(|sv| sv.kind.clone())) else { return };
         self.sign_in_page(kind, None);
     }
 
@@ -3279,7 +3310,7 @@ impl App {
     /// Opens the profile in use again, as the settings now keep it (its account signed in or out), on the
     /// page it was on.
     fn reopen(&mut self) {
-        if let Some(p) = crate::session::app().settings.current().and_then(|p| p.active_server().cloned()) {
+        if let Some(p) = self.root.app.settings.current().and_then(|p| p.active_server().cloned()) {
             let view = self.ui().get_view();
             self.open(p, None);
             self.go(view);
@@ -3300,9 +3331,9 @@ impl App {
         }
         ui.set_join_busy(true);
         ui.set_join_error("".into());
-        let (http, tx, remote) = (self.http.clone(), self.tx.clone(), self.session.as_ref().and_then(|s| s.remote()));
+        let (http, tx, remote, settings) = (self.http.clone(), self.tx.clone(), self.session.as_ref().and_then(|s| s.remote()), self.root.app.settings.clone());
         nori_host::spawn("nori-jam-join", move || {
-            let joined = nori_host::jam_join(http, &session::app().settings, link, &nori_host::device_name(), remote);
+            let joined = nori_host::jam_join(http, &settings, link, &nori_host::device_name(), remote);
             tx.send(Msg::Joined(joined.map_err(|e| words::jam_join_failed(&e))))
         });
     }
@@ -3313,7 +3344,7 @@ impl App {
         ui.set_join_busy(false);
         ui.set_join_open(false);
         ui.set_join_link("".into());
-        let guest = nori_host::jam_joined(&session::app().settings, pass, words::JAM_GUEST);
+        let guest = nori_host::jam_joined(&self.root.app.settings, pass, words::JAM_GUEST);
         self.open(guest, None);
     }
 
@@ -3327,7 +3358,7 @@ impl App {
 
     /// The guest profile is dropped, and the user's own opened again; `said` says why.
     fn left(&mut self, said: &str) {
-        let back = nori_host::jam_left(&session::app().settings);
+        let back = nori_host::jam_left(&self.root.app.settings);
         self.playback = Playback::Here;
         self.asked.clear();
         match back {
@@ -3362,8 +3393,6 @@ impl App {
                     }
                     Event::Error { message, .. } => self.say(&format!("Could not play: {message}"), true),
                     Event::Waiting(true) => self.say("Waiting for the server…", true),
-                    // A sleep timer of songs, or this one's end, stops playback by itself.
-                    Event::Stopped { .. } if self.sleeping && !self.sleep_timer.running() => self.sleeping = false,
                     _ => {}
                 }
                 self.follow();
@@ -3432,7 +3461,7 @@ impl App {
                 }
                 if let Some(s) = &self.session {
                     let core = s.core.clone();
-                    let taste = crate::session::app().settings.prefs(|p| p.taste_model);
+                    let taste = self.root.app.settings.prefs(|p| p.taste_model);
                     let id = nori_core::mixes::board::FAVOURITES_MIX;
                     if let nori_core::mixes::board::MixLookup::Ready { sheet } = core.mix_page(id.into()) {
                         self.data(Req::Page(PageAsk::Mix(id.into())), Ok(Data::Page(PageGot::Mix(Box::new(sheet)))));
@@ -3447,7 +3476,7 @@ impl App {
                 let ui = self.ui();
                 ui.set_eq_autoeq_busy(false);
                 let note = match curve {
-                    Ok(Some(text)) => match crate::session::app().settings.sound_tool(nori_core::settings_store::SoundTool::Import { text }) {
+                    Ok(Some(text)) => match self.root.app.settings.sound_tool(nori_core::settings_store::SoundTool::Import { text }) {
                         Ok(change) => {
                             if let Some(change) = change {
                                 self.on_session(|s| s.applied(change.effect));
@@ -3526,16 +3555,15 @@ impl App {
                 self.motion_follow();
             }
             Msg::Loop { .. } => {}
-            Msg::LoopFrame { song, image } => {
-                let playing = self.moving.as_ref().and_then(|m| m.playing.as_ref());
-                if let Some(playing) = playing {
-                    playing.busy.store(false, std::sync::atomic::Ordering::Relaxed);
-                }
-                if Some(&song) == self.heard.as_ref() && playing.is_some() {
+            Msg::LoopFrame { song } => {
+                let Some(playing) = self.moving.as_ref().and_then(|m| m.playing.as_ref()) else { return };
+                if Some(&song) == self.heard.as_ref() {
+                    let image = playing.shown.lock().expect("not poisoned");
                     let ui = self.ui();
                     ui.set_sleeve(self.compositor.picture(&image.pixels, image.width, image.height));
                     ui.set_sleeved(true);
                 }
+                playing.busy.store(false, std::sync::atomic::Ordering::Relaxed);
             }
             Msg::LoopFailed { song, artwork, status } => {
                 // A failure of the song before leaves the new one's loop playing.
@@ -3789,7 +3817,7 @@ impl App {
     /// Takes the song at list index `index` out of the queue shown (here, or on the device playing), and
     /// offers its undo for a few seconds.
     fn remove_queued(&mut self, index: usize) {
-        let song = self.queue.as_ref().and_then(|q| q.view.songs.get(index).cloned());
+        let song = self.queue.as_ref().and_then(|q| q.songs.get(index).cloned());
         let Some(song) = song else { return };
         // It starts folding away at the click, not once the queue is read again.
         let m = &self.queue_rows;
@@ -3835,14 +3863,15 @@ impl App {
         let remote = self.session.as_ref().and_then(|s| s.remote());
         let cast = self.cast();
         // A jam guest's music is the jam's; it moves to no other device.
-        let host = &nori_host::desktop::plugins(&self.data).host;
+        let host = &self.root.plugins().host;
         let targets = host.cast_targets();
         ui.set_devices_on((remote.is_some() || cast.is_some() || host.finds_outputs() || ui.get_device_plugin_rows().row_count() > 0) && !self.guest());
         if !devices_open(&ui) || (remote.is_none() && cast.is_none() && targets.is_empty()) {
             return;
         }
         let active = self.there().map(|e| e.mirror.id.as_str());
-        let mut rows = vec![words::device_row(None, active.is_none() && cast.is_none())];
+        let here = matches!(nori_core::destination::destination(remote.clone(), cast.as_ref().map(Into::into)), nori_core::destination::Destination::Here { .. });
+        let mut rows = vec![words::device_row(None, here)];
         rows.extend(cast.as_ref().map(words::cast_row));
         rows.extend(targets.iter().map(words::target_row));
         if let Some(r) = remote {
@@ -3862,23 +3891,26 @@ impl App {
 
     /// A plugin's cast, while one runs.
     fn cast(&self) -> Option<nori_plugins::Cast> {
-        nori_host::desktop::plugins(&self.data).host.cast()
+        self.root.plugins().host.cast()
     }
 
     /// Where the sound goes, for the output buttons: the device playing while it is another one, else this
     /// computer's output as the core's `output_look` reads it (this computer until the first song opens one).
     fn output_shown(&self) {
         use nori_core::outputs::{output_look, OutputGlyph};
-        let (elsewhere, glyph, name) = match (self.there(), self.cast()) {
-            (Some(e), _) => (true, words::device_glyph(e.mirror.kind), e.mirror.name.clone()),
-            (None, Some(c)) => (true, if c.look == nori_plugins::CastLook::Headphones { 1 } else { 3 }, c.device),
+        use nori_core::destination::Destination;
+        let remote = self.session.as_ref().and_then(|s| s.remote());
+        let cast = self.cast();
+        let (elsewhere, glyph, name) = match (nori_core::destination::destination(remote, cast.as_ref().map(Into::into)), self.there(), cast) {
+            (Destination::Mirroring { .. }, Some(e), _) => (true, words::device_glyph(e.mirror.kind), e.mirror.name.clone()),
+            (Destination::Cast { .. }, _, Some(c)) => (true, if c.look == nori_plugins::CastLook::Headphones { 1 } else { 3 }, c.device),
             // Headphones a plugin controls by their own name, with their battery.
-            (None, None) if self.output_device().is_some() => {
+            _ if self.output_device().is_some() => {
                 let d = self.output_device().expect("just found");
                 (false, 2, d.level.map_or_else(|| d.name.clone(), |l| words::with_level(&d.name, l)))
             }
-            (None, None) if self.output.is_empty() => (false, 0, words::THIS_COMPUTER.to_string()),
-            (None, None) => {
+            _ if self.output.is_empty() => (false, 0, words::THIS_COMPUTER.to_string()),
+            _ => {
                 let look = output_look(self.output.clone());
                 let glyph = match look.glyph {
                     OutputGlyph::Phone => 0,
@@ -3905,7 +3937,7 @@ impl App {
         if id == words::CAST_ROW {
             return;
         }
-        let host = &nori_host::desktop::plugins(&self.data).host;
+        let host = &self.root.plugins().host;
         if let Some(target) = host.cast_targets().into_iter().find(|t| words::target_id(t) == id) {
             return host.cast_to(target);
         }
@@ -3919,7 +3951,7 @@ impl App {
         }
         // The music goes to one place: wherever it goes now, a cast's device stops.
         if self.cast().is_some() {
-            nori_host::desktop::plugins(&self.data).host.cast_button(nori_plugins::CastButton::Stop);
+            self.root.plugins().host.cast_button(nori_plugins::CastButton::Stop);
         }
         if let Some(r) = self.session.as_ref().and_then(|s| s.remote()) {
             r.pick((!id.is_empty()).then_some(id));
@@ -3958,7 +3990,7 @@ impl App {
     fn settings_shown(&mut self) {
         self.repaint();
         let ui = self.ui();
-        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let prefs = self.root.app.settings.current().unwrap_or_default();
         self.devices_shown();
         let today = crate::look::Today::now();
         let seasons = crate::settings::seasons(&prefs, today);
@@ -3980,7 +4012,7 @@ impl App {
             ui.set_settings(if tab == plugins_tab {
                 crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, today)
             } else {
-                crate::settings::rows(&prefs, &self.facts, self.kinds(), tab, today)
+                crate::settings::rows(&self.root.app.settings.model, &prefs, &self.facts, self.kinds(), tab, today)
             });
         }
         if view == View::Equalizer {
@@ -3993,7 +4025,7 @@ impl App {
         // The first screen has no session, and its plugins' switch still works.
         let changed = match &self.session {
             Some(s) => s.setting(name, value),
-            None => crate::session::app().settings.edit_by_name(name, value),
+            None => self.root.app.settings.edit_by_name(name, value),
         };
         if changed.is_none() {
             self.say(&format!("{name}: not a setting"), true);
@@ -4007,7 +4039,7 @@ impl App {
         let ui = self.ui();
         let g = ui.global::<crate::Jam>();
         let guest = self.guest();
-        let jams = guest || crate::session::app().settings.prefs(|p| p.remote_control);
+        let jams = guest || self.root.app.settings.prefs(|p| p.remote_control);
         let remote = self.session.as_ref().and_then(|s| s.remote()).filter(|_| jams);
         let unsupported = remote.as_ref().is_some_and(|r| r.jam_start() == nori_core::remote::JamStart::Unsupported);
         let view = remote.as_ref().and_then(|r| r.jam_view());
@@ -4119,7 +4151,7 @@ impl App {
     /// Edits a level in place; redraws the page when the slider is released.
     fn slid(&mut self, name: &str, v: f32, last: bool) {
         let Some(level) = crate::settings::level_of(name) else { return };
-        if let Some((effect, _)) = crate::session::app().settings.edit_level(level, v) {
+        if let Some((effect, _)) = self.root.app.settings.edit_level(level, v) {
             self.on_session(|s| s.applied(effect));
         }
         if last {
@@ -4130,7 +4162,7 @@ impl App {
     /// Sets band `i` as the curve or its editor left it; the curve updates at once, the page on release.
     /// `pos` is its place across the curve (a graphic band keeps its own).
     fn eq_band(&mut self, i: u32, point: nori_core::settings_store::BandPoint, last: bool) {
-        let settings = &crate::session::app().settings;
+        let settings = self.root.app.settings.clone();
         if let Some(effect) = settings.edit_point(i, point) {
             self.on_session(|s| s.applied(effect));
         }
@@ -4144,7 +4176,7 @@ impl App {
     /// What was typed for `field` of band `i` (`settings::band_typed`); the page shows the band as kept, or
     /// as it was when the words read as nothing.
     fn eq_typed(&mut self, i: u32, field: nori_core::settings::BandField, text: &str) {
-        if let Some(effect) = crate::session::app().settings.edit_typed(i, field, text) {
+        if let Some(effect) = self.root.app.settings.edit_typed(i, field, text) {
             self.on_session(|s| s.applied(effect));
         }
         self.settings_shown();
@@ -4172,7 +4204,7 @@ impl App {
     }
 
     fn sound_tool(&mut self, tool: nori_core::settings_store::SoundTool) {
-        match crate::session::app().settings.sound_tool(tool) {
+        match self.root.app.settings.sound_tool(tool) {
             Ok(Some(change)) => {
                 self.on_session(|s| s.applied(change.effect));
             }
@@ -4244,7 +4276,7 @@ impl App {
     /// Makes saved profile `i`'s sound the one in use.
     fn profile_apply(&mut self, i: usize) {
         let Some(sound) = self.profiles.get(i).and_then(|p| nori_core::settings::sound_from_json(p.json.clone())) else { return };
-        let store = &crate::session::app().settings;
+        let store = &self.root.app.settings;
         let Some(prefs) = store.current() else { return };
         let effect = store.put(prefs.with_sound(sound));
         self.on_session(|s| s.applied(effect));
@@ -4253,7 +4285,7 @@ impl App {
 
     fn profile_save(&mut self, name: &str) {
         let name = name.trim();
-        let (Some(s), Some(prefs)) = (&self.session, crate::session::app().settings.current()) else { return };
+        let (Some(s), Some(prefs)) = (&self.session, self.root.app.settings.current()) else { return };
         if name.is_empty() {
             return;
         }
@@ -4271,8 +4303,8 @@ impl App {
 
     /// Lyrics service `id` dragged `by` places (down +).
     fn source_moved(&mut self, id: &str, by: i32) {
-        let Some(p) = crate::session::app().settings.current() else { return };
-        let s = nori_core::settings_model::state(&p, nori_core::settings_model::Output::default(), &crate::session::app().settings.model);
+        let Some(p) = self.root.app.settings.current() else { return };
+        let s = nori_core::settings_model::state(&p, nori_core::settings_model::Output::default(), &self.root.app.settings.model);
         let Some(at) = s.lyrics_sources.iter().position(|x| x.id == id) else { return };
         let to = (at as i32 + by).clamp(0, s.lyrics_sources.len() as i32 - 1) as usize;
         if to != at {
@@ -4293,10 +4325,10 @@ impl App {
                 self.choose_provider();
             }
             Some(Act::Server(id)) => {
-                let mut prefs = crate::session::app().settings.current().unwrap_or_default();
+                let mut prefs = self.root.app.settings.current().unwrap_or_default();
                 let Some(p) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
                 prefs.active_server_id = id;
-                crate::session::app().settings.put(prefs);
+                self.root.app.settings.put(prefs);
                 self.open(p, None);
             }
             Some(Act::Edit(id)) => self.edit_profile(id),
@@ -4403,7 +4435,7 @@ impl App {
         let ui = self.ui();
         let now = s.now();
         // Copy the queue only when it changed.
-        let queue = s.queue_stale(self.queue.as_ref()).then(|| s.queue_shown(self.queue.as_ref().map(|q| &q.view)));
+        let queue = s.queue_stale(self.queue.as_ref()).then(|| s.queue_shown(self.queue.as_ref()));
         let playing = now.playing;
         ui.set_playing(playing);
         ui.set_mixing(now.mixing && now.state == State::Playing);
@@ -4433,7 +4465,7 @@ impl App {
             // Every song in play order, as Android's queue: those played (dimmed, above), the one playing, the rest.
             let now = q.rows.now;
             let rows = q.rows.order.iter().enumerate().filter_map(|(at, &i)| {
-                let s = q.view.songs.get(i as usize)?;
+                let s = q.songs.get(i as usize)?;
                 let at = at as i32;
                 Some(SongRow { by: q.by.get(&s.id).cloned().unwrap_or_default().into(), played: at < now, ..row(s, i as usize, at == now) })
             }).collect();
@@ -4441,18 +4473,11 @@ impl App {
             ui.set_queue_from(queue_from(q.upcoming().map(|(_, s)| s)).into());
             self.queue = Some(q);
         }
-        // Seek bar timer: only while playing, quarter-pixel steps of the widest bar.
-        let step = pixel_ms(ui.get_duration_ms() as i64);
+        // The seek bar steps only while playing.
+        self.pace = now.pace;
         let ticks = playing && !self.hidden;
-        if ticks && (!self.tick.running() || self.tick_ms != step) {
-            self.tick_ms = step;
-            let me = self.me.clone();
-            self.tick.start(TimerMode::Repeated, Duration::from_millis(step), move || {
-                me.with(|a| {
-                    let ui = a.ui();
-                    position_shown(&ui, a.player.as_ref(), a.position_now() as i32);
-                });
-            });
+        if ticks && !self.tick.running() {
+            self.seek_step();
         } else if !ticks {
             self.tick.stop();
         }
@@ -4465,11 +4490,6 @@ fn position_shown(ui: &AppWindow, player: Option<&PlayerBar>, position_ms: i32) 
     ui.set_position_ms(position_ms);
     if ui.get_full_player() || player.is_none() { ui.set_display_position_ms(position_ms); }
     if let Some(player) = player.filter(|_| !ui.get_full_player()) { player.set_position_ms(position_ms); }
-}
-
-/// Seek bar step: a quarter pixel of the widest bar (~380 pt at 2x), clamped to 16..250 ms.
-fn pixel_ms(duration_ms: i64) -> u64 {
-    (duration_ms.max(1) as u64 / (760 * 4)).clamp(16, 250)
 }
 
 fn cards(it: impl Iterator<Item = Card>) -> ModelRc<Card> {
@@ -4662,7 +4682,7 @@ mod tests {
     }
 
     fn dressed() -> crate::look::Look {
-        crate::look::plain(&nori_core::settings::StoredPrefs::default(), true, crate::look::Today { month: 10, day: 19, southern: false })
+        crate::look::plain(&Default::default(), &nori_core::settings::StoredPrefs::default(), true, crate::look::Today { month: 10, day: 19, southern: false })
     }
 
     /// A window in the theme's colors, as the app paints it.
@@ -4689,6 +4709,31 @@ mod tests {
         assert_eq!(trail.forward(0.0), None, "a tab chosen forgets the pages ahead");
         trail.opened(PageAsk::Artist("ar".into()), opened_from(View::Search), 0.0);
         assert_eq!(trail.back(0.0).0, Back::Tab(View::Search), "an artist found by search goes back to the search");
+    }
+
+    #[test]
+    fn a_long_continue_title_moves_nothing_under_it() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.set_view(View::Home);
+        ui.set_picks_loaded(true);
+        ui.set_offer_shown(true);
+        ui.set_offer_line("The Weeknd · 9 of 22".into());
+        ui.show().unwrap();
+        // The rows from the card's line down, under where a two-line title ends.
+        let under_title = |title: &str| {
+            ui.set_offer_title(title.into());
+            ui.window().take_snapshot().unwrap();
+            slint::platform::update_timers_and_animations();
+            let shot = ui.window().take_snapshot().unwrap();
+            shot.as_bytes()[245 * 1280 * 4..].to_vec()
+        };
+        let two_lines = under_title("Reflections Laughing (feat. Florence + The Machine)");
+        let too_long = under_title("Reflections Laughing (feat. Florence + The Machine, Travis Scott) and a good deal more words than fit");
+        assert!(two_lines == too_long, "the card's line and button moved");
     }
 
     #[test]
@@ -5408,7 +5453,7 @@ mod tests {
         let facts = crate::settings::Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() };
         let tab = crate::settings::tabs(&facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Lyrics).unwrap() as i32;
         ui.set_view(View::Settings);
-        ui.set_settings(crate::settings::rows(&nori_core::settings::StoredPrefs::default(), &facts, &nori_core::providers::Kinds::builtin(), tab, crate::look::Today { month: 10, day: 19, southern: false }));
+        ui.set_settings(crate::settings::rows(&Default::default(), &nori_core::settings::StoredPrefs::default(), &facts, &nori_core::providers::Kinds::builtin(), tab, crate::look::Today { month: 10, day: 19, southern: false }));
         let moved = Rc::new(RefCell::new(Vec::new()));
         let seen = moved.clone();
         ui.on_source_moved(move |id, by| seen.borrow_mut().push((id.to_string(), by)));
@@ -5546,21 +5591,57 @@ mod tests {
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_devices_on(true);
         ui.show().unwrap();
-        // The tabs head the side sheet; their glyphs' tops sit above the names.
-        let glyph_tops = |panel: Panel| {
+        // Where each of the side sheet's tabs is laid out, left edge and width.
+        let tabs = |panel: Panel| {
             ui.set_inspector(panel);
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
-            let shot = ui.window().take_snapshot().unwrap();
-            let top = glyphs(&shot, 960..1250, 80..112).iter().map(|g| g.2).min().unwrap();
-            glyphs(&shot, 960..1250, top..top + 3).iter().map(|g| (g.0 + g.1) as f32 / 2.0).collect::<Vec<_>>()
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "PanelTabs")
+                .flat_map(|t| t.query_descendants().match_inherits("TabButton").find_all())
+                .map(|b| (b.absolute_position().x, b.size().width))
+                .collect::<Vec<_>>()
         };
-        let devices = glyph_tops(Panel::Devices);
+        let devices = tabs(Panel::Devices);
         assert!(devices.len() >= 3, "{devices:?}");
         for panel in [Panel::Lyrics, Panel::Queue] {
-            let lit = glyph_tops(panel);
-            assert_eq!(lit.len(), devices.len(), "panel {panel:?}");
-            assert!(lit.iter().zip(&devices).all(|(a, b)| (a - b).abs() <= 1.0), "panel {panel:?}: {lit:?} against {devices:?}");
+            assert_eq!(tabs(panel), devices, "panel {panel:?}");
+        }
+    }
+
+    #[test]
+    fn a_sideways_scroll_leaves_the_lyrics_in_place() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        // A row wider than either view, as one measured a hair narrower than the window draws it.
+        let row = "All that I want is a little bit of buh-duh-dabba-dabba-dabba";
+        let line = crate::SungLine { text: row.into(), backing: SharedString::default(), right: false, background: false };
+        ui.set_lyrics_lines(ModelRc::new(VecModel::from(vec![line])));
+        let rows = || ModelRc::new(VecModel::from(vec![SharedString::from(row)]));
+        ui.set_lyrics_side_rows(rows());
+        ui.set_lyrics_full_rows(rows());
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+        };
+        ui.set_full_panel(Panel::Lyrics);
+        for (view, inspector, full) in [("side", Panel::Lyrics, false), ("Now Playing", Panel::None, true)] {
+            ui.set_inspector(inspector);
+            ui.set_full_player(full);
+            settle();
+            let text = || {
+                let found: Vec<_> = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, row).map(|t| t.absolute_position()).collect();
+                assert_eq!(found.len(), 1, "{view}");
+                found[0]
+            };
+            let before = text();
+            let position = slint::LogicalPosition::new(before.x + 40.0, before.y + 10.0);
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled { position, delta_x: -200.0, delta_y: 0.0 });
+            settle();
+            assert_eq!(text(), before, "{view}");
         }
     }
 
@@ -5571,7 +5652,7 @@ mod tests {
         ))).unwrap();
         for dark in [false, true] {
             let bar = crate::PlayerBar::new().unwrap();
-            crate::look::plain(&nori_core::settings::StoredPrefs::default(), dark, crate::look::Today { month: 10, day: 19, southern: false }).paint(&bar);
+            crate::look::plain(&Default::default(), &nori_core::settings::StoredPrefs::default(), dark, crate::look::Today { month: 10, day: 19, southern: false }).paint(&bar);
             bar.window().set_size(slint::PhysicalSize::new(1200, 64));
             bar.set_room(1200.0);
             bar.set_has_song(true);
@@ -5601,7 +5682,7 @@ mod tests {
         ))).unwrap();
         for dark in [false, true] {
             let ui = AppWindow::new().unwrap();
-            crate::look::plain(&nori_core::settings::StoredPrefs::default(), dark, crate::look::Today { month: 10, day: 19, southern: false }).paint(&ui);
+            crate::look::plain(&Default::default(), &nori_core::settings::StoredPrefs::default(), dark, crate::look::Today { month: 10, day: 19, southern: false }).paint(&ui);
             let ink = ui.global::<crate::Palette>().get_foreground().color().to_argb_u8();
             let light = nori_look::color::luminance(u32::from_be_bytes([ink.alpha, ink.red, ink.green, ink.blue])) > 0.5;
             assert_eq!(light, dark, "dark {dark}: {ink:?}");

@@ -5,6 +5,7 @@
   // sung one in place, by a transform the browser draws; a wheel or a drag browses them until the next
   // line. In the full player the lines away from the sung one go soft. A click on a line plays from it.
   import { untrack } from "svelte";
+  import { unlessElsewhere } from "../rpc";
   import { player } from "../state/player.svelte";
   import { W } from "../words";
 
@@ -39,7 +40,12 @@
     let frame: number | undefined;
     const step = async () => {
       timer = frame = undefined;
-      const wait = await player.lyricsStep(16);
+      let wait: number;
+      try {
+        wait = await player.lyricsStep(16);
+      } catch (e) {
+        return unlessElsewhere(e);
+      }
       if (gone || a.pace === 0 || wait <= 0 || document.hidden) return;
       if (wait <= 20) frame = requestAnimationFrame(() => void step());
       else timer = setTimeout(() => void step(), wait / a.pace);

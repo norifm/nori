@@ -28,6 +28,9 @@ const REPLAY_FRAMES: u64 = 256;
 /// Kept input reaches this far behind what has played, so a track that replaces from a little before
 /// its play head (one that drops what its device holds) finds a kept state there.
 const KEPT_BEHIND_US: i64 = 500_000;
+/// The most input frames one buffer brings, as decoders make them (a FLAC block, the largest its subset
+/// allows): kept beyond what the track reaches back to, with the room a ring leaves unused where it wraps.
+const BUFFER_FRAMES_MOST: u64 = 16_384;
 
 /// How long a splice blends what the track held into what replaces it, µs.
 pub const BLEND_US: i64 = 5_000;
@@ -169,6 +172,11 @@ pub trait Track {
     fn ready_to_reopen(&self) -> bool {
         self.is_empty()
     }
+    /// What the device holds at most beyond the track, µs: a sound change made again reaches back that
+    /// far.
+    fn depth_us(&self) -> i64 {
+        0
+    }
     /// Whether the track is told where each song starts ([`Track::song_starts`]).
     fn marks_songs(&self) -> bool {
         false
@@ -304,9 +312,6 @@ pub struct Sink<T: Track> {
     pub rebuilds: usize,
     /// Buffer depth.
     pub capacity_us: i64,
-    /// How far back the input is kept to be run again: the track's depth and what its device holds
-    /// beyond it. From the next flush or format on.
-    pub kept_us: i64,
     settings: ChainSettings,
     runner: Runner,
     kept: Kept,
@@ -356,7 +361,6 @@ impl<T: Track> Sink<T> {
             opens: 0,
             rebuilds: 0,
             capacity_us,
-            kept_us: capacity_us,
             settings,
             runner: Runner::default(),
             kept: Kept::default(),
@@ -847,9 +851,11 @@ impl<T: Track> Sink<T> {
         }
     }
 
-    /// Input frames kept at `f`, played at 1x: what the track holds and what it may reach back to.
+    /// Input frames kept at `f`, played at 1x: what the track and its device hold and what they may reach
+    /// back to, from the mark before it to the end of a buffer being run.
     fn kept_frames(&self, f: Format) -> u64 {
-        (f.rate as i64 * (self.kept_us.max(self.capacity_us) + KEPT_BEHIND_US) / 1_000_000) as u64
+        let reach = (f.rate as i64 * (self.capacity_us + self.track.depth_us() + KEPT_BEHIND_US) / 1_000_000) as u64;
+        reach + crate::chain::MARK_FRAMES + 2 * BUFFER_FRAMES_MOST
     }
 
     /// The track counts from zero again.

@@ -142,6 +142,8 @@ struct Relay {
     deaf: Mutex<Option<String>>,
     /// Requests to doors are refused, as by a device gone from the network; those under way still answer.
     doors_refuse: std::sync::atomic::AtomicBool,
+    /// The devices' network is metered (mobile data).
+    metered: std::sync::atomic::AtomicBool,
 }
 
 struct LatePoll {
@@ -196,7 +198,7 @@ impl Relay {
             lan: Mutex::default(),
             sim: Arc::new(Native::simulated("nori-remote-test", START_US).unwrap()),
             devices: Mutex::default(),
-            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: absent.into(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default(), late_poll: Mutex::new(None), deaf: Mutex::new(None), doors_refuse: Default::default() })
+            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: absent.into(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default(), late_poll: Mutex::new(None), deaf: Mutex::new(None), doors_refuse: Default::default(), metered: Default::default() })
     }
 
     /// Device `dev`'s times read `skew_us` ahead as the relay passes them on. Its states reach the relay
@@ -606,7 +608,11 @@ impl Transport for Relay {
     fn address_changed(&self) {}
 
     fn network(&self) -> nori_core::transport::Network {
-        nori_core::transport::Network::Unmetered
+        if self.metered.load(Ordering::Relaxed) {
+            nori_core::transport::Network::Metered
+        } else {
+            nori_core::transport::Network::Unmetered
+        }
     }
 }
 
@@ -888,6 +894,31 @@ fn active_discovery_follows_the_playing_device() {
     relay.close();
 }
 
+/// Where the music plays, one answer for every client: another device mirrored outranks a plugin's
+/// cast, which outranks this device; a jam guest's profile plays its jam; a host plays here.
+#[test]
+fn the_destination_ranks_mirror_cast_and_here() {
+    use nori_core::destination::{destination, Casting, Destination};
+    let speaker = || Some(Casting { device: "Speaker".into(), sink: true });
+    assert_eq!(destination(None, None), Destination::Here { hosting: false }, "remote control off");
+    assert_eq!(destination(None, speaker()), Destination::Cast { device: "Speaker".into(), sink: true });
+    let relay = Relay::new();
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    desk.playing(&["s1", "s2"], 1);
+    desk.remote.clone().serve(true);
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    assert_eq!(destination(Some(phone.remote.clone()), speaker()), Destination::Cast { device: "Speaker".into(), sink: true });
+    phone.remote.clone().discover_active(true);
+    phone.until("the desktop playing", |r| r.active());
+    assert_eq!(destination(Some(phone.remote.clone()), speaker()), Destination::Mirroring { device: "Desk".into() });
+    let link = opened(&desk);
+    assert_eq!(destination(Some(desk.remote.clone()), None), Destination::Here { hosting: true });
+    let pass = joined(&relay, link, "Gus".into());
+    let gus = Device::new(&relay, ServerConfig { url: pass.url, api_key: Some(pass.api_key), ..Default::default() }, DeviceKind::Guest, "Gus");
+    assert_eq!(destination(Some(gus.remote.clone()), None), Destination::Guest);
+    relay.close();
+}
+
 #[test]
 fn only_the_device_playing_shows_a_song() {
     let relay = Relay::new();
@@ -1072,7 +1103,7 @@ fn a_handoff_counts_one_listen() {
         assert_eq!(donor.submit_id, None, "the old device no longer owns the listen");
         assert_eq!(receiver.submit_id.as_deref(), Some("long"), "time heard on both devices qualifies");
         assert_eq!(receiver.submit_at, started, "the original start belongs to the same listen");
-        nori_core::background::flush();
+        desk.core.session.settings.writer.flush();
         assert!(phone.core.history_recent(10, None, true).unwrap().0.is_empty(), "the donor does not record the listen again");
         let history = desk.core.history_recent(10, None, true).unwrap().0;
         assert_eq!(history.len(), 1);
@@ -1307,6 +1338,45 @@ fn a_jam_opened_while_a_poll_is_held_hears_its_first_request() {
     let asked = host.until("Gus's request", |r| r.jam_view().and_then(|v| v.pending.first().cloned()));
     assert_eq!((asked.from_name.as_str(), asked.song.id.as_str()), ("Gus", "s2"));
     relay.close();
+}
+
+/// A device that only serves, with nothing on its screen, polls the relay every few minutes on a metered
+/// network rather than after every answer, and at once again when something shows; unmetered, it polls
+/// after each. The account's other device changes once a minute, answering the polls held.
+#[test]
+fn out_of_sight_on_mobile_data_a_device_polls_the_relay_less() {
+    for metered in [false, true] {
+        let relay = Relay::new();
+        relay.metered.store(metered, Ordering::Relaxed);
+        let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+        let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+        phone.playing(&["s1", "s2"], 0);
+        desk.playing(&["s3"], 0);
+        phone.remote.clone().serve(true);
+        desk.remote.clone().serve(true);
+        phone.remote.clone().sight(Sight::Nothing);
+        relay.sim.pass(Duration::from_secs(60));
+        let id = phone.remote.id();
+        let polls = || relay.asked().iter().filter(|a| a.starts_with("noriRemote.poll") && a.ends_with(id.as_str())).count();
+        let before = polls();
+        for minute in 0..10 {
+            desk.remote.clone().played(Playing { playing: minute % 2 == 1, position_ms: 5_000, volume: Some(40), ..Default::default() });
+            relay.sim.pass(Duration::from_secs(60));
+        }
+        let ten_minutes = polls() - before;
+        if metered {
+            assert!((1..=3).contains(&ten_minutes), "{ten_minutes} polls in ten minutes on mobile data, out of sight");
+            phone.remote.clone().sight(Sight::Screen);
+            let shown = polls();
+            relay.sim.pass(Duration::from_secs(1));
+            assert!(polls() > shown, "in sight, it polls again at once");
+        } else {
+            assert!(ten_minutes >= 9, "{ten_minutes} polls in ten minutes, unmetered");
+        }
+        phone.remote.stop();
+        desk.remote.stop();
+        relay.close();
+    }
 }
 
 #[test]
@@ -2944,6 +3014,40 @@ fn jam_controls_reach_by_role() {
         dee.remote.jam_added().get("s4").map(String::as_str),
         Some("Dee")
     );
+    relay.close();
+}
+
+/// A jam guest's pick by its role (`jam_play`, `jam_add`): a plain guest's is asked of the host, the
+/// song it would start; an admin's goes straight into the jam's queue.
+#[test]
+fn a_jam_pick_is_asked_or_sent_by_role() {
+    use nori_core::jam_pick::Picked;
+    let relay = Relay::new();
+    let host = Device::account(&relay, DeviceKind::Phone, "Host");
+    host.playing(&["s1", "s2"], 0);
+    let link = opened(&host);
+    host.remote.clone().jam_along(true);
+    let guest_of = |name: &str| {
+        let pass = joined(&relay, link.clone(), name.into());
+        let d = Device::new(&relay, ServerConfig { url: pass.url, api_key: Some(pass.api_key), ..Default::default() }, DeviceKind::Guest, name);
+        d.remote.follow_with(Some(Arc::new(Leads::default())));
+        d.remote.clone().listen(true);
+        d
+    };
+    let (gus, dee) = (guest_of("Gus"), guest_of("Dee"));
+    host.remote.clone().played(Playing { playing: true, position_ms: 30_000, index: Some(0), ..Default::default() });
+    let dee_id = dee.until("the jam", |r| r.jam_view().filter(|v| v.members.len() == 3)).you;
+    host.remote.clone().jam_act(Op::Promote { member: dee_id, admin: true });
+    dee.until("Dee's role", |r| r.jam_controls().filter(|c| !c.asks));
+    gus.until("Gus's controls", |r| r.jam_controls());
+    let song = |id: &str| Song { id: id.into(), title: id.into(), ..Default::default() };
+
+    assert_eq!(gus.remote.clone().jam_play(vec![song("s7"), song("s8")], 1, false), Picked::Asked { title: "s8".into() });
+    host.until("Gus's request", |r| r.jam_view().filter(|v| v.pending.len() == 1 && v.pending[0].song.id == "s8"));
+    assert!(host.ops.try_recv().is_err(), "asked, not played");
+
+    assert_eq!(dee.remote.clone().jam_add(vec![song("s9")], true), Picked::Sent);
+    assert_eq!(host.told(), Op::Add { songs: vec![song("s9")], next: true });
     relay.close();
 }
 

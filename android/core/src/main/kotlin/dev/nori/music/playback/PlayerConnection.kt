@@ -3,7 +3,6 @@ package dev.nori.music.playback
 import android.content.ComponentName
 import android.content.Context
 import android.os.Bundle
-import android.os.SystemClock
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -58,9 +57,8 @@ data class PlayerState(
     val repeat: Repeat = Repeat.OFF,
     val durationMs: Long = 0,
     val error: String? = null,
-    /** elapsedRealtime at which playback will pause, or 0. */
-    val sleepAt: Long = 0,
-    val sleepAtEndOfTrack: Boolean = false,
+    /** The sleep timer (the core's); a time is on elapsedRealtime's clock. */
+    val sleep: dev.nori.music.ffi.queue.Sleep = dev.nori.music.ffi.queue.Sleep.Off,
     /**
      * Playing from downloads while the server is unreachable; the original queue is parked after the
      * bridge block and comes back when the network does.
@@ -132,6 +130,9 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     /** The jam this phone is a guest in, while it is one: its controls go by its role. */
     private var jamGuest = false
 
+    /** A station asked for while another device played, played once the music is back here. */
+    private var pendingStation: RadioStation? = null
+
     private fun mirrored(m: Mirror?, guest: Boolean, jam: dev.nori.music.ffi.JamControls?) {
         val was = mirror
         mirror = m
@@ -142,6 +143,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             was != null -> {
                 _mixing.value = false
                 controller?.let { publish(it, queueChanged = true) } ?: run { _state.value = PlayerState() }
+                pendingStation?.let { pendingStation = null; playRadio(it) }
             }
         }
         answer(mirrorAsked)
@@ -390,13 +392,6 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             publish(player, events.contains(Player.EVENT_TIMELINE_CHANGED))
         }
 
-        // The music stopped by itself at a song's end: the sleep timer's end of a song, if set, is spent (the player's `pauseAtEndOfItem`).
-        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-            if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM && _state.value.sleepAtEndOfTrack) {
-                _state.value = _state.value.copy(sleepAtEndOfTrack = false)
-            }
-        }
-
         override fun onPlayerError(error: PlaybackException) {
             // The platform only sorts its error into the core's kinds (media3's audio output codes are the
             // 5000s), and says it in its own words, not the exception's.
@@ -472,8 +467,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             bridging = view?.bridging ?: old.bridging,
             waiting = p.playWhenReady && PlaybackService.rustPlayer?.waiting == true,
             origin = PlaylistJni.origin(nori.sessionHandle), playingOn = null, playingOnKind = null,
-            // The sleep timer's alarm has fired (its pause is this event): no longer counted down.
-            sleepAt = old.sleepAt.takeIf { it > SystemClock.elapsedRealtime() } ?: 0L,
+            sleep = nori.session.sleep(),
         )
     }
 
@@ -575,6 +569,10 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     }
 
     fun playRadio(station: RadioStation) = with { c ->
+        // A station plays on this phone (the remote protocol carries none): a jam guest's listening is
+        // the host's, and while another device plays, the music comes back here first ([mirrored]).
+        if (jamGuest) return@with
+        if (mirror != null) { pendingStation = station; nori.remotes.pick(null); return@with }
         c.setMediaItem(station.toMediaItem(context.getString(R.string.radio_artist)))
         c.prepare()
         c.play()
@@ -776,9 +774,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     fun sleep(minutes: Int, endOfTrack: Boolean = false, songs: Int = 0) = with { c ->
         c.sendCustomCommand(SessionCommand(PlaybackService.CMD_SLEEP, Bundle.EMPTY), Bundle().apply {
             putInt(PlaybackService.ARG_MINUTES, minutes); putBoolean(PlaybackService.ARG_END_OF_TRACK, endOfTrack); putInt(PlaybackService.ARG_SONGS, songs)
-        })
-        val shown = dev.nori.music.ffi.queue.sleepShown(minutes.coerceAtLeast(0).toUInt(), endOfTrack, songs.coerceAtLeast(0).toUInt(), SystemClock.elapsedRealtime())
-        _state.value = _state.value.copy(sleepAt = shown.atMs, sleepAtEndOfTrack = shown.atEndOfTrack)
+        }).addListener({ _state.value = _state.value.copy(sleep = nori.session.sleep()) }, MoreExecutors.directExecutor())
     }
     init {
         scope.launch {

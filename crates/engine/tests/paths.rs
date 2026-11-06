@@ -853,7 +853,7 @@ fn offload_joins_songs_on_one_track() {
     fake.advance(20 * 44_100 + 100);
     assert!(rig.wait(5, |r| r.heard_song("b")), "{:?}", rig.events.lock());
     assert!(rig.wait(5, |_| fake.0.lock().calls.contains(&Call::Volume(0.5))), "b plays at its ReplayGain volume");
-    assert!(rig.engine.status().offloaded);
+    assert!(rig.engine.status().offloaded());
     let at = rig.engine.status().position_ms;
     assert!((0..100).contains(&at), "at the start of b: {at}");
     fake.advance(20 * 44_100);
@@ -878,7 +878,7 @@ fn torn_down_track_hands_to_cpu() {
     assert!(rig.wait(10, |r| r.card.heard.lock().len() > 44_100), "the CPU took over");
     assert!(fake.calls().contains(&Call::Close), "the torn track was let go");
     let s = rig.engine.status();
-    assert!(!s.offloaded && s.position_ms >= 5_000, "{s:?}");
+    assert!(!s.offloaded() && s.position_ms >= 5_000, "{s:?}");
     rig.engine.stop();
 }
 
@@ -899,7 +899,7 @@ fn offload_follows_settings_both_ways() {
     let (before, asked) = ((rig.card.heard.lock().len() / 2) as i64 * 1000 / 44_100, rig.now_ms());
     rig.engine.set_settings(offload());
     // At once, behind a dip.
-    assert!(rig.wait(10, |r| r.engine.status().offloaded), "{:?}", rig.engine.status().pcm_why);
+    assert!(rig.wait(10, |r| r.engine.status().offloaded()), "{:?}", rig.engine.status().pcm_why);
     let s = rig.engine.status();
     // The offload track starts at the packet the position lands in (a few frames early for the
     // decoder's reservoir).
@@ -915,7 +915,7 @@ fn offload_follows_settings_both_ways() {
     rig.engine.set_settings(Settings { sound: eq, ..offload() });
     assert!(rig.wait(10, |r| r.card.heard.lock().len() > heard + 44_100), "the CPU plays a on");
     assert!(fake.calls().contains(&Call::Close));
-    assert!(rig.wait(5, |r| !r.engine.status().offloaded), "the status follows once the burst is in");
+    assert!(rig.wait(5, |r| !r.engine.status().offloaded()), "the status follows once the burst is in");
     // The CPU resumes where the offload track was.
     let s = rig.engine.status();
     assert!(s.index == Some(0) && s.position_ms >= at + 9_990, "{s:?}");
@@ -966,7 +966,7 @@ fn cpu_song_between_offloaded() {
     assert!(fake.calls().contains(&Call::Close));
     // Offloaded again for c after b.
     assert!(rig.wait(20, |r| r.heard_song("c")), "{:?}", rig.events.lock());
-    assert!(rig.wait(5, |r| r.engine.status().offloaded), "c is the chip's");
+    assert!(rig.wait(5, |r| r.engine.status().offloaded()), "c is the chip's");
     let heard = rig.card.heard.lock().len() / 2;
     assert!(heard + 44_100 / 2 >= 30 * 44_100, "b whole on the CPU: {heard}");
     rig.engine.stop();
@@ -993,7 +993,7 @@ fn cpu_song_between_offloaded() {
     assert!(why.contains("ReplayGain turns it up"), "{why}: {log:?}");
     // Offloaded again for c, at its volume.
     assert!(rig.wait(30, |r| r.heard_song("c")), "{:?}", rig.events.lock());
-    assert!(rig.wait(5, |r| r.engine.status().offloaded), "c is the chip's");
+    assert!(rig.wait(5, |r| r.engine.status().offloaded()), "c is the chip's");
     assert!(rig.wait(5, |_| fake.0.lock().calls.contains(&Call::Volume(0.5))), "c at its ReplayGain volume");
     // b louder than the file, under the limiter's ceiling.
     let heard = rig.card.heard.lock().clone();
@@ -1016,7 +1016,7 @@ fn offload_volume_restored() {
     let songs = vec![("a".into(), "mp3".into(), 10_000), ("b".into(), "flac".into(), 10_000), ("c".into(), "mp3".into(), 10_000)];
     let rig = Rig::new(server, songs, app(), Some(fake.clone()), Settings { fade_ms: 300, ..offload() });
     rig.engine.play_at(0, 0);
-    assert!(rig.wait(10, |r| r.engine.status().offloaded), "a is the chip's: {:?}", rig.engine.status());
+    assert!(rig.wait(10, |r| r.engine.status().offloaded()), "a is the chip's: {:?}", rig.engine.status());
     rig.run(1_200);
     fake.advance(44_100);
     assert!(rig.wait(5, |r| r.engine.status().position_ms >= 990), "{:?}", rig.engine.status());
@@ -1027,7 +1027,7 @@ fn offload_volume_restored() {
     rig.engine.play();
     assert!(rig.wait(10, |r| r.heard_song("b") && !r.card.heard.lock().is_empty()), "b on the CPU: {:?}", rig.events.lock());
     assert!(rig.wait(30, |r| r.heard_song("c")), "{:?}", rig.events.lock());
-    assert!(rig.wait(5, |r| r.engine.status().offloaded), "c is the chip's: {:?}", rig.engine.status());
+    assert!(rig.wait(5, |r| r.engine.status().offloaded()), "c is the chip's: {:?}", rig.engine.status());
     rig.run(1_000);
     // Volume calls since c's track opened.
     let raw = fake.0.lock().calls.clone();
@@ -1046,7 +1046,7 @@ fn offload_volume_restored() {
     rig.run(6 * 60_000);
     assert!(rig.engine.status().releases > 0, "the track was let go: {:?}", rig.engine.status());
     rig.engine.play();
-    assert!(rig.wait(10, |r| r.engine.status().offloaded && r.engine.status().state == State::Playing), "{:?}", rig.engine.status());
+    assert!(rig.wait(10, |r| r.engine.status().offloaded() && r.engine.status().state == State::Playing), "{:?}", rig.engine.status());
     rig.run(1_000);
     let raw = fake.0.lock().calls.clone();
     let opened = raw.iter().rposition(|c| matches!(c, Call::Open(_))).expect("a track");
@@ -1061,9 +1061,9 @@ fn offload_volume_restored() {
     let heard = rig.card.heard.lock().len();
     rig.engine.set_settings(Settings { sound: eq, ..offload() });
     assert!(rig.wait(10, |r| r.card.heard.lock().len() > heard + 44_100), "the CPU plays a on");
-    assert!(rig.wait(5, |r| !r.engine.status().offloaded));
+    assert!(rig.wait(5, |r| !r.engine.status().offloaded()));
     rig.engine.set_settings(offload());
-    assert!(rig.wait(10, |r| r.engine.status().offloaded), "back on the chip: {:?}", rig.engine.status().pcm_why);
+    assert!(rig.wait(10, |r| r.engine.status().offloaded()), "back on the chip: {:?}", rig.engine.status().pcm_why);
     rig.run(1_000);
     let raw = fake.0.lock().calls.clone();
     let opened = raw.iter().rposition(|c| matches!(c, Call::Open(_))).expect("a track");
@@ -1082,13 +1082,13 @@ fn offloaded_song_boosted_moves_to_cpu() {
     let app = Logged::new();
     let rig = Rig::new(server, vec![("a".into(), "mp3".into(), 20_000)], app.clone(), Some(fake.clone()), Settings { gain_boost_db: 6.0, ..offload() });
     rig.engine.play_at(0, 0);
-    assert!(rig.wait(10, |r| r.engine.status().offloaded), "a is the chip's: {:?}", rig.engine.status());
+    assert!(rig.wait(10, |r| r.engine.status().offloaded()), "a is the chip's: {:?}", rig.engine.status());
     fake.advance(5 * 44_100);
     // a now wants +6 dB.
     app.0.lock().gains.insert("a".into(), 2.0);
     rig.engine.gain_changed();
     let asked = rig.now_ms();
-    assert!(rig.wait(10, |r| !r.engine.status().offloaded), "the CPU took over: {:?}", rig.engine.status());
+    assert!(rig.wait(10, |r| !r.engine.status().offloaded()), "the CPU took over: {:?}", rig.engine.status());
     // Regression: the song opened ahead was first looked at a second later.
     assert!(rig.now_ms() - asked <= REMAKE_LEAD_MS + 50, "took over {} ms after", rig.now_ms() - asked);
     assert!(rig.wait(10, |r| r.card.heard.lock().len() > 44_100));
@@ -1546,7 +1546,7 @@ fn cpu_song_reports_why_not_offloaded() {
         let rig = Rig::new(server, vec![("a".into(), ext.into(), 10_000)], app(), Some(fake.clone()), settings);
         rig.engine.play_at(0, 0);
         assert!(rig.wait(10, |r| r.engine.status().pcm_why.is_some_and(|w| w.contains(why))), "{why}: {:?}", rig.engine.status().pcm_why);
-        assert!(!rig.engine.status().offloaded);
+        assert!(!rig.engine.status().offloaded());
         assert!(fake.calls().iter().all(|c| !matches!(c, Call::Open(_))), "no track for the chip: {:?}", fake.calls());
         rig.engine.stop();
     }
@@ -1562,7 +1562,7 @@ fn plain_offload_takes_songs() {
     let fake = Fake::new(&[(Coding::Mp3, Support::Plain)]);
     let rig = Rig::new(server, vec![("a".into(), "mp3".into(), 10_000)], self::app(), Some(fake.clone()), offload());
     rig.engine.play_at(0, 0);
-    assert!(rig.wait(10, |r| r.engine.status().offloaded), "{:?}", rig.engine.status().pcm_why);
+    assert!(rig.wait(10, |r| r.engine.status().offloaded()), "{:?}", rig.engine.status().pcm_why);
     assert!(fake.calls().contains(&Call::DelayPadding(0, 0)), "{:?}", fake.calls());
     assert_eq!(rig.engine.status().pcm_why, None);
     rig.engine.stop();
@@ -1575,7 +1575,7 @@ fn plain_offload_takes_songs() {
     // Shuffled albums: no album neighbours adjacent.
     let rig = Rig::albums(server, songs, on(&[("x", "X", 3), ("y", "Y", 7), ("z", "Z", 1)]), app(), Some(fake.clone()), offload());
     rig.engine.play_at(0, 0);
-    assert!(rig.wait(10, |r| r.engine.status().offloaded), "{:?}", rig.engine.status().pcm_why);
+    assert!(rig.wait(10, |r| r.engine.status().offloaded()), "{:?}", rig.engine.status().pcm_why);
     let why = rig.engine.status().pcm_why.unwrap_or_default();
     assert!(why.contains("near silence at its ends") && why.contains("does not do gapless offload"), "{why}");
     // Each next song on the same track from its start.
@@ -1583,7 +1583,7 @@ fn plain_offload_takes_songs() {
         assert!(rig.wait(10, |_| fake.written() > 0));
         fake.advance(1 << 40);
         let ended = rig.now_ms();
-        assert!(rig.wait(10, |r| r.heard_song(next) && r.engine.status().offloaded), "{next}: {:?}", rig.events.lock());
+        assert!(rig.wait(10, |r| r.heard_song(next) && r.engine.status().offloaded()), "{next}: {:?}", rig.events.lock());
         // Regression: the song opened after the turn that started it, so it waited for the next wake.
         assert!(rig.now_ms() - ended < 100, "{next} began {} ms after the last ended", rig.now_ms() - ended);
     }
@@ -1622,7 +1622,7 @@ fn album_stays_on_cpu() {
     let why = "joins a song of its album without a gap, which needs gapless offload, and the output does not do it";
     assert!(rig.wait(10, |r| r.engine.status().pcm_why.is_some_and(|w| w.starts_with("MP3 with an encoder delay of 576") && w.contains(why))), "{:?}", rig.engine.status().pcm_why);
     assert!(rig.wait(30, |r| r.heard_song("a2")));
-    assert!(!rig.engine.status().offloaded);
+    assert!(!rig.engine.status().offloaded());
     assert!(fake.calls().iter().all(|c| !matches!(c, Call::Open(_))), "no track for the chip: {:?}", fake.calls());
     rig.engine.stop();
 
@@ -1641,7 +1641,7 @@ fn album_stays_on_cpu() {
     // Offload wanted again, but a1 joins a2 gaplessly, which this track cannot: the CPU plays on.
     let why = "joins a song of its album without a gap";
     assert!(rig.wait(10, |r| r.engine.status().pcm_why.is_some_and(|w| w.contains(why))), "{:?}", rig.engine.status().pcm_why);
-    assert!(rig.engine.status().offload_wanted && !rig.engine.status().offloaded);
+    assert!(rig.engine.status().offload_wanted && !rig.engine.status().offloaded());
     assert!(fake.calls().iter().all(|c| !matches!(c, Call::Open(_))), "no track for the chip: {:?}", fake.calls());
     rig.engine.stop();
 }
@@ -1655,14 +1655,14 @@ fn plain_offload_album_handover() {
     let albums = on(&[("x", "X", 5), ("a1", "A", 1), ("a2", "A", 2), ("y", "Y", 9)]);
     let rig = Rig::albums(server, songs, albums, app(), Some(fake.clone()), offload());
     rig.engine.play_at(0, 0);
-    assert!(rig.wait(10, |r| r.engine.status().offloaded && fake.written() > 0), "x on the chip: {:?}", rig.engine.status().pcm_why);
+    assert!(rig.wait(10, |r| r.engine.status().offloaded() && fake.written() > 0), "x on the chip: {:?}", rig.engine.status().pcm_why);
     fake.advance(1 << 40);
     // a1 joins a2 gaplessly: the CPU from a1's start.
-    assert!(rig.wait(10, |r| r.heard_song("a1") && !r.engine.status().offloaded && !r.card.heard.lock().is_empty()), "{:?}", rig.events.lock());
+    assert!(rig.wait(10, |r| r.heard_song("a1") && !r.engine.status().offloaded() && !r.card.heard.lock().is_empty()), "{:?}", rig.events.lock());
     assert_eq!(fake.calls().iter().filter(|c| matches!(c, Call::DelayPadding(..))).count(), 1, "only x went to the chip: {:?}", fake.calls());
     assert_eq!(fake.written(), 0, "and nothing of a1 after x");
     // After a2, y is offloaded again from its start.
-    assert!(rig.wait(20, |r| r.heard_song("y") && r.engine.status().offloaded), "{:?}", rig.events.lock());
+    assert!(rig.wait(20, |r| r.heard_song("y") && r.engine.status().offloaded()), "{:?}", rig.events.lock());
     let heard = rig.card.heard.lock().len() / 2;
     assert!(heard + 44_100 / 2 >= 2 * 30 * 44_100, "a1 and a2 whole on the CPU: {heard} frames");
     assert_eq!(fake.calls().iter().filter(|c| matches!(c, Call::DelayPadding(576, _))).count(), 2, "x and y from their starts: {:?}", fake.calls());
@@ -1716,7 +1716,7 @@ fn bad_head_skips_no_song() {
     fake.read_as(&[None, Some(0), None]);
     read_all(&rig, &fake);
     let s = rig.engine.status();
-    assert!(!rig.heard_song("b") && s.index == Some(0) && s.offloaded, "still a, on the chip: {s:?} {:?}", rig.events.lock());
+    assert!(!rig.heard_song("b") && s.index == Some(0) && s.offloaded(), "still a, on the chip: {s:?} {:?}", rig.events.lock());
     assert!((990..=1_100).contains(&s.position_ms), "where the ear was: {s:?}");
     let notes = fake.notes();
     assert!(notes.iter().any(|n| n.contains("could not be read")), "{notes:?}");
@@ -1744,7 +1744,7 @@ fn bad_head_skips_no_song() {
     fake.read_as(&[]);
     rig.run(100);
     let s = rig.engine.status();
-    assert!(!rig.heard_song("b") && s.index == Some(0) && s.offloaded, "still a: {s:?} {:?}", rig.events.lock());
+    assert!(!rig.heard_song("b") && s.index == Some(0) && s.offloaded(), "still a: {s:?} {:?}", rig.events.lock());
     assert!((1_250..=1_450).contains(&s.position_ms), "a second and 300 ms into a: {s:?}");
     assert!(fake.notes().iter().any(|n| n.contains("counts again from nought")), "{:?}", fake.notes());
     fake.pace(None);
@@ -1762,7 +1762,7 @@ fn bad_chip_hands_to_cpu() {
     let Some((rig, fake)) = two_on_the_chip_with(&d, 20, app.clone()) else { return };
     // A 10 s jump, a failed call, the jump again.
     fake.read_as(&[Some(11 * 44_100), None, Some(11 * 44_100)]);
-    assert!(rig.wait(10, |r| !r.engine.status().offloaded && r.card.heard.lock().len() > 44_100), "the CPU took over: {:?}", rig.engine.status());
+    assert!(rig.wait(10, |r| !r.engine.status().offloaded() && r.card.heard.lock().len() > 44_100), "the CPU took over: {:?}", rig.engine.status());
     let s = rig.engine.status();
     assert!(!rig.heard_song("b") && s.index == Some(0), "a, on the CPU: {s:?} {:?}", rig.events.lock());
     assert!(s.position_ms >= 990 && s.position_ms < 11_000, "from where the ear was, not where the head said: {s:?}");
@@ -1777,7 +1777,7 @@ fn bad_chip_hands_to_cpu() {
     // clock's position.
     let d = dir();
     let Some((rig, fake)) = two_on_a_phone(&d, 30, false, true) else { return };
-    let took = rig.time.until(Duration::from_secs(30), || !rig.engine.status().offloaded && rig.card.heard.lock().len() > 2 * 44_100);
+    let took = rig.time.until(Duration::from_secs(30), || !rig.engine.status().offloaded() && rig.card.heard.lock().len() > 2 * 44_100);
     assert!(took, "the CPU took over: {:?} {:?}", rig.engine.status(), fake.notes());
     let s = rig.engine.status();
     assert!(s.index == Some(0) && !rig.heard_song("b"), "a, on the CPU: {s:?}");
@@ -1800,7 +1800,7 @@ fn bad_chip_hands_to_cpu() {
         c.stalled = true;
         (c.head * 1000 / 44_100) as i64
     };
-    let took = rig.time.until(Duration::from_secs(60), || !rig.engine.status().offloaded);
+    let took = rig.time.until(Duration::from_secs(60), || !rig.engine.status().offloaded());
     let notes = fake.notes();
     assert!(took, "the CPU took over: {:?} {notes:?}", rig.engine.status());
     let s = rig.engine.status();
@@ -1820,7 +1820,7 @@ fn bad_chip_hands_to_cpu() {
     fake.0.lock().refuse_eos = 100;
     let rig = Rig::new(server, vec![("a".into(), "mp3".into(), 10_000)], self::app(), Some(fake.clone()), offload());
     rig.engine.play_at(0, 0);
-    assert!(rig.wait(10, |r| !r.engine.status().offloaded && r.card.heard.lock().len() > 44_100), "the CPU took over: {:?}", rig.engine.status());
+    assert!(rig.wait(10, |r| !r.engine.status().offloaded() && r.card.heard.lock().len() > 44_100), "the CPU took over: {:?}", rig.engine.status());
     let why = rig.engine.status().pcm_why.unwrap_or_default();
     assert!(why.contains("would not take the end of stream"), "{why}");
     assert!(!fake.calls().contains(&Call::EndOfStream));
@@ -1849,7 +1849,7 @@ fn late_presented_ends_no_song() {
     assert!(rig.wait(5, |_| fake.calls().iter().filter(|c| **c == Call::EndOfStream).count() == 2), "said again until taken: {:?}", fake.calls());
     rig.run(200);
     let s = rig.engine.status();
-    assert!(s.state == State::Playing && s.offloaded, "{s:?}");
+    assert!(s.state == State::Playing && s.offloaded(), "{s:?}");
     // Ended, with a perf note saying how.
     fake.advance(3 * 44_100);
     assert!(rig.wait(5, |r| r.events.lock().contains(&Event::State(State::Ended))), "{:?}", rig.events.lock());
@@ -1892,12 +1892,12 @@ fn look_reads_offload_place() {
     rig.run(10_000);
     fake.advance_quietly(10 * 44_100);
     let stale = rig.engine.status();
-    assert!(stale.offloaded && stale.position_ms < 2_000, "the engine has not looked: {stale:?}");
+    assert!(stale.offloaded() && stale.position_ms < 2_000, "the engine has not looked: {stale:?}");
     rig.engine.look();
     // Within 20 ms, not at the next wake.
     assert!(rig.time.until(Duration::from_millis(20), || rig.engine.status().position_ms >= 10_990), "{:?}", rig.engine.status());
     let s = rig.engine.status();
-    assert!(s.offloaded && s.index == Some(0) && s.position_ms <= 11_400, "eleven seconds into a, on the chip: {s:?}");
+    assert!(s.offloaded() && s.index == Some(0) && s.position_ms <= 11_400, "eleven seconds into a, on the chip: {s:?}");
     assert!(!fake.notes().iter().any(|n| n.contains("ahead of the clock")), "{:?}", fake.notes());
     rig.engine.stop();
 }
@@ -1916,7 +1916,7 @@ fn pause_after_sleep_keeps_place() {
     fake.read_as(&[]);
     read_all(&rig, &fake);
     let s = rig.engine.status();
-    assert!(s.offloaded && s.index == Some(0) && s.position_ms >= 1_990, "two seconds into a, still on the chip: {s:?}");
+    assert!(s.offloaded() && s.index == Some(0) && s.position_ms >= 1_990, "two seconds into a, still on the chip: {s:?}");
     assert!(!fake.notes().iter().any(|n| n.contains("ahead of the clock")), "{:?}", fake.notes());
     rig.engine.stop();
 }
@@ -1972,7 +1972,7 @@ fn small_track_place() {
     rig.run(100);
     let s = rig.engine.status();
     // As of the last wake (about two per track fill).
-    assert!(s.offloaded && s.index == Some(0) && (7_000..=10_200).contains(&s.position_ms), "{s:?}");
+    assert!(s.offloaded() && s.index == Some(0) && (7_000..=10_200).contains(&s.position_ms), "{s:?}");
     plays_through_on_the_phone(&rig, &fake, secs);
     rig.engine.stop();
 
@@ -2016,7 +2016,7 @@ fn jittery_timestamp_keeps_place() {
             (c.head, c.flushes)
         };
         // a before the skip, b from zero after the flush.
-        if s.offloaded && !s.switching && s.state == State::Playing && s.index == Some(flushes as usize) {
+        if s.offloaded() && !s.switching && s.state == State::Playing && s.index == Some(flushes as usize) {
             let truth = (head * 1000 / 44_100) as i64;
             ahead_ms = ahead_ms.max(s.position_ms - truth);
             looked += 1;
@@ -2177,13 +2177,13 @@ fn automix_toggles_offload() {
     let songs = vec![("a".into(), "mp3".into(), 40_000), ("b".into(), "mp3".into(), 30_000)];
     let rig = Rig::new(server, songs, app.clone(), Some(fake.clone()), offload());
     rig.engine.play_at(0, 0);
-    assert!(rig.wait(10, |r| r.engine.status().offloaded && fake.written() > 0), "{:?}", rig.engine.status().pcm_why);
+    assert!(rig.wait(10, |r| r.engine.status().offloaded() && fake.written() > 0), "{:?}", rig.engine.status().pcm_why);
     fake.advance(5 * 44_100);
     assert!(rig.wait(5, |r| r.engine.status().position_ms >= 4_900), "{:?}", rig.engine.status());
     // The offload track cannot mix: the CPU takes over at once, not at the next song.
     rig.engine.set_settings(automix());
     rig.engine.replan();
-    assert!(rig.wait(10, |r| !r.engine.status().offloaded && r.card.heard.lock().len() > 2 * 44_100), "the CPU took over: {:?}", rig.engine.status());
+    assert!(rig.wait(10, |r| !r.engine.status().offloaded() && r.card.heard.lock().len() > 2 * 44_100), "the CPU took over: {:?}", rig.engine.status());
     assert!(fake.calls().contains(&Call::Close), "the chip's track was let go");
     assert_eq!(rig.engine.status().pcm_why.as_deref(), Some("AutoMix is on"));
     let s = rig.engine.status();
@@ -2205,12 +2205,12 @@ fn automix_toggles_offload() {
     let rig = Rig::new(server, songs, app.clone(), Some(fake.clone()), automix());
     rig.engine.play_at(0, 0);
     assert!(rig.wait(10, |r| r.card.heard.lock().len() > 2 * 44_100), "the CPU plays a");
-    assert!(!rig.engine.status().offloaded);
+    assert!(!rig.engine.status().offloaded());
     app.0.lock().prefs = sim::prefs_off();
     let before = rig.engine.status().position_ms;
     rig.engine.set_settings(offload());
     rig.engine.replan();
-    assert!(rig.wait(10, |r| r.engine.status().offloaded), "{:?}", rig.engine.status().pcm_why);
+    assert!(rig.wait(10, |r| r.engine.status().offloaded()), "{:?}", rig.engine.status().pcm_why);
     let s = rig.engine.status();
     assert!(s.index == Some(0) && s.position_ms >= before, "a from where the ear was ({before} ms): {s:?}");
     rig.engine.stop();
@@ -2229,12 +2229,12 @@ fn automix_on_after_equalizer_mixes() {
     let songs = vec![("a".into(), "mp3".into(), 40_000), ("b".into(), "mp3".into(), 30_000)];
     let rig = Rig::new(server, songs, app.clone(), Some(fake.clone()), offload());
     rig.engine.play_at(0, 0);
-    assert!(rig.wait(10, |r| r.engine.status().offloaded && fake.written() > 0), "{:?}", rig.engine.status().pcm_why);
+    assert!(rig.wait(10, |r| r.engine.status().offloaded() && fake.written() > 0), "{:?}", rig.engine.status().pcm_why);
     fake.advance(5 * 44_100);
     assert!(rig.wait(5, |r| r.engine.status().position_ms >= 4_900), "{:?}", rig.engine.status());
     let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     rig.engine.set_settings(Settings { sound: eq.clone(), ..offload() });
-    assert!(rig.wait(10, |r| !r.engine.status().offloaded && r.card.heard.lock().len() > 2 * 44_100), "the CPU took over: {:?}", rig.engine.status());
+    assert!(rig.wait(10, |r| !r.engine.status().offloaded() && r.card.heard.lock().len() > 2 * 44_100), "the CPU took over: {:?}", rig.engine.status());
     rig.run(1_000);
     app.0.lock().prefs = Watched::automix().0.lock().prefs;
     rig.engine.set_settings(Settings { sound: eq, ..automix() });
@@ -2255,14 +2255,14 @@ fn offload_setting_moves_song() {
     let fake = Fake::new(MP3_ONLY);
     let rig = Rig::new(server, vec![("a".into(), "mp3".into(), 60_000)], app(), Some(fake.clone()), offload());
     rig.engine.play_at(0, 0);
-    assert!(rig.wait(10, |r| r.engine.status().offloaded && fake.written() > 0), "{:?}", rig.engine.status().pcm_why);
+    assert!(rig.wait(10, |r| r.engine.status().offloaded() && fake.written() > 0), "{:?}", rig.engine.status().pcm_why);
     assert!(rig.wait(5, |r| { fake.advance(4_410); r.engine.status().position_ms >= 4_900 }), "{:?}", rig.engine.status());
     rig.engine.set_settings(Settings::default());
-    assert!(rig.wait(10, |r| !r.engine.status().offloaded && r.card.heard.lock().len() > 44_100), "the CPU took over");
+    assert!(rig.wait(10, |r| !r.engine.status().offloaded() && r.card.heard.lock().len() > 44_100), "the CPU took over");
     assert_eq!(rig.engine.status().pcm_why.as_deref(), Some("offload is off in the settings"));
     assert!(rig.engine.status().position_ms >= 4_900, "{:?}", rig.engine.status());
     rig.engine.set_settings(offload());
-    assert!(rig.wait(10, |r| r.engine.status().offloaded), "back on the chip: {:?}", rig.engine.status().pcm_why);
+    assert!(rig.wait(10, |r| r.engine.status().offloaded()), "back on the chip: {:?}", rig.engine.status().pcm_why);
     rig.engine.stop();
 }
 
@@ -2310,7 +2310,7 @@ fn equalizer_on_a_phone(jittery: bool, before: Before) {
         }
     };
     let s = rig.engine.status();
-    assert!(s.offloaded && s.index == Some(song), "{s:?} {:?}", fake.notes());
+    assert!(s.offloaded() && s.index == Some(song), "{s:?} {:?}", fake.notes());
     let events_before = rig.events.lock().len();
     // The track moves with the clock: here is the position when the settings arrive.
     let chip_ms = (head() * 1000 / 44_100) as i64;
@@ -2318,9 +2318,9 @@ fn equalizer_on_a_phone(jittery: bool, before: Before) {
     let asked_at = rig.now_ms();
     rig.engine.set_settings(Settings { sound: eq, ..offload() });
     // The CPU plays at once, not at the next top-up.
-    assert!(rig.time.until(Duration::from_secs(10), || !rig.engine.status().offloaded && !rig.card.heard.lock().is_empty()));
+    assert!(rig.time.until(Duration::from_secs(10), || !rig.engine.status().offloaded() && !rig.card.heard.lock().is_empty()));
     assert!(rig.now_ms() - asked_at <= 300, "the CPU played {} ms after the equalizer went on: {:?}", rig.now_ms() - asked_at, fake.notes());
-    let took = rig.time.until(Duration::from_secs(10), || !rig.engine.status().offloaded && rig.card.heard.lock().len() >= 2 * 44_100 / 2);
+    let took = rig.time.until(Duration::from_secs(10), || !rig.engine.status().offloaded() && rig.card.heard.lock().len() >= 2 * 44_100 / 2);
     assert!(took, "the CPU took over: {:?} {:?}", rig.engine.status(), fake.notes());
     assert!(fake.calls().contains(&Call::Close) && !fake.0.lock().playing);
     let s = rig.engine.status();
@@ -2338,7 +2338,7 @@ fn equalizer_on_a_phone(jittery: bool, before: Before) {
     assert!(s.position_ms <= left_ms + cpu_ms + 50 && s.position_ms >= left_ms + cpu_ms - 300, "from {left_ms} ms, {cpu_ms} ms played: {s:?}");
     rig.run(3_000);
     let later = rig.engine.status();
-    assert!(later.index == Some(song) && later.state == State::Playing && !later.offloaded, "{later:?}");
+    assert!(later.index == Some(song) && later.state == State::Playing && !later.offloaded(), "{later:?}");
     assert!((later.position_ms - s.position_ms - 3_000).abs() <= 100, "three seconds on: {s:?} {later:?}");
     // No song change nor end; positions continue from the track's.
     let events: Vec<Event> = rig.events.lock()[events_before..].to_vec();
@@ -2381,11 +2381,11 @@ fn leaving_offload_has_no_gap() {
     let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     for round in 0..3 {
         let (t0, chip0, cpu0, calls0, seen) = (rig.time.clock.now_ns(), head(), rig.card.heard.lock().len(), fake.0.lock().calls.len(), rig.events.lock().len());
-        assert!(rig.engine.status().offloaded, "round {round}: on the chip");
+        assert!(rig.engine.status().offloaded(), "round {round}: on the chip");
         rig.engine.set_settings(Settings { sound: eq.clone(), ..offload() });
         rig.run(1_000);
         let s = rig.engine.status();
-        assert!(!s.offloaded && s.index == Some(0), "round {round}: the CPU took over: {s:?}");
+        assert!(!s.offloaded() && s.index == Some(0), "round {round}: the CPU took over: {s:?}");
         // Every frame of the time was played, offloaded then by the CPU.
         let (chip, cpu) = (head() - chip0, (rig.card.heard.lock().len() - cpu0) as u64 / 2);
         let due = ((rig.time.clock.now_ns() - t0) as u128 * 44_100 / 1_000_000_000) as u64;
@@ -2403,7 +2403,7 @@ fn leaving_offload_has_no_gap() {
         let places: Vec<i64> = rig.events.lock()[seen..].iter().filter_map(|e| if let Event::Position { ms, .. } = e { Some(*ms) } else { None }).collect();
         assert!(places.windows(2).all(|w| w[1] >= w[0] - 20 && w[1] - w[0] <= 250), "round {round}: the place runs on: {places:?}");
         rig.engine.set_settings(offload());
-        assert!(rig.time.until(Duration::from_secs(10), || rig.engine.status().offloaded), "round {round}: back on the chip");
+        assert!(rig.time.until(Duration::from_secs(10), || rig.engine.status().offloaded()), "round {round}: back on the chip");
         rig.run(1_000);
     }
     rig.engine.stop();
@@ -2500,7 +2500,7 @@ fn equalizer_on_unsized_song() {
     let chip_ms = (fake.0.lock().head * 1000 / 44_100) as i64;
     let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     rig.engine.set_settings(Settings { sound: eq, ..offload() });
-    let took = rig.time.until(Duration::from_secs(10), || !rig.engine.status().offloaded && rig.card.heard.lock().len() >= 44_100);
+    let took = rig.time.until(Duration::from_secs(10), || !rig.engine.status().offloaded() && rig.card.heard.lock().len() >= 44_100);
     let events = rig.events.lock().clone();
     assert!(took, "the CPU took over: {:?} {:?} {events:?}", rig.engine.status(), fake.notes());
     assert!(!events.iter().any(|e| matches!(e, Event::Error { .. })), "{events:?}");
@@ -2523,7 +2523,7 @@ fn equalizer_on_unsized_song() {
     let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let asked_at = rig.now_ms();
     rig.engine.set_settings(Settings { sound: eq, ..Settings::default() });
-    assert!(rig.time.until(Duration::from_secs(10), || rig.engine.status().chain), "{:?}", rig.engine.status());
+    assert!(rig.time.until(Duration::from_secs(10), || rig.engine.status().chain()), "{:?}", rig.engine.status());
     assert!(rig.now_ms() - asked_at <= 300, "the chain came in {} ms after", rig.now_ms() - asked_at);
     rig.run(2_000);
     let s = rig.engine.status();
@@ -2552,7 +2552,7 @@ fn equalizer_toggles_cleanly() {
         rig.run(if k == 3 { 1_000 } else { 150 });
     }
     // Last switched off: offloaded and playing.
-    assert!(rig.time.until(Duration::from_secs(10), || rig.engine.status().offloaded && fake.0.lock().playing), "{:?} {:?}", rig.engine.status(), fake.notes());
+    assert!(rig.time.until(Duration::from_secs(10), || rig.engine.status().offloaded() && fake.0.lock().playing), "{:?} {:?}", rig.engine.status(), fake.notes());
     rig.run(2_000);
     let s = rig.engine.status();
     let elapsed = rig.now_ms() - t0;
@@ -2585,7 +2585,7 @@ fn equalizer_toggles_cleanly() {
     let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let asked_at = rig.now_ms();
     rig.engine.set_settings(Settings { sound: eq.clone(), ..Settings::default() });
-    assert!(rig.time.until(Duration::from_secs(10), || rig.engine.status().chain), "{:?}", rig.engine.status());
+    assert!(rig.time.until(Duration::from_secs(10), || rig.engine.status().chain()), "{:?}", rig.engine.status());
     assert!(rig.now_ms() - asked_at <= 300, "the chain came in {} ms after the equalizer went on", rig.now_ms() - asked_at);
     let events_before = rig.events.lock().len();
     for k in 0..8 {
@@ -2596,7 +2596,7 @@ fn equalizer_toggles_cleanly() {
     let s = rig.engine.status();
     let events: Vec<Event> = rig.events.lock()[events_before..].to_vec();
     assert!(!events.iter().any(|e| matches!(e, Event::Error { .. } | Event::Buffering(true))), "{events:?}");
-    assert!(s.index == Some(0) && s.state == State::Playing && s.chain, "{s:?}");
+    assert!(s.index == Some(0) && s.state == State::Playing && s.chain(), "{s:?}");
     assert_eq!(s.underruns, 0, "the output never ran dry: {s:?}");
     rig.engine.stop();
 }
@@ -2612,7 +2612,7 @@ fn offload_seeks() {
     assert!(rig.time.until(Duration::from_secs(10), || fake.0.lock().flushes >= 1 && fake.0.lock().head >= 44_100));
     rig.run(500);
     let s = rig.engine.status();
-    assert!(s.offloaded && !s.on_cpu && s.index == Some(0) && (13_000..14_000).contains(&s.position_ms), "{s:?}");
+    assert!(s.offloaded() && !s.on_cpu() && s.index == Some(0) && (13_000..14_000).contains(&s.position_ms), "{s:?}");
     let events = rig.events.lock().clone();
     assert!(!events.iter().any(|e| matches!(e, Event::Looped { .. })), "{events:?}");
     rig.engine.stop();
@@ -2624,14 +2624,14 @@ fn offload_seeks() {
     let first = rig.engine.go_to(0, 9_000);
     assert!(rig.time.until(Duration::from_secs(40), || fake.0.lock().head >= 3 * 44_100));
     let s = rig.engine.status();
-    assert!(s.offloaded && (9_000..13_000).contains(&s.position_ms), "asked while opening: {s:?}");
+    assert!(s.offloaded() && (9_000..13_000).contains(&s.position_ms), "asked while opening: {s:?}");
     let second = rig.engine.go_to(0, 20_000);
     assert!(rig.time.until(Duration::from_secs(10), || rig.events.lock().iter().any(|e| matches!(e, Event::Position { jumps, .. } if *jumps == second))));
     rig.run(1_000);
     rig.engine.look();
     rig.run(1);
     let s = rig.engine.status();
-    assert!(s.offloaded && s.index == Some(0) && (20_500..21_500).contains(&s.position_ms), "{s:?}");
+    assert!(s.offloaded() && s.index == Some(0) && (20_500..21_500).contains(&s.position_ms), "{s:?}");
     let landed: Vec<u64> = rig.events.lock().iter().filter_map(|e| if let Event::Position { jumps, .. } = e { Some(*jumps) } else { None }).collect();
     assert!(landed.contains(&first), "{landed:?}");
     rig.engine.stop();
@@ -2813,7 +2813,7 @@ fn wakes_on_a_small_grant(grant: usize, dsp: usize) -> Option<(f64, f64)> {
     eprintln!("grant {} KB, dsp {} KB: the engine woke {wakes:.2}/s, the platform asked {requests:.2}/s", grant / 1024, dsp / 1024);
     assert_eq!(fake.starved_ms(), 0, "never out of music: {notes:?}");
     assert!(!notes.iter().any(|n| n.contains("given up")), "{notes:?}");
-    assert!(rig.engine.status().offloaded, "{:?}", rig.engine.status());
+    assert!(rig.engine.status().offloaded(), "{:?}", rig.engine.status());
     rig.engine.stop();
     Some((wakes, requests))
 }
@@ -2858,7 +2858,7 @@ fn screen_off_on_a_32_kb_track(head_too: bool) {
     }
     let asked = fake.0.lock().requests - requests;
     let s = rig.engine.status();
-    assert!(s.offloaded, "still on the chip after the count stood 5 s ({asked} requests meanwhile): {s:?} {:?}", fake.notes());
+    assert!(s.offloaded(), "still on the chip after the count stood 5 s ({asked} requests meanwhile): {s:?} {:?}", fake.notes());
     plays_through_on_a_small_grant(&rig, &fake, secs);
     rig.engine.stop();
 }
@@ -2946,7 +2946,7 @@ fn cpu_awake_while_on_cpu() {
     let d = dir();
     let Some((rig, _fake)) = two_on_a_small_grant(&d, 20, KB32, DSP) else { return };
     rig.engine.set_settings(Settings::default());
-    assert!(rig.wait(10, |r| !r.engine.status().offloaded && r.card.heard.lock().len() > 44_100 * 2), "{:?}", rig.engine.status());
+    assert!(rig.wait(10, |r| !r.engine.status().offloaded() && r.card.heard.lock().len() > 44_100 * 2), "{:?}", rig.engine.status());
     rig.events.lock().clear();
     rig.run(5_000);
     assert!(rig.engine.status().awake);
@@ -3025,8 +3025,8 @@ fn offload_perf_report() {
     let songs = vec![("a".into(), "mp3".into(), 120_000), ("b".into(), "mp3".into(), 120_000)];
     let rig = Rig::new(server, songs, app(), Some(fake.clone()), offload());
     rig.engine.play_at(0, 0);
-    assert!(rig.wait(10, |r| r.engine.status().offloaded && r.engine.status().position_ms > 1_000), "{:?}", rig.engine.status());
-    let (wakes, cpu, allocs, at) = (rig.time.clock.sleeps(), crate::engine::cpu_ms(), crate::perf_alloc::counts().0, rig.now_ms());
+    assert!(rig.wait(10, |r| r.engine.status().offloaded() && r.engine.status().position_ms > 1_000), "{:?}", rig.engine.status());
+    let (wakes, cpu, allocs, at, naps) = (rig.time.clock.sleeps(), crate::engine::cpu_ms(), crate::perf_alloc::counts().0, rig.now_ms(), rig.time.clock.naps().len());
     rig.run(200_000);
     let minutes = (rig.now_ms() - at) as f64 / 60_000.0;
     let per = |v: f64| v / minutes;
@@ -3036,7 +3036,10 @@ fn offload_perf_report() {
         per(crate::engine::cpu_ms() - cpu),
         per((crate::perf_alloc::counts().0 - allocs) as f64),
     );
-    assert!(rig.engine.status().offloaded, "{:?}", rig.engine.status());
+    if std::env::var_os("NORI_WAKES").is_some() {
+        print!("{}", crate::engine::wake_report("offload", &rig.time.clock.naps()[naps..]));
+    }
+    assert!(rig.engine.status().offloaded(), "{:?}", rig.engine.status());
     rig.engine.stop();
 }
 
@@ -3071,7 +3074,7 @@ fn torn_down_after_skip_carries_on() {
     let d = dir();
     let Some((rig, fake)) = two_on_the_chip(&d, 20) else { return };
     rig.engine.next();
-    assert!(rig.wait(5, |r| r.engine.status().offloaded && r.engine.status().index == Some(1)), "{:?}", rig.engine.status());
+    assert!(rig.wait(5, |r| r.engine.status().offloaded() && r.engine.status().index == Some(1)), "{:?}", rig.engine.status());
     rig.run(100);
     // The chip plays 400 ms of b while the engine sleeps, then the platform takes the track away.
     let start = fake.0.lock().head;
@@ -3079,7 +3082,7 @@ fn torn_down_after_skip_carries_on() {
     rig.run(400);
     assert_eq!(fake.0.lock().head - start, 44_100 * 2 / 5, "the chip played on");
     fake.tear_down();
-    assert!(rig.wait(10, |r| !r.engine.status().offloaded && !r.card.heard.lock().is_empty()), "the CPU took over");
+    assert!(rig.wait(10, |r| !r.engine.status().offloaded() && !r.card.heard.lock().is_empty()), "the CPU took over");
     let s = rig.engine.status();
     assert!(s.index == Some(1) && s.position_ms >= 350, "b on from about 400 ms, not again from its start: {s:?}");
     rig.engine.stop();

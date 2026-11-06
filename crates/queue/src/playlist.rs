@@ -264,8 +264,8 @@ impl Session {
     }
 
     fn gain_around(&self, around: Option<Around>, bit_perfect: bool) -> f32 {
-        let (Some(s), Some(a)) = (self.settings.current(), around) else { return 1.0 };
-        self.queue_gain(a.before, Some(a.song), a.after, &s.gain_prefs(), bit_perfect, a.shuffling)
+        let (Some(prefs), Some(a)) = (self.settings.with_prefs(|p| p.gain_prefs()), around) else { return 1.0 };
+        self.queue_gain(a.before, Some(a.song), a.after, &prefs, bit_perfect, a.shuffling)
     }
 
     /// The queue view; songs are omitted when `held` equals the current `list_rev`.

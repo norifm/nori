@@ -5,7 +5,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 if [ "${1:-}" = --leased ]; then shift; else
   exec python3 "$here/with-resource.py" "device:emulator-${2:-5554}" bash "$0" --leased "$@"
 fi
-avd="${1:-a16}"; port="${2:-5554}"
+avd="${1:?usage: tools/emulator.sh <avd> [port]}"; port="${2:-5554}"
 [[ "$port" =~ ^[0-9]+$ ]] && [ $((port % 2)) -eq 0 ] || { echo "use an even emulator port" >&2; exit 2; }
 serial="emulator-$port"
 if adb -s "$serial" get-state >/dev/null 2>&1; then

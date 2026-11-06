@@ -286,6 +286,21 @@ fn place_through_stretched_mix() {
     walk(MIX_AT_MS - 5_000, 1.0, Some(MIX_AT_MS + 9_345));
 }
 
+/// Before the incoming song takes over, the bar shows the outgoing one, run on at its own pace: the
+/// pace said is that, and the incoming song's tempo in the output wakes nothing.
+#[test]
+fn the_song_mixed_out_of_runs_on_at_its_own_pace() {
+    let rig = Rig::start(MIX_AT_MS - 5_000, 1.0);
+    rig.run(6_000);
+    let before = rig.time.clock.sleeps();
+    rig.run(3_000);
+    let wakes = rig.time.clock.sleeps() - before;
+    let s = rig.engine.status();
+    assert!(s.index == Some(0) && s.mixing, "still before the takeover: {s:?}");
+    assert_eq!(s.pace, 1.0, "the pace said for the song mixed out of");
+    assert!(wakes <= 4, "{wakes} wakes in 3 s of the mix");
+}
+
 /// The lyrics page through a mix, read per display frame as a phone does, with the output clock briefly
 /// read 60 ms back. Regression: the page switched songs early and its first line refilled repeatedly.
 #[test]

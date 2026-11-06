@@ -38,9 +38,6 @@ the owner asks for it, and delete its line once it ships.
 **AutoMix**
 - Analyze old downloads while charging.
 
-**Settings**
-- Backup and restore with a password (plugin settings go into the same backup).
-
 **Android**
 - Launcher shortcuts for playlists.
 - Check on a phone, frame by frame: the sleeve's soft bottom through swipes, sheet pulls and panel
@@ -52,7 +49,6 @@ the owner asks for it, and delete its line once it ships.
 Plan: `docs/research/plugins.md`. These go there instead of becoming settings:
 - casting: Snapcast, UPnP/DLNA, Chromecast;
 - headphone control (ANC, battery) over Bluetooth;
-- YouTube Music as a provider plugin;
 - the removed sound knobs (crossfade curves, crossfeed levels, compressor, expander, loudness
   compensation) and the hardcoded values, as overrides and sound-stage plugins;
 - autoplay when headphones connect, headset click mapping, audio focus behavior;
@@ -78,6 +74,9 @@ When everything above is done; each behind a switch:
 - DSD output.
 - 32-bit integer output.
 - Web: lock-screen playback in iPhone Safari.
+- Android Baseline Profile: on the emulator (2026-11-03) a cold start to Home took 138 ms uncompiled,
+  127 ms with the profile ART builds from use and 129 ms fully compiled, so it would save at most about
+  10 ms of a fresh install's first starts; a macrobenchmark module and a device run per release to keep.
 
 ## Not planned
 

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use nori_db as db;
-use nori_db::background;
+use nori_db::background::Writer;
 use nori_model::alog;
 use parking_lot::{Mutex, RwLock};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -33,6 +33,8 @@ pub const CACHE_LIMIT: u32 = 32;
 /// The open settings and the database they are kept in.
 struct SettingsStore {
     db: Arc<Mutex<Connection>>,
+    /// The settings' [`Settings::writer`].
+    writer: Writer,
     prefs: StoredPrefs,
     /// Bumped per change; a queued write skips itself when a newer one is queued behind it.
     writes: Arc<AtomicU64>,
@@ -138,7 +140,7 @@ fn effects(a: &StoredPrefs, b: &StoredPrefs) -> u32 {
 
 impl SettingsStore {
     /// The settings in the app database at `db_path`; the defaults are written the first time.
-    fn open(db_path: &str) -> nori_model::Result<Self> {
+    fn open(db_path: &str, writer: Writer) -> nori_model::Result<Self> {
         let mut c = db::open_app(db_path)?;
         let raw = read(&c)?;
         let mut prefs = load(&raw);
@@ -155,7 +157,7 @@ impl SettingsStore {
         if legacy {
             migrate_profiles(&c)?;
         }
-        Ok(SettingsStore { db: Arc::new(Mutex::new(c)), written: Arc::new(Mutex::new(prefs.clone())), prefs, writes: Arc::new(AtomicU64::new(0)) })
+        Ok(SettingsStore { db: Arc::new(Mutex::new(c)), writer, written: Arc::new(Mutex::new(prefs.clone())), prefs, writes: Arc::new(AtomicU64::new(0)) })
     }
 
     /// Replaces the settings with what `make` makes of them and queues the write. Returns the effect
@@ -169,7 +171,7 @@ impl SettingsStore {
         self.prefs = prefs;
         let (db, writes, written, prefs) = (self.db.clone(), self.writes.clone(), self.written.clone(), self.prefs.clone());
         let n = writes.fetch_add(1, Ordering::SeqCst) + 1;
-        background::run(move || {
+        self.writer.run(move || {
             if writes.load(Ordering::SeqCst) != n {
                 return;
             }
@@ -254,6 +256,8 @@ impl SettingsStore {
 #[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct Settings {
     kept: RwLock<Option<SettingsStore>>,
+    /// Where the settings' writes run, and other app database writes off the caller's thread.
+    pub writer: Writer,
     pub model: nori_automix::beat_model::ModelFile,
     /// What enabled plugins lay over the settings; never stored.
     layer: Mutex<crate::overrides::Layer>,
@@ -297,7 +301,7 @@ impl Settings {
 
     /// Opens the settings kept in the app database at `db_path` and makes them the live ones.
     pub fn open(&self, db_path: &str) -> nori_model::Result<StoredPrefs> {
-        let store = SettingsStore::open(db_path)?;
+        let store = SettingsStore::open(db_path, self.writer.clone())?;
         let prefs = store.prefs.clone();
         self.write(|k| *k = Some(store));
         Ok(prefs)
@@ -324,7 +328,7 @@ impl Settings {
         let before = watch.as_ref().and_then(|_| Some(k.as_ref()?.prefs.clone()));
         let r = f(&mut k);
         if let Some(s) = k.as_ref() {
-            self.model.switched(s.prefs.auto_mix_better_beats);
+            self.model.switched(s.prefs.auto_mix_better_beats, &self.writer);
         }
         let after = k.as_ref().map(|s| s.prefs.clone());
         drop(k);
@@ -358,7 +362,7 @@ impl Settings {
     /// Stores an `app_kv` value on the background thread.
     pub fn keep_app_value(&self, key: &'static str, value: String) {
         let Some(db) = self.app_db() else { return };
-        background::run(move || {
+        self.writer.run(move || {
             if let Err(e) = db.lock().execute("INSERT OR REPLACE INTO app_kv(key, value) VALUES(?1, ?2)", params![key, value]) {
                 alog::info(&format!("{key}: could not write: {e}"));
             }
@@ -368,7 +372,7 @@ impl Settings {
     /// Removes an `app_kv` value on the background thread.
     pub fn forget_app_value(&self, key: &'static str) {
         let Some(db) = self.app_db() else { return };
-        background::run(move || {
+        self.writer.run(move || {
             if let Err(e) = db.lock().execute("DELETE FROM app_kv WHERE key=?1", [key]) {
                 alog::info(&format!("{key}: could not remove: {e}"));
             }
@@ -525,7 +529,7 @@ mod tests {
     use crate::settings::{band_from, sound_json, CompressorPreset, EqMode, GainMode, HeadphoneSound, Level, SavedServer, ThemeMode, EQ_MODE_KEY, EQ_RANGES};
 
     fn open(dir: &nori_testdir::TempDir) -> SettingsStore {
-        SettingsStore::open(&dir.join("nori.db").display().to_string()).unwrap()
+        SettingsStore::open(&dir.join("nori.db").display().to_string(), Writer::default()).unwrap()
     }
 
     #[test]
@@ -652,10 +656,10 @@ mod tests {
         let dir = nori_testdir::TempDir::new("settings-shared");
         let (mut a, mut b) = (open(&dir), open(&dir));
         a.edit(|p| StoredPrefs { crossfade_sec: 4, ..p.clone() });
-        background::flush();
+        a.writer.flush();
         b.edit(|p| StoredPrefs { theme: ThemeMode::Light, ..p.clone() });
         b.edit(|p| StoredPrefs { cache_mb: 4096, ..p.clone() });
-        background::flush();
+        b.writer.flush();
         let kept = open(&dir).prefs;
         assert_eq!((kept.crossfade_sec, kept.theme, kept.cache_mb), (4, ThemeMode::Light, 4096));
     }
@@ -669,12 +673,12 @@ mod tests {
             write(&mut c, &StoredPrefs { remote_control: false, ..Default::default() }).unwrap();
             c.execute("INSERT INTO settings VALUES ('jam', ?1)", [to_json(&PrefValue::Flag { v: true })]).unwrap();
         }
-        let mut migrated = SettingsStore::open(&path).unwrap();
+        let mut migrated = SettingsStore::open(&path, Writer::default()).unwrap();
         assert!(migrated.prefs.remote_control);
         assert!(!read(&migrated.db.lock()).unwrap().contains_key("jam"));
         migrated.prefs.remote_control = false;
         write(&mut migrated.db.lock(), &migrated.prefs).unwrap();
-        assert!(!SettingsStore::open(&path).unwrap().prefs.remote_control);
+        assert!(!SettingsStore::open(&path, Writer::default()).unwrap().prefs.remote_control);
     }
 
     /// An install from before the graphic equalizer: the mode is chosen from its settings and sound
@@ -692,7 +696,7 @@ mod tests {
                     c.execute("INSERT INTO profiles(name, json) VALUES('Mine', ?1)", [json]).unwrap();
                 }
             }
-            let opened = SettingsStore::open(&path).unwrap().prefs.eq_mode;
+            let opened = SettingsStore::open(&path, Writer::default()).unwrap().prefs.eq_mode;
             let raw = read(&db::open_app(&path).unwrap()).unwrap();
             (opened, raw.contains_key(EQ_MODE_KEY), load(&raw).eq_mode)
         };
@@ -807,7 +811,7 @@ mod tests {
                 c.execute("INSERT INTO settings(key, value) VALUES(?1, ?2)", params![k, to_json(v)]).unwrap();
             }
         }
-        let prefs = SettingsStore::open(&path).unwrap().prefs;
+        let prefs = SettingsStore::open(&path, Writer::default()).unwrap().prefs;
         (prefs, read(&db::open_app(&path).unwrap()).unwrap())
     }
 
@@ -844,7 +848,9 @@ mod tests {
             assert_eq!(stored, save(&prefs));
         }
         let (prefs, _) = open_old("old-changed", &stored_062(true));
-        assert_eq!((prefs.servers.len(), prefs.theme, prefs.cache_mb, prefs.crossfade_keep_albums), (0, ThemeMode::Midnight, 4096, false), "its built-in YouTube Music profile gone, the rest as it was, pure black with dark becoming Midnight");
+        let kinds: Vec<_> = prefs.servers.iter().map(|s| (s.id.as_str(), s.kind.id())).collect();
+        assert_eq!(kinds, vec![("a1", "fm.nori.youtube-music")], "its built-in YouTube Music profile the plugin's");
+        assert_eq!((prefs.active_server_id.as_str(), prefs.theme, prefs.cache_mb, prefs.crossfade_keep_albums), ("a1", ThemeMode::Midnight, 4096, false), "the rest as it was, pure black with dark becoming Midnight");
     }
 
     #[test]
@@ -973,11 +979,11 @@ mod tests {
             }
             c.execute("INSERT INTO profiles(name, json) VALUES('Car', ?1)", [profile]).unwrap();
         }
-        SettingsStore::open(&path).unwrap();
+        SettingsStore::open(&path, Writer::default()).unwrap();
         let json: String = db::open_app(&path).unwrap().query_row("SELECT json FROM profiles", [], |r| r.get(0)).unwrap();
         assert!(!crate::settings::legacy_profile(&json), "{json}");
         let s = crate::settings::sound_from(&json).unwrap();
-        assert_eq!((s.effects.headphone, s.effects.compressor_preset, s.replay_gain, s.crossfade_sec), (HeadphoneSound::Natural, CompressorPreset::Car, GainMode::Auto, 4));
+        assert_eq!((s.effects.headphone, s.effects.compressor_preset), (HeadphoneSound::Natural, CompressorPreset::Car));
         assert!(s.effects.compressor && s.eq_enabled && s.eq_graphic[0] > 2.0, "the bass boost on the equalizer");
         assert_eq!(crate::settings::sound_from(profile).unwrap(), s, "read the same before it is stored again");
     }

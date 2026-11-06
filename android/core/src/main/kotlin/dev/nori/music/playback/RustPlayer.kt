@@ -7,8 +7,6 @@ import android.content.IntentFilter
 import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
-import dev.nori.music.ffi.model.Focus
-import dev.nori.music.ffi.model.FocusAct
 import android.media.AudioRouting
 import android.media.AudioTrack
 import android.os.Build
@@ -53,6 +51,8 @@ internal object RustPlayerJni {
     @JvmStatic @CriticalNative external fun pause(h: Long)
     /** Pause at once, no fade (headphones pulled out). */
     @JvmStatic @CriticalNative external fun pauseNow(h: Long)
+    /** The system's audio focus changed (0 lost, 1 lost for a while, 2 another sound over it, 3 gained): what it does is the engine's. */
+    @JvmStatic @CriticalNative external fun focus(h: Long, change: Int)
     /** Pause at once and let the output go now (the music moved to another device). */
     @JvmStatic @CriticalNative external fun releaseNow(h: Long)
     /** The core's queue was edited (or reordered): the engine follows it. */
@@ -139,6 +139,8 @@ internal class RustBridge(private val player: EnginePlayer) {
     /** The Rust side lets a request go that has not answered or sends nothing: its call is cancelled. From any of its threads. */
     fun cancel(ticket: Long) = player.tickets.cancel(ticket)
     fun openLive(url: String): RustBody? = player.openLive(url)
+    /** The engine asks for the audio focus ([take]; whether granted) or gives it back. On the engine's thread. */
+    fun focus(take: Boolean): Boolean = player.platformFocus(take)
     /** The files that hold every byte of download [key], in order, for the engine to read in place; null while any is missing. */
     fun downloaded(key: String): Array<String>? = player.downloaded(key)
     /** The same over the stream cache: asked once a song has arrived whole, to play it from disk, not memory. */
@@ -173,6 +175,9 @@ internal class RustBridge(private val player: EnginePlayer) {
     fun cpu(awake: Boolean) = player.engineAwake(awake)
 }
 
+/** What one network read brings at most: an okio segment. */
+private const val SEGMENT = 8192
+
 /**
  * A song's bytes from [from] on, read by the Rust player's loader a buffer at a time. [length] is -1 when
  * unknown; [icy] is a station's stream's bytes of music between two announcements, 0 when it sends none.
@@ -196,17 +201,29 @@ class RustBody internal constructor(
     /**
      * Available bytes read into [buffer], at most [max]. The core controls buffering; waiting to fill
      * this buffer holds up decoding on a slow connection. -1 at the end, -2 when the connection broke.
+     * A network read brings at most one okio segment; one that filled it left more waiting, so reading
+     * goes on, and a fast connection crosses into Rust in large pieces rather than a call per 8 KiB.
      */
     fun read(max: Int): Int {
         if (broke) return -2
         val source = source ?: return -1
         val want = minOf(max, buffer.size)
+        var got = 0
         return try {
-            source.read(buffer, 0, want)
+            var last = source.read(buffer, 0, want)
+            if (last <= 0) return last
+            got = last
+            while (last >= SEGMENT && got < want) {
+                last = source.read(buffer, got, want - got)
+                if (last <= 0) break
+                got += last
+            }
+            got
         } catch (e: Exception) {
             dev.nori.music.NoriLog.w("rust player: the song's bytes stopped coming: $e")
             broke = true
-            -2
+            // What came before the break is still handed over; the next read says it broke.
+            if (got > 0) got else -2
         }
     }
 
@@ -223,8 +240,9 @@ class RustBody internal constructor(
  * and tells the engine. The song shown is the one heard (the engine's song events, which come through a
  * mix at the moment the next song is audible); the position is the engine's, read when asked.
  *
- * What ExoPlayer does around the player and the engine does not, this does as ExoPlayer would: audio
- * focus, pausing when headphones are pulled out, the CPU wake lock while music plays. The player's own
+ * What ExoPlayer does around the player and the engine does not, this does as ExoPlayer would: pausing
+ * when headphones are pulled out, the CPU wake lock while music plays. The audio focus is the engine's
+ * (nori_player::focus): this hands it AudioManager's changes and asks for or gives back the focus when it says. The player's own
  * rules - a seek or a skip while paused is held until play, so nothing is fetched until the music is
  * wanted; the sleep timer's pause at the end of a song - are nori-engine's (`Engine::go_to`,
  * `Engine::pause_at_end`), as a desktop client gets them.
@@ -264,8 +282,6 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     private var prepared = false
     private var want = Want.PAUSED
     private var whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
-    /** Plays and pauses asked for so far: a focus change decided before the last one is stale ([Want.afterFocus]). */
-    private var presses = 0
     private var engineState = EngineState.IDLE
     private var repeat = Player.REPEAT_MODE_OFF
     private var shuffle = false
@@ -283,8 +299,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     private var discontinuity = Discontinuity.NONE
     @Volatile private var loading = 0
     /** Pause when the song playing ends (the sleep timer's "end of this song"): the engine does it. */
-    var pauseAtEndOfItem = false
-        set(on) { field = on; RustPlayerJni.pauseAtEnd(h, on) }
+    fun pauseAtEnd(on: Boolean) = RustPlayerJni.pauseAtEnd(h, on)
     /** Times the song playing started again by itself (repeat one); see [position]. */
     private var loops = 0
     /** What the radio station playing announced (ICY), shown as the song's title as ExoPlayer shows it. */
@@ -302,6 +317,8 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
      * the bridge, and says whether the music goes on (it jumped somewhere to play) or stops here.
      */
     var onBridge: (() -> Boolean)? = null
+    /** Paused a long while (nori-engine's `Event::LongPause`): the engine let its output go; the service lets the session go. */
+    var onLongPause: (() -> Unit)? = null
     /**
      * How the engine follows a jam's host (nori-engine's `Event::Following`), null while it does not. While
      * it follows, wanting to play is the engine's word: the host pausing pauses here too, as a remote change.
@@ -527,22 +544,20 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     }
 
     override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
-        // Asked again on every play, not only when it was never held: play pressed during a call must
-        // not sound over it, and the system refuses the focus until the call is over.
-        if (playWhenReady && !focus(again = true)) return done().also { dev.nori.music.NoriLog.w("rust player: play refused, the audio focus was not granted") }
         // Every change of "wants to play" is in the log with its cause: a page that reads paused over music
         // playing is told apart from the engine's word, a call, or headphones.
         if (playWhenReady != want.playWhenReady) dev.nori.music.NoriLog.i("rust player: ${if (playWhenReady) "play" else "pause"} asked for")
-        presses++
-        // Played while the host is paused, this phone joins it once it plays (the engine says so then).
-        want = if (!playWhenReady || following && led?.playing != true) Want.PAUSED else Want.PLAYING
-        whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
+        // Listening along, wanting to play is the engine's word ([onFollowing]): play joins the host, once it plays.
+        if (!following) {
+            want = if (playWhenReady) Want.PLAYING else Want.PAUSED
+            whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
+        }
+        // The audio focus is the engine's: it asks for it before playing (a refusal is its focus event)
+        // and gives it back on a pause.
         if (playWhenReady) {
             if (prepared) start()
         } else {
             RustPlayerJni.pause(h)
-            // Following a jam's host the focus stays: the host playing on is heard again on play.
-            if (!following) unfocus()
         }
         follow()
         return done()
@@ -554,6 +569,11 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         led = now
         // Listening along ended (the jam left, or only watched now): the engine paused, and so is this.
         if (now == null && was == null) return
+        // Listening along began: the engine plays the host's music by itself, so media3's player is ready for it.
+        if (was == null && now != null && !prepared) {
+            prepared = true
+            clearError()
+        }
         val plays = now == Followed.PLAYING
         if (plays != want.playWhenReady) {
             dev.nori.music.NoriLog.i("rust player: ${if (plays) "plays" else "pauses"} with the jam's host")
@@ -565,18 +585,17 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     override fun handlePrepare(): ListenableFuture<*> {
         prepared = true
         if (h != 0L) clearError()
-        if (audible() && focus()) start()
+        if (audible()) start()
         follow()
         return done()
     }
 
-    /** The music moved to another device: paused at once, the output and the audio focus let go, the place kept. */
+    /** The music moved to another device: paused at once, the output and the audio focus let go (the engine's), the place kept. */
     fun letGo() {
         dev.nori.music.NoriLog.i("rust player: the music plays elsewhere, output let go")
         RustPlayerJni.releaseNow(h)
         want = Want.PAUSED
         prepared = false
-        unfocus()
         follow()
         invalidateState()
     }
@@ -585,7 +604,6 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     override fun handleStop(): ListenableFuture<*> {
         RustPlayerJni.pause(h)
         prepared = false
-        unfocus()
         follow()
         return done()
     }
@@ -593,7 +611,6 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     override fun handleRelease(): ListenableFuture<*> {
         unwatchNetwork()
         watchVolume(false)
-        unfocus()
         main.removeCallbacks(drain)
         val handle = h
         h = 0L
@@ -745,6 +762,8 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
                 EVENT_PLACED -> { discontinuity = discontinuity.and(Discontinuity.PLACED); remoteChanged = true }
                 EVENT_FOLLOWING -> onFollowing(Followed.of(arg))
                 EVENT_WAITING -> remoteChanged = true
+                EVENT_LONG_PAUSE -> main.post { onLongPause?.invoke() }
+                EVENT_FOCUS -> onFocusHold(arg)
                 // The engine is where a jump or seek asked: the session says that place, not its own guess.
                 EVENT_LANDED -> { landed = RustPlayerJni.eventJumps(h); discontinuity = discontinuity.and(Discontinuity.PLACED); remoteChanged = true; PlaybackService.onLanded?.invoke() }
                 // Handed on after the batch: the bridge edits and seeks this player itself.
@@ -822,7 +841,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
      * before a prepare, a call - turned wanting to play off as well.
      */
     private fun stoppedByItself() {
-        pauseAtEndOfItem = false
+        nori.session.sleepStopped()
         // After a run of songs that would not play (not the sleep timer's end of a song, which leaves no
         // failure behind): the player's error, as ExoPlayer's is, so the page says why the music stopped.
         // The words are the core's (PlayerConnection reads the kind from the code); play prepares again.
@@ -869,49 +888,30 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         .setAudioAttributes(PLATFORM_ATTRIBUTES)
         .setOnAudioFocusChangeListener({ change -> onFocus(change) }, main)
         .build()
-    private var focused = false
 
-    private fun focus(again: Boolean = false): Boolean {
-        if (!focused || again) focused = audio.requestAudioFocus(focusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        return focused
-    }
+    /** The engine's ask ([RustBridge.focus]): the focus requested (whether granted) or given back. */
+    internal fun platformFocus(take: Boolean): Boolean =
+        if (take) audio.requestAudioFocus(focusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        else { audio.abandonAudioFocusRequest(focusRequest); true }
 
-    private fun unfocus() {
-        if (focused) audio.abandonAudioFocusRequest(focusRequest)
-        focused = false
-    }
-
-    /** Where focus changes are decided (the core's `Session::audio_focus`, which a plugin may answer): off the main thread, in order. */
-    private val focusing by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
-
-    /** A call or another player: what it does is the core's; acted on here. */
+    /** A call or another player: handed to the engine, whose focus state decides (with a plugin's word). */
     private fun onFocus(change: Int) {
-        val focus = when (change) {
-            AudioManager.AUDIOFOCUS_LOSS -> Focus.LOST
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> Focus.LOST_TRANSIENT
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> Focus.DUCK
-            AudioManager.AUDIOFOCUS_GAIN -> Focus.GAINED
+        val code = when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> 0
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> 1
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> 2
+            AudioManager.AUDIOFOCUS_GAIN -> 3
             else -> return
         }
-        if (focus == Focus.LOST) focused = false
-        val wanted = want
-        val at = presses
-        focusing.execute {
-            val act = nori.session.audioFocus(focus, wanted.playWhenReady, wanted == Want.HELD_BY_CALL)
-            main.post { onFocus(focus, act, at) }
-        }
+        RustPlayerJni.focus(h, code)
     }
 
-    /** [act] for [focus], decided after [decidedAt] presses ([Want.afterFocus]). Ducking the system does itself. */
-    private fun onFocus(focus: Focus, act: FocusAct, decidedAt: Int) {
+    /** Where the engine's focus holds the music ([code]: 0 free, 1 held by a call, 2 paused for good), as media3 says it. */
+    private fun onFocusHold(code: Int) {
         val was = want
-        want = was.afterFocus(focus, act, decidedAt, presses)
-        dev.nori.music.NoriLog.i("rust player: audio focus $focus: $act${if (decidedAt != presses) ", asked for something since" else ""}, wanted $was, now $want")
-        if (was == Want.PLAYING && want != Want.PLAYING) RustPlayerJni.pause(h)
+        want = was.held(code)
+        dev.nori.music.NoriLog.i("rust player: audio focus hold $code, wanted $was, now $want")
         if (was != Want.PAUSED && want == Want.PAUSED) whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
-        if (was == Want.HELD_BY_CALL && want == Want.PLAYING) start()
-        follow()
-        invalidateState()
     }
 
     /**
@@ -1165,6 +1165,8 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         const val EVENT_LANDED = 11
         const val EVENT_FOLLOWING = 12
         const val EVENT_WAITING = 13
+        const val EVENT_LONG_PAUSE = 14
+        const val EVENT_FOCUS = 15
 
         val ATTRIBUTES: AudioAttributes = AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build()
         val PLATFORM_ATTRIBUTES: android.media.AudioAttributes = android.media.AudioAttributes.Builder()

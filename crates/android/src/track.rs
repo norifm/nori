@@ -1048,6 +1048,8 @@ pub(crate) struct TrackOutput {
     float: bool,
     shared: Arc<Shared>,
     format: Option<OutputFormat>,
+    /// What the track opened holds, µs.
+    depth_us: i64,
     thread: Option<JoinHandle<()>>,
     /// A test's: the writer is stepped by hand on the test's clock, not run on a thread of its own.
     #[cfg(test)]
@@ -1062,6 +1064,7 @@ impl TrackOutput {
             float,
             shared,
             format: None,
+            depth_us: 0,
             thread: None,
             #[cfg(test)]
             by_hand: None,
@@ -1091,6 +1094,7 @@ impl AudioOutput for TrackOutput {
         let shallow = self.shared.control.lock().shallow;
         let frames = track_frames(format.rate, false);
         let opened = open_fitting(&mut **self.opener.lock(), format, self.float, frames).inspect_err(|e| log(&format!("the AudioTrack would not open: {e}")))?;
+        self.depth_us = (opened.frames * 1_000_000 / format.rate as u64) as i64;
         *self.shared.control.lock() = Control { shallow, ..Control::default() };
         *self.shared.failure.lock() = None;
         let reopen = Reopen { opener: self.opener.clone(), frames, failure: self.shared.failure.clone() };
@@ -1123,6 +1127,10 @@ impl AudioOutput for TrackOutput {
 
     fn mixed_us(&self) -> u64 {
         self.shared.clock.mixed_us()
+    }
+
+    fn depth_us(&self) -> i64 {
+        self.depth_us
     }
 
     fn takes_float(&mut self) -> bool {

@@ -414,17 +414,41 @@ impl Stretcher {
 /// new position.
 fn delay(raw: &mut [f32], mut pos: usize, ch: usize, input: &[f32], out: &mut [f32]) -> usize {
     let lat = raw.len() / ch;
-    for (i, o) in input.chunks_exact(ch).zip(out.chunks_exact_mut(ch)) {
-        let slot = &mut raw[pos * ch..(pos + 1) * ch];
-        o.copy_from_slice(slot);
-        slot.copy_from_slice(i);
-        pos = if pos + 1 == lat { 0 } else { pos + 1 };
+    let n = (input.len() / ch).min(out.len() / ch);
+    assert!(lat > 0 || n == 0, "a delay line of no frames");
+    let mut done = 0;
+    // The ring in runs up to its end: a frame at a time, each copy was a call.
+    while done < n {
+        let k = (lat - pos).min(n - done);
+        let slot = &mut raw[pos * ch..(pos + k) * ch];
+        out[done * ch..(done + k) * ch].copy_from_slice(slot);
+        slot.copy_from_slice(&input[done * ch..(done + k) * ch]);
+        done += k;
+        pos = if pos + k == lat { 0 } else { pos + k };
     }
     pos
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delay_line_holds_its_length_across_wraps() {
+        let (ch, lat) = (2, 5);
+        let mut raw = vec![0f32; lat * ch];
+        let input: Vec<f32> = (1..=46).map(|v| v as f32).collect();
+        let (mut out, mut pos, mut at) = (Vec::new(), 0, 0);
+        for frames in [3, 7, 1, 12] {
+            let mut block = vec![0f32; frames * ch];
+            pos = delay(&mut raw, pos, ch, &input[at..at + frames * ch], &mut block);
+            out.extend(block);
+            at += frames * ch;
+        }
+        let mut want = vec![0f32; lat * ch];
+        want.extend(&input[..input.len() - lat * ch]);
+        assert_eq!(out, want);
+        assert_eq!(pos, 23 % lat);
+    }
 
     /// Clicks every `every` frames, stereo.
     fn clicks(frames: usize, every: usize) -> Vec<f32> {

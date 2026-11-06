@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use nori_db as db;
 use nori_model::model::Song;
 use rusqlite::{types::Value, Connection, OptionalExtension};
 
@@ -83,17 +84,18 @@ fn pool(c: &Connection, played_only: bool, cond: &str, mut args: Vec<Value>, ord
     };
     args.push(Value::Integer(n as i64));
     let sql = format!(
-        "SELECT i.json, coalesce(s.plays,0), coalesce(s.skips,0), coalesce(s.taste,0) FROM {from}
+        "SELECT coalesce(s.plays,0), coalesce(s.skips,0), coalesce(s.taste,0), {} FROM {from}
          WHERE {SONGS} AND {cond} AND NOT EXISTS(SELECT 1 FROM mix_excluded e WHERE e.server=i.server AND e.song_id=i.id) ORDER BY {order} LIMIT ?{}",
+        db::items::SONG,
         args.len()
     );
     let mut st = c.prepare_cached(&sql)?;
     let mut rows = st.query(rusqlite::params_from_iter(args))?;
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
-        let Ok(song) = serde_json::from_str::<Song>(&r.get::<_, String>(0)?) else { continue };
-        let taste = history::taste(&song, r.get(3)?, now_ms);
-        out.push(Cand { song, plays: r.get(1)?, skips: r.get(2)?, taste });
+        let song = db::items::song(r, 3)?;
+        let taste = history::taste(&song, r.get(2)?, now_ms);
+        out.push(Cand { song, plays: r.get(0)?, skips: r.get(1)?, taste });
     }
     Ok(out)
 }
@@ -236,8 +238,8 @@ pub fn quick_picks(c: &Connection, limit: usize, seed: u64, now_ms: i64) -> rusq
     let rested = || vec![Value::Integer(now_ms - 3 * DAY_MS)];
     let mut cands = pool(c, true, "s.last_played_ms<?1 AND s.taste>0", rested(), Order::Taste, (limit * 4).max(100), now_ms)?;
     // Two statements because each can only use its own partial index.
-    cands.extend(pool(c, false, "json_extract(i.json,'$.starred')=1 AND coalesce(s.last_played_ms,0)<?1", rested(), Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
-    cands.extend(pool(c, false, "json_extract(i.json,'$.userRating')>=4 AND coalesce(s.last_played_ms,0)<?1", rested(), Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
+    cands.extend(pool(c, false, "i.starred=1 AND coalesce(s.last_played_ms,0)<?1", rested(), Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
+    cands.extend(pool(c, false, "i.user_rating>=4 AND coalesce(s.last_played_ms,0)<?1", rested(), Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
     let picked = sample(cands.into_iter().filter(|c| c.taste > 0.0).map(|c| (c.song, c.taste)).collect(), limit, (limit / 5).max(2), &mut rng);
     Ok(spread(picked, &mut rng, None))
 }
@@ -269,7 +271,7 @@ pub fn top(c: &Connection, limit: usize, now_ms: i64) -> rusqlite::Result<Vec<So
 pub fn discover(c: &Connection, limit: usize, seed: u64, now_ms: i64) -> rusqlite::Result<Vec<Song>> {
     let mut rng = Rng::new(seed);
     let mut liked = pool(c, true, "1", vec![], Order::Taste, 500, now_ms)?;
-    liked.extend(pool(c, false, "json_extract(i.json,'$.starred')=1", vec![], Order::Shuffled(rng.next_u64()), 200, now_ms)?);
+    liked.extend(pool(c, false, "i.starred=1", vec![], Order::Shuffled(rng.next_u64()), 200, now_ms)?);
     let (mut artists, mut genres): (HashMap<String, f64>, HashMap<String, f64>) = (HashMap::new(), HashMap::new());
     let mut seen = HashSet::new();
     for l in liked.iter().filter(|l| seen.insert(l.song.id.clone())) {
@@ -291,10 +293,10 @@ pub fn discover(c: &Connection, limit: usize, seed: u64, now_ms: i64) -> rusqlit
     const FRESH: &str = "coalesce(s.plays,0)<=1 AND coalesce(s.skips,0)=0";
     let mut cands = Vec::new();
     for (id, _) in &top_artists {
-        cands.extend(pool(c, false, &format!("json_extract(i.json,'$.artistId')=?1 AND {FRESH}"), vec![text(id)], Order::Shuffled(rng.next_u64()), limit, now_ms)?);
+        cands.extend(pool(c, false, &format!("i.artist_id=?1 AND {FRESH}"), vec![text(id)], Order::Shuffled(rng.next_u64()), limit, now_ms)?);
     }
     for (g, _) in &top_genres {
-        cands.extend(pool(c, false, &format!("json_extract(i.json,'$.genre')=?1 COLLATE NOCASE AND {FRESH}"), vec![text(g)], Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
+        cands.extend(pool(c, false, &format!("i.genre=?1 COLLATE NOCASE AND {FRESH}"), vec![text(g)], Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
     }
     cands.extend(pool(c, false, FRESH, vec![], Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
 
@@ -327,7 +329,7 @@ fn affinity(taste: f64, skips: u32) -> f64 {
 
 /// The seed song, then its neighbourhood: same genre first, then same artist and same decade.
 pub fn instant(c: &Connection, seed_song_id: &str, limit: usize, seed: u64, now_ms: i64) -> rusqlite::Result<Vec<Song>> {
-    let first: Option<Song> = c.prepare_cached("SELECT json FROM items WHERE server=sid() AND kind=2 AND id=?1")?.query_row([seed_song_id], |r| r.get::<_, String>(0)).optional()?.and_then(|j| serde_json::from_str(&j).ok());
+    let first: Option<Song> = c.prepare_cached(&format!("SELECT {} FROM items i WHERE server=sid() AND kind=2 AND id=?1", db::items::SONG))?.query_row([seed_song_id], |r| db::items::song(r, 0)).optional()?;
     let Some(first) = first else { return Ok(Vec::new()) };
     if limit == 0 {
         return Ok(Vec::new());
@@ -336,13 +338,13 @@ pub fn instant(c: &Connection, seed_song_id: &str, limit: usize, seed: u64, now_
     let decade = (first.year / 10 * 10) as i64;
     let mut cands = Vec::new();
     if let Some(g) = first.genre.as_deref().filter(|g| !g.is_empty()) {
-        cands.extend(pool(c, false, "json_extract(i.json,'$.genre')=?1 COLLATE NOCASE", vec![text(g)], Order::Shuffled(rng.next_u64()), limit * 3, now_ms)?);
+        cands.extend(pool(c, false, "i.genre=?1 COLLATE NOCASE", vec![text(g)], Order::Shuffled(rng.next_u64()), limit * 3, now_ms)?);
     }
     if let Some(a) = first.artist_id.as_deref().filter(|a| !a.is_empty()) {
-        cands.extend(pool(c, false, "json_extract(i.json,'$.artistId')=?1", vec![text(a)], Order::Shuffled(rng.next_u64()), limit, now_ms)?);
+        cands.extend(pool(c, false, "i.artist_id=?1", vec![text(a)], Order::Shuffled(rng.next_u64()), limit, now_ms)?);
     }
     if first.year > 0 {
-        cands.extend(pool(c, false, "json_extract(i.json,'$.year') BETWEEN ?1 AND ?2", vec![Value::Integer(decade), Value::Integer(decade + 9)], Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
+        cands.extend(pool(c, false, "i.year BETWEEN ?1 AND ?2", vec![Value::Integer(decade), Value::Integer(decade + 9)], Order::Shuffled(rng.next_u64()), limit * 2, now_ms)?);
     }
     let genre = first.genre.as_ref().map(|g| g.to_lowercase());
     let weighted = cands

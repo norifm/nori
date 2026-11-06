@@ -400,8 +400,8 @@ no enabled plugin exports the point (`Deciders::deciding`), no input is built an
 | leveling | the song's ReplayGain (`Session::queue_gain`), once per song and gain; not while leveling is off | 250 ms | finite, -60 dB to nori's boost ceiling |
 | sound-profile | an output arrives (`Core::device_arrive`) | 250 ms | a saved profile, or none |
 | now-playing | Android's notification and lock screen (as a song starts), MPRIS on the desktop and terminal; once per song | 250 ms | a title |
-| media-button | Android's media buttons (taken from media3 only while a plugin decides), MPRIS play-pause, next and previous | 50 ms | an act of the enum; `plugin` runs its lifecycle `action("media-button")` and the player does nothing |
-| audio-focus | Android's focus changes (`Session::audio_focus`, nori's rule `focus_act`) | 50 ms | an act of the enum |
+| media-button | Android's media buttons (taken from media3 only while a plugin decides), MPRIS and the iPod's play-pause, next and previous (`Handle::media_key`) | 50 ms | an act of the enum; `plugin` runs its lifecycle `action("media-button")` and the player does nothing |
+| audio-focus | a focus change (Android's focus, an iOS interruption), on the engine's thread in order with the presses (`nori_player::focus`, nori's rule `focus_act`) | 50 ms | an act of the enum, carried out only where it fits the focus state (a resume only of what a loss held) |
 | look | the season's palette with no cover: Android's theme, the desktop's plain pages, the terminal's theme | 250 ms | contrast (`nori_look::theme::readable`) |
 
 `mixes` is AutoMix's (AutoMix seams). On Android double and triple presses stay media3's own (it counts

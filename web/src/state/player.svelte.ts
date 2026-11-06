@@ -3,7 +3,7 @@
 // worker); this reads it and asks.
 
 import * as rpc from "../rpc";
-import { ask, facts } from "../rpc";
+import { ask, facts, unlessElsewhere } from "../rpc";
 import workletUrl from "../worklet.ts?worker&url";
 import { ui } from "./ui.svelte";
 import { W } from "../words";
@@ -116,10 +116,10 @@ class Player {
     await this.refresh();
   }
 
-  /** A radio or an instant mix from `song`. */
-  async mix(song: Song, radio: boolean) {
+  /** A radio from `song`. */
+  async radio(song: Song) {
     await this.soundCard();
-    if ((await ask<number>("mix", song.id, radio)) === 0) ui.say(W.mixEmpty);
+    if ((await ask<number>("radio", song.id)) === 0) ui.say(W.mixEmpty);
     await this.refresh();
   }
 
@@ -214,14 +214,14 @@ class Player {
 
   /** Tells the session the song heard, while a lyrics view is in sight. */
   lyricsHeard() {
-    if (this.lyricsViews > 0 && rpc.player) void ask("lyrics_heard", this.song?.id ?? null);
+    if (this.lyricsViews > 0 && rpc.player) void ask("lyrics_heard", this.song?.id ?? null).catch(unlessElsewhere);
   }
 
   /** Tells the session the song heard and whether a lyrics view is in sight. */
   private tellLyrics() {
     if (!rpc.player) return;
     this.lyricsHeard();
-    void ask("lyrics_view", this.lyricsViews > 0);
+    void ask("lyrics_view", this.lyricsViews > 0).catch(unlessElsewhere);
   }
 
   /** The lyrics' state now, lit; ms until it changes (0: not until the position jumps). */
@@ -250,7 +250,7 @@ class Player {
     rpc.onPlayerUp(() => {
       this.up = true;
       if (this.lyricsViews > 0) this.tellLyrics();
-      void this.refresh();
+      void this.refresh().catch(unlessElsewhere);
     });
     rpc.onRestart(() => {
       // The player worker crashed and started again over the saved queue: it plays on if it played.
@@ -264,7 +264,7 @@ class Player {
       })();
     });
     rpc.onSaid((s) => {
-      if (s.kind === "engine" || s.kind === "remote" || s.kind === "starred") void this.refresh();
+      if (s.kind === "engine" || s.kind === "remote" || s.kind === "starred") void this.refresh().catch(unlessElsewhere);
       else if (s.kind === "lyrics") {
         const now = s as unknown as LyricsNow;
         if (now.song !== this.shown?.song) this.line = -1;

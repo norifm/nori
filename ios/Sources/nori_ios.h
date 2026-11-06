@@ -83,6 +83,9 @@ void nori_ios_toggle(void);
 void nori_ios_next(void);
 void nori_ios_previous(void);
 void nori_ios_seek(int64_t ms);
+/// A media key (the lock screen, Control Center, a headset): 0 play, 1 pause, 2 play or pause, 3 next,
+/// 4 previous.
+void nori_ios_media_key(int32_t key);
 
 /// The next repeat mode after the one shown: off, all, one.
 void nori_ios_cycle_repeat(void);
@@ -376,12 +379,10 @@ int32_t nori_ios_tap_song(uint64_t token, int32_t index);
 #define NORI_SWIPE_DOWNLOAD 4
 int32_t nori_ios_row_swipe(int32_t left, int32_t starred);
 int32_t nori_ios_playlist_delete(const char *playlist);
-/// The sleep timer: its choices as JSON to free [{minutes, end, songs}]; songs or end of track (0, 0
-/// cancel); a minutes timer's [delay ms, slack ms] as JSON to free; and the pause when it runs out.
-char *nori_ios_sleep_choices(int32_t running);
-void nori_ios_sleep_set(uint32_t songs, int32_t end_of_track);
-char *nori_ios_sleep_delay(uint32_t minutes);
-void nori_ios_sleep_now(void);
+/// The sleep timer (the core's): its choices as JSON to free [{minutes, end, songs}], and one set (all
+/// zeros: off).
+char *nori_ios_sleep_choices(void);
+void nori_ios_sleep_set(uint32_t minutes, int32_t end_of_track, uint32_t songs);
 
 void nori_ios_remember(const char *query);
 void nori_ios_sync(void);

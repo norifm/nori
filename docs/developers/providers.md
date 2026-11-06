@@ -17,9 +17,13 @@ This is not octo-fiesta's provider items (the `ext-` songs a Subsonic server fet
 
 The kinds a client offers are a `Kinds`' (`Kinds::builtin`, or `Kinds::with_plugins` over the plugin
 host): Subsonic first, then each enabled plugin with a provider, named by the plugin's own `name`
-string (`Kinds::plugin_name`). A profile of a plugin kind whose plugin is missing doesn't open, except a
+string (`Kinds::plugin_name`). A profile of a plugin kind whose plugin doesn't run here doesn't open, except a
 LAN jam's guest profile: it keeps the host's kind (its songs are that provider's) and plays through the
-host (`HostedProvider`), so a guest needs neither the plugin nor an account.
+host (`HostedProvider`), so a guest needs neither the plugin nor an account. `Kinds::waits` says what such
+a profile waits for (`ProfileWait`: the plugin installed, turned on, every plugin's switch back on, or
+nothing this client can do); the client shows that in place of the profile and opens it once its plugin
+runs. A YouTube Music profile from before it was a plugin (kind `youtubeMusic`) loads as the plugin's,
+signed out: its account stayed with the built-in provider.
 
 ## What a provider answers
 
@@ -70,7 +74,7 @@ A client asks the core and draws:
 | the first screen | a new profile starts here: `Kinds::providers`, in order, then quieter `nori_plugins::provider_offers`, what repos offer that isn't on. One not installed opens its plugin page, and once installed is turned on; one installed but off just turns on. The pages are `providers::flow::AddFlow`: the client hands it each `AddEvent` and draws the `AddPage` and `AddSend` it is left with, doing the `AddDo` it answers. Choosing a kind runs `ProviderInfo::first_step`: a form to fill, titled with the provider's name; a sign-in page and nothing to fill (a name alone doesn't count), a page with its sign-in and Continue as guest; nothing at all, added at once (`AddDo::Connect`), its page showing only if that fails. A profile goes out once at a time, and how a new one was asked for (`AfterAdding`) comes back only with its acceptance (`AddDo::Open`). Back from a page chooses again. With every plugin off (`pluginsOff`) no plugin is offered. Repos that can't be read leave `Kinds::providers` |
 | the add form | the chosen kind's `ProviderInfo` fields, advanced ones folded away; `Kinds::server_ready` says whether it can be sent |
 | logging in | `log_in`: `Kinds::login_profile`, then `Kinds::check_profile`; keeps the profile as the active one |
-| opening a profile | `Core::configure_profile`; the engine's byte source wrapped by `nori_engine::core::resolving` |
+| opening a profile | `Kinds::waits` first, for a plugin's profile; then `Core::configure_profile`; the engine's byte source wrapped by `nori_engine::core::resolving` |
 | its account | `Client::sign_in_due(added)` says what to show once a profile opens, or its account changed: the sign-in offered or its page opened after adding, nothing (and no more reminders) after adding as a guest, and the offer again when the provider ended the session, until told to stop reminding. `Client::sign_in_offer` is the offer asked for. What shows, one dialog at a time, and the sign-in on its way are `providers::flow::SignInFlow` |
 | signing in | for a `SignIn::WebPage`, a page of the app's own at `start_url` whose addresses (each page, and each address it refuses to open: an OAuth redirect to an app's own address) and cookies go to `Kinds::sign_in_done` until it says done, then to `Client::sign_in`; for `SignIn::Paste`, a box to paste into. `Client::account` says where it stands |
 | covers | `Core::cover_prefix` (the id and size appended), or `Core::cover_address` without one |

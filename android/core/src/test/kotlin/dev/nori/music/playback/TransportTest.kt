@@ -1,35 +1,22 @@
 package dev.nori.music.playback
 
-import dev.nori.music.ffi.model.Focus
-import dev.nori.music.ffi.model.FocusAct
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class TransportTest {
-    @Test fun focusActsMoveWhatIsWanted() {
-        // was, focus, act -> now; decided for the presses there are.
+    @Test fun theEnginesFocusHoldMovesWhatIsWanted() {
+        // was, the engine's hold -> now.
         val table = listOf(
-            Triple(Want.PLAYING, Focus.LOST, FocusAct.PAUSE) to Want.PAUSED,
-            Triple(Want.PLAYING, Focus.LOST_TRANSIENT, FocusAct.PAUSE) to Want.HELD_BY_CALL,
-            Triple(Want.HELD_BY_CALL, Focus.LOST, FocusAct.PAUSE) to Want.PAUSED,
-            Triple(Want.HELD_BY_CALL, Focus.GAINED, FocusAct.RESUME) to Want.PLAYING,
-            Triple(Want.PAUSED, Focus.GAINED, FocusAct.RESUME) to Want.PAUSED,
-            Triple(Want.PAUSED, Focus.LOST, FocusAct.PAUSE) to Want.PAUSED,
-            Triple(Want.PLAYING, Focus.DUCK, FocusAct.DUCK) to Want.PLAYING,
-            Triple(Want.PLAYING, Focus.LOST, FocusAct.KEEP_PLAYING) to Want.PLAYING,
+            (Want.PLAYING to 1) to Want.HELD_BY_CALL,
+            (Want.PLAYING to 2) to Want.PAUSED,
+            (Want.HELD_BY_CALL to 2) to Want.PAUSED,
+            (Want.HELD_BY_CALL to 0) to Want.PLAYING,
+            (Want.PAUSED to 0) to Want.PAUSED,
+            (Want.PAUSED to 1) to Want.PAUSED,
+            (Want.PLAYING to 0) to Want.PLAYING,
         )
-        for ((given, now) in table) {
-            val (was, focus, act) = given
-            assertEquals("$was $focus $act", now, was.afterFocus(focus, act, decidedAt = 4, asked = 4))
-        }
-    }
-
-    @Test fun aPauseDecidedBeforePlayWasPressedIsNotTaken() {
-        // Lost for good while playing; play pressed (the focus granted again) before the core's pause came back.
-        assertEquals(Want.PLAYING, Want.PLAYING.afterFocus(Focus.LOST, FocusAct.PAUSE, decidedAt = 1, asked = 2))
-        // Paused by hand while a call's end was decided: the resume does not play.
-        assertEquals(Want.PAUSED, Want.PAUSED.afterFocus(Focus.GAINED, FocusAct.RESUME, decidedAt = 1, asked = 2))
+        for ((given, now) in table) assertEquals("$given", now, given.first.held(given.second))
     }
 
     @Test fun followingCodesDecodeBothBits() {

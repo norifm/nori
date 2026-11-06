@@ -38,9 +38,18 @@ function enter(p: Phase) {
   if (!waits) opened();
 }
 
+/** A call that fails because nori runs in another tab. */
+export class Elsewhere extends Error {}
+
+/** For a call the page makes by itself (a report read, a lyric step): nothing to say once nori runs in
+ * another tab; any other failure goes on. */
+export function unlessElsewhere(e: unknown) {
+  if (!(e instanceof Elsewhere)) throw e;
+}
+
 /** The calls not answered fail with `why`. */
-function dropWaiting(why: string) {
-  for (const [, c] of waiting) c.failed(new Error(why));
+function dropWaiting(why: () => Error) {
+  for (const [, c] of waiting) c.failed(why());
   waiting.clear();
   quiet.splice(0).forEach((r) => r());
 }
@@ -120,7 +129,7 @@ function send<T>(call: string, args: unknown[]): Promise<T> {
  * another tab has nori. */
 export async function ask<T = unknown>(call: string, ...args: unknown[]): Promise<T> {
   await gate;
-  if (phase === "lockedOut" || phase === "movedAway") throw new Error("nori is open in another tab");
+  if (phase === "lockedOut" || phase === "movedAway") throw new Elsewhere("nori is open in another tab");
   return send<T>(call, args);
 }
 
@@ -136,7 +145,7 @@ async function replace(b: Build, answered: boolean) {
   if (phase !== "core" && phase !== "player") return;
   enter(answered ? "switching" : "restarting");
   if (answered) await settled();
-  else dropWaiting("the worker stopped");
+  else dropWaiting(() => new Error("the worker stopped"));
   worker.terminate();
   await start(b);
   player = b.kind === "player";
@@ -242,7 +251,7 @@ tabs.onmessage = async (e: MessageEvent) => {
   worker.terminate();
   player = false;
   enter("movedAway");
-  dropWaiting("nori moved to another tab");
+  dropWaiting(() => new Elsewhere("nori moved to another tab"));
   const r = release;
   release = undefined;
   r();

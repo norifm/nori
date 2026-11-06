@@ -208,6 +208,12 @@ pub fn offer_for(offers: Vec<Offer>, id: String, card: Option<PluginCard>) -> Op
     offer_of(&offers, &id, card.as_ref()).map(|(_, o)| o.clone())
 }
 
+/// Plugin `id`'s name: installed, as `cards` show it, else as `offers` have it, else its id.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn plugin_display_name(id: String, cards: Vec<PluginCard>, offers: Vec<Offer>) -> String {
+    cards.into_iter().find(|c| c.id == id).map(|c| c.name).or_else(|| offers.into_iter().find(|o| o.id == id).map(|o| o.name)).unwrap_or(id)
+}
+
 /// [`updates_waiting`], owned.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn offers_to_update(offers: Vec<Offer>, cards: Vec<PluginCard>) -> Vec<Offer> {

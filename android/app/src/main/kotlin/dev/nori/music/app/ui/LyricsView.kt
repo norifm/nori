@@ -324,8 +324,12 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
             // 120 Hz screen counting display frames drew the sweep twice as often as it asked for - every
             // frame of the whole screen, the page's blur included, for as long as a line was sung.
             if (sweep && !LyricsClock.still(step)) {
+                // Asleep until a millisecond before the step is due, rather than woken by every frame up to it.
+                val due = drawnAt + wait * CORE_FRAME_NS - FRAME_SLACK_NS
+                val sleepMs = (due - System.nanoTime()) / 1_000_000 - 1
+                if (sleepMs > 0) delay(sleepMs)
                 var now = withFrameNanos { it }
-                while (now - drawnAt < wait * CORE_FRAME_NS - FRAME_SLACK_NS) now = withFrameNanos { it }
+                while (now < due) now = withFrameNanos { it }
                 drawnAt = now
             } else { delay(wait.toLong()); drawnAt = 0L }
             val read = vm.positionIn(song) ?: break

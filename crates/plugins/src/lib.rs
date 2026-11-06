@@ -45,7 +45,6 @@ mod worker;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub use app::{open, open_plugins, Client};
@@ -53,7 +52,7 @@ pub use bluetooth::{Bluetooth, BtDevice, BtFailure};
 pub use devices::{controlled_output, output_device, Battery, ControlledDevice, Noise};
 pub use safe::SafeStart;
 pub use readme::ReadmeBlock;
-pub use repo::{offer_for, offer_of, offers_found, offers_to_update, provider_offers, updates_waiting, Offer, OfferState, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
+pub use repo::{offer_for, offer_of, offers_found, offers_to_update, plugin_display_name, provider_offers, updates_waiting, Offer, OfferState, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
 pub use slots::{Artwork, InfoGroup, InfoLine, Items, MenuEntry};
 pub use view::{PluginCard, PluginPreview, PluginRow};
 pub use assets::{AssetLine, AssetState};
@@ -182,10 +181,20 @@ pub struct Plugins {
     songs: Arc<Mutex<Option<prepare::Songs>>>,
     /// Which plugin is being called, for the next start (safe.rs).
     marks: Arc<safe::Marks>,
-    /// Every plugin is off for this start (a safe start), until one is turned on.
-    paused: AtomicBool,
-    /// Why plugins are off at this start, until the client takes it.
-    safe_start: Mutex<Option<SafeStart>>,
+    /// How this start runs the plugins.
+    start: Mutex<Start>,
+}
+
+/// How a start runs the plugins.
+enum Start {
+    /// As they are switched.
+    Normal,
+    /// nori stopped while calling these plugins the run before; they are off now, which the client
+    /// is told once ([`Plugins::take_safe_start`]).
+    Crashed { plugins: Vec<String> },
+    /// The last start stopped before it finished: every plugin is off for this one until one is turned
+    /// on. `told`: the client was.
+    AllOff { told: bool },
 }
 
 impl Plugins {
@@ -204,7 +213,7 @@ impl Plugins {
             })
             .collect();
         let (marks, last) = safe::Marks::open(dir.join("safe"), !installed.is_empty());
-        let mut safe_start = None;
+        let mut start = Start::Normal;
         if let Some(last) = last {
             let crashed: Vec<String> = installed
                 .iter_mut()
@@ -216,14 +225,14 @@ impl Plugins {
                 .collect();
             if !crashed.is_empty() {
                 nori_model::alog::info(&format!("safe mode: nori stopped while calling {}, off now", crashed.join(", ")));
-                safe_start = Some(SafeStart::Crashed { plugins: crashed });
+                start = Start::Crashed { plugins: crashed };
             } else if last.starting && installed.iter().any(|i| i.enabled) {
                 nori_model::alog::info("safe mode: the last start didn't finish, with no plugin being called; every plugin is off for this one");
-                safe_start = Some(SafeStart::AllOff);
+                start = Start::AllOff { told: false };
             }
         }
-        let paused = safe_start == Some(SafeStart::AllOff);
-        let crashed = matches!(safe_start, Some(SafeStart::Crashed { .. }));
+        let paused = matches!(start, Start::AllOff { .. });
+        let crashed = matches!(start, Start::Crashed { .. });
         let starts = !paused && installed.iter().any(|i| i.enabled);
         let workers: Arc<lan::Workers> = Arc::default();
         let gate: Arc<timers::Gate> = Arc::default();
@@ -254,8 +263,7 @@ impl Plugins {
             preparation: Mutex::new(None),
             songs: Arc::default(),
             marks,
-            paused: AtomicBool::new(paused),
-            safe_start: Mutex::new(safe_start),
+            start: Mutex::new(start),
         });
         plugins.lan.set_plugins(Arc::downgrade(&plugins));
         if crashed {
@@ -264,6 +272,11 @@ impl Plugins {
         plugins.marks.starting(starts);
         plugins.refresh();
         plugins
+    }
+
+    /// Whether the user's switch turns every plugin off.
+    pub fn all_off(&self) -> bool {
+        self.side.all_off()
     }
 
     /// The plugins that run now: those on, unless every plugin is off (the switch, or a safe start).
@@ -278,10 +291,15 @@ impl Plugins {
     /// safe start. The settings leave the layer out themselves while the switch turns every plugin off,
     /// so it is whole again when the switch goes back.
     fn laying(&self) -> Vec<Installed> {
-        if self.paused.load(Ordering::Relaxed) {
+        if self.safe_off() {
             return Vec::new();
         }
         self.installed().into_iter().filter(|i| i.enabled).collect()
+    }
+
+    /// Every plugin is off for this start (a safe start).
+    fn safe_off(&self) -> bool {
+        matches!(*self.start.lock().expect("not poisoned"), Start::AllOff { .. })
     }
 
     /// What an instance's imports reach beyond its folder.
@@ -557,7 +575,10 @@ impl Plugins {
         drop(list);
         // A plugin turned on in a safe start ends it: the user has taken the plugins in hand.
         if on {
-            self.paused.store(false, Ordering::Relaxed);
+            let mut start = self.start.lock().expect("not poisoned");
+            if let Start::AllOff { .. } = *start {
+                *start = Start::Normal;
+            }
         }
         if !on {
             self.workers.lock().expect("not poisoned").remove(id);
@@ -618,7 +639,19 @@ impl Plugins {
 
     /// Why plugins are off at this start, once: the client says so when it shows.
     pub fn take_safe_start(&self) -> Option<SafeStart> {
-        self.safe_start.lock().expect("not poisoned").take()
+        let mut start = self.start.lock().expect("not poisoned");
+        match &mut *start {
+            Start::Normal | Start::AllOff { told: true } => None,
+            Start::AllOff { told } => {
+                *told = true;
+                Some(SafeStart::AllOff)
+            }
+            Start::Crashed { plugins } => {
+                let plugins = std::mem::take(plugins);
+                *start = Start::Normal;
+                Some(SafeStart::Crashed { plugins })
+            }
+        }
     }
 
     /// The client has started (its first screen is up, or its player is): a crash from here on is no
@@ -639,7 +672,7 @@ impl Plugins {
         let mut out = String::new();
         if self.side.all_off() {
             out.push_str("every plugin off (the switch)\n");
-        } else if self.paused.load(Ordering::Relaxed) {
+        } else if self.safe_off() {
             out.push_str("every plugin off for this start (safe mode)\n");
         }
         let installed = self.installed();

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -71,6 +72,10 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
 
     /** The device playing while it is not this phone (Remotes.mirror). */
     val mirror: StateFlow<dev.nori.music.ffi.Mirror?> = remotes.mirror
+    /** Where the music plays (the core's `destination`): what the devices list lights. */
+    val destination: StateFlow<dev.nori.music.ffi.Destination> = combine(remotes.mirror, remotes.jam, nori.plugins.cast) { _, _, c -> remotes.destination(c) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), dev.nori.music.ffi.Destination.Here(false))
 
     /** Whether the server relays: jams and devices elsewhere only then. */
     val relay: StateFlow<RelaySupport> = remotes.relay

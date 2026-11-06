@@ -721,7 +721,7 @@ fn queue_panel_editing() {
 fn full_player_shows_the_song_and_the_mix() {
     let mut a = app();
     let next = song("s2", "Second", 180);
-    crate::backend::app().register(vec![next.clone()]);
+    a.shared.register(vec![next.clone()]);
     a.heard(Some(Song { year: 2020, suffix: "flac".into(), ..song("s1", "First", 200) }));
     a.now.state = State::Playing;
     a.now.mixing = true;
@@ -1956,6 +1956,37 @@ fn page_heads_offer_what_the_core_says() {
     assert!(matches!(a.selected(), Some(Item::Album(al)) if al.id == "a1"));
 }
 
+/// The full player's menu has the sleep timer: its choices are the core's, "Off" first while one runs,
+/// and a pick goes to the session.
+#[test]
+fn the_players_menu_sets_the_sleep_timer() {
+    use crate::menu::{MenuAct, MenuLine};
+    use nori_core::menus::{SleepChoice, SongAction};
+    let mut a = app();
+    a.song = Some(song("1", "One", 200));
+    a.full = true;
+    let pick = |a: &mut App, line: MenuLine| {
+        key(a, KeyCode::Char('m'));
+        let Some(Overlay::Menu { lines, folded, sel, .. }) = &mut a.overlay else { panic!("no menu") };
+        if !lines.contains(&line) {
+            let more = lines.iter().position(|l| *l == MenuLine::More).expect("more");
+            lines.splice(more..=more, folded.drain(..));
+        }
+        sel.at = lines.iter().position(|l| *l == line).unwrap_or_else(|| panic!("{line:?} in {lines:?}"));
+        key(a, KeyCode::Enter);
+    };
+    pick(&mut a, MenuLine::Act(MenuAct::Song(SongAction::SleepTimer)));
+    let Some(Overlay::Picker { options, .. }) = &a.overlay else { panic!("no choices") };
+    assert_eq!(options[0].0, "15 minutes", "nothing to turn off");
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Sleep(SleepChoice { minutes: 30, end_of_track: false, songs: 0 })));
+    a.shared.sleep_pick(SleepChoice { minutes: 30, end_of_track: false, songs: 0 }, 0);
+    pick(&mut a, MenuLine::Act(MenuAct::Song(SongAction::SleepTimer)));
+    let Some(Overlay::Picker { options, .. }) = &a.overlay else { panic!("no choices") };
+    assert_eq!(options[0].0, "Off", "a timer runs");
+}
+
 /// m opens the menu of what is selected: a song's lines as the core lists them, the less used under More,
 /// then on a page the page's own; an album's Play, Play next and Add to queue. Enter does the line.
 #[test]
@@ -1969,14 +2000,14 @@ fn the_menu_lists_what_the_core_offers() {
     a.handle(Msg::Data(Req::Album("al-1".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-1", "Record"), songs.clone(), vec![]))))));
     key(&mut a, KeyCode::Char('m'));
     let Some(Overlay::Menu { lines, folded, .. }) = &a.overlay else { panic!("no menu") };
-    let core: Vec<MenuLine> = nori_core::menus::song_menu(songs[0].clone(), false, nori_core::menus::SongDownload::None, false, false, true, true, true, a.rules.radio, None, Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, "al-1")))
+    let core: Vec<MenuLine> = nori_core::menus::song_menu(songs[0].clone(), false, false, nori_core::menus::SongDownload::None, false, false, true, true, true, a.rules.radio, false, Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, "al-1")))
         .into_iter()
         .filter(|i| !i.more && !matches!(i.action, SongAction::Details | SongAction::Share | SongAction::AddToLibrary))
         .map(|i| MenuLine::Act(MenuAct::Song(i.action)))
         .collect();
     assert_eq!(lines[..core.len()], core[..], "the core's lines, in its order");
     assert_eq!(lines[core.len()], MenuLine::More);
-    assert!(folded.contains(&MenuLine::Act(MenuAct::Song(SongAction::InstantMix))) && !folded.contains(&MenuLine::Act(MenuAct::Song(SongAction::Details))), "{folded:?}");
+    assert!(folded.contains(&MenuLine::Act(MenuAct::Song(SongAction::Radio))) && !folded.contains(&MenuLine::Act(MenuAct::Song(SongAction::Details))), "{folded:?}");
     assert_eq!(lines[core.len() + 1], MenuLine::Heading("Record".into()), "then the page's");
     let s = draw(&mut a, 120, 40);
     dump("menu", &s);
@@ -1987,11 +2018,11 @@ fn the_menu_lists_what_the_core_offers() {
         sel.at = more;
     }
     key(&mut a, KeyCode::Enter);
-    assert!(draw(&mut a, 120, 40).contains("Instant mix"));
+    assert!(draw(&mut a, 120, 40).contains("Radio"));
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
     assert!(a.overlay.is_none());
-    assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Radio(id) | crate::backend::Fetch::InstantMix(id), false)) if id == "1"), "{:?}", a.cmds);
+    assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Radio(id), false)) if id == "1"), "{:?}", a.cmds);
     // Add to playlist: the playlists, a new one first, which asks for its name.
     playlists(&mut a, &["Road trip"]);
     key(&mut a, KeyCode::Char('m'));
@@ -2675,34 +2706,13 @@ fn the_first_screen_opens_the_plugins() {
     assert_eq!(a.view, View::Settings);
 }
 
-struct Quiet;
-impl nori_plugins::Client for Quiet {
-    fn layer_changed(&self, _: u32) {}
-    fn devices_changed(&self) {}
-    fn status(&self, _: String, _: String, _: String, _: Vec<String>) {}
-    fn shown(&self, _: String, _: String, _: bool, _: bool) {}
-    fn notice(&self, _: String, _: bool, _: String, _: Vec<String>) {}
-    fn browse(&self, _: String, _: bool) {}
-    fn multicast(&self, _: bool) {}
-    fn streaming(&self, _: bool) {}
-    fn pressed(&self, _: nori_core::deciders::Press) {}
-    fn cast(&self, _: Option<nori_plugins::Cast>) {}
-    fn control(&self, _: nori_plugins::Control) {}
-    fn sign_in(&self, _: String, _: String) -> bool {
-        false
-    }
-    fn wake(&self, _: Vec<nori_plugins::WakeEvent>) {}
-    fn commands(&self, _: Vec<nori_plugins::Command>) {}
-    fn watch_screen(&self, _: bool) {}
-    fn asset(&self, _: String, _: String, _: nori_plugins::AssetState) {}
-}
 
 /// An app on the first screen with the fixture plugin on, so its provider is a kind of profile.
 fn app_with_provider(dir: &nori_testdir::TempDir) -> App {
-    let plugins = nori_plugins::open(dir.join("plugins"), crate::backend::app().settings.clone(), std::sync::Arc::new(Quiet));
+    let mut a = app();
+    let plugins = nori_plugins::open(dir.join("plugins"), a.shared.settings.clone(), std::sync::Arc::new(nori_plugins::testing::Quiet));
     plugins.install(&nori_plugins::testing::fixture("")).unwrap();
     plugins.turn(nori_plugins::testing::FIXTURE.into(), true);
-    let mut a = app();
     a.settings.own.kinds = nori_core::providers::Kinds::with_plugins(plugins);
     a.view = View::Login;
     a

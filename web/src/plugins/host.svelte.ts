@@ -2,7 +2,7 @@
 // once a plugin is installed, or by the Plugins page.
 
 import { untrack } from "svelte";
-import { ask, onPlayerUp, onRestart } from "../rpc";
+import { ask, onPlayerUp, onRestart, unlessElsewhere } from "../rpc";
 import { player } from "../state/player.svelte";
 import { sleeves } from "../state/sleeve.svelte";
 import { ui } from "../state/ui.svelte";
@@ -199,7 +199,7 @@ class Plugins {
   /** Tells the core what the plugins running override, in their order: the last says. */
   private lay() {
     const overrides = this.installed.flatMap((i) => this.runningOf(i.plugin.id)?.overrides ?? []);
-    void ask("plugin_overrides", JSON.stringify(overrides));
+    void ask("plugin_overrides", JSON.stringify(overrides)).catch(unlessElsewhere);
   }
 
   /** What's on, in the sound card, once there is one. */

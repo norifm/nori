@@ -16,7 +16,9 @@ pub mod player;
 #[cfg(feature = "desktop")]
 mod plugged;
 pub mod remote;
+mod destination;
 pub mod session;
+mod sleep;
 mod tuning;
 
 use std::path::Path;
@@ -166,8 +168,6 @@ pub enum Fetch {
     Playlist(String),
     Artist(String),
     Radio(String),
-    /// The server's instant mix from a song.
-    InstantMix(String),
     /// One of the core's mixes (or the favourites), as its page lists it.
     Mix(String),
 }
@@ -180,7 +180,7 @@ impl Fetch {
             Fetch::DownloadedAlbum(id) => PageOrigin::new(OriginKind::Downloads, id.as_str()),
             Fetch::Playlist(id) => PageOrigin::new(OriginKind::Playlist, id.as_str()),
             Fetch::Artist(id) => PageOrigin::new(OriginKind::Artist, id.as_str()),
-            Fetch::Radio(id) | Fetch::InstantMix(id) => PageOrigin::new(OriginKind::Songs, id.as_str()),
+            Fetch::Radio(id) => PageOrigin::new(OriginKind::Songs, id.as_str()),
             Fetch::Mix(id) => PageOrigin::new(OriginKind::Mix, id.as_str()),
         }
     }
@@ -197,7 +197,6 @@ impl Fetch {
             },
             Fetch::Mix(id) => client.mix_songs(id).await?,
             Fetch::Radio(id) => client.radio(id).await?,
-            Fetch::InstantMix(id) => client.instant_mix(id).await?,
         })
     }
 }
@@ -387,9 +386,9 @@ mod tests {
         let pass = |n: u8| JamPass { url: "http://friend".into(), api_key: nori_remote::guest_key(&format!("key{n}")), kind: ServerKind::Subsonic };
 
         let first = jam_joined(&settings, pass(1), "Jam");
-        nori_core::background::flush();
+        settings.writer.flush();
         let second = jam_joined(&settings, pass(2), "Jam");
-        nori_core::background::flush();
+        settings.writer.flush();
         let p = settings.current().unwrap();
         let ids: Vec<&str> = p.servers.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["home", "work", second.id.as_str()], "one guest profile, the latest");

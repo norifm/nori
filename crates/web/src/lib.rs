@@ -562,7 +562,7 @@ impl Nori {
             "artist" => Some(PageOrigin::new(OriginKind::Artist, id)),
             _ => None,
         };
-        let items: Vec<Value> = song_menu(song.clone(), song.starred, SongDownload::None, player, lyrics, rules.stars, rules.account, false, rules.radio, self.jam_offer(), on)
+        let items: Vec<Value> = song_menu(song.clone(), song.starred, false, SongDownload::None, player, lyrics, rules.stars, rules.account, false, rules.radio, self.guest(), on)
             .into_iter()
             .map(|m| {
                 let mut v = json!({ "more": m.more, "enabled": m.enabled });
@@ -632,8 +632,8 @@ impl Nori {
         ProfileRules::default()
     }
 
-    fn jam_offer(&self) -> Option<nori_core::menus::JamOffer> {
-        None
+    fn guest(&self) -> bool {
+        false
     }
 
     /// Sets a setting by name; false if there is no such setting.

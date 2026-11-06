@@ -294,6 +294,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // See below, where it is latched.
     var held by remember { mutableStateOf<PagePalette?>(null) }
     val arrivingNow by androidx.compose.runtime.rememberUpdatedState(arriving)
+    val inViewNow by androidx.compose.runtime.rememberUpdatedState(inView)
     LaunchedEffect(tint) {
         // Still the last song's colours, which the song after it must not be given: colours worked out
         // for a song skipped past are dropped.
@@ -303,7 +304,9 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
         // A fade this change cut short is finished first, from where it had got to: starting the next
         // one from its end would put the page there in one frame.
         if (fadingFrom != null) {
-            if (!AppMotion.reduce && washFade.value < 1f) washFade.fadeByFrames(1f, stage.colourFadeMs * (1f - washFade.value))
+            if (washFade.value < 1f) {
+                if (!AppMotion.reduce && inViewNow) washFade.fadeByFrames(1f, stage.colourFadeMs * (1f - washFade.value)) else washFade.snapTo(1f)
+            }
             fadingFrom = null
         }
         if (found == palette) { shift.adopted = rowUrl; return@LaunchedEffect }
@@ -320,7 +323,8 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
         val carried = found != null && (held == found ||
             shift.amount > 0.9f && shift.towards == rowUrl && arrivingNow == found)
         val from = if (carried) null else (palette ?: neutral)
-        val fades = from != null && !AppMotion.reduce
+        // Behind the app, the page takes the new colours at once: a fade there was frames nobody saw.
+        val fades = from != null && !AppMotion.reduce && inViewNow
         // Back to its start before the colours change under it, not after. Taking the fade over from one
         // still running can wait a frame for it to let go, and on that frame the new colours were drawn
         // at the old fade's strength over the old ones: the page changed, went back, and changed again.
@@ -833,12 +837,7 @@ internal fun OutputButton(
     // Where a plugin casts is where the music plays, whatever this phone's own output is.
     val cast by settings.pluginCast.collectAsStateWithLifecycle()
     val playingOn = otherName ?: cast?.device
-    val icon = otherDevice?.let(::kindIcon) ?: cast?.let { castIcon(it.look) } ?: when (o.glyph) {
-        dev.nori.music.ffi.devices.OutputGlyph.PHONE -> Iconoir.SmartphoneDevice
-        dev.nori.music.ffi.devices.OutputGlyph.HEADPHONES -> Iconoir.Headset
-        dev.nori.music.ffi.devices.OutputGlyph.BLUETOOTH -> Iconoir.Bluetooth
-        dev.nori.music.ffi.devices.OutputGlyph.CAST -> Iconoir.Airplay
-    }
+    val icon = otherDevice?.let(::kindIcon) ?: cast?.let { castIcon(it.look) } ?: outputIcon(o.glyph)
     val description = remember(o, playingOn) { playingOn?.let(say::devicePlayingOn) ?: say.outputDescription(o.port, o.name) }
     // Headphones a plugin controls: their battery beside their name, and the button opens nori's devices.
     val controlled by viewModel<dev.nori.music.app.vm.PluginsViewModel>().controlled.collectAsStateWithLifecycle()
@@ -2569,7 +2568,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     drawing.glyphs = rememberTimeGlyphs(MaterialTheme.typography.labelSmall)
     drawing.density = androidx.compose.ui.platform.LocalDensity.current
     drawing.thickness = with(drawing.density) { SEEK_THICKNESS.dp.toPx() }
-    val slot = rememberIsland(drawing, wanted = free && live && !eink && state.sleepAt <= 0L, overPage = false)
+    val slot = rememberIsland(drawing, wanted = free && live && !eink && state.sleep !is dev.nori.music.ffi.queue.Sleep.At, overPage = false, pace = IslandPace.PACES)
     // Handed back, what the island stepped the pace to is shown here at once.
     val wasApart = remember { booleanArrayOf(false) }
     androidx.compose.runtime.SideEffect {
@@ -2611,8 +2610,9 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
             stepped[0] = now
             publish()
             if (wait < 0) break
-            if (wait > 0) kotlinx.coroutines.delay(wait.toLong())
-            now = androidx.compose.runtime.withFrameNanos { it }
+            // A wait is stepped off the frame: a state written inside a frame's callbacks asks for a vsync that
+            // then draws nothing.
+            now = if (wait > 0) { kotlinx.coroutines.delay(wait.toLong()); System.nanoTime() } else androidx.compose.runtime.withFrameNanos { it }
         }
     }
 
@@ -2689,7 +2689,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
                 },
         )
         val mixing = vm.mixing.collectAsStateWithLifecycle()
-        SeekTimes(times, fadingFrom, fade, dragging, drag, held, if (eink) einkShown else null, durationMs, state.error, state.sleepAtEndOfTrack, state.sleepAt, mixing, drawing.glyphs!!, slot, { drawing.left = it.placeInWindow() }, { drawing.right = it.placeInWindow(); drawing.rightWidth = it.size.width })
+        SeekTimes(times, fadingFrom, fade, dragging, drag, held, if (eink) einkShown else null, durationMs, state.error, state.sleep !is dev.nori.music.ffi.queue.Sleep.Off && state.sleep !is dev.nori.music.ffi.queue.Sleep.At, (state.sleep as? dev.nori.music.ffi.queue.Sleep.At)?.atMs ?: 0L, mixing, drawing.glyphs!!, slot, { drawing.left = it.placeInWindow() }, { drawing.right = it.placeInWindow(); drawing.rightWidth = it.size.width })
     }
 }
 
@@ -2738,7 +2738,7 @@ private fun SeekTimes(
         // keeps the minutes current; otherwise nothing here reads them. How the timer reads is
         // nori-core's (`words_sleep`), asked only while one is set.
         //
-        // elapsedRealtime, not wall clock: sleepAt is set from SystemClock (PlayerConnection),
+        // elapsedRealtime, not wall clock: the sleep timer's time is on SystemClock's (PlaybackService),
         // and subtracting one from the other gives a number about fifty years wide, which the
         // rounding then turned into a cheerful "1 min" for every timer ever set.
         if (sleepAt > 0) times.longValue

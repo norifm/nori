@@ -85,7 +85,7 @@ impl Listening {
     pub fn on_turns(hint: Option<String>, heard: Box<dyn Heard>, steps: &Steps) -> Listening {
         let pipe = Arc::new(Pipe::default());
         pipe.s.lock().on_turns = true;
-        steps.songs.lock().push(Turned { pipe: pipe.clone(), hint, decoding: None, decoded: None, heard: Some(heard) });
+        steps.songs.lock().push(Turned { pipe: pipe.clone(), hint, phase: Phase::Unopened, heard: Some(heard) });
         Listening { pipe, wait: false, ended: false }
     }
 
@@ -276,10 +276,19 @@ pub struct Steps {
 struct Turned {
     pipe: Arc<Pipe>,
     hint: Option<String>,
-    decoding: Option<Decoding>,
-    /// Decoded to its last buffer, and whether to the song's end: waits for the fetch's verdict.
-    decoded: Option<bool>,
+    phase: Phase,
     heard: Option<Box<dyn Heard>>,
+}
+
+/// How far a song decoded on turns is.
+// One per song; its decoder is made once, and boxing it would only add an allocation.
+#[allow(clippy::large_enum_variant)]
+enum Phase {
+    /// Waiting for enough bytes to open it.
+    Unopened,
+    Decoding(Decoding),
+    /// Decoded to its last buffer, and whether to the song's end: waits for the fetch's verdict.
+    Decoded(bool),
 }
 
 /// Where a song decoded on turns stands.
@@ -348,26 +357,30 @@ impl Turned {
             if ended == Some(false) {
                 return self.over(false);
             }
-            if let Some(decoded) = self.decoded {
-                return match ended {
-                    Some(whole) => self.over(whole && decoded),
-                    None => Turn::Waits,
-                };
-            }
             // Out of time only with something to do: a song waiting for bytes waits.
-            let Some(d) = self.decoding.as_mut() else {
-                if waiting < OPEN_AFTER && ended.is_none() {
-                    return Turn::Waits;
+            let d = match &mut self.phase {
+                Phase::Decoded(decoded) => {
+                    let decoded = *decoded;
+                    return match ended {
+                        Some(whole) => self.over(whole && decoded),
+                        None => Turn::Waits,
+                    };
                 }
-                if Instant::now() >= until {
-                    return Turn::Ready;
+                Phase::Unopened => {
+                    if waiting < OPEN_AFTER && ended.is_none() {
+                        return Turn::Waits;
+                    }
+                    if Instant::now() >= until {
+                        return Turn::Ready;
+                    }
+                    let reader = Reader { pipe: self.pipe.clone(), at: 0, taken: 0, head: Vec::with_capacity(HEAD) };
+                    match Decoding::open(Box::new(reader), self.hint.as_deref(), false) {
+                        Ok(d) => self.phase = Phase::Decoding(d),
+                        Err(_) => self.finished(false),
+                    }
+                    continue;
                 }
-                let reader = Reader { pipe: self.pipe.clone(), at: 0, taken: 0, head: Vec::with_capacity(HEAD) };
-                match Decoding::open(Box::new(reader), self.hint.as_deref(), false) {
-                    Ok(d) => self.decoding = Some(d),
-                    Err(_) => self.finished(false),
-                }
-                continue;
+                Phase::Decoding(d) => d,
             };
             if waiting < READ_AFTER && ended.is_none() {
                 return Turn::Waits;
@@ -391,8 +404,7 @@ impl Turned {
 
     /// The decoding ended; the rest of the bytes (tags after the music) are dropped.
     fn finished(&mut self, to_the_end: bool) {
-        self.decoded = Some(to_the_end);
-        self.decoding = None;
+        self.phase = Phase::Decoded(to_the_end);
         let mut s = self.pipe.s.lock();
         s.quit = true;
         s.bytes.clear();

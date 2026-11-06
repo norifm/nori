@@ -2,6 +2,7 @@
 //! or the jam a guest is in; the same for every client and for the system's media controls.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use nori_core::playlist::PlaylistView;
 use nori_core::stage::QueueRows;
@@ -121,8 +122,10 @@ impl Now {
 /// The queue the player shows.
 #[derive(Debug, Clone)]
 pub struct QueueShown {
-    /// Each song at its list index, in play order (`order`).
+    /// The queue: its order, place and switches. Its `songs` are moved to [`QueueShown::songs`].
     pub view: PlaylistView,
+    /// Each song at its list index, shared with the queue shown before while they have not changed.
+    pub songs: Arc<[Song]>,
     /// Its rows in play order around the song heard: what has played, that song, what plays next
     /// (`Core::queue_rows`).
     pub rows: QueueRows,
@@ -142,15 +145,16 @@ impl QueueShown {
     /// The songs after the one heard, in play order, with their list indexes.
     pub fn upcoming(&self) -> impl Iterator<Item = (u32, &Song)> {
         let from = usize::try_from(self.rows.now).map_or(0, |n| n + 1);
-        self.rows.order.get(from..).unwrap_or_default().iter().filter_map(|&i| Some((i, self.view.songs.get(i as usize)?)))
+        self.rows.order.get(from..).unwrap_or_default().iter().filter_map(|&i| Some((i, self.songs.get(i as usize)?)))
     }
 
     /// A mirrored queue: its rows are its play order already.
     fn mirrored(e: &Elsewhere, jam: bool, by: HashMap<String, String>) -> QueueShown {
-        let view = e.view();
+        let mut view = e.view();
         let now = e.mirror.at.map_or(-1, |a| a as i32);
         let rows = QueueRows { order: view.order.clone(), reorderable: false, kept: view.order.clone(), now };
-        QueueShown { view, rows, by, mirrored: true, jam }
+        let songs = std::mem::take(&mut view.songs).into();
+        QueueShown { view, songs, rows, by, mirrored: true, jam }
     }
 }
 
@@ -202,24 +206,25 @@ impl Handle {
         Now { song: id.and_then(|id| self.core.session.song(&id)), ..now }
     }
 
-    /// The queue the player shows. `before`, the view read last, lends its songs when they have not
+    /// The queue the player shows. `before`, the one read last, shares its songs when they have not
     /// changed since.
-    pub fn queue_shown(&self, before: Option<&PlaylistView>) -> QueueShown {
+    pub fn queue_shown(&self, before: Option<&QueueShown>) -> QueueShown {
         let by = self.remote().map(|r| r.jam_added()).unwrap_or_default();
         match self.playback() {
             Playback::There(e) => QueueShown::mirrored(&e, false, by),
             Playback::Jam(Some(e)) => QueueShown::mirrored(&e, true, by),
             Playback::Jam(None) => {
                 let view = PlaylistView { songs: Vec::new(), len: 0, list_rev: 0, order: Vec::new(), queued: Vec::new(), index: -1, shuffle: false, repeat: 0, bridging: false, rev: 0 };
-                QueueShown { view, rows: nori_core::stage::mirrored_queue_rows(0, false, -1), by, mirrored: true, jam: true }
+                QueueShown { view, songs: Arc::default(), rows: nori_core::stage::mirrored_queue_rows(0, false, -1), by, mirrored: true, jam: true }
             }
             Playback::Here => {
-                let mut view = self.core.session.view(before.map_or(u64::MAX, |v| v.list_rev));
-                if view.songs.is_empty() && view.len > 0 {
-                    view.songs = before.map(|b| b.songs.clone()).unwrap_or_default();
-                }
+                let mut view = self.core.session.view(before.map_or(u64::MAX, |q| q.view.list_rev));
+                let songs = match before {
+                    Some(b) if view.songs.is_empty() && view.len > 0 => b.songs.clone(),
+                    _ => std::mem::take(&mut view.songs).into(),
+                };
                 let rows = self.core.queue_rows(view.len, view.shuffle, self.heard_index(view.index));
-                QueueShown { view, rows, by, mirrored: false, jam: false }
+                QueueShown { view, songs, rows, by, mirrored: false, jam: false }
             }
         }
     }
@@ -238,29 +243,57 @@ impl Handle {
     }
 }
 
+/// A key of the system's media controls (a headset, the lock screen, MPRIS).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaKey {
+    Play,
+    Pause,
+    Toggle,
+    Next,
+    Previous,
+}
+
+impl Handle {
+    /// Media key `key` pressed: the session's own controls, so it reaches what the player shows; a toggle
+    /// or a skip does what the core says (`Session::media_button`, a plugin's word).
+    pub fn media_key(&self, key: MediaKey) {
+        use nori_core::deciders::Press;
+        #[cfg(feature = "desktop")]
+        self.heard_press(match key {
+            MediaKey::Play => nori_plugins::Press::Play,
+            MediaKey::Pause => nori_plugins::Press::Pause,
+            MediaKey::Toggle => nori_plugins::Press::PlayPause,
+            MediaKey::Next => nori_plugins::Press::Next,
+            MediaKey::Previous => nori_plugins::Press::Previous,
+        });
+        match key {
+            MediaKey::Play => self.resume(),
+            MediaKey::Pause => self.halt(),
+            MediaKey::Toggle => self.pressed(Press::PlayPause),
+            MediaKey::Next => self.pressed(Press::Next),
+            MediaKey::Previous => self.pressed(Press::Previous),
+        }
+    }
+}
+
 /// The media keys and the system's media controls: the session's own controls, so they reach what the
 /// player shows.
 #[cfg(feature = "desktop")]
 impl nori_mpris::Controls for Handle {
     fn play(&self) {
-        self.heard_press(nori_plugins::Press::Play);
-        self.resume();
+        self.media_key(MediaKey::Play);
     }
     fn pause(&self) {
-        self.heard_press(nori_plugins::Press::Pause);
-        self.halt();
+        self.media_key(MediaKey::Pause);
     }
     fn toggle(&self) {
-        self.heard_press(nori_plugins::Press::PlayPause);
-        self.pressed(nori_core::deciders::Press::PlayPause);
+        self.media_key(MediaKey::Toggle);
     }
     fn next(&self) {
-        self.heard_press(nori_plugins::Press::Next);
-        self.pressed(nori_core::deciders::Press::Next);
+        self.media_key(MediaKey::Next);
     }
     fn previous(&self) {
-        self.heard_press(nori_plugins::Press::Previous);
-        self.pressed(nori_core::deciders::Press::Previous);
+        self.media_key(MediaKey::Previous);
     }
     fn seek(&self, ms: i64) {
         Handle::seek(self, ms);

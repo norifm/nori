@@ -331,6 +331,8 @@ fn an_offer_says_where_it_stands_and_shows_its_readme() {
     serve("0.1.0");
     assert_eq!(states(), [(own.to_string(), OfferState::New), (other.to_string(), OfferState::New)]);
     let offer = nori_tasks::block_on(plugins.offers()).offers.into_iter().find(|o| o.repo.url == own).unwrap();
+    let name = |id: &str| nori_plugins::plugin_display_name(id.into(), plugins.cards("en".into()), vec![offer.clone()]);
+    assert_eq!([name(ID), name("fm.nori.elsewhere")], ["Test", "fm.nori.elsewhere"], "not installed: as its repo names it, else its id");
     let said = vec![nori_plugins::ReadmeBlock::Text { text: "Hello".into() }];
     assert_eq!(nori_tasks::block_on(plugins.readme(ID.into(), Some(offer.clone()))), said, "before it is installed, from its repo");
     assert_eq!(nori_tasks::block_on(plugins.icon(ID.into(), Some(offer.clone()))).as_deref(), Some(&b"\x89PNG\r\n\x1a\nimage"[..]));
@@ -664,6 +666,27 @@ fn a_start_that_never_finished_starts_once_with_every_plugin_off() {
     again.started();
     drop(again);
     assert_eq!(open().take_safe_start(), None, "a start that finished");
+}
+
+#[test]
+fn a_plugin_turned_on_ends_a_safe_start() {
+    let dir = nori_testdir::TempDir::new("plugins-start-turned-on");
+    let open = || {
+        nori_plugins::testing::marks_released(dir.path());
+        Plugins::open(dir.path().to_path_buf(), Arc::new(Session::default()))
+    };
+    let first = open();
+    first.install(&fixture("")).unwrap();
+    first.turn(ID.into(), false);
+    drop(first);
+    left_on(dir.path(), ID);
+    drop(open());
+
+    let safe = open();
+    safe.turn(ID.into(), true);
+    assert_eq!(safe.running().len(), 1);
+    assert_eq!(safe.take_safe_start(), None, "nothing is off to say");
+    assert!(!safe.report().contains("safe mode"), "{}", safe.report());
 }
 
 #[test]

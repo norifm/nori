@@ -37,6 +37,26 @@ pub fn seek_step(bar: f32, target: f32, dt_s: f32, width_px: f32, speed: f32) ->
     (next, (((1.0 - ahead_px) * px_s * 1000.0) as i32).clamp(MIN_WAIT_MS, MAX_WAIT_MS))
 }
 
+/// How far a playing seek bar moves between draws: a quarter pixel keeps its rounded end moving without
+/// drawing every frame; a whole one under reduced motion.
+pub const fn step_px(reduced: bool) -> f32 {
+    if reduced {
+        REDUCED_DRAW_PX
+    } else {
+        DRAW_PX
+    }
+}
+
+/// The wait before a seek bar `width_px` wide, the song playing at `rate`, next moves `step_px` on from
+/// where it was drawn (`ahead_px` past the song already), or its labels reach the next second; ms, one
+/// frame to one second.
+pub fn wait_ms(position_ms: i64, duration_ms: i64, width_px: f32, rate: f32, step_px: f32, ahead_px: f32) -> i32 {
+    let px_ms = if duration_ms > 0 { duration_ms as f32 / (width_px.max(1.0) * rate) } else { MAX_WAIT_MS as f32 };
+    let pixel = (step_px - ahead_px.clamp(0.0, step_px)) * px_ms;
+    let second = (1000 - position_ms.rem_euclid(1000)) as f32 / rate;
+    (pixel.min(second) as i32).clamp(MIN_WAIT_MS, MAX_WAIT_MS)
+}
+
 /// Glide and cross-fade duration after a jump (new song, seek, crossfade handover).
 pub(crate) const GLIDE_S: f32 = 0.32;
 /// A move this many pixels beyond normal playback progress counts as a jump and glides.
@@ -114,7 +134,7 @@ impl SeekPace {
 
     /// A pace for reduced motion: the bar steps a whole pixel at a time.
     pub const fn reduced() -> Self {
-        SeekPace { step_px: REDUCED_DRAW_PX, ..SeekPace::new() }
+        SeekPace { step_px: step_px(true), ..SeekPace::new() }
     }
 
     /// Jumps straight to the song's position with no glide or fade.
@@ -187,12 +207,7 @@ impl SeekPace {
         if rate <= 0.0 {
             return -1;
         }
-        // Quarter-pixel steps keep the rounded edge moving without ticking every frame.
-        let ahead_px = ((target - self.bar) * width).clamp(0.0, self.step_px);
-        let px_ms = if duration_ms > 0 { duration_ms as f32 / (width * rate) } else { MAX_WAIT_MS as f32 };
-        let pixel = (self.step_px - ahead_px) * px_ms;
-        let second = (1000 - position_ms.rem_euclid(1000)) as f32 / rate;
-        (pixel.min(second) as i32).clamp(MIN_WAIT_MS, MAX_WAIT_MS)
+        wait_ms(position_ms, duration_ms, width, rate, self.step_px, (target - self.bar) * width)
     }
 
     /// Drawn bar position, 0..1.

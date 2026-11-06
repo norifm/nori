@@ -15,16 +15,26 @@ import dev.nori.music.plugins.PluginHost
  * system's output switcher show the cast's device, and the volume keys set its volume (a remote playback
  * type, which media3 hands the system as a volume provider). Everything else is this phone's own player's:
  * while the device plays the songs itself, the engine keeps the queue for it and plays nothing here
- * (`Engine::play_elsewhere`), and what it plays there is what the engine says.
+ * (`Engine::play_elsewhere`), and what it plays there is what the engine says. Between casts it follows
+ * nothing ([hide]): [controls]' changes cost it no state built.
  */
 @UnstableApi
-class CastPlayer(controls: Player, private val plugins: PluginHost) : ForwardingSimpleBasePlayer(controls) {
+class CastPlayer(private val controls: Player, private val plugins: PluginHost) : ForwardingSimpleBasePlayer(controls) {
     private var cast: Cast? = null
+    /** What it follows between casts: a player that never changes. */
+    private val idle by lazy { Idle(controls.applicationLooper) }
 
     /** The cast changed (its device's state, or a cast of another kind). */
     fun show(c: Cast) {
         cast = c
+        setPlayer(controls)
         invalidateState()
+    }
+
+    /** The cast ended, and the session shows [controls] itself again. */
+    fun hide() {
+        cast = null
+        setPlayer(idle)
     }
 
     override fun getState(): State {
@@ -50,6 +60,11 @@ class CastPlayer(controls: Player, private val plugins: PluginHost) : Forwarding
     private fun step(by: Int): ListenableFuture<*> {
         plugins.castTook(if (by > 0) CastButton.VOLUME_UP else CastButton.VOLUME_DOWN)
         return Futures.immediateVoidFuture()
+    }
+
+    /** A player with nothing in it, which never says anything. */
+    private class Idle(looper: android.os.Looper) : androidx.media3.common.SimpleBasePlayer(looper) {
+        override fun getState(): State = State.Builder().build()
     }
 
     private companion object {

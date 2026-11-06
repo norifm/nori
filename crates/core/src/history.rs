@@ -10,7 +10,7 @@ use serde::Deserialize;
 use crate::browse::{HistoryAfter, ServerHistory};
 use crate::client::{Client, NetResult};
 use crate::transport::{Exchange, Outcome, TransportResponse};
-use crate::{model::*, Core, Result};
+use crate::{db, model::*, Core, Result};
 
 pub use nori_library::history::*;
 
@@ -55,7 +55,7 @@ impl Client {
     /// history newest first; ids, not play times, so plays submitted late are not missed. Kept only once
     /// all arrived, so an interrupted walk leaves no gap. False when the server has no history to give.
     async fn fetch_server_plays(&self) -> NetResult<bool> {
-        let login = self.core.native_login.read().clone();
+        let login = self.core.account.read().as_ref().and_then(crate::Account::login);
         let Some((user, password)) = login else { return Ok(false) };
         let base = self.core.server.read().base.clone();
         let json = serde_json::json!({ "username": user, "password": password }).to_string();
@@ -100,16 +100,17 @@ impl Core {
     pub fn history_recent(&self, limit: u32, after: Option<HistoryAfter>, include_skipped: bool) -> Result<(Vec<HistoryEntry>, Option<HistoryAfter>)> {
         let after = after.unwrap_or(HistoryAfter { started_ms: i64::MAX, row: i64::MAX });
         let c = self.db.lock();
-        let mut st = c.prepare_cached(
-            "SELECT i.json, p.started_ms, p.heard_ms, p.completed, p.skipped, p.rowid FROM plays p JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=p.song_id
+        let mut st = c.prepare_cached(&format!(
+            "SELECT p.started_ms, p.heard_ms, p.completed, p.skipped, p.rowid, {} FROM plays p JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=p.song_id
              WHERE p.server=sid() AND p.skipped<=?1 AND (p.started_ms, p.rowid) < (?3, ?4) ORDER BY p.started_ms DESC, p.rowid DESC LIMIT ?2",
-        )?;
+            db::items::SONG
+        ))?;
         let rows = st.query_map(params![include_skipped, limit, after.started_ms, after.row], |r| {
-            Ok((entry(r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?), HistoryAfter { started_ms: r.get(1)?, row: r.get(5)? }))
+            Ok((HistoryEntry { song: db::items::song(r, 5)?, started_ms: r.get(0)?, heard_ms: r.get(1)?, completed: r.get(2)?, skipped: r.get(3)? }, HistoryAfter { started_ms: r.get(0)?, row: r.get(4)? }))
         })?;
         let rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
         let next = rows.last().filter(|_| rows.len() == limit as usize).map(|(_, at)| *at);
-        Ok((rows.into_iter().filter_map(|(e, _)| e).collect(), next))
+        Ok((rows.into_iter().map(|(e, _)| e).collect(), next))
     }
 
 }

@@ -170,8 +170,10 @@ session grants.
 | Pause | Stops the unit. After the engine's idle release (5 minutes paused) the output closes and the session goes inactive, so iOS can suspend the app |
 
 The render path pulls and stamps; it neither locks nor allocates. The shim decides nothing: a route
-lost (headphones pulled, Bluetooth gone) pauses, an interruption pauses and, when iOS says so, resumes,
-both decided in Rust (`session::audio_changed`).
+lost (headphones pulled, Bluetooth gone) pauses; an interruption is the engine's audio focus
+(`Engine::focus`): it pauses what played and, when iOS says to resume, plays only what the
+interruption paused (`session::audio_changed`). The lock screen's and a headset's keys go through
+`nori_ios_media_key` (`Handle::media_key`).
 
 **Volume**: iOS keeps it. nori multiplies no samples for volume. The system volume (`outputVolume`,
 observed) is passed to `nori_ios_volume` so other devices see it, and a volume set from another device

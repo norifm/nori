@@ -1480,7 +1480,7 @@ fn gain_boost_uses_float_limiter() {
     let rig = Rig::with_app(&[("a", &a), ("b", &b)], app, Settings { gain_boost_db: nori_player::gain::BOOST_MAX_DB, ..Settings::default() });
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(30, Rig::ended), "{:?}", rig.events.lock());
-    assert!(rig.engine.status().chain, "the limiter is in the path");
+    assert!(rig.engine.status().chain(), "the limiter is in the path");
     let heard = rig.heard.lock().clone();
     // The limiter's look-ahead delays the music by 5 ms.
     let delay = 220 * 2;
@@ -1532,7 +1532,7 @@ fn hi_res_keeps_24_bits() {
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(30, Rig::ended), "{:?}", rig.events.lock());
     let heard = rig.heard_f.lock().clone();
-    assert!(rig.engine.status().chain, "{:?}", rig.engine.status());
+    assert!(rig.engine.status().chain(), "{:?}", rig.engine.status());
     // The chain over 24 bits, and over the song cut to 16 bits.
     let chain = |x: &[f32]| {
         let mut eq = nori_player::dsp::Equalizer::new(RATE, 2);
@@ -1754,6 +1754,50 @@ fn failed_songs() {
     assert!(rig.wait_for(4, Rig::ended), "played well before the first try at 5 s: {:?}", rig.events.lock());
 }
 
+/// A cast's device taking the songs during a network wait ends the wait: the device plays on from
+/// where the song waited, and nothing is tried here.
+#[test]
+fn a_cast_taking_the_songs_ends_a_network_wait() {
+    let a = music(10.0, 22);
+    let extra = Extra::default();
+    extra.server.cut.lock().push(("a".into(), 44 + RATE as u64 * 4 * 2));
+    let rig = Rig::build(files(&[("a", &a)]), sim::App::new(), Settings::default(), extra);
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(30, |r| r.engine.status().waiting), "{:?}", rig.events.lock());
+    let asked = rig.server.requests.lock().len();
+    rig.engine.play_elsewhere(None, None);
+    rig.run(100);
+    let st = rig.engine.status();
+    assert_eq!((st.state, st.index, st.waiting, st.buffering), (State::Playing, Some(0), false, false), "the device plays a");
+    assert!(rig.events.lock().contains(&Event::Waiting(false)));
+    rig.run(10_000);
+    assert_eq!(rig.server.requests.lock().len(), asked, "nothing is tried here");
+    rig.engine.look();
+    rig.run(10);
+    assert!(rig.engine.status().position_ms > 10_000, "the place runs on as the device plays");
+}
+
+/// Another card put in during a network wait plays the song as soon as it comes.
+#[test]
+fn a_card_put_in_during_a_network_wait_plays_the_song() {
+    let a = music(10.0, 23);
+    let extra = Extra::default();
+    extra.server.cut.lock().push(("a".into(), 44 + RATE as u64 * 4 * 2));
+    let rig = Rig::build(files(&[("a", &a)]), sim::App::new(), Settings::default(), extra);
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(30, |r| r.engine.status().waiting), "{:?}", rig.events.lock());
+    rig.server.cut.lock().clear();
+    let heard = rig.heard.lock().len();
+    let next = Recorder { card: rig.card.clone(), opened: Arc::default(), shut: Arc::default(), watch: Arc::default(), flushes: Arc::default(), shallow: Arc::default() };
+    rig.engine.set_card(Box::new(next), None, false);
+    assert!(rig.wait_for(4, |r| r.heard.lock().len() > heard + RATE as usize * 2), "played before the first try at 5 s");
+    rig.engine.look();
+    rig.run(10);
+    let st = rig.engine.status();
+    assert_eq!((st.state, st.waiting, st.buffering), (State::Playing, false, false));
+    assert!(st.position_ms > 2_500, "the place moves with the music: {}", st.position_ms);
+}
+
 #[test]
 fn loading_song_does_not_block_engine() {
     let (slow, a) = (music(6.0, 13), music(6.0, 14));
@@ -1814,6 +1858,7 @@ fn idle_release_and_reopen() {
     assert!(rig.wait_for(5, |r| r.shut.load(Ordering::Relaxed) == 1), "let go after the idle time");
     assert_eq!(rig.engine.status().releases, 1);
     assert_eq!(rig.engine.status().state, State::Paused);
+    assert_eq!(rig.events.lock().iter().filter(|e| **e == Event::LongPause).count(), 1, "said once");
     rig.engine.play();
     assert!(rig.wait_for(30, Rig::ended), "{:?}", rig.events.lock());
     assert_eq!(rig.opened.load(Ordering::Relaxed), 2, "opened again on play");
@@ -1823,6 +1868,70 @@ fn idle_release_and_reopen() {
     assert!(again <= RATE as usize * 2 / 1000, "{again} samples heard again");
     let (head, tail) = (RATE as usize * 2 * 3, a.len() - RATE as usize * 2 * 6);
     assert!(heard[..head] == a[..head] && heard[heard.len() - tail..] == a[a.len() - tail..], "from the start, and on to the end");
+}
+
+/// The platform's audio focus: granted or not, asked for and given back.
+#[derive(Clone, Default)]
+struct FocusDoor(Arc<Mutex<(bool, u32, u32)>>);
+
+impl nori_engine::FocusRequest for FocusDoor {
+    fn request(&mut self) -> bool {
+        let mut d = self.0.lock();
+        d.1 += 1;
+        d.0
+    }
+
+    fn abandon(&mut self) {
+        self.0.lock().2 += 1;
+    }
+}
+
+/// A call (a loss of the focus for a while) holds the music and its end plays it again; play pressed
+/// during it stays silent; a pause during it is not undone by its end and gives the focus back; a loss
+/// for good never plays again by itself.
+#[test]
+fn the_audio_focus_holds_the_music_in_order() {
+    use nori_player::focus::{Focus, Hold};
+    let a = music(60.0, 19);
+    let songs: [(&str, &[i16]); 1] = [("a", &a)];
+    let rig = Rig::build(files(&songs), sim::App::new(), Settings::default(), Extra::default());
+    let door = FocusDoor::default();
+    door.0.lock().0 = true;
+    rig.engine.ask_focus_of(Box::new(door.clone()));
+    let heard = |r: &Rig| r.heard.lock().len();
+    let holds = |r: &Rig| r.events.lock().iter().filter_map(|e| if let Event::Focus(h) = e { Some(*h) } else { None }).collect::<Vec<_>>();
+    rig.engine.go_to(0, 0);
+    rig.engine.play();
+    assert!(rig.wait_for(10, |r| heard(r) > RATE as usize * 2));
+    assert_eq!(door.0.lock().1, 1, "asked for before playing");
+
+    rig.engine.focus(Focus::LostTransient);
+    assert!(rig.wait_for(5, |r| r.engine.status().state == State::Paused));
+    door.0.lock().0 = false;
+    rig.engine.play();
+    rig.run(2_000);
+    let silent = heard(&rig);
+    rig.run(2_000);
+    assert_eq!(heard(&rig), silent, "refused during the call");
+    assert_eq!(holds(&rig), [Hold::Held, Hold::Held], "held, and said again for the refused play");
+    door.0.lock().0 = true;
+    rig.engine.focus(Focus::Gained);
+    assert!(rig.wait_for(5, |r| r.engine.status().state == State::Playing && heard(r) > silent), "the call over: plays on");
+
+    rig.engine.focus(Focus::LostTransient);
+    rig.engine.pause();
+    rig.engine.focus(Focus::Gained);
+    rig.run(2_000);
+    assert_eq!(rig.engine.status().state, State::Paused, "the listener's pause stands");
+    assert_eq!(door.0.lock().2, 1, "the focus given back");
+
+    rig.engine.play();
+    assert!(rig.wait_for(5, |r| r.engine.status().state == State::Playing));
+    rig.engine.focus(Focus::Lost);
+    rig.engine.focus(Focus::Gained);
+    rig.run(2_000);
+    assert_eq!(rig.engine.status().state, State::Paused, "lost for good");
+    assert_eq!(holds(&rig).last(), Some(&Hold::Lost));
 }
 
 #[test]
@@ -1851,6 +1960,7 @@ fn idle_release_after_queue_ends() {
     assert!(rig.wait_for(5, |r| r.shut.load(Ordering::Relaxed) == 1), "let go after the idle time");
     assert_eq!(rig.engine.status().releases, 1);
     assert!(rig.wait_for(5, |r| r.engine.held().songs == 0), "the song's bytes let go: {:?}", rig.engine.held());
+    assert!(!rig.events.lock().contains(&Event::LongPause), "ended is no pause");
     rig.heard.lock().clear();
     rig.engine.play();
     assert!(rig.wait_for(30, |r| r.heard.lock().len() >= a.len() && r.engine.status().state == State::Ended), "{:?}", rig.events.lock());
@@ -3145,7 +3255,7 @@ fn eq_chain_stays_through_changes() {
     let rig = Rig::build(files, sim::App::new(), loud_eq(), Extra { float: true, ..Extra::default() });
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(10, |r| r.heard_f.lock().len() > RATE as usize * 2 * 2));
-    assert!(rig.engine.status().chain && rig.engine.status().on_cpu, "{:?}", rig.engine.status());
+    assert!(rig.engine.status().chain() && rig.engine.status().on_cpu(), "{:?}", rig.engine.status());
     let steps = [
         Settings { auto_mix: true, ..loud_eq() },
         Settings { auto_mix: true, crossfade_s: 6, ..loud_eq() },
@@ -3158,9 +3268,9 @@ fn eq_chain_stays_through_changes() {
         rig.engine.set_settings(s);
         rig.run(1_000);
         let st = rig.engine.status();
-        assert!(st.state == State::Playing && st.index == Some(0) && st.on_cpu, "{k}: {st:?}");
+        assert!(st.state == State::Playing && st.index == Some(0) && st.on_cpu(), "{k}: {st:?}");
         // Hi-res keeps it too, in float.
-        assert!(st.chain, "{k}: a second after the change the chain is in the path: {st:?}");
+        assert!(st.chain(), "{k}: a second after the change the chain is in the path: {st:?}");
     }
     rig.engine.stop();
 }

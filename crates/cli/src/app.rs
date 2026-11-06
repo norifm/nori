@@ -125,7 +125,9 @@ pub enum Cmd {
     CycleRepeat,
     Download(Vec<Song>),
     /// Keeps the song out of the mixes.
-    ExcludeFromMixes(String),
+    ExcludeFromMixes(String, bool),
+    /// Sets the sleep timer.
+    Sleep(nori_core::menus::SleepChoice),
     /// Adds songs to the playlist `id`, or makes one called `name` of them.
     AddToPlaylist { id: String, songs: Vec<String> },
     NewPlaylist { name: String, songs: Vec<String> },
@@ -859,6 +861,12 @@ pub enum DeviceRow {
 }
 
 impl Devices {
+    /// Where the music plays (`nori_core::destination::destination_of`), for a jam guest's profile or not.
+    pub fn destination(&self, guest: bool) -> nori_core::destination::Destination {
+        let hosting = self.jam.as_ref().is_some_and(|j| j.hosting);
+        nori_core::destination::destination_of(guest, self.active.as_ref().map(|(_, name)| name.clone()), self.cast.as_ref().map(Into::into), hosting)
+    }
+
     /// The panel's rows, the plugins' last.
     pub fn rows(&self) -> Vec<DeviceRow> {
         let mut rows = Vec::new();
@@ -1048,6 +1056,8 @@ pub enum Target {
     /// The file to save a backup to or restore one from; its password is asked next.
     BackupFile { restore: bool },
     BackupPassword { restore: bool, path: String },
+    /// The sleep timer's choices, as offered.
+    Sleep(Vec<nori_core::menus::SleepChoice>),
 }
 
 impl Target {
@@ -1058,6 +1068,7 @@ impl Target {
             Target::Device => Some(Cmd::Device(value)),
             Target::Preset => value.parse().ok().map(|i| Cmd::Sound(SoundToolCmd::Preset(i))),
             Target::Playlist(songs) => Some(Cmd::AddToPlaylist { id: value, songs }),
+            Target::Sleep(choices) => value.parse().ok().and_then(|i: usize| choices.get(i).copied()).map(Cmd::Sleep),
             Target::Level(l) => value.parse().ok().map(|v| Cmd::Level(l, v)),
             Target::Plugin { plugin, row, kind } => {
                 use nori_plugins::{RowKind, Value};
@@ -1201,6 +1212,8 @@ pub enum Drag {
 
 #[derive(Default)]
 pub struct App {
+    /// The queue session over the settings, which the screens read.
+    pub shared: std::sync::Arc<nori_core::queue::Session>,
     pub view: View,
     /// Pages opened over the view, topmost last.
     pub pages: Vec<Page>,
@@ -1237,6 +1250,8 @@ pub struct App {
     pub slots: Slots,
     /// What the open profile offers (a jam guest's: the host's library, its picks asked of the host).
     pub rules: ProfileRules,
+    /// The songs left out of every mix.
+    pub excluded: std::collections::HashSet<String>,
     /// The planned transition out of `song`.
     pub transition: Option<nori_core::automix::planner::TransitionNote>,
     /// The transition that brought `song` in, while still mixing.
@@ -1334,7 +1349,7 @@ impl App {
         let day = crate::art::Day::now();
         let dark = crate::art::terminal_dark(std::env::var("COLORFGBG").ok().as_deref());
         self.dark = self.prefs.theme.is_dark(dark);
-        self.look = Theme::season(&self.prefs, day, dark, self.paint, self.colors);
+        self.look = Theme::season(&self.shared, &self.prefs, day, dark, self.paint, self.colors);
         self.theme = match &self.colours {
             Some(c) if self.prefs.theme.covers_tint_pages() && self.images => Theme::dyed(c.edge, &self.prefs, day, self.dark, self.paint, self.colors),
             _ => self.look,
@@ -1796,7 +1811,7 @@ impl App {
             }
             Event::Song { .. } | Event::Looped { .. } => {}
             Event::Error { id, message } => {
-                let what = crate::backend::app().song(&id).map_or_else(|| "The output".to_string(), |s| format!("“{}”", s.title));
+                let what = self.shared.song(&id).map_or_else(|| "The output".to_string(), |s| format!("“{}”", s.title));
                 self.say(format!("{what} would not play: {message}"), true);
             }
             Event::Buffering(on) => self.now.buffering = on,
@@ -1811,7 +1826,7 @@ impl App {
             Event::Waiting(false) => {}
             Event::Mixing(on) => self.now.mixing = on,
             // How a jam's host is followed is the core's jam controls' to show.
-            Event::Position { .. } | Event::Placed { .. } | Event::Awake(_) | Event::Following(_) => {}
+            Event::Position { .. } | Event::Placed { .. } | Event::Awake(_) | Event::Following(_) | Event::LongPause | Event::Focus(_) => {}
         }
     }
 

@@ -111,7 +111,7 @@ impl Shelf {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 struct Coef {
     b0: f64,
     b1: f64,
@@ -138,6 +138,13 @@ impl Coef {
         let a0 = 1.0 + alpha;
         let (b0, b1) = if low { ((1.0 - c) / 2.0, 1.0 - c) } else { ((1.0 + c) / 2.0, -(1.0 + c)) };
         Coef { b0: b0 / a0, b1: b1 / a0, b2: b0 / a0, a1: -2.0 * c / a0, a2: (1.0 - alpha) / a0 }
+    }
+
+    /// `self` moved toward `to` by `t` (0..1), coefficient by coefficient.
+    #[inline]
+    fn lerp(&self, to: &Coef, t: f64) -> Coef {
+        let l = |a: f64, b: f64| a + (b - a) * t;
+        Coef { b0: l(self.b0, to.b0), b1: l(self.b1, to.b1), b2: l(self.b2, to.b2), a1: l(self.a1, to.a1), a2: l(self.a2, to.a2) }
     }
 
     #[inline]
@@ -250,8 +257,8 @@ impl Sample for i16 {
 /// Frames the fade curves are interpolated over.
 const FADE_RUN: u64 = 32;
 
-/// The out and in fade gains at the two ends of a run of frames, linear in between. A run never crosses
-/// a fade's start or end, where its curve bends or steps.
+/// The gains at the two ends of a run of frames, linear in between. A run never crosses the start or end
+/// of a fade, the bass swap, the duck's release or the echo's, where a curve bends or steps.
 #[derive(Clone, Copy, Debug, Default)]
 struct FadeRun {
     start: u64,
@@ -260,21 +267,36 @@ struct FadeRun {
     to: Fades,
 }
 
-/// The fade curves' gains at one frame, and what both decks together are scaled by to one song's power.
+/// What changes over a transition, at one frame: the decks' gains (fade, level and gap trim), what both
+/// decks together are scaled by to one song's power, and the effects' amounts.
 #[derive(Clone, Copy, Debug, Default)]
 struct Fades {
     out: f64,
     inc: f64,
     held: f64,
+    /// The bass swap: how much of each deck's lows is heard.
+    lows_out: f64,
+    lows_in: f64,
+    /// The shelf holding the swapped highs to one song's power.
+    shelf: Coef,
+    /// How much of the incoming voice band is held down.
+    duck: f64,
+    /// How much of the echo's repeats is still heard.
+    echo: f64,
 }
 
 impl FadeRun {
-    /// The gains at frame `p` of the run.
+    /// How far frame `p` is through the run, 0..1.
     #[inline]
-    fn at(&self, p: u64) -> Fades {
-        let t = (p - self.start) as f64 / (self.end - self.start) as f64;
-        let (a, b) = (self.from, self.to);
-        Fades { out: a.out + (b.out - a.out) * t, inc: a.inc + (b.inc - a.inc) * t, held: a.held + (b.held - a.held) * t }
+    fn t(&self, p: u64) -> f64 {
+        (p - self.start) as f64 / (self.end - self.start) as f64
+    }
+
+    /// One of the gains, `t` through the run; only the ones a frame uses are worked out.
+    #[inline]
+    fn get(&self, t: f64, gain: impl Fn(&Fades) -> f64) -> f64 {
+        let a = gain(&self.from);
+        a + (gain(&self.to) - a) * t
     }
 }
 
@@ -461,14 +483,34 @@ impl Mixer {
     /// swap gives to one deck at a time are not held down.
     fn fades_at(&self, p: u64) -> Fades {
         let (out, inc) = (fade(self.curve, self.out_fade.progress(p), true), fade(self.curve, self.in_fade.progress(p), false));
-        Fades { out, inc, held: 1.0 / (out * out + inc * inc).sqrt().max(1.0) }
+        let held = 1.0 / (out * out + inc * inc).sqrt().max(1.0);
+        let (trim_out, trim_in) = trims(self.gap_db, p as f64 / self.len.max(1) as f64);
+        // The lows change hands at equal power, two bass lines being as unrelated as two songs.
+        let (lows_in, lows_out) = self.swap.map_or((0.0, 1.0), |s| (s.progress(p) * std::f64::consts::FRAC_PI_2).sin_cos());
+        // All of the incoming voice band is held down until the release, none after.
+        let duck = match self.duck {
+            Some((span, depth)) if p < span.end => depth * (1.0 - raised_cos(span.progress(p))),
+            _ => 0.0,
+        };
+        Fades {
+            out: out * self.out_gain * db_to_gain(trim_out),
+            inc: inc * db_to_gain(trim_in),
+            held,
+            lows_out,
+            lows_in,
+            shelf: self.hold_shelf.coef(held),
+            duck,
+            echo: 1.0 - raised_cos(self.echo_out.progress(p)),
+        }
     }
 
     /// The run from frame `p` (inside the transition): up to [`FADE_RUN`] frames, ending at the next fade
     /// start or end. A fade with no length steps from its start to the frame after, so that is an end too.
     fn fade_run(&self, p: u64) -> FadeRun {
         let (o, i) = (self.out_fade, self.in_fade);
-        let end = [o.start, o.start + 1, o.end, i.start, i.start + 1, i.end].into_iter().filter(|&b| b > p).fold((p + FADE_RUN).min(self.len), u64::min);
+        let (s, d, e) = (self.swap.unwrap_or_default(), self.duck.map_or_else(Span::default, |d| d.0), self.echo_out);
+        let bends = [o.start, o.start + 1, o.end, i.start, i.start + 1, i.end, s.start, s.end, d.start, d.end, e.start, e.end];
+        let end = bends.into_iter().filter(|&b| b > p).fold((p + FADE_RUN).min(self.len), u64::min);
         FadeRun { start: p, end, from: self.fades_at(p), to: self.fades_at(end) }
     }
 
@@ -484,14 +526,8 @@ impl Mixer {
         if !(self.fades.start..self.fades.end).contains(&p) {
             self.fades = self.fade_run(p);
         }
-        let fades = self.fades.at(p);
-        // No gap is exactly unity: no power per frame.
-        let (g_out, g_in) = if self.gap_db == 0.0 {
-            (fades.out * self.out_gain, fades.inc)
-        } else {
-            let (trim_out, trim_in) = trims(self.gap_db, p as f64 / self.len as f64);
-            (fades.out * self.out_gain * db_to_gain(trim_out), fades.inc * db_to_gain(trim_in))
-        };
+        let (run, t) = (self.fades, self.fades.t(p));
+        let (g_out, g_in, held) = (run.get(t, |f| f.out), run.get(t, |f| f.inc), run.get(t, |f| f.held));
         let (rate, entry) = (self.rate, self.sweep_entry);
         for f in [&mut self.high_pass, &mut self.low_pass].into_iter().flatten() {
             let wet = f.wet(rate, entry, p);
@@ -501,11 +537,7 @@ impl Mixer {
                 }
             }
         }
-        // How much of the incoming voice band is still held down: all of it until the release, none after.
-        let duck = match self.duck {
-            Some((span, depth)) if p < span.end => depth * (1.0 - raised_cos(span.progress(p))),
-            _ => 0.0,
-        };
+        let duck = if self.duck.is_some() { run.get(t, |f| f.duck) } else { 0.0 };
         if duck > 0.0 {
             for (x, s) in i[..ch].iter_mut().zip(&mut self.duck_state) {
                 *x -= duck * self.duck_coef.run(s, *x);
@@ -513,23 +545,19 @@ impl Mixer {
         }
         if let Some((d, fb, wet)) = self.echo {
             // Post-fader send: the repeats are of what went through the fader, so they decay once it is down.
-            let left = 1.0 - raised_cos(self.echo_out.progress(p));
+            let left = run.get(t, |f| f.echo);
             for c in 0..ch {
                 let idx = self.echo_pos * ch + c;
                 let rep = self.echo_buf[idx];
-                self.echo_buf[idx] = o[c] * g_out * fades.held + rep * fb;
-                o[c] = o[c] * g_out * fades.held + rep * wet * left + i[c] * g_in * fades.held;
+                self.echo_buf[idx] = o[c] * g_out * held + rep * fb;
+                o[c] = o[c] * g_out * held + rep * wet * left + i[c] * g_in * held;
             }
             self.echo_pos = (self.echo_pos + 1) % d;
             return;
         }
-        // The lows change hands at equal power, two bass lines being as unrelated as two songs. They go to
-        // one deck at a time, so only the highs are held to one song's power, by a shelf that is no filter
-        // at all once nothing is held.
-        let swap = self.swap.map(|s| {
-            let (lows_in, lows_out) = (s.progress(p) * std::f64::consts::FRAC_PI_2).sin_cos();
-            (lows_out, lows_in, self.hold_shelf.coef(fades.held))
-        });
+        // The lows go to one deck at a time, so only the highs are held to one song's power, by a shelf
+        // that is no filter at all once nothing is held.
+        let swap = self.swap.map(|_| (run.get(t, |f| f.lows_out), run.get(t, |f| f.lows_in), run.from.shelf.lerp(&run.to.shelf, t)));
         for c in 0..ch {
             let (x, y) = (o[c], i[c]);
             o[c] = match swap {
@@ -540,7 +568,7 @@ impl Mixer {
                     let y = shelf.run(&mut h[1][c], y * lows_in + hy * (1.0 - lows_in));
                     x * g_out + y * g_in
                 }
-                None => (x * g_out + y * g_in) * fades.held,
+                None => (x * g_out + y * g_in) * held,
             };
         }
     }
@@ -838,4 +866,40 @@ mod tests {
         }
     }
 
+    /// Mixing time of a 12 s stereo transition of each kind (`cargo test --release -p nori-player --lib
+    /// mixer::tests::mixing_perf -- --ignored --nocapture`); `NORI_DUMP=dir` writes each mix, to compare
+    /// two builds' output.
+    #[test]
+    #[ignore]
+    fn mixing_perf() {
+        let mut base = plan();
+        (base.duration_ms, base.out_fade_end_ms, base.in_fade_end_ms) = (12_000, 12_000, 12_000);
+        let trimmed = TransitionPlan { in_gain_db: -4.5, ..base.clone() };
+        let kinds = [
+            ("fade", base.clone()),
+            ("fade, trimmed", trimmed.clone()),
+            ("bass swap, trimmed", TransitionPlan { bass_swap: Some(crate::types::BassSwap { at_ms: 4_000, len_ms: 2_000, cut_hz: 180.0 }), ..trimmed.clone() }),
+            ("vocal duck", TransitionPlan { vocal_duck: Some(VocalDuck { until_ms: 8_000, release_ms: 3_000, db: -9.0, hz: 1_500.0 }), ..trimmed.clone() }),
+            ("echo", TransitionPlan { echo: Some(Echo { delay_ms: 500, feedback: 0.4, wet_db: -6.0 }), ..trimmed.clone() }),
+            ("sweeps", TransitionPlan { low_pass: Some(Sweep { start_ms: 2_000, end_ms: 10_000, from_hz: 18_000.0, to_hz: 300.0 }), high_pass: Some(Sweep { start_ms: 0, end_ms: 12_000, from_hz: 20.0, to_hz: 400.0 }), ..trimmed }),
+        ];
+        let frames = 44_100 * 12;
+        let stereo = |f: f64| -> Vec<f32> { sine(f, frames).iter().flat_map(|v| [*v, -*v]).collect() };
+        let (a, b) = (stereo(220.0), stereo(331.0));
+        let mut m = Mixer::new(44_100, 2);
+        for (name, p) in kinds {
+            let mut y = Vec::new();
+            let t = std::time::Instant::now();
+            for _ in 0..10 {
+                m.configure(&p);
+                y.clone_from(&a);
+                m.process(&mut y, &b);
+            }
+            println!("perf: {name:20} {:6.2} ms per transition", t.elapsed().as_secs_f64() * 100.0);
+            if let Ok(dir) = std::env::var("NORI_DUMP") {
+                let bytes: Vec<u8> = y.iter().flat_map(|v| v.to_le_bytes()).collect();
+                std::fs::write(format!("{dir}/{}.f32", name.replace([' ', ','], "")), bytes).unwrap();
+            }
+        }
+    }
 }

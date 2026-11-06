@@ -141,8 +141,8 @@ impl Rig {
         let measurer = (measured == Measured::WhilePlaying).then(|| Measurer::new(analyses.clone(), store.clone()));
         let library = CoreLibrary { client, bytes: Arc::new(Net(files)), store: Some(store.clone()), analyses: analyses.clone() };
         let app = match &measurer {
-            Some(m) => CoreApp::new(core.session.clone()).measuring(m.clone()),
-            None => CoreApp::new(core.session.clone()),
+            Some(m) => CoreApp::new(core.session.clone(), analyses.clone()).measuring(m.clone()),
+            None => CoreApp::new(core.session.clone(), analyses.clone()),
         };
         let card = Card::new();
         let clock = Virtual::default();

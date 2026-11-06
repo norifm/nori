@@ -105,6 +105,27 @@ fn webm_arrivals_keep_analysis_and_voice() {
     assert!(plan.mixer.duration_ms > 0);
 }
 
+/// One analysis a song: the one made as its bytes arrive, which ends in time to plan the song's way out,
+/// not a second one as it plays.
+#[test]
+fn a_song_measured_as_it_arrives_is_not_measured_again_as_it_plays() {
+    use nori_player::engine::Host;
+    let dir = nori_testdir::TempDir::new("arrives-once");
+    let (core, client) = common::own_core(&dir, |p| p.auto_mix = true);
+    let song = Song { id: "a".into(), duration: 5, ..Default::default() };
+    core.session.register(vec![song.clone()]);
+    core.session.set(vec![song.id.clone()], Some(0), false, None);
+    let analyses = Analyses::new(move || Some(client.clone()));
+    let mut app = nori_engine::core::CoreApp::new(core.session.clone(), analyses.clone());
+    assert!(app.wants_analysis("a").is_some(), "unmeasured, it is measured as it plays");
+    let mut listening = analyses.measure_as_it_comes("a", Some("wav"), true).expect("measured as it arrives");
+    assert_eq!(app.wants_analysis("a"), None, "not while it is measured as it arrives");
+    listening.take(&beat_wav()[..1000]);
+    listening.end(false);
+    analyses.wait_arrivals();
+    assert!(app.wants_analysis("a").is_some(), "its bytes not all come, it is measured as it plays");
+}
+
 #[test]
 fn downloads_and_measuring_over_core() {
     let dir = nori_testdir::TempDir::new("core");

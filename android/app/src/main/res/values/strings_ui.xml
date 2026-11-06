@@ -192,6 +192,7 @@
     <string name="autoeq_credit">Curves by the AutoEQ project (jaakkopasanen/AutoEq). Tapping one replaces the equalizer\'s bands.</string>
     <string name="autoeq_credit_graphic">Curves by the AutoEQ project (jaakkopasanen/AutoEq). Tapping one sets the graphic equalizer\'s sliders to follow it.</string>
     <string name="devices">Devices</string>
+    <string name="other_devices">Other devices</string>
     <string name="autoeq_auto">Apply AutoEQ automatically</string>
     <string name="autoeq_auto_detail">Headphones with a known AutoEQ curve get it as soon as they connect, instead of being asked.</string>
     <string name="devices_note">Devices keep their sound only while Settings, then Sound, then Remember sound per device is on.</string>
@@ -238,6 +239,13 @@
     <string name="provider_no_session">These aren’t a signed-in session’s cookies. Copy them while signed in.</string>
     <string name="provider_refused">%1$s didn’t accept these cookies. Sign in again in a private window and copy them anew.</string>
     <string name="provider_unreachable">Couldn’t reach %1$s. Nothing changed.</string>
+    <string name="profile_waits_install">This profile plays from %1$s, a plugin that isn’t installed.</string>
+    <string name="profile_waits_turn_on">This profile plays from %1$s, a plugin that’s off.</string>
+    <string name="profile_waits_plugins_on">This profile plays from %1$s, a plugin, and plugins are off.</string>
+    <string name="profile_waits_no_plugins">This profile plays from %1$s, a plugin, which can’t run here.</string>
+    <string name="profile_wait_install">Install %1$s</string>
+    <string name="profile_wait_turn_on">Turn on %1$s</string>
+    <string name="profile_wait_plugins_on">Turn on plugins</string>
     <string name="user">User</string>
     <string name="password">Password</string>
     <string name="connecting">Connecting…</string>
@@ -279,6 +287,7 @@
     <string name="said_playing_next">Playing next</string>
     <string name="said_added_to_queue">Added to queue</string>
     <string name="said_excluded_from_mixes">Excluded from mixes</string>
+    <string name="said_back_in_mixes">Back in mixes</string>
     <string name="said_added_to_playlist">Added to %1$s</string>
     <string name="said_playlist_created">Created %1$s</string>
     <string name="said_server_downloading">The server is downloading it into your library</string>
@@ -301,8 +310,6 @@
         <item quantity="one">%d song</item>
         <item quantity="other">%d songs</item>
     </plurals>
-    <!-- The album and playlist pages have always said "1 songs". -->
-    <string name="songs_always_plural">%d songs</string>
     <plurals name="albums">
         <item quantity="one">%d album</item>
         <item quantity="other">%d albums</item>
@@ -484,9 +491,9 @@
     <string name="menu_go_to_named">Go to %1$s</string>
     <string name="menu_add_to_library">Add to library</string>
     <string name="menu_sleep_timer">Sleep timer…</string>
-    <string name="menu_start_radio">Start radio from this song</string>
-    <string name="menu_instant_mix">Instant mix</string>
+    <string name="menu_radio">Radio</string>
     <string name="menu_exclude_from_mixes">Exclude from mixes</string>
+    <string name="menu_include_in_mixes">Include in mixes</string>
     <string name="menu_share_link">Share link</string>
     <!-- The sleep timer's choices (menus::sleep_choices). -->
     <string name="sleep_choice_off">Off</string>
@@ -577,8 +584,6 @@
     <string name="output_other">Other output</string>
     <string name="output_named">%1$s: %2$s</string>
     <string name="output_description">Output: %1$s</string>
-    <string name="device_playing_now">Playing now</string>
-    <string name="device_playing_now_after">" · Playing now"</string>
     <string name="device_sheet_intro">What music played through %1$s sounds like. It switches by itself whenever the device connects.</string>
     <string name="device_this">this</string>
     <string name="device_this_kind">this %1$s device</string>

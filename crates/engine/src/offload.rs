@@ -445,7 +445,7 @@ impl Offload {
             open: None,
             supported: Vec::new(),
             t: Run::default(),
-            stage: Vec::with_capacity(STAGE_BYTES + 64 * 1024),
+            stage: Vec::new(),
             quiet_ms: 0,
             called_back: false,
             ask_gap_ms: 0,
@@ -548,6 +548,8 @@ impl Offload {
     /// plays here is known once open ([`Offload::turn`]).
     pub(crate) fn start<L: Library, Q: Queue>(&mut self, i: usize, from_ms: i64, tracks: &mut Sources<L>, queue: &Known<Q>) -> usize {
         self.empty();
+        // Made the first time a song plays here, not for an engine that never offloads.
+        self.stage.reserve(STAGE_BYTES + 64 * 1024);
         self.stop_after = None;
         // A skipped song (explicit) gives way to the next that is not.
         let i = if queue.skips(i) { self.next_of(i, queue).unwrap_or(i) } else { i };

@@ -33,8 +33,10 @@ use crate::output::{AudioOutput, Device, RingTrack, WAKE_LOW_US};
 use crate::panic_words;
 use crate::source::{Fetching, Held};
 
+mod focus;
 mod follow;
 
+pub use focus::FocusRequest;
 use follow::{Following, Here, Led};
 use nori_player::engine::{Plan, Plans};
 
@@ -104,6 +106,9 @@ pub enum State {
 enum Playback {
     Idle,
     Playing,
+    /// Playing to the listener, the song held where the network would not bring it: tried again at
+    /// `retry_at` (engine ms).
+    Waiting { retry_at: i64 },
     /// Paused, the fade down heard until `until` (engine ms), when the output stops.
     Pausing { until: i64 },
     Paused,
@@ -114,7 +119,7 @@ impl Playback {
     fn state(self) -> State {
         match self {
             Playback::Idle => State::Idle,
-            Playback::Playing => State::Playing,
+            Playback::Playing | Playback::Waiting { .. } => State::Playing,
             Playback::Pausing { .. } | Playback::Paused => State::Paused,
             Playback::Ended => State::Ended,
         }
@@ -158,6 +163,12 @@ pub enum Event {
     Awake(bool),
     /// Following another device ([`Engine::follow`]), or not any more (None).
     Following(Option<Followed>),
+    /// Paused for [`Config::idle_release_ms`]: the output and the song's bytes are let go, and the
+    /// platform may let its playback session go too. Not while listening along to a paused leader,
+    /// whose play is this device's too.
+    LongPause,
+    /// Where the audio focus holds the music now ([`Engine::focus`]); said again when a play is refused.
+    Focus(nori_player::focus::Hold),
 }
 
 /// How this engine follows another device's playback.
@@ -224,13 +235,10 @@ pub struct Status {
     pub releases: u64,
     /// A switch is waiting out its dip: the position is still the old one.
     pub switching: bool,
-    /// The sound chain is in the samples' path; means something only while `on_cpu`.
-    pub chain: bool,
-    pub on_cpu: bool,
+    pub path: Path,
     /// What the limiter and the compressor took off the last buffer, dB.
     pub gain_reduction_db: f32,
     pub compression_db: f32,
-    pub offloaded: bool,
     /// The settings allow offload, as last applied.
     pub offload_wanted: bool,
     /// Why the music is on the CPU rather than offloaded, for a report.
@@ -261,11 +269,9 @@ impl Default for Status {
             underruns: 0,
             releases: 0,
             switching: false,
-            chain: false,
-            on_cpu: false,
+            path: Path::Idle,
             gain_reduction_db: 0.0,
             compression_db: 0.0,
-            offloaded: false,
             offload_wanted: false,
             pcm_why: None,
             awake: true,
@@ -275,7 +281,43 @@ impl Default for Status {
     }
 }
 
+/// The path the music takes to the ear.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Path {
+    /// Nothing is placed on either, or the output was let go.
+    Idle,
+    /// The CPU makes it, through the engine's output. `chain`: the sound chain is in the samples' path;
+    /// `heard`: it plays, not waiting for bytes or a switch.
+    Cpu { chain: bool, heard: bool },
+    /// The output's own decoder plays the song's file.
+    Offloaded,
+}
+
+impl Path {
+    /// The same path with nothing heard on it.
+    fn unheard(self) -> Path {
+        match self {
+            Path::Cpu { chain, .. } => Path::Cpu { chain, heard: false },
+            p => p,
+        }
+    }
+}
+
 impl Status {
+    /// The music heard is made on the CPU.
+    pub fn on_cpu(&self) -> bool {
+        matches!(self.path, Path::Cpu { heard: true, .. })
+    }
+
+    /// The sound chain is in the samples' path.
+    pub fn chain(&self) -> bool {
+        matches!(self.path, Path::Cpu { chain: true, .. })
+    }
+
+    pub fn offloaded(&self) -> bool {
+        self.path == Path::Offloaded
+    }
+
     /// The position now: the last reading moved on at its pace while playing and heard.
     pub fn position_now(&self) -> i64 {
         self.positions_at(Instant::now(), self.buffering).0
@@ -354,6 +396,8 @@ enum Command {
     Back,
     /// The device is on a network again.
     NetworkBack,
+    Focus(nori_player::focus::Focus),
+    AskFocus(Box<dyn FocusRequest>),
     Stop,
 }
 
@@ -552,6 +596,17 @@ impl Engine {
     /// The device is on a network again: a song waiting for it is tried now.
     pub fn network_back(&self) {
         self.send(Command::NetworkBack);
+    }
+
+    /// The system's audio focus changed (a call, another player, an iOS interruption): the engine pauses,
+    /// ducks or plays on as its focus state says.
+    pub fn focus(&self, change: nori_player::focus::Focus) {
+        self.send(Command::Focus(change));
+    }
+
+    /// Asks the platform's audio focus of `request` before playing, and gives it back on pause.
+    pub fn ask_focus_of(&self, request: Box<dyn FocusRequest>) {
+        self.send(Command::AskFocus(request));
     }
 
     pub fn toggle(&self) {
@@ -929,8 +984,6 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     parked: Option<Parked>,
     /// Paused: when the output is let go.
     idle_at: Option<i64>,
-    /// Holding a song the network would not bring: when it is tried again.
-    retry_at: Option<i64>,
     /// Tries since music was last heard, for the time to the next.
     tries: u32,
     releases: u64,
@@ -962,13 +1015,11 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     card: Card,
     /// A cast's device plays the songs ([`Engine::play_elsewhere`]): the place is the parked one.
     away: Option<Away>,
-    led_speed: (f32, f32),
-
-    mix_place: Option<Led>,
     /// The volume and route plugins' stages read.
     around: nori_player::stage::Around,
     /// Sends [`Command::Prepared`], for the plugins' preparation.
     prepared: Arc<dyn Fn() + Send + Sync>,
+    focus: focus::Focused,
 }
 
 impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E, C> {
@@ -992,7 +1043,6 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             dip: None,
             parked: None,
             idle_at: None,
-            retry_at: None,
             tries: 0,
             releases: 0,
             jumps: 0,
@@ -1014,10 +1064,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             following: None,
             card: Card::Own,
             away: None,
-            led_speed: (1.0, 1.0),
-            mix_place: None,
             around: nori_player::stage::Around::default(),
             prepared,
+            focus: focus::Focused::default(),
         };
         w.apply(config.settings);
         w
@@ -1120,7 +1169,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let h = &self.h;
         let quiet = self.dip.is_none() && h.takeover.is_none() && h.entering.is_none() && h.probe.is_none() && h.at_end.is_none() && self.parked.is_none();
         // Waiting for the network, nothing plays: the next try comes when the device wakes or the network does.
-        let sleeps = self.retry_at.is_some() || self.playback == Playback::Playing && quiet && self.chip().is_some_and(Offload::lets_cpu_sleep);
+        let sleeps = self.waiting() || self.playback == Playback::Playing && quiet && self.chip().is_some_and(Offload::lets_cpu_sleep);
         self.say_awake(!sleeps);
     }
 
@@ -1159,7 +1208,12 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
     /// Playing and no pause fading.
     fn going(&self) -> bool {
-        self.playback == Playback::Playing
+        matches!(self.playback, Playback::Playing | Playback::Waiting { .. })
+    }
+
+    /// Holding a song the network would not bring.
+    fn waiting(&self) -> bool {
+        matches!(self.playback, Playback::Waiting { .. })
     }
 
     fn pausing(&self) -> bool {
@@ -1373,7 +1427,12 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     }
 
     fn set(&mut self, to: Playback) {
-        let (was, s) = (std::mem::replace(&mut self.playback, to).state(), to.state());
+        let old = std::mem::replace(&mut self.playback, to);
+        if matches!(old, Playback::Waiting { .. }) && !self.waiting() {
+            self.status.lock().waiting = false;
+            (self.events)(Event::Waiting(false));
+        }
+        let (was, s) = (old.state(), to.state());
         if was != s {
             self.idle_at = matches!(s, State::Paused | State::Ended).then(|| self.now() + self.idle_release_ms);
             let mut st = self.status.lock();
@@ -1573,6 +1632,18 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn command(&mut self, c: Command) {
         let now = self.now();
         self.p.clock(now);
+        // The audio focus first: a play it refuses does nothing (counted still), and a pause gives it back.
+        match c {
+            Command::Focus(change) => return self.focus_changed(change, now),
+            Command::AskFocus(request) => return self.ask_focus_of(request),
+            Command::Play | Command::Toggle if (matches!(c, Command::Play) || self.toggles_to_play()) && !self.focus_play() => {
+                self.plays += matches!(c, Command::Play) as u64;
+                return;
+            }
+            Command::Pause(_) | Command::Release => self.focus_paused(),
+            Command::Toggle if !self.toggles_to_play() => self.focus_paused(),
+            _ => {}
+        }
         // Following another device, its place rules: this one's own skips and seeks do nothing (counted
         // still); its pause holds the listening here, and play joins the leader again where it is.
         if let Some(f) = self.following.as_mut() {
@@ -1599,6 +1670,15 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             return;
         }
         self.obey(c, now);
+    }
+
+    /// Whether a toggle now plays, rather than pauses.
+    fn toggles_to_play(&self) -> bool {
+        match (&self.following, &self.away) {
+            (Some(f), _) => !(self.state() == State::Playing && !f.held),
+            (None, Some(a)) => !a.playing,
+            (None, None) => self.state() != State::Playing,
+        }
     }
 
     /// Carries out `c` as this engine's own command.
@@ -1706,7 +1786,6 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.release();
                 self.leave_offload();
                 self.p.sink.track.replace(card);
-                self.p.sink.kept_us = nori_player::burst::BUFFER_US + self.p.sink.track.depth_us();
                 // The device's own offload path waits out a cast whose device decodes; the cast's goes.
                 let waiting = match std::mem::replace(&mut self.card, Card::Own) {
                     Card::CastDecoding { own } => Some(own),
@@ -1737,7 +1816,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 }
             }
             Command::NetworkBack => {
-                if self.retry_at.is_some() {
+                if self.waiting() {
                     self.try_again();
                 }
             }
@@ -1745,13 +1824,15 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.leave(now);
                 self.obey_away(Command::Elsewhere(playing, ms), now);
             }
-            Command::Back | Command::Look | Command::Stop => {}
+            Command::Back | Command::Look | Command::Stop | Command::Focus(_) | Command::AskFocus(_) => {}
         }
     }
 
     /// The music goes to a cast's device: the place heard here is parked and the output let go.
     fn leave(&mut self, now: i64) {
         let going = self.going();
+        // The device plays the song held for the network: nothing waits here, paused as the music is.
+        self.end_wait();
         let parked = self.parked.as_ref().map(|p| (p.at, p.ms, p.is_chosen()));
         let place = match parked {
             Some((at, ms, true)) => Some((at, ms)),
@@ -1843,9 +1924,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let was = self.following.is_some();
         let Some(l) = leading else {
             self.following = None;
-            self.mix_place = None;
             self.p.sink.track.set_slip(0.0, 0.0, 0.0);
-            self.p.priming = false;
+            self.p.unprime();
             self.p.engine.plans = Plans::Own;
             if was {
                 self.apply(self.settings.clone());
@@ -1856,17 +1936,24 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let Leading { led, speed, pitch, mix,
             mix_place,
         } = *l;
-        self.mix_place = mix_place;
         let now_us = self.clock.now_us();
-        match self.following.as_mut() {
-            Some(f) => f.lead(led, now_us),
-            None => self.following = Some(Following::new(led)),
+        let f = match self.following.as_mut() {
+            Some(f) => {
+                f.lead(led, now_us);
+                f
+            }
+            None => self.following.insert(Following::new(led)),
+        };
+        f.mix_place = mix_place;
+        let sped = std::mem::replace(&mut f.speed, (speed, pitch)) != (speed, pitch);
+        // Listening along plays by itself: the focus is asked for as a play's is, refused it holds.
+        if !was && !self.focus_play() {
+            self.following.as_mut().expect("following").hold(true);
         }
         let plans = Plans::Led(mix.map(|(id, plan)| (id, Box::new(plan))));
         let replan = self.p.engine.plans != plans;
         self.p.engine.plans = plans;
-        if !was || self.led_speed != (speed, pitch) {
-            self.led_speed = (speed, pitch);
+        if !was || sped {
             self.apply(self.settings.clone());
         }
         if replan {
@@ -1905,7 +1992,6 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 f.starting = None;
                 f.started();
                 f.look_at = Some(now_us + LOOK_AFTER_START_US);
-                self.p.priming = false;
                 self.go_on();
                 self.ramp(Some(0.0), 1.0, START_FADE_MS);
                 self.set_state(State::Playing);
@@ -1938,7 +2024,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
         let here = {
             let s = self.status.lock();
-            let playing = self.playback.state() == State::Playing && self.p.playing() && !self.p.priming;
+            let playing = self.playback.state() == State::Playing && self.p.playing();
             // To the µs where the player's own place is the one heard.
             let audible = self.p.heard().id.is_none() && !s.mixing && s.index == self.p.current();
             let ms = if audible { self.p.position_us() as f64 / 1000.0 } else { s.position_ms as f64 };
@@ -1963,7 +2049,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             }
             follow::Step::Start { index, ms, at_us } => {
 
-                let (index, ms) = match (&self.mix_place, &self.p.engine.plans) {
+                let (index, ms) = match (&f.mix_place, &self.p.engine.plans) {
                     (Some(place), Plans::Led(Some((_, plan))))
                         if place.place_at(at_us) * 1000.0
                             < (plan.out_start_us() + plan.duration_us()) as f64 =>
@@ -1999,11 +2085,10 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn prime(&mut self, index: usize, now: i64, ms: f64) {
         (self.dip, self.parked) = (None, None);
         self.faded();
-        self.p.pause();
+        self.p.prime();
         self.leave_offload();
-        self.p.priming = true;
 
-        match (&self.mix_place, &self.p.engine.plans) {
+        match (self.following.as_ref().and_then(|f| f.mix_place.as_ref()), &self.p.engine.plans) {
             (Some(place), Plans::Led(Some((_, plan))))
                 if place.index == index && plan.out_loop_us() > 0 =>
             {
@@ -2082,7 +2167,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let bit_perfect = self.facts.bit_perfect;
         // Following, the leader's speed plays, its jumps skip silence, and nothing is offloaded.
         let (speed, pitch, skip_silence) = match &self.following {
-            Some(_) => (self.led_speed.0, self.led_speed.1, false),
+            Some(f) => (f.speed.0, f.speed.1, false),
             None => (s.speed, s.pitch, s.skip_silence),
         };
         // A cast's device that decodes songs itself takes them whenever nothing touches the samples.
@@ -2517,8 +2602,11 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn due(&mut self, now: i64) {
         if self.idle_at.is_some_and(|t| now >= t) {
             self.release();
+            if self.state() == State::Paused && self.following.as_ref().is_none_or(|f| f.held) {
+                (self.events)(Event::LongPause);
+            }
         }
-        if self.retry_at.is_some_and(|t| now >= t) {
+        if matches!(self.playback, Playback::Waiting { retry_at } if now >= retry_at) {
             self.try_again();
         }
         if matches!(self.playback, Playback::Pausing { until } if now >= until) {
@@ -2565,7 +2653,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         self.p.release();
         self.p.sink.track.release();
         self.parked = Some(Parked::let_go((i, ms)));
-        self.retry_at = Some(now + if self.tries == 0 { WAIT_FIRST_MS } else { WAIT_EVERY_MS });
+        self.set(Playback::Waiting { retry_at: now + if self.tries == 0 { WAIT_FIRST_MS } else { WAIT_EVERY_MS } });
         self.tries += 1;
         self.p.app.log(&format!("waiting for the network, song {i} at {ms} ms"));
         {
@@ -2581,11 +2669,10 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
     /// Ends a wait; false when there was none.
     fn unwait(&mut self) -> bool {
-        if self.retry_at.take().is_none() {
+        if !self.waiting() {
             return false;
         }
-        self.status.lock().waiting = false;
-        (self.events)(Event::Waiting(false));
+        self.set(Playback::Playing);
         true
     }
 
@@ -2643,7 +2730,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         } else if ended {
             self.p.pause();
             self.set_state(State::Ended);
-        } else if !self.p.playing() && self.playback == Playback::Playing && self.dip.is_none() && !self.p.priming && self.retry_at.is_none() {
+        } else if !self.p.playing() && self.playback == Playback::Playing && self.dip.is_none() && !self.p.priming() {
             // The queue's rules stopped playback (a run of songs that would not play), the bridge takes
             // over, or the song waits for the network.
             match self.p.stopped_for() {
@@ -2798,7 +2885,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     /// event's song and state there.
     fn report(&mut self, now: i64) {
         // Waiting for the network: the place and the loading said when it began stand.
-        if self.retry_at.is_some() {
+        if self.waiting() {
             return;
         }
         if let Some(p) = self.parked.as_ref() {
@@ -2813,8 +2900,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 // Let go: the place last reported stands.
                 let mut s = self.status.lock();
                 s.releases = self.releases;
-                s.offloaded = false;
-                s.on_cpu = false;
+                s.path = Path::Idle;
                 return;
             };
             // A place chosen while paused is where the player is, to the screen; a cast's device's
@@ -2826,7 +2912,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             let there = self.away.as_ref().map(|a| (a.playing, ms + if a.playing { now - a.since } else { 0 }));
             self.write_status(i, there.map_or(ms, |t| t.1), Instant::now(), |s| {
                 s.switching = false;
-                s.on_cpu = false;
+                s.path = s.path.unheard();
                 if let Some((playing, _)) = there {
                     s.state = if playing { State::Playing } else { State::Paused };
                     s.buffering = false;
@@ -2846,7 +2932,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
         if self.p.current().is_none() {
             self.unstall();
-            self.status.lock().on_cpu = false;
+            let mut s = self.status.lock();
+            s.path = s.path.unheard();
             return;
         }
         let track = &self.p.sink.track;
@@ -2871,27 +2958,27 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
         let mix_from = self.p.mix_from();
         let mix_position_ms = self.p.mix_position_ms().unwrap_or(0);
-        // The place moves at the speed times the tempo a mix brings the song in at.
+        // The place moves at the speed times the tempo a mix brings the song in at; a song held while it
+        // is mixed out of runs on at 1 ms per ms (`Heard::id`).
+        let held = self.p.heard().id.is_some();
         let tempo = self.p.sink.pace_heard();
         let stretched = (tempo - 1.0).abs() > 1e-3;
         self.told.placed |= self.told.stretched && !stretched;
         self.told.stretched = stretched;
         let (speed, underruns, switching) = (self.p.speed().0, self.p.sink.track.underruns(), self.dip.is_some());
         let (chain, meter, compression) = (self.p.sink.chain_in(), self.p.sink.meter_db(), self.p.sink.compression_db());
-        let on_cpu = self.state() == State::Playing && !stalled && !switching;
+        let heard = self.state() == State::Playing && !stalled && !switching;
         let mixing_was = self.write_status(i, self.sought().unwrap_or(ms), self.p.placed_at(), |s| {
             s.speed = speed;
-            s.pace = speed * tempo as f32;
+            s.pace = if held { 1.0 } else { speed * tempo as f32 };
             s.mixing = mixing;
             s.mix_from = mix_from;
             s.mix_position_ms = mix_position_ms;
             s.underruns = underruns;
             s.switching = switching;
-            s.chain = chain;
-            s.on_cpu = on_cpu;
+            s.path = Path::Cpu { chain, heard };
             s.gain_reduction_db = meter;
             s.compression_db = compression;
-            s.offloaded = false;
             s.buffering = stalled;
         });
         if stall_changed {
@@ -2928,11 +3015,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             s.mixing = false;
             s.mix_from = None;
             s.switching = switching;
-            s.chain = false;
-            s.on_cpu = false;
+            s.path = Path::Offloaded;
             s.gain_reduction_db = 0.0;
             s.compression_db = 0.0;
-            s.offloaded = true;
         });
         self.say_changes(now, i, ms, other, looped, mixing_was, false);
     }
@@ -3005,8 +3090,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             State::Playing => self.told.said,
             _ => None,
         };
-        // Where the music written will move the place away from what was said, it is looked at again.
-        if let (Some(o), false) = (off(self.told.said), self.offloading()) {
+        // Where the music written will move the place away from what was said, it is looked at again. A
+        // held song's place is not the music written's.
+        if let (Some(o), false) = (off(self.told.said), self.offloading() || self.p.heard().id.is_some()) {
             let within = self.p.until_next_song_us().map_or(i64::MAX, |u| (u as f64 / self.p.speed().0.max(0.1) as f64) as i64);
             let said_pace = self.told.said.map_or(1.0, |s| s.3);
             let starting = self.told.said.map_or(now, |s| s.2 + PLACE_STARTING_MS);
@@ -3046,11 +3132,12 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn wake_for_music(&self, now: i64) -> Option<i64> {
         let mut d: Option<i64> = None;
         let mut at = |ms: i64| d = Some(d.map_or(ms, |x| x.min(ms)));
-        let pause_heard = match self.playback {
-            Playback::Pausing { until } => Some(until),
-            _ => None,
+        let (pause_heard, retry_at) = match self.playback {
+            Playback::Pausing { until } => (Some(until), None),
+            Playback::Waiting { retry_at } => (None, Some(retry_at)),
+            _ => (None, None),
         };
-        for t in [pause_heard, self.dip.as_ref().map(|d| d.at), self.idle_at, self.retry_at, self.told.title.as_ref().map(|t| t.1)].into_iter().flatten() {
+        for t in [pause_heard, self.dip.as_ref().map(|d| d.at), self.idle_at, retry_at, self.told.title.as_ref().map(|t| t.1)].into_iter().flatten() {
             at(t - now);
         }
         if self.chain_wanted.is_some() {
@@ -3076,7 +3163,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             }
             return d.map(|x| x.max(1));
         }
-        if self.p.hungry() && (self.p.playing() || self.p.priming) {
+        if self.p.hungry() && (self.p.playing() || self.p.priming()) {
             return Some(0);
         }
         if !self.p.playing() {

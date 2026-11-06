@@ -302,7 +302,7 @@ class PageController: UITableViewController {
             return count > 0 ? Say.listCaption(count, seconds) : ""
         default:
             let year = head["y"] as? Int ?? 0
-            return [year > 0 ? "\(year)" : nil, n > 0 ? Say.songsPlural(n) : nil, seconds > 0 ? Fmt.clock(ms: seconds * 1000) : nil]
+            return [year > 0 ? "\(year)" : nil, n > 0 ? Say.songs(n) : nil, seconds > 0 ? Fmt.clock(ms: seconds * 1000) : nil]
                 .compactMap { $0 }.joined(separator: " · ")
         }
     }

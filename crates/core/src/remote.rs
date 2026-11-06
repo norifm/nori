@@ -2,7 +2,8 @@
 //! remote control or jams are switched on, or the profile is a jam guest's; it polls the relay only
 //! while it serves (this device is controllable), watches (a device picker or jam screen is open),
 //! mirrors the account's active device or hosts a jam, and holds each poll up to [`HOLD_MS`], so a quiet
-//! device wakes about once a minute. Nearby devices are reached through their LAN door instead of the relay.
+//! device wakes about once a minute; one that only serves, with nothing on its screen, on a metered network
+//! waits [`REST_MS`] between polls. Nearby devices are reached through their LAN door instead of the relay.
 //!
 //! One device of the account plays at a time: the active one. This one is it until a transfer moves the
 //! playback elsewhere ([`Remote::pick`], or another device's transfer); it then mirrors that device
@@ -65,6 +66,11 @@ const SENT_WAIT_MS: u64 = 3_000;
 
 /// A held poll's own timeout: the hold plus the way there and back.
 const POLL_TIMEOUT_MS: u32 = HOLD_MS + 15_000;
+
+/// Between two relay polls of a device that only serves, with nothing on its screen, on a metered network
+/// ([`Remote::rest`]): a poll asked again as each hold ends would wake its radio every minute. A relay lists a
+/// device only while its poll is held and a little after (octo-fiesta: 20 s), so it is not listed meanwhile.
+const REST_MS: u64 = 300_000;
 
 /// A published position this close to where the last one runs on to is not sent again.
 const POSITION_SLACK_MS: i64 = 5;
@@ -609,11 +615,8 @@ struct Listen {
 /// What this device knows of the active device it mirrors.
 struct Mirrored {
     id: String,
-    /// Its state as it last arrived.
-    heard: Option<DeviceState>,
-    /// When `heard` arrived, on this device's clock.
-    arrived: i64,
-    /// That state with this device's own commands since then foreseen in it.
+    known: Known,
+    /// Its state as known with this device's own commands since then foreseen in it.
     shown: Option<DeviceState>,
     /// When `shown`'s position was right, on this device's clock: as it arrived, or was foreseen here.
     at: i64,
@@ -633,6 +636,17 @@ struct Mirrored {
     /// Its state (instance, seq) when playback was handed to it: a hand-off said in that state or an
     /// older one came before, and is not followed.
     handed_at: Option<(Option<u64>, u64)>,
+}
+
+/// What is known of the mirrored device's own state.
+// One per device mirrored; boxed, each state heard would allocate.
+#[allow(clippy::large_enum_variant)]
+enum Known {
+    Nothing,
+    /// Nothing heard from it yet: what this device handed it shows.
+    Handed,
+    /// Its state as it last arrived, and when (this device's clock).
+    Heard { state: DeviceState, arrived: i64 },
 }
 
 /// Whether the mirrored device is there.
@@ -687,7 +701,7 @@ fn song_at(state: &DeviceState) -> Option<&str> {
 
 impl Mirrored {
     fn new(id: String, now: i64) -> Mirrored {
-        Mirrored { id, heard: None, arrived: 0, shown: None, at: now, device_at: None, clock: ClockSync::default(), pages: Vec::new(), asking: None, taken: Vec::new(), foreseen: Vec::new(), presence: Presence::Answering { unanswered: 0 }, handed_at: None }
+        Mirrored { id, known: Known::Nothing, shown: None, at: now, device_at: None, clock: ClockSync::default(), pages: Vec::new(), asking: None, taken: Vec::new(), foreseen: Vec::new(), presence: Presence::Answering { unanswered: 0 }, handed_at: None }
     }
 
     /// A state arrived from the device (`at`: when, on this device's clock). It ends the foresight of
@@ -695,11 +709,11 @@ impl Mirrored {
     /// when it is the one already heard.
     fn heard(&mut self, state: &DeviceState, at: i64, me: &str) -> bool {
         // Shown what this device handed it (`handed`), its state from before the hand-off is old news.
-        let handed_here = self.heard.is_none() && self.shown.is_some();
+        let handed_here = matches!(self.known, Known::Handed);
         if handed_here && self.handed_at.is_some_and(|h| (state.instance, state.seq) <= h) {
             return false;
         }
-        if let Some(last) = &self.heard {
+        if let Some(last) = self.last() {
             if state.instance == last.instance {
                 if state.seq < last.seq || state == last {
                     return false;
@@ -739,11 +753,18 @@ impl Mirrored {
                 *slot = Some(e.clone());
             }
         }
-        self.heard = Some(state.clone());
-        self.arrived = at;
+        self.known = Known::Heard { state: state.clone(), arrived: at };
         self.show();
         self.reached();
         true
+    }
+
+    /// Its state as it last arrived.
+    fn last(&self) -> Option<&DeviceState> {
+        match &self.known {
+            Known::Heard { state, .. } => Some(state),
+            Known::Nothing | Known::Handed => None,
+        }
     }
 
     /// Playback was handed to it by command `id` as `state` at `at` (this device's clock): shown so until
@@ -751,6 +772,9 @@ impl Mirrored {
     fn handed(&mut self, id: u64, state: Box<DeviceState>, at: i64) {
         let change = Change::Handed { state, at };
         self.foreseen.push(Foreseen { id, until: Some(at + FORESEEN_US), change });
+        if let Known::Nothing = self.known {
+            self.known = Known::Handed;
+        }
         self.show();
     }
 
@@ -782,10 +806,10 @@ impl Mirrored {
     /// `shown`: the state heard, with the commands foreseen over it.
     fn show(&mut self) {
         // Nothing heard from it yet: what it was handed stays shown.
-        if self.heard.is_some() {
-            self.shown = self.heard.clone();
-            self.at = self.arrived;
-            self.device_at = self.heard.as_ref().and_then(|s| s.at_us);
+        if let Known::Heard { state, arrived } = &self.known {
+            self.shown = Some(state.clone());
+            self.at = *arrived;
+            self.device_at = state.at_us;
         }
         let foreseen = std::mem::take(&mut self.foreseen);
         for f in &foreseen {
@@ -1228,6 +1252,13 @@ impl Inner {
         self.probes_asked != self.probes_answered
     }
 
+    /// The relay is wanted only so this device can be controlled, and nothing here shows anything.
+    fn rests(&self) -> bool {
+        self.serving
+            && self.sight == Sight::Nothing
+            && !(self.probing() || self.watching || self.active.discovering() || self.active.taking().is_some() || self.follows_mirror() || self.jams() || self.guest.listen().is_some())
+    }
+
     fn wants_relay(&self) -> bool {
         self.probing() || self.relay != RelaySupport::Unsupported && !matches!(self.guest, GuestJam::Over) && (self.serving || self.watching || self.active.discovering() || self.active.taking().is_some() || self.follows_mirror() || self.hosted().is_some() || self.guest.listen().is_some())
     }
@@ -1475,6 +1506,8 @@ pub struct Remote {
     timing: Notify,
     /// Wakes the requests waiting for an answer to check they are still wanted.
     cancel: Notify,
+    /// Wakes a relay poller resting ([`Remote::rest`]) to check it still rests.
+    rested: Notify,
     /// None once stopped: the sender ends with what was queued.
     out: Mutex<Option<Outbox>>,
     /// The tasks [`Remote::stop`] waits for.
@@ -1558,6 +1591,14 @@ fn kept_device_id(c: &rusqlite::Connection, key: &str, shared: bool) -> rusqlite
 }
 
 impl Remote {
+    /// What [`crate::destination`] needs of the remote control, without building the mirror: whether this
+    /// is a jam guest's profile, the mirrored device's name, and whether this device hosts a jam.
+    pub(crate) fn whereabouts(&self) -> (bool, Option<String>, bool) {
+        let i = self.inner.lock();
+        let mirrored = i.active.mirror().filter(|m| m.shown.is_some()).and_then(|m| i.who(&m.id)).map(|(name, _)| name);
+        (self.me.kind == DeviceKind::Guest, mirrored, i.hosted().is_some())
+    }
+
     /// [`Self::pick`]; `cast`: to carry a cast through it.
     fn pick_for(self: Arc<Self>, device: Option<String>, cast: bool) {
         self.clone().discover_active(false);
@@ -1594,6 +1635,47 @@ impl Remote {
         }
         if cancelled {
             self.keep_polling();
+        }
+    }
+
+    /// [`Self::played`], with the playback `read` under the remote's lock: reports from several threads
+    /// apply in the order they were read, so an older one never overwrites a newer one.
+    pub fn played_read(self: Arc<Self>, read: impl FnOnce() -> Playing) {
+        // The report belongs to call entry, before waiting for the session lock.
+        let now = self.now();
+        let (publish, started, shown, cancelled, playing) = {
+            let mut i = self.inner.lock();
+            let playing = read();
+            let started = playing.playing && !i.playing.playing;
+            // A guest listening along paused or played here: its controls say so.
+            let shown = i.guest.listen().is_some() && playing.playing != i.playing.playing;
+            if started {
+                i.handed_to = None;
+            }
+
+            if playing.playing || i.playing.playing {
+                i.played_last = Some(now);
+            }
+            let moved_here = started || (!i.playing.playing && (playing.index != i.playing.index || (playing.position_ms - i.playing.position_ms).abs() > POSITION_SLACK_MS));
+            let cancelled = moved_here && i.active.cancel_taking();
+            i.playing = playing;
+            i.playing_at = Some(now);
+            (i.serving || i.hosted().is_some(), started && i.active.mirror().is_some(), shown, cancelled, playing.playing)
+        };
+        if playing {
+            self.clone().discover_active(false);
+        }
+        if started {
+            self.set_active(None, Becomes::Followed);
+        }
+        if publish {
+            self.publish();
+        }
+        if cancelled {
+            self.keep_polling();
+        }
+        if shown {
+            self.shown.changed();
         }
     }
 }
@@ -1777,42 +1859,7 @@ impl Remote {
     /// The platform's playback changed (play, pause, seek, another song, the queue, the volume). Music
     /// starting here makes this the active device again.
     pub fn played(self: Arc<Self>, playing: Playing) {
-
-        // The report belongs to call entry, before waiting for the session lock.
-        let now = self.now();
-        let (publish, started, shown, cancelled) = {
-            let mut i = self.inner.lock();
-            let started = playing.playing && !i.playing.playing;
-            // A guest listening along paused or played here: its controls say so.
-            let shown = i.guest.listen().is_some() && playing.playing != i.playing.playing;
-            if started {
-                i.handed_to = None;
-            }
-
-            if playing.playing || i.playing.playing {
-                i.played_last = Some(now);
-            }
-            let moved_here = started || (!i.playing.playing && (playing.index != i.playing.index || (playing.position_ms - i.playing.position_ms).abs() > POSITION_SLACK_MS));
-            let cancelled = moved_here && i.active.cancel_taking();
-            i.playing = playing;
-            i.playing_at = Some(now);
-            (i.serving || i.hosted().is_some(), started && i.active.mirror().is_some(), shown, cancelled)
-        };
-        if playing.playing {
-            self.clone().discover_active(false);
-        }
-        if started {
-            self.set_active(None, Becomes::Followed);
-        }
-        if publish {
-            self.publish();
-        }
-        if cancelled {
-            self.keep_polling();
-        }
-        if shown {
-            self.shown.changed();
-        }
+        self.played_read(|| playing);
     }
 
     /// The device is on a network again: a poll that failed is asked again now, not after its wait.
@@ -2243,6 +2290,7 @@ impl Remote {
         self.retry.notify();
         self.timing.notify();
         self.cancel.notify();
+        self.rested.notify();
         // After the tasks: a poller ending may send the leave again.
         let sent = async {
             self.running.ended().await;
@@ -2483,15 +2531,23 @@ struct Sends {
 #[derive(Default)]
 struct Queued {
     waiting: VecDeque<Out>,
+    sender: Sending,
+}
+
+/// Where the sender is.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum Sending {
+    #[default]
+    Open,
     /// Nothing more comes: the sender ends once the waiting ones went.
-    closed: bool,
-    ended: bool,
+    Closed,
+    Ended,
 }
 
 impl Sends {
     /// Until the sender ended.
     async fn ended(&self) {
-        self.changed.until(|| self.queue.lock().ended).await;
+        self.changed.until(|| self.queue.lock().sender == Sending::Ended).await;
     }
 }
 
@@ -2507,7 +2563,7 @@ impl Outbox {
 
 impl Drop for Outbox {
     fn drop(&mut self) {
-        self.0.queue.lock().closed = true;
+        self.0.queue.lock().sender = Sending::Closed;
         self.0.changed.notify();
     }
 }
@@ -2519,7 +2575,7 @@ async fn send_all(sends: Arc<Sends>, client: Arc<Client>, who: Vec<(String, Stri
         let changed = sends.changed.notified();
         let (next, closed) = {
             let mut q = sends.queue.lock();
-            (q.waiting.pop_front(), q.closed)
+            (q.waiting.pop_front(), q.sender == Sending::Closed)
         };
         match next {
             Some(o) => deliver(&client, &who, o).await,
@@ -2527,7 +2583,7 @@ async fn send_all(sends: Arc<Sends>, client: Arc<Client>, who: Vec<(String, Stri
             None => changed.await,
         }
     }
-    sends.queue.lock().ended = true;
+    sends.queue.lock().sender = Sending::Ended;
     sends.changed.notify();
 }
 
@@ -2553,7 +2609,7 @@ fn keep_pairing(settings: &Settings, secret: &str) -> bool {
 
 fn lan_secret(client: &Client) -> Option<String> {
     if let Some((_, secret)) = client.core.lan_jam.read().as_ref() { return Some(secret.clone()); }
-    if let Some((_, secret)) = client.core.account.read().as_ref() { return Some(secret.clone()); }
+    if let Some(account) = client.core.account.read().as_ref() { return Some(account.proof().to_string()); }
     let settings = &client.core.session.settings;
     let db = settings.app_db()?;
     let db = db.lock();
@@ -2631,7 +2687,7 @@ impl Remote {
             ).map_err(|e| crate::alog::info(&format!("remote: could not keep instance: {e}"))).ok()?.parse().ok()
         });
         let sends = Arc::new(Sends::default());
-        let remote = Arc::new(Remote { client, id, id_lock: Mutex::new(id_lock), instance, me, player, shown, discovery, inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), running: Arc::default(), follower: Mutex::default() });
+        let remote = Arc::new(Remote { client, id, id_lock: Mutex::new(id_lock), instance, me, player, shown, discovery, inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), rested: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), running: Arc::default(), follower: Mutex::default() });
         remote.tasks.spawn(Box::pin(send_all(sends, remote.client.clone(), remote.who())));
         *remote.client.core.remote.lock() = Arc::downgrade(&remote);
         if remote.client.core.serverless() && remote.client.core.lan_jam.read().is_none() {
@@ -2857,7 +2913,7 @@ impl Remote {
     }
 
     fn account_tag(&self) -> Option<String> {
-        let user = self.client.core.account.read().as_ref().map(|(user, _)| user.clone()).unwrap_or_else(|| "youtube".into());
+        let user = self.client.core.account.read().as_ref().map(|a| a.user.clone()).unwrap_or_else(|| "youtube".into());
         lan_secret(&self.client).map(|secret| lan::account_tag(&user, &secret))
     }
 
@@ -3076,7 +3132,19 @@ impl Remote {
         for (service, poller) in start_peers {
             self.spawn(self.clone().poll_peer(service, poller));
         }
+        self.rested.notify();
         self.shown.changed();
+    }
+
+    /// Before the next relay poll: waits [`REST_MS`] while this device only serves ([`Inner::rests`]) on a
+    /// metered network, until anything that changes that ([`Remote::keep_polling`]) or a stop.
+    async fn rest(&self, poller: u64) {
+        let resting = |i: &Inner| !i.stopped && i.relay_poller == Some(poller) && i.rests();
+        if !self.client.metered() || !resting(&self.inner.lock()) {
+            return;
+        }
+        let over = self.rested.until(|| !resting(&self.inner.lock()));
+        select(std::pin::pin!(self.tasks.sleep(Duration::from_millis(REST_MS))), std::pin::pin!(over)).await;
     }
 
     async fn poll_relay(self: Arc<Self>, poller: u64) {
@@ -3141,6 +3209,7 @@ impl Remote {
                     self.inner.lock().relay = RelaySupport::Supported;
                     retry_ms = RETRY_MS;
                     self.took(answer(&body).unwrap_or_default(), received);
+                    self.rest(poller).await;
                 }
                 // Asked again while this answer was on its way: the server may have gained the relay since.
                 (Some(_), _) if asked_since => first_poll = true,
@@ -3567,7 +3636,7 @@ impl Remote {
             let heard = i.state_of(&id).map(|(s, at)| (s.clone(), at.unwrap_or_else(|| self.now())));
             let me = self.id.clone();
             let m = i.active.mirror_mut().expect("mirrored");
-            if let (Some((st, _)), Some(last)) = (&heard, &m.heard) {
+            if let (Some((st, _)), Some(last)) = (&heard, m.last()) {
                 liked = liked_since(last, st);
             }
             let moved = match heard {
@@ -4188,7 +4257,7 @@ mod tests {
         prefs.active_server_id = "navidrome".into();
         settings.put(prefs);
         jam_joining(&settings);
-        crate::background::flush();
+        settings.writer.flush();
         let list = ServerList { servers: vec![own("navidrome"), own("youtube"), guest], active_server_id: "guest".into() };
         let back = jam_return(&settings, list);
         assert_eq!(back.active_server_id, "navidrome");
@@ -4470,7 +4539,7 @@ mod tests {
         assert!(m.shown.as_ref().unwrap().playing);
         assert!(!m.heard(&DeviceState { seq: 81, ..old }, 2, "me"));
         assert!(!m.heard(&DeviceState { seq: 90, ..Default::default() }, 3, "me"));
-        assert_eq!(m.heard.as_ref().unwrap().instance, Some(2));
+        assert_eq!(m.last().unwrap().instance, Some(2));
         let mut fresh = Mirrored::new("desk".into(), clock::now_us());
         fresh.heard(&restarted, 0, "me");
         assert!(!fresh.heard(&DeviceState { instance: Some(1), seq: 100, ..Default::default() }, 1, "me"));

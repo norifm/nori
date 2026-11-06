@@ -261,17 +261,9 @@ impl Nori {
         self.with(|h| h.rules()).unwrap_or_default()
     }
 
-    /// What a jam adds to song menus: starting one, or asking the host as its guest.
-    pub(crate) fn jam_offer(&self) -> Option<nori_core::menus::JamOffer> {
-        use nori_core::menus::JamOffer;
-        self.with(|h| {
-            if h.guest {
-                return Some(JamOffer::Guest);
-            }
-            let r = h.remote()?;
-            (r.jam_start() == nori_core::remote::JamStart::Offered).then_some(JamOffer::Start)
-        })
-        .flatten()
+    /// Whether this is a jam's guest, whose song menu asks the host.
+    pub(crate) fn guest(&self) -> bool {
+        self.with(|h| h.guest).unwrap_or(false)
     }
 
     pub(crate) fn client(&self) -> Option<Arc<nori_core::client::Client>> {
@@ -331,6 +323,19 @@ impl Nori {
         self.with(|h| h.toggle());
     }
 
+    /// The sleep timer's choices (JSON): `[{minutes, end, songs}]`, all zeros for "Off" (first, while one
+    /// runs).
+    pub fn sleep_choices(&self) -> String {
+        let running = self.with(|h| h.sleep() != nori_core::sleep::Sleep::Off).unwrap_or(false);
+        let rows: Vec<Value> = nori_core::menus::sleep_choices(running).iter().map(|c| json!({ "minutes": c.minutes, "end": c.end_of_track, "songs": c.songs })).collect();
+        Value::from(rows).to_string()
+    }
+
+    /// Sets the sleep timer to one of its choices (all zeros: off).
+    pub fn sleep_pick(&self, minutes: u32, end: bool, songs: u32) {
+        self.with(|h| h.sleep_pick(nori_core::menus::SleepChoice { minutes, end_of_track: end, songs }));
+    }
+
     /// The page went out of sight, where a browser may close it without a word: the queue is kept as
     /// it is when an app closes (`rules::queue_keep`).
     pub fn hidden(&self) {
@@ -349,14 +354,13 @@ impl Nori {
         self.with(|h| h.seek(ms as i64));
     }
 
-    /// Plays a radio (`radio`) or an instant mix seeded by song `id`: the songs played (0: the server had
-    /// none).
-    pub async fn mix(&self, id: String, radio: bool) -> Result<usize, JsValue> {
+    /// Plays a radio seeded by song `id`: the songs played (0: the server had none).
+    pub async fn radio(&self, id: String) -> Result<usize, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        let songs = if radio { client.radio(id).await } else { client.instant_mix(id).await }.map_err(error)?;
+        let songs = client.radio(id).await.map_err(error)?;
         let n = songs.len();
         if n > 0 {
-            self.with(|h| h.play(songs, 0, false, None));
+            self.with(|h| h.play_radio(songs));
         }
         Ok(n)
     }
@@ -523,7 +527,7 @@ impl Nori {
                 .order
                 .iter()
                 .map(|&i| {
-                    let mut v = match shown.view.songs.get(i as usize).filter(|s| !s.id.is_empty()) {
+                    let mut v = match shown.songs.get(i as usize).filter(|s| !s.id.is_empty()) {
                         Some(s) => crate::pages::song(core, s),
                         None => json!({}),
                     };
@@ -675,14 +679,6 @@ impl Nori {
         .unwrap_or_else(|| "null".into())
     }
 
-    /// Starts a jam around song `start` of `songs` (JSON): they play here, then it opens. Its invite link
-    /// (null when one is open or being started already).
-    pub async fn jam_start(&self, songs: String, start: usize) -> Result<Option<String>, JsValue> {
-        let songs: Vec<Song> = serde_json::from_str(&songs).map_err(error)?;
-        let h = self.with(|h| nori_host::session::Handle::clone(h)).ok_or_else(|| error("not signed in"))?;
-        h.start_jam(songs, start, None).await.ok_or_else(|| error("remote control is off"))?.map_err(error)
-    }
-
     /// Starts hosting a jam; its invite link (null when one is being started already).
     pub async fn jam_open(&self) -> Result<Option<String>, JsValue> {
         let remote = self.with(|h| h.remote()).flatten().ok_or_else(|| error("remote control is off"))?;
@@ -776,16 +772,16 @@ impl Nori {
 /// Moving the music between the account's devices ("Play on"), through the relay.
 #[wasm_bindgen]
 impl Nori {
-    /// The account's other devices: `{ on, me, active, list: [{ id, name, kind, playing, nearby, refused }] }`; `on`
+    /// The account's other devices: `{ on, me, here, active, list: [{ id, name, kind, playing, nearby, refused }] }`; `on`
     /// while the music can move (remote control on, not a jam guest), `me` this browser's id as the
-    /// others know it, `active` the id of the device playing while it is another one, `refused` why a device
+    /// others know it, `here` whether the music plays in this browser (`nori_core::destination`), `active` the id of the device playing while it is another one, `refused` why a device
     /// did not do the last thing asked of it (a `Refusal`, camelCase) or null. `kinds` (JSON `{ phone, desktop, terminal, guest }`) words the
     /// kinds that tell devices of one name apart.
     pub fn devices(&self, kinds: String) -> String {
         let words: Kinds = serde_json::from_str(&kinds).unwrap_or_default();
         self.with(|h| {
             let remote = h.remote().filter(|_| !h.guest);
-            let Some(r) = remote else { return json!({ "on": false, "active": null, "list": [] }).to_string() };
+            let Some(r) = remote else { return json!({ "on": false, "here": true, "active": null, "list": [] }).to_string() };
             let devices = r.devices();
             let words = nori_core::remote::KindWords { phone: words.phone, desktop: words.desktop, terminal: words.terminal, guest: words.guest };
             let names = nori_core::remote::device_names(devices.clone(), r.me(), words);
@@ -794,9 +790,10 @@ impl Nori {
                 .zip(names)
                 .map(|(d, name)| json!({ "id": d.id, "name": name, "kind": format!("{:?}", d.kind), "playing": d.state.as_ref().is_some_and(|s| s.playing), "nearby": d.nearby, "refused": d.refused }))
                 .collect();
-            json!({ "on": true, "me": r.id(), "active": h.elsewhere().map(|e| e.mirror.id), "list": list }).to_string()
+            let here = matches!(h.destination(), nori_core::destination::Destination::Here { .. });
+            json!({ "on": true, "me": r.id(), "here": here, "active": h.elsewhere().map(|e| e.mirror.id), "list": list }).to_string()
         })
-        .unwrap_or_else(|| json!({ "on": false, "active": null, "list": [] }).to_string())
+        .unwrap_or_else(|| json!({ "on": false, "here": true, "active": null, "list": [] }).to_string())
     }
 
     /// Moves the music to device `id`, or here ("").

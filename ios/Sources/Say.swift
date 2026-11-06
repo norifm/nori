@@ -79,11 +79,9 @@ enum Say {
     }
 
     static func songs(_ n: Int) -> String { n == 1 ? "1 song" : "\(n) songs" }
-    /// "1 songs" too: where a count stands with others ("2019 · 1 songs · 3:20"), as Android's.
-    static func songsPlural(_ n: Int) -> String { "\(n) songs" }
     static func releases(_ n: Int) -> String { n == 1 ? "1 release" : "\(n) releases" }
     /// A list head's "12 songs · 48:10".
-    static func listCaption(_ n: Int, _ seconds: Int) -> String { songsPlural(n) + " · " + Fmt.clock(ms: seconds * 1000) }
+    static func listCaption(_ n: Int, _ seconds: Int) -> String { songs(n) + " · " + Fmt.clock(ms: seconds * 1000) }
     /// An artist's shelf by its `ReleaseKind` code, a tagged one by the server's tag.
     static func release(_ kind: Int, _ tag: String) -> String {
         switch kind {
@@ -254,6 +252,7 @@ enum Say {
     static let servers = "Servers"
     static let none = "None"
     static let addServer = "Add a server"
+    static let profileWaitsNoPlugins = "Plays from a plugin, which can’t run here"
     static func forgetServer(_ name: String) -> String { "Forget \(name)?" }
     static let forgetServerNote = "Its downloads stay on this iPod until you add it again."
     static let forget = "Forget"
@@ -381,6 +380,7 @@ enum Say {
     static let sleepTimer = "Sleep timer"
     static let detailsTitle = "Details"
     static let excludedFromMixes = "Excluded from mixes"
+    static let backInMixes = "Back in mixes"
     static let serverDownloading = "The server is downloading it into your library"
     static let removeFromPlaylist = "Remove"
     static func addedToPlaylist(_ name: String) -> String { "Added to \(name)" }
@@ -403,9 +403,8 @@ enum Say {
             return "Go to \(name)"
         case 9: return "Add to library"
         case 10: return "Sleep timer…"
-        case 11: return "Start radio from this song"
-        case 12: return "Instant mix"
-        case 13: return "Exclude from mixes"
+        case 11: return "Radio"
+        case 13: return item["on"] as? Bool ?? true ? "Exclude from mixes" : "Include in mixes"
         case 14: return "Share link"
         default: return detailsTitle
         }

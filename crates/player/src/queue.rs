@@ -12,32 +12,17 @@ pub struct Placement {
 
 /// Play next (`last` false: right after `cur`) and Add to queue (`last`: after the run of hand-added
 /// songs following `cur`), as Apple does. Under shuffle the new songs are placed in the play order the
-/// same way. `hand[i]`: song i was added by hand; `count`: songs being added.
-pub fn place(n: usize, cur: usize, hand: &[bool], order: Option<&[usize]>, last: bool, count: usize) -> Placement {
-    // Last hand-added song after `cur` along `walk` (or `cur` for play next).
-    let run_end = |walk: &dyn Fn(usize) -> Option<usize>| {
-        let mut end = cur;
-        if !last {
-            return end;
-        }
-        let mut i = walk(cur);
-        while let Some(x) = i {
-            if !hand.get(x).copied().unwrap_or(false) {
-                break;
-            }
-            end = x;
-            i = walk(x);
-        }
-        end
-    };
-    let in_list = |i: usize| (i + 1 < n).then_some(i + 1);
-    let at = run_end(&in_list) + 1;
+/// same way. `hand(i)`: song i was added by hand; `count`: songs being added.
+pub fn place(n: usize, cur: usize, hand: impl Fn(usize) -> bool, order: Option<&[usize]>, last: bool, count: usize) -> Placement {
+    // The last of the hand-added run that follows `cur` along `walk` (`cur` itself for play next).
+    let run_end = |walk: &mut dyn Iterator<Item = usize>| if last { walk.take_while(|&i| hand(i)).last().unwrap_or(cur) } else { cur };
+    let at = run_end(&mut (cur + 1..n)) + 1;
     let Some(order) = order else { return Placement { at, order: None } };
-    let pos_of = |x: usize| order.iter().position(|&o| o == x);
-    let in_order = |i: usize| pos_of(i).and_then(|p| order.get(p + 1).copied());
-    let end = run_end(&in_order);
+    let from = order.iter().position(|&o| o == cur).map_or(order.len(), |p| p + 1);
+    let end = run_end(&mut order[from..].iter().copied());
     let shift = |i: usize| if i >= at { i + count } else { i };
-    let mut next: Vec<usize> = order.iter().map(|&i| shift(i)).collect();
+    let mut next = Vec::with_capacity(order.len() + count);
+    next.extend(order.iter().map(|&i| shift(i)));
     let after = next.iter().position(|&i| i == shift(end)).map_or(next.len(), |p| p + 1);
     next.splice(after..after, at..at + count);
     Placement { at, order: Some(next) }
@@ -45,17 +30,28 @@ pub fn place(n: usize, cur: usize, hand: &[bool], order: Option<&[usize]>, last:
 
 /// The play order when shuffle is turned on: the current song first, the hand-added run after it in
 /// order, the rest shuffled.
-pub(crate) fn shuffle_around(n: usize, cur: usize, hand: &[bool], seed: u64) -> Vec<usize> {
-    let mut kept = vec![cur];
-    let mut i = cur + 1;
-    while i < n && hand.get(i).copied().unwrap_or(false) {
-        kept.push(i);
-        i += 1;
+pub(crate) fn shuffle_around(n: usize, cur: usize, hand: impl Fn(usize) -> bool, seed: u64) -> Vec<usize> {
+    let run = (cur + 1..n).find(|&i| !hand(i)).unwrap_or(n);
+    let mut order = Vec::with_capacity(n);
+    order.extend((cur..run).chain(0..cur).chain(run..n));
+    shuffle(&mut order[run - cur..], seed);
+    order
+}
+
+/// `order` holds each index below `n` exactly once.
+pub(crate) fn is_permutation(order: &[usize], n: usize) -> bool {
+    if order.len() != n {
+        return false;
     }
-    let mut rest: Vec<usize> = (0..cur).chain(i..n).collect();
-    shuffle(&mut rest, seed);
-    kept.extend(rest);
-    kept
+    let mut seen = vec![0u64; n.div_ceil(64)];
+    order.iter().all(|&i| {
+        let (word, bit) = (i / 64, 1u64 << (i % 64));
+        let first = i < n && seen[word] & bit == 0;
+        if first {
+            seen[word] |= bit;
+        }
+        first
+    })
 }
 
 /// Deterministic Fisher-Yates over xorshift.
@@ -302,29 +298,49 @@ mod tests {
 
     #[test]
     fn hand_added_placement() {
-        let hand = [false, false, true, false, false];
-        assert_eq!(place(5, 1, &hand, None, false, 2), Placement { at: 2, order: None });
+        let hand = |i| i == 2;
+        assert_eq!(place(5, 1, hand, None, false, 2), Placement { at: 2, order: None });
 
         // Add to queue after hand added run.
-        let hand = [false, false, true, true, false];
-        assert_eq!(place(5, 1, &hand, None, true, 1).at, 4);
+        let hand = |i| i == 2 || i == 3;
+        assert_eq!(place(5, 1, hand, None, true, 1).at, 4);
     }
 
     #[test]
     fn shuffled_placement() {
         // Order 3, 0, 4, 1, 2; two songs inserted at 4 shift the rest and follow 3 in the order.
         let order = [3, 0, 4, 1, 2];
-        let p = place(5, 3, &[false; 5], Some(&order), false, 2);
+        let p = place(5, 3, |_| false, Some(&order), false, 2);
         assert_eq!(p.at, 4);
         assert_eq!(p.order, Some(vec![3, 4, 5, 0, 6, 1, 2]));
 
+        // Add to queue under shuffle: after the hand-added run that follows 3 in the order.
+        let p = place(5, 3, |i| i == 0 || i == 4, Some(&order), true, 1);
+        assert_eq!(p.at, 5);
+        assert_eq!(p.order, Some(vec![3, 0, 4, 5, 1, 2]));
+
         // Shuffle keeps current and hand added first.
-        let hand = [false, false, true, true, false, false, false];
-        let o = shuffle_around(7, 1, &hand, 42);
+        let o = shuffle_around(7, 1, |i| i == 2 || i == 3, 42);
         assert_eq!(&o[..3], &[1, 2, 3]);
         let mut rest = o[3..].to_vec();
         rest.sort();
         assert_eq!(rest, vec![0, 4, 5, 6]);
+    }
+
+    #[test]
+    fn permutation_check() {
+        for (order, n, ok) in [
+            (&[2, 0, 1][..], 3, true),
+            (&[], 0, true),
+            (&[0, 0, 1], 3, false),
+            (&[0, 1, 3], 3, false),
+            (&[0, 1], 3, false),
+            (&[64, 1, 0], 65, false),
+        ] {
+            assert_eq!(is_permutation(order, n), ok, "{order:?} of {n}");
+        }
+        let big: Vec<usize> = (0..200).rev().collect();
+        assert!(is_permutation(&big, 200));
     }
 
     #[test]

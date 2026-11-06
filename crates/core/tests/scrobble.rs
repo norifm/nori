@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use nori_core::queue::Session;
 use nori_core::scrobble::TrackChange;
-use nori_core::{background, Core, Song};
+use nori_core::{Core, Song};
 
 #[test]
 fn listen_kept_by_its_profile() {
@@ -16,13 +16,13 @@ fn listen_kept_by_its_profile() {
     session.register(vec![song]);
     session.scrobble_track(Some("s".into()), TrackChange::Moved, true, 0, 1_000, 0);
     let (go, wait) = channel::<()>();
-    background::run(move || {
+    session.settings.writer.run(move || {
         let _ = wait.recv();
     });
     session.scrobble_track(None, TrackChange::Ended, false, 120_000, 121_000, 0);
-    let _second = Core::new(String::new(), "second".into(), session).unwrap();
+    let _second = Core::new(String::new(), "second".into(), session.clone()).unwrap();
     go.send(()).unwrap();
-    background::flush();
+    session.settings.writer.flush();
     assert_eq!(first.history_recent(10, None, true).unwrap().0.len(), 1);
 }
 
@@ -55,7 +55,7 @@ fn a_listen_left_after_a_profile_switch_stays_with_its_profile() {
     session.scrobble_track(Some("yt-a".into()), TrackChange::Moved, true, 0, 1_000, 0);
     let second = Core::new(String::new(), "second".into(), session.clone()).unwrap();
     let left = session.scrobble_track(Some("b".into()), TrackChange::Moved, true, 150_000, 151_000, 0);
-    background::flush();
+    session.settings.writer.flush();
     assert_eq!(left.submit_id, None, "not scrobbled to the second profile's server");
     assert_eq!(second.history_recent(10, None, true).unwrap().0.len(), 0);
     assert_eq!(first.history_recent(10, None, true).unwrap().0.len(), 1);
