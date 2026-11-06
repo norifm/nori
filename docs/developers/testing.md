@@ -18,8 +18,9 @@ service, the screens and a force stop.
 | `tools/audio-e2e.sh --only …`, `tools/feature-e2e.sh --only …` | the sections a change touches | the change's author |
 | `tools/audio-e2e.sh`, `tools/feature-e2e.sh` in full | every device check | once per batch |
 
-CI on a push runs only the jobs it touches, and `tools/affected.py` narrows Rust to the crates changed
-and those depending on them; a change to `Cargo.*`, `wit/`, `vendor/` or `.github/` runs everything.
+CI on a push runs only the jobs it touches, and `tools/affected.py` narrows Rust's tests to the crates
+changed and those depending on them; a change to `Cargo.*`, `wit/`, `vendor/` or `.github/` runs everything.
+The Android job compiles the Kotlin and runs its unit tests.
 
 For the shared queue, nextest, Bazel and running several emulators, see
 [Building](building.md#faster-development-checks).
@@ -31,7 +32,7 @@ For the shared queue, nextest, Bazel and running several emulators, see
 | Crate | Checked |
 | --- | --- |
 | player | the sound chain sample by sample (decoders, ReplayGain, equalizer, compressor, limiter, speed, silence skipping), AutoMix analysis on synthetic songs of known tempo, key and structure, the planner (never panicking over any stored row: `automix/plan_fuzz.rs`), the mixer, and the whole player on a simulated output (`sim`, `tests/pipeline`): gapless joins, crossfades, levels, controls |
-| engine | the player on its own thread, on the virtual clock of `tests/common`: loading, fetching ahead, the stream cache, offload on a simulated chip (`paths.rs`), radio, tempo, stretched mixes (`stretch.rs`), estimated transcode lengths and their 416 (`estimated.rs`, `transcode.rs`), streams that hang (`hung.rs`), never playing silent (`silent.rs`), one fetch per song (`one_fetch.rs`), settings changed while playing (`replan.rs`), albums kept gapless (`album.rs`), jam guests listening along (`along.rs`), pushed and late-decoded songs for the web (`pushed.rs`, `driven.rs`, `later.rs`), the core's queue (`core.rs`) |
+| engine | the player on its own thread, on the virtual clock of `tests/common`: loading, fetching ahead, the stream cache, offload on a simulated chip (`paths.rs`), radio, tempo, stretched mixes (`stretch.rs`), estimated transcode lengths and their 416 (`estimated.rs`, `transcode.rs`), streams that hang (`hung.rs`), never playing silent (`silent.rs`), one fetch per song (`one_fetch.rs`), settings changed while playing (`replan.rs`), albums kept gapless (`album.rs`), jam guests listening along (`along.rs`), pushed and late-decoded songs for the web (`pushed.rs`, `driven.rs`, `later.rs`), FLAC and ALAC decoding to what was encoded in every shape ffmpeg makes, and Opus decoding with no packet refused in every mode and frame length libopus makes, with a digest to compare a change with (`decoders.rs`), the core's queue (`core.rs`) |
 | core | the FFI surface over real SQLite: index and search, smart playlists, mixes, history, lyrics, covers, AutoEQ, the Subsonic client against a fake transport, transfers, the car's tree; whole flows against an in-memory server (`tests/scenario.rs`); remote control and jams over an in-memory relay (`tests/remote.rs`); listens kept by profile (`tests/scrobble.rs`); Kotlin twins (`tests/twins.rs`) |
 | host | the shared session: queue saving, profiles and jam guest profiles, signing out, autofill and radio (`refill_tests.rs`), remote control and volume (`remote.rs`), LAN jams and pairing, a guest without the host's plugin searching and streaming through the host (`tests/lan_jam.rs`) |
 | lyrics | every format, the services' answers, trust and fitting, the race between services, sync against synthetic sung songs (`sync.rs`) |
@@ -212,6 +213,7 @@ A new device check needs a line here saying why Rust cannot test it.
 | Section | Checks | Why a device |
 | --- | --- | --- |
 | `lyrics` | lyrics cross the binding; the next song's lyrics are cached ahead and arrive after an offline skip | the Android binding and the network going |
+| `status-bar` | the status bar's icons stay right after a theme change under an album page (local server) | what the window was told, which only the system reports |
 | `notification` | the notification's seal and shuffle act and redraw; its cover is drawn once and then served from disk | the media session, the cover provider's readers |
 | `album-page` | the Play and Shuffle pills answer for the page's own queue; holding a song opens its menu | Compose taps and gestures |
 | `bridge` | downloads stand in while the server is out of reach, and the album comes back with the network | the network really going and coming |
@@ -281,6 +283,7 @@ python3 tools/desktop-app.py do pause
 | `open` | `home`, `search`, `albums`, `artists`, `playlists`, `songs`, `settings`, `equalizer`, `fullscreen` |
 | `panel` | `none`, `queue`, `lyrics`, `devices` |
 | `do` | `play`, `pause`, `toggle`, `next`, `previous`, `close_fullscreen` |
+| `play_album` | an album's id |
 
 Each instance needs its own socket and data directory; an existing socket is never replaced. The
 socket is owner-only (0600) and removed on a normal exit. The reply is the UI's actual state; playback

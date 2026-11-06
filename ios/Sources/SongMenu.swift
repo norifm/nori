@@ -46,10 +46,8 @@ enum SongMenu {
         case 9: parts = Iconoir.folderPlus
         case 10: parts = Iconoir.halfMoon
         case 11: parts = Iconoir.antennaSignal
-        case 12: parts = Iconoir.sparks
         case 13: parts = Iconoir.prohibition
         case 14: parts = Iconoir.shareIos
-        case 18: parts = Iconoir.community
         default: parts = Iconoir.infoCircle
         }
         return Glyph.draw(parts, 20)
@@ -75,12 +73,13 @@ enum SongMenu {
             Toast.show(Say.serverDownloading)
         case 10:
             SleepTimer.shared.pick(from: host)
-        case 11, 12:
-            off({ nori_ios_song_act(token, i, Int32(a), 0) }) { n in
+        case 11:
+            off({ nori_ios_song_act(token, i, 11, 0) }) { n in
                 if n < 0 { Toast.show(Say.failed) } else if n == 0, let words = Say.note(NORI_NOTE_NOTHING_TO_PLAY, 0) { Toast.show(words) }
             }
         case 13:
-            off({ nori_ios_song_act(token, i, 13, 0) }) { done in Toast.show(done == 1 ? Say.excludedFromMixes : Say.failed) }
+            let on = item["on"] as? Bool ?? true
+            off({ nori_ios_song_act(token, i, 13, on ? 1 : 0) }) { done in Toast.show(done == 1 ? (on ? Say.excludedFromMixes : Say.backInMixes) : Say.failed) }
         case 14:
             share(token: token, index: index, from: host)
         case 15:

@@ -8,7 +8,7 @@
 #   tools/feature-e2e.sh [--only <section>,...] [--list]     NORI_E2E_SERVER=local for tools/dev-server.sh
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="plugins lyrics notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel remote jam"
+SECTIONS="plugins lyrics status-bar notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel remote jam"
 OPT_IN="lyrics-services scrobble download-albums youtube-music"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
@@ -183,8 +183,13 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   adb shell input keyevent 4
   check "the browser offers orbit" wait_until 30 on_screen 'text="Orbit"'
   adb exec-out screencap -p > "$shots/browser.png"
+  # This repo's orbit, not the official repo's beside it.
+  tapnode text 10.0.2.2
+  check "the repo's filter shows its orbit only" wait_until 10 off_screen 'text="Moving covers"'
   tapnode text Orbit
-  check "its page offers it" wait_until 10 on_screen 'text="Versions"'
+  # Its page, the browser gone: the browser's rows have Install buttons too.
+  offered() { on_screen 'text="Install"' && off_screen 'text="Get plugins"'; }
+  check "its page offers it" wait_until 10 offered
   tapnode text Install
   check "before installing, its sheet says what it may do" wait_until 30 on_screen 'Change the sound'
   check "and nothing is installed yet" plugin_is none
@@ -227,7 +232,7 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   check "its action runs and its notice shows as the app's message" wait_until 10 on_screen 'Long Track 07 by'
   tapnode content-desc More
   tapnode text More
-  tapnode text Details
+  tapnode content-desc Details
   check "its lines join the song's info" scrolled_to 'Search the web'
   adb exec-out screencap -p > "$shots/song-info.png"
   tapnode text Close
@@ -238,6 +243,7 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   adb exec-out screencap -p > "$shots/devices.png"
   adb shell input keyevent 4
   "$app" open plugins >/dev/null
+  wait_until 10 on_screen 'text="INSTALLED"'
   tapnode text Showcase
   check "its page shows a level's value with its unit" wait_until 10 on_screen 'Level · 0.00 dB'
   check "and a hint under it" on_screen 'Two decimals'
@@ -478,6 +484,26 @@ PY
   "$app" play "$SONG" >/dev/null
   check "and its songs play" sounds 20
   "$app" plugin reset >/dev/null
+fi
+
+if want status-bar; then section "the status bar's icons after a theme change under a page"
+  # What the window was told, which no Rust test can see.
+  dark_icons() { adb shell dumpsys window | grep -A1 'mLastStatusBarAppearanceRegions=' | tail -1 | grep -q LIGHT_STATUS; }
+  white_icons() { ! dark_icons; }
+  pale=$(api getAlbumList2 "&type=alphabeticalByName&size=500" | python3 -c "import json,sys; print(next((a['id'] for a in json.load(sys.stdin)['subsonic-response']['albumList2']['album'] if a['name'] == 'Paper Sleeve'), ''))")
+  if [ -z "$pale" ]; then
+    echo "     (no Paper Sleeve album; the local server has one)"
+  else
+    "$app" set theme Light >/dev/null
+    "$app" open home >/dev/null
+    check "a light page has dark icons" wait_until 8 dark_icons
+    "$app" open "album/$pale" >/dev/null
+    check "a pale album's page keeps them" wait_until 8 dark_icons
+    "$app" set theme Dark >/dev/null
+    adb shell input keyevent 4
+    check "back on a page gone dark, they are white" wait_until 8 white_icons
+    "$app" set theme System >/dev/null
+  fi
 fi
 
 if want notification; then section "the notification's seal and shuffle"
@@ -1050,13 +1076,9 @@ jam_checks() {
     check "Invite shows the code and the link" wait_until 10 on_screen 'text="Copy link"'
     ui > "$here/../build/e2e/$ANDROID_SERIAL/jam-invite.xml"
     link=$(cat "$here/../build/e2e/$ANDROID_SERIAL/jam-invite.xml" | grep -oE 'text="https?://[^"]*/nori/jam#[^"]*"' | head -1 | cut -d'"' -f2 | sed 's/&amp;/\&/g')
-    tapnode content-desc Back
-    check "Invite returns to the existing room drawer" wait_until 10 on_screen 'text="Your jam"'
-    check "the invite content is replaced" off_screen 'text="Copy link"'
-    tapnode text Invite
-    check "Invite opens again in the same drawer" wait_until 10 on_screen 'text="Copy link"'
     adb shell input keyevent KEYCODE_BACK
-    check "system back returns to the room drawer" wait_until 10 on_screen 'text="Your jam"'
+    check "back returns from the invite to the room drawer" wait_until 10 on_screen 'text="Your jam"'
+    check "the invite content is replaced" off_screen 'text="Copy link"'
     adb shell input keyevent KEYCODE_BACK
     if on_screen 'content-desc="Close sheet"'; then tapnode content-desc "Close sheet"; fi
     # Its own invite opened here is refused: this phone stays the host, on its own profile.
@@ -1068,8 +1090,8 @@ jam_checks() {
     tapnode content-desc Settings
     check "room settings replace the drawer" wait_until 10 on_screen 'text="Allow remote songs"'
     tapnode text "Allow remote songs"
-    tapnode content-desc Back
-    check "settings return to the existing room drawer" wait_until 10 on_screen 'text="Your jam"'
+    adb shell input keyevent KEYCODE_BACK
+    check "back returns from settings to the room drawer" wait_until 10 on_screen 'text="Your jam"'
     adb shell input keyevent KEYCODE_BACK
     "$app" open queue >/dev/null
     guests="$here/../build/e2e/$ANDROID_SERIAL/jam"; mkdir -p "$guests"

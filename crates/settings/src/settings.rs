@@ -395,6 +395,10 @@ impl LibrarySection {
     };
 }
 
+/// The kind YouTube Music profiles were stored under while it was built in, before it became a plugin.
+const BUILT_IN_YOUTUBE_MUSIC: &str = "youtubeMusic";
+const YOUTUBE_MUSIC_PLUGIN: &str = "fm.nori.youtube-music";
+
 /// What a saved profile plays from: the provider it opens with (nori-core's providers/).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -419,6 +423,7 @@ impl ServerKind {
     pub fn from_id(id: &str) -> Option<ServerKind> {
         match id {
             "subsonic" => Some(ServerKind::Subsonic),
+            BUILT_IN_YOUTUBE_MUSIC => Some(ServerKind::Plugin { id: YOUTUBE_MUSIC_PLUGIN.into() }),
             // Only a plugin's id has a dot.
             p if p.contains('.') => Some(ServerKind::Plugin { id: p.to_string() }),
             _ => None,
@@ -472,7 +477,7 @@ pub struct StoredPrefs {
     pub active_server_id: String,
     // Between songs.
     /// Seconds; 0 is off. Equal power.
-    #[setting("crossfadeSec", clamped(0, 12), default = 0, show = K::Choice(&["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]), effect = APPLY_AUDIO | REPLAN, sound)]
+    #[setting("crossfadeSec", clamped(0, 12), default = 0, show = K::Choice(&["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]), effect = APPLY_AUDIO | REPLAN)]
     pub crossfade_sec: i32,
     /// Beat-matched transitions with every part of them on ([`StoredPrefs::transition_prefs`]).
     #[setting("autoMix", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO | REPLAN)]
@@ -545,7 +550,7 @@ pub struct StoredPrefs {
     #[setting("profilePerOutput", FLAG, default = true, show = K::Switch)]
     pub profile_per_output: bool,
     /// Volume leveling. Also decides whether songs may be turned up, hence the SOUND bit.
-    #[setting("replayGain", PICK_NEAREST, default = GainMode::Auto, show = K::Choice(GainMode::NAMES), effect = APPLY_GAIN | REPLAN | SOUND, sound)]
+    #[setting("replayGain", PICK_NEAREST, default = GainMode::Auto, show = K::Choice(GainMode::NAMES), effect = APPLY_GAIN | REPLAN | SOUND)]
     pub replay_gain: GainMode,
     /// The loudness songs are leveled to.
     #[setting("loudnessLevel", PICK, default = Level::Normal, show = K::Choice(Level::NAMES), effect = APPLY_GAIN)]
@@ -671,11 +676,10 @@ pub(crate) const SPECIAL_SPECS: &[(&str, K)] = &[
 ];
 
 const SERVERS: Custom<Vec<SavedServer>> = Custom {
-    // An unreadable list, or a server without an id, loses the whole list; a profile of a kind nori no
-    // longer has (YouTube Music before it was a plugin) is dropped alone.
+    // An unreadable list, or a server without an id, loses the whole list.
     load: |t, _| {
         t.and_then(|json| serde_json::from_str::<Value>(json).ok())
-            .and_then(|v| v.as_array().map(|a| a.iter().filter(|s| kind_kept(s)).map(server_from).collect::<Option<Vec<_>>>()))
+            .and_then(|v| v.as_array().map(|a| a.iter().map(server_from).collect::<Option<Vec<_>>>()))
             .flatten()
             .unwrap_or_default()
     },
@@ -754,8 +758,6 @@ pub struct SoundSettings {
     pub limiter: bool,
     pub limiter_threshold_db: f32,
     pub effects: SoundEffects,
-    pub replay_gain: GainMode,
-    pub crossfade_sec: i32,
     pub hi_res: bool,
     pub max_rate: MaxRate,
     pub bit_perfect: bool,
@@ -974,8 +976,6 @@ pub fn sound_from(json: &str) -> Option<SoundSettings> {
             compressor_preset: CompressorPreset::nth(opt_i32(o, "compressorPreset")).unwrap_or(d.compressor_preset),
         }
         .held(),
-        replay_gain: GainMode::ALL[opt_i32(o, "replayGain").clamp(0, GainMode::ALL.len() as i32 - 1) as usize],
-        crossfade_sec: opt_i32(o, "crossfadeSec").clamp(0, 12),
         hi_res: opt_bool(o, "hiRes"),
         max_rate: MaxRate::nth(opt_i32(o, "maxRate")).unwrap_or(MaxRate::Auto),
         bit_perfect: opt_bool(o, "bitPerfect"),
@@ -1010,8 +1010,6 @@ pub fn sound_json(s: &SoundSettings) -> String {
     o.insert("volumeBoostDb".into(), (e.volume_boost_db as f64).into());
     o.insert("compressor".into(), e.compressor.into());
     o.insert("compressorPreset".into(), e.compressor_preset.ordinal().into());
-    o.insert("replayGain".into(), s.replay_gain.ordinal().into());
-    o.insert("crossfadeSec".into(), s.crossfade_sec.into());
     o.insert("hiRes".into(), s.hi_res.into());
     o.insert("maxRate".into(), s.max_rate.ordinal().into());
     o.insert("bitPerfect".into(), s.bit_perfect.into());
@@ -1074,9 +1072,9 @@ impl Old for Map<String, Value> {
 }
 
 /// Settings stored before 0.6.3 in their new form ([`migrate_sound`] for the sound part): the loudness
-/// target as the nearest level, the crossfade as the longer of its fades, the cover color switches as
-/// the choice that colors the same places, reduced motion or e-ink as the motion, and playlist
-/// descriptions as playlist notes.
+/// target as the nearest level, any leveling as automatic, the crossfade as the longer of its fades, the
+/// cover color switches as the choice that colors the same places, reduced motion or e-ink as the motion,
+/// and playlist descriptions as playlist notes.
 fn migrate(raw: &HashMap<String, PrefValue>, p: &mut StoredPrefs) {
     if let Some(lufs) = raw.number("loudnessTarget") {
         p.level = Level::nearest(lufs);
@@ -1095,19 +1093,18 @@ fn migrate(raw: &HashMap<String, PrefValue>, p: &mut StoredPrefs) {
         Motion::Full
     };
     p.playlist_notes = on("playlistDescriptions", true);
+    if p.replay_gain != GainMode::Off {
+        p.replay_gain = GainMode::Auto;
+    }
     let mut sound = p.sound();
     migrate_sound(raw, &mut sound);
     *p = p.clone().with_sound(sound);
 }
 
-/// The sound part of settings or a profile stored before 0.6.3 in its new form: any leveling as
-/// automatic, crossfeed as the natural headphone sound and the virtualizer as the wide one, the
-/// compressor's controls as the nearest preset, and bass boost as the equalizer's bass shelf at the
-/// same strength.
+/// The sound part of settings or a profile stored before 0.6.3 in its new form: crossfeed as the natural
+/// headphone sound and the virtualizer as the wide one, the compressor's controls as the nearest preset,
+/// and bass boost as the equalizer's bass shelf at the same strength.
 fn migrate_sound(old: &impl Old, s: &mut SoundSettings) {
-    if s.replay_gain != GainMode::Off {
-        s.replay_gain = GainMode::Auto;
-    }
     s.effects.headphone = if old.number("virtualizer").is_some_and(|v| v > 0.0) {
         HeadphoneSound::Wide
     } else if old.number("crossfeedDb").is_some_and(|v| v > 0.0) {
@@ -1154,21 +1151,19 @@ fn with_bass_boost(s: SoundSettings, db: f32) -> SoundSettings {
     }
 }
 
-/// Whether a stored server's kind is one nori has; absent in profiles saved before there were kinds.
-fn kind_kept(v: &Value) -> bool {
-    v.get("kind").and_then(Value::as_str).is_none_or(|k| ServerKind::from_id(k).is_some())
-}
-
 /// One server from the stored list; None without an id.
 fn server_from(v: &Value) -> Option<SavedServer> {
     let o = v.as_object()?;
+    // Absent in profiles saved before there were kinds.
+    let kind = o.get("kind").and_then(Value::as_str);
     Some(SavedServer {
         id: text(o.get("id")?),
-        kind: o.get("kind").and_then(Value::as_str).and_then(ServerKind::from_id).unwrap_or_default(),
+        kind: kind.and_then(ServerKind::from_id).unwrap_or_default(),
         name: opt_string(o, "name"),
         url: opt_string(o, "url"),
         alt_url: opt_string(o, "altUrl"),
-        user: opt_string(o, "user"),
+        // The built-in YouTube Music's account stayed with it: the plugin signs in again.
+        user: if kind == Some(BUILT_IN_YOUTUBE_MUSIC) { String::new() } else { opt_string(o, "user") },
         password: opt_string(o, "password"),
         api_key: opt_string(o, "apiKey"),
         legacy_auth: opt_bool(o, "legacyAuth"),
@@ -2157,8 +2152,6 @@ mod tests {
             limiter: true,
             limiter_threshold_db: -2.0,
             effects: SoundEffects { headphone: HeadphoneSound::Wide, volume_boost_db: 3.0, compressor: true, compressor_preset: CompressorPreset::Night },
-            replay_gain: GainMode::Album,
-            crossfade_sec: 4,
             hi_res: true,
             max_rate: MaxRate::Khz96,
             bit_perfect: false,
@@ -2171,8 +2164,6 @@ mod tests {
         assert_eq!(s.eq_bands, [], "the parametric equalizer starts with no bands");
         assert_eq!(s.limiter_threshold_db, -1.0);
         assert_eq!(s.eq_preamp_db, None);
-        assert_eq!(sound_from(r#"{"replayGain":7}"#).unwrap().replay_gain, GainMode::Auto);
-        assert_eq!(sound_from(r#"{"replayGain":-1}"#).unwrap().replay_gain, GainMode::Off);
         assert_eq!(s.max_rate, MaxRate::Auto, "a profile saved before the maximum rate: the device's own");
         assert_eq!(sound_from(r#"{"maxRate":9}"#).unwrap().max_rate, MaxRate::Auto);
         assert_eq!(sound_from(r#"{"eqPreampDb":"x"}"#), None, "a pre-amp that is not a number");
@@ -2468,17 +2459,25 @@ mod tests {
     }
 
     /// Every kind is stored under its own name and read back; a profile saved before there were kinds
-    /// is a server's, and one of a kind nori no longer has is dropped alone.
+    /// is a server's.
     #[test]
     fn kinds_are_stored_by_name() {
         for kind in [ServerKind::Subsonic, ServerKind::Plugin { id: "fm.nori.youtube-music".into() }] {
-            let p = SavedServer { id: "p".into(), kind, ..SavedServer::default() };
+            let p = SavedServer { id: "p".into(), kind, user: "u".into(), ..SavedServer::default() };
             assert_eq!(server_from(&server_json(&p)), Some(p));
         }
         assert_eq!(server_from(&serde_json::json!({"id": "a", "url": "https://x"})).unwrap().kind, ServerKind::Subsonic, "saved before kinds");
-        let stored = serde_json::json!([{"id": "a", "kind": "youtubeMusic"}, {"id": "b", "kind": "subsonic"}]).to_string();
+    }
+
+    /// A profile of the built-in YouTube Music is the plugin's, keeping its id and name; its account
+    /// stayed behind, so it opens signed out.
+    #[test]
+    fn built_in_youtube_music_becomes_the_plugin() {
+        let stored = serde_json::json!([{"id": "a", "kind": "youtubeMusic", "name": "Mine", "user": "me"}, {"id": "b", "kind": "subsonic", "user": "u"}]).to_string();
         let kept = (SERVERS.load)(Some(&stored), Vec::new());
-        assert_eq!(kept.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec!["b"], "the built-in YouTube Music is gone; its profile goes, the rest stay");
+        let plugin = ServerKind::Plugin { id: "fm.nori.youtube-music".into() };
+        let read: Vec<_> = kept.iter().map(|s| (s.id.as_str(), &s.kind, s.name.as_str(), s.user.as_str())).collect();
+        assert_eq!(read, vec![("a", &plugin, "Mine", ""), ("b", &ServerKind::Subsonic, "", "u")]);
     }
 
     fn sound() -> SoundSettings {

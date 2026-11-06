@@ -2,7 +2,8 @@
 //! remote control or jams are switched on, or the profile is a jam guest's; it polls the relay only
 //! while it serves (this device is controllable), watches (a device picker or jam screen is open),
 //! mirrors the account's active device or hosts a jam, and holds each poll up to [`HOLD_MS`], so a quiet
-//! device wakes about once a minute. Nearby devices are reached through their LAN door instead of the relay.
+//! device wakes about once a minute; one that only serves, with nothing on its screen, on a metered network
+//! waits [`REST_MS`] between polls. Nearby devices are reached through their LAN door instead of the relay.
 //!
 //! One device of the account plays at a time: the active one. This one is it until a transfer moves the
 //! playback elsewhere ([`Remote::pick`], or another device's transfer); it then mirrors that device
@@ -65,6 +66,11 @@ const SENT_WAIT_MS: u64 = 3_000;
 
 /// A held poll's own timeout: the hold plus the way there and back.
 const POLL_TIMEOUT_MS: u32 = HOLD_MS + 15_000;
+
+/// Between two relay polls of a device that only serves, with nothing on its screen, on a metered network
+/// ([`Remote::rest`]): a poll asked again as each hold ends would wake its radio every minute. A relay lists a
+/// device only while its poll is held and a little after (octo-fiesta: 20 s), so it is not listed meanwhile.
+const REST_MS: u64 = 300_000;
 
 /// A published position this close to where the last one runs on to is not sent again.
 const POSITION_SLACK_MS: i64 = 5;
@@ -1246,6 +1252,13 @@ impl Inner {
         self.probes_asked != self.probes_answered
     }
 
+    /// The relay is wanted only so this device can be controlled, and nothing here shows anything.
+    fn rests(&self) -> bool {
+        self.serving
+            && self.sight == Sight::Nothing
+            && !(self.probing() || self.watching || self.active.discovering() || self.active.taking().is_some() || self.follows_mirror() || self.jams() || self.guest.listen().is_some())
+    }
+
     fn wants_relay(&self) -> bool {
         self.probing() || self.relay != RelaySupport::Unsupported && !matches!(self.guest, GuestJam::Over) && (self.serving || self.watching || self.active.discovering() || self.active.taking().is_some() || self.follows_mirror() || self.hosted().is_some() || self.guest.listen().is_some())
     }
@@ -1493,6 +1506,8 @@ pub struct Remote {
     timing: Notify,
     /// Wakes the requests waiting for an answer to check they are still wanted.
     cancel: Notify,
+    /// Wakes a relay poller resting ([`Remote::rest`]) to check it still rests.
+    rested: Notify,
     /// None once stopped: the sender ends with what was queued.
     out: Mutex<Option<Outbox>>,
     /// The tasks [`Remote::stop`] waits for.
@@ -1612,6 +1627,47 @@ impl Remote {
         }
         if cancelled {
             self.keep_polling();
+        }
+    }
+
+    /// [`Self::played`], with the playback `read` under the remote's lock: reports from several threads
+    /// apply in the order they were read, so an older one never overwrites a newer one.
+    pub fn played_read(self: Arc<Self>, read: impl FnOnce() -> Playing) {
+        // The report belongs to call entry, before waiting for the session lock.
+        let now = self.now();
+        let (publish, started, shown, cancelled, playing) = {
+            let mut i = self.inner.lock();
+            let playing = read();
+            let started = playing.playing && !i.playing.playing;
+            // A guest listening along paused or played here: its controls say so.
+            let shown = i.guest.listen().is_some() && playing.playing != i.playing.playing;
+            if started {
+                i.handed_to = None;
+            }
+
+            if playing.playing || i.playing.playing {
+                i.played_last = Some(now);
+            }
+            let moved_here = started || (!i.playing.playing && (playing.index != i.playing.index || (playing.position_ms - i.playing.position_ms).abs() > POSITION_SLACK_MS));
+            let cancelled = moved_here && i.active.cancel_taking();
+            i.playing = playing;
+            i.playing_at = Some(now);
+            (i.serving || i.hosted().is_some(), started && i.active.mirror().is_some(), shown, cancelled, playing.playing)
+        };
+        if playing {
+            self.clone().discover_active(false);
+        }
+        if started {
+            self.set_active(None, Becomes::Followed);
+        }
+        if publish {
+            self.publish();
+        }
+        if cancelled {
+            self.keep_polling();
+        }
+        if shown {
+            self.shown.changed();
         }
     }
 }
@@ -1795,42 +1851,7 @@ impl Remote {
     /// The platform's playback changed (play, pause, seek, another song, the queue, the volume). Music
     /// starting here makes this the active device again.
     pub fn played(self: Arc<Self>, playing: Playing) {
-
-        // The report belongs to call entry, before waiting for the session lock.
-        let now = self.now();
-        let (publish, started, shown, cancelled) = {
-            let mut i = self.inner.lock();
-            let started = playing.playing && !i.playing.playing;
-            // A guest listening along paused or played here: its controls say so.
-            let shown = i.guest.listen().is_some() && playing.playing != i.playing.playing;
-            if started {
-                i.handed_to = None;
-            }
-
-            if playing.playing || i.playing.playing {
-                i.played_last = Some(now);
-            }
-            let moved_here = started || (!i.playing.playing && (playing.index != i.playing.index || (playing.position_ms - i.playing.position_ms).abs() > POSITION_SLACK_MS));
-            let cancelled = moved_here && i.active.cancel_taking();
-            i.playing = playing;
-            i.playing_at = Some(now);
-            (i.serving || i.hosted().is_some(), started && i.active.mirror().is_some(), shown, cancelled)
-        };
-        if playing.playing {
-            self.clone().discover_active(false);
-        }
-        if started {
-            self.set_active(None, Becomes::Followed);
-        }
-        if publish {
-            self.publish();
-        }
-        if cancelled {
-            self.keep_polling();
-        }
-        if shown {
-            self.shown.changed();
-        }
+        self.played_read(|| playing);
     }
 
     /// The device is on a network again: a poll that failed is asked again now, not after its wait.
@@ -2261,6 +2282,7 @@ impl Remote {
         self.retry.notify();
         self.timing.notify();
         self.cancel.notify();
+        self.rested.notify();
         // After the tasks: a poller ending may send the leave again.
         let sent = async {
             self.running.ended().await;
@@ -2657,7 +2679,7 @@ impl Remote {
             ).map_err(|e| crate::alog::info(&format!("remote: could not keep instance: {e}"))).ok()?.parse().ok()
         });
         let sends = Arc::new(Sends::default());
-        let remote = Arc::new(Remote { client, id, id_lock: Mutex::new(id_lock), instance, me, player, shown, discovery, inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), running: Arc::default(), follower: Mutex::default() });
+        let remote = Arc::new(Remote { client, id, id_lock: Mutex::new(id_lock), instance, me, player, shown, discovery, inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), rested: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), running: Arc::default(), follower: Mutex::default() });
         remote.tasks.spawn(Box::pin(send_all(sends, remote.client.clone(), remote.who())));
         *remote.client.core.remote.lock() = Arc::downgrade(&remote);
         if remote.client.core.serverless() && remote.client.core.lan_jam.read().is_none() {
@@ -3102,7 +3124,19 @@ impl Remote {
         for (service, poller) in start_peers {
             self.spawn(self.clone().poll_peer(service, poller));
         }
+        self.rested.notify();
         self.shown.changed();
+    }
+
+    /// Before the next relay poll: waits [`REST_MS`] while this device only serves ([`Inner::rests`]) on a
+    /// metered network, until anything that changes that ([`Remote::keep_polling`]) or a stop.
+    async fn rest(&self, poller: u64) {
+        let resting = |i: &Inner| !i.stopped && i.relay_poller == Some(poller) && i.rests();
+        if !self.client.metered() || !resting(&self.inner.lock()) {
+            return;
+        }
+        let over = self.rested.until(|| !resting(&self.inner.lock()));
+        select(std::pin::pin!(self.tasks.sleep(Duration::from_millis(REST_MS))), std::pin::pin!(over)).await;
     }
 
     async fn poll_relay(self: Arc<Self>, poller: u64) {
@@ -3167,6 +3201,7 @@ impl Remote {
                     self.inner.lock().relay = RelaySupport::Supported;
                     retry_ms = RETRY_MS;
                     self.took(answer(&body).unwrap_or_default(), received);
+                    self.rest(poller).await;
                 }
                 // Asked again while this answer was on its way: the server may have gained the relay since.
                 (Some(_), _) if asked_since => first_poll = true,
@@ -4214,7 +4249,7 @@ mod tests {
         prefs.active_server_id = "navidrome".into();
         settings.put(prefs);
         jam_joining(&settings);
-        crate::background::flush();
+        settings.writer.flush();
         let list = ServerList { servers: vec![own("navidrome"), own("youtube"), guest], active_server_id: "guest".into() };
         let back = jam_return(&settings, list);
         assert_eq!(back.active_server_id, "navidrome");

@@ -129,6 +129,9 @@ for k in sys.argv[1:]: print(d.get(k,''))" "$@" 2>/dev/null; }
 # `wait_for <field> <value> <timeout s>`: until the field reads the value (a leading ! waits for it to read
 # anything else, and >N / <N for a number past N). Fails after the timeout, saying what it last read.
 WAITED=""
+# The bridge takes the login; "no ui" until the screen is up.
+logged_in_asked() { [ "$("$app" login "$APP_URL|$USER|$PASS")" = ok ]; }
+
 wait_for() {
   local f="$1" want="$2" limit="$3" v="" end=$(( $(date +%s) + $3 ))
   while :; do
@@ -195,12 +198,14 @@ bursts_continue() {
 # The app in the foreground, answering, logged in to this run's server.
 fixture_logged_in=0
 app_up() {
+  # A fresh install would ask first, and the prompt covers the app.
+  adb shell pm grant "$pkg" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
   "$app" wake >/dev/null
   "$app" launch >/dev/null
   wait_until 20 bash -c "'$app' state 2>/dev/null | grep -q '\"route\"'" || return 1
   if [ "$(field server)" != "$APP_URL" ] || { [ "$NORI_E2E_SERVER" = local ] && [ "$fixture_logged_in" = 0 ]; }; then
     echo "     logging in to $([ "$NORI_E2E_SERVER" = local ] && echo "$APP_URL" || echo "the real server")"
-    "$app" login "$APP_URL|$USER|$PASS" >/dev/null
+    wait_until 10 logged_in_asked || return 1
     wait_for server "$APP_URL" 30 >/dev/null || return 1
     fixture_logged_in=1
   fi

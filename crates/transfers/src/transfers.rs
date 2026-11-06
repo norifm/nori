@@ -625,9 +625,10 @@ impl Tracker {
     fn info(&mut self, id: &str) -> Option<&Info> {
         if !self.info.contains_key(id) {
             let c = self.db.as_ref()?.try_lock()?;
-            let json: Option<String> = c.query_row("SELECT json FROM downloads WHERE server=sid() AND id=?1", [id], |r| r.get(0)).ok();
+            let sql = format!("SELECT {} FROM downloads i WHERE server=sid() AND id=?1", nori_db::items::SONG);
+            let song = c.prepare_cached(&sql).and_then(|mut st| st.query_row([id], |r| nori_db::items::song(r, 0))).ok();
             drop(c);
-            self.keep_info(id, json.and_then(|j| serde_json::from_str::<Song>(&j).ok()).as_ref());
+            self.keep_info(id, song.as_ref());
         }
         self.info.get(id)
     }
@@ -1438,9 +1439,9 @@ pub struct DownloadQueueCounts {
     pub failed: u32,
 }
 
-/// Queues the new `rows` (id, song json) behind everything queued; unfinished ones already queued are
-/// returned as `again`, finished ones skipped.
-pub fn queue_rows(c: &mut Connection, rows: impl IntoIterator<Item = (String, String)>) -> nori_model::Result<DownloadQueued> {
+/// Queues the new `songs` behind everything queued; unfinished ones already queued are returned as
+/// `again`, finished ones skipped.
+pub fn queue_rows(c: &mut Connection, songs: impl IntoIterator<Item = Song>) -> nori_model::Result<DownloadQueued> {
     use rusqlite::OptionalExtension;
     let tx = c.transaction()?;
     let mut out = DownloadQueued::default();
@@ -1449,16 +1450,16 @@ pub fn queue_rows(c: &mut Connection, rows: impl IntoIterator<Item = (String, St
         let newest: i64 = tx.query_row("SELECT coalesce(max(ts), 0) FROM downloads WHERE server=sid()", [], |r| r.get(0))?;
         let mut ts = newest.max(nori_db::now_ms());
         let mut done = tx.prepare_cached("SELECT done FROM downloads WHERE server=sid() AND id=?1")?;
-        let mut add = tx.prepare_cached("INSERT INTO downloads(server, id, json, ts) VALUES(sid(), ?1, ?2, ?3)")?;
+        let mut add = tx.prepare_cached(&nori_db::items::add_download_sql())?;
         let mut seen = HashSet::new();
-        for (id, json) in rows.into_iter().filter(|(id, _)| seen.insert(id.clone())) {
-            match done.query_row([&id], |r| r.get::<_, bool>(0)).optional()? {
+        for song in songs.into_iter().filter(|s| seen.insert(s.id.clone())) {
+            match done.query_row([&song.id], |r| r.get::<_, bool>(0)).optional()? {
                 None => {
                     ts += 1;
-                    add.execute(rusqlite::params![id, json, ts])?;
-                    out.fresh.push(id);
+                    add.execute(rusqlite::params_from_iter(nori_db::items::download_params(&song, ts)))?;
+                    out.fresh.push(song.id);
                 }
-                Some(false) => out.again.push(id),
+                Some(false) => out.again.push(song.id),
                 Some(true) => {}
             }
         }

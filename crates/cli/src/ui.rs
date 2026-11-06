@@ -1254,7 +1254,7 @@ fn mix_lines(app: &App, w: usize, t: &Theme) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     // While mixing, `song` is the louder of the two.
     if app.now.mixing {
-        let from = app.mixed_in.as_ref().and_then(|n| crate::backend::app().song(&n.outgoing_id)).map(|s| s.title);
+        let from = app.mixed_in.as_ref().and_then(|n| app.shared.song(&n.outgoing_id)).map(|s| s.title);
         let heard = match &from {
             Some(from) => format!("Mixing in from “{from}”"),
             None => "Mixing into the next".to_string(),
@@ -1265,7 +1265,7 @@ fn mix_lines(app: &App, w: usize, t: &Theme) -> Vec<Line<'static>> {
         }
     }
     if let Some(n) = &app.transition {
-        let next = crate::backend::app().song(&n.incoming_id).map(|s| s.title).unwrap_or_default();
+        let next = app.shared.song(&n.incoming_id).map(|s| s.title).unwrap_or_default();
         lines.push(Line::from(Span::styled(fit(&format!("Next: “{next}”"), w).into_owned(), Style::default().fg(t.ink))));
         lines.push(Line::from(Span::styled(fit(&format!("  {}", how_mixed(n)), w).into_owned(), t.dim())));
         if !n.reason.is_empty() {

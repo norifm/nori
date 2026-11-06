@@ -42,6 +42,7 @@ import dev.nori.music.ffi.FormField as Field
 import dev.nori.music.ffi.ProviderInfo
 import dev.nori.music.ffi.SignIn
 import dev.nori.music.ffi.settings.SavedServer
+import dev.nori.music.settings.label
 import dev.nori.music.settings.server
 
 /** [kind]'s words, a plugin kind's name and about from its plugin as the view model has them. */
@@ -279,6 +280,55 @@ private fun ProviderChoice(vm: SettingsViewModel, onClose: (() -> Unit)?, choose
                 }
             }
             onClose?.let { Row(Modifier.padding(horizontal = 8.dp, vertical = 12.dp)) { TextAction(say.cancel, it) } }
+        }
+    }
+}
+
+/**
+ * The profile in use while its plugin doesn't run here ([wait], the core's `Kinds::waits`): what it plays
+ * from and the one step that opens it, then the other profiles to switch to. Once the plugin runs, the
+ * view model opens the profile.
+ */
+@Composable
+fun WaitingProfile(vm: SettingsViewModel, wait: dev.nori.music.ffi.ProfileWait) {
+    val plugins: dev.nori.music.app.vm.PluginsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val prefs by vm.prefs.collectAsStateWithLifecycle()
+    val cards by plugins.cards.collectAsStateWithLifecycle()
+    val offers by plugins.offers.collectAsStateWithLifecycle()
+    val profile = prefs.server ?: return
+    val id = (profile.kind as? ServerKind.Plugin)?.id ?: return
+    LaunchedEffect(Unit) { plugins.loadOffers() }
+    val name = remember(id, cards, offers) { dev.nori.music.ffi.plugins.pluginDisplayName(id, cards, offers.offers) }
+    var installing by remember { mutableStateOf(false) }
+    var adding by remember { mutableStateOf(false) }
+    NoriDialog(installing, { installing = false }, DialogStyle.Page) {
+        Surface(Modifier.fillMaxSize()) { Column(Modifier.systemBarsPadding()) { PluginPage(plugins, vm, id) { installing = false } } }
+    }
+    NoriDialog(adding, { adding = false }, DialogStyle.Page) { LoginScreen(vm) { adding = false } }
+    Surface(Modifier.fillMaxSize()) {
+        Column(Modifier.systemBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp), Arrangement.spacedBy(12.dp)) {
+            Text(profile.label.ifBlank { name }, style = titled(MaterialTheme.typography.displaySmall), modifier = Modifier.padding(top = 16.dp, bottom = 2.dp))
+            Text(say.profileWaits(name, wait), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            say.profileWaitAction(name, wait)?.let { action ->
+                PillButton(action, null, {
+                    when (wait) {
+                        dev.nori.music.ffi.ProfileWait.INSTALL -> installing = true
+                        dev.nori.music.ffi.ProfileWait.TURN_ON -> plugins.turn(id, true)
+                        dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> plugins.allOff(vm, false)
+                        dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> {}
+                    }
+                }, Modifier.fillMaxWidth().padding(top = 4.dp).testTag("profile-wait"), prominent = true)
+            }
+            val others = prefs.servers.filter { it.id != profile.id }
+            if (others.isNotEmpty()) {
+                Caption(say.profiles, Modifier.padding(top = 12.dp))
+                GroupCard {
+                    others.forEachIndexed { i, other ->
+                        GroupRow(other.label.ifBlank { providerWords(vm, other.kind).name }, { vm.switchServer(other) }, divider = i < others.lastIndex)
+                    }
+                }
+            }
+            TextAction(say.addServer, { adding = true })
         }
     }
 }

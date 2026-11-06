@@ -82,11 +82,12 @@ profile, feature set and target keeps its own artifacts. `cargo clean`, or `carg
 ### Devices
 
 `tools/emulator.sh <avd> <port>` starts an existing arm64 AVD headless, with host graphics and four
-CPUs. Use a distinct even port per emulator. Create the AVDs in Android Studio first.
+CPUs. Use a distinct even port per emulator. Create the AVDs in Android Studio first; an AVD runs once
+at a time, so each emulator needs its own (`emulator -list-avds` names them).
 
 ```sh
-tools/emulator.sh a16 5554
-tools/emulator.sh a16b 5556
+tools/emulator.sh first-avd 5554
+tools/emulator.sh second-avd 5556
 export NORI_E2E_SERVER=local
 export NORI_E2E_DEVICES=emulator-5554,emulator-5556
 tools/device-check.sh --install android/app/build/outputs/apk/debug/app-debug.apk smoke
@@ -433,14 +434,22 @@ volumes.
 | Nightly (`nightly.yml`) | at 02:00 UTC when master moved since the last one (or by hand): replaces the one prerelease tagged `nightly` with the "nori nightly" APK, the desktop and terminal packages and the iPod app. It is signed with the release key, and every package is built as `<x.y.z>-nightly.<commit time>` (`tools/bump-version.sh`, uncommitted): its files are named for it, the apps report it, and it is the release's title, which nori nightly's updater reads to offer the next night's build (`update.rs`, its nightly channel). Stable and beta builds never see it. Its notes are one line, and it stays the first release listed: one published after it has it made again over the same commit and files, with no build |
 | Desktop and CLI release (`host-release.yml`) | the desktop and terminal packages; uploads to a release when given its tag. Also callable from other workflows |
 | macOS rendering checks (`macos-render.yml`) | the desktop's Metal pixel tests on a Mac runner |
+| Caches (`caches.yml`) | after each of the above and daily: deletes the caches no job restores any more (`tools/ci-caches.py`) |
 | Backfill Linux bundles, Backfill macOS disk images | add bundles or DMGs to an older release from its archives, without rebuilding |
 
 The workflows cache Rust dependencies (`Swatinem/rust-cache`, one key per job and platform), Gradle and
 npm. Caches are saved from master only and read by every branch, so branch pushes don't evict them from
-GitHub's 10 GB. The release link (fat LTO) is never cached.
+GitHub's 10 GB. The release link (fat LTO) is never cached. A new `Cargo.lock`, Rust or apt package
+list saves a new cache; `caches.yml` then deletes the one it replaced, and a branch's caches a day after
+their last use, so GitHub never has to evict one a job still restores. The test job always builds the
+whole workspace and runs only the affected crates' tests (`tools/affected.py --tests`): building some
+crates resolves the dependencies' features differently and rebuilds them instead of using the cache.
 
-Mac builds in the workflows run on Apple Silicon; the Intel package is checked under Rosetta. The
-`macos_on_linux` input builds them on Linux instead and skips running them.
+Mac builds in the workflows run on Apple Silicon (the `macos-26` runner); the Intel package is checked under
+Rosetta. macOS draws the window buttons and other system chrome in its current look (Liquid Glass) only for
+apps linked against the macOS 26 SDK or newer (`vtool -show-build` shows `sdk`), so a release never builds
+on an older runner. The `macos_on_linux` input builds them on Linux instead and skips running them; those
+link an older SDK and keep the older look.
 
 Workers can hand their artifacts to one publisher. Put the APK, the IPA and every desktop package
 with its checksum manifest (keeping host subdirectories) in one directory, then, from the matching

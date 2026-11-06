@@ -44,3 +44,5 @@ mod on_disk;
 mod later;
 #[path = "cast.rs"]
 mod cast;
+#[path = "decoders.rs"]
+mod decoders;

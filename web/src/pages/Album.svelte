@@ -24,7 +24,7 @@
   });
   const a = $derived(page.data?.album);
   const songs = $derived(page.data?.songs ?? []);
-  const label = $derived(a ? [a.year || "", W.songsAlways(songs.length), W.time((page.data?.seconds ?? 0) * 1000), page.data?.quality ?? ""].filter(Boolean).join(" · ") : "");
+  const label = $derived(a ? [a.year || "", W.songCount(songs.length), W.time((page.data?.seconds ?? 0) * 1000), page.data?.quality ?? ""].filter(Boolean).join(" · ") : "");
 </script>
 
 <Page back ready={!!a} error={page.error}>

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,11 +29,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.DeviceRow
 import dev.nori.music.app.vm.SettingsViewModel
+import dev.nori.music.ffi.devices.OutputGlyph
+import dev.nori.music.ffi.devices.outputLook
 import dev.nori.music.playback.DeviceSound
 
 /**
@@ -45,10 +49,19 @@ fun DevicesSection(vm: SettingsViewModel) {
     val p by vm.prefs.collectAsStateWithLifecycle()
     var picking by remember { mutableStateOf<String?>(null) }
     NoriSheet(rows.firstOrNull { it.output == picking }, { picking = null }, skipPartiallyExpanded = false) { d -> DeviceSheet(vm, d) { picking = null } }
+    val pick = { d: DeviceRow -> vm.clearAssignError(); picking = d.output }
 
-    GroupLabel(say.devices)
+    val current = rows.firstOrNull { it.current }
+    val others = rows.filterNot { it.current }
+    if (current != null) {
+        GroupLabel(say.playingOn)
+        GroupCard {
+            AnimatedRows(listOf(current), { it.output }) { d -> DeviceItem(d, divider = false) { pick(d) } }
+        }
+    }
+    GroupLabel(if (current != null && others.isNotEmpty()) say.otherDevices else say.devices)
     GroupCard {
-        AnimatedRows(rows, { it.output }) { d -> DeviceItem(d) { vm.clearAssignError(); picking = d.output } }
+        AnimatedRows(others, { it.output }) { d -> DeviceItem(d) { pick(d) } }
         Toggle(say.autoeqAuto, say.autoeqAutoDetail, p.autoEqAuto, divider = false) { on -> vm.update { it.copy(autoEqAuto = on) } }
     }
     AnimatedVisibility(!p.profilePerOutput, enter = AppMotion.grow(), exit = AppMotion.shrink()) {
@@ -60,32 +73,46 @@ fun DevicesSection(vm: SettingsViewModel) {
     }
 }
 
+/** The playing device leads with its glyph in the accent and has its sound beside its kind; the others keep the sound at the end. */
 @Composable
-private fun DeviceItem(d: DeviceRow, onClick: () -> Unit) {
+private fun DeviceItem(d: DeviceRow, divider: Boolean = true, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Column {
         Row(
             Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 14.dp, end = 10.dp, top = 11.dp, bottom = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (d.current) {
+                val glyph = remember(d.output) { outputLook(d.output).glyph }
+                Icon(outputIcon(glyph), null, Modifier.padding(end = 14.dp).size(20.dp), tint = scheme.primary)
+            }
             Column(Modifier.weight(1f)) {
                 Text(d.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row {
-                    d.kind?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant) }
-                    AnimatedVisibility(d.current, enter = AppMotion.grow(across = true), exit = AppMotion.shrink(across = true)) {
-                        val playing = remember(d.kind != null) { say.devicePlayingNow(d.kind != null) }
-                        Text(playing, style = MaterialTheme.typography.bodySmall, color = scheme.primary)
-                    }
+                if (d.current) {
+                    Text(listOfNotNull(d.kind, d.sound).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                } else {
+                    d.kind?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 }
             }
-            // The sound it gets cross-fades when it changes rather than being swapped in one frame.
-            Crossfade(d.sound, Modifier.padding(start = 12.dp), animationSpec = AppMotion.fadeIn(), label = "sound") { sound ->
-                Text(sound, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!d.current) {
+                // The sound it gets cross-fades when it changes rather than being swapped in one frame. A long
+                // profile name is capped so it can't squeeze the device's name.
+                Crossfade(d.sound, Modifier.padding(start = 12.dp).widthIn(max = 140.dp), animationSpec = AppMotion.fadeIn(), label = "sound") { sound ->
+                    Text(sound, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
             Icon(Iconoir.NavArrowRight, null, Modifier.padding(start = 6.dp).size(19.dp), tint = scheme.onSurfaceVariant.copy(alpha = 0.7f))
         }
-        Hairline(startIndent = 14.dp)
+        if (divider) Hairline(startIndent = 14.dp)
     }
+}
+
+/** The glyph for how an output is connected. */
+internal fun outputIcon(glyph: OutputGlyph): ImageVector = when (glyph) {
+    OutputGlyph.PHONE -> Iconoir.SmartphoneDevice
+    OutputGlyph.HEADPHONES -> Iconoir.Headset
+    OutputGlyph.BLUETOOTH -> Iconoir.Bluetooth
+    OutputGlyph.CAST -> Iconoir.Airplay
 }
 
 private class Shown<T>(item: T, val key: String, val state: MutableTransitionState<Boolean>) {

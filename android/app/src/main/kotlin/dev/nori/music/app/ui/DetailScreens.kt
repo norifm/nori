@@ -70,7 +70,7 @@ private fun FilterField(count: Int, filter: String, onFilter: (String) -> Unit) 
 @Composable
 internal fun SongListPage(
     title: String, songs: List<Song>, done: Set<String>, from: PageOrigin, actions: ActionsViewModel,
-    headLabel: String = if (songs.isEmpty()) "" else say.listCaption(songs.size, songs.sumOf { it.duration.toLong() }, true),
+    headLabel: String = if (songs.isEmpty()) "" else say.listCaption(songs.size, songs.sumOf { it.duration.toLong() }),
     pageActions: @Composable RowScope.() -> Unit = {},
     coverUrl: String? = null, coverStandIns: List<String?> = emptyList(),
     /** After Play, where an album's seal stands. */
@@ -476,7 +476,7 @@ private fun PlaylistPage(
     val arrival = rememberArrival(detail != null)
     val head = remember(detail, playlist) {
         val count = detail?.songs?.size ?: playlist.songCount.toInt()
-        if (count > 0) say.listCaption(count, detail?.seconds?.toLong() ?: playlist.duration.toLong(), true) else ""
+        if (count > 0) say.listCaption(count, detail?.seconds?.toLong() ?: playlist.duration.toLong()) else ""
     }
     val shown = rememberMatching(detail?.songs.orEmpty(), filter)
     val from = rememberOrigin(OriginKind.PLAYLIST, id)

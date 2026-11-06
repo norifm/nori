@@ -246,17 +246,9 @@ impl Nori {
         self.with(|h| h.rules()).unwrap_or_default()
     }
 
-    /// What a jam adds to song menus: starting one, or asking the host as its guest.
-    pub(crate) fn jam_offer(&self) -> Option<nori_core::menus::JamOffer> {
-        use nori_core::menus::JamOffer;
-        self.with(|h| {
-            if h.guest {
-                return Some(JamOffer::Guest);
-            }
-            let r = h.remote()?;
-            (r.jam_start() == nori_core::remote::JamStart::Offered).then_some(JamOffer::Start)
-        })
-        .flatten()
+    /// Whether this is a jam's guest, whose song menu asks the host.
+    pub(crate) fn guest(&self) -> bool {
+        self.with(|h| h.guest).unwrap_or(false)
     }
 
     pub(crate) fn client(&self) -> Option<Arc<nori_core::client::Client>> {
@@ -334,14 +326,13 @@ impl Nori {
         self.with(|h| h.seek(ms as i64));
     }
 
-    /// Plays a radio (`radio`) or an instant mix seeded by song `id`: the songs played (0: the server had
-    /// none).
-    pub async fn mix(&self, id: String, radio: bool) -> Result<usize, JsValue> {
+    /// Plays a radio seeded by song `id`: the songs played (0: the server had none).
+    pub async fn radio(&self, id: String) -> Result<usize, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        let songs = if radio { client.radio(id).await } else { client.instant_mix(id).await }.map_err(error)?;
+        let songs = client.radio(id).await.map_err(error)?;
         let n = songs.len();
         if n > 0 {
-            self.with(|h| h.play(songs, 0, false, None));
+            self.with(|h| h.play_radio(songs));
         }
         Ok(n)
     }
@@ -490,7 +481,7 @@ impl Nori {
                 .order
                 .iter()
                 .map(|&i| {
-                    let mut v = match shown.view.songs.get(i as usize).filter(|s| !s.id.is_empty()) {
+                    let mut v = match shown.songs.get(i as usize).filter(|s| !s.id.is_empty()) {
                         Some(s) => crate::pages::song(core, s),
                         None => json!({}),
                     };
@@ -640,14 +631,6 @@ impl Nori {
             .to_string()
         })
         .unwrap_or_else(|| "null".into())
-    }
-
-    /// Starts a jam around song `start` of `songs` (JSON): they play here, then it opens. Its invite link
-    /// (null when one is open or being started already).
-    pub async fn jam_start(&self, songs: String, start: usize) -> Result<Option<String>, JsValue> {
-        let songs: Vec<Song> = serde_json::from_str(&songs).map_err(error)?;
-        let h = self.with(|h| nori_host::session::Handle::clone(h)).ok_or_else(|| error("not signed in"))?;
-        h.start_jam(songs, start, None).await.ok_or_else(|| error("remote control is off"))?.map_err(error)
     }
 
     /// Starts hosting a jam; its invite link (null when one is being started already).

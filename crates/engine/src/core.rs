@@ -61,6 +61,8 @@ impl Queue for CoreQueue {
 /// The core's planner, analysis store and log, and a session's queue rules, as the engine's [`App`].
 pub struct CoreApp {
     session: Arc<Session>,
+    /// The songs being measured as they arrive.
+    analyses: Arc<Analyses>,
     /// The clock the engine's last call was made at.
     now_ms: i64,
     measurer: Option<Arc<Measurer>>,
@@ -75,9 +77,10 @@ pub struct CoreApp {
 }
 
 impl CoreApp {
-    pub fn new(session: Arc<Session>) -> CoreApp {
+    pub fn new(session: Arc<Session>, analyses: Arc<Analyses>) -> CoreApp {
         CoreApp {
             session,
+            analyses,
             now_ms: 0,
             measurer: None,
             devices: None,
@@ -114,7 +117,11 @@ impl Host for CoreApp {
         self.session.planner.plan_for(outgoing_id)
     }
 
+    /// Not a song being measured as it arrives: that measure ends sooner, with the song's bytes.
     fn wants_analysis(&mut self, song_id: &str) -> Option<u64> {
+        if self.analyses.arrivals.lock().has(song_id) {
+            return None;
+        }
         self.session.planner.wants_analysis(song_id)
     }
 

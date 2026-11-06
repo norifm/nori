@@ -10,22 +10,13 @@ use crate::fft::ModifiedRealFft;
 
 const ALMOST_ZERO: f32 = 1e-30;
 
-/// The input history, a ring per channel. Kept apart from [`Stft`] so a snapshot of it can be analyzed.
-#[derive(Clone)]
+/// The input history, a ring per channel.
 pub(crate) struct Input {
     pos: usize,
     buffer: Vec<f32>,
 }
 
-impl Input {
-    pub fn copy_from(&mut self, other: &Input) {
-        self.pos = other.pos;
-        self.buffer.copy_from_slice(&other.buffer);
-    }
-}
-
 /// The overlap-added output, a ring per channel, and the window products it is divided by.
-#[derive(Clone)]
 pub(crate) struct Output {
     pos: usize,
     buffer: Vec<f32>,
@@ -33,12 +24,6 @@ pub(crate) struct Output {
 }
 
 impl Output {
-    pub fn copy_from(&mut self, other: &Output) {
-        self.pos = other.pos;
-        self.buffer.copy_from_slice(&other.buffer);
-        self.window_products.copy_from_slice(&other.window_products);
-    }
-
     fn block(&self) -> usize {
         self.window_products.len()
     }
@@ -50,16 +35,35 @@ impl Output {
         self.buffer[channel * block + i] / self.window_products[i]
     }
 
+    /// Writes the normalized frames from the read position into `frames` (interleaved), clears them and moves on.
+    pub fn take(&mut self, frames: &mut [f32]) {
+        let block = self.block();
+        let channels = self.buffer.len() / block;
+        let n = frames.len() / channels;
+        let first = (block - self.pos).min(n);
+        for (from, to, at) in [(self.pos, self.pos + first, 0), (0, n - first, first)] {
+            for c in 0..channels {
+                let ring = &mut self.buffer[c * block + from..c * block + to];
+                for (k, (sample, product)) in ring.iter_mut().zip(&self.window_products[from..to]).enumerate() {
+                    frames[(at + k) * channels + c] = *sample / product;
+                    *sample = 0.0;
+                }
+            }
+            self.window_products[from..to].fill(ALMOST_ZERO);
+        }
+        self.pos = (self.pos + n) % block;
+    }
+
     /// Moves the read position on, clearing what it passes.
     pub fn advance(&mut self, samples: usize) {
         let block = self.block();
         let channels = self.buffer.len() / block;
-        for k in 0..samples {
-            let i = (self.pos + k) % block;
+        let first = (block - self.pos).min(samples);
+        for (from, to) in [(self.pos, self.pos + first), (0, samples - first)] {
             for c in 0..channels {
-                self.buffer[c * block + i] = 0.0;
+                self.buffer[c * block + from..c * block + to].fill(0.0);
             }
-            self.window_products[i] = ALMOST_ZERO;
+            self.window_products[from..to].fill(ALMOST_ZERO);
         }
         self.pos = (self.pos + samples) % block;
     }
@@ -74,9 +78,11 @@ pub(crate) struct Stft {
     /// Centre of both windows (the analysis and synthesis offsets are equal here).
     offset: usize,
     window: Vec<f32>,
+    /// The window with its first `offset` samples negated: the half-bin shift turns the rotation of the window to
+    /// its center into a sign flip of its first half.
+    signed_window: Vec<f32>,
     pub input: Input,
     pub output: Output,
-    spectrum: Vec<Complex32>,
     time: Vec<f32>,
     fft: ModifiedRealFft,
 }
@@ -87,17 +93,19 @@ impl Stft {
         let input_len = block + extra_input_history;
         let mut window: Vec<f32> = kaiser(block as f64 / interval as f64, block);
         force_perfect_reconstruction(&mut window, interval);
+        let offset = block / 2;
+        let signed_window = window.iter().enumerate().map(|(i, w)| if i < offset { -w } else { *w }).collect();
         let mut stft = Stft {
             channels,
             block,
             fft_size,
             interval,
             input_len,
-            offset: block / 2,
+            offset,
             window,
+            signed_window,
             input: Input { pos: 0, buffer: vec![0.0; input_len * channels] },
             output: Output { pos: 0, buffer: vec![0.0; block * channels], window_products: vec![0.0; block] },
-            spectrum: vec![Complex32::default(); fft_size / 2 * channels],
             time: vec![0.0; fft_size],
             fft: ModifiedRealFft::new(fft_size),
         };
@@ -132,7 +140,6 @@ impl Stft {
         self.output.pos = 0;
         self.input.buffer.fill(0.0);
         self.output.buffer.fill(0.0);
-        self.spectrum.fill(Complex32::default());
         self.output.window_products.fill(0.0);
         self.add_window_product();
         let wp = &mut self.output.window_products;
@@ -147,69 +154,46 @@ impl Stft {
 
     /// Writes `length` frames of interleaved `frames` (from frame `from`) into every channel's input ring.
     pub fn write_input(&mut self, frames: &[f32], from: usize, length: usize) {
-        let (ch, len) = (self.channels, self.input_len);
+        let (ch, len, pos) = (self.channels, self.input_len, self.input.pos);
+        let first = (len - pos).min(length);
         for c in 0..ch {
-            let ring = &mut self.input.buffer[c * len..(c + 1) * len];
-            let mut p = self.input.pos;
-            for i in 0..length {
-                ring[p] = frames[(from + i) * ch + c];
-                p += 1;
-                if p == len {
-                    p = 0;
+            let (head, tail) = self.input.buffer[c * len..(c + 1) * len].split_at_mut(pos);
+            for (to, at) in [(&mut tail[..first], from), (&mut head[..length - first], from + first)] {
+                for (k, v) in to.iter_mut().enumerate() {
+                    *v = frames[(at + k) * ch + c];
                 }
             }
         }
-        self.input.pos = (self.input.pos + length) % len;
+        self.input.pos = (pos + length) % len;
     }
 
-    pub fn spectrum(&self, channel: usize) -> &[Complex32] {
-        let bands = self.bands();
-        &self.spectrum[channel * bands..(channel + 1) * bands]
-    }
-    pub fn spectrum_mut(&mut self, channel: usize) -> &mut [Complex32] {
-        let bands = self.bands();
-        &mut self.spectrum[channel * bands..(channel + 1) * bands]
-    }
-
-    /// Windows one channel of `input`, `samples_in_past` before its write position, into that channel's spectrum.
-    pub fn analyze(&mut self, channel: usize, input: &Input, samples_in_past: usize) {
+    /// Windows one channel of the input, `samples_in_past` before its write position, and transforms it into
+    /// `spectrum`.
+    pub fn analyze(&mut self, channel: usize, samples_in_past: usize, spectrum: &mut [Complex32]) {
         let (len, block, fft_size, offset) = (self.input_len, self.block, self.fft_size, self.offset);
-        let start = (len * 2 + input.pos - block - samples_in_past) % len;
-        let ring = &input.buffer[channel * len..(channel + 1) * len];
-        let mut bi = start;
-        for i in 0..block {
-            // The half-bin shift turns the window's rotation to the center into a sign flip of its first half.
-            let (w, ti) = if i < offset { (-self.window[i], i + fft_size - offset) } else { (self.window[i], i - offset) };
-            self.time[ti] = ring[bi] * w;
-            bi += 1;
-            if bi == len {
-                bi = 0;
-            }
-        }
+        let start = (len * 2 + self.input.pos - block - samples_in_past) % len;
+        let ring = &self.input.buffer[channel * len..(channel + 1) * len];
+        let window = &self.signed_window;
+        // The window's first half lands at the end of the transform's input, the rest at its start.
+        windowed(&mut self.time[fft_size - offset..], ring, start, &window[..offset]);
+        windowed(&mut self.time[..block - offset], ring, (start + offset) % len, &window[offset..]);
         self.time[block - offset..fft_size - offset].fill(0.0);
-        let bands = self.bands();
-        self.fft.fft(&self.time, &mut self.spectrum[channel * bands..(channel + 1) * bands]);
+        self.fft.fft(&self.time, spectrum);
     }
 
-    /// Inverse transforms one channel's spectrum and overlap-adds it at the output position. The first channel
+    /// Inverse transforms one channel's `spectrum` and overlap-adds it at the output position. The first channel
     /// also adds the window product the output is normalized by.
-    pub fn synthesize(&mut self, channel: usize) {
+    pub fn synthesize(&mut self, channel: usize, spectrum: &[Complex32]) {
         if channel == 0 {
             self.add_window_product();
         }
         let (block, fft_size, offset) = (self.block, self.fft_size, self.offset);
-        let bands = self.bands();
-        self.fft.ifft(&self.spectrum[channel * bands..(channel + 1) * bands], &mut self.time);
+        self.fft.ifft(spectrum, &mut self.time);
         let out = &mut self.output.buffer[channel * block..(channel + 1) * block];
-        let mut bi = self.output.pos;
-        for i in 0..block {
-            let (w, ti) = if i < offset { (-self.window[i], i + fft_size - offset) } else { (self.window[i], i - offset) };
-            out[bi] += self.time[ti] * w;
-            bi += 1;
-            if bi == block {
-                bi = 0;
-            }
-        }
+        let pos = self.output.pos;
+        let window = &self.signed_window;
+        overlap_add(out, pos, &self.time[fft_size - offset..], &window[..offset]);
+        overlap_add(out, (pos + offset) % block, &self.time[..block - offset], &window[offset..]);
     }
 
     /// Lets the output taper away as if no more blocks follow, instead of being scaled up by missing ones.
@@ -224,16 +208,39 @@ impl Stft {
     }
 
     fn add_window_product(&mut self) {
-        let (block, scale) = (self.block, self.fft_size as f32);
-        let mut bi = self.output.pos;
-        for i in 0..block {
-            let w = self.window[i];
-            self.output.window_products[bi] += w * w * scale;
-            bi += 1;
-            if bi == block {
-                bi = 0;
+        let (block, scale, pos) = (self.block, self.fft_size as f32, self.output.pos);
+        let (head, tail) = self.output.window_products.split_at_mut(pos);
+        let first = block - pos;
+        for (to, window) in [(tail, &self.window[..first]), (head, &self.window[first..])] {
+            for (p, w) in to.iter_mut().zip(window) {
+                *p += w * w * scale;
             }
         }
+    }
+}
+
+/// `to[i] = ring[start + i] * window[i]`, the ring read on from `start` around its end.
+fn windowed(to: &mut [f32], ring: &[f32], start: usize, window: &[f32]) {
+    let first = (ring.len() - start).min(to.len());
+    let (to_a, to_b) = to.split_at_mut(first);
+    let (w_a, w_b) = window.split_at(first);
+    for ((t, r), w) in to_a.iter_mut().zip(&ring[start..start + first]).zip(w_a) {
+        *t = r * w;
+    }
+    for ((t, r), w) in to_b.iter_mut().zip(ring).zip(w_b) {
+        *t = r * w;
+    }
+}
+
+/// `ring[start + i] += from[i] * window[i]`, around the ring's end.
+fn overlap_add(ring: &mut [f32], start: usize, from: &[f32], window: &[f32]) {
+    let first = (ring.len() - start).min(from.len());
+    let (ring_a, ring_b) = ring.split_at_mut(start);
+    for ((o, f), w) in ring_b[..first].iter_mut().zip(&from[..first]).zip(&window[..first]) {
+        *o += f * w;
+    }
+    for ((o, f), w) in ring_a.iter_mut().zip(&from[first..]).zip(&window[first..]) {
+        *o += f * w;
     }
 }
 
@@ -310,12 +317,11 @@ mod tests {
         let mut stft = Stft::new(1, block, interval, interval + 1);
         let x: Vec<f32> = (0..8000).map(|i| ((i as f32) * 0.05).sin() * 0.5).collect();
         let mut y = Vec::new();
-        let mut snapshot = Input { pos: 0, buffer: vec![0.0; stft.input.buffer.len()] };
         for chunk in x.chunks(interval) {
             stft.write_input(chunk, 0, chunk.len());
-            snapshot.copy_from(&stft.input);
-            stft.analyze(0, &snapshot, 0);
-            stft.synthesize(0);
+            let mut spectrum = vec![Complex32::default(); stft.bands()];
+            stft.analyze(0, 0, &mut spectrum);
+            stft.synthesize(0, &spectrum);
             for i in 0..chunk.len() {
                 y.push(stft.output.read(0, i));
             }

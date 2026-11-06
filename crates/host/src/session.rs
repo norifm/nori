@@ -386,7 +386,7 @@ impl Session {
         // `bridging`: a song the network cannot bring raises `Event::Bridge` (see `Handle::bridge`).
         let guest = nori_remote::is_guest_key(&o.profile.api_key);
         let rules = core.rules();
-        let app = CoreApp::new(core.session.clone()).per_device(core.clone()).bridging();
+        let app = CoreApp::new(core.session.clone(), analyses.clone()).per_device(core.clone()).bridging();
         // A guest plays its host's transitions.
         let app = match &store {
             Some(store) if rules.measures => app.measuring(Measurer::new(analyses.clone(), store.clone())),
@@ -587,14 +587,6 @@ impl Handle {
         self.play_kept(songs, start, shuffle, from, false);
     }
 
-    /// Starts a jam around `songs[start]`: they play here, then the jam opens. Its invite link (None when
-    /// one is open or opening already); nothing while remote control is off.
-    pub async fn start_jam(&self, songs: Vec<Song>, start: usize, from: Option<PageOrigin>) -> Option<Result<Option<String>, NetError>> {
-        let remote = self.remote()?;
-        self.play(songs, start, false, from);
-        Some(remote.jam_open().await)
-    }
-
     /// `songs` as the queue around the song playing, `songs[at]`: it goes on where it is, playing or
     /// paused, rather than starting again (a tap on it in a list). Any other song plays as [`Handle::play`]
     /// would. True when it went on.
@@ -616,13 +608,19 @@ impl Handle {
         });
     }
 
+    /// A radio of `songs`, its seed first: a seed that is playing goes on where it is.
+    pub fn play_radio(&self, songs: Vec<Song>) {
+        let origin = songs.first().map(|s| Fetch::Radio(s.id.clone()).origin());
+        self.keep_playing(songs, 0, origin);
+    }
+
     /// Plays an album, playlist or artist once its songs are fetched; a radio from the song playing
     /// goes on with it.
     pub fn play_later(&self, what: Fetch, shuffle: bool) {
         let origin = what.origin();
         let radio = matches!(what, Fetch::Radio(_));
         self.fetched(what, move |me, songs| match songs.is_empty() {
-            false if radio => _ = me.keep_playing(songs, 0, Some(origin)),
+            false if radio => me.play_radio(songs),
             false => me.play(songs, 0, shuffle, Some(origin)),
             true => me.note(Note::NothingToPlay),
         });

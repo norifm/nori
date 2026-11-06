@@ -307,19 +307,35 @@ fn smooth(px: &[u32]) -> Vec<u32> {
 /// Separable radius-2 box blur of an n x n channel, in place.
 fn box_blur(c: &mut [f32], n: usize) {
     let mut tmp = vec![0f32; c.len()];
-    let pass = |src: &[f32], dst: &mut [f32], across: bool| {
-        for y in 0..n {
+    // Five taps, summed in one order everywhere; only the two at each end are clamped.
+    let five = |a: f32, b: f32, m: f32, d: f32, e: f32| (a + b + m + d + e) / 5.0;
+    let clamped = |at: &dyn Fn(usize) -> f32, i: usize| {
+        let v = |d: isize| at((i as isize + d).clamp(0, n as isize - 1) as usize);
+        five(v(-2), v(-1), v(0), v(1), v(2))
+    };
+    let edges = |i: usize| i < 2 || i + 2 >= n;
+    for (row, out) in c.chunks_exact(n).zip(tmp.chunks_exact_mut(n)) {
+        for x in (0..n).filter(|&x| edges(x)) {
+            out[x] = clamped(&|v| row[v], x);
+        }
+        for x in 2..n.saturating_sub(2) {
+            out[x] = five(row[x - 2], row[x - 1], row[x], row[x + 1], row[x + 2]);
+        }
+    }
+    for y in 0..n {
+        let line = |v: usize| &tmp[v * n..(v + 1) * n];
+        let out = &mut c[y * n..(y + 1) * n];
+        if edges(y) {
+            for (x, o) in out.iter_mut().enumerate() {
+                *o = clamped(&|v| tmp[v * n + x], y);
+            }
+        } else {
+            let (a, b, m, d, e) = (line(y - 2), line(y - 1), line(y), line(y + 1), line(y + 2));
             for x in 0..n {
-                let at = |d: isize| {
-                    let v = ((if across { x } else { y }) as isize + d).clamp(0, n as isize - 1) as usize;
-                    src[if across { y * n + v } else { v * n + x }]
-                };
-                dst[y * n + x] = (-2..=2).map(at).sum::<f32>() / 5.0;
+                out[x] = five(a[x], b[x], m[x], d[x], e[x]);
             }
         }
-    };
-    pass(c, &mut tmp, true);
-    pass(&tmp, c, false);
+    }
 }
 
 /// Separable 3-tap box blur of the [`WASH`] grid: horizontally into a buffer, vertically back.
@@ -567,13 +583,13 @@ impl Seam {
         let band = (SEAM_FROM * n as f32) as usize * n..(SEEN_TO * n as f32) as usize * n;
         let mean = mean_rgb(sharp[band].iter().copied()).expect("the band has rows");
         let frame = one_colour(&ring);
-        let mut left: Vec<(u32, f32)> = lower.iter().chain(&ring).map(|&c| (c, 1.0)).collect();
+        let mut left: Vec<u32> = lower.iter().chain(&ring).copied().collect();
         let least = left.len() as f32 * CANDIDATE_SHARE;
         let mut candidates = Vec::with_capacity(CANDIDATES);
         while !left.is_empty() && candidates.len() < CANDIDATES {
             let c = heaviest(&left);
             let before = left.len();
-            left.retain(|p| !near(p.0, c));
+            left.retain(|&p| !near(p, c));
             if candidates.is_empty() || (before - left.len()) as f32 >= least {
                 candidates.push(c);
             }
@@ -644,14 +660,20 @@ fn seam_cost(sharp: &[u32], blurred: &[u32], page: u32, ok: &Oklab) -> f32 {
 }
 
 /// The colour with the most weight near it, as the weighted mean of those near it.
-fn heaviest(px: &[(u32, f32)]) -> u32 {
-    let near_weight = |c: u32| px.iter().filter(|p| near(p.0, c)).map(|p| p.1).sum::<f32>();
-    let best = px.iter().map(|p| (near_weight(p.0), p.0)).max_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, c)| c).expect("at least one colour");
-    let (mut r, mut g, mut b, mut total) = (0f32, 0f32, 0f32, 0f32);
-    for &(c, wt) in px.iter().filter(|p| near(p.0, best)) {
-        (r, g, b, total) = (r + red(c) as f32 * wt, g + green(c) as f32 * wt, b + blue(c) as f32 * wt, total + wt);
+fn heaviest(px: &[u32]) -> u32 {
+    // Channels apart, so counting each colour's near ones runs in vector lanes.
+    let (r, g, b): (Vec<i32>, Vec<i32>, Vec<i32>) = (px.iter().map(|&c| red(c)).collect(), px.iter().map(|&c| green(c)).collect(), px.iter().map(|&c| blue(c)).collect());
+    let near_count = |k: usize| {
+        let (cr, cg, cb) = (r[k], g[k], b[k]);
+        r.iter().zip(&g).zip(&b).filter(|((&x, &y), &z)| (x - cr) * (x - cr) + (y - cg) * (y - cg) + (z - cb) * (z - cb) < NEAR * NEAR).count()
+    };
+    let best = (0..px.len()).map(|k| (near_count(k), px[k])).max_by_key(|&(n, _)| n).map(|(_, c)| c).expect("at least one colour");
+    let (mut sr, mut sg, mut sb, mut total) = (0i64, 0i64, 0i64, 0i64);
+    for &c in px.iter().filter(|&&c| near(c, best)) {
+        (sr, sg, sb, total) = (sr + red(c) as i64, sg + green(c) as i64, sb + blue(c) as i64, total + 1);
     }
-    rgb((r / total).round() as i32, (g / total).round() as i32, (b / total).round() as i32)
+    let mean = |v: i64| (v as f32 / total as f32).round() as i32;
+    rgb(mean(sr), mean(sg), mean(sb))
 }
 
 /// The colour 85 % of `px` share, as the mean of those pixels; None for a mix.
@@ -662,9 +684,12 @@ fn one_colour(px: &[u32]) -> Option<u32> {
 }
 
 /// Whether two colours look alike (within 48 levels).
+/// How far apart two colours may be, per channel in RGB distance, to count as one.
+const NEAR: i32 = 48;
+
 fn near(a: u32, b: u32) -> bool {
     let (dr, dg, db) = (red(a) - red(b), green(a) - green(b), blue(a) - blue(b));
-    dr * dr + dg * dg + db * db < 48 * 48
+    dr * dr + dg * dg + db * db < NEAR * NEAR
 }
 
 /// The mean colour of `px`, each channel's sum divided down; None for no pixels.

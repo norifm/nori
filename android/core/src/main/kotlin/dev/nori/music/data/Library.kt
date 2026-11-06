@@ -216,15 +216,14 @@ class Library(
 
     suspend fun clearHistory() = withContext(Dispatchers.IO) { core.historyClear() }
 
+    suspend fun excludedFromMixes(): List<String> = withContext(Dispatchers.IO) { core.mixExcludedSongs() }
+
     suspend fun excludeFromMixes(songId: String, excluded: Boolean) = withContext(Dispatchers.IO) { core.mixExcludedSet(songId, excluded) }
 
     // ---- what to play: each list is made in the core (actions.rs), requests included ----
 
     /** A radio from one song: it, then what the server finds similar, or random songs of its genre. */
     suspend fun radio(song: Song): List<Song> = withContext(Dispatchers.IO) { lifted { client.radio(song.id) } }
-
-    /** An instant mix from the index, or the radio when the index has nothing near the song. */
-    suspend fun instantMix(song: Song): List<Song> = withContext(Dispatchers.IO) { lifted { client.instantMix(song.id) } }
 
     /** Every album of an artist (a provider's left out), in order, as one list of songs. */
     suspend fun artistSongs(artistId: String): List<Song> = withContext(Dispatchers.IO) { lifted { client.artistSongsOf(artistId) } }

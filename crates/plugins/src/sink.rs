@@ -287,24 +287,61 @@ fn utf8_number(out: &mut Vec<u8>, n: u64) {
     }
 }
 
-fn crc8(bytes: &[u8]) -> u8 {
-    bytes.iter().fold(0u8, |mut crc, &b| {
-        crc ^= b;
-        for _ in 0..8 {
+/// FLAC's CRC-8 (polynomial 0x07) and CRC-16 (0x8005) of each byte value, MSB first.
+const CRC8: [u8; 256] = {
+    let mut t = [0u8; 256];
+    let mut i = 0;
+    while i < 256 {
+        let mut crc = i as u8;
+        let mut k = 0;
+        while k < 8 {
             crc = if crc & 0x80 != 0 { crc << 1 ^ 0x07 } else { crc << 1 };
+            k += 1;
         }
-        crc
-    })
+        t[i] = crc;
+        i += 1;
+    }
+    t
+};
+/// CRC-16 tables for eight bytes at a time: `CRC16[k][b]` is byte `b` followed by `k` zero bytes.
+const CRC16: [[u16; 256]; 8] = {
+    let mut t = [[0u16; 256]; 8];
+    let mut i = 0;
+    while i < 256 {
+        let mut crc = (i as u16) << 8;
+        let mut k = 0;
+        while k < 8 {
+            crc = if crc & 0x8000 != 0 { crc << 1 ^ 0x8005 } else { crc << 1 };
+            k += 1;
+        }
+        t[0][i] = crc;
+        i += 1;
+    }
+    let mut k = 1;
+    while k < 8 {
+        let mut i = 0;
+        while i < 256 {
+            let prev = t[k - 1][i];
+            t[k][i] = prev << 8 ^ t[0][(prev >> 8) as usize];
+            i += 1;
+        }
+        k += 1;
+    }
+    t
+};
+
+fn crc8(bytes: &[u8]) -> u8 {
+    bytes.iter().fold(0u8, |crc, &b| CRC8[(crc ^ b) as usize])
 }
 
 fn crc16(bytes: &[u8]) -> u16 {
-    bytes.iter().fold(0u16, |mut crc, &b| {
-        crc ^= (b as u16) << 8;
-        for _ in 0..8 {
-            crc = if crc & 0x8000 != 0 { crc << 1 ^ 0x8005 } else { crc << 1 };
-        }
-        crc
-    })
+    let t = &CRC16;
+    let (chunks, rest) = bytes.as_chunks::<8>();
+    let crc = chunks.iter().fold(0u16, |crc, b| {
+        let [hi, lo] = crc.to_be_bytes();
+        t[7][(b[0] ^ hi) as usize] ^ t[6][(b[1] ^ lo) as usize] ^ t[5][b[2] as usize] ^ t[4][b[3] as usize] ^ t[3][b[4] as usize] ^ t[2][b[5] as usize] ^ t[1][b[6] as usize] ^ t[0][b[7] as usize]
+    });
+    rest.iter().fold(crc, |crc, &b| crc << 8 ^ t[0][((crc >> 8) as u8 ^ b) as usize])
 }
 
 #[cfg(test)]
@@ -353,6 +390,25 @@ mod tests {
         assert!(gone);
     }
 
+    /// Time to send a minute of stereo, per encoding, to a served stream nobody fetches yet. Not a check:
+    /// `cargo test --release -p nori-plugins --lib sink::tests::a_minute_sent -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn a_minute_sent() {
+        let samples: Vec<i16> = (0..44_100 * 2).map(|i| ((i * 7919) % 65_536) as i16).collect();
+        for encoding in [Encoding::Pcm16, Encoding::Flac] {
+            let sink = Sink::served(encoding);
+            sink.open(44_100, 2);
+            let start = std::time::Instant::now();
+            for _ in 0..60 {
+                for block in samples.chunks(4096) {
+                    sink.write(block);
+                }
+            }
+            println!("perf: {} a minute in {:.1} ms", encoding.extension(), start.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+
     #[test]
     fn flac_frames_are_whole_blocks_a_decoder_checks() {
         let (sink, other) = socket(Encoding::Flac);
@@ -381,5 +437,19 @@ mod tests {
         }
         // CRC-16/UMTS and CRC-8/SMBUS check values (FLAC's).
         assert_eq!((crc16(b"123456789"), crc8(b"123456789")), (0xfee8, 0xf4));
+        // Eight bytes at a time, as one at a time, at every length's remainder.
+        let bitwise = |bytes: &[u8]| {
+            bytes.iter().fold(0u16, |mut crc, &b| {
+                crc ^= (b as u16) << 8;
+                for _ in 0..8 {
+                    crc = if crc & 0x8000 != 0 { crc << 1 ^ 0x8005 } else { crc << 1 };
+                }
+                crc
+            })
+        };
+        let bytes: Vec<u8> = (0..300u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8).collect();
+        for len in 0..bytes.len() {
+            assert_eq!(crc16(&bytes[..len]), bitwise(&bytes[..len]), "{len} bytes");
+        }
     }
 }

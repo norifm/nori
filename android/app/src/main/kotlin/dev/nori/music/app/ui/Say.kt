@@ -272,6 +272,8 @@ class Say(private val r: Resources) {
     val autoeqCredit: String = r.getString(R.string.autoeq_credit)
     val autoeqCreditGraphic: String = r.getString(R.string.autoeq_credit_graphic)
     val devices: String = r.getString(R.string.devices)
+    val playingOn: String = r.getString(R.string.devices_title)
+    val otherDevices: String = r.getString(R.string.other_devices)
     val autoeqAuto: String = r.getString(R.string.autoeq_auto)
     val autoeqAutoDetail: String = r.getString(R.string.autoeq_auto_detail)
     val devicesNote: String = r.getString(R.string.devices_note)
@@ -406,6 +408,24 @@ class Say(private val r: Resources) {
     val pluginFromFile: String get() = r.getString(R.string.plugins_from_file)
     val pluginUnsigned: String get() = r.getString(R.string.plugins_unsigned)
     val providerChoose: String get() = r.getString(R.string.provider_choose)
+    /** Why a profile of plugin [name]'s kind doesn't open ([wait]). */
+    fun profileWaits(name: String, wait: dev.nori.music.ffi.ProfileWait): String = r.getString(
+        when (wait) {
+            dev.nori.music.ffi.ProfileWait.INSTALL -> R.string.profile_waits_install
+            dev.nori.music.ffi.ProfileWait.TURN_ON -> R.string.profile_waits_turn_on
+            dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> R.string.profile_waits_plugins_on
+            dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> R.string.profile_waits_no_plugins
+        },
+        name,
+    )
+    /** The button that opens it; none where nothing here can. */
+    fun profileWaitAction(name: String, wait: dev.nori.music.ffi.ProfileWait): String? = when (wait) {
+        dev.nori.music.ffi.ProfileWait.INSTALL -> r.getString(R.string.profile_wait_install, name)
+        dev.nori.music.ffi.ProfileWait.TURN_ON -> r.getString(R.string.profile_wait_turn_on, name)
+        dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> r.getString(R.string.profile_wait_plugins_on)
+        dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> null
+    }
+    val addServer: String get() = r.getString(R.string.settings_add_server)
     val providerGuest: String get() = r.getString(R.string.provider_guest)
     val providerSubsonicAbout: String get() = r.getString(R.string.provider_subsonic_about)
     val pluginsEvery: String get() = r.getString(R.string.plugins_every)
@@ -462,8 +482,6 @@ class Say(private val r: Resources) {
 
     /** "1 song", "12 songs". */
     fun songs(n: Int): String = counted(songsMade, R.plurals.songs, n)
-    /** "12 songs" whatever the count: how the album and playlist pages have always put it. */
-    fun songsAlwaysPlural(n: Int): String = r.getString(R.string.songs_always_plural, n)
     /** "1 album", "12 albums": under an artist's name. */
     fun albums(n: Int): String = counted(albumsMade, R.plurals.albums, n)
     fun releases(n: Int): String = r.getQuantityString(R.plurals.releases, n, n)
@@ -483,21 +501,20 @@ class Say(private val r: Resources) {
 
     // ---- captions ----
 
-    /** A list's caption: "12 songs · 48:10", every count plural when [alwaysPlural]. */
-    fun listCaption(count: Int, seconds: Long, alwaysPlural: Boolean): String =
-        (if (alwaysPlural) songsAlwaysPlural(count) else songs(count)) + " · " + Fmt.duration(seconds)
+    /** A list's caption: "12 songs · 48:10". */
+    fun listCaption(count: Int, seconds: Long): String = songs(count) + " · " + Fmt.duration(seconds)
 
     /** What is known of an album before its songs are: "2019 · 12 songs · 48:10", each part only if known. */
     fun albumHintCaption(year: Int, songCount: Int, seconds: Long): String = listOfNotNull(
         year.takeIf { it > 0 }?.toString(),
-        songCount.takeIf { it > 0 }?.let(::songsAlwaysPlural),
+        songCount.takeIf { it > 0 }?.let(::songs),
         seconds.takeIf { it > 0 }?.let(Fmt::duration),
     ).joinToString(" · ")
 
     /** An album page's caption once its songs are in: "2019 · 12 songs · 48:10 · FLAC 16/44.1 · explicit". */
     fun albumCaption(d: AlbumDetail): String = listOfNotNull(
         d.album.year.toInt().takeIf { it > 0 }?.toString(),
-        songsAlwaysPlural(d.songs.size),
+        songs(d.songs.size),
         Fmt.duration(d.seconds.toLong()),
         d.songs.firstOrNull()?.let(::quality),
         if (d.album.explicitStatus == dev.nori.music.ffi.model.ExplicitStatus.EXPLICIT) r.getString(R.string.caption_explicit) else null,
@@ -621,9 +638,9 @@ class Say(private val r: Resources) {
     private val menuGoToAlbum: String = r.getString(R.string.menu_go_to_album)
     private val menuGoToArtist: String = r.getString(R.string.menu_go_to_artist)
     private val menuSleepTimer: String = r.getString(R.string.menu_sleep_timer)
-    private val menuStartRadio: String = r.getString(R.string.menu_start_radio)
-    private val menuInstantMix: String = r.getString(R.string.menu_instant_mix)
+    private val menuRadio: String = r.getString(R.string.menu_radio)
     private val menuExclude: String = r.getString(R.string.menu_exclude_from_mixes)
+    private val menuInclude: String = r.getString(R.string.menu_include_in_mixes)
     private val menuShare: String = r.getString(R.string.menu_share_link)
 
     /** A line of the song menu, by what it does (`menus::song_menu`). */
@@ -640,12 +657,10 @@ class Say(private val r: Resources) {
         SongAction.AddToLibrary -> r.getString(R.string.menu_add_to_library)
         SongAction.Lyrics -> lyrics
         SongAction.SleepTimer -> menuSleepTimer
-        SongAction.StartRadio -> menuStartRadio
-        SongAction.InstantMix -> menuInstantMix
-        SongAction.ExcludeFromMixes -> menuExclude
+        SongAction.Radio -> menuRadio
+        is SongAction.ExcludeFromMixes -> if (a.on) menuExclude else menuInclude
         SongAction.Share -> menuShare
         SongAction.Details -> details
-        SongAction.StartJam -> r.getString(R.string.jam_start)
     }
 
     /** One of the sleep timer's choices: "30 minutes", "End of track", "After 3 songs", or "Off" (all zeros). */
@@ -866,9 +881,6 @@ class Say(private val r: Resources) {
     val deviceSettings: String get() = r.getString(R.string.device_settings)
     val allowBluetooth: String get() = r.getString(R.string.plugins_allow_bluetooth)
 
-    /** The mark on the device playing now, after its kind when it has one. */
-    fun devicePlayingNow(afterKind: Boolean): String = r.getString(if (afterKind) R.string.device_playing_now_after else R.string.device_playing_now)
-
     /** The words under a device's name in its sheet. */
     fun deviceIntro(kind: String?): String =
         r.getString(R.string.device_sheet_intro, if (kind == null) r.getString(R.string.device_this) else r.getString(R.string.device_this_kind, kind))
@@ -900,6 +912,7 @@ class Say(private val r: Resources) {
     val homeClosedToGuests: String get() = r.getString(R.string.home_closed_to_guests)
     val searchIsTheWayIn: String get() = r.getString(R.string.search_is_the_way_in)
     fun jamEnded(host: String?): String = host?.let { r.getString(R.string.jam_ended_by, it) } ?: r.getString(R.string.jam_ended)
+    val backInMixes: String get() = r.getString(R.string.said_back_in_mixes)
     val excludedFromMixes: String get() = r.getString(R.string.said_excluded_from_mixes)
     val serverDownloading: String get() = r.getString(R.string.said_server_downloading)
     val saidFailed: String get() = r.getString(R.string.said_failed)

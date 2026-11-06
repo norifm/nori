@@ -872,6 +872,10 @@ impl TransitionEngine {
                 Ending::Planned(_) | Ending::LetGo => true,
             };
         if !known {
+            // An analysis stored meanwhile (measured ahead, or as it came) ends the one made as it plays.
+            if matches!(self.analysis, Analysis::On { .. }) && self.current_id.as_ref() == Some(id) && host.wants_analysis(&id.song).is_none() {
+                self.analysis = Analysis::Off;
+            }
             self.flight.ending = self.plans.plan_for(host, &id.song).map_or(Ending::Gapless(now), Ending::Planned);
             if self.flight.plan_for.as_ref() != Some(id) {
                 self.flight.plan_for = Some(id.clone());

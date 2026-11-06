@@ -545,12 +545,31 @@ impl SkiaRenderer {
         context: &SkiaSharedContext,
         surface: Box<dyn Surface + 'static>,
     ) -> Self {
+        let partial = create_partial_renderer_state(Some(surface.as_ref()));
+        Self::with_surface(context, surface, partial)
+    }
+
+    /// NORI: a renderer over `surface` whose targets keep their pixels between frames: told a target
+    /// holds the last frame (a back buffer age of 1), it repaints only what changed.
+    #[cfg(feature = "wgpu-30")]
+    pub(crate) fn new_with_surface_retained(
+        context: &SkiaSharedContext,
+        surface: Box<dyn Surface + 'static>,
+    ) -> Self {
+        Self::with_surface(context, surface, Some(PartialRenderingState::default()))
+    }
+
+    fn with_surface(
+        context: &SkiaSharedContext,
+        surface: Box<dyn Surface + 'static>,
+        partial_rendering_state: Option<PartialRenderingState>,
+    ) -> Self {
         let renderer = Self::new_with_surface_factory(
             context,
             |_, _, _, _, _| {
                 Err("Skia renderer constructed with surface does not support dynamic surface re-creation".into())
             },
-            create_partial_renderer_state(Some(surface.as_ref())),
+            partial_rendering_state,
         );
         renderer.rendering_first_time.set(true);
         *renderer.surface.borrow_mut() = Some(surface);

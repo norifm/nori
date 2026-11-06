@@ -20,6 +20,8 @@ enum Command {
     Open(View),
     Do(Action),
     Panel(Panel),
+    /// Plays the album with this id from its first song.
+    PlayAlbum(String),
 }
 
 #[derive(Deserialize)]
@@ -75,6 +77,7 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
             });
             ui.invoke_player_changed();
         }
+        Command::PlayAlbum(id) => ui.invoke_play_album(id.into()),
         Command::Do(action) => match action {
             Action::Play if !ui.get_playing() => ui.invoke_toggle(),
             Action::Pause if ui.get_playing() => ui.invoke_toggle(),

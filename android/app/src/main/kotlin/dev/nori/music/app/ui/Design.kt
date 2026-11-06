@@ -755,24 +755,40 @@ private fun androidx.compose.material3.ColorScheme.dressedIn(l: Look): androidx.
 }
 
 /**
- * Status bar icons follow the colour of the page they sit on, and go back to the app's when it leaves.
- * The look says which (a light page gets dark icons); a page that is changing colour is followed as it
- * goes, without recomposing anything.
+ * Who the status bar icons follow: the page or player that last came up and is still here, else the app.
+ * Asked each time rather than remembered, so a theme changed under a page holds when that page goes.
  */
+@androidx.compose.runtime.Stable
+class StatusBarLooks {
+    var app: Look? by mutableStateOf(null)
+    val over = androidx.compose.runtime.mutableStateListOf<androidx.compose.runtime.State<Look>>()
+    val top: Look? get() = over.lastOrNull()?.value ?: app
+}
+
+val LocalStatusBarLooks = androidx.compose.runtime.staticCompositionLocalOf { StatusBarLooks() }
+
+/** Keeps the window's status bar icons on [looks]' top one (a light page gets dark icons), as it changes colour too. */
 @Composable
-fun SystemBarIcons(look: Look) {
+fun StatusBarIconsFollow(looks: StatusBarLooks) {
     val view = androidx.compose.ui.platform.LocalView.current
     val controller = remember(view) {
         (view.context as? android.app.Activity)?.window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
     }
-    androidx.compose.runtime.DisposableEffect(controller) {
-        val before = controller?.isAppearanceLightStatusBars
-        onDispose { if (before != null) controller.isAppearanceLightStatusBars = before }
-    }
-    LaunchedEffect(controller, look) {
+    LaunchedEffect(controller, looks) {
         if (controller == null) return@LaunchedEffect
-        androidx.compose.runtime.snapshotFlow { look.argb(CoverLook.STATUS_LIGHT) != 0 }
-            .collect { controller.isAppearanceLightStatusBars = it }
+        androidx.compose.runtime.snapshotFlow { looks.top?.let { it.argb(CoverLook.STATUS_LIGHT) != 0 } }
+            .collect { light -> if (light != null) controller.isAppearanceLightStatusBars = light }
+    }
+}
+
+/** Status bar icons follow [look] for as long as this is composed. */
+@Composable
+fun SystemBarIcons(look: Look) {
+    val looks = LocalStatusBarLooks.current
+    val mine = androidx.compose.runtime.rememberUpdatedState(look)
+    androidx.compose.runtime.DisposableEffect(looks) {
+        looks.over += mine
+        onDispose { looks.over -= mine }
     }
 }
 

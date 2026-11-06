@@ -124,6 +124,7 @@ class Nori private constructor(private val context: Context) {
     }
 
     val library = Library(::core, ::client)
+    val downloads = Downloads(context, ::core, ::client, { analyses }, lazySources, settings)
     val dac = BitPerfect(context)
     private val pluginScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
     val outputs = Outputs(context, settings.core, { name, connected -> pluginScope.launch { plugins.device(name, connected) } }) { plugins.hears(dev.nori.music.ffi.plugins.Hook.DEVICE_CONNECTED) }
@@ -144,8 +145,6 @@ class Nori private constructor(private val context: Context) {
         _reportedRules.value?.takeIf { it.first == settings.value.activeServerId }?.second
             ?: plugins.kinds.rulesOf(settings.value.server ?: dev.nori.music.settings.newServer(""), remotes.isGuest())
     val player = PlayerConnection(context, this)
-    /** Last of what its thread reaches (the core, through the plugins and the rules): it starts the thread as it is built. */
-    val downloads = Downloads(context, ::core, ::client, { analyses }, lazySources, settings)
 
     /**
      * Joins the jam an invite [link] names (the core's `jam_join`, which knows this phone's own invites):
@@ -312,6 +311,9 @@ class Nori private constructor(private val context: Context) {
     suspend fun remindsToSignIn(): Boolean = withContext(Dispatchers.IO) { client.remindsToSignIn() }
 
     suspend fun stopReminding() = withContext(Dispatchers.IO) { client.stopReminding() }
+
+    // Last: the downloads thread opens the core, whose plugins may call back into any field above.
+    init { downloads.start() }
 
     companion object {
         @Volatile private var instance: Nori? = null

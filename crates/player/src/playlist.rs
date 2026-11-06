@@ -1,7 +1,7 @@
 //! The queue: songs in list order, play order under shuffle, hand-added marks, current song, repeat,
 //! and the offline bridge. Every change is made here first and mirrored to the platform's player.
 
-use crate::queue::{place, shuffle, shuffle_around};
+use crate::queue::{is_permutation, place, shuffle, shuffle_around};
 
 /// How a song came into the queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -259,7 +259,7 @@ impl Playlist {
             }
             (_, None) => Some(0),
         };
-        self.order = self.cur.filter(|_| shuffling).map(|c| shuffle_around(n, c, &vec![false; n], seed));
+        self.order = self.cur.filter(|_| shuffling).map(|c| shuffle_around(n, c, |_| false, seed));
         self.rev += 1;
         self.cur
     }
@@ -269,8 +269,7 @@ impl Playlist {
     pub fn set_in_order(&mut self, ids: Vec<String>, start: usize, order: Vec<usize>, seed: u64) -> Option<usize> {
         let n = ids.len();
         let at = self.set(ids, Some(start), true, seed);
-        let mut seen = vec![false; n];
-        if let Some(o) = self.order.as_mut().filter(|_| order.len() == n && order.iter().all(|&i| i < n && !std::mem::replace(&mut seen[i], true))) {
+        if let Some(o) = self.order.as_mut().filter(|_| is_permutation(&order, n)) {
             *o = order;
         }
         at
@@ -287,8 +286,7 @@ impl Playlist {
             }
             return at;
         };
-        let flags: Vec<bool> = self.hand.iter().map(|h| h.by_user()).collect();
-        let p = place(self.ids.len(), cur, &flags, self.order.as_deref(), hand == Hand::Last, count);
+        let p = place(self.ids.len(), cur, |i| self.hand[i].by_user(), self.order.as_deref(), hand == Hand::Last, count);
         self.splice(p.at, ids, hand);
         if let Some(o) = p.order {
             self.order = Some(o);
@@ -462,9 +460,8 @@ impl Playlist {
         if on == self.shuffling() {
             return;
         }
-        let flags: Vec<bool> = self.hand.iter().map(|h| h.by_user()).collect();
         self.order = match (on && !self.ids.is_empty(), self.cur) {
-            (true, Some(c)) => Some(shuffle_around(self.ids.len(), c, &flags, seed)),
+            (true, Some(c)) => Some(shuffle_around(self.ids.len(), c, |i| self.hand[i].by_user(), seed)),
             (true, None) => {
                 let mut all: Vec<usize> = (0..self.ids.len()).collect();
                 shuffle(&mut all, seed);
@@ -479,8 +476,7 @@ impl Playlist {
     /// order kept, when it does not fit the list.
     pub fn reorder(&mut self, order: Vec<usize>) -> bool {
         let n = self.ids.len();
-        let mut seen = vec![false; n];
-        let Some(o) = self.order.as_mut().filter(|_| order.len() == n && order.iter().all(|&i| i < n && !std::mem::replace(&mut seen[i], true))) else {
+        let Some(o) = self.order.as_mut().filter(|_| is_permutation(&order, n)) else {
             return false;
         };
         *o = order;

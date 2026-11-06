@@ -50,8 +50,8 @@ pub const SOFT_TO: f32 = 1.0 - SAMPLE_SHARE * 0.55;
 
 /// Black shade under the status bar (alpha at the top), gone at [`STATUS_SHADE_TO`] of the height, so
 /// white icons read on pale covers.
-pub const STATUS_SHADE: f32 = 0.30;
-pub const STATUS_SHADE_TO: f32 = 0.16;
+pub const STATUS_SHADE: f32 = 0.50;
+pub const STATUS_SHADE_TO: f32 = 0.20;
 
 /// Album artwork dissolve: clear until `[0]`, then `HERO_EDGE`, `HERO_MID` and the page colour. Ends
 /// on the page colour inside the artwork so parallax never exposes a seam.

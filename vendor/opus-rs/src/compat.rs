@@ -1,0 +1,377 @@
+//! no_std / std compatibility shims — zero external dependencies.
+//!
+//! Provides:
+//! * [`OnceCell`] — a dependency-free, **heap-free** lazy cell backed by a 3-state
+//!   atomic and inline `UnsafeCell<MaybeUninit<T>>` storage. The value is
+//!   constructed exactly once into the inline storage, so no global allocator is
+//!   required. Replaces `std::sync::LazyLock`.
+//! * [`x86_has_avx`] / [`x86_has_avx2`] — x86 SIMD availability probes. Under the
+//!   `std` feature these use the OS-backed `is_x86_feature_detected!`; without `std`
+//!   they fall back to compile-time `cfg!(target_feature = ...)`.
+
+use core::cell::UnsafeCell;
+use core::hint;
+use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicU8, Ordering};
+
+// ---------------------------------------------------------------------------
+// OnceCell (heap-free lazy initialization)
+// ---------------------------------------------------------------------------
+
+/// Lazily-initialized value stored in inline (non-heap) storage.
+///
+/// State machine encoded in [`AtomicU8`]:
+/// * `0` — uninitialized, idle
+/// * `1` — a thread is currently initializing
+/// * `2` — initialization complete; the value is live
+///
+/// The stored value is constructed exactly once into the embedded
+/// `MaybeUninit<T>` and never mutated afterwards. Publication uses `Release`
+/// ordering so all field writes are visible to any reader that observes state `2`
+/// with `Acquire` ordering.
+pub struct OnceCell<T: Sync> {
+    state: AtomicU8,
+    storage: UnsafeCell<MaybeUninit<T>>,
+}
+
+// SAFETY: `OnceCell` hands out shared `&T` references to a value that is
+// constructed once and never mutated. `T: Sync` makes shared access sound. The
+// `UnsafeCell` is only ever written by the single initializer before publication.
+unsafe impl<T: Sync> Sync for OnceCell<T> {}
+
+impl<T: Sync> OnceCell<T> {
+    /// Create a new, uninitialized cell. `const`-constructible so it can live in a
+    /// `static`.
+    pub const fn new() -> Self {
+        Self {
+            state: AtomicU8::new(0),
+            storage: UnsafeCell::new(MaybeUninit::uninit()),
+        }
+    }
+
+    /// Return a shared reference to the value, initializing it on first access.
+    ///
+    /// `init` is invoked at most once across all threads. It must not panic: a
+    /// panic would leave the cell in the `initializing` (1) state and subsequent
+    /// callers would spin indefinitely. In practice the only initializer used by
+    /// this crate (`CeltMode::new_48000_960_120`) is infallible.
+    pub fn get(&self, init: impl FnOnce() -> T) -> &T {
+        if self.state.load(Ordering::Acquire) == 2 {
+            // SAFETY: initialization is complete; storage holds a valid `T`.
+            return unsafe { (*self.storage.get()).assume_init_ref() };
+        }
+        self.get_slow(init)
+    }
+
+    #[cold]
+    fn get_slow(&self, init: impl FnOnce() -> T) -> &T {
+        // Spin until we either claim the initializer slot (0 -> 1) or observe a
+        // finished initialization.
+        while self
+            .state
+            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            if self.state.load(Ordering::Acquire) == 2 {
+                // SAFETY: another thread finished initialization.
+                return unsafe { (*self.storage.get()).assume_init_ref() };
+            }
+            hint::spin_loop();
+        }
+
+        // We claimed the slot; construct into the inline storage and publish.
+        // SAFETY: we are the sole writer (state == 1); no reader can observe the
+        // storage until we publish state == 2 with Release ordering.
+        unsafe {
+            (*self.storage.get()).write(init());
+        }
+        self.state.store(2, Ordering::Release);
+        // SAFETY: initialization is complete and published.
+        unsafe { (*self.storage.get()).assume_init_ref() }
+    }
+}
+
+impl<T: Sync> Default for OnceCell<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// No-std slice sorting (`alloc` provides `[T]::sort*` as inherent methods; since
+// this crate does not depend on `alloc`, we provide small insertion sorts here).
+// ---------------------------------------------------------------------------
+
+/// Sort a slice by a comparator (insertion sort). Intended for the small slices
+/// used in this crate (energy bands, NLSF coefficients, median-of-3/5); O(n²) is
+/// fine because `n` is tiny.
+pub fn sort_by<T>(slice: &mut [T], mut cmp: impl FnMut(&T, &T) -> core::cmp::Ordering) {
+    for i in 1..slice.len() {
+        let mut j = i;
+        while j > 0 && cmp(&slice[j - 1], &slice[j]) == core::cmp::Ordering::Greater {
+            slice.swap(j - 1, j);
+            j -= 1;
+        }
+    }
+}
+
+/// Sort a slice in ascending order (`Ord` version). See [`sort_by`].
+pub fn sort<T: Ord>(slice: &mut [T]) {
+    sort_by(slice, |a, b| a.cmp(b));
+}
+
+// ---------------------------------------------------------------------------
+// x86 SIMD feature detection
+// ---------------------------------------------------------------------------
+
+/// Whether the `avx` x86 feature is usable.
+///
+/// * With the `std` feature: OS-backed runtime detection via CPUID.
+/// * Without `std`: compile-time detection (`cfg!(target_feature = "avx")`); build
+///   with e.g. `RUSTFLAGS="-C target-feature=+avx"` to enable it.
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+pub fn x86_has_avx() -> bool {
+    std::arch::is_x86_feature_detected!("avx")
+}
+#[cfg(not(all(feature = "std", target_arch = "x86_64")))]
+#[allow(dead_code)]
+pub fn x86_has_avx() -> bool {
+    cfg!(target_feature = "avx")
+}
+
+/// Whether the `avx2` x86 feature is usable. See [`x86_has_avx`].
+#[cfg(all(feature = "std", target_arch = "x86_64"))]
+pub fn x86_has_avx2() -> bool {
+    std::arch::is_x86_feature_detected!("avx2")
+}
+#[cfg(not(all(feature = "std", target_arch = "x86_64")))]
+#[allow(dead_code)]
+pub fn x86_has_avx2() -> bool {
+    cfg!(target_feature = "avx2")
+}
+
+// ---------------------------------------------------------------------------
+// Float math (no_std needs libm for transcendentals / rounding)
+// ---------------------------------------------------------------------------
+
+#[cfg(not(feature = "std"))]
+#[cfg(not(feature = "libm"))]
+compile_error!(
+    "opus-rs no_std builds require the `libm` feature (or the `std` feature). \
+     Set features = [\"libm\"] (or re-enable default-features)."
+);
+
+/// Extension trait giving `f32`/`f64` the usual math methods (`sqrt`, `sin`, ...)
+/// under `no_std` by forwarding to `libm`. Under the `std` feature the inherent
+/// methods take priority and this trait is simply unused.
+///
+/// Bring it into scope with `use crate::compat::Math;` in any module that calls
+/// these methods so the same `x.sqrt()` syntax works in both build modes.
+#[cfg(all(not(feature = "std"), feature = "libm"))]
+#[allow(dead_code)]
+pub trait Math {
+    fn sqrt(self) -> Self;
+    fn floor(self) -> Self;
+    fn ceil(self) -> Self;
+    fn round(self) -> Self;
+    fn trunc(self) -> Self;
+    fn fract(self) -> Self;
+    fn abs(self) -> Self;
+    fn ln(self) -> Self;
+    fn log2(self) -> Self;
+    fn log10(self) -> Self;
+    fn log(self, base: Self) -> Self;
+    fn exp(self) -> Self;
+    fn exp2(self) -> Self;
+    fn powf(self, n: Self) -> Self;
+    fn powi(self, n: i32) -> Self;
+    fn sin(self) -> Self;
+    fn cos(self) -> Self;
+    fn tan(self) -> Self;
+    fn atan2(self, other: Self) -> Self;
+    fn atan(self) -> Self;
+    fn asin(self) -> Self;
+    fn acos(self) -> Self;
+    fn sinh(self) -> Self;
+    fn cosh(self) -> Self;
+    fn tanh(self) -> Self;
+    fn cbrt(self) -> Self;
+    fn hypot(self, other: Self) -> Self;
+    fn mul_add(self, a: Self, b: Self) -> Self;
+}
+
+#[cfg(all(not(feature = "std"), feature = "libm"))]
+impl Math for f32 {
+    fn sqrt(self) -> Self {
+        libm::sqrtf(self)
+    }
+    fn floor(self) -> Self {
+        libm::floorf(self)
+    }
+    fn ceil(self) -> Self {
+        libm::ceilf(self)
+    }
+    fn round(self) -> Self {
+        libm::roundf(self)
+    }
+    fn trunc(self) -> Self {
+        libm::truncf(self)
+    }
+    fn fract(self) -> Self {
+        self - libm::truncf(self)
+    }
+    fn abs(self) -> Self {
+        libm::fabsf(self)
+    }
+    fn ln(self) -> Self {
+        libm::logf(self)
+    }
+    fn log2(self) -> Self {
+        libm::log2f(self)
+    }
+    fn log10(self) -> Self {
+        libm::log10f(self)
+    }
+    fn log(self, base: Self) -> Self {
+        libm::logf(self) / libm::logf(base)
+    }
+    fn exp(self) -> Self {
+        libm::expf(self)
+    }
+    fn exp2(self) -> Self {
+        libm::exp2f(self)
+    }
+    fn powf(self, n: Self) -> Self {
+        libm::powf(self, n)
+    }
+    fn powi(self, n: i32) -> Self {
+        libm::powf(self, n as Self)
+    }
+    fn sin(self) -> Self {
+        libm::sinf(self)
+    }
+    fn cos(self) -> Self {
+        libm::cosf(self)
+    }
+    fn tan(self) -> Self {
+        libm::tanf(self)
+    }
+    fn atan2(self, other: Self) -> Self {
+        libm::atan2f(self, other)
+    }
+    fn atan(self) -> Self {
+        libm::atanf(self)
+    }
+    fn asin(self) -> Self {
+        libm::asinf(self)
+    }
+    fn acos(self) -> Self {
+        libm::acosf(self)
+    }
+    fn sinh(self) -> Self {
+        libm::sinhf(self)
+    }
+    fn cosh(self) -> Self {
+        libm::coshf(self)
+    }
+    fn tanh(self) -> Self {
+        libm::tanhf(self)
+    }
+    fn cbrt(self) -> Self {
+        libm::cbrtf(self)
+    }
+    fn hypot(self, other: Self) -> Self {
+        libm::hypotf(self, other)
+    }
+    fn mul_add(self, a: Self, b: Self) -> Self {
+        libm::fmaf(self, a, b)
+    }
+}
+
+#[cfg(all(not(feature = "std"), feature = "libm"))]
+impl Math for f64 {
+    fn sqrt(self) -> Self {
+        libm::sqrt(self)
+    }
+    fn floor(self) -> Self {
+        libm::floor(self)
+    }
+    fn ceil(self) -> Self {
+        libm::ceil(self)
+    }
+    fn round(self) -> Self {
+        libm::round(self)
+    }
+    fn trunc(self) -> Self {
+        libm::trunc(self)
+    }
+    fn fract(self) -> Self {
+        self - libm::trunc(self)
+    }
+    fn abs(self) -> Self {
+        libm::fabs(self)
+    }
+    fn ln(self) -> Self {
+        libm::log(self)
+    }
+    fn log2(self) -> Self {
+        libm::log2(self)
+    }
+    fn log10(self) -> Self {
+        libm::log10(self)
+    }
+    fn log(self, base: Self) -> Self {
+        libm::log(self) / libm::log(base)
+    }
+    fn exp(self) -> Self {
+        libm::exp(self)
+    }
+    fn exp2(self) -> Self {
+        libm::exp2(self)
+    }
+    fn powf(self, n: Self) -> Self {
+        libm::pow(self, n)
+    }
+    fn powi(self, n: i32) -> Self {
+        libm::pow(self, n as Self)
+    }
+    fn sin(self) -> Self {
+        libm::sin(self)
+    }
+    fn cos(self) -> Self {
+        libm::cos(self)
+    }
+    fn tan(self) -> Self {
+        libm::tan(self)
+    }
+    fn atan2(self, other: Self) -> Self {
+        libm::atan2(self, other)
+    }
+    fn atan(self) -> Self {
+        libm::atan(self)
+    }
+    fn asin(self) -> Self {
+        libm::asin(self)
+    }
+    fn acos(self) -> Self {
+        libm::acos(self)
+    }
+    fn sinh(self) -> Self {
+        libm::sinh(self)
+    }
+    fn cosh(self) -> Self {
+        libm::cosh(self)
+    }
+    fn tanh(self) -> Self {
+        libm::tanh(self)
+    }
+    fn cbrt(self) -> Self {
+        libm::cbrt(self)
+    }
+    fn hypot(self, other: Self) -> Self {
+        libm::hypot(self, other)
+    }
+    fn mul_add(self, a: Self, b: Self) -> Self {
+        libm::fma(self, a, b)
+    }
+}

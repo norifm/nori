@@ -74,21 +74,8 @@ function item(a: MenuAction, s: Song): Item | null {
       return { label: W.goToArtist(a.name ?? "", !!a.named), icon: "user", run: () => ((ui.full = false), go("artist", a.id!)) };
     case "Lyrics":
       return { label: W.lyrics, icon: "quote-message", run: () => (ui.lyricsInfo = true) };
-    case "StartRadio":
-      return { label: W.startRadio, icon: "antenna-signal", run: () => player.mix(s, true) };
-    case "InstantMix":
-      return { label: W.instantMix, icon: "sparks", run: () => player.mix(s, false) };
-    case "StartJam":
-      return {
-        label: W.startJam,
-        icon: "community",
-        run: async () => {
-          await player.soundCard();
-          await remote.act(() => ask("jam_start", JSON.stringify([s]), 0));
-          await player.refresh();
-          ui.show("devices");
-        },
-      };
+    case "Radio":
+      return { label: W.radio, icon: "antenna-signal", run: () => player.radio(s) };
     default:
       return null;
   }

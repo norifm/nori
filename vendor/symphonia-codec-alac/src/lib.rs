@@ -1,0 +1,655 @@
+// Symphonia
+// Copyright (c) 2019-2026 The Project Symphonia Developers.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+#![warn(rust_2018_idioms)]
+#![forbid(unsafe_code)]
+// The following lints are allowed in all Symphonia crates. Please see clippy.toml for their
+// justification.
+#![allow(clippy::comparison_chain)]
+#![allow(clippy::excessive_precision)]
+#![allow(clippy::identity_op)]
+#![allow(clippy::manual_range_contains)]
+// Disable to better express the specification.
+#![allow(clippy::collapsible_else_if)]
+
+use std::cmp::min;
+
+use symphonia_core::audio::{
+    AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef,
+    layouts,
+};
+use symphonia_core::codecs::CodecInfo;
+use symphonia_core::codecs::audio::well_known::CODEC_ID_ALAC;
+use symphonia_core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
+use symphonia_core::codecs::audio::{AudioDecoder, FinalizeResult};
+use symphonia_core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
+use symphonia_core::errors::{Result, decode_error, unsupported_error};
+use symphonia_core::packet::PacketRef;
+use symphonia_core::support_audio_codec;
+
+use symphonia_common::apple::audio::alac::MagicCookie;
+
+// NORI: packets are read through `bits::Bits`, not symphonia_core's `BitReaderLtr`.
+mod bits;
+
+use bits::{Bits, Golomb};
+
+/// Single Channel Element (SCE) tag.
+const ALAC_ELEM_TAG_SCE: u32 = 0;
+/// Channel Pair Element (CPE) tag.
+const ALAC_ELEM_TAG_CPE: u32 = 1;
+/// Coupling Channel Element CCE tag.
+const ALAC_ELEM_TAG_CCE: u32 = 2;
+/// LFE Channel Element (LFE) tag.
+const ALAC_ELEM_TAG_LFE: u32 = 3;
+/// Data Stream Element (DSE) tag.
+const ALAC_ELEM_TAG_DSE: u32 = 4;
+/// Program Control Element (PCE) tag.
+const ALAC_ELEM_TAG_PCE: u32 = 5;
+/// Fill Element (FIL) tag.
+const ALAC_ELEM_TAG_FIL: u32 = 6;
+/// Frame End Element (END) tag.
+const ALAC_ELEM_TAG_END: u32 = 7;
+
+/// Given the current ALAC channel layout, this function will return a mappings of an ALAC
+/// channel number (the index into the array) to a Symphonia `AudioBuffer` channel index.
+fn map_channels(channels: &Channels) -> [u8; 8] {
+    match *channels {
+        layouts::CHANNEL_LAYOUT_MONO => [0, 0, 0, 0, 0, 0, 0, 0],
+        layouts::CHANNEL_LAYOUT_STEREO => [0, 1, 0, 0, 0, 0, 0, 0],
+        layouts::CHANNEL_LAYOUT_MPEG_3P0_B => [2, 0, 1, 0, 0, 0, 0, 0],
+        layouts::CHANNEL_LAYOUT_MPEG_4P0_B => [2, 0, 1, 3, 0, 0, 0, 0],
+        layouts::CHANNEL_LAYOUT_MPEG_5P0_D => [2, 0, 1, 3, 4, 0, 0, 0],
+        layouts::CHANNEL_LAYOUT_MPEG_5P1_D => [2, 0, 1, 4, 5, 3, 0, 0],
+        layouts::CHANNEL_LAYOUT_AAC_6P1 => [2, 0, 1, 5, 6, 4, 3, 0],
+        layouts::CHANNEL_LAYOUT_MPEG_7P1_B => [2, 4, 5, 0, 1, 6, 7, 3],
+        _ => unreachable!(),
+    }
+}
+
+#[derive(Debug)]
+struct ElementChannel {
+    bps: u32,
+    kb: u32,
+    mb: u32,
+    mode: u32,
+    shift: u32,
+    pb_factor: u32,
+    lpc_order: u32,
+    lpc_coeffs: [i32; 32],
+}
+
+impl ElementChannel {
+    fn try_read(
+        bs: &mut Bits<'_>,
+        config: &MagicCookie,
+        bps: u8,
+    ) -> Result<ElementChannel> {
+        let mode = bs.read_bits_leq32(4)?;
+        let shift = bs.read_bits_leq32(4)?;
+        let pb_factor = (bs.read_bits_leq32(3)? * u32::from(config.pb)) >> 2;
+        let lpc_order = bs.read_bits_leq32(5)?;
+
+        // Read the predictor coefficients.
+        let mut lpc_coeffs = [0; 32];
+
+        for coeff in &mut lpc_coeffs[..lpc_order as usize] {
+            *coeff = bs.read_bits_leq32_signed(16)?;
+        }
+
+        Ok(ElementChannel {
+            bps: u32::from(bps),
+            kb: u32::from(config.kb),
+            mb: u32::from(config.mb),
+            mode,
+            shift,
+            pb_factor,
+            lpc_order,
+            lpc_coeffs,
+        })
+    }
+
+    /// NORI: reads the residuals (`Bits::read_residuals`) and predicts the samples from them. In
+    /// mode 0 with orders 1 to 8, those encoders choose, each sample is predicted as its residual
+    /// is read (`decode_order`).
+    fn decode(&mut self, bs: &mut Bits<'_>, out: &mut [i32]) -> Result<()> {
+        let golomb = Golomb { mb: self.mb, kb: self.kb, pb_factor: self.pb_factor, bps: self.bps };
+        let (coeffs, shift, clip) = (&self.lpc_coeffs, self.shift, 32 - self.bps);
+        let read = match (self.mode, self.lpc_order) {
+            (0, 1) => decode_order::<1>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 2) => decode_order::<2>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 3) => decode_order::<3>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 4) => decode_order::<4>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 5) => decode_order::<5>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 6) => decode_order::<6>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 7) => decode_order::<7>(bs, &golomb, coeffs, shift, clip, out),
+            (0, 8) => decode_order::<8>(bs, &golomb, coeffs, shift, clip, out),
+            _ => {
+                let mut slots = out.iter_mut();
+                bs.read_residuals(slots.len(), &golomb, |res| {
+                    if let Some(slot) = slots.next() {
+                        *slot = res;
+                    }
+                })?;
+                return self.predict(out);
+            }
+        };
+        Ok(read?)
+    }
+
+    fn predict(&mut self, out: &mut [i32]) -> Result<()> {
+        // Modes other than 0 and 15 are invalid.
+        if self.mode > 0 && self.mode < 15 {
+            return decode_error("alac: invalid mode");
+        }
+
+        // An order of 0 indicates no prediction is done (the residuals are the samples).
+        // If the output buffer is empty, there is nothing to predict.
+        if self.lpc_order == 0 || out.is_empty() {
+            return Ok(());
+        }
+
+        // Decoding is performed on signed 32-bit numbers, however, the actual predicted samples
+        // have a bit-width of `pred_bits`. Therefore, the top `32 - pred_bits` bits should be
+        // clipped.
+        let num_clip_bits = 32 - self.bps;
+
+        // An order of 31, or a mode of 15, are special cases where the predictor runs twice. The
+        // first-pass uses a first-order prediction. The second pass is then the regular prediction
+        // using the coefficients from the bitstream.
+        if self.lpc_order == 31 || self.mode == 15 {
+            for i in 1..out.len() {
+                out[i] = clip_msbs(out[i].wrapping_add(out[i - 1]), num_clip_bits);
+            }
+        }
+
+        let order = self.lpc_order as usize;
+
+        // Process warm-up samples.
+        // The loop is bounded by `out.len()` to prevent out-of-bounds access if the frame is
+        // shorter than the LPC order.
+        for i in 1..min(1 + order, out.len()) {
+            out[i] = clip_msbs(out[i].wrapping_add(out[i - 1]), num_clip_bits);
+        }
+
+        // Do the prediction.
+        //
+        // TODO: Orders for 4 and 8 are special-cased in the reference decoder. Consider using
+        // optimized versions for those cases like the FLAC decoder does.
+        for i in 1 + order..out.len() {
+            // Value of the output sample before prediction (the residual or difference).
+            let mut res = out[i];
+
+            // Value of the sample preceeding the first past sample.
+            let past0 = out[i - order - 1];
+
+            // Run the FIR filter.
+            let sum = self.lpc_coeffs[..order]
+                .iter()
+                .rev()
+                .zip(&out[i - order..i])
+                .map(|(&coeff, &s)| coeff.wrapping_mul(s - past0))
+                .fold(0i32, |sum, s| sum.wrapping_add(s));
+
+            // Rewrite `1 << (self.shift - 1)` as `(1 << self.shift) >> 1` to prevent overflowing
+            // when shift is 0.
+            let val = (sum.wrapping_add((1 << self.shift) >> 1)) >> self.shift;
+            out[i] = clip_msbs(out[i].wrapping_add(past0).wrapping_add(val), num_clip_bits);
+
+            // Adjust the coefficients if the initial value of the residual was not 0.
+            if res != 0 {
+                let iter =
+                    self.lpc_coeffs[..order].iter_mut().rev().zip(&out[i - order..i]).enumerate();
+
+                // Note the subtle change in operations and signs for the following two cases.
+                if res > 0 {
+                    // Positive residual case.
+                    for (j, (coeff, &sample)) in iter {
+                        let val = past0 - sample;
+                        let sign = val.signum();
+
+                        *coeff -= sign;
+
+                        res -= (1 + j as i32) * ((sign * val) >> self.shift);
+
+                        if res <= 0 {
+                            break;
+                        }
+                    }
+                }
+                else {
+                    // Negative residual case.
+                    for (j, (coeff, &sample)) in iter {
+                        let val = past0 - sample;
+                        let sign = val.signum();
+
+                        *coeff += sign;
+
+                        res -= (1 + j as i32) * ((-sign * val) >> self.shift);
+
+                        if res >= 0 {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// NORI: reads a channel's residuals and, in mode 0 with order `N`, predicts each sample as its
+/// residual is read, as `predict` does: the coefficients and the last sample stay in registers,
+/// and the coefficients adapt without branching on the residual.
+#[inline(always)]
+fn decode_order<const N: usize>(
+    bs: &mut Bits<'_>,
+    golomb: &Golomb,
+    coeffs: &[i32; 32],
+    shift: u32,
+    clip: u32,
+    out: &mut [i32],
+) -> std::io::Result<()> {
+    // `c[j]` weighs the `j`th oldest of the `N` samples before the one predicted.
+    let mut c: [i32; N] = std::array::from_fn(|j| coeffs[N - 1 - j]);
+    let half: i32 = (1 << shift) >> 1;
+    let (mut i, mut last) = (0, 0i32);
+    // Inlined into the loop reading the residuals, which keeps this state in registers.
+    bs.read_residuals(out.len(), golomb, #[inline(always)] |res| {
+        let next = if i > N {
+            // The sample before the `N` past ones, and the past ones' differences from it.
+            let older = &out[i - N - 1..i];
+            let top = older[0];
+            let diff: [i32; N] = std::array::from_fn(|j| top.wrapping_sub(if j + 1 < N { older[j + 1] } else { last }));
+            let mut sum = half;
+            for j in 0..N {
+                sum = sum.wrapping_sub(c[j].wrapping_mul(diff[j]));
+            }
+            // From the oldest, each coefficient steps by its difference's sign, against the
+            // residual's, until the residual less the steps' weighed differences is no longer of
+            // its sign.
+            let neg = res >> 31;
+            let mut live = -i32::from(res != 0);
+            let mut left = res;
+            for j in 0..N {
+                let sign = (diff[j] >> 31) + i32::from(diff[j] > 0);
+                let step = (sign ^ neg).wrapping_sub(neg);
+                c[j] = c[j].wrapping_sub(step & live);
+                left = left.wrapping_sub((j as i32 + 1).wrapping_mul(step.wrapping_mul(diff[j]) >> shift));
+                live &= -i32::from((left ^ neg) > neg);
+            }
+            clip_msbs(res.wrapping_add(top).wrapping_add(sum >> shift), clip)
+        }
+        else if i == 0 {
+            // The warm-up: the first sample is its residual, each of the next N adds the one before.
+            res
+        }
+        else {
+            clip_msbs(res.wrapping_add(last), clip)
+        };
+        if let Some(slot) = out.get_mut(i) {
+            *slot = next;
+        }
+        (i, last) = (i + 1, next);
+    })
+}
+
+/// Apple Lossless Audio Codec (ALAC) decoder.
+pub struct AlacDecoder {
+    /// Codec paramters.
+    params: AudioCodecParameters,
+    /// A temporary buffer to store the tail bits while decoding an element with a bit-shift > 0. If
+    /// `config.num_channels` > 1, then this buffer must be 2x the frame length.
+    tail_bits: Vec<u16>,
+    /// ALAC codec-specific configuration.
+    config: MagicCookie,
+    /// Output buffer.
+    buf: AudioBuffer<i32>,
+}
+
+impl AlacDecoder {
+    pub fn try_new(params: &AudioCodecParameters, _opts: &AudioDecoderOptions) -> Result<Self> {
+        // Verify codec ID.
+        if params.codec != CODEC_ID_ALAC {
+            return unsupported_error("alac: invalid codec");
+        }
+
+        // Read the config (magic cookie).
+        let cookie = if let Some(extra_data) = &params.extra_data {
+            MagicCookie::read(extra_data)?
+        }
+        else {
+            return unsupported_error("alac: missing extra data");
+        };
+
+        // Limit the frame length to a reasonable value to prevent a single, 4-byte integer
+        // value from crashing the entire application via memory exhaustion.
+        const STANDARD_FRAME_SIZE: u32 = 4096;
+        if cookie.frame_length > STANDARD_FRAME_SIZE * 16 {
+            return unsupported_error("common (alac): frame length too large");
+        }
+
+        let spec = AudioSpec::new(cookie.sample_rate, cookie.channels.clone());
+        let buf = AudioBuffer::new(spec, cookie.frame_length as usize);
+
+        let max_tail_values = min(2, cookie.num_channels) as usize * cookie.frame_length as usize;
+
+        // Update codec parameters using the cookie.
+        let mut params = params.clone();
+        params.with_channels(cookie.channels.clone());
+        params.with_sample_rate(cookie.sample_rate);
+
+        Ok(AlacDecoder { params, tail_bits: vec![0; max_tail_values], buf, config: cookie })
+    }
+
+    fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
+        let mut bs = Bits::new(packet.data);
+
+        let channel_map = map_channels(&self.config.channels);
+        let num_channels = self.config.num_channels as usize;
+        let mut next_channel = 0;
+        let mut num_frames = 0;
+
+        // Fill the audio buffer with silence.
+        self.buf.clear();
+        self.buf.render_silence(None);
+
+        loop {
+            let tag = bs.read_bits_leq32(3)?;
+
+            match tag {
+                ALAC_ELEM_TAG_SCE | ALAC_ELEM_TAG_LFE => {
+                    let out0 = self
+                        .buf
+                        .plane_mut(channel_map[next_channel] as usize)
+                        .expect("invalid channel map");
+
+                    num_frames =
+                        decode_sce_or_cpe(&self.config, &mut bs, &mut self.tail_bits, out0, None)?;
+
+                    next_channel += 1;
+                }
+                ALAC_ELEM_TAG_CPE => {
+                    // There may only be one channel left in the output buffer, do not attempt to
+                    // decode in this case.
+                    if next_channel + 2 > num_channels {
+                        break;
+                    }
+
+                    let (out0, out1) = self
+                        .buf
+                        .plane_pair_mut(
+                            channel_map[next_channel + 0] as usize,
+                            channel_map[next_channel + 1] as usize,
+                        )
+                        .expect("invalid channel map");
+
+                    num_frames = decode_sce_or_cpe(
+                        &self.config,
+                        &mut bs,
+                        &mut self.tail_bits,
+                        out0,
+                        Some(out1),
+                    )?;
+
+                    next_channel += 2;
+                }
+                ALAC_ELEM_TAG_DSE => {
+                    let _tag = bs.read_bits_leq32(4)?;
+                    let align_flag = bs.read_bool()?;
+
+                    let count = match bs.read_bits_leq32(8)? {
+                        val @ 0..=254 => val,
+                        val @ 255 => val + bs.read_bits_leq32(8)?,
+                        _ => unreachable!(),
+                    };
+
+                    if align_flag {
+                        bs.realign();
+                    }
+
+                    bs.ignore_bits(8 * count)?;
+                }
+                ALAC_ELEM_TAG_FIL => {
+                    let count = match bs.read_bits_leq32(4)? {
+                        val @ 0..=14 => val,
+                        val @ 15 => val + bs.read_bits_leq32(8)? - 1,
+                        _ => unreachable!(),
+                    };
+
+                    bs.ignore_bits(8 * count)?;
+                }
+                ALAC_ELEM_TAG_CCE | ALAC_ELEM_TAG_PCE => {
+                    // These elements are unsupported in ALAC version 0.
+                    return decode_error("alac: unsupported element");
+                }
+                ALAC_ELEM_TAG_END => break,
+                _ => unreachable!(),
+            }
+
+            // Exit if all channels are decoded.
+            if next_channel >= num_channels {
+                break;
+            }
+        }
+
+        // Truncate the audio buffer to the number of samples of the last element.
+        self.buf.truncate(num_frames);
+
+        // The audio buffer is always signed 32-bit, but the actual bit-depth may be smaller. If
+        // the bit-depth is less-than 32, shift the final samples up.
+        let shift = 32 - self.config.bit_depth;
+
+        if shift > 0 {
+            self.buf.apply(|sample| sample << shift);
+        }
+
+        Ok(())
+    }
+}
+
+impl AudioDecoder for AlacDecoder {
+    fn reset(&mut self) {
+        // Nothing to do.
+    }
+
+    fn codec_info(&self) -> &CodecInfo {
+        // Only one codec is supported.
+        &Self::supported_codecs().first().expect("at least one codec registered").info
+    }
+
+    fn codec_params(&self) -> &AudioCodecParameters {
+        &self.params
+    }
+
+    fn decode_ref(&mut self, packet: &PacketRef<'_>) -> Result<GenericAudioBufferRef<'_>> {
+        if let Err(e) = self.decode_inner(packet) {
+            self.buf.clear();
+            Err(e)
+        }
+        else {
+            Ok(self.buf.as_generic_audio_buffer_ref())
+        }
+    }
+
+    fn finalize(&mut self) -> FinalizeResult {
+        Default::default()
+    }
+
+    fn last_decoded(&self) -> GenericAudioBufferRef<'_> {
+        self.buf.as_generic_audio_buffer_ref()
+    }
+}
+
+impl RegisterableAudioDecoder for AlacDecoder {
+    fn try_registry_new(
+        params: &AudioCodecParameters,
+        opts: &AudioDecoderOptions,
+    ) -> Result<Box<dyn AudioDecoder>>
+    where
+        Self: Sized,
+    {
+        Ok(Box::new(AlacDecoder::try_new(params, opts)?))
+    }
+
+    fn supported_codecs() -> &'static [SupportedAudioCodec] {
+        &[support_audio_codec!(CODEC_ID_ALAC, "alac", "Apple Lossless Audio Codec")]
+    }
+}
+
+/// Reads and decodes a SCE or CPE (if the second output channel not `None`).
+fn decode_sce_or_cpe(
+    config: &MagicCookie,
+    bs: &mut Bits<'_>,
+    tail_bits: &mut [u16],
+    out0: &mut [i32],
+    mut out1: Option<&mut [i32]>,
+) -> Result<usize> {
+    // If the second output channel is provided, decode as a Channel Pair Element (CPE), otherwise
+    // as a Single Channel Element (SCE).
+    let is_cpe = out1.is_some();
+
+    // Element instance tag.
+    let _elem_instance_tag = bs.read_bits_leq32(4)?;
+
+    // Unused header bits.
+    if bs.read_bits_leq32(12)? != 0 {
+        return decode_error("alac: unused header bits not 0");
+    };
+
+    let is_partial_frame = bs.read_bool()?;
+    let shift = 8 * bs.read_bits_leq32(2)? as u8;
+    let is_uncompressed = bs.read_bool()?;
+
+    // The shift must not be >= 24-bits, or exceed the encoded bit-depth.
+    if shift >= 8 * 3 || shift >= config.bit_depth {
+        return decode_error("alac: invalid shift value");
+    }
+
+    // If this is a partial frame, then read the frame length from the element,
+    // otherwise use the frame length in the configuration.
+    let num_samples =
+        if is_partial_frame { bs.read_bits_leq32(32)? } else { config.frame_length } as usize;
+    if num_samples > config.frame_length as usize {
+        return decode_error("alac: frame length exceeds maximum frame length");
+    }
+
+    if !is_uncompressed {
+        // The bits per sample for samples that are not rice coded. This may be less-than the
+        // bit-depth if the lower sample bits will be encoded separately. If decoding a CPE, each
+        // channel gets an extra bit allocated to it for mid-side encoding.
+        let bps = config.bit_depth - shift + u8::from(is_cpe);
+
+        if bps > 32 {
+            return decode_error("alac: bits per coded sample exceed 32");
+        }
+
+        let mid_side_shift = bs.read_bits_leq32(8)? as u8;
+        let mid_side_weight = bs.read_bits_leq32_signed(8)?;
+
+        // For SCE elements, the mid-side parameters must (should?) be 0.
+        if !is_cpe && (mid_side_shift != 0 || mid_side_weight != 0) {
+            return decode_error("alac: invalid mixing information for mono channel");
+        }
+
+        // Read the headers for each channel in the element.
+        let mut elem0 = ElementChannel::try_read(bs, config, bps)?;
+        let mut elem1 =
+            if is_cpe { Some(ElementChannel::try_read(bs, config, bps)?) } else { None };
+
+        // If there is a shift, read and save the "tail" bits that will be appended to the predicted
+        // samples.
+        if shift > 0 {
+            let num_tail_values = if is_cpe { 2 } else { 1 } * num_samples;
+
+            for val in &mut tail_bits[..num_tail_values] {
+                *val = bs.read_bits_leq32(u32::from(shift))? as u16;
+            }
+        }
+
+        // NORI: read and predicted together.
+        elem0.decode(bs, &mut out0[..num_samples])?;
+
+        if let Some(out1) = out1.as_mut() {
+            let elem1 = match elem1.as_mut() {
+                Some(e) => e,
+                None => return decode_error("alac: missing second channel element"),
+            };
+
+            elem1.decode(bs, &mut out1[..num_samples])?;
+
+            if mid_side_weight != 0 {
+                // mid_side_shift should not be bigger than 31 bits as we are shifting i32 to the right
+                // TODO Validate whether it should also not be greater than config.bit_depth.
+                if mid_side_shift > 31 {
+                    return decode_error("alac: mid_side_shift is greater than 31 bit");
+                }
+
+                decorrelate_mid_side(out0, out1, mid_side_weight, mid_side_shift);
+            }
+        }
+
+        // If there is a shift, append the saved "tail" bits to each predicted sample.
+        if shift > 0 {
+            let out0_iter = out0[..num_samples].iter_mut();
+
+            if let Some(out1) = out1.as_mut() {
+                let out1_iter = out1[..num_samples].iter_mut();
+                let tail_iter = tail_bits[..2 * num_samples].chunks_exact(2);
+
+                // For a CPE, the tail bits are interleaved.
+                for ((s0, s1), vals) in out0_iter.zip(out1_iter).zip(tail_iter) {
+                    *s0 = (*s0 << shift) | vals[0] as i32;
+                    *s1 = (*s1 << shift) | vals[1] as i32;
+                }
+            }
+            else {
+                let tail_iter = tail_bits[..num_samples].iter();
+
+                for (s0, &val) in out0_iter.zip(tail_iter) {
+                    *s0 = (*s0 << shift) | val as i32;
+                }
+            }
+        }
+    }
+    else {
+        // Read uncompressed samples directly from the bitstream.
+        if let Some(out1) = out1.as_mut() {
+            // For a CPE, the samples are interleaved.
+            for (s0, s1) in out0[..num_samples].iter_mut().zip(&mut out1[..num_samples]) {
+                *s0 = bs.read_bits_leq32_signed(u32::from(config.bit_depth))?;
+                *s1 = bs.read_bits_leq32_signed(u32::from(config.bit_depth))?;
+            }
+        }
+        else {
+            for s0 in out0[..num_samples].iter_mut() {
+                *s0 = bs.read_bits_leq32_signed(u32::from(config.bit_depth))?;
+            }
+        }
+    }
+
+    Ok(num_samples)
+}
+
+// NORI: `lg3a`, `read_rice_code` and `rice_code_to_signed` are in bits.rs, where the residuals are read.
+
+/// Clips `num` most significant bits from the provided value and returns the result.
+#[inline(always)]
+fn clip_msbs(val: i32, num: u32) -> i32 {
+    (val << num) >> num
+}
+
+/// Decorrelates a mid-side channel pair.
+fn decorrelate_mid_side(out0: &mut [i32], out1: &mut [i32], weight: i32, shift: u8) {
+    assert!(out0.len() == out1.len());
+
+    for (s0, s1) in out0.iter_mut().zip(out1.iter_mut()) {
+        *s0 = *s0 + *s1 - ((*s1 * weight) >> shift);
+        *s1 = *s0 - *s1;
+    }
+}

@@ -2,7 +2,7 @@
 //! under More), an album's, a playlist's or an artist's, and on a page the page's own actions after the song's.
 
 use nori_core::client::Starrable;
-use nori_core::menus::{JamOffer, PageAction, SongAction, SongDownload};
+use nori_core::menus::{PageAction, SongAction, SongDownload};
 use nori_core::{OriginKind, PageOrigin, Song};
 
 use nori_plugins::{ItemKind, Items};
@@ -89,9 +89,8 @@ impl App {
         let starred = self.starred(Starrable::Song, &song.id, song.starred);
         let download = self.downloaded.get(&song.id).copied().unwrap_or(SongDownload::None);
         let lyrics = self.lyrics.as_ref().is_some_and(|l| !l.pick.lyrics.lines.is_empty()) && self.lyrics_for.as_deref() == Some(&song.id);
-        let jam = if self.guest() { Some(JamOffer::Guest) } else if self.devices.jam_start == Some(nori_core::remote::JamStart::Offered) && self.devices.jam.is_none() { Some(JamOffer::Start) } else { None };
         let r = &self.rules;
-        let items = nori_core::menus::song_menu(song.clone(), starred, download, player, lyrics, r.stars, r.account, r.downloads, r.radio, jam, page);
+        let items = nori_core::menus::song_menu(song.clone(), starred, self.excluded.contains(&song.id), download, player, lyrics, r.stars, r.account, r.downloads, r.radio, self.guest(), page);
         let mut lines = Vec::with_capacity(items.len() + 1);
         let mut more = false;
         for i in items.into_iter().filter(|i| offered(&i.action) && i.enabled) {
@@ -174,10 +173,8 @@ impl App {
             SongAction::GoToAlbum { id } => self.open_album(id),
             SongAction::GoToArtist { id, .. } => self.open_artist(id),
             SongAction::Lyrics => self.set_panel(Panel::Lyrics),
-            SongAction::StartRadio => self.cmds.push(Cmd::PlayFetch(Fetch::Radio(s.id), false)),
-            SongAction::InstantMix => self.cmds.push(Cmd::PlayFetch(Fetch::InstantMix(s.id), false)),
-            SongAction::ExcludeFromMixes => self.cmds.push(Cmd::ExcludeFromMixes(s.id)),
-            SongAction::StartJam => self.jam_with(Some(Item::Song(vec![s], 0))),
+            SongAction::Radio => self.cmds.push(Cmd::PlayFetch(Fetch::Radio(s.id), false)),
+            SongAction::ExcludeFromMixes { on } => self.cmds.push(Cmd::ExcludeFromMixes(s.id, on)),
             SongAction::StopDownload | SongAction::AddToLibrary | SongAction::SleepTimer | SongAction::Share | SongAction::Details => {}
         }
     }
