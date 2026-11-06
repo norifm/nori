@@ -147,17 +147,40 @@ struct Inner {
     serving: BTreeSet<String>,
     /// Song URLs the door proxies for plugins (`media`), by index: the plugin that asked, the URL.
     proxied: Vec<Option<(String, String)>>,
-    /// The audio served at the door (`audio-out.serve`), by the plugin that serves it.
-    served: Option<(String, Arc<Sink>)>,
-    /// The audio pumped into a plugin's socket (`audio-out.to-socket`).
-    pumped: Option<(String, Arc<Sink>)>,
+    /// The sink nori's music plays into: the engine plays into one.
+    audio: Option<Audio>,
     cast: Option<Cast>,
     door: Option<Door>,
 }
 
+/// A plugin's sink that nori's music plays into.
+struct Audio {
+    plugin: String,
+    sink: Arc<Sink>,
+    to: AudioTo,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AudioTo {
+    /// Served at the door (`audio-out.serve`).
+    Door,
+    /// Pumped into the plugin's socket (`audio-out.to-socket`).
+    Socket,
+}
+
 impl Inner {
     fn door_wanted(&self) -> bool {
-        !self.serving.is_empty() || self.served.is_some() || self.proxied.iter().any(Option::is_some)
+        !self.serving.is_empty() || self.audio.as_ref().is_some_and(|a| a.to == AudioTo::Door) || self.proxied.iter().any(Option::is_some)
+    }
+
+    /// Plugin `id`'s sink, while the music plays into it.
+    fn audio_of(&self, id: &str) -> Option<&Audio> {
+        self.audio.as_ref().filter(|a| a.plugin == id)
+    }
+
+    /// Plugin `id`'s deep sink, while the music plays into it.
+    fn deep_of(&self, id: &str) -> Option<Arc<crate::deep::Deep>> {
+        self.audio_of(id)?.sink.deep.clone()
     }
 }
 
@@ -308,7 +331,7 @@ impl Lan {
     pub(crate) fn serve_sink(&self, id: &str, sink: Arc<Sink>) -> Option<String> {
         let mut i = self.inner();
         let extension = sink.encoding.extension();
-        i.served = Some((id.to_string(), sink.clone()));
+        i.audio = Some(Audio { plugin: id.to_string(), sink: sink.clone(), to: AudioTo::Door });
         self.keep_door(&mut i);
         drop(i);
         let url = self.base().map(|b| format!("{b}/a/{extension}"));
@@ -335,14 +358,17 @@ impl Lan {
             let side = self.side.clone();
             deep.on_burst(Box::new(move |on| side.streaming(on)));
         }
-        self.inner().pumped = Some((id.to_string(), sink.clone()));
+        let mut i = self.inner();
+        i.audio = Some(Audio { plugin: id.to_string(), sink: sink.clone(), to: AudioTo::Socket });
+        self.keep_door(&mut i);
+        drop(i);
         self.card(Card::Sink(sink));
     }
 
     /// Plugin `id`'s deep sink went away: nori plays on its own output again, and the plugin hears the
     /// cast stop as if another output were picked. Nothing when the plugin stopped it first.
     fn sink_lost(&self, id: &str) {
-        if !self.inner().pumped.as_ref().is_some_and(|(by, s)| by == id && s.deep.is_some()) {
+        if self.inner().deep_of(id).is_none() {
             return;
         }
         self.stop_sink(id);
@@ -379,7 +405,7 @@ impl Lan {
     /// sink plays.
     pub(crate) fn deep_volume(&self, volume: u8) -> bool {
         let mut i = self.inner();
-        let Some(deep) = i.pumped.as_ref().and_then(|(_, s)| s.deep.clone()) else { return false };
+        let Some(deep) = i.audio.as_ref().and_then(|a| a.sink.deep.clone()) else { return false };
         let Some(cast) = i.cast.as_mut() else { return false };
         cast.volume = Some(volume);
         let cast = cast.clone();
@@ -390,22 +416,19 @@ impl Lan {
     }
 
     pub(crate) fn sink_latency(&self, id: &str, ms: u32) {
-        let i = self.inner();
-        for (by, sink) in i.served.iter().chain(i.pumped.iter()) {
-            if by == id {
-                sink.set_latency_ms(ms);
-            }
+        if let Some(a) = self.inner().audio_of(id) {
+            a.sink.set_latency_ms(ms);
         }
     }
 
-    /// Plugin `id`'s audio stops: nori plays on its own output again.
+    /// Plugin `id`'s audio stops: nori plays on its own output again, unless it plays into another
+    /// plugin's sink by now.
     pub(crate) fn stop_sink(&self, id: &str) {
         let mut i = self.inner();
-        let served = i.served.as_ref().is_some_and(|(by, _)| by == id).then(|| i.served.take()).flatten();
-        let pumped = i.pumped.as_ref().is_some_and(|(by, _)| by == id).then(|| i.pumped.take()).flatten();
+        let stopped = i.audio.take_if(|a| a.plugin == id);
         self.keep_door(&mut i);
         drop(i);
-        if served.or(pumped).is_some() {
+        if stopped.is_some() {
             self.card(Card::Here);
         }
     }
@@ -440,7 +463,7 @@ impl Lan {
 
     pub(crate) fn start_cast(&self, id: &str, kind: CastKind, device: String) {
         let mut i = self.inner();
-        let bursts = kind == CastKind::Sink && i.pumped.as_ref().is_some_and(|(by, s)| by == id && s.deep.is_some());
+        let bursts = kind == CastKind::Sink && i.deep_of(id).is_some();
         let look = i.targets.get(id).into_iter().flatten().find(|t| t.name == device).map(|t| t.look).unwrap_or_default();
         let cast = Cast { plugin: id.to_string(), kind, device, look, playing: false, position_ms: 0, volume: None, bursts };
         if i.cast.as_ref().is_some_and(|c| c.plugin != id) {
@@ -522,7 +545,7 @@ impl Lan {
                     None => respond(conn, &Response::status(404)),
                 }
             }
-            (Some("a"), Some(_), None) => match self.inner().served.as_ref().map(|(_, s)| s.clone()) {
+            (Some("a"), Some(_), None) => match self.inner().audio.as_ref().filter(|a| a.to == AudioTo::Door).map(|a| a.sink.clone()) {
                 Some(sink) => sink.listen(conn),
                 None => respond(conn, &Response::status(404)),
             },
