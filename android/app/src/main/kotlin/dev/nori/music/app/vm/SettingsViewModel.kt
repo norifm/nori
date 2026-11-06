@@ -139,7 +139,6 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     val login: StateFlow<LoginUi> = _login
     private val _sync = MutableStateFlow(SyncUi())
     val sync: StateFlow<SyncUi> = _sync
-    private var syncJob: Job? = null
 
     init { viewModelScope.launch { runCatching { nori.library.indexSize() }.onSuccess { n -> _sync.update { it.copy(indexed = n) } } } }
 
@@ -779,7 +778,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     fun syncLibrary() {
         if (_sync.value.running) return
         _sync.update { it.copy(running = true, error = null) }
-        syncJob = viewModelScope.launch {
+        viewModelScope.launch {
             try {
                 nori.library.sync()
                 _sync.value = SyncUi(indexed = nori.library.indexSize())
