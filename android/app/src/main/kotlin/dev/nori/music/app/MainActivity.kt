@@ -18,9 +18,26 @@ import kotlinx.coroutines.launch
 import dev.nori.music.app.ui.App
 import dev.nori.music.settings.loggedIn
 
-/** Launch requests that play rather than open a page (a launcher shortcut's); App carries them out. */
-const val SHUFFLE_SONGS = "shuffle:songs"
-const val SHUFFLE_ALBUMS = "shuffle:albums"
+/** What the activity was asked for from outside (the download notification, a launcher shortcut, a widget); App carries it out. */
+sealed interface LaunchRoute {
+    data object Downloads : LaunchRoute
+    data object Search : LaunchRoute
+    data object Player : LaunchRoute
+    data object Lyrics : LaunchRoute
+    data object ShuffleSongs : LaunchRoute
+    data object ShuffleAlbums : LaunchRoute
+    /** A page, by its route. */
+    data class Page(val route: String) : LaunchRoute
+
+    companion object {
+        /** A widget's [MainActivity.EXTRA_ROUTE]: "player", "lyrics" or a page's route. */
+        fun ofWidget(route: String): LaunchRoute = when (route) {
+            "player" -> Player
+            "lyrics" -> Lyrics
+            else -> Page(route)
+        }
+    }
+}
 
 class MainActivity : ComponentActivity() {
     companion object {
@@ -34,8 +51,8 @@ class MainActivity : ComponentActivity() {
     private val actions: dev.nori.music.app.vm.ActionsViewModel by viewModels()
     private val remote: dev.nori.music.app.vm.RemoteViewModel by viewModels()
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
-    /** What was asked for from outside (the download notification, a launcher shortcut); App does it and clears this. */
-    private val launchRoute = androidx.compose.runtime.mutableStateOf<String?>(null)
+    /** What was asked for from outside; App does it and clears this. */
+    private val launchRoute = androidx.compose.runtime.mutableStateOf<LaunchRoute?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -88,12 +105,12 @@ class MainActivity : ComponentActivity() {
     }
 
     /** What an intent from outside asks for: the download notification's screen, a launcher shortcut's (res/xml/shortcuts.xml) or a widget's. */
-    private fun routeOf(intent: Intent?): String? = when (intent?.action) {
-        ACTION_OPEN_DOWNLOADS -> "downloads"
-        "dev.nori.music.SHORTCUT_SEARCH" -> "search"
-        "dev.nori.music.SHORTCUT_SHUFFLE_SONGS" -> SHUFFLE_SONGS
-        "dev.nori.music.SHORTCUT_SHUFFLE_ALBUMS" -> SHUFFLE_ALBUMS
-        ACTION_WIDGET -> intent.getStringExtra(EXTRA_ROUTE)
+    private fun routeOf(intent: Intent?): LaunchRoute? = when (intent?.action) {
+        ACTION_OPEN_DOWNLOADS -> LaunchRoute.Downloads
+        "dev.nori.music.SHORTCUT_SEARCH" -> LaunchRoute.Search
+        "dev.nori.music.SHORTCUT_SHUFFLE_SONGS" -> LaunchRoute.ShuffleSongs
+        "dev.nori.music.SHORTCUT_SHUFFLE_ALBUMS" -> LaunchRoute.ShuffleAlbums
+        ACTION_WIDGET -> intent.getStringExtra(EXTRA_ROUTE)?.let(LaunchRoute::ofWidget)
         else -> null
     }
 

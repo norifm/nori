@@ -254,7 +254,7 @@ private val tabs = listOf(
  * here once it has been done.
  */
 @Composable
-fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
+fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.LaunchRoute?>? = null) {
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.prefs.collectAsStateWithLifecycle()
     androidx.compose.runtime.SideEffect {
@@ -377,15 +377,15 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             androidx.compose.runtime.snapshotFlow { launchRoute.value }.collect { route ->
                 if (route == null) return@collect
                 when (route) {
-                    "downloads" -> nav.downloads()
+                    dev.nori.music.app.LaunchRoute.Downloads -> nav.downloads()
                     // A tab, as a tap on it: the keyboard comes up with it.
-                    "search" -> nav.tab(route)
+                    dev.nori.music.app.LaunchRoute.Search -> nav.tab("search")
                     // A widget's song: the player, or the player turned to the lyrics.
-                    "player" -> nav.player()
-                    "lyrics" -> nav.player(Panel.LYRICS)
-                    dev.nori.music.app.SHUFFLE_SONGS -> actions.shuffleAll()
-                    dev.nori.music.app.SHUFFLE_ALBUMS -> actions.shuffleAlbums()
-                    else -> nav.go(route)
+                    dev.nori.music.app.LaunchRoute.Player -> nav.player()
+                    dev.nori.music.app.LaunchRoute.Lyrics -> nav.player(Panel.LYRICS)
+                    dev.nori.music.app.LaunchRoute.ShuffleSongs -> actions.shuffleAll()
+                    dev.nori.music.app.LaunchRoute.ShuffleAlbums -> actions.shuffleAlbums()
+                    is dev.nori.music.app.LaunchRoute.Page -> nav.go(route.route)
                 }
                 launchRoute.value = null
             }

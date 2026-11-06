@@ -14,7 +14,9 @@ class Found(val name: String, val host: String, val port: Int, val txt: List<Pai
 class NsdBrowse(private val nsd: NsdManager, private val type: String, private val found: (Found) -> Unit, private val lost: (String) -> Unit) {
     /** Before Android 14 one resolve runs at a time; the others wait here. */
     private val resolving = ArrayDeque<NsdServiceInfo>()
-    private var busy = false
+    private var phase = Phase.BROWSING
+
+    private enum class Phase { BROWSING, RESOLVING, STOPPED }
 
     private val listener = object : NsdManager.DiscoveryListener {
         override fun onDiscoveryStarted(type: String) {}
@@ -22,28 +24,39 @@ class NsdBrowse(private val nsd: NsdManager, private val type: String, private v
         override fun onStartDiscoveryFailed(type: String, error: Int) = dev.nori.music.NoriLog.w("nsd: no discovery of $type ($error)")
         override fun onStopDiscoveryFailed(type: String, error: Int) {}
         override fun onServiceFound(info: NsdServiceInfo) = resolve(info)
-        override fun onServiceLost(info: NsdServiceInfo) = lost(info.serviceName)
+        override fun onServiceLost(info: NsdServiceInfo) { if (browsing()) lost(info.serviceName) }
     }
 
     init {
         runCatching { nsd.discoverServices(type, NsdManager.PROTOCOL_DNS_SD, listener) }
     }
 
+    /** Nothing found or lost is handed on after this, not even what a resolve under way answers. */
     fun stop() {
+        synchronized(this) {
+            phase = Phase.STOPPED
+            resolving.clear()
+        }
         runCatching { nsd.stopServiceDiscovery(listener) }
     }
 
     @Synchronized
+    private fun browsing() = phase != Phase.STOPPED
+
+    @Synchronized
     private fun resolve(info: NsdServiceInfo) {
-        if (busy) { resolving.addLast(info); return }
-        busy = true
+        when (phase) {
+            Phase.STOPPED -> return
+            Phase.RESOLVING -> { resolving.addLast(info); return }
+            Phase.BROWSING -> phase = Phase.RESOLVING
+        }
         @Suppress("DEPRECATION")
         nsd.resolveService(info, object : NsdManager.ResolveListener {
             override fun onResolveFailed(info: NsdServiceInfo, error: Int) = next()
             override fun onServiceResolved(info: NsdServiceInfo) {
                 @Suppress("DEPRECATION")
                 val host = info.host?.hostAddress
-                if (host != null) found(Found(info.serviceName, host, info.port, info.attributes.map { (k, v) -> k to v?.toString(Charsets.UTF_8).orEmpty() }))
+                if (host != null && browsing()) found(Found(info.serviceName, host, info.port, info.attributes.map { (k, v) -> k to v?.toString(Charsets.UTF_8).orEmpty() }))
                 next()
             }
         })
@@ -51,7 +64,8 @@ class NsdBrowse(private val nsd: NsdManager, private val type: String, private v
 
     @Synchronized
     private fun next() {
-        busy = false
+        if (phase == Phase.STOPPED) return
+        phase = Phase.BROWSING
         resolving.removeFirstOrNull()?.let(::resolve)
     }
 }

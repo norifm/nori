@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.SettingsViewModel
+import dev.nori.music.app.vm.SignInFlow
 import dev.nori.music.ffi.SignIn
 import kotlinx.coroutines.launch
 import dev.nori.music.ffi.settings.ServerKind
@@ -52,25 +53,25 @@ fun SignInFlow(vm: SettingsViewModel, kind: ServerKind) {
     val providers by vm.providers.collectAsStateWithLifecycle()
     val words = providerWords(vm, kind).account
     val start = providers.firstOrNull { it.kind == kind }?.signIn?.firstNotNullOfOrNull { (it as? SignIn.WebPage)?.startUrl } ?: return
-    NoriDialog(ui.offer, vm::skipSignIn) {
+    NoriDialog(ui.flow as? SignInFlow.Offered, vm::skipSignIn) { offered ->
         AlertCard(
             confirmButton = { TextAction(words.pageButton, vm::openSignInPage, Modifier.testTag("offer-sign-in")) },
             dismissButton = {
                 Row {
-                    if (ui.ended) TextAction(say.word(R.string.dont_show_again), vm::stopReminding, Modifier.testTag("offer-quiet"))
+                    if (offered.ended) TextAction(say.word(R.string.dont_show_again), vm::stopReminding, Modifier.testTag("offer-quiet"))
                     TextAction(say.notNow, vm::skipSignIn, Modifier.testTag("offer-skip"))
                 }
             },
             title = { Text(words.offerTitle) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(if (ui.ended) words.signedOutAgain else words.offerText)
+                    Text(if (offered.ended) words.signedOutAgain else words.offerText)
                     Text(words.risk, style = MaterialTheme.typography.bodySmall)
                 }
             },
         )
     }
-    NoriDialog(ui.page, vm::closeSignInPage, DialogStyle.Page) { SignInSheet(vm, kind, ui.pageStart ?: start, words) }
+    NoriDialog(ui.flow as? SignInFlow.Page, vm::closeSignInPage, DialogStyle.Page) { page -> SignInSheet(vm, kind, page.start ?: start, words) }
 }
 
 /** The sign-in page as a sheet: Cancel and the title over the provider's page, then the core's answer. */

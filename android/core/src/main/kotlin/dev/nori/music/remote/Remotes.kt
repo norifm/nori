@@ -120,7 +120,8 @@ class Remotes(private val context: Context, private val nori: Nori) {
     private val discovery by lazy { NsdDiscovery(context) { remote } }
     @Volatile private var remote: Remote? = null
     private var client: Client? = null
-    private var serving = false
+    /** The playback service is up; set where it is said, read by the worker as it applies it. */
+    @Volatile private var serving = false
     private var watching = false
     /** The app on screen, and the playback notification up: either shows the mirrored device. */
     @Volatile private var appShown = false
@@ -272,12 +273,13 @@ class Remotes(private val context: Context, private val nori: Nori) {
 
     /** Whether the playback service is up: the device is controllable then, while remote control is on. */
     fun serve(on: Boolean) {
+        serving = on
         // Nothing built and nothing wanted: the worker thread is not started.
-        if (remote == null && !wanted()) return synchronized(this) { serving = on }
+        if (remote == null && !wanted()) return
         work {
-            serving = on
+            // As it stands when the worker gets to it: a later word said meanwhile is the one kept.
             // A guest's phone is no device of the host's account to control.
-            val serves = on && nori.settings.value.remoteControl && !isGuest()
+            val serves = serving && nori.settings.value.remoteControl && !isGuest()
             current()?.serve(serves)
             main.post { watchKeys(serves) }
         }

@@ -262,10 +262,11 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     /** The number of the last jump the engine said it landed (its position event). */
     private var landed = 0L
     private var prepared = false
-    private var playWhenReady = false
+    private var want = Want.PAUSED
     private var whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
-    private var suppressed = Player.PLAYBACK_SUPPRESSION_REASON_NONE
-    private var engineState = ENGINE_IDLE
+    /** Plays and pauses asked for so far: a focus change decided before the last one is stale ([Want.afterFocus]). */
+    private var presses = 0
+    private var engineState = EngineState.IDLE
     private var repeat = Player.REPEAT_MODE_OFF
     private var shuffle = false
     private var error: PlaybackException? = null
@@ -273,15 +274,13 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     private var lastError: String? = null
     /** The engine waits for a song's bytes with nothing left to play (its buffering event). */
     private var buffering = false
-    /** The engine moved on by itself (a song ended into the next): said once, in the next state. */
-    private var moved = false
     /**
-     * The engine moved the music to another path (the audio chip to the CPU or back) without a jump asked
-     * for: the next state says the place again as a discontinuity, so the session and its controllers
-     * anchor their clocks there, as they do after a pause or a seek, rather than running on from an
-     * older word.
+     * Said once, by the next state: the engine moved on by itself (a song ended into the next), or put the
+     * music somewhere without a jump asked for (another path, the audio chip to the CPU or back), so the
+     * session and its controllers anchor their clocks there, as they do after a pause or a seek, rather
+     * than running on from an older word.
      */
-    private var placed = false
+    private var discontinuity = Discontinuity.NONE
     @Volatile private var loading = 0
     /** Pause when the song playing ends (the sleep timer's "end of this song"): the engine does it. */
     var pauseAtEndOfItem = false
@@ -304,15 +303,14 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
      */
     var onBridge: (() -> Boolean)? = null
     /**
-     * How the engine follows a jam's host (nori-engine's `Event::Following`): -1 while it does not; else
-     * bit 0 the music plays there, bit 1 this phone's own pause holds it here. While it follows, wanting to
-     * play is the engine's word: the host pausing pauses here too, as a remote change.
+     * How the engine follows a jam's host (nori-engine's `Event::Following`), null while it does not. While
+     * it follows, wanting to play is the engine's word: the host pausing pauses here too, as a remote change.
      */
-    private var led = -1
+    private var led: Followed? = null
     /** Following a jam's host. */
-    val following: Boolean get() = led >= 0
+    val following: Boolean get() = led != null
     /** Following a jam's host that paused, this phone not paused by its own listener. */
-    val hostPaused: Boolean get() = led == 0
+    val hostPaused: Boolean get() = led == Followed.HOST_PAUSED
     /** The controls offered ([offer]). */
     private var commands: Player.Commands = COMMANDS
 
@@ -425,7 +423,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
      * engine's own place is put right here: the place said again as a discontinuity, as after a change of path.
      */
     fun reanchor() {
-        placed = true
+        discontinuity = discontinuity.and(Discontinuity.PLACED)
         invalidateState()
     }
 
@@ -454,9 +452,9 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
 
     private fun playbackState(): Int = when {
         !prepared || error != null -> Player.STATE_IDLE
-        items.isEmpty() || engineState == ENGINE_ENDED -> Player.STATE_ENDED
+        items.isEmpty() || engineState == EngineState.ENDED -> Player.STATE_ENDED
         // The music ran out waiting for the network: what ExoPlayer says then, and what a screen shows as loading.
-        buffering && playWhenReady -> Player.STATE_BUFFERING
+        buffering && want.playWhenReady -> Player.STATE_BUFFERING
         else -> Player.STATE_READY
     }
 
@@ -464,9 +462,9 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         val state = playbackState()
         val b = State.Builder()
             .setAvailableCommands(commands)
-            .setPlayWhenReady(playWhenReady, whyPlayWhenReady)
+            .setPlayWhenReady(want.playWhenReady, whyPlayWhenReady)
             .setPlaybackState(state)
-            .setPlaybackSuppressionReason(suppressed)
+            .setPlaybackSuppressionReason(want.suppression)
             .setRepeatMode(repeat)
             .setShuffleModeEnabled(shuffle)
             // media3 has nothing loading while idle or ended (the engine may be, following a jam's host).
@@ -476,14 +474,12 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
             .setCurrentMediaItemIndex(if (items.isEmpty()) C.INDEX_UNSET else current.coerceIn(0, items.size - 1))
             .setContentPositionMs(position(loops))
         error?.let { b.setPlayerError(it) }
-        if (moved) {
-            moved = false
-            placed = false
-            b.setPositionDiscontinuity(Player.DISCONTINUITY_REASON_AUTO_TRANSITION, 0)
-        } else if (placed) {
-            placed = false
-            b.setPositionDiscontinuity(Player.DISCONTINUITY_REASON_INTERNAL, RustPlayerJni.positionMs(h))
+        when (discontinuity) {
+            Discontinuity.NONE -> {}
+            Discontinuity.MOVED -> b.setPositionDiscontinuity(Player.DISCONTINUITY_REASON_AUTO_TRANSITION, 0)
+            Discontinuity.PLACED -> b.setPositionDiscontinuity(Player.DISCONTINUITY_REASON_INTERNAL, RustPlayerJni.positionMs(h))
         }
+        discontinuity = Discontinuity.NONE
         return b.build()
     }
 
@@ -510,7 +506,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
      * Everything that would start the engine asks this first; while a call holds the focus the engine
      * stays paused, and holds any place asked for until the focus comes back.
      */
-    private fun audible(): Boolean = prepared && playWhenReady && suppressed == Player.PLAYBACK_SUPPRESSION_REASON_NONE
+    private fun audible(): Boolean = prepared && want == Want.PLAYING
 
     /** The engine plays on from where it is, or from where the list or a seek left it (which it held). */
     private fun start() {
@@ -536,10 +532,11 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         if (playWhenReady && !focus(again = true)) return done().also { dev.nori.music.NoriLog.w("rust player: play refused, the audio focus was not granted") }
         // Every change of "wants to play" is in the log with its cause: a page that reads paused over music
         // playing is told apart from the engine's word, a call, or headphones.
-        if (playWhenReady != this.playWhenReady) dev.nori.music.NoriLog.i("rust player: ${if (playWhenReady) "play" else "pause"} asked for")
-        this.playWhenReady = playWhenReady
+        if (playWhenReady != want.playWhenReady) dev.nori.music.NoriLog.i("rust player: ${if (playWhenReady) "play" else "pause"} asked for")
+        presses++
+        // Played while the host is paused, this phone joins it once it plays (the engine says so then).
+        want = if (!playWhenReady || following && led?.playing != true) Want.PAUSED else Want.PLAYING
         whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
-        suppressed = Player.PLAYBACK_SUPPRESSION_REASON_NONE
         if (playWhenReady) {
             if (prepared) start()
         } else {
@@ -547,22 +544,20 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
             // Following a jam's host the focus stays: the host playing on is heard again on play.
             if (!following) unfocus()
         }
-        // Played while the host is paused, this phone joins it once it plays (the engine says so then).
-        if (following && led and 1 == 0) this.playWhenReady = false
         follow()
         return done()
     }
 
     /** The engine's word on following a jam's host ([led]): the host's pause and play are this player's too. */
-    private fun onFollowing(code: Int) {
+    private fun onFollowing(now: Followed?) {
         val was = led
-        led = code
+        led = now
         // Listening along ended (the jam left, or only watched now): the engine paused, and so is this.
-        if (code < 0 && was < 0) return
-        val plays = code == 1
-        if (plays != playWhenReady) {
+        if (now == null && was == null) return
+        val plays = now == Followed.PLAYING
+        if (plays != want.playWhenReady) {
             dev.nori.music.NoriLog.i("rust player: ${if (plays) "plays" else "pauses"} with the jam's host")
-            playWhenReady = plays
+            want = if (plays) Want.PLAYING else Want.PAUSED
             whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE
         }
     }
@@ -579,7 +574,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     fun letGo() {
         dev.nori.music.NoriLog.i("rust player: the music plays elsewhere, output let go")
         RustPlayerJni.releaseNow(h)
-        playWhenReady = false
+        want = Want.PAUSED
         prepared = false
         unfocus()
         follow()
@@ -738,7 +733,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
             if (e < 0) break
             val arg = e.toInt()
             when ((e ushr 32).toInt()) {
-                EVENT_STATE -> { onState(arg); remoteChanged = true }
+                EVENT_STATE -> { onState(EngineState.of(arg)); remoteChanged = true }
                 EVENT_SONG -> { onSong(arg, RustPlayerJni.eventJumps(h)); remoteChanged = true }
                 EVENT_ERROR -> RustPlayerJni.eventText(h).let { lastError = it; "rust player error: $it".let { t -> dev.nori.music.NoriLog.w(t); PlaybackService.observer?.error(t) } }
                 EVENT_STOPPED -> stoppedByItself()
@@ -747,11 +742,11 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
                 EVENT_TITLE -> announced = RustPlayerJni.eventText(h)
                 // A mix became audible or ended: update local and remote observers.
                 EVENT_MIXING -> { remoteChanged = true; PlaybackService.onMixingChanged?.invoke() }
-                EVENT_PLACED -> { placed = true; remoteChanged = true }
-                EVENT_FOLLOWING -> onFollowing(arg)
+                EVENT_PLACED -> { discontinuity = discontinuity.and(Discontinuity.PLACED); remoteChanged = true }
+                EVENT_FOLLOWING -> onFollowing(Followed.of(arg))
                 EVENT_WAITING -> remoteChanged = true
                 // The engine is where a jump or seek asked: the session says that place, not its own guess.
-                EVENT_LANDED -> { landed = RustPlayerJni.eventJumps(h); placed = true; remoteChanged = true; PlaybackService.onLanded?.invoke() }
+                EVENT_LANDED -> { landed = RustPlayerJni.eventJumps(h); discontinuity = discontinuity.and(Discontinuity.PLACED); remoteChanged = true; PlaybackService.onLanded?.invoke() }
                 // Handed on after the batch: the bridge edits and seeks this player itself.
                 EVENT_BRIDGE -> main.post { if (onBridge?.invoke() != true) { stoppedByItself(); follow(); invalidateState() } }
                 // The output device's own sound is DeviceSound's, from Outputs: its name is not asked for,
@@ -764,17 +759,17 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         if (remoteChanged) onRemoteStateChanged?.invoke()
     }
 
-    private fun onState(state: Int) {
+    private fun onState(state: EngineState) {
         engineState = state
-        when {
+        when (state) {
             // Played to the end of the queue: ExoPlayer keeps wanting to play, and says it ended.
-            state == ENGINE_ENDED -> {}
+            EngineState.ENDED, EngineState.PAUSED -> {}
             // Idle after it was started is the output failing: it would not open, or died and would not open again.
-            state == ENGINE_IDLE -> {
+            EngineState.IDLE -> {
                 error = PlaybackException("the audio output would not open", null, PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED)
             }
             // Music again: whatever stopped it before is over.
-            state == ENGINE_PLAYING -> clearError()
+            EngineState.PLAYING -> clearError()
         }
     }
 
@@ -840,9 +835,9 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
             error = PlaybackException(lastError ?: "a song would not play", null, code)
             if (kind == dev.nori.music.ffi.model.PlaybackError.NETWORK) watchNetwork()
         }
-        if (!playWhenReady) return
+        if (!want.playWhenReady) return
         dev.nori.music.NoriLog.i("rust player: the engine stopped by itself: no longer wants to play")
-        playWhenReady = false
+        want = Want.PAUSED
         whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM
     }
 
@@ -856,7 +851,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         current = i
         if (asked) return
         // A song ending into the next one.
-        moved = true
+        discontinuity = Discontinuity.MOVED
     }
 
     /** The song playing started again by itself (repeat one): a transition media3 reports as a repeat. */
@@ -864,7 +859,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         if (jumps < sent || index !in items.indices) return
         current = index
         loops++
-        moved = true
+        discontinuity = Discontinuity.MOVED
     }
 
     // ---- the platform around the player, as ExoPlayer runs it ----
@@ -899,32 +894,22 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
             else -> return
         }
         if (focus == Focus.LOST) focused = false
-        val (wants, held) = playWhenReady to (suppressed != Player.PLAYBACK_SUPPRESSION_REASON_NONE)
+        val wanted = want
+        val at = presses
         focusing.execute {
-            val act = nori.session.audioFocus(focus, wants, held)
-            main.post { onFocus(focus, act) }
+            val act = nori.session.audioFocus(focus, wanted.playWhenReady, wanted == Want.HELD_BY_CALL)
+            main.post { onFocus(focus, act, at) }
         }
     }
 
-    /** [act] for [focus]: a pause is for good after a loss, until the focus is back otherwise. Ducking the system does itself. */
-    private fun onFocus(focus: Focus, act: FocusAct) {
-        dev.nori.music.NoriLog.i("rust player: audio focus $focus: $act, wants to play $playWhenReady")
-        when (act) {
-            FocusAct.PAUSE -> if (playWhenReady) {
-                RustPlayerJni.pause(h)
-                if (focus == Focus.LOST) {
-                    playWhenReady = false
-                    whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
-                } else {
-                    suppressed = Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS
-                }
-            }
-            FocusAct.RESUME -> if (suppressed != Player.PLAYBACK_SUPPRESSION_REASON_NONE) {
-                suppressed = Player.PLAYBACK_SUPPRESSION_REASON_NONE
-                if (playWhenReady) start()
-            }
-            FocusAct.DUCK, FocusAct.KEEP_PLAYING, FocusAct.NOTHING -> {}
-        }
+    /** [act] for [focus], decided after [decidedAt] presses ([Want.afterFocus]). Ducking the system does itself. */
+    private fun onFocus(focus: Focus, act: FocusAct, decidedAt: Int) {
+        val was = want
+        want = was.afterFocus(focus, act, decidedAt, presses)
+        dev.nori.music.NoriLog.i("rust player: audio focus $focus: $act${if (decidedAt != presses) ", asked for something since" else ""}, wanted $was, now $want")
+        if (was == Want.PLAYING && want != Want.PLAYING) RustPlayerJni.pause(h)
+        if (was != Want.PAUSED && want == Want.PAUSED) whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
+        if (was == Want.HELD_BY_CALL && want == Want.PLAYING) start()
         follow()
         invalidateState()
     }
@@ -935,10 +920,10 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
      */
     private val noisy = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (!playWhenReady) return
+            if (!want.playWhenReady) return
             dev.nori.music.NoriLog.i("rust player: the audio became noisy: paused")
             RustPlayerJni.pauseNow(h)
-            playWhenReady = false
+            want = Want.PAUSED
             whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY
             follow()
             invalidateState()
@@ -949,7 +934,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     @Suppress("DEPRECATION")
     private val wakeLock = context.getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "nori:engine").apply { setReferenceCounted(false) }
 
-    /** Music is wanted and can come ([follow]): the CPU lock is held for it, unless the engine lets the CPU sleep. */
+    /** Music plays, or is on its way ([follow]): the CPU lock is held for it, unless the engine lets the CPU sleep. */
     @Volatile private var wantsCpu = false
     /**
      * The engine said it can let the CPU sleep (nori-engine's `Event::Awake(false)`): the songs are on the
@@ -970,22 +955,25 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     }
 
     /**
-     * The receiver and the CPU lock are held exactly while music is wanted, as ExoPlayer's WAKE_MODE_LOCAL -
-     * and can come: an output that would not open leaves the player wanting music it cannot play, and
-     * held on through that, the lock kept the phone awake for nothing. Released, nothing is wanted: a
-     * late word of the engine as it stops changes nothing.
+     * The receiver is held exactly while music is wanted, as ExoPlayer's WAKE_MODE_LOCAL - and can come: an
+     * output that would not open leaves the player wanting music it cannot play. It stays while a call holds
+     * the music: headphones pulled out then must not let it come back on the speaker. The CPU lock is held
+     * only while the music plays: held by a call, the engine is paused like any pause, and the focus coming
+     * back wakes the main thread by itself. Released, nothing is wanted: a late word of the engine as it
+     * stops changes nothing.
      */
     private fun follow() {
-        val playing = h != 0L && playWhenReady && prepared && error == null && engineState != ENGINE_ENDED
-        if (playing && !listening) {
+        val comes = h != 0L && prepared && error == null && engineState != EngineState.ENDED
+        val wanted = comes && want.playWhenReady
+        if (wanted && !listening) {
             val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
             if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(noisy, filter, Context.RECEIVER_NOT_EXPORTED) else context.registerReceiver(noisy, filter)
             listening = true
-        } else if (!playing && listening) {
+        } else if (!wanted && listening) {
             context.unregisterReceiver(noisy)
             listening = false
         }
-        wantsCpu = playing
+        wantsCpu = comes && want == Want.PLAYING
         holdCpu()
     }
 
@@ -1164,9 +1152,6 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     internal fun quiet(level: Float) = RustPlayerJni.setQuiet(h, level)
 
     private companion object {
-        const val ENGINE_IDLE = 0
-        const val ENGINE_PLAYING = 1
-        const val ENGINE_ENDED = 3
         const val EVENT_STATE = 0
         const val EVENT_SONG = 1
         const val EVENT_ERROR = 2

@@ -47,20 +47,49 @@ import dev.nori.music.update.Updates
 /** settings_store.rs `CACHE_LIMIT`: the stream cache size changed. */
 private const val CACHE_LIMIT = 32u
 
-data class LoginUi(val busy: Boolean = false, val error: String? = null, val done: Boolean = false)
+/** A profile being added or saved: nothing asked yet, on its way, why it failed, or done (the form closes and clears it). */
+sealed interface LoginUi {
+    data object Idle : LoginUi
+    data object Busy : LoginUi
+    data class Failed(val error: String) : LoginUi
+    data object Done : LoginUi
+}
 
 /**
  * The account of the profile in use, for a provider that signs it in apart from its form
- * (`ProviderInfo.sign_in`): where it stands (null until asked), a sign-in on its way, why the last one
- * failed, whether the provider's sign-in page is open, and whether a profile just added, or a session the
- * provider ended ([ended]), offers it.
+ * (`ProviderInfo.sign_in`): where it stands (null until asked), what is shown for signing in, and the
+ * last sign-in.
  */
 data class AccountUi(
-    val account: dev.nori.music.ffi.AccountState? = null, val busy: Boolean = false, val failed: dev.nori.music.ffi.SignInResult? = null,
-    val page: Boolean = false, val offer: Boolean = false, val ended: Boolean = false,
-    /** Where the page starts when the provider's plugin asked for it there; null: the provider's own start. */
-    val pageStart: String? = null,
-)
+    val account: dev.nori.music.ffi.AccountState? = null,
+    val flow: SignInFlow = SignInFlow.Closed,
+    val attempt: SignInAttempt = SignInAttempt.Idle,
+) {
+    val busy: Boolean get() = attempt == SignInAttempt.Busy
+    val failed: dev.nori.music.ffi.SignInResult? get() = (attempt as? SignInAttempt.Failed)?.result
+
+    /** Offering signing in, unless the page is open already: one dialog at a time. */
+    fun offered(ended: Boolean): AccountUi = if (flow is SignInFlow.Page) this else copy(flow = SignInFlow.Offered(ended))
+}
+
+/** What is shown for signing in: nothing, the offer, or the provider's sign-in page; one at a time. */
+sealed interface SignInFlow {
+    data object Closed : SignInFlow
+    /** A profile just added offers it, or a session the provider [ended]. */
+    data class Offered(val ended: Boolean) : SignInFlow
+    /** The page, starting at [start] when the provider's plugin asked for it there; null: the provider's own start. */
+    data class Page(val start: String?) : SignInFlow
+}
+
+/** The last sign-in: none (or its failure left), on its way, or why it failed. */
+sealed interface SignInAttempt {
+    data object Idle : SignInAttempt
+    data object Busy : SignInAttempt
+    data class Failed(val result: dev.nori.music.ffi.SignInResult) : SignInAttempt
+
+    /** Its failure left for a fresh try; one on its way goes on. */
+    fun cleared(): SignInAttempt = if (this is Failed) Idle else this
+}
 /**
  * The AutoEQ list: how many headphones it holds ([countWords] and [searchWords] say so), the query and
  * its hits, and whether the query is still too short to search (the core's `autoeq_too_short`).
@@ -70,12 +99,29 @@ data class AutoEqUi(
     val query: String = "",
     val hits: List<AutoEqHit> = emptyList(),
     val tooShort: Boolean = true,
-    val busy: Boolean = false,
-    val applied: String? = null,
-    val error: String? = null,
     val countWords: String = "",
     val searchWords: String = "",
-)
+    /** The list's download or a curve being applied: one at a time, with how the last one ended. */
+    val task: AutoEqTask = AutoEqTask.Idle,
+) {
+    val busy: Boolean get() = task is AutoEqTask.Downloading || task is AutoEqTask.Applying
+    val applied: String? get() = when (val t = task) {
+        is AutoEqTask.Applied -> t.name
+        is AutoEqTask.Applying -> t.applied
+        is AutoEqTask.Downloading -> t.applied
+        AutoEqTask.Idle, is AutoEqTask.Failed -> null
+    }
+    val error: String? get() = (task as? AutoEqTask.Failed)?.error
+}
+
+/** While one is under way, the curve applied before it is still said. */
+sealed interface AutoEqTask {
+    data object Idle : AutoEqTask
+    data class Downloading(val applied: String?) : AutoEqTask
+    data class Applying(val applied: String?) : AutoEqTask
+    data class Applied(val name: String) : AutoEqTask
+    data class Failed(val error: String) : AutoEqTask
+}
 
 /**
  * One output device in the equalizer's device list: [name] is what it calls itself, [kind] where it is
@@ -135,11 +181,10 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         }
     }
     val dac: StateFlow<DacState> = nori.dac.state
-    private val _login = MutableStateFlow(LoginUi())
+    private val _login = MutableStateFlow<LoginUi>(LoginUi.Idle)
     val login: StateFlow<LoginUi> = _login
     private val _sync = MutableStateFlow(SyncUi())
     val sync: StateFlow<SyncUi> = _sync
-    private var syncJob: Job? = null
 
     init { viewModelScope.launch { runCatching { nori.library.indexSize() }.onSuccess { n -> _sync.update { it.copy(indexed = n) } } } }
 
@@ -411,7 +456,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     // A provider's plugin asks for its sign-in page (its `sign-in.open`): the page opens at that address.
     init {
         viewModelScope.launch {
-            nori.plugins.signIns.collect { (_, url) -> _account.update { it.copy(page = true, offer = false, failed = null, pageStart = url) } }
+            nori.plugins.signIns.collect { (_, url) -> _account.update { it.copy(flow = SignInFlow.Page(url), attempt = it.attempt.cleared()) } }
         }
     }
 
@@ -420,14 +465,14 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     init {
         viewModelScope.launch {
             nori.reportedRules.collect { reported ->
-                if (reported != null && nori.remindsToSignIn()) _account.update { it.copy(offer = true, ended = true) }
+                if (reported != null && nori.remindsToSignIn()) _account.update { it.offered(ended = true) }
             }
         }
     }
 
     /** The ended session's offer no longer comes back at start. */
     fun stopReminding() {
-        _account.update { it.copy(offer = false) }
+        skipSignIn()
         viewModelScope.launch { nori.stopReminding() }
     }
 
@@ -438,13 +483,18 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     /** Signs the profile in use in with [answer]: a sign-in page's cookies, or what was pasted. */
     fun signIn(answer: String) {
         if (_account.value.busy) return
-        _account.update { it.copy(busy = true, failed = null) }
+        _account.update { it.copy(attempt = SignInAttempt.Busy) }
         viewModelScope.launch {
             val r = nori.signIn(answer)
             val failed = r.takeIf { it !is dev.nori.music.ffi.SignInResult.SignedIn }
             val account = nori.account()
             // Signed in, the sign-in page has done its work; a failure stays on it to be tried again.
-            _account.update { it.copy(account = account, busy = false, failed = failed, page = it.page && failed != null) }
+            _account.update {
+                it.copy(
+                    account = account, attempt = failed?.let(SignInAttempt::Failed) ?: SignInAttempt.Idle,
+                    flow = if (failed == null && it.flow is SignInFlow.Page) SignInFlow.Closed else it.flow,
+                )
+            }
         }
     }
 
@@ -454,43 +504,44 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     /** Opens the provider's sign-in page, from the account's row or a just-added profile's offer. */
-    fun openSignInPage() = _account.update { it.copy(page = true, offer = false, failed = null, pageStart = null) }
+    fun openSignInPage() = _account.update { it.copy(flow = SignInFlow.Page(null), attempt = it.attempt.cleared()) }
 
-    fun closeSignInPage() = _account.update { it.copy(page = false, failed = null, pageStart = null) }
+    fun closeSignInPage() = _account.update { it.copy(flow = if (it.flow is SignInFlow.Page) SignInFlow.Closed else it.flow, attempt = it.attempt.cleared()) }
 
     /** Leaves the sign-in page's failure for a fresh page. */
-    fun retrySignIn() = _account.update { it.copy(failed = null) }
+    fun retrySignIn() = _account.update { it.copy(attempt = it.attempt.cleared()) }
 
-    fun skipSignIn() = _account.update { it.copy(offer = false) }
+    fun skipSignIn() = _account.update { if (it.flow is SignInFlow.Offered) it.copy(flow = SignInFlow.Closed) else it }
 
     /** Offers signing in, as a seal tapped while signed out does. */
     fun offerSignIn() = viewModelScope.launch {
         val ended = nori.account() == dev.nori.music.ffi.AccountState.ENDED
-        _account.update { it.copy(offer = true, ended = ended) }
+        _account.update { it.offered(ended) }
     }
 
     fun login(profile: SavedServer, afterAdding: dev.nori.music.ffi.AfterAdding = dev.nori.music.ffi.AfterAdding.REMIND) {
-        if (_login.value.busy) return
-        _login.value = LoginUi(busy = true)
+        if (_login.value == LoginUi.Busy) return
+        _login.value = LoginUi.Busy
         val saved = prefs.value.servers.map { it.id }
         viewModelScope.launch {
             _login.value = try {
                 val accepted = nori.login(profile)
                 val step = provider(accepted.kind)?.takeIf { accepted.id !in saved }?.let { dev.nori.music.ffi.providerAfterAdding(it, afterAdding) }
                 when (step) {
-                    dev.nori.music.ffi.SignInStep.OFFER -> _account.value = AccountUi(offer = true)
-                    dev.nori.music.ffi.SignInStep.OPEN -> _account.value = AccountUi(page = true)
+                    // A new profile, in use now: the account shown so far was the last one's.
+                    dev.nori.music.ffi.SignInStep.OFFER -> _account.value = AccountUi(flow = SignInFlow.Offered(ended = false))
+                    dev.nori.music.ffi.SignInStep.OPEN -> _account.value = AccountUi(flow = SignInFlow.Page(null))
                     dev.nori.music.ffi.SignInStep.STOP_REMINDING -> nori.stopReminding()
                     null -> {}
                 }
-                LoginUi(done = true)
+                LoginUi.Done
             } catch (e: Exception) {
-                LoginUi(error = describeConnectionError(e))
+                LoginUi.Failed(describeConnectionError(e))
             }
         }
     }
 
-    fun clearLoginResult() { _login.value = LoginUi() }
+    fun clearLoginResult() { _login.value = LoginUi.Idle }
     fun switchServer(profile: SavedServer) = nori.activate(profile)
     fun updateServer(profile: SavedServer) = nori.updateServer(profile)
     fun removeServer(id: String) = nori.removeServer(id)
@@ -679,7 +730,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
             is dev.nori.music.ffi.devices.CurveNotice.Offer -> try {
                 devices.accept(src)
             } catch (e: Exception) {
-                _autoEq.update { it.copy(error = describeConnectionError(e)) }
+                _autoEq.update { it.copy(task = AutoEqTask.Failed(describeConnectionError(e))) }
             }
             is dev.nori.music.ffi.devices.CurveNotice.Applied -> devices.undo(src)
         }
@@ -713,12 +764,13 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     fun downloadAutoEqIndex() = viewModelScope.launch {
         // Asked for by name, with a button: that is the consent, on any network. The lookups switch and
         // "Keep the AutoEQ list" are for what the app fetches on its own, not for a download the user started.
-        _autoEq.update { it.copy(busy = true, error = null) }
-        _autoEq.value = try {
+        _autoEq.update { it.copy(task = AutoEqTask.Downloading(it.applied)) }
+        try {
             val n = withContext(Dispatchers.IO) { nori.client.autoeqUpdate(true, nori.http.metered) }
-            AutoEqUi().counted(n ?: withContext(Dispatchers.IO) { nori.core.autoeqCount() })
+            _autoEq.value = AutoEqUi().counted(n ?: withContext(Dispatchers.IO) { nori.core.autoeqCount() })
         } catch (e: Exception) {
-            AutoEqUi(error = describeConnectionError(e))
+            // The list held before stays.
+            _autoEq.update { it.copy(task = AutoEqTask.Failed(describeConnectionError(e))) }
         }
     }
 
@@ -738,7 +790,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     /** Fetches one headphone's parametric preset and makes it the current curve. */
     fun applyAutoEq(entry: AutoEqEntry) = viewModelScope.launch {
-        _autoEq.update { it.copy(busy = true, error = null) }
+        _autoEq.update { it.copy(task = AutoEqTask.Applying(it.applied)) }
         try {
             // The parametric preset, or the graphic curve fitted with parametric filters when that is all
             // AutoEQ has (the core's autoeq_curve and parse_eq_preset); null when it has neither.
@@ -746,14 +798,14 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
             if (text == null) {
                 // The core has taken it out of the list: the search and the count say so at once.
                 val n = withContext(Dispatchers.IO) { runCatching { nori.core.autoeqCount() }.getOrDefault(0u) }
-                _autoEq.update { it.counted(n).copy(busy = false, error = dev.nori.music.app.ui.say.autoeqNoCurve) }
+                _autoEq.update { it.counted(n).copy(task = AutoEqTask.Failed(dev.nori.music.app.ui.say.autoeqNoCurve)) }
                 searchAutoEq(_autoEq.value.query)
                 return@launch
             }
             withContext(Dispatchers.IO) { import(text) }
-            _autoEq.update { it.copy(busy = false, applied = entry.name) }
+            _autoEq.update { it.copy(task = AutoEqTask.Applied(entry.name)) }
         } catch (e: Exception) {
-            _autoEq.update { it.copy(busy = false, error = describeConnectionError(e)) }
+            _autoEq.update { it.copy(task = AutoEqTask.Failed(describeConnectionError(e))) }
         }
     }
 
@@ -779,7 +831,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     fun syncLibrary() {
         if (_sync.value.running) return
         _sync.update { it.copy(running = true, error = null) }
-        syncJob = viewModelScope.launch {
+        viewModelScope.launch {
             try {
                 nori.library.sync()
                 _sync.value = SyncUi(indexed = nori.library.indexSize())

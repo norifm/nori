@@ -104,10 +104,18 @@ data class PlayerState(
 class PlayerConnection(private val context: Context, private val nori: Nori) {
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state
-    private var controller: MediaController? = null
-    /** The connection under way; forgotten by [disconnect], so one landing after it is let go at once. */
-    private var connecting: com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
-    private val pending = ArrayList<(MediaController) -> Unit>()
+    /** The controller to the service, or the connection under way and what waits for it. */
+    private var link: Link = Link.Disconnected
+    private val controller: MediaController? get() = (link as? Link.Connected)?.controller
+
+    private sealed interface Link {
+        data object Disconnected : Link
+        /** Forgotten by [disconnect]: one landing after it runs [pending] and is let go at once. */
+        class Connecting(val future: com.google.common.util.concurrent.ListenableFuture<MediaController>) : Link {
+            val pending = ArrayList<(MediaController) -> Unit>()
+        }
+        class Connected(val controller: MediaController) : Link
+    }
 
     /** Moves whenever a new queue is set (nori-queue `playlist_origin_gen`): when to ask again which page it came from. */
     val queueOrigin: Int get() = PlaylistJni.origin(nori.sessionHandle)
@@ -257,7 +265,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         val raw = c.currentPosition
         val now = android.os.SystemClock.elapsedRealtime()
         val on = c.currentMediaItemIndex
-        val engine = engine()?.takeIf { _pendingSeek.value == null }
+        val engine = engine()?.takeIf { seekHold == null }
         val r = PlayheadJni.position(clock, now, c.isPlaying, on, raw, shown, engine?.handle ?: 0L)
         val out = read(r)
         if (c === controller && c.isPlaying && r < 0 && now - reanchored > REANCHOR_GAP_MS) {
@@ -302,19 +310,24 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     val playerPositionMs: Long get() = controller?.currentPosition ?: -1L
 
     fun connect() {
-        if (controller != null || connecting != null) return
+        if (link != Link.Disconnected) return
         val future = MediaController.Builder(context, SessionToken(context, ComponentName(context, PlaybackService::class.java))).buildAsync()
-        connecting = future
+        val connecting = Link.Connecting(future)
+        link = connecting
         future.addListener({
             val c = runCatching { future.get() }.getOrNull()
-            if (connecting !== future) {
+            if (link !== connecting) {
                 // Disconnected meanwhile: what was asked of it is done, and it is let go.
-                c?.let { runPending(it); it.release() } ?: pending.clear()
+                c?.let { runPending(connecting, it); it.release() }
                 return@addListener
             }
-            connecting = null
-            c ?: return@addListener
-            controller = c
+            if (c == null) {
+                // What waited for it goes with it, not to a later connection.
+                dev.nori.music.NoriLog.w("player: the controller would not connect; ${connecting.pending.size} actions dropped")
+                link = Link.Disconnected
+                return@addListener
+            }
+            link = Link.Connected(c)
             c.addListener(listener)
             // A mix starting or ending is a change to the UI, and the player itself fires no event for it.
             PlaybackService.onMixingChanged = { main.post { controller?.let { publish(it, queueChanged = false) } } }
@@ -322,25 +335,28 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             PlaybackService.onQueueSet = { main.post { controller?.let { publish(it, queueChanged = true) } } }
             PlaybackService.onLanded = { followSeek() }
             publish(c, queueChanged = true)
-            runPending(c)
+            runPending(connecting, c)
         }, MoreExecutors.directExecutor())
     }
 
     /**
-     * Runs what was asked before `c` connected. Taken out first: an action run on a controller already
-     * let go that asks again waits for the next one.
+     * Runs what was asked of [connecting] on `c`, the controller it made. An action run on a controller
+     * already let go that asks again waits for the next one.
      */
-    private fun runPending(c: MediaController) {
-        val asked = pending.toList()
-        pending.clear()
+    private fun runPending(connecting: Link.Connecting, c: MediaController) {
+        val asked = connecting.pending.toList()
+        connecting.pending.clear()
         asked.forEach { it(c) }
     }
 
     fun disconnect() {
-        connecting = null
-        _pendingSeek.value = null
-        controller?.let { it.removeListener(listener); it.release() }
-        controller = null
+        seekHold = null
+        (link as? Link.Connected)?.controller?.let { it.removeListener(listener); it.release() }
+        link = Link.Disconnected
+        // Nothing to tell while no controller is connected: no wake of the main thread for it.
+        PlaybackService.onMixingChanged = null
+        PlaybackService.onQueueSet = null
+        PlaybackService.onLanded = null
         _state.value = _state.value.copy(connected = false)
     }
 
@@ -355,13 +371,26 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             android.os.Handler(android.os.Looper.getMainLooper()).post { with(action) }
             return
         }
-        controller?.let(action) ?: run { pending += action; connect() }
+        if (link == Link.Disconnected) connect()
+        when (val l = link) {
+            is Link.Connected -> action(l.controller)
+            is Link.Connecting -> l.pending += action
+            // The connection failed at once: nothing to run it on.
+            Link.Disconnected -> {}
+        }
     }
 
     private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
             followSeek()
             publish(player, events.contains(Player.EVENT_TIMELINE_CHANGED))
+        }
+
+        // The music stopped by itself at a song's end: the sleep timer's end of a song, if set, is spent (the player's `pauseAtEndOfItem`).
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM && _state.value.sleepAtEndOfTrack) {
+                _state.value = _state.value.copy(sleepAtEndOfTrack = false)
+            }
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -439,6 +468,8 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             bridging = view?.bridging ?: old.bridging,
             waiting = p.playWhenReady && PlaybackService.rustPlayer?.waiting == true,
             origin = PlaylistJni.origin(nori.sessionHandle), playingOn = null, playingOnKind = null,
+            // The sleep timer's alarm has fired (its pause is this event): no longer counted down.
+            sleepAt = old.sleepAt.takeIf { it > SystemClock.elapsedRealtime() } ?: 0L,
         )
     }
 
@@ -582,7 +613,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     }
     fun next() = with { c ->
         mirror?.let { m -> press(m, Press.Next); return@with }
-        _pendingSeek.value = null
+        seekHold = null
         // With nothing after, the service refills the queue and takes the skip when songs land
         // (nori_queue's next_action).
         when (dev.nori.music.ffi.queue.nextAction(c.hasNextMediaItem())) {
@@ -595,12 +626,12 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         mirror?.let { m -> press(m, Press.Previous); return@with }
         // Restart here, or let the player's own previous decide: nori_player::queue::previous_restarts.
         if (nori.session.queuePreviousRestarts(c.currentPosition, c.hasPreviousMediaItem())) { seekTo(0); if (!c.playWhenReady) c.play() }
-        else { _pendingSeek.value = null; c.seekToPrevious() }
+        else { seekHold = null; c.seekToPrevious() }
     }
     /** The song before, even well into this one - a swipe is a request for the other record, not a restart. */
     fun previousItem() = with { c ->
         mirror?.let { m -> _state.value.previousIndex.takeIf { it >= 0 }?.let { remoteIndex(m, it) }?.let { press(m, Press.Jump(it)) }; return@with }
-        _pendingSeek.value = null
+        seekHold = null
         c.seekToPreviousMediaItem()
     }
 
@@ -609,8 +640,8 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         mirror?.let { m -> press(m, Press.Seek(ms)); return@with }
         // Asked for: the bar and the lyrics go there as they are, even a moment back (heard.rs Playhead).
         PlayheadJni.jumped(clock)
-        seekAfter = engine()?.let { it to it.jumpsSent }
-        _pendingSeek.value = ms
+        val e = engine()
+        seekHold = SeekHold(ms, e, e?.jumpsSent ?: 0L)
         // A tap is a place in the song on the page. While the ear is still on the song the player
         // has left (see publish), that is the earlier song: the seek goes to it, not to the one the
         // player is already counting.
@@ -618,8 +649,12 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         if (heardIndex != null) c.seekTo(heardIndex, ms) else c.seekTo(ms)
     }
 
-    /** The engine and its jumps sent before the pending seek; null when there is no engine to wait for. */
-    private var seekAfter: Pair<EnginePlayer, Long>? = null
+    /**
+     * A seek to [ms] held until [engine] lands a jump sent after its [after] jumps; no engine: none to wait for.
+     */
+    private class SeekHold(val ms: Long, val engine: EnginePlayer?, val after: Long)
+    private var seekHold: SeekHold? = null
+        set(hold) { field = hold; _pendingSeek.value = hold?.ms }
     /**
      * Where a seek asked to go, until the engine has landed it. The seek bar holds this instead of its
      * own timer, so a slow seek reads as one held place rather than a jump, a snap-back and a glide.
@@ -633,10 +668,9 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
      * engine it was sent to is gone.
      */
     private fun followSeek() {
-        if (_pendingSeek.value == null) return
+        val hold = seekHold ?: return
         val e = engine()
-        val (sentTo, after) = seekAfter ?: (null to 0L)
-        if (e == null || e !== sentTo || (e.jumpsSent > after && e.landedAll)) _pendingSeek.value = null
+        if (e == null || e !== hold.engine || (e.jumpsSent > hold.after && e.landedAll)) seekHold = null
     }
 
     fun setShuffle(on: Boolean) = with {
