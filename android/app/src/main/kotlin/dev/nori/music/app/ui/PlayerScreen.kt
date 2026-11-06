@@ -1,6 +1,7 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.animation.core.Animatable
+import dev.nori.music.data.Pending
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.Spring
@@ -223,7 +224,8 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     val artwork = vm.artwork.collectAsStateWithLifecycle().value
     val coverUrl = artwork?.takeIf { !it.looping }?.url ?: vm.cover(state.current?.coverArt, CoverSize.FULL)
     // One picture for the sleeve and for the cover in flight (see SleeveArt).
-    val sleeveArt = rememberSleeveArt(coverUrl)
+    val answered by vm.answered.collectAsStateWithLifecycle()
+    val sleeveArt = rememberSleeveArt(coverUrl, answered)
     // Nothing of the loop exists until a song has had one: no player, no surface, no touch watcher. Once
     // made it stays, so a loop leaving with its song fades out rather than vanishing.
     val loop = artwork?.takeIf { it.looping }?.url
@@ -956,9 +958,10 @@ private fun Artwork(
             // behind the title; a full-width square can only do one or the other. Cover crops already.
             Modifier.bleed().then(if (LocalWide.current) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(SLEEVE)),
         ) {
+            val answered by vm.answered.collectAsStateWithLifecycle()
             SleeveCarousel(
                 art, currentUrl, previousUrl, nextUrl, previousTint, nextTint, songs,
-                onPrevious = vm::previousItem, onNext = vm::next, slide = slide, shift = shift, motion = motion,
+                onPrevious = vm::previousItem, onNext = vm::next, answered = answered, slide = slide, shift = shift, motion = motion,
             )
             // Just enough shade under the status bar for its icons to read on a pale cover; the same
             // amount the album page uses, and invisible against anything darker.
@@ -1424,8 +1427,10 @@ private class SleeveArt {
     var previous by mutableStateOf<androidx.compose.ui.graphics.painter.Painter?>(null)
     val previousAlpha = androidx.compose.animation.core.Animatable(1f)
     var loading by mutableStateOf(true)
-    /** The address of [current]: what a swipe waits for before it hands the sleeve back. */
+    /** The address of [current]. */
     var shownUrl by mutableStateOf<String?>(null)
+    /** The song the sleeve has finished changing to, its picture shown or none to show: what a swipe waits for before it hands the sleeve back. */
+    var settledUrl by mutableStateOf<String?>(null)
     /** The next picture goes straight in: a swipe has already slid it into place. */
     var snapNext = false
     /**
@@ -1443,23 +1448,24 @@ private class SleeveArt {
     /** Which song's picture is wanted, and when the placeholder is due. */
     val turn = CoverTurn(HOLD_MS)
     /**
-     * A record slid in for this address with no picture on it, or with its picture only part way in: the
-     * sleeve is at the plate for it already, and the old picture is not to come back while the player
-     * catches up with the change.
+     * A record slid in for this address with no picture on it, or with its picture only part way in, and
+     * the skip that asked for it: the sleeve is at the plate for it already, and the old picture is not to
+     * come back while the player catches up with the change.
      */
-    var clearedFor by mutableStateOf<String?>(null)
+    var clearedFor by mutableStateOf<Pending<String?>?>(null)
     /** Where the next picture's fade starts: how far in the record that slid in had it; below 0 for no such record. */
     var fadeFrom = -1f
 
     /**
-     * A record has slid in over the sleeve for [url] without its whole picture ([level] of it, 0 for none):
-     * the sleeve under it becomes the plate at once, since the picture that was on it has slid away, and the
-     * new one carries on from [level] when the sleeve has it.
+     * A record has slid in over the sleeve for [url]'s address without its whole picture ([level] of it, 0
+     * for none): the sleeve under it becomes the plate at once, since the picture that was on it has slid
+     * away, and the new one carries on from [level] when the sleeve has it.
      */
-    fun clearFor(url: String?, level: Float) {
+    fun clearFor(url: Pending<String?>, level: Float) {
         current = null
         previous = null
         shownUrl = null
+        settledUrl = null
         loading = level <= 0f
         fadeFrom = level.coerceIn(0f, 1f)
         clearedFor = url
@@ -1487,9 +1493,6 @@ private const val PICTURE_IN_MS = 320
 /** A picture fading in over the last song's. */
 private const val PICTURE_OVER_MS = 480
 
-/** How long the sleeve waits on a record slid in without a picture for the player to take the change. */
-private const val CLEARED_WAIT_MS = 1_500L
-
 /**
  * The sleeve as one record in a row of them: a sideways drag slides it and brings the next (or the
  * last) record in from the other edge, already drawn, the way Apple's does. Let go past a third of the
@@ -1504,7 +1507,10 @@ private const val CLEARED_WAIT_MS = 1_500L
 private fun SleeveCarousel(
     art: SleeveArt, currentUrl: String?, previousUrl: String?, nextUrl: String?,
     previousTint: String?, nextTint: String?, songs: Songs,
-    onPrevious: () -> Unit, onNext: () -> Unit, slide: SleeveSlide, shift: PageShift,
+    onPrevious: () -> Long, onNext: () -> Long,
+    /** The last skip's ticket the player's state answers ([PlayerViewModel.answered]). */
+    answered: Long,
+    slide: SleeveSlide, shift: PageShift,
     motion: SleeveMotion?,
 ) {
     val scope = rememberCoroutineScope()
@@ -1568,18 +1574,21 @@ private fun SleeveCarousel(
     var committedTint by remember { mutableStateOf<String?>(null) }
     val onNextNow by androidx.compose.runtime.rememberUpdatedState(onNext)
     val onPreviousNow by androidx.compose.runtime.rememberUpdatedState(onPrevious)
+    // Taken from the composition, as the song is: an answer is never read ahead of the state it answers.
+    val answeredNow by androidx.compose.runtime.rememberUpdatedState(answered)
     // The record that has been slid in, drawn over the sleeve until the sleeve shows it too. The drawn
     // picture itself, not the painter: the painter is handed the following song's address next.
     var landed by remember { mutableStateOf<androidx.compose.ui.graphics.painter.Painter?>(null) }
-    var landedUrl by remember { mutableStateOf<String?>(null) }
+    /** The address [landed] is the picture of, and the skip that asked for it. */
+    var landing by remember { mutableStateOf<Pending<String>?>(null) }
     /** The address of the song the last change asked the player for; see land. */
-    var committed by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(landedUrl) {
-        val url = landedUrl ?: return@LaunchedEffect
-        // A second and a half, not four: if the sleeve has not arrived by then something is wrong with
-        // the picture, and a record held over the page is worse than the sleeve's own cross-fade.
-        kotlinx.coroutines.withTimeoutOrNull(1_500) { androidx.compose.runtime.snapshotFlow { art.shownUrl }.first { it == url } }
-        landed = null; landedUrl = null
+    var committed by remember { mutableStateOf<Pending<String?>?>(null) }
+    LaunchedEffect(landing) {
+        val l = landing ?: return@LaunchedEffect
+        // Until the sleeve has finished changing to it (its picture shown, or none to show), or the player
+        // answered the skip with another song.
+        androidx.compose.runtime.snapshotFlow { art.settledUrl == l.asked || (l.answeredBy(answeredNow) && currentUrlNow != l.asked) }.first { it }
+        landed = null; landing = null
     }
     // A song that changes by itself - the end of one, gapless, a crossfade, an AutoMix switch, a skip
     // from the notification - changes record the way a skip does: the record it left goes out one side
@@ -1599,7 +1608,7 @@ private fun SleeveCarousel(
     val incoming = art.cover?.takeIf { it.url == currentUrl }?.painter
     val go = when {
         songs.current == null || passing.id == null || songs.current == passing.id -> 0
-        AppMotion.reduce || !onScreen || holding || moving?.isActive == true || landedUrl != null || songs.current == askedId -> 0
+        AppMotion.reduce || !onScreen || holding || moving?.isActive == true || landing != null || songs.current == askedId -> 0
         incoming == null -> 0
         songs.previous == passing.id && before.image != null -> 1
         songs.next == passing.id && after.image != null -> -1
@@ -1633,7 +1642,7 @@ private fun SleeveCarousel(
 
     // The loop plays only on a record at rest: none held, lifted, sliding (a skip or a song changing by itself) or waiting to land.
     if (motion != null) LaunchedEffect(motion) {
-        androidx.compose.runtime.snapshotFlow { !holding && offset == 0f && lift.value == 0f && landedUrl == null && !naturalHere }
+        androidx.compose.runtime.snapshotFlow { !holding && offset == 0f && lift.value == 0f && landing == null && !naturalHere }
             .collect { motion.resting = it }
     }
     // The plate a record waits on: the same placeholder as the sleeve's, the theme's own surface, not
@@ -1654,7 +1663,7 @@ private fun SleeveCarousel(
     val travel = heightPx * liftedScale(if (AppMotion.reduce) 0f else 1f, widthPx, heightPx) + gap
     val travelNow by androidx.compose.runtime.rememberUpdatedState(travel)
     fun sync(at: Float) {
-        val waiting = committed
+        val waiting = committed?.asked
         val showing = currentUrlNow
         val taken = shift.adopted
         // Held from the moment a record is sent until the page is drawing its colours, and taken
@@ -1710,13 +1719,12 @@ private fun SleeveCarousel(
         // one that is showing: starting now would slide in a copy of the cover already in the middle,
         // which is the press that seems to change the cover first and then animate from it to itself.
         //
-        // A quarter of a second is long enough for a player that is going to answer at all, and short
-        // enough that a run of presses (each of which waits here for the change before it) does not
-        // read as the records pausing between slides.
+        // Until the player has answered that change: then either it is on the song, or it went elsewhere.
         val waitingFor = committed
-        val stale = waitingFor != null && currentUrlNow != waitingFor && kotlinx.coroutines.withTimeoutOrNull(250) {
-            androidx.compose.runtime.snapshotFlow { currentUrlNow }.first { it == waitingFor }
-        } == null
+        val stale = waitingFor != null && currentUrlNow != waitingFor.asked && run {
+            androidx.compose.runtime.snapshotFlow { currentUrlNow == waitingFor.asked || waitingFor.answeredBy(answeredNow) }.first { it }
+            currentUrlNow != waitingFor.asked
+        }
         val painter = if (go < 0) afterNow else beforeNow
         val url = if (go < 0) nextUrlNow else previousUrlNow
         // The player never caught up with the last change, so the record waiting off the edge is the one
@@ -1759,25 +1767,26 @@ private fun SleeveCarousel(
             val picture = painter.painter
             val level = if (picture == null) 0f else (if (go < 0) afterFadeNow else beforeFadeNow).value
             val whole = picture != null && level >= 1f
+            // The skip first: what is drawn for it waits for its answer.
+            askedId = if (go < 0) nextIdNow else previousIdNow
+            val ticket = if (go < 0) onNextNow() else onPreviousNow()
             landed = picture.takeIf { whole }
-            landedUrl = url.takeIf { whole }
+            landing = url?.takeIf { whole }?.let { Pending(it, ticket) }
             // Otherwise the record that came in is a plate, or a picture part way in, and the sleeve going
             // back under it has to be the same: not the picture of the song just left, which has slid off
             // the other side. That was the same cover twice in a row - out one side, back in the middle
             // for the length of the load. The sleeve goes to the plate at once and fades this song's
             // picture in from where the record had it when it comes (SleeveArt.clearFor).
-            if (!whole && url != art.shownUrl) art.clearFor(url, level)
+            if (!whole && url != art.shownUrl) art.clearFor(Pending(url, ticket), level)
             // What the player has been asked for, whether or not there was a picture to hold over. The
             // next change waits for this, not for the picture, so a cover that failed to load does not let
             // the one after it start against a queue that has not moved yet.
-            committed = url
+            committed = Pending(url, ticket)
             committedTint = if (go < 0) nextTintNow else previousTintNow
             // Unless the sleeve already shows this picture (the next song of the same album): then no
             // picture is coming, and a snap left waiting here would cut the fade of the next real change.
             art.snapNext = whole && url != art.shownUrl
             offset = rest
-            askedId = if (go < 0) nextIdNow else previousIdNow
-            if (go < 0) onNextNow() else onPreviousNow()
         }
 
         var changed = false
@@ -1960,10 +1969,10 @@ private fun SleeveCarousel(
         fun androidx.compose.foundation.layout.BoxScope.records(blurred: Boolean) {
             // Not while a record that has landed is held over it: the two sit in the same place, and
             // the one on top is the whole record.
-            if (landedUrl == null && !naturalHere) Box(Modifier.fillMaxSize().record({ o, _ -> o }, { _, f -> 1f - 0.35f * f })) {
+            if (landing == null && !naturalHere) Box(Modifier.fillMaxSize().record({ o, _ -> o }, { _, f -> 1f - 0.35f * f })) {
                 SleeveImage(art, Modifier.fillMaxSize())
             }
-            if (landedUrl == null && naturalHere) Box(Modifier.fillMaxSize().record({ o, _ -> o }, { _, f -> 1f - 0.35f * f }).then(plate)) {
+            if (landing == null && naturalHere) Box(Modifier.fillMaxSize().record({ o, _ -> o }, { _, f -> 1f - 0.35f * f }).then(plate)) {
                 naturalPicture?.let { androidx.compose.foundation.Image(it, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
             }
             // The sheen under the picture, which fades in over it when it comes (rememberPictureFade).
@@ -1986,7 +1995,7 @@ private fun SleeveCarousel(
             // Only over its own song's record: once a slide has brought another record to the middle (the
             // player asked for that song and not there yet, or there), the loop's still is not this record's.
             val loopRecord = motion != null && (naturalHere || motion.shownSong == songs.current && (askedId == null || askedId == songs.current))
-            if (!blurred && motion != null && motion.present && landedUrl == null && loopRecord) Box(
+            if (!blurred && motion != null && motion.present && landing == null && loopRecord) Box(
                 Modifier.fillMaxSize().record(
                     { o, span -> if (naturalHere) o - naturalGo * span else o },
                     { o, f ->
@@ -2000,7 +2009,7 @@ private fun SleeveCarousel(
             ) { MotionCover(motion) }
             // It is the record that is showing, so it moves with the record: held still in the middle it
             // covered the next change from on top, which is the "cover stuck over the animation".
-            if (landedUrl != null) Box(Modifier.fillMaxSize().record({ o, _ -> o }, { _, f -> 1f - 0.35f * f }).then(plate)) {
+            if (landing != null) Box(Modifier.fillMaxSize().record({ o, _ -> o }, { _, f -> 1f - 0.35f * f }).then(plate)) {
                 landed?.let { androidx.compose.foundation.Image(it, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
             }
         }
@@ -2194,21 +2203,24 @@ private fun liftedScale(l: Float, width: Float, side: Float): Float {
 
 
 @Composable
-private fun rememberSleeveArt(url: String?): SleeveArt {
+private fun rememberSleeveArt(url: String?, answered: Long): SleeveArt {
     val art = remember { SleeveArt() }
+    // Taken from the composition, as [url] is: an answer is never read ahead of the song it answers with.
+    val answeredNow by androidx.compose.runtime.rememberUpdatedState(answered)
     val cover = rememberCover(url, CoverSize.FULL)
     art.cover = cover
     val picture = cover.painter
     // Run again when a record slides in for another song without its picture (see clearFor), and not when
     // the song it slid in for arrives and takes that over: this song's own fade is not to be cut short.
-    val elsewhere = art.clearedFor?.takeIf { it != url }
+    val elsewhere = art.clearedFor?.takeIf { it.asked != url }
     LaunchedEffect(cover, cover.state, picture, elsewhere) {
         val now = android.os.SystemClock.uptimeMillis()
         val cleared = art.clearedFor
-        if (cleared != null && cleared != url) {
+        if (cleared != null && cleared.asked != url) {
             // A record slid in for a song the player has not moved to yet: the plate stays for it. Should
-            // the player never get there, the picture of the song it is still on comes back, faded in.
-            delay(CLEARED_WAIT_MS)
+            // the player answer the skip with another song, the picture of the song it is on comes back,
+            // faded in.
+            androidx.compose.runtime.snapshotFlow { cleared.answeredBy(answeredNow) }.first { it }
             art.fadeFrom = 0f
             art.clearedFor = null
             return@LaunchedEffect
@@ -2243,6 +2255,7 @@ private fun rememberSleeveArt(url: String?): SleeveArt {
                 // away while the sleeve underneath was still showing the cover before it, which is the
                 // frame of the previous cover that appeared as the record grew back.
                 art.shownUrl = url
+                art.settledUrl = url
             } else if (art.shownUrl != url) {
                 // This picture's fade was cut short (the effect ran again for the same song: a record slid
                 // in for another one and was not taken up, the cover's state moved): it finishes from where
@@ -2252,6 +2265,7 @@ private fun rememberSleeveArt(url: String?): SleeveArt {
                 else art.fade.animateTo(1f, androidx.compose.animation.core.tween(((1f - art.fade.value) * PICTURE_IN_MS).toInt().coerceAtLeast(1)))
                 art.previous = null
                 art.shownUrl = url
+                art.settledUrl = url
             }
             cover.state == CoverImage.LOADING -> {
                 if (art.current == null) art.loading = true
@@ -2263,7 +2277,7 @@ private fun rememberSleeveArt(url: String?): SleeveArt {
                 }
             }
             // Nothing to show for this song: back to the plate rather than keep the last cover.
-            else -> { art.loading = false; art.letGo() }
+            else -> { art.loading = false; art.settledUrl = url; art.letGo() }
         }
     }
     return art
@@ -2783,6 +2797,8 @@ private const val MIXING_FADE_MS = 360f
 @Composable
 private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
+    // The player's answers to the moves and removals made here, read with [state].
+    val answered by vm.answered.collectAsStateWithLifecycle()
     // In the order the songs will play, which under shuffle is not the order of the list itself. A drag
     // moves a song within the list, so reordering is offered only when the two are the same.
     // Which order, whether a drag may reorder it, which rows a swipe leaves and which have played are the
@@ -2896,7 +2912,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
     }
     LaunchedEffect(nowKey, nowEntry, state.origin) {
         followed = nowKey
-        if (nowKey == null || drag.from >= 0 || dragged[0]) return@LaunchedEffect
+        if (nowKey == null || drag.from != null || dragged[0]) return@LaunchedEffect
         val asked = tapped == nowKey || origin[0] != state.origin
         tapped = null
         origin[0] = state.origin
@@ -2905,10 +2921,10 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
         pinned[0] = true
         if (plain) list.scrollToItem(nowEntry) else list.animateScrollToItem(nowEntry)
     }
-    // A drop has landed when the queue is no longer the one it was sent against. On that frame the rows
-    // are laid out where they were already drawn: their shifts go (before this frame is laid out) and
-    // they do not also slide there.
-    val landed = drag.landed(state.queue)
+    // A drop has landed when the queue is no longer the one it was sent against, or the player has
+    // answered the move with the queue as it was. On that frame the rows are laid out where they were
+    // already drawn: their shifts go (before this frame is laid out) and they do not also slide there.
+    val landed = drag.landed(state.queue, answered)
     SideEffect { if (landed) drag.clear() }
     // The last row is cut off dead straight where the list ends, a few pixels above the song's title,
     // and those few pixels are the ones that flickered as a panel came or went: a row half drawn, over
@@ -2977,7 +2993,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
             val aside by remember(key) { derivedStateOf { drag.step(place) } }
             val stepping = remember(key) { androidx.compose.animation.core.Animatable(0f) }
             LaunchedEffect(aside) {
-                if (plain || drag.from < 0) stepping.snapTo(aside)
+                if (plain || drag.from == null) stepping.snapTo(aside)
                 else stepping.animateTo(aside, AppMotion.settle())
             }
             val back = undo.returning?.takeIf { it.key == key }
@@ -2996,7 +3012,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                 val index = queueKeys(now.map { it.id }).indexOf(key)
                 if (index >= 0) {
                     undo.took(now[index], index, key, -1f)
-                    vm.remove(index)
+                    swipe.leaving = Pending(Unit, vm.remove(index))
                 }
             }
             Box(
@@ -3013,7 +3029,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                     .graphicsLayer {
                         // Once the drag is over the rows are where they were drawn: no step is left over.
                         translationY = when {
-                            drag.from < 0 -> 0f
+                            drag.from == null -> 0f
                             drag.from == place -> drag.offset.floatValue
                             else -> stepping.value
                         }
@@ -3041,7 +3057,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                     Modifier.fillMaxWidth()
                         .touchedInSight(seen, null)
                         .then(if (played) Modifier.graphicsLayer { alpha = QUEUE_PLAYED_ALPHA } else Modifier)
-                        .then(if (edits) Modifier.swipeable(swipe, null, taken, null, gone = true, resist = i in kept, shown = { seen.inSight(null) }).clickable { if (i == state.index) showPlayer() else { tapped = key; vm.skipTo(i) } } else Modifier)
+                        .then(if (edits) Modifier.swipeable(swipe, null, taken, null, gone = true, resist = i in kept, shown = { seen.inSight(null) }, answered = answered).clickable { if (i == state.index) showPlayer() else { tapped = key; vm.skipTo(i) } } else Modifier)
                         .padding(vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -3097,9 +3113,8 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                             // Let go: the row settles into the slot it is over, and only then is the move
                             // sent; the rows stay drawn where they are until the queue has changed.
                             fun drop(send: Boolean) {
-                                val from = drag.from
-                                if (from < 0) return
-                                val to = if (send) drag.target() else from
+                                val from = drag.from ?: return
+                                val to = if (send) drag.target() ?: from else from
                                 val h = drag.rowHeight
                                 scope.launch {
                                     val rest = (to - from) * h
@@ -3107,11 +3122,7 @@ private fun Queue(vm: PlayerViewModel, showPlayer: () -> Unit) {
                                     else androidx.compose.animation.core.animate(drag.offset.floatValue, rest, animationSpec = AppMotion.settle()) { v, _ -> drag.offset.floatValue = v }
                                     lift(0f)
                                     if (to == from || drag.from != from) { if (drag.from == from) drag.clear(); return@launch }
-                                    drag.landing = queueNow
-                                    vm.move(from, to)
-                                    // A move that never arrives does not hold the rows up for good.
-                                    kotlinx.coroutines.delay(QUEUE_LANDING_MS)
-                                    if (drag.landing != null && drag.from == from) drag.clear()
+                                    drag.landing = Pending(queueNow, vm.move(from, to))
                                 }
                             }
                             detectDragGestures(
@@ -3165,8 +3176,6 @@ private val QUEUE_LIFT_ROOM = 8.dp
 
 private val QUEUE_NOW_VEIL = Color.Black.copy(alpha = 0.4f)
 
-/** How long the rows wait for a move to reach the queue before they give it up. */
-private const val QUEUE_LANDING_MS = 1_000L
 
 /**
  * "Removed “song” · Undo", a small pill over the foot of the queue for a few seconds after a song is taken

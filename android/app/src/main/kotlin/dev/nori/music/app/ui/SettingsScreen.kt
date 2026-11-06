@@ -448,8 +448,9 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     // The order as it is now, for a gesture that outlives the composition it started in.
     val orderNow by androidx.compose.runtime.rememberUpdatedState(order)
     val shown = drag?.shown ?: order
-    // Once the core's order is the one shown, the drag is over.
-    drag?.let { d -> if (!d.active && d.shown == order) androidx.compose.runtime.SideEffect { drag = null } }
+    // Once the page shows the core's answer to the drop, the drag is over: the order shown, or another
+    // the core placed it in (the rows then glide there).
+    drag?.let { d -> if (!d.active && (d.shown == order || order != d.from)) androidx.compose.runtime.SideEffect { drag = null } }
     var keying by remember { mutableStateOf<SettingRow.Ranked?>(null) }
     NoriDialog(keying, { keying = null }) { row -> KeyDialog(row, { keying = null }) { v -> vm.set(row.keyName, v); keying = null } }
     // Each row under a key of its own, so a ranked row moved in the core's order is the same row, its

@@ -22,6 +22,8 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     val state: StateFlow<PlayerState> = player.state
     /** Where a seek asked to go, while it is still being watched into place; the seek bar holds this. */
     val pendingSeek: StateFlow<Long?> = player.pendingSeek
+    /** The last command's ticket the player's state answers ([dev.nori.music.data.Pending]). */
+    val answered: StateFlow<Long> = player.answered
 
     /** A mix is being heard (see [dev.nori.music.playback.PlayerConnection.mixing]): the seek row says so. */
     val mixing: StateFlow<Boolean> = player.mixing
@@ -257,14 +259,15 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
 
     fun connect() = player.connect()
     fun toggle() = player.toggle()
-    fun next() = player.next()
+    /** Skips; the ticket the state answers it by ([answered]). */
+    fun next(): Long { player.next(); return player.ticket() }
     fun previous() = player.previous()
-    fun previousItem() = player.previousItem()
+    fun previousItem(): Long { player.previousItem(); return player.ticket() }
     fun seekTo(ms: Long) = player.seekTo(ms)
     fun skipTo(index: Int) = player.skipTo(index)
-    fun remove(index: Int) = player.remove(index)
+    fun remove(index: Int): Long { player.remove(index); return player.ticket() }
     fun restore(song: dev.nori.music.ffi.model.Song, index: Int) = player.restore(song, index)
-    fun move(from: Int, to: Int) = player.move(from, to)
+    fun move(from: Int, to: Int): Long { player.move(from, to); return player.ticket() }
     fun toggleShuffle() = player.setShuffle(!state.value.shuffle)
     fun cycleRepeat() = player.cycleRepeat()
     fun sleep(minutes: Int, endOfTrack: Boolean = false, songs: Int = 0) = player.sleep(minutes, endOfTrack, songs)

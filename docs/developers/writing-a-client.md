@@ -296,6 +296,10 @@ it again and run `tools/twins.sh`. Nothing a client calls per row, frame or buff
 - **Gestures and per-frame animation math**: drags, springs, easing, flick velocity, and the decisions a
   gesture ends in. A crossing costs more than the few multiplications, and other clients have other
   input.
+- **What a gesture drew ahead of its answer** (a record slid in, a row dropped or swiped away) is held
+  until the player has answered the command, whatever came of it, never for a guessed time. On Android
+  each skip, move and removal gets a ticket (`PlayerConnection.ticket`), and `answered` reaches it once
+  the state shows its outcome (`data/Pending.kt`).
 - **Drawing**: layout, text measurement, glyph caches, bitmaps, the lyrics' fill and glow. When the page
   redraws and how far the singing is are the core's (`LyricClock`).
 - **Glue around platform objects**: the media session, the HTTP client's TLS setup, the network monitor,

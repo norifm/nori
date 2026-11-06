@@ -3,9 +3,9 @@ package dev.nori.music.app.ui
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import dev.nori.music.data.Pending
 import kotlin.math.roundToInt
 
 /**
@@ -23,7 +23,7 @@ internal fun queueKeys(ids: List<String>): List<String> {
  * no higher than row [first] (the songs already played and the one playing stay where they are).
  */
 internal fun reorderTarget(from: Int, offset: Float, rowHeight: Float, size: Int, first: Int = 0): Int {
-    if (from < 0 || rowHeight <= 0f) return from
+    if (rowHeight <= 0f) return from
     val last = (size - 1).coerceAtLeast(0)
     return (from + (offset / rowHeight).roundToInt()).coerceIn(first.coerceIn(0, last).coerceAtMost(from), last)
 }
@@ -40,7 +40,6 @@ internal fun queueFollows(top: Any?, playing: Any?, atEnd: Boolean): Boolean = p
  * row follows the finger, and the rows it has passed step out of its way, a row each.
  */
 internal fun reorderShift(at: Int, from: Int, target: Int, offset: Float, rowHeight: Float): Float = when {
-    from < 0 -> 0f
     at == from -> offset
     at in (from + 1)..target -> -rowHeight
     at in target until from -> rowHeight
@@ -51,13 +50,13 @@ internal fun reorderShift(at: Int, from: Int, target: Int, offset: Float, rowHei
  * The queue panel's drag to reorder. Written by the gesture and read where the rows are drawn
  * ([shift], from a `graphicsLayer`), so a frame of the drag moves layers and recomposes no row.
  * Nothing is reordered until the finger lifts: the drop is animated to its slot, sent, and the rows keep
- * their drawn places until the queue has changed from [landing] - on that frame they are laid out where
- * they were drawn, so nothing jumps.
+ * their drawn places until the player has answered the move ([landing]) - on that frame they are laid out
+ * where they were drawn, so nothing jumps.
  */
 @Stable
 internal class QueueDrag {
-    /** The row held, by its place in the list as drawn; -1 none. */
-    var from by mutableIntStateOf(-1)
+    /** The row held, by its place in the list as drawn; null while none is. */
+    var from by mutableStateOf<Int?>(null)
     /** The key of the row lifted by the drag, as long as it is ([lift] above 0: it settles after the drop). */
     var liftKey by mutableStateOf<String?>(null)
     val offset = mutableFloatStateOf(0f)
@@ -66,31 +65,39 @@ internal class QueueDrag {
     var size = 0
     /** The highest row a drop may land on: the one after the song playing. */
     var first = 0
-    /** The queue a drop was sent against: set, the rows hold their places until the queue is another. */
-    var landing by mutableStateOf<Any?>(null)
+    /** The move a drop sent, against the queue it was drawn from: the rows hold their places until it is answered. */
+    var landing by mutableStateOf<Pending<Any>?>(null)
 
-    fun target(): Int = reorderTarget(from, offset.floatValue, rowHeight, size, first)
+    /** Where the row held would land; null while none is held. */
+    fun target(): Int? = from?.let { reorderTarget(it, offset.floatValue, rowHeight, size, first) }
 
     /** How far a row other than the one held steps aside; the held row's own is [offset]. */
-    fun step(at: Int): Float = if (at == from) 0f else reorderShift(at, from, target(), offset.floatValue, rowHeight)
+    fun step(at: Int): Float {
+        val held = from ?: return 0f
+        return if (at == held) 0f else reorderShift(at, held, reorderTarget(held, offset.floatValue, rowHeight, size, first), offset.floatValue, rowHeight)
+    }
 
     /**
      * The held row moved [dy] pixels, kept between the first and last places it can land in. Returns
      * whether that changed where it would land.
      */
     fun moveBy(dy: Float): Boolean {
+        val held = from ?: return false
         val was = target()
-        val top = (first.coerceAtMost(from) - from) * rowHeight
-        val bottom = (size - 1 - from).coerceAtLeast(0) * rowHeight
+        val top = (first.coerceAtMost(held) - held) * rowHeight
+        val bottom = (size - 1 - held).coerceAtLeast(0) * rowHeight
         offset.floatValue = (offset.floatValue + dy).coerceIn(top, bottom.coerceAtLeast(top))
         return target() != was
     }
 
-    /** Whether a drop has landed: the queue on the page is no longer the one it was sent against. */
-    fun landed(queue: Any): Boolean = landing != null && landing !== queue
+    /**
+     * Whether a drop has landed: the queue on the page is another than the one it was sent against, or the
+     * player has answered the move ([answered], read in the same composition as [queue]) and left it as it was.
+     */
+    fun landed(queue: Any, answered: Long): Boolean = landing?.let { it.asked !== queue || it.answeredBy(answered) } == true
 
     fun clear() {
-        from = -1
+        from = null
         offset.floatValue = 0f
         landing = null
     }

@@ -19,7 +19,6 @@ class QueueEditsTest {
 
     @Test fun `the held row follows the finger and the rows it passes step aside`() {
         val h = 100f
-        assertEquals(-1, reorderTarget(-1, 500f, h, 5))
         assertEquals(1, reorderTarget(1, 40f, h, 5))
         assertEquals(3, reorderTarget(1, 160f, h, 5))
         assertEquals(4, reorderTarget(1, 10_000f, h, 5))
@@ -31,7 +30,6 @@ class QueueEditsTest {
         assertEquals(listOf(0f, 160f, -h, -h, 0f), (0..4).map(shift))
         // Dragged up past one row: that row moves down.
         assertEquals(listOf(0f, h, -60f, 0f), (0..3).map { reorderShift(it, 2, 1, -60f, h) })
-        assertEquals(listOf(0f, 0f, 0f), (0..2).map { reorderShift(it, -1, -1, 0f, h) })
     }
 
     @Test fun `a song is not dropped among the ones played or above the one playing`() {
@@ -51,7 +49,7 @@ class QueueEditsTest {
         assertFalse("nothing playing", queueFollows("a#1", null, atEnd = true))
     }
 
-    @Test fun `a drop holds the rows until the queue has changed`() {
+    @Test fun `a drop holds the rows until the queue has changed or the move is answered`() {
         val d = QueueDrag()
         d.rowHeight = 100f
         d.size = 4
@@ -59,14 +57,16 @@ class QueueEditsTest {
         d.offset.floatValue = 200f
         assertEquals(2, d.target())
         val queue = listOf("a", "b", "c", "d")
-        d.landing = queue
-        assertFalse(d.landed(queue))
+        d.landing = dev.nori.music.data.Pending(queue, ticket = 7)
+        assertFalse(d.landed(queue, answered = 6))
         assertEquals(-100f, d.step(1), 0f)
-        assertTrue(d.landed(listOf("b", "c", "a", "d")))
+        assertTrue(d.landed(listOf("b", "c", "a", "d"), answered = 6))
+        assertTrue("answered, the queue as it was", d.landed(queue, answered = 7))
         d.clear()
-        assertEquals(-1, d.from)
+        assertNull(d.from)
+        assertNull(d.target())
         assertEquals(0f, d.step(1), 0f)
-        assertFalse(d.landed(queue))
+        assertFalse(d.landed(queue, answered = 7))
     }
 
     @Test fun `the held row stays among the places it can land in, and says when it changes place`() {

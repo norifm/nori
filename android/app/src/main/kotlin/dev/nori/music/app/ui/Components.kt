@@ -200,6 +200,11 @@ class SwipeState {
     var armed by mutableStateOf(false)
     /** The spring back, while it runs: a new drag takes the row from wherever it has got to. */
     var settling: kotlinx.coroutines.Job? = null
+    /**
+     * A row its swipe took away, and the command that takes it out of its list (set by the action), until
+     * the list's state has answered it. A list that takes the row out itself sets none.
+     */
+    var leaving by mutableStateOf<dev.nori.music.data.Pending<Unit>?>(null)
 }
 
 /** A head pinned over a list (an album's title and buttons): the rows under it are out of sight. */
@@ -252,10 +257,25 @@ internal fun Modifier.swipeable(
     resist: Boolean = false,
     /** Whether the row is in sight enough to be swiped ([RowPlace.inSight]). */
     shown: () -> Boolean = { true },
+    /** The last command its list's state has answered, read with that state: what [SwipeState.leaving] waits for. */
+    answered: Long = 0L,
 ): Modifier = composed {
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     val back = AppMotion.settle<Float>()
+    // A row that went but is still here once its list has answered (the change did not happen) comes
+    // back rather than leave a hole. A row that really went has left the composition by then, and this
+    // with it.
+    val leaving = s.leaving
+    if (leaving != null && leaving.answeredBy(answered)) androidx.compose.runtime.SideEffect {
+        if (s.leaving !== leaving) return@SideEffect
+        s.leaving = null
+        s.settling?.cancel()
+        s.settling = scope.launch {
+            s.armed = false
+            androidx.compose.animation.core.animate(s.offset.floatValue, 0f, animationSpec = back) { v, _ -> s.offset.floatValue = v }
+        }
+    }
     // The gesture outlives recompositions (it is keyed on which sides act, not on the actions), so it
     // reads the actions as they are now: a favourite swiped once must offer "Remove" the second time.
     val acts by rememberUpdatedState(right to left)
@@ -268,16 +288,9 @@ internal fun Modifier.swipeable(
             s.armed = false
             s.settling = scope.launch { androidx.compose.animation.core.animate(s.offset.floatValue, 0f, animationSpec = back) { v, _ -> s.offset.floatValue = v } }
         }
-        // A row that went but is still here long after (the change did not happen): it comes back rather
-        // than leave a hole. A row that really went has left the composition by then, and this with it.
-        suspend fun comeBackIfStill() {
-            kotlinx.coroutines.delay(SWIPE_GONE_WAIT_MS)
-            s.armed = false
-            androidx.compose.animation.core.animate(s.offset.floatValue, 0f, animationSpec = back) { v, _ -> s.offset.floatValue = v }
-        }
         sidewaysDrag(
             takes = { inSight() },
-            onDragStart = { s.settling?.cancel(); x = s.offset.floatValue; travel = x },
+            onDragStart = { s.settling?.cancel(); s.leaving = null; x = s.offset.floatValue; travel = x },
             onDragEnd = {
                 val act = if (s.armed) (if (x > 0f) acts.first else acts.second) else null
                 when {
@@ -288,7 +301,6 @@ internal fun Modifier.swipeable(
                         val to = kotlin.math.sign(x) * size.width.toFloat()
                         androidx.compose.animation.core.animate(s.offset.floatValue, to, animationSpec = AppMotion.leave()) { v, _ -> s.offset.floatValue = v }
                         act.action()
-                        comeBackIfStill()
                     }
                     else -> { act.action(); settle() }
                 }
@@ -317,9 +329,6 @@ internal fun Modifier.swipeable(
         .graphicsLayer { translationX = s.offset.floatValue }
         .then(if (fill != null) Modifier.drawBehind { if (s.offset.floatValue != 0f) drawRect(fill) } else Modifier)
 }
-
-/** How long a row taken away by its swipe takes to leave from where the finger let go. */
-private const val SWIPE_GONE_WAIT_MS = 1_500L
 
 /**
  * A drag taken only when it is plainly sideways: once the finger has gone [slop] times the touch slop,

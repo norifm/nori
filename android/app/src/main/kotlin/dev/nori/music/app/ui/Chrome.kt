@@ -47,6 +47,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.drawWithCache
 import dev.nori.music.look.CoverLook
+import dev.nori.music.data.Pending
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -447,6 +448,7 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
                 next = state.queue.getOrNull(state.nextIndex)?.takeIf { song != null },
                 same = { a, b -> a?.id == b?.id },
                 onPrevious = vm::previousItem, onNext = vm::next,
+                answered = vm.answered.collectAsStateWithLifecycle().value,
                 still = covered,
                 modifier = Modifier.weight(1f),
                 item = track,
@@ -526,7 +528,8 @@ fun PageTint(palette: PagePalette?, waiting: Boolean = false) {
  * A row of records, one showing: a sideways drag slides the showing one aside and brings its neighbour
  * in from the other edge, already drawn. Let go past a third of the way, or flicked, the neighbour
  * lands and [onNext] / [onPrevious] runs; it stays drawn in place of [current] until [current] is that
- * song too (the player answers a few frames later), so the old one never comes back for a frame.
+ * song too, or the player has answered the skip ([answered] reaching its ticket) with another, so the old
+ * one never comes back for a frame.
  * [item]'s second argument is true for the one really showing. Nothing runs until a finger is down, or
  * until [current] steps to a neighbour by itself, which slides the same way unless the row is [still]
  * (out of sight).
@@ -534,7 +537,9 @@ fun PageTint(palette: PagePalette?, waiting: Boolean = false) {
 @Composable
 internal fun <T> SwipeCarousel(
     current: T, previous: T?, next: T?, same: (T?, T?) -> Boolean,
-    onPrevious: () -> Unit, onNext: () -> Unit,
+    onPrevious: () -> Long, onNext: () -> Long,
+    /** The last skip's ticket the player's state answers, taken from the composition as [current] is. */
+    answered: Long,
     modifier: Modifier = Modifier,
     still: Boolean = false,
     item: @Composable (T?, Boolean) -> Unit,
@@ -550,16 +555,14 @@ internal fun <T> SwipeCarousel(
     val hasAfter by androidx.compose.runtime.rememberUpdatedState(next != null)
     val nextNow by androidx.compose.runtime.rememberUpdatedState(next)
     val previousNow by androidx.compose.runtime.rememberUpdatedState(previous)
-    // The neighbour that has been slid in, shown until the player has caught up with it.
-    var landed by remember { mutableStateOf<Any?>(NONE) }
+    // The neighbour that has been slid in, shown until the player has caught up with it or answered otherwise.
+    var landed by remember { mutableStateOf<Pending<T?>?>(null) }
     val currentNow by androidx.compose.runtime.rememberUpdatedState(current)
+    val answeredNow by androidx.compose.runtime.rememberUpdatedState(answered)
     androidx.compose.runtime.LaunchedEffect(landed) {
-        if (landed === NONE) return@LaunchedEffect
-        @Suppress("UNCHECKED_CAST")
-        kotlinx.coroutines.withTimeoutOrNull(2_000) {
-            androidx.compose.runtime.snapshotFlow { same(currentNow, landed as T?) }.first { it }
-        }
-        landed = NONE
+        val l = landed ?: return@LaunchedEffect
+        androidx.compose.runtime.snapshotFlow { same(currentNow, l.asked) || l.answeredBy(answeredNow) }.first { it }
+        landed = null
     }
     // A song that changes by itself (its end, a mix, the bar's own next button, the notification) comes
     // in as a swipe brings it: the one it left goes out one side, the new one in from the other. As on
@@ -568,7 +571,7 @@ internal fun <T> SwipeCarousel(
     val last = remember { Last<T>() }
     val go = when {
         !last.set || same(current, last.item) || current == null -> 0
-        AppMotion.reduce || still || landed !== NONE || moving?.isActive == true -> 0
+        AppMotion.reduce || still || landed != null || moving?.isActive == true -> 0
         same(previous, last.item) -> 1
         same(next, last.item) -> -1
         else -> 0
@@ -606,10 +609,9 @@ internal fun <T> SwipeCarousel(
                     try {
                         if (AppMotion.reduce) offset = go * w
                         else androidx.compose.animation.core.animate(offset, go * w, v, settle) { value, _ -> offset = value }
-                        landed = arriving
+                        landed = Pending(arriving, if (go < 0) onNext() else onPrevious())
                         offset = 0f
                         changed = true
-                        if (go < 0) onNext() else onPrevious()
                     } finally {
                         if (!changed) { offset = 0f; if (go < 0) onNext() else onPrevious() }
                     }
@@ -638,15 +640,13 @@ internal fun <T> SwipeCarousel(
             }
         },
     ) {
-        @Suppress("UNCHECKED_CAST")
-        val showing = if (landed === NONE) current else landed as T?
-        Box(Modifier.graphicsLayer { translationX = offset + natural.value * size.width }) { item(showing, landed === NONE) }
+        val l = landed
+        val showing = if (l == null) current else l.asked
+        Box(Modifier.graphicsLayer { translationX = offset + natural.value * size.width }) { item(showing, l == null) }
         Box(Modifier.graphicsLayer { val o = offset + natural.value * size.width; alpha = if (o < 0f) 1f else 0f; translationX = o + size.width }) { item(next, false) }
         Box(Modifier.graphicsLayer { val o = offset + natural.value * size.width; alpha = if (o > 0f) 1f else 0f; translationX = o - size.width }) { item(previous, false) }
     }
 }
-
-private val NONE = Any()
 
 /** What a row of records was last composed with; written after each composition, read by the next. */
 private class Last<T> {

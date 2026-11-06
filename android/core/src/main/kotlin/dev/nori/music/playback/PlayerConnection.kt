@@ -144,6 +144,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
                 controller?.let { publish(it, queueChanged = true) } ?: run { _state.value = PlayerState() }
             }
         }
+        answer(mirrorAsked)
     }
 
     /**
@@ -325,6 +326,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
                 // What waited for it goes with it, not to a later connection.
                 dev.nori.music.NoriLog.w("player: the controller would not connect; ${connecting.pending.size} actions dropped")
                 link = Link.Disconnected
+                answer(asked)
                 return@addListener
             }
             link = Link.Connected(c)
@@ -358,6 +360,8 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         PlaybackService.onQueueSet = null
         PlaybackService.onLanded = null
         _state.value = _state.value.copy(connected = false)
+        // Nothing more will come of what was asked.
+        answer(asked)
     }
 
     /**
@@ -633,6 +637,34 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         mirror?.let { m -> _state.value.previousIndex.takeIf { it >= 0 }?.let { remoteIndex(m, it) }?.let { press(m, Press.Jump(it)) }; return@with }
         seekHold = null
         c.seekToPreviousMediaItem()
+    }
+
+    /** Commands numbered by [ticket], and the last of them whose outcome [state] shows. */
+    private var asked = 0L
+    private val _answered = MutableStateFlow(0L)
+    /**
+     * The last [ticket] whose command's outcome [state] shows, done or not: set only after that state is,
+     * so a screen that reads both never sees an answer ahead of its state. What a screen that drew a skip,
+     * move or removal ahead waits for ([dev.nori.music.data.Pending]).
+     */
+    val answered: StateFlow<Long> = _answered
+    /** The last command sent to the device shown ([mirror]): answered by the next state it shows. */
+    private var mirrorAsked = 0L
+
+    /**
+     * A number for the command just asked of this connection: [answered] reaches it once [state] shows
+     * what came of it. Here, once the controller's listeners have published it (they run on a message
+     * posted to the front of the queue); on another device, with the next state of it shown (as foreseen
+     * by the core, or its own answer), or once it is no longer shown.
+     */
+    fun ticket(): Long {
+        val n = ++asked
+        with { _ -> if (mirror != null) mirrorAsked = n else main.post { answer(n) } }
+        return n
+    }
+
+    private fun answer(n: Long) {
+        if (n > _answered.value) _answered.value = n
     }
 
     /** A seek. The bar holds its place ([pendingSeek]) until the engine says it landed there ([followSeek]). */
