@@ -134,11 +134,18 @@ enum Reading {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Settling {
     Settled,
-    /// Not read since the start.
-    Started,
-    /// Read at `at_us`, `gap` ms from the leader with `slipped` ms slipped in: compared with the next
-    /// reading.
-    Read { at_us: i64, gap: f64, slipped: f64 },
+    /// Not judged since the start: the last reading if any, compared with the next. `mixed`: a mix was
+    /// heard meanwhile. `paced`: the pace there changed since, so the place settled says nothing of how
+    /// late starts are heard.
+    Settling { read: Option<Read>, mixed: bool, paced: bool },
+}
+
+/// A reading at `at_us`, `gap` ms from the leader with `slipped` ms slipped in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Read {
+    at_us: i64,
+    gap: f64,
+    slipped: f64,
 }
 
 #[derive(Debug)]
@@ -166,8 +173,6 @@ pub(super) struct Following {
     settling: Settling,
     /// How long a start is planned ahead.
     start_lead_us: i64,
-    /// A mix was heard before the last start was looked at.
-    mixed: bool,
     /// Since when this one plays another song than the leader's, µs.
     elsewhere: Option<i64>,
     /// A reading off the line the others make, held back until the next says whether the gap stepped
@@ -175,9 +180,10 @@ pub(super) struct Following {
     odd: Option<(i64, f64)>,
     /// This device's own pause holds its listening here.
     pub held: bool,
-    /// The pace there changed since the last start: the place settled after it says nothing of how late
-    /// starts are heard.
-    paced: bool,
+    /// The leader's speed and pitch, played here.
+    pub speed: (f32, f32),
+    /// The place in the outgoing song of a mix there, at the moment of `led`'s.
+    pub mix_place: Option<Led>,
 }
 
 impl Following {
@@ -193,12 +199,12 @@ impl Following {
             started_at: i64::MIN / 2,
             start_delay_us: 0,
             settling: Settling::Settled,
-            mixed: false,
             start_lead_us: START_LEAD_US,
             elsewhere: None,
             odd: None,
-            paced: false,
             held: false,
+            speed: (1.0, 1.0),
+            mix_place: None,
         }
     }
 
@@ -242,8 +248,8 @@ impl Following {
         if old.rate != new.rate {
             self.readings.clear();
             self.odd = None;
-            self.settling = Settling::Started;
-            self.paced = true;
+            let mixed = matches!(self.settling, Settling::Settling { mixed: true, .. });
+            self.settling = Settling::Settling { read: None, mixed, paced: true };
         }
     }
 
@@ -254,11 +260,9 @@ impl Following {
         self.elsewhere = None;
         let at_us = now_us + self.start_lead_us;
         self.started_at = at_us;
-        self.settling = Settling::Started;
+        self.settling = Settling::Settling { read: None, mixed: false, paced: false };
         self.readings.clear();
         self.odd = None;
-        self.mixed = false;
-        self.paced = false;
         Step::Start { index: self.led.index, ms: self.led.place_at(at_us + self.start_delay_us), at_us }
     }
 
@@ -292,36 +296,38 @@ impl Following {
         // Through a mix the place heard is the seek bar's reckoning: looked at again once it is over (a
         // start into a mix is judged then, its gap the mix's, not the output's).
         if here.mixing {
-            self.mixed |= self.settling != Settling::Settled;
+            if let Settling::Settling { mixed, .. } = &mut self.settling {
+                *mixed = true;
+            }
             return Step::Stay;
         }
         let gap = ms - self.led.place_at(now_us);
         let slipped = here.slipped.heard_ms;
         let mut settled_now = false;
-        if self.settling != Settling::Settled {
+        if let Settling::Settling { read, mixed, paced } = self.settling {
             // The gap moves by the drift and the slip since the reading compared with.
-            let agrees = |at: i64, was: f64, was_slipped: f64| (gap + slipped - was - was_slipped - self.drift * (now_us - at) as f64 / 1000.0).abs() <= SETTLED_MS;
-            match self.settling {
-                Settling::Read { at_us: at, gap: was, slipped: was_slipped } if now_us - at >= SETTLE_US && agrees(at, was, was_slipped) => {
+            let agrees = |r: Read| (gap + slipped - r.gap - r.slipped - self.drift * (now_us - r.at_us) as f64 / 1000.0).abs() <= SETTLED_MS;
+            match read {
+                Some(r) if now_us - r.at_us >= SETTLE_US && agrees(r) => {
                     self.settling = Settling::Settled;
                     settled_now = true;
-                    if std::mem::take(&mut self.mixed) {
+                    if mixed {
                         // A start into a mix lands as the mix's reckoning had it: off that, it starts
                         // again out of it.
                         if gap.abs() > MIXED_OFF_MS {
                             return self.start(now_us);
                         }
-                    } else if !std::mem::take(&mut self.paced) {
+                    } else if !paced {
                         // How late (or early) the start was heard: the next one allows for it.
                         self.start_delay_us = (self.start_delay_us - (gap * 1000.0) as i64).clamp(0, START_DELAY_MAX_US);
                     }
                 }
-                Settling::Read { at_us: at, .. } if now_us - at < SETTLE_US => {
-                    self.look_at = Some(at + SETTLE_US);
+                Some(r) if now_us - r.at_us < SETTLE_US => {
+                    self.look_at = Some(r.at_us + SETTLE_US);
                     return Step::Stay;
                 }
                 _ => {
-                    self.settling = Settling::Read { at_us: now_us, gap, slipped };
+                    self.settling = Settling::Settling { read: Some(Read { at_us: now_us, gap, slipped }), mixed, paced };
                     self.look_at = Some(now_us + SETTLE_US);
                     return Step::Stay;
                 }

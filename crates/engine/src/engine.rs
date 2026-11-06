@@ -962,9 +962,6 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     card: Card,
     /// A cast's device plays the songs ([`Engine::play_elsewhere`]): the place is the parked one.
     away: Option<Away>,
-    led_speed: (f32, f32),
-
-    mix_place: Option<Led>,
     /// The volume and route plugins' stages read.
     around: nori_player::stage::Around,
     /// Sends [`Command::Prepared`], for the plugins' preparation.
@@ -1014,8 +1011,6 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             following: None,
             card: Card::Own,
             away: None,
-            led_speed: (1.0, 1.0),
-            mix_place: None,
             around: nori_player::stage::Around::default(),
             prepared,
         };
@@ -1843,9 +1838,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let was = self.following.is_some();
         let Some(l) = leading else {
             self.following = None;
-            self.mix_place = None;
             self.p.sink.track.set_slip(0.0, 0.0, 0.0);
-            self.p.priming = false;
+            self.p.unprime();
             self.p.engine.plans = Plans::Own;
             if was {
                 self.apply(self.settings.clone());
@@ -1856,17 +1850,20 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let Leading { led, speed, pitch, mix,
             mix_place,
         } = *l;
-        self.mix_place = mix_place;
         let now_us = self.clock.now_us();
-        match self.following.as_mut() {
-            Some(f) => f.lead(led, now_us),
-            None => self.following = Some(Following::new(led)),
-        }
+        let f = match self.following.as_mut() {
+            Some(f) => {
+                f.lead(led, now_us);
+                f
+            }
+            None => self.following.insert(Following::new(led)),
+        };
+        f.mix_place = mix_place;
+        let sped = std::mem::replace(&mut f.speed, (speed, pitch)) != (speed, pitch);
         let plans = Plans::Led(mix.map(|(id, plan)| (id, Box::new(plan))));
         let replan = self.p.engine.plans != plans;
         self.p.engine.plans = plans;
-        if !was || self.led_speed != (speed, pitch) {
-            self.led_speed = (speed, pitch);
+        if !was || sped {
             self.apply(self.settings.clone());
         }
         if replan {
@@ -1905,7 +1902,6 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 f.starting = None;
                 f.started();
                 f.look_at = Some(now_us + LOOK_AFTER_START_US);
-                self.p.priming = false;
                 self.go_on();
                 self.ramp(Some(0.0), 1.0, START_FADE_MS);
                 self.set_state(State::Playing);
@@ -1938,7 +1934,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
         let here = {
             let s = self.status.lock();
-            let playing = self.playback.state() == State::Playing && self.p.playing() && !self.p.priming;
+            let playing = self.playback.state() == State::Playing && self.p.playing();
             // To the µs where the player's own place is the one heard.
             let audible = self.p.heard().id.is_none() && !s.mixing && s.index == self.p.current();
             let ms = if audible { self.p.position_us() as f64 / 1000.0 } else { s.position_ms as f64 };
@@ -1963,7 +1959,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             }
             follow::Step::Start { index, ms, at_us } => {
 
-                let (index, ms) = match (&self.mix_place, &self.p.engine.plans) {
+                let (index, ms) = match (&f.mix_place, &self.p.engine.plans) {
                     (Some(place), Plans::Led(Some((_, plan))))
                         if place.place_at(at_us) * 1000.0
                             < (plan.out_start_us() + plan.duration_us()) as f64 =>
@@ -1999,11 +1995,10 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn prime(&mut self, index: usize, now: i64, ms: f64) {
         (self.dip, self.parked) = (None, None);
         self.faded();
-        self.p.pause();
+        self.p.prime();
         self.leave_offload();
-        self.p.priming = true;
 
-        match (&self.mix_place, &self.p.engine.plans) {
+        match (self.following.as_ref().and_then(|f| f.mix_place.as_ref()), &self.p.engine.plans) {
             (Some(place), Plans::Led(Some((_, plan))))
                 if place.index == index && plan.out_loop_us() > 0 =>
             {
@@ -2082,7 +2077,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let bit_perfect = self.facts.bit_perfect;
         // Following, the leader's speed plays, its jumps skip silence, and nothing is offloaded.
         let (speed, pitch, skip_silence) = match &self.following {
-            Some(_) => (self.led_speed.0, self.led_speed.1, false),
+            Some(f) => (f.speed.0, f.speed.1, false),
             None => (s.speed, s.pitch, s.skip_silence),
         };
         // A cast's device that decodes songs itself takes them whenever nothing touches the samples.
@@ -2643,7 +2638,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         } else if ended {
             self.p.pause();
             self.set_state(State::Ended);
-        } else if !self.p.playing() && self.playback == Playback::Playing && self.dip.is_none() && !self.p.priming && self.retry_at.is_none() {
+        } else if !self.p.playing() && self.playback == Playback::Playing && self.dip.is_none() && !self.p.priming() && self.retry_at.is_none() {
             // The queue's rules stopped playback (a run of songs that would not play), the bridge takes
             // over, or the song waits for the network.
             match self.p.stopped_for() {
@@ -3076,7 +3071,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             }
             return d.map(|x| x.max(1));
         }
-        if self.p.hungry() && (self.p.playing() || self.p.priming) {
+        if self.p.hungry() && (self.p.playing() || self.p.priming()) {
             return Some(0);
         }
         if !self.p.playing() {

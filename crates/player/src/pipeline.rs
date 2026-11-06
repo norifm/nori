@@ -296,6 +296,15 @@ struct Read<R> {
     remaking: Option<Opening<R>>,
 }
 
+/// Whether the player makes music and plays it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Paused,
+    /// Paused, the music made ready for a start at a set moment.
+    Priming,
+    Playing,
+}
+
 /// Why playback stopped at a failed song.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Halt {
@@ -379,7 +388,7 @@ pub struct Player<S: Songs, T: Track, A: App, Q: Queue> {
     /// Where the song being read started; cleared once the clock passes it (audio is audible).
     heard_from: Option<i64>,
     periods: Vec<Period>,
-    playing: bool,
+    mode: Mode,
     /// Renderer position: from a seek or start, then from the engine once the output has a clock.
     position_us: Option<i64>,
     /// When `position_us` was read or set: a turn reads it before it renders, which takes a while.
@@ -403,8 +412,6 @@ pub struct Player<S: Songs, T: Track, A: App, Q: Queue> {
     pub loops: u32,
     /// Queue entries as last seen, to map indexes across edits.
     seqs: Vec<u64>,
-    /// Music is made while paused, ready for a start at a set moment.
-    pub priming: bool,
     /// Plugins' song-slot stages, made for each song read.
     song_stages: Vec<StageSpec>,
     /// What plugins make of the songs read, and made.
@@ -433,7 +440,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             fetch_after: false,
             heard_from: None,
             periods: Vec::new(),
-            playing: false,
+            mode: Mode::Paused,
             position_us: None,
             placed_at: Instant::now(),
             current: None,
@@ -447,7 +454,6 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             serials: 0,
             loops: 0,
             seqs: Vec::new(),
-            priming: false,
             song_stages: Vec::new(),
             preparing: None,
             facts: Vec::new(),
@@ -563,7 +569,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// If its ending was made otherwise and can still change, it is made again from where the old and
     /// new endings part. A mix already audible plays out as it began.
     pub fn replan_ending(&mut self) {
-        if self.playing {
+        if self.playing() {
             self.follow_clock();
         }
         self.engine.replan();
@@ -832,7 +838,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     pub fn resume(&mut self) {
         self.burst.restart();
         self.sink.play();
-        self.playing = true;
+        self.mode = Mode::Playing;
         self.follow_clock();
     }
 
@@ -841,23 +847,48 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// been a burst ago, and what is done now (a pause, a report) goes from where the music is.
     pub fn clock(&mut self, now_ms: i64) {
         self.now_ms = now_ms;
-        if self.playing {
+        if self.playing() {
             self.follow_clock();
         }
     }
 
+    /// Pauses; music made ready while paused ([`Player::prime`]) goes on being made.
     pub fn pause(&mut self) {
         // The last turn may have been a burst ago.
-        if self.playing {
+        if self.playing() {
             self.follow_clock();
         }
         self.burst.restart();
         self.sink.pause();
-        self.playing = false;
+        self.stop_playing();
+    }
+
+    /// Pauses, and makes the music ready while paused for a start at a set moment ([`Player::resume`]).
+    pub fn prime(&mut self) {
+        self.pause();
+        self.mode = Mode::Priming;
+    }
+
+    /// No music is made ready any more; playing goes on.
+    pub fn unprime(&mut self) {
+        if self.mode == Mode::Priming {
+            self.mode = Mode::Paused;
+        }
+    }
+
+    fn stop_playing(&mut self) {
+        if self.mode == Mode::Playing {
+            self.mode = Mode::Paused;
+        }
     }
 
     pub fn playing(&self) -> bool {
-        self.playing
+        self.mode == Mode::Playing
+    }
+
+    /// Music is made while paused, ready for a start at a set moment ([`Player::prime`]).
+    pub fn priming(&self) -> bool {
+        self.mode == Mode::Priming
     }
 
     /// Frees everything a long pause does not need and returns (queue index, ms) to [`Player::jump`]
@@ -989,7 +1020,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
                 self.call(|e, _, a| e.reset(a));
                 self.sink.flush();
                 self.sink.pause();
-                self.playing = false;
+                self.stop_playing();
             }
         }
     }
@@ -1215,7 +1246,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// The seek bar's song and position.
     pub fn bar(&mut self) -> Seen {
         let pos = self.position_ms();
-        let now = PlayerNow { now_ms: self.now_ms, playing: self.playing, on: self.on_serial, position_ms: pos };
+        let now = PlayerNow { now_ms: self.now_ms, playing: self.playing(), on: self.on_serial, position_ms: pos };
         let periods = &self.periods;
         let after = self.head.reader().and_then(|r| self.next_of(r.index));
         let placed = |p: &Period| (p.index, if p.duration_us > 0 { p.duration_us / 1000 } else { i64::MAX });
@@ -1261,7 +1292,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         if self.engine.heard().id.is_some() {
             if let Some(i) = self.bar().index {
                 let heard = self.engine.heard();
-                let since = if self.playing { (self.now_ms - heard.at_ms).max(0) } else { 0 };
+                let since = if self.playing() { (self.now_ms - heard.at_ms).max(0) } else { 0 };
                 let ms = (heard.us + since * 1000) / 1000;
                 return Some((i, ms));
             }
@@ -1301,7 +1332,12 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// State summary for diagnostics.
     pub fn words(&self) -> String {
         let id = |i: usize| self.queue.read(|q| q.ids().get(i).cloned()).unwrap_or_else(|| "?".into());
-        let mut w = format!("{} on {}", if self.playing { "playing" } else { "paused" }, self.current.map_or("nothing".into(), |i| format!("{i} ({})", id(i))));
+        let mode = match self.mode {
+            Mode::Paused => "paused",
+            Mode::Priming => "priming",
+            Mode::Playing => "playing",
+        };
+        let mut w = format!("{mode} on {}", self.current.map_or("nothing".into(), |i| format!("{i} ({})", id(i))));
         if self.position_us.is_some() {
             w.push_str(&format!(" at {} ms", self.position_ms()));
         }
@@ -1377,10 +1413,10 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         self.now_ms = now_ms;
         self.opened();
         self.remade();
-        if !self.playing && !self.priming {
+        if self.mode == Mode::Paused {
             return;
         }
-        if self.playing {
+        if self.playing() {
             self.follow_clock();
         }
         self.fetch_when_free();
