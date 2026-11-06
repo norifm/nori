@@ -8,7 +8,7 @@
 #   tools/feature-e2e.sh [--only <section>,...] [--list]     NORI_E2E_SERVER=local for tools/dev-server.sh
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="plugins lyrics notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel remote jam"
+SECTIONS="plugins lyrics status-bar notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets queue-panel remote jam"
 OPT_IN="lyrics-services scrobble download-albums youtube-music"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
@@ -484,6 +484,26 @@ PY
   "$app" play "$SONG" >/dev/null
   check "and its songs play" sounds 20
   "$app" plugin reset >/dev/null
+fi
+
+if want status-bar; then section "the status bar's icons after a theme change under a page"
+  # What the window was told, which no Rust test can see.
+  dark_icons() { adb shell dumpsys window | grep -A1 'mLastStatusBarAppearanceRegions=' | tail -1 | grep -q LIGHT_STATUS; }
+  white_icons() { ! dark_icons; }
+  pale=$(api getAlbumList2 "&type=alphabeticalByName&size=500" | python3 -c "import json,sys; print(next((a['id'] for a in json.load(sys.stdin)['subsonic-response']['albumList2']['album'] if a['name'] == 'Paper Sleeve'), ''))")
+  if [ -z "$pale" ]; then
+    echo "     (no Paper Sleeve album; the local server has one)"
+  else
+    "$app" set theme Light >/dev/null
+    "$app" open home >/dev/null
+    check "a light page has dark icons" wait_until 8 dark_icons
+    "$app" open "album/$pale" >/dev/null
+    check "a pale album's page keeps them" wait_until 8 dark_icons
+    "$app" set theme Dark >/dev/null
+    adb shell input keyevent 4
+    check "back on a page gone dark, they are white" wait_until 8 white_icons
+    "$app" set theme System >/dev/null
+  fi
 fi
 
 if want notification; then section "the notification's seal and shuffle"
