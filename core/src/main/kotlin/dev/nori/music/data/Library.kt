@@ -216,6 +216,8 @@ class Library(
 
     suspend fun clearHistory() = withContext(Dispatchers.IO) { core.historyClear() }
 
+    suspend fun excludedFromMixes(): List<String> = withContext(Dispatchers.IO) { core.mixExcludedSongs() }
+
     suspend fun excludeFromMixes(songId: String, excluded: Boolean) = withContext(Dispatchers.IO) { core.mixExcludedSet(songId, excluded) }
 
     // ---- what to play: each list is made in the core (actions.rs), requests included ----

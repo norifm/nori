@@ -382,6 +382,7 @@ enum Say {
     static let sleepTimer = "Sleep timer"
     static let detailsTitle = "Details"
     static let excludedFromMixes = "Excluded from mixes"
+    static let backInMixes = "Back in mixes"
     static let serverDownloading = "The server is downloading it into your library"
     static let removeFromPlaylist = "Remove"
     static func addedToPlaylist(_ name: String) -> String { "Added to \(name)" }
@@ -406,7 +407,7 @@ enum Say {
         case 10: return "Sleep timer…"
         case 11: return "Start radio from this song"
         case 12: return "Instant mix"
-        case 13: return "Exclude from mixes"
+        case 13: return item["on"] as? Bool ?? true ? "Exclude from mixes" : "Include in mixes"
         case 14: return "Share link"
         default: return detailsTitle
         }

@@ -122,7 +122,7 @@ pub enum Cmd {
     CycleRepeat,
     Download(Vec<Song>),
     /// Keeps the song out of the mixes.
-    ExcludeFromMixes(String),
+    ExcludeFromMixes(String, bool),
     /// Adds songs to the playlist `id`, or makes one called `name` of them.
     AddToPlaylist { id: String, songs: Vec<String> },
     NewPlaylist { name: String, songs: Vec<String> },
@@ -1255,6 +1255,8 @@ pub struct App {
     pub slots: Slots,
     /// What the open profile offers (a jam guest's: the host's library, its picks asked of the host).
     pub rules: ProfileRules,
+    /// The songs left out of every mix.
+    pub excluded: std::collections::HashSet<String>,
     /// The planned transition out of `song`.
     pub transition: Option<nori_core::automix::planner::TransitionNote>,
     /// The transition that brought `song` in, while still mixing.

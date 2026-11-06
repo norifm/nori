@@ -587,14 +587,6 @@ impl Handle {
         self.play_kept(songs, start, shuffle, from, false);
     }
 
-    /// Starts a jam around `songs[start]`: they play here, then the jam opens. Its invite link (None when
-    /// one is open or opening already); nothing while remote control is off.
-    pub async fn start_jam(&self, songs: Vec<Song>, start: usize, from: Option<PageOrigin>) -> Option<Result<Option<String>, NetError>> {
-        let remote = self.remote()?;
-        self.play(songs, start, false, from);
-        Some(remote.jam_open().await)
-    }
-
     /// `songs` as the queue around the song playing, `songs[at]`: it goes on where it is, playing or
     /// paused, rather than starting again (a tap on it in a list). Any other song plays as [`Handle::play`]
     /// would. True when it went on.

@@ -527,10 +527,10 @@ pub fn song_action(a: &nori_core::menus::SongAction) -> String {
         A::SleepTimer => "Sleep timer…".into(),
         A::StartRadio => "Start radio from this song".into(),
         A::InstantMix => "Instant mix".into(),
-        A::ExcludeFromMixes => "Exclude from mixes".into(),
+        A::ExcludeFromMixes { on: true } => "Exclude from mixes".into(),
+        A::ExcludeFromMixes { on: false } => "Include in mixes".into(),
         A::Share => "Share link".into(),
         A::Details => "Details".into(),
-        A::StartJam => "Start a jam".into(),
     }
 }
 
@@ -569,6 +569,7 @@ pub fn lyrics_shift(ms: i64) -> String {
 }
 
 pub const EXCLUDED_FROM_MIXES: &str = "Left out of mixes";
+pub const BACK_IN_MIXES: &str = "Back in mixes";
 pub const SHARE_FAILED: &str = "The server made no link";
 
 pub fn added_to_playlist(name: &str) -> String {

@@ -1961,7 +1961,7 @@ fn the_menu_lists_what_the_core_offers() {
     a.handle(Msg::Data(Req::Album("al-1".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-1", "Record"), songs.clone(), vec![]))))));
     key(&mut a, KeyCode::Char('m'));
     let Some(Overlay::Menu { lines, folded, .. }) = &a.overlay else { panic!("no menu") };
-    let core: Vec<MenuLine> = nori_core::menus::song_menu(songs[0].clone(), false, nori_core::menus::SongDownload::None, false, false, true, true, true, a.rules.radio, None, Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, "al-1")))
+    let core: Vec<MenuLine> = nori_core::menus::song_menu(songs[0].clone(), false, false, nori_core::menus::SongDownload::None, false, false, true, true, true, a.rules.radio, false, Some(nori_core::PageOrigin::new(nori_core::OriginKind::Album, "al-1")))
         .into_iter()
         .filter(|i| !i.more && !matches!(i.action, SongAction::Details | SongAction::Share | SongAction::AddToLibrary))
         .map(|i| MenuLine::Act(MenuAct::Song(i.action)))

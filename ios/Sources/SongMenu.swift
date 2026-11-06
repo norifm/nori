@@ -49,7 +49,6 @@ enum SongMenu {
         case 12: parts = Iconoir.sparks
         case 13: parts = Iconoir.prohibition
         case 14: parts = Iconoir.shareIos
-        case 18: parts = Iconoir.community
         default: parts = Iconoir.infoCircle
         }
         return Glyph.draw(parts, 20)
@@ -80,7 +79,8 @@ enum SongMenu {
                 if n < 0 { Toast.show(Say.failed) } else if n == 0, let words = Say.note(NORI_NOTE_NOTHING_TO_PLAY, 0) { Toast.show(words) }
             }
         case 13:
-            off({ nori_ios_song_act(token, i, 13, 0) }) { done in Toast.show(done == 1 ? Say.excludedFromMixes : Say.failed) }
+            let on = item["on"] as? Bool ?? true
+            off({ nori_ios_song_act(token, i, 13, on ? 1 : 0) }) { done in Toast.show(done == 1 ? (on ? Say.excludedFromMixes : Say.backInMixes) : Say.failed) }
         case 14:
             share(token: token, index: index, from: host)
         case 15:
