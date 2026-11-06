@@ -262,6 +262,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         AppMotion.still = prefs.motion == dev.nori.music.ffi.settings.Motion.EINK
     }
     NoriTheme(prefs, settings::look) {
+        dev.nori.music.app.TestLogin(settings)
         // A jam guest's profile is the same app over its host's library, started afresh on joining and on leaving.
         val guest = remember(prefs.activeServerId, prefs.server?.apiKey) { prefs.server?.apiKey?.let { dev.nori.music.ffi.remote.isGuestKey(it) } == true }
         val kind = prefs.server?.kind ?: dev.nori.music.ffi.settings.ServerKind.Subsonic

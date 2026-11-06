@@ -30,12 +30,34 @@ fun testLyrics(song: Song): Flow<FoundLyrics>? = TestHooks.lyrics?.invoke(song)
 /** The lyrics panel logs every reading it takes (tag norilyrics) while a check has asked for it. */
 val traceLyrics: Boolean get() = TestHooks.traceLyrics
 
+/** The test bridge's login, live on the logged-out screen too, where [TestDriver] is not composed. */
+@Composable
+fun TestLogin(settings: SettingsViewModel) {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    DisposableEffect(settings) {
+        TestHooks.login = { spec ->
+            val (url, user, pass) = spec.split("|").let { Triple(it[0], it.getOrElse(1) { "" }, it.getOrElse(2) { "" }) }
+            // "kind:subsonic" or "kind:plugin:<id>" adds a profile of that kind (as [kindTag] says it) with nothing typed in.
+            val kind = spec.removePrefix("kind:").takeIf { it != spec }?.let { k ->
+                if (k.startsWith("plugin:")) dev.nori.music.ffi.settings.ServerKind.Plugin(k.removePrefix("plugin:")) else dev.nori.music.ffi.settings.ServerKind.Subsonic
+            }
+            val profile = if (kind != null) settings.newProfile().copy(kind = kind)
+                else settings.newProfile().copy(url = url, user = user, password = pass)
+            // Logins come back to back (the app's start, then a section's): one still busy would drop the next.
+            scope.launch {
+                settings.login.first { !it.busy }
+                settings.login(profile)
+            }
+        }
+        onDispose { TestHooks.login = null }
+    }
+}
+
 /** The test bridge's handles, live for as long as the signed-in app is on screen. See TestHooks. */
 @Composable
 fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, settings: SettingsViewModel, actions: ActionsViewModel, player: PlayerViewModel, devices: () -> Unit) {
     val context = LocalContext.current
     val player2 = player
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
     DisposableEffect(controller) {
         // "queue" is the player on its queue (where a jam's header is), "lyrics" on its lyrics, "devices" the devices sheet.
         val open = { route: String ->
@@ -51,20 +73,6 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
         TestHooks.open = open
         TestHooks.set = { name, value -> TestActions.setByName(context, settings, name, value) }
         TestHooks.play = { what -> TestActions.playByRef(context, actions, what) }
-        TestHooks.login = { spec ->
-            val (url, user, pass) = spec.split("|").let { Triple(it[0], it.getOrElse(1) { "" }, it.getOrElse(2) { "" }) }
-            // "kind:subsonic" or "kind:plugin:<id>" adds a profile of that kind (as [kindTag] says it) with nothing typed in.
-            val kind = spec.removePrefix("kind:").takeIf { it != spec }?.let { k ->
-                if (k.startsWith("plugin:")) dev.nori.music.ffi.settings.ServerKind.Plugin(k.removePrefix("plugin:")) else dev.nori.music.ffi.settings.ServerKind.Subsonic
-            }
-            val profile = if (kind != null) settings.newProfile().copy(kind = kind)
-                else settings.newProfile().copy(url = url, user = user, password = pass)
-            // Logins come back to back (the app's start, then a section's): one still busy would drop the next.
-            scope.launch {
-                settings.login.first { !it.busy }
-                settings.login(profile)
-            }
-        }
         TestHooks.act = { what -> TestActions.act(context, actions, what, player2) }
         TestHooks.state = {
             val st = player2.state.value
