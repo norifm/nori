@@ -163,7 +163,6 @@ export const W = {
   failed: (why: string) => `Something went wrong: ${why}`,
   songCount: (n: number) => plural(n, "song", "songs"),
   /** A count of songs that reads as a list's: "1 songs" stays "1 song" only in a sentence. */
-  songsAlways: (n: number) => `${n} songs`,
   albumCount: (n: number) => plural(n, "album", "albums"),
   /** A list's head: "8 songs · 36:28". */
   listCaption: (n: number, seconds: number) => `${n} songs · ${clock(seconds * 1000)}`,

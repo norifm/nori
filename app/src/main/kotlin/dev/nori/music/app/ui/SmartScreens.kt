@@ -189,7 +189,7 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             // Its covers as the page's picture, as a cover heads an album's; a mix with none yet keeps its tile.
             mosaic = m.covers,
             art = { MixArt(MixCard(m.id, m.title, m.covers, m.favourites), 236.dp) },
-            headLabel = if (m.songs.isEmpty()) "" else say.listCaption(m.songs.size, m.songs.sumOf { it.duration.toLong() }, true),
+            headLabel = if (m.songs.isEmpty()) "" else say.listCaption(m.songs.size, m.songs.sumOf { it.duration.toLong() }),
             // After Play, as a record's seal stands there: keep the mix on the account as a playlist.
             actions = {
                 if (LocalRules.current.account && m.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveAsPlaylist(m.title, m.songs) }
@@ -253,7 +253,7 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
             onPlay = if (any) { { actions.play(page.songs, from = from) } } else null,
             onShuffle = if (any) { { actions.shuffle(page.songs, from) } } else null,
             queue = remember(from) { dev.nori.music.ffi.library.PageQueue(from) },
-            headLabel = if (any) remember(page) { say.listCaption(page.songs.size, page.seconds.toLong(), true) } else "",
+            headLabel = if (any) remember(page) { say.listCaption(page.songs.size, page.seconds.toLong()) } else "",
             headActions = {
                 PageActionGlyphs(
                     dev.nori.music.ffi.library.PageKind.Smart, page.songs, list.downloaded, actions,

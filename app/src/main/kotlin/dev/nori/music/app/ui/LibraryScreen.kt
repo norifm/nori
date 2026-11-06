@@ -446,7 +446,7 @@ private fun Playlists(actions: ActionsViewModel, vm: PlaylistsViewModel = viewMo
                 val menu = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) }
                 NavRow(
                     p.name, { nav.playlist(p.id, p) }, onLongClick = menu,
-                    subtitle = remember(p.songCount, p.duration) { say.listCaption(p.songCount.toInt(), p.duration.toLong(), false) },
+                    subtitle = remember(p.songCount, p.duration) { say.listCaption(p.songCount.toInt(), p.duration.toLong()) },
                     leading = { Cover(vm.cover(p.coverArt, CoverSize.ROW), 48.dp) },
                     action = { IconButton(menu, Modifier.size(40.dp)) { Icon(Iconoir.MoreHoriz, say.more, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 )

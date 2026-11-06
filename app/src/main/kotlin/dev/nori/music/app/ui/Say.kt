@@ -482,8 +482,6 @@ class Say(private val r: Resources) {
 
     /** "1 song", "12 songs". */
     fun songs(n: Int): String = counted(songsMade, R.plurals.songs, n)
-    /** "12 songs" whatever the count: how the album and playlist pages have always put it. */
-    fun songsAlwaysPlural(n: Int): String = r.getString(R.string.songs_always_plural, n)
     /** "1 album", "12 albums": under an artist's name. */
     fun albums(n: Int): String = counted(albumsMade, R.plurals.albums, n)
     fun releases(n: Int): String = r.getQuantityString(R.plurals.releases, n, n)
@@ -503,21 +501,20 @@ class Say(private val r: Resources) {
 
     // ---- captions ----
 
-    /** A list's caption: "12 songs · 48:10", every count plural when [alwaysPlural]. */
-    fun listCaption(count: Int, seconds: Long, alwaysPlural: Boolean): String =
-        (if (alwaysPlural) songsAlwaysPlural(count) else songs(count)) + " · " + Fmt.duration(seconds)
+    /** A list's caption: "12 songs · 48:10". */
+    fun listCaption(count: Int, seconds: Long): String = songs(count) + " · " + Fmt.duration(seconds)
 
     /** What is known of an album before its songs are: "2019 · 12 songs · 48:10", each part only if known. */
     fun albumHintCaption(year: Int, songCount: Int, seconds: Long): String = listOfNotNull(
         year.takeIf { it > 0 }?.toString(),
-        songCount.takeIf { it > 0 }?.let(::songsAlwaysPlural),
+        songCount.takeIf { it > 0 }?.let(::songs),
         seconds.takeIf { it > 0 }?.let(Fmt::duration),
     ).joinToString(" · ")
 
     /** An album page's caption once its songs are in: "2019 · 12 songs · 48:10 · FLAC 16/44.1 · explicit". */
     fun albumCaption(d: AlbumDetail): String = listOfNotNull(
         d.album.year.toInt().takeIf { it > 0 }?.toString(),
-        songsAlwaysPlural(d.songs.size),
+        songs(d.songs.size),
         Fmt.duration(d.seconds.toLong()),
         d.songs.firstOrNull()?.let(::quality),
         if (d.album.explicitStatus == dev.nori.music.ffi.model.ExplicitStatus.EXPLICIT) r.getString(R.string.caption_explicit) else null,

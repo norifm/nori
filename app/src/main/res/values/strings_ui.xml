@@ -309,8 +309,6 @@
         <item quantity="one">%d song</item>
         <item quantity="other">%d songs</item>
     </plurals>
-    <!-- The album and playlist pages have always said "1 songs". -->
-    <string name="songs_always_plural">%d songs</string>
     <plurals name="albums">
         <item quantity="one">%d album</item>
         <item quantity="other">%d albums</item>
