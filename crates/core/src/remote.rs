@@ -787,9 +787,11 @@ impl Mirrored {
             self.at = self.arrived;
             self.device_at = self.heard.as_ref().and_then(|s| s.at_us);
         }
-        for change in self.foreseen.iter().map(|f| f.change.clone()).collect::<Vec<_>>() {
-            self.put(&change);
+        let foreseen = std::mem::take(&mut self.foreseen);
+        for f in &foreseen {
+            self.put(&f.change);
         }
+        self.foreseen = foreseen;
     }
 
     /// Drops a refused command or an unanswered command past its deadline; whether anything shown changed.
