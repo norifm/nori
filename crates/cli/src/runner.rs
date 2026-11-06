@@ -379,6 +379,7 @@ impl Runner {
         let Some(s) = &self.session else { return };
         let Some(state) = s.account_changed() else { return };
         app.rules = s.rules();
+        app.excluded = s.core.mix_excluded_songs().unwrap_or_default().into_iter().collect();
         app.dirty = true;
         if state == nori_core::providers::AccountState::Ended {
             self.offer_sign_in(app);
@@ -958,11 +959,11 @@ impl Runner {
                 let states = s.download_states(&ids.iter().map(String::as_str).collect::<Vec<_>>());
                 app.knows_downloads(ids, states);
             }
-            Cmd::ExcludeFromMixes(id) => {
-                if let Err(e) = s.core.mix_excluded_set(id, true) {
-                    app.say(e.to_string(), true);
-                }
-            }
+            Cmd::ExcludeFromMixes(id, on) => match s.core.mix_excluded_set(id.clone(), on) {
+                Ok(()) if on => _ = app.excluded.insert(id),
+                Ok(()) => _ = app.excluded.remove(&id),
+                Err(e) => app.say(e.to_string(), true),
+            },
             Cmd::AddToPlaylist { id, songs } => {
                 let name = app.library.playlists.ready().and_then(|v| v.iter().find(|p| p.id == id)).map(|p| p.name.clone()).unwrap_or_default();
                 self.playlist_write(s, nori_core::client::Write::AddToPlaylist { id, song_ids: songs }, crate::text::added_to(&name));

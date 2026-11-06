@@ -2235,15 +2235,13 @@ impl App {
     /// `one`'s menu as the core lists it (menus.rs's `song_menu`); `player`: opened from the player, `page`
     /// the album or artist page it is opened on.
     fn menu_lines(&self, one: Song, player: bool, page: Option<nori_core::PageOrigin>) -> Vec<SongGo> {
-        use nori_core::menus::{song_menu, JamOffer, SongAction as A, SongDownload};
+        use nori_core::menus::{song_menu, SongAction as A, SongDownload};
         let Some(s) = self.session.as_ref() else { return Vec::new() };
-        let ui = self.ui();
-        let jam = ui.global::<crate::Jam>();
-        let offer = if s.rules().asks { Some(JamOffer::Guest) } else { (jam.get_on() && !jam.get_hosting()).then_some(JamOffer::Start) };
         let starred = self.heart(&one);
         let download = if s.rules().downloads { s.download_state(&one.id) } else { SongDownload::None };
         let lyrics = player && self.lyrics.as_ref().is_some_and(|l| !l.is_empty());
-        let items = song_menu(one, starred.unwrap_or_default(), download, player, lyrics, starred.is_some(), s.rules().account, s.rules().downloads, s.rules().radio, offer, page);
+        let excluded = s.core.mix_excluded_songs().is_ok_and(|ids| ids.contains(&one.id));
+        let items = song_menu(one, starred.unwrap_or_default(), excluded, download, player, lyrics, starred.is_some(), s.rules().account, s.rules().downloads, s.rules().radio, s.rules().asks, page);
         let lines = items.into_iter().map(|m| {
             let (kind, id) = match &m.action {
                 A::Favourite { .. } => (0, String::new()),
@@ -2258,10 +2256,9 @@ impl App {
                 A::StopDownload => (9, String::new()),
                 A::AddToLibrary => (10, String::new()),
                 A::InstantMix => (11, String::new()),
-                A::ExcludeFromMixes => (12, String::new()),
+                A::ExcludeFromMixes { on } => (if *on { 12 } else { 19 }, String::new()),
                 A::Share => (13, String::new()),
                 A::Details => (14, String::new()),
-                A::StartJam => (15, String::new()),
                 A::Lyrics => (16, String::new()),
                 A::SleepTimer => (17, String::new()),
             };
@@ -2290,7 +2287,6 @@ impl App {
         match how {
             -1 if list == 3 => self.on_session(|s| s.jump(i)),
             -1 => self.on_session(|s| s.play(songs, i, false, origin)),
-            15 => self.on_session(|s| s.start_jam(songs, i)),
             18 => self.remove_from_playlist(i),
             _ => self.song_act(one, how),
         }
@@ -2299,7 +2295,6 @@ impl App {
     /// The player's menu line `how` (`SongGo::kind`), for the song playing.
     fn player_act(&mut self, how: i32) {
         match how {
-            15 => self.on_session(|s| s.jam_open()),
             16 => self.lyrics_sheet(true),
             17 => {
                 self.sleep_choices = nori_core::menus::sleep_choices(self.sleeping);
@@ -2334,10 +2329,10 @@ impl App {
             8 | 9 => self.on_session(|s| s.download_remove(&one.id)),
             10 => self.on_session(|s| s.star(nori_core::client::Starrable::Song, one.id, true)),
             11 => self.on_session(|s| s.play_later(Fetch::InstantMix(one.id), false)),
-            12 => {
-                let done = self.session.as_ref().is_some_and(|s| s.core.mix_excluded_set(one.id, true).is_ok());
+            12 | 19 => {
+                let done = self.session.as_ref().is_some_and(|s| s.core.mix_excluded_set(one.id, how == 12).is_ok());
                 if done {
-                    self.say(words::EXCLUDED_FROM_MIXES, false);
+                    self.say(if how == 12 { words::EXCLUDED_FROM_MIXES } else { words::BACK_IN_MIXES }, false);
                 }
             }
             13 => self.share(one.id),

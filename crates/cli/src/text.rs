@@ -721,10 +721,10 @@ pub fn song_action(a: &nori_core::menus::SongAction) -> String {
         SongAction::SleepTimer => "Sleep timer…".into(),
         SongAction::StartRadio => "Start radio from this song".into(),
         SongAction::InstantMix => "Instant mix".into(),
-        SongAction::ExcludeFromMixes => "Exclude from mixes".into(),
+        SongAction::ExcludeFromMixes { on: true } => "Exclude from mixes".into(),
+        SongAction::ExcludeFromMixes { on: false } => "Include in mixes".into(),
         SongAction::Share => "Share link".into(),
         SongAction::Details => "Details".into(),
-        SongAction::StartJam => JAM_START.into(),
     }
 }
 

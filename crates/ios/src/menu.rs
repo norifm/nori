@@ -6,7 +6,7 @@ use std::ffi::{c_char, CString};
 
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::{Starrable, Write};
-use nori_core::menus::{row_swipe, saved_mix_name, sleep_choices, song_menu, JamOffer, RowSwipeAct, SongAction, SongDownload, SongMenuItem};
+use nori_core::menus::{row_swipe, saved_mix_name, sleep_choices, song_menu, RowSwipeAct, SongAction, SongDownload, SongMenuItem};
 use nori_core::browse::ProfileRules;
 use nori_core::{PageOrigin, Song};
 use serde_json::{json, Value};
@@ -29,10 +29,9 @@ fn action_code(a: &SongAction) -> i32 {
         SongAction::SleepTimer => 10,
         SongAction::StartRadio => 11,
         SongAction::InstantMix => 12,
-        SongAction::ExcludeFromMixes => 13,
+        SongAction::ExcludeFromMixes { .. } => 13,
         SongAction::Share => 14,
         SongAction::Details => 15,
-        SongAction::StartJam => 18,
         SongAction::Lyrics => 19,
     }
 }
@@ -40,7 +39,7 @@ fn action_code(a: &SongAction) -> i32 {
 fn item_json(m: &SongMenuItem) -> Value {
     let mut v = json!({ "a": action_code(&m.action), "more": m.more, "enabled": m.enabled });
     match &m.action {
-        SongAction::Favourite { on } => v["on"] = json!(on),
+        SongAction::Favourite { on } | SongAction::ExcludeFromMixes { on } => v["on"] = json!(on),
         SongAction::GoToAlbum { id } => v["id"] = json!(id),
         SongAction::GoToArtist { id, name, named } => {
             v["id"] = json!(id);
@@ -69,9 +68,9 @@ fn details_json(s: &Song) -> Value {
 }
 
 /// `rules`: whether the profile has the account's things, and whether its menu asks a jam's host
-/// (`JamOffer::Guest`). `page`: the page it is opened on, whose own album or artist it leaves out.
-fn menu_json(song: &Song, starred: bool, download: SongDownload, player: bool, rules: &ProfileRules, page: Option<PageOrigin>) -> Value {
-    let items: Vec<Value> = song_menu(song.clone(), starred, download, player, false, rules.stars, rules.account, rules.downloads, rules.radio, rules.asks.then_some(JamOffer::Guest), page)
+/// as its guest. `page`: the page it is opened on, whose own album or artist it leaves out.
+fn menu_json(song: &Song, starred: bool, excluded: bool, download: SongDownload, player: bool, rules: &ProfileRules, page: Option<PageOrigin>) -> Value {
+    let items: Vec<Value> = song_menu(song.clone(), starred, excluded, download, player, false, rules.stars, rules.account, rules.downloads, rules.radio, rules.asks, page)
         .iter()
         // The iPod has no sheet for the lyrics' source and timing.
         .filter(|i| i.action != SongAction::Lyrics)
@@ -131,11 +130,14 @@ pub extern "C" fn nori_ios_song_menu(token: u64, index: i32, starred: i32, playe
         return std::ptr::null_mut();
     };
     let page = if player != 0 { None } else { list_origin(token) };
-    with_session(|s| owned(&menu_json(&song, starred != 0, s.download_state(&song.id), player != 0, &s.rules(), page)))
+    with_session(|s| {
+        let excluded = s.core.mix_excluded_songs().is_ok_and(|ids| ids.contains(&song.id));
+        owned(&menu_json(&song, starred != 0, excluded, s.download_state(&song.id), player != 0, &s.rules(), page))
+    })
         .unwrap_or(std::ptr::null_mut())
 }
 
-/// Does menu line `action` (its `a`) for song `index` of list `token`; `on` for the heart. Lines the
+/// Does menu line `action` (its `a`) for song `index` of list `token`; `on` for the heart and leaving it out of mixes. Lines the
 /// client draws itself (album, artist, playlist, sleep timer, share, details) do nothing here. Radio
 /// and instant mix block: the songs played, -1 when the server could not be asked. Otherwise 1 done.
 #[no_mangle]
@@ -165,7 +167,7 @@ pub extern "C" fn nori_ios_song_act(token: u64, index: i32, action: i32, on: i32
             s.star(Starrable::Song, song.id.clone(), true);
             1
         }
-        13 => i32::from(s.core.mix_excluded_set(song.id.clone(), true).is_ok()),
+        13 => i32::from(s.core.mix_excluded_set(song.id.clone(), on != 0).is_ok()),
         _ => 0,
     })
     .unwrap_or(0)
@@ -328,7 +330,7 @@ mod tests {
 
     #[test]
     fn the_menu_carries_each_line_by_code_with_what_it_needs() {
-        let v = menu_json(&song(), true, SongDownload::Done, false, &profile_rules(false), None);
+        let v = menu_json(&song(), true, false, SongDownload::Done, false, &profile_rules(false), None);
         let items = v["items"].as_array().unwrap();
         assert_eq!((items[0]["a"].as_i64(), items[0]["on"].as_bool()), (Some(0), Some(false)));
         assert!(codes(&v).contains(&4), "a downloaded song offers removing it: {v}");
@@ -337,11 +339,11 @@ mod tests {
         let artist = items.iter().find(|i| i["a"] == 8).unwrap();
         assert_eq!((artist["id"].as_str(), artist["named"].as_bool()), (Some("ar"), Some(false)));
         assert!(!codes(&v).contains(&10), "the sleep timer is the player's");
-        assert!(codes(&menu_json(&song(), false, SongDownload::Pending, true, &profile_rules(false), None)).contains(&10));
-        assert!(codes(&menu_json(&song(), false, SongDownload::Pending, true, &profile_rules(false), None)).contains(&5));
+        assert!(codes(&menu_json(&song(), false, false, SongDownload::Pending, true, &profile_rules(false), None)).contains(&10));
+        assert!(codes(&menu_json(&song(), false, false, SongDownload::Pending, true, &profile_rules(false), None)).contains(&5));
         assert_eq!(v["details"]["title"], "Blue");
         // A jam guest's asks the host, and has nothing of the account's.
-        assert_eq!(codes(&menu_json(&song(), false, SongDownload::None, true, &profile_rules(true), None)), [1, 2, 7, 8, 15]);
+        assert_eq!(codes(&menu_json(&song(), false, false, SongDownload::None, true, &profile_rules(true), None)), [1, 2, 7, 8, 15]);
     }
 
     #[test]
@@ -360,10 +362,9 @@ mod tests {
             SongAction::SleepTimer,
             SongAction::StartRadio,
             SongAction::InstantMix,
-            SongAction::ExcludeFromMixes,
+            SongAction::ExcludeFromMixes { on: true },
             SongAction::Share,
             SongAction::Details,
-            SongAction::StartJam,
             SongAction::Lyrics,
         ];
         let mut seen: Vec<i32> = actions.iter().map(action_code).collect();

@@ -166,7 +166,9 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
 
     fun instantMix(song: Song) = attempt(null) { start(nori.library.instantMix(song)) }
 
-    fun excludeFromMixes(song: Song) = attempt(say.excludedFromMixes) { nori.library.excludeFromMixes(song.id, true) }
+    suspend fun excludedFromMixes(song: Song): Boolean = song.id in nori.library.excludedFromMixes()
+
+    fun excludeFromMixes(song: Song, on: Boolean) = attempt(if (on) say.excludedFromMixes else say.backInMixes) { nori.library.excludeFromMixes(song.id, on) }
 
     /** Creates a server playlist from an M3U file; tracks that are not in the index are reported, not guessed. */
     fun importM3u(name: String, text: String) = attempt(null) {

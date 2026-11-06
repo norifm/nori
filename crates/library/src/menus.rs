@@ -27,22 +27,23 @@ pub enum SongAction {
     SleepTimer,
     StartRadio,
     InstantMix,
-    ExcludeFromMixes,
+    /// `on` is what pressing it sets.
+    ExcludeFromMixes { on: bool },
     Share,
     Details,
-    /// Plays the song and starts a jam around it.
-    StartJam,
 }
 
-/// What a jam adds to the song menu.
+/// Where a sheet that lays the song menu out draws an item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum JamOffer {
-    /// Jams are on, the server relays them and none is hosted: the song can start one.
-    Start,
-    /// A jam guest: Play next and Add to queue ask the host for the song, and only the pages a guest may
-    /// open are offered.
-    Guest,
+pub enum SongMenuPlace {
+    /// A bare glyph beside the song's title.
+    Title,
+    /// The artist or album name under the title, which opens that page.
+    Names,
+    /// A bare glyph on the line under the head.
+    Glyphs,
+    Line,
 }
 
 /// One line of the song menu.
@@ -50,6 +51,7 @@ pub enum JamOffer {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct SongMenuItem {
     pub action: SongAction,
+    pub place: SongMenuPlace,
     /// Under "More".
     pub more: bool,
     /// Shown but not offered now (greyed): the player's Lyrics while the song has none.
@@ -66,32 +68,25 @@ pub enum SongDownload {
     Done,
 }
 
-/// The menu of `song`, most used first. `starred` as shown; `player`: opened from the player, which adds
-/// the sleep timer, and the lyrics' source and timing (greyed while it shows no `lyrics`), and leaves the
-/// seal to the player's own. `stars`: songs carry seals ([`crate::browse::ProfileRules::stars`]). `account`: the
+/// The menu of `song`, most used first. `starred` and `excluded` (from mixes) as shown; `player`: opened from the player, which adds
+/// the sleep timer, and the lyrics' source and timing (greyed while it shows no `lyrics`). `stars`: songs carry seals ([`crate::browse::ProfileRules::stars`]). `account`: the
 /// profile has an account's playlists, mixes and shares (not a jam guest's, nor a
 /// profile without a Subsonic account). A provider's song has no mix or share actions: those need it
-/// on the server. `jam`: what a jam adds. `page`: the page it is opened on, whose own album or artist it
+/// on the server. `guest`: a jam guest's, where Play next and Add to queue ask the host for the song and
+/// only the pages a guest may open are offered. `page`: the page it is opened on, whose own album or artist it
 /// does not offer to go to.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 #[allow(clippy::too_many_arguments)]
-pub fn song_menu(song: Song, starred: bool, download: SongDownload, player: bool, lyrics: bool, stars: bool, account: bool, downloads: bool, radio: bool, jam: Option<JamOffer>, page: Option<PageOrigin>) -> Vec<SongMenuItem> {
+pub fn song_menu(song: Song, starred: bool, excluded: bool, download: SongDownload, player: bool, lyrics: bool, stars: bool, account: bool, downloads: bool, radio: bool, guest: bool, page: Option<PageOrigin>) -> Vec<SongMenuItem> {
     let mut out = Vec::with_capacity(16);
-    let mut add = |action: SongAction, more: bool, enabled: bool| out.push(SongMenuItem { action, more, enabled });
-    if stars && !player {
+    let mut add = |action: SongAction, more: bool, enabled: bool| out.push(SongMenuItem { place: place_of(&action), action, more, enabled });
+    if stars {
         add(SongAction::Favourite { on: !starred }, false, true);
     }
     add(SongAction::PlayNext, false, true);
     add(SongAction::AddToQueue, false, true);
     if account {
         add(SongAction::AddToPlaylist, false, true);
-    }
-    if downloads {
-        match download {
-            SongDownload::Done => add(SongAction::RemoveDownload, false, true),
-            SongDownload::Pending => add(SongAction::StopDownload, false, true),
-            SongDownload::None => add(SongAction::Download, false, true),
-        }
     }
     let here = |kind: &[OriginKind], id: &str| page.as_ref().is_some_and(|p| kind.contains(&p.kind) && p.id == id);
     if let Some(id) = song.album_id.as_ref().filter(|id| !here(&[OriginKind::Album], id)) {
@@ -105,32 +100,47 @@ pub fn song_menu(song: Song, starred: bool, download: SongDownload, player: bool
     } else if let Some(id) = song.artist_id.as_ref().filter(|id| !here(&artist_page, id)) {
         add(SongAction::GoToArtist { id: id.clone(), name: song.artist.clone(), named: false }, false, true);
     }
-    if jam == Some(JamOffer::Guest) {
+    if !guest && account && song.is_provider() {
+        add(SongAction::AddToLibrary, false, true);
+    }
+    if !guest && player {
+        add(SongAction::Lyrics, false, lyrics);
+        add(SongAction::SleepTimer, false, true);
+    }
+    if downloads {
+        match download {
+            SongDownload::Done => add(SongAction::RemoveDownload, false, true),
+            SongDownload::Pending => add(SongAction::StopDownload, false, true),
+            SongDownload::None => add(SongAction::Download, false, true),
+        }
+    }
+    if guest {
         add(SongAction::Details, false, true);
         return out;
     }
-    if account && song.is_provider() {
-        add(SongAction::AddToLibrary, false, true);
-    }
-    if jam == Some(JamOffer::Start) {
-        add(SongAction::StartJam, false, true);
-    }
-    if player {
-        add(SongAction::Lyrics, false, lyrics);
-    }
-    if player {
-        add(SongAction::SleepTimer, false, true);
+    let own = account && !song.is_provider();
+    if own {
+        add(SongAction::Share, true, true);
     }
     if radio {
         add(SongAction::StartRadio, true, true);
     }
-    if account && !song.is_provider() {
+    if own {
         add(SongAction::InstantMix, true, true);
-        add(SongAction::ExcludeFromMixes, true, true);
-        add(SongAction::Share, true, true);
+        add(SongAction::ExcludeFromMixes { on: !excluded }, true, true);
     }
     add(SongAction::Details, true, true);
     out
+}
+
+fn place_of(action: &SongAction) -> SongMenuPlace {
+    use SongAction::*;
+    match action {
+        Favourite { .. } | Details => SongMenuPlace::Title,
+        GoToAlbum { .. } | GoToArtist { .. } => SongMenuPlace::Names,
+        Lyrics | SleepTimer | RemoveDownload | StopDownload | Download | Share | ExcludeFromMixes { .. } => SongMenuPlace::Glyphs,
+        PlayNext | AddToQueue | AddToPlaylist | AddToLibrary | StartRadio | InstantMix => SongMenuPlace::Line,
+    }
 }
 
 /// A song's artist line as names that open their artists' pages.
@@ -146,6 +156,7 @@ pub enum ArtistLine {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct ArtistPiece {
     pub text: String,
     pub id: Option<String>,
@@ -163,6 +174,17 @@ pub fn artist_line(song: &Song) -> ArtistLine {
     match split_line(&song.artist, &artists) {
         Some(pieces) => ArtistLine::Split(pieces),
         None => ArtistLine::Several(artists.into_iter().cloned().collect()),
+    }
+}
+
+/// `song`'s artists as they stand on one line: the line itself where it can't be split, a piece with no `id`
+/// between two names that are its own words, and bare names side by side where the line doesn't name them.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn artist_pieces(song: Song) -> Vec<ArtistPiece> {
+    match artist_line(&song) {
+        ArtistLine::One => vec![ArtistPiece { text: song.artist, id: song.artist_id }],
+        ArtistLine::Split(pieces) => pieces,
+        ArtistLine::Several(artists) => artists.into_iter().map(|a| ArtistPiece { text: a.name, id: Some(a.id) }).collect(),
     }
 }
 
@@ -472,7 +494,7 @@ mod tests {
     #[test]
     fn downloads_without_an_account() {
         for (state, action) in [(SongDownload::None, SongAction::Download), (SongDownload::Pending, SongAction::StopDownload), (SongDownload::Done, SongAction::RemoveDownload)] {
-            let menu = actions(&song_menu(Song::default(), false, state, false, false, false, false, true, true, None, None));
+            let menu = actions(&song_menu(Song::default(), false, false, state, false, false, false, false, true, true, false, None));
             assert!(menu.contains(&(action, false)));
             assert!(!menu.contains(&(SongAction::AddToPlaylist, false)));
         }
@@ -480,7 +502,7 @@ mod tests {
 
     #[test]
     fn radio_without_an_account() {
-        let menu = actions(&song_menu(Song::default(), false, SongDownload::None, false, false, false, false, false, true, None, None));
+        let menu = actions(&song_menu(Song::default(), false, false, SongDownload::None, false, false, false, false, false, true, false, None));
         assert!(menu.contains(&(SongAction::StartRadio, true)));
         assert!(!menu.contains(&(SongAction::InstantMix, true)));
         assert!(!menu.contains(&(SongAction::Share, true)));
@@ -489,35 +511,33 @@ mod tests {
     #[test]
     fn song_menus() {
         let s = Song { id: "1".into(), album_id: Some("al".into()), artist_id: Some("ar".into()), artist: "Björk".into(), ..Default::default() };
-        let m = song_menu(s.clone(), false, SongDownload::None, false, false, true, true, true, true, None, None);
+        let m = song_menu(s.clone(), false, false, SongDownload::None, false, false, true, true, true, true, false, None);
         assert_eq!(
-            actions(&song_menu(s.clone(), false, SongDownload::None, true, false, false, false, false, false, Some(JamOffer::Guest), None)),
+            actions(&song_menu(s.clone(), false, false, SongDownload::None, true, false, false, false, false, false, true, None)),
             [(PlayNext, false), (AddToQueue, false), (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (Details, false)],
             "a jam guest asks for songs and opens what it may read"
         );
-        let starts = song_menu(s.clone(), false, SongDownload::None, false, false, true, true, true, true, Some(JamOffer::Start), None);
-        assert_eq!(actions(&starts).into_iter().filter(|(a, _)| *a == StartJam).collect::<Vec<_>>(), [(StartJam, false)], "a jam starts from the menu's first part");
         use SongAction::*;
         assert_eq!(
-            actions(&song_menu(s.clone(), false, SongDownload::None, true, true, false, false, false, false, None, None)),
+            actions(&song_menu(s.clone(), false, false, SongDownload::None, true, true, false, false, false, false, false, None)),
             [(PlayNext, false), (AddToQueue, false), (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (Lyrics, false), (SleepTimer, false), (Details, true)],
             "without an account only the queue, the pages and what plays here"
         );
-        let without = song_menu(s.clone(), false, SongDownload::None, true, false, true, true, true, true, None, None);
+        let without = song_menu(s.clone(), false, false, SongDownload::None, true, false, true, true, true, true, false, None);
         assert_eq!(without.iter().find(|i| i.action == Lyrics).map(|i| i.enabled), Some(false), "no lyrics: the line is there, greyed");
         assert!(m.iter().all(|i| i.enabled), "everything else is offered");
-        assert!(!actions(&song_menu(s.clone(), false, SongDownload::None, false, true, true, true, true, true, None, None)).contains(&(Lyrics, false)), "only the player's menu has it");
+        assert!(!actions(&song_menu(s.clone(), false, false, SongDownload::None, false, true, true, true, true, true, false, None)).contains(&(Lyrics, false)), "only the player's menu has it");
         assert_eq!(
-            actions(&song_menu(s, true, SongDownload::None, false, false, true, false, false, false, None, None))[..3],
+            actions(&song_menu(s, true, false, SongDownload::None, false, false, true, false, false, false, false, None))[..3],
             [(Favourite { on: false }, false), (PlayNext, false), (AddToQueue, false)],
             "seals without an account: still no playlists or downloads"
         );
         assert_eq!(
             actions(&m),
             [
-                (Favourite { on: true }, false), (PlayNext, false), (AddToQueue, false), (AddToPlaylist, false), (Download, false),
-                (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false),
-                (StartRadio, true), (InstantMix, true), (ExcludeFromMixes, true), (Share, true), (Details, true),
+                (Favourite { on: true }, false), (PlayNext, false), (AddToQueue, false), (AddToPlaylist, false),
+                (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (Download, false),
+                (Share, true), (StartRadio, true), (InstantMix, true), (ExcludeFromMixes { on: true }, true), (Details, true),
             ]
         );
 
@@ -528,19 +548,57 @@ mod tests {
             artists: vec![ArtistRef { id: "a".into(), name: "A".into() }, ArtistRef { id: String::new(), name: "Nobody".into() }, ArtistRef { id: "b".into(), name: "B".into() }],
             ..Default::default()
         };
-        let m = song_menu(s, true, SongDownload::Pending, true, false, true, true, true, true, None, None);
+        let m = song_menu(s, true, false, SongDownload::Pending, true, false, true, true, true, true, false, None);
         assert_eq!(
             actions(&m),
-            // The player's menu: the seal is the player's own.
             [
-                (PlayNext, false), (AddToQueue, false), (AddToPlaylist, false), (StopDownload, false),
+                (Favourite { on: false }, false), (PlayNext, false), (AddToQueue, false), (AddToPlaylist, false),
                 (GoToArtist { id: "a".into(), name: "A".into(), named: true }, false), (GoToArtist { id: "b".into(), name: "B".into(), named: true }, false),
-                (AddToLibrary, false), (Lyrics, false), (SleepTimer, false),
+                (AddToLibrary, false), (Lyrics, false), (SleepTimer, false), (StopDownload, false),
                 (StartRadio, true), (Details, true),
             ]
         );
-        let done = song_menu(Song::default(), false, SongDownload::Done, false, false, true, true, true, true, None, None);
-        assert_eq!(done[4].action, SongAction::RemoveDownload);
+        let done = song_menu(Song::default(), false, false, SongDownload::Done, false, false, true, true, true, true, false, None);
+        assert!(done.iter().any(|i| i.action == SongAction::RemoveDownload));
+    }
+
+    #[test]
+    fn every_action_has_its_place() {
+        use SongMenuPlace::*;
+        let s = Song { id: "1".into(), album_id: Some("al".into()), artist_id: Some("ar".into()), artist: "A".into(), ..Default::default() };
+        let of = |want: SongMenuPlace| -> Vec<SongAction> {
+            song_menu(s.clone(), false, false, SongDownload::None, true, true, true, true, true, true, false, None).into_iter().filter(|i| i.place == want).map(|i| i.action).collect()
+        };
+        use SongAction::*;
+        assert_eq!(of(Title), [Favourite { on: true }, Details]);
+        assert_eq!(of(Names), [GoToAlbum { id: "al".into() }, GoToArtist { id: "ar".into(), name: "A".into(), named: false }]);
+        assert_eq!(of(Glyphs), [Lyrics, SleepTimer, Download, Share, ExcludeFromMixes { on: true }]);
+        assert_eq!(of(Line), [PlayNext, AddToQueue, AddToPlaylist, StartRadio, InstantMix]);
+    }
+
+    #[test]
+    fn excluding_is_a_toggle() {
+        let s = Song { id: "1".into(), ..Default::default() };
+        for (excluded, on) in [(false, true), (true, false)] {
+            let menu = song_menu(s.clone(), false, excluded, SongDownload::None, false, false, false, true, false, false, false, None);
+            assert!(menu.iter().any(|i| i.action == SongAction::ExcludeFromMixes { on }), "{excluded}");
+        }
+    }
+
+    #[test]
+    fn artist_pieces_keep_the_line_where_they_can() {
+        let r = |id: &str, name: &str| ArtistRef { id: id.into(), name: name.into() };
+        let p = |text: &str, id: Option<&str>| ArtistPiece { text: text.into(), id: id.map(Into::into) };
+        let one = Song { artist: "A".into(), artist_id: Some("a".into()), ..Default::default() };
+        let split = Song { artist: "A & B".into(), artists: vec![r("a", "A"), r("b", "B")], ..Default::default() };
+        let apart = Song { artist: "Someone else".into(), artists: vec![r("a", "A"), r("b", "B")], ..Default::default() };
+        for (song, want) in [
+            (one, vec![p("A", Some("a"))]),
+            (split, vec![p("A", Some("a")), p(" & ", None), p("B", Some("b"))]),
+            (apart, vec![p("A", Some("a")), p("B", Some("b"))]),
+        ] {
+            assert_eq!(artist_pieces(song), want);
+        }
     }
 
     #[test]
@@ -549,7 +607,7 @@ mod tests {
         let s = Song { id: "1".into(), album_id: Some("al".into()), artist_id: Some("ar".into()), artist: "A".into(), ..Default::default() };
         let pair = Song { artists: vec![r("ar", "A"), r("b", "B")], ..s.clone() };
         let goes = |song: &Song, page: Option<PageOrigin>| -> Vec<String> {
-            song_menu(song.clone(), false, SongDownload::None, false, false, false, false, false, false, None, page)
+            song_menu(song.clone(), false, false, SongDownload::None, false, false, false, false, false, false, false, page)
                 .into_iter()
                 .filter_map(|i| match i.action {
                     SongAction::GoToAlbum { id } => Some(format!("album {id}")),

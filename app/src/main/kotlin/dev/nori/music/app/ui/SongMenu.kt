@@ -30,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import dev.nori.music.app.vm.ActionsViewModel
 import dev.nori.music.app.vm.CardItem
@@ -83,19 +84,10 @@ fun SongMenu(
         val downloads by actions.downloads.collectAsState()
         // No stretch past the ends and no lift, here or in the other sheets: a menu that fits moved under every swipe.
         Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
-            // The track leads the sheet, the way the row it came from looked.
-            SheetHead(actions.cover(song.coverArt, CoverSize.ROW), song.title, remember(song) { say.songLine(song.artist, song.album) }) {
-                // The album page's way of saying it, in its own case: "FLAC 16/44.1", "MP3 320 kbps".
-                remember(song) { say.quality(song) }?.let { Caption(it, caps = false) }
-            }
-            // What someone opened this menu to do: queue it, keep it, or leave for where it came
-            // from. Everything one reaches for perhaps once a month comes after it.
-            // The heart comes first because it is the one thing here that is about the song rather than
-            // about the queue, and it reads this session's marks rather than the snapshot the song was
-            // handed over with: one starred a moment ago from the bar above still says so, without
-            // waiting for the server's list to come round again. The marks are collected here rather
-            // than taken from LocalStarMarks because the sheet is put up outside the provider, at the
-            // top of the app, so that it outlives the row or the player that asked for it.
+            // What the menu offers, in what order and where, is the core's (`menus::song_menu`); the words are
+            // this app's (`Say.songAction`), made once when the menu opens.
+            // The marks are collected here rather than taken from LocalStarMarks because the sheet is put up
+            // outside the provider, at the top of the app, so that it outlives the row or the player that asked for it.
             val marks by actions.starMarks.collectAsState()
             val starred = marks.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)
             val download = when (song.id) {
@@ -103,57 +95,91 @@ fun SongMenu(
                 in downloads.pendingIds -> dev.nori.music.ffi.library.SongDownload.PENDING
                 else -> dev.nori.music.ffi.library.SongDownload.NONE
             }
-            // What the menu offers and in what order is the core's (`menus::song_menu`); the words are this
-            // app's (`Say.songAction`), made once when the menu opens. This draws each line with its icon.
-            val remote: dev.nori.music.app.vm.RemoteViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-            val jamCan by remote.canStartJam.collectAsState()
-            // A jam guest's Play next and Add to queue ask the host (ActionsViewModel).
-            val jam = when {
-                LocalRules.current.asks -> dev.nori.music.ffi.library.JamOffer.GUEST
-                jamCan -> dev.nori.music.ffi.library.JamOffer.START
-                else -> null
-            }
             val rules = LocalRules.current
+            val nav = LocalNav.current
             val lyrics = player?.let { p -> val l by p.lyrics.collectAsState(); hasWords(l, song.id) } == true
-            val items = remember(song, starred, download, player != null, lyrics, rules, jam, page) { dev.nori.music.ffi.library.songMenu(song, starred, download, player != null, lyrics, rules.stars, rules.account, rules.downloads, rules.radio, jam, page) }
+            var excluded by remember(song.id) { mutableStateOf(false) }
+            LaunchedEffect(song.id) { excluded = actions.excludedFromMixes(song) }
+            val items = remember(song, starred, excluded, download, player != null, lyrics, rules, page) { dev.nori.music.ffi.library.songMenu(song, starred, excluded, download, player != null, lyrics, rules.stars, rules.account, rules.downloads, rules.radio, rules.asks, page) }
             val labels = remember(items) { items.map { say.songAction(it.action) } }
-            @Composable fun line(i: dev.nori.music.ffi.library.SongMenuItem, label: String, divider: Boolean) = when (val a = i.action) {
-                is dev.nori.music.ffi.library.SongAction.Favourite -> Item(label, if (a.on) Kanji.Seal else Kanji.Sealed, divider = divider) { actions.star(song, a.on); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.PlayNext -> Item(label, Iconoir.PlaylistPlay, divider = divider) { actions.playNext(listOf(song)); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.AddToQueue -> Item(label, Iconoir.Playlist, divider = divider) { actions.enqueue(listOf(song)); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.AddToPlaylist -> Item(label, Iconoir.PlusCircle, divider = divider) { picking = true }
-                dev.nori.music.ffi.library.SongAction.RemoveDownload -> Item(label, Iconoir.Trash, divider = divider) { actions.removeDownloads(listOf(song.id)); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.StopDownload -> Item(label, Iconoir.Xmark, divider = divider) { actions.cancelDownloads(listOf(song)); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.Download -> Item(label, Iconoir.Download, divider = divider) { actions.download(listOf(song)); onDismiss() }
-                is dev.nori.music.ffi.library.SongAction.GoToAlbum -> { val nav = LocalNav.current; Item(label, Iconoir.CompactDisc, divider = divider) { nav.album(a.id); onDismiss() } }
-                // The song's own cover stands in for a lone artist's until their page has one.
-                is dev.nori.music.ffi.library.SongAction.GoToArtist -> { val nav = LocalNav.current; Item(label, Iconoir.User, divider = divider) {
-                    nav.artist(a.id, Artist(a.id, a.name, song.coverArt.takeIf { song.artists.size <= 1 }, null, 0u, false, false)); onDismiss()
-                } }
-                dev.nori.music.ffi.library.SongAction.AddToLibrary -> Item(label, Iconoir.FolderPlus, divider = divider) { actions.addToLibrary(song.id, isAlbum = false); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.Lyrics -> Item(label, Iconoir.QuoteMessage, enabled = i.enabled, divider = divider) { timing = true }
-                dev.nori.music.ffi.library.SongAction.SleepTimer -> Item(label, Iconoir.HalfMoon, divider = divider) { sleeping = true }
-                dev.nori.music.ffi.library.SongAction.StartRadio -> Item(label, Iconoir.AntennaSignal, divider = divider) { actions.startRadio(song); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.InstantMix -> Item(label, Iconoir.Sparks, divider = divider) { actions.instantMix(song); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.ExcludeFromMixes -> Item(label, Iconoir.Prohibition, divider = divider) { actions.excludeFromMixes(song); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.Share -> Item(label, Iconoir.ShareIos, divider = divider) { actions.share(song.id); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.Details -> Item(label, Iconoir.InfoCircle, divider = divider) { details = true }
-                // Plays the song and opens the queue, where the jam's invite is.
-                dev.nori.music.ffi.library.SongAction.StartJam -> { val nav = LocalNav.current; Item(label, Iconoir.Community, divider = divider) {
-                    actions.play(listOf(song)); remote.jamStart(); onDismiss(); nav.player(Panel.QUEUE)
-                } }
+            val at = { place: dev.nori.music.ffi.library.SongMenuPlace -> items.indices.filter { items[it].place == place } }
+            @Composable fun titleGlyph(n: Int) = when (val a = items[n].action) {
+                is dev.nori.music.ffi.library.SongAction.Favourite -> GlyphButton(if (a.on) Kanji.Seal else Kanji.Sealed, labels[n], lit = !a.on) { actions.star(song, a.on) }
+                else -> GlyphButton(Iconoir.InfoCircle, labels[n], quiet = true) { details = true }
             }
-            val main = items.indices.filter { !items[it].more }
-            val folded = items.indices.filter { items[it].more }
-            SheetRows(head = true) {
-                main.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < main.lastIndex) }
+            @Composable fun glyph(n: Int) = when (val a = items[n].action) {
+                dev.nori.music.ffi.library.SongAction.Lyrics -> GlyphButton(Iconoir.QuoteMessage, labels[n], Modifier.alpha(if (items[n].enabled) 1f else 0.38f), enabled = items[n].enabled, quiet = true) { timing = true }
+                dev.nori.music.ffi.library.SongAction.SleepTimer -> GlyphButton(Iconoir.HalfMoon, labels[n], quiet = true) { sleeping = true }
+                dev.nori.music.ffi.library.SongAction.RemoveDownload -> GlyphButton(Iconoir.Trash, labels[n], quiet = true) { actions.removeDownloads(listOf(song.id)); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.StopDownload -> GlyphButton(Iconoir.Xmark, labels[n], quiet = true) { actions.cancelDownloads(listOf(song)); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.Download -> GlyphButton(Iconoir.Download, labels[n], quiet = true) { actions.download(listOf(song)); onDismiss() }
+                is dev.nori.music.ffi.library.SongAction.ExcludeFromMixes -> GlyphButton(Iconoir.Prohibition, labels[n], lit = !a.on, quiet = true) { actions.excludeFromMixes(song, a.on); excluded = a.on }
+                else -> GlyphButton(Iconoir.ShareIos, labels[n], quiet = true) { actions.share(song.id); onDismiss() }
+            }
+            @Composable fun line(n: Int, divider: Boolean) = when (items[n].action) {
+                dev.nori.music.ffi.library.SongAction.PlayNext -> Item(labels[n], Iconoir.PlaylistPlay, divider = divider) { actions.playNext(listOf(song)); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.AddToQueue -> Item(labels[n], Iconoir.Playlist, divider = divider) { actions.enqueue(listOf(song)); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.AddToPlaylist -> Item(labels[n], Iconoir.PlusCircle, divider = divider) { picking = true }
+                dev.nori.music.ffi.library.SongAction.AddToLibrary -> Item(labels[n], Iconoir.FolderPlus, divider = divider) { actions.addToLibrary(song.id, isAlbum = false); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.StartRadio -> Item(labels[n], Iconoir.AntennaSignal, divider = divider) { actions.startRadio(song); onDismiss() }
+                else -> Item(labels[n], Iconoir.Sparks, divider = divider) { actions.instantMix(song); onDismiss() }
+            }
+            val names = at(dev.nori.music.ffi.library.SongMenuPlace.NAMES).map { items[it].action }
+            SheetHead(actions.cover(song.coverArt, CoverSize.ROW), song.title, "", trailing = { at(dev.nori.music.ffi.library.SongMenuPlace.TITLE).forEach { titleGlyph(it) } }) {
+                SongNames(song, names) { a ->
+                    when (a) {
+                        is dev.nori.music.ffi.library.SongAction.GoToAlbum -> nav.album(a.id)
+                        // The song's own cover stands in for a lone artist's until their page has one.
+                        is dev.nori.music.ffi.library.SongAction.GoToArtist -> nav.artist(a.id, Artist(a.id, a.name, song.coverArt.takeIf { song.artists.size <= 1 }, null, 0u, false, false))
+                        else -> Unit
+                    }
+                    onDismiss()
+                }
+            }
+            SheetRows(head = true) {}
+            // The album page's way of saying it, in its own case: "FLAC 16/44.1", "MP3 320 kbps".
+            ListHead(remember(song) { say.quality(song) }.orEmpty(), { at(dev.nori.music.ffi.library.SongMenuPlace.GLYPHS).forEach { glyph(it) } }, edge = SHEET_EDGE, hairlineEnd = 0.dp)
+            val lines = at(dev.nori.music.ffi.library.SongMenuPlace.LINE)
+            val main = lines.filter { !items[it].more }
+            val folded = lines.filter { items[it].more }
+            SheetRows {
+                main.forEachIndexed { k, n -> line(n, divider = k < main.lastIndex) }
                 // The rest follows in full after a hairline (a jam guest's menu has none): a menu shows everything.
-                if (folded.isNotEmpty()) Hairline(startIndent = GROUP_INSET)
-                folded.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < folded.lastIndex) }
+                if (main.isNotEmpty() && folded.isNotEmpty()) Hairline(startIndent = GROUP_INSET)
+                folded.forEachIndexed { k, n -> line(n, divider = k < folded.lastIndex) }
                 PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.SONG, dev.nori.music.ffi.plugins.Items.Songs(listOf(song)), onDismiss)
             }
         }
     }
+}
+
+/**
+ * The song's artists, then its album: each name in [names] in ink, opening its page through [open]; what
+ * stands between them, and a name of the page the menu is on, stays quiet.
+ */
+@Composable
+private fun SongNames(song: Song, names: List<dev.nori.music.ffi.library.SongAction>, open: (dev.nori.music.ffi.library.SongAction) -> Unit) {
+    val ink = MaterialTheme.colorScheme.onSurface
+    val quiet = MaterialTheme.colorScheme.onSurfaceVariant
+    val link = androidx.compose.ui.text.TextLinkStyles(androidx.compose.ui.text.SpanStyle(color = ink, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium))
+    val style = MaterialTheme.typography.bodySmall.copy(color = quiet)
+    val artists = remember(song) { dev.nori.music.ffi.library.artistPieces(song) }
+    val line = androidx.compose.ui.text.buildAnnotatedString {
+        artists.forEachIndexed { i, piece ->
+            if (i > 0 && piece.id != null && artists[i - 1].id != null) append(", ")
+            val go = names.firstOrNull { it is dev.nori.music.ffi.library.SongAction.GoToArtist && it.id == piece.id }
+            if (go == null) append(piece.text)
+            else withLink(androidx.compose.ui.text.LinkAnnotation.Clickable(piece.text, link) { open(go) }) { append(piece.text) }
+        }
+    }
+    if (line.isNotEmpty()) Text(line, style = style, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    val album = names.firstOrNull { it is dev.nori.music.ffi.library.SongAction.GoToAlbum }
+    // A link, not a clickable: a clickable's touch area would reach up over the line above.
+    val albumLine = androidx.compose.ui.text.buildAnnotatedString {
+        if (album == null) append(song.album)
+        else withLink(androidx.compose.ui.text.LinkAnnotation.Clickable(song.album, androidx.compose.ui.text.TextLinkStyles(androidx.compose.ui.text.SpanStyle(color = ink))) { open(album) }) { append(song.album) }
+    }
+    if (albumLine.isNotEmpty()) Text(albumLine, style = style, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
 }
 
 /**
@@ -225,9 +251,9 @@ private val KeepUpwardDrags = object : androidx.compose.ui.input.nestedscroll.Ne
         androidx.compose.ui.unit.Velocity(0f, available.y.coerceAtMost(0f))
 }
 
-/** The song or record a menu is about, right under the sheet's handle: its cover, its name, a line, and [more]. */
+/** The song or record a menu is about, right under the sheet's handle: its cover, its name, a line, [more], and [trailing] at the right. */
 @Composable
-private fun SheetHead(cover: String?, title: String, line: String, round: Boolean = false, more: @Composable () -> Unit = {}) {
+private fun SheetHead(cover: String?, title: String, line: String, round: Boolean = false, trailing: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {}, more: @Composable () -> Unit = {}) {
     Row(Modifier.fillMaxWidth().padding(start = SHEET_EDGE, end = SHEET_EDGE, bottom = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
         Cover(cover, 52.dp, radius = if (round) 26.dp else 8.dp)
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
@@ -235,6 +261,7 @@ private fun SheetHead(cover: String?, title: String, line: String, round: Boolea
             if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             more()
         }
+        trailing()
     }
 }
 

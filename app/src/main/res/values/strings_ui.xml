@@ -286,6 +286,7 @@
     <string name="said_playing_next">Playing next</string>
     <string name="said_added_to_queue">Added to queue</string>
     <string name="said_excluded_from_mixes">Excluded from mixes</string>
+    <string name="said_back_in_mixes">Back in mixes</string>
     <string name="said_added_to_playlist">Added to %1$s</string>
     <string name="said_playlist_created">Created %1$s</string>
     <string name="said_server_downloading">The server is downloading it into your library</string>
@@ -494,6 +495,7 @@
     <string name="menu_start_radio">Start radio from this song</string>
     <string name="menu_instant_mix">Instant mix</string>
     <string name="menu_exclude_from_mixes">Exclude from mixes</string>
+    <string name="menu_include_in_mixes">Include in mixes</string>
     <string name="menu_share_link">Share link</string>
     <!-- The sleep timer's choices (menus::sleep_choices). -->
     <string name="sleep_choice_off">Off</string>

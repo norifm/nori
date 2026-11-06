@@ -232,7 +232,7 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   check "its action runs and its notice shows as the app's message" wait_until 10 on_screen 'Long Track 07 by'
   tapnode content-desc More
   tapnode text More
-  tapnode text Details
+  tapnode content-desc Details
   check "its lines join the song's info" scrolled_to 'Search the web'
   adb exec-out screencap -p > "$shots/song-info.png"
   tapnode text Close

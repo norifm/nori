@@ -8,6 +8,14 @@ pub use nori_library::mixes::*;
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
+    /// The songs left out of every mix.
+    pub fn mix_excluded_songs(&self) -> Result<Vec<String>> {
+        let c = self.db.lock();
+        let mut q = c.prepare_cached("SELECT song_id FROM mix_excluded WHERE server=sid()")?;
+        let ids = q.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(ids)
+    }
+
     /// Excludes a song from (or restores it to) every mix.
     pub fn mix_excluded_set(&self, song_id: String, excluded: bool) -> Result<()> {
         let c = self.db.lock();
@@ -195,6 +203,15 @@ pub(crate) mod tests {
         let bare = Song { id: "bare".into(), title: "Ünïcödé".into(), ..Default::default() };
         db::index(&mut core.db.lock(), &[], &[], std::slice::from_ref(&bare)).unwrap();
         assert_eq!(core.mix_instant("bare".into(), 10, 1).unwrap(), vec![bare]);
+    }
+
+    #[test]
+    fn excluding_a_song_can_be_undone() {
+        let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        core.mix_excluded_set("a".into(), true).unwrap();
+        assert_eq!(core.mix_excluded_songs().unwrap(), ["a"]);
+        core.mix_excluded_set("a".into(), false).unwrap();
+        assert!(core.mix_excluded_songs().unwrap().is_empty());
     }
 
     #[test]

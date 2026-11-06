@@ -246,17 +246,9 @@ impl Nori {
         self.with(|h| h.rules()).unwrap_or_default()
     }
 
-    /// What a jam adds to song menus: starting one, or asking the host as its guest.
-    pub(crate) fn jam_offer(&self) -> Option<nori_core::menus::JamOffer> {
-        use nori_core::menus::JamOffer;
-        self.with(|h| {
-            if h.guest {
-                return Some(JamOffer::Guest);
-            }
-            let r = h.remote()?;
-            (r.jam_start() == nori_core::remote::JamStart::Offered).then_some(JamOffer::Start)
-        })
-        .flatten()
+    /// Whether this is a jam's guest, whose song menu asks the host.
+    pub(crate) fn guest(&self) -> bool {
+        self.with(|h| h.guest).unwrap_or(false)
     }
 
     pub(crate) fn client(&self) -> Option<Arc<nori_core::client::Client>> {
@@ -640,14 +632,6 @@ impl Nori {
             .to_string()
         })
         .unwrap_or_else(|| "null".into())
-    }
-
-    /// Starts a jam around song `start` of `songs` (JSON): they play here, then it opens. Its invite link
-    /// (null when one is open or being started already).
-    pub async fn jam_start(&self, songs: String, start: usize) -> Result<Option<String>, JsValue> {
-        let songs: Vec<Song> = serde_json::from_str(&songs).map_err(error)?;
-        let h = self.with(|h| nori_host::session::Handle::clone(h)).ok_or_else(|| error("not signed in"))?;
-        h.start_jam(songs, start, None).await.ok_or_else(|| error("remote control is off"))?.map_err(error)
     }
 
     /// Starts hosting a jam; its invite link (null when one is being started already).

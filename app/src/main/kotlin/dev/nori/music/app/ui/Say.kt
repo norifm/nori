@@ -644,6 +644,7 @@ class Say(private val r: Resources) {
     private val menuStartRadio: String = r.getString(R.string.menu_start_radio)
     private val menuInstantMix: String = r.getString(R.string.menu_instant_mix)
     private val menuExclude: String = r.getString(R.string.menu_exclude_from_mixes)
+    private val menuInclude: String = r.getString(R.string.menu_include_in_mixes)
     private val menuShare: String = r.getString(R.string.menu_share_link)
 
     /** A line of the song menu, by what it does (`menus::song_menu`). */
@@ -662,10 +663,9 @@ class Say(private val r: Resources) {
         SongAction.SleepTimer -> menuSleepTimer
         SongAction.StartRadio -> menuStartRadio
         SongAction.InstantMix -> menuInstantMix
-        SongAction.ExcludeFromMixes -> menuExclude
+        is SongAction.ExcludeFromMixes -> if (a.on) menuExclude else menuInclude
         SongAction.Share -> menuShare
         SongAction.Details -> details
-        SongAction.StartJam -> r.getString(R.string.jam_start)
     }
 
     /** One of the sleep timer's choices: "30 minutes", "End of track", "After 3 songs", or "Off" (all zeros). */
@@ -917,6 +917,7 @@ class Say(private val r: Resources) {
     val homeClosedToGuests: String get() = r.getString(R.string.home_closed_to_guests)
     val searchIsTheWayIn: String get() = r.getString(R.string.search_is_the_way_in)
     fun jamEnded(host: String?): String = host?.let { r.getString(R.string.jam_ended_by, it) } ?: r.getString(R.string.jam_ended)
+    val backInMixes: String get() = r.getString(R.string.said_back_in_mixes)
     val excludedFromMixes: String get() = r.getString(R.string.said_excluded_from_mixes)
     val serverDownloading: String get() = r.getString(R.string.said_server_downloading)
     val saidFailed: String get() = r.getString(R.string.said_failed)
