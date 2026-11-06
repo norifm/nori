@@ -122,8 +122,6 @@ struct Runner {
     http: Arc<Http>,
     tx: Sender<Msg>,
     session: Option<Session>,
-    /// What follows the profile about to open, when it was just added.
-    after_adding: Option<AfterAdding>,
     /// The lyrics panel was shown when last told to the session ([`Session::lyrics_view`]).
     lyrics_viewed: bool,
     /// Media controls for the process; each session drives them while open.
@@ -206,7 +204,7 @@ pub fn run(o: Options) -> Result<(), String> {
     app.settings.own.device = own::text(own::DEVICE).unwrap_or_default();
     let art = picker.clone().map(Art::new);
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
-    let mut r = Runner { http: Http::new(), tx, session: None, after_adding: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
+    let mut r = Runner { http: Http::new(), tx, session: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
     // Plugins reach the web before any profile opens; a session's own transport takes over.
     app.settings.own.kinds.set_transport(r.http.clone());
     let notices = r.tx.clone();
@@ -231,7 +229,7 @@ pub fn run(o: Options) -> Result<(), String> {
         app.say(crate::text::plugins_safe(&safe, &names), true);
     }
     match prefs.active_server().cloned() {
-        Some(p) => r.open(&mut app, p),
+        Some(p) => r.open(&mut app, p, None),
         None => {
             app.choose_provider();
             r.update_plugins();
@@ -250,7 +248,8 @@ pub fn run(o: Options) -> Result<(), String> {
 }
 
 impl Runner {
-    fn open(&mut self, app: &mut App, profile: SavedServer) {
+    /// Opens `profile`; `added` says what follows when it was just added.
+    fn open(&mut self, app: &mut App, profile: SavedServer, added: Option<AfterAdding>) {
         if let Some(s) = self.session.take() {
             s.close();
         }
@@ -282,7 +281,6 @@ impl Runner {
                 app.retheme();
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
                 app.output = self.o.device.clone().or_else(|| own::text(own::DEVICE)).unwrap_or_default();
-                let added = self.after_adding.take();
                 match self.session.as_ref().and_then(|s| s.client.sign_in_step(added)) {
                     Some(SignInStep::Offer) => self.offer_sign_in(app),
                     Some(SignInStep::Open) => {
@@ -505,7 +503,7 @@ impl Runner {
     /// The profile in use opened again, as signing in or out left it.
     fn reopen(&mut self, app: &mut App) {
         let Some(profile) = crate::backend::app().settings.current().and_then(|p| p.active_server().cloned()) else { return };
-        self.open(app, profile);
+        self.open(app, profile, None);
         app.go(View::Home);
     }
 
@@ -578,7 +576,7 @@ impl Runner {
             Msg::Joined(Ok(pass)) => {
                 let guest = nori_host::jam_joined(&crate::backend::app().settings, pass.clone(), crate::text::JAM_GUEST);
                 prefs_changed(app);
-                self.open(app, guest);
+                self.open(app, guest, None);
                 app.go(View::Home);
                 return;
             }
@@ -586,7 +584,7 @@ impl Runner {
                 match nori_host::jam_left(&crate::backend::app().settings) {
                     Some(p) => {
                         prefs_changed(app);
-                        self.open(app, p);
+                        self.open(app, p, None);
                         app.go(View::Home);
                     }
                     None => {
@@ -600,9 +598,9 @@ impl Runner {
                 return app.say(said.clone(), false);
             }
             Msg::LoggedIn(Ok(p)) => {
-                self.after_adding = app.login.after;
+                let added = app.login.after;
                 prefs_changed(app);
-                self.open(app, p.clone());
+                self.open(app, p.clone(), added);
                 app.go(View::Home);
                 return;
             }
@@ -878,7 +876,7 @@ impl Runner {
                 prefs.active_server_id = id;
                 crate::backend::app().settings.put(prefs.clone());
                 app.prefs_changed(prefs);
-                self.open(app, p);
+                self.open(app, p, None);
                 app.go(View::Home);
                 return;
             }
