@@ -152,6 +152,13 @@ async function pane(name, p = page) {
   await p.waitForSelector(`#side #${name}`);
 }
 
+/** Closes the side pane a phase left open: it floats over the page's own buttons. */
+async function noPane(p = page) {
+  const open = await p.$("#bar [data-pane][aria-pressed=true]");
+  if (open) await open.click();
+  await p.waitForFunction(() => !document.querySelector("#bar [data-pane][aria-pressed=true]"));
+}
+
 if (!only || only.includes("lyrics")) {
   await playAlbum(album("Sung Album"));
   await pane("lyrics");
@@ -433,6 +440,7 @@ if (!only || only.includes("edit")) {
   };
   const playlistNamed = async (name) => (await read({ kind: "playlists" })).playlists.find((p) => p.name === name);
   const name = `Check ${Date.now() % 100000}`;
+  await noPane();
   await hash("#/playlists", "playlists");
   await page.click("#new-playlist");
   await named(name);
