@@ -48,6 +48,9 @@ private fun Item(text: String, icon: ImageVector? = null, enabled: Boolean = tru
     GroupRow(text, if (enabled) onClick else null, Modifier.alpha(if (enabled) 1f else 0.38f), icon = icon, divider = divider, minHeight = SHEET_ROW)
 }
 
+/** What a song's menu shows: its sheet, or one of what comes up over it. */
+private enum class MenuStage { MENU, PLAYLIST, DETAILS, SLEEP, LYRICS }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SongMenu(
@@ -68,18 +71,15 @@ fun SongMenu(
     // sleep choices, the details or the playlist picker come up over it, and each of those leaves with
     // the menu when it is done.
     val open = song != null
-    var picking by remember(open) { mutableStateOf(false) }
-    var details by remember(open) { mutableStateOf(false) }
-    var sleeping by remember(open) { mutableStateOf(false) }
-    var timing by remember(open) { mutableStateOf(false) }
-    NoriSheet(player?.takeIf { open && sleeping }, onDismiss) { p -> SleepChoices(p, onDismiss) }
-    NoriSheet(player?.takeIf { open && timing }?.let { p -> song?.let { p to it.id } }, onDismiss) { (p, id) -> LyricsSheet(p, id) }
-    NoriDialog(song?.takeIf { details }, onDismiss) { s -> TrackInfo(s, actions, onDismiss) }
-    NoriDialog(song?.takeIf { picking }, onDismiss) { s -> PlaylistPicker(listOf(s), actions, onDismiss) }
+    var stage by remember(open) { mutableStateOf(MenuStage.MENU) }
+    NoriSheet(player?.takeIf { open && stage == MenuStage.SLEEP }, onDismiss) { p -> SleepChoices(p, onDismiss) }
+    NoriSheet(player?.takeIf { open && stage == MenuStage.LYRICS }?.let { p -> song?.let { p to it.id } }, onDismiss) { (p, id) -> LyricsSheet(p, id) }
+    NoriDialog(song?.takeIf { stage == MenuStage.DETAILS }, onDismiss) { s -> TrackInfo(s, actions, onDismiss) }
+    NoriDialog(song?.takeIf { stage == MenuStage.PLAYLIST }, onDismiss) { s -> PlaylistPicker(listOf(s), actions, onDismiss) }
 
     // A sheet with a half-open stage swallows the first back gesture to collapse itself, which reads
     // as the menu refusing to close. There is only ever one stage here, so back always dismisses.
-    NoriSheet(song?.takeIf { !picking && !details && !sleeping && !timing }, onDismiss) { song ->
+    NoriSheet(song?.takeIf { stage == MenuStage.MENU }, onDismiss) { song ->
         val downloads by actions.downloads.collectAsState()
         // No stretch past the ends and no lift, here or in the other sheets: a menu that fits moved under every swipe.
         Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
@@ -121,7 +121,7 @@ fun SongMenu(
                 is dev.nori.music.ffi.library.SongAction.Favourite -> Item(label, if (a.on) Kanji.Seal else Kanji.Sealed, divider = divider) { actions.star(song, a.on); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.PlayNext -> Item(label, Iconoir.PlaylistPlay, divider = divider) { actions.playNext(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.AddToQueue -> Item(label, Iconoir.Playlist, divider = divider) { actions.enqueue(listOf(song)); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.AddToPlaylist -> Item(label, Iconoir.PlusCircle, divider = divider) { picking = true }
+                dev.nori.music.ffi.library.SongAction.AddToPlaylist -> Item(label, Iconoir.PlusCircle, divider = divider) { stage = MenuStage.PLAYLIST }
                 dev.nori.music.ffi.library.SongAction.RemoveDownload -> Item(label, Iconoir.Trash, divider = divider) { actions.removeDownloads(listOf(song.id)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.StopDownload -> Item(label, Iconoir.Xmark, divider = divider) { actions.cancelDownloads(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.Download -> Item(label, Iconoir.Download, divider = divider) { actions.download(listOf(song)); onDismiss() }
@@ -131,13 +131,13 @@ fun SongMenu(
                     nav.artist(a.id, Artist(a.id, a.name, song.coverArt.takeIf { song.artists.size <= 1 }, null, 0u, false, false)); onDismiss()
                 } }
                 dev.nori.music.ffi.library.SongAction.AddToLibrary -> Item(label, Iconoir.FolderPlus, divider = divider) { actions.addToLibrary(song.id, isAlbum = false); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.Lyrics -> Item(label, Iconoir.QuoteMessage, enabled = i.enabled, divider = divider) { timing = true }
-                dev.nori.music.ffi.library.SongAction.SleepTimer -> Item(label, Iconoir.HalfMoon, divider = divider) { sleeping = true }
+                dev.nori.music.ffi.library.SongAction.Lyrics -> Item(label, Iconoir.QuoteMessage, enabled = i.enabled, divider = divider) { stage = MenuStage.LYRICS }
+                dev.nori.music.ffi.library.SongAction.SleepTimer -> Item(label, Iconoir.HalfMoon, divider = divider) { stage = MenuStage.SLEEP }
                 dev.nori.music.ffi.library.SongAction.StartRadio -> Item(label, Iconoir.AntennaSignal, divider = divider) { actions.startRadio(song); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.InstantMix -> Item(label, Iconoir.Sparks, divider = divider) { actions.instantMix(song); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.ExcludeFromMixes -> Item(label, Iconoir.Prohibition, divider = divider) { actions.excludeFromMixes(song); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.Share -> Item(label, Iconoir.ShareIos, divider = divider) { actions.share(song.id); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.Details -> Item(label, Iconoir.InfoCircle, divider = divider) { details = true }
+                dev.nori.music.ffi.library.SongAction.Details -> Item(label, Iconoir.InfoCircle, divider = divider) { stage = MenuStage.DETAILS }
                 // Plays the song and opens the queue, where the jam's invite is.
                 dev.nori.music.ffi.library.SongAction.StartJam -> { val nav = LocalNav.current; Item(label, Iconoir.Community, divider = divider) {
                     actions.play(listOf(song)); remote.jamStart(); onDismiss(); nav.player(Panel.QUEUE)
