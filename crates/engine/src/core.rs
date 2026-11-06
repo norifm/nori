@@ -1281,7 +1281,7 @@ struct Job<'m, 'a> {
 
 /// Runs Beat This! over each unread end of `id`; returns whether a grid was stored.
 pub(crate) fn listen(core: &Core, id: &str, model: &Model, ends: &mut Ends) -> bool {
-    let Some(beats_model) = &model.loaded else { return false };
+    let Some(beats_model) = model.model() else { return false };
     let Ok(Some(row)) = core.analysis_get(id.to_string()) else { return false };
     let _one = model.models.running.lock();
     let rate = ends.rate();
@@ -1338,37 +1338,54 @@ pub(crate) struct Models {
 
 /// The beat model for a thread's life: loaded on first need, tried once per thread.
 pub(crate) struct Model<'a> {
-    tried: bool,
-    loaded: Option<BeatModel>,
+    load: Load,
     models: &'a Models,
+}
+
+/// Where the thread's beat model stands.
+enum Load {
+    Untried,
+    /// Tried: not there, or it would not load.
+    Missing,
+    Loaded(BeatModel),
 }
 
 impl Model<'_> {
     pub(crate) fn new(models: &Models) -> Model<'_> {
-        Model { tried: false, loaded: None, models }
+        Model { load: Load::Untried, models }
     }
 
     /// Whether the model is loaded, loading it on first call.
     pub(crate) fn ready(&mut self, client: &Client) -> bool {
-        if !self.tried {
-            self.tried = true;
-            self.loaded = BeatModel::load(client).map(|(model, bytes)| {
-                self.models.held.store(bytes, Ordering::Relaxed);
-                model
-            });
+        if let Load::Untried = self.load {
+            self.load = match BeatModel::load(client) {
+                Some((model, bytes)) => {
+                    self.models.held.store(bytes, Ordering::Relaxed);
+                    Load::Loaded(model)
+                }
+                None => Load::Missing,
+            };
         }
-        self.loaded.is_some()
+        self.loaded()
     }
 
     pub(crate) fn loaded(&self) -> bool {
-        self.loaded.is_some()
+        matches!(self.load, Load::Loaded(_))
+    }
+
+    fn model(&self) -> Option<&BeatModel> {
+        match &self.load {
+            Load::Loaded(m) => Some(m),
+            Load::Untried | Load::Missing => None,
+        }
     }
 }
 
 impl Drop for Model<'_> {
     /// Frees the model and returns its pages.
     fn drop(&mut self) {
-        if self.loaded.take().is_some() {
+        let loaded = matches!(std::mem::replace(&mut self.load, Load::Missing), Load::Loaded(_));
+        if loaded {
             self.models.held.store(0, Ordering::Relaxed);
             crate::arriving::give_memory_back();
         }

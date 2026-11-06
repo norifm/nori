@@ -115,17 +115,22 @@ enum Off {
 struct CallState {
     /// The song was let go: every request of it is off.
     closed: bool,
-    /// This request is off, and why.
-    off: Option<Off>,
-    /// How the client cancels the running request.
-    hook: Option<Box<dyn FnOnce() + Send>>,
-    /// Called off at this moment unless it moves first.
-    deadline: Option<Instant>,
+    request: Request,
+    /// The stall watch holds it.
     watched: bool,
     stall_ms: u64,
     /// Whose watch calls it off when it stalls, and counts it among the requests asking; none for a
     /// request only cancelled by hand.
     fetching: Weak<Fetching>,
+}
+
+/// The loader's last request.
+enum Request {
+    Idle,
+    /// Running: how the client cancels it, and when it is called off unless it moves first.
+    Asking { hook: Option<Box<dyn FnOnce() + Send>>, deadline: Option<Instant> },
+    /// Called off, and why.
+    Off(Off),
 }
 
 impl Default for Cancel {
@@ -146,7 +151,7 @@ impl Cancel {
     }
 
     fn of(fetching: Weak<Fetching>, stall_ms: u64) -> Cancel {
-        let s = CallState { closed: false, off: None, hook: None, deadline: None, watched: false, stall_ms, fetching };
+        let s = CallState { closed: false, request: Request::Idle, watched: false, stall_ms, fetching };
         Cancel(Arc::new(Mutex::new(s)))
     }
 
@@ -157,23 +162,30 @@ impl Cancel {
     /// Whether the request is off (for an HTTP stack that polls).
     pub fn cancelled(&self) -> bool {
         let s = self.0.lock();
-        s.closed || s.off.is_some()
+        s.closed || matches!(s.request, Request::Off(_))
     }
 
     /// Whether it was called off for stalling.
     pub fn timed_out(&self) -> bool {
-        self.0.lock().off == Some(Off::Stalled)
+        matches!(self.0.lock().request, Request::Off(Off::Stalled))
     }
 
     /// Registers how to cancel the running request; runs it at once if already off. Replaces the last.
     pub fn on_cancel(&self, off: impl FnOnce() + Send + 'static) {
         let mut s = self.0.lock();
-        if s.closed || s.off.is_some() {
-            drop(s);
-            off();
-            return;
+        let deadline = match s.request {
+            _ if s.closed => None,
+            Request::Off(_) => None,
+            Request::Idle => Some(None),
+            Request::Asking { deadline, .. } => Some(deadline),
+        };
+        match deadline {
+            Some(deadline) => s.request = Request::Asking { hook: Some(Box::new(off)), deadline },
+            None => {
+                drop(s);
+                off();
+            }
         }
-        s.hook = Some(Box::new(off));
     }
 
     /// A new request begins: clears the last one's cancellation (not a closed song) and arms the stall.
@@ -190,11 +202,13 @@ impl Cancel {
     /// cancellation cannot land on it.
     fn stalls(&self, anew: bool) {
         let mut s = self.0.lock();
-        if anew {
-            s.off = None;
-            s.hook = None;
+        let at = Instant::now() + Duration::from_millis(s.stall_ms);
+        match &mut s.request {
+            Request::Asking { deadline, .. } if !anew => *deadline = Some(at),
+            // Called off already: nothing more to stall.
+            Request::Off(_) if !anew => {}
+            _ => s.request = Request::Asking { hook: None, deadline: Some(at) },
         }
-        s.deadline = Some(Instant::now() + Duration::from_millis(s.stall_ms));
         if !s.watched {
             let Some(fetching) = s.fetching.upgrade() else { return };
             s.watched = true;
@@ -206,19 +220,24 @@ impl Cancel {
     /// The request is over (its body dropped).
     pub(crate) fn end(&self) {
         let mut s = self.0.lock();
-        s.hook = None;
-        s.deadline = None;
+        if let Request::Asking { .. } = s.request {
+            s.request = Request::Idle;
+        }
     }
 
     /// Cancels the running request.
     pub(crate) fn call_off(&self, stalled: bool) {
         let hook = {
             let mut s = self.0.lock();
-            if stalled || s.off.is_none() {
-                s.off = Some(if stalled { Off::Stalled } else { Off::Asked });
+            let why = if stalled { Off::Stalled } else { Off::Asked };
+            match std::mem::replace(&mut s.request, Request::Off(why)) {
+                Request::Asking { hook, .. } => hook,
+                Request::Idle => None,
+                Request::Off(was) => {
+                    s.request = Request::Off(if stalled { why } else { was });
+                    None
+                }
             }
-            s.deadline = None;
-            s.hook.take()
         };
         if let Some(h) = hook {
             h();
@@ -361,17 +380,17 @@ impl Fetching {
             w.calls.retain(|c| {
                 let Some(c) = c.upgrade() else { return false };
                 let mut s = c.lock();
-                match s.deadline {
-                    Some(at) if at <= now => {
+                match s.request {
+                    Request::Asking { deadline: Some(at), .. } if at <= now => {
                         due.push(c.clone());
                         s.watched = false;
                         false
                     }
-                    Some(at) => {
+                    Request::Asking { deadline: Some(at), .. } => {
                         next = Some(next.map_or(at, |n| n.min(at)));
                         true
                     }
-                    None => {
+                    _ => {
                         s.watched = false;
                         false
                     }
