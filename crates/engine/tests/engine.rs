@@ -1754,6 +1754,50 @@ fn failed_songs() {
     assert!(rig.wait_for(4, Rig::ended), "played well before the first try at 5 s: {:?}", rig.events.lock());
 }
 
+/// A cast's device taking the songs during a network wait ends the wait: the device plays on from
+/// where the song waited, and nothing is tried here.
+#[test]
+fn a_cast_taking_the_songs_ends_a_network_wait() {
+    let a = music(10.0, 22);
+    let extra = Extra::default();
+    extra.server.cut.lock().push(("a".into(), 44 + RATE as u64 * 4 * 2));
+    let rig = Rig::build(files(&[("a", &a)]), sim::App::new(), Settings::default(), extra);
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(30, |r| r.engine.status().waiting), "{:?}", rig.events.lock());
+    let asked = rig.server.requests.lock().len();
+    rig.engine.play_elsewhere(None, None);
+    rig.run(100);
+    let st = rig.engine.status();
+    assert_eq!((st.state, st.index, st.waiting, st.buffering), (State::Playing, Some(0), false, false), "the device plays a");
+    assert!(rig.events.lock().contains(&Event::Waiting(false)));
+    rig.run(10_000);
+    assert_eq!(rig.server.requests.lock().len(), asked, "nothing is tried here");
+    rig.engine.look();
+    rig.run(10);
+    assert!(rig.engine.status().position_ms > 10_000, "the place runs on as the device plays");
+}
+
+/// Another card put in during a network wait plays the song as soon as it comes.
+#[test]
+fn a_card_put_in_during_a_network_wait_plays_the_song() {
+    let a = music(10.0, 23);
+    let extra = Extra::default();
+    extra.server.cut.lock().push(("a".into(), 44 + RATE as u64 * 4 * 2));
+    let rig = Rig::build(files(&[("a", &a)]), sim::App::new(), Settings::default(), extra);
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(30, |r| r.engine.status().waiting), "{:?}", rig.events.lock());
+    rig.server.cut.lock().clear();
+    let heard = rig.heard.lock().len();
+    let next = Recorder { card: rig.card.clone(), opened: Arc::default(), shut: Arc::default(), watch: Arc::default(), flushes: Arc::default(), shallow: Arc::default() };
+    rig.engine.set_card(Box::new(next), None, false);
+    assert!(rig.wait_for(4, |r| r.heard.lock().len() > heard + RATE as usize * 2), "played before the first try at 5 s");
+    rig.engine.look();
+    rig.run(10);
+    let st = rig.engine.status();
+    assert_eq!((st.state, st.waiting, st.buffering), (State::Playing, false, false));
+    assert!(st.position_ms > 2_500, "the place moves with the music: {}", st.position_ms);
+}
+
 #[test]
 fn loading_song_does_not_block_engine() {
     let (slow, a) = (music(6.0, 13), music(6.0, 14));
