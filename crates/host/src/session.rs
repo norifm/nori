@@ -608,13 +608,19 @@ impl Handle {
         });
     }
 
+    /// A radio of `songs`, its seed first: a seed that is playing goes on where it is.
+    pub fn play_radio(&self, songs: Vec<Song>) {
+        let origin = songs.first().map(|s| Fetch::Radio(s.id.clone()).origin());
+        self.keep_playing(songs, 0, origin);
+    }
+
     /// Plays an album, playlist or artist once its songs are fetched; a radio from the song playing
     /// goes on with it.
     pub fn play_later(&self, what: Fetch, shuffle: bool) {
         let origin = what.origin();
         let radio = matches!(what, Fetch::Radio(_));
         self.fetched(what, move |me, songs| match songs.is_empty() {
-            false if radio => _ = me.keep_playing(songs, 0, Some(origin)),
+            false if radio => me.play_radio(songs),
             false => me.play(songs, 0, shuffle, Some(origin)),
             true => me.note(Note::NothingToPlay),
         });
