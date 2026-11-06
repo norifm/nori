@@ -36,6 +36,32 @@ typedef struct NoriReport {
     const char *text;
 } NoriReport;
 
+/// `NoriReport.kind`, as crates/ios/src/session.rs's `REPORT_` constants say what each carries.
+#define NORI_REPORT_STATE 1
+#define NORI_REPORT_SONG 2
+#define NORI_REPORT_LOOPED 3
+#define NORI_REPORT_POSITION 4
+#define NORI_REPORT_ERROR 5
+#define NORI_REPORT_OUTPUT 6
+#define NORI_REPORT_BUFFERING 7
+#define NORI_REPORT_STOPPED 8
+#define NORI_REPORT_NOTE 9
+#define NORI_REPORT_REACHABLE 10
+#define NORI_REPORT_LYRICS 11
+#define NORI_REPORT_SEARCH 12
+#define NORI_REPORT_TITLE 13
+#define NORI_REPORT_MIXING 14
+#define NORI_REPORT_BRIDGE 15
+#define NORI_REPORT_PLACED 16
+#define NORI_REPORT_AWAKE 17
+#define NORI_REPORT_REMOTE 18
+#define NORI_REPORT_VOLUME 19
+#define NORI_REPORT_JAM_JOINED 20
+#define NORI_REPORT_JAM_LEFT 21
+#define NORI_REPORT_CURVE 22
+#define NORI_REPORT_STARRED 23
+#define NORI_REPORT_WAITING 24
+
 typedef void (*NoriReportFn)(const NoriReport *report);
 
 /// Where reports go, delivered on a thread the library owns. NULL clears it. The callback may call
@@ -304,7 +330,7 @@ int32_t nori_ios_device_assign(const char *output, int32_t choice, const char *p
 int32_t nori_ios_device_adopt(const char *output, const char *name, const char *source,
                               const char *form, const char *target, const char *path);
 void nori_ios_device_forget(const char *output);
-/// The answer to the last AutoEQ report (22): the curve offered applied, or the one applied undone.
+/// The answer to the last AutoEQ report (NORI_REPORT_CURVE): the curve offered applied, or the one applied undone.
 void nori_ios_curve_answer(void);
 
 /// The AutoEQ list's hits, JSON to free: {short, count, hits: [{name, source, form, target, path}]}.
@@ -391,7 +417,7 @@ char *nori_ios_rules(void);
 /// ids], asks: [{t, s, c}], listening: 0 only shown, 1 playing here, 2 the host lets no one, 3 the server
 /// lets no guest, 4 the host's songs don't play on this device}. Its asks are its own requests the host has yet to take.
 char *nori_ios_jam(void);
-/// Joins the jam invite `link` is to, its guest profile named `name`. NORI_JOIN_STARTED: report 20 says
+/// Joins the jam invite `link` is to, its guest profile named `name`. NORI_JOIN_STARTED: NORI_REPORT_JAM_JOINED says
 /// how it went (flag 1 joined: open the active profile; flag 2: the jam has ended; flag 0: index a
 /// NORI_LOGIN_* code, text its detail).
 int32_t nori_ios_jam_join(const char *link, const char *name);

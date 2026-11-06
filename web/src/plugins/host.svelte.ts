@@ -30,6 +30,7 @@ class Running {
   private next = 1;
   private calls = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
   started: Promise<void>;
+  private startFailed!: (e: Error) => void;
   status = $state<Record<string, string>>({});
   shown = $state<Record<string, { shown: boolean; enabled: boolean }>>({});
   overrides: [string, string][];
@@ -44,6 +45,7 @@ class Running {
     const id = i.plugin.id;
     this.overrides = overridesIn(data);
     this.started = new Promise((started, failed) => {
+      this.startFailed = failed;
       this.worker.onmessage = (e: MessageEvent) => {
         const m = e.data;
         if (m.started) started();
@@ -78,8 +80,13 @@ class Running {
     });
   }
 
+  /** Ends the worker: what it was asked and has not answered fails. */
   stop() {
     this.worker.terminate();
+    const stopped = new Error("the plugin stopped");
+    this.startFailed(stopped);
+    for (const c of this.calls.values()) c.reject(stopped);
+    this.calls.clear();
   }
 }
 
@@ -115,6 +122,7 @@ class Plugins {
   proxied = $state(false);
   /** The switch over every plugin (`pluginsOff`). */
   allOff = $state(false);
+  /** The workers of the plugins on, starting or started; one that could not start has none. */
   private running = new Map<string, Running>();
   /** Stages added to the worklet, as `id` at `version`: a worklet can't take a module away. */
   private added = new Set<string>();
@@ -161,7 +169,7 @@ class Plugins {
   }
 
   private withHooks() {
-    return this.installed.filter((i) => this.runs(i) && i.plugin.points.includes("hooks")).flatMap((i) => this.running.get(i.plugin.id) ?? []);
+    return this.installed.filter((i) => this.runs(i) && i.plugin.points.includes("hooks")).flatMap((i) => this.runningOf(i.plugin.id) ?? []);
   }
 
   private needsWorker = (p: WebPlugin) => p.points.some((x) => x !== "sound-stage" && x !== "lifecycle") || (p.points.includes("lifecycle") && !p.stage);
@@ -169,14 +177,20 @@ class Plugins {
   /** Starts `i`'s worker, if it has one. One that can't start stays installed and on, its worker gone. */
   private async begin(i: Installed) {
     const id = i.plugin.id;
-    if (!this.needsWorker(i.plugin) || this.running.has(id)) return;
+    if (!this.needsWorker(i.plugin) || this.runningOf(id)) return;
+    let worker: Running | undefined;
     try {
       const [code, data] = await Promise.all([db.code(id), db.data(id)]);
-      const r = new Running(i, code, data, this.proxied ? PROXY : null, () => this.lay());
-      this.running.set(id, r);
-      await r.started;
-      if (i.plugin.points.includes("lifecycle")) await r.call("lifecycle", "start");
+      // Started meanwhile, or turned off or removed.
+      const still = this.find(id);
+      if (this.runningOf(id) || !still || !this.runs(still)) return;
+      worker = new Running(i, code, data, this.proxied ? PROXY : null, () => this.lay());
+      this.running.set(id, worker);
+      await worker.started;
+      if (i.plugin.points.includes("lifecycle")) await worker.call("lifecycle", "start");
     } catch (e) {
+      // Stopped while it started (perhaps for another one): nothing failed.
+      if (this.runningOf(id) !== worker) return;
       console.warn(`plugin ${id}: can't start: ${e}`);
       this.stop(id);
     }
@@ -184,7 +198,7 @@ class Plugins {
 
   /** Tells the core what the plugins running override, in their order: the last says. */
   private lay() {
-    const overrides = this.installed.flatMap((i) => this.running.get(i.plugin.id)?.overrides ?? []);
+    const overrides = this.installed.flatMap((i) => this.runningOf(i.plugin.id)?.overrides ?? []);
     void ask("plugin_overrides", JSON.stringify(overrides));
   }
 
@@ -224,7 +238,7 @@ class Plugins {
   async sleeve(s: NonNullable<typeof player.song>) {
     for (const i of this.installed) {
       if (!this.runs(i) || !i.plugin.points.includes("slots")) continue;
-      const answer = await this.running.get(i.plugin.id)?.call<Sleeve | undefined>("slots", "artwork", song(s)).catch((e) => console.warn(`plugin artwork: ${e}`));
+      const answer = await this.runningOf(i.plugin.id)?.call<Sleeve | undefined>("slots", "artwork", song(s)).catch((e) => console.warn(`plugin artwork: ${e}`));
       if (!answer || player.song?.id !== s.id) continue;
       sleeves.current = answer.tag === "loop" ? { song: s.id, video: answer.val.video, poster: answer.val.poster } : { song: s.id, still: answer.val };
       return sleeves.current;
@@ -236,7 +250,7 @@ class Plugins {
     const s = player.song;
     if (s?.id !== id) return;
     sleeves.current = null;
-    for (const i of this.installed) if (this.runs(i) && i.plugin.points.includes("slots")) void this.running.get(i.plugin.id)?.call("slots", "artworkFailed", song(s), status).catch(() => {});
+    for (const i of this.installed) if (this.runs(i) && i.plugin.points.includes("slots")) void this.runningOf(i.plugin.id)?.call("slots", "artworkFailed", song(s), status).catch(() => {});
   }
 
   /** What a package says of itself, nothing kept. */
@@ -334,16 +348,19 @@ class Plugins {
     await db.save($state.snapshot(i));
     if (!i.on) return;
     if (i.plugin.stage) player.card()?.node.port.postMessage({ numbers: { id: `${id}@${i.plugin.version}`, numbers: numbers(i) } });
-    if (i.plugin.points.includes("lifecycle")) await this.running.get(id)?.call("lifecycle", "changed", row.id, witValue(row, value));
+    if (i.plugin.points.includes("lifecycle")) await this.runningOf(id)?.call("lifecycle", "changed", row.id, witValue(row, value));
   }
 
   async act(id: string, row: string) {
-    await this.running.get(id)?.call("lifecycle", "action", row);
+    await this.runningOf(id)?.call("lifecycle", "action", row);
   }
 
   private stop(id: string) {
-    this.running.get(id)?.stop();
-    if (this.running.delete(id)) this.lay();
+    const worker = this.running.get(id);
+    if (!worker) return;
+    this.running.delete(id);
+    worker.stop();
+    this.lay();
   }
 
   async remove(id: string) {

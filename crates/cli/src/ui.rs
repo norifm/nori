@@ -1102,7 +1102,7 @@ fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) 
         v.skip_titles(true);
     }
     // The groups down the left when wide enough.
-    let body = if body.width >= 96 && !v.alone && !v.deep() {
+    let body = if body.width >= 96 && v.alone == settings_view::Alone::No && !v.deep() {
         let at = v.group_at();
         for (g, group) in settings_view::GROUPS.iter().enumerate() {
             let r = Rect { x: body.x, y: body.y + g as u16, width: 18, height: 1 };
@@ -1236,7 +1236,7 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
     });
     devices.sel = sel;
     let mut y = body.y + body.height + 1;
-    let notes = [(devices.jams_unsupported, crate::text::JAM_UNSUPPORTED)];
+    let notes = [(devices.jam_start == Some(nori_core::remote::JamStart::Unsupported), crate::text::JAM_UNSUPPORTED)];
     for (_, note) in notes.into_iter().filter(|(on, _)| *on) {
         for l in wrap(note, area.width as usize) {
             if y >= area.y + area.height {

@@ -15,7 +15,7 @@ use nori_core::settings::HomeRow;
 use nori_core::client::Starrable;
 use nori_core::playlist::PlaylistView;
 use nori_core::remote::wire::Pending;
-use nori_core::remote::{Controls, JamControls, JamView, Listening, Reach, RemoteDevice};
+use nori_core::remote::{Controls, JamControls, JamStart, JamView, Listening, Reach, RemoteDevice};
 use nori_core::search::SearchView;
 use nori_core::settings::{EqLevel, SavedServer, ServerKind, SoundBand, StoredPrefs, TapAction};
 use nori_core::settings_store::SoundTool;
@@ -31,7 +31,7 @@ use crate::art::{Colors, Theme};
 use crate::backend::{Data, Downloads, Fetch, Msg, Req, ALBUM_PAGE};
 use crate::keys::{action, Action, Scope};
 use crate::lyrics::SongLyrics;
-use crate::settings_view::{Chore, Opened, SettingsView, Switch};
+use crate::settings_view::{Alone, Chore, Opened, SettingsView, Switch};
 
 /// The page's root view, under any opened album, artist or playlist pages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -707,18 +707,47 @@ pub struct Login {
     pub sel: Sel,
     /// Whether the saved servers list has the keys.
     pub on_list: bool,
-    /// The kind of profile added, once chosen; until then the first screen shows.
-    pub kind: Option<ServerKind>,
-    /// What its page is ([`ProviderInfo::first_step`]).
-    pub step: Option<FirstStep>,
+    pub page: LoginPage,
     /// Selection among the first screen's providers ([`App::provider_lines`]).
     pub choice: Sel,
-    /// The plugin whose page the first screen opened; installed, it is turned on and its form opens.
-    pub offered: Option<String>,
-    /// The kind chosen is being added at once: the first screen stays unless that fails.
-    pub adding_now: bool,
     /// How the profile being added was asked for; None for one already saved.
     pub after: Option<AfterAdding>,
+}
+
+/// Which page of adding a profile shows.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum LoginPage {
+    /// The first screen: what a new profile plays from.
+    #[default]
+    Choosing,
+    /// `kind` has nothing to ask and is being added at once: the first screen stays unless that fails.
+    Adding(ServerKind),
+    /// `kind`'s page, as its [`ProviderInfo::first_step`] says.
+    Provider { kind: ServerKind, step: FirstStep },
+}
+
+impl LoginPage {
+    /// The kind of profile added, once chosen.
+    pub fn kind(&self) -> Option<&ServerKind> {
+        match self {
+            LoginPage::Choosing => None,
+            LoginPage::Adding(kind) | LoginPage::Provider { kind, .. } => Some(kind),
+        }
+    }
+
+    /// Adding at once failed: the kind's own page shows, with why.
+    fn stop_adding(&mut self) {
+        if let LoginPage::Adding(kind) = self {
+            *self = LoginPage::Provider { kind: kind.clone(), step: FirstStep::AddNow };
+        }
+    }
+
+    fn step(&self) -> Option<FirstStep> {
+        match self {
+            LoginPage::Provider { step, .. } => Some(*step),
+            _ => None,
+        }
+    }
 }
 
 /// A line of the first screen.
@@ -768,10 +797,8 @@ impl Now {
 pub struct Devices {
     /// Remote control or jams are switched on.
     pub on: bool,
-    /// A jam can be started: jams are on and the server has not said it cannot relay.
-    pub jams: bool,
-    /// Jams are on but the server cannot relay them.
-    pub jams_unsupported: bool,
+    /// Where starting a jam stands, while remote control is on; Unavailable with jams off.
+    pub jam_start: Option<JamStart>,
     pub pairing: Option<String>,
     /// The account's other devices.
     pub list: Vec<RemoteDevice>,
@@ -892,7 +919,7 @@ impl Devices {
         if self.on {
             rows.extend((0..self.list.len()).flat_map(|i| [DeviceRow::Device(i), DeviceRow::Playing(i)]));
             rows.extend((0..self.reached.len()).map(DeviceRow::Reached));
-            if self.jams || self.jam.is_some() {
+            if self.jam_start == Some(JamStart::Offered) || self.jam.is_some() {
                 rows.push(DeviceRow::Jam);
             }
             rows.push(DeviceRow::Join);
@@ -1744,7 +1771,7 @@ impl App {
                 self.login.busy = false;
                 if let Err(e) = r {
                     self.login.error = Some(e);
-                    self.login.adding_now = false;
+                    self.login.page.stop_adding();
                 }
             }
             Msg::Reachable(r) => self.unreachable = r.err(),
@@ -1780,12 +1807,12 @@ impl App {
                 }
             }
             Msg::Preview(Ok(p)) => {
-                let turns_on = self.login.offered.as_ref() == Some(&p.card.id) || !self.settings.own.plugins.iter().any(|c| c.id == p.card.id);
+                let turns_on = self.settings.alone.offer() == Some(p.card.id.as_str()) || !self.settings.own.plugins.iter().any(|c| c.id == p.card.id);
                 self.overlay = Some(preview_sheet(p, turns_on));
             }
             Msg::Installed(Ok(id)) => {
                 self.say(crate::text::PLUGIN_INSTALLED, false);
-                if self.login.offered.as_ref() == Some(&id) {
+                if self.settings.alone.offer() == Some(id.as_str()) {
                     while self.settings.leave() {}
                     self.plugins_left();
                     self.cmds.push(Cmd::Plugin(PluginCmd::TurnOnChosen(id)));
@@ -2199,20 +2226,20 @@ impl App {
 
     /// The form's provider.
     pub fn login_info(&self) -> Option<nori_core::providers::ProviderInfo> {
-        let kind = self.login.kind.as_ref()?;
+        let kind = self.login.page.kind()?;
         self.settings.own.kinds.providers().into_iter().find(|i| i.kind == *kind)
     }
 
     /// Which of `LOGIN_FIELDS` the kind chosen asks.
     pub fn login_fields(&self) -> Vec<usize> {
-        let Some(info) = self.login_info().filter(|_| self.login.step == Some(FirstStep::Form)) else { return Vec::new() };
+        let Some(info) = self.login_info().filter(|_| self.login.page.step() == Some(FirstStep::Form)) else { return Vec::new() };
         (0..4).filter(|&i| info.fields.iter().any(|f| f.what == LOGIN_ASKS[i])).collect()
     }
 
     /// The first screen: what a new profile plays from, the repos asked what they offer.
     pub fn choose_provider(&mut self) {
         self.view = View::Login;
-        (self.login.kind, self.login.adding_now) = (None, false);
+        self.login.page = LoginPage::Choosing;
         self.cmds.push(Cmd::Plugin(PluginCmd::Read));
         if matches!(self.settings.own.shelf, crate::settings_view::Shelf::Unasked) {
             self.cmds.push(Cmd::Plugin(PluginCmd::Look));
@@ -2228,24 +2255,26 @@ impl App {
 
     /// See [`App::provider_chosen`].
     pub(crate) fn provider_opened(&mut self, info: &nori_core::providers::ProviderInfo) {
-        self.login.kind = Some(info.kind.clone());
-        self.login.step = Some(info.first_step());
+        let (kind, step) = (info.kind.clone(), info.first_step());
+        self.login.page = match step {
+            FirstStep::AddNow => LoginPage::Adding(kind),
+            step => LoginPage::Provider { kind, step },
+        };
         self.login.focus = self.login_fields().first().copied().unwrap_or(0);
         self.login.error = None;
-        if self.login.step == Some(FirstStep::AddNow) {
-            self.login.adding_now = true;
+        if step == FirstStep::AddNow {
             self.connect(AfterAdding::Remind);
         }
     }
 
     /// Whether the first screen shows.
     pub fn login_choosing(&self) -> bool {
-        self.login.kind.is_none() || self.login.adding_now
+        matches!(self.login.page, LoginPage::Choosing | LoginPage::Adding(_))
     }
 
     /// The account page shows: a provider with an account and nothing to fill.
     pub fn login_account(&self) -> bool {
-        self.login.kind.is_some() && self.login.step == Some(FirstStep::Account)
+        self.login.page.step() == Some(FirstStep::Account)
     }
 
     /// The first screen's line `at`: a kind's form, a plugin off turned on, or the page of one not installed.
@@ -2253,11 +2282,10 @@ impl App {
         match self.provider_lines().into_iter().nth(at) {
             Some(ProviderLine::Kind(kind)) => self.provider_chosen(kind),
             // With every plugin off none could run: it leads to the switch.
-            Some(ProviderLine::Offered { .. }) if self.prefs.plugins_off => self.plugins_alone(),
+            Some(ProviderLine::Offered { .. }) if self.prefs.plugins_off => self.plugins_alone(Alone::Plugins),
             Some(ProviderLine::Offered { id, .. }) if self.settings.own.plugins.iter().any(|c| c.id == id) => self.cmds.push(Cmd::Plugin(PluginCmd::TurnOnChosen(id))),
             Some(ProviderLine::Offered { id, .. }) => {
-                self.login.offered = Some(id.clone());
-                self.plugins_alone();
+                self.plugins_alone(Alone::Offer(id.clone()));
                 self.plugin_page(crate::settings_view::PluginPage::Plugin(id));
             }
             None => {}
@@ -2265,8 +2293,8 @@ impl App {
     }
 
     /// Settings › Plugins on its own, from the first screen: no profile is needed to add one.
-    fn plugins_alone(&mut self) {
-        self.settings.alone = true;
+    fn plugins_alone(&mut self, alone: Alone) {
+        self.settings.alone = alone;
         self.settings.row = Sel::default();
         self.settings.invalidate();
         self.view = View::Settings;
@@ -2296,7 +2324,7 @@ impl App {
             KeyCode::Esc if l.on_list => l.on_list = false,
             KeyCode::Esc if profiles > 0 => self.view = View::Settings,
             KeyCode::Esc | KeyCode::Char('q') => self.quit = true,
-            KeyCode::Char('p') => self.plugins_alone(),
+            KeyCode::Char('p') => self.plugins_alone(Alone::Plugins),
             KeyCode::Enter if l.on_list => {
                 if let Some(s) = self.prefs.servers.get(l.sel.at) {
                     self.cmds.push(Cmd::SwitchServer(s.id.clone()));
@@ -2337,7 +2365,7 @@ impl App {
             KeyCode::Enter if !last => l.focus = fields[at.map_or(0, |i| i + 1)],
             KeyCode::Enter => self.connect(AfterAdding::Remind),
             KeyCode::Esc => {
-                l.kind = None;
+                l.page = LoginPage::Choosing;
                 l.error = None;
             }
             KeyCode::Backspace if at.is_some() => {
@@ -2363,7 +2391,7 @@ impl App {
         l.after = self.settings.own.kinds.adds_profile(list, draft.clone()).then_some(after);
         if !self.settings.own.kinds.server_ready(draft.clone()) {
             l.error = Some(crate::text::LOGIN_MISSING.into());
-            l.adding_now = false;
+            l.page.stop_adding();
             return;
         }
         l.error = None;
@@ -2798,12 +2826,12 @@ impl App {
             return;
         }
         if self.on_settings() && self.settings.leave() {
-            if self.login.offered.is_some() && !self.settings.deep() {
+            if self.settings.alone.offer().is_some() && !self.settings.deep() {
                 self.plugins_left();
             }
             return;
         }
-        if self.view == View::Settings && self.settings.alone {
+        if self.view == View::Settings && self.settings.alone != Alone::No {
             return self.plugins_left();
         }
         if self.pages.pop().is_none() {
@@ -2813,9 +2841,8 @@ impl App {
 
     /// Back on the first screen from the plugins on their own.
     fn plugins_left(&mut self) {
-        self.settings.alone = false;
+        self.settings.alone = Alone::No;
         self.settings.invalidate();
-        self.login.offered = None;
         self.view = View::Login;
     }
 
@@ -3577,10 +3604,10 @@ impl App {
             self.dirty = false;
         } else if self.devices.jam.is_some() {
             self.invite();
-        } else if self.devices.jams {
+        } else if self.devices.jam_start == Some(JamStart::Offered) {
             self.cmds.push(Cmd::JamStart);
         } else {
-            self.say(if self.devices.jams_unsupported { crate::text::JAM_UNSUPPORTED } else { crate::text::JAMS_OFF }, false);
+            self.say(if self.devices.jam_start == Some(JamStart::Unsupported) { crate::text::JAM_UNSUPPORTED } else { crate::text::JAMS_OFF }, false);
         }
     }
 
@@ -3595,7 +3622,7 @@ impl App {
             Some(Item::Mix(m)) => Some(Cmd::PlayFetch(Fetch::Mix(m.id), false)),
             None => None,
         };
-        if self.devices.jam.is_none() && self.devices.jams {
+        if self.devices.jam.is_none() && self.devices.jam_start == Some(JamStart::Offered) {
             self.cmds.extend(play);
         }
         self.jam_start();
@@ -3911,7 +3938,7 @@ impl App {
             Button::Connect => self.connect(AfterAdding::Remind),
             Button::LoginSignIn => self.connect(AfterAdding::SignIn),
             Button::LoginGuest => self.connect(AfterAdding::Guest),
-            Button::LoginPlugins => self.plugins_alone(),
+            Button::LoginPlugins => self.plugins_alone(Alone::Plugins),
             Button::Resume => self.take_offer(true),
             Button::Dismiss => self.take_offer(false),
         }

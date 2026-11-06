@@ -532,9 +532,12 @@ if (!only || only.includes("tabs")) {
   await second.click("#use-here");
   // A tab in the background draws no frames: polled by time.
   await page.waitForFunction(() => window.nori.movedAway, { timeout: 30000, polling: 250 });
+  // A call after that fails at once: no worker is left to answer it.
+  const after = await page.evaluate(() => Promise.race([window.ask("now").then(() => "answered", () => "failed"), new Promise((r) => setTimeout(() => r("hung"), 5000))]));
+  expect(after === "failed", `a call after another tab took over fails, not hangs (${after})`);
   await second.waitForFunction(() => window.nori.page === "home", { timeout: 60000 });
   const stored = await second.evaluate(() => window.nori.stored);
-  report.tabs = { secondSawElsewhere: true, firstMovedAway: true, secondHome: true, secondStored: stored };
+  report.tabs = { secondSawElsewhere: true, firstMovedAway: true, callAfter: after, secondHome: true, secondStored: stored };
   expect(stored, "the tab that took over keeps the databases in OPFS");
   await second.close();
   await page.bringToFront();

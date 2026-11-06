@@ -89,7 +89,7 @@ impl App {
         let starred = self.starred(Starrable::Song, &song.id, song.starred);
         let download = self.downloaded.get(&song.id).copied().unwrap_or(SongDownload::None);
         let lyrics = self.lyrics.as_ref().is_some_and(|l| !l.pick.lyrics.lines.is_empty()) && self.lyrics_for.as_deref() == Some(&song.id);
-        let jam = if self.guest() { Some(JamOffer::Guest) } else if self.devices.jams && self.devices.jam.is_none() { Some(JamOffer::Start) } else { None };
+        let jam = if self.guest() { Some(JamOffer::Guest) } else if self.devices.jam_start == Some(nori_core::remote::JamStart::Offered) && self.devices.jam.is_none() { Some(JamOffer::Start) } else { None };
         let r = &self.rules;
         let items = nori_core::menus::song_menu(song.clone(), starred, download, player, lyrics, r.stars, r.account, r.downloads, r.radio, jam, page);
         let mut lines = Vec::with_capacity(items.len() + 1);

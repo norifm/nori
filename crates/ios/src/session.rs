@@ -387,11 +387,15 @@ pub(crate) fn audio_changed() {
             s.engine.pause();
         }
         match interrupt {
-            Some(Interrupt::Began) => s.engine.pause_now(),
+            Some(Interrupt::Began | Interrupt::BeganAndEnded { resume: false }) => s.engine.pause_now(),
             Some(Interrupt::Ended { resume: true }) => {
                 s.engine.play();
             }
-            _ => {}
+            Some(Interrupt::BeganAndEnded { resume: true }) => {
+                s.engine.pause_now();
+                s.engine.play();
+            }
+            Some(Interrupt::Ended { resume: false }) | None => {}
         }
     });
 }
