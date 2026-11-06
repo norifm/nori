@@ -499,10 +499,11 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         // The facts and the bar are the core's, the words these; asked once a second, it says whether the
         // facts changed, and a notification whose words and bar did not is handed back as it was rather
         // than built again.
-        when (DownloadsJni.notice(DownloadsJni.h, downloads.size, notMetRequirements, SystemClock.elapsedRealtime())) {
-            0 -> lastProgress?.let { return it }
+        when (NoticeChange.entries[DownloadsJni.notice(DownloadsJni.h, downloads.size, notMetRequirements, SystemClock.elapsedRealtime())]) {
+            NoticeChange.SAME -> lastProgress?.let { return it }
+            NoticeChange.CHANGED -> {}
             // The bytes are in and saved songs are still processing: the service stays for them, and says so.
-            2 -> processingNow()?.let { return workingNotification(it, DOWNLOAD_NOTIFICATION, SystemClock.elapsedRealtime()) } ?: return complete ?: NotificationCompat.Builder(context, CHANNEL)
+            NoticeChange.BATCH_OVER -> processingNow()?.let { return workingNotification(it, DOWNLOAD_NOTIFICATION, SystemClock.elapsedRealtime()) } ?: return complete ?: NotificationCompat.Builder(context, CHANNEL)
                 // Nothing left: the service is on its way out, and the batch's own summary (its own id,
                 // so stopping the service does not take it) says how it went. No bar here.
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
@@ -769,7 +770,7 @@ internal object DownloadsJni {
     @JvmStatic external fun open(h: Long, id: String, now: Long): Int
     /** Per chunk: the progress to show, or NaN when it has not moved enough to draw. */
     @JvmStatic @CriticalNative external fun note(h: Long, slot: Int, length: Long, bytes: Long, now: Long): Float
-    /** 0 unchanged, 1 changed, 2 the batch is over. */
+    /** A [NoticeChange] by its ordinal. */
     @JvmStatic @CriticalNative external fun notice(h: Long, listed: Int, waiting: Int, now: Long): Int
     /**
      * The notification's facts, `[kind, position, total, permille, speed_bps, eta_s]` into [out], and the
@@ -881,6 +882,9 @@ private fun cancelIntent(context: Context): PendingIntent =
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
+/** What a second's notice found (crates/transfers `NoticeChange`, whose discriminants are these ordinals). */
+internal enum class NoticeChange { SAME, CHANGED, BATCH_OVER }
+
 /**
  * The progress of a download batch, for as long as the service runs. Not 1001: that is media3's
  * playback notification id, and sharing it replaced the now-playing notification while downloading.
@@ -896,13 +900,13 @@ class DownloadWorker : DownloadService(DOWNLOAD_NOTIFICATION, 1000L, CHANNEL, an
     override fun getScheduler(): Scheduler? = null
 
     /**
-     * The start that holds the service for the saved songs still processing, 0 when none does. media3 stops the
+     * The start that holds the service for the saved songs still processing, null when none does. media3 stops the
      * service once nothing is left to download with the id of the last start it was handed; a start it is never
      * handed is newer, and that stop does not take. [release] stops it with this one when the work is over.
      */
-    private var holdId = 0
+    private var holdId: Int? = null
 
-    internal val holding get() = holdId != 0
+    internal val holding get() = holdId != null
 
     /**
      * The CPU lock, held exactly while there is work: songs downloading (the manager is not idle, which it also is
@@ -951,7 +955,7 @@ class DownloadWorker : DownloadService(DOWNLOAD_NOTIFICATION, 1000L, CHANNEL, an
         }
         // Held: a start that finds nothing to download would stop the service under the songs still processing,
         // so a newer hold goes first.
-        if (holdId != 0 && downloads.processingNow() != null) downloads.hold()
+        if (holdId != null && downloads.processingNow() != null) downloads.hold()
         if (intent?.action == ACTION_CANCEL_DOWNLOADS) {
             downloads.cancelAll()
             return super.onStartCommand(Intent(intent).setAction(DownloadService.ACTION_INIT), flags, startId)
@@ -961,9 +965,8 @@ class DownloadWorker : DownloadService(DOWNLOAD_NOTIFICATION, 1000L, CHANNEL, an
 
     /** The saved songs are processed: the hold goes, and the service with it unless downloads came meanwhile. */
     internal fun release() {
-        val id = holdId
-        if (id == 0) return
-        holdId = 0
+        val id = holdId ?: return
+        holdId = null
         awake()
         stopSelfResult(id)
     }
