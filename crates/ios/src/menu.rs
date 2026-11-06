@@ -27,8 +27,7 @@ fn action_code(a: &SongAction) -> i32 {
         SongAction::GoToArtist { .. } => 8,
         SongAction::AddToLibrary => 9,
         SongAction::SleepTimer => 10,
-        SongAction::StartRadio => 11,
-        SongAction::InstantMix => 12,
+        SongAction::Radio => 11,
         SongAction::ExcludeFromMixes { .. } => 13,
         SongAction::Share => 14,
         SongAction::Details => 15,
@@ -83,16 +82,10 @@ fn song_at(token: u64, index: i32) -> Option<Song> {
     list_song(token, usize::try_from(index).ok()?)
 }
 
-/// Plays a radio (`radio`) or an instant mix seeded by `song`: the songs played, or -1 when the
-/// server could not be asked.
-fn play_mix(song: Song, radio: bool) -> i32 {
+/// Plays a radio seeded by `song`: the songs played, or -1 when the server could not be asked.
+fn play_radio(song: Song) -> i32 {
     let Some((client, _)) = server() else { return 0 };
-    let asked = if radio {
-        nori_core::transport::block_on(client.radio(song.id))
-    } else {
-        nori_core::transport::block_on(client.instant_mix(song.id))
-    };
-    match asked {
+    match nori_core::transport::block_on(client.radio(song.id)) {
         Ok(songs) if songs.is_empty() => 0,
         Ok(songs) => {
             let n = i32::try_from(songs.len()).unwrap_or(i32::MAX);
@@ -139,12 +132,12 @@ pub extern "C" fn nori_ios_song_menu(token: u64, index: i32, starred: i32, playe
 
 /// Does menu line `action` (its `a`) for song `index` of list `token`; `on` for the heart and leaving it out of mixes. Lines the
 /// client draws itself (album, artist, playlist, sleep timer, share, details) do nothing here. Radio
-/// and instant mix block: the songs played, -1 when the server could not be asked. Otherwise 1 done.
+/// blocks: the songs played, -1 when the server could not be asked. Otherwise 1 done.
 #[no_mangle]
 pub extern "C" fn nori_ios_song_act(token: u64, index: i32, action: i32, on: i32) -> i32 {
     let Some(song) = song_at(token, index) else { return 0 };
-    if let 11 | 12 = action {
-        return play_mix(song, action == 11);
+    if action == 11 {
+        return play_radio(song);
     }
     with_session(|s| match action {
         0 => {
@@ -360,8 +353,7 @@ mod tests {
             SongAction::GoToArtist { id: String::new(), name: String::new(), named: false },
             SongAction::AddToLibrary,
             SongAction::SleepTimer,
-            SongAction::StartRadio,
-            SongAction::InstantMix,
+            SongAction::Radio,
             SongAction::ExcludeFromMixes { on: true },
             SongAction::Share,
             SongAction::Details,

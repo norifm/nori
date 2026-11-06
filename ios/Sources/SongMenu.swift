@@ -46,7 +46,6 @@ enum SongMenu {
         case 9: parts = Iconoir.folderPlus
         case 10: parts = Iconoir.halfMoon
         case 11: parts = Iconoir.antennaSignal
-        case 12: parts = Iconoir.sparks
         case 13: parts = Iconoir.prohibition
         case 14: parts = Iconoir.shareIos
         default: parts = Iconoir.infoCircle
@@ -74,8 +73,8 @@ enum SongMenu {
             Toast.show(Say.serverDownloading)
         case 10:
             SleepTimer.shared.pick(from: host)
-        case 11, 12:
-            off({ nori_ios_song_act(token, i, Int32(a), 0) }) { n in
+        case 11:
+            off({ nori_ios_song_act(token, i, 11, 0) }) { n in
                 if n < 0 { Toast.show(Say.failed) } else if n == 0, let words = Say.note(NORI_NOTE_NOTHING_TO_PLAY, 0) { Toast.show(words) }
             }
         case 13:

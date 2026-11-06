@@ -105,10 +105,10 @@ class Player {
     await this.refresh();
   }
 
-  /** A radio or an instant mix from `song`. */
-  async mix(song: Song, radio: boolean) {
+  /** A radio from `song`. */
+  async radio(song: Song) {
     await this.soundCard();
-    if ((await ask<number>("mix", song.id, radio)) === 0) ui.say(W.mixEmpty);
+    if ((await ask<number>("radio", song.id)) === 0) ui.say(W.mixEmpty);
     await this.refresh();
   }
 

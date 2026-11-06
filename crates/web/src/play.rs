@@ -326,11 +326,10 @@ impl Nori {
         self.with(|h| h.seek(ms as i64));
     }
 
-    /// Plays a radio (`radio`) or an instant mix seeded by song `id`: the songs played (0: the server had
-    /// none).
-    pub async fn mix(&self, id: String, radio: bool) -> Result<usize, JsValue> {
+    /// Plays a radio seeded by song `id`: the songs played (0: the server had none).
+    pub async fn radio(&self, id: String) -> Result<usize, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        let songs = if radio { client.radio(id).await } else { client.instant_mix(id).await }.map_err(error)?;
+        let songs = client.radio(id).await.map_err(error)?;
         let n = songs.len();
         if n > 0 {
             self.with(|h| h.play(songs, 0, false, None));

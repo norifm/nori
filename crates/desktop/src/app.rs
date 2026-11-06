@@ -2248,14 +2248,13 @@ impl App {
                 A::GoToAlbum { id } => (1, id.clone()),
                 A::GoToArtist { id, .. } => (2, id.clone()),
                 A::Download => (3, String::new()),
-                A::StartRadio => (4, String::new()),
+                A::Radio => (4, String::new()),
                 A::PlayNext => (5, String::new()),
                 A::AddToQueue => (6, String::new()),
                 A::AddToPlaylist => (7, String::new()),
                 A::RemoveDownload => (8, String::new()),
                 A::StopDownload => (9, String::new()),
                 A::AddToLibrary => (10, String::new()),
-                A::InstantMix => (11, String::new()),
                 A::ExcludeFromMixes { on } => (if *on { 12 } else { 19 }, String::new()),
                 A::Share => (13, String::new()),
                 A::Details => (14, String::new()),
@@ -2328,7 +2327,6 @@ impl App {
             }
             8 | 9 => self.on_session(|s| s.download_remove(&one.id)),
             10 => self.on_session(|s| s.star(nori_core::client::Starrable::Song, one.id, true)),
-            11 => self.on_session(|s| s.play_later(Fetch::InstantMix(one.id), false)),
             12 | 19 => {
                 let done = self.session.as_ref().is_some_and(|s| s.core.mix_excluded_set(one.id, how == 12).is_ok());
                 if done {

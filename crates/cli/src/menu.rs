@@ -173,8 +173,7 @@ impl App {
             SongAction::GoToAlbum { id } => self.open_album(id),
             SongAction::GoToArtist { id, .. } => self.open_artist(id),
             SongAction::Lyrics => self.set_panel(Panel::Lyrics),
-            SongAction::StartRadio => self.cmds.push(Cmd::PlayFetch(Fetch::Radio(s.id), false)),
-            SongAction::InstantMix => self.cmds.push(Cmd::PlayFetch(Fetch::InstantMix(s.id), false)),
+            SongAction::Radio => self.cmds.push(Cmd::PlayFetch(Fetch::Radio(s.id), false)),
             SongAction::ExcludeFromMixes { on } => self.cmds.push(Cmd::ExcludeFromMixes(s.id, on)),
             SongAction::StopDownload | SongAction::AddToLibrary | SongAction::SleepTimer | SongAction::Share | SongAction::Details => {}
         }

@@ -25,8 +25,7 @@ pub enum SongAction {
     /// Where the playing song's lyrics came from and how they are timed, with the timing to change.
     Lyrics,
     SleepTimer,
-    StartRadio,
-    InstantMix,
+    Radio,
     /// `on` is what pressing it sets.
     ExcludeFromMixes { on: bool },
     Share,
@@ -122,11 +121,10 @@ pub fn song_menu(song: Song, starred: bool, excluded: bool, download: SongDownlo
     if own {
         add(SongAction::Share, true, true);
     }
-    if radio {
-        add(SongAction::StartRadio, true, true);
+    if radio || own {
+        add(SongAction::Radio, true, true);
     }
     if own {
-        add(SongAction::InstantMix, true, true);
         add(SongAction::ExcludeFromMixes { on: !excluded }, true, true);
     }
     add(SongAction::Details, true, true);
@@ -138,8 +136,8 @@ fn place_of(action: &SongAction) -> SongMenuPlace {
     match action {
         Favourite { .. } | Details => SongMenuPlace::Title,
         GoToAlbum { .. } | GoToArtist { .. } => SongMenuPlace::Names,
-        Lyrics | SleepTimer | RemoveDownload | StopDownload | Download | Share | ExcludeFromMixes { .. } => SongMenuPlace::Glyphs,
-        PlayNext | AddToQueue | AddToPlaylist | AddToLibrary | StartRadio | InstantMix => SongMenuPlace::Line,
+        Lyrics | SleepTimer | RemoveDownload | StopDownload | Download | Share | Radio | ExcludeFromMixes { .. } => SongMenuPlace::Glyphs,
+        PlayNext | AddToQueue | AddToPlaylist | AddToLibrary => SongMenuPlace::Line,
     }
 }
 
@@ -503,8 +501,7 @@ mod tests {
     #[test]
     fn radio_without_an_account() {
         let menu = actions(&song_menu(Song::default(), false, false, SongDownload::None, false, false, false, false, false, true, false, None));
-        assert!(menu.contains(&(SongAction::StartRadio, true)));
-        assert!(!menu.contains(&(SongAction::InstantMix, true)));
+        assert!(menu.contains(&(SongAction::Radio, true)));
         assert!(!menu.contains(&(SongAction::Share, true)));
     }
 
@@ -537,7 +534,7 @@ mod tests {
             [
                 (Favourite { on: true }, false), (PlayNext, false), (AddToQueue, false), (AddToPlaylist, false),
                 (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (Download, false),
-                (Share, true), (StartRadio, true), (InstantMix, true), (ExcludeFromMixes { on: true }, true), (Details, true),
+                (Share, true), (Radio, true), (ExcludeFromMixes { on: true }, true), (Details, true),
             ]
         );
 
@@ -555,7 +552,7 @@ mod tests {
                 (Favourite { on: false }, false), (PlayNext, false), (AddToQueue, false), (AddToPlaylist, false),
                 (GoToArtist { id: "a".into(), name: "A".into(), named: true }, false), (GoToArtist { id: "b".into(), name: "B".into(), named: true }, false),
                 (AddToLibrary, false), (Lyrics, false), (SleepTimer, false), (StopDownload, false),
-                (StartRadio, true), (Details, true),
+                (Radio, true), (Details, true),
             ]
         );
         let done = song_menu(Song::default(), false, false, SongDownload::Done, false, false, true, true, true, true, false, None);
@@ -572,8 +569,16 @@ mod tests {
         use SongAction::*;
         assert_eq!(of(Title), [Favourite { on: true }, Details]);
         assert_eq!(of(Names), [GoToAlbum { id: "al".into() }, GoToArtist { id: "ar".into(), name: "A".into(), named: false }]);
-        assert_eq!(of(Glyphs), [Lyrics, SleepTimer, Download, Share, ExcludeFromMixes { on: true }]);
-        assert_eq!(of(Line), [PlayNext, AddToQueue, AddToPlaylist, StartRadio, InstantMix]);
+        assert_eq!(of(Glyphs), [Lyrics, SleepTimer, Download, Share, Radio, ExcludeFromMixes { on: true }]);
+        assert_eq!(of(Line), [PlayNext, AddToQueue, AddToPlaylist]);
+    }
+
+    #[test]
+    fn a_radio_needs_either_the_provider_or_the_index() {
+        let has = |radio: bool, account: bool, id: &str| {
+            song_menu(Song { id: id.into(), ..Default::default() }, false, false, SongDownload::None, false, false, false, account, false, radio, false, None).iter().any(|i| i.action == SongAction::Radio)
+        };
+        assert_eq!([has(true, false, "1"), has(false, true, "1"), has(false, true, "ext-deezer-song-9"), has(false, false, "1")], [true, true, false, false]);
     }
 
     #[test]

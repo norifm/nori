@@ -113,6 +113,7 @@ fun SongMenu(
                 dev.nori.music.ffi.library.SongAction.RemoveDownload -> GlyphButton(Iconoir.Trash, labels[n], quiet = true) { actions.removeDownloads(listOf(song.id)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.StopDownload -> GlyphButton(Iconoir.Xmark, labels[n], quiet = true) { actions.cancelDownloads(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.Download -> GlyphButton(Iconoir.Download, labels[n], quiet = true) { actions.download(listOf(song)); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.Radio -> GlyphButton(Iconoir.AntennaSignal, labels[n], quiet = true) { actions.startRadio(song); onDismiss() }
                 is dev.nori.music.ffi.library.SongAction.ExcludeFromMixes -> GlyphButton(Iconoir.Prohibition, labels[n], lit = !a.on, quiet = true) { actions.excludeFromMixes(song, a.on); excluded = a.on }
                 else -> GlyphButton(Iconoir.ShareIos, labels[n], quiet = true) { actions.share(song.id); onDismiss() }
             }
@@ -120,9 +121,7 @@ fun SongMenu(
                 dev.nori.music.ffi.library.SongAction.PlayNext -> Item(labels[n], Iconoir.PlaylistPlay, divider = divider) { actions.playNext(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.AddToQueue -> Item(labels[n], Iconoir.Playlist, divider = divider) { actions.enqueue(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.AddToPlaylist -> Item(labels[n], Iconoir.PlusCircle, divider = divider) { picking = true }
-                dev.nori.music.ffi.library.SongAction.AddToLibrary -> Item(labels[n], Iconoir.FolderPlus, divider = divider) { actions.addToLibrary(song.id, isAlbum = false); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.StartRadio -> Item(labels[n], Iconoir.AntennaSignal, divider = divider) { actions.startRadio(song); onDismiss() }
-                else -> Item(labels[n], Iconoir.Sparks, divider = divider) { actions.instantMix(song); onDismiss() }
+                else -> Item(labels[n], Iconoir.FolderPlus, divider = divider) { actions.addToLibrary(song.id, isAlbum = false); onDismiss() }
             }
             val names = at(dev.nori.music.ffi.library.SongMenuPlace.NAMES).map { items[it].action }
             SheetHead(actions.cover(song.coverArt, CoverSize.ROW), song.title, "", trailing = { at(dev.nori.music.ffi.library.SongMenuPlace.TITLE).forEach { titleGlyph(it) } }) {

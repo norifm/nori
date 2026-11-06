@@ -225,9 +225,6 @@ class Library(
     /** A radio from one song: it, then what the server finds similar, or random songs of its genre. */
     suspend fun radio(song: Song): List<Song> = withContext(Dispatchers.IO) { lifted { client.radio(song.id) } }
 
-    /** An instant mix from the index, or the radio when the index has nothing near the song. */
-    suspend fun instantMix(song: Song): List<Song> = withContext(Dispatchers.IO) { lifted { client.instantMix(song.id) } }
-
     /** Every album of an artist (a provider's left out), in order, as one list of songs. */
     suspend fun artistSongs(artistId: String): List<Song> = withContext(Dispatchers.IO) { lifted { client.artistSongsOf(artistId) } }
     suspend fun albumSongs(albumId: String): List<Song> = withContext(Dispatchers.IO) { lifted { client.albumSongsOf(albumId) } }
