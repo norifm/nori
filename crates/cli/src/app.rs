@@ -24,7 +24,7 @@ use nori_core::settings_store::SoundTool;
 use nori_core::stars::StarMarks;
 use nori_core::{Album, AlbumDetail, Artist, ArtistDetail, OriginKind, PageOrigin, Playlist, PlaylistDetail, Song};
 use nori_engine::{Event, State};
-use nori_core::rules::sound_tuning;
+use nori_core::tuning::SoundPage;
 use nori_look::cover::CoverColours;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
@@ -160,7 +160,8 @@ pub enum Cmd {
     Paint(bool),
     /// Output device for the next start; empty for the system default.
     Device(String),
-    Tuning(bool),
+    /// A sound page came in sight (true) or left it (`Parts::sound_page`).
+    SoundPage(SoundPage, bool),
     SearchTyped(String),
     SearchServer(String),
     /// The song heard's lyrics looked up again.
@@ -269,7 +270,7 @@ impl Cmd {
             Cmd::Setting(k, v) => format!("setting {k}={v}"),
             Cmd::Action(a) => format!("action {a:?}"),
             Cmd::Curve => "curve".into(),
-            Cmd::Tuning(on) => format!("tuning {on}"),
+            Cmd::SoundPage(page, on) => format!("sound page {page:?} {on}"),
             Cmd::Mouse(on) => format!("mouse {on}"),
             Cmd::Images(on) => format!("images {on}"),
             Cmd::Device(d) => format!("device {d}"),
@@ -1314,11 +1315,8 @@ pub struct App {
     /// The terminal has focus; true until it says otherwise, as terminals without focus events never do.
     pub in_sight: bool,
     pub quit: bool,
-    /// Whether the engine holds the equalizer's low-latency buffer ([`App::sound_edited`]); released
-    /// when the equalizer closes or is switched off.
-    pub tuning: bool,
-    /// The sound was changed on the equalizer since it was opened.
-    pub touched: bool,
+    /// The sound page the session was last told is in sight.
+    sound_page: Option<SoundPage>,
     pub drag: Option<Drag>,
     /// Where the equalizer's curve was drawn, for the mouse.
     pub eq_plot: Rect,
@@ -1514,9 +1512,6 @@ impl App {
 
     /// Opens a root view, closing any opened pages, and requests its data if needed.
     pub fn go(&mut self, view: View) {
-        if view != View::Equalizer {
-            self.touched = false;
-        }
         self.view = view;
         if crate::chrome::tab_name(view) == crate::chrome::tab_name(View::Albums) {
             self.section = view;
@@ -1524,7 +1519,7 @@ impl App {
         self.pages.clear();
         self.full = false;
         self.focus = Focus::Main;
-        self.tune();
+        self.follow_sound_page();
         self.dirty = true;
         // What the downloads weigh, beside their place.
         if self.sections().contains(&view) && self.places(view).contains(&Place::Downloads) {
@@ -1700,6 +1695,7 @@ impl App {
         // Handlers clear `dirty` when nothing changed; an earlier message in the batch stays dirty.
         let was = std::mem::replace(&mut self.dirty, true);
         self.take(msg);
+        self.follow_sound_page();
         self.dirty |= was;
     }
 
@@ -3695,25 +3691,32 @@ impl App {
         self.settings.invalidate();
     }
 
-    /// A sound change was stored. Returns true when the engine should now take the low-latency buffer
-    /// (first real edit on the equalizer; `rules::sound_tuning`), so later edits are heard
-    /// at once. Merely opening the equalizer does not.
-    pub fn sound_edited(&mut self) -> bool {
-        self.touched |= sound_tuning(self.view == View::Equalizer, true);
-        self.tune()
+    /// The sound page in sight: the equalizer, a plugin's page, or Settings, which holds the Sound group.
+    fn sound_page_in_sight(&self) -> Option<SoundPage> {
+        match self.view {
+            View::Equalizer => Some(SoundPage::Equalizer),
+            View::Settings => match self.settings.own.stack.last() {
+                Some((crate::settings_view::PluginPage::Plugin(_), _)) => Some(SoundPage::Plugin),
+                Some(_) => None,
+                None => (self.settings.alone == crate::settings_view::Alone::No).then_some(SoundPage::Sound),
+            },
+            _ => None,
+        }
     }
 
-    /// Updates `tuning` from `rules::sound_tuning`; pushes the release command, returns true on take.
-    fn tune(&mut self) -> bool {
-        let want = sound_tuning(self.view == View::Equalizer, self.touched);
-        if want == self.tuning {
-            return false;
+    /// Tells the session when the sound page in sight changes; the new one first, so the buffer holds
+    /// from one to the next.
+    fn follow_sound_page(&mut self) {
+        let now = self.sound_page_in_sight();
+        if now == self.sound_page {
+            return;
         }
-        self.tuning = want;
-        if !want {
-            self.cmds.push(Cmd::Tuning(false));
+        if let Some(page) = now {
+            self.cmds.push(Cmd::SoundPage(page, true));
         }
-        want
+        if let Some(page) = std::mem::replace(&mut self.sound_page, now) {
+            self.cmds.push(Cmd::SoundPage(page, false));
+        }
     }
 
     fn eq_step(&mut self, up: bool) {

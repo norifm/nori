@@ -129,7 +129,7 @@ Implement `nori_engine::AudioOutput`, or use `nori-output-cpal` (PipeWire/ALSA, 
 | `latency_us`, `mixed_us` | How long until a sample pulled now is heard; of that, what the device has mixed already (Bluetooth) |
 | `takes_float`, `float` | Whether it plays float, for high quality output |
 | `watch` | Tells the engine which device the music goes to (`DeviceWatch`), for per-device sound |
-| `shallow` | Holds only a fraction of a second while a sound page is tuned (`rules::sound_tuning`) |
+| `shallow` | Holds only a fraction of a second while a sound page is tuned (`nori_core::tuning`) |
 | `failed` | The device died and would not reopen |
 | `ramp`, `flush`, `holding`, `bursts` | Only for a device that holds seconds (Android's AudioTrack): fades on its volume, drops what it holds, says it still plays, wakes the engine from its own pulls |
 
@@ -256,7 +256,11 @@ of this; Android's `PlaybackService` calls the same functions.
   another, then leaves the network alone.
 - **A new output's AutoEQ curve**: `Core::device_arrive`, then `Client::device_curve`; the client words
   the offer and answers it (`Session::curve_answer`).
-- **A sound page's shallow buffer**: `rules::sound_tuning(in_sight, touched)`.
+- **A sound page's shallow buffer**: `tuning::SoundTuning` counts the sound pages in sight (the
+  equalizer, AutoEQ's presets, Settings › Sound, a plugin's page) and answers the buffer to switch to:
+  shallow after a change to what is heard on one (a plugin's page from its first look), deep again once
+  the last leaves. On the host the client says only `Session::sound_page(page, shown)`; the session's
+  `apply` counts the changes.
 - **A download's covers**: `Core::download_cover_urls`, for the cover loader to `warm`.
 
 ## The clients today

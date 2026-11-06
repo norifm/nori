@@ -1048,7 +1048,7 @@ impl Runner {
             }
             Cmd::Action(c) => s.action(c),
             Cmd::Curve => s.curve_answer(),
-            Cmd::Tuning(on) => s.engine.set_shallow(on),
+            Cmd::SoundPage(page, on) => s.sound_page(page, on),
             Cmd::SearchTyped(text) => {
                 let v = s.search_typed(&text);
                 app.search.view = Some(v);
@@ -1090,14 +1090,10 @@ impl Runner {
     }
 }
 
-/// After a sound edit: applies its effect (None: nothing changed), then may take the low-latency
-/// buffer; the engine runs commands in order, so it sees the new sound first.
+/// After a sound edit: applies its effect (None: nothing changed).
 fn sound_edited(s: &Session, app: &mut App, effect: Option<u32>) {
     if let Some(effect) = effect {
         s.applied(effect);
-        if app.sound_edited() {
-            s.engine.set_shallow(true);
-        }
     }
     prefs_changed(app);
 }

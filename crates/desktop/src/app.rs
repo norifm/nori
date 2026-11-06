@@ -508,8 +508,8 @@ pub struct App {
     moving: Option<Moving>,
     /// Now Playing was open when last seen: its opening asks the plugins' status lines.
     full_seen: bool,
-    /// The engine is in its shallow equalizer-tuning buffer.
-    tuning: bool,
+    /// The sound page the session was last told is in sight.
+    sound_page: Option<nori_core::tuning::SoundPage>,
     lyrics: Option<crate::lyrics::SongLyrics>,
     lyrics_timer: Timer,
     /// Active lyric line pieces in the side panel and Now Playing, and its backing vocals', updated in
@@ -747,7 +747,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             full_seen: false,
             lists: Lists::default(),
             find: String::new(),
-            tuning: false,
+            sound_page: None,
             lyrics: None,
             lyrics_timer: Timer::default(),
             pieces: [Rc::new(VecModel::default()), Rc::new(VecModel::default())],
@@ -1135,7 +1135,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         if t == crate::settings::tabs(&a.facts.rules.settings).len() as i32 {
             a.plugins_look();
         }
-        a.untune(View::Settings);
+        a.follow_sound_page(View::Settings);
         a.settings_shown();
     });
     on!(ui.on_setting_toggled, h, |a, name, on| match crate::settings::PluginAct::of(&name) {
@@ -1167,7 +1167,6 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_source_moved, h, |a, id, by| a.source_moved(&id, by));
     on!(ui.on_eq_set, h, |a, name, value| {
         a.setting(&name, &value);
-        a.tune();
     });
     on!(ui.on_eq_typed, h, |a, i, field, text| {
         use nori_core::settings::BandField;
@@ -1366,7 +1365,7 @@ impl App {
             self.ui().set_find_text("".into());
             self.narrowed();
         }
-        self.untune(view);
+        self.follow_sound_page(view);
         self.plugged.stack.clear();
         self.plugged.choosing &= view == View::Login;
         let ui = self.ui();
@@ -1504,6 +1503,7 @@ impl App {
         ui.set_page_songs(ModelRc::default());
         ui.set_page_shelves(ModelRc::default());
         self.page_colours(None);
+        self.follow_sound_page(View::Page);
         ui.set_view(View::Page);
         ui.set_failed("".into());
         self.mirror();
@@ -3417,7 +3417,6 @@ impl App {
                         Ok(change) => {
                             if let Some(change) = change {
                                 self.on_session(|s| s.applied(change.effect));
-                                self.tune();
                             }
                             words::autoeq_applied(&name)
                         }
@@ -3539,7 +3538,6 @@ impl App {
             },
             Msg::Restored(Ok(r)) => {
                 self.on_session(|s| s.backup_restored(&r.settings));
-                self.tune();
                 self.settings_shown();
                 self.jam_shown();
                 self.plugins_read();
@@ -3971,8 +3969,6 @@ impl App {
         };
         if changed.is_none() {
             self.say(&format!("{name}: not a setting"), true);
-        } else {
-            self.tune();
         }
         self.settings_shown();
         self.jam_shown();
@@ -4060,26 +4056,36 @@ impl App {
         }
     }
 
-    /// Enters the engine's shallow buffer after a change on a sound page (`rules::sound_tuning`).
-    fn tune(&mut self) {
-        if !self.tuning && nori_core::rules::sound_tuning(self.sound_page(self.ui().get_view()), true) {
-            self.tuning = true;
-            self.on_session(|s| s.engine.set_shallow(true));
+    /// Tells the session when the sound page in sight changes as `view` shows; the new one first, so
+    /// the buffer holds from one to the next.
+    fn follow_sound_page(&mut self, view: View) {
+        let now = self.sound_page_of(view);
+        if now == self.sound_page {
+            return;
         }
+        let was = std::mem::replace(&mut self.sound_page, now);
+        self.on_session(|s| {
+            if let Some(page) = now {
+                s.sound_page(page, true);
+            }
+            if let Some(page) = was {
+                s.sound_page(page, false);
+            }
+        });
     }
 
-    /// Gives the deep buffer back unless `view` is a sound page.
-    fn untune(&mut self, view: View) {
-        if self.tuning && !self.sound_page(view) {
-            self.tuning = false;
-            self.on_session(|s| s.engine.set_shallow(false));
+    /// The equalizer page (with its AutoEQ search), Settings on its Sound tab, or the plugins' tab.
+    fn sound_page_of(&self, view: View) -> Option<nori_core::tuning::SoundPage> {
+        use nori_core::tuning::SoundPage;
+        match view {
+            View::Equalizer => Some(SoundPage::Equalizer),
+            View::Settings => {
+                let tabs = crate::settings::tabs(&self.facts.rules.settings);
+                let tab = self.ui().get_settings_tab() as usize;
+                if tab == tabs.len() { Some(SoundPage::Plugin) } else { tabs.get(tab).copied().and_then(SoundPage::of_settings) }
+            }
+            _ => None,
         }
-    }
-
-    /// The equalizer page, or Settings on its Sound tab: where a sound change is heard at once.
-    fn sound_page(&self, view: View) -> bool {
-        view == View::Equalizer
-            || view == View::Settings && crate::settings::tabs(&self.facts.rules.settings).get(self.ui().get_settings_tab() as usize) == Some(&nori_core::settings_pages::SettingsPage::Sound)
     }
 
     /// Edits a level in place; redraws the page when the slider is released.
@@ -4087,7 +4093,6 @@ impl App {
         let Some(level) = crate::settings::level_of(name) else { return };
         if let Some((effect, _)) = crate::session::app().settings.edit_level(level, v) {
             self.on_session(|s| s.applied(effect));
-            self.tune();
         }
         if last {
             self.settings_shown();
@@ -4100,7 +4105,6 @@ impl App {
         let settings = &crate::session::app().settings;
         if let Some(effect) = settings.edit_point(i, point) {
             self.on_session(|s| s.applied(effect));
-            self.tune();
         }
         if last {
             self.settings_shown();
@@ -4114,7 +4118,6 @@ impl App {
     fn eq_typed(&mut self, i: u32, field: nori_core::settings::BandField, text: &str) {
         if let Some(effect) = crate::session::app().settings.edit_typed(i, field, text) {
             self.on_session(|s| s.applied(effect));
-            self.tune();
         }
         self.settings_shown();
     }
@@ -4144,7 +4147,6 @@ impl App {
         match crate::session::app().settings.sound_tool(tool) {
             Ok(Some(change)) => {
                 self.on_session(|s| s.applied(change.effect));
-                self.tune();
             }
             Ok(None) => {}
             Err(e) => self.say(&format!("{e:?}"), true),
@@ -4218,7 +4220,6 @@ impl App {
         let Some(prefs) = store.current() else { return };
         let effect = store.put(prefs.with_sound(sound));
         self.on_session(|s| s.applied(effect));
-        self.tune();
         self.settings_shown();
     }
 

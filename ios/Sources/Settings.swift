@@ -504,12 +504,12 @@ final class EqualizerPage: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        nori_ios_tuning(1, 0)
+        nori_ios_sound_page(0, 1)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        nori_ios_tuning(0, 0)
+        nori_ios_sound_page(0, 0)
     }
 
     private var bands: [[String: Any]] { eq["bands"] as? [[String: Any]] ?? [] }
@@ -548,7 +548,6 @@ final class EqualizerPage: UIViewController {
         guard i >= 0, i < bands.count, i < (eq["points"] as? [[String: Any]] ?? []).count else { return }
         let b = bands[i]
         let point = (eq["points"] as? [[String: Any]] ?? [])[i]
-        nori_ios_tuning(1, 1)
         let changed = nori_ios_eq_point(UInt32(i), pos ?? Float(point["x"] as? Double ?? 0), gain ?? Float(b["gain"] as? Double ?? 0),
                                         q ?? Float(b["q"] as? Double ?? 1), Int32(kind ?? b["kind"] as? Int ?? 0), Int32(channel ?? b["channel"] as? Int ?? 0))
         if changed == 1 { paint() }
@@ -561,7 +560,6 @@ final class EqualizerPage: UIViewController {
     }
 
     private func add(_ across: Float, _ db: Float) {
-        nori_ios_tuning(1, 1)
         if nori_ios_eq_band(0, across, db) == 1 {
             chosen = bands.count
             paint()
@@ -570,14 +568,12 @@ final class EqualizerPage: UIViewController {
 
     @objc private func switched() {
         _ = "eq".withCString { n in (toggle.isOn ? "true" : "false").withCString { v in nori_ios_set(n, v) } }
-        nori_ios_tuning(1, 1)
         paint()
     }
 
     private func mode(_ value: String) {
         chosen = -1
         _ = "eqMode".withCString { n in value.withCString { v in nori_ios_set(n, v) } }
-        nori_ios_tuning(1, 1)
         paint()
     }
 
@@ -603,7 +599,6 @@ final class EqualizerPage: UIViewController {
             sheet.add(Say.bandSide(c), checked: b["channel"] as? Int == c) { [weak self] in self?.set(i, channel: c) }
         }
         sheet.add(Say.removeBand, destructive: true) { [weak self] in
-            nori_ios_tuning(1, 1)
             if nori_ios_eq_band(UInt32(i), -1, 0) == 1 {
                 self?.chosen = -1
                 self?.paint()
@@ -617,7 +612,6 @@ final class EqualizerPage: UIViewController {
         let sheet = Sheet(Say.presets)
         for (i, kind) in kinds.enumerated() {
             sheet.add(Say.preset(kind)) { [weak self] in
-                nori_ios_tuning(1, 1)
                 if nori_ios_preset(UInt32(i)) == 1 { self?.paint() }
             }
         }

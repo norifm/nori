@@ -316,13 +316,6 @@ pub struct SongSteps {
     pub pause_at_end: bool,
 }
 
-/// Whether a sound page (the equalizer, AutoEQ, the sound settings) switches to the shallow buffer
-/// (`set_shallow`): the page in sight and a setting changed on it.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn sound_tuning(in_sight: bool, touched: bool) -> bool {
-    in_sight && touched
-}
-
 /// The volume step for slider `fraction` on an output with steps 0..=`max`, rounded half to even like
 /// Kotlin's `round`; None without steps. Twin of `PlayerViewModel.setVolumeFraction`.
 pub fn volume_step(fraction: f32, max: i32) -> Option<i32> {

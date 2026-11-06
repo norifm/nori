@@ -319,8 +319,9 @@ int32_t nori_ios_set(const char *name, const char *value);
 char *nori_ios_equalizer(void);
 int32_t nori_ios_eq_point(uint32_t index, float pos, float gain_db, float q, int32_t kind, int32_t channel);
 int32_t nori_ios_eq_band(uint32_t index, float pos, float gain_db);
-/// The equalizer screen is in sight and was touched: the short output buffer follows the core's rule.
-void nori_ios_tuning(int32_t in_sight, int32_t touched);
+/// Sound page `page` (0 the equalizer, 1 AutoEQ's presets, 2 Settings › Sound) came in sight (`shown`
+/// 1) or left it; a change made on one is then heard at once.
+void nori_ios_sound_page(int32_t page, int32_t shown);
 
 /// Outputs and their sound (crates/ios/src/sound.rs), JSON to free:
 /// {current, rows: [{output, port, name, current, choice, profile}]}.

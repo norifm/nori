@@ -514,7 +514,7 @@ private fun PluginAssets(vm: PluginsViewModel, id: String) {
  */
 @Composable
 private fun SoundPage(sound: SettingsViewModel) {
-    LifecycleStartEffect(sound) { sound.soundPageShown(true, tuned = true); onStopOrDispose { sound.soundPageShown(false) } }
+    LifecycleStartEffect(sound) { sound.soundPageShown(dev.nori.music.ffi.queue.SoundPage.PLUGIN, true); onStopOrDispose { sound.soundPageShown(dev.nori.music.ffi.queue.SoundPage.PLUGIN, false) } }
 }
 
 /** The rows of the plugins that show on the devices sheet too, each under its name; read before the sheet opened. */
@@ -522,7 +522,7 @@ private fun SoundPage(sound: SettingsViewModel) {
 fun PluginDeviceSections(vm: PluginsViewModel, sound: SettingsViewModel) {
     val cards by vm.deviceCards.collectAsStateWithLifecycle()
     // With plugins' rows on it, the sheet is a sound page: what they change is heard at once.
-    if (cards.isNotEmpty()) DisposableEffect(sound) { sound.soundPageShown(true, tuned = true); onDispose { sound.soundPageShown(false) } }
+    if (cards.isNotEmpty()) DisposableEffect(sound) { sound.soundPageShown(dev.nori.music.ffi.queue.SoundPage.PLUGIN, true); onDispose { sound.soundPageShown(dev.nori.music.ffi.queue.SoundPage.PLUGIN, false) } }
     cards.forEach { c -> PluginRows(vm, c, c.name) }
 }
 

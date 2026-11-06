@@ -163,7 +163,7 @@ session grants.
 | Rate | The unit's input is the rate Rust asks for, and RemoteIO converts if the hardware differs. The hardware moves to the preferred rate late, so the shim rebuilds the unit whenever its output side changes |
 | Format | Float32 always (`takes_float`): high quality output on is float from decoder to DAC with no dither of nori's |
 | Latency | `latency_us` is when the music pulled will be heard: the render timestamp's host time plus the route's `outputLatency`. `mixed_us` is the route's latency on Bluetooth |
-| Equalizer in sight | `shallow` asks for a 10 ms buffer, so a band moved is heard at once; back to 93 ms after (`rules::sound_tuning`, through `nori_ios_tuning`) |
+| Equalizer in sight | `shallow` asks for a 10 ms buffer, so a band moved is heard at once; back to 93 ms after (`nori_core::tuning`, through `nori_ios_sound_page`) |
 | Fades | The ring runs them per sample: `ramp` false, `flush` a no-op, `bursts` false; the pull that crosses the ring's low mark wakes the engine |
 | Routes | `watch` maps the route's port to Speaker, Wired, Bluetooth (with its name) or Other, for per-output sound and the AutoEQ offer |
 | Failure | After a media-services reset the unit is rebuilt once; if that fails, `failed` tells the engine |

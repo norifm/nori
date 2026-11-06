@@ -76,7 +76,7 @@ private val ranges get() = EQ.eqRanges
 @Composable
 fun EqualizerScreen(vm: SettingsViewModel) {
     val p by vm.prefs.collectAsStateWithLifecycle()
-    LifecycleStartEffect(vm) { vm.soundPageShown(true); onStopOrDispose { vm.soundPageShown(false) } }
+    LifecycleStartEffect(vm) { vm.soundPageShown(dev.nori.music.ffi.queue.SoundPage.EQUALIZER, true); onStopOrDispose { vm.soundPageShown(dev.nori.music.ffi.queue.SoundPage.EQUALIZER, false) } }
     val nav = LocalNav.current
     var importing by remember { mutableStateOf(false) }
 

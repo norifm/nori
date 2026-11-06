@@ -322,7 +322,7 @@ fun SettingsGroupScreen(vm: SettingsViewModel, id: String, highlight: String = "
     // phone, the server's music folders.
     LaunchedEffect(id, p.autoMix) { if (id == "playing" && p.autoMix) vm.refreshAnalysed() }
     LaunchedEffect(id) { if (id == "data") vm.refreshStorage() }
-    if (id == "sound") LifecycleStartEffect(vm) { vm.soundPageShown(true); onStopOrDispose { vm.soundPageShown(false) } }
+    if (id == "sound") LifecycleStartEffect(vm) { vm.soundPageShown(dev.nori.music.ffi.queue.SoundPage.SOUND, true); onStopOrDispose { vm.soundPageShown(dev.nori.music.ffi.queue.SoundPage.SOUND, false) } }
     LaunchedEffect(id, p.activeServerId) { if (id == "servers") vm.loadMusicFolders() }
     val res = LocalContext.current.resources
     val config = LocalConfiguration.current

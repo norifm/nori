@@ -17,6 +17,7 @@ pub mod player;
 mod plugged;
 pub mod remote;
 pub mod session;
+mod tuning;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};

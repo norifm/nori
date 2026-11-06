@@ -31,7 +31,7 @@ import dev.nori.music.app.vm.SettingsViewModel
 fun AutoEqScreen(vm: SettingsViewModel) {
     val ui by vm.autoEq.collectAsStateWithLifecycle()
     val prefs by vm.prefs.collectAsStateWithLifecycle()
-    LifecycleStartEffect(vm) { vm.soundPageShown(true); onStopOrDispose { vm.soundPageShown(false) } }
+    LifecycleStartEffect(vm) { vm.soundPageShown(dev.nori.music.ffi.queue.SoundPage.AUTO_EQ, true); onStopOrDispose { vm.soundPageShown(dev.nori.music.ffi.queue.SoundPage.AUTO_EQ, false) } }
     val nav = LocalNav.current
     Column {
         LargeTitle(say.headphonePresets)

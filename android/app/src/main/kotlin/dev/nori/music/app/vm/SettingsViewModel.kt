@@ -618,25 +618,26 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     fun removeBand(index: Int) { nori.settings.soundTool(SoundTool.RemoveBand(index.toUInt())) }
     fun resetBands() { nori.settings.soundTool(SoundTool.ResetBands) }
 
-    /** Sound pages started and not stopped: one coming in sight can start before the one it covers stops. */
-    private var soundPages = 0
+    /** The sound pages in sight (`nori_core::tuning`): one coming in sight can start before the one it covers stops. */
+    private val tuning = dev.nori.music.ffi.queue.SoundTuning()
     private var touchWatch: Job? = null
 
     /**
-     * A sound page (the equalizer, AutoEQ, the sound settings, a plugin's) came in sight ([on]) or left it.
-     * A setting or a plugin's layer changed while one is, or a page [tuned] from its first look (a
-     * plugin's), trades the deep buffer for one heard at once until the last leaves (`rules::sound_tuning`).
+     * Sound page [page] (the equalizer, AutoEQ, the sound settings, a plugin's) came in sight ([on]) or left
+     * it. The core says when the deep buffer is traded for one heard at once and back, and when to watch
+     * for a setting or a plugin's layer changing.
      */
-    fun soundPageShown(on: Boolean, tuned: Boolean = false) {
-        soundPages += if (on) 1 else -1
-        if (soundPages == 0) {
+    fun soundPageShown(page: dev.nori.music.ffi.queue.SoundPage, on: Boolean) = tuned(if (on) tuning.shown(page) else tuning.left())
+
+    private fun tuned(step: dev.nori.music.ffi.queue.TuningStep) {
+        step.set?.let { nori.player.tuning(it == dev.nori.music.ffi.queue.Buffer.SHALLOW) }
+        if (!step.watch) {
             touchWatch?.cancel(); touchWatch = null
-            nori.player.tuning(false)
-        } else if (on && (tuned || touchWatch == null)) {
-            touchWatch?.cancel()
+        } else if (touchWatch == null) {
             touchWatch = viewModelScope.launch {
-                if (!tuned) merge(prefs.drop(1).map { }, nori.settings.effects.map { }).first()
-                nori.player.tuning(dev.nori.music.ffi.queue.soundTuning(true, true))
+                merge(prefs.drop(1).map { }, nori.settings.effects.map { }).first()
+                touchWatch = null
+                tuned(tuning.edited())
             }
         }
     }

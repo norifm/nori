@@ -1670,11 +1670,17 @@ fn sound_tool(tool: nori_core::settings_store::SoundTool) -> i32 {
     .unwrap_or(0)
 }
 
-/// The equalizer screen is in sight (`in_sight`) and was touched: the output's short buffer follows
-/// the core's rule.
+/// Sound page `page` (0 the equalizer, 1 AutoEQ's presets, 2 Settings › Sound) came in sight (`shown`
+/// 1) or left it; a change made on one is then heard at once (`nori_core::tuning`).
 #[no_mangle]
-pub extern "C" fn nori_ios_tuning(in_sight: i32, touched: i32) {
-    with_session(|s| s.engine.set_shallow(nori_core::rules::sound_tuning(in_sight != 0, touched != 0)));
+pub extern "C" fn nori_ios_sound_page(page: i32, shown: i32) {
+    use nori_core::tuning::SoundPage;
+    let page = match page {
+        0 => SoundPage::Equalizer,
+        1 => SoundPage::AutoEq,
+        _ => SoundPage::Sound,
+    };
+    with_session(|s| s.sound_page(page, shown != 0));
 }
 
 /// Keeps `query` in the recent searches: the user picked a result or pressed search.

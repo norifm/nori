@@ -311,6 +311,8 @@ pub struct Parts {
     discovery: Option<Arc<dyn nori_core::remote::Discovery>>,
     /// The AutoEQ notice said last, waiting for an answer.
     curve: parking_lot::Mutex<Option<CurveNotice>>,
+    /// The sound pages in sight ([`Parts::sound_page`]).
+    pub(crate) tuning: nori_core::tuning::SoundTuning,
     tasks: Arc<dyn Tasks>,
     pub(crate) out: Out,
     /// The plugin host the session's kinds come with, told what plays.
@@ -425,6 +427,7 @@ impl Session {
             rules_shown: parking_lot::Mutex::new(rules),
             discovery: o.discovery,
             curve: Default::default(),
+            tuning: Default::default(),
             tasks: o.tasks,
             out: o.out,
             #[cfg(feature = "desktop")]
@@ -978,8 +981,12 @@ impl Handle {
         }
     }
 
-    /// Applies a settings change's `effect` bits to the engine.
+    /// Applies a settings change's `effect` bits to the engine; a change to what is heard made while a
+    /// sound page is in sight makes the next ones heard at once ([`Parts::sound_page`]).
     pub fn apply(&self, effect: u32, prefs: &StoredPrefs) {
+        if effect & (APPLY_AUDIO | APPLY_GAIN | SOUND) != 0 {
+            self.sound_edited();
+        }
         if effect & (APPLY_AUDIO | SOUND | PLAYER) != 0 {
             self.engine.set_settings(settings(prefs, self.core.session.settings.layer()));
         }

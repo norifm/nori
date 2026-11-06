@@ -47,7 +47,7 @@ pub use nori_library::{menus, offer, paged, pages, rows, stars};
 pub use nori_lyrics::{follow as lyrics_follow, formats, look, lrclib, lyrics, services};
 pub use nori_net::{api, transport};
 pub use nori_perf::perf_log;
-pub use nori_queue::{heard, rules, scrobble, undo};
+pub use nori_queue::{heard, rules, scrobble, tuning, undo};
 pub use nori_queue::deciders::{button_act, focus_act};
 pub use nori_settings::{credits, dsp, lyrics_sources, overrides, settings, settings_model, settings_pages, settings_store};
 pub use nori_settings::settings::parse_eq_preset;

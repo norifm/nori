@@ -798,7 +798,7 @@ fn equalizer_screen() {
     a.prefs.eq_graphic[2] = 12.0;
     a.prefs.eq_graphic[5] = -6.0;
     a.go(View::Equalizer);
-    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Tuning(_))), "opening it leaves the output as it is");
+    assert_eq!(a.cmds.last(), Some(&Cmd::SoundPage(nori_core::tuning::SoundPage::Equalizer, true)), "the session is told it is in sight");
     let s = draw(&mut a, 160, 44);
     assert!(s.contains("●") && s.contains("0 dB") && s.contains("1k") && s.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)) && s.contains(" Presets ") && !s.contains("▾") && s.contains("Equalizer on") && s.contains("Limiter"), "{s}");
     dump("equalizer", &s);
@@ -835,22 +835,18 @@ fn equalizer_screen() {
     let on = hit_rect(&a, Hit::Row(ListRef::Eq, 0));
     click(&mut a, on.x + 2, on.y);
     assert_eq!(a.cmds.last(), Some(&Cmd::Setting("eq".into(), "false".into())));
-    // The first sound really changed there asks for the shallow buffer, once.
-    assert!(a.sound_edited());
-    assert!(!a.sound_edited());
-    a.go(View::Home);
-    assert!(a.cmds.contains(&Cmd::Tuning(false)));
-    // Left without changing anything: nothing to ask back.
+    // Leaving it says so, and going on to Settings shows its Sound group before the equalizer leaves.
     a.cmds.clear();
-    a.go(View::Equalizer);
+    a.go(View::Settings);
+    use nori_core::tuning::SoundPage;
+    assert_eq!(a.cmds[..2], [Cmd::SoundPage(SoundPage::Sound, true), Cmd::SoundPage(SoundPage::Equalizer, false)], "{:?}", a.cmds);
+    a.cmds.clear();
     a.go(View::Home);
-    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Tuning(_))), "{:?}", a.cmds);
-    // With the equalizer off its page's limiter and balance are still heard: the same.
-    a.prefs.eq_enabled = false;
+    assert_eq!(a.cmds.iter().filter(|c| matches!(c, Cmd::SoundPage(..))).collect::<Vec<_>>(), [&Cmd::SoundPage(SoundPage::Sound, false)]);
+    a.cmds.clear();
+    a.go(View::Albums);
+    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::SoundPage(..))), "{:?}", a.cmds);
     a.go(View::Equalizer);
-    assert!(a.sound_edited());
-    a.go(View::Home);
-    assert!(a.cmds.contains(&Cmd::Tuning(false)));
     // The parametric one draws its own bands, and d takes the one chosen out.
     let mut p = StoredPrefs { eq_enabled: true, eq_mode: nori_core::settings::EqMode::Parametric, ..StoredPrefs::default() };
     p.eq_bands = (0..3).map(|i| nori_core::settings::SoundBand { kind: nori_core::EqKind::Peaking, freq: 100.0 * 10f32.powi(i), gain_db: 0.0, q: 1.0, channel: nori_core::settings::BandChannel::Both }).collect();
@@ -2095,6 +2091,8 @@ fn no_plugins_offers_the_browser_then_repos_and_a_file() {
     assert!(!s.contains("Add repo"), "repos are a page of their own:\n{s}");
 
     follow(&mut a, "Get plugins");
+    // Leaving Settings' own groups for the plugins' pages tells the session (`Cmd::SoundPage`).
+    a.cmds.retain(|c| !matches!(c, Cmd::SoundPage(..)));
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Look)), "the browser asks the repos");
     let s = draw(&mut a, 140, 40);
     assert!(s.contains("Looking…") && s.contains("[ Install from a file ]") && s.contains("esc back"), "{s}");
@@ -2286,6 +2284,8 @@ fn the_browser_searches_narrows_and_opens_the_offer_shown() {
     let s = draw(&mut a, 140, 300);
     assert!(s.contains("UPDATES") && s.contains("1.0.0 → 2.0.0"), "an update waits on the list:\n{s}");
     follow(&mut a, "Get plugins");
+    // Leaving Settings' own groups for the plugins' pages tells the session (`Cmd::SoundPage`).
+    a.cmds.retain(|c| !matches!(c, Cmd::SoundPage(..)));
     assert!(a.cmds.is_empty(), "what was read isn't asked again");
     let s = draw(&mut a, 140, 40);
     dump("plugins-browser", &s);
@@ -2320,6 +2320,7 @@ fn the_browser_searches_narrows_and_opens_the_offer_shown() {
 
     select_row(&mut a, |r| matches!(r, Row::Offer { title, .. } if title == "Gain"));
     key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.pop(), Some(Cmd::SoundPage(nori_core::tuning::SoundPage::Plugin, true)), "a plugin's page is a sound page");
     assert!(matches!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Readme(id, Some(_)))) if id == "dev.example.gain"), "its README, off the UI's way");
     let s = draw(&mut a, 140, 60);
     dump("plugins-offer-page", &s);
@@ -2337,6 +2338,8 @@ fn the_browser_searches_narrows_and_opens_the_offer_shown() {
     key(&mut a, KeyCode::Char('d'));
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::RemoveRepo(friend.url.clone()))));
+    assert_eq!(a.cmds, [Cmd::SoundPage(nori_core::tuning::SoundPage::Plugin, false)], "the plugin's page left");
+    a.cmds.clear();
     let add = |a: &mut App| {
         select_row(a, |r| matches!(r, Row::Button { title, .. } if title == "Add repo"));
         key(a, KeyCode::Enter);
@@ -2368,6 +2371,8 @@ fn an_offered_plugins_page_shows_its_readme() {
     select_row(&mut a, |r| matches!(r, Row::Offer { .. }));
     key(&mut a, KeyCode::Enter);
     let id = "dev.example.lyrics-plus";
+    // Leaving Settings' own groups for the plugins' pages tells the session (`Cmd::SoundPage`).
+    a.cmds.retain(|c| !matches!(c, Cmd::SoundPage(..)));
     assert!(matches!(a.cmds.pop(), Some(Cmd::Plugin(PluginCmd::Readme(..)))));
     a.settings.readme_came("dev.example.elsewhere", vec![ReadmeBlock::Text { text: "Not this".into() }]);
     a.settings.readme_came(id, vec![
