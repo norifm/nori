@@ -4646,6 +4646,31 @@ mod tests {
     }
 
     #[test]
+    fn a_long_continue_title_moves_nothing_under_it() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.set_view(HOME);
+        ui.set_picks_loaded(true);
+        ui.set_offer_shown(true);
+        ui.set_offer_line("The Weeknd · 9 of 22".into());
+        ui.show().unwrap();
+        // The rows from the card's line down, under where a two-line title ends.
+        let under_title = |title: &str| {
+            ui.set_offer_title(title.into());
+            ui.window().take_snapshot().unwrap();
+            slint::platform::update_timers_and_animations();
+            let shot = ui.window().take_snapshot().unwrap();
+            shot.as_bytes()[245 * 1280 * 4..].to_vec()
+        };
+        let two_lines = under_title("Reflections Laughing (feat. Florence + The Machine)");
+        let too_long = under_title("Reflections Laughing (feat. Florence + The Machine, Travis Scott) and a good deal more words than fit");
+        assert!(two_lines == too_long, "the card's line and button moved");
+    }
+
+    #[test]
     fn back_returns_to_where_home_was_scrolled() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
