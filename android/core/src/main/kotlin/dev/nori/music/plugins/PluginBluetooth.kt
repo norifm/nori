@@ -180,32 +180,47 @@ class PluginBluetooth(private val context: Context, private val plugins: () -> P
     private inner class Gatt(private val link: ULong) : BluetoothGattCallback(), Link {
         var gatt: BluetoothGatt? = null
         @Volatile var mtu = 23
+        /** Where opening the link is; [ready] counts down once it settles on [Phase.READY] or [Phase.FAILED]. */
+        @Volatile private var phase = Phase.CONNECTING
         private val ready = CountDownLatch(1)
-        @Volatile private var failed = false
         private val answers = LinkedBlockingQueue<Pair<Int, ByteArray>>()
         private val turn = Any()
 
         fun open(d: BluetoothDevice) {
             gatt = try { d.connectGatt(context, false, this, BluetoothDevice.TRANSPORT_LE) } catch (e: SecurityException) { throw BtFailure.Refused() }
             if (!ready.await(SLOWEST_S, TimeUnit.SECONDS)) throw BtFailure.Timeout()
-            if (failed) throw BtFailure.Failed("no connection")
+            if (phase == Phase.FAILED) throw BtFailure.Failed("no connection")
+        }
+
+        private fun settle(to: Phase) {
+            phase = to
+            ready.countDown()
         }
 
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, state: Int) {
             when {
-                state == BluetoothProfile.STATE_CONNECTED -> g.discoverServices()
-                ready.count > 0 -> { failed = true; ready.countDown() }
-                else -> plugins().bluetoothLost(link)
+                state == BluetoothProfile.STATE_CONNECTED && phase == Phase.CONNECTING -> {
+                    // Set before the call: its answer comes on another thread.
+                    phase = Phase.DISCOVERING
+                    if (!g.discoverServices()) settle(Phase.FAILED)
+                }
+                state == BluetoothProfile.STATE_CONNECTED -> {}
+                phase == Phase.READY -> plugins().bluetoothLost(link)
+                else -> settle(Phase.FAILED)
             }
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
-            if (status != BluetoothGatt.GATT_SUCCESS || !g.requestMtu(517)) ready.countDown()
+            if (status != BluetoothGatt.GATT_SUCCESS) return settle(Phase.FAILED)
+            phase = Phase.NEGOTIATING_MTU
+            // Refused, the link keeps the smallest packets.
+            if (!g.requestMtu(517)) settle(Phase.READY)
         }
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            if (phase != Phase.NEGOTIATING_MTU) return
             if (status == BluetoothGatt.GATT_SUCCESS) this.mtu = mtu
-            ready.countDown()
+            settle(Phase.READY)
         }
 
         override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray, status: Int) { answers.offer(status to value) }
@@ -271,6 +286,8 @@ class PluginBluetooth(private val context: Context, private val plugins: () -> P
             }
         }
     }
+
+    private enum class Phase { CONNECTING, DISCOVERING, NEGOTIATING_MTU, READY, FAILED }
 
     private companion object {
         val CLIENT_CONFIG: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
