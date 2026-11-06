@@ -1,4 +1,4 @@
-//! Play-action calls: the songs a radio, instant mix, artist, shuffle or M3U import plays. Taps and
+//! Play-action calls: the songs a radio, artist, shuffle or M3U import plays. Taps and
 //! shuffle order are nori-queue's.
 
 use crate::autofill::seed_now;
@@ -68,31 +68,30 @@ impl Core {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
-    /// A radio from song `id`: similar songs, else random songs of its genre ([radio_queue]).
+    /// A radio from song `id`: what the index and history pick around it taking turns with the server's
+    /// similar songs ([radio_queue]). The picks alone when the server can't be asked; random songs of its
+    /// genre when neither has anything.
     pub async fn radio(&self, id: String) -> NetResult<Vec<Song>> {
-        let similar = self.songs(Read::SimilarSongs { id: id.clone(), count: RADIO }).await?;
+        let picks = self.core.mix_instant(id.clone(), RADIO as u32, seed_now())?;
+        let excluded = self.core.mix_excluded_songs()?;
+        let similar = match self.songs(Read::SimilarSongs { id: id.clone(), count: RADIO }).await {
+            Ok(similar) => similar,
+            Err(_) if picks.len() > 1 => return Ok(picks),
+            Err(e) => return Err(e),
+        };
         let listed = similar.iter().find(|s| s.id == id);
-        let seed = match (self.stored_song_of(&id), listed) {
+        let seed = match (self.stored_song_of(&id).or_else(|| picks.first().cloned()), listed) {
             // A YouTube Home row says no length; the radio's copy does.
             (Some(seed), Some(l)) if seed.duration == 0 => Song { duration: l.duration, ..seed },
             (Some(seed), _) => seed,
             (None, Some(l)) => l.clone(),
             (None, None) => self.song_of(id).await?,
         };
-        if let Some(queue) = radio_queue(seed.clone(), similar) {
+        if let Some(queue) = radio_queue(seed.clone(), picks, similar, &excluded) {
             return Ok(queue);
         }
         let random = self.songs(Read::RandomSongs { size: RADIO, genre: seed.genre.clone() }).await?;
-        Ok(radio_queue(seed.clone(), random).unwrap_or_else(|| vec![seed]))
-    }
-
-    /// A mix around song `id` from the index and history; the radio when that yields only the song.
-    pub async fn instant_mix(&self, id: String) -> NetResult<Vec<Song>> {
-        let mix = self.core.mix_instant(id.clone(), INSTANT_MIX, seed_now())?;
-        if mix.len() > 1 {
-            return Ok(mix);
-        }
-        self.radio(id).await
+        Ok(radio_queue(seed.clone(), random, Vec::new(), &excluded).unwrap_or_else(|| vec![seed]))
     }
 
     /// The library songs of `albums` in order, skipping provider and unreadable albums.
@@ -161,9 +160,20 @@ pub(crate) mod tests {
         assert_eq!(got.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["r", "x", "y"]);
         let asked = fake.asked();
         assert!(asked[1].contains("getRandomSongs") && asked[1].contains("genre=Jazz"), "{asked:?}");
-        // Nothing indexed near the song: the instant mix is the radio.
-        fake.answer(&songs_json("similarSongs2", &["s"]));
-        assert_eq!(block(c.instant_mix(seed.id)).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_radio_blends_its_picks_with_the_server_and_goes_on_without_it() {
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        let near = |id: &str| Song { id: id.into(), genre: Some("Jazz".into()), year: 1960, ..Default::default() };
+        let songs = [near("seed"), near("a"), near("left-out")];
+        db::index(&mut c.core.db.lock(), &[], &[], &songs).unwrap();
+        c.core.mix_excluded_set("left-out".into(), true).unwrap();
+        fake.answer(&songs_json("similarSongs2", &["srv", "left-out"]));
+        let got = block(c.radio("seed".into())).unwrap();
+        assert_eq!(got.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["seed", "a", "srv"]);
+        let offline = block(c.radio("seed".into())).unwrap();
+        assert_eq!(offline.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["seed", "a"], "the server does not answer");
     }
 
     #[test]

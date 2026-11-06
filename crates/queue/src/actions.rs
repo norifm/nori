@@ -7,10 +7,8 @@ use nori_settings::settings::TapAction;
 use crate::autofill::seed_now;
 use crate::Session;
 
-/// Similar (or, as fallback, random) songs requested for a radio.
+/// Songs in a radio, and how many each of its sources is asked for.
 pub const RADIO: i32 = 50;
-/// Songs in an instant mix.
-pub const INSTANT_MIX: u32 = 50;
 /// Songs "shuffle all" plays.
 pub const SHUFFLE_ALL: i32 = 200;
 /// Random albums requested by "shuffle albums"; the first library album plays.
@@ -75,13 +73,21 @@ fn plan_shuffle(songs: Vec<Song>, seed: u64) -> ShufflePlan {
     }
 }
 
-/// A radio: `seed`, then the library songs of `more` besides it. None when there are none.
-pub fn radio_queue(seed: Song, more: Vec<Song>) -> Option<Vec<Song>> {
-    let rest: Vec<Song> = more.into_iter().filter(|s| s.id != seed.id && !s.is_provider()).collect();
+/// A radio: `seed`, then `picks` and `similar` taking turns, each song once, without provider songs or
+/// `excluded` ones, up to [`RADIO`] songs. None when nothing follows the seed.
+pub fn radio_queue(seed: Song, picks: Vec<Song>, similar: Vec<Song>, excluded: &[String]) -> Option<Vec<Song>> {
+    let wanted = |s: &Song| s.id != seed.id && !s.is_provider() && !excluded.contains(&s.id);
+    let (mut picks, mut similar) = (picks.into_iter().filter(wanted), similar.into_iter().filter(wanted));
+    let turns = std::iter::from_fn(|| match (picks.next(), similar.next()) {
+        (None, None) => None,
+        (a, b) => Some(a.into_iter().chain(b)),
+    });
+    let mut seen = std::collections::HashSet::from([seed.id.clone()]);
+    let rest: Vec<Song> = turns.flatten().filter(|s| seen.insert(s.id.clone())).collect();
     if rest.is_empty() {
         return None;
     }
-    Some(std::iter::once(seed).chain(rest).collect())
+    Some(std::iter::once(seed).chain(rest).take(RADIO as usize).collect())
 }
 
 /// A debug test-bridge reference: `album:<id>`, `song:<id>`, `search:<text>`, `downloaded:<n>` (n-th newest
@@ -125,6 +131,16 @@ pub struct M3uImport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_radio_takes_turns_and_leaves_out_what_it_should() {
+        let s = |id: &str| Song { id: id.into(), ..Default::default() };
+        let ids = |q: Vec<Song>| q.into_iter().map(|s| s.id).collect::<Vec<_>>();
+        let got = radio_queue(s("seed"), vec![s("seed"), s("p1"), s("both"), s("p2")], vec![s("s1"), s("both"), s("out")], &["out".to_string()]).unwrap();
+        assert_eq!(ids(got), ["seed", "p1", "s1", "both", "p2"]);
+        let many: Vec<Song> = (0..80).map(|i| s(&format!("m{i}"))).collect();
+        assert_eq!(radio_queue(s("seed"), many, vec![], &[]).unwrap().len(), RADIO as usize);
+    }
 
     fn song(id: &str, title: &str, artist: &str, album: &str, genre: &str, year: u32) -> Song {
         Song {
@@ -170,8 +186,8 @@ mod tests {
     fn radio_starts_with_seed_once() {
         let (a, b, c) = (song("a", "t", "x", "y", "", 0), song("b", "t", "x", "y", "", 0), song("c", "t", "x", "y", "", 0));
         let provider = song("ext-deezer-song-1", "t", "x", "y", "", 0);
-        assert_eq!(radio_queue(a.clone(), vec![a.clone(), provider.clone()]), None);
-        assert_eq!(radio_queue(a.clone(), vec![b.clone(), a.clone(), provider, c.clone()]).unwrap(), [a, b, c]);
+        assert_eq!(radio_queue(a.clone(), vec![a.clone(), provider.clone()], vec![], &[]), None);
+        assert_eq!(radio_queue(a.clone(), vec![b.clone(), a.clone(), provider, c.clone()], vec![], &[]).unwrap(), [a, b, c]);
     }
 
 }

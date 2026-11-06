@@ -164,8 +164,6 @@ pub enum Fetch {
     Playlist(String),
     Artist(String),
     Radio(String),
-    /// The server's instant mix from a song.
-    InstantMix(String),
     /// One of the core's mixes (or the favourites), as its page lists it.
     Mix(String),
 }
@@ -178,7 +176,7 @@ impl Fetch {
             Fetch::DownloadedAlbum(id) => PageOrigin::new(OriginKind::Downloads, id.as_str()),
             Fetch::Playlist(id) => PageOrigin::new(OriginKind::Playlist, id.as_str()),
             Fetch::Artist(id) => PageOrigin::new(OriginKind::Artist, id.as_str()),
-            Fetch::Radio(id) | Fetch::InstantMix(id) => PageOrigin::new(OriginKind::Songs, id.as_str()),
+            Fetch::Radio(id) => PageOrigin::new(OriginKind::Songs, id.as_str()),
             Fetch::Mix(id) => PageOrigin::new(OriginKind::Mix, id.as_str()),
         }
     }
@@ -195,7 +193,6 @@ impl Fetch {
             },
             Fetch::Mix(id) => client.mix_songs(id).await?,
             Fetch::Radio(id) => client.radio(id).await?,
-            Fetch::InstantMix(id) => client.instant_mix(id).await?,
         })
     }
 }

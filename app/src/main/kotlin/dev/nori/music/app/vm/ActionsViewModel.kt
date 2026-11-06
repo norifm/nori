@@ -164,8 +164,6 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
         }
     }
 
-    fun instantMix(song: Song) = attempt(null) { start(nori.library.instantMix(song)) }
-
     suspend fun excludedFromMixes(song: Song): Boolean = song.id in nori.library.excludedFromMixes()
 
     fun excludeFromMixes(song: Song, on: Boolean) = attempt(if (on) say.excludedFromMixes else say.backInMixes) { nori.library.excludeFromMixes(song.id, on) }

@@ -405,8 +405,7 @@ enum Say {
             return "Go to \(name)"
         case 9: return "Add to library"
         case 10: return "Sleep timer…"
-        case 11: return "Start radio from this song"
-        case 12: return "Instant mix"
+        case 11: return "Radio"
         case 13: return item["on"] as? Bool ?? true ? "Exclude from mixes" : "Include in mixes"
         case 14: return "Share link"
         default: return detailsTitle

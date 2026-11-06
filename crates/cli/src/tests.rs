@@ -1968,7 +1968,7 @@ fn the_menu_lists_what_the_core_offers() {
         .collect();
     assert_eq!(lines[..core.len()], core[..], "the core's lines, in its order");
     assert_eq!(lines[core.len()], MenuLine::More);
-    assert!(folded.contains(&MenuLine::Act(MenuAct::Song(SongAction::InstantMix))) && !folded.contains(&MenuLine::Act(MenuAct::Song(SongAction::Details))), "{folded:?}");
+    assert!(folded.contains(&MenuLine::Act(MenuAct::Song(SongAction::Radio))) && !folded.contains(&MenuLine::Act(MenuAct::Song(SongAction::Details))), "{folded:?}");
     assert_eq!(lines[core.len() + 1], MenuLine::Heading("Record".into()), "then the page's");
     let s = draw(&mut a, 120, 40);
     dump("menu", &s);
@@ -1979,11 +1979,11 @@ fn the_menu_lists_what_the_core_offers() {
         sel.at = more;
     }
     key(&mut a, KeyCode::Enter);
-    assert!(draw(&mut a, 120, 40).contains("Instant mix"));
+    assert!(draw(&mut a, 120, 40).contains("Radio"));
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
     assert!(a.overlay.is_none());
-    assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Radio(id) | crate::backend::Fetch::InstantMix(id), false)) if id == "1"), "{:?}", a.cmds);
+    assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Radio(id), false)) if id == "1"), "{:?}", a.cmds);
     // Add to playlist: the playlists, a new one first, which asks for its name.
     playlists(&mut a, &["Road trip"]);
     key(&mut a, KeyCode::Char('m'));
