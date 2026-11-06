@@ -32,9 +32,8 @@ class Player {
   /** Another device plays: the controls reach it, nothing plays here. */
   elsewhere = $derived(!!this.now?.device);
 
-  private audio?: AudioContext;
-  private made?: Promise<void>;
-  private node?: AudioWorkletNode;
+  /** The sound card, from the first Play: its context, and its worklet once added (when `made` settles). */
+  private sound?: { ctx: AudioContext; made: Promise<void>; node?: AudioWorkletNode };
   /** Told when there is a sound card: plugins' sound stages go in it. */
   onCard: () => void = () => {};
   /** `now` as last drawn, without its position: drawn again only when the rest changes. */
@@ -48,24 +47,31 @@ class Player {
 
   /** The sound card, once it is made. */
   card() {
-    return this.audio && this.node ? { ctx: this.audio, node: this.node } : null;
+    const s = this.sound;
+    return s?.node ? { ctx: s.ctx, node: s.node } : null;
   }
 
   /** The sound card, made on the first Play (a browser starts audio only after a click on the page):
    * an AudioWorklet the player worker feeds over its own port. */
   soundCard(): Promise<void> {
-    if (this.audio) {
-      void this.audio.resume();
-      return this.made!;
+    if (this.sound) {
+      void this.sound.ctx.resume();
+      return this.sound.made;
     }
-    const ctx = (this.audio = new AudioContext({ latencyHint: "playback" }));
+    const ctx = new AudioContext({ latencyHint: "playback" });
     void ctx.resume();
-    ctx.onstatechange = () => (this.held = ctx.state === "suspended" && this.now?.state === "Playing");
-    this.made = (async () => {
+    ctx.onstatechange = () => this.heldNow();
+    this.sound = { ctx, made: this.attach(ctx) };
+    return this.sound.made;
+  }
+
+  /** Adds the worklet to `ctx`, the sound card being made, and joins it to the player worker. */
+  private async attach(ctx: AudioContext) {
+    try {
       await ctx.audioWorklet.addModule(workletUrl);
       const node = new AudioWorkletNode(ctx, "nori-out", { outputChannelCount: [2] });
       node.connect(ctx.destination);
-      this.node = node;
+      this.sound!.node = node;
       this.onCard();
       facts.rate = ctx.sampleRate;
       // The sound card's clock, which the worklet's times are on.
@@ -78,18 +84,22 @@ class Player {
         return { port: line.port2, rate: ctx.sampleRate, ear: ctx.baseLatency + (ctx.outputLatency || 0) };
       });
       if (ui.toast === W.loadingPlayer) ui.say("");
-    })().catch((e) => {
+    } catch (e) {
       // A failed setup is made again by the next Play.
-      this.audio = this.made = this.node = undefined;
+      this.sound = undefined;
       void ctx.close();
       throw e;
-    });
-    return this.made;
+    }
+  }
+
+  /** The browser holds the sound card while the session plays here. */
+  private heldNow() {
+    this.held = this.sound?.ctx.state === "suspended" && this.now?.state === "Playing";
   }
 
   /** A click anywhere lets a held sound card play. */
   unhold() {
-    if (this.audio?.state === "suspended") void this.audio.resume();
+    if (this.sound?.ctx.state === "suspended") void this.sound.ctx.resume();
   }
 
   /** Plays `songs` from `start`; `kind` and `id` name the page they are the list of. Call from a click. */
@@ -163,10 +173,10 @@ class Player {
     this.key = key;
     const before = this.now?.id;
     this.now = n;
-    this.held = this.audio?.state === "suspended" && n?.state === "Playing";
+    this.heldNow();
     if (n?.id !== before) this.songChanged();
     // Music handed over from another device plays here: the sound card is made for it.
-    if (n?.state === "Playing" && !n.device && !n.jam && !this.audio) void this.soundCard().catch(() => {});
+    if (n?.state === "Playing" && !n.device && !n.jam && !this.sound) void this.soundCard().catch(() => {});
   }
 
   private songChanged() {
@@ -236,7 +246,7 @@ class Player {
     // What the sound card heard, asked for when read (the headless check's), so nothing is sent while playing.
     facts.heard = async () => {
       const heard = rpc.player ? await ask<rpc.Heard | null>("heard") : null;
-      return heard && { seconds: heard.played / (this.audio?.sampleRate ?? 48000), dry: heard.dry, dryAt: heard.dryAt, peak: heard.peak, silences: heard.silences, lastLoud: heard.lastLoud, soundAt: heard.soundAt, freshAt: heard.freshAt };
+      return heard && { seconds: heard.played / (this.sound?.ctx.sampleRate ?? 48000), dry: heard.dry, dryAt: heard.dryAt, peak: heard.peak, silences: heard.silences, lastLoud: heard.lastLoud, soundAt: heard.soundAt, freshAt: heard.freshAt };
     };
     if ("mediaSession" in navigator) {
       const m = navigator.mediaSession;
