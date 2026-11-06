@@ -99,6 +99,28 @@ pub enum State {
     Ended,
 }
 
+/// Where the worker's playback stands; a client is told it as a [`State`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Playback {
+    Idle,
+    Playing,
+    /// Paused, the fade down heard until `until` (engine ms), when the output stops.
+    Pausing { until: i64 },
+    Paused,
+    Ended,
+}
+
+impl Playback {
+    fn state(self) -> State {
+        match self {
+            Playback::Idle => State::Idle,
+            Playback::Playing => State::Playing,
+            Playback::Pausing { .. } | Playback::Paused => State::Paused,
+            Playback::Ended => State::Ended,
+        }
+    }
+}
+
 /// What the engine tells a client, each once as it changes, after writing the status.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
@@ -851,9 +873,7 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     facts: OutputFacts,
     idle_release_ms: i64,
     watch: Option<crate::watch::Watcher>,
-    state: State,
-    /// When a pause's fade ends.
-    pause_at: Option<i64>,
+    playback: Playback,
     dip: Option<Dip>,
     parked: Option<Parked>,
     /// Paused: when the output is let go.
@@ -919,8 +939,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             facts: OutputFacts::default(),
             idle_release_ms,
             watch,
-            state: State::Idle,
-            pause_at: None,
+            playback: Playback::Idle,
             dip: None,
             parked: None,
             idle_at: None,
@@ -991,7 +1010,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.p.app.log("the engine's thread panicked again and again: it waits for a command");
-            if self.state == State::Playing {
+            if self.state() == State::Playing {
                 (self.events)(Event::Stopped { plays: self.plays });
                 self.set_state(State::Paused);
             }
@@ -1050,9 +1069,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     /// for the network.
     fn follow_awake(&mut self) {
         let h = &self.h;
-        let quiet = self.pause_at.is_none() && self.dip.is_none() && h.takeover.is_none() && h.entering.is_none() && h.probe.is_none() && h.at_end.is_none() && self.parked.is_none();
+        let quiet = self.dip.is_none() && h.takeover.is_none() && h.entering.is_none() && h.probe.is_none() && h.at_end.is_none() && self.parked.is_none();
         // Waiting for the network, nothing plays: the next try comes when the device wakes or the network does.
-        let sleeps = self.retry_at.is_some() || self.state == State::Playing && quiet && self.chip().is_some_and(Offload::lets_cpu_sleep);
+        let sleeps = self.retry_at.is_some() || self.playback == Playback::Playing && quiet && self.chip().is_some_and(Offload::lets_cpu_sleep);
         self.say_awake(!sleeps);
     }
 
@@ -1091,7 +1110,15 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
     /// Playing and no pause fading.
     fn going(&self) -> bool {
-        self.state == State::Playing && self.pause_at.is_none()
+        self.playback == Playback::Playing
+    }
+
+    fn pausing(&self) -> bool {
+        matches!(self.playback, Playback::Pausing { .. })
+    }
+
+    fn state(&self) -> State {
+        self.playback.state()
     }
 
     fn current(&self) -> Option<usize> {
@@ -1284,9 +1311,21 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         why
     }
 
+    /// Playback moves to `s`; a pause stays fading until its end is heard.
     fn set_state(&mut self, s: State) {
-        if self.state != s {
-            self.state = s;
+        let to = match s {
+            State::Idle => Playback::Idle,
+            State::Playing => Playback::Playing,
+            State::Paused if self.pausing() => self.playback,
+            State::Paused => Playback::Paused,
+            State::Ended => Playback::Ended,
+        };
+        self.set(to);
+    }
+
+    fn set(&mut self, to: Playback) {
+        let (was, s) = (std::mem::replace(&mut self.playback, to).state(), to.state());
+        if was != s {
             self.idle_at = matches!(s, State::Paused | State::Ended).then(|| self.now() + self.idle_release_ms);
             let mut st = self.status.lock();
             if s == State::Playing {
@@ -1310,7 +1349,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             return;
         }
         let at = self.leave_offload().or_else(|| self.p.release());
-        if self.parked.is_none() && self.state != State::Ended {
+        if self.parked.is_none() && self.state() != State::Ended {
             self.parked = at.map(|(at, ms)| Parked { at, ms, shown: None });
         }
         self.p.sink.track.release();
@@ -1371,7 +1410,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         if h.at_end.is_some() {
             self.p.pause_at_end(false);
         }
-        (self.dip, self.pause_at, self.parked, self.stall) = (None, None, None, None);
+        (self.dip, self.parked, self.stall) = (None, None, None);
+        self.faded();
         self.unstall();
         self.leave_offload();
         self.p.release();
@@ -1382,7 +1422,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     /// ([`Library::forget`]). The same song again with nothing heard since fails as a song that would
     /// not play.
     fn start_again(&mut self, why: &str) {
-        let playing = self.state == State::Playing;
+        let playing = self.state() == State::Playing;
         let (at, ms) = match self.jumping.take() {
             Some((i, ms)) => (Some(i), ms),
             None => (self.current().or_else(|| self.p.queue.read(|q| q.current())), self.position_ms().max(0)),
@@ -1495,7 +1535,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                     self.plays += 1;
                     false
                 }
-                Command::Toggle => self.state == State::Playing && !f.held,
+                Command::Toggle => self.playback.state() == State::Playing && !f.held,
                 Command::Pause(_) | Command::Release => true,
                 _ => {
                     return self.obey(c, now);
@@ -1546,7 +1586,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.jumps += 1;
                 let s = if matches!(c, Command::Next) { Switched::Next } else { Switched::Previous };
                 // Paused, a skip also plays.
-                if self.playing() && self.pause_at.is_none() {
+                if self.playing() && !self.pausing() {
                     self.switch(s, Switch::Skip, now);
                 } else {
                     self.hold(s);
@@ -1559,7 +1599,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.play()
             }
             Command::Pause(fade) => self.pause(now, fade.unwrap_or(self.settings.fade_ms)),
-            Command::Toggle if self.state == State::Playing => self.pause(now, self.settings.fade_ms),
+            Command::Toggle if self.state() == State::Playing => self.pause(now, self.settings.fade_ms),
             Command::Toggle => self.play(),
             Command::Seek(ms) => self.go(Switched::Seek(ms), Switch::Seek, now),
             Command::Settings(s) => self.apply(*s),
@@ -1576,7 +1616,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.replan();
             }
             Command::Refilled(entry) => {
-                let continues = self.state == State::Ended && self.p.queue.read(|q| {
+                let continues = self.state() == State::Ended && self.p.queue.read(|q| {
                     q.current().and_then(|at| q.seqs().get(at)).copied() == Some(entry)
                         && q.repeat() == nori_player::playlist::REPEAT_OFF && q.next().is_some()
                 });
@@ -1702,7 +1742,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                     self.play();
                 } else {
                     self.report(now);
-                    (self.events)(Event::State(self.state));
+                    (self.events)(Event::State(self.playback.state()));
                 }
                 return None;
             }
@@ -1846,7 +1886,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
         let here = {
             let s = self.status.lock();
-            let playing = self.state == State::Playing && self.p.playing() && !self.p.priming;
+            let playing = self.playback.state() == State::Playing && self.p.playing() && !self.p.priming;
             // To the µs where the player's own place is the one heard.
             let audible = self.p.heard().id.is_none() && !s.mixing && s.index == self.p.current();
             let ms = if audible { self.p.position_us() as f64 / 1000.0 } else { s.position_ms as f64 };
@@ -1905,7 +1945,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
     /// Song `index` made ready from `ms` while the output waits.
     fn prime(&mut self, index: usize, now: i64, ms: f64) {
-        (self.dip, self.pause_at, self.parked) = (None, None, None);
+        (self.dip, self.parked) = (None, None);
+        self.faded();
         self.p.pause();
         self.leave_offload();
         self.p.priming = true;
@@ -2137,7 +2178,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     /// Once the song opened ahead is open and the track a dip away from its start, the dip goes down and
     /// the CPU takes over at its bottom ([`Worker::hand_to_cpu`]). Paused, the handover is made at once.
     fn follow_takeover(&mut self, now: i64) {
-        if self.h.takeover.is_none() || self.dip.as_ref().is_some_and(|d| d.then.iter().any(Switched::hands)) || self.pause_at.is_some() {
+        if self.h.takeover.is_none() || self.dip.as_ref().is_some_and(|d| d.then.iter().any(Switched::hands)) || self.pausing() {
             return;
         }
         if !self.offloading() {
@@ -2174,13 +2215,13 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
     fn play(&mut self) {
         let chosen = self.parked.as_ref().is_some_and(|p| p.shown.is_some());
-        if self.pause_at.take().is_some() && !chosen {
+        if self.pausing() && !chosen {
             // Play during the pause's fade: back up from where the fade got to.
             self.ramp(None, 1.0, self.settings.fade_ms.max(0) as i64);
             return self.set_state(State::Playing);
         }
         // A place chosen during the fade (a skip, a new queue) is played below.
-        if self.playing() && self.state == State::Playing {
+        if self.playing() && self.state() == State::Playing {
             return;
         }
         if let Some(p) = self.parked.take_if(|p| p.shown.is_some()) {
@@ -2189,13 +2230,13 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
         self.reopen();
         if self.offloading() {
-            if self.state == State::Ended {
+            if self.state() == State::Ended {
                 self.jump(self.p.queue.read(|q| q.current()).unwrap_or(0), 0);
             }
         } else if let Some(i) = self.p.stopped_at() {
             // Stopped at a failing song: try it again.
             self.jump(i, 0);
-        } else if self.p.current().is_none() || self.state == State::Ended {
+        } else if self.p.current().is_none() || self.state() == State::Ended {
             if self.p.queue.read(|q| q.is_empty()) {
                 return;
             }
@@ -2205,33 +2246,44 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     }
 
     fn pause(&mut self, now: i64, fade_ms: i32) {
-        if self.pause_at.is_some() && fade_ms <= 0 {
-            // At once, during a fade.
-            self.pause_at = None;
-            return self.halt();
+        if self.pausing() {
+            if fade_ms <= 0 {
+                // At once, during a fade.
+                self.faded();
+                self.halt();
+            }
+            return;
         }
-        if !self.playing() || self.pause_at.is_some() {
+        if !self.playing() {
             return;
         }
         // A pause never swallows the switch it interrupts.
         self.end_dip();
         if fade_ms > 0 {
             // The device stops once the fade's bottom is heard, not when it was pulled.
-            self.pause_at = Some(now + self.ramp(None, 0.0, fade_ms as i64));
+            let until = now + self.ramp(None, 0.0, fade_ms as i64);
+            self.set(Playback::Pausing { until });
         } else {
             self.halt();
+            self.set_state(State::Paused);
         }
-        self.set_state(State::Paused);
+    }
+
+    /// A pause's fade is over, its output stopped by the caller.
+    fn faded(&mut self) {
+        if self.pausing() {
+            self.playback = Playback::Paused;
+        }
     }
 
     /// A jump or seek that keeps playing or paused: made behind its dip while playing, parked while
     /// paused. After the end of the queue it plays, as the music did before it ended.
     fn go(&mut self, s: Switched, kind: Switch, now: i64) {
-        if self.playing() && self.pause_at.is_none() {
+        if self.playing() && !self.pausing() {
             self.switch(s, kind, now);
         } else {
             self.hold(s);
-            if self.state == State::Ended {
+            if self.state() == State::Ended {
                 self.play();
             }
         }
@@ -2291,7 +2343,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     }
 
     fn switch(&mut self, s: Switched, kind: Switch, now: i64) {
-        let playing = self.playing() && self.pause_at.is_none();
+        let playing = self.playing() && !self.pausing();
         match switch_dip(self.settings.fade_ms, kind, playing) {
             Some(dip) => {
                 let d = self.dip_down(now, dip.down_ms as i64, dip.up_ms as i64);
@@ -2351,8 +2403,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             Switched::ToChip => from = self.hand_to_chip(),
             Switched::To(..) => {}
         }
-        // Only a play_at comes here paused (a skip or a go_to is parked instead): music is wanted.
-        if s.jumps() && !self.playing() && self.current().is_some() {
+        // Only a play_at comes here paused or pausing (a skip or a go_to is parked instead): music is
+        // wanted.
+        if s.jumps() && (!self.playing() || self.pausing()) && self.current().is_some() {
             self.resume();
         }
         from
@@ -2411,8 +2464,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         if self.retry_at.is_some_and(|t| now >= t) {
             self.try_again();
         }
-        if self.pause_at.is_some_and(|t| now >= t) {
-            self.pause_at = None;
+        if matches!(self.playback, Playback::Pausing { until } if now >= until) {
+            self.faded();
             self.halt();
         }
         if self.dip.as_ref().is_some_and(|d| now >= d.at) {
@@ -2533,7 +2586,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         } else if ended {
             self.p.pause();
             self.set_state(State::Ended);
-        } else if !self.p.playing() && self.state == State::Playing && self.pause_at.is_none() && self.dip.is_none() && !self.p.priming && self.retry_at.is_none() {
+        } else if !self.p.playing() && self.playback == Playback::Playing && self.dip.is_none() && !self.p.priming && self.retry_at.is_none() {
             // The queue's rules stopped playback (a run of songs that would not play), the bridge takes
             // over, or the song waits for the network.
             if std::mem::take(&mut self.p.waiting) {
@@ -2568,7 +2621,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         match tail {
             Tail::Then(n) => {
                 self.jump(n, 0);
-                if self.state == State::Playing && !self.playing() {
+                if self.state() == State::Playing && !self.playing() {
                     self.go_on();
                 }
             }
@@ -2619,8 +2672,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     /// The engine's state in words, for a stall report.
     fn words(&self, in_output_ms: i64) -> String {
         let parked = self.parked.as_ref().map(|p| if p.shown.is_some() { ", a place chosen" } else { ", output let go" });
-        let marks = [(self.dip.is_some(), ", switching"), (self.pause_at.is_some(), ", pausing"), (self.offloading(), ", offloaded")];
-        let mut w = format!("{:?}", self.state);
+        let marks = [(self.dip.is_some(), ", switching"), (self.pausing(), ", pausing"), (self.offloading(), ", offloaded")];
+        let mut w = format!("{:?}", self.state());
         marks.iter().filter(|m| m.0).for_each(|m| w.push_str(m.1));
         w.push_str(parked.unwrap_or_default());
         w.push_str(&format!("; {}; ring {} ms, output {in_output_ms} ms", self.p.words(), self.p.sink.track.filled_us() / 1000));
@@ -2728,7 +2781,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         if self.offloading() {
             // The output's decoder says its own waits.
             self.unstall();
-            self.told.audible = self.state == State::Playing;
+            self.told.audible = self.state() == State::Playing;
             return self.report_offload(now);
         }
         if self.p.current().is_none() {
@@ -2739,8 +2792,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let track = &self.p.sink.track;
         // A start from silence is loading until its first sample is heard; a jump while music plays is not.
         let unheard = self.p.unheard() && !self.told.audible;
-        let stalled = self.state == State::Playing && ((self.p.starved() && track.filled_us() < STALL_US && track.latency_us() < STALL_US) || unheard);
-        self.told.audible = self.state == State::Playing && !stalled && (self.told.audible || !self.p.unheard());
+        let stalled = self.state() == State::Playing && ((self.p.starved() && track.filled_us() < STALL_US && track.latency_us() < STALL_US) || unheard);
+        self.told.audible = self.state() == State::Playing && !stalled && (self.told.audible || !self.p.unheard());
         if self.told.audible {
             self.tries = 0;
         }
@@ -2765,7 +2818,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         self.told.stretched = stretched;
         let (speed, underruns, switching) = (self.p.speed().0, self.p.sink.track.underruns(), self.dip.is_some());
         let (chain, meter, compression) = (self.p.sink.chain_in(), self.p.sink.meter_db(), self.p.sink.compression_db());
-        let on_cpu = self.state == State::Playing && !stalled && !switching;
+        let on_cpu = self.state() == State::Playing && !stalled && !switching;
         let mixing_was = self.write_status(i, self.sought().unwrap_or(ms), self.p.placed_at(), |s| {
             s.speed = speed;
             s.pace = speed * tempo as f32;
@@ -2802,7 +2855,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.p.tracks.upcoming(&next);
             }
         }
-        if !self.h.heard && ms > 0 && self.state == State::Playing {
+        if !self.h.heard && ms > 0 && self.state() == State::Playing {
             // Music is heard: a run of songs that would not play is broken.
             self.h.heard = true;
             self.p.errors.played();
@@ -2839,7 +2892,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let id = self.told.heard.as_ref().map(|h| h.1.as_str());
         let mut s = self.status.lock();
         let was = s.mixing;
-        s.state = self.state;
+        s.state = self.state();
         if s.index != Some(i) || s.id.as_deref() != id {
             s.index = Some(i);
             s.id = id.map(str::to_owned);
@@ -2886,7 +2939,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
         let positioned = self.say_position(now, i, ms);
         let pace = self.status.lock().pace as f64;
-        self.told.said = match self.state {
+        self.told.said = match self.state() {
             _ if self.dip.is_some() => None,
             State::Playing if other || looped || placed || positioned || self.told.said.is_none() => Some((i, ms, now, pace)),
             State::Playing => self.told.said,
@@ -2906,7 +2959,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn say_position(&mut self, now: i64, index: usize, ms: i64) -> bool {
         let jumps = self.made();
         let landed = std::mem::take(&mut self.told.seek_landed) || jumps != self.told.landed_jumps;
-        let due = self.told.positions.is_some() && self.state == State::Playing && now >= self.told.next_position;
+        let due = self.told.positions.is_some() && self.state() == State::Playing && now >= self.told.next_position;
         if due {
             self.told.next_position = now + self.told.positions.expect("checked");
         }
@@ -2933,7 +2986,11 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn wake_for_music(&self, now: i64) -> Option<i64> {
         let mut d: Option<i64> = None;
         let mut at = |ms: i64| d = Some(d.map_or(ms, |x| x.min(ms)));
-        for t in [self.pause_at, self.dip.as_ref().map(|d| d.at), self.idle_at, self.retry_at, self.told.title.as_ref().map(|t| t.1)].into_iter().flatten() {
+        let pause_heard = match self.playback {
+            Playback::Pausing { until } => Some(until),
+            _ => None,
+        };
+        for t in [pause_heard, self.dip.as_ref().map(|d| d.at), self.idle_at, self.retry_at, self.told.title.as_ref().map(|t| t.1)].into_iter().flatten() {
             at(t - now);
         }
         if self.chain_wanted.is_some() {
@@ -2943,10 +3000,10 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         if self.h.entering.is_some() {
             at(1_000);
         }
-        if let Some(m) = self.h.takeover.as_ref().filter(|_| self.dip.is_none() && self.pause_at.is_none()) {
+        if let Some(m) = self.h.takeover.as_ref().filter(|_| self.dip.is_none() && !self.pausing()) {
             at(if m.ready { m.dip_at - now } else { 1_000 });
         }
-        let positions = self.told.positions.is_some() && self.state == State::Playing;
+        let positions = self.told.positions.is_some() && self.state() == State::Playing;
         if let Some(off) = self.chip() {
             if off.unlooked() {
                 return Some(0);

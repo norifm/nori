@@ -1290,6 +1290,26 @@ fn song_chosen_during_pause_fade_plays() {
     assert!(heard.len() > at + RATE as usize * 2, "and it plays");
 }
 
+/// A song played during a pause fade plays, fading in, and the pause it cut short stops nothing.
+#[test]
+fn song_played_during_pause_fade_plays() {
+    let a = vec![8000i16; RATE as usize * 2 * 20];
+    let b = vec![-8000i16; RATE as usize * 2 * 20];
+    let rig = Rig::new(&[("a", &a), ("b", &b)], prefs_off(), Settings { fade_ms: 400, ..Settings::default() });
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2 * 3));
+    rig.engine.pause();
+    rig.run(100);
+    rig.engine.play_at(1, 0);
+    let at = rig.heard.lock().len();
+    rig.run(3_000);
+    let heard = rig.heard.lock().clone();
+    assert_eq!(rig.engine.status().state, State::Playing, "{:?}", rig.events.lock());
+    assert!(!rig.events.lock().iter().any(|e| matches!(e, Event::Stopped { .. })), "{:?}", rig.events.lock());
+    assert_eq!(*heard.last().unwrap(), -8000, "b is heard at its level");
+    assert!(heard.len() > at + RATE as usize * 2 * 2, "and it plays on");
+}
+
 /// A seek into bytes not yet fetched says it waits, holds the place it was sent to while nothing is
 /// heard, and plays on from there once they come.
 #[test]
