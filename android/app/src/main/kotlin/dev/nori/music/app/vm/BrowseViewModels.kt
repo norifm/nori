@@ -30,8 +30,6 @@ import dev.nori.music.ffi.library.PlaylistDetail
 import dev.nori.music.ffi.model.RadioStation
 import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.library.Starred
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
@@ -226,66 +224,67 @@ class HomeRowViewModel(app: Application) : NoriViewModel(app) {
     private var row: HomeRow? = null
     private var albums = Grown.empty<Album>()
     private var songs = Grown.empty<Song>()
-    private var loading = false
-    private var exhausted = false
+    private val pages = Pager(viewModelScope)
 
     fun open(key: String) {
-        if (key == this.key) return
+        // The same row again: a first page that failed is asked for again.
+        if (key == this.key) return loadMore()
         this.key = key
-        val feed = key.split('-').takeIf { it.size == 3 && it[0] == "feed" }
-        if (feed != null) readFeed(feed[1].toInt(), feed[2]) else { row = HomeRow.valueOf(key); loadMore() }
+        // Another row: nothing of the last one stays.
+        pages.reset()
+        albums = Grown.empty()
+        songs = Grown.empty()
+        _entries.value = null
+        _title.value = null
+        row = if (key.startsWith("feed-")) null else HomeRow.valueOf(key)
+        loadMore()
     }
 
-    private fun readFeed(place: Int, kind: String) {
-        viewModelScope.launch {
-            val shelf = runCatching { nori.library.homeFeed().first().getOrNull(place) }.getOrNull() ?: return@launch
-            _title.value = shelf.title
-            _entries.value = when (kind) {
-                "songs" -> RowEntries.Songs(shelf.songs, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, shelf.title))
-                "albums" -> RowEntries.Albums(shelf.albums)
-                else -> RowEntries.Playlists(shelf.playlists)
-            }
+    /** A feed shelf, whole, from where it is on the feed ([key] `feed-<place>-<kind>`). */
+    private suspend fun readFeed(key: String) {
+        val (place, kind) = key.split('-').let { it[1].toInt() to it[2] }
+        val shelf = nori.library.homeFeed().first().getOrNull(place) ?: return
+        _title.value = shelf.title
+        _entries.value = when (kind) {
+            "songs" -> RowEntries.Songs(shelf.songs, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, shelf.title))
+            "albums" -> RowEntries.Albums(shelf.albums)
+            else -> RowEntries.Playlists(shelf.playlists)
         }
     }
 
     fun loadMore() {
-        val row = row ?: return
-        if (loading || exhausted) return
-        loading = true
-        val offset = when (val e = _entries.value) {
-            is RowEntries.Albums -> e.albums.size
-            is RowEntries.Songs -> e.songs.size
-            is RowEntries.Playlists -> e.playlists.size
-            null -> 0
-        }
-        viewModelScope.launch {
-            try {
-                val shelf = dev.nori.music.ffi.library.homeRowPage(row, offset.toUInt())
-                if (shelf == null) { exhausted = true; return@launch }
-                when (shelf) {
-                    is HomeShelf.Albums -> {
-                        val got = runCatching { nori.library.shelfAlbums(shelf, offset).first() }.getOrDefault(emptyList())
-                        albums = albums.from(offset, got)
-                        _entries.value = RowEntries.Albums(albums)
-                        exhausted = !dev.nori.music.ffi.library.homeRowMore(shelf, got.size.toUInt())
-                    }
-                    is HomeShelf.Songs -> {
-                        val got = runCatching { nori.library.browseSongs(shelf.sort, shelf.descending, false, null, offset, shelf.limit.toInt()) }.getOrDefault(emptyList())
-                        songs = songs.from(offset, got)
-                        _entries.value = RowEntries.Songs(songs, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, row.name))
-                        exhausted = !dev.nori.music.ffi.library.homeRowMore(shelf, got.size.toUInt())
-                    }
-                    is HomeShelf.Playlists -> {
-                        val all = runCatching { nori.library.playlists().first() }.getOrDefault(emptyList())
-                        _entries.value = RowEntries.Playlists(all.take(shelf.take.toInt()))
-                    }
-                    HomeShelf.Pinned -> {
-                        val all = runCatching { nori.library.playlists().first() }.getOrDefault(emptyList())
-                        _entries.value = RowEntries.Playlists(homePinned(all, nori.settings.value.pinnedPlaylists))
-                    }
+        val key = key ?: return
+        val row = row ?: return pages.next { readFeed(key); false }
+        pages.next {
+            val offset = when (val e = _entries.value) {
+                is RowEntries.Albums -> e.albums.size
+                is RowEntries.Songs -> e.songs.size
+                is RowEntries.Playlists -> e.playlists.size
+                null -> 0
+            }
+            when (val shelf = dev.nori.music.ffi.library.homeRowPage(row, offset.toUInt())) {
+                null -> false
+                is HomeShelf.Albums -> {
+                    val got = nori.library.shelfAlbums(shelf, offset).first()
+                    albums = albums.from(offset, got)
+                    _entries.value = RowEntries.Albums(albums)
+                    dev.nori.music.ffi.library.homeRowMore(shelf, got.size.toUInt())
                 }
-            } finally {
-                loading = false
+                is HomeShelf.Songs -> {
+                    val got = nori.library.browseSongs(shelf.sort, shelf.descending, false, null, offset, shelf.limit.toInt())
+                    songs = songs.from(offset, got)
+                    _entries.value = RowEntries.Songs(songs, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, row.name))
+                    dev.nori.music.ffi.library.homeRowMore(shelf, got.size.toUInt())
+                }
+                // Read whole, once.
+                is HomeShelf.Playlists -> {
+                    _entries.value = RowEntries.Playlists(nori.library.playlists().first().take(shelf.take.toInt()))
+                    false
+                }
+                HomeShelf.Pinned -> {
+                    _entries.value = RowEntries.Playlists(homePinned(nori.library.playlists().first(), nori.settings.value.pinnedPlaylists))
+                    false
+                }
             }
         }
     }
@@ -315,8 +314,7 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
     val rows: StateFlow<List<List<Album>>> = _rows
     // Where each of [rows] starts in [albums].
     private var rowStarts: List<Int> = emptyList()
-    private var job: Job? = null
-    private var exhausted = false
+    private val pages = Pager(viewModelScope)
 
     init { loadMore() }
 
@@ -337,43 +335,40 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
     fun setFavorites(on: Boolean) { _favorites.value = on; reset() }
 
     private fun reset() {
-        job?.cancel()
+        pages.reset()
         _albums.value = Grown.empty()
         _none.value = false
         _rows.value = emptyList()
         rowStarts = emptyList()
-        exhausted = false
         loadMore()
     }
 
     fun loadMore() {
-        if (exhausted || job?.isActive == true) return
         val sort = _sort.value
         val reversed = _reversed.value
-        if (_favorites.value) return loadFavorites(sort, reversed)
-        val offset = _albums.value.size
-        job = viewModelScope.launch {
-            val pages = if (reversed) flow { emit(nori.library.albumsIndexed(sort, true, offset, pageSize)) } else nori.library.albums(sort, pageSize, offset)
-            pages.catch { }.collect { page ->
+        if (_favorites.value) return pages.next { loadFavorites(sort, reversed); false }
+        pages.next {
+            val offset = _albums.value.size
+            val read = if (reversed) flow { emit(nori.library.albumsIndexed(sort, true, offset, pageSize)) } else nori.library.albums(sort, pageSize, offset)
+            var more = true
+            read.collect { page ->
                 val all = _albums.value.from(offset, page)
                 if (sort == AlbumSort.ARTIST_ROWS) regroup(all, offset)
                 _albums.value = all
-                exhausted = albumsExhausted(page.size.toUInt())
+                more = !albumsExhausted(page.size.toUInt())
                 _none.value = offset == 0 && page.isEmpty()
             }
+            more
         }
     }
 
     /** Every favorite at once, in [sort]'s order (the core's `favorites_in_order`): the stored answer, then the server's. */
-    private fun loadFavorites(sort: AlbumSort, reversed: Boolean) {
-        exhausted = true
-        job = viewModelScope.launch {
-            nori.library.starred().catch { }.collect { starred ->
-                val all = withContext(Dispatchers.Default) { favoritesInOrder(starred.albums, sort, reversed) }
-                if (sort == AlbumSort.ARTIST_ROWS) regroup(all, 0)
-                _albums.value = _albums.value.from(0, all)
-                _none.value = all.isEmpty()
-            }
+    private suspend fun loadFavorites(sort: AlbumSort, reversed: Boolean) {
+        nori.library.starred().collect { starred ->
+            val all = withContext(Dispatchers.Default) { favoritesInOrder(starred.albums, sort, reversed) }
+            if (sort == AlbumSort.ARTIST_ROWS) regroup(all, 0)
+            _albums.value = _albums.value.from(0, all)
+            _none.value = all.isEmpty()
         }
     }
 
@@ -493,8 +488,7 @@ class SongsViewModel(app: Application) : NoriViewModel(app) {
     private val _songs = MutableStateFlow(Grown.empty<Song>())
     val songs: StateFlow<List<Song>> = _songs
     private var years: IntRange? = null
-    private var job: Job? = null
-    private var exhausted = false
+    private val pages = Pager(viewModelScope)
 
     init { loadMore() }
 
@@ -510,24 +504,17 @@ class SongsViewModel(app: Application) : NoriViewModel(app) {
         reset()
     }
     fun setStarredOnly(on: Boolean) { _starred.value = on; reset() }
-    private fun reset() { job?.cancel(); _songs.value = Grown.empty(); exhausted = false; loadMore() }
+    private fun reset() { pages.reset(); _songs.value = Grown.empty(); loadMore() }
 
     fun loadMore() {
-        if (exhausted || job?.isActive == true) return
         val s = _sort.value
         val turned = _reversed.value
         val st = _starred.value
         val y = years
-        val offset = _songs.value.size
-        job = viewModelScope.launch {
-            // A page that could not be read ends the list, as an empty one would.
-            val next = runCatching {
-                nori.library.songsListed(s.name, turned, st, (y?.first ?: 0).toUInt(), (y?.last ?: 0).toUInt(), offset.toUInt())
-            }.getOrNull()
-            // runCatching also caught a cancellation: a reset while the page was being read drops it.
-            ensureActive()
-            _songs.value = _songs.value.plus(next?.songs.orEmpty())
-            exhausted = next?.exhausted ?: true
+        pages.next {
+            val next = nori.library.songsListed(s.name, turned, st, (y?.first ?: 0).toUInt(), (y?.last ?: 0).toUInt(), _songs.value.size.toUInt())
+            _songs.value = _songs.value.plus(next.songs)
+            !next.exhausted
         }
     }
 }
