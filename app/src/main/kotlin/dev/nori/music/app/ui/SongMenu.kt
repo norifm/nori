@@ -105,7 +105,7 @@ fun SongMenu(
             val at = { place: dev.nori.music.ffi.library.SongMenuPlace -> items.indices.filter { items[it].place == place } }
             @Composable fun titleGlyph(n: Int) = when (val a = items[n].action) {
                 is dev.nori.music.ffi.library.SongAction.Favourite -> GlyphButton(if (a.on) Kanji.Seal else Kanji.Sealed, labels[n], lit = !a.on) { actions.star(song, a.on) }
-                else -> GlyphButton(Iconoir.InfoCircle, labels[n], quiet = true) { details = true }
+                else -> GlyphButton(Iconoir.InfoCircle, labels[n]) { details = true }
             }
             @Composable fun glyph(n: Int) = when (val a = items[n].action) {
                 dev.nori.music.ffi.library.SongAction.Lyrics -> GlyphButton(Iconoir.QuoteMessage, labels[n], Modifier.alpha(if (items[n].enabled) 1f else 0.38f), enabled = items[n].enabled, quiet = true) { timing = true }
