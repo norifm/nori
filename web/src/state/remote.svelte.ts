@@ -68,16 +68,16 @@ class Remote {
   private switched() {
     go("home");
     library.changed();
-    void player.refresh();
-    void this.read();
+    void player.refresh().catch(rpc.unlessElsewhere);
+    void this.read().catch(rpc.unlessElsewhere);
   }
 
   follow() {
-    rpc.onPlayerUp(() => void this.read());
+    rpc.onPlayerUp(() => void this.read().catch(rpc.unlessElsewhere));
     rpc.onSaid((s) => {
-      if (s.kind === "remote") void this.read();
+      if (s.kind === "remote") void this.read().catch(rpc.unlessElsewhere);
       // A jam this guest was in ended: its profile goes, the one before opens again.
-      else if (s.kind === "jamEnded") void this.leave();
+      else if (s.kind === "jamEnded") void this.leave().catch(rpc.unlessElsewhere);
     });
   }
 }

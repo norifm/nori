@@ -3,7 +3,7 @@
 // worker); this reads it and asks.
 
 import * as rpc from "../rpc";
-import { ask, facts } from "../rpc";
+import { ask, facts, unlessElsewhere } from "../rpc";
 import workletUrl from "../worklet.ts?worker&url";
 import { ui } from "./ui.svelte";
 import { W } from "../words";
@@ -189,7 +189,7 @@ class Player {
   /** Asks for the lyrics of the song playing, unless they are shown. */
   wantLyrics() {
     const id = this.song?.id;
-    if (id && this.shown?.song !== id && rpc.player) void ask("lyrics", id);
+    if (id && this.shown?.song !== id && rpc.player) void ask("lyrics", id).catch(unlessElsewhere);
   }
 
   /** The lyrics' state now, lit; ms until it changes (0: not until the position jumps). */
@@ -217,7 +217,7 @@ class Player {
   listen() {
     rpc.onPlayerUp(() => {
       this.up = true;
-      void this.refresh();
+      void this.refresh().catch(unlessElsewhere);
     });
     rpc.onRestart(() => {
       // The player worker crashed and started again over the saved queue: it plays on if it played.
@@ -231,7 +231,7 @@ class Player {
       })();
     });
     rpc.onSaid((s) => {
-      if (s.kind === "engine" || s.kind === "remote" || s.kind === "starred") void this.refresh();
+      if (s.kind === "engine" || s.kind === "remote" || s.kind === "starred") void this.refresh().catch(unlessElsewhere);
       else if (s.kind === "lyrics") {
         const shown = s as unknown as Shown;
         if (shown.song !== this.shown?.song) this.line = -1;
