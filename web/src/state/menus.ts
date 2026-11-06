@@ -56,8 +56,14 @@ export async function newPlaylist(songIds: string[] = []) {
   if (name) await library.change({ kind: "createPlaylist", name, songIds });
 }
 
-/** What a song menu's action is, or null for one a browser has nothing for (downloads, the sleep
- * timer, sharing, details). */
+/** The sleep timer's choices; the timer itself is the core's. */
+async function sleepMenu() {
+  const choices = JSON.parse(await ask<string>("sleep_choices")) as { minutes: number; end: boolean; songs: number }[];
+  ui.menu({ title: W.sleepTimer }, choices.map((c) => ({ label: W.sleepChoice(c.minutes, c.end, c.songs), run: () => ask("sleep_pick", c.minutes, c.end, c.songs) })));
+}
+
+/** What a song menu's action is, or null for one a browser has nothing for (downloads, sharing,
+ * details). */
 function item(a: MenuAction, s: Song): Item | null {
   switch (a.action) {
     case "Favourite":
@@ -76,6 +82,8 @@ function item(a: MenuAction, s: Song): Item | null {
       return { label: W.lyrics, icon: "quote-message", run: () => (ui.lyricsInfo = true) };
     case "Radio":
       return { label: W.radio, icon: "antenna-signal", run: () => player.radio(s) };
+    case "SleepTimer":
+      return { label: W.sleepTimer, run: sleepMenu };
     default:
       return null;
   }

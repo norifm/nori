@@ -67,8 +67,9 @@ impl Session {
 
     fn songs_at(&self, ids: Vec<String>, now: i64) -> Vec<Song> {
         // The queue's ids are looked at in place (the playlist's lock, then the store's, as elsewhere).
+        let undo = self.undoable_at(now).map(|u| u.id);
         self.playlist(|p| {
-            let kept: std::collections::HashSet<&str> = ids.iter().chain(p.ids()).map(String::as_str).chain(p.undoable()).collect();
+            let kept: std::collections::HashSet<&str> = ids.iter().chain(p.ids()).chain(&undo).map(String::as_str).collect();
             self.store(|s| {
                 s.songs.retain(|id, (_, at)| kept.contains(id.as_str()) || now - *at < KEEP_MS);
                 ids.iter().map(|id| s.songs.get(id).map_or_else(|| Song::only_id(id.clone()), |(song, _)| song.clone())).collect()
@@ -190,14 +191,17 @@ mod tests {
         let song = |id: &str| Song { duration: 200, ..Song::only_id(id.to_string()) };
         s.register(vec![song("keep1"), song("keep2"), song("keep3"), song("taken"), song("gone")]);
         s.take(3, vec!["taken".into()], vec![crate::playlist::Hand::No]);
-        s.remove(3, 4);
-        // Asking for one song keeps the rest of the queue.
+        // Long after they were registered, the song just taken out is kept while its undo is offered.
         let later = db::now_ms() + 2 * KEEP_MS;
+        s.remove_at(3, 4, later - 1_000);
+        // Asking for one song keeps the rest of the queue.
         assert_eq!(s.songs_at(vec!["keep1".into()], later)[0].duration, 200);
         for id in ["keep2", "keep3", "taken"] {
             assert_eq!(s.song(id).map(|s| s.duration), Some(200), "{id}");
         }
         assert!(s.song("gone").is_none());
+        s.songs_at(vec!["keep1".into()], later + crate::undo::UNDO_MS);
+        assert!(s.song("taken").is_none(), "once its undo is over");
     }
 
 }

@@ -36,8 +36,7 @@ pub(crate) struct Controls {
     errors: ErrorRun,
     /// The last playback error, until music plays again.
     last_error: Option<PlaybackError>,
-    /// Song changes left before the "after N songs" sleep timer pauses.
-    sleep_left: u32,
+    pub(crate) sleep: crate::sleep::Sleep,
 }
 
 impl Controls {
@@ -94,13 +93,6 @@ impl Session {
         self.controls.lock().played();
     }
 
-    /// The song changed: whether the sleep timer now pauses at its end.
-    pub fn sleep_song_changed(&self) -> bool {
-        let mut c = self.controls.lock();
-        let (left, pause) = t::sleep_song_changed(c.sleep_left);
-        c.sleep_left = left;
-        pause
-    }
 
 }
 
@@ -124,14 +116,6 @@ impl Session {
     #[cfg_attr(feature = "ffi", uniffi::method(name = "queue_playing"))]
     pub fn playing(&self) {
         self.controls.lock().played();
-    }
-
-    /// Sets the sleep timer to `songs` songs or the end of this one (0/false cancel). Returns whether to
-    /// pause at the end of the current song.
-    pub fn sleep_set(&self, songs: u32, end_of_track: bool) -> bool {
-        let (pause, left) = t::sleep_after(songs, end_of_track);
-        self.controls.lock().sleep_left = left;
-        pause
     }
 
     /// Everything a new song asks of the platform. Stateful steps (refill fetch, sleep countdown) are
@@ -196,27 +180,6 @@ pub fn skip_plays(play_when_ready: bool) -> bool {
     !play_when_ready
 }
 
-/// The sleep timer for `minutes` as [delay ms, slack ms].
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn sleep_delay(minutes: u32) -> Vec<i64> {
-    let (d, s) = t::sleep_delay_ms(minutes);
-    vec![d, s]
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
-pub struct SleepShown {
-    /// Monotonic time it pauses at (the clock of `now_ms`); 0 for none.
-    pub at_ms: i64,
-    pub at_end_of_track: bool,
-}
-
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn sleep_shown(minutes: u32, end_of_track: bool, songs: u32, now_ms: i64) -> SleepShown {
-    let (at_ms, at_end_of_track) = t::sleep_shown(minutes, end_of_track, songs, now_ms);
-    SleepShown { at_ms, at_end_of_track }
-}
-
 /// Delays for the playback service's chores, shared by every platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -225,8 +188,6 @@ pub struct PlaybackTimings {
     pub measure_after_edit_ms: i64,
     pub measure_after_settings_ms: i64,
     pub save_after_ms: i64,
-    /// Paused this long, the output is released.
-    pub idle_release_ms: i64,
     pub fade_tick_ms: i64,
 }
 
@@ -237,7 +198,6 @@ pub fn playback_timings() -> PlaybackTimings {
         measure_after_edit_ms: t::MEASURE_AFTER_EDIT_MS,
         measure_after_settings_ms: t::MEASURE_AFTER_SETTINGS_MS,
         save_after_ms: t::SAVE_AFTER_MS,
-        idle_release_ms: t::IDLE_RELEASE_MS,
         fade_tick_ms: t::FADE_TICK_MS,
     }
 }
@@ -314,13 +274,6 @@ pub struct SongSteps {
     pub precache_after_ms: i64,
     /// The sleep timer's last song: pause at its end.
     pub pause_at_end: bool,
-}
-
-/// Whether a sound page (the equalizer, AutoEQ, the sound settings) switches to the shallow buffer
-/// (`set_shallow`): the page in sight and a setting changed on it.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn sound_tuning(in_sight: bool, touched: bool) -> bool {
-    in_sight && touched
 }
 
 /// The volume step for slider `fraction` on an output with steps 0..=`max`, rounded half to even like
@@ -404,15 +357,13 @@ mod tests {
         assert!(!s.bridge_failed());
         s.playing();
 
-        // Sleep timer counts song changes.
+        // The sleep timer counts songs as they arrive.
         let s = session(&["sa1", "sa2"], 0);
-        assert!(!s.sleep_set(3, false));
+        s.sleep_pick(nori_library::menus::SleepChoice { minutes: 0, end_of_track: false, songs: 3 }, 0);
         let steps = s.song_arrived();
         assert_eq!((steps.save_after_ms, steps.bridge, steps.pause_at_end), (t::SAVE_AFTER_MS, BridgeStep::Off, false));
         assert!(s.song_arrived().pause_at_end, "the third song is the last");
         assert!(!s.song_arrived().pause_at_end);
-        assert!(s.sleep_set(0, true));
-        assert!(!s.sleep_song_changed(), "end of track counts nothing");
     }
 
 }

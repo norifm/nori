@@ -324,15 +324,37 @@ enum Eos {
     Due,
 }
 
+/// The open track.
+#[derive(Debug, Clone, Copy)]
+struct Track {
+    coded: Coded,
+    /// It joins songs gaplessly.
+    gapless: bool,
+    /// Its size, bytes.
+    bytes: usize,
+    /// Told to play since opened or paused, with songs on it: Android takes an end of stream only then.
+    started: bool,
+}
+
+/// What is written to the track next.
+#[derive(Default)]
+enum Writer {
+    /// No song: the path holds none.
+    #[default]
+    Empty,
+    /// The first song from `from_ms`, opening; placed or handed to the CPU once ready.
+    Starting { index: usize, from_ms: i64, opened: Result<Demuxed, String> },
+    Writing(Writing),
+    /// The song after the last written, opened once that one was read to its end.
+    Next(usize, Result<Demuxed, String>),
+    /// Nothing more: this follows once what was written played.
+    Closed(Tail),
+}
+
 #[derive(Default)]
 struct Run {
     placed: VecDeque<Placed>,
-    writing: Option<Writing>,
-    /// The first song, opening; placed or handed to the CPU once ready.
-    starting: Option<(usize, i64, Result<Demuxed, String>)>,
-    /// The song after the last written, opened once that one was read to its end.
-    next: Option<(usize, Result<Demuxed, String>)>,
-    tail: Option<Tail>,
+    writer: Writer,
     /// Bytes of the stage written, and the stage's frames not yet written.
     staged: usize,
     stage_frames: u64,
@@ -381,8 +403,7 @@ struct Run {
 /// The engine's offload path: the track, the songs written to it, and the one being written.
 pub(crate) struct Offload {
     out: Box<dyn OffloadOutput>,
-    /// The track's format, whether it joins gaplessly, and its size in bytes.
-    open: Option<(Coded, bool, usize)>,
+    open: Option<Track>,
     supported: Vec<(Coded, Support)>,
     t: Run,
     /// Bytes gathered for one write (allocated once).
@@ -396,8 +417,6 @@ pub(crate) struct Offload {
     /// Bytes asked for at open, until the grant is noted.
     granted: Option<usize>,
     playing: bool,
-    /// Told to play since opened or paused: Android takes an end of stream only then.
-    started: bool,
     /// The song playback stops after (the sleep timer).
     pub stop_after: Option<usize>,
     gain: f32,
@@ -432,7 +451,6 @@ impl Offload {
             ask_gap_ms: 0,
             granted: None,
             playing: false,
-            started: false,
             stop_after: None,
             gain: 1.0,
             level: 1.0,
@@ -450,7 +468,7 @@ impl Offload {
 
     /// The offload path holds the current song (playing or paused).
     pub(crate) fn active(&self) -> bool {
-        self.t.starting.is_some() || !self.t.placed.is_empty()
+        !matches!(self.t.writer, Writer::Empty)
     }
 
     pub(crate) fn playing(&self) -> bool {
@@ -459,12 +477,25 @@ impl Offload {
 
     /// A track is playing, so this path's watchdog judges stalls ([`Offload::stuck`]).
     pub(crate) fn watching(&self) -> bool {
-        self.playing && self.started && self.open.is_some() && !self.t.placed.is_empty()
+        self.started()
+    }
+
+    /// The open track was told to play (and plays, with songs on it).
+    fn started(&self) -> bool {
+        self.open.is_some_and(|t| t.started)
+    }
+
+    /// Tells the open track to play.
+    fn start_track(&mut self) {
+        if let Some(t) = self.open.as_mut() {
+            t.started = true;
+            self.out.play();
+        }
     }
 
     /// The open track's format.
     pub(crate) fn track(&self) -> Option<Coded> {
-        self.open.map(|o| o.0)
+        self.open.map(|t| t.coded)
     }
 
     /// Whether the output decodes `coded`, asked once per format per output device.
@@ -524,7 +555,7 @@ impl Offload {
         let i = if queue.skips(i) { self.next_of(i, queue).unwrap_or(i) } else { i };
         let id = queue.read(|q| q.ids()[i].clone());
         let opened = tracks.open_packets(&id, from_ms, false);
-        self.t.starting = Some((i, from_ms, opened));
+        self.t.writer = Writer::Starting { index: i, from_ms, opened };
         i
     }
 
@@ -534,10 +565,9 @@ impl Offload {
             // After an end of stream Android's track is stopping until it presents it; flushed then, it
             // refuses non-blocking writes. Like media3, open a new track instead.
             self.out.close();
-            self.started = false;
-        } else if self.open.is_some() {
+        } else if let Some(t) = self.open.as_mut() {
             self.out.pause();
-            self.started = false;
+            t.started = false;
             self.out.flush();
         }
         self.t = Run::default();
@@ -548,7 +578,7 @@ impl Offload {
     /// notes it and releases the track. Returns the place (queue index, ms).
     pub(crate) fn leave(&mut self, now_ms: i64) -> Option<(usize, i64)> {
         self.now_ms = now_ms;
-        if self.playing && self.started && !self.t.placed.is_empty() {
+        if self.started() {
             self.read_head();
         }
         self.note_left();
@@ -571,11 +601,13 @@ impl Offload {
 
     /// Releases the track; returns the place (queue index, ms).
     pub(crate) fn release(&mut self) -> Option<(usize, i64)> {
-        let at = self.heard().map(|(i, ms, _)| (i, ms)).or(self.t.starting.as_ref().map(|s| (s.0, s.1)));
+        let at = self.heard().map(|(i, ms, _)| (i, ms)).or(match self.t.writer {
+            Writer::Starting { index, from_ms, .. } => Some((index, from_ms)),
+            _ => None,
+        });
         self.empty();
         if self.open.take().is_some() {
             self.out.close();
-            self.started = false;
         }
         self.playing = false;
         self.stop_after = None;
@@ -592,8 +624,7 @@ impl Offload {
         self.t.play_clock = None;
         if self.open.is_some() && !self.t.placed.is_empty() {
             self.t.resumed = true;
-            self.out.play();
-            self.started = true;
+            self.start_track();
             if self.t.eos == Eos::Due {
                 self.end_stream();
             }
@@ -609,9 +640,9 @@ impl Offload {
             self.gain = f.to;
             self.volume();
         }
-        if self.open.is_some() {
+        if let Some(t) = self.open.as_mut() {
             self.out.pause();
-            self.started = false;
+            t.started = false;
         }
     }
 
@@ -648,7 +679,7 @@ impl Offload {
     }
 
     fn rate(&self) -> u32 {
-        self.open.map_or(48_000, |o| o.0.rate).max(1)
+        self.open.map_or(48_000, |t| t.coded.rate).max(1)
     }
 
     /// The furthest the count can be by the clock: the last sensible reading moved on by the time since.
@@ -742,7 +773,7 @@ impl Offload {
 
     /// Music the track can hold, µs, from its size and the bitrate so far.
     fn holds_us(&self) -> i64 {
-        let Some((_, _, bytes)) = self.open else { return TRACK_US };
+        let Some(Track { bytes, .. }) = self.open else { return TRACK_US };
         if self.t.written_bytes == 0 || self.t.written_frames == 0 {
             return (bytes as i128 * 8_000_000 / GUESS_BPS as i128) as i64;
         }
@@ -767,7 +798,7 @@ impl Offload {
     /// moving, returns why the CPU takes over and whether the place follows the clock (the platform kept
     /// asking, so it played) rather than the last count (a real stall).
     fn stuck(&mut self) -> Option<(String, bool)> {
-        if !self.playing || !self.started || self.t.placed.is_empty() || self.open.is_none() {
+        if !self.started() {
             return None;
         }
         let now = self.now_ms;
@@ -853,7 +884,10 @@ impl Offload {
 
     /// The song being played, without reading the count.
     pub(crate) fn current(&self) -> Option<usize> {
-        self.t.placed.front().map(|p| p.index).or(self.t.starting.as_ref().map(|s| s.0))
+        self.t.placed.front().map(|p| p.index).or(match self.t.writer {
+            Writer::Starting { index, .. } => Some(index),
+            _ => None,
+        })
     }
 
     /// Written music not yet played, µs.
@@ -863,8 +897,8 @@ impl Offload {
 
     /// Everything written was played and nothing more comes: what follows.
     pub(crate) fn done(&mut self) -> Option<Tail> {
-        let tail = self.t.tail?;
-        if self.t.writing.is_some() || self.t.staged < self.stage.len() {
+        let Writer::Closed(tail) = self.t.writer else { return None };
+        if self.t.staged < self.stage.len() {
             return None;
         }
         let end = self.t.written_frames;
@@ -928,7 +962,7 @@ impl Offload {
         }
         // Asked for more: top up whatever the count says.
         let asked = self.open.is_some() && self.out.data_requested();
-        if self.t.play_clock.is_none() && self.playing && self.started {
+        if self.t.play_clock.is_none() && self.started() {
             self.t.play_clock = Some((now_ms, self.t.heard_at));
         }
         self.read_head();
@@ -968,7 +1002,7 @@ impl Offload {
         self.called_back = true;
         self.t.asks = self.t.asks.saturating_add(1);
         self.t.asked_ms = Some(now_ms);
-        if self.playing && self.started {
+        if self.started() {
             if let Some(last) = self.t.last_ask_ms.replace(now_ms) {
                 self.ask_gap_ms = self.ask_gap_ms.max(now_ms - last);
             }
@@ -977,7 +1011,7 @@ impl Offload {
 
     /// Something is left to write.
     fn more(&self) -> bool {
-        self.t.writing.is_some() || self.t.next.is_some() || self.t.staged < self.stage.len()
+        matches!(self.t.writer, Writer::Writing(_) | Writer::Next(..)) || self.t.staged < self.stage.len()
     }
 
     /// Whether to write without an ask: a full track only if the platform never asks (at
@@ -1002,7 +1036,7 @@ impl Offload {
     /// Whether nothing is due before the platform's next ask: playing and fed, nothing opening, fading
     /// or pending, and no boundary within [`Offload::awake_before_ms`].
     pub(crate) fn lets_cpu_sleep(&self) -> bool {
-        if !self.playing || !self.started || self.t.placed.is_empty() || self.open.is_none() || self.t.starting.is_some() || self.t.waiting || self.fade.is_some() {
+        if !self.started() || self.t.waiting || self.fade.is_some() {
             return false;
         }
         if self.t.strikes > 0 || self.t.eos == Eos::Due || self.t.head.lower.is_some() || self.t.stamp.lower.is_some() {
@@ -1018,7 +1052,7 @@ impl Offload {
         if self.t.placed.get(1).is_some_and(|p| ms(p.start.saturating_sub(self.t.heard_at)) <= near) {
             return false;
         }
-        if self.t.tail.is_some() && !self.more() && ms(self.t.written_frames.saturating_sub(self.t.heard_at)) <= near {
+        if matches!(self.t.writer, Writer::Closed(_)) && !self.more() && ms(self.t.written_frames.saturating_sub(self.t.heard_at)) <= near {
             return false;
         }
         true
@@ -1044,17 +1078,13 @@ impl Offload {
 
     /// Places the starting song once open on a track for its format, or hands it to the CPU.
     fn begin<L: Library, Q: Queue>(&mut self, tracks: &mut Sources<L>, queue: &Known<Q>, gain: &mut dyn FnMut(&Playlist, usize) -> f32) -> Option<Step> {
-        let (i, ms) = self.t.starting.as_ref().map(|s| (s.0, s.1))?;
-        let ready = match &mut self.t.starting.as_mut().expect("checked").2 {
-            Ok(r) => r.ready(),
-            Err(_) => true,
-        };
-        if !ready {
+        let Writer::Starting { opened, .. } = &mut self.t.writer else { return None };
+        if opened.as_mut().is_ok_and(|r| !r.ready()) {
             self.t.waiting = true;
             return Some(Step::Fine);
         }
         self.t.waiting = false;
-        let (_, _, opened) = self.t.starting.take().expect("checked");
+        let Writer::Starting { index: i, from_ms: ms, opened } = std::mem::take(&mut self.t.writer) else { unreachable!("checked") };
         let to_pcm = Some(Step::ToPcm { index: i, ms, refused: false });
         let Ok(r) = opened else {
             self.on_cpu = Some(OnCpu::Unread);
@@ -1068,17 +1098,16 @@ impl Offload {
         }
         let Some(song) = r.coded().cloned() else { return to_pcm };
         let coded = song.coded;
-        if self.open.is_none_or(|o| o.0 != coded) {
+        if self.open.is_none_or(|t| t.coded != coded) {
             if self.open.take().is_some() {
                 self.out.close();
-                self.started = false;
             }
             let bps = if song.bitrate > 0 { song.bitrate } else { GUESS_BPS };
             let bytes = ((bps as i128 * TRACK_US as i128 / 8_000_000) as usize).clamp(MIN_BYTES, MAX_BYTES);
             match self.out.open(coded, bytes) {
                 Ok(held) => {
                     let gapless = self.support(coded) == Support::Gapless;
-                    self.open = Some((coded, gapless, held.max(1)));
+                    self.open = Some(Track { coded, gapless, bytes: held.max(1), started: false });
                     self.granted = Some(bytes);
                 }
                 Err(_) => {
@@ -1087,7 +1116,7 @@ impl Offload {
                 }
             }
         }
-        let gapless = self.open.is_some_and(|o| o.1);
+        let gapless = self.open.is_some_and(|t| t.gapless);
         self.gapped = (!gapless && (song.delay != 0 || song.padding != 0)).then(|| {
             let said = self.out.said(coded).map(|s| format!(" ({s})")).unwrap_or_default();
             format!("its encoder delay of {} and padding of {} heard as a moment of near silence at its ends: no song of its album joins it, and the output does not do gapless offload{said}", song.delay, song.padding)
@@ -1101,13 +1130,13 @@ impl Offload {
         self.seq += 1;
         self.t.placed.push_back(Placed { index: i, id, start: 0, from_ms, level, seq: self.seq });
         let ogg = (coded.coding == Coding::Opus).then(|| Ogg::new(song.setup.as_deref()));
-        self.t.writing = Some(Writing { r, frames: 0, ogg });
+        self.t.writer = Writer::Writing(Writing { r, frames: 0, ogg });
         self.volume();
         if self.fill(false, tracks, queue, gain).is_err() {
             return Some(self.fallback());
         }
         if let Some(asked) = self.granted.take() {
-            let held = self.open.map_or(0, |o| o.2);
+            let held = self.open.map_or(0, |t| t.bytes);
             let (holds, low) = (self.holds_us() / 1000, self.low_us() / 1000);
             self.note(format!(
                 "the platform granted a track of {} KB of the {} KB asked: {holds} ms of this song, topped up when the platform asks for more (about every {low} ms if its chip buffers nothing of its own)",
@@ -1116,8 +1145,7 @@ impl Offload {
             ));
         }
         if self.playing {
-            self.out.play();
-            self.started = true;
+            self.start_track();
             self.t.clock = Some((self.now_ms, self.t.heard_at));
             self.t.clock_lag_ms = 0;
             self.t.play_clock = self.t.clock;
@@ -1143,7 +1171,7 @@ impl Offload {
                 }
                 continue;
             }
-            if let Some(w) = self.t.writing.as_mut() {
+            if let Writer::Writing(w) = &mut self.t.writer {
                 if !w.r.ready() {
                     self.t.waiting = true;
                     return Ok(());
@@ -1176,24 +1204,17 @@ impl Offload {
                     let ms = w.frames as i64 * 1000 / self.rate() as i64;
                     self.note(format!("{id} was read to an early end at {ms} ms: {why}"));
                 }
-                self.t.writing = None;
                 let last = self.t.placed.back().map(|p| p.index).expect("a song is placed");
-                match self.next_of(last, queue) {
-                    None => self.close(Tail::End),
-                    Some(n) => {
-                        let id = queue.read(|q| q.ids()[n].clone());
-                        self.t.next = Some((n, tracks.open_packets(&id, 0, false)));
-                    }
-                }
+                self.write_next(last, tracks, queue);
                 continue;
             }
             // The next song is written below LOW_US (a queue edit before then costs nothing), or at an ask
             // while the count lags (a DSP may hold a song's end until more comes).
             let lagging = asked && self.in_track_us() > self.holds_us() * 3 / 2;
-            if self.t.next.is_none() || (self.in_track_us() >= LOW_US && !lagging) {
+            if self.in_track_us() >= LOW_US && !lagging {
                 return Ok(());
             }
-            let (n, opened) = self.t.next.as_mut().expect("checked");
+            let Writer::Next(n, opened) = &mut self.t.writer else { return Ok(()) };
             let n = *n;
             let song = match opened {
                 Ok(r) => {
@@ -1206,10 +1227,9 @@ impl Offload {
                 Err(_) => None,
             };
             let (id, level) = queue.read(|q| (q.ids()[n].clone(), gain(q, n)));
-            let joins = nori_player::gain::offload_allows(level) && self.open.is_some_and(|(c, gapless, _)| gapless && song.as_ref().is_some_and(|s| s.coded == c));
+            let joins = nori_player::gain::offload_allows(level) && self.open.is_some_and(|t| t.gapless && song.as_ref().is_some_and(|s| s.coded == t.coded));
             let Some(song) = song.filter(|_| joins) else {
                 // Another format or not offloadable: decided once the track plays out.
-                self.t.next = None;
                 self.close(Tail::Then(n));
                 return Ok(());
             };
@@ -1220,8 +1240,7 @@ impl Offload {
                     return Ok(());
                 }
             }
-            let (_, opened) = self.t.next.take().expect("checked");
-            let r = opened.expect("checked");
+            let Writer::Next(_, Ok(r)) = std::mem::take(&mut self.t.writer) else { unreachable!("checked") };
             self.out.delay_padding(song.delay, song.padding);
             self.level_in_band = self.out.song(&song, &id, level);
             let start = self.t.written_frames;
@@ -1229,14 +1248,25 @@ impl Offload {
             let from_ms = song.from_frame * 1000 / song.coded.rate.max(1) as i64;
             self.t.placed.push_back(Placed { index: n, id, start, from_ms, level, seq: self.seq });
             let ogg = (song.coded.coding == Coding::Opus).then(|| Ogg::new(song.setup.as_deref()));
-            self.t.writing = Some(Writing { r, frames: 0, ogg });
+            self.t.writer = Writer::Writing(Writing { r, frames: 0, ogg });
+        }
+    }
+
+    /// The song after `last` is opened to be written next, or nothing more is.
+    fn write_next<L: Library, Q: Queue>(&mut self, last: usize, tracks: &mut Sources<L>, queue: &Known<Q>) {
+        match self.next_of(last, queue) {
+            Some(n) => {
+                let id = queue.read(|q| q.ids()[n].clone());
+                self.t.writer = Writer::Next(n, tracks.open_packets(&id, 0, false));
+            }
+            None => self.close(Tail::End),
         }
     }
 
     /// Nothing more is written; `tail` follows once it played.
     fn close(&mut self, tail: Tail) {
         self.end_stream();
-        self.t.tail = Some(tail);
+        self.t.writer = Writer::Closed(tail);
     }
 
     /// Tells the platform the last packet ended its song, now if playing or once it plays (Android
@@ -1245,7 +1275,7 @@ impl Offload {
         if self.t.eos == Eos::Closed {
             return;
         }
-        if !self.playing || !self.started || self.open.is_none() {
+        if !self.started() {
             self.t.eos = Eos::Due;
             return;
         }
@@ -1282,12 +1312,12 @@ impl Offload {
 
     /// A song was started after this turn looked at the path.
     pub(crate) fn unlooked(&self) -> bool {
-        self.t.starting.is_some() && !self.t.waiting
+        matches!(self.t.writer, Writer::Starting { .. }) && !self.t.waiting
     }
 
     /// The starting song or the next packet waits for bytes.
     pub(crate) fn waiting_for_bytes(&self) -> bool {
-        self.t.starting.is_some() || self.t.waiting
+        matches!(self.t.writer, Writer::Starting { .. }) || self.t.waiting
     }
 
     /// How long until this path needs the thread, ms; None when nothing is due.
@@ -1297,7 +1327,7 @@ impl Offload {
         if self.fade.is_some() {
             at(nori_player::transport::FADE_TICK_MS);
         }
-        if self.t.starting.is_some() || self.t.waiting {
+        if matches!(self.t.writer, Writer::Starting { .. }) || self.t.waiting {
             // The loader wakes the thread; this is a fallback.
             at(1_000);
         }
@@ -1325,12 +1355,12 @@ impl Offload {
             } else {
                 at(((self.in_track_us() - LOW_US) / 1000).max(0) + 1);
             }
-        } else if self.t.tail.is_some() {
+        } else if matches!(self.t.writer, Writer::Closed(_)) {
             let end = ms(self.t.written_frames.saturating_sub(self.t.heard_at));
             at(if end > 0 { end + 5 } else { END_LOOK_MS });
         }
         // The watchdog.
-        if let Some(since) = self.t.moved_ms.filter(|_| self.started && self.in_track_us() > END_SLACK_US) {
+        if let Some(since) = self.t.moved_ms.filter(|_| self.started() && self.in_track_us() > END_SLACK_US) {
             at((self.watch_at(since) - self.now_ms).max(0) + 1);
         }
         d
@@ -1344,22 +1374,15 @@ impl Offload {
         if on && self.t.placed.len() > 1 {
             return true;
         }
-        if self.t.writing.is_some() {
+        // Still opening or being written: what follows it is chosen at its end.
+        if matches!(self.t.writer, Writer::Starting { .. } | Writer::Writing(_)) {
             return false;
         }
         if on {
-            self.t.next = None;
             self.close(Tail::End);
-        } else if self.t.tail == Some(Tail::End) {
+        } else if matches!(self.t.writer, Writer::Closed(Tail::End)) {
             // Cancelled before the end: write what follows after all.
-            self.t.tail = None;
-            match self.next_of(c, queue) {
-                Some(n) => {
-                    let id = queue.read(|q| q.ids()[n].clone());
-                    self.t.next = Some((n, tracks.open_packets(&id, 0, false)));
-                }
-                None => self.close(Tail::End),
-            }
+            self.write_next(c, tracks, queue);
         }
         false
     }
@@ -1369,7 +1392,10 @@ impl Offload {
     pub(crate) fn queue_changed<L: Library, Q: Queue>(&mut self, old: &[u64], new: &[u64], tracks: &mut Sources<L>, queue: &Known<Q>) -> bool {
         let moved = |i: usize| old.get(i).and_then(|s| new.iter().position(|n| n == s));
         self.stop_after = self.stop_after.and_then(moved);
-        for i in self.t.placed.iter_mut().map(|p| &mut p.index).chain(self.t.starting.as_mut().map(|s| &mut s.0)) {
+        for i in self.t.placed.iter_mut().map(|p| &mut p.index).chain(match &mut self.t.writer {
+            Writer::Starting { index, .. } => Some(index),
+            _ => None,
+        }) {
             match moved(*i) {
                 Some(k) => *i = k,
                 None => return true,
@@ -1380,34 +1406,24 @@ impl Offload {
                 return true;
             }
         }
-        if self.t.writing.is_some() {
+        // Still opening or being written: what follows it is chosen at its end.
+        if matches!(self.t.writer, Writer::Empty | Writer::Starting { .. } | Writer::Writing(_)) {
             return false;
         }
-        let Some(last) = self.t.placed.back().map(|p| p.index) else { return false };
+        let last = self.t.placed.back().map(|p| p.index).expect("a song is placed");
         let after = self.next_of(last, queue);
-        let was = self.t.next.as_ref().map(|(n, _)| *n).or(match self.t.tail {
-            Some(Tail::Then(n)) => Some(n),
+        let was = match &mut self.t.writer {
+            Writer::Next(n, _) | Writer::Closed(Tail::Then(n)) => Some(n),
             _ => None,
-        });
+        };
         // The same entry follows (its index may have moved).
-        if was.map(|w| old.get(w)) == after.map(|a| new.get(a)) {
-            if let (Some(n), Some(a)) = (self.t.next.as_mut(), after) {
-                n.0 = a;
-            }
-            if let (Some(Tail::Then(n)), Some(a)) = (self.t.tail.as_mut(), after) {
+        if was.as_deref().map(|&w| old.get(w)) == after.map(|a| new.get(a)) {
+            if let (Some(n), Some(a)) = (was, after) {
                 *n = a;
             }
             return false;
         }
-        self.t.next = None;
-        self.t.tail = None;
-        match after {
-            Some(n) => {
-                let id = queue.read(|q| q.ids()[n].clone());
-                self.t.next = Some((n, tracks.open_packets(&id, 0, false)));
-            }
-            None => self.close(Tail::End),
-        }
+        self.write_next(last, tracks, queue);
         false
     }
 }

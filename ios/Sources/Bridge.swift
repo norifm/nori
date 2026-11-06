@@ -102,9 +102,14 @@ struct PageAnswer {
     }
 }
 
+/// The player's state, as the library codes it (`STATE_` in crates/ios/src/session.rs).
+enum PlayState: Int {
+    case idle = 0, playing, paused, ended
+}
+
 /// What plays now.
 struct Now {
-    var state: Int = 0
+    var state = PlayState.idle
     var index: Int = -1
     var ms: Int = 0
     var pace: Double = 1
@@ -117,8 +122,8 @@ struct Now {
     var hz = 0
     var bits = 0
     var stamp = Date()
-    /// Waiting for bytes after a seek or open: the place stands still until sound is heard again.
     var mixing = false
+    /// Waiting for bytes after a seek or open: the place stands still until sound is heard again.
     var buffering = false
     /// Another device plays, and this is its music: its name and kind (`DeviceKind`).
     var device: String?
@@ -130,7 +135,7 @@ struct Now {
     /// The jam's music, this iPod a guest in it: the host's, which nothing here controls.
     var jam = false
 
-    var playing: Bool { state == 1 }
+    var playing: Bool { state == .playing }
 
     /// The position extrapolated from the last read while playing and not buffering.
     var position: Int {
@@ -254,6 +259,8 @@ final class Core {
     private(set) var rules = Rules()
     /// The jam this iPod is a guest in, read as it changes.
     private(set) var jam: Jam?
+    /// An invite opened before a session was: joined once one is.
+    var inviteWaiting: String?
 
     /// Whether the song is one this guest asked for and the host has yet to take.
     func isAsked(_ item: Item) -> Bool { item.kind == "song" && jam?.asked.contains(item.id) == true }
@@ -321,6 +328,12 @@ final class Core {
         return t
     }
 
+    /// The next page of the list read with `token`, if the core says one is to be read.
+    func readMore(_ kind: Int32, _ arg: String, token: UInt64, answer: @escaping (PageAnswer) -> Void) {
+        pages[token] = answer
+        arg.withCString { nori_ios_read_more(token, kind, $0) }
+    }
+
     /// Measures cover `id`'s page colors (`nori_ios_cover_look`) on the season's paper; `done` runs on the
     /// main thread with them, or with nil for a cover that does not load. Measured once per cover and look.
     func coverLook(_ id: String, done: @escaping (PageLook?) -> Void) {
@@ -359,15 +372,13 @@ final class Core {
 
     /// Reads what plays now and tells the screens.
     func refresh() {
-        // Buffering is only told on its own report: keep it across a place or state read.
-        let wasBuffering = now.buffering
         var n = Now()
         guard let d = takenJSON(nori_ios_now()) as? [String: Any] else {
             now = n
             NotificationCenter.default.post(name: .noriNow, object: nil)
             return
         }
-        n.state = d["state"] as? Int ?? 0
+        n.state = PlayState(rawValue: d["state"] as? Int ?? 0) ?? .idle
         n.index = d["index"] as? Int ?? -1
         n.ms = d["ms"] as? Int ?? 0
         n.pace = d["pace"] as? Double ?? 1
@@ -385,28 +396,9 @@ final class Core {
         n.remote = d["remote"] as? Bool ?? false
         n.volume = d["volume"] as? Int
         n.jam = d["jam"] as? Bool ?? false
-        if n.device != nil || n.jam {
-            // The device says its own waits.
-            n.buffering = d["buffering"] as? Bool ?? false
-        } else {
-            // Buffering is per song and only while Playing; a new song or a pause lets the clock go again.
-            let same = n.song?.id == now.song?.id
-            n.buffering = wasBuffering && same && n.state == 1
-        }
+        n.buffering = d["buffering"] as? Bool ?? false
         n.stamp = Date()
         now = n
-        NotificationCenter.default.post(name: .noriNow, object: nil)
-    }
-
-    /// The engine is waiting for bytes (`on`) or sound is moving again.
-    func setBuffering(_ on: Bool) {
-        if on == now.buffering { return }
-        if on {
-            // Freeze at the place last heard: a refresh while starved can still extrapolate.
-            now.ms = now.position
-        }
-        now.buffering = on
-        now.stamp = Date()
         NotificationCenter.default.post(name: .noriNow, object: nil)
     }
 
@@ -421,8 +413,8 @@ final class Core {
         refresh()
         readJam()
         NotificationCenter.default.post(name: .noriOpened, object: nil)
-        if let link = JamJoin.waiting {
-            JamJoin.waiting = nil
+        if let link = inviteWaiting {
+            inviteWaiting = nil
             JamJoin.join(link)
         }
     }
@@ -440,38 +432,37 @@ final class Core {
 
     private func reported(kind: Int32, id: String, text: String, flag: Int32, count: Int32, ms: Int64) {
         switch kind {
-        case 1, 2, 3, 4, 8, 14, 16:
+        case NORI_REPORT_STATE, NORI_REPORT_SONG, NORI_REPORT_LOOPED, NORI_REPORT_POSITION, NORI_REPORT_BUFFERING,
+             NORI_REPORT_MIXING, NORI_REPORT_PLACED, NORI_REPORT_STOPPED:
             refresh()
-        case 18:
+        case NORI_REPORT_REMOTE:
             refresh()
             readJam()
             NotificationCenter.default.post(name: .noriDevices, object: nil)
-        case 20 where flag == 2:
+        case NORI_REPORT_JAM_JOINED where flag == 2:
             Toast.show(Say.jamInviteEnded)
-        case 20 where flag != 0:
+        case NORI_REPORT_JAM_JOINED where flag != 0:
             switchProfile(nil)
-        case 20:
+        case NORI_REPORT_JAM_JOINED:
             Toast.show(Say.jamJoinFailed(Say.failure(count, text)))
-        case 21:
+        case NORI_REPORT_JAM_LEFT:
             switchProfile(count == 0 ? Say.jamLeft : Say.jamEnded(text))
-        case 19:
+        case NORI_REPORT_VOLUME:
             systemVolume?.set(Float(ms) / 1000)
-        case 5:
+        case NORI_REPORT_ERROR:
             Toast.show(Say.playbackError(text))
-        case 24 where flag != 0:
+        case NORI_REPORT_WAITING where flag != 0:
             Toast.show(Say.waitingForServer)
-        case 7 where now.device == nil:
-            setBuffering(flag != 0)
-        case 9:
+        case NORI_REPORT_NOTE:
             if let words = Say.note(flag, Int(count)) {
                 Toast.show(words)
             }
-        case 11:
+        case NORI_REPORT_LYRICS:
             NotificationCenter.default.post(name: .noriLyrics, object: id)
-        case 23:
+        case NORI_REPORT_STARRED:
             refresh()
             NotificationCenter.default.post(name: .noriFavorites, object: nil)
-        case 22:
+        case NORI_REPORT_CURVE:
             askCurve(text, offered: flag != 0)
         default:
             break

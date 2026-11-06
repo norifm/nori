@@ -55,7 +55,7 @@ impl Client {
     /// history newest first; ids, not play times, so plays submitted late are not missed. Kept only once
     /// all arrived, so an interrupted walk leaves no gap. False when the server has no history to give.
     async fn fetch_server_plays(&self) -> NetResult<bool> {
-        let login = self.core.native_login.read().clone();
+        let login = self.core.account.read().as_ref().and_then(crate::Account::login);
         let Some((user, password)) = login else { return Ok(false) };
         let base = self.core.server.read().base.clone();
         let json = serde_json::json!({ "username": user, "password": password }).to_string();

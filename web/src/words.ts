@@ -1,4 +1,4 @@
-// Every word the web client shows, as the Android app words it (app/src/main/res/values). The core says
+// Every word the web client shows, as the Android app words it (android/app/src/main/res/values). The core says
 // what happened; the words are the client's.
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
@@ -88,6 +88,8 @@ export const W = {
   playNext: "Play next",
   addToQueue: "Add to queue",
   remove: "Remove",
+  removed: (title: string) => `Removed “${title}”`,
+  undo: "Undo",
   more: "More",
   cancel: "Cancel",
   done: "Done",
@@ -114,6 +116,9 @@ export const W = {
   goToArtist: (name: string, named: boolean) => (named ? `Go to ${name}` : "Go to artist"),
   radio: "Radio",
   startJam: "Start a Jam here",
+  sleepTimer: "Sleep timer",
+  /** One of the sleep timer's choices: "30 minutes", "End of track", "After 3 songs", or "Off" (all zeros). */
+  sleepChoice: (minutes: number, end: boolean, songs: number) => (end ? "End of track" : songs > 0 ? `After ${songs} songs` : minutes > 0 ? `${minutes} minutes` : "Off"),
   mixEmpty: "The server has nothing like it.",
   nothingToPlay: "Nothing to play.",
   lyrics: "Lyrics",
@@ -185,6 +190,11 @@ export const W = {
   pluginInstall: "Install",
   pluginInstalling: "Installing…",
   pluginInstallFailed: "Couldn’t install it. Nothing changed.",
+  pluginRefused: {
+    NotListed: "It isn’t the package its repo lists. Nothing changed.",
+    Signature: "Its signature doesn’t match its author’s key. Nothing changed.",
+    OtherKey: "It isn’t signed by the author it was installed from. Remove the plugin to install it.",
+  },
   pluginsInstallFile: "Install from file",
   pluginFromFile: "From a file",
   pluginFromFileLine: "Installed from a file",

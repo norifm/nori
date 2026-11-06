@@ -18,8 +18,8 @@
     <p class="sub">{W.devicesOff}</p>
   {:else}
     <div class="rows">
-      <PanelRow icon="computer" title={W.thisBrowser} lit={!d.active} data-device="" onclick={() => void remote.pick("")}>
-        {#snippet end()}{#if !d.active}<Icon name="check" />{/if}{/snippet}
+      <PanelRow icon="computer" title={W.thisBrowser} lit={d.here} data-device="" onclick={() => void remote.pick("")}>
+        {#snippet end()}{#if d.here}<Icon name="check" />{/if}{/snippet}
       </PanelRow>
       {#each d.list as x (x.id)}
         <PanelRow icon={kindGlyph[x.kind] ?? "computer"} title={x.name} sub={(x.refused && W.refused[x.refused]) || (x.playing && d.active !== x.id ? W.devicePlaying : "")} lit={d.active === x.id} data-device={x.id} onclick={() => void remote.pick(x.id)}>

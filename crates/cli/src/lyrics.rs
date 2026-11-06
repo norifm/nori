@@ -1,12 +1,43 @@
 //! Lyrics state: the core's pick plus `nori_look::lyrics::LyricClock` (shared with Android), which gives
 //! the active line, the word fill and the next wake. The terminal fills whole characters.
 
-use nori_core::race::{lyrics_replaces, LyricsPick};
+use nori_core::lyrics_follow::LyricsNow;
+use nori_core::race::LyricsPick;
 use nori_core::lyrics_sources::LyricsOrigin;
 use nori_look::lyrics::{LyricClock, Step};
 
 /// Redraw interval while a word-timed line fills (the clock counts in frames then).
 pub const FRAME_MS: u64 = 50;
+
+/// What the lyrics panel shows: the session's [`LyricsNow`] for the song heard, its words on their clock.
+#[derive(Default)]
+pub enum Words {
+    #[default]
+    Nothing,
+    Looking,
+    Failed,
+    /// Found; no lines when there are none for the song.
+    Found(Box<SongLyrics>),
+}
+
+impl Words {
+    /// `now` drawn, its clock at `position_ms`.
+    pub fn of(now: LyricsNow, position_ms: i64) -> Words {
+        match now {
+            LyricsNow::NoSong => Words::Nothing,
+            LyricsNow::Looking { .. } => Words::Looking,
+            LyricsNow::Failed { .. } => Words::Failed,
+            LyricsNow::Shown { pick, .. } => Words::Found(Box::new(SongLyrics::new(pick, position_ms))),
+        }
+    }
+
+    pub fn found(&self) -> Option<&SongLyrics> {
+        match self {
+            Words::Found(l) => Some(l.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 pub struct SongLyrics {
     pub pick: LyricsPick,
@@ -49,11 +80,6 @@ impl SongLyrics {
         (*origin != LyricsOrigin::Server).then(|| crate::text::lyrics_credit(origin, self.pick.lyrics.synced, plugin_name))
     }
 
-    /// Whether `next` should replace these (`race::lyrics_replaces`: the same lyrics again do not).
-    pub fn replaced_by(&self, next: &LyricsPick) -> bool {
-        lyrics_replaces(Some(&self.pick), next)
-    }
-
     /// Advances the clock to `position_ms`: what to draw, and ms until the next wake (None: never).
     pub fn advance(&self, position_ms: i64, sweep: bool, force: bool) -> (Step, Option<u64>) {
         let step = self.clock.advance(position_ms, sweep, false, force);
@@ -94,13 +120,6 @@ mod tests {
         plain.word_timed = false;
         let l = SongLyrics::new(server(plain), 0);
         assert_eq!(l.advance(1000, true, true).1, None);
-
-        // Same lyrics do not replace.
-        let l = SongLyrics::new(server(Lyrics::default()), 0);
-        assert!(l.replaced_by(&server(lyrics())));
-        let l = SongLyrics::new(server(lyrics()), 0);
-        assert!(!l.replaced_by(&server(lyrics())), "read again");
-        assert!(l.replaced_by(&LyricsPick { lyrics: lyrics(), origin: LyricsOrigin::Lrclib }));
     }
 
 }

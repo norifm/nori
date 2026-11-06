@@ -63,11 +63,20 @@ pub struct Nori {
     app: Arc<nori_core::queue::Session>,
     /// The databases are kept in the origin's private file system, not in memory.
     stored: bool,
+    /// The search box's: what it holds and the answers it has had.
+    search: Arc<nori_core::search::SearchSession>,
     #[cfg(not(feature = "engine"))]
     client: std::cell::RefCell<Option<Arc<Client>>>,
     #[cfg(feature = "engine")]
     live: play::Live,
+    /// The queue Home offers (`offer::Offered`).
+    offered: std::cell::RefCell<nori_core::offer::Offered>,
+    /// Each album grid's pages, by the grid's number; the oldest fall off.
+    grids: std::cell::RefCell<std::collections::VecDeque<(u32, nori_core::paged::Paged<u32>)>>,
 }
+
+/// Album grids whose pages are kept.
+const KEPT_GRIDS: usize = 8;
 
 #[wasm_bindgen]
 impl Nori {
@@ -90,8 +99,11 @@ impl Nori {
             live: play::Live::new(tell, wake),
             app,
             stored: kept.is_ok(),
+            search: nori_core::search::SearchSession::new(),
             #[cfg(not(feature = "engine"))]
             client: Default::default(),
+            offered: Default::default(),
+            grids: Default::default(),
         })
     }
 
@@ -110,6 +122,11 @@ impl Nori {
 
     fn active(&self) -> Option<SavedServer> {
         self.app.settings.prefs(|p| p.active_server().cloned())
+    }
+
+    /// The account signed in, whose own playlists it may change; None for a profile without one.
+    fn user(&self) -> Option<String> {
+        self.active().filter(|_| self.rules().account).map(|p| p.user)
     }
 
     /// Signs in to `url` and keeps the profile, the active one from now on (`providers::log_in`).
@@ -157,8 +174,50 @@ impl Nori {
     /// Reads a page (`{ kind, ... }`, see `pages::Ask`): its JSON.
     pub async fn read(&self, ask: String) -> Result<String, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
+        pages::read(&client, &ask, self.user().as_deref()).await.map_err(error)
+    }
+
+    /// The next page of album grid `list` in `sort`'s order (with `favorites`, the starred albums, whole):
+    /// `{ albums, more }`, or null when none is to be read (one on its way, or the last in). `first` reads
+    /// the grid from its first page again. A page that failed is read again with the next call.
+    pub async fn album_page(&self, list: u32, sort: String, favorites: bool, first: bool) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let offset = {
+            let mut grids = self.grids.borrow_mut();
+            if first {
+                grids.retain(|(l, _)| *l != list);
+                grids.push_back((list, nori_core::paged::Paged::new(0)));
+                while grids.len() > KEPT_GRIDS {
+                    grids.pop_front();
+                }
+            }
+            match grids.iter_mut().find(|(l, _)| *l == list).and_then(|(_, p)| p.ask()) {
+                Some(offset) => offset,
+                None => return Ok("null".into()),
+            }
+        };
         let user = self.active().filter(|_| self.rules().account).map(|p| p.user);
-        pages::read(&client, &ask, user.as_deref()).await.map_err(error)
+        let read = pages::album_page(&client, sort, favorites, offset, user.as_deref()).await;
+        let mut grids = self.grids.borrow_mut();
+        let pages = grids.iter_mut().find(|(l, _)| *l == list).map(|(_, p)| p);
+        match read {
+            Ok((mut v, next)) => {
+                let more = pages.is_some_and(|p| {
+                    p.answered(&offset, next);
+                    p.more()
+                });
+                if let Value::Object(m) = &mut v {
+                    m.insert("more".into(), more.into());
+                }
+                Ok(v.to_string())
+            }
+            Err(e) => {
+                if let Some(p) = pages {
+                    p.failed(&offset);
+                }
+                Err(error(e))
+            }
+        }
     }
 
     /// Fills the offline index when the profile keeps one and it is empty, as the session does.
@@ -167,28 +226,52 @@ impl Nori {
         client.sync_library().await.map(|_| ()).map_err(|e| error(e.to_string()))
     }
 
+    /// The search box now holds `text`: what it shows, the offline index's answer at once
+    /// (`pages::search_view`).
+    pub fn search_typed(&self, text: String) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let view = self.search.typed_with_index(client.core().clone(), text);
+        Ok(pages::search_view(client.core(), view, self.user().as_deref()))
+    }
+
+    /// The server's answer to `query` as the box shows it (`search_typed`); null when the box holds
+    /// another query by then.
+    pub async fn search_ask(&self, query: String) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        Ok(match self.search.answer(client.clone(), query, |e| e.to_string()).await {
+            Some(view) => pages::search_view(client.core(), view, self.user().as_deref()),
+            None => "null".into(),
+        })
+    }
+
     /// How long live search waits for `query` before asking the server, ms.
     pub fn search_delay(&self, query: &str) -> f64 {
         nori_core::search::live_delay_ms(query, nori_core::search::LIVE_SEARCH_DELAY_MS) as f64
     }
 
     /// The queue another device or app left on the server, offered while nothing plays here
-    /// (`Client::queue_offer`; `playing` and `shown`, the song the player shows, are the player's):
-    /// `{ songs, index, positionMs }` (the songs as a page reads them), or null.
+    /// (`Client::queue_offer`; `playing` and `shown`, the song the player shows, are the player's), kept
+    /// while it stands (`offer::Offered`): `{ songs, index, positionMs }` (the songs as a page reads
+    /// them), or null.
     pub async fn queue_offer(&self, playing: bool, shown: Option<String>) -> Result<String, JsValue> {
         let client = self.client().ok_or_else(|| error("not signed in"))?;
-        let Some(o) = client.queue_offer(playing, shown).await.map_err(error)? else { return Ok("null".into()) };
+        let found = client.queue_offer(playing, shown.clone()).await.map_err(error)?;
+        let mut offered = self.offered.borrow_mut();
+        let Some(o) = offered.found(found, shown, playing) else { return Ok("null".into()) };
         let songs: Vec<Value> = o.songs.iter().map(|s| pages::song(client.core(), s)).collect();
         Ok(json!({ "songs": songs, "index": o.index, "positionMs": o.position_ms }).to_string())
     }
 
-    /// The offer of `songs` (JSON) from `index`, `position_ms` in, was taken or turned down: that queue is
-    /// not offered again (`Client::queue_offer_done`, which keeps where it stands, not who left it).
-    pub fn queue_offer_done(&self, songs: String, index: u32, position_ms: f64) -> Result<(), JsValue> {
-        let client = self.client().ok_or_else(|| error("not signed in"))?;
-        let songs: Vec<nori_core::Song> = serde_json::from_str(&songs).map_err(error)?;
-        client.queue_offer_done(nori_core::library::QueueOffer { by: nori_core::library::QueueBy::Nori, songs, index, position_ms: position_ms as u64 });
-        Ok(())
+    /// The player shows `here` and is `playing` or not: whether the offer still stands; one that does
+    /// not is let go.
+    pub fn queue_offer_still(&self, here: Option<String>, playing: bool) -> bool {
+        self.offered.borrow_mut().still(here, playing)
+    }
+
+    /// The offer was taken up or turned down: that queue is not offered again (`Client::queue_offer_done`).
+    pub fn queue_offer_close(&self) {
+        let (Some(o), Some(client)) = (self.offered.borrow_mut().close(), self.client()) else { return };
+        client.queue_offer_done(o);
     }
 
     /// Cover `id`'s address for `px` square.
@@ -385,7 +468,7 @@ impl Nori {
     /// The plugins nori's own repo lists, each with what stops it in a browser (`web_fit`; `proxied`: this
     /// page's server carries a plugin's requests), how it stands against `installed` (`[{ id, version,
     /// held, fromFile }]`) and its versions of this API, newest first: `[{ id, name, about, icon, readme,
-    /// source, versions: [{ version, released, url, sha256 }], state, waiting, fit }]`.
+    /// source, versions: [{ version, released, url, sha256, key, signature }], state, waiting, fit }]`.
     pub async fn plugin_offers(&self, proxied: bool, installed: String) -> Result<String, JsValue> {
         let installed: Vec<PluginHere> = serde_json::from_str(&installed).map_err(error)?;
         let from = nori_plugin_index::OFFICIAL;
@@ -408,7 +491,10 @@ impl Nori {
                     (_, true) => "Update",
                     _ => "Installed",
                 };
-                let listed: Vec<Value> = versions.iter().map(|v| json!({ "version": v.version, "released": v.released, "url": at(&v.url), "sha256": v.sha256.to_ascii_lowercase() })).collect();
+                let listed: Vec<Value> = versions
+                    .iter()
+                    .map(|v| json!({ "version": v.version, "released": v.released, "url": at(&v.url), "sha256": v.sha256.to_ascii_lowercase(), "key": v.key, "signature": v.signature }))
+                    .collect();
                 json!({ "id": l.id, "name": l.name, "about": l.about, "icon": l.icon.as_deref().map(at), "readme": l.readme.as_deref().map(at), "source": l.source, "versions": listed, "state": state, "waiting": update && here.is_some_and(|h| !h.held), "fit": nori_plugin_index::web_fit(l, proxied) })
             })
             .collect();
@@ -427,10 +513,33 @@ impl Nori {
         serde_json::to_string(&nori_plugin_index::readme::blocks(&markdown)).map_err(error)
     }
 
+    /// Why package `pack` doesn't install as `listed` (`package::Listed` as JSON): `NotListed` or
+    /// `Signature`; empty when it may (`package::checked`).
+    pub fn plugin_check(&self, pack: Vec<u8>, listed: String) -> Result<String, JsValue> {
+        let listed: nori_plugin_index::package::Listed = serde_json::from_str(&listed).map_err(error)?;
+        Ok(nori_plugin_index::package::checked(&pack, &listed).err().map(|r| format!("{r:?}")).unwrap_or_default())
+    }
+
+    /// Whether a version signed by `key` may replace a plugin that pinned `pinned` (empty: none), as
+    /// `package::admits` says.
+    pub fn plugin_admits(&self, pinned: String, key: String) -> bool {
+        fn some(s: &str) -> Option<&str> {
+            (!s.is_empty()).then_some(s)
+        }
+        nori_plugin_index::package::admits(some(&pinned), some(&key))
+    }
+
     /// A package's `plugin.wasm` and English strings as the page installs it (`WebPlugin`, as JSON).
     pub fn plugin_read(&self, component: Vec<u8>, strings: String, proxied: bool) -> Result<String, JsValue> {
         let plugin = nori_plugin_index::read_web_plugin(&component, &strings, proxied).map_err(error)?;
         serde_json::to_string(&plugin).map_err(error)
+    }
+
+    /// The standing of a plugin installed over one with standing `had` (`{ on, held, place }` as JSON;
+    /// empty for a new plugin, placed at `next_place`), as JSON (`standing::installed_over`).
+    pub fn plugin_installed_over(&self, had: String, next_place: u32) -> Result<String, JsValue> {
+        let had = (!had.is_empty()).then(|| serde_json::from_str(&had)).transpose().map_err(error)?;
+        serde_json::to_string(&nori_plugin_index::standing::installed_over(had, next_place, true)).map_err(error)
     }
 
     /// Settings page `name` as a browser draws it: `[{ id, rows: [row] }]`, each row `{ item, shown,
@@ -518,6 +627,7 @@ fn settings_row(r: &settings_pages::SettingsRow) -> Option<Value> {
 #[wasm_bindgen]
 impl Nori {
     fn enter(&self, profile: SavedServer) -> Result<(), JsValue> {
+        self.leave();
         let core = nori_core::Core::new(db(), nori_core::settings::server_db_id(&profile.id), self.app.clone()).map_err(error)?;
         core.configure(nori_core::server_config(&profile)).map_err(error)?;
         let client = Client::new(core, Arc::new(Fetch(())), nori_core::covers::CoverNet::new());
@@ -532,6 +642,8 @@ impl Nori {
 
     fn leave(&self) {
         *self.client.borrow_mut() = None;
+        // One profile's answers are not another's.
+        self.search.typed(String::new());
     }
 
     /// An account's: the core module opens no guest's profile.

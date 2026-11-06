@@ -212,9 +212,6 @@ enum JamJoin {
         host.present(ask, animated: true)
     }
 
-    /// An invite opened before a session was: joined once one is.
-    static var waiting: String?
-
     /// Joins the jam `link` invites to (an https invite, or the app's own nori:// one).
     static func join(_ link: String) {
         switch link.withCString({ l in Say.jamGuest.withCString { nori_ios_jam_join(l, $0) } }) {
@@ -222,7 +219,8 @@ enum JamJoin {
         case NORI_JOIN_NOT_AN_INVITE: Toast.show(Say.notAnInvite)
         case NORI_JOIN_OWN: Toast.show(Say.ownJam)
         case NORI_JOIN_ENDED: Toast.show(Say.jamInviteEnded)
-        default: waiting = link
+        case NORI_JOIN_CLOSED: Core.shared.inviteWaiting = link
+        default: break
         }
     }
 }

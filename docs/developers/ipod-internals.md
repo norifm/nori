@@ -64,12 +64,13 @@ mode or sheet presentation controller.
 | `session.rs` | The one open `nori_host::Session` in a process-wide slot (C entry points carry no handle); reports to Swift as `NoriReport` on a thread the library owns; the controls; background, foreground and memory warnings |
 | `output.rs` | `IosOutput` over a `Sink`, and the render callback |
 | `pages.rs` | Every page through `nori_ios_read(token, kind, arg)`, answered as JSON; song lists kept under the token, so play, enqueue and download name a token and an index; covers, lyrics, settings, the equalizer |
+| `paging.rs` | A list's next page through `nori_ios_read_more(token, kind, arg)`, as the core's `paged::Paged` for that token decides |
 | `menu.rs` | The song menu (`menus::song_menu`), playlists, the sleep timer |
 | `sound.rs` | Each output's sound and the AutoEQ browser, through the core's `device_*` calls |
 | `lyrics.rs` | The core's `LyricClock` behind a handle the lyrics page holds |
 | `theme.rs` | The `theme` and `season` settings worn on the device's date and zone, and pages dyed with a cover |
 | `account.rs` | The login form (`providers`, `log_in`) and saved servers |
-| `offer.rs` | The queue another device left on the server, offered on Home (`Client::queue_offer`) |
+| `offer.rs` | The queue another device left on the server, offered on Home (`offer::Offered`) |
 | `remote.rs` | Remote control: Bonjour through the app, the devices the music can move to |
 | `jam.rs` | A jam this iPod is a guest in |
 
@@ -121,7 +122,7 @@ What `tools/ios-build/build.sh` does:
    carries its own `Dispatch` module, which clashes with the SDK's, so the build assembles one from its
    `shims` and `clang` and the iOS parts.
 4. **Resources**: the launch image (`UILaunchImages`, so no Interface Builder), the icons, Inter and
-   Literata (`UIAppFonts`), and the license texts from `app/src/main/assets/licences`.
+   Literata (`UIAppFonts`), and the license texts from `android/app/src/main/assets/licences`.
 5. **Signing**: `ldid -S ios/entitlements.plist`, then `Payload/nori.app` zipped as the `.ipa`.
    `tools/release.sh` builds the same `.ipa` beside the APK (`--no-ipod` leaves it out).
 
@@ -162,15 +163,17 @@ session grants.
 | Rate | The unit's input is the rate Rust asks for, and RemoteIO converts if the hardware differs. The hardware moves to the preferred rate late, so the shim rebuilds the unit whenever its output side changes |
 | Format | Float32 always (`takes_float`): high quality output on is float from decoder to DAC with no dither of nori's |
 | Latency | `latency_us` is when the music pulled will be heard: the render timestamp's host time plus the route's `outputLatency`. `mixed_us` is the route's latency on Bluetooth |
-| Equalizer in sight | `shallow` asks for a 10 ms buffer, so a band moved is heard at once; back to 93 ms after (`rules::sound_tuning`, through `nori_ios_tuning`) |
+| Equalizer in sight | `shallow` asks for a 10 ms buffer, so a band moved is heard at once; back to 93 ms after (`nori_core::tuning`, through `nori_ios_sound_page`) |
 | Fades | The ring runs them per sample: `ramp` false, `flush` a no-op, `bursts` false; the pull that crosses the ring's low mark wakes the engine |
 | Routes | `watch` maps the route's port to Speaker, Wired, Bluetooth (with its name) or Other, for per-output sound and the AutoEQ offer |
 | Failure | After a media-services reset the unit is rebuilt once; if that fails, `failed` tells the engine |
 | Pause | Stops the unit. After the engine's idle release (5 minutes paused) the output closes and the session goes inactive, so iOS can suspend the app |
 
 The render path pulls and stamps; it neither locks nor allocates. The shim decides nothing: a route
-lost (headphones pulled, Bluetooth gone) pauses, an interruption pauses and, when iOS says so, resumes,
-both decided in Rust (`session::audio_changed`).
+lost (headphones pulled, Bluetooth gone) pauses; an interruption is the engine's audio focus
+(`Engine::focus`): it pauses what played and, when iOS says to resume, plays only what the
+interruption paused (`session::audio_changed`). The lock screen's and a headset's keys go through
+`nori_ios_media_key` (`Handle::media_key`).
 
 **Volume**: iOS keeps it. nori multiplies no samples for volume. The system volume (`outputVolume`,
 observed) is passed to `nori_ios_volume` so other devices see it, and a volume set from another device

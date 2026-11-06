@@ -111,9 +111,10 @@ impl Client {
     /// The queue another device or app left on the server, when it is worth offering to this device while
     /// it is `playing` or not (`queue_offer`). Its song is the one the player `shown` (another device's
     /// while it controls one), else the queue's, or the one saved for the next start when the player has
-    /// not taken that up yet. Never asked with the offer switched off.
+    /// not taken that up yet. Never asked with the offer switched off, nor for a profile without an
+    /// account's things (a jam guest's, whose Home is the host's).
     pub async fn queue_offer(&self, playing: bool, shown: Option<String>) -> NetResult<Option<QueueOffer>> {
-        if playing || !self.settings().prefs(|p| p.queue_offer) {
+        if playing || !self.settings().prefs(|p| p.queue_offer) || !self.core.rules().account {
             return Ok(None);
         }
         let here = shown.or_else(|| self.core.session.snapshot().0).or_else(|| {
@@ -241,6 +242,9 @@ pub(crate) mod tests {
             let songs = r#"[{"id":"a","title":"A","isDir":false},{"id":"b","title":"B","isDir":false}]"#;
             fake.answer(&format!(r#"{{"subsonic-response":{{"status":"ok","playQueue":{{"current":"{current}","position":{position},"changedBy":"{by}","entry":{songs}}}}}}}"#));
         };
+        c.core.set_rules(crate::browse::ProfileRules { account: false, ..c.core.rules() });
+        assert_eq!(block(c.queue_offer(false, None)).unwrap(), None, "no account, nothing asked");
+        c.core.set_rules(crate::browse::ProfileRules { account: true, ..c.core.rules() });
         saved("NavidromeUI", "b", 1200);
         let offer = block(c.queue_offer(false, None)).unwrap().unwrap();
         assert_eq!((offer.by.clone(), offer.index, offer.position_ms), (QueueBy::App { name: "NavidromeUI".into() }, 1, 1200));

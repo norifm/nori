@@ -38,7 +38,7 @@ wasmtime = { version = "50", default-features = false, features = ["cranelift", 
 serde = { version = "1", features = ["derive"] }
 # The manifest, in the wasm's `nori:plugin` custom section; wasmtime's own parser.
 wasmparser = "0.261"
-# A compiled plugin's cache key (the hash of its wasm), and a repo package's check.
+# A compiled plugin's cache key (the hash of its wasm).
 sha2 = "0.10"
 # index.json and a repo's index.json.
 serde_json = "1"
@@ -56,8 +56,6 @@ webpki-roots = "1"
 socket2 = "0.6"
 # The interfaces an IPv6 group without a zone is joined on.
 libc = "0.2"
-# A package's author's signature, checked at install.
-ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 # Safe mode's marks of the plugin being called: a file a crash leaves as it was.
 memmap2 = "0.9"
 
@@ -71,6 +69,7 @@ async-trait = "0.1"
 nori-plugin-sdk = { path = "../plugin-sdk" }
 # The extension points' order, read from wit/.
 wit-parser = "0.239"
-# A package served by a test's repo.
+# A package served by a test's repo, signed.
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }

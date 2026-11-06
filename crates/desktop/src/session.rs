@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 
 use nori_core::cache_policy::{Page, Read};
-use nori_core::race::LyricsPick;
+use nori_core::lyrics_follow::LyricsNow;
 use nori_core::remote::wire::DeviceKind;
 use nori_core::search::SearchView;
 use nori_core::settings::{HomeRow, SavedServer};
@@ -49,13 +49,14 @@ pub enum Msg {
     /// A decoded cover, with page colours for large sizes.
     Cover { key: CoverKey, image: Arc<Image>, colours: Option<Box<CoverColours>> },
     Search(SearchView),
-    Lyrics { song: String, pick: LyricsPick },
+    Lyrics(LyricsNow),
     Facts(Box<crate::settings::Facts>),
     Note { text: String, error: bool },
     /// A playlist write the server took, and what to say: the playlists are read again.
     Playlist { text: String, change: PlaylistChange },
     /// A note with a button, answered with [`nori_host::session::Handle::curve_answer`].
     Ask { text: String, action: String },
+    /// The profile the sign-in form made, and what follows its opening when it was added.
     LoggedIn(Result<SavedServer, String>),
     /// The account's sign-in answered.
     SignedIn(nori_core::providers::SignInResult),
@@ -308,7 +309,7 @@ fn worded(s: Said) -> Msg {
     let note = |text: String, error: bool| Msg::Note { text, error };
     match s {
         Said::Engine(e) => Msg::Engine(e),
-        Said::Lyrics { song, pick } => Msg::Lyrics { song, pick },
+        Said::Lyrics(now) => Msg::Lyrics(now),
         Said::Search(v) => Msg::Search(v),
         Said::Reachable(r) => Msg::Reachable(r.map_err(|e| net_error(&e))),
         Said::Remote => Msg::Remote,

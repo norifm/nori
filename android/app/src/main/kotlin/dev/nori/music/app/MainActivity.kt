@@ -1,0 +1,149 @@
+package dev.nori.music.app
+
+import android.Manifest
+import android.content.Intent
+import android.os.Build
+import android.os.Bundle
+import android.os.Looper
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
+import androidx.compose.ui.platform.createLifecycleAwareWindowRecomposer
+import androidx.activity.result.contract.ActivityResultContracts
+import dev.nori.music.Nori
+import dev.nori.music.downloads.ACTION_OPEN_DOWNLOADS
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import dev.nori.music.app.ui.App
+import dev.nori.music.settings.loggedIn
+
+/** What the activity was asked for from outside (the download notification, a launcher shortcut, a widget); App carries it out. */
+sealed interface LaunchRoute {
+    data object Downloads : LaunchRoute
+    data object Search : LaunchRoute
+    data object Player : LaunchRoute
+    data object Lyrics : LaunchRoute
+    data object ShuffleSongs : LaunchRoute
+    data object ShuffleAlbums : LaunchRoute
+    /** A page, by its route. */
+    data class Page(val route: String) : LaunchRoute
+
+    companion object {
+        /** A widget's [MainActivity.EXTRA_ROUTE]: "player", "lyrics" or a page's route. */
+        fun ofWidget(route: String): LaunchRoute = when (route) {
+            "player" -> Player
+            "lyrics" -> Lyrics
+            else -> Page(route)
+        }
+    }
+}
+
+class MainActivity : ComponentActivity() {
+    companion object {
+        /** A home-screen widget's tap: [EXTRA_ROUTE] is where it goes (App's launch routes), none for the app as it was. */
+        const val ACTION_WIDGET = "dev.nori.music.WIDGET"
+        const val EXTRA_ROUTE = "route"
+    }
+
+    private var started = false
+    /** The same one App's messages come from: one per activity. */
+    private val actions: dev.nori.music.app.vm.ActionsViewModel by viewModels()
+    private val remote: dev.nori.music.app.vm.RemoteViewModel by viewModels()
+    private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    /** What was asked for from outside; App does it and clears this. */
+    private val launchRoute = androidx.compose.runtime.mutableStateOf<LaunchRoute?>(null)
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        // A turn of the phone dissolves the old layout into the new one rather than spinning a picture of the
+        // whole screen round, bar and all. Seamless, as this
+        // was, is not honoured with the status bar shown, and the system cut to black instead.
+        window.attributes = window.attributes.apply { rotationAnimation = android.view.WindowManager.LayoutParams.ROTATION_ANIMATION_CROSSFADE }
+        if (Build.VERSION.SDK_INT >= 33 && savedInstanceState == null) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        // The composition runs under the app's own animation speed, not Android's: see AppMotion.
+        @OptIn(androidx.compose.ui.InternalComposeUiApi::class)
+        val recomposer = window.decorView.createLifecycleAwareWindowRecomposer(dev.nori.music.app.ui.AppMotion, lifecycle)
+        // Only a fresh launch: a recreated activity (rotation) already went where its intent asked.
+        if (savedInstanceState == null) launchRoute.value = routeOf(intent)
+        if (savedInstanceState == null) joinJam(intent)
+        val islands = dev.nori.music.app.ui.Islands(this)
+        setContent(recomposer) { androidx.compose.runtime.CompositionLocalProvider(dev.nori.music.app.ui.LocalIslands provides islands) { App(launchRoute) } }
+        addContentView(islands, android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.MATCH_PARENT))
+    }
+
+    /** The app already running: singleTop hands the notification's intent here instead of to a new activity. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        routeOf(intent)?.let { launchRoute.value = it }
+        joinJam(intent)
+    }
+
+    /** A jam invite opened: this phone joins as a guest, and the app shows the host's playback (App, LocalRules). */
+    private fun joinJam(intent: Intent?) {
+        val link = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
+        if (dev.nori.music.ffi.pairingValid(link)) {
+            remote.offerPairing(link)
+            return
+        }
+        if (!dev.nori.music.ffi.remote.isInvite(link)) return
+        lifecycleScope.launch {
+            val said = runCatching { Nori.get(this@MainActivity).joinJam(link) }.fold(
+                {
+                    when (it) {
+                        is dev.nori.music.ffi.JamJoin.Joined -> null
+                        dev.nori.music.ffi.JamJoin.Own -> R.string.jam_own
+                        dev.nori.music.ffi.JamJoin.Ended -> R.string.jam_invite_ended
+                    }
+                },
+                { dev.nori.music.NoriLog.w("jam: not joined: ${it.javaClass.simpleName}"); R.string.jam_join_failed },
+            )
+            said?.let { actions.tell(getString(it)) }
+        }
+    }
+
+    /** What an intent from outside asks for: the download notification's screen, a launcher shortcut's (res/xml/shortcuts.xml) or a widget's. */
+    private fun routeOf(intent: Intent?): LaunchRoute? = when (intent?.action) {
+        ACTION_OPEN_DOWNLOADS -> LaunchRoute.Downloads
+        "dev.nori.music.SHORTCUT_SEARCH" -> LaunchRoute.Search
+        "dev.nori.music.SHORTCUT_SHUFFLE_SONGS" -> LaunchRoute.ShuffleSongs
+        "dev.nori.music.SHORTCUT_SHUFFLE_ALBUMS" -> LaunchRoute.ShuffleAlbums
+        ACTION_WIDGET -> intent.getStringExtra(EXTRA_ROUTE)?.let(LaunchRoute::ofWidget)
+        else -> null
+    }
+
+    override fun onStart() {
+        // Before the screen draws again: the song may have changed while it was away (see catchUp), and the
+        // first frame is to show the song playing now. Until that frame is out, Android shows the last one
+        // drawn before the app went; from it, the page cross-fades to the new song as it would on screen.
+        Nori.get(this).player.catchUp()
+        // Back from Android's "install unknown apps" page: an update waiting for it goes on.
+        Nori.get(this).updates.resumed()
+        super.onStart()
+        Nori.get(this).remotes.appShown(true)
+        // Binding starts the playback service, which builds a player on this thread. Let the first frame out first.
+        window.decorView.post { Looper.myQueue().addIdleHandler { startedPlugins(); if (started && Nori.get(this).settings.value.loggedIn) { Nori.get(this).player.connect(); pickAddress(); updatePlugins() }; false } }
+        started = true
+    }
+
+    /** Coming to the foreground is when the network may have changed (home Wi-Fi vs. outside). */
+    private fun pickAddress() = lifecycleScope.launch { runCatching { Nori.get(this@MainActivity).chooseAddress() } }
+
+    /** The first frame is out: a crash from here on is no startup crash for safe mode. */
+    private fun startedPlugins() = lifecycleScope.launch { Nori.get(this@MainActivity).plugins.started() }
+
+    /** Plugins update from their repos when the app comes to the front, if it is time to ask: never on a timer. */
+    private fun updatePlugins() = lifecycleScope.launch { runCatching { Nori.get(this@MainActivity).plugins.updateIfDue() } }
+
+    override fun onStop() {
+        super.onStop()
+        started = false
+        Nori.get(this).remotes.appShown(false)
+        // The service keeps playing on its own; holding a controller while hidden would only keep callbacks flowing.
+        Nori.get(this).player.disconnect()
+        // Leaving the app is going to the home screen: its "For you" widget shows the mixes as they are now.
+        dev.nori.music.app.widget.MixesWidget.refresh(this)
+    }
+}

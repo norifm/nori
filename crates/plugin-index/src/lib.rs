@@ -1,8 +1,11 @@
-//! A plugin repo's `index.json`, and what stops a plugin running in a browser: pure, with no plugin
-//! host, so the web client reads it too. [`web_blocks`] is the one rule, for a listing and an install.
+//! A plugin repo's `index.json`, what stops a plugin running in a browser, and whether a package may
+//! install ([`package`]): pure, with no plugin host, so the web client reads it too. [`web_blocks`] is the
+//! one rule, for a listing and an install.
 
+pub mod package;
 pub mod readme;
 pub mod section;
+pub mod standing;
 
 use section::Section;
 use serde::{Deserialize, Serialize};

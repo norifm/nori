@@ -349,8 +349,6 @@ pub struct Sink<T: Track> {
     pending_pos: usize,
     pending_media: f64,
     carry: f64,
-    /// The source ended: running dry is the end, not a gap.
-    pub source_ended: bool,
     /// Largest limiter reduction seen, dB.
     pub gain_reduction_db: f32,
     pub track: T,
@@ -384,7 +382,6 @@ impl<T: Track> Sink<T> {
             pending_pos: 0,
             pending_media: 0.0,
             carry: 0.0,
-            source_ended: false,
             gain_reduction_db: 0.0,
             track,
         }
@@ -625,7 +622,6 @@ impl<T: Track> Sink<T> {
         self.owed = None;
         self.start = Start::At(pts - (self.submitted_frames * 1_000_000.0 / f.rate as f64) as i64);
         self.end = End::Open;
-        self.source_ended = false;
         true
     }
 
@@ -835,7 +831,6 @@ impl<T: Track> Sink<T> {
         self.start = Start::Unknown;
         self.submitted_frames = 0.0;
         self.paces.clear();
-        self.source_ended = false;
         self.restart_counts();
         // Processors that stayed in after being turned off go now.
         let s = &self.settings;
@@ -895,6 +890,11 @@ impl<T: Track> Sink<T> {
     /// Output is waiting for room in the track, or kept input to be run again.
     pub fn pending(&self) -> bool {
         self.pending_left() || self.run < self.kept.end() || self.end == End::Due
+    }
+
+    /// The source ended: running dry is the end, not a gap.
+    pub fn source_ended(&self) -> bool {
+        self.end != End::Open
     }
 
     /// Everything written has played.

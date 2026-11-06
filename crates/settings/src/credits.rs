@@ -153,10 +153,10 @@ mod tests {
     fn credits_complete() {
         let (c, a, d) = (core_credits(), android_credits(), data_credits());
         // Every licence named is bundled for the licences page, and nothing is listed twice.
-        let texts = concat!(env!("CARGO_MANIFEST_DIR"), "/../../app/src/main/assets/licences");
+        let texts = concat!(env!("CARGO_MANIFEST_DIR"), "/../../android/app/src/main/assets/licences");
         let all: Vec<&Credit> = c.iter().chain(&a).chain(&d).collect();
         let missing: Vec<String> = all.iter().filter_map(|c| c.file.as_ref()).filter(|f| !std::path::Path::new(texts).join(format!("{f}.txt")).is_file()).cloned().collect();
-        assert!(missing.is_empty(), "licence texts named but not in app/src/main/assets/licences: {missing:?}");
+        assert!(missing.is_empty(), "licence texts named but not in android/app/src/main/assets/licences: {missing:?}");
         let mut names: Vec<&str> = all.iter().map(|c| c.name.as_str()).collect();
         names.sort_unstable();
         let twice: Vec<&&str> = names.windows(2).filter(|w| w[0] == w[1]).map(|w| &w[0]).collect();

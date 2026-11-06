@@ -43,6 +43,9 @@ class Ui {
   /** The browser is wide enough for the top bar and the player bar (below it: the phone's layout). */
   wide = $state(matchMedia("(min-width: 720px)").matches);
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The song just taken out of the queue, while its undo is offered. */
+  undo = $state.raw<{ id: string; title: string } | null>(null);
+  private undoTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
     matchMedia("(min-width: 720px)").addEventListener("change", (e) => (this.wide = e.matches));
@@ -53,6 +56,21 @@ class Ui {
     this.toast = text;
     clearTimeout(this.toastTimer);
     if (text) this.toastTimer = setTimeout(() => (this.toast = ""), 4000);
+  }
+
+  /** Offers the undo of song `id` taken out of the queue for `ms`, the core's window; a later one replaces it. */
+  offerUndo(id: string, title: string, ms: number) {
+    this.undo = { id, title };
+    clearTimeout(this.undoTimer);
+    this.undoTimer = setTimeout(() => (this.undo = null), ms);
+  }
+
+  /** The undo offered, taken: it is offered no more. */
+  takeUndo() {
+    const u = this.undo;
+    this.undo = null;
+    clearTimeout(this.undoTimer);
+    return u;
   }
 
   /** A menu about `head` at `at`; one that follows another (Add to playlist…) opens where it was. */

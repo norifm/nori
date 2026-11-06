@@ -14,7 +14,7 @@ use nori_core::covers::CoverNet;
 use nori_core::library::StarsShown;
 use nori_core::profiles::{CurveNotice, DeviceCurve, DeviceEffect};
 use nori_core::playlist::{Hand, QueueEdit};
-use nori_core::race::{LyricsPick, LyricsShown};
+use nori_core::lyrics_follow::LyricsNow;
 use nori_core::rules::{queue_keep, BridgeStep, QueueMoment};
 use nori_core::search::{SearchSession, SearchView};
 use nori_core::settings::{SavedServer, SettingChange, StoredPrefs};
@@ -35,8 +35,8 @@ use nori_remote::wire::Op;
 /// What a session reports from any thread.
 pub enum Said {
     Engine(Event),
-    /// One of possibly several lyrics answers for `song`, each better than the last.
-    Lyrics { song: String, pick: LyricsPick },
+    /// What the lyrics view shows changed ([`Handle::lyrics_heard`]).
+    Lyrics(LyricsNow),
     Search(SearchView),
     Note(Note),
     /// The reachability check made when a session opens.
@@ -202,17 +202,6 @@ impl Transport for Offline {
     }
 }
 
-struct Shown {
-    song: String,
-    out: Out,
-}
-
-impl LyricsShown for Shown {
-    fn show(&self, pick: LyricsPick) {
-        (self.out)(Said::Lyrics { song: self.song.clone(), pick });
-    }
-}
-
 /// The core's star marks moved: the client reads its hearts again, and other devices see the queue's.
 struct Hearts {
     out: Out,
@@ -304,6 +293,7 @@ pub struct Parts {
     pub covers: Option<Arc<Loader>>,
     level: Arc<Level>,
     search: Arc<SearchSession>,
+    pub(crate) lyrics: crate::lyrics::Lyrics,
     pub offline: bool,
     /// The process's media controls while this session drives them.
     #[cfg(feature = "desktop")]
@@ -321,8 +311,10 @@ pub struct Parts {
     discovery: Option<Arc<dyn nori_core::remote::Discovery>>,
     /// The AutoEQ notice said last, waiting for an answer.
     curve: parking_lot::Mutex<Option<CurveNotice>>,
-    tasks: Arc<dyn Tasks>,
-    out: Out,
+    /// The sound pages in sight ([`Parts::sound_page`]).
+    pub(crate) tuning: nori_core::tuning::SoundTuning,
+    pub(crate) tasks: Arc<dyn Tasks>,
+    pub(crate) out: Out,
     /// The plugin host the session's kinds come with, told what plays.
     #[cfg(feature = "desktop")]
     pub(crate) plugins: Option<Arc<nori_plugins::Plugins>>,
@@ -423,6 +415,7 @@ impl Session {
             covers,
             level,
             search: SearchSession::new(),
+            lyrics: Default::default(),
             offline: o.offline,
             #[cfg(feature = "desktop")]
             media,
@@ -434,6 +427,7 @@ impl Session {
             rules_shown: parking_lot::Mutex::new(rules),
             discovery: o.discovery,
             curve: Default::default(),
+            tuning: Default::default(),
             tasks: o.tasks,
             out: o.out,
             #[cfg(feature = "desktop")]
@@ -485,7 +479,7 @@ impl Handle {
     }
 
     /// Runs `work` among the session's tasks.
-    fn run(&self, work: impl std::future::Future<Output = ()> + Send + 'static) {
+    pub(crate) fn run(&self, work: impl std::future::Future<Output = ()> + Send + 'static) {
         self.tasks.spawn(Box::pin(work));
     }
 
@@ -496,6 +490,7 @@ impl Handle {
         #[cfg(feature = "desktop")]
         self.plugins_heard(e);
         self.followed(e);
+        self.sleep_heard(e);
     }
 
     /// Tells the media controls the song or state changed.
@@ -662,7 +657,6 @@ impl Handle {
     }
 
     /// Plays; a queue restored but never started starts where it was.
-    #[cfg(feature = "desktop")]
     pub(crate) fn resume(&self) {
         if self.there(Press::Play) {
             return;
@@ -674,7 +668,6 @@ impl Handle {
     }
 
     /// Pauses, on the device playing.
-    #[cfg(feature = "desktop")]
     pub(crate) fn halt(&self) {
         if !self.there(Press::Pause) {
             self.engine.pause();
@@ -817,6 +810,15 @@ impl Handle {
         };
         if !back {
             self.note(Note::NothingToPutBack);
+        }
+    }
+
+    /// Undoes the last removal here while its undo is on offer (`nori_queue::undo`), for a client that
+    /// shows no undo of its own.
+    pub fn undo(&self) {
+        match self.core.session.undoable().filter(|_| self.elsewhere().is_none()) {
+            Some(u) => self.put_back(&u.id),
+            None => self.note(Note::NothingToPutBack),
         }
     }
 
@@ -976,8 +978,12 @@ impl Handle {
         }
     }
 
-    /// Applies a settings change's `effect` bits to the engine.
+    /// Applies a settings change's `effect` bits to the engine; a change to what is heard made while a
+    /// sound page is in sight makes the next ones heard at once ([`Parts::sound_page`]).
     pub fn apply(&self, effect: u32, prefs: &StoredPrefs) {
+        if effect & (APPLY_AUDIO | APPLY_GAIN | SOUND) != 0 {
+            self.sound_edited();
+        }
         if effect & (APPLY_AUDIO | SOUND | PLAYER) != 0 {
             self.engine.set_settings(settings(prefs, self.core.session.settings.layer()));
         }
@@ -1050,23 +1056,6 @@ impl Handle {
         }
     }
 
-    /// A lyrics view opened or closed: the core warms the songs ahead's lyrics only while one is open.
-    pub fn lyrics_view(&self, open: bool) {
-        self.client.lyrics_view(open);
-        if open {
-            let client = self.client.clone();
-            self.run(async move { client.lyrics_prefetch().await });
-        }
-    }
-
-    /// Fetches lyrics for `song`; each better answer arrives as [`Said::Lyrics`].
-    pub fn lyrics(&self, song: String) {
-        let (client, out) = (self.client.clone(), self.out.clone());
-        self.run(async move {
-            let _ = client.lyrics_for(song.clone(), Arc::new(Shown { song, out })).await;
-        });
-    }
-
     /// Requests cover `id` at `px` square: the core's rendition for that size is fetched
     /// ([`nori_core::covers::cover_rendition`]) and decoded to `px`. `done` gets the image or failure and,
     /// when `colours`, its page colors, derived off the caller's thread (a memory hit answers at once). None
@@ -1084,12 +1073,7 @@ impl Handle {
 
     /// Searches the offline index for the typed text.
     pub fn search_typed(&self, text: &str) -> SearchView {
-        let view = self.search.typed(text.to_string());
-        if view.query.is_empty() {
-            return view;
-        }
-        let limit = nori_core::browse::library_sizes().local_search;
-        self.search.local(self.core.clone(), view.query.clone(), limit).ok().flatten().unwrap_or(view)
+        self.search.typed_with_index(self.core.clone(), text.to_string())
     }
 
     /// Searches the server in the background. `error` words a failure for the results.
@@ -1100,16 +1084,19 @@ impl Handle {
         let _ = self.core.search_remember_recent(query.clone());
         let (search, client, out) = (self.search.clone(), self.client.clone(), self.out.clone());
         self.run(async move {
-            match search.ask(client, query.clone()).await {
-                Ok(Some(v)) => out(Said::Search(v)),
-                Ok(None) => {}
-                Err(e) => {
-                    if let Some(v) = search.failed(query, Some(error(&e))) {
-                        out(Said::Search(v));
-                    }
-                }
+            if let Some(v) = search.answer(client, query, error).await {
+                out(Said::Search(v));
             }
         });
+    }
+
+    /// The server's answer to `query` on the caller's thread, as [`Handle::search_server`] reports it;
+    /// None offline or when stale.
+    pub fn search_server_now(&self, query: String, error: fn(&NetError) -> String) -> Option<SearchView> {
+        if self.offline || query.trim().is_empty() {
+            return None;
+        }
+        block_on(self.search.answer(self.client.clone(), query, error))
     }
 
     /// Signs the profile's account in with `answer` (cookies pasted from a browser); signed in, the
@@ -1571,12 +1558,8 @@ impl Handle {
         }
         let start = picked.and_then(|id| songs.iter().position(|s| s.id == id)).unwrap_or(0);
         if self.guest {
-            let Some(r) = self.remotes.get() else { return };
-            if r.jam_controls().is_some_and(|c| !c.asks) {
-                let repeat = r.jam_playing().map_or(0, |m| m.repeat);
-                r.jam_press(Op::Replace { songs, index: start as u32, position_ms: 0, play: true, order: None, shuffle, repeat, transfer: None, listen: None, mix: None });
-            } else {
-                self.ask(songs.into_iter().skip(start).take(1).collect());
+            if let Some(r) = self.remotes.get() {
+                r.jam_play(songs, start as u32, shuffle);
             }
             return;
         }
@@ -1595,12 +1578,8 @@ impl Handle {
     /// [`Handle::enqueue_here`] on the device playing: the active device while it is another one.
     fn add(&self, songs: Vec<Song>, next: bool) {
         if self.guest {
-            let Some(r) = self.remotes.get() else { return };
-            let songs = queueable(songs);
-            if r.jam_controls().is_some_and(|c| !c.asks) {
-                r.jam_press(Op::Add { songs, next });
-            } else {
-                self.ask(songs);
+            if let Some(r) = self.remotes.get() {
+                r.jam_add(queueable(songs), next);
             }
             return;
         }
@@ -1611,13 +1590,6 @@ impl Handle {
         }
     }
 
-    /// A jam guest asks the host for `songs`, each a request of its own.
-    fn ask(&self, songs: Vec<Song>) {
-        let Some(r) = self.remotes.get() else { return };
-        for song in songs {
-            r.clone().jam_act(Op::Request { song });
-        }
-    }
 
     pub(crate) fn enqueue_here(&self, songs: Vec<Song>, next: bool) {
         let songs = queueable(songs);
@@ -1678,9 +1650,12 @@ fn monotonic_ms() -> i64 {
 #[path = "refill_tests.rs"]
 mod refill_tests;
 
+#[path = "carry_on.rs"]
+mod carry_on;
+
 /// A session's opening for a test: online, playing into `output`, reporting nowhere.
 #[cfg(test)]
-fn test_open<'a>(queue: Arc<nori_core::queue::Session>, data: &'a Path, profile: SavedServer, output: Box<dyn AudioOutput>) -> Open<'a> {
+pub(crate) fn test_open<'a>(queue: Arc<nori_core::queue::Session>, data: &'a Path, profile: SavedServer, output: Box<dyn AudioOutput>) -> Open<'a> {
     Open {
         queue,
         data,

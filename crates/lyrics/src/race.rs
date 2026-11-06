@@ -163,18 +163,32 @@ pub struct Race {
     entries: Vec<Entry>,
     prefer_words: bool,
     server_timing: Timing,
-    done: Vec<bool>,
-    waiting: Vec<usize>,
-    answers: Vec<Option<(Lyrics, Named)>>,
+    /// Where each rank is, by rank.
+    ranks: Vec<Rank>,
     /// The rank on screen.
     shown: Option<usize>,
-    /// The song's vocal curve, once measured, and each answer checked against it.
+    /// The song's vocal curve, once measured: every answer is checked against it.
     voice: Option<VocalCurve>,
-    checks: Vec<Option<SyncCheck>>,
     /// Whether two ranks' answers have the same words, found once as each answer comes.
     agree: Vec<Vec<bool>>,
-    /// Each answer's words, for [`Race::agree`].
-    words: Vec<Option<HashSet<String>>>,
+}
+
+/// Where a service is in the race.
+enum Rank {
+    /// Not asked yet.
+    Waiting,
+    Asking,
+    /// Its lyrics, or none.
+    Answered(Option<Box<Answer>>),
+}
+
+struct Answer {
+    lyrics: Lyrics,
+    named: Named,
+    /// Against the song's vocal curve, once measured.
+    check: Option<SyncCheck>,
+    /// Its words, for [`Race::agree`].
+    words: HashSet<String>,
 }
 
 impl Race {
@@ -185,25 +199,42 @@ impl Race {
             entries,
             prefer_words,
             server_timing,
-            done: vec![false; n],
-            waiting: (0..n).collect(),
-            answers: vec![None; n],
+            ranks: (0..n).map(|_| Rank::Waiting).collect(),
             shown: None,
             voice: None,
-            checks: vec![None; n],
             agree: vec![vec![false; n]; n],
-            words: vec![None; n],
         }
+    }
+
+    /// `rank`'s lyrics, once it answered with some.
+    fn answer_of(&self, rank: usize) -> Option<&Answer> {
+        match self.ranks.get(rank) {
+            Some(Rank::Answered(a)) => a.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn answered(&self, rank: usize) -> bool {
+        matches!(self.ranks[rank], Rank::Answered(_))
+    }
+
+    /// The ranks not asked yet, best first.
+    fn waiting(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.ranks.len()).filter(|&r| matches!(self.ranks[r], Rank::Waiting))
     }
 
     /// The song's vocal curve: every timed answer, in and to come, is checked against it.
     pub fn hear(&mut self, curve: VocalCurve) {
-        self.checks = self.answers.iter().map(|a| a.as_ref().and_then(|(l, _)| sync::check(l, &curve))).collect();
+        for r in &mut self.ranks {
+            if let Rank::Answered(Some(a)) = r {
+                a.check = sync::check(&a.lyrics, &curve);
+            }
+        }
         self.voice = Some(curve);
     }
 
     pub fn check(&self, rank: usize) -> Option<SyncCheck> {
-        self.checks.get(rank).copied().flatten()
+        self.answer_of(rank)?.check
     }
 
     /// `rank`'s lyrics with the offset their check is sure of.
@@ -217,17 +248,17 @@ impl Race {
         let n = self.entries.len().max(1) as f64;
         (0..self.entries.len())
             .map(|r| {
-                let (l, named) = self.answers[r].as_ref()?;
-                if timing(l) <= self.server_timing {
+                let a = self.answer_of(r)?;
+                if timing(&a.lyrics) <= self.server_timing {
                     return None;
                 }
-                let others: Vec<Other> = (0..self.answers.len())
+                let others: Vec<Other> = (0..self.ranks.len())
                     .filter(|&o| o != r)
-                    .filter_map(|o| self.answers[o].as_ref().map(|(lyrics, named)| Other { lyrics, named, agrees: self.agree[r][o] }))
+                    .filter_map(|o| self.answer_of(o).map(|other| Other { lyrics: &other.lyrics, named: &other.named, agrees: self.agree[r][o] }))
                     .collect();
-                let len = self.answers.len();
+                let len = self.ranks.len();
                 let others_agree = (0..len).any(|a| a != r && (a + 1..len).any(|b| b != r && self.agree[a][b]));
-                let mut t = with_sync(score(&self.song, l, named, self.entries[r].prior, &others, others_agree, self.prefer_words), self.checks[r].as_ref());
+                let mut t = with_sync(score(&self.song, &a.lyrics, &a.named, self.entries[r].prior, &others, others_agree, self.prefer_words), a.check.as_ref());
                 t.score = (t.score + RANK_BONUS * (1.0 - r as f64 / n)).min(1.0);
                 Some(t)
             })
@@ -255,26 +286,26 @@ impl Race {
     /// nor the second wave.
     fn first_wave_in(&self) -> bool {
         let wave: Vec<usize> = (0..self.entries.len()).filter(|&r| self.entries[r].first_wave && self.entries[r].best > self.server_timing).collect();
-        let out = wave.iter().filter(|&&r| !self.done[r]).count();
+        let out = wave.iter().filter(|&&r| !self.answered(r)).count();
         out == 0 || (out == 1 && wave.len() > 1)
     }
 
     fn timed_done(&self) -> bool {
-        (0..self.entries.len()).all(|r| self.done[r] || self.entries[r].best < Timing::Lines)
+        (0..self.entries.len()).all(|r| self.answered(r) || self.entries[r].best < Timing::Lines)
     }
 
     /// `rank` answered, with lyrics and what it named, or with nothing.
     pub fn answer(&mut self, rank: usize, found: Option<(Lyrics, Named)>) {
-        if self.done[rank] {
+        if self.answered(rank) {
             return;
         }
-        self.done[rank] = true;
-        self.waiting.retain(|w| *w != rank);
-        self.answers[rank] = found.filter(|(l, _)| !l.lines.is_empty());
-        self.checks[rank] = self.voice.as_ref().zip(self.answers[rank].as_ref()).and_then(|(v, (l, _))| sync::check(l, v));
-        self.words[rank] = self.answers[rank].as_ref().map(|(l, _)| words(l));
-        for other in 0..self.words.len() {
-            let same = other != rank && self.words[rank].as_ref().zip(self.words[other].as_ref()).is_some_and(|(a, b)| same_words(a, b));
+        let answer = found.filter(|(l, _)| !l.lines.is_empty()).map(|(lyrics, named)| {
+            let check = self.voice.as_ref().and_then(|v| sync::check(&lyrics, v));
+            Box::new(Answer { words: words(&lyrics), lyrics, named, check })
+        });
+        self.ranks[rank] = Rank::Answered(answer);
+        for other in 0..self.ranks.len() {
+            let same = other != rank && self.answer_of(rank).zip(self.answer_of(other)).is_some_and(|(a, b)| same_words(&a.words, &b.words));
             (self.agree[rank][other], self.agree[other][rank]) = (same, same);
         }
     }
@@ -302,7 +333,7 @@ impl Race {
     fn wants_words(&self, rank: usize, leader: Option<(usize, f64)>) -> bool {
         self.prefer_words
             && self.entries[rank].best == Timing::Words
-            && leader.is_some_and(|(r, _)| self.answers[r].as_ref().is_some_and(|(l, _)| timing(l) < Timing::Words))
+            && leader.is_some_and(|(r, _)| self.answer_of(r).is_some_and(|a| timing(&a.lyrics) < Timing::Words))
     }
 
     /// Whether `rank`, not asked yet, can never be asked with the answers in hand.
@@ -316,12 +347,14 @@ impl Race {
     /// The ranks to ask now, best first, so that no more than `pool` are out; hopeless ones are dropped.
     pub fn next(&mut self, running: usize, pool: usize) -> Vec<usize> {
         let leader = self.leader();
-        let hopeless: Vec<usize> = self.waiting.iter().copied().filter(|r| self.hopeless(*r, leader)).collect();
+        let hopeless: Vec<usize> = self.waiting().filter(|r| self.hopeless(*r, leader)).collect();
         for r in hopeless {
             self.answer(r, None);
         }
-        let start: Vec<usize> = self.waiting.iter().copied().filter(|r| self.may_ask(*r, leader)).take(pool.saturating_sub(running)).collect();
-        self.waiting.retain(|w| !start.contains(w));
+        let start: Vec<usize> = self.waiting().filter(|r| self.may_ask(*r, leader)).take(pool.saturating_sub(running)).collect();
+        for &r in &start {
+            self.ranks[r] = Rank::Asking;
+        }
         start
     }
 
@@ -343,13 +376,13 @@ impl Race {
             return None;
         }
         self.shown = Some(leader);
-        self.answers[leader].as_ref().map(|a| (leader, self.to_screen(leader, a.0.clone())))
+        self.answer_of(leader).map(|a| (leader, self.to_screen(leader, a.lyrics.clone())))
     }
 
     /// Whether the answer names this title, agrees with another, or matches the length with timing
     /// across the song.
     fn evidenced(&self, rank: usize) -> bool {
-        let Some((lyrics, named)) = self.answers[rank].as_ref() else { return false };
+        let Some(Answer { lyrics, named, .. }) = self.answer_of(rank) else { return false };
         let duration = self.song.duration as f64;
         let length = duration > 0.0 && named.duration_s.is_some_and(|s| (Named::seconds(s) - duration).abs() <= 2.0);
         let times = || lyrics.lines.iter().filter(|l| l.start_ms >= 0 && !l.text.trim().is_empty()).map(|l| l.start_ms);
@@ -363,8 +396,8 @@ impl Race {
     pub fn chosen(&self) -> Option<(usize, Trust, &Lyrics, &Named)> {
         let r = self.shown?;
         let t = self.scores()[r]?;
-        let (l, n) = self.answers[r].as_ref()?;
-        Some((r, t, l, n))
+        let a = self.answer_of(r)?;
+        Some((r, t, &a.lyrics, &a.named))
     }
 
     /// The best of the rest.
@@ -581,7 +614,7 @@ pub async fn lookup(
     };
     let now = Instant::now();
     for (rank, key) in keys.iter().enumerate() {
-        if race.done[rank] || race.entries[rank].best <= server_timing {
+        if race.answered(rank) || race.entries[rank].best <= server_timing {
             continue;
         }
         match remembered(cache, key, song) {

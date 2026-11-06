@@ -266,7 +266,6 @@ impl Provider for PluginProvider {
         self.now(move |s, x| x.nori_plugin_provider().call_open(s, &p));
         let guest = nori_remote::is_guest_key(&profile.api_key);
         core.set_rules(self.ask_rules(profile, guest));
-        *core.native_login.write() = None;
         *core.account.write() = None;
         Ok(())
     }

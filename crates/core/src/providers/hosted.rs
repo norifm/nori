@@ -52,7 +52,6 @@ impl Provider for HostedProvider {
         core.serves(&format!("jam:{}", profile.url))?;
         *core.server.write() = crate::api::Server::default();
         core.set_rules(self.rules(profile, true));
-        *core.native_login.write() = None;
         *core.account.write() = None;
         Ok(())
     }

@@ -1,0 +1,234 @@
+package dev.nori.music.app.widget
+
+import android.appwidget.AppWidgetManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
+import android.widget.RemoteViews
+import androidx.core.content.ContextCompat
+import dev.nori.music.Nori
+import dev.nori.music.app.R
+import dev.nori.music.app.widget.Widgets.tint
+import dev.nori.music.ffi.lyrics.LyricsEnd
+import dev.nori.music.ffi.lyrics.LyricsHeard
+import dev.nori.music.ffi.lyrics.LyricsNow
+import dev.nori.music.ffi.lyrics.LyricsPick
+import dev.nori.music.ffi.lyrics.widgetLines
+import dev.nori.music.look.CoverLook
+import dev.nori.music.playback.PlaybackService
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+
+/** The line being sung, large, and the next one under it, on the song's own colours. See [LyricsLine]. */
+class LyricsWidget : NoriWidget() {
+    override fun onReceive(context: Context, intent: Intent) {
+        super.onReceive(context, intent)
+        if (intent.action == PlaybackService.ACTION_STATE) {
+            Widgets.heard(intent)
+            LyricsLine.heard(context.applicationContext)
+        }
+    }
+
+    override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) = LyricsLine.changed(context.applicationContext)
+
+    override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: Bundle) = LyricsLine.changed(context.applicationContext)
+
+    override fun onDisabled(context: Context) {
+        super.onDisabled(context)
+        LyricsLine.stop(context.applicationContext)
+    }
+}
+
+/**
+ * Keeps the lyrics widgets on the line being sung. The song's lyrics are looked up as the app's lyrics are
+ * (the server's, then the lyrics services' when the settings allow), once per song and only with the screen
+ * on. Then one wake per line: the next is posted for when it starts, and only while music plays, the screen
+ * is on and a lyrics widget is placed - nothing ticks between lines, and nothing at all with the screen off:
+ * the screen turning on draws everything. A line's change, or the same song's playing or seeking, sends
+ * only its words; the picture behind them is sent with the song.
+ */
+internal object LyricsLine {
+    private val main = Handler(Looper.getMainLooper())
+    private var app: Context? = null
+    private val next = Runnable { app?.let(::line) }
+
+    /** The lyrics of the song heard, as the core follows them; made on first use, off the main thread. */
+    private val heard by lazy { LyricsHeard() }
+
+    /** The song drawn, what its lyrics are, and the lookup running for it. */
+    private var song: String? = null
+    private var now: LyricsNow = LyricsNow.NoSong
+    private var looking: Job? = null
+
+    /** The screen's turning on and off, watched while a lyrics widget is placed. */
+    private var watching = false
+    private val screen = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_SCREEN_ON) changed(context.applicationContext) else main.removeCallbacks(next)
+        }
+    }
+
+    private fun on(context: Context) = context.getSystemService(PowerManager::class.java).isInteractive
+
+    /** The widgets or the screen changed: everything drawn again, if the screen is on. Main thread. */
+    fun changed(context: Context) {
+        if (track(context) && on(context)) full(context)
+    }
+
+    /** The service announced the song or its playing: the words alone while it is the song drawn, else everything. Main thread. */
+    fun heard(context: Context) {
+        val drawn = look != null && Widgets.now(context).id == song
+        if (!track(context) || !on(context)) return
+        if (drawn) line(context) else full(context)
+    }
+
+    /** Watches the screen and keeps the song's lyrics looked up; false when no lyrics widget is placed. */
+    private fun track(context: Context): Boolean {
+        app = context
+        if (Widgets.ids(context, LyricsWidget::class.java).isEmpty()) { stop(context); return false }
+        if (!watching) {
+            watching = true
+            ContextCompat.registerReceiver(context, screen, IntentFilter(Intent.ACTION_SCREEN_ON).apply { addAction(Intent.ACTION_SCREEN_OFF) }, ContextCompat.RECEIVER_NOT_EXPORTED)
+        }
+        val id = Widgets.now(context).id
+        if (id != song) {
+            song = id
+            now = if (id == null) LyricsNow.NoSong else LyricsNow.Looking(id)
+            looking?.cancel()
+            looking = null
+        }
+        if (id != null && now is LyricsNow.Looking && looking == null && on(context)) looking = Widgets.scope.launch { look(context, id) }
+        return true
+    }
+
+    /** What the core says song [id]'s lyrics are; each change drawn while it is the song drawn. */
+    private fun show(context: Context, id: String, shown: LyricsNow) {
+        if (song != id) return
+        now = shown
+        line(context)
+    }
+
+    private suspend fun look(context: Context, id: String) {
+        val library = Nori.get(context).library
+        val first = withContext(Dispatchers.IO) { heard.hear(id) }
+        // Kept words come at once; a song whose lookup had ended is not looked up again.
+        if (first !is LyricsNow.Looking) show(context, id, first)
+        val fetch = withContext(Dispatchers.IO) { heard.fetch() }
+        if (fetch != null) {
+            var failed = false
+            try {
+                val s = try { library.song(id) } catch (e: CancellationException) { throw e } catch (e: Exception) { failed = true; null }
+                // Each better answer as it comes, the server's first; a service that never answers is let go.
+                if (s != null) withTimeoutOrNull(30_000) {
+                    library.lyricsFor(s).catch { failed = true }.collect { f ->
+                        val pick = LyricsPick(f.lyrics, f.source)
+                        if (withContext(Dispatchers.IO) { heard.answer(id, pick) }) show(context, id, LyricsNow.Shown(id, pick))
+                    }
+                }
+            } catch (e: CancellationException) {
+                withContext(NonCancellable + Dispatchers.IO) { heard.ended(id, LyricsEnd.STOPPED) }
+                throw e
+            }
+            withContext(Dispatchers.IO) { heard.ended(id, if (failed) LyricsEnd.FAILED else LyricsEnd.DONE) }?.let { show(context, id, it) }
+        }
+        if (song == id) looking = null
+    }
+
+    fun stop(context: Context) {
+        main.removeCallbacks(next)
+        looking?.cancel()
+        looking = null
+        if (watching) { watching = false; runCatching { context.unregisterReceiver(screen) } }
+    }
+
+    /** The words shown now: the line, the next one, whether the line is a note rather than lyrics, and when it changes (ms), if it will. */
+    private class Words(val line: String, val next: String, val note: Boolean, val waitMs: Long?)
+
+    private fun words(context: Context): Words {
+        val p = Widgets.now(context)
+        val l = (now as? LyricsNow.Shown)?.pick?.lyrics
+        val looked = now !is LyricsNow.Looking
+        if (p.id == null) return Words(context.getString(R.string.nothing_playing), "", true, null)
+        val shown = l?.let { widgetLines(it, p.positionNow(), p.speed) }
+        if (l == null || shown == null) return Words(if (looked) context.getString(R.string.note_no_lyrics) else NOTE, "", looked, null)
+        val said = { i: UInt? -> i?.let { l.lines[it.toInt()].text }.orEmpty() }
+        return Words(said(shown.line).ifEmpty { NOTE }, said(shown.next), false, shown.waitMs?.toLong())
+    }
+
+    /** Between lines, and in a song's instrumental stretches. */
+    private const val NOTE = "♪"
+
+    /** The words of [v] and their colours, in [look]. */
+    private fun write(context: Context, v: RemoteViews, look: IntArray): Words {
+        val w = words(context)
+        v.setTextViewText(R.id.widget_line, w.line)
+        v.setTextColor(R.id.widget_line, look[if (w.note) CoverLook.ON_VARIANT else CoverLook.ON])
+        v.setTextViewText(R.id.widget_next_line, w.next)
+        v.setTextColor(R.id.widget_next_line, look[CoverLook.ON_45])
+        return w
+    }
+
+    private fun schedule(context: Context, w: Words) {
+        main.removeCallbacks(next)
+        if (w.waitMs != null && Widgets.now(context).playing && on(context)) main.postDelayed(next, w.waitMs)
+    }
+
+    /** The look the last full drawing wore, for the line changes between. */
+    private var look: IntArray? = null
+
+    /** Only the words, to every lyrics widget, and the next line's wake. */
+    private fun line(context: Context) {
+        val ids = Widgets.ids(context, LyricsWidget::class.java)
+        val l = look
+        if (ids.isEmpty() || l == null) { if (ids.isNotEmpty()) full(context); return }
+        val v = RemoteViews(context.packageName, R.layout.widget_lyrics)
+        val w = write(context, v, l)
+        AppWidgetManager.getInstance(context).partiallyUpdateAppWidget(ids, v)
+        schedule(context, w)
+    }
+
+    /** Everything: the page from the song's cover, the song, and the words. */
+    private fun full(context: Context) {
+        val manager = AppWidgetManager.getInstance(context)
+        for (id in Widgets.ids(context, LyricsWidget::class.java)) Widgets.draw("lyrics$id") {
+            val p = Widgets.now(context)
+            val theme = Widgets.theme(context)
+            val dressed = Widgets.coverLook(context, p.cover, theme)
+            val look = dressed?.look ?: theme.look
+            this.look = look
+            val (wDp, hDp) = Widgets.sizeDp(context, id)
+            val density = context.resources.displayMetrics.density
+            val scale = minOf(1f, 600f / (maxOf(wDp, hDp) * density))
+            val v = RemoteViews(context.packageName, R.layout.widget_lyrics)
+            // The wash is a blur 128 px a side: drawn at most 600 px, it loses nothing.
+            v.setImageViewBitmap(
+                R.id.widget_back,
+                Painter.wash(dressed?.wash, (wDp * density * scale).toInt().coerceAtLeast(1), (hDp * density * scale).toInt().coerceAtLeast(1), Widgets.radiusPx(context, scale), look),
+            )
+            // One row high, the line alone: no song over it, nothing after it.
+            val short = hDp < ONE_ROW
+            v.setViewVisibility(R.id.widget_head, if (short) android.view.View.GONE else android.view.View.VISIBLE)
+            v.setViewVisibility(R.id.widget_next_line, if (short) android.view.View.GONE else android.view.View.VISIBLE)
+            if (short) v.setViewPadding(R.id.widget_open, (16 * density).toInt(), (10 * density).toInt(), (16 * density).toInt(), (10 * density).toInt())
+            val thumb = Widgets.px(context, 30f)
+            v.setImageViewBitmap(R.id.widget_cover, Painter.cover(context, Widgets.picture(context, p.cover, thumb), thumb, thumb, 6 * density, look))
+            v.setTextViewText(R.id.widget_title, listOfNotNull(p.title, p.artist?.takeIf { it.isNotEmpty() }).joinToString(" · ").ifEmpty { context.getString(R.string.lyrics) })
+            v.setTextColor(R.id.widget_title, look[CoverLook.ON_VARIANT])
+            val w = write(context, v, look)
+            v.setOnClickPendingIntent(R.id.widget_open, Widgets.open(context, if (p.id == null) null else "lyrics"))
+            manager.updateAppWidget(id, v)
+            schedule(context, w)
+        }
+    }
+}

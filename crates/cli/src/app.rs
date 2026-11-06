@@ -6,7 +6,10 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use nori_core::browse::{AlbumSort, HistoryAfter, LibrarySection, ProfileRules};
+use nori_core::paged::Paged;
 use nori_core::library::QueueOffer;
+use nori_core::offer::Offered;
+use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, SignInEvent, SignInFlow};
 use nori_core::providers::{AfterAdding, FirstStep};
 use nori_core::menus::{DownloadAct, PageAction, PageKind, SongDownload};
 use nori_core::mixes::board::{MixSheet, MixTile};
@@ -15,14 +18,14 @@ use nori_core::settings::HomeRow;
 use nori_core::client::Starrable;
 use nori_core::playlist::PlaylistView;
 use nori_core::remote::wire::Pending;
-use nori_core::remote::{Controls, JamControls, JamView, Listening, Reach, RemoteDevice};
+use nori_core::remote::{Controls, JamControls, JamStart, JamView, Listening, Reach, RemoteDevice};
 use nori_core::search::SearchView;
 use nori_core::settings::{EqLevel, SavedServer, ServerKind, SoundBand, StoredPrefs, TapAction};
 use nori_core::settings_store::SoundTool;
 use nori_core::stars::StarMarks;
 use nori_core::{Album, AlbumDetail, Artist, ArtistDetail, OriginKind, PageOrigin, Playlist, PlaylistDetail, Song};
 use nori_engine::{Event, State};
-use nori_core::rules::sound_tuning;
+use nori_core::tuning::SoundPage;
 use nori_look::cover::CoverColours;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
@@ -30,8 +33,8 @@ use ratatui::layout::{Position, Rect};
 use crate::art::{Colors, Theme};
 use crate::backend::{Data, Downloads, Fetch, Msg, Req, ALBUM_PAGE};
 use crate::keys::{action, Action, Scope};
-use crate::lyrics::SongLyrics;
-use crate::settings_view::{Chore, Opened, SettingsView, Switch};
+use crate::lyrics::Words;
+use crate::settings_view::{Alone, Chore, Opened, SettingsView, Switch};
 
 /// The page's root view, under any opened album, artist or playlist pages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -114,8 +117,8 @@ pub enum Cmd {
     Volume(f32),
     Jump(usize),
     Remove(usize),
-    /// Undo the last removal (`playlist_restore`).
-    Restore(String),
+    /// Undo the last removal while it is on offer (`Session::undo`).
+    Undo,
     Move(usize, usize),
     Shuffle(bool),
     /// The next repeat mode after the one shown.
@@ -123,6 +126,8 @@ pub enum Cmd {
     Download(Vec<Song>),
     /// Keeps the song out of the mixes.
     ExcludeFromMixes(String, bool),
+    /// Sets the sleep timer.
+    Sleep(nori_core::menus::SleepChoice),
     /// Adds songs to the playlist `id`, or makes one called `name` of them.
     AddToPlaylist { id: String, songs: Vec<String> },
     NewPlaylist { name: String, songs: Vec<String> },
@@ -132,8 +137,8 @@ pub enum Cmd {
     RedrawMix(String),
     /// Keeps a mix as a playlist, its name made from `title` by the core.
     SaveMix { title: String, songs: Vec<Song> },
-    /// Asks for the queue another device left, for a player `playing` or not and showing the song `shown`.
-    LookForOffer { playing: bool, shown: Option<String> },
+    /// Asks for the queue another device left, against what the player shows.
+    LookForOffer,
     /// Plays the queue offered where it was left, and does not offer it again.
     TakeOffer(QueueOffer),
     DismissOffer(QueueOffer),
@@ -158,10 +163,12 @@ pub enum Cmd {
     Paint(bool),
     /// Output device for the next start; empty for the system default.
     Device(String),
-    Tuning(bool),
+    /// A sound page came in sight (true) or left it (`Parts::sound_page`).
+    SoundPage(SoundPage, bool),
     SearchTyped(String),
     SearchServer(String),
-    Lyrics(String),
+    /// The song heard's lyrics looked up again.
+    LyricsRefresh,
     /// The playing song cover by id, and the colors the player wears from it.
     Cover(String),
     Login(Box<SavedServer>),
@@ -254,7 +261,7 @@ impl Cmd {
             Cmd::Download(songs) => format!("download {} songs", songs.len()),
             Cmd::Login(p) => format!("log in to {}", p.url),
             Cmd::Cover(art) => format!("cover {art}"),
-            Cmd::Lyrics(id) => format!("lyrics {id}"),
+            Cmd::LyricsRefresh => "lyrics refresh".into(),
             Cmd::Toggle => "toggle".into(),
             Cmd::Next => "next".into(),
             Cmd::Previous => "previous".into(),
@@ -266,7 +273,7 @@ impl Cmd {
             Cmd::Setting(k, v) => format!("setting {k}={v}"),
             Cmd::Action(a) => format!("action {a:?}"),
             Cmd::Curve => "curve".into(),
-            Cmd::Tuning(on) => format!("tuning {on}"),
+            Cmd::SoundPage(page, on) => format!("sound page {page:?} {on}"),
             Cmd::Mouse(on) => format!("mouse {on}"),
             Cmd::Images(on) => format!("images {on}"),
             Cmd::Device(d) => format!("device {d}"),
@@ -380,9 +387,9 @@ pub enum Page {
     Playlist { id: String, detail: Load<Box<PlaylistDetail>>, sel: Sel },
     /// One of the core's mixes, or the favorites.
     Mix { id: String, detail: Load<Box<MixSheet>>, sel: Sel },
-    /// All of a Home shelf's entries: a library row's read a page at a time (`more` while there may be more),
-    /// a feed's or For you's as Home has them.
-    Row { title: String, items: Vec<Item>, row: Option<HomeRow>, more: bool, sel: Sel },
+    /// All of a Home shelf's entries: a library row's read a page at a time from an offset, a feed's or For
+    /// you's as Home has them.
+    Row { title: String, items: Vec<Item>, row: Option<HomeRow>, pages: Paged<u32>, sel: Sel },
 }
 
 impl Page {
@@ -471,7 +478,7 @@ pub struct Home {
     /// For you: the favorites, then the mixes.
     pub mixes: Vec<MixTile>,
     /// The queue left on the server, offered to carry on here (`Client::queue_offer`).
-    pub offer: Option<QueueOffer>,
+    pub offer: Offered,
     pub error: Option<String>,
     pub asked: bool,
     /// Selection over [`Home::lines`].
@@ -516,7 +523,7 @@ impl Home {
 
     pub fn lines(&self) -> Vec<HomeLine> {
         let mut out = Vec::new();
-        if self.offer.is_some() {
+        if self.offer.shown().is_some() {
             out.push(HomeLine::Offer);
         }
         let shelves = std::iter::once(ShelfAt::ForYou).chain((0..self.rows.len()).map(ShelfAt::Row));
@@ -551,19 +558,12 @@ impl Home {
             self.sel.at = if down && self.sel.at + 1 < lines.len() { self.sel.at + 1 } else { self.sel.at.saturating_sub(1) };
         }
     }
-
-    /// The offered song, playing here or the player showing it, takes the offer away (`offer_stands`).
-    fn offer_still(&mut self, here: Option<String>, playing: bool) {
-        let gone = self.offer.as_ref().is_some_and(|o| !o.songs.get(o.index as usize).is_some_and(|s| nori_core::library::offer_stands(&s.id, here.clone(), playing)));
-        if gone {
-            self.offer = None;
-        }
-    }
 }
 
 pub struct Library {
     pub albums: Load<Vec<Album>>,
-    pub albums_more: bool,
+    /// The albums' pages, from an offset.
+    pub album_pages: Paged<u32>,
     pub albums_sel: Sel,
     /// The albums' order, whether only the favorites are listed, and in Artist order where each artist's
     /// shelf starts (`browse::artist_rows`).
@@ -574,7 +574,7 @@ pub struct Library {
     pub artists_sel: Sel,
     pub playlists: Load<Vec<Playlist>>,
     pub songs: Load<Vec<Song>>,
-    pub songs_more: bool,
+    pub song_pages: Paged<u32>,
     pub songs_sel: Sel,
     /// The songs' order, one of `browse::song_sorts`, and whether only the favorites are listed.
     pub song_sort: String,
@@ -583,9 +583,9 @@ pub struct Library {
     /// The starred songs.
     pub favorites: Load<Vec<Song>>,
     pub favorites_sel: Sel,
-    /// What this device played, newest first, and where the next page starts.
+    /// What this device played, newest first, a page after the place the last one ended.
     pub history: Load<Vec<HistoryEntry>>,
-    pub history_next: Option<HistoryAfter>,
+    pub history_pages: Paged<Option<HistoryAfter>>,
     pub history_sel: Sel,
     /// What the downloads weigh, once weighed.
     pub downloads_bytes: Option<i64>,
@@ -595,7 +595,7 @@ impl Default for Library {
     fn default() -> Self {
         Library {
             albums: Load::Idle,
-            albums_more: false,
+            album_pages: Paged::new(0),
             albums_sel: Sel::default(),
             album_sort: nori_core::browse::album_sort_saved(Default::default()),
             albums_favorites: false,
@@ -604,7 +604,7 @@ impl Default for Library {
             artists_sel: Sel::default(),
             playlists: Load::Idle,
             songs: Load::Idle,
-            songs_more: false,
+            song_pages: Paged::new(0),
             songs_sel: Sel::default(),
             song_sort: nori_core::browse::song_sort_saved(Default::default()),
             songs_favorites: false,
@@ -612,7 +612,7 @@ impl Default for Library {
             favorites: Load::Idle,
             favorites_sel: Sel::default(),
             history: Load::Idle,
-            history_next: None,
+            history_pages: Paged::new(None),
             history_sel: Sel::default(),
             downloads_bytes: None,
         }
@@ -663,7 +663,7 @@ impl Search {
     /// The results as one list: songs, albums, artists, playlists, each under a title.
     pub fn rows(&self) -> Vec<SearchRow<'_>> {
         let mut out = Vec::new();
-        let Some(r) = self.view.as_ref().and_then(|v| v.shown.as_ref()) else { return out };
+        let Some(r) = self.view.as_ref().and_then(|v| v.answer.result()) else { return out };
         if !r.songs.is_empty() {
             out.push(SearchRow::Title("Songs", r.songs.len()));
             out.extend(r.songs.iter().map(SearchRow::Song));
@@ -701,24 +701,14 @@ pub struct Login {
     /// Name, address, user, password.
     pub fields: [String; 4],
     pub focus: usize,
-    pub error: Option<String>,
-    pub busy: bool,
     /// Selection in the saved servers list.
     pub sel: Sel,
     /// Whether the saved servers list has the keys.
     pub on_list: bool,
-    /// The kind of profile added, once chosen; until then the first screen shows.
-    pub kind: Option<ServerKind>,
-    /// What its page is ([`ProviderInfo::first_step`]).
-    pub step: Option<FirstStep>,
+    /// The page shown and the profile on its way (the core's).
+    pub flow: AddFlow,
     /// Selection among the first screen's providers ([`App::provider_lines`]).
     pub choice: Sel,
-    /// The plugin whose page the first screen opened; installed, it is turned on and its form opens.
-    pub offered: Option<String>,
-    /// The kind chosen is being added at once: the first screen stays unless that fails.
-    pub adding_now: bool,
-    /// How the profile being added was asked for; None for one already saved.
-    pub after: Option<AfterAdding>,
 }
 
 /// A line of the first screen.
@@ -768,10 +758,8 @@ impl Now {
 pub struct Devices {
     /// Remote control or jams are switched on.
     pub on: bool,
-    /// A jam can be started: jams are on and the server has not said it cannot relay.
-    pub jams: bool,
-    /// Jams are on but the server cannot relay them.
-    pub jams_unsupported: bool,
+    /// Where starting a jam stands, while remote control is on; Unavailable with jams off.
+    pub jam_start: Option<JamStart>,
     pub pairing: Option<String>,
     /// The account's other devices.
     pub list: Vec<RemoteDevice>,
@@ -873,6 +861,12 @@ pub enum DeviceRow {
 }
 
 impl Devices {
+    /// Where the music plays (`nori_core::destination::destination_of`), for a jam guest's profile or not.
+    pub fn destination(&self, guest: bool) -> nori_core::destination::Destination {
+        let hosting = self.jam.as_ref().is_some_and(|j| j.hosting);
+        nori_core::destination::destination_of(guest, self.active.as_ref().map(|(_, name)| name.clone()), self.cast.as_ref().map(Into::into), hosting)
+    }
+
     /// The panel's rows, the plugins' last.
     pub fn rows(&self) -> Vec<DeviceRow> {
         let mut rows = Vec::new();
@@ -892,7 +886,7 @@ impl Devices {
         if self.on {
             rows.extend((0..self.list.len()).flat_map(|i| [DeviceRow::Device(i), DeviceRow::Playing(i)]));
             rows.extend((0..self.reached.len()).map(DeviceRow::Reached));
-            if self.jams || self.jam.is_some() {
+            if self.jam_start == Some(JamStart::Offered) || self.jam.is_some() {
                 rows.push(DeviceRow::Jam);
             }
             rows.push(DeviceRow::Join);
@@ -1031,7 +1025,8 @@ pub enum Overlay {
     Join { text: String, error: Option<String>, busy: bool },
     /// The profile's account with a provider: who is signed in (empty: no one), whether the provider
     /// ended the session, cookies being pasted, why signing in failed, and a sign-in under way.
-    Account { kind: nori_core::settings::ServerKind, user: String, ended: bool, pasting: bool, text: String, error: Option<String>, busy: bool },
+    /// `flow` is the core's; `window_failed`, that the sign-in window would not open.
+    Account { kind: nori_core::settings::ServerKind, user: String, pasting: bool, text: String, flow: SignInFlow, window_failed: bool },
 }
 
 /// What a picker sets.
@@ -1061,6 +1056,8 @@ pub enum Target {
     /// The file to save a backup to or restore one from; its password is asked next.
     BackupFile { restore: bool },
     BackupPassword { restore: bool, path: String },
+    /// The sleep timer's choices, as offered.
+    Sleep(Vec<nori_core::menus::SleepChoice>),
 }
 
 impl Target {
@@ -1071,6 +1068,7 @@ impl Target {
             Target::Device => Some(Cmd::Device(value)),
             Target::Preset => value.parse().ok().map(|i| Cmd::Sound(SoundToolCmd::Preset(i))),
             Target::Playlist(songs) => Some(Cmd::AddToPlaylist { id: value, songs }),
+            Target::Sleep(choices) => value.parse().ok().and_then(|i: usize| choices.get(i).copied()).map(Cmd::Sleep),
             Target::Level(l) => value.parse().ok().map(|v| Cmd::Level(l, v)),
             Target::Plugin { plugin, row, kind } => {
                 use nori_plugins::{RowKind, Value};
@@ -1230,16 +1228,13 @@ pub struct App {
     pub shown: Shown,
     pub queue: Option<PlaylistView>,
     pub queue_sel: Sel,
-    /// Id of the song last removed from the queue, for undo.
-    pub taken: Option<String>,
     pub downloads: Load<Box<Downloads>>,
     pub downloads_sel: Sel,
     pub downloads_at: Option<Instant>,
     pub settings: SettingsView,
     pub eq_sel: Sel,
     pub login: Login,
-    pub lyrics: Option<SongLyrics>,
-    pub lyrics_for: Option<String>,
+    pub lyrics: Words,
     pub lyrics_sel: Option<usize>,
     pub lyrics_wake: Option<Instant>,
     pub overlay: Option<Overlay>,
@@ -1298,11 +1293,8 @@ pub struct App {
     /// The terminal has focus; true until it says otherwise, as terminals without focus events never do.
     pub in_sight: bool,
     pub quit: bool,
-    /// Whether the engine holds the equalizer's low-latency buffer ([`App::sound_edited`]); released
-    /// when the equalizer closes or is switched off.
-    pub tuning: bool,
-    /// The sound was changed on the equalizer since it was opened.
-    pub touched: bool,
+    /// The sound page the session was last told is in sight.
+    sound_page: Option<SoundPage>,
     pub drag: Option<Drag>,
     /// Where the equalizer's curve was drawn, for the mouse.
     pub eq_plot: Rect,
@@ -1498,9 +1490,6 @@ impl App {
 
     /// Opens a root view, closing any opened pages, and requests its data if needed.
     pub fn go(&mut self, view: View) {
-        if view != View::Equalizer {
-            self.touched = false;
-        }
         self.view = view;
         if crate::chrome::tab_name(view) == crate::chrome::tab_name(View::Albums) {
             self.section = view;
@@ -1508,7 +1497,7 @@ impl App {
         self.pages.clear();
         self.full = false;
         self.focus = Focus::Main;
-        self.tune();
+        self.follow_sound_page();
         self.dirty = true;
         // What the downloads weigh, beside their place.
         if self.sections().contains(&view) && self.places(view).contains(&Place::Downloads) {
@@ -1523,17 +1512,15 @@ impl App {
                     self.home.sel = Sel::default();
                     self.cmds.push(Cmd::Load(Req::Home));
                 }
-                // Each time Home comes into sight, the queue another device left; a jam guest's is the host's.
-                if self.rules.account {
-                    let (playing, shown) = (self.now.state == State::Playing, self.song.as_ref().map(|s| s.id.clone()));
-                    self.cmds.push(Cmd::LookForOffer { playing, shown });
-                }
+                // Each time Home comes into sight, the queue another device left.
+                self.cmds.push(Cmd::LookForOffer);
             }
             View::Albums if matches!(l.albums, Load::Idle) => {
                 l.albums = Load::Loading;
                 // The order it was left in (`album_sort_saved`).
                 l.album_sort = nori_core::browse::album_sort_saved(self.prefs.list_prefs.clone());
-                self.cmds.push(Cmd::Load(Req::Albums { sort: l.album_sort, favorites: l.albums_favorites, offset: 0 }));
+                l.album_pages.reset();
+                self.cmds.extend(l.album_pages.ask().map(|offset| Cmd::Load(Req::Albums { sort: l.album_sort, favorites: l.albums_favorites, offset })));
             }
             View::Artists if matches!(l.artists, Load::Idle) => {
                 l.artists = Load::Loading;
@@ -1542,11 +1529,13 @@ impl App {
             View::Songs if matches!(l.songs, Load::Idle) => {
                 l.songs = Load::Loading;
                 l.song_sort = nori_core::browse::song_sort_saved(self.prefs.list_prefs.clone());
-                self.cmds.push(Cmd::Load(Req::Songs { sort: l.song_sort.clone(), starred: l.songs_favorites, offset: 0 }));
+                l.song_pages.reset();
+                self.cmds.extend(l.song_pages.ask().map(|offset| Cmd::Load(Req::Songs { sort: l.song_sort.clone(), starred: l.songs_favorites, offset })));
             }
             View::History if matches!(l.history, Load::Idle) => {
                 l.history = Load::Loading;
-                self.cmds.push(Cmd::Load(Req::History(None)));
+                l.history_pages.reset();
+                self.cmds.extend(l.history_pages.ask().map(|after| Cmd::Load(Req::History(after))));
             }
             View::Playlists if matches!(l.playlists, Load::Idle) => {
                 l.playlists = Load::Loading;
@@ -1626,7 +1615,7 @@ impl App {
                 d.sel.at = active.map_or(0, |i| d.rows().iter().position(|r| *r == DeviceRow::Device(i)).unwrap_or(0));
                 d.settle(true);
             }
-            Panel::Lyrics => self.want_lyrics(),
+            Panel::Lyrics => self.lyrics_wake = Some(Instant::now()),
             Panel::Playing => {}
         }
     }
@@ -1638,7 +1627,7 @@ impl App {
         self.full = true;
         self.focus = Focus::Panel;
         if self.panel == Panel::Lyrics {
-            self.want_lyrics();
+            self.lyrics_wake = Some(Instant::now());
         }
     }
 
@@ -1668,14 +1657,13 @@ impl App {
         self.open_full();
     }
 
-    fn want_lyrics(&mut self) {
-        let Some(id) = self.song.as_ref().map(|s| s.id.clone()) else { return };
-        if self.lyrics_for.as_deref() != Some(&id) {
-            self.lyrics_for = Some(id.clone());
-            self.lyrics = None;
-            self.lyrics_sel = None;
-            self.cmds.push(Cmd::Lyrics(id));
+    /// What the session's lyrics view shows now (`Handle::lyrics_heard`); another song's, still on its
+    /// way, is let go.
+    pub fn lyrics_now(&mut self, now: nori_core::lyrics_follow::LyricsNow) {
+        if now.song() != self.song.as_ref().map(|s| s.id.as_str()) {
+            return;
         }
+        self.lyrics = Words::of(now, self.now.position(Instant::now()));
         self.lyrics_wake = Some(Instant::now());
     }
 
@@ -1685,6 +1673,7 @@ impl App {
         // Handlers clear `dirty` when nothing changed; an earlier message in the batch stays dirty.
         let was = std::mem::replace(&mut self.dirty, true);
         self.take(msg);
+        self.follow_sound_page();
         self.dirty |= was;
     }
 
@@ -1709,13 +1698,7 @@ impl App {
                     }
                 }
             }
-            Msg::Lyrics { song, pick } => {
-                if self.lyrics_for.as_deref() == Some(&song) && self.lyrics.as_ref().is_none_or(|l| l.replaced_by(&pick)) {
-                    let pos = self.now.position(Instant::now());
-                    self.lyrics = Some(SongLyrics::new(pick, pos));
-                    self.lyrics_wake = Some(Instant::now());
-                }
-            }
+            Msg::Lyrics(now) => self.lyrics_now(now),
             Msg::Search(v) => {
                 if v.query == self.search.text.trim() {
                     self.search.view = Some(v);
@@ -1740,15 +1723,12 @@ impl App {
                 }
             }
             Msg::Offer(offer) => {
-                self.home.offer = offer;
                 let (here, playing) = (self.song.as_ref().map(|s| s.id.clone()), self.now.state == State::Playing);
-                self.home.offer_still(here, playing);
+                self.home.offer.found(offer, here, playing);
             }
             Msg::LoggedIn(r) => {
-                self.login.busy = false;
-                if let Err(e) = r {
-                    self.login.error = Some(e);
-                    self.login.adding_now = false;
+                if let Err(said) = r {
+                    self.login.flow.on(AddEvent::Refused { said });
                 }
             }
             Msg::Reachable(r) => self.unreachable = r.err(),
@@ -1771,25 +1751,27 @@ impl App {
                 _ => self.say(e.clone(), true),
             },
             // The runner opens these, and the profiles a jam is joined and left with.
-            Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { .. }) => self.overlay = None,
-            Msg::SignedIn(r) => {
-                let kind = self.prefs.active_server().map(|p| p.kind.clone()).unwrap_or_default();
-                let said = crate::text::sign_in(&self.provider_words(&kind).name, &r);
-                match &mut self.overlay {
-                    Some(Overlay::Account { error, busy, .. }) => {
-                        *error = Some(said);
-                        *busy = false;
+            Msg::SignedIn(r) => match &mut self.overlay {
+                Some(Overlay::Account { flow, .. }) => {
+                    flow.on(SignInEvent::Answered { result: r });
+                    if flow.shown == nori_core::providers::flow::SignInShown::Closed {
+                        self.overlay = None;
                     }
-                    _ => self.say(said, true),
                 }
-            }
+                _ if matches!(r, nori_core::providers::SignInResult::SignedIn { .. }) => {}
+                _ => {
+                    let kind = self.prefs.active_server().map(|p| p.kind.clone()).unwrap_or_default();
+                    let said = crate::text::sign_in(&self.provider_words(&kind).name, &r);
+                    self.say(said, true);
+                }
+            },
             Msg::Preview(Ok(p)) => {
-                let turns_on = self.login.offered.as_ref() == Some(&p.card.id) || !self.settings.own.plugins.iter().any(|c| c.id == p.card.id);
+                let turns_on = self.settings.alone.offer() == Some(p.card.id.as_str()) || !self.settings.own.plugins.iter().any(|c| c.id == p.card.id);
                 self.overlay = Some(preview_sheet(p, turns_on));
             }
             Msg::Installed(Ok(id)) => {
                 self.say(crate::text::PLUGIN_INSTALLED, false);
-                if self.login.offered.as_ref() == Some(&id) {
+                if self.settings.alone.offer() == Some(id.as_str()) {
                     while self.settings.leave() {}
                     self.plugins_left();
                     self.cmds.push(Cmd::Plugin(PluginCmd::TurnOnChosen(id)));
@@ -1825,7 +1807,7 @@ impl App {
                 }
                 // Music started: Home lets the offer go.
                 let here = self.song.as_ref().map(|s| s.id.clone());
-                self.home.offer_still(here, s == State::Playing);
+                self.home.offer.still(here, s == State::Playing);
             }
             Event::Song { .. } | Event::Looped { .. } => {}
             Event::Error { id, message } => {
@@ -1844,7 +1826,7 @@ impl App {
             Event::Waiting(false) => {}
             Event::Mixing(on) => self.now.mixing = on,
             // How a jam's host is followed is the core's jam controls' to show.
-            Event::Position { .. } | Event::Placed { .. } | Event::Awake(_) | Event::Following(_) => {}
+            Event::Position { .. } | Event::Placed { .. } | Event::Awake(_) | Event::Following(_) | Event::LongPause | Event::Focus(_) => {}
         }
     }
 
@@ -1860,7 +1842,7 @@ impl App {
         let changed = self.song.as_ref().map(|s| &s.id) != song.as_ref().map(|s| &s.id);
         self.song = song;
         // The player came to show the song offered.
-        self.home.offer_still(self.song.as_ref().map(|s| s.id.clone()), self.now.state == State::Playing);
+        self.home.offer.still(self.song.as_ref().map(|s| s.id.clone()), self.now.state == State::Playing);
         if !changed {
             return;
         }
@@ -1875,12 +1857,7 @@ impl App {
         if let Some(art) = art {
             self.cmds.push(Cmd::Cover(art));
         }
-        if self.lyrics_shown() {
-            self.want_lyrics();
-        } else {
-            self.lyrics = None;
-            self.lyrics_for = None;
-        }
+        self.lyrics_sel = None;
     }
 
     fn data(&mut self, req: Req, r: Result<Data, String>) {
@@ -1905,7 +1882,9 @@ impl App {
             (Req::Albums { sort, favorites, .. }, _) if (sort, favorites) != (self.library.album_sort, self.library.albums_favorites) => self.dirty = false,
             (Req::Albums { sort, favorites, offset }, Ok(Data::Albums(v))) => {
                 let l = &mut self.library;
-                l.albums_more = nori_core::browse::next_album_page(sort, favorites, offset, ALBUM_PAGE, v.len() as u32).is_some();
+                if !l.album_pages.answered(&offset, nori_core::browse::next_album_page(sort, favorites, offset, ALBUM_PAGE, v.len() as u32)) {
+                    return self.dirty = false;
+                }
                 match &mut l.albums {
                     Load::Ready(have) if offset > 0 => {
                         have.truncate(offset as usize);
@@ -1918,7 +1897,14 @@ impl App {
                 }
                 self.onto_entries(View::Albums);
             }
-            (Req::Albums { .. }, Err(e)) => self.library.albums = Load::Failed(e),
+            (Req::Albums { offset, .. }, Err(e)) => {
+                let l = &mut self.library;
+                l.album_pages.failed(&offset);
+                // A later page's failure keeps what is listed; scrolling on asks for it again.
+                if offset == 0 {
+                    l.albums = Load::Failed(e);
+                }
+            }
             (Req::Artists, Ok(Data::Artists(v))) => {
                 self.library.artists = Load::Ready(v);
                 self.onto_entries(View::Artists);
@@ -1933,7 +1919,9 @@ impl App {
             (Req::Favorites, Err(e)) => self.library.favorites = Load::Failed(e),
             (Req::Songs { ref sort, starred, .. }, _) if (sort, starred) != (&self.library.song_sort, self.library.songs_favorites) => self.dirty = false,
             (Req::Songs { offset, .. }, Ok(Data::Songs(v, exhausted))) => {
-                self.library.songs_more = !exhausted;
+                if !self.library.song_pages.answered(&offset, (!exhausted).then_some(offset + v.len() as u32)) {
+                    return self.dirty = false;
+                }
                 match &mut self.library.songs {
                     Load::Ready(have) if offset > 0 => {
                         have.truncate(offset as usize);
@@ -1943,17 +1931,31 @@ impl App {
                 }
                 self.onto_entries(View::Songs);
             }
-            (Req::Songs { .. }, Err(e)) => self.library.songs = Load::Failed(e),
+            (Req::Songs { offset, .. }, Err(e)) => {
+                let l = &mut self.library;
+                l.song_pages.failed(&offset);
+                if offset == 0 {
+                    l.songs = Load::Failed(e);
+                }
+            }
             (Req::History(after), Ok(Data::History(page))) => {
                 let l = &mut self.library;
-                l.history_next = page.next;
+                if !l.history_pages.answered(&after, page.next.map(Some)) {
+                    return self.dirty = false;
+                }
                 let songs = page.entries;
                 match &mut l.history {
                     Load::Ready(have) if after.is_some() => have.extend(songs),
                     slot => *slot = Load::Ready(songs),
                 }
             }
-            (Req::History(_), Err(e)) => self.library.history = Load::Failed(e),
+            (Req::History(after), Err(e)) => {
+                let l = &mut self.library;
+                l.history_pages.failed(&after);
+                if after.is_none() {
+                    l.history = Load::Failed(e);
+                }
+            }
             (Req::DownloadsSize, Ok(Data::DownloadsSize(bytes))) => self.library.downloads_bytes = Some(bytes),
             (Req::DownloadsSize, Err(_)) => self.dirty = false,
             (Req::Downloads, Ok(Data::Downloads(d))) => {
@@ -1972,18 +1974,16 @@ impl App {
             (Req::Facts, Ok(Data::Facts(f))) => self.settings.set_facts(*f),
             (Req::Facts, Err(_)) => {}
             (Req::Row { row, offset }, r) => {
-                let Some(Page::Row { items, more, .. }) = self.pages.iter_mut().rev().find(|p| matches!(p, Page::Row { row: Some(at), .. } if *at == row)) else { return self.dirty = false };
+                let Some(Page::Row { items, pages, .. }) = self.pages.iter_mut().rev().find(|p| matches!(p, Page::Row { row: Some(at), .. } if *at == row)) else { return self.dirty = false };
                 match r {
                     Ok(Data::Row(v, done)) => {
-                        if offset == 0 {
-                            *items = v;
-                        } else {
-                            items.truncate(offset as usize);
-                            items.extend(v);
+                        if !pages.answered(&offset, (!done).then_some(offset + v.len() as u32)) {
+                            return self.dirty = false;
                         }
-                        *more = !done;
+                        items.truncate(offset as usize);
+                        items.extend(v);
                     }
-                    _ => *more = false,
+                    _ => pages.failed(&offset),
                 }
             }
             (req, r) => {
@@ -2135,7 +2135,7 @@ impl App {
 
     fn paste(&mut self, text: &str) {
         let text: String = text.chars().filter(|c| !c.is_control()).collect();
-        if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Account { text: t, pasting: true, busy: false, .. }) = &mut self.overlay {
+        if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Account { text: t, pasting: true, .. }) = &mut self.overlay {
             t.push_str(&text);
         } else if self.view == View::Login {
             if !self.login_choosing() {
@@ -2203,20 +2203,20 @@ impl App {
 
     /// The form's provider.
     pub fn login_info(&self) -> Option<nori_core::providers::ProviderInfo> {
-        let kind = self.login.kind.as_ref()?;
+        let kind = self.login.flow.kind()?;
         self.settings.own.kinds.providers().into_iter().find(|i| i.kind == *kind)
     }
 
     /// Which of `LOGIN_FIELDS` the kind chosen asks.
     pub fn login_fields(&self) -> Vec<usize> {
-        let Some(info) = self.login_info().filter(|_| self.login.step == Some(FirstStep::Form)) else { return Vec::new() };
+        let Some(info) = self.login_info().filter(|_| self.login.flow.step() == Some(FirstStep::Form)) else { return Vec::new() };
         (0..4).filter(|&i| info.fields.iter().any(|f| f.what == LOGIN_ASKS[i])).collect()
     }
 
     /// The first screen: what a new profile plays from, the repos asked what they offer.
     pub fn choose_provider(&mut self) {
         self.view = View::Login;
-        (self.login.kind, self.login.adding_now) = (None, false);
+        self.login.flow.on(AddEvent::Start);
         self.cmds.push(Cmd::Plugin(PluginCmd::Read));
         if matches!(self.settings.own.shelf, crate::settings_view::Shelf::Unasked) {
             self.cmds.push(Cmd::Plugin(PluginCmd::Look));
@@ -2232,24 +2232,21 @@ impl App {
 
     /// See [`App::provider_chosen`].
     pub(crate) fn provider_opened(&mut self, info: &nori_core::providers::ProviderInfo) {
-        self.login.kind = Some(info.kind.clone());
-        self.login.step = Some(info.first_step());
+        let then = self.login.flow.on(AddEvent::Chose { info: info.clone() });
         self.login.focus = self.login_fields().first().copied().unwrap_or(0);
-        self.login.error = None;
-        if self.login.step == Some(FirstStep::AddNow) {
-            self.login.adding_now = true;
+        if then == AddDo::Connect {
             self.connect(AfterAdding::Remind);
         }
     }
 
     /// Whether the first screen shows.
     pub fn login_choosing(&self) -> bool {
-        self.login.kind.is_none() || self.login.adding_now
+        self.login.flow.choosing()
     }
 
     /// The account page shows: a provider with an account and nothing to fill.
     pub fn login_account(&self) -> bool {
-        self.login.kind.is_some() && self.login.step == Some(FirstStep::Account)
+        self.login.flow.step() == Some(FirstStep::Account)
     }
 
     /// The first screen's line `at`: a kind's form, a plugin off turned on, or the page of one not installed.
@@ -2257,11 +2254,10 @@ impl App {
         match self.provider_lines().into_iter().nth(at) {
             Some(ProviderLine::Kind(kind)) => self.provider_chosen(kind),
             // With every plugin off none could run: it leads to the switch.
-            Some(ProviderLine::Offered { .. }) if self.prefs.plugins_off => self.plugins_alone(),
+            Some(ProviderLine::Offered { .. }) if self.prefs.plugins_off => self.plugins_alone(Alone::Plugins),
             Some(ProviderLine::Offered { id, .. }) if self.settings.own.plugins.iter().any(|c| c.id == id) => self.cmds.push(Cmd::Plugin(PluginCmd::TurnOnChosen(id))),
             Some(ProviderLine::Offered { id, .. }) => {
-                self.login.offered = Some(id.clone());
-                self.plugins_alone();
+                self.plugins_alone(Alone::Offer(id.clone()));
                 self.plugin_page(crate::settings_view::PluginPage::Plugin(id));
             }
             None => {}
@@ -2269,8 +2265,8 @@ impl App {
     }
 
     /// Settings › Plugins on its own, from the first screen: no profile is needed to add one.
-    fn plugins_alone(&mut self) {
-        self.settings.alone = true;
+    fn plugins_alone(&mut self, alone: Alone) {
+        self.settings.alone = alone;
         self.settings.row = Sel::default();
         self.settings.invalidate();
         self.view = View::Settings;
@@ -2300,13 +2296,13 @@ impl App {
             KeyCode::Esc if l.on_list => l.on_list = false,
             KeyCode::Esc if profiles > 0 => self.view = View::Settings,
             KeyCode::Esc | KeyCode::Char('q') => self.quit = true,
-            KeyCode::Char('p') => self.plugins_alone(),
+            KeyCode::Char('p') => self.plugins_alone(Alone::Plugins),
             KeyCode::Enter if l.on_list => {
                 if let Some(s) = self.prefs.servers.get(l.sel.at) {
                     self.cmds.push(Cmd::SwitchServer(s.id.clone()));
                 }
             }
-            KeyCode::Enter if !l.busy => {
+            KeyCode::Enter if !l.flow.busy() => {
                 let at = l.choice.at;
                 self.provider_open(at);
             }
@@ -2341,8 +2337,7 @@ impl App {
             KeyCode::Enter if !last => l.focus = fields[at.map_or(0, |i| i + 1)],
             KeyCode::Enter => self.connect(AfterAdding::Remind),
             KeyCode::Esc => {
-                l.kind = None;
-                l.error = None;
+                l.flow.on(AddEvent::Back);
             }
             KeyCode::Backspace if at.is_some() => {
                 l.fields[l.focus].pop();
@@ -2353,9 +2348,6 @@ impl App {
     }
 
     fn connect(&mut self, after: AfterAdding) {
-        if self.login.busy {
-            return;
-        }
         let Some(info) = self.login_info() else { return };
         let asked = self.login_fields();
         let l = &mut self.login;
@@ -2364,15 +2356,11 @@ impl App {
         let url = if url.is_empty() || url.contains("://") { url } else { format!("https://{url}") };
         let draft = SavedServer { id: nori_core::settings::new_server_id(), kind: info.kind.clone(), name: typed(0).trim().to_string(), url, user: typed(2).trim().to_string(), password: typed(3), ..Default::default() };
         let list = nori_core::settings::ServerList { servers: self.prefs.servers.clone(), active_server_id: self.prefs.active_server_id.clone() };
-        l.after = self.settings.own.kinds.adds_profile(list, draft.clone()).then_some(after);
-        if !self.settings.own.kinds.server_ready(draft.clone()) {
-            l.error = Some(crate::text::LOGIN_MISSING.into());
-            l.adding_now = false;
-            return;
+        let added = self.settings.own.kinds.adds_profile(list, draft.clone()).then_some(after);
+        let ready = self.settings.own.kinds.server_ready(draft.clone());
+        if let AddDo::Send { .. } = l.flow.on(AddEvent::Send { ready, added }) {
+            self.cmds.push(Cmd::Login(Box::new(draft)));
         }
-        l.error = None;
-        l.busy = true;
-        self.cmds.push(Cmd::Login(Box::new(draft)));
     }
 
     fn overlay_key(&mut self, k: KeyEvent) {
@@ -2422,12 +2410,14 @@ impl App {
                 KeyCode::Char('q') => self.overlay = None,
                 _ => {}
             },
-            Overlay::Account { busy: true, .. } | Overlay::Join { busy: true, .. } if k.code != KeyCode::Esc => self.dirty = false,
-            Overlay::Account { pasting: true, text, error, busy, .. } => match k.code {
+            Overlay::Join { busy: true, .. } if k.code != KeyCode::Esc => self.dirty = false,
+            Overlay::Account { flow, .. } if flow.busy() && k.code != KeyCode::Esc => self.dirty = false,
+            Overlay::Account { pasting: true, text, flow, window_failed, .. } => match k.code {
                 KeyCode::Enter if !text.trim().is_empty() => {
-                    *busy = true;
-                    *error = None;
-                    self.cmds.push(Cmd::SignIn(text.trim().to_string()));
+                    *window_failed = false;
+                    if flow.on(SignInEvent::Sent) {
+                        self.cmds.push(Cmd::SignIn(text.trim().to_string()));
+                    }
                 }
                 KeyCode::Esc => {
                     if let Some(Overlay::Account { pasting, .. }) = &mut self.overlay {
@@ -2441,18 +2431,20 @@ impl App {
                 KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
                 _ => {}
             },
-            Overlay::Account { user, ended, pasting, error, busy, .. } => match k.code {
+            Overlay::Account { user, pasting, flow, window_failed, .. } => match k.code {
                 KeyCode::Enter if !user.is_empty() => {
                     self.cmds.push(Cmd::SignOut);
                     self.overlay = None;
                 }
                 KeyCode::Enter => {
-                    *busy = true;
-                    *error = None;
-                    self.cmds.push(Cmd::SignInWindow);
+                    *window_failed = false;
+                    flow.on(SignInEvent::Retry);
+                    if flow.on(SignInEvent::Sent) {
+                        self.cmds.push(Cmd::SignInWindow);
+                    }
                 }
                 KeyCode::Char('p') if user.is_empty() => *pasting = true,
-                KeyCode::Char('d') if *ended => {
+                KeyCode::Char('d') if flow.shown == (nori_core::providers::flow::SignInShown::Offered { ended: true }) => {
                     self.cmds.push(Cmd::StopReminding);
                     self.overlay = None;
                 }
@@ -2632,7 +2624,7 @@ impl App {
             Action::Back => self.back(),
             Action::Refresh => self.refresh(),
             Action::Sooner | Action::Later | Action::Unnudge => {
-                if let Some(l) = &self.lyrics {
+                if let Some(l) = self.lyrics.found() {
                     let dir = match a {
                         Action::Sooner => 1,
                         Action::Later => -1,
@@ -2708,11 +2700,7 @@ impl App {
                 Some(QueueRow::Song(i)) if self.queue.as_ref().is_some_and(|q| nori_core::stage::mirrored_queue_rows(q.len, false, q.index).kept.contains(&(i as u32))) => {
                     self.dirty = false
                 }
-                Some(QueueRow::Song(i)) => {
-                    // Another device's queue has its own undo.
-                    self.taken = self.queue.as_ref().filter(|_| self.devices.active.is_none()).and_then(|q| q.songs.get(i)).map(|s| s.id.clone());
-                    self.cmds.push(Cmd::Remove(i));
-                }
+                Some(QueueRow::Song(i)) => self.cmds.push(Cmd::Remove(i)),
                 Some(row) => match row.ask().and_then(|k| self.ask_request(k)) {
                     Some(request) => self.cmds.push(Cmd::JamDecide(request, false)),
                     None => self.dirty = false,
@@ -2730,10 +2718,7 @@ impl App {
                 None => self.dirty = false,
             },
             Action::Menu => self.open_menu(),
-            Action::Undo if self.queue_in_focus() => match self.taken.take() {
-                Some(id) => self.cmds.push(Cmd::Restore(id)),
-                None => self.say("Nothing to put back", false),
-            },
+            Action::Undo if self.queue_in_focus() => self.cmds.push(Cmd::Undo),
             Action::Undo => self.dirty = false,
             Action::MoveUp | Action::MoveDown if self.view == View::Settings && !self.queue_in_focus() => match self.settings.plugin_move(a == Action::MoveUp) {
                 Some(c) => self.cmds.push(c),
@@ -2802,12 +2787,12 @@ impl App {
             return;
         }
         if self.on_settings() && self.settings.leave() {
-            if self.login.offered.is_some() && !self.settings.deep() {
+            if self.settings.alone.offer().is_some() && !self.settings.deep() {
                 self.plugins_left();
             }
             return;
         }
-        if self.view == View::Settings && self.settings.alone {
+        if self.view == View::Settings && self.settings.alone != Alone::No {
             return self.plugins_left();
         }
         if self.pages.pop().is_none() {
@@ -2817,18 +2802,20 @@ impl App {
 
     /// Back on the first screen from the plugins on their own.
     fn plugins_left(&mut self) {
-        self.settings.alone = false;
+        self.settings.alone = Alone::No;
         self.settings.invalidate();
-        self.login.offered = None;
         self.view = View::Login;
     }
 
     fn refresh(&mut self) {
         if self.lyrics_focused() {
-            self.lyrics_for = None;
-            return self.want_lyrics();
+            return self.cmds.push(Cmd::LyricsRefresh);
         }
-        if let Some(p) = self.page() {
+        if let Some(p) = self.pages.last_mut() {
+            if let Page::Row { pages, row: Some(_), .. } = p {
+                pages.reset();
+                pages.ask();
+            }
             self.cmds.extend(p.req().map(Cmd::Load));
             return;
         }
@@ -2957,11 +2944,10 @@ impl App {
             return;
         }
         // A Home row in full, a page at a time.
-        if let Some(Page::Row { items, row: Some(row), more: more @ true, sel, .. }) = self.pages.last_mut() {
+        if let Some(Page::Row { items, row: Some(row), pages, sel, .. }) = self.pages.last_mut() {
             if sel.at + 30 >= items.len() {
-                *more = false;
-                let (row, offset) = (*row, items.len() as u32);
-                self.cmds.push(Cmd::Load(Req::Row { row, offset }));
+                let row = *row;
+                self.cmds.extend(pages.ask().map(|offset| Cmd::Load(Req::Row { row, offset })));
             }
             return;
         }
@@ -2972,24 +2958,20 @@ impl App {
         match self.view {
             View::Albums => {
                 let len = l.albums.ready().map_or(0, Vec::len);
-                if l.albums_sel.at + 50 >= len && l.albums_more {
-                    l.albums_more = false;
-                    self.cmds.push(Cmd::Load(Req::Albums { sort: l.album_sort, favorites: l.albums_favorites, offset: len as u32 }));
+                if l.albums_sel.at + 50 >= len {
+                    self.cmds.extend(l.album_pages.ask().map(|offset| Cmd::Load(Req::Albums { sort: l.album_sort, favorites: l.albums_favorites, offset })));
                 }
             }
             View::Songs => {
                 let len = l.songs.ready().map_or(0, Vec::len);
-                if l.songs_sel.at + 50 >= len && l.songs_more {
-                    l.songs_more = false;
-                    self.cmds.push(Cmd::Load(Req::Songs { sort: l.song_sort.clone(), starred: l.songs_favorites, offset: len as u32 }));
+                if l.songs_sel.at + 50 >= len {
+                    self.cmds.extend(l.song_pages.ask().map(|offset| Cmd::Load(Req::Songs { sort: l.song_sort.clone(), starred: l.songs_favorites, offset })));
                 }
             }
             View::History => {
                 let len = l.history.ready().map_or(0, Vec::len);
                 if l.history_sel.at + 30 >= len {
-                    if let Some(after) = l.history_next.take() {
-                        self.cmds.push(Cmd::Load(Req::History(Some(after))));
-                    }
+                    self.cmds.extend(l.history_pages.ask().map(|after| Cmd::Load(Req::History(after))));
                 }
             }
             _ => {}
@@ -3205,11 +3187,13 @@ impl App {
         match self.view {
             View::Albums => {
                 (l.albums, l.album_shelves, l.albums_sel) = (Load::Loading, Vec::new(), Sel::default());
-                self.cmds.push(Cmd::Load(Req::Albums { sort: l.album_sort, favorites: l.albums_favorites, offset: 0 }));
+                l.album_pages.reset();
+                self.cmds.extend(l.album_pages.ask().map(|offset| Cmd::Load(Req::Albums { sort: l.album_sort, favorites: l.albums_favorites, offset })));
             }
             View::Songs => {
                 (l.songs, l.songs_sel) = (Load::Loading, Sel::default());
-                self.cmds.push(Cmd::Load(Req::Songs { sort: l.song_sort.clone(), starred: l.songs_favorites, offset: 0 }));
+                l.song_pages.reset();
+                self.cmds.extend(l.song_pages.ask().map(|offset| Cmd::Load(Req::Songs { sort: l.song_sort.clone(), starred: l.songs_favorites, offset })));
             }
             _ => {}
         }
@@ -3218,7 +3202,7 @@ impl App {
     /// Plays the queue offered where it was left (`take`), or turns it down; either way it is not offered
     /// again (`queue_offer_done`).
     fn take_offer(&mut self, take: bool) {
-        if let Some(offer) = self.home.offer.take() {
+        if let Some(offer) = self.home.offer.close() {
             self.cmds.push(if take { Cmd::TakeOffer(offer) } else { Cmd::DismissOffer(offer) });
             self.home.settle(true);
         }
@@ -3236,7 +3220,14 @@ impl App {
             ShelfAt::Row(i) => self.home.rows.get(i).and_then(|r| r.as_ref()).and_then(|s| s.row),
             ShelfAt::ForYou => None,
         };
-        self.open_page(Page::Row { title, items, row, more: false, sel: Sel::default() });
+        let mut pages = Paged::new(0);
+        // A library row's first page is asked as it opens; a shelf from elsewhere has no pages.
+        if row.is_some() {
+            pages.ask();
+        } else {
+            pages.end();
+        }
+        self.open_page(Page::Row { title, items, row, pages, sel: Sel::default() });
     }
 
     /// A song picked from a list, per the `tap_action` setting (not offered here; default PlayList).
@@ -3581,10 +3572,10 @@ impl App {
             self.dirty = false;
         } else if self.devices.jam.is_some() {
             self.invite();
-        } else if self.devices.jams {
+        } else if self.devices.jam_start == Some(JamStart::Offered) {
             self.cmds.push(Cmd::JamStart);
         } else {
-            self.say(if self.devices.jams_unsupported { crate::text::JAM_UNSUPPORTED } else { crate::text::JAMS_OFF }, false);
+            self.say(if self.devices.jam_start == Some(JamStart::Unsupported) { crate::text::JAM_UNSUPPORTED } else { crate::text::JAMS_OFF }, false);
         }
     }
 
@@ -3599,7 +3590,7 @@ impl App {
             Some(Item::Mix(m)) => Some(Cmd::PlayFetch(Fetch::Mix(m.id), false)),
             None => None,
         };
-        if self.devices.jam.is_none() && self.devices.jams {
+        if self.devices.jam.is_none() && self.devices.jam_start == Some(JamStart::Offered) {
             self.cmds.extend(play);
         }
         self.jam_start();
@@ -3608,7 +3599,7 @@ impl App {
     // ---- lyrics ----
 
     fn lyrics_action(&mut self, a: Action) {
-        let Some(l) = &self.lyrics else { return };
+        let Some(l) = self.lyrics.found() else { return };
         let len = l.pick.lyrics.lines.len();
         // `active` is past the end after the last line.
         let active = (l.clock.shown().active.max(0) as usize).min(len.saturating_sub(1));
@@ -3669,25 +3660,32 @@ impl App {
         self.settings.invalidate();
     }
 
-    /// A sound change was stored. Returns true when the engine should now take the low-latency buffer
-    /// (first real edit on the equalizer; `rules::sound_tuning`), so later edits are heard
-    /// at once. Merely opening the equalizer does not.
-    pub fn sound_edited(&mut self) -> bool {
-        self.touched |= sound_tuning(self.view == View::Equalizer, true);
-        self.tune()
+    /// The sound page in sight: the equalizer, a plugin's page, or Settings, which holds the Sound group.
+    fn sound_page_in_sight(&self) -> Option<SoundPage> {
+        match self.view {
+            View::Equalizer => Some(SoundPage::Equalizer),
+            View::Settings => match self.settings.own.stack.last() {
+                Some((crate::settings_view::PluginPage::Plugin(_), _)) => Some(SoundPage::Plugin),
+                Some(_) => None,
+                None => (self.settings.alone == crate::settings_view::Alone::No).then_some(SoundPage::Sound),
+            },
+            _ => None,
+        }
     }
 
-    /// Updates `tuning` from `rules::sound_tuning`; pushes the release command, returns true on take.
-    fn tune(&mut self) -> bool {
-        let want = sound_tuning(self.view == View::Equalizer, self.touched);
-        if want == self.tuning {
-            return false;
+    /// Tells the session when the sound page in sight changes; the new one first, so the buffer holds
+    /// from one to the next.
+    fn follow_sound_page(&mut self) {
+        let now = self.sound_page_in_sight();
+        if now == self.sound_page {
+            return;
         }
-        self.tuning = want;
-        if !want {
-            self.cmds.push(Cmd::Tuning(false));
+        if let Some(page) = now {
+            self.cmds.push(Cmd::SoundPage(page, true));
         }
-        want
+        if let Some(page) = std::mem::replace(&mut self.sound_page, now) {
+            self.cmds.push(Cmd::SoundPage(page, false));
+        }
     }
 
     fn eq_step(&mut self, up: bool) {
@@ -3780,8 +3778,8 @@ impl App {
                 }
             }
             ListRef::Lyrics => {
-                let len = self.lyrics.as_ref().map_or(0, |l| l.pick.lyrics.lines.len());
-                let at = self.lyrics_sel.unwrap_or_else(|| self.lyrics.as_ref().map_or(0, |l| l.clock.shown().active.max(0) as usize));
+                let len = self.lyrics.found().map_or(0, |l| l.pick.lyrics.lines.len());
+                let at = self.lyrics_sel.unwrap_or_else(|| self.lyrics.found().map_or(0, |l| l.clock.shown().active.max(0) as usize));
                 self.lyrics_sel = Some((at as isize + d * 3).clamp(0, len.saturating_sub(1) as isize) as usize);
             }
             ListRef::Picker => {
@@ -3915,7 +3913,7 @@ impl App {
             Button::Connect => self.connect(AfterAdding::Remind),
             Button::LoginSignIn => self.connect(AfterAdding::SignIn),
             Button::LoginGuest => self.connect(AfterAdding::Guest),
-            Button::LoginPlugins => self.plugins_alone(),
+            Button::LoginPlugins => self.plugins_alone(Alone::Plugins),
             Button::Resume => self.take_offer(true),
             Button::Dismiss => self.take_offer(false),
         }

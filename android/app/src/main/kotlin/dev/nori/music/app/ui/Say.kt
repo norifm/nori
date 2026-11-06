@@ -1,0 +1,1097 @@
+package dev.nori.music.app.ui
+
+import android.content.res.Resources
+import dev.nori.music.app.R
+import dev.nori.music.ffi.library.AlbumDetail
+import dev.nori.music.ffi.library.DiscGroup
+import dev.nori.music.ffi.library.ServerHistory
+import dev.nori.music.ffi.library.StatsPage
+import dev.nori.music.ffi.library.StatsSource
+import dev.nori.music.ffi.model.Song
+import dev.nori.music.ffi.devices.OutputPort
+import dev.nori.music.ffi.library.AlbumSort
+import dev.nori.music.ffi.library.DownloadAct
+import dev.nori.music.ffi.settings.LibrarySection
+import dev.nori.music.ffi.library.MixName
+import dev.nori.music.ffi.library.ReleaseGroup
+import dev.nori.music.ffi.library.ReleaseKind
+import dev.nori.music.ffi.library.RowSwipeAct
+import dev.nori.music.ffi.library.SearchScope
+import dev.nori.music.ffi.library.SleepChoice
+import dev.nori.music.ffi.library.SongAction
+import dev.nori.music.ffi.model.AutoEqEntry
+import dev.nori.music.ffi.model.PresetKind
+import dev.nori.music.ffi.model.SmartBuiltin
+import dev.nori.music.ffi.settings.BandMark
+import dev.nori.music.ffi.settings.EqBypass
+import dev.nori.music.ffi.settings.LyricsOrigin
+import dev.nori.music.ffi.settings.BandChannel
+import dev.nori.music.ffi.model.EqKind
+import dev.nori.music.ffi.settings.HomeRow
+import dev.nori.music.ffi.settings.ServerKind
+import dev.nori.music.text.Fmt
+
+/**
+ * A kind of profile's words (the core's providers): what it is called, what adding one does and its button,
+ * what is said under a profile that names no user, and its account's words. Subsonic's are the app's own; a
+ * plugin's name and about are the plugin's ([pluginName], [pluginAbout]), the rest the app's words for any
+ * provider, its name in them.
+ */
+class ProviderWords(val name: String, val hint: String, val add: String, val noUser: String, val account: AccountWords)
+
+/** The words of a provider whose account signs in apart from its form (`ProviderInfo.sign_in`). */
+class AccountWords(
+    val signInHint: String, val pageButton: String, val pageTitle: String, val pageRefused: String, val pasteInstead: String, val pasteHint: String,
+    val pasteLabel: String, val risk: String, val offerTitle: String, val offerText: String, val signedOutAgain: String, val noSession: String,
+    val refused: String, val unreachable: String,
+)
+
+/** [kind]'s words; a plugin kind is named by [pluginName] (its id until the plugin's words are read), [pluginAbout] its hint. */
+fun providerWords(r: Resources, kind: ServerKind, pluginName: String? = null, pluginAbout: String? = null): ProviderWords {
+    val name = when (kind) {
+        ServerKind.Subsonic -> r.getString(R.string.profile_kind_server)
+        is ServerKind.Plugin -> pluginName ?: kind.id
+    }
+    val account = AccountWords(
+        r.getString(R.string.provider_sign_in_hint), r.getString(R.string.provider_sign_in_page, name), name, r.getString(R.string.provider_page_refused, name),
+        r.getString(R.string.provider_paste_instead), r.getString(R.string.provider_paste_hint, name), r.getString(R.string.provider_cookies),
+        r.getString(R.string.provider_account_risk, name), r.getString(R.string.provider_offer_title, name), r.getString(R.string.provider_offer_text),
+        r.getString(R.string.provider_signed_out_again, name), r.getString(R.string.provider_no_session), r.getString(R.string.provider_refused, name),
+        r.getString(R.string.provider_unreachable, name),
+    )
+    return when (kind) {
+        ServerKind.Subsonic -> ProviderWords(name, r.getString(R.string.server_hint), r.getString(R.string.connect), r.getString(R.string.settings_server_api_key), account)
+        is ServerKind.Plugin -> ProviderWords(name, pluginAbout.orEmpty(), r.getString(R.string.provider_add, name), r.getString(R.string.profile_kind_plugin_no_user), account)
+    }
+}
+
+/**
+ * Every word the screens say, from the app's string resources (res/values/strings.xml), so the app can
+ * be translated. The fixed words are read once per locale into fields ([say] is rebuilt when the locale
+ * changes); a word with a number or a name in it is a function. Numbers themselves are [Fmt]'s. The core
+ * says none of these: it hands over data and kinds, and this words them.
+ */
+class Say(private val r: Resources) {
+    val home: String = r.getString(R.string.home)
+    val search: String = r.getString(R.string.search)
+    val library: String = r.getString(R.string.library)
+    val settings: String = r.getString(R.string.settings)
+    val more: String = r.getString(R.string.more)
+    val next: String = r.getString(R.string.next)
+    val previous: String = r.getString(R.string.previous)
+    val play: String = r.getString(R.string.play)
+    val pause: String = r.getString(R.string.pause)
+    val shuffle: String = r.getString(R.string.shuffle)
+    val repeat: String = r.getString(R.string.repeat)
+    val queue: String = r.getString(R.string.queue)
+    val lyrics: String = r.getString(R.string.lyrics)
+    val jamPausedHere: String = r.getString(R.string.jam_paused_here)
+    val favourite: String = r.getString(R.string.favourite)
+    val addToFavourites: String = r.getString(R.string.add_to_favourites)
+    val removeFromFavourites: String = r.getString(R.string.remove_from_favourites)
+    val remove: String = r.getString(R.string.remove)
+    val undo: String = r.getString(R.string.undo)
+    fun queueRemoved(title: String): String = r.getString(R.string.queue_removed, title)
+    val cancel: String = r.getString(R.string.cancel)
+    val done: String = r.getString(R.string.done)
+    val close: String = r.getString(R.string.close)
+    val create: String = r.getString(R.string.create)
+    val delete: String = r.getString(R.string.delete)
+    val edit: String = r.getString(R.string.edit)
+    val save: String = r.getString(R.string.save)
+    fun serviceKey(service: String): String = r.getString(R.string.settings_service_key, service)
+    val betterLyricsKeyAsk: String = r.getString(R.string.settings_betterlyrics_key_ask)
+    val keyChange: String = r.getString(R.string.settings_key_change)
+    val backupPasswordNew: String = r.getString(R.string.settings_backup_password_new)
+    val backupPasswordNewText: String = r.getString(R.string.settings_backup_password_new_text)
+    val backupPassword: String = r.getString(R.string.settings_backup_password)
+    val backupSave: String = r.getString(R.string.settings_backup_save)
+    val backupOpen: String = r.getString(R.string.settings_backup_open)
+    val addKey: String = r.getString(R.string.settings_add_key)
+    val paxsenixKeyAsk: String = r.getString(R.string.settings_paxsenix_key_ask)
+    val paxsenixKeyChange: String = r.getString(R.string.settings_paxsenix_key_change)
+    val changeKey: String = r.getString(R.string.settings_change_key)
+    val add: String = r.getString(R.string.add)
+    val copyIt: String = r.getString(R.string.copy_it)
+    val reportProblem: String = r.getString(R.string.report_problem)
+    val reportProblemDetail: String = r.getString(R.string.report_problem_detail)
+    val reportFailed: String = r.getString(R.string.report_failed)
+    val clear: String = r.getString(R.string.clear)
+    val clearAll: String = r.getString(R.string.clear_all)
+    val reset: String = r.getString(R.string.reset)
+    val open: String = r.getString(R.string.open)
+    val import: String = r.getString(R.string.import_it)
+    val name: String = r.getString(R.string.name)
+    val sort: String = r.getString(R.string.sort)
+    val filter: String = r.getString(R.string.filter)
+    val get: String = r.getString(R.string.get)
+    val retry: String = r.getString(R.string.retry)
+    val automatic: String = r.getString(R.string.automatic)
+    val chosen: String = r.getString(R.string.chosen)
+    val nowPlayingBar: String = r.getString(R.string.now_playing_bar)
+    val notInLibraryYet: String = r.getString(R.string.not_in_library_yet)
+    val nothingMatches: String = r.getString(R.string.nothing_matches)
+    val listenNow: String = r.getString(R.string.listen_now)
+    /** Who left the queue the Home page offers. */
+    fun continueFrom(by: dev.nori.music.ffi.library.QueueBy): String = when (by) {
+        is dev.nori.music.ffi.library.QueueBy.Nori -> r.getString(R.string.continue_from_nori)
+        is dev.nori.music.ffi.library.QueueBy.App -> r.getString(R.string.continue_from_app, by.name)
+    }
+    val homeRowsTitle: String = r.getString(R.string.settings_home_rows)
+    val recentlyAdded: String = r.getString(R.string.library_recently_added)
+    val showAll: String = r.getString(R.string.show_all)
+    private val untitled: String = r.getString(R.string.untitled)
+    /** A song's title as shown: Untitled for one that has none (some uploads have a blank one). */
+    fun title(t: String): String = t.ifBlank { untitled }
+    val yourAlbums: String = r.getString(R.string.library_your_albums)
+    val yourPlaylists: String = r.getString(R.string.library_your_playlists)
+    val smartPlaylists: String = r.getString(R.string.smart_playlists)
+    val forYou: String = r.getString(R.string.for_you)
+    val holdARowToMoveIt: String = r.getString(R.string.hold_a_row_to_move_it)
+    val notShown: String = r.getString(R.string.not_shown)
+    val searchHint: String = r.getString(R.string.search_hint)
+    val recentSearches: String = r.getString(R.string.recent_searches)
+    val albums: String = r.getString(R.string.albums)
+    val artists: String = r.getString(R.string.artists)
+    val songs: String = r.getString(R.string.songs)
+    val playlists: String = r.getString(R.string.playlists)
+    val smart: String = r.getString(R.string.smart)
+    val history: String = r.getString(R.string.history)
+    val favourites: String = r.getString(R.string.favourites)
+    val genres: String = r.getString(R.string.genres)
+    val decades: String = r.getString(R.string.decades)
+    val folders: String = r.getString(R.string.folders)
+    val radio: String = r.getString(R.string.radio)
+    val playerLive: String = r.getString(R.string.player_live)
+    val downloads: String = r.getString(R.string.downloads)
+    val filterArtists: String = r.getString(R.string.filter_artists)
+    val newPlaylist: String = r.getString(R.string.new_playlist)
+    val importPlaylistFile: String = r.getString(R.string.import_playlist_file)
+    val favouriteSongs: String = r.getString(R.string.favourite_songs)
+    val starredFavourites: String = r.getString(R.string.starred_favourites)
+    val newStation: String = r.getString(R.string.new_station)
+    val streamUrl: String = r.getString(R.string.stream_url)
+    val downloadQueue: String = r.getString(R.string.download_queue)
+    val addAllToQueue: String = r.getString(R.string.add_all_to_queue)
+    val downloadAll: String = r.getString(R.string.download_all)
+    val downloadEverything: String = r.getString(R.string.download_everything)
+    val addToQueue: String = r.getString(R.string.add_to_queue)
+    val openInBrowser: String = r.getString(R.string.open_in_browser)
+    val topSongs: String = r.getString(R.string.top_songs)
+    val similarArtists: String = r.getString(R.string.similar_artists)
+    val sleepTimer: String = r.getString(R.string.sleep_timer)
+    val addToPlaylist: String = r.getString(R.string.add_to_playlist)
+    val details: String = r.getString(R.string.details)
+    val playlist: String = r.getString(R.string.playlist)
+    val clearSelection: String = r.getString(R.string.clear_selection)
+    val addedByYou: String = r.getString(R.string.added_by_you)
+    val reorder: String = r.getString(R.string.reorder)
+    val later: String = r.getString(R.string.later)
+    val sooner: String = r.getString(R.string.sooner)
+    val mixing: String = r.getString(R.string.mixing)
+    /** Whole minutes of the song played, under an e-ink seek bar. */
+    fun minutesPlayed(minutes: Int): String = r.getString(R.string.seek_minutes_played, minutes)
+    val newMix: String = r.getString(R.string.new_mix)
+    val saveAsPlaylist: String = r.getString(R.string.save_as_playlist)
+    val newSmartPlaylist: String = r.getString(R.string.new_smart_playlist)
+    val readyMade: String = r.getString(R.string.ready_made)
+    val smartPlaylist: String = r.getString(R.string.smart_playlist)
+    val matchAll: String = r.getString(R.string.match_all)
+    val matchAny: String = r.getString(R.string.match_any)
+    val removeRule: String = r.getString(R.string.remove_rule)
+    val addRule: String = r.getString(R.string.add_rule)
+    val sortBy: String = r.getString(R.string.sort_by)
+    val descending: String = r.getString(R.string.descending)
+    val limit: String = r.getString(R.string.limit)
+    val noLimit: String = r.getString(R.string.no_limit)
+    val listeningStats: String = r.getString(R.string.listening_stats)
+    val clearHistory: String = r.getString(R.string.clear_history)
+    val listening: String = r.getString(R.string.listening)
+    val whenYouListen: String = r.getString(R.string.when_you_listen)
+    val topArtists: String = r.getString(R.string.top_artists)
+    val topAlbums: String = r.getString(R.string.top_albums)
+    val topGenres: String = r.getString(R.string.top_genres)
+    val downloaded: String = r.getString(R.string.downloaded)
+    val downloadFailed: String = r.getString(R.string.download_failed)
+    val stopAll: String = r.getString(R.string.stop_all)
+    val downloading: String = r.getString(R.string.downloading)
+    val waiting: String = r.getString(R.string.waiting)
+    val failed: String = r.getString(R.string.failed)
+    val retryAll: String = r.getString(R.string.retry_all)
+    val finished: String = r.getString(R.string.finished)
+    val stopDownload: String = r.getString(R.string.stop_download)
+    val findingLyrics: String = r.getString(R.string.finding_lyrics)
+    val analysing: String = r.getString(R.string.analysing)
+    val detectingBeats: String = r.getString(R.string.detecting_beats)
+    val nothingToAnalyse: String = r.getString(R.string.said_nothing_to_analyse)
+    val equalizer: String = r.getString(R.string.equalizer)
+    val addBand: String = r.getString(R.string.add_band)
+    val eqGraphic: String = r.getString(R.string.eq_graphic)
+    val eqParametric: String = r.getString(R.string.eq_parametric)
+    fun eqBandCount(n: Int): String = r.getString(R.string.eq_band_count, n)
+    /**
+     * How closely the graphic equalizer follows a headphone correction, by its largest difference; past
+     * 1.5 dB it says what follows it more closely (more bands, or the parametric equalizer).
+     */
+    fun eqFollows(maxDb: Float, bands: Int): String {
+        val db = Fmt.fixed(maxDb.toDouble(), 1)
+        return when {
+            maxDb <= 1.5f -> r.getString(R.string.eq_follows, db)
+            bands < 31 -> r.getString(R.string.eq_follows_loose, db)
+            else -> r.getString(R.string.eq_follows_loose_31, db)
+        }
+    }
+    val pastePreset: String = r.getString(R.string.paste_preset)
+    val presets: String = r.getString(R.string.presets)
+    val output: String = r.getString(R.string.output)
+    val balance: String = r.getString(R.string.balance)
+    val mono: String = r.getString(R.string.mono)
+    val monoDetail: String = r.getString(R.string.mono_detail)
+    val limiter: String = r.getString(R.string.limiter)
+    val limiterDetail: String = r.getString(R.string.limiter_detail)
+    val profiles: String = r.getString(R.string.profiles)
+    val saveTheseSettings: String = r.getString(R.string.save_these_settings)
+    val saveAsProfile: String = r.getString(R.string.save_as_profile)
+    val importPreset: String = r.getString(R.string.import_preset)
+    val importPresetHint: String = r.getString(R.string.import_preset_hint)
+    val importPresetExample: String = r.getString(R.string.import_preset_example)
+    val noFiltersFound: String = r.getString(R.string.no_filters_found)
+    val frequency: String = r.getString(R.string.frequency)
+    val gain: String = r.getString(R.string.gain)
+    val eqTapToAdd: String = r.getString(R.string.eq_tap_to_add)
+    val eqTapABand: String = r.getString(R.string.eq_tap_a_band)
+    val eqTapGraphic: String = r.getString(R.string.eq_tap_graphic)
+    val eqLower: String = r.getString(R.string.eq_lower)
+    val eqRaise: String = r.getString(R.string.eq_raise)
+    val removeBand: String = r.getString(R.string.remove_band)
+    val headphonePresets: String = r.getString(R.string.headphone_presets)
+    val autoeqAbout: String = r.getString(R.string.autoeq_about)
+    val downloadTheList: String = r.getString(R.string.download_the_list)
+    val refreshList: String = r.getString(R.string.refresh_list)
+    val autoeqNoCurve: String = r.getString(R.string.autoeq_no_curve)
+    val autoeqCredit: String = r.getString(R.string.autoeq_credit)
+    val autoeqCreditGraphic: String = r.getString(R.string.autoeq_credit_graphic)
+    val devices: String = r.getString(R.string.devices)
+    val playingOn: String = r.getString(R.string.devices_title)
+    val otherDevices: String = r.getString(R.string.other_devices)
+    val autoeqAuto: String = r.getString(R.string.autoeq_auto)
+    val autoeqAutoDetail: String = r.getString(R.string.autoeq_auto_detail)
+    val devicesNote: String = r.getString(R.string.devices_note)
+    val flat: String = r.getString(R.string.flat)
+    val flatDetail: String = r.getString(R.string.flat_detail)
+    val noProcessing: String = r.getString(R.string.no_processing)
+    val noProcessingDetail: String = r.getString(R.string.no_processing_detail)
+    val leaveAsIs: String = r.getString(R.string.leave_as_is)
+    val leaveAsIsDetail: String = r.getString(R.string.leave_as_is_detail)
+    val savedProfile: String = r.getString(R.string.saved_profile)
+    val autoeqCurves: String = r.getString(R.string.autoeq_curves)
+    val autoeqDownloadHint: String = r.getString(R.string.autoeq_download_hint)
+    val forgetDevice: String = r.getString(R.string.forget_device)
+    val searchSettings: String = r.getString(R.string.search_settings)
+    val performance: String = r.getString(R.string.performance)
+    val performanceDetail: String = r.getString(R.string.performance_detail)
+    val server: String = r.getString(R.string.server)
+    val serverHint: String = r.getString(R.string.server_hint)
+    val serverUrl: String = r.getString(R.string.server_url)
+    /** A word by its resource id. */
+    fun word(id: Int): String = r.getString(id)
+    val account: String get() = r.getString(R.string.account)
+    fun signedInAs(name: String): String = r.getString(R.string.signed_in_as, name)
+    val signOut: String get() = r.getString(R.string.sign_out)
+    val signInAction: String get() = r.getString(R.string.sign_in_action)
+    val signingIn: String get() = r.getString(R.string.signing_in)
+    val tryAgain: String get() = r.getString(R.string.try_again)
+    val notNow: String get() = r.getString(R.string.not_now)
+    /** [kind]'s words ([providerWords]). */
+    fun provider(kind: ServerKind, pluginName: String? = null, pluginAbout: String? = null) = providerWords(r, kind, pluginName, pluginAbout)
+    /** Why a sign-in page's session did not sign in: it always holds a session, so only the provider's refusal or the network is left. */
+    fun signInPage(w: AccountWords, result: dev.nori.music.ffi.SignInResult): String =
+        if (result is dev.nori.music.ffi.SignInResult.Unreachable) w.unreachable else w.pageRefused
+    /** How a sign-in went. */
+    fun signIn(w: AccountWords, result: dev.nori.music.ffi.SignInResult): String = when (result) {
+        is dev.nori.music.ffi.SignInResult.SignedIn -> signedInAs(result.name)
+        dev.nori.music.ffi.SignInResult.NoSession -> w.noSession
+        dev.nori.music.ffi.SignInResult.Refused -> w.refused
+        is dev.nori.music.ffi.SignInResult.Unreachable -> w.unreachable
+    }
+    val plugins: String get() = r.getString(R.string.plugins)
+    val pluginsSummary: String get() = r.getString(R.string.plugins_summary)
+    val pluginsEmpty: String get() = r.getString(R.string.plugins_empty)
+    val pluginsInstalled: String get() = r.getString(R.string.plugins_installed_list)
+    val pluginsInstallFile: String get() = r.getString(R.string.plugins_install_file)
+    fun pluginVersion(v: String): String = r.getString(R.string.plugins_version, v)
+    val pluginMoveUp: String get() = r.getString(R.string.plugins_move_up)
+    val pluginMoveDown: String get() = r.getString(R.string.plugins_move_down)
+    val pluginOn: String get() = r.getString(R.string.plugins_on)
+    /** What a plugin is, from the extension points it fills and whether it overrides nori's values. */
+    fun pluginKinds(points: List<String>, overrides: Boolean): String = (points.mapNotNull { p ->
+        when (p) {
+            "provider" -> R.string.plugins_kind_provider
+            "sound-stage" -> R.string.plugins_kind_sound
+            "lyrics" -> R.string.plugins_kind_lyrics
+            "automix" -> R.string.plugins_kind_automix
+            "scrobbler" -> R.string.plugins_kind_scrobbler
+            "device-control" -> R.string.plugins_kind_devices
+            "slots" -> R.string.plugins_kind_slots
+            "deciders" -> R.string.plugins_kind_deciders
+            "preparation" -> R.string.plugins_kind_preparation
+            else -> null
+        }
+    } + listOfNotNull(R.string.plugins_kind_overrides.takeIf { overrides })).joinToString(" · ") { r.getString(it) }
+    /** What a plugin may do, one line each: what it reaches, whether it plays music or changes the sound, the values it changes. */
+    fun pluginMay(c: dev.nori.music.ffi.plugins.PluginCard): List<String> = listOfNotNull(
+        c.net.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_reach, it.joinToString(", ")) },
+        r.getString(R.string.plugins_may_reach_lan).takeIf { c.lan },
+        r.getString(R.string.plugins_may_bluetooth).takeIf { c.bluetooth },
+        r.getString(R.string.plugins_may_play).takeIf { "provider" in c.points },
+        r.getString(R.string.plugins_may_sound).takeIf { "sound-stage" in c.points },
+        c.overrides.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_change, it.joinToString(", ")) },
+    ) + c.permissions.map { p ->
+        r.getString(when (p) {
+            dev.nori.music.ffi.plugins.Permission.PLAYBACK_READ -> R.string.plugins_may_read_playing
+            dev.nori.music.ffi.plugins.Permission.PLAYBACK_CONTROL -> R.string.plugins_may_control
+            dev.nori.music.ffi.plugins.Permission.LIBRARY_READ -> R.string.plugins_may_read_library
+            dev.nori.music.ffi.plugins.Permission.LIBRARY_WRITE -> R.string.plugins_may_write_library
+            dev.nori.music.ffi.plugins.Permission.SUBSONIC -> R.string.plugins_may_subsonic
+            dev.nori.music.ffi.plugins.Permission.SCHEDULE -> R.string.plugins_may_schedule
+        })
+    } + listOfNotNull(
+        r.getString(R.string.plugins_may_lyric_wakes).takeIf { dev.nori.music.ffi.plugins.Hook.LYRIC_LINE in c.hooks },
+        r.getString(R.string.plugins_may_start_at_boot).takeIf { dev.nori.music.ffi.plugins.WakeEvent.BOOT in c.wakes },
+        r.getString(R.string.plugins_may_start_on_bluetooth).takeIf { dev.nori.music.ffi.plugins.WakeEvent.BLUETOOTH_CONNECTED in c.wakes },
+        c.commands.takeIf { it.isNotEmpty() }?.let { r.getString(R.string.plugins_may_commands, it.joinToString(", ")) },
+        c.cacheBytes.takeIf { it > 0uL }?.let { r.getString(R.string.plugins_may_cache, size(it)) },
+        c.assetBytes.takeIf { it > 0uL }?.let { r.getString(R.string.plugins_may_download, size(it)) },
+    )
+
+    private fun size(bytes: ULong): String = dev.nori.music.text.Fmt.bytes(bytes.toLong())
+
+    /** An asset's line on its plugin's page. */
+    fun pluginAsset(a: dev.nori.music.ffi.plugins.AssetLine): String = when (val st = a.state) {
+        is dev.nori.music.ffi.plugins.AssetState.Missing -> r.getString(R.string.plugins_asset_missing, a.name, size(a.size))
+        is dev.nori.music.ffi.plugins.AssetState.WaitingForWifi -> r.getString(R.string.plugins_asset_waiting, a.name)
+        is dev.nori.music.ffi.plugins.AssetState.Fetching -> r.getString(R.string.plugins_asset_fetching, a.name, if (st.total > 0uL) (st.done * 100uL / st.total).toInt() else 0)
+        is dev.nori.music.ffi.plugins.AssetState.Ready -> r.getString(R.string.plugins_asset_ready, a.name)
+        is dev.nori.music.ffi.plugins.AssetState.Failed -> r.getString(R.string.plugins_asset_failed, a.name)
+    }
+    val pluginAssetsOnMobile: String get() = r.getString(R.string.plugins_assets_on_mobile)
+    val pluginsGet: String get() = r.getString(R.string.plugins_get)
+    val pluginsSearch: String get() = r.getString(R.string.plugins_search)
+    val pluginsAll: String get() = r.getString(R.string.plugins_all)
+    val pluginsNoneFound: String get() = r.getString(R.string.plugins_none_found)
+    val pluginsUpdates: String get() = r.getString(R.string.plugins_updates)
+    val pluginAbout: String get() = r.getString(R.string.plugins_about)
+    fun pluginUpdateTo(version: String): String = r.getString(R.string.plugins_update_to, version)
+    fun pluginUpdateLine(from: String, to: String): String = r.getString(R.string.plugins_update_line, from, to)
+    fun pluginRepoCount(n: Int): String = r.getQuantityString(R.plurals.plugins_repo_count, n, n)
+    val pluginsAsking: String get() = r.getString(R.string.plugins_asking)
+    fun pluginOfferLine(version: String, repo: String): String = r.getString(R.string.plugins_offer_line, version, repo)
+    val pluginInstall: String get() = r.getString(R.string.plugins_install)
+    val pluginUpdate: String get() = r.getString(R.string.plugins_update)
+    val pluginUpToDate: String get() = r.getString(R.string.plugins_up_to_date)
+    val pluginRepos: String get() = r.getString(R.string.plugins_repos)
+    val pluginRepoOfficial: String get() = r.getString(R.string.plugins_repo_official)
+    fun pluginRepoUnreachable(host: String): String = r.getString(R.string.plugins_repo_unreachable, host)
+    val pluginAddRepo: String get() = r.getString(R.string.plugins_add_repo)
+    val pluginRepoUrl: String get() = r.getString(R.string.plugins_repo_url)
+    val pluginRepoWarning: String get() = r.getString(R.string.plugins_repo_warning)
+    val pluginMayTitle: String get() = r.getString(R.string.plugins_may)
+    fun pluginRemoveTitle(name: String): String = r.getString(R.string.plugins_remove_title, name)
+    val pluginRemoveText: String get() = r.getString(R.string.plugins_remove_text)
+    fun pluginLevel(label: String, value: String): String = r.getString(R.string.plugins_level, label, value)
+    fun pluginUnit(value: String, unit: String): String = r.getString(R.string.plugins_unit, value, unit)
+    fun pluginSection(plugin: String, section: String): String = r.getString(R.string.plugins_section, plugin, section)
+    fun pluginUpdated(name: String, to: String): String = r.getString(R.string.plugins_updated, name, to)
+    val pluginVersions: String get() = r.getString(R.string.plugins_versions)
+    val pluginKeepVersion: String get() = r.getString(R.string.plugins_keep_version)
+    val pluginSource: String get() = r.getString(R.string.plugins_source)
+    val pluginFromFile: String get() = r.getString(R.string.plugins_from_file)
+    val pluginUnsigned: String get() = r.getString(R.string.plugins_unsigned)
+    val providerChoose: String get() = r.getString(R.string.provider_choose)
+    /** Why a profile of plugin [name]'s kind doesn't open ([wait]). */
+    fun profileWaits(name: String, wait: dev.nori.music.ffi.ProfileWait): String = r.getString(
+        when (wait) {
+            dev.nori.music.ffi.ProfileWait.INSTALL -> R.string.profile_waits_install
+            dev.nori.music.ffi.ProfileWait.TURN_ON -> R.string.profile_waits_turn_on
+            dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> R.string.profile_waits_plugins_on
+            dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> R.string.profile_waits_no_plugins
+        },
+        name,
+    )
+    /** The button that opens it; none where nothing here can. */
+    fun profileWaitAction(name: String, wait: dev.nori.music.ffi.ProfileWait): String? = when (wait) {
+        dev.nori.music.ffi.ProfileWait.INSTALL -> r.getString(R.string.profile_wait_install, name)
+        dev.nori.music.ffi.ProfileWait.TURN_ON -> r.getString(R.string.profile_wait_turn_on, name)
+        dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> r.getString(R.string.profile_wait_plugins_on)
+        dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> null
+    }
+    val addServer: String get() = r.getString(R.string.settings_add_server)
+    val providerGuest: String get() = r.getString(R.string.provider_guest)
+    val providerSubsonicAbout: String get() = r.getString(R.string.provider_subsonic_about)
+    val pluginsEvery: String get() = r.getString(R.string.plugins_every)
+    /** Why plugins are off at this start: [names] of those nori stopped in, or none for a start that didn't finish. */
+    fun pluginsSafe(safe: dev.nori.music.ffi.plugins.SafeStart, names: List<String>): String = when (safe) {
+        is dev.nori.music.ffi.plugins.SafeStart.Crashed -> r.getString(R.string.plugins_safe_crashed, names.joinToString(", "))
+        dev.nori.music.ffi.plugins.SafeStart.AllOff -> r.getString(R.string.plugins_safe_all_off)
+    }
+    val user: String = r.getString(R.string.user)
+    val password: String = r.getString(R.string.password)
+    val connecting: String = r.getString(R.string.connecting)
+    /** Why a profile was not added: the form's gap, or the refusal as worded when it came. */
+    fun addFailure(f: dev.nori.music.ffi.AddFailure): String = when (f) {
+        dev.nori.music.ffi.AddFailure.Missing -> r.getString(R.string.login_missing)
+        is dev.nori.music.ffi.AddFailure.Refused -> f.said
+    }
+    val connect: String = r.getString(R.string.connect)
+    val hideAdvanced: String = r.getString(R.string.hide_advanced)
+    val advanced: String = r.getString(R.string.advanced)
+    val nameOptional: String = r.getString(R.string.name_optional)
+    val secondAddress: String = r.getString(R.string.second_address)
+    val secondAddressHint: String = r.getString(R.string.second_address_hint)
+    val apiKey: String = r.getString(R.string.api_key)
+    val extraHeaders: String = r.getString(R.string.extra_headers)
+    val extraHeadersHint: String = r.getString(R.string.extra_headers_hint)
+    val legacyAuth: String = r.getString(R.string.legacy_auth)
+    val legacyAuthHint: String = r.getString(R.string.legacy_auth_hint)
+    val selfSigned: String = r.getString(R.string.self_signed)
+    val selfSignedHint: String = r.getString(R.string.self_signed_hint)
+    val wifiOnly: String = r.getString(R.string.wifi_only)
+    val wifiOnlyHint: String = r.getString(R.string.wifi_only_hint)
+    val clientCertPassword: String = r.getString(R.string.client_cert_password)
+    val importClientCert: String = r.getString(R.string.import_client_cert)
+    val replaceClientCert: String = r.getString(R.string.replace_client_cert)
+    val underTheHood: String = r.getString(R.string.under_the_hood)
+    val playback: String = r.getString(R.string.playback)
+    val libraryAndSearch: String = r.getString(R.string.library_and_search)
+    val automix: String = r.getString(R.string.automix)
+    val interfaceTitle: String = r.getString(R.string.interface_title)
+    val openSource: String = r.getString(R.string.open_source)
+    val freeSoftware: String = r.getString(R.string.free_software)
+    val licenceLine: String = r.getString(R.string.licence_line)
+    val licences: String = r.getString(R.string.licences)
+    val licencesDetail: String = r.getString(R.string.licences_detail)
+    val rustCore: String = r.getString(R.string.rust_core)
+    val fontsAndData: String = r.getString(R.string.fonts_and_data)
+    val noLicenceText: String = r.getString(R.string.no_licence_text)
+    val licenceUnreadable: String = r.getString(R.string.licence_unreadable)
+
+    // ---- counts: kept per number, since list rows ask for them while they scroll ----
+
+    private val songsMade = arrayOfNulls<String>(COUNTS)
+    private val albumsMade = arrayOfNulls<String>(COUNTS)
+
+    private fun counted(made: Array<String?>, id: Int, n: Int): String {
+        if (n !in 0 until COUNTS) return r.getQuantityString(id, n, n)
+        return made[n] ?: r.getQuantityString(id, n, n).also { made[n] = it }
+    }
+
+    /** "1 song", "12 songs". */
+    fun songs(n: Int): String = counted(songsMade, R.plurals.songs, n)
+    /** "1 album", "12 albums": under an artist's name. */
+    fun albums(n: Int): String = counted(albumsMade, R.plurals.albums, n)
+    fun releases(n: Int): String = r.getQuantityString(R.plurals.releases, n, n)
+    fun selected(n: Int): String = r.getString(R.string.selected_count, n)
+    /** The count alone, where "12 selected" does not fit. */
+    fun selectedShort(n: Int): String = r.getString(R.string.selected_count_short, n)
+
+    /** A decade by its first year: "1990s". */
+    fun decade(start: Int): String = r.getString(R.string.decade_name, start)
+
+    /** The download queue's row in the library: "4 to go · 1 failed", or that nothing is downloading. */
+    fun downloadQueue(waiting: Int, failed: Int): String {
+        val toGo = if (waiting > 0) r.getString(R.string.download_queue_to_go, waiting) else null
+        val lost = if (failed > 0) r.getString(dev.nori.music.core.R.string.downloads_failed, failed) else null
+        return listOfNotNull(toGo, lost).joinToString(" · ").ifEmpty { r.getString(dev.nori.music.core.R.string.downloads_nothing) }
+    }
+
+    // ---- captions ----
+
+    /** A list's caption: "12 songs · 48:10". */
+    fun listCaption(count: Int, seconds: Long): String = songs(count) + " · " + Fmt.duration(seconds)
+
+    /** What is known of an album before its songs are: "2019 · 12 songs · 48:10", each part only if known. */
+    fun albumHintCaption(year: Int, songCount: Int, seconds: Long): String = listOfNotNull(
+        year.takeIf { it > 0 }?.toString(),
+        songCount.takeIf { it > 0 }?.let(::songs),
+        seconds.takeIf { it > 0 }?.let(Fmt::duration),
+    ).joinToString(" · ")
+
+    /** An album page's caption once its songs are in: "2019 · 12 songs · 48:10 · FLAC 16/44.1 · explicit". */
+    fun albumCaption(d: AlbumDetail): String = listOfNotNull(
+        d.album.year.toInt().takeIf { it > 0 }?.toString(),
+        songs(d.songs.size),
+        Fmt.duration(d.seconds.toLong()),
+        d.songs.firstOrNull()?.let(::quality),
+        if (d.album.explicitStatus == dev.nori.music.ffi.model.ExplicitStatus.EXPLICIT) r.getString(R.string.caption_explicit) else null,
+    ).joinToString(" · ")
+
+    /** The format of a record, from its first song: "FLAC 24/96.0", "MP3 320 kbps". */
+    fun quality(s: Song): String? = dev.nori.music.ffi.model.quality(s.suffix, s.bitDepth, s.samplingRate, s.bitRate)
+
+    /** A song's rate, sample rate, depth and channels as the details say them, each only if known. */
+    private fun qualityParts(s: Song): List<String> = listOfNotNull(
+        if (s.bitRate > 0u) "${s.bitRate} kbps" else null,
+        if (s.samplingRate > 0u) "${Fmt.khz(s.samplingRate.toInt())} kHz" else null,
+        if (s.bitDepth > 0u) "${s.bitDepth} bit" else null,
+        if (s.channelCount > 0u) "${s.channelCount} ch" else null,
+    )
+
+    /** A song's second line where it is shown on its own (its menu's head): "Artist · Album". */
+    fun songLine(artist: String, album: String): String = if (album.isEmpty()) artist else "$artist · $album"
+
+    /** Everything the server said about one file, in the order the details sheet shows it, blanks left out. */
+    fun trackInfo(s: Song): List<Pair<String, String>> {
+        val artists = s.artists.joinToString(", ") { it.name }
+        val gain = s.replayGain?.let { g ->
+            listOfNotNull(
+                g.trackGain?.let { r.getString(R.string.info_track_gain, Fmt.fixed(it.toDouble(), 2, true)) },
+                g.albumGain?.let { r.getString(R.string.info_album_gain, Fmt.fixed(it.toDouble(), 2, true)) },
+                g.trackPeak?.let { r.getString(R.string.info_peak, Fmt.fixed(it.toDouble(), 3)) },
+            ).joinToString(" · ")
+        }
+        val rows = listOf(
+            R.string.info_title to s.title,
+            R.string.info_artist to artists.ifEmpty { s.artist },
+            R.string.info_album to s.album,
+            R.string.info_track to listOfNotNull(
+                if (s.discNumber > 0u) r.getString(R.string.info_disc_number, s.discNumber.toInt()) else null,
+                if (s.track > 0u) r.getString(R.string.info_track_number, s.track.toInt()) else null,
+            ).joinToString(", "),
+            R.string.info_year to (if (s.year > 0u) s.year.toString() else null),
+            R.string.info_genre to s.genre,
+            R.string.info_duration to Fmt.duration(s.duration.toLong()),
+            R.string.info_format to listOfNotNull(s.suffix.ifEmpty { null }?.uppercase(), s.contentType.ifEmpty { null }).joinToString(" · "),
+            R.string.info_quality to qualityParts(s).joinToString(" · "),
+            R.string.info_size to (if (s.size > 0u) Fmt.megabytes(s.size.toLong()) else null),
+            R.string.info_replay_gain to gain,
+            R.string.info_bpm to (if (s.bpm > 0u) s.bpm.toString() else null),
+            R.string.info_plays to (if (s.playCount > 0u) s.playCount.toString() else null),
+            R.string.info_last_played to s.played?.take(16)?.replace('T', ' '),
+            R.string.info_added to s.created?.take(10),
+            R.string.info_path to s.path,
+            R.string.info_musicbrainz to s.musicBrainzId,
+            R.string.info_comment to s.comment,
+            R.string.info_id to s.id,
+        )
+        return rows.mapNotNull { (label, v) -> v?.takeIf { it.isNotBlank() }?.let { r.getString(label) to it } }
+    }
+
+    /** An album's disc heading, "Disc 2 · Bonus"; empty for the one disc of an album that has only one. */
+    fun discHeading(d: DiscGroup): String = when {
+        !d.headed -> ""
+        d.title.isEmpty() -> r.getString(R.string.disc_heading, d.disc.toInt())
+        else -> r.getString(R.string.disc_heading_titled, d.disc.toInt(), d.title)
+    }
+
+    // ---- the player ----
+
+    /** What the player's title says with no song: the station playing, or that nothing is. */
+    fun playerIdle(radio: String?): String = radio ?: r.getString(R.string.nothing_playing)
+    val bridging: String get() = r.getString(R.string.bridging)
+    val waitingForServer: String get() = r.getString(R.string.waiting_for_server)
+    val upNext: String get() = r.getString(R.string.up_next)
+    /** The now playing bar's second line: what went wrong, else the artist, else (a station) "Radio". */
+    fun barLine(error: String?, artist: String?): String = error ?: artist ?: radio
+    fun playingThrough(output: String): String = r.getString(R.string.said_playing_through, output)
+
+    /** The sleep timer under the seek bar: "Sleep · end of track", or the minutes left rounded up, never fewer than one. */
+    fun sleep(endOfTrack: Boolean, leftMs: Long): String =
+        if (endOfTrack) r.getString(R.string.sleep_end_of_track)
+        else r.getString(R.string.sleep_minutes, ((leftMs + 59_999) / 60_000).coerceAtLeast(1).toInt())
+
+    // ---- lyrics ----
+
+    /** A lyrics source's name as the credit gives it: "your server", "LRCLIB"; a plugin's by its name in [pluginNames]. */
+    fun lyricsOrigin(o: LyricsOrigin, pluginNames: Map<String, String>): String = when (o) {
+        LyricsOrigin.Server -> r.getString(R.string.lyrics_your_server)
+        LyricsOrigin.Binilyrics -> "BiniLyrics"
+        LyricsOrigin.BetterLyrics -> "BetterLyrics"
+        LyricsOrigin.Paxsenix, LyricsOrigin.PaxsenixMusixmatch, LyricsOrigin.PaxsenixSpotify -> "PaxSenix"
+        LyricsOrigin.LyricsPlus -> "LyricsPlus"
+        LyricsOrigin.Unison -> "Unison"
+        LyricsOrigin.Netease -> "NetEase"
+        LyricsOrigin.Kugou -> "KuGou"
+        LyricsOrigin.Lrclib -> "LRCLIB"
+        LyricsOrigin.YoutubeMusic -> "YouTube Music"
+        is LyricsOrigin.Plugin -> pluginNames[o.id] ?: o.id
+    }
+
+    /** Where lyrics came from and how finely they are timed: "From LRCLIB · timed line by line". */
+    fun lyricsSource(o: LyricsOrigin, synced: Boolean, wordTimed: Boolean, pluginNames: Map<String, String>): String = r.getString(
+        R.string.lyrics_source, lyricsOrigin(o, pluginNames),
+        r.getString(if (!synced) R.string.lyrics_not_timed else if (wordTimed) R.string.lyrics_timed_words else R.string.lyrics_timed_lines),
+    )
+
+    fun lyricsShift(ms: Long): String = r.getString(R.string.lyrics_shift, ms / 1000.0)
+
+    /** Who moved the lyrics' timing, and by how much (`LyricsTiming`). */
+    fun lyricsTiming(t: dev.nori.music.ffi.model.LyricsTiming): String = when (t) {
+        dev.nori.music.ffi.model.LyricsTiming.NotChecked -> r.getString(R.string.lyrics_timing_not_checked)
+        dev.nori.music.ffi.model.LyricsTiming.DoesNotFit -> r.getString(R.string.lyrics_timing_does_not_fit)
+        dev.nori.music.ffi.model.LyricsTiming.Unsure -> r.getString(R.string.lyrics_timing_unsure)
+        is dev.nori.music.ffi.model.LyricsTiming.Automatic ->
+            if (t.ms == 0L) r.getString(R.string.lyrics_timing_on_time) else r.getString(R.string.lyrics_timing_automatic, t.ms)
+        is dev.nori.music.ffi.model.LyricsTiming.Yours -> r.getString(R.string.lyrics_timing_yours, t.ms)
+    }
+
+    // ---- the core's kinds, named: the fixed words read once per locale, so a row or a frame allocates nothing ----
+
+    val menuPlayNext: String = r.getString(R.string.menu_play_next)
+    private val menuAddToPlaylist: String = r.getString(R.string.menu_add_to_playlist)
+    private val menuRemoveDownload: String = r.getString(R.string.menu_remove_download)
+    val menuDownload: String = r.getString(R.string.menu_download)
+    private val menuGoToAlbum: String = r.getString(R.string.menu_go_to_album)
+    private val menuGoToArtist: String = r.getString(R.string.menu_go_to_artist)
+    private val menuSleepTimer: String = r.getString(R.string.menu_sleep_timer)
+    private val menuRadio: String = r.getString(R.string.menu_radio)
+    private val menuExclude: String = r.getString(R.string.menu_exclude_from_mixes)
+    private val menuInclude: String = r.getString(R.string.menu_include_in_mixes)
+    private val menuShare: String = r.getString(R.string.menu_share_link)
+
+    /** A line of the song menu, by what it does (`menus::song_menu`). */
+    fun songAction(a: SongAction): String = when (a) {
+        is SongAction.Favourite -> if (a.on) addToFavourites else removeFromFavourites
+        SongAction.PlayNext -> menuPlayNext
+        SongAction.AddToQueue -> addToQueue
+        SongAction.AddToPlaylist -> menuAddToPlaylist
+        SongAction.RemoveDownload -> menuRemoveDownload
+        SongAction.StopDownload -> stopDownload
+        SongAction.Download -> menuDownload
+        is SongAction.GoToAlbum -> menuGoToAlbum
+        is SongAction.GoToArtist -> if (a.named) r.getString(R.string.menu_go_to_named, a.name) else menuGoToArtist
+        SongAction.AddToLibrary -> r.getString(R.string.menu_add_to_library)
+        SongAction.Lyrics -> lyrics
+        SongAction.SleepTimer -> menuSleepTimer
+        SongAction.Radio -> menuRadio
+        is SongAction.ExcludeFromMixes -> if (a.on) menuExclude else menuInclude
+        SongAction.Share -> menuShare
+        SongAction.Details -> details
+    }
+
+    /** One of the sleep timer's choices: "30 minutes", "End of track", "After 3 songs", or "Off" (all zeros). */
+    fun sleepChoice(c: SleepChoice): String = when {
+        c.endOfTrack -> r.getString(R.string.sleep_choice_end_of_track)
+        c.songs > 0u -> r.getString(R.string.sleep_choice_after_songs, c.songs.toInt())
+        c.minutes > 0u -> r.getString(R.string.sleep_choice_minutes, c.minutes.toInt())
+        else -> r.getString(R.string.sleep_choice_off)
+    }
+
+    /** What letting go of a swiped row does, under the row: one of the words read above, nothing made. */
+    fun rowSwipe(a: RowSwipeAct): String = when (a) {
+        RowSwipeAct.Queue -> addToQueue
+        RowSwipeAct.PlayNext -> menuPlayNext
+        is RowSwipeAct.Favourite -> if (a.on) favourite else remove
+        RowSwipeAct.Download -> menuDownload
+    }
+
+    /** A page's download entry: "Download", "Remove downloads", or "Download the other 3" for the [missing]. */
+    fun downloadEntry(act: DownloadAct, missing: Int): String = when (act) {
+        DownloadAct.ALL -> menuDownload
+        DownloadAct.REMOVE -> r.getString(R.string.entry_remove_downloads)
+        DownloadAct.MISSING -> r.getString(R.string.entry_download_other, missing)
+    }
+
+    /** A "For you" tile's or page's name. */
+    fun mixName(n: MixName): String = when (n) {
+        MixName.FAVOURITES -> favourites
+        MixName.QUICK_PICKS -> r.getString(R.string.mix_quick_picks)
+        MixName.DISCOVER -> r.getString(R.string.mix_discover)
+        MixName.REWIND -> r.getString(R.string.mix_rewind)
+        MixName.LISTEN_AGAIN -> r.getString(R.string.mix_listen_again)
+        MixName.TOP -> r.getString(R.string.mix_top)
+    }
+
+    fun mixUnknown(id: String): String = r.getString(R.string.mix_unknown, id)
+
+    /** A ready-made smart playlist's name. */
+    fun smartBuiltin(b: SmartBuiltin): String = r.getString(
+        when (b) {
+            SmartBuiltin.MOST_PLAYED -> R.string.smart_most_played
+            SmartBuiltin.RECENTLY_PLAYED -> R.string.smart_recently_played
+            SmartBuiltin.RECENTLY_ADDED -> R.string.smart_recently_added
+            SmartBuiltin.NEVER_PLAYED -> R.string.smart_never_played
+            SmartBuiltin.TOP_RATED -> R.string.smart_top_rated
+            SmartBuiltin.FORGOTTEN_FAVOURITES -> R.string.smart_forgotten_favourites
+            SmartBuiltin.LONG_TRACKS -> R.string.smart_long_tracks
+        },
+    )
+
+    /** A smart playlist's name: the one the user gave it, a ready-made one's, or "Smart playlist" for one left blank. */
+    fun smartName(p: dev.nori.music.ffi.model.SmartPlaylist): String = p.builtin?.let(::smartBuiltin) ?: p.name.ifEmpty { smartPlaylist }
+
+    /** An artist's shelf heading: "Albums", "EPs", or a type the app does not know by its tag ("Mixtapes"). */
+    fun releaseShelf(g: ReleaseGroup): String = when (g.kind) {
+        ReleaseKind.ALBUM -> albums
+        ReleaseKind.EP -> r.getString(R.string.shelf_eps)
+        ReleaseKind.SINGLE -> r.getString(R.string.shelf_singles)
+        ReleaseKind.LIVE -> r.getString(R.string.shelf_live)
+        ReleaseKind.COMPILATION -> r.getString(R.string.shelf_compilations)
+        ReleaseKind.SOUNDTRACK -> r.getString(R.string.shelf_soundtracks)
+        ReleaseKind.REMIX -> r.getString(R.string.shelf_remixes)
+        ReleaseKind.OTHER -> r.getString(R.string.shelf_other)
+        ReleaseKind.TAGGED -> if (g.tag.endsWith('s')) g.tag else r.getString(R.string.shelf_tagged, g.tag)
+    }
+
+    /** One of the album grid's orders. */
+    fun albumSort(s: AlbumSort): String = when (s) {
+        AlbumSort.BY_NAME -> r.getString(R.string.sort_title)
+        AlbumSort.BY_ARTIST -> r.getString(R.string.sort_artist)
+        AlbumSort.ARTIST_ROWS -> r.getString(R.string.sort_artist)
+        AlbumSort.NEWEST -> r.getString(R.string.sort_added)
+        AlbumSort.RECENT -> r.getString(R.string.sort_played)
+        AlbumSort.FREQUENT -> r.getString(R.string.sort_most_played)
+        AlbumSort.STARRED -> starredFavourites
+        AlbumSort.BY_YEAR -> r.getString(R.string.sort_year)
+        AlbumSort.RANDOM -> r.getString(R.string.sort_random)
+        AlbumSort.BY_GENRE -> genres
+    }
+
+    /** One of the songs list's orders, by the name the core keeps it under (`browse::song_sorts`). */
+    fun songSort(name: String): String = when (name) {
+        "TITLE" -> r.getString(R.string.sort_title)
+        "ARTIST" -> r.getString(R.string.sort_artist)
+        "ALBUM" -> r.getString(R.string.sort_album)
+        "YEAR" -> r.getString(R.string.sort_year)
+        "ADDED" -> r.getString(R.string.sort_added)
+        "PLAYS" -> r.getString(R.string.sort_most_played)
+        "LONGEST" -> r.getString(R.string.sort_longest)
+        else -> name
+    }
+
+    /** A pill of the library. */
+    fun librarySection(s: LibrarySection): String = when (s) {
+        LibrarySection.ALBUMS -> albums
+        LibrarySection.FAVOURITES -> favourites
+        LibrarySection.ARTISTS -> artists
+        LibrarySection.SONGS -> songs
+        LibrarySection.PLAYLISTS -> playlists
+        LibrarySection.SMART -> smart
+        LibrarySection.HISTORY -> history
+        LibrarySection.GENRES -> genres
+        LibrarySection.DECADES -> decades
+        LibrarySection.FOLDERS -> folders
+        LibrarySection.RADIO -> radio
+        LibrarySection.DOWNLOADS -> downloads
+    }
+
+    /** A search scope's chip. */
+    fun searchScope(s: SearchScope): String = when (s) {
+        SearchScope.EVERYTHING -> r.getString(R.string.scope_everything)
+        SearchScope.LIBRARY -> r.getString(R.string.scope_in_library)
+        SearchScope.PROVIDERS -> notInLibraryYet
+    }
+
+    /** The server search failed and the offline answer stays; [reason] is what the failure said. */
+    fun searchFallback(reason: String?): String = r.getString(R.string.search_fallback, reason ?: "null")
+
+    private val homeRows: Array<String> = HomeRow.entries.map { row ->
+        when (row) {
+            HomeRow.PINNED -> r.getString(R.string.home_row_pinned)
+            HomeRow.PLAYLISTS -> playlists
+            HomeRow.RECENT -> r.getString(R.string.home_row_recent)
+            HomeRow.NEWEST -> r.getString(R.string.home_row_newest)
+            HomeRow.FREQUENT -> r.getString(R.string.home_row_frequent)
+            HomeRow.TOP_SONGS -> r.getString(R.string.home_row_top_songs)
+            HomeRow.RANDOM -> r.getString(R.string.home_row_random)
+            HomeRow.STARRED -> r.getString(R.string.home_row_starred)
+        }
+    }.toTypedArray()
+
+    /** A home shelf's title: read once per locale, so a shelf composed again allocates nothing. */
+    fun homeRow(row: HomeRow): String = homeRows[row.ordinal]
+
+    private val bandKinds: Array<String> = arrayOf(
+        R.string.band_peak, R.string.band_low_shelf, R.string.band_high_shelf, R.string.band_low_pass, R.string.band_high_pass,
+        R.string.band_band_pass, R.string.band_notch, R.string.band_all_pass, R.string.band_low_shelf_slope, R.string.band_high_shelf_slope,
+    ).map(r::getString).toTypedArray()
+    private val bandChannels: Array<String> = arrayOf(R.string.channel_both, R.string.channel_left, R.string.channel_right).map(r::getString).toTypedArray()
+
+    /** A kind of band as the band editor names it: read once, so the list's rows allocate nothing. */
+    fun bandKind(k: EqKind): String = bandKinds[k.ordinal]
+    fun bandChannel(c: BandChannel): String = bandChannels[c.ordinal]
+
+    /** A built-in equalizer curve's name. */
+    fun preset(k: PresetKind): String = when (k) {
+        PresetKind.FLAT -> flat
+        PresetKind.BASS_BOOST -> r.getString(R.string.preset_bass_boost)
+        PresetKind.BASS_CUT -> r.getString(R.string.preset_bass_cut)
+        PresetKind.TREBLE_BOOST -> r.getString(R.string.preset_treble_boost)
+        PresetKind.TREBLE_CUT -> r.getString(R.string.preset_treble_cut)
+        PresetKind.VOCAL_BOOST -> r.getString(R.string.preset_vocal_boost)
+        PresetKind.LOUDNESS -> r.getString(R.string.preset_loudness)
+        PresetKind.SMALL_SPEAKERS -> r.getString(R.string.preset_small_speakers)
+    }
+
+    /** Why nothing on the equalizer screen reaches the sound. */
+    fun eqBypass(b: EqBypass): String = r.getString(
+        when (b) {
+            EqBypass.BIT_PERFECT -> R.string.eq_bypass_bit_perfect
+            EqBypass.OUTPUT -> R.string.eq_bypass_output
+        },
+    )
+
+    /** Under a saved profile: which devices use it, or that choosing it loads it. */
+    fun profileUse(devices: List<String>): String =
+        if (devices.isEmpty()) r.getString(R.string.profile_choose_to_load) else r.getString(R.string.profile_used_for, devices.joinToString(", "))
+
+    // ---- output devices: a key's parts (`outputs::parts`) in words ----
+
+    private val outputSpeaker: String = r.getString(R.string.output_speaker)
+    private val outputWired: String = r.getString(R.string.output_wired)
+    private val outputUsb: String = r.getString(R.string.output_usb)
+    private val outputBluetooth: String = r.getString(R.string.output_bluetooth)
+
+    /** Where a device is plugged in, when that is worth saying: "USB", "Bluetooth". */
+    fun outputKind(port: OutputPort): String? = when (port) {
+        OutputPort.USB -> outputUsb
+        OutputPort.BLUETOOTH -> outputBluetooth
+        else -> null
+    }
+
+    /** A device's name: its own, or the app's for one without ("Phone speaker", "DAC"). */
+    fun outputName(port: OutputPort, name: String?): String = when (port) {
+        OutputPort.SPEAKER -> outputSpeaker
+        OutputPort.WIRED -> outputWired
+        OutputPort.USB -> name ?: r.getString(R.string.output_usb_nameless)
+        OutputPort.BLUETOOTH -> name ?: r.getString(R.string.output_bluetooth_nameless)
+        OutputPort.OTHER -> name ?: r.getString(R.string.output_other)
+    }
+
+    /** A device with where it is plugged in: "USB: K3", "Bluetooth: buds", "Phone speaker". */
+    fun outputLabel(port: OutputPort, name: String?): String =
+        outputKind(port)?.let { r.getString(R.string.output_named, it, outputName(port, name)) } ?: outputName(port, name)
+
+    /** What the player's output button says to a screen reader. */
+    fun outputDescription(port: OutputPort, name: String?): String = r.getString(R.string.output_description, outputLabel(port, name))
+
+    /** What the output button says while device [name] plays: "Playing on S22". */
+    fun devicePlayingOn(name: String): String = r.getString(R.string.devices_playing_on, name)
+    fun noise(n: dev.nori.music.ffi.plugins.Noise): String = r.getString(
+        when (n) {
+            dev.nori.music.ffi.plugins.Noise.OFF -> R.string.device_noise_off
+            dev.nori.music.ffi.plugins.Noise.CANCELING -> R.string.device_noise_canceling
+            dev.nori.music.ffi.plugins.Noise.TRANSPARENCY -> R.string.device_noise_transparency
+            dev.nori.music.ffi.plugins.Noise.ADAPTIVE -> R.string.device_noise_adaptive
+        },
+    )
+    /** Each battery a device has: "80%", or "L 80% · R 70% · Case 50%"; empty when it said none. */
+    fun battery(b: dev.nori.music.ffi.plugins.Battery): String = b.single?.let { r.getString(R.string.device_battery, it.toInt()) }
+        ?: listOfNotNull(
+            b.left?.let { r.getString(R.string.device_battery_left, it.toInt()) },
+            b.right?.let { r.getString(R.string.device_battery_right, it.toInt()) },
+            b.case?.let { r.getString(R.string.device_battery_case, it.toInt()) },
+        ).joinToString(" · ")
+    /** An output's name with its battery: "WH-1000XM5 · 80%". */
+    fun withLevel(name: String, level: UByte): String = r.getString(R.string.device_with_level, name, level.toInt())
+    val deviceSettings: String get() = r.getString(R.string.device_settings)
+    val allowBluetooth: String get() = r.getString(R.string.plugins_allow_bluetooth)
+
+    /** The words under a device's name in its sheet. */
+    fun deviceIntro(kind: String?): String =
+        r.getString(R.string.device_sheet_intro, if (kind == null) r.getString(R.string.device_this) else r.getString(R.string.device_this_kind, kind))
+
+    /** The line under "Automatic": whether a known curve is used or offered. */
+    fun deviceAutomatic(autoApply: Boolean): String = r.getString(if (autoApply) R.string.device_auto_uses else R.string.device_auto_offers)
+
+    /** The snackbar about the device that just connected: its words and its one action. */
+    fun deviceNotice(offer: Boolean, curve: String): Pair<String, String> =
+        if (offer) r.getString(R.string.device_notice_offer, curve) to r.getString(R.string.device_notice_apply)
+        else r.getString(R.string.device_notice_applied, curve) to r.getString(R.string.device_notice_undo)
+
+    /** The size of the AutoEQ list, and the search field's hint. */
+    fun autoeqCount(n: Int): String = r.getString(R.string.autoeq_count, n)
+    fun autoeqSearch(n: Int): String = r.getString(R.string.autoeq_search_count, n)
+
+    /** An AutoEQ curve's line in the browser: who measured it, the form and the target, whichever are known. */
+    fun autoeqCaption(e: AutoEqEntry): String = listOf(e.source, e.form, e.target).filter { it.isNotEmpty() }.joinToString(" · ")
+    /** Its line in a device's sheet: who measured it and the form. */
+    fun autoeqShort(e: AutoEqEntry): String = "${e.source} · ${e.form}"
+
+    // ---- confirmations ----
+
+    fun addedToPlaylist(name: String): String = r.getString(R.string.said_added_to_playlist, name)
+    fun playlistCreated(name: String): String = r.getString(R.string.said_playlist_created, name)
+    val playingNext: String get() = r.getString(R.string.said_playing_next)
+    val addedToQueue: String get() = r.getString(R.string.said_added_to_queue)
+    fun jamAsked(title: String): String = r.getString(R.string.jam_asked, title)
+    val homeClosedToGuests: String get() = r.getString(R.string.home_closed_to_guests)
+    val searchIsTheWayIn: String get() = r.getString(R.string.search_is_the_way_in)
+    fun jamEnded(host: String?): String = host?.let { r.getString(R.string.jam_ended_by, it) } ?: r.getString(R.string.jam_ended)
+    val backInMixes: String get() = r.getString(R.string.said_back_in_mixes)
+    val excludedFromMixes: String get() = r.getString(R.string.said_excluded_from_mixes)
+    val serverDownloading: String get() = r.getString(R.string.said_server_downloading)
+    val saidFailed: String get() = r.getString(R.string.said_failed)
+    fun downloadingSongs(n: Int): String = r.getQuantityString(R.plurals.said_downloading, n, n)
+    fun downloadsRemoved(n: Int): String = r.getQuantityString(R.plurals.said_downloads_removed, n, n)
+    fun analysingDownloads(n: Int): String = r.getQuantityString(R.plurals.said_analysing_downloads, n, n)
+    /** After an M3U import: how many of its entries were found and went into [playlist]. */
+    fun m3uImported(found: Int, entries: Int, playlist: String): String =
+        if (found == 0) r.getString(R.string.m3u_none_found, entries) else r.getString(R.string.m3u_imported, found, entries, playlist)
+    fun autoeqApplied(name: String): String = r.getString(R.string.autoeq_applied, name)
+    fun deleteNamed(name: String): String = r.getString(R.string.delete_named, name)
+    fun deleteQuestion(name: String): String = r.getString(R.string.delete_question, name)
+    val cannotBeUndone: String get() = r.getString(R.string.cannot_be_undone)
+
+    /** Stopping every download: its title, and what it does to [unfinished] songs. */
+    val stopAllTitle: String get() = r.getString(R.string.stop_all_title)
+    val discardChanges: String get() = r.getString(R.string.discard_changes)
+    val discard: String get() = r.getString(R.string.discard)
+    val keepEditing: String get() = r.getString(R.string.keep_editing)
+    fun stopAllText(unfinished: Int): String = r.getQuantityString(R.plurals.stop_all_text, unfinished, unfinished)
+
+    fun note(n: Note): String = r.getString(n.id)
+
+    // ---- the equalizer ----
+
+    val autoPreamp: String = r.getString(R.string.eq_auto_preamp)
+    /** The pre-amp in effect: "-3.5 dB". */
+    fun preamp(db: Float): String = r.getString(R.string.settings_db, Fmt.signedDb(db))
+    /** "centre", "L 30%", "R 5%". */
+    fun balance(balance: Float): String = when {
+        balance == 0f -> r.getString(R.string.eq_balance_centre)
+        else -> r.getString(if (balance < 0f) R.string.eq_balance_left else R.string.eq_balance_right, Fmt.fixed((kotlin.math.abs(balance) * 100f).toDouble(), 0))
+    }
+    /** "Ceiling -1.0 dB". */
+    fun ceiling(db: Float): String = r.getString(R.string.eq_ceiling, Fmt.fixed(db.toDouble(), 1))
+    /** What the limiter is pulling back right now, or that it is not: "−2.3 dB", "not clipping". */
+    /** What the compressor is taking off right now, or that it is resting: "Compressing 3.2 dB". */
+    fun compression(db: Float): String =
+        if (db > 0.05f) r.getString(R.string.eq_compressing, Fmt.fixed(db.toDouble(), 1)) else r.getString(R.string.eq_not_compressing)
+    fun reduction(db: Float): String =
+        if (db > 0.05f) r.getString(R.string.eq_reduction, Fmt.fixed(db.toDouble(), 1)) else r.getString(R.string.eq_not_clipping)
+    /** The band dialog's title: "63 Hz", "1k Hz". */
+    fun hzTitle(freq: Float): String = r.getString(R.string.eq_hz_title, Fmt.hz(freq))
+    /** "Slope 0.71" for a shelf given by its slope, "Q 1.41" for the rest. */
+    /** What a band's width is called in its editor: a shelf's slope, or Q. */
+    fun widthName(slope: Boolean): String = if (slope) slopeName else qName
+    private val slopeName: String = r.getString(R.string.eq_slope_name)
+    private val qName: String = r.getString(R.string.eq_q_name)
+    /** A band's label: its frequency and a mark for its channel or kind (the core's `band_mark`). */
+    fun band(freq: Float, mark: BandMark): String {
+        val hz = Fmt.hz(freq)
+        return when (mark) {
+            BandMark.NONE -> hz
+            BandMark.LEFT -> r.getString(R.string.eq_band_left, hz)
+            BandMark.RIGHT -> r.getString(R.string.eq_band_right, hz)
+            BandMark.LOW_SHELF -> "$hz ↙"
+            BandMark.HIGH_SHELF -> "$hz ↗"
+            BandMark.NO_GAIN -> "$hz ∿"
+        }
+    }
+
+    // ---- listening stats ----
+
+    /** The periods the stats can cover, in the order the chips run: days back from now (0 for all time) and a name. */
+    val statsPeriods: List<Pair<Int, String>> get() = listOf(
+        7 to r.getString(R.string.stats_week), 30 to r.getString(R.string.stats_month),
+        365 to r.getString(R.string.stats_year), 0 to r.getString(R.string.stats_all_time),
+    )
+    /** Whose plays the stats can count, in the order the chips run. */
+    val statsSources: List<Pair<StatsSource, String>> get() = listOf(
+        StatsSource.DEVICE to r.getString(R.string.stats_this_device), StatsSource.SERVER_ACCOUNT to r.getString(R.string.stats_all_devices),
+    )
+    /** Under the play count: "plays · 12:34:56 listened"; the server knows no time listened. */
+    fun statsHeadline(p: StatsPage): String = when (p.source) {
+        StatsSource.DEVICE -> r.getString(R.string.stats_headline, Fmt.duration(p.stats.listenedMs / 1000))
+        StatsSource.SERVER_ACCOUNT -> r.getString(R.string.stats_server_headline)
+    }
+    /** What the server account's figures are, or why they are missing or old. */
+    fun statsServerNote(h: ServerHistory?): String = r.getString(
+        when (h) {
+            ServerHistory.UNREACHED -> R.string.stats_server_unreached
+            ServerHistory.UNAVAILABLE -> R.string.stats_server_unavailable
+            ServerHistory.CURRENT, null -> R.string.stats_server_since
+        },
+    )
+    /** "Most around 21:00, mostly on Fridays"; null (and no chart) when nothing was played. */
+    fun statsHabit(p: StatsPage): String? {
+        val hour = p.busiestHour?.toInt() ?: return null
+        val day = p.busiestWeekday?.toInt() ?: return r.getString(R.string.stats_habit, hour)
+        return r.getString(R.string.stats_habit_day, hour, r.getStringArray(R.array.stats_weekdays)[day])
+    }
+    /** The tiles under the headline, in rows of three: a number and what it counts. Skips are this device's only. */
+    fun statsTiles(p: StatsPage): List<Pair<String, String>> = with(p.stats) {
+        listOfNotNull(
+            distinctSongs.toString() to r.getString(R.string.stat_songs),
+            distinctArtists.toString() to r.getString(R.string.stat_artists),
+            distinctAlbums.toString() to r.getString(R.string.stat_albums),
+            (skips.toString() to r.getString(R.string.stat_skips)).takeIf { p.source == StatsSource.DEVICE },
+            activeDays.toString() to r.getString(R.string.stat_active_days),
+            longestStreakDays.toString() to r.getString(R.string.stat_day_streak),
+        )
+    }
+
+    // ---- about ----
+
+    /** What About says this build is made of, one line each, and all of it together for a bug report. */
+    class AboutFacts(val title: String, val build: String, val playback: String, val library: String, val automix: String, val ui: String, val report: String)
+
+    /**
+     * About's facts for the app [version], from [versions] as the build writes them ("media3=1.8.0;
+     * okhttp=5.1.0;...", an empty value for one it could not read), a [debug] build or not, its commit
+     * [sha] (blank outside a checkout), the first [abi] the phone runs and its Android [release] and [sdk].
+     */
+    fun about(version: String, versions: String, debug: Boolean, sha: String, abi: String?, release: String, sdk: Int): AboutFacts {
+        val known = versions.split(';').mapNotNull { p -> p.indexOf('=').takeIf { it >= 0 }?.let { p.substring(0, it) to p.substring(it + 1) } }
+            .filter { (_, v) -> '=' !in v && v.isNotBlank() }
+        fun v(name: String) = known.firstOrNull { it.first == name }?.let { " ${it.second}" }.orEmpty()
+        val build = r.getString(
+            R.string.about_build, r.getString(if (debug) R.string.about_debug else R.string.about_release),
+            sha.ifBlank { r.getString(R.string.about_no_commit) }, abi ?: r.getString(R.string.about_unknown_abi), release, sdk,
+        )
+        val playback = r.getString(R.string.about_playback, v("media3"), v("okhttp"))
+        val library = r.getString(R.string.about_library, v("rusqlite"), v("uniffi"))
+        val automix = r.getString(R.string.about_automix, v("rustfft"))
+        val ui = r.getString(R.string.about_ui, v("composeBom"))
+        val title = r.getString(R.string.about_title, version)
+        return AboutFacts(title, build, playback, library, automix, ui, r.getString(R.string.about_report, title, build, playback, library, automix, ui))
+    }
+
+
+    // Home: the Continue card and the mix cards.
+    val continueLabel: String = r.getString(R.string.continue_label)
+    val resume: String = r.getString(R.string.resume)
+    fun offerPlace(artist: String, at: Int, of: Int): String = r.getString(R.string.offer_place, artist, at, of)
+
+    companion object {
+        /** Counts up to this are made once and kept. */
+        private const val COUNTS = 512
+
+        @Volatile private var res: Resources? = null
+        @Volatile private var made: Say? = null
+
+        /** The app's resources, once at start and again when the locale changes: the words are read anew. */
+        fun use(r: Resources) {
+            res = r
+            made = null
+        }
+
+        /** The words in the app's locale now. */
+        val current: Say get() = made ?: Say(checkNotNull(res) { "Say.use was not called" }).also { made = it }
+    }
+}
+
+/** The empty-list, failure and help lines around the app, by where they are shown. */
+enum class Note(val id: Int) {
+    /** No index yet: the songs and decades lists. */
+    NO_INDEX(R.string.note_no_index),
+    NO_PLAYLISTS(R.string.note_no_playlists),
+    NO_ALBUMS(R.string.note_no_albums),
+    NO_ARTISTS(R.string.note_no_artists),
+    NO_SONGS(R.string.note_no_songs),
+    NO_STATIONS(R.string.note_no_stations),
+    NOTHING_DOWNLOADED(R.string.note_nothing_downloaded),
+    NO_DOWNLOADS(R.string.note_no_downloads),
+    NO_DOWNLOADS_HELP(R.string.note_no_downloads_help),
+    DOWNLOAD_FAILED(R.string.note_download_failed),
+    NO_FAVOURITE_SONGS(R.string.note_no_favourite_songs),
+    NO_FAVOURITE_ALBUMS(R.string.note_no_favourite_albums),
+    NOTHING_TO_MIX(R.string.note_nothing_to_mix),
+    SMART_HELP(R.string.note_smart_help),
+    NO_HISTORY(R.string.note_no_history),
+    NOTHING_FOUND(R.string.note_nothing_found),
+    NO_LYRICS(R.string.note_no_lyrics),
+    /** Over the reason, where a page could not be read. */
+    COULD_NOT_LOAD(R.string.note_could_not_load),
+    COULD_NOT_EVALUATE(R.string.note_could_not_evaluate),
+}

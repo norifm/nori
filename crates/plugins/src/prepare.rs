@@ -70,13 +70,21 @@ struct Ring {
     len: usize,
     /// The frame of the first sample held.
     at: u64,
-    ended: bool,
-    left: bool,
+    end: Option<End>,
+}
+
+/// How the player's feed of a song ended.
+#[derive(Clone, Copy)]
+enum End {
+    /// The song played to its end.
+    Whole,
+    /// The player let it go before.
+    Cut,
 }
 
 impl Feed {
     fn new(format: Format, from: u64) -> Feed {
-        let ring = Ring { samples: vec![0.0; format.rate as usize * format.channels.max(1) * FEED_S], len: 0, at: from, ended: false, left: false };
+        let ring = Ring { samples: vec![0.0; format.rate as usize * format.channels.max(1) * FEED_S], len: 0, at: from, end: None };
         Feed { ring: Mutex::new(ring), ready: Condvar::new(), unwanted: AtomicBool::new(false) }
     }
 }
@@ -113,7 +121,7 @@ impl Tap for FeedTap {
 
     fn end(&mut self) {
         if let Ok(mut r) = self.feed.ring.lock() {
-            r.ended = true;
+            r.end = Some(End::Whole);
         }
         self.feed.ready.notify_one();
     }
@@ -122,7 +130,7 @@ impl Tap for FeedTap {
 impl Drop for FeedTap {
     fn drop(&mut self) {
         if let Ok(mut r) = self.feed.ring.lock() {
-            r.left = !r.ended;
+            r.end.get_or_insert(End::Cut);
         }
         self.feed.ready.notify_one();
     }
@@ -189,9 +197,9 @@ fn hear(hearers: &[Hearer], job: Job, prepared: &Mutex<Made>, analysed: &Mutex<M
     let ch = channels as usize;
     let mut block = Vec::new();
     loop {
-        let (at, ended, left) = {
+        let (at, end) = {
             let mut r = feed.ring.lock().expect("not poisoned");
-            while r.len * 2 < r.samples.len() && !r.ended && !r.left {
+            while r.len * 2 < r.samples.len() && r.end.is_none() {
                 r = feed.ready.wait(r).expect("not poisoned");
             }
             block.clear();
@@ -200,7 +208,7 @@ fn hear(hearers: &[Hearer], job: Job, prepared: &Mutex<Made>, analysed: &Mutex<M
             let at = r.at;
             r.at += (len / ch) as u64;
             r.len = 0;
-            (at, r.ended, r.left)
+            (at, r.end)
         };
         if !block.is_empty() {
             for (h, prepares, analyses) in &wanting {
@@ -214,11 +222,10 @@ fn hear(hearers: &[Hearer], job: Job, prepared: &Mutex<Made>, analysed: &Mutex<M
                 }
             }
         }
-        if left {
-            return;
-        }
-        if ended {
-            break;
+        match end {
+            Some(End::Cut) => return,
+            Some(End::Whole) => break,
+            None => {}
         }
     }
     let mut came = false;

@@ -8,7 +8,8 @@ use nori_host::desktop::Root;
 use std::time::Instant;
 
 use nori_core::remote::wire::Op;
-use nori_core::providers::{AfterAdding, SignInStep};
+use nori_core::providers::flow::{AddDo, AddEvent, SignInEvent};
+use nori_core::providers::AfterAdding;
 use nori_core::remote::JamStart;
 use nori_core::settings::SavedServer;
 use nori_host::player::{Playback, QueueShown};
@@ -125,8 +126,6 @@ struct Runner {
     http: Arc<Http>,
     tx: Sender<Msg>,
     session: Option<Session>,
-    /// What follows the profile about to open, when it was just added.
-    after_adding: Option<AfterAdding>,
     /// The profile in use while its plugin doesn't run here, opened once it does.
     waiting: Option<SavedServer>,
     /// The lyrics panel was shown when last told to the session ([`Session::lyrics_view`]).
@@ -220,7 +219,7 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
     app.shared = root.app.clone();
     app.settings.own.shared = root.app.clone();
-    let mut r = Runner { root: root.clone(), http: Http::new(), tx, session: None, after_adding: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
+    let mut r = Runner { root: root.clone(), http: Http::new(), tx, session: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
     // Plugins reach the web before any profile opens; a session's own transport takes over.
     app.settings.own.kinds.set_transport(r.http.clone());
     let notices = r.tx.clone();
@@ -245,7 +244,7 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
         app.say(crate::text::plugins_safe(&safe, &names), true);
     }
     match prefs.active_server().cloned() {
-        Some(p) => r.open(&mut app, p),
+        Some(p) => r.open(&mut app, p, None),
         None => {
             app.choose_provider();
             r.update_plugins();
@@ -264,7 +263,8 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
 }
 
 impl Runner {
-    fn open(&mut self, app: &mut App, profile: SavedServer) {
+    /// Opens `profile`; `added` says what follows when it was just added.
+    fn open(&mut self, app: &mut App, profile: SavedServer, added: Option<AfterAdding>) {
         if let Some(s) = self.session.take() {
             s.close();
         }
@@ -301,17 +301,11 @@ impl Runner {
                 app.retheme();
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
                 app.output = self.o.device.clone().or_else(|| own::text(&self.root.app.settings, own::DEVICE)).unwrap_or_default();
-                let added = self.after_adding.take();
-                match self.session.as_ref().and_then(|s| s.client.sign_in_step(added)) {
-                    Some(SignInStep::Offer) => self.offer_sign_in(app),
-                    Some(SignInStep::Open) => {
-                        self.offer_sign_in(app);
+                match self.session.as_ref().and_then(|s| s.client.sign_in_due(added)) {
+                    Some(offer @ SignInEvent::Offer { .. }) => self.offer_sign_in(app, offer),
+                    Some(_) => {
+                        self.offer_sign_in(app, SignInEvent::Offer { ended: false });
                         self.carry(app, Cmd::SignInWindow);
-                    }
-                    Some(SignInStep::StopReminding) => {
-                        if let Some(s) = &self.session {
-                            s.client.stop_reminding();
-                        }
                     }
                     None => {}
                 }
@@ -320,9 +314,9 @@ impl Runner {
                 self.update_plugins();
                 self.plugin(app, crate::app::PluginCmd::Read);
             }
-            Err(e) => {
+            Err(said) => {
                 app.session_ended();
-                app.login.error = Some(e);
+                app.login.flow.on(AddEvent::Unopened { said });
             }
         }
     }
@@ -381,21 +375,22 @@ impl Runner {
         app.rules = s.rules();
         app.excluded = s.core.mix_excluded_songs().unwrap_or_default().into_iter().collect();
         app.dirty = true;
-        if state == nori_core::providers::AccountState::Ended {
-            self.offer_sign_in(app);
+        if let Some(offer) = s.client.sign_in_due(None).filter(|_| state == nori_core::providers::AccountState::Ended) {
+            self.offer_sign_in(app, offer);
         }
     }
 
-    /// The account sheet over the profile in use, as its provider has the account.
-    fn offer_sign_in(&self, app: &mut App) {
-        let Some(s) = &self.session else { return };
+    /// The account sheet over the profile in use, as its provider has the account, opened by `offer`.
+    fn offer_sign_in(&self, app: &mut App, offer: SignInEvent) {
         let Some(profile) = self.root.app.settings.current().and_then(|p| p.active_server().cloned()) else { return };
         if !app.settings.own.kinds.providers().iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
             return;
         }
-        let ended = s.client.account() == nori_core::providers::AccountState::Ended;
+        let mut flow = nori_core::providers::flow::SignInFlow::default();
+        flow.on(offer);
+        let ended = flow.shown == (nori_core::providers::flow::SignInShown::Offered { ended: true });
         let user = if ended { String::new() } else { profile.user };
-        app.overlay = Some(crate::app::Overlay::Account { kind: profile.kind, user, ended, pasting: false, text: String::new(), error: None, busy: false });
+        app.overlay = Some(crate::app::Overlay::Account { kind: profile.kind, user, pasting: false, text: String::new(), flow, window_failed: false });
         app.dirty = true;
     }
 
@@ -532,11 +527,11 @@ impl Runner {
         let Some(profile) = self.waiting.clone() else { return };
         let nori_core::settings::ServerKind::Plugin { id } = &profile.kind else { return };
         match self.root.plugins().kinds.waits(profile.clone()) {
-            None => self.open(app, profile),
+            None => self.open(app, profile, None),
             Some(wait) => {
                 let own = &app.settings.own;
                 let name = nori_plugins::plugin_display_name(id.clone(), own.plugins.clone(), own.offers().to_vec());
-                app.login.error = Some(crate::text::profile_waits(&name, wait));
+                app.login.flow.on(AddEvent::Unopened { said: crate::text::profile_waits(&name, wait) });
             }
         }
     }
@@ -544,7 +539,7 @@ impl Runner {
     /// The profile in use opened again, as signing in or out left it.
     fn reopen(&mut self, app: &mut App) {
         let Some(profile) = self.root.app.settings.current().and_then(|p| p.active_server().cloned()) else { return };
-        self.open(app, profile);
+        self.open(app, profile, None);
         app.go(View::Home);
     }
 
@@ -617,7 +612,7 @@ impl Runner {
             Msg::Joined(Ok(pass)) => {
                 let guest = nori_host::jam_joined(&self.root.app.settings, pass.clone(), crate::text::JAM_GUEST);
                 prefs_changed(app);
-                self.open(app, guest);
+                self.open(app, guest, None);
                 app.go(View::Home);
                 return;
             }
@@ -625,7 +620,7 @@ impl Runner {
                 match nori_host::jam_left(&self.root.app.settings) {
                     Some(p) => {
                         prefs_changed(app);
-                        self.open(app, p);
+                        self.open(app, p, None);
                         app.go(View::Home);
                     }
                     None => {
@@ -639,9 +634,12 @@ impl Runner {
                 return app.say(said.clone(), false);
             }
             Msg::LoggedIn(Ok(p)) => {
-                self.after_adding = app.login.after;
+                let added = match app.login.flow.on(AddEvent::Accepted) {
+                    AddDo::Open { added } => added,
+                    _ => None,
+                };
                 prefs_changed(app);
-                self.open(app, p.clone());
+                self.open(app, p.clone(), added);
                 app.go(View::Home);
                 return;
             }
@@ -662,9 +660,10 @@ impl Runner {
         // A guest's music is the jam's: it moves to no other device.
         d.on = remote.is_some() && !guest;
         d.pairing = remote.as_ref().and_then(|r| r.pairing_link());
-        let start = remote.as_ref().map(|r| r.jam_start());
-        d.jams = jams && d.on && (start == Some(JamStart::Offered) || remote.as_ref().is_some_and(|r| r.jam_view().is_some()));
-        d.jams_unsupported = d.on && start == Some(JamStart::Unsupported);
+        d.jam_start = remote.as_ref().filter(|_| d.on).map(|r| match r.jam_start() {
+            JamStart::Offered | JamStart::Starting | JamStart::Hosting if !jams => JamStart::Unavailable,
+            start => start,
+        });
         d.list = remote.as_ref().filter(|_| d.on).map(|r| r.devices()).unwrap_or_default();
         d.reached = remote.as_ref().filter(|_| d.on).map(|r| r.outputs()).unwrap_or_default();
         if let Some(r) = &remote {
@@ -719,8 +718,9 @@ impl Runner {
         app.follow_now(Now { state: now.state, position_ms: now.position_ms, at: now.at, speed: now.pace, mixing: now.mixing, buffering: now.buffering });
         let id = now.song.as_ref().map(|s| s.id.clone());
         if id != self.heard {
-            self.heard = id;
+            self.heard = id.clone();
             app.heard(now.song);
+            app.lyrics_now(s.lyrics_heard(id));
         }
         if s.queue_stale(self.queue.as_ref()) {
             let q = s.queue_shown(self.queue.as_ref());
@@ -749,7 +749,7 @@ impl Runner {
 
     /// Advances the lyrics clock and schedules its next wake.
     fn lyrics_step(&self, app: &mut App) {
-        let Some(l) = &app.lyrics else {
+        let Some(l) = app.lyrics.found() else {
             app.lyrics_wake = None;
             return;
         };
@@ -819,7 +819,10 @@ impl Runner {
                 app.say(if on { "Covers on (from the next song; restart to fetch covers again)" } else { "Covers off" }, false);
                 return;
             }
-            Cmd::OfferSignIn => return self.offer_sign_in(app),
+            Cmd::OfferSignIn => {
+                let Some(offer) = self.session.as_ref().map(|s| s.client.sign_in_offer()) else { return };
+                return self.offer_sign_in(app, offer);
+            }
             Cmd::Plugin(c) => return self.plugin(app, c),
             Cmd::Backup { restore: false, path, password } => {
                 let tx = self.tx.clone();
@@ -834,7 +837,7 @@ impl Runner {
                 });
             }
             Cmd::SignInWindow => {
-                let (Some(s), Some(crate::app::Overlay::Account { kind, pasting, error, busy, .. })) = (&self.session, &mut app.overlay) else { return };
+                let (Some(s), Some(crate::app::Overlay::Account { kind, pasting, flow, window_failed, .. })) = (&self.session, &mut app.overlay) else { return };
                 #[cfg(feature = "sign-in-window")]
                 {
                     if self.sign_in_window.as_mut().is_some_and(|w| w.open_now()) {
@@ -846,13 +849,15 @@ impl Runner {
                         let _ = tx.send(Msg::SignedIn(h.sign_in(cookies)));
                     });
                     if self.sign_in_window.is_some() {
+                        // Its cookies are the answer: one is on its way (already so when a key opened it).
+                        flow.on(SignInEvent::Sent);
                         return;
                     }
                 }
                 let _ = (s, kind);
                 *pasting = true;
-                *busy = false;
-                *error = Some(crate::text::SIGN_IN_WINDOW_FAILED.into());
+                flow.on(SignInEvent::Unsent);
+                *window_failed = true;
                 return;
             }
             Cmd::SignIn(cookies) => {
@@ -917,7 +922,7 @@ impl Runner {
                 prefs.active_server_id = id;
                 self.root.app.settings.put(prefs.clone());
                 app.prefs_changed(prefs);
-                self.open(app, p);
+                self.open(app, p, None);
                 app.go(View::Home);
                 return;
             }
@@ -947,7 +952,7 @@ impl Runner {
             }
             Cmd::Jump(i) => s.jump(i),
             Cmd::Remove(i) => s.remove(i),
-            Cmd::Restore(id) => s.put_back(&id),
+            Cmd::Undo => s.undo(),
             Cmd::Move(from, to) => s.move_song(from, to),
             Cmd::Shuffle(on) => s.shuffle(on),
             Cmd::CycleRepeat => {
@@ -959,6 +964,7 @@ impl Runner {
                 let states = s.download_states(&ids.iter().map(String::as_str).collect::<Vec<_>>());
                 app.knows_downloads(ids, states);
             }
+            Cmd::Sleep(choice) => s.sleep_pick(choice),
             Cmd::ExcludeFromMixes(id, on) => match s.core.mix_excluded_set(id.clone(), on) {
                 Ok(()) if on => _ = app.excluded.insert(id),
                 Ok(()) => _ = app.excluded.remove(&id),
@@ -1002,21 +1008,14 @@ impl Runner {
                     }
                 });
             }
-            Cmd::LookForOffer { playing, shown } => {
-                let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
+            Cmd::LookForOffer => {
+                let (h, tx, id) = ((**s).clone(), self.tx.clone(), s.id);
                 nori_host::spawn("nori-offer", move || {
-                    // An offer that cannot be asked for is none.
-                    let offer = block_on(client.queue_offer(playing, shown)).ok().flatten();
-                    let _ = tx.send(Msg::From(id, Box::new(Msg::Offer(offer))));
+                    let _ = tx.send(Msg::From(id, Box::new(Msg::Offer(h.queue_offer()))));
                 });
             }
-            Cmd::TakeOffer(offer) => {
-                s.client.queue_offer_done(offer.clone());
-                let (index, position) = (offer.index as usize, offer.position_ms as i64);
-                s.play(offer.songs, index, false, None);
-                s.seek(position);
-            }
-            Cmd::DismissOffer(offer) => s.client.queue_offer_done(offer),
+            Cmd::TakeOffer(offer) => s.queue_offer_closed(offer, true),
+            Cmd::DismissOffer(offer) => s.queue_offer_closed(offer, false),
             Cmd::ShuffleLibrary { albums } => {
                 let (h, tx, id) = ((**s).clone(), self.tx.clone(), s.id);
                 nori_host::spawn("nori-shuffle", move || {
@@ -1094,7 +1093,7 @@ impl Runner {
             }
             Cmd::Action(c) => s.action(c),
             Cmd::Curve => s.curve_answer(),
-            Cmd::Tuning(on) => s.engine.set_shallow(on),
+            Cmd::SoundPage(page, on) => s.sound_page(page, on),
             Cmd::SearchTyped(text) => {
                 let v = s.search_typed(&text);
                 app.search.view = Some(v);
@@ -1102,7 +1101,7 @@ impl Runner {
             Cmd::SearchServer(q) => {
                 s.search_server(q);
             }
-            Cmd::Lyrics(id) => s.lyrics(id),
+            Cmd::LyricsRefresh => s.lyrics_refresh(),
             Cmd::Cover(art) => {
                 if let Some(t) = s.cover(art, COVER_PX) {
                     self.tickets.push(t);
@@ -1136,14 +1135,10 @@ impl Runner {
     }
 }
 
-/// After a sound edit: applies its effect (None: nothing changed), then may take the low-latency
-/// buffer; the engine runs commands in order, so it sees the new sound first.
+/// After a sound edit: applies its effect (None: nothing changed).
 fn sound_edited(s: &Session, app: &mut App, effect: Option<u32>) {
     if let Some(effect) = effect {
         s.applied(effect);
-        if app.sound_edited() {
-            s.engine.set_shallow(true);
-        }
     }
     prefs_changed(app);
 }

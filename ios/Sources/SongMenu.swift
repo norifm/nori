@@ -72,7 +72,7 @@ enum SongMenu {
             _ = nori_ios_song_act(token, i, 9, 1)
             Toast.show(Say.serverDownloading)
         case 10:
-            SleepTimer.shared.pick(from: host)
+            SleepTimer.pick(from: host)
         case 11:
             off({ nori_ios_song_act(token, i, 11, 0) }) { n in
                 if n < 0 { Toast.show(Say.failed) } else if n == 0, let words = Say.note(NORI_NOTE_NOTHING_TO_PLAY, 0) { Toast.show(words) }
@@ -160,40 +160,19 @@ enum SongMenu {
     }
 }
 
-/// The sleep timer: after some minutes (a one-shot timer here, its length the core's), or after songs or
-/// at the end of this one (the core and the engine count those).
-final class SleepTimer {
-    static let shared = SleepTimer()
-    private var timer: Timer?
-    private var running = false
-
-    func pick(from host: UIViewController) {
-        guard let choices = takenJSON(nori_ios_sleep_choices(running ? 1 : 0)) as? [[String: Any]] else { return }
+/// The sleep timer's choices; the timer itself is the core's.
+enum SleepTimer {
+    static func pick(from host: UIViewController) {
+        guard let choices = takenJSON(nori_ios_sleep_choices()) as? [[String: Any]] else { return }
         let sheet = Sheet(Say.sleepTimer)
         for c in choices {
             let minutes = c["minutes"] as? Int ?? 0
             let end = c["end"] as? Bool ?? false
             let songs = c["songs"] as? Int ?? 0
             sheet.add(Say.sleepChoice(minutes: minutes, end: end, songs: songs)) {
-                self.set(minutes: minutes, end: end, songs: songs)
+                nori_ios_sleep_set(UInt32(minutes), end ? 1 : 0, UInt32(songs))
             }
         }
         sheet.show(from: host)
-    }
-
-    private func set(minutes: Int, end: Bool, songs: Int) {
-        timer?.invalidate()
-        timer = nil
-        nori_ios_sleep_set(UInt32(songs), end ? 1 : 0)
-        running = minutes > 0 || end || songs > 0
-        guard minutes > 0, let delay = takenJSON(nori_ios_sleep_delay(UInt32(minutes))) as? [Int], delay.count == 2 else { return }
-        let t = Timer(timeInterval: Double(delay[0]) / 1000, repeats: false) { [weak self] _ in
-            nori_ios_sleep_now()
-            self?.running = false
-            self?.timer = nil
-        }
-        t.tolerance = Double(delay[1]) / 1000
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
     }
 }

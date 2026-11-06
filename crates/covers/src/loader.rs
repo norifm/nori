@@ -168,9 +168,30 @@ const PROVIDER_FILES_BYTES: u64 = 4 << 20;
 
 /// One in-progress cover at one size and its waiters.
 struct Flight<P> {
-    url: String,
-    started: bool,
+    state: FlightState,
     waiters: Vec<(u64, Done<P>)>,
+}
+
+impl<P> Flight<P> {
+    fn queued(url: &str, waiters: Vec<(u64, Done<P>)>) -> Flight<P> {
+        Flight { state: FlightState::Queued { url: url.to_owned() }, waiters }
+    }
+}
+
+enum FlightState {
+    Queued { url: String },
+    /// A worker took it.
+    Running,
+}
+
+/// Whether workers wait for more covers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pool {
+    Shown,
+    /// Set by [`Loader::show`]: workers exit as soon as they run out of work.
+    Hidden,
+    /// The loader is gone: workers exit after their current cover.
+    Closed,
 }
 
 struct Jobs<P> {
@@ -186,15 +207,13 @@ struct Jobs<P> {
     generation: u64,
     /// Workers of the current generation (counted against the limit).
     current: usize,
-    /// Set by [`Loader::show`].
-    hidden: bool,
+    pool: Pool,
     next_id: u64,
-    closed: bool,
 }
 
 impl<P> Default for Jobs<P> {
     fn default() -> Jobs<P> {
-        Jobs { flights: HashMap::new(), queue: Vec::new(), workers: 0, idle: 0, delivering: 0, generation: 0, current: 0, hidden: false, next_id: 0, closed: false }
+        Jobs { flights: HashMap::new(), queue: Vec::new(), workers: 0, idle: 0, delivering: 0, generation: 0, current: 0, pool: Pool::Shown, next_id: 0 }
     }
 }
 
@@ -242,7 +261,7 @@ impl<P: Paint> Leave for Inner<P> {
         let job = Job::Picture(*key);
         let Some(f) = jobs.flights.get_mut(&job) else { return };
         f.waiters.retain(|(i, _)| *i != id);
-        if f.waiters.is_empty() && !f.started {
+        if f.waiters.is_empty() && matches!(f.state, FlightState::Queued { .. }) {
             jobs.flights.remove(&job);
         }
     }
@@ -329,7 +348,7 @@ impl<P: Paint> Loader<P> {
                     done(Ok(picture));
                     return Ticket { inner: None, key, id: 0 };
                 }
-                v.insert(Flight { url: url.to_owned(), started: false, waiters: vec![(id, Box::new(done))] });
+                v.insert(Flight::queued(url, vec![(id, Box::new(done))]));
                 inner.enqueue(&mut jobs, Job::Picture(key), true);
             }
         }
@@ -352,7 +371,7 @@ impl<P: Paint> Loader<P> {
         let inner = &self.inner;
         let mut jobs = inner.jobs.lock();
         if let Entry::Vacant(v) = jobs.flights.entry(job) {
-            v.insert(Flight { url: url.to_owned(), started: false, waiters: Vec::new() });
+            v.insert(Flight::queued(url, Vec::new()));
             inner.enqueue(&mut jobs, job, false);
         }
     }
@@ -406,7 +425,7 @@ impl<P: Paint> Loader<P> {
     /// Sets whether covers are on screen (initially true). Hidden, the loader rests and workers exit as
     /// soon as they run out of work instead of waiting.
     pub fn show(&self, shown: bool) {
-        self.inner.jobs.lock().hidden = !shown;
+        self.inner.jobs.lock().pool = if shown { Pool::Shown } else { Pool::Hidden };
         if !shown {
             self.rest();
         }
@@ -423,7 +442,7 @@ impl<P: Paint> Drop for Loader<P> {
     fn drop(&mut self) {
         let flights = {
             let mut jobs = self.inner.jobs.lock();
-            jobs.closed = true;
+            jobs.pool = Pool::Closed;
             jobs.queue.clear();
             std::mem::take(&mut jobs.flights)
         };
@@ -537,7 +556,7 @@ impl<P: Paint> Inner<P> {
                     jobs.delivering -= 1;
                 }
                 loop {
-                    if jobs.closed {
+                    if jobs.pool == Pool::Closed {
                         return;
                     }
                     // A worker from an old generation leaves the queue to newer ones, taking it only if
@@ -549,15 +568,14 @@ impl<P: Paint> Inner<P> {
                         return;
                     }
                     if let Some(job) = jobs.queue.pop() {
-                        match jobs.flights.get_mut(&job) {
-                            Some(f) if !f.started => {
-                                f.started = true;
-                                break (job, std::mem::take(&mut f.url));
+                        if let Some(f) = jobs.flights.get_mut(&job) {
+                            if let FlightState::Queued { url } = std::mem::replace(&mut f.state, FlightState::Running) {
+                                break (job, url);
                             }
-                            _ => continue,
                         }
+                        continue;
                     }
-                    if jobs.generation != generation || jobs.hidden {
+                    if jobs.generation != generation || jobs.pool == Pool::Hidden {
                         return;
                     }
                     jobs.idle += 1;

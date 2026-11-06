@@ -8,6 +8,7 @@ mod bluez;
 mod btids;
 #[cfg(feature = "desktop")]
 pub mod desktop;
+mod lyrics;
 #[cfg(all(feature = "desktop", target_os = "macos"))]
 mod macbt;
 pub mod pages;
@@ -15,7 +16,10 @@ pub mod player;
 #[cfg(feature = "desktop")]
 mod plugged;
 pub mod remote;
+mod destination;
 pub mod session;
+mod sleep;
+mod tuning;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -217,12 +221,18 @@ pub struct Keeper {
     due: parking_lot::Mutex<Due>,
 }
 
+/// Where the next save stands.
 #[derive(Default)]
-struct Due {
-    at: Option<Instant>,
-    /// The task that saves runs.
-    running: bool,
-    stopped: bool,
+enum Due {
+    /// None is due, and no task waits.
+    #[default]
+    Idle,
+    /// Due then; the task waits for it.
+    At(Instant),
+    /// The task saves, nothing due after it yet.
+    Saving,
+    /// Nothing is saved again.
+    Stopped,
 }
 
 impl Keeper {
@@ -234,11 +244,13 @@ impl Keeper {
     /// Schedules a save `ms` from now, replacing any pending one.
     pub fn later(self: &Arc<Self>, ms: i64) {
         let mut due = self.due.lock();
-        if due.stopped {
-            return;
-        }
-        due.at = Some(Instant::now() + Duration::from_millis(ms.max(0) as u64));
-        if std::mem::replace(&mut due.running, true) {
+        let waiting = match *due {
+            Due::Stopped => return,
+            Due::Idle => false,
+            Due::At(_) | Due::Saving => true,
+        };
+        *due = Due::At(Instant::now() + Duration::from_millis(ms.max(0) as u64));
+        if waiting {
             return;
         }
         let me = self.clone();
@@ -246,16 +258,17 @@ impl Keeper {
             loop {
                 let wait = {
                     let mut due = me.due.lock();
-                    match due.at {
-                        Some(at) if !due.stopped && Instant::now() < at => at.saturating_duration_since(Instant::now()),
-                        Some(_) if !due.stopped => {
-                            due.at = None;
+                    match *due {
+                        Due::At(at) if Instant::now() < at => at.saturating_duration_since(Instant::now()),
+                        Due::At(_) => {
+                            *due = Due::Saving;
                             Duration::ZERO
                         }
-                        _ => {
-                            due.running = false;
+                        Due::Saving => {
+                            *due = Due::Idle;
                             return;
                         }
+                        Due::Idle | Due::Stopped => return,
                     }
                 };
                 if wait.is_zero() {
@@ -268,7 +281,7 @@ impl Keeper {
     }
 
     pub fn stop(&self) {
-        self.due.lock().stopped = true;
+        *self.due.lock() = Due::Stopped;
     }
 }
 

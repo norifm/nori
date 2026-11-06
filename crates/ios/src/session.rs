@@ -145,8 +145,9 @@ fn deliver_one(said: Said) {
         Said::Engine(Event::Song { index, .. }) => {
             with_session(|s| crate::pages::warm_around(s, *index));
         }
-        Said::Lyrics { song, pick } => crate::pages::lyrics_arrived(song, &pick.lyrics),
         Said::JamEnded { host } => return crate::jam::left(Some(host.clone())),
+        // The state events say what these do to the music; the app draws nothing of them.
+        Said::Engine(Event::LongPause | Event::Focus(_)) => return,
         _ => {}
     }
     emit(&said);
@@ -219,9 +220,9 @@ fn pack(said: &Said) -> Packed {
     };
     match said {
         Said::Engine(e) => pack_event(&mut p, e),
-        Said::Lyrics { song, .. } => {
+        Said::Lyrics(now) => {
             p.kind = REPORT_LYRICS;
-            p.id = c(song);
+            p.id = c(now.song().unwrap_or_default());
         }
         Said::Search(view) => {
             p.kind = REPORT_SEARCH;
@@ -336,6 +337,7 @@ fn pack_event(p: &mut Packed, e: &Event) {
         }
         // Listening along paused or played here, or the host did: the jam's controls are read again.
         Event::Following(_) => p.kind = REPORT_REMOTE,
+        Event::LongPause | Event::Focus(_) => {}
     }
 }
 
@@ -386,14 +388,36 @@ pub(crate) fn audio_changed() {
         if lost {
             s.engine.pause();
         }
+        // An interruption is the audio focus: what it does is the engine's focus state.
+        use nori_player::focus::Focus;
         match interrupt {
-            Some(Interrupt::Began) => s.engine.pause_now(),
-            Some(Interrupt::Ended { resume: true }) => {
-                s.engine.play();
+            Some(Interrupt::Began) => s.engine.focus(Focus::LostTransient),
+            Some(Interrupt::Ended { resume: true }) => s.engine.focus(Focus::Gained),
+            Some(Interrupt::Ended { resume: false }) => s.engine.focus(Focus::Lost),
+            // Both read at once: the loss first, then how it ended.
+            Some(Interrupt::BeganAndEnded { resume }) => {
+                s.engine.focus(Focus::LostTransient);
+                s.engine.focus(if resume { Focus::Gained } else { Focus::Lost });
             }
-            _ => {}
+            None => {}
         }
     });
+}
+
+/// The lock screen's, Control Center's or a headset's key: 0 play, 1 pause, 2 play or pause, 3 next,
+/// 4 previous. What it does is the session's (`Handle::media_key`, a plugin's word on a toggle or skip).
+#[no_mangle]
+pub extern "C" fn nori_ios_media_key(key: i32) {
+    use nori_host::player::MediaKey;
+    let key = match key {
+        0 => MediaKey::Play,
+        1 => MediaKey::Pause,
+        2 => MediaKey::Toggle,
+        3 => MediaKey::Next,
+        4 => MediaKey::Previous,
+        _ => return,
+    };
+    with_session(|s| s.media_key(key));
 }
 
 /// The system's volume, which the app follows. A process-wide slot: the system tells it before a
@@ -705,6 +729,12 @@ pub unsafe extern "C" fn nori_ios_put_back(id: *const c_char) {
         return;
     };
     with_session(|s| s.put_back(&id));
+}
+
+/// How long the undo of a song taken out of the queue is offered, ms (`nori_queue::undo::UNDO_MS`).
+#[no_mangle]
+pub extern "C" fn nori_ios_undo_ms() -> i64 {
+    nori_core::undo::UNDO_MS
 }
 
 #[no_mangle]

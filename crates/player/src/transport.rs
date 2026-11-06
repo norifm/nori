@@ -1,4 +1,4 @@
-//! Transport behaviour: fades on play and pause, dips around seeks and skips, and the sleep timer. The
+//! Transport behaviour: fades on play and pause, and dips around seeks and skips. The
 //! platform runs them; this decides them.
 
 /// What a control does to the music.
@@ -68,32 +68,6 @@ pub const MEASURE_AFTER_SETTINGS_MS: i64 = 1_000;
 /// Save the queue this long after its last change (debounce).
 pub const SAVE_AFTER_MS: i64 = 1_500;
 
-/// Sleep timer "after N songs": (pause at the end of this song, song changes left before that).
-/// "End of track" equals one song.
-pub fn sleep_after(songs: u32, end_of_track: bool) -> (bool, u32) {
-    (end_of_track || songs == 1, songs.saturating_sub(1))
-}
-
-/// A song change with `left` changes to go: (remaining, pause at the end of this song).
-pub fn sleep_song_changed(left: u32) -> (u32, bool) {
-    match left {
-        0 => (0, false),
-        n => (n - 1, n == 1),
-    }
-}
-
-/// The sleep timer's (delay, allowed slack for batching the wake-up), ms.
-pub fn sleep_delay_ms(minutes: u32) -> (i64, i64) {
-    (minutes as i64 * 60_000, 15_000)
-}
-
-/// The sleep timer display: (fire time or 0 without a clock timer, waits for a song to end).
-pub fn sleep_shown(minutes: u32, end_of_track: bool, songs: u32, now_ms: i64) -> (i64, bool) {
-    let at = if minutes > 0 { now_ms + sleep_delay_ms(minutes).0 } else { 0 };
-    let (pause, left) = sleep_after(songs, end_of_track);
-    (at, pause || left > 0)
-}
-
 /// Paused this long, the player releases the audio track and stops ticking so the phone can sleep.
 pub const IDLE_RELEASE_MS: i64 = 5 * 60_000;
 
@@ -137,18 +111,7 @@ mod tests {
     }
 
     #[test]
-    fn sleep_timer_counts_songs() {
-        assert_eq!(sleep_after(1, false), (true, 0));
-        assert_eq!(sleep_after(3, false), (false, 2));
-        assert_eq!(sleep_after(0, true), (true, 0));
-        assert_eq!(sleep_song_changed(2), (1, false));
-        assert_eq!(sleep_song_changed(1), (0, true));
-        assert_eq!(sleep_song_changed(0), (0, false));
-        assert_eq!(sleep_shown(30, false, 0, 1_000), (1_000 + 1_800_000, false));
-        assert_eq!(sleep_shown(0, false, 0, 1_000), (0, false), "cancelled");
-        assert_eq!(sleep_shown(0, true, 0, 1_000), (0, true));
-        assert_eq!(sleep_shown(0, false, 1, 1_000), (0, true));
-        assert_eq!(sleep_shown(0, false, 3, 1_000), (0, true));
+    fn load_control_caps_bytes() {
         assert_eq!(load_control(256)[4], 48 * 1024 * 1024);
         assert_eq!(load_control(32)[4], 16 * 1024 * 1024);
     }

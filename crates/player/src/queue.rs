@@ -173,12 +173,15 @@ impl ErrorRun {
 /// press is older than [`NEXT_KEPT_MS`] (a late skip would surprise).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Refill {
-    in_flight: bool,
-    /// The queue's last entry (play order, `Playlist::seqs`) when the fetch started.
+    /// The fetch out: the queue's last entry (play order, `Playlist::seqs`) when it started.
+    fetching: Option<Fetch>,
+    /// The entry a next was pressed on with nothing after, and the latest press time, ms.
+    next_from: Option<(u64, i64)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Fetch {
     end: Option<u64>,
-    /// The entry a next was pressed on with nothing after, and the latest press time.
-    pending_from: Option<u64>,
-    pending_at_ms: i64,
 }
 
 /// Songs remaining after the current one when refilling starts.
@@ -193,28 +196,26 @@ pub fn refillable(song: bool, radio: bool, repeat: u8, setting: bool) -> bool {
 
 impl Refill {
     pub const fn new() -> Self {
-        Refill { in_flight: false, end: None, pending_from: None, pending_at_ms: 0 }
+        Refill { fetching: None, next_from: None }
     }
 
     /// Whether to start a fetch now (`after` songs follow, `end` is last); true until [`Refill::arrived`].
     pub fn start(&mut self, refillable: bool, after: usize, end: Option<u64>) -> bool {
-        if !refillable || after > FILL_AHEAD || (self.in_flight && self.end == end) {
+        if !refillable || after > FILL_AHEAD || self.fetching == Some(Fetch { end }) {
             return false;
         }
-        self.in_flight = true;
-        self.end = end;
+        self.fetching = Some(Fetch { end });
         true
     }
 
     /// Next pressed: true to skip now; with nothing after, remembers the press if refillable.
     pub fn next(&mut self, has_next: bool, can_refill: bool, current: Option<u64>, now_ms: i64) -> bool {
         if has_next {
-            self.pending_from = None;
+            self.next_from = None;
             return true;
         }
         if can_refill {
-            self.pending_from = current;
-            self.pending_at_ms = now_ms;
+            self.next_from = current.map(|c| (c, now_ms));
         }
         false
     }
@@ -223,14 +224,13 @@ impl Refill {
     /// the queue's end, `end`). An answer for an older end is dropped and the newer fetch still awaited;
     /// any other drop ends the fetch and a waiting next.
     pub fn arrived(&mut self, count: usize, after: Option<u64>, end: Option<u64>) -> bool {
-        if after.is_some() && after != self.end {
+        if after.is_some() && after != self.fetching.and_then(|f| f.end) {
             return false;
         }
         let keep = count > 0 && end.is_some() && after == end;
         if !keep {
-            self.pending_from = None;
-            self.in_flight = false;
-            self.end = None;
+            self.next_from = None;
+            self.fetching = None;
         }
         keep
     }
@@ -238,19 +238,18 @@ impl Refill {
     /// The songs are in: whether to take the waiting next now.
     pub fn landed(&mut self, current: Option<u64>, has_next: bool, now_ms: i64) -> bool {
         let waiting = self.skip_waiting(current, now_ms);
-        self.in_flight = false;
-        self.end = None;
-        self.pending_from = None;
+        self.fetching = None;
+        self.next_from = None;
         waiting && has_next
     }
 
     /// A next is waiting and would be taken now (shown as a busy next button).
     pub fn skip_waiting(&self, current: Option<u64>, now_ms: i64) -> bool {
-        self.in_flight && self.pending_from.is_some_and(|p| Some(p) == current) && now_ms - self.pending_at_ms <= NEXT_KEPT_MS
+        self.fetching.is_some() && self.next_from.is_some_and(|(from, at_ms)| Some(from) == current && now_ms - at_ms <= NEXT_KEPT_MS)
     }
 
     pub fn in_flight(&self) -> bool {
-        self.in_flight
+        self.fetching.is_some()
     }
 }
 

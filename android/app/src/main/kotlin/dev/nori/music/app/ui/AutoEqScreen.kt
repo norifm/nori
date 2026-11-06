@@ -1,0 +1,67 @@
+package dev.nori.music.app.ui
+
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleStartEffect
+import dev.nori.music.app.vm.SettingsViewModel
+
+/**
+ * The AutoEQ headphone database. The 850 kB index is kept by the core on Wi-Fi, or downloaded here on request; after that searching
+ * 8000+ measurements is a local query, and only the chosen preset is fetched.
+ */
+@Composable
+fun AutoEqScreen(vm: SettingsViewModel) {
+    val ui by vm.autoEq.collectAsStateWithLifecycle()
+    val prefs by vm.prefs.collectAsStateWithLifecycle()
+    LifecycleStartEffect(vm) { vm.soundPageShown(dev.nori.music.ffi.queue.SoundPage.AUTO_EQ, true); onStopOrDispose { vm.soundPageShown(dev.nori.music.ffi.queue.SoundPage.AUTO_EQ, false) } }
+    val nav = LocalNav.current
+    Column {
+        LargeTitle(say.headphonePresets)
+        if (ui.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.onSurface, trackColor = MaterialTheme.colorScheme.outlineVariant)
+        ui.error?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
+        ui.applied?.let { Text(androidx.compose.runtime.remember(it) { say.autoeqApplied(it) }, Modifier.padding(16.dp)) }
+
+        if (ui.count == 0) {
+            Text(
+                say.autoeqAbout,
+                Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            PillButton(say.downloadTheList, null, vm::downloadAutoEqIndex, Modifier.padding(horizontal = Space.gutter), prominent = true, enabled = !ui.busy)
+            return@Column
+        }
+
+        Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(ui.countWords, Modifier.weight(1f).padding(start = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextAction(say.refreshList, vm::downloadAutoEqIndex, enabled = !ui.busy)
+        }
+        SearchField(ui.query, vm::searchAutoEq, ui.searchWords, Modifier.padding(horizontal = Space.gutter, vertical = 8.dp))
+        val scroll = rememberLazyListState()
+        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+            if (ui.hits.isNotEmpty()) item {
+                GroupCard {
+                    ui.hits.forEachIndexed { i, e -> GroupRow(e.entry.name, { vm.applyAutoEq(e.entry) }, subtitle = e.caption, divider = i < ui.hits.lastIndex) }
+                }
+            }
+            if (!ui.tooShort && ui.hits.isEmpty()) item { Text(say.nothingMatches, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Text(if (prefs.eqMode == dev.nori.music.ffi.settings.EqMode.GRAPHIC) say.autoeqCreditGraphic else say.autoeqCredit, Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+    }
+}

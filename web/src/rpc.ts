@@ -14,14 +14,45 @@ type Build = { kind: "core" } | { kind: "player"; module: WebAssembly.Module; fi
 export const facts: Record<string, unknown> = { shellMs: Math.round(performance.now()) };
 (window as unknown as { nori: unknown }).nori = facts;
 
+/** Where this tab's line to the worker is. Calls wait while a worker is on its way (booting, switching
+ * to the player, restarting after a crash) and fail once none will come (another tab has nori). */
+type Phase = "booting" | "lockedOut" | "core" | "switching" | "player" | "restarting" | "movedAway";
+let phase: Phase = "booting";
+
 let worker: Worker;
 let build: Build = { kind: "core" };
 let calls = 0;
 const waiting = new Map<number, { done: (v: unknown) => void; failed: (e: Error) => void }>();
-let booted!: () => void;
-/** Open while the worker takes calls; a call waits here for the first one to start. */
-let gate = new Promise<void>((r) => (booted = r));
+let opened!: () => void;
+/** Settles when calls may go on; pending while a worker is on its way. */
+let gate = new Promise<void>((r) => (opened = r));
+/** The worker answering (or on its way) runs the player module. */
 export let player = false;
+
+/** Enters `p`: calls wait while a worker is on its way, and go on (or fail) once it is up (or none
+ * will come). */
+function enter(p: Phase) {
+  const waits = p === "switching" || p === "restarting";
+  if (waits && !(phase === "switching" || phase === "restarting")) gate = new Promise((r) => (opened = r));
+  phase = p;
+  if (!waits) opened();
+}
+
+/** A call that fails because nori runs in another tab. */
+export class Elsewhere extends Error {}
+
+/** For a call the page makes by itself (a report read, a lyric step): nothing to say once nori runs in
+ * another tab; any other failure goes on. */
+export function unlessElsewhere(e: unknown) {
+  if (!(e instanceof Elsewhere)) throw e;
+}
+
+/** The calls not answered fail with `why`. */
+function dropWaiting(why: () => Error) {
+  for (const [, c] of waiting) c.failed(why());
+  waiting.clear();
+  quiet.splice(0).forEach((r) => r());
+}
 
 const listeners: ((s: Said) => void)[] = [];
 const up: (() => void)[] = [];
@@ -94,9 +125,11 @@ function send<T>(call: string, args: unknown[]): Promise<T> {
   });
 }
 
-/** Calls the worker's `call` with `args`; while the worker is being replaced, once it is. */
+/** Calls the worker's `call` with `args`; while the worker is being replaced, once it is. Fails when
+ * another tab has nori. */
 export async function ask<T = unknown>(call: string, ...args: unknown[]): Promise<T> {
   await gate;
+  if (phase === "lockedOut" || phase === "movedAway") throw new Elsewhere("nori is open in another tab");
   return send<T>(call, args);
 }
 
@@ -108,15 +141,11 @@ export async function read<T = Record<string, unknown>>(ask_: Record<string, unk
 /** Replaces the worker with one over `b` while calls wait: the old one answers what it was asked and
  * goes, the new one opens the profile signed in last. */
 async function replace(b: Build, answered: boolean) {
-  await gate;
-  let open!: () => void;
-  gate = new Promise((r) => (open = r));
+  while (phase === "booting" || phase === "switching" || phase === "restarting") await gate;
+  if (phase !== "core" && phase !== "player") return;
+  enter(answered ? "switching" : "restarting");
   if (answered) await settled();
-  else {
-    for (const [, c] of waiting) c.failed(new Error("the worker stopped"));
-    waiting.clear();
-    quiet.splice(0).forEach((r) => r());
-  }
+  else dropWaiting(() => new Error("the worker stopped"));
   worker.terminate();
   await start(b);
   player = b.kind === "player";
@@ -125,7 +154,7 @@ async function replace(b: Build, answered: boolean) {
     const { port, rate, ear } = sound();
     worker.postMessage({ id: ++calls, call: "audio", args: [port, rate, ear] }, [port]);
   }
-  open();
+  enter(b.kind);
   if (player) {
     up.forEach((f) => f());
     // Here, not before: this worker stays, where a call on the core's would hold up the move or be cut.
@@ -133,16 +162,15 @@ async function replace(b: Build, answered: boolean) {
   }
 }
 
-let restarting = false;
+let restart: Promise<void> | undefined;
 
 /** The worker `w` crashed (a panic in Rust aborts its module): another starts over the saved session. */
 function crashed(w: Worker, why: string) {
-  if (w !== worker || restarting) return;
-  restarting = true;
+  if (w !== worker || restart) return;
   facts.crashes = ((facts.crashes as number) ?? 0) + 1;
   facts.crashed = why;
-  void replace(build, false).then(() => {
-    restarting = false;
+  restart = replace(build, false).then(() => {
+    restart = undefined;
     restarted.forEach((f) => f());
   });
 }
@@ -221,6 +249,9 @@ tabs.onmessage = async (e: MessageEvent) => {
   // Another tab wants nori: the session is saved and closed, the worker goes, the lock is let go.
   await ask("close").catch(() => {});
   worker.terminate();
+  player = false;
+  enter("movedAway");
+  dropWaiting(() => new Elsewhere("nori moved to another tab"));
   const r = release;
   release = undefined;
   r();
@@ -230,10 +261,13 @@ tabs.onmessage = async (e: MessageEvent) => {
 /** Starts nori in this tab: false when another tab has it (then nothing starts). */
 export async function boot(): Promise<boolean> {
   const free = await navigator.locks.query().then((s) => !(s.held ?? []).some((l) => l.name === LOCK));
-  if (!free) return false;
+  if (!free) {
+    enter("lockedOut");
+    return false;
+  }
   await hold();
   await start({ kind: "core" });
-  booted();
+  enter("core");
   return true;
 }
 

@@ -4,6 +4,7 @@
 use nori_core::browse::{favorites_in_order, home_pinned, home_row_more, home_row_page, home_rows_shown, home_shelves, shelf_albums_read, AlbumSort, HomeShelf};
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::Client;
+use nori_core::library::QueueOffer;
 use nori_core::mixes::board::{MixLookup, MixSheet, MixTile};
 use nori_core::settings::HomeRow;
 use nori_core::transport::{block_on, NetError};
@@ -81,6 +82,24 @@ pub enum ShelfItems {
 }
 
 impl Handle {
+    /// The queue another device or app left on the server, worth offering against what the player shows
+    /// (`Client::queue_offer`); none when it cannot be asked. Blocks.
+    pub fn queue_offer(&self) -> Option<QueueOffer> {
+        let now = self.now();
+        block_on(self.client.queue_offer(now.playing, now.song.map(|s| s.id))).ok().flatten()
+    }
+
+    /// The queue Home offered (`offer::Offered::close`) was taken up (`take`: it plays from its song and
+    /// place) or turned down; either way it is not offered again.
+    pub fn queue_offer_closed(&self, offer: QueueOffer, take: bool) {
+        self.client.queue_offer_done(offer.clone());
+        if take {
+            let position = offer.position_ms as i64;
+            self.play(offer.songs, offer.index as usize, false, None);
+            self.seek(position);
+        }
+    }
+
     /// Reads `ask` on a thread of its own; `each` gets every answer, or why there is none.
     pub fn read_page(&self, ask: PageAsk, each: impl Fn(Result<PageGot, PageFailed>) + Send + 'static) {
         let me = self.clone();

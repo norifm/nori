@@ -38,12 +38,12 @@ jobs:
           [ "$(wc -l <<< "$files")" -lt 300 ] || all
           shared='^(crates/|vendor/|wit/|Cargo\.|\.cargo/|\.config/|\.github/|tools/affected\.py)'
           # Rust's tests and builds also read these: core's native calls, the fonts, licenses, icons, the map.
-          read_by_rust='^(core/|AGENTS\.md|app/src/main/assets/|app/src/main/res/font/|docs/brand/)'
+          read_by_rust='^(android/core/|AGENTS\.md|android/app/src/main/assets/|android/app/src/main/res/font/|docs/brand/)'
           touches() { grep -qE "$1" <<< "$files" && echo true || echo false; }
           {
             echo "rust=$(touches "$shared|$read_by_rust")"
             echo "web=$(touches "$shared|^web/")"
-            echo "android=$(touches "$shared|^(app/|core/|gradle|gradlew|build\.gradle\.kts|settings\.gradle\.kts)")"
+            echo "android=$(touches "$shared|^(android/|gradle|gradlew|build\.gradle\.kts|settings\.gradle\.kts)")"
           } >> "$GITHUB_OUTPUT"
   rust:
     needs: changes

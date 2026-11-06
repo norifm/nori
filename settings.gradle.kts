@@ -14,3 +14,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "noriMusic"
 include(":core", ":app")
+project(":core").projectDir = file("android/core")
+project(":app").projectDir = file("android/app")

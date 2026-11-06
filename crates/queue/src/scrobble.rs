@@ -13,15 +13,20 @@ use crate::{queue, Session};
 
 #[derive(Default)]
 pub(crate) struct Scrobbler {
-    /// The current song, kept from its start: the queue may be replaced before it is left.
-    song: Option<Song>,
-    /// The database of the profile the current song started in.
-    profile: Weak<Mutex<Connection>>,
+    current: Option<Current>,
     incoming: Option<Listen>,
-    started_at: i64,
-    heard_ms: i64,
     /// Monotonic ms playback last started; None while paused.
     playing_since: Option<i64>,
+}
+
+/// The song playing, kept from its start: the queue may be replaced before it is left.
+struct Current {
+    song: Song,
+    /// The database of the profile it started in.
+    profile: Weak<Mutex<Connection>>,
+    /// When it started, wall clock ms.
+    started_at: i64,
+    heard_ms: i64,
 }
 
 impl Scrobbler {
@@ -29,27 +34,26 @@ impl Scrobbler {
         match (playing, self.playing_since) {
             (true, None) => self.playing_since = Some(now),
             (false, Some(since)) => {
-                self.heard_ms += now - since;
+                if let Some(c) = &mut self.current {
+                    c.heard_ms += now - since;
+                }
                 self.playing_since = None;
             }
             _ => {}
         }
     }
 
-    /// Moves to `next`, started in `profile`; returns the song left, how long it was heard, when it
-    /// started and the profile it started in.
-    fn switch(&mut self, next: Option<Song>, profile: Weak<Mutex<Connection>>, playing: bool, now_ms: i64, wall_ms: i64) -> (Option<Song>, i64, i64, Weak<Mutex<Connection>>) {
+    /// Moves to `next`, started in `profile` at `wall_ms` unless it is the listen handed here; the song left.
+    fn switch(&mut self, next: Option<Song>, profile: Weak<Mutex<Connection>>, playing: bool, now_ms: i64, wall_ms: i64) -> Option<Current> {
         self.edge(false, now_ms);
-        let done = std::mem::replace(&mut self.song, next);
-        let left_in = std::mem::replace(&mut self.profile, profile);
-        let heard = std::mem::take(&mut self.heard_ms);
-        let at = std::mem::replace(&mut self.started_at, wall_ms);
-        if let Some(listen) = self.incoming.take().filter(|l| self.song.as_ref().is_some_and(|s| s.id == l.song_id)) {
-            self.started_at = listen.started_ms;
-            self.heard_ms = listen.heard_ms.max(0);
-        }
+        let incoming = self.incoming.take();
+        let next = next.map(|song| {
+            let handed = incoming.filter(|l| l.song_id == song.id);
+            Current { started_at: handed.as_ref().map_or(wall_ms, |l| l.started_ms), heard_ms: handed.map_or(0, |l| l.heard_ms.max(0)), song, profile }
+        });
+        let done = std::mem::replace(&mut self.current, next);
         self.edge(playing, now_ms);
-        (done, heard, at, left_in)
+        done
     }
 }
 
@@ -103,8 +107,8 @@ impl Session {
     pub fn hand_listen(&self, now_ms: i64) -> Option<Listen> {
         let mut s = self.scrobbler.lock();
         s.edge(false, now_ms);
-        let song = s.song.take()?;
-        Some(Listen { song_id: song.id, started_ms: s.started_at, heard_ms: std::mem::take(&mut s.heard_ms) })
+        let c = s.current.take()?;
+        Some(Listen { song_id: c.song.id, started_ms: c.started_at, heard_ms: c.heard_ms })
     }
 
     /// The next song edge adopts the handed listen after accounting for the song it replaces.
@@ -132,20 +136,20 @@ impl Session {
         let next = followed(id, why);
         let song = next.as_deref().and_then(|id| self.song(id));
         let open = self.db.weak();
-        let (done, heard, at, left_in) = self.scrobbler.lock().switch(song, open.clone(), playing, now_ms, wall_ms);
-        let still_open = Weak::ptr_eq(&left_in, &open);
+        let done = self.scrobbler.lock().switch(song, open.clone(), playing, now_ms, wall_ms);
         // The profile the song started in, not one opened since or while the write waits.
         if taste_model {
-            if let (Some(song), Some(db)) = (done.clone(), left_in.upgrade()) {
+            if let Some((c, db)) = done.as_ref().and_then(|c| Some((c, c.profile.upgrade()?))) {
+                let (song, at, heard) = (c.song.clone(), c.started_at, c.heard_ms);
                 self.settings.writer.run(move || {
                     let _ = nori_library::history::record(&mut db.lock(), &song, at, heard, tz_offset_ms, db::now_ms());
                 });
             }
         }
-        let counted = done.filter(|s| still_open && heard >= needed_ms(s.duration as i64));
+        let counted = done.filter(|c| Weak::ptr_eq(&c.profile, &open) && c.heard_ms >= needed_ms(c.song.duration as i64));
         if let Some(to) = self.scrobbles.lock().clone() {
-            if let Some(s) = &counted {
-                to.scrobble(s, at);
+            if let Some(c) = &counted {
+                to.scrobble(&c.song, c.started_at);
             }
             if let Some(s) = next.as_deref().and_then(|id| self.song(id)) {
                 to.now_playing(&s);
@@ -154,7 +158,8 @@ impl Session {
         if !scrobble {
             return ScrobbleSend { submit_id: None, submit_at: 0, now_playing_id: None };
         }
-        ScrobbleSend { submit_id: counted.map(|s| s.id), submit_at: at, now_playing_id: next }
+        let submit_at = counted.as_ref().map_or(0, |c| c.started_at);
+        ScrobbleSend { submit_id: counted.map(|c| c.song.id), submit_at, now_playing_id: next }
     }
 }
 
@@ -183,8 +188,8 @@ mod tests {
         s.edge(false, 5_000);
         s.edge(false, 9_000);
         s.edge(true, 10_000);
-        let (done, heard, at, _) = s.switch(None, Weak::new(), false, 12_000, 60);
-        assert_eq!((done, heard, at), (Some(song), 6_000, 50));
+        let done = s.switch(None, Weak::new(), false, 12_000, 60).unwrap();
+        assert_eq!((done.song, done.heard_ms, done.started_at), (song, 6_000, 50));
     }
 
     /// Notes what it is told: "now <id>" and "play <id> <at>".

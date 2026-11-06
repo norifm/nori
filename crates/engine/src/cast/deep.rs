@@ -127,17 +127,13 @@ struct State {
     playing: bool,
     shallow: bool,
     ramps: VecDeque<(Option<f32>, f32, i64)>,
-    /// A flush to look for in the ring, and how many of `ramps` were asked before it: they go before
-    /// it, the rest after (a skip's fade in is for the new music, never the old the device holds).
-    flush: bool,
-    ramps_first: usize,
-    /// A flush was asked and has not gone yet: the fades after it wait for it (or for audio to send).
-    flush_awaited: bool,
+    /// A flush asked for that has not gone to the device yet.
+    flush: Option<Flush>,
     /// The next ring goes on after what the device holds ([`AudioOutput::goes_on`]); otherwise its
     /// first step drops that.
     goes_on: bool,
     drop_held: bool,
-    closed: bool,
+    link: Link,
     float: bool,
     /// The open ring's format, and whether it is still to be said before its first audio.
     format: Option<Format>,
@@ -154,25 +150,62 @@ struct State {
     /// Stream frames sent since Hello, as the device counts them.
     sent: u64,
     rates: Rates,
-    /// A flush whose answer is awaited: its seq, what it kept, and frames sent since.
-    flushing: Option<(u32, Option<u64>, u64)>,
-    gone: bool,
-    failure_said: bool,
+    /// A flush sent whose answer is awaited.
+    flushing: Option<Sent>,
     bursting: bool,
     // Shown.
     covers: VecDeque<(String, u32)>,
     next_id: u32,
     // Offloaded.
     offloaded: Option<Offloaded>,
-    /// The engine, woken when the device asks for more while offloaded (not a test's: its device says).
-    engine: Option<Thread>,
     asked: bool,
     by_hand: bool,
 }
 
+/// A flush the engine asked for, before it goes to the device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Flush {
+    /// To be looked for in the ring; the first `ramps` of the fades asked for go before it, the rest
+    /// after (a skip's fade in is for the new music, never the old the device holds).
+    Asked { ramps: usize },
+    /// Looked for: the fades after it wait for it (or for audio to send).
+    Awaited,
+}
+
+/// A flush sent, until the device answers it: its seq, what it kept, and the frames sent since.
+#[derive(Debug, Clone, Copy)]
+struct Sent {
+    seq: u32,
+    keep: Option<u64>,
+    since: u64,
+}
+
+/// The line to the device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Link {
+    Open,
+    /// The engine closed the output: the pump stops until it starts again.
+    Closed,
+    /// The device is gone for good; `said`: the engine was woken to hear it.
+    Gone { said: bool },
+}
+
+impl State {
+    fn gone(&self) -> bool {
+        matches!(self.link, Link::Gone { .. })
+    }
+
+    fn lose(&mut self) {
+        if !self.gone() {
+            self.link = Link::Gone { said: false };
+        }
+    }
+}
+
 /// The offload path's song as the device plays it.
-#[derive(Default)]
 struct Offloaded {
+    /// The engine, woken when the device asks for more (not a test's: its device says).
+    engine: Thread,
     /// The device's count when the track was opened or flushed: the offload path counts from it.
     base: u64,
     /// The next song's start, to send before its first packet: its id, gain and where in it (ms).
@@ -242,17 +275,17 @@ impl Shared {
     fn heard(&self, said: Option<Device>) {
         let mut st = self.st.lock();
         match said {
-            None => st.gone = true,
+            None => st.lose(),
             Some(Device::Want { frames }) => {
                 st.credit = frames as i64;
                 st.asked = true;
-                if let Some(t) = st.engine.as_ref().filter(|_| st.offloaded.is_some() && !st.by_hand) {
-                    t.unpark();
+                if let Some(o) = st.offloaded.as_ref().filter(|_| !st.by_hand) {
+                    o.engine.unpark();
                 }
             }
             Some(Device::Status { played, delay_us, .. }) => self.anchor(&mut st, played, Some(delay_us)),
             Some(Device::Flushed { seq, played }) => {
-                if let Some((_, keep, since)) = st.flushing.filter(|f| f.0 == seq) {
+                if let Some(Sent { keep, since, .. }) = st.flushing.filter(|f| f.seq == seq) {
                     st.flushing = None;
                     st.sent = keep.unwrap_or(played) + since;
                     if let Some(o) = st.offloaded.as_mut() {
@@ -273,13 +306,13 @@ impl Shared {
         st.flushes += 1;
         let seq = st.flushes;
         Frame::Flush { seq, keep }.encode(out);
-        st.flush_awaited = false;
+        st.flush = None;
         match keep {
             Some(k) => st.sent = k.min(st.sent),
             // Until it answers: where it is now, all dropped.
             None => st.sent = self.played(st),
         }
-        st.flushing = Some((seq, keep, 0));
+        st.flushing = Some(Sent { seq, keep, since: 0 });
         st.format_due = true;
         if let Some(f) = st.format {
             st.rates.from(st.sent, f.rate);
@@ -290,7 +323,7 @@ impl Shared {
     fn sent(&self, st: &mut State, frames: u64) {
         st.sent += frames;
         if let Some(f) = st.flushing.as_mut() {
-            f.2 += frames;
+            f.since += frames;
         }
         st.credit -= frames as i64;
     }
@@ -319,7 +352,9 @@ impl Shared {
             }
             Frame::Ramp { target, ms: ms.clamp(0, u32::MAX as i64) as u32 }.encode(out);
         }
-        st.ramps_first = st.ramps_first.saturating_sub(n);
+        if let Some(Flush::Asked { ramps }) = st.flush.as_mut() {
+            *ramps = ramps.saturating_sub(n);
+        }
     }
 
     /// The format, before the first audio after it changed or a flush.
@@ -365,7 +400,7 @@ impl Shared {
 
     fn send(&self, out: &[u8]) {
         if !out.is_empty() && !self.deep.send_raw(out) {
-            self.st.lock().gone = true;
+            self.st.lock().lose();
         }
     }
 
@@ -409,27 +444,29 @@ impl Pump {
         let mut out = std::mem::take(&mut self.bytes);
         out.clear();
         let mut st = sh.st.lock();
-        if st.closed {
-            return Pumped::Done;
-        }
-        if st.gone {
-            if !std::mem::replace(&mut st.failure_said, true) {
-                self.feed.wake_engine();
+        match &mut st.link {
+            Link::Open => {}
+            Link::Closed => return Pumped::Done,
+            Link::Gone { said } => {
+                if !std::mem::replace(said, true) {
+                    self.feed.wake_engine();
+                }
+                return Pumped::Done;
             }
-            return Pumped::Done;
         }
         sh.controls(&mut st, &mut out);
-        let first = Some(std::mem::take(&mut st.ramps_first));
-        sh.ramps(&mut st, first, &mut out);
+        if let Some(Flush::Asked { ramps }) = st.flush {
+            st.flush = Some(Flush::Awaited);
+            sh.ramps(&mut st, Some(ramps), &mut out);
+        }
         if std::mem::take(&mut st.drop_held) {
             sh.flush(&mut st, None, &mut out);
         }
         // A flush surfaces on a pull: an empty one finds it without credit.
-        st.flush = false;
         self.feed.pull(&mut []);
         self.feed.flushed();
         self.flushed(&mut st, &mut out);
-        if !st.flush_awaited {
+        if st.flush.is_none() {
             sh.ramps(&mut st, None, &mut out);
         }
         let at = self.feed.position();
@@ -463,7 +500,7 @@ impl Pump {
         }
         sh.burst(&mut st, true);
         // Audio goes: the fades waiting for a flush go before it all the same.
-        st.flush_awaited = false;
+        st.flush = None;
         sh.ramps(&mut st, None, &mut out);
         sh.format(&mut st, &mut out);
         let ch = f.channels as usize;
@@ -534,7 +571,7 @@ impl Pump {
                 Pumped::Idle => {
                     let sh = self.shared.clone();
                     let mut st = sh.st.lock();
-                    while !st.closed && !st.gone && !self.due(&st) {
+                    while st.link == Link::Open && !self.due(&st) {
                         sh.cv.wait(&mut st);
                     }
                 }
@@ -545,7 +582,7 @@ impl Pump {
     /// Whether a step has something to do.
     fn due(&self, st: &State) -> bool {
         let sh = &self.shared;
-        st.flush || st.drop_held || st.told_playing != st.playing || !st.ramps.is_empty() || st.told_depth != Some(sh.depth_ms(st)) || (st.credit > 0 && self.feed.available() > 0)
+        matches!(st.flush, Some(Flush::Asked { .. })) || st.drop_held || st.told_playing != st.playing || !st.ramps.is_empty() || st.told_depth != Some(sh.depth_ms(st)) || (st.credit > 0 && self.feed.available() > 0)
     }
 }
 
@@ -567,12 +604,10 @@ impl DeepOutput {
             playing: false,
             shallow: false,
             ramps: VecDeque::new(),
-            ramps_first: 0,
-            flush_awaited: false,
-            flush: false,
+            flush: None,
             goes_on: false,
             drop_held: false,
-            closed: false,
+            link: if deep.gone() { Link::Gone { said: false } } else { Link::Open },
             float: false,
             format: None,
             format_due: false,
@@ -585,13 +620,10 @@ impl DeepOutput {
             sent: 0,
             rates: Rates::default(),
             flushing: None,
-            gone: deep.gone(),
-            failure_said: false,
             bursting: false,
             covers: VecDeque::new(),
             next_id: 0,
             offloaded: None,
-            engine: None,
             asked: false,
             by_hand: false,
         };
@@ -637,7 +669,9 @@ impl AudioOutput for DeepOutput {
     fn start(&mut self, feed: Feed) -> Result<(), String> {
         self.close();
         let mut st = self.shared.st.lock();
-        st.closed = false;
+        if st.link == Link::Closed {
+            st.link = Link::Open;
+        }
         st.marks.clear();
         // A new ring but for a new format is new music: what the device holds goes.
         st.drop_held = !std::mem::take(&mut st.goes_on) && st.sent > 0;
@@ -675,11 +709,7 @@ impl AudioOutput for DeepOutput {
     }
 
     fn flush(&mut self) {
-        self.tell(|st| {
-            st.flush = true;
-            st.ramps_first = st.ramps.len();
-            st.flush_awaited = true;
-        });
+        self.tell(|st| st.flush = Some(Flush::Asked { ramps: st.ramps.len() }));
     }
 
     fn fades(&self) -> bool {
@@ -704,7 +734,7 @@ impl AudioOutput for DeepOutput {
     }
 
     fn failed(&mut self) -> Option<String> {
-        self.shared.st.lock().gone.then(|| "the cast's device is gone".to_string())
+        self.shared.st.lock().gone().then(|| "the cast's device is gone".to_string())
     }
 
     fn takes_formats(&self) -> bool {
@@ -746,7 +776,11 @@ impl AudioOutput for DeepOutput {
     }
 
     fn close(&mut self) {
-        self.tell(|st| st.closed = true);
+        self.tell(|st| {
+            if st.link == Link::Open {
+                st.link = Link::Closed;
+            }
+        });
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
@@ -810,17 +844,16 @@ impl OffloadOutput for CastOffload {
     fn open(&mut self, coded: Coded, bytes: usize) -> Result<usize, String> {
         let sh = self.shared.clone();
         let mut st = sh.st.lock();
-        if st.gone {
+        if st.gone() {
             return Err("the cast's device is gone".into());
         }
-        st.engine = Some(std::thread::current());
         let mut out = Vec::new();
         sh.flush(&mut st, None, &mut out);
         let codec = if coded.coding == Coding::Flac { Codec::Flac } else { Codec::Mp3 };
         st.format = Some(Format { rate: coded.rate, channels: coded.channels.clamp(1, 8) as u8, bits: 0, codec });
         st.format_due = true;
         let base = st.sent;
-        st.offloaded = Some(Offloaded { base, ..Offloaded::default() });
+        st.offloaded = Some(Offloaded { engine: std::thread::current(), base, song: None, header: None });
         // The depth at the codec, so the device asks.
         sh.controls(&mut st, &mut out);
         sh.ramps(&mut st, None, &mut out);
@@ -833,7 +866,7 @@ impl OffloadOutput for CastOffload {
     fn write(&mut self, data: &[u8], frames: u64) -> Result<usize, i32> {
         let sh = self.shared.clone();
         let mut st = sh.st.lock();
-        if st.gone {
+        if st.gone() {
             return Err(-1);
         }
         if st.credit <= 0 {
@@ -916,13 +949,11 @@ impl OffloadOutput for CastOffload {
     }
 
     fn torn_down(&mut self) -> bool {
-        self.lock().gone
+        self.lock().gone()
     }
 
     fn close(&mut self) {
-        let mut st = self.lock();
-        st.offloaded = None;
-        st.engine = None;
+        self.lock().offloaded = None;
     }
 
     fn note(&mut self, _what: &str) {}

@@ -21,8 +21,8 @@ class Release(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         (self.root / "tools/host-release").mkdir(parents=True)
-        (self.root / "app").mkdir()
-        (self.root / "app/build.gradle.kts").write_text(f'versionName = "{VERSION}"\n')
+        (self.root / "android/app").mkdir(parents=True)
+        (self.root / "android/app/build.gradle.kts").write_text(f'versionName = "{VERSION}"\n')
         for name in ("release.sh", "host-release/check.py", "host-release/dmg.py", "host-release/app.py"):
             shutil.copy2(ROOT / "tools" / name, self.root / "tools" / name)
         (self.root / "gradlew").write_text("#!/bin/sh\necho 'unexpected build' >&2\nexit 99\n")

@@ -18,16 +18,15 @@ impl SearchSession {
         std::sync::Arc::new(Self::default())
     }
 
-    /// The field now holds `text`; blank shows the recent searches.
+    /// The field now holds `text`; blank shows the recent searches. The same query keeps its answer.
     pub fn typed(&self, text: String) -> SearchView {
         let mut s = self.0.lock();
-        let blank = text.trim().is_empty();
+        let same = s.query() == text.trim();
         s.text = text;
-        s.from_server = false;
-        s.error = None;
-        s.searching = !blank;
-        if blank {
-            s.split = None;
+        if s.query().is_empty() {
+            s.answer = Answer::Blank;
+        } else if !same {
+            s.answer = Answer::Asking(s.answer.take_split());
         }
         s.view()
     }
@@ -36,10 +35,13 @@ impl SearchSession {
     pub fn local(&self, core: std::sync::Arc<Core>, query: String, limit: u32) -> Result<Option<SearchView>> {
         let split = core.local_search_split(query.clone(), limit)?;
         let mut s = self.0.lock();
-        if s.query() != query || s.from_server {
+        if s.query() != query {
             return Ok(None);
         }
-        s.split = Some(split);
+        match &mut s.answer {
+            Answer::Asking(index) | Answer::Failed { index, .. } => *index = Some(split),
+            Answer::Blank | Answer::Server(_) => return Ok(None),
+        }
         Ok(Some(s.view()))
     }
 
@@ -50,10 +52,7 @@ impl SearchSession {
         if s.query() != query {
             return None;
         }
-        s.split = Some(split);
-        s.from_server = true;
-        s.searching = false;
-        s.error = None;
+        s.answer = Answer::Server(split);
         Some(s.view())
     }
 
@@ -65,14 +64,15 @@ impl SearchSession {
         Ok(self.server(query, v))
     }
 
-    /// The server failed for `query`: keeps the index answer and reports the fallback.
+    /// The server failed for `query`: keeps the index answer and reports the fallback. None if stale, or
+    /// another ask for it was answered.
     pub fn failed(&self, query: String, reason: Option<String>) -> Option<SearchView> {
         let mut s = self.0.lock();
-        if s.query() != query {
+        if s.query() != query || matches!(s.answer, Answer::Blank | Answer::Server(_)) {
             return None;
         }
-        s.searching = false;
-        s.error = Some(SearchFallback { reason });
+        let index = s.answer.take_split();
+        s.answer = Answer::Failed { index, fallback: SearchFallback { reason } };
         Some(s.view())
     }
 
@@ -80,6 +80,27 @@ impl SearchSession {
         let mut s = self.0.lock();
         s.scope = scope;
         s.view()
+    }
+}
+
+impl SearchSession {
+    /// [`SearchSession::typed`], then the index's answer to the query at once ([`SearchSession::local`]).
+    pub fn typed_with_index(&self, core: std::sync::Arc<Core>, text: String) -> SearchView {
+        let view = self.typed(text);
+        if view.query.is_empty() {
+            return view;
+        }
+        let limit = crate::browse::library_sizes().local_search;
+        self.local(core, view.query.clone(), limit).ok().flatten().unwrap_or(view)
+    }
+
+    /// [`SearchSession::ask`], a failure kept as the fallback `reason` words: the view to show, None when
+    /// it is stale.
+    pub async fn answer(&self, client: std::sync::Arc<crate::client::Client>, query: String, reason: fn(&crate::transport::NetError) -> String) -> Option<SearchView> {
+        match self.ask(client, query.clone()).await {
+            Ok(v) => v,
+            Err(e) => self.failed(query, Some(reason(&e))),
+        }
     }
 }
 
@@ -124,28 +145,33 @@ pub(crate) mod tests {
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
         let s = SearchSession::new();
         let v = s.typed(" dogs ".into());
-        assert_eq!((v.query.as_str(), v.searching, v.shown.is_none()), ("dogs", true, true));
+        assert_eq!(v.query, "dogs");
+        assert!(matches!(v.answer, SearchShown::Asking { index: None }));
         assert!(s.local(core.clone(), "dog".into(), 30).unwrap().is_none(), "stale");
         assert!(s.local(core.clone(), "dogs".into(), 30).unwrap().is_some());
         let v = s.server("dogs".into(), result()).unwrap();
-        assert!(v.from_server && !v.searching && v.scopes_offered && !v.nothing_found);
-        assert_eq!(v.shown.as_ref().unwrap().songs.len(), 3);
+        assert!(v.scopes_offered);
+        let SearchShown::Found { result: found } = &v.answer else { panic!("{:?}", v.answer) };
+        assert_eq!(found.songs.len(), 3);
         assert!(s.local(core, "dogs".into(), 30).unwrap().is_none(), "server answer stands");
-        assert_eq!(s.scope(SearchScope::Providers).shown.unwrap().songs.len(), 1);
-        assert_eq!(s.scope(SearchScope::Library).shown.unwrap().songs.len(), 2);
+        assert_eq!(s.scope(SearchScope::Providers).answer.result().unwrap().songs.len(), 1);
+        assert_eq!(s.scope(SearchScope::Library).answer.result().unwrap().songs.len(), 2);
         assert!(s.server("cats".into(), result()).is_none());
-        let failed = s.failed("dogs".into(), Some("timeout".into())).unwrap();
-        assert_eq!(failed.error, Some(SearchFallback { reason: Some("timeout".into()) }));
+        s.typed("cats".into());
+        let failed = s.failed("cats".into(), Some("timeout".into())).unwrap();
+        let SearchShown::Failed { index, fallback } = &failed.answer else { panic!("{:?}", failed.answer) };
+        assert_eq!(*fallback, SearchFallback { reason: Some("timeout".into()) });
+        assert!(index.is_some(), "the last answer stays");
         let v = s.typed("  ".into());
-        assert!(v.shown.is_none() && !v.searching && v.error.is_none());
+        assert!(matches!(v.answer, SearchShown::Blank));
         assert!(!s.scope(SearchScope::Everything).scopes_offered);
         let none = s.typed("x".into());
-        assert!(!none.nothing_found);
+        assert!(matches!(none.answer, SearchShown::Asking { .. }));
         let v = s.server("x".into(), SearchResult::default()).unwrap();
-        assert!(v.nothing_found);
+        assert!(matches!(v.answer, SearchShown::NothingFound));
         let only_playlists = SearchResult { playlists: vec![crate::Playlist { id: "yt-VLa".into(), ..Default::default() }], ..Default::default() };
-        assert!(!s.server("x".into(), only_playlists).unwrap().nothing_found);
-        assert_eq!(s.scope(SearchScope::Library).shown.unwrap().songs.len(), 0);
+        assert!(matches!(s.server("x".into(), only_playlists).unwrap().answer, SearchShown::Found { .. }));
+        assert_eq!(s.scope(SearchScope::Library).answer.result().map_or(0, |r| r.songs.len()), 0);
 
         // Short queries are not remembered.
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
@@ -156,6 +182,32 @@ pub(crate) mod tests {
         let history = core.search_remember_recent("dogs".into()).unwrap().unwrap();
         assert_eq!(history.len(), 2);
         assert!(history.contains(&"dogs".to_string()));
+    }
+
+    #[test]
+    fn a_failed_ask_leaves_the_server_answer_standing() {
+        // Two asks for one query overlap: the first answers, the second fails.
+        let s = SearchSession::new();
+        s.typed("dogs".into());
+        s.server("dogs".into(), result()).unwrap();
+        assert!(s.failed("dogs".into(), Some("timeout".into())).is_none());
+        let v = s.scope(SearchScope::Everything);
+        assert!(matches!(&v.answer, SearchShown::Found { result } if result.songs.len() == 3));
+    }
+
+    #[test]
+    fn spaces_around_the_query_keep_its_answer() {
+        let s = SearchSession::new();
+        s.typed("dogs".into());
+        s.server("dogs".into(), result()).unwrap();
+        let v = s.typed("dogs ".into());
+        assert_eq!(v.text, "dogs ");
+        assert!(matches!(v.answer, SearchShown::Found { .. }), "the query is the same, so nothing asks it again");
+
+        s.typed("cats".into());
+        s.failed("cats".into(), None).unwrap();
+        let v = s.typed(" cats".into());
+        assert!(matches!(v.answer, SearchShown::Failed { .. }));
     }
 
     #[test]

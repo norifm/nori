@@ -48,10 +48,18 @@ impl Encoding {
 
 /// Where a sink's bytes go.
 enum To {
-    /// A plugin's socket.
-    Socket(TcpStream),
+    /// A plugin's socket; `gone` once it failed.
+    Socket { socket: TcpStream, gone: bool },
     /// The devices fetching it at the door.
     Listeners(Vec<TcpStream>),
+}
+
+/// How the engine plays into a sink.
+enum Route {
+    /// It pumps the music in real time, encoded here.
+    Pumped { encoding: Encoding, out: Mutex<Out> },
+    /// It speaks nori-sink-protocol over the connection, in the bursts the device asks for.
+    Deep(Arc<Deep>),
 }
 
 struct Out {
@@ -65,45 +73,58 @@ struct Out {
     /// FLAC: samples waiting for a full frame, and frames made.
     pending: Vec<i16>,
     frames: u64,
-    /// Its socket failed.
-    gone: bool,
 }
 
 pub struct Sink {
-    pub encoding: Encoding,
     /// The rate and channels the device takes; None: what nori plays (each song's own).
     pub rate: Option<u32>,
     pub channels: Option<u8>,
-    /// A deep sink's connection: the engine speaks nori-sink-protocol over it instead of pumping.
-    pub deep: Option<Arc<Deep>>,
     latency_ms: AtomicU32,
-    out: Mutex<Out>,
+    route: Route,
 }
 
 impl Sink {
-    fn new(encoding: Encoding, rate: Option<u32>, channels: Option<u8>, to: To) -> Sink {
-        let out = Out { to, format: None, header: Vec::new(), bytes: Vec::new(), pending: Vec::new(), frames: 0, gone: false };
-        Sink { encoding, rate, channels, deep: None, latency_ms: AtomicU32::new(0), out: Mutex::new(out) }
+    fn pumped(encoding: Encoding, rate: Option<u32>, channels: Option<u8>, to: To) -> Sink {
+        let out = Out { to, format: None, header: Vec::new(), bytes: Vec::new(), pending: Vec::new(), frames: 0 };
+        Sink { rate, channels, latency_ms: AtomicU32::new(0), route: Route::Pumped { encoding, out: Mutex::new(out) } }
     }
 
     pub(crate) fn to_socket(encoding: Encoding, socket: TcpStream, rate: Option<u32>, channels: Option<u8>) -> Sink {
         let _ = socket.set_write_timeout(Some(WRITE_WAIT));
-        Sink::new(encoding, rate, channels, To::Socket(socket))
+        Sink::pumped(encoding, rate, channels, To::Socket { socket, gone: false })
     }
 
     /// A deep sink over `deep`, at `rate` and `channels` if the plugin said them.
     pub fn deep(deep: Arc<Deep>, rate: Option<u32>, channels: Option<u8>) -> Sink {
-        let mut sink = Sink::new(Encoding::Pcm16, rate, channels, To::Listeners(Vec::new()));
-        sink.deep = Some(deep);
-        sink
+        Sink { rate, channels, latency_ms: AtomicU32::new(0), route: Route::Deep(deep) }
     }
 
     pub(crate) fn served(encoding: Encoding) -> Sink {
-        Sink::new(encoding, None, None, To::Listeners(Vec::new()))
+        Sink::pumped(encoding, None, None, To::Listeners(Vec::new()))
     }
 
-    fn out(&self) -> std::sync::MutexGuard<'_, Out> {
-        self.out.lock().expect("not poisoned")
+    /// A deep sink's connection; None for a sink the engine pumps.
+    pub fn connection(&self) -> Option<&Arc<Deep>> {
+        match &self.route {
+            Route::Deep(deep) => Some(deep),
+            Route::Pumped { .. } => None,
+        }
+    }
+
+    /// What a pumped sink sends; None for a deep one.
+    pub(crate) fn encoding(&self) -> Option<Encoding> {
+        match &self.route {
+            Route::Pumped { encoding, .. } => Some(*encoding),
+            Route::Deep(_) => None,
+        }
+    }
+
+    /// A pumped sink's encoding and output; a deep sink is played over its connection and has neither.
+    fn out(&self) -> Option<(Encoding, std::sync::MutexGuard<'_, Out>)> {
+        match &self.route {
+            Route::Pumped { encoding, out } => Some((*encoding, out.lock().expect("not poisoned"))),
+            Route::Deep(_) => None,
+        }
     }
 
     /// The device's delay, as the plugin said it.
@@ -118,30 +139,25 @@ impl Sink {
     /// The music starts at `rate` and `channels`: the stream's header goes out (to the devices that
     /// fetch it later, first).
     pub fn open(&self, rate: u32, channels: u8) {
-        let mut o = self.out();
+        let Some((encoding, mut o)) = self.out() else { return };
         o.format = Some((rate, channels));
-        o.header = header(self.encoding, rate, channels);
+        o.header = header(encoding, rate, channels);
         o.pending.clear();
         o.frames = 0;
-        let header = std::mem::take(&mut o.header);
-        match &mut o.to {
-            To::Socket(s) => {
-                if s.write_all(&header).is_err() {
-                    o.gone = true;
-                }
-            }
-            To::Listeners(l) => l.retain_mut(|c| c.write_all(&header).is_ok()),
+        let Out { to, header, .. } = &mut *o;
+        match to {
+            To::Socket { socket, gone } => *gone |= socket.write_all(header).is_err(),
+            To::Listeners(l) => l.retain_mut(|c| c.write_all(header).is_ok()),
         }
-        o.header = header;
     }
 
     /// Sends `samples` (interleaved). False once its socket failed: the device is gone.
     pub fn write(&self, samples: &[i16]) -> bool {
-        let mut o = self.out();
-        let Some((_, channels)) = o.format else { return !o.gone };
-        let Out { to, bytes, pending, frames, gone, .. } = &mut *o;
+        let Some((encoding, mut o)) = self.out() else { return true };
+        let Some((_, channels)) = o.format else { return !matches!(o.to, To::Socket { gone: true, .. }) };
+        let Out { to, bytes, pending, frames, .. } = &mut *o;
         bytes.clear();
-        match (self.encoding, &*to) {
+        match (encoding, &*to) {
             (Encoding::Pcm16, To::Listeners(_)) => bytes.extend(samples.iter().flat_map(|s| s.to_be_bytes())),
             (Encoding::Pcm16 | Encoding::Wav, _) => bytes.extend(samples.iter().flat_map(|s| s.to_le_bytes())),
             (Encoding::Flac, _) => {
@@ -157,21 +173,22 @@ impl Sink {
             }
         }
         match to {
-            To::Socket(s) => {
-                if !bytes.is_empty() && s.write_all(bytes).is_err() {
-                    *gone = true;
-                }
+            To::Socket { socket, gone } => {
+                *gone |= !bytes.is_empty() && socket.write_all(bytes).is_err();
+                !*gone
             }
-            To::Listeners(l) => l.retain_mut(|c| bytes.is_empty() || c.write_all(bytes).is_ok()),
+            To::Listeners(l) => {
+                l.retain_mut(|c| bytes.is_empty() || c.write_all(bytes).is_ok());
+                true
+            }
         }
-        !*gone
     }
 
     /// A device fetching it at the door: it hears the stream from now on.
     pub(crate) fn listen(&self, mut conn: TcpStream) {
-        let mut o = self.out();
+        let Some((encoding, mut o)) = self.out() else { return };
         let (rate, channels) = o.format.unwrap_or((self.rate.unwrap_or(44_100), self.channels.unwrap_or(2)));
-        let head = format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n", self.encoding.content_type(rate, channels));
+        let head = format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n", encoding.content_type(rate, channels));
         let _ = conn.set_write_timeout(Some(WRITE_WAIT));
         if conn.write_all(head.as_bytes()).and_then(|_| conn.write_all(&o.header)).is_err() {
             return;
@@ -184,8 +201,8 @@ impl Sink {
 
 impl Drop for Sink {
     fn drop(&mut self) {
-        if let Ok(o) = self.out.get_mut() {
-            if let To::Listeners(l) = &o.to {
+        if let Route::Pumped { out, .. } = &mut self.route {
+            if let Ok(Out { to: To::Listeners(l), .. }) = out.get_mut() {
                 for c in l {
                     let _ = c.shutdown(Shutdown::Both);
                 }

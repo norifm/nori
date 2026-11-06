@@ -5,8 +5,8 @@
 //! and its author's key with the key's ed25519 signature over that sha256 (its 32 bytes). Old versions
 //! stay listed, so a plugin can be taken back to one.
 
+use nori_plugin_index::package::{checked, Listed, PackageRefusal};
 use nori_plugin_index::{older, resolved};
-use sha2::{Digest, Sha256};
 
 use crate::{PluginCard, Plugins, Refusal, WhenNew, API};
 
@@ -99,24 +99,6 @@ pub struct Offers {
     pub failed: Vec<RepoFailure>,
 }
 
-/// The bytes hex `text` spells; None when it isn't `N` of them.
-fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
-    let mut out = [0; N];
-    if text.len() != 2 * N {
-        return None;
-    }
-    for (i, b) in out.iter_mut().enumerate() {
-        *b = u8::from_str_radix(text.get(2 * i..2 * i + 2)?, 16).ok()?;
-    }
-    Some(out)
-}
-
-/// Whether `signature` (hex) is ed25519 key `key`'s (hex) over `digest`.
-fn signed(key: &str, signature: &str, digest: &[u8]) -> bool {
-    let (Some(key), Some(signature)) = (unhex::<32>(key), unhex::<64>(signature)) else { return false };
-    ed25519_dalek::VerifyingKey::from_bytes(&key).is_ok_and(|k| k.verify_strict(digest, &ed25519_dalek::Signature::from_bytes(&signature)).is_ok())
-}
-
 /// The plugins in `index`'s text, from `repo`, with the versions this host runs; one with none is left out.
 fn offers(repo: &Repo, text: &[u8]) -> Result<Vec<Offer>, String> {
     let index = nori_plugin_index::parse(text)?;
@@ -154,16 +136,11 @@ impl Plugins {
         if !(200..=299).contains(&r.status) {
             return Err(unreadable(format!("HTTP {}", r.status)));
         }
-        let digest = Sha256::digest(&r.body);
-        let hash: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-        if hash != version.sha256 {
-            return Err(unreadable("the package isn't the one its repo lists".into()));
-        }
-        match (&version.key, &version.signature) {
-            (None, None) => {}
-            (Some(key), Some(signature)) if signed(key, signature, &digest) => {}
-            _ => return Err(Refusal::Signature),
-        }
+        let listed = Listed { sha256: version.sha256.clone(), key: version.key.clone(), signature: version.signature.clone() };
+        let hash = checked(&r.body, &listed).map_err(|e| match e {
+            PackageRefusal::NotListed => unreadable("the package isn't the one its repo lists".into()),
+            PackageRefusal::Signature => Refusal::Signature,
+        })?;
         let file = self.dir.join(format!(".{hash}.noriplugin"));
         std::fs::create_dir_all(&self.dir).and_then(|_| std::fs::write(&file, &r.body)).map_err(|e| unreadable(e.to_string()))?;
         Ok(file)

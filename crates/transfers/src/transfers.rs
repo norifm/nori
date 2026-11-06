@@ -197,7 +197,6 @@ struct Slot {
     speed_bytes: i64,
     speed_at: i64,
     rate: f64,
-    live: bool,
 }
 
 /// Everything queued since the queue was last empty. Its total stays fixed while songs finish ("12 of 49").
@@ -566,7 +565,8 @@ pub struct DownloadMarks {
 pub struct Tracker {
     /// Where song details are read from when [`Tracker::know`] was not told.
     db: Option<Arc<Mutex<Connection>>>,
-    slots: Vec<Slot>,
+    /// Each download transferring by its slot ([`Tracker::open`]); a closed one's is free.
+    slots: Vec<Option<Slot>>,
     batch: Batch,
     marks: HashMap<String, (Phase, i64)>,
     /// Songs whose mark changed since [`Tracker::marks_changed`].
@@ -644,12 +644,17 @@ impl Tracker {
     }
 
     fn slot_of(&self, id: &str) -> Option<usize> {
-        self.slots.iter().position(|s| s.live && s.id == id)
+        self.slots.iter().position(|s| s.as_ref().is_some_and(|s| s.id == id))
+    }
+
+    /// The downloads transferring.
+    fn open_slots(&self) -> impl Iterator<Item = &Slot> {
+        self.slots.iter().flatten()
     }
 
     fn close(&mut self, id: &str) {
         if let Some(i) = self.slot_of(id) {
-            self.slots[i].live = false;
+            self.slots[i] = None;
         }
     }
 
@@ -747,8 +752,7 @@ impl Tracker {
             }
             COMPLETED => {
                 // Its size, for estimating the rest.
-                if let (true, Some(i)) = (was_open, self.slot_of(id)) {
-                    let s = &self.slots[i];
+                if let (true, Some(s)) = (was_open, self.slot_of(id).and_then(|i| self.slots[i].as_ref())) {
                     let size = if s.length > 0 { s.length } else { s.bytes };
                     if size > 0 {
                         self.batch.done_bytes += size;
@@ -1037,18 +1041,18 @@ impl Tracker {
         // A resumed download replaces its old slot.
         self.close(id);
         // After an idle stretch, measure speed from now.
-        if !self.slots.iter().any(|s| s.live) && self.received == self.rate.bytes {
+        if self.open_slots().next().is_none() && self.received == self.rate.bytes {
             self.rate.restart(now, self.received);
         }
         let estimate = self.info(id).map_or(0, |i| i.estimate);
-        let slot = Slot { id: id.to_string(), estimate, length: 0, bytes: 0, started_at: now, gate_value: f32::NAN, gate_at: 0, speed_bytes: 0, speed_at: now, rate: 0.0, live: true };
-        match self.slots.iter().position(|s| !s.live) {
+        let slot = Slot { id: id.to_string(), estimate, length: 0, bytes: 0, started_at: now, gate_value: f32::NAN, gate_at: 0, speed_bytes: 0, speed_at: now, rate: 0.0 };
+        match self.slots.iter().position(Option::is_none) {
             Some(i) => {
-                self.slots[i] = slot;
+                self.slots[i] = Some(slot);
                 i as i32
             }
             None => {
-                self.slots.push(slot);
+                self.slots.push(Some(slot));
                 self.slots.len() as i32 - 1
             }
         }
@@ -1057,7 +1061,7 @@ impl Tracker {
     /// A chunk arrived on `slot`: `bytes` so far of `length` (0 unknown). Returns the progress to show, or
     /// NaN when not worth redrawing. Called per chunk: allocates nothing.
     pub fn note(&mut self, slot: i32, length: i64, bytes: i64, now: i64) -> f32 {
-        let Some(s) = usize::try_from(slot).ok().and_then(|i| self.slots.get_mut(i)).filter(|s| s.live) else { return f32::NAN };
+        let Some(s) = usize::try_from(slot).ok().and_then(|i| self.slots.get_mut(i)).and_then(Option::as_mut) else { return f32::NAN };
         // A resumed download's first report is its existing bytes, not new ones.
         if s.gate_value.is_nan() && s.bytes == 0 {
             s.speed_bytes = bytes;
@@ -1095,7 +1099,7 @@ impl Tracker {
             lyrics_to_come += 1;
             beats_to_come += self.beats_wanted.contains(id) as i32;
             analysing |= self.analysing.contains(id);
-            let (length, bytes) = self.slots.iter().find(|s| s.live && s.id == *id).map_or((0, 0), |s| (s.length, s.bytes));
+            let (length, bytes) = self.open_slots().find(|s| s.id == *id).map_or((0, 0), |s| (s.length, s.bytes));
             let size = if length > 0 { length as f64 } else { self.info.get(id).map_or(0, |i| i.estimate) as f64 * ratio };
             if size > 0.0 {
                 known_sum += size;
@@ -1120,9 +1124,9 @@ impl Tracker {
             return NoticeChange::BatchOver;
         }
         let (mut in_flight, mut current) = (0f64, None::<usize>);
-        for (i, s) in self.slots.iter().enumerate().filter(|(_, s)| s.live) {
+        for (i, s) in self.slots.iter().enumerate().filter_map(|(i, s)| s.as_ref().map(|s| (i, s))) {
             in_flight += fraction(s.length, s.bytes, s.estimate).max(0.0) as f64;
-            if current.is_none_or(|c| s.started_at < self.slots[c].started_at) {
+            if current.is_none_or(|c| self.slots[c].as_ref().is_some_and(|c| s.started_at < c.started_at)) {
                 current = Some(i);
             }
         }
@@ -1149,7 +1153,7 @@ impl Tracker {
         self.eta_s = self.countdown.next(if waiting { -1.0 } else { time_left(download_s, &after) }, now);
         // The notification says how long the bytes take; the lyrics and analysis after them have their own.
         let download_eta = self.download_countdown.next(if waiting { -1.0 } else { download_s.unwrap_or(-1.0) }, now);
-        let current = current.and_then(|i| self.info.get(&self.slots[i].id)).map_or("", |i| i.title.as_str());
+        let current = current.and_then(|i| self.slots[i].as_ref()).and_then(|s| self.info.get(&s.id)).map_or("", |i| i.title.as_str());
         let kind = match (waiting, total) {
             (true, _) => NoticeKind::Waiting,
             (false, 1) if !current.is_empty() => NoticeKind::OneNamed,
@@ -1215,8 +1219,8 @@ impl Tracker {
     }
 }
 
-fn row_facts(slots: &[Slot], id: &str) -> Option<RowFacts> {
-    let s = slots.iter().find(|s| s.live && s.id == id)?;
+fn row_facts(slots: &[Option<Slot>], id: &str) -> Option<RowFacts> {
+    let s = slots.iter().flatten().find(|s| s.id == id)?;
     let f = fraction(s.length, s.bytes, s.estimate);
     let total = if s.length > 0 { s.length } else { s.estimate };
     let speed = s.rate as i64;
@@ -1819,7 +1823,7 @@ mod tests {
 
     #[test]
     fn rows_and_lanes() {
-        let slot = Slot { id: "r".into(), estimate: 0, length: 1000, bytes: 450, started_at: 0, gate_value: 0.0, gate_at: 0, speed_bytes: 0, speed_at: 0, rate: 0.0, live: true };
+        let slot = Some(Slot { id: "r".into(), estimate: 0, length: 1000, bytes: 450, started_at: 0, gate_value: 0.0, gate_at: 0, speed_bytes: 0, speed_at: 0, rate: 0.0 });
         assert_eq!(row_facts(std::slice::from_ref(&slot), "r"), Some(RowFacts { percent: 45, speed_bps: 0, eta_s: -1 }));
         assert_eq!(row_facts(std::slice::from_ref(&slot), "other"), None);
 
@@ -1844,7 +1848,7 @@ mod tests {
         let mut t = Tracker::default();
         let slot = t.open("a", 0);
         assert!(t.note(-1, 1000, 500, 10).is_nan());
-        assert_eq!(t.slots[slot as usize].bytes, 0);
+        assert_eq!(t.slots[slot as usize].as_ref().map(|s| s.bytes), Some(0));
     }
 
     /// A tracker knowing `ids` weigh `size` each (0 unknown).
@@ -1981,7 +1985,7 @@ mod tests {
             assert!((190_000..=210_000).contains(&t.speed_bps), "{} B/s", t.speed_bps);
             // Asked for again after it stopped: one slot, not two.
             t.open("ext-r", 3_000);
-            assert_eq!(t.slots.iter().filter(|s| s.live).count(), 1);
+            assert_eq!(t.open_slots().count(), 1);
         }
 
         // After the last byte: no speed, the time left counts down the pending lyrics, then -1.

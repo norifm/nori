@@ -1,6 +1,6 @@
 # Writing a client
 
-Applies to nori 0.7: the Android app (`app/`, `core/`), the terminal (`crates/cli`), the desktop
+Applies to nori 0.7: the Android app (`android/app/`, `android/core/`), the terminal (`crates/cli`), the desktop
 (`crates/desktop`), the iPod touch (`crates/ios`, `ios/`) and the web client in progress (`crates/web`,
 `web/`).
 
@@ -129,7 +129,7 @@ Implement `nori_engine::AudioOutput`, or use `nori-output-cpal` (PipeWire/ALSA, 
 | `latency_us`, `mixed_us` | How long until a sample pulled now is heard; of that, what the device has mixed already (Bluetooth) |
 | `takes_float`, `float` | Whether it plays float, for high quality output |
 | `watch` | Tells the engine which device the music goes to (`DeviceWatch`), for per-device sound |
-| `shallow` | Holds only a fraction of a second while a sound page is tuned (`rules::sound_tuning`) |
+| `shallow` | Holds only a fraction of a second while a sound page is tuned (`nori_core::tuning`) |
 | `failed` | The device died and would not reopen |
 | `ramp`, `flush`, `holding`, `bursts` | Only for a device that holds seconds (Android's AudioTrack): fades on its volume, drops what it holds, says it still plays, wakes the engine from its own pulls |
 
@@ -151,9 +151,18 @@ eviction order) and downloads. A browser keeps none (`keeps_music: false`).
 - Media controls and now playing: `nori-mpris` on Linux and macOS, the media session on Android,
   `MPRemoteCommandCenter` and `MPNowPlayingInfoCenter` on the iPod. Update them on events, never on a
   timer.
-- Audio focus and interruptions, headphones pulled out, route changes. The client notices; the engine
-  and the core decide (`pause`, `pause_now`, the device's sound profile).
+- Audio focus and interruptions: forward each change to `Engine::focus` (`nori_player::focus`). The engine
+  keeps the focus state beside its play state (held by a call, lost for good, ducked), asks a plugin
+  (`audio-focus`), pauses and resumes, and says `Event::Focus` with where the focus holds the music. A
+  platform with a focus to ask for (Android's) gives the engine a `FocusRequest`, which the engine asks
+  before playing and gives back on a pause.
+- Media keys and the lock screen: `Handle::media_key` (a toggle or a skip is the core's
+  `media_button`, a plugin's word).
+- Headphones pulled out, route changes. The client notices; the engine and the core decide (`pause`,
+  `pause_now`, the device's sound profile).
 - Going to the background: save the queue (`QueueMoment::Closing`).
+- A long pause: the engine lets its output go and says `Event::LongPause` (never while listening along to
+  a paused jam host); a platform that keeps a playback session in the foreground lets it go then.
 - Downloads on the platform's threads or jobs, when the core says to.
 - Platform-only features may live wholly in their client (Android Auto, widgets, the lock screen); what
   they show still comes from the core.
@@ -175,7 +184,7 @@ eviction order) and downloads. A browser keeps none (`keeps_music: false`).
 - **Words**: labels, captions, counts and plurals, times, sizes, decibels. The core hands over counts,
   seconds and kinds (`PlaybackError`, `SongAction`, `MixName`, `ReleaseKind`, `NetError` and the like).
   Numbers go through `nori_model::numbers`. Android's words are `strings.xml` and `strings_ui.xml` (read
-  through `app/ui/Say.kt`), the terminal's `crates/cli/src/text.rs`, the desktop's
+  through `android/app/.../ui/Say.kt`), the terminal's `crates/cli/src/text.rs`, the desktop's
   `crates/desktop/src/words.rs`, the iPod's `ios/Sources/Say.swift`.
 - **Settings**: `settings_pages` gives a client (`SettingsClient`: `Phone`, `Desktop`, `Terminal`,
   `Web`) its pages, sections and rows, each with its spec, value, and whether it is shown and enabled.
@@ -219,29 +228,69 @@ of this; Android's `PlaybackService` calls the same functions.
 - **A song arrives**: `queue::Session::song_arrived` answers `SongSteps`: when to save the queue, songs to
   fetch for its end (autofill), the offline bridge's step, when to measure what is on the device, and the
   sleep timer's last song.
+- **The sleep timer**: `queue::Session::sleep_pick(choice, now_ms)` sets a `Sleep` (`Off`, `At`,
+  `EndOfSong`, `AfterSongs`) and answers whether the engine pauses at this song's end and the alarm to
+  arm; the alarm going off asks `sleep_due`, the engine's `Event::Stopped` ends a song's-end timer
+  (`sleep_stopped`), and the player shows `sleep()`. On the host `Handle::sleep_pick` does all of it,
+  its time waited for by a task.
+- **Where the music plays**: `destination(remote, cast)` answers one `Destination` (here, hosting or
+  not; a plugin's cast; another device mirrored; a jam guest's jam), the order of the answers written
+  once (`destination_of`, which a client gives what it last heard of each part). On the host, `Handle::destination`.
+- **A jam guest's pick**: `Remote::jam_play` and `jam_add` send an admin's pick to the host's queue and
+  ask the host for a guest's (`Picked`, which the client words).
 - **The queue kept**: `rules::queue_keep(QueueMoment)` says whether to save now or after a delay
   (`Core::playlist_save`) and whether to hand the queue to the server (`Client::playlist_push`).
 - **A song the network would not bring**: `Core::bridge_take` answers `BridgeTake` (jump to a download,
   apply the bridge's edit, skip, or stop); `Core::bridge_parked` brings the parked queue back.
 - **A screen's read**: `Client::read_cached(read, PageShown)` hands the stored answer at once and the
   server's when it differs. A failure is an error only when nothing was stored.
+- **A list read a page at a time**: `paged::Paged` (over the list's cursor; `paged::Pages` counts pages,
+  for Android) says which page to read next: one on its way at a time, none after the last, a page
+  answered twice (stored, then the server's) taken again, and a page that failed read again with the next
+  ask rather than ending the list. A list read again from the top (`reset`) drops the page on its way.
 - **Lyrics**: `Client::lyrics_for(id, LyricsShown)` is the whole order: the server's, the services'
-  race, then none. `lyrics_replaces` and `nori_look::lyrics::matching_line` handle a better answer
-  arriving. Lyrics carry `offset_ms`, which `lyrics_clock` applies.
+  race, then none. What a lyrics view shows for the song heard is `lyrics_follow::LyricsHeard`'s
+  `LyricsNow` (no song, looking, shown, failed): the client says which song is heard (`hear`), runs the
+  lookup it is told to (`fetch`) while a view is open and hands its answers in (`answer`, `ended`); it
+  keeps only a better answer for the song heard, and the last few songs' words, so a song come back to
+  starts from them and one whose lookup ended is not looked up again. On the host this is
+  `Handle::lyrics_heard`, `lyrics_view`, `lyrics_refresh` and `lyrics_nudge`, each change a
+  `Said::Lyrics`. `nori_look::lyrics::matching_line` handles a better answer arriving. Lyrics carry
+  `offset_ms`, which `lyrics_clock` applies.
+- **A song taken out of the queue**: the last one taken out on its own goes back where it was for
+  `nori_queue::undo::UNDO_MS` (`Stage::undo_ms`); `Session::put_back` (`playlist_restore`) refuses it
+  after that. A client offering the undo shows it that long; one that shows none calls `Session::undo`.
+- **Search**: `SearchSession` answers each keystroke from the offline index and the server once typing
+  pauses (`typed_with_index`, `answer`); its `SearchView` says where the answer stands as one
+  `SearchShown` (blank, asking, failed, found, nothing found). On the host: `search_typed`,
+  `search_server` (reported as `Said::Search`) and `search_server_now` (on the caller's thread).
+- **Home's queue offer**: `offer::Offered` keeps a look's answer (`Client::queue_offer`, which asks
+  nothing for a profile without an account) while it stands against what the player shows, lets it go
+  once music starts or the player shows its song, and hands it over once when taken up or turned down
+  (`HomeOffer` for Android). On the host `Handle::queue_offer` asks against what the player shows, and
+  `Handle::queue_offer_closed` marks it done and, taken, plays it from its song and place.
+- **Adding a profile and signing its account in**: `providers::flow`: `AddFlow` is the pages of adding
+  one, `SignInFlow` the sign-in shown, one dialog at a time; `Client::sign_in_due` says what follows a
+  profile opening or its account changing, the offer again after the provider ended the session included
+  ([Providers](providers.md)).
 - **A favorite**: `Client::star` marks it at once and puts the old mark back if the server refuses.
 - **Fetching ahead**: `Client::precache_targets` names the songs after the next (the `songs_ahead_wifi`
   and `songs_ahead_mobile` settings; never a provider's song). The engine fetches them whole, one after
   another, then leaves the network alone.
 - **A new output's AutoEQ curve**: `Core::device_arrive`, then `Client::device_curve`; the client words
   the offer and answers it (`Session::curve_answer`).
-- **A sound page's shallow buffer**: `rules::sound_tuning(in_sight, touched)`.
+- **A sound page's shallow buffer**: `tuning::SoundTuning` counts the sound pages in sight (the
+  equalizer, AutoEQ's presets, Settings › Sound, a plugin's page) and answers the buffer to switch to:
+  shallow after a change to what is heard on one (a plugin's page from its first look), deep again once
+  the last leaves. On the host the client says only `Session::sound_page(page, shown)`; the session's
+  `apply` counts the changes.
 - **A download's covers**: `Core::download_cover_urls`, for the cover loader to `warm`.
 
 ## The clients today
 
 | | Session | Sound | HTTP | Covers | Media controls |
 |---|---|---|---|---|---|
-| Android | the core and `nori-engine` from Kotlin | AudioTrack (`crates/android/src/track.rs`), MediaCodec for HE-AAC, offload, bit-perfect USB | OkHttp (`core/.../net/Http.kt`) | `CoverPixels` paints Bitmaps; `CoverLoader` keeps them | media3 session and notification, Android Auto, widget |
+| Android | the core and `nori-engine` from Kotlin | AudioTrack (`crates/android/src/track.rs`), MediaCodec for HE-AAC, offload, bit-perfect USB | OkHttp (`android/core/.../net/Http.kt`) | `CoverPixels` paints Bitmaps; `CoverLoader` keeps them | media3 session and notification, Android Auto, widget |
 | Terminal | `nori-host` | cpal | `nori-http` | RGBA through ratatui-image (kitty, sixel, iTerm2, half blocks) | MPRIS, macOS Now Playing |
 | Desktop | `nori-host` | cpal | `nori-http` | RGBA in Slint | MPRIS, macOS Now Playing |
 | iPod | `nori-host` behind a C ABI | AURemoteIO ([iPod internals](ipod-internals.md)) | `nori-http` | RGBA handed to `CGImage` without a copy | `MPRemoteCommandCenter`, `MPNowPlayingInfoCenter` |
@@ -293,6 +342,10 @@ it again and run `tools/twins.sh`. Nothing a client calls per row, frame or buff
 - **Gestures and per-frame animation math**: drags, springs, easing, flick velocity, and the decisions a
   gesture ends in. A crossing costs more than the few multiplications, and other clients have other
   input.
+- **What a gesture drew ahead of its answer** (a record slid in, a row dropped or swiped away) is held
+  until the player has answered the command, whatever came of it, never for a guessed time. On Android
+  each skip, move and removal gets a ticket (`PlayerConnection.ticket`), and `answered` reaches it once
+  the state shows its outcome (`data/Pending.kt`).
 - **Drawing**: layout, text measurement, glyph caches, bitmaps, the lyrics' fill and glow. When the page
   redraws and how far the singing is are the core's (`LyricClock`).
 - **Glue around platform objects**: the media session, the HTTP client's TLS setup, the network monitor,

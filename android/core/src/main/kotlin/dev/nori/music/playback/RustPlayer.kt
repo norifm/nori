@@ -1,0 +1,1253 @@
+package dev.nori.music.playback
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioFocusRequest
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioRouting
+import android.media.AudioTrack
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.SimpleBasePlayer
+import androidx.media3.common.Timeline
+import androidx.media3.common.Tracks
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.cache.Cache
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
+import dalvik.annotation.optimization.CriticalNative
+import dalvik.annotation.optimization.FastNative
+import dev.nori.music.Nori
+
+/**
+ * nori-engine, the Rust player (crates/android/src/player.rs): the core's queue played into an AudioTrack
+ * the engine writes itself (crates/android/src/track.rs). Commands go in as primitives; the engine's
+ * events come out through [RustBridge.signal] and [event], one wake of the main thread per batch.
+ */
+internal object RustPlayerJni {
+    init { System.loadLibrary("norimusic") }
+    /**
+     * An engine playing through [current]'s client (a `CurrentClient.uniffiCloneHandle()`, which it takes
+     * over) and measuring with [analyses] (`MeasureJni.analyses`). [float] is the high quality output
+     * setting; [memoryMb] the app's memory class. 0 when it could not start.
+     */
+    @JvmStatic external fun create(bridge: RustBridge, current: Long, analyses: Long, sdk: Int, float: Boolean, memoryMb: Int): Long
+    @JvmStatic external fun destroy(h: Long)
+    /** Answers the jump's number, which the song events it leads to carry ([eventJumps]). */
+    @JvmStatic @CriticalNative external fun goTo(h: Long, index: Int, ms: Long, skip: Boolean): Long
+    @JvmStatic @CriticalNative external fun pauseAtEnd(h: Long, on: Boolean)
+    @JvmStatic @CriticalNative external fun play(h: Long)
+    @JvmStatic @CriticalNative external fun pause(h: Long)
+    /** Pause at once, no fade (headphones pulled out). */
+    @JvmStatic @CriticalNative external fun pauseNow(h: Long)
+    /** The system's audio focus changed (0 lost, 1 lost for a while, 2 another sound over it, 3 gained): what it does is the engine's. */
+    @JvmStatic @CriticalNative external fun focus(h: Long, change: Int)
+    /** Pause at once and let the output go now (the music moved to another device). */
+    @JvmStatic @CriticalNative external fun releaseNow(h: Long)
+    /** The core's queue was edited (or reordered): the engine follows it. */
+    @JvmStatic @CriticalNative external fun queueChanged(h: Long)
+    @JvmStatic @CriticalNative external fun setRepeat(h: Long, mode: Int)
+    @JvmStatic @CriticalNative external fun replan(h: Long)
+    @JvmStatic @CriticalNative external fun gainChanged(h: Long)
+    @JvmStatic @CriticalNative external fun setShallow(h: Long, on: Boolean)
+    /** The sound and the controls' fades as the core's settings are now; whether a plugin's sound stage reads the volume. */
+    @JvmStatic @CriticalNative external fun applySettings(h: Long): Boolean
+    /** The media volume, 0 to 1, for plugins' sound stages. */
+    @JvmStatic @CriticalNative external fun setVolume(h: Long, level: Float)
+    /** Where the ear is in it now (the engine's `status().position_now()`), read when asked, never ticked. */
+    @JvmStatic @CriticalNative external fun positionMs(h: Long): Long
+    /** [positionMs] for the seek bar on screen in queue index [index] (-1: the engine is on another song): see `EnginePlayer.shownMs`. */
+    @JvmStatic @CriticalNative external fun shownMs(h: Long, index: Int): Long
+    /** The engine reads its output once, now. */
+    @JvmStatic @CriticalNative external fun look(h: Long)
+    @JvmStatic @CriticalNative external fun mixing(h: Long): Boolean
+    @JvmStatic @CriticalNative external fun waiting(h: Long): Boolean
+    @JvmStatic @CriticalNative external fun networkBack(h: Long)
+    /**
+     * Tells [remote] (`Remote.uniffiCloneHandle()`, taken over) where the engine is now, at media [volume] 0 to 100
+     * (-1: none). Not `@CriticalNative`: the remote calls back into Kotlin, and a garbage collection walking
+     * this thread's stack then crashed the app.
+     */
+    @JvmStatic external fun remotePlayed(h: Long, remote: Long, volume: Int)
+    @JvmStatic @CriticalNative external fun chainIn(h: Long): Boolean
+    @JvmStatic @CriticalNative external fun onCpu(h: Long): Boolean
+    /** Song ms per real ms: the speed times a mix's tempo. */
+    @JvmStatic @CriticalNative external fun pace(h: Long): Float
+    /** Plays along with the jam whose guest [remote] is (`Remote.uniffiCloneHandle()`, taken over) while it listens along. */
+    @JvmStatic @CriticalNative external fun follow(h: Long, remote: Long)
+    /** A plugin's cast takes the engine's audio while it runs ([plugins] `Plugins.uniffiCloneHandle()`, taken over), with [covers]' covers (`CoverLoader.handle`). */
+    @JvmStatic @CriticalNative external fun castTo(h: Long, plugins: Long, covers: Long)
+    @JvmStatic @CriticalNative external fun gainReductionDb(h: Long): Float
+    @JvmStatic @CriticalNative external fun compressionDb(h: Long): Float
+    /** The outputs play at [level] (0 to 1) of their own volume from their next volume or open on ([Quiet]). */
+    @JvmStatic @CriticalNative external fun setQuiet(h: Long, level: Float)
+    @JvmStatic @CriticalNative external fun bytesWritten(h: Long): Long
+    /** The next event, `kind shl 32 or index` (the kinds are `EnginePlayer`'s `EVENT_*`); -1 when there are no more. */
+    @JvmStatic @CriticalNative external fun event(h: Long): Long
+    /**
+     * The words of the event [event] last gave: the song's id, the error, the stream's title. Short and
+     * calling nothing back (the words sit behind a lock only the main thread takes, and one string is
+     * made of them), so a fast door.
+     */
+    @JvmStatic @FastNative external fun eventText(h: Long): String?
+    /** The jumps the engine had made when it said the song or loop [event] last gave (see `EnginePlayer.onSong`). */
+    @JvmStatic @CriticalNative external fun eventJumps(h: Long): Long
+    /** The track's route changed: [type] is `AudioDeviceInfo.TYPE_*`. */
+    @JvmStatic external fun device(h: Long, type: Int, name: String?)
+    /** What the engine cannot see of the output: something USB attached, a DAC playing bit-perfect. */
+    @JvmStatic @CriticalNative external fun setOutput(h: Long, usb: Boolean, bitPerfect: Boolean)
+    /** The offloaded track's stream event: 0 it wants more, 1 it played to the end of stream, 2 it was torn down. */
+    @JvmStatic @CriticalNative external fun offloadEvent(h: Long, kind: Int)
+    /** The songs go to the audio chip now. */
+    @JvmStatic @CriticalNative external fun offloaded(h: Long): Boolean
+    /** The settings and the output let the songs go to the audio chip. */
+    @JvmStatic @CriticalNative external fun offloadWanted(h: Long): Boolean
+    /**
+     * Why the music plays on the CPU and not on the audio chip, in words; while it is offloaded, null, or
+     * what the chip leaves in (a song's encoder delay and padding, where it does not do gapless offload).
+     */
+    @JvmStatic @FastNative external fun pcmWhy(h: Long): String?
+    /** A radio station queued as [id], streaming at [url]. */
+    @JvmStatic external fun radio(h: Long, id: String, url: String)
+    /** What the engine holds, for the perf report: `[song loaders, their KB, those read from the disk, the beat model's KB]` into [out]. */
+    @JvmStatic external fun memory(h: Long, out: LongArray)
+}
+
+/**
+ * What one player's engine asks of the platform, from its own threads: an AudioTrack, a song's bytes, the
+ * cache key a song resolves to, and a wake for its events. Handed to the engine as it starts, so whatever
+ * it asks, however late, reaches the player that started it. Each is rare: a track per start, a body per
+ * burst of a song, a key per song, a signal per batch of events.
+ */
+@UnstableApi
+internal class RustBridge(private val player: EnginePlayer) {
+    /** [encoding] is `AudioFormat.ENCODING_*`: 16-bit, 24-bit packed (a song played as it is) or float. */
+    fun openTrack(rate: Int, channels: Int, encoding: Int, frames: Int): AudioTrack? = player.openTrack(rate, channels, encoding, frames)
+    /** [end]: the byte the request stops before, -1 for the rest. [ticket]: the request's number, by which [cancel] calls it off (see [Tickets]). */
+    fun open(url: String, key: String, from: Long, end: Long, ticket: Long): RustBody? = player.open(url, key, from, end, ticket)
+    /** The Rust side lets a request go that has not answered or sends nothing: its call is cancelled. From any of its threads. */
+    fun cancel(ticket: Long) = player.tickets.cancel(ticket)
+    fun openLive(url: String): RustBody? = player.openLive(url)
+    /** The engine asks for the audio focus ([take]; whether granted) or gives it back. On the engine's thread. */
+    fun focus(take: Boolean): Boolean = player.platformFocus(take)
+    /** The files that hold every byte of download [key], in order, for the engine to read in place; null while any is missing. */
+    fun downloaded(key: String): Array<String>? = player.downloaded(key)
+    /** The same over the stream cache: asked once a song has arrived whole, to play it from disk, not memory. */
+    fun streamed(key: String): Array<String>? = player.streamed(key)
+    /**
+     * For the songs fetched ahead (nori-engine's one fetcher, through [open]): whether all of [key] is in the
+     * stream cache, and whether the player is writing it now. Asked once per song.
+     */
+    fun kept(key: String): Boolean = player.kept(key)
+    fun busy(key: String): Boolean = player.busy(key)
+    /** What the stream cache keeps of [key], in words: for the perf build's break of a player that plays nothing. */
+    fun disk(key: String): String = player.disk(key)
+    /**
+     * [key] played nothing and is fetched anew (crates/engine `Library::forget`): its stream cache entry goes.
+     * What it kept is answered, in words, for the log.
+     */
+    fun forget(key: String): String = player.forget(key)
+    /**
+     * Whether the audio chip decodes [encoding] where the music goes now, as the platform answers media3:
+     * the call made in the high byte (3 `getDirectPlaybackSupport`, 2 `getPlaybackOffloadSupport`, 1
+     * `isOffloadedPlaybackSupported`) and its answer in the low one; -1 when it could not be asked. The
+     * Rust side reads it (crates/android/src/player.rs `offload_support`).
+     */
+    fun offloadSupport(encoding: Int, rate: Int, channels: Int): Int = player.offloadSupport(encoding, rate, channels)
+    fun openOffload(encoding: Int, rate: Int, channels: Int, bytes: Int): AudioTrack? = player.openOffload(encoding, rate, channels, bytes)
+    fun signal() = player.signal()
+    /**
+     * The engine needs the CPU kept awake ([awake]), or can let it sleep while the audio chip plays the
+     * songs (nori-engine's `Event::Awake`). Called on the engine's thread as it changes, before the
+     * engine goes on.
+     */
+    fun cpu(awake: Boolean) = player.engineAwake(awake)
+}
+
+/** What one network read brings at most: an okio segment. */
+private const val SEGMENT = 8192
+
+/**
+ * A song's bytes from [from] on, read by the Rust player's loader a buffer at a time. [length] is -1 when
+ * unknown; [icy] is a station's stream's bytes of music between two announcements, 0 when it sends none.
+ * [past]: asked for from past the song's end, so there are no bytes, and [length] is the whole song's
+ * when the server said it (-1 when not): the Rust side takes it as the song's real end
+ * (crates/engine/src/source.rs `OpenError::PastEnd`). [status]: the server answered with this error
+ * status instead of bytes; it was reached, so the song's failure is not the network's (`OpenError::Status`).
+ */
+class RustBody internal constructor(
+    private val source: DataSource?,
+    @JvmField val length: Long,
+    @JvmField val icy: Int = 0,
+    @JvmField val past: Boolean = false,
+    @JvmField val status: Int = 0,
+    private val done: () -> Unit,
+) {
+    /** As large as the loader's reads (crates/engine/src/source.rs CHUNK); none for an answer without bytes. */
+    @JvmField val buffer = ByteArray(if (source == null) 0 else 256 * 1024)
+    private var broke = false
+
+    /**
+     * Available bytes read into [buffer], at most [max]. The core controls buffering; waiting to fill
+     * this buffer holds up decoding on a slow connection. -1 at the end, -2 when the connection broke.
+     * A network read brings at most one okio segment; one that filled it left more waiting, so reading
+     * goes on, and a fast connection crosses into Rust in large pieces rather than a call per 8 KiB.
+     */
+    fun read(max: Int): Int {
+        if (broke) return -2
+        val source = source ?: return -1
+        val want = minOf(max, buffer.size)
+        var got = 0
+        return try {
+            var last = source.read(buffer, 0, want)
+            if (last <= 0) return last
+            got = last
+            while (last >= SEGMENT && got < want) {
+                last = source.read(buffer, got, want - got)
+                if (last <= 0) break
+                got += last
+            }
+            got
+        } catch (e: Exception) {
+            dev.nori.music.NoriLog.w("rust player: the song's bytes stopped coming: $e")
+            broke = true
+            // What came before the break is still handed over; the next read says it broke.
+            if (got > 0) got else -2
+        }
+    }
+
+    fun close() {
+        runCatching { source?.close() }
+        done()
+    }
+}
+
+/**
+ * The Rust player as media3 sees it, so the session, the notification, the lock screen, headset buttons,
+ * Android Auto and the widget follow it as they would any media3 player, through [PlaybackService]'s `Controls`.
+ * The queue is the core's: `Controls` edits it there first, and this keeps the items the session shows
+ * and tells the engine. The song shown is the one heard (the engine's song events, which come through a
+ * mix at the moment the next song is audible); the position is the engine's, read when asked.
+ *
+ * What ExoPlayer does around the player and the engine does not, this does as ExoPlayer would: pausing
+ * when headphones are pulled out, the CPU wake lock while music plays. The audio focus is the engine's
+ * (nori_player::focus): this hands it AudioManager's changes and asks for or gives back the focus when it says. The player's own
+ * rules - a seek or a skip while paused is held until play, so nothing is fetched until the music is
+ * wanted; the sleep timer's pause at the end of a song - are nori-engine's (`Engine::go_to`,
+ * `Engine::pause_at_end`), as a desktop client gets them.
+ */
+@UnstableApi
+class EnginePlayer(private val context: Context, private val nori: Nori) : SimpleBasePlayer(Looper.getMainLooper()) {
+    private val main = Handler(Looper.getMainLooper())
+    /**
+     * The engine's handle, set as the last of this is built ([init] at the end); 0 before that and once
+     * released. Every door takes it as it is at the call, and the Rust side answers 0 - or a handle that is
+     * gone - with nothing, so a routing callback, a test's read or a posted settings change that arrives
+     * after the release does no harm.
+     */
+    @Volatile private var h: Long = 0L
+    /** The song requests its engine may call off, by the numbers it gave them. */
+    internal val tickets = Tickets()
+
+    private val items = ArrayList<MediaItem>()
+    private val uids = ArrayList<Long>()
+    private var nextUid = 0L
+    /** Changes with every edit, for the timeline kept below. */
+    private var edits = 0
+
+    /** The song shown: the one heard, or the one a seek asked for while paused (which the engine holds). */
+    private var current = 0
+    /** A song the engine was sent to, whose song event is that jump, not a song ending. */
+    private var expecting = -1
+    /**
+     * The number of the last jump the engine was sent. A song event said before the engine made it is
+     * from the place already left: pressed quickly, next went 1, 2 and the engine's word that 1 was heard
+     * (said as it got there, taken here after the second press) put the page back on 1, and then on 2
+     * again as a song ending by itself - two changes more than were asked for.
+     */
+    private var sent = 0L
+    /** The number of the last jump the engine said it landed (its position event). */
+    private var landed = 0L
+    private var prepared = false
+    private var want = Want.PAUSED
+    private var whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
+    private var engineState = EngineState.IDLE
+    private var repeat = Player.REPEAT_MODE_OFF
+    private var shuffle = false
+    private var error: PlaybackException? = null
+    /** The engine's words for the last song that would not play, for the error a stop after it shows. */
+    private var lastError: String? = null
+    /** The engine waits for a song's bytes with nothing left to play (its buffering event). */
+    private var buffering = false
+    /**
+     * Said once, by the next state: the engine moved on by itself (a song ended into the next), or put the
+     * music somewhere without a jump asked for (another path, the audio chip to the CPU or back), so the
+     * session and its controllers anchor their clocks there, as they do after a pause or a seek, rather
+     * than running on from an older word.
+     */
+    private var discontinuity = Discontinuity.NONE
+    @Volatile private var loading = 0
+    /** Pause when the song playing ends (the sleep timer's "end of this song"): the engine does it. */
+    fun pauseAtEnd(on: Boolean) = RustPlayerJni.pauseAtEnd(h, on)
+    /** Times the song playing started again by itself (repeat one); see [position]. */
+    private var loops = 0
+    /** What the radio station playing announced (ICY), shown as the song's title as ExoPlayer shows it. */
+    private var announced: String? = null
+    /** The lines a plugin shows for a song (the core's `Session::now_playing`), by its id. */
+    private var shownAs: Pair<String, dev.nori.music.ffi.model.Shown>? = null
+
+    /** The system's controls show [shown] for song [id] while it plays. */
+    fun showAs(id: String, shown: dev.nori.music.ffi.model.Shown) {
+        shownAs = id to shown
+        invalidateState()
+    }
+    /**
+     * A song the network would not bring, with the offline bridge's setting on: the service hands it to
+     * the bridge, and says whether the music goes on (it jumped somewhere to play) or stops here.
+     */
+    var onBridge: (() -> Boolean)? = null
+    /** Paused a long while (nori-engine's `Event::LongPause`): the engine let its output go; the service lets the session go. */
+    var onLongPause: (() -> Unit)? = null
+    /**
+     * How the engine follows a jam's host (nori-engine's `Event::Following`), null while it does not. While
+     * it follows, wanting to play is the engine's word: the host pausing pauses here too, as a remote change.
+     */
+    private var led: Followed? = null
+    /** Following a jam's host. */
+    val following: Boolean get() = led != null
+    /** Following a jam's host that paused, this phone not paused by its own listener. */
+    val hostPaused: Boolean get() = led == Followed.HOST_PAUSED
+    /** The controls offered ([offer]). */
+    private var commands: Player.Commands = COMMANDS
+
+    /** Offers the controls a jam guest's role reaches with ([jam], the core's `jam_controls`), or all of them (null). */
+    fun offer(jam: dev.nori.music.ffi.JamControls?) {
+        val c = jam?.controls
+        val none = dev.nori.music.ffi.remote.Reach.NOWHERE
+        val offered = if (c == null) COMMANDS else COMMANDS.buildUpon().apply {
+            if (c.playPause == none) remove(Player.COMMAND_PLAY_PAUSE)
+            if (c.skip == none) removeAll(
+                Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM, Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_MEDIA_ITEM, Player.COMMAND_SEEK_TO_DEFAULT_POSITION,
+            )
+            if (c.seek == none) removeAll(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM, Player.COMMAND_SEEK_BACK, Player.COMMAND_SEEK_FORWARD)
+        }.build()
+        if (offered == commands) return
+        commands = offered
+        invalidateState()
+    }
+
+    // ---- what the service asks of it directly ----
+
+    /** The settings changed: the engine takes them from the core. */
+    fun applySettings() = watchVolume(RustPlayerJni.applySettings(h))
+
+    /** The media volume as plugins' sound stages read it, followed only while one does. */
+    private val volume = object : android.database.ContentObserver(main) {
+        override fun onChange(selfChange: Boolean, uri: android.net.Uri?) {
+            if (uri != null && uri.lastPathSegment?.startsWith("volume_") != true) return
+            tellVolume()
+        }
+    }
+    private var volumeWatched = false
+
+    private fun tellVolume() {
+        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        if (max > 0 && h != 0L) RustPlayerJni.setVolume(h, audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max)
+    }
+
+    private fun watchVolume(on: Boolean) = main.post {
+        if (on == volumeWatched) return@post
+        volumeWatched = on
+        if (on) {
+            context.contentResolver.registerContentObserver(android.provider.Settings.System.CONTENT_URI, true, volume)
+            tellVolume()
+        } else context.contentResolver.unregisterContentObserver(volume)
+    }
+    fun gainChanged() = RustPlayerJni.gainChanged(h)
+    /** A sound page is tuned: the engine trades its deep buffer for a shallow one until it stops. */
+    fun setShallow(on: Boolean) = RustPlayerJni.setShallow(h, on)
+    fun replan() = RustPlayerJni.replan(h)
+    val mixing: Boolean get() = RustPlayerJni.mixing(h)
+    /** A song the network would not bring is held, playing still, and tried again by the engine. */
+    val waiting: Boolean get() = RustPlayerJni.waiting(h)
+
+    /** The device is on a network again: a song waiting for it is tried now. */
+    fun networkBack() = RustPlayerJni.networkBack(h)
+    internal var onRemoteStateChanged: (() -> Unit)? = null
+    /** Tells [remote] where the engine is now, at media [volume] 0 to 100 (null: none): the core's `playing`. */
+    internal fun remotePlayed(remote: dev.nori.music.ffi.Remote, volume: Int?) = RustPlayerJni.remotePlayed(h, remote.uniffiCloneHandle(), volume ?: -1)
+    /** How fast the place moves: the speed times a mix's tempo. */
+    val pace: Float get() = RustPlayerJni.pace(h)
+    /** Plays along with the jam whose guest [remote] is, while it listens along (the core says when). */
+    fun follow(remote: dev.nori.music.ffi.Remote) = RustPlayerJni.follow(h, remote.uniffiCloneHandle())
+    /** Shows the queue and place the engine set while following a jam. */
+    fun showFollowingQueue(mediaItems: List<MediaItem>, index: Int) {
+        replaceItems(mediaItems)
+        current = index.coerceIn(0, (items.size - 1).coerceAtLeast(0))
+        invalidateState()
+    }
+    /** The sound chain is in the samples' path, and what its limiter takes off, dB: see [Equalizer.inChain]. */
+    val chainIn: Boolean get() = RustPlayerJni.chainIn(h)
+    /** The ear is on music the CPU made, through the engine's own output: where [chainIn] says anything. */
+    val onCpu: Boolean get() = RustPlayerJni.onCpu(h)
+    val gainReductionDb: Float get() = RustPlayerJni.gainReductionDb(h)
+    /** The compressor's meter: what it takes off, dB. */
+    val compressionDb: Float get() = RustPlayerJni.compressionDb(h)
+    val bytesWritten: Long get() = RustPlayerJni.bytesWritten(h)
+    /** The songs go to the audio chip now, and whether the settings and the output let them. */
+    val offloaded: Boolean get() = RustPlayerJni.offloaded(h)
+    val offloadWanted: Boolean get() = RustPlayerJni.offloadWanted(h)
+    /** Why the music is on the CPU rather than the audio chip, for the perf report. */
+    val pcmWhy: String? get() = RustPlayerJni.pcmWhy(h)
+    /** What the engine cannot see of the output: something USB attached (the chip cannot reach it), a DAC playing bit-perfect. */
+    fun setOutput(usb: Boolean, bitPerfect: Boolean) = RustPlayerJni.setOutput(h, usb, bitPerfect)
+
+    /**
+     * The engine's own place in the song at queue index [index], for the seek bar on screen; -1 when the
+     * engine is on another song. Its last reading run on for two seconds at most, the engine asked to read
+     * its output again whenever that reading is a second old (nori_player::heard::screen_place).
+     */
+    fun shownMs(index: Int): Long = RustPlayerJni.shownMs(h, index)
+
+    /** Jumps sent to the engine so far: a seek asked after this reading is sent as a later one. */
+    val jumpsSent: Long get() = sent
+    /** Whether the engine has landed every jump sent to it. */
+    val landedAll: Boolean get() = landed >= sent
+
+    /** What the engine holds, for the perf report (`perf_rust_memory`): see [RustPlayerJni.memory]. */
+    fun memory(): List<Long> = LongArray(4).also { RustPlayerJni.memory(h, it) }.toList()
+
+    /** The engine for a door that reads it itself (PlayheadJni.position); 0 once released. */
+    internal val handle: Long get() = h
+
+    /** The engine reads its output once, now: the screen is coming back (its last wake may be minutes old). */
+    fun look() = RustPlayerJni.look(h)
+    /**
+     * The session and its controllers run their place on from its last word, and media3 lets them run on
+     * until a play, a pause or a seek says it again (periodic updates are off). One that drifted from the
+     * engine's own place is put right here: the place said again as a discontinuity, as after a change of path.
+     */
+    fun reanchor() {
+        discontinuity = discontinuity.and(Discontinuity.PLACED)
+        invalidateState()
+    }
+
+    // ---- the state media3 reads ----
+
+    /**
+     * The position, read when asked. Each state has its own, so that the one before a repeat-one loop
+     * reads as the end of the song and the one after as its start: media3 tells a loop (a transition
+     * with the reason REPEAT) from the song's own place going back.
+     */
+    private fun position(round: Int): PositionSupplier {
+        // The song's end, as the state before a loop last heard it.
+        val end = items.getOrNull(current)?.mediaMetadata?.durationMs?.takeIf { it > 0 } ?: (Long.MAX_VALUE / 4)
+        return PositionSupplier { if (round == loops) RustPlayerJni.positionMs(h) else end }
+    }
+    private var timeline: QueueTimeline? = null
+    private var timelineAt = Pair(-1, -1L)
+
+    /** The list with the core's play order under shuffle, built again only when either changed. */
+    private fun timeline(): QueueTimeline {
+        val at = Pair(edits, if (shuffle) PlaylistJni.rev(nori.sessionHandle) else -1L)
+        timeline?.takeIf { timelineAt == at }?.let { return it }
+        val order = if (shuffle && items.isNotEmpty()) IntArray(items.size).takeIf { PlaylistJni.order(nori.sessionHandle, it) == items.size } else null
+        return QueueTimeline(ArrayList(items), uids.toLongArray(), order).also { timeline = it; timelineAt = at }
+    }
+
+    private fun playbackState(): Int = when {
+        !prepared || error != null -> Player.STATE_IDLE
+        items.isEmpty() || engineState == EngineState.ENDED -> Player.STATE_ENDED
+        // The music ran out waiting for the network: what ExoPlayer says then, and what a screen shows as loading.
+        buffering && want.playWhenReady -> Player.STATE_BUFFERING
+        else -> Player.STATE_READY
+    }
+
+    override fun getState(): State {
+        val state = playbackState()
+        val b = State.Builder()
+            .setAvailableCommands(commands)
+            .setPlayWhenReady(want.playWhenReady, whyPlayWhenReady)
+            .setPlaybackState(state)
+            .setPlaybackSuppressionReason(want.suppression)
+            .setRepeatMode(repeat)
+            .setShuffleModeEnabled(shuffle)
+            // media3 has nothing loading while idle or ended (the engine may be, following a jam's host).
+            .setIsLoading(loading > 0 && state != Player.STATE_IDLE && state != Player.STATE_ENDED)
+            .setAudioAttributes(ATTRIBUTES)
+            .setPlaylist(timeline(), Tracks.EMPTY, announcement() ?: decided())
+            .setCurrentMediaItemIndex(if (items.isEmpty()) C.INDEX_UNSET else current.coerceIn(0, items.size - 1))
+            .setContentPositionMs(position(loops))
+        error?.let { b.setPlayerError(it) }
+        when (discontinuity) {
+            Discontinuity.NONE -> {}
+            Discontinuity.MOVED -> b.setPositionDiscontinuity(Player.DISCONTINUITY_REASON_AUTO_TRANSITION, 0)
+            Discontinuity.PLACED -> b.setPositionDiscontinuity(Player.DISCONTINUITY_REASON_INTERNAL, RustPlayerJni.positionMs(h))
+        }
+        discontinuity = Discontinuity.NONE
+        return b.build()
+    }
+
+    /** The radio station playing, titled with what it announced, as ExoPlayer merges ICY into the metadata; null otherwise. */
+    private fun announcement(): androidx.media3.common.MediaMetadata? {
+        val said = announced ?: return null
+        val item = items.getOrNull(current)?.takeIf { it.isRadio } ?: return null
+        return item.mediaMetadata.buildUpon().setTitle(said).build()
+    }
+
+    /** The song playing with the lines a plugin gave it; null otherwise. */
+    private fun decided(): androidx.media3.common.MediaMetadata? {
+        val (id, shown) = shownAs ?: return null
+        val item = items.getOrNull(current)?.takeIf { it.mediaId == id } ?: return null
+        return item.mediaMetadata.buildUpon().setTitle(shown.title).setArtist(shown.artist).setAlbumTitle(shown.album).build()
+    }
+
+    // ---- commands ----
+
+    private fun done(): ListenableFuture<*> = Futures.immediateVoidFuture()
+
+    /**
+     * Whether music may sound now: prepared, wanted, and no call (a transient loss of focus) under way.
+     * Everything that would start the engine asks this first; while a call holds the focus the engine
+     * stays paused, and holds any place asked for until the focus comes back.
+     */
+    private fun audible(): Boolean = prepared && want == Want.PLAYING
+
+    /** The engine plays on from where it is, or from where the list or a seek left it (which it held). */
+    private fun start() {
+        if (items.isEmpty() || h == 0L) return
+        RustPlayerJni.play(h)
+    }
+
+    /** The engine goes to [index] at [ms], playing or paused as it is: paused, it holds the place until play. */
+    private fun goTo(index: Int, ms: Long, skip: Boolean = false) {
+        if (index != current) expecting = index
+        current = index
+        jumped(RustPlayerJni.goTo(h, index, ms, skip))
+    }
+
+    /** The engine was sent jump [n] (0: nothing was sent). */
+    private fun jumped(n: Long) {
+        if (n > 0) sent = n
+    }
+
+    override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
+        // Every change of "wants to play" is in the log with its cause: a page that reads paused over music
+        // playing is told apart from the engine's word, a call, or headphones.
+        if (playWhenReady != want.playWhenReady) dev.nori.music.NoriLog.i("rust player: ${if (playWhenReady) "play" else "pause"} asked for")
+        // Listening along, wanting to play is the engine's word ([onFollowing]): play joins the host, once it plays.
+        if (!following) {
+            want = if (playWhenReady) Want.PLAYING else Want.PAUSED
+            whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST
+        }
+        // The audio focus is the engine's: it asks for it before playing (a refusal is its focus event)
+        // and gives it back on a pause.
+        if (playWhenReady) {
+            if (prepared) start()
+        } else {
+            RustPlayerJni.pause(h)
+        }
+        follow()
+        return done()
+    }
+
+    /** The engine's word on following a jam's host ([led]): the host's pause and play are this player's too. */
+    private fun onFollowing(now: Followed?) {
+        val was = led
+        led = now
+        // Listening along ended (the jam left, or only watched now): the engine paused, and so is this.
+        if (now == null && was == null) return
+        // Listening along began: the engine plays the host's music by itself, so media3's player is ready for it.
+        if (was == null && now != null && !prepared) {
+            prepared = true
+            clearError()
+        }
+        val plays = now == Followed.PLAYING
+        if (plays != want.playWhenReady) {
+            dev.nori.music.NoriLog.i("rust player: ${if (plays) "plays" else "pauses"} with the jam's host")
+            want = if (plays) Want.PLAYING else Want.PAUSED
+            whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE
+        }
+    }
+
+    override fun handlePrepare(): ListenableFuture<*> {
+        prepared = true
+        if (h != 0L) clearError()
+        if (audible()) start()
+        follow()
+        return done()
+    }
+
+    /** The music moved to another device: paused at once, the output and the audio focus let go (the engine's), the place kept. */
+    fun letGo() {
+        dev.nori.music.NoriLog.i("rust player: the music plays elsewhere, output let go")
+        RustPlayerJni.releaseNow(h)
+        want = Want.PAUSED
+        prepared = false
+        follow()
+        invalidateState()
+    }
+
+    /** Stopped: the engine pauses and keeps its place, to start from after the next prepare. */
+    override fun handleStop(): ListenableFuture<*> {
+        RustPlayerJni.pause(h)
+        prepared = false
+        follow()
+        return done()
+    }
+
+    override fun handleRelease(): ListenableFuture<*> {
+        unwatchNetwork()
+        watchVolume(false)
+        main.removeCallbacks(drain)
+        val handle = h
+        h = 0L
+        follow()
+        RustPlayerJni.destroy(handle)
+        return done()
+    }
+
+    override fun handleSetRepeatMode(repeatMode: Int): ListenableFuture<*> {
+        repeat = repeatMode
+        RustPlayerJni.setRepeat(h, repeatMode)
+        return done()
+    }
+
+    /** The core already put the songs in their new order (`Controls`); the engine and the timeline follow it. */
+    override fun handleSetShuffleModeEnabled(shuffleModeEnabled: Boolean): ListenableFuture<*> {
+        shuffle = shuffleModeEnabled
+        edited()
+        return done()
+    }
+
+    override fun handleSetMediaItems(mediaItems: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long): ListenableFuture<*> {
+        val was = items.getOrNull(current)?.mediaId
+        replaceItems(mediaItems)
+        stations(mediaItems)
+        edited()
+        val at = if (startIndex == C.INDEX_UNSET || items.isEmpty()) timeline().getFirstWindowIndex(shuffle).coerceAtLeast(0) else startIndex.coerceIn(0, items.size - 1)
+        if (items.isEmpty()) { current = 0; RustPlayerJni.pause(h); return done() }
+        // The song playing, kept in a queue made around it: its entry stays (`Playlist::set`), so the
+        // engine carries on with it, playing or paused, with no jump.
+        if (items[at].isKept() && items[at].mediaId == was) { current = at; return done() }
+        // Playing, the new list plays at once, as ExoPlayer's does; paused, the engine holds its start.
+        expecting = at
+        current = at
+        jumped(RustPlayerJni.goTo(h, at, if (startPositionMs == C.TIME_UNSET) 0 else startPositionMs, false))
+        if (audible()) start()
+        return done()
+    }
+
+    private fun replaceItems(mediaItems: List<MediaItem>) {
+        items.clear()
+        uids.clear()
+        for (item in mediaItems) { items += item; uids += nextUid++ }
+        timeline = null
+    }
+
+    override fun handleAddMediaItems(index: Int, mediaItems: MutableList<MediaItem>): ListenableFuture<*> {
+        val at = index.coerceIn(0, items.size)
+        val had = items.isNotEmpty()
+        items.addAll(at, mediaItems)
+        uids.addAll(at, List(mediaItems.size) { nextUid++ })
+        if (had && at <= current) current += mediaItems.size
+        stations(mediaItems)
+        edited()
+        return done()
+    }
+
+    /** A radio station's address is its item's own (the core's queue keeps ids only): handed to the engine as it is queued. */
+    private fun stations(added: List<MediaItem>) {
+        for (item in added) {
+            if (!item.isRadio) continue
+            val uri = item.localConfiguration?.uri ?: item.requestMetadata.mediaUri ?: continue
+            // A provider's live stream is a song: the core knows where it plays from.
+            if (uri.scheme == SONG_SCHEME) continue
+            val url = uri.toString()
+            RustPlayerJni.radio(h, item.mediaId, url)
+        }
+    }
+
+    override fun handleRemoveMediaItems(fromIndex: Int, toIndex: Int): ListenableFuture<*> {
+        val to = toIndex.coerceAtMost(items.size)
+        if (fromIndex >= to) return done()
+        val gone = current in fromIndex until to
+        items.subList(fromIndex, to).clear()
+        uids.subList(fromIndex, to).clear()
+        when {
+            current >= to -> current -= to - fromIndex
+            gone -> current = fromIndex.coerceAtMost(items.size - 1).coerceAtLeast(0)
+        }
+        edited()
+        if (items.isEmpty()) {
+            RustPlayerJni.pause(h)
+        } else if (gone) {
+            // The song playing went: the one after it plays (or waits, paused), as media3 moves on.
+            expecting = current
+            jumped(RustPlayerJni.goTo(h, current, 0, false))
+        }
+        return done()
+    }
+
+    override fun handleMoveMediaItems(fromIndex: Int, toIndex: Int, newIndex: Int): ListenableFuture<*> {
+        val on = uids.getOrNull(current)
+        val moving = items.subList(fromIndex, toIndex).toList()
+        val movingUids = uids.subList(fromIndex, toIndex).toList()
+        items.subList(fromIndex, toIndex).clear()
+        uids.subList(fromIndex, toIndex).clear()
+        val at = newIndex.coerceIn(0, items.size)
+        items.addAll(at, moving)
+        uids.addAll(at, movingUids)
+        on?.let { u -> current = uids.indexOf(u).coerceAtLeast(0) }
+        edited()
+        return done()
+    }
+
+    /**
+     * A seek, a skip or a tap on a song of the queue. Playing, the engine goes there at once (with its own
+     * dip); paused, it holds the place until play, as a paused ExoPlayer fetches nothing either
+     * (`Engine::go_to`). A seek in the song heard is a jump to it as well: in the last seconds of a song
+     * the engine is already reading the next one, and its own seek would land there.
+     */
+    override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> {
+        if (items.isEmpty()) return done()
+        val target = if (mediaItemIndex == C.INDEX_UNSET) current else mediaItemIndex.coerceIn(0, items.size - 1)
+        val skip = when (seekCommand) {
+            Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+            Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> true
+            else -> false
+        }
+        goTo(target, if (positionMs == C.TIME_UNSET) 0 else positionMs.coerceAtLeast(0), skip)
+        return done()
+    }
+
+    private fun edited() {
+        edits++
+        RustPlayerJni.queueChanged(h)
+    }
+
+    // ---- the engine's events ----
+
+    /** Called on one of the engine's threads: its events are taken on the main thread. */
+    internal fun signal() { main.post(drain) }
+
+    private val drain = Runnable {
+        var remoteChanged = false
+        while (true) {
+            val e = RustPlayerJni.event(h)
+            if (e < 0) break
+            val arg = e.toInt()
+            when ((e ushr 32).toInt()) {
+                EVENT_STATE -> { onState(EngineState.of(arg)); remoteChanged = true }
+                EVENT_SONG -> { onSong(arg, RustPlayerJni.eventJumps(h)); remoteChanged = true }
+                EVENT_ERROR -> RustPlayerJni.eventText(h).let { lastError = it; "rust player error: $it".let { t -> dev.nori.music.NoriLog.w(t); PlaybackService.observer?.error(t) } }
+                EVENT_STOPPED -> stoppedByItself()
+                EVENT_BUFFERING -> { buffering = arg != 0; remoteChanged = true }
+                EVENT_LOOPED -> { onLoop(arg, RustPlayerJni.eventJumps(h)); remoteChanged = true }
+                EVENT_TITLE -> announced = RustPlayerJni.eventText(h)
+                // A mix became audible or ended: update local and remote observers.
+                EVENT_MIXING -> { remoteChanged = true; PlaybackService.onMixingChanged?.invoke() }
+                EVENT_PLACED -> { discontinuity = discontinuity.and(Discontinuity.PLACED); remoteChanged = true }
+                EVENT_FOLLOWING -> onFollowing(Followed.of(arg))
+                EVENT_WAITING -> remoteChanged = true
+                EVENT_LONG_PAUSE -> main.post { onLongPause?.invoke() }
+                EVENT_FOCUS -> onFocusHold(arg)
+                // The engine is where a jump or seek asked: the session says that place, not its own guess.
+                EVENT_LANDED -> { landed = RustPlayerJni.eventJumps(h); discontinuity = discontinuity.and(Discontinuity.PLACED); remoteChanged = true; PlaybackService.onLanded?.invoke() }
+                // Handed on after the batch: the bridge edits and seeks this player itself.
+                EVENT_BRIDGE -> main.post { if (onBridge?.invoke() != true) { stoppedByItself(); follow(); invalidateState() } }
+                // The output device's own sound is DeviceSound's, from Outputs: its name is not asked for,
+                // which would only make a string to throw away.
+                else -> {}
+            }
+        }
+        follow()
+        invalidateState()
+        if (remoteChanged) onRemoteStateChanged?.invoke()
+    }
+
+    private fun onState(state: EngineState) {
+        engineState = state
+        when (state) {
+            // Played to the end of the queue: ExoPlayer keeps wanting to play, and says it ended.
+            EngineState.ENDED, EngineState.PAUSED -> {}
+            // Idle after it was started is the output failing: it would not open, or died and would not open again.
+            EngineState.IDLE -> {
+                error = PlaybackException("the audio output would not open", null, PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED)
+            }
+            // Music again: whatever stopped it before is over.
+            EngineState.PLAYING -> clearError()
+        }
+    }
+
+    /**
+     * Watches for the network while the error shown is that the server could not be reached, and only
+     * then: the network coming back clears it, so the page does not keep saying so over a player that
+     * can play again. Registered with the error, let go with it.
+     */
+    private var networkWatch: android.net.ConnectivityManager.NetworkCallback? = null
+
+    private fun clearError() {
+        error = null
+        unwatchNetwork()
+    }
+
+    private fun watchNetwork() {
+        if (networkWatch != null) return
+        val connectivity = context.getSystemService(android.net.ConnectivityManager::class.java)
+        // The network the failure happened on is told at once as the callback registers; only another
+        // one, or this one after it was lost, is the network coming back.
+        val failedOn = runCatching { connectivity.activeNetwork }.getOrNull()
+        val cb = object : android.net.ConnectivityManager.NetworkCallback() {
+            @Volatile private var lost = failedOn == null
+            override fun onLost(network: android.net.Network) {
+                lost = true
+            }
+            override fun onAvailable(network: android.net.Network) {
+                if (!lost && network == failedOn) return
+                main.post {
+                    if (error?.errorCode != PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED) return@post
+                    dev.nori.music.NoriLog.i("rust player: the network is back, the failure it left goes")
+                    clearError()
+                    invalidateState()
+                }
+            }
+        }
+        runCatching { connectivity.registerDefaultNetworkCallback(cb) }
+            .onSuccess { networkWatch = cb }
+    }
+
+    private fun unwatchNetwork() {
+        val cb = networkWatch ?: return
+        networkWatch = null
+        runCatching { context.getSystemService(android.net.ConnectivityManager::class.java).unregisterNetworkCallback(cb) }
+    }
+
+    /**
+     * The engine stopped by itself (the queue's rules after songs that would not play), which it says
+     * apart from a pause it was asked for: guessed from the pause alone, every pause asked for - a stop
+     * before a prepare, a call - turned wanting to play off as well.
+     */
+    private fun stoppedByItself() {
+        nori.session.sleepStopped()
+        // After a run of songs that would not play (not the sleep timer's end of a song, which leaves no
+        // failure behind): the player's error, as ExoPlayer's is, so the page says why the music stopped.
+        // The words are the core's (PlayerConnection reads the kind from the code); play prepares again.
+        nori.session.queueLastError()?.let { kind ->
+            val code = when (kind) {
+                dev.nori.music.ffi.model.PlaybackError.NETWORK -> PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED
+                dev.nori.music.ffi.model.PlaybackError.OUTPUT -> PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED
+                dev.nori.music.ffi.model.PlaybackError.OTHER -> PlaybackException.ERROR_CODE_DECODING_FAILED
+            }
+            error = PlaybackException(lastError ?: "a song would not play", null, code)
+            if (kind == dev.nori.music.ffi.model.PlaybackError.NETWORK) watchNetwork()
+        }
+        if (!want.playWhenReady) return
+        dev.nori.music.NoriLog.i("rust player: the engine stopped by itself: no longer wants to play")
+        want = Want.PAUSED
+        whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM
+    }
+
+    /** [i]: where the song's entry is in the queue now (see `event`); -1 when an edit took it out. */
+    private fun onSong(i: Int, jumps: Long) {
+        // Said before the engine made the last jump sent: the page is already where that jump goes.
+        if (jumps < sent || i !in items.indices) return
+        val asked = i == expecting
+        expecting = -1
+        if (i != current) announced = null
+        current = i
+        if (asked) return
+        // A song ending into the next one.
+        discontinuity = Discontinuity.MOVED
+    }
+
+    /** The song playing started again by itself (repeat one): a transition media3 reports as a repeat. */
+    private fun onLoop(index: Int, jumps: Long) {
+        if (jumps < sent || index !in items.indices) return
+        current = index
+        loops++
+        discontinuity = Discontinuity.MOVED
+    }
+
+    // ---- the platform around the player, as ExoPlayer runs it ----
+
+    private val audio = context.getSystemService(AudioManager::class.java)
+    private val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+        .setAudioAttributes(PLATFORM_ATTRIBUTES)
+        .setOnAudioFocusChangeListener({ change -> onFocus(change) }, main)
+        .build()
+
+    /** The engine's ask ([RustBridge.focus]): the focus requested (whether granted) or given back. */
+    internal fun platformFocus(take: Boolean): Boolean =
+        if (take) audio.requestAudioFocus(focusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        else { audio.abandonAudioFocusRequest(focusRequest); true }
+
+    /** A call or another player: handed to the engine, whose focus state decides (with a plugin's word). */
+    private fun onFocus(change: Int) {
+        val code = when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> 0
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> 1
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> 2
+            AudioManager.AUDIOFOCUS_GAIN -> 3
+            else -> return
+        }
+        RustPlayerJni.focus(h, code)
+    }
+
+    /** Where the engine's focus holds the music ([code]: 0 free, 1 held by a call, 2 paused for good), as media3 says it. */
+    private fun onFocusHold(code: Int) {
+        val was = want
+        want = was.held(code)
+        dev.nori.music.NoriLog.i("rust player: audio focus hold $code, wanted $was, now $want")
+        if (was != Want.PAUSED && want == Want.PAUSED) whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
+    }
+
+    /**
+     * Headphones pulled out: paused, as ExoPlayer's `setHandleAudioBecomingNoisy` does, and at once
+     * whatever the fade on pause is, as a fade would play on out of the speaker.
+     */
+    private val noisy = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (!want.playWhenReady) return
+            dev.nori.music.NoriLog.i("rust player: the audio became noisy: paused")
+            RustPlayerJni.pauseNow(h)
+            want = Want.PAUSED
+            whyPlayWhenReady = Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY
+            follow()
+            invalidateState()
+        }
+    }
+    private var listening = false
+
+    @Suppress("DEPRECATION")
+    private val wakeLock = context.getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "nori:engine").apply { setReferenceCounted(false) }
+
+    /** Music plays, or is on its way ([follow]): the CPU lock is held for it, unless the engine lets the CPU sleep. */
+    @Volatile private var wantsCpu = false
+    /**
+     * The engine said it can let the CPU sleep (nori-engine's `Event::Awake(false)`): the songs are on the
+     * audio chip, fed, and nothing but the platform's word is due. The chip plays from its own buffer
+     * without the CPU; when it wants more, the platform's `onDataRequest` wakes the engine's thread
+     * (audioserver holds its own wake lock while it runs the offloaded track and calls back). It is the
+     * rule media3 plays offload by: `ExoPlayerImpl` lets its wake lock go while it sleeps for offload and
+     * waits for the same callback. The engine takes the lock back ([engineAwake] true) before any work of
+     * its own: a control, a song starting or its bytes awaited, a fade, a song or the end of the music
+     * coming up (its volume and its event come on time), a count to look at again, the CPU path.
+     */
+    @Volatile private var engineAsleep = false
+
+    /** The engine's word ([RustBridge.cpu]), on its thread. */
+    internal fun engineAwake(awake: Boolean) {
+        engineAsleep = !awake
+        holdCpu()
+    }
+
+    /**
+     * The receiver is held exactly while music is wanted, as ExoPlayer's WAKE_MODE_LOCAL - and can come: an
+     * output that would not open leaves the player wanting music it cannot play. It stays while a call holds
+     * the music: headphones pulled out then must not let it come back on the speaker. The CPU lock is held
+     * only while the music plays: held by a call, the engine is paused like any pause, and the focus coming
+     * back wakes the main thread by itself. Released, nothing is wanted: a late word of the engine as it
+     * stops changes nothing.
+     */
+    private fun follow() {
+        val comes = h != 0L && prepared && error == null && engineState != EngineState.ENDED
+        val wanted = comes && want.playWhenReady
+        if (wanted && !listening) {
+            val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+            if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(noisy, filter, Context.RECEIVER_NOT_EXPORTED) else context.registerReceiver(noisy, filter)
+            listening = true
+        } else if (!wanted && listening) {
+            context.unregisterReceiver(noisy)
+            listening = false
+        }
+        wantsCpu = comes && want == Want.PLAYING
+        holdCpu()
+    }
+
+    /**
+     * The CPU lock, held while music is wanted, but for while the engine lets the CPU sleep with no song's
+     * bytes being fetched (a fetch runs on the loader's threads, which the engine's word does not cover).
+     * From the main thread, the engine's and the loaders'.
+     */
+    @Synchronized private fun holdCpu() {
+        val hold = wantsCpu && (!engineAsleep || loading > 0)
+        if (hold == wakeLock.isHeld) return
+        if (hold) wakeLock.acquire() else wakeLock.release()
+        PlaybackService.observer?.wakeLock(hold)
+    }
+
+    // ---- what the Rust side asks for (RustBridge) ----
+
+    /**
+     * The engine's AudioTrack: music attributes, a deep buffer in the power-saving mode (the framework's deep-buffer output, which wakes least), pinned to a DAC
+     * when bit-perfect is on, and the route told to the engine whenever it changes. Called on the engine's
+     * thread.
+     */
+    internal fun openTrack(rate: Int, channels: Int, encoding: Int, frames: Int): AudioTrack? = runCatching {
+        val width = when (encoding) { AudioFormat.ENCODING_PCM_FLOAT -> 4; AudioFormat.ENCODING_PCM_24BIT_PACKED -> 3; else -> 2 }
+        // The DAC's mixer attributes are read by the framework when the track is built: set for this format first.
+        nori.dac.onFormat(rate, encoding)
+        val bitPerfect = nori.dac.state.value.bitPerfect
+        // Always opened deep, in power saving mode: a sound page's shallow buffer is the same
+        // track made smaller in place (setBufferSizeInFrames, crates/android/src/track.rs), not another one.
+        val mode = if (bitPerfect) AudioTrack.PERFORMANCE_MODE_NONE else AudioTrack.PERFORMANCE_MODE_POWER_SAVING
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(PLATFORM_ATTRIBUTES)
+            .setAudioFormat(AudioFormat.Builder().setSampleRate(rate).setEncoding(encoding).setChannelMask(mask(channels)).build())
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .setBufferSizeInBytes(frames * channels * width)
+            .setPerformanceMode(mode)
+            .build()
+        // Started with a quarter of a second in it rather than once full: a seek is heard as soon as its
+        // first burst is decoded. Before Android 12 a track waits to be full, and the engine fills it.
+        if (Build.VERSION.SDK_INT >= 31) runCatching { track.setStartThresholdInFrames(minOf(rate / 4, track.bufferSizeInFrames)) }
+        nori.dac.preferredDevice()?.let { runCatching { track.setPreferredDevice(it) } }
+        nori.dac.onTrack(rate, encoding, false)
+        track.addOnRoutingChangedListener(AudioRouting.OnRoutingChangedListener { r ->
+            r.routedDevice?.let { d -> nori.outputs.routedTo(d); RustPlayerJni.device(h, d.type, d.productName?.toString()) }
+        }, main)
+        PlaybackService.track = OpenedTrack(track, frames * channels * width, mode)
+        val given = if (track.performanceMode == AudioTrack.PERFORMANCE_MODE_POWER_SAVING) "power saving" else "normal"
+        dev.nori.music.NoriLog.i("rust AudioTrack: $rate Hz x$channels enc=$encoding, ${track.bufferSizeInFrames} of $frames frames (${track.bufferSizeInFrames * 1000L / rate} ms), $given, bitPerfect=$bitPerfect")
+        track
+    }.onFailure { dev.nori.music.NoriLog.w("rust AudioTrack would not open", it); PlaybackService.observer?.error("rust AudioTrack would not open: $it") }.getOrNull()
+
+    /**
+     * Whether the phone's audio chip decodes [encoding] (`AudioFormat.ENCODING_MP3`, `_AAC_LC`, `_OPUS`)
+     * where the music goes now: 2 without gaps between songs too, 1 only by itself, 0 not at all (or
+     * before Android 10). Asked by the engine once per format until the output moves.
+     */
+    internal fun offloadSupport(encoding: Int, rate: Int, channels: Int): Int {
+        if (Build.VERSION.SDK_INT < 29) return -1
+        return runCatching {
+            val format = AudioFormat.Builder().setEncoding(encoding).setSampleRate(rate).setChannelMask(mask(channels)).build()
+            // The call media3 1.11 makes on each Android (DefaultAudioOffloadSupportProvider): from 13 on it asks
+            // getDirectPlaybackSupport, whose answer a phone may give where getPlaybackOffloadSupport says no.
+            when {
+                Build.VERSION.SDK_INT >= 33 -> (3 shl 8) or (AudioManager.getDirectPlaybackSupport(format, PLATFORM_ATTRIBUTES) and 0xFF)
+                Build.VERSION.SDK_INT >= 31 -> (2 shl 8) or (AudioManager.getPlaybackOffloadSupport(format, PLATFORM_ATTRIBUTES) and 0xFF)
+                else -> (1 shl 8) or (if (AudioManager.isOffloadedPlaybackSupported(format, PLATFORM_ATTRIBUTES)) 1 else 0)
+            }
+        }.getOrDefault(-1)
+    }
+
+    /**
+     * An AudioTrack the audio chip decodes into: the song's packets as they are, [bytes] of them held
+     * (minutes of music, so the engine writes rarely). Its stream events go to the engine, which acts on
+     * them on its own thread; the route is told to it as for any track. Called on the engine's thread.
+     */
+    internal fun openOffload(encoding: Int, rate: Int, channels: Int, bytes: Int): AudioTrack? {
+        if (Build.VERSION.SDK_INT < 29) return null
+        return runCatching {
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(PLATFORM_ATTRIBUTES)
+                .setAudioFormat(AudioFormat.Builder().setSampleRate(rate).setEncoding(encoding).setChannelMask(mask(channels)).build())
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setBufferSizeInBytes(bytes)
+                .setOffloadedPlayback(true)
+                .build()
+            offloadTrack = track
+            val events = offloadEvents ?: OffloadEvents { from, kind -> if (from === offloadTrack) RustPlayerJni.offloadEvent(h, kind) }.also { offloadEvents = it }
+            track.registerStreamEventCallback(Runnable::run, events)
+            track.addOnRoutingChangedListener(AudioRouting.OnRoutingChangedListener { r ->
+                r.routedDevice?.let { d -> nori.outputs.routedTo(d); RustPlayerJni.device(h, d.type, d.productName?.toString()) }
+            }, main)
+            nori.dac.onTrack(rate, encoding, track.isOffloadedPlayback)
+            PlaybackService.track = OpenedTrack(track, bytes, AudioTrack.PERFORMANCE_MODE_NONE)
+            dev.nori.music.NoriLog.i("rust offloaded AudioTrack: $rate Hz x$channels enc=$encoding, ${track.bufferSizeInFrames} of $bytes bytes, offloaded=${track.isOffloadedPlayback}")
+            track
+        }.onFailure { dev.nori.music.NoriLog.w("rust offloaded AudioTrack would not open", it); PlaybackService.observer?.error("rust offloaded AudioTrack would not open: $it") }.getOrNull()
+    }
+
+    /** The offloaded track's stream events, made once, the first time a track is offloaded (Android 10's). */
+    private var offloadEvents: OffloadEvents? = null
+    /** The offloaded track opened last: a late event of one before it is not the engine's news. */
+    @Volatile private var offloadTrack: AudioTrack? = null
+
+    /** A radio station's stream, straight from the network, its announcements asked for. Called on a loader thread. */
+    internal fun openLive(url: String): RustBody? {
+        val (source, every) = try {
+            nori.sources.openLive(url)
+        } catch (e: Exception) {
+            dev.nori.music.NoriLog.w("rust player: the station would not open: $e")
+            return null
+        }
+        loaded(+1)
+        return RustBody(source, -1, every) { loaded(-1) }
+    }
+
+    /**
+     * A song's bytes from [from] on, at the URL and under the cache key the core resolved (over the network
+     * state told it here), through media3's data sources (MediaSources): a download, then the stream
+     * cache, then the network on the app's one OkHttp client (its TLS, certificates and headers). Called
+     * on a loader thread; while one is open the service holds the Wi-Fi lock.
+     */
+    internal fun open(url: String, key: String, from: Long, end: Long, ticket: Long = 0): RustBody? {
+        val (source, length) = try {
+            nori.sources.openResolved(url, key, from, end, tickets.start(ticket))
+        } catch (e: MediaSources.PastEnd) {
+            tickets.end(ticket)
+            // Not a failure: the song ends before [from] (a transcode's estimated length was longer).
+            dev.nori.music.NoriLog.i("rust player: $key from byte $from: past its end (${if (e.whole >= 0) "at ${e.whole}" else "unknown"})")
+            return RustBody(null, e.whole, past = true) {}
+        } catch (e: Exception) {
+            tickets.end(ticket)
+            dev.nori.music.NoriLog.w("rust player: $key would not open: $e")
+            // The server answered, with an error: said as such, since it was reached.
+            val status = MediaSources.httpStatus(e)
+            return if (status > 0) RustBody(null, -1, status = status) {} else null
+        }
+        loaded(+1)
+        return RustBody(source, if (length == C.LENGTH_UNSET.toLong()) -1 else length) { tickets.end(ticket); loaded(-1) }
+    }
+
+    internal fun downloaded(key: String): Array<String>? = wholeFiles(nori.sources.downloadCache, key)
+    internal fun streamed(key: String): Array<String>? = wholeFiles(nori.sources.streamCache, key)
+    private fun wholeFiles(cache: Cache, key: String): Array<String>? =
+        runCatching { AutoMixPrefetch.files(cache, key, tail = 0) }.getOrNull()?.let { it.copyOfRange(1, it.size) }
+    internal fun kept(key: String): Boolean = runCatching { MediaSources.isWhole(nori.sources.streamCache, key) }.getOrDefault(true)
+    internal fun busy(key: String): Boolean = nori.sources.beingWritten(key)
+    internal fun disk(key: String): String = nori.sources.cacheWords(key)
+    internal fun forget(key: String): String = nori.sources.forgetStream(key)
+
+    /** A song's bytes started or stopped coming, on a loader thread: several load at once, so both ends are read under the one lock. */
+    private fun loaded(by: Int) {
+        val changed = synchronized(this) {
+            val was = loading > 0
+            loading += by
+            was != loading > 0
+        }
+        if (changed) holdCpu()
+        if (changed) main.post { invalidateState() }
+    }
+
+    // Last, once everything above exists: from here on the engine's threads may call in.
+    init {
+        h = RustPlayerJni.create(
+            RustBridge(this), nori.currentClient.uniffiCloneHandle(), nori.analyses, Build.VERSION.SDK_INT, nori.settings.value.hiRes,
+            context.getSystemService(android.app.ActivityManager::class.java).memoryClass,
+        )
+        if (h == 0L) error = PlaybackException("the Rust player would not start", null, PlaybackException.ERROR_CODE_FAILED_RUNTIME_CHECK)
+        quiet(Quiet.level)
+        nori.plugins.castTo(this)
+    }
+
+    /** A plugin's cast takes this engine's audio while it runs. */
+    internal fun castTo(plugins: dev.nori.music.ffi.plugins.Plugins) = RustPlayerJni.castTo(h, plugins.uniffiCloneHandle(), dev.nori.music.data.CoverLoader.get(context).handle)
+
+    /** Its outputs play at [level] of their own volume ([Quiet]). */
+    internal fun quiet(level: Float) = RustPlayerJni.setQuiet(h, level)
+
+    private companion object {
+        const val EVENT_STATE = 0
+        const val EVENT_SONG = 1
+        const val EVENT_ERROR = 2
+        const val EVENT_STOPPED = 4
+        const val EVENT_BUFFERING = 5
+        const val EVENT_LOOPED = 6
+        const val EVENT_TITLE = 7
+        const val EVENT_BRIDGE = 8
+        const val EVENT_MIXING = 9
+        const val EVENT_PLACED = 10
+        const val EVENT_LANDED = 11
+        const val EVENT_FOLLOWING = 12
+        const val EVENT_WAITING = 13
+        const val EVENT_LONG_PAUSE = 14
+        const val EVENT_FOCUS = 15
+
+        val ATTRIBUTES: AudioAttributes = AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build()
+        val PLATFORM_ATTRIBUTES: android.media.AudioAttributes = android.media.AudioAttributes.Builder()
+            .setUsage(android.media.AudioAttributes.USAGE_MEDIA).setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build()
+
+        fun mask(channels: Int) = if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
+
+        /** Volume and speed are the engine's (fades, ReplayGain, the settings), so they are not offered. */
+        val COMMANDS: Player.Commands = Player.Commands.Builder().addAll(
+            Player.COMMAND_PLAY_PAUSE, Player.COMMAND_PREPARE, Player.COMMAND_STOP, Player.COMMAND_RELEASE,
+            Player.COMMAND_SEEK_TO_DEFAULT_POSITION, Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
+            Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM, Player.COMMAND_SEEK_TO_PREVIOUS,
+            Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM, Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_MEDIA_ITEM,
+            Player.COMMAND_SEEK_BACK, Player.COMMAND_SEEK_FORWARD,
+            Player.COMMAND_SET_REPEAT_MODE, Player.COMMAND_SET_SHUFFLE_MODE,
+            Player.COMMAND_GET_CURRENT_MEDIA_ITEM, Player.COMMAND_GET_TIMELINE, Player.COMMAND_GET_METADATA,
+            Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS, Player.COMMAND_GET_AUDIO_ATTRIBUTES,
+            Player.COMMAND_GET_VOLUME,
+        ).build()
+    }
+}
+
+/**
+ * An offloaded track's stream events, handed to the engine as they come, on the platform's own callback
+ * thread: 0 it wants more, 1 it played everything up to the end of stream, 2 it was torn down.
+ */
+@androidx.annotation.RequiresApi(29)
+private class OffloadEvents(private val tell: (AudioTrack, Int) -> Unit) : AudioTrack.StreamEventCallback() {
+    override fun onDataRequest(track: AudioTrack, sizeInFrames: Int) { OffloadCalls.dataRequests++; tell(track, 0) }
+    override fun onPresentationEnded(track: AudioTrack) { OffloadCalls.presented++; tell(track, 1) }
+    override fun onTearDown(track: AudioTrack) { OffloadCalls.tornDown++; tell(track, 2) }
+}
+
+/**
+ * The queue as media3's timeline: one window per song, walked in the core's play order under shuffle
+ * ([PlaylistJni.order]) so that next and previous, the notification and the controllers' queue land where
+ * the engine goes.
+ */
+@UnstableApi
+private class QueueTimeline(private val items: List<MediaItem>, private val uids: LongArray, private val order: IntArray?) : Timeline() {
+    private val byUid = HashMap<Any, Int>(uids.size * 2).apply { uids.forEachIndexed { i, u -> put(u, i) } }
+    /** Where each song is in [order]. */
+    private val place = order?.let { o -> IntArray(o.size).also { p -> o.forEachIndexed { k, i -> if (i in p.indices) p[i] = k } } }
+
+    override fun getWindowCount() = items.size
+    override fun getPeriodCount() = items.size
+
+    private fun durationUs(i: Int): Long = items[i].mediaMetadata.durationMs?.takeIf { it > 0 }?.let { it * 1000 } ?: C.TIME_UNSET
+
+    override fun getWindow(windowIndex: Int, window: Window, defaultPositionProjectionUs: Long): Window =
+        window.set(uids[windowIndex], items[windowIndex], null, C.TIME_UNSET, C.TIME_UNSET, C.TIME_UNSET, true, false, null, 0, durationUs(windowIndex), windowIndex, windowIndex, 0)
+
+    override fun getPeriod(periodIndex: Int, period: Period, setIds: Boolean): Period =
+        period.set(if (setIds) uids[periodIndex] else null, if (setIds) uids[periodIndex] else null, periodIndex, durationUs(periodIndex), 0)
+
+    override fun getIndexOfPeriod(uid: Any): Int = byUid[uid] ?: C.INDEX_UNSET
+    override fun getUidOfPeriod(periodIndex: Int): Any = uids[periodIndex]
+
+    private fun shuffled(shuffle: Boolean) = shuffle && order != null && place != null
+
+    override fun getFirstWindowIndex(shuffle: Boolean): Int = when {
+        isEmpty -> C.INDEX_UNSET
+        shuffled(shuffle) -> order!![0]
+        else -> 0
+    }
+
+    override fun getLastWindowIndex(shuffle: Boolean): Int = when {
+        isEmpty -> C.INDEX_UNSET
+        shuffled(shuffle) -> order!![order.size - 1]
+        else -> items.size - 1
+    }
+
+    override fun getNextWindowIndex(windowIndex: Int, repeatMode: Int, shuffle: Boolean): Int {
+        if (repeatMode == Player.REPEAT_MODE_ONE) return windowIndex
+        if (windowIndex == getLastWindowIndex(shuffle)) return if (repeatMode == Player.REPEAT_MODE_ALL) getFirstWindowIndex(shuffle) else C.INDEX_UNSET
+        return if (shuffled(shuffle)) order!![place!![windowIndex] + 1] else windowIndex + 1
+    }
+
+    override fun getPreviousWindowIndex(windowIndex: Int, repeatMode: Int, shuffle: Boolean): Int {
+        if (repeatMode == Player.REPEAT_MODE_ONE) return windowIndex
+        if (windowIndex == getFirstWindowIndex(shuffle)) return if (repeatMode == Player.REPEAT_MODE_ALL) getLastWindowIndex(shuffle) else C.INDEX_UNSET
+        return if (shuffled(shuffle)) order!![place!![windowIndex] - 1] else windowIndex - 1
+    }
+}

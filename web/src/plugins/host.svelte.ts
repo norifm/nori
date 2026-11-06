@@ -2,15 +2,15 @@
 // once a plugin is installed, or by the Plugins page.
 
 import { untrack } from "svelte";
-import { ask, onPlayerUp, onRestart } from "../rpc";
+import { ask, onPlayerUp, onRestart, unlessElsewhere } from "../rpc";
 import { player } from "../state/player.svelte";
 import { sleeves } from "../state/sleeve.svelte";
 import { ui } from "../state/ui.svelte";
 import * as db from "./db";
 import { overridesIn, type Call, type Start } from "./runner";
 import { stageModule } from "./stage";
-import type { Code, Installed, Read, Row, Value, WebPlugin } from "./types";
-import { numbers, witValue } from "./types";
+import type { Code, Installed, Read, Row, Value, Version, WebPlugin } from "./types";
+import { numbers, Refused, witValue } from "./types";
 
 /** What says a plugin is installed, read at the page's start so none costs nothing. */
 const MARK = "nori-plugins";
@@ -30,6 +30,7 @@ class Running {
   private next = 1;
   private calls = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
   started: Promise<void>;
+  private startFailed!: (e: Error) => void;
   status = $state<Record<string, string>>({});
   shown = $state<Record<string, { shown: boolean; enabled: boolean }>>({});
   overrides: [string, string][];
@@ -44,6 +45,7 @@ class Running {
     const id = i.plugin.id;
     this.overrides = overridesIn(data);
     this.started = new Promise((started, failed) => {
+      this.startFailed = failed;
       this.worker.onmessage = (e: MessageEvent) => {
         const m = e.data;
         if (m.started) started();
@@ -78,8 +80,13 @@ class Running {
     });
   }
 
+  /** Ends the worker: what it was asked and has not answered fails. */
   stop() {
     this.worker.terminate();
+    const stopped = new Error("the plugin stopped");
+    this.startFailed(stopped);
+    for (const c of this.calls.values()) c.reject(stopped);
+    this.calls.clear();
   }
 }
 
@@ -115,6 +122,7 @@ class Plugins {
   proxied = $state(false);
   /** The switch over every plugin (`pluginsOff`). */
   allOff = $state(false);
+  /** The workers of the plugins on, starting or started; one that could not start has none. */
   private running = new Map<string, Running>();
   /** Stages added to the worklet, as `id` at `version`: a worklet can't take a module away. */
   private added = new Set<string>();
@@ -161,7 +169,7 @@ class Plugins {
   }
 
   private withHooks() {
-    return this.installed.filter((i) => this.runs(i) && i.plugin.points.includes("hooks")).flatMap((i) => this.running.get(i.plugin.id) ?? []);
+    return this.installed.filter((i) => this.runs(i) && i.plugin.points.includes("hooks")).flatMap((i) => this.runningOf(i.plugin.id) ?? []);
   }
 
   private needsWorker = (p: WebPlugin) => p.points.some((x) => x !== "sound-stage" && x !== "lifecycle") || (p.points.includes("lifecycle") && !p.stage);
@@ -169,14 +177,20 @@ class Plugins {
   /** Starts `i`'s worker, if it has one. One that can't start stays installed and on, its worker gone. */
   private async begin(i: Installed) {
     const id = i.plugin.id;
-    if (!this.needsWorker(i.plugin) || this.running.has(id)) return;
+    if (!this.needsWorker(i.plugin) || this.runningOf(id)) return;
+    let worker: Running | undefined;
     try {
       const [code, data] = await Promise.all([db.code(id), db.data(id)]);
-      const r = new Running(i, code, data, this.proxied ? PROXY : null, () => this.lay());
-      this.running.set(id, r);
-      await r.started;
-      if (i.plugin.points.includes("lifecycle")) await r.call("lifecycle", "start");
+      // Started meanwhile, or turned off or removed.
+      const still = this.find(id);
+      if (this.runningOf(id) || !still || !this.runs(still)) return;
+      worker = new Running(i, code, data, this.proxied ? PROXY : null, () => this.lay());
+      this.running.set(id, worker);
+      await worker.started;
+      if (i.plugin.points.includes("lifecycle")) await worker.call("lifecycle", "start");
     } catch (e) {
+      // Stopped while it started (perhaps for another one): nothing failed.
+      if (this.runningOf(id) !== worker) return;
       console.warn(`plugin ${id}: can't start: ${e}`);
       this.stop(id);
     }
@@ -184,8 +198,8 @@ class Plugins {
 
   /** Tells the core what the plugins running override, in their order: the last says. */
   private lay() {
-    const overrides = this.installed.flatMap((i) => this.running.get(i.plugin.id)?.overrides ?? []);
-    void ask("plugin_overrides", JSON.stringify(overrides));
+    const overrides = this.installed.flatMap((i) => this.runningOf(i.plugin.id)?.overrides ?? []);
+    void ask("plugin_overrides", JSON.stringify(overrides)).catch(unlessElsewhere);
   }
 
   /** What's on, in the sound card, once there is one. */
@@ -224,7 +238,7 @@ class Plugins {
   async sleeve(s: NonNullable<typeof player.song>) {
     for (const i of this.installed) {
       if (!this.runs(i) || !i.plugin.points.includes("slots")) continue;
-      const answer = await this.running.get(i.plugin.id)?.call<Sleeve | undefined>("slots", "artwork", song(s)).catch((e) => console.warn(`plugin artwork: ${e}`));
+      const answer = await this.runningOf(i.plugin.id)?.call<Sleeve | undefined>("slots", "artwork", song(s)).catch((e) => console.warn(`plugin artwork: ${e}`));
       if (!answer || player.song?.id !== s.id) continue;
       sleeves.current = answer.tag === "loop" ? { song: s.id, video: answer.val.video, poster: answer.val.poster } : { song: s.id, still: answer.val };
       return sleeves.current;
@@ -236,33 +250,30 @@ class Plugins {
     const s = player.song;
     if (s?.id !== id) return;
     sleeves.current = null;
-    for (const i of this.installed) if (this.runs(i) && i.plugin.points.includes("slots")) void this.running.get(i.plugin.id)?.call("slots", "artworkFailed", song(s), status).catch(() => {});
+    for (const i of this.installed) if (this.runs(i) && i.plugin.points.includes("slots")) void this.runningOf(i.plugin.id)?.call("slots", "artworkFailed", song(s), status).catch(() => {});
   }
 
-  /** What a package says of itself, nothing kept. */
-  async read(pack: Uint8Array, sha256?: string): Promise<Read> {
+  /** What a package says of itself, nothing kept; refused when its plugin pinned another key than
+   * `listed`'s (a file has none). */
+  async read(pack: Uint8Array, listed?: Version): Promise<Read> {
     const { read } = await import("./install");
-    return read(pack, this.proxied, sha256);
+    const got = await read(pack, this.proxied, listed);
+    if (!(await ask<boolean>("plugin_admits", this.find(got.plugin.id)?.key ?? "", got.key ?? ""))) throw new Refused("OtherKey");
+    return got;
   }
 
-  /** Keeps a package read. A new plugin turns on; an update keeps its place, values, switch and being
-   * held. Installing `fromFile` leaves its repo behind. */
-  async install({ plugin, wasm, icon, readme }: Read, fromFile = false) {
+  /** Keeps a package read, standing as the core says (`standing::installed_over`): an update keeps its
+   * standing and values. Installing `fromFile` leaves its repo behind. */
+  async install({ plugin, wasm, icon, readme, key }: Read, fromFile = false) {
     const { transpile } = await import("./install");
     const code = await transpile(wasm);
     const id = plugin.id;
     const had = this.find(id);
+    const standing = had && JSON.stringify({ on: had.on, held: !!had.held, place: had.at ?? 0 });
+    const next = Math.max(-1, ...this.installed.map((x) => x.at ?? 0)) + 1;
+    const s = JSON.parse(await ask<string>("plugin_installed_over", standing ?? "", next)) as { on: boolean; held: boolean; place: number };
     this.stop(id);
-    const i: Installed = {
-      plugin,
-      on: had?.on ?? true,
-      values: had ? $state.snapshot(had.values) : {},
-      icon,
-      readme,
-      held: had?.held,
-      fromFile,
-      at: had?.at ?? Math.max(-1, ...this.installed.map((x) => x.at ?? 0)) + 1,
-    };
+    const i: Installed = { plugin, on: s.on, values: had ? $state.snapshot(had.values) : {}, icon, readme, held: s.held, fromFile, key: had?.key ?? key, at: s.place };
     await db.saveCode(id, code);
     await db.save(i);
     this.installed = had ? this.installed.map((x) => (x.plugin.id === id ? i : x)) : [...this.installed, i];
@@ -334,16 +345,19 @@ class Plugins {
     await db.save($state.snapshot(i));
     if (!i.on) return;
     if (i.plugin.stage) player.card()?.node.port.postMessage({ numbers: { id: `${id}@${i.plugin.version}`, numbers: numbers(i) } });
-    if (i.plugin.points.includes("lifecycle")) await this.running.get(id)?.call("lifecycle", "changed", row.id, witValue(row, value));
+    if (i.plugin.points.includes("lifecycle")) await this.runningOf(id)?.call("lifecycle", "changed", row.id, witValue(row, value));
   }
 
   async act(id: string, row: string) {
-    await this.running.get(id)?.call("lifecycle", "action", row);
+    await this.runningOf(id)?.call("lifecycle", "action", row);
   }
 
   private stop(id: string) {
-    this.running.get(id)?.stop();
-    if (this.running.delete(id)) this.lay();
+    const worker = this.running.get(id);
+    if (!worker) return;
+    this.running.delete(id);
+    worker.stop();
+    this.lay();
   }
 
   async remove(id: string) {
