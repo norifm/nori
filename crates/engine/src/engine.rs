@@ -18,7 +18,7 @@ use std::thread::JoinHandle;
 use nori_time::{Duration, Instant};
 
 use nori_player::pcm::Encoding;
-use nori_player::pipeline::{App, ChainSettings, Player, Queue, Reading, Known, Songs, Sound};
+use nori_player::pipeline::{App, ChainSettings, Halt, Player, Queue, Reading, Known, Songs, Sound};
 use nori_player::playlist::Playlist;
 use nori_player::policy::{audio_policy, offload_blocked, AudioPrefs, OutputState};
 use nori_player::queue::previous_restarts;
@@ -2646,13 +2646,10 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         } else if !self.p.playing() && self.playback == Playback::Playing && self.dip.is_none() && !self.p.priming && self.retry_at.is_none() {
             // The queue's rules stopped playback (a run of songs that would not play), the bridge takes
             // over, or the song waits for the network.
-            if std::mem::take(&mut self.p.waiting) {
-                return self.wait();
-            }
-            if std::mem::take(&mut self.p.bridge) {
-                (self.events)(Event::Bridge { plays: self.plays });
-            } else {
-                (self.events)(Event::Stopped { plays: self.plays });
+            match self.p.stopped_for() {
+                Some(Halt::Wait) => return self.wait(),
+                Some(Halt::Bridge) => (self.events)(Event::Bridge { plays: self.plays }),
+                _ => (self.events)(Event::Stopped { plays: self.plays }),
             }
             self.set_state(State::Paused);
         }
