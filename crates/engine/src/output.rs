@@ -641,12 +641,7 @@ pub(crate) struct RingTrack {
     output: Box<dyn AudioOutput>,
     /// Where the output's device changes go; each output put in tells it too.
     watch: Option<Arc<dyn Fn(Device) + Send + Sync>>,
-    ring: Option<Arc<Ring>>,
-    device: Option<OutputFormat>,
-    /// What the device was asked for (it may have given something else).
-    asked: Option<OutputFormat>,
-    format: Option<Format>,
-    resampler: Option<Resampler>,
+    card: Card,
     tables: Tables,
     converted: Vec<u8>,
     engine: Thread,
@@ -668,6 +663,7 @@ pub(crate) struct RingTrack {
     /// before it: a cut at the same frame blends from that, not from the blend.
     blend_at: Option<u64>,
     blended_from: Vec<f32>,
+    /// Played, or paused: the device follows it as it opens.
     playing: bool,
     /// Whether the device takes float, once asked.
     float: Option<bool>,
@@ -680,18 +676,10 @@ pub(crate) struct RingTrack {
     bits: u32,
     /// Highest device rate, Hz (0: the song's own); ignored when bit-perfect.
     pub(crate) max_rate: u32,
-    /// High quality output is on, and was when the device opened.
+    /// High quality output is on.
     float_on: bool,
-    opened_float: bool,
     /// As last told to [`AudioOutput::shallow`].
     shallow: bool,
-    /// A flush not yet told to the device ([`TELL_FLUSH_US`]).
-    untold: Option<Untold>,
-    /// A fade asked for before the device opened, applied as it opens.
-    unopened_ramp: Option<(Option<f32>, f32, i64)>,
-    /// The device still plays the stream before this ring, opened for another format while it held
-    /// that ([`AudioOutput::takes_formats`]): the place heard is in it until the ring's music is reached.
-    lead: bool,
     /// A song starting at the next frame written, and where in it ([`Track::song_starts`]).
     starts: Option<(String, i64)>,
     /// Music was written since the device was last told ([`AudioOutput::wrote`]).
@@ -704,7 +692,38 @@ struct Untold {
     /// Frames written since.
     written: u64,
     /// A fade asked for since, applied with the flush.
-    ramp: Option<(Option<f32>, f32, i64)>,
+    ramp: Option<Ramp>,
+}
+
+/// A fade: from a level (or where it is) to a level, over ms.
+type Ramp = (Option<f32>, f32, i64);
+
+/// The device under the track.
+// One per engine, inline as its fields were: boxed, each opening would allocate.
+#[allow(clippy::large_enum_variant)]
+enum Card {
+    /// Closed (never opened, released, or it would not open); a fade asked for meanwhile is applied as
+    /// it opens.
+    Closed { ramp: Option<Ramp> },
+    Open(Open),
+}
+
+/// An open device and the ring it pulls.
+struct Open {
+    ring: Arc<Ring>,
+    /// What it gave, and what it was asked for (it may have given something else).
+    device: OutputFormat,
+    asked: OutputFormat,
+    /// High quality output was on as it opened.
+    float: bool,
+    /// The stream written to it, and its resampler to the device's format where they differ.
+    format: Format,
+    resampler: Option<Resampler>,
+    /// A flush not yet told to the device ([`TELL_FLUSH_US`]).
+    untold: Option<Untold>,
+    /// The device still plays the stream before this ring, opened for another format while it held
+    /// that ([`AudioOutput::takes_formats`]): the place heard is in it until the ring's music is reached.
+    lead: bool,
 }
 
 impl RingTrack {
@@ -712,11 +731,7 @@ impl RingTrack {
         RingTrack {
             output,
             watch: None,
-            ring: None,
-            device: None,
-            asked: None,
-            format: None,
-            resampler: None,
+            card: Card::Closed { ramp: None },
             tables: Tables::default(),
             converted: Vec::new(),
             engine: std::thread::current(),
@@ -737,11 +752,7 @@ impl RingTrack {
             bits: 0,
             max_rate: 0,
             float_on: false,
-            opened_float: false,
             shallow: false,
-            untold: None,
-            unopened_ramp: None,
-            lead: false,
             starts: None,
             wrote: false,
         }
@@ -758,7 +769,21 @@ impl RingTrack {
 
     /// Whether the device is open.
     pub(crate) fn opened(&self) -> bool {
-        self.device.is_some()
+        matches!(self.card, Card::Open(_))
+    }
+
+    fn open_card(&self) -> Option<&Open> {
+        match &self.card {
+            Card::Open(o) => Some(o),
+            Card::Closed { .. } => None,
+        }
+    }
+
+    fn open_card_mut(&mut self) -> Option<&mut Open> {
+        match &mut self.card {
+            Card::Open(o) => Some(o),
+            Card::Closed { .. } => None,
+        }
     }
 
     /// Takes `output` as the device from now on, the old one released.
@@ -784,17 +809,10 @@ impl RingTrack {
 
     /// Releases the device; the next stream reopens it.
     pub(crate) fn release(&mut self) {
-        if self.device.take().is_some() {
+        if let Card::Open(_) = std::mem::replace(&mut self.card, Card::Closed { ramp: None }) {
             self.output.close();
         }
-        self.asked = None;
-        self.ring = None;
-        self.format = None;
-        self.resampler = None;
         self.restart_map();
-        self.untold = None;
-        self.unopened_ramp = None;
-        self.lead = false;
     }
 
     /// The device is told of music written this turn, at its end.
@@ -811,16 +829,16 @@ impl RingTrack {
 
     /// Ring frames the device still plays of the stream before this ring, while it does.
     fn lead_frames(&mut self) -> Option<u64> {
-        if !self.lead {
+        let Card::Open(o) = &mut self.card else { return None };
+        if !o.lead {
             return None;
         }
-        let (Some(r), Some(d)) = (self.ring.as_ref(), self.device) else { return None };
-        let taken = r.read_at().saturating_sub(self.base);
-        let held = self.output.latency_us() * d.rate as u64 / 1_000_000;
+        let taken = o.ring.read_at().saturating_sub(self.base);
+        let held = self.output.latency_us() * o.device.rate as u64 / 1_000_000;
         if held > taken {
             return Some(held - taken);
         }
-        self.lead = false;
+        o.lead = false;
         None
     }
 
@@ -834,7 +852,7 @@ impl RingTrack {
 
     /// Starts the resampler and the slipper afresh (after a flush or cut).
     fn restart_resampler(&mut self) {
-        if let Some(r) = self.resampler.as_mut() {
+        if let Some(r) = self.open_card_mut().and_then(|o| o.resampler.as_mut()) {
             r.reset();
         }
         self.slipper.restart();
@@ -853,7 +871,7 @@ impl RingTrack {
     /// What is slipped in (less what is left out), ms: of what the device has played since the flush, and
     /// of what is written and not heard yet; and how long until all that is written is heard, ms.
     pub(crate) fn slipped(&mut self) -> Slipped {
-        let Some(d) = self.device else { return Slipped::default() };
+        let Some(d) = self.open_card().map(|o| o.device) else { return Slipped::default() };
         let now = self.played_at();
         let ms = |frames: f64| frames * 1000.0 / d.rate as f64;
         Slipped { heard_ms: now.back_ms, ahead_ms: self.written.back_ms - now.back_ms, owed_ms: self.slipper.owed * self.frame_ms, written_ms: ms(self.written.ring.saturating_sub(now.ring) as f64) }
@@ -861,7 +879,7 @@ impl RingTrack {
 
     /// Tells the device of a pending flush, with the fade asked for since (at the end of the engine's turn).
     pub(crate) fn tell_flush(&mut self) {
-        let Some(untold) = self.untold.take() else { return };
+        let Some(untold) = self.open_card_mut().and_then(|o| o.untold.take()) else { return };
         self.output.flush();
         if let Some((from, target, ms)) = untold.ramp {
             self.ramp_now(from, target, ms);
@@ -886,7 +904,7 @@ impl RingTrack {
     /// was asked for, or opened 16-bit before high quality output was switched on. A device that gave
     /// another format than asked is fed through the resampler instead.
     fn reopens(&self, format: Format) -> bool {
-        self.device.is_some() && (self.asked != Some(self.wanted(format)) || (self.float_on && !self.opened_float))
+        self.open_card().is_some_and(|o| o.asked != self.wanted(format) || (self.float_on && !o.float))
     }
 
     /// Whether the device takes float; asked once.
@@ -896,10 +914,7 @@ impl RingTrack {
 
     /// Music in the ring, µs.
     pub(crate) fn filled_us(&self) -> i64 {
-        match (&self.ring, self.device) {
-            (Some(r), Some(d)) => (r.unread() as i128 * 1_000_000 / d.rate as i128) as i64,
-            _ => 0,
-        }
+        self.open_card().map_or(0, |o| (o.ring.unread() as i128 * 1_000_000 / o.device.rate as i128) as i64)
     }
 
     pub(crate) fn latency_us(&self) -> i64 {
@@ -918,7 +933,7 @@ impl RingTrack {
 
     /// The engine sleeps until the ring holds `us` or less.
     pub(crate) fn wake_at(&self, us: i64) {
-        if let Some(r) = &self.ring {
+        if let Some(r) = self.open_card().map(|o| &o.ring) {
             r.low.store(us.max(0) as u64 * r.rate as u64 / 1_000_000, Ordering::Relaxed);
             r.waiting.store(true, Ordering::Release);
         }
@@ -927,7 +942,7 @@ impl RingTrack {
     /// Fades from `from` (or where it is) to `target` over `ms`, on the device if it fades itself, else
     /// in the pulls. Returns how long until the fade's end is heard, ms.
     pub(crate) fn ramp(&mut self, from: Option<f32>, target: f32, ms: i64) -> i64 {
-        match self.untold.as_mut().filter(|_| self.ring.is_some()) {
+        match self.open_card_mut().and_then(|o| o.untold.as_mut()) {
             // The device still plays pre-flush music: the fade goes with the flush; a start level
             // applies at once.
             Some(u) => {
@@ -938,7 +953,7 @@ impl RingTrack {
             }
             None => self.ramp_now(from, target, ms),
         }
-        if self.ring.is_none() || self.output.fades() {
+        if !self.opened() || self.output.fades() {
             ms
         } else {
             ms + self.latency_us() / 1000
@@ -946,23 +961,23 @@ impl RingTrack {
     }
 
     fn ramp_now(&mut self, from: Option<f32>, target: f32, ms: i64) {
-        match &self.ring {
-            Some(r) => {
+        match &mut self.card {
+            Card::Open(o) => {
                 if self.output.fades() {
                     self.output.ramp(from, target, ms);
                 } else {
-                    r.ramp(from, target, ms);
+                    o.ring.ramp(from, target, ms);
                 }
             }
             // Nothing played yet: a fade from where it is starts where the one before would have.
-            None => self.unopened_ramp = Some((from.or(self.unopened_ramp.and_then(|r| r.0)), target, ms)),
+            Card::Closed { ramp } => *ramp = Some((from.or(ramp.and_then(|r| r.0)), target, ms)),
         }
     }
 
     /// Marks the music over (no underruns counted past it).
     pub(crate) fn set_ended(&self, ended: bool) {
-        if let Some(r) = &self.ring {
-            r.ended.store(ended, Ordering::Release);
+        if let Some(o) = self.open_card() {
+            o.ring.ended.store(ended, Ordering::Release);
         }
     }
 
@@ -972,7 +987,7 @@ impl RingTrack {
     }
 
     pub(crate) fn underruns(&self) -> u64 {
-        self.ring.as_ref().map_or(0, |r| r.underruns.load(Ordering::Relaxed))
+        self.open_card().map_or(0, |o| o.ring.underruns.load(Ordering::Relaxed))
     }
 
     /// The written stretch at ring frame `p` (since the flush).
@@ -990,7 +1005,7 @@ impl RingTrack {
     /// The stretch the device plays at, letting go of those before it but for [`REWIND_EARLY_US`].
     fn played_at(&mut self) -> Stretch {
         let (p, _) = self.heard();
-        let early = self.device.map_or(0, |d| (REWIND_EARLY_US * d.rate as i64 / 1_000_000) as u64);
+        let early = self.open_card().map_or(0, |o| (REWIND_EARLY_US * o.device.rate as i64 / 1_000_000) as u64);
         while self.marks.front().is_some_and(|m| m.ring + early <= p) {
             self.from = self.marks.pop_front().expect("checked");
         }
@@ -1001,7 +1016,7 @@ impl RingTrack {
     /// µs from now, within `within_us` and what is written: where it crosses, or past a jump (music
     /// written far faster than the pace, a silence skipped) where the place moves at about the pace again.
     pub(crate) fn leaves(&mut self, off_ms: f64, pace: f64, by_ms: f64, within_us: i64) -> Option<i64> {
-        let (Some(d), Some(f)) = (self.device, self.format) else { return None };
+        let (d, f) = self.open_card().map(|o| (o.device, o.format))?;
         let now = self.played_at();
         let us_of = |s: Stretch| (s.ring.saturating_sub(now.ring)) as i64 * 1_000_000 / d.rate as i64;
         let off = |s: Stretch| off_ms + (s.media - now.media) * 1000.0 / f.rate as f64 - us_of(s) as f64 / 1000.0 * pace;
@@ -1042,10 +1057,10 @@ impl RingTrack {
 
     /// The ring frame (since the flush) the device has played to, and the frames it holds past it.
     fn heard(&self) -> (u64, u64) {
-        let (Some(r), Some(d)) = (self.ring.as_ref(), self.device) else { return (0, 0) };
+        let Some(o) = self.open_card() else { return (0, 0) };
         // Taken read first: a pull ending between the two readings shows the place behind, never ahead.
-        let taken = r.read_at().saturating_sub(self.base);
-        let held = self.output.latency_us() * d.rate as u64 / 1_000_000;
+        let taken = o.ring.read_at().saturating_sub(self.base);
+        let held = self.output.latency_us() * o.device.rate as u64 / 1_000_000;
         (taken.saturating_sub(held), held.min(taken))
     }
 }
@@ -1103,20 +1118,18 @@ fn put<T: Copy>(r: &Ring, at: u64, blend: Option<(u64, u64)>, samples: &[T], val
 
 impl Track for RingTrack {
     fn open(&mut self, format: Format) {
-        self.format = Some(format);
         let want = self.wanted(format);
-        if self.reopens(format) {
-            // Another format: a new device (the old one played out, `Track::must_reopen`), or the same
-            // one told the format in its stream after what it holds.
-            self.lead = self.output.takes_formats();
-            if self.lead {
+        // Another format: a new device (the old one played out, `Track::must_reopen`), or the same one
+        // told the format in its stream after what it holds.
+        let lead = self.reopens(format) && {
+            let lead = self.output.takes_formats();
+            if lead {
                 self.output.goes_on();
             }
             self.release();
-            self.lead = self.output.takes_formats();
-            self.format = Some(format);
-        }
-        if self.device.is_none() {
+            lead
+        };
+        if let Card::Closed { ramp } = self.card {
             // The stream picks the format; mixed songs arrive converted by the transition engine.
             let opened = self.output.open(want).and_then(|d| {
                 let ring = Arc::new(Ring::new(d, self.engine.clone()));
@@ -1124,40 +1137,41 @@ impl Track for RingTrack {
                 Ok((d, ring))
             });
             match opened {
-                Ok((d, ring)) => {
-                    self.opened_float = self.float_on;
-                    self.device = Some(d);
-                    self.asked = Some(want);
-                    self.ring = Some(ring);
+                Ok((device, ring)) => {
+                    self.card = Card::Open(Open { ring, device, asked: want, float: self.float_on, format, resampler: None, untold: None, lead });
                     self.base = 0;
                     if self.playing {
                         self.output.resume();
                     }
-                    if let Some((from, target, ms)) = self.unopened_ramp.take() {
+                    if let Some((from, target, ms)) = ramp {
                         self.ramp_now(from, target, ms);
                     }
                 }
                 Err(e) => self.failed = Some(e),
             }
         }
-        self.resampler = self.device.filter(|d| d.rate != format.rate || d.channels != format.channels).and_then(|d| {
-            Resampler::new(&mut self.tables, format.rate as i32, format.channels as i32, d.rate as i32, d.channels as i32)
-        });
+        let Card::Open(o) = &mut self.card else { return };
+        let d = o.device;
+        o.format = format;
+        o.resampler = (d.rate != format.rate || d.channels != format.channels)
+            .then(|| Resampler::new(&mut self.tables, format.rate as i32, format.channels as i32, d.rate as i32, d.channels as i32))
+            .flatten();
     }
 
     fn queued_bytes(&self) -> usize {
-        let (Some(r), Some(d), Some(f)) = (&self.ring, self.device, self.format) else { return 0 };
-        (r.unread() as u128 * f.rate as u128 / d.rate as u128) as usize * f.frame_bytes()
+        let Some(o) = self.open_card() else { return 0 };
+        (o.ring.unread() as u128 * o.format.rate as u128 / o.device.rate as u128) as usize * o.format.frame_bytes()
     }
 
     fn write(&mut self, data: &[u8], media: f64) {
-        let (Some(r), Some(d), Some(f)) = (self.ring.clone(), self.device, self.format) else { return };
+        let Card::Open(o) = &mut self.card else { return };
+        let (r, d, f) = (o.ring.clone(), o.device, o.format);
         let w = r.write.load(Ordering::Relaxed);
         let ch = d.channels;
         let pcm16 = |b: [u8; 2]| i16::from_le_bytes(b) as f32 / 32768.0;
         let slipping = self.slipper.active();
         let pattern = self.slipper.pattern();
-        let (frames, slipped) = match (self.resampler.as_mut(), f.encoding) {
+        let (frames, slipped) = match (o.resampler.as_mut(), f.encoding) {
             (None, Encoding::Pcm16) if slipping => (0, self.slipper.run(data.as_chunks::<2>().0, ch, pcm16)),
             (None, Encoding::Pcm16) => (put(&r, w, self.blend, data.as_chunks::<2>().0, pcm16), 0),
             (None, Encoding::Float) if slipping => (0, self.slipper.run(data.as_chunks::<4>().0, ch, f32::from_le_bytes)),
@@ -1196,7 +1210,7 @@ impl Track for RingTrack {
         }
         let back_ms = before.back_ms + slipped as f64 * self.frame_ms;
         self.written = Stretch { ring: before.ring + frames, sink, media: before.media + media, slipped: before.slipped + slipped as f64, back_ms };
-        if let Some(u) = self.untold.as_mut() {
+        if let Some(u) = self.open_card_mut().and_then(|o| o.untold.as_mut()) {
             u.written += frames;
             if u.written as i64 >= d.rate as i64 * TELL_FLUSH_US / 1_000_000 {
                 self.tell_flush();
@@ -1215,8 +1229,8 @@ impl Track for RingTrack {
     /// Below zero while the device still plays the stream before this ring ([`RingTrack::lead`]): the
     /// place is before this stream's start by that much.
     fn played_media(&mut self) -> f64 {
-        if let (Some(ahead), Some(d), Some(f)) = (self.lead_frames(), self.device, self.format) {
-            return -(ahead as f64) * f.rate as f64 / d.rate as f64;
+        if let (Some(ahead), Some(o)) = (self.lead_frames(), self.open_card()) {
+            return -(ahead as f64) * o.format.rate as f64 / o.device.rate as f64;
         }
         self.played_at().media
     }
@@ -1229,7 +1243,7 @@ impl Track for RingTrack {
     /// it before the cut. One holding more than [`HELD_US`] not yet mixed drops what it holds for a new
     /// ending: a little before what it has played.
     fn freeze(&mut self, why: Remake) -> u64 {
-        let (Some(r), Some(d)) = (self.ring.clone(), self.device) else { return self.written.sink };
+        let Some((r, d)) = self.open_card().map(|o| (o.ring.clone(), o.device)) else { return self.written.sink };
         let (heard, held) = self.heard();
         let mixed = self.output.mixed_us() * d.rate as u64 / 1_000_000;
         if why != Remake::Same && held.saturating_sub(mixed) as i64 * 1_000_000 > HELD_US * d.rate as i64 {
@@ -1263,7 +1277,7 @@ impl Track for RingTrack {
     }
 
     fn cut(&mut self, at: u64) -> f64 {
-        let Some(r) = self.ring.clone() else { return self.written.media };
+        let Some((r, d)) = self.open_card().map(|o| (o.ring.clone(), o.device)) else { return self.written.media };
         let end = self.written;
         let p = self.ring_of(at).min(end.ring);
         let cut = if p >= end.ring { end } else { self.at_ring(p) };
@@ -1280,16 +1294,17 @@ impl Track for RingTrack {
             // Before what the device took: it drops what it holds and plays on from where it got to, the
             // music up to `w` kept for it (as early as its clock may be ahead of it).
             let (heard, _) = self.heard();
-            let early = self.device.map_or(0, |d| (REWIND_EARLY_US * d.rate as i64 / 1_000_000) as u64);
+            let early = (REWIND_EARLY_US * d.rate as i64 / 1_000_000) as u64;
             r.discard.store(w.min(self.base + heard.saturating_sub(early)), Ordering::Release);
             r.cut_from.fetch_min(w, Ordering::AcqRel);
             r.flushes.fetch_add(1, Ordering::AcqRel);
             r.ended.store(false, Ordering::Release);
             r.quiet();
-            self.untold = Some(Untold::default());
-            self.lead = false;
+            if let Some(o) = self.open_card_mut() {
+                (o.untold, o.lead) = (Some(Untold::default()), false);
+            }
         }
-        let n = self.device.map_or(0, |d| d.rate as i64 * nori_player::pipeline::BLEND_US / 1_000_000) as u64;
+        let n = (d.rate as i64 * nori_player::pipeline::BLEND_US / 1_000_000) as u64;
         let n = n.min(end.ring - p);
         if self.blend_at == Some(p) {
             slots_from(&r, w, &self.blended_from);
@@ -1302,11 +1317,12 @@ impl Track for RingTrack {
     }
 
     fn is_empty(&self) -> bool {
-        self.ring.as_ref().is_none_or(|r| r.unread() == 0) && !self.output.holding()
+        self.open_card().is_none_or(|o| o.ring.unread() == 0) && !self.output.holding()
     }
 
     fn flush(&mut self) {
-        if let Some(r) = &self.ring {
+        if let Card::Open(o) = &mut self.card {
+            let r = &o.ring;
             let w = r.write.load(Ordering::Relaxed);
             r.discard.store(w, Ordering::Release);
             r.dropped.store(true, Ordering::Release);
@@ -1314,9 +1330,8 @@ impl Track for RingTrack {
             r.ended.store(false, Ordering::Release);
             r.quiet();
             self.base = w;
-            self.untold = Some(Untold::default());
+            (o.untold, o.lead) = (Some(Untold::default()), false);
         }
-        self.lead = false;
         self.restart_map();
         self.restart_resampler();
     }
@@ -1334,7 +1349,7 @@ impl Track for RingTrack {
     }
 
     fn ready_to_reopen(&self) -> bool {
-        self.ring.as_ref().is_none_or(|r| r.unread() == 0) && (self.output.takes_formats() || !self.output.holding())
+        self.open_card().is_none_or(|o| o.ring.unread() == 0) && (self.output.takes_formats() || !self.output.holding())
     }
 
     fn marks_songs(&self) -> bool {
@@ -1347,14 +1362,14 @@ impl Track for RingTrack {
 
     fn play(&mut self) {
         self.playing = true;
-        if self.device.is_some() {
+        if self.opened() {
             self.output.resume();
         }
     }
 
     fn pause(&mut self) {
         self.playing = false;
-        if self.device.is_some() {
+        if self.opened() {
             self.output.pause();
         }
     }
