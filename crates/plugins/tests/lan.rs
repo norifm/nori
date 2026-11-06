@@ -409,7 +409,7 @@ fn a_deep_sink_is_said_hello_and_its_buttons_are_media_buttons() {
     rig.settle();
     assert_eq!(rig.said("cast-deep"), Some(vec!["casting".into()]));
     let sink = sink(&sinks);
-    let deep = sink.deep.as_ref().expect("a deep sink");
+    let deep = sink.connection().expect("a deep sink");
     assert_eq!((deep.caps, deep.depth_ms, sink.rate), (caps, Some(30_000), None), "the song's own rate");
     assert!(rig.plugins.cast().unwrap().bursts, "the Wi-Fi lock is the bursts'");
 

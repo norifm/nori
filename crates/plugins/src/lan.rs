@@ -180,7 +180,7 @@ impl Inner {
 
     /// Plugin `id`'s deep sink, while the music plays into it.
     fn deep_of(&self, id: &str) -> Option<Arc<crate::deep::Deep>> {
-        self.audio_of(id)?.sink.deep.clone()
+        self.audio_of(id)?.sink.connection().cloned()
     }
 }
 
@@ -330,7 +330,7 @@ impl Lan {
     /// Plugin `id`'s audio served at the door from now on; its URL.
     pub(crate) fn serve_sink(&self, id: &str, sink: Arc<Sink>) -> Option<String> {
         let mut i = self.inner();
-        let extension = sink.encoding.extension();
+        let extension = sink.encoding()?.extension();
         i.audio = Some(Audio { plugin: id.to_string(), sink: sink.clone(), to: AudioTo::Door });
         self.keep_door(&mut i);
         drop(i);
@@ -342,7 +342,7 @@ impl Lan {
     }
 
     pub(crate) fn pump_sink(&self, id: &str, sink: Arc<Sink>) {
-        if let Some(deep) = &sink.deep {
+        if let Some(deep) = sink.connection() {
             let (me, plugin) = (self.me.clone(), id.to_string());
             deep.controls(Box::new(move |said| {
                 let Some(lan) = me.upgrade() else { return };
@@ -405,7 +405,7 @@ impl Lan {
     /// sink plays.
     pub(crate) fn deep_volume(&self, volume: u8) -> bool {
         let mut i = self.inner();
-        let Some(deep) = i.audio.as_ref().and_then(|a| a.sink.deep.clone()) else { return false };
+        let Some(deep) = i.audio.as_ref().and_then(|a| a.sink.connection().cloned()) else { return false };
         let Some(cast) = i.cast.as_mut() else { return false };
         cast.volume = Some(volume);
         let cast = cast.clone();
