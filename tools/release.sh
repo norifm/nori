@@ -122,8 +122,8 @@ if [ "$GUIDED" = 1 ]; then
   [ -z "$(git status --porcelain)" ] || die "commit or stash your changes first: the release commit holds only the release"
 
   current=$(code_version)
-  latest=$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""' 2>/dev/null || true)
-  latest=${latest#v}
+  # The newest release with a version: the nightly's tag is "nightly" and moves to the top each night.
+  latest=$(gh release list --exclude-drafts --limit 20 --json tagName --jq '.[].tagName' 2>/dev/null | sed 's/^v//' | grep -E "$VERSION_RE" | head -1 || true)
   echo "latest release on GitHub:  ${latest:-none yet}"
   echo "version in the code:       $current"
   # A release made without the iPod app gets it added, if nothing but build, docs, tests or chores came since.
