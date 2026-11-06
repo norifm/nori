@@ -12,11 +12,14 @@
 // CHROME names the browser (default: Google Chrome's macOS path). Headless Chrome is muted: what the
 // AudioWorklet played is checked instead (frames, running dry, silences over 20 ms).
 import fs from "node:fs";
+import zlib from "node:zlib";
 import puppeteer from "puppeteer-core";
 
 const url = process.argv[2] ?? "http://localhost:8080/";
 // Phases by name, comma separated; all without.
 const only = process.argv[3]?.split(",");
+// Play, pause, seeks and skips fade over this while playing (`PLAY_PAUSE_FADE_MS`, `switch_dip`).
+const FADE_MS = 150;
 // A second address of the client through a throttled server (`web/serve.py --port 8081 --kbps 4000
 // --files-kbps 4000`).
 const slow = process.env.SLOW_URL;
@@ -193,7 +196,7 @@ if (!only || only.includes("lyrics")) {
   await page.waitForFunction((k) => window.nori.lyricLine === k, { timeout: 2000, polling: 50 }, enter).catch(() => {});
   report.lyrics.tap = { line: later, litMs, heardMs: Math.round((tapHeard - tapped.t) * 1000), soughtMs: sought, placeMs: Math.round(landed - (sought + (at - tapHeard) * 1000)), enterLit: (await facts()).lyricLine === enter };
   const tap = report.lyrics.tap;
-  expect(tap.litMs < 100 && tap.heardMs >= 0 && tap.heardMs < 100 && Math.abs(tap.placeMs) < 100 && tap.enterLit, "a lyric line clicked or entered lights at once and is heard from where it is sung");
+  expect(tap.litMs < 100 && tap.heardMs >= 0 && tap.heardMs < FADE_MS + 100 && Math.abs(tap.placeMs) < 100 && tap.enterLit, "a lyric line clicked or entered lights at once and is heard from where it is sung");
   await page.click("#bar [data-pane=lyrics]");
 }
 
@@ -310,11 +313,10 @@ if (!only || only.includes("instant")) {
   const nextMs = ms((await facts()).heard.freshAt - skipped);
   const index = (await now()).index;
   report.instant = { pauseMs, resumeMs, seekMs: ms(seekHeard - sought), nextMs, pausedMovedMs: held1 - held0, offsetMs: [Math.round(before), Math.round(after)], seekPlaceMs, index, seekBar: bar };
-  // Play and pause fade over 150 ms (`PLAY_PAUSE_FADE_MS`).
-  expect(pauseMs >= 0 && pauseMs < 200, "a pause is silent within 200 ms");
+  expect(pauseMs >= 0 && pauseMs < FADE_MS + 50, "a pause is silent within its fade");
   expect(resumeMs >= 0 && resumeMs < 50, "play sounds again within 50 ms");
-  expect(report.instant.seekMs >= 0 && report.instant.seekMs < 100 && Math.abs(seekPlaceMs) < 100, "a seek is heard from its place within 100 ms");
-  expect(nextMs >= 0 && nextMs < 250 && index === 1, "next is heard within 250 ms");
+  expect(report.instant.seekMs >= 0 && report.instant.seekMs < FADE_MS + 100 && Math.abs(seekPlaceMs) < 100, "a seek is heard from its place within 100 ms of its fade");
+  expect(nextMs >= 0 && nextMs < FADE_MS + 100 && index === 1, "next is heard within 100 ms of its fade");
   expect(held1 === held0 && Math.abs(after - before) < 40, "the place stays still while paused and follows the music across it");
 }
 
@@ -586,8 +588,15 @@ if (!only || only.includes("offline")) {
   const swFile = new URL("../dist/sw.js", import.meta.url);
   if (fs.existsSync(swFile)) {
     const was = fs.readFileSync(swFile, "utf8");
+    // The server sends its brotli or gzip twin when there is one (web/build.sh writes them): those change too.
+    const twins = [[".br", zlib.brotliCompressSync], [".gz", zlib.gzipSync]]
+      .map(([suffix, pack]) => [new URL(`../dist/sw.js${suffix}`, import.meta.url), pack])
+      .filter(([file]) => fs.existsSync(file))
+      .map(([file, pack]) => ({ file, pack, was: fs.readFileSync(file) }));
     const build = (await page.evaluate(() => caches.keys())).find((k) => k.startsWith("nori-")).slice(5);
-    fs.writeFileSync(swFile, was.replaceAll(build, `${build}0`));
+    const next = was.replaceAll(build, `${build}0`);
+    fs.writeFileSync(swFile, next);
+    for (const t of twins) fs.writeFileSync(t.file, t.pack(Buffer.from(next)));
     try {
       await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).update());
       await page.waitForFunction(async () => !!(await navigator.serviceWorker.getRegistration()).waiting, { timeout: 30000, polling: 250 });
@@ -599,6 +608,7 @@ if (!only || only.includes("offline")) {
       expect(after.length === 1 && after[0] === `nori-${build}0`, "a new build takes over at the next load, the old one's files gone");
     } finally {
       fs.writeFileSync(swFile, was);
+      for (const t of twins) fs.writeFileSync(t.file, t.was);
     }
   }
 }
