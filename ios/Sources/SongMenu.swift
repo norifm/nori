@@ -165,10 +165,20 @@ enum SongMenu {
 /// at the end of this one (the core and the engine count those).
 final class SleepTimer {
     static let shared = SleepTimer()
-    private var timer: Timer?
-    private var running = false
+
+    private enum State {
+        case off
+        /// The client's one-shot timer pauses when it fires.
+        case timed(Timer)
+        /// The core and the engine count songs, or wait for this one's end, and stop playback.
+        case counted
+    }
+
+    private var state = State.off
 
     func pick(from host: UIViewController) {
+        let running: Bool
+        if case .off = state { running = false } else { running = true }
         guard let choices = takenJSON(nori_ios_sleep_choices(running ? 1 : 0)) as? [[String: Any]] else { return }
         let sheet = Sheet(Say.sleepTimer)
         for c in choices {
@@ -182,19 +192,25 @@ final class SleepTimer {
         sheet.show(from: host)
     }
 
+    /// Playback stopped by itself: a counted timer has done its work.
+    func stopped() {
+        if case .counted = state { state = .off }
+    }
+
     private func set(minutes: Int, end: Bool, songs: Int) {
-        timer?.invalidate()
-        timer = nil
+        if case .timed(let t) = state { t.invalidate() }
+        state = .off
         nori_ios_sleep_set(UInt32(songs), end ? 1 : 0)
-        running = minutes > 0 || end || songs > 0
+        if end || songs > 0 {
+            state = .counted
+        }
         guard minutes > 0, let delay = takenJSON(nori_ios_sleep_delay(UInt32(minutes))) as? [Int], delay.count == 2 else { return }
         let t = Timer(timeInterval: Double(delay[0]) / 1000, repeats: false) { [weak self] _ in
             nori_ios_sleep_now()
-            self?.running = false
-            self?.timer = nil
+            self?.state = .off
         }
         t.tolerance = Double(delay[1]) / 1000
         RunLoop.main.add(t, forMode: .common)
-        timer = t
+        state = .timed(t)
     }
 }
