@@ -457,9 +457,24 @@ if (!only || only.includes("edit")) {
     // The picker: the playlist found by its name, then picked.
     await page.waitForSelector("#playlist-picker input");
     await page.type("#playlist-picker input", name);
-    await page.$$eval("#playlist-picker .row:not(.new)", (rows, n) => rows.find((r) => r.textContent.trim() === n).click(), name);
+    await page.waitForFunction((n) => [...document.querySelectorAll("#playlist-picker .row:not(.new) .text .clip:first-child")].some((t) => t.textContent.trim() === n), { timeout: 30000, polling: 100 }, name);
+    await page.$$eval("#playlist-picker .row:not(.new)", (rows, n) => rows.find((r) => r.querySelector(".text .clip")?.textContent.trim() === n).click(), name);
     await page.waitForFunction(async ([id, n]) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlist", id }))).songs.length === n, { timeout: 30000, polling: 250 }, [made.id, i + 1]);
   }
+  // A song the playlist has: the picker says so and offers it nothing to add.
+  await (await page.$$(".songs li button[aria-label='More']"))[0].click();
+  await menu("Add to playlist");
+  const held = await page.waitForFunction(
+    (n) => {
+      const row = [...document.querySelectorAll("#playlist-picker .row:not(.new)")].find((r) => r.querySelector(".text .clip")?.textContent.trim() === n);
+      return row && { disabled: row.disabled, says: row.querySelector(".sub")?.textContent.trim() };
+    },
+    { timeout: 30000, polling: 100 },
+    name,
+  );
+  const mark = await held.jsonValue();
+  if (!mark.disabled || mark.says !== "Has it") throw new Error(`the picker shows a playlist that has the song as ${JSON.stringify(mark)}`);
+  await page.keyboard.press("Escape");
   const songsOf = async () => (await read({ kind: "playlist", id: made.id })).songs.map((s) => s.title);
   const added = await songsOf();
   await hash(`#/playlist/${made.id}`, "playlist");

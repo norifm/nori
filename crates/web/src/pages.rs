@@ -292,7 +292,7 @@ fn songs(core: &Core, v: &[Song]) -> Value {
 }
 
 /// Playlist `p`, with whether `user` may change it.
-fn playlist(core: &Core, p: &nori_core::Playlist, user: Option<&str>) -> Value {
+pub(crate) fn playlist(core: &Core, p: &nori_core::Playlist, user: Option<&str>) -> Value {
     let mut v = serde_json::to_value(p).unwrap_or(Value::Null);
     if let Value::Object(m) = &mut v {
         if let Some(art) = p.cover_art.as_ref() {

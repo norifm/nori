@@ -103,6 +103,8 @@ export const W = {
   addedTo: (name: string) => `Added to ${name}`,
   delete: "Delete",
   playlistName: "Playlist name",
+  /** What a playlist offered for `asked` songs has of them: its size when none. */
+  playlistHolds: (holds: number, asked: number, songs: number) => (holds === 0 ? plural(songs, "song", "songs") : holds === asked ? (asked === 1 ? "Has it" : `Has all ${asked}`) : `Has ${holds} of ${asked}`),
   rename: "Rename",
   deletePlaylist: "Delete playlist",
   deleteConfirm: (name: string) => `Delete “${name}”?`,

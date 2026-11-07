@@ -148,7 +148,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
         NoriDialog(naming, { naming = false }) {
             AlertCard(
                 title = { Text(say.saveTheseSettings) },
-                text = { FormField(newName, { newName = it }, label = { Text(say.name) }, singleLine = true) },
+                text = { FormField(newName, { newName = it }, label = { Text(say.name) }, singleLine = true, autofocus = true, onDone = { if (newName.isNotBlank()) { vm.saveProfile(newName); naming = false } }) },
                 confirmButton = { TextAction(say.save, { vm.saveProfile(newName); naming = false }, enabled = newName.isNotBlank()) },
                 dismissButton = { TextAction(say.cancel, { naming = false }) },
             )

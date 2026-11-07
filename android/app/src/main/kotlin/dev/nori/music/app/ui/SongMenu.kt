@@ -3,7 +3,12 @@ package dev.nori.music.app.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.draw.alpha
@@ -32,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import dev.nori.music.app.vm.ActionsViewModel
 import dev.nori.music.app.vm.CardItem
 import dev.nori.music.data.wordsOf
@@ -76,8 +82,8 @@ fun SongMenu(
     var stage by remember(open) { mutableStateOf(MenuStage.MENU) }
     NoriSheet(player?.takeIf { open && stage == MenuStage.SLEEP }, onDismiss) { p -> SleepChoices(p, onDismiss) }
     NoriSheet(player?.takeIf { open && stage == MenuStage.LYRICS }?.let { p -> song?.let { p to it.id } }, onDismiss) { (p, id) -> LyricsSheet(p, id) }
-    NoriDialog(song?.takeIf { stage == MenuStage.DETAILS }, onDismiss) { s -> TrackInfo(s, actions, onDismiss) }
-    NoriDialog(song?.takeIf { stage == MenuStage.PLAYLIST }, onDismiss) { s -> PlaylistPicker(listOf(s), actions, onDismiss) }
+    NoriSheet(song?.takeIf { stage == MenuStage.DETAILS }, onDismiss) { s -> TrackInfo(s, actions) }
+    NoriSheet(song?.takeIf { stage == MenuStage.PLAYLIST }, onDismiss) { s -> PlaylistPicker(listOf(s), actions, onDismiss) }
 
     // A sheet with a half-open stage swallows the first back gesture to collapse itself, which reads
     // as the menu refusing to close. There is only ever one stage here, so back always dismisses.
@@ -137,19 +143,22 @@ fun SongMenu(
                     onDismiss()
                 }
             }
-            SheetRows(head = true) {}
+            HeadLine()
             // The album page's way of saying it, in its own case: "FLAC 16/44.1", "MP3 320 kbps".
-            ListHead(remember(song) { say.quality(song) }.orEmpty(), { at(dev.nori.music.ffi.library.SongMenuPlace.GLYPHS).forEach { glyph(it) } }, edge = SHEET_EDGE, actionsEnd = SHEET_EDGE, hairlineEnd = 0.dp)
-            val lines = at(dev.nori.music.ffi.library.SongMenuPlace.LINE)
-            val main = lines.filter { !items[it].more }
-            val folded = lines.filter { items[it].more }
-            SheetRows {
-                main.forEachIndexed { k, n -> line(n, divider = k < main.lastIndex) }
-                // The rest follows in full after a hairline (a jam guest's menu has none): a menu shows everything.
-                if (main.isNotEmpty() && folded.isNotEmpty()) Hairline(startIndent = GROUP_INSET)
-                folded.forEachIndexed { k, n -> line(n, divider = k < folded.lastIndex) }
-                PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.SONG, dev.nori.music.ffi.plugins.Items.Songs(listOf(song)), onDismiss)
+            Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = SHEET_EDGE, end = SHEET_EDGE), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text(
+                    remember(song) { say.quality(song) }.orEmpty(), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+                at(dev.nori.music.ffi.library.SongMenuPlace.GLYPHS).forEach { glyph(it) }
             }
+            // What is done with the song, then what opens more or switches a state (a jam guest's menu has
+            // neither): a menu shows everything.
+            val lines = at(dev.nori.music.ffi.library.SongMenuPlace.LINE)
+            for (group in listOf(lines.filter { !items[it].more }, lines.filter { items[it].more })) {
+                if (group.isNotEmpty()) SheetGroup { group.forEachIndexed { k, n -> line(n, divider = k < group.lastIndex) } }
+            }
+            PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.SONG, dev.nori.music.ffi.plugins.Items.Songs(listOf(song)), onDismiss)
         }
     }
 }
@@ -206,17 +215,20 @@ fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) 
         }
         Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
             SheetHead(actions.cover(art, CoverSize.ROW), title, line, round = card is CardItem.OfArtist)
-            SheetRows(head = true) {
+            HeadLine()
+            Spacer(Modifier.height(SHEET_GAP))
+            SheetGroup {
                 if (!LocalRules.current.asks) Item(say.play, Iconoir.Play) { actions.play(card); onDismiss() }
                 Item(say.menuPlayNext, Iconoir.PlaylistPlay) { actions.queue(card, next = true); onDismiss() }
-                val deletes = card is CardItem.OfPlaylist && actions.editable(card.playlist)
-                Item(say.addToQueue, Iconoir.Playlist, divider = deletes) { actions.queue(card, next = false); onDismiss() }
-                if (deletes) Item(say.delete, Iconoir.Trash, divider = false) { deleting = (card as CardItem.OfPlaylist).playlist; onDismiss() }
-                when (card) {
-                    is CardItem.OfAlbum -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.ALBUM, dev.nori.music.ffi.plugins.Items.Albums(listOf(card.album)), onDismiss)
-                    is CardItem.OfPlaylist -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.PLAYLIST, dev.nori.music.ffi.plugins.Items.Playlists(listOf(card.playlist)), onDismiss)
-                    is CardItem.OfArtist -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.ARTIST, dev.nori.music.ffi.plugins.Items.Artists(listOf(card.artist)), onDismiss)
-                }
+                Item(say.addToQueue, Iconoir.Playlist, divider = false) { actions.queue(card, next = false); onDismiss() }
+            }
+            if (card is CardItem.OfPlaylist && actions.editable(card.playlist)) SheetGroup {
+                Item(say.delete, Iconoir.Trash, divider = false) { deleting = card.playlist; onDismiss() }
+            }
+            when (card) {
+                is CardItem.OfAlbum -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.ALBUM, dev.nori.music.ffi.plugins.Items.Albums(listOf(card.album)), onDismiss)
+                is CardItem.OfPlaylist -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.PLAYLIST, dev.nori.music.ffi.plugins.Items.Playlists(listOf(card.playlist)), onDismiss)
+                is CardItem.OfArtist -> PluginItems(actions, dev.nori.music.ffi.plugins.ItemKind.ARTIST, dev.nori.music.ffi.plugins.Items.Artists(listOf(card.artist)), onDismiss)
             }
         }
     }
@@ -227,9 +239,10 @@ fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) 
 private fun PluginItems(actions: ActionsViewModel, kind: dev.nori.music.ffi.plugins.ItemKind, items: dev.nori.music.ffi.plugins.Items, onDismiss: () -> Unit) {
     val menus by actions.pluginMenus.collectAsState()
     val entries = menus[kind].orEmpty()
-    if (entries.isNotEmpty()) Hairline(startIndent = GROUP_INSET)
-    entries.forEachIndexed { i, e ->
-        Item(e.label, glyphIcon(e.glyph), divider = i < entries.lastIndex) { actions.runPluginMenu(e, items); onDismiss() }
+    if (entries.isNotEmpty()) SheetGroup {
+        entries.forEachIndexed { i, e ->
+            Item(e.label, glyphIcon(e.glyph), divider = i < entries.lastIndex) { actions.runPluginMenu(e, items); onDismiss() }
+        }
     }
 }
 
@@ -274,16 +287,16 @@ private fun SheetHead(cover: String?, title: String, line: String, round: Boolea
 }
 
 /**
- * A sheet's lines, on the sheet itself rather than on a card inside it: one surface, the lines parted by
- * hairlines, their glyphs [SHEET_EDGE] from the sheet's sides. Under a [head] (the song or record), a hairline first.
+ * A sheet's lines that belong together, on a card of their own as the library's groups sit on its page:
+ * the card's hairline edge and corners set the group apart, [SHEET_EDGE] from the sheet's sides.
  */
 @Composable
-private fun SheetRows(head: Boolean = false, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
-    Column(Modifier.padding(horizontal = SHEET_EDGE - GROUP_INSET)) {
-        if (head) Hairline(startIndent = GROUP_INSET)
-        content()
-    }
-}
+private fun SheetGroup(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) =
+    GroupCard(Modifier.padding(bottom = SHEET_GAP), content = content)
+
+/** The hairline under a sheet's head (the song or record), in from both of the sheet's sides. */
+@Composable
+private fun HeadLine() = Box(Modifier.padding(end = SHEET_EDGE)) { Hairline(startIndent = SHEET_EDGE) }
 
 /** Song [id]'s lyrics as [l] has them, when it has words. */
 private fun hasWords(l: dev.nori.music.ffi.lyrics.LyricsNow, id: String): Boolean =
@@ -300,34 +313,26 @@ private fun LyricsSheet(player: dev.nori.music.app.vm.PlayerViewModel, id: Strin
     val lyrics = found.lyrics
     val pluginNames by player.pluginNames.collectAsState()
     Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
-        SectionTitle(say.lyrics)
-        Text(
-            remember(found.source, lyrics.synced, lyrics.wordTimed, pluginNames) { say.lyricsSource(found.source, lyrics.synced, lyrics.wordTimed, pluginNames) },
-            Modifier.padding(horizontal = Space.gutter, vertical = 4.dp), style = MaterialTheme.typography.bodyLarge,
-        )
-        if (!lyrics.synced) return@Column
-        Text(
-            remember(lyrics.timing) { say.lyricsTiming(lyrics.timing) },
-            Modifier.padding(horizontal = Space.gutter, vertical = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        // Centred, the value in a slot of its own width so − and + stay put as it changes.
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-        ) {
-            TextAction("−", { player.nudgeLyrics(id, -1) })
-            Text(
-                say.lyricsShift(dev.nori.music.ffi.lyrics.lyricsOffsetMs(lyrics.timing)),
-                Modifier.widthIn(min = 96.dp), style = MaterialTheme.typography.titleMedium,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        SheetTitle(say.lyrics)
+        SheetGroup {
+            GroupRow(
+                remember(found.source, lyrics.synced, lyrics.wordTimed, pluginNames) { say.lyricsSource(found.source, lyrics.synced, lyrics.wordTimed, pluginNames) },
+                subtitle = if (lyrics.synced) remember(lyrics.timing) { say.lyricsTiming(lyrics.timing) } else null,
+                minHeight = SHEET_ROW, divider = lyrics.synced,
             )
-            TextAction("+", { player.nudgeLyrics(id, 1) })
+            // The value in a slot of its own width, so − and + stay put as it changes.
+            if (lyrics.synced) GroupRow(say.lyricsOffset, minHeight = SHEET_ROW, divider = false, trailing = {
+                SheetGlyph(Iconoir.Minus, say.later) { player.nudgeLyrics(id, -1) }
+                Text(
+                    say.lyricsShift(dev.nori.music.ffi.lyrics.lyricsOffsetMs(lyrics.timing)),
+                    Modifier.widthIn(min = 76.dp), style = MaterialTheme.typography.titleMedium,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+                SheetGlyph(Iconoir.Plus, say.lyricsEarlier) { player.nudgeLyrics(id, 1) }
+            })
         }
-        if (lyrics.timing is dev.nori.music.ffi.model.LyricsTiming.Yours) {
-            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center) {
-                TextAction(say.reset, { player.nudgeLyrics(id, 0) })
-            }
+        if (lyrics.synced && lyrics.timing is dev.nori.music.ffi.model.LyricsTiming.Yours) SheetGroup {
+            Item(say.reset, Iconoir.Refresh, divider = false) { player.nudgeLyrics(id, 0) }
         }
     }
 }
@@ -337,65 +342,130 @@ private fun LyricsSheet(player: dev.nori.music.app.vm.PlayerViewModel, id: Strin
 private fun SleepChoices(player: dev.nori.music.app.vm.PlayerViewModel, onDone: () -> Unit) {
     val state by player.state.collectAsState()
     Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
-        SectionTitle(say.sleepTimer)
+        SheetTitle(say.sleepTimer)
         val running = state.sleep !is dev.nori.music.ffi.queue.Sleep.Off
         // The choices are the core's (`menus::sleep_choices`); "Off" is all zeros.
         val choices = remember(running) { dev.nori.music.ffi.library.sleepChoices(running) }
         val words = remember(choices) { choices.map(say::sleepChoice) }
-        SheetRows {
+        SheetGroup {
             choices.forEachIndexed { n, c -> Item(words[n], divider = n < choices.lastIndex) { player.sleep(c.minutes.toInt(), c.endOfTrack, c.songs.toInt()); onDone() } }
         }
     }
 }
 
+/**
+ * Adding [songs] to a playlist, a sheet's content: New playlist, which turns into the new one's name in
+ * place, then the playlists the account may change, each saying what it has of them already (the core's
+ * `playlist_choices`). One that has them all is checked and takes nothing.
+ */
 @Composable
 fun PlaylistPicker(songs: List<Song>, actions: ActionsViewModel, onDone: () -> Unit) {
-    var playlists by remember { mutableStateOf<List<Playlist>?>(null) }
+    var choices by remember { mutableStateOf<List<dev.nori.music.ffi.library.PlaylistChoice>?>(null) }
+    var naming by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) { playlists = actions.playlists() }
-    AlertCard(
-        title = { Text(say.addToPlaylist) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                FormField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text(say.newPlaylist) }, singleLine = true)
-                playlists?.forEach { p -> Text(p.name, Modifier.fillMaxWidth().clickable { actions.addToPlaylist(p, songs); onDone() }.padding(vertical = 12.dp)) }
-            }
-        },
-        confirmButton = { TextAction(say.create, { actions.addToNewPlaylist(name.trim(), songs); onDone() }, enabled = name.isNotBlank()) },
-        dismissButton = { TextAction(say.cancel, onDone) },
-    )
+    LaunchedEffect(Unit) { choices = actions.playlistChoices(songs) }
+    val create = { if (name.isNotBlank()) { actions.addToNewPlaylist(name.trim(), songs); onDone() } }
+    Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom).imePadding()) {
+        SheetTitle(say.addToPlaylist)
+        SheetGroup {
+            if (naming) NameLine(name, { name = it }, create) else Item(say.newPlaylist, Iconoir.Plus, divider = false) { naming = true }
+        }
+        val listed = choices.orEmpty()
+        if (choices == null) LoadingDots(Modifier.fillMaxWidth().padding(vertical = 22.dp).wrapContentWidth())
+        if (listed.isNotEmpty()) SheetGroup {
+            listed.forEachIndexed { n, c -> PlaylistChoiceRow(c, songs.size, actions, divider = n < listed.lastIndex) { actions.addToPlaylist(c); onDone() } }
+        }
+    }
 }
 
-/** Everything the server said about one file, then what plugins add, each under its name, a line with a link opening it. */
+/** New playlist turned into the new one's name, in the line's place: its glyph, the field, and Create. */
 @Composable
-fun TrackInfo(song: Song, actions: ActionsViewModel, onDone: () -> Unit) {
+private fun NameLine(name: String, onName: (String) -> Unit, create: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().heightIn(min = SHEET_ROW).padding(start = GROUP_INSET), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Icon(Iconoir.Plus, null, Modifier.size(20.dp), tint = scheme.onSurface)
+        Box(Modifier.weight(1f).padding(start = GROUP_INSET)) {
+            if (name.isEmpty()) Text(say.playlistName, style = MaterialTheme.typography.bodyLarge, color = scheme.onSurfaceVariant)
+            androidx.compose.foundation.text.BasicTextField(
+                name, onName, Modifier.fillMaxWidth().takesFocus(), singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(scheme.primary),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { create() }),
+            )
+        }
+        TextAction(say.create, create, enabled = name.isNotBlank())
+    }
+}
+
+/** A playlist offered in [PlaylistPicker], for [asked] songs: its cover, its name, and what it has of them. */
+@Composable
+private fun PlaylistChoiceRow(c: dev.nori.music.ffi.library.PlaylistChoice, asked: Int, actions: ActionsViewModel, divider: Boolean, onClick: () -> Unit) {
+    val full = c.adds.isEmpty()
+    val scheme = MaterialTheme.colorScheme
+    Column {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 60.dp).then(if (full) Modifier else Modifier.clickable(onClick = onClick))
+                .padding(horizontal = GROUP_INSET, vertical = 8.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Cover(actions.cover(c.playlist.coverArt, CoverSize.ROW), PICKED_COVER, radius = 6.dp)
+            Column(Modifier.weight(1f).padding(horizontal = GROUP_INSET)) {
+                Text(c.playlist.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                Text(say.playlistHolds(c.holds.toInt(), asked, c.playlist.songCount.toInt()), style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1)
+            }
+            if (full) Icon(Iconoir.Check, null, Modifier.size(20.dp), tint = scheme.onSurface)
+        }
+        if (divider) Hairline(startIndent = GROUP_INSET * 2 + PICKED_COVER)
+    }
+}
+
+private val PICKED_COVER = 40.dp
+
+/**
+ * Everything the server said about one file, a sheet's content: each line its name and value, on a card;
+ * then what plugins add, each group on its own card under its name, a line with a link opening it.
+ */
+@Composable
+fun TrackInfo(song: Song, actions: ActionsViewModel) {
     // Which rows there are, in what order and how each reads is nori-core's (`fmt::track_info`).
     val rows = remember(song) { say.trackInfo(song) }
     val groups by androidx.compose.runtime.produceState(emptyList<dev.nori.music.ffi.plugins.InfoGroup>(), song) { value = actions.pluginSongInfo(song) }
     val uri = androidx.compose.ui.platform.LocalUriHandler.current
-    AlertCard(
-        title = { Text(say.details) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                rows.forEach { (label, value) -> Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, Modifier.padding(bottom = 8.dp)) }
-                // Asked as the sheet opens: the plugins' lines come in under nori's own, never in place of them.
-                AnimatedVisibility(groups.isNotEmpty(), enter = AppMotion.grow(), exit = ExitTransition.None) {
-                    Column {
-                        groups.forEach { g ->
-                            Text(g.name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            g.lines.forEach { l ->
-                                val link = l.link
-                                if (link == null) Text(l.words, Modifier.padding(bottom = 4.dp))
-                                else Text(l.words, Modifier.padding(bottom = 4.dp).clickable { runCatching { uri.openUri(link) } }, textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline)
-                            }
-                            androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
+    Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
+        SheetTitle(say.details)
+        // A path or an id is there to be copied.
+        androidx.compose.foundation.text.selection.SelectionContainer {
+            SheetGroup { rows.forEachIndexed { n, (label, value) -> InfoLine(label, value, divider = n < rows.lastIndex) } }
+        }
+        // Asked as the sheet opens: the plugins' lines come in under nori's own, never in place of them.
+        AnimatedVisibility(groups.isNotEmpty(), enter = AppMotion.grow(), exit = ExitTransition.None) {
+            Column {
+                groups.forEach { g ->
+                    GroupLabel(g.name)
+                    SheetGroup {
+                        g.lines.forEachIndexed { n, l ->
+                            val link = l.link
+                            GroupRow(l.words, link?.let { { runCatching { uri.openUri(it) } } }, chevron = link != null, minHeight = SHEET_ROW, divider = n < g.lines.lastIndex)
                         }
                     }
                 }
             }
-        },
-        confirmButton = { TextAction(say.close, onDone) },
-    )
+        }
+    }
+}
+
+/** A line of [TrackInfo]: its name quiet at the start, its value in ink at the end, wrapping when long. */
+@Composable
+private fun InfoLine(label: String, value: String, divider: Boolean) {
+    val scheme = MaterialTheme.colorScheme
+    Column {
+        Row(Modifier.fillMaxWidth().heightIn(min = SHEET_ROW).padding(horizontal = GROUP_INSET, vertical = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, maxLines = 1)
+            Text(value, Modifier.weight(1f).padding(start = 16.dp), style = MaterialTheme.typography.bodyMedium, textAlign = androidx.compose.ui.text.style.TextAlign.End)
+        }
+        if (divider) Hairline(startIndent = GROUP_INSET)
+    }
 }
 
 /** Shown instead of nothing while songs are selected: the batch actions. */
@@ -404,7 +474,7 @@ fun SelectionBar(actions: ActionsViewModel) {
     val selection by actions.selection.collectAsState()
     // Above the early return, so the picker can leave after the selection it cleared is gone.
     var picking by remember { mutableStateOf(false) }
-    NoriDialog(selection.takeIf { picking && it.isNotEmpty() }, { picking = false }) { songs ->
+    NoriSheet(selection.takeIf { picking && it.isNotEmpty() }, { picking = false }) { songs ->
         PlaylistPicker(songs, actions) { picking = false; actions.clearSelection() }
     }
     LaunchedEffect(selection.isEmpty()) { if (selection.isEmpty()) picking = false }
@@ -461,6 +531,8 @@ private fun SelectedCount(n: Int, modifier: Modifier) {
 
 /** How far a menu sheet's head and lines stand in from its sides. */
 private val SHEET_EDGE = 16.dp
+/** The room between a sheet's groups. */
+private val SHEET_GAP = 12.dp
 /** A menu sheet's line: Android's 48 dp touch target, so a long menu fits the screen. */
 private val SHEET_ROW = 48.dp
 /** Narrower than a page's glyphs, so six leave the line under the head room for the format. */

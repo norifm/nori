@@ -356,7 +356,7 @@ private fun BackupPasswordDialog(restore: Boolean, onDismiss: () -> Unit, onDone
         text = {
             Column {
                 if (!restore) Text(say.backupPasswordNewText, Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                FormField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+                FormField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), autofocus = true, onDone = { if (text.isNotEmpty()) onDone(text) })
             }
         },
         confirmButton = { TextAction(if (restore) say.backupOpen else say.backupSave, { onDone(text) }, enabled = text.isNotEmpty()) },
@@ -374,7 +374,7 @@ private fun KeyDialog(row: SettingRow.Ranked, onDismiss: () -> Unit, onSave: (St
         text = {
             Column {
                 Text(if (row.keySet) (if (row.keyed) say.paxsenixKeyChange else say.keyChange) else if (row.keyed) say.paxsenixKeyAsk else say.betterLyricsKeyAsk, Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                FormField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+                FormField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), autofocus = true, onDone = { if (!row.keyed || row.keySet || text.isNotBlank()) onSave(text) })
             }
         },
         confirmButton = { TextAction(say.save, { onSave(text) }, enabled = !row.keyed || row.keySet || text.isNotBlank()) },

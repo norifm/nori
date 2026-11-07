@@ -397,6 +397,37 @@ pub fn playlist_editable(playlist: &Playlist, user: &str, account: bool) -> bool
     account && !is_provider_id(&playlist.id) && playlist.owner.as_deref().is_none_or(|o| o.eq_ignore_ascii_case(user))
 }
 
+/// A playlist offered to take some songs, with which of them it has already.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct PlaylistChoice {
+    pub playlist: Playlist,
+    /// The songs it lacks, in the order asked: what adding to it sends. Empty when it has them all.
+    pub adds: Vec<String>,
+    /// How many of the songs it has already.
+    pub holds: u32,
+}
+
+/// Each playlist with what adding `songs` to it sends: the ones it lacks, each once. `held` is a
+/// playlist's song ids, None when they could not be read: it is offered taking every song then.
+pub fn playlist_choices(playlists: Vec<(Playlist, Option<Vec<String>>)>, songs: &[String]) -> Vec<PlaylistChoice> {
+    let mut asked: Vec<&str> = Vec::with_capacity(songs.len());
+    for id in songs {
+        if !asked.contains(&id.as_str()) {
+            asked.push(id);
+        }
+    }
+    playlists
+        .into_iter()
+        .map(|(playlist, held)| {
+            let has = |id: &str| held.as_ref().is_some_and(|h| h.iter().any(|x| x == id));
+            let adds: Vec<String> = asked.iter().filter(|id| !has(id)).map(|id| id.to_string()).collect();
+            let holds = (asked.len() - adds.len()) as u32;
+            PlaylistChoice { playlist, adds, holds }
+        })
+        .collect()
+}
+
 /// What a mix is called as a playlist saved to the server: "nori discover", then "nori discover 2" and on
 /// while `existing` (the account's playlist names) has the one before.
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -479,6 +510,19 @@ mod tests {
         for (p, user, account, want) in cases {
             assert_eq!(playlist_editable(&p, user, account), want, "{p:?} as {user}, account {account}");
         }
+    }
+
+    #[test]
+    fn a_playlist_choice_adds_only_the_songs_it_lacks() {
+        let list = |id: &str| Playlist { id: id.into(), ..Playlist::default() };
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let asked = ids(&["a", "b", "a", "c"]);
+        let got = playlist_choices(
+            vec![(list("has-none"), Some(ids(&["x"]))), (list("has-some"), Some(ids(&["c", "a"]))), (list("has-all"), Some(ids(&["c", "b", "a"]))), (list("unread"), None)],
+            &asked,
+        );
+        let seen: Vec<(&str, Vec<String>, u32)> = got.iter().map(|c| (c.playlist.id.as_str(), c.adds.clone(), c.holds)).collect();
+        assert_eq!(seen, [("has-none", ids(&["a", "b", "c"]), 0), ("has-some", ids(&["b"]), 2), ("has-all", vec![], 3), ("unread", ids(&["a", "b", "c"]), 0)]);
     }
 
     #[test]

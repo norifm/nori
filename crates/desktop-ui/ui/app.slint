@@ -128,6 +128,14 @@ export struct Detail {
     link: string,
 }
 
+// A playlist the picker offers: its name, cover and what it has of the songs; full when it has them all.
+export struct PlaylistChoice {
+    title: string,
+    sub: string,
+    art: string,
+    full: bool,
+}
+
 export struct SongRow {
     title: string,
     artist: string,
@@ -1070,6 +1078,148 @@ component MenuSheet inherits Rectangle {
     background: Theme.ground;
     border-width: 1px;
     border-color: Theme.hairline;
+}
+
+// A dialog over the dimmed page: its title, then what it holds (groups, a field, its buttons at the end).
+// A press beside it dismisses it.
+component Dialog inherits Rectangle {
+    in property <string> title;
+    in property <length> sheet-width: 380px;
+    callback dismissed;
+    background: Theme.ground.with-alpha(0.6);
+    TouchArea {
+        clicked => { root.dismissed(); }
+    }
+    MenuSheet {
+        x: (parent.width - self.width) / 2;
+        y: 80px;
+        width: min(root.sheet-width, parent.width - 32px);
+        height: min(body.preferred-height, parent.height - 120px);
+        TouchArea {}
+        body := VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+            if root.title != "": Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: 17px;
+                font-weight: 600;
+                wrap: word-wrap;
+            }
+            @children
+        }
+    }
+}
+
+// A dialog's lines on the surface, a step up from its paper: the popover's radius and inset, so the rows'
+// hover plates sit concentric in it, as the dialog's corners do round it.
+component DialogGroup inherits Rectangle {
+    border-radius: MenuShape.radius;
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: Theme.hairline;
+    VerticalLayout {
+        padding: MenuShape.inset;
+        @children
+    }
+}
+
+// A fact on a dialog's group: what it is in the quiet ink, its value at the end (in the accent when it opens
+// something), wrapping when long, and a hairline under it.
+component InfoLine inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> link;
+    in property <bool> divider: true;
+    callback clicked;
+    HorizontalLayout {
+        padding: 8px;
+        spacing: 16px;
+        Text {
+            text: root.label;
+            color: Theme.dim;
+            font-size: 13px;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.value;
+            color: root.link ? Theme.accent : Theme.text;
+            font-size: 13px;
+            horizontal-alignment: right;
+            wrap: word-wrap;
+            if root.link: TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.clicked(); }
+            }
+        }
+    }
+    if root.divider: Rectangle {
+        x: 8px;
+        y: parent.height - 1px;
+        width: parent.width - 16px;
+        height: 1px;
+        background: Theme.hairline;
+    }
+}
+
+// A playlist on the picker: its cover, its name and what it has of the songs; one that has them all is
+// checked and takes nothing.
+component ChoiceLine inherits Rectangle {
+    in property <image> picture;
+    in property <string> title;
+    in property <string> line;
+    in property <bool> full;
+    in property <bool> divider: true;
+    callback clicked;
+    height: 48px;
+    border-radius: MenuShape.inner;
+    background: ta.has-hover && !root.full ? Theme.hover : transparent;
+    HorizontalLayout {
+        padding: 6px;
+        padding-right: 8px;
+        spacing: 10px;
+        Art {
+            width: 36px;
+            height: 36px;
+            border-radius: 6px;
+            source: root.picture;
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: 13px;
+                overflow: elide;
+            }
+            Text {
+                text: root.line;
+                color: Theme.dim;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+        if root.full: Icon {
+            y: (parent.height - self.height) / 2;
+            glyph: Icons.check;
+            colour: Theme.text;
+            width: 18px;
+            height: 18px;
+        }
+    }
+    if root.divider: Rectangle {
+        x: 52px;
+        y: parent.height - 1px;
+        width: parent.width - self.x - 8px;
+        height: 1px;
+        background: Theme.hairline;
+    }
+    ta := TouchArea {
+        enabled: !root.full;
+        mouse-cursor: root.full ? default : pointer;
+        clicked => { root.clicked(); }
+    }
 }
 
 // What a menu is about, at its head: its artwork (its corner concentric with the popover's), its title and a
@@ -6002,13 +6152,13 @@ export component AppWindow inherits Window {
     in property <bool> sleeved;
     // The plugins' rows the devices panel shows too.
     in property <[SettingRow]> device-plugin-rows;
-    // Adding a song to a playlist: the sheet open, the playlists offered, whether a new one is being named,
-    // and its name.
+    // Adding a song to a playlist: the sheet open, the playlists offered (the core's `playlist_choices`, by
+    // index), whether a new one is being named, and its name.
     in-out property <bool> picker-open;
-    in property <[Card]> picker-playlists;
+    in property <[PlaylistChoice]> picker-choices;
     in-out property <bool> picker-naming;
     in-out property <string> picker-name;
-    callback add-to-playlist(string);
+    callback add-to-playlist(int);
     callback add-to-new-playlist(string);
     // The playlist shown can be changed (the core's `playlist_editable`): its list head renames and deletes it.
     in property <bool> page-editable;
@@ -8511,495 +8661,375 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.ask-open: Rectangle {
-            background: Theme.ground.with-alpha(0.6);
-            TouchArea {
-                clicked => { root.ask-open = false; }
+        if root.ask-open: Dialog {
+            title: root.ask-title;
+            sheet-width: 420px;
+            dismissed => { root.ask-open = false; }
+            if root.ask-note != "": Text {
+                text: root.ask-note;
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
             }
-            MenuSheet {
-                x: (parent.width - self.width) / 2;
-                y: 80px;
-                width: 420px;
-                height: ask-sheet.preferred-height;
-                TouchArea {}
-                ask-sheet := VerticalLayout {
-                    padding: 16px;
-                    spacing: 12px;
-                    Text {
-                        text: root.ask-title;
-                        color: Theme.text;
-                        font-size: 17px;
-                        font-weight: 700;
-                    }
-                    if root.ask-note != "": Text {
-                        text: root.ask-note;
-                        color: Theme.dim;
-                        font-size: 13px;
-                        wrap: word-wrap;
-                    }
-                    if root.ask-field: Field {
-                        height: 34px;
-                        border-radius: 8px;
-                        clip: true;
-                        secret: root.ask-secret;
-                        text <=> root.ask-text;
-                        accepted => {
-                            root.ask-open = false;
-                            root.setting-typed(root.ask-name, root.ask-text);
-                        }
-                    }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        Rectangle { horizontal-stretch: 1; }
-                        SmallButton {
-                            y: (parent.height - self.height) / 2;
-                            text: "Cancel";
-                            clicked => { root.ask-open = false; }
-                        }
-                        Capsule {
-                            text: root.ask-button;
-                            clicked => {
-                                root.ask-open = false;
-                                root.setting-typed(root.ask-name, root.ask-text);
-                            }
-                        }
+            if root.ask-field: Field {
+                height: 34px;
+                border-radius: 8px;
+                clip: true;
+                secret: root.ask-secret;
+                text <=> root.ask-text;
+                init => { self.take-focus(); }
+                accepted => {
+                    root.ask-open = false;
+                    root.setting-typed(root.ask-name, root.ask-text);
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Cancel";
+                    clicked => { root.ask-open = false; }
+                }
+                Capsule {
+                    text: root.ask-button;
+                    clicked => {
+                        root.ask-open = false;
+                        root.setting-typed(root.ask-name, root.ask-text);
                     }
                 }
             }
         }
 
-        if root.key-open: Rectangle {
-            background: Theme.ground.with-alpha(0.6);
-            TouchArea {
-                clicked => { root.key-open = false; }
+        if root.key-open: Dialog {
+            title: root.key-title + " key";
+            dismissed => { root.key-open = false; }
+            Field {
+                height: 34px;
+                border-radius: 8px;
+                clip: true;
+                icon: Icons.key;
+                secret: true;
+                placeholder: "Key";
+                text <=> root.key-text;
+                init => { self.take-focus(); }
+                accepted => {
+                    root.setting-typed("lyricsKey:" + root.key-service, root.key-text);
+                    root.key-open = false;
+                }
             }
-            MenuSheet {
-                x: (parent.width - self.width) / 2;
-                y: 80px;
-                width: 380px;
-                height: key-sheet.preferred-height;
-                TouchArea {}
-                key-sheet := VerticalLayout {
-                    padding: 16px;
-                    spacing: 12px;
-                    Text {
-                        text: root.key-title + " key";
-                        color: Theme.text;
-                        font-size: 17px;
-                        font-weight: 700;
+            HorizontalLayout {
+                spacing: 8px;
+                if root.key-set: SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Remove key";
+                    clicked => {
+                        root.setting-typed("lyricsKey:" + root.key-service, "");
+                        root.key-open = false;
                     }
-                    Field {
-                        height: 34px;
-                        border-radius: 8px;
-                        clip: true;
-                        icon: Icons.key;
-                        secret: true;
-                        placeholder: "Key";
-                        text <=> root.key-text;
-                        accepted => {
-                            root.setting-typed("lyricsKey:" + root.key-service, root.key-text);
-                            root.key-open = false;
-                        }
-                    }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        if root.key-set: SmallButton {
-                            y: (parent.height - self.height) / 2;
-                            text: "Remove key";
-                            clicked => {
-                                root.setting-typed("lyricsKey:" + root.key-service, "");
-                                root.key-open = false;
-                            }
-                        }
-                        Rectangle { horizontal-stretch: 1; }
-                        SmallButton {
-                            y: (parent.height - self.height) / 2;
-                            text: "Cancel";
-                            clicked => { root.key-open = false; }
-                        }
-                        Capsule {
-                            text: "Save";
-                            clicked => {
-                                root.setting-typed("lyricsKey:" + root.key-service, root.key-text);
-                                root.key-open = false;
-                            }
-                        }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Cancel";
+                    clicked => { root.key-open = false; }
+                }
+                Capsule {
+                    text: "Save";
+                    clicked => {
+                        root.setting-typed("lyricsKey:" + root.key-service, root.key-text);
+                        root.key-open = false;
                     }
                 }
             }
         }
 
-        if root.lyrics-sheet-open: Rectangle {
-            background: Theme.ground.with-alpha(0.6);
-            TouchArea {
-                clicked => { root.lyrics-sheet-open = false; }
-            }
-            MenuSheet {
-                x: (parent.width - self.width) / 2;
-                y: 80px;
-                width: 380px;
-                height: timing-sheet.preferred-height;
-                TouchArea {}
-                timing-sheet := VerticalLayout {
-                    padding: 16px;
-                    spacing: 12px;
-                    Text {
-                        text: "Lyrics";
-                        color: Theme.text;
-                        font-size: 17px;
-                        font-weight: 700;
-                    }
-                    Text {
-                        text: root.lyrics-from;
-                        color: Theme.text;
-                        font-size: 13px;
-                        wrap: word-wrap;
-                    }
-                    if root.lyrics-synced: Text {
-                        text: root.lyrics-timing;
-                        color: Theme.dim;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                    }
-                    // The shift in a slot of its own width, so − and + stay put as it changes.
-                    if root.lyrics-synced: HorizontalLayout {
-                        alignment: center;
-                        spacing: 8px;
-                        SmallButton {
-                            y: (parent.height - self.height) / 2;
-                            text: "−";
-                            clicked => { root.lyrics-nudge(-1); }
-                        }
+        // Where the lyrics came from and how they are timed; the offset a step earlier or later, in a slot of
+        // its own width so − and + stay put as it changes.
+        if root.lyrics-sheet-open: Dialog {
+            title: "Lyrics";
+            dismissed => { root.lyrics-sheet-open = false; }
+            DialogGroup {
+                Rectangle {
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 2px;
                         Text {
-                            width: 96px;
-                            text: root.lyrics-shift;
+                            text: root.lyrics-from;
                             color: Theme.text;
-                            font-size: 15px;
-                            font-weight: 600;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
+                            font-size: 13px;
+                            wrap: word-wrap;
                         }
-                        SmallButton {
-                            y: (parent.height - self.height) / 2;
-                            text: "+";
-                            clicked => { root.lyrics-nudge(1); }
-                        }
-                    }
-                    HorizontalLayout {
-                        alignment: end;
-                        spacing: 8px;
-                        if root.lyrics-yours: SmallButton {
-                            y: (parent.height - self.height) / 2;
-                            text: "Reset";
-                            clicked => { root.lyrics-nudge(0); }
-                        }
-                        Capsule {
-                            text: "Close";
-                            clicked => { root.lyrics-sheet-open = false; }
+                        if root.lyrics-synced: Text {
+                            text: root.lyrics-timing;
+                            color: Theme.dim;
+                            font-size: 12px;
+                            wrap: word-wrap;
                         }
                     }
+                    if root.lyrics-synced: Rectangle {
+                        x: 8px;
+                        y: parent.height - 1px;
+                        width: parent.width - 16px;
+                        height: 1px;
+                        background: Theme.hairline;
+                    }
+                }
+                if root.lyrics-synced: HorizontalLayout {
+                    padding-left: 8px;
+                    height: 40px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "Offset";
+                        color: Theme.text;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                    IconButton {
+                        y: (parent.height - self.height) / 2;
+                        glyph: Icons.minus;
+                        icon: 18px;
+                        clicked => { root.lyrics-nudge(-1); }
+                    }
+                    Text {
+                        width: 72px;
+                        text: root.lyrics-shift;
+                        color: Theme.text;
+                        font-size: 13px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    IconButton {
+                        y: (parent.height - self.height) / 2;
+                        glyph: Icons.plus;
+                        icon: 18px;
+                        clicked => { root.lyrics-nudge(1); }
+                    }
+                }
+            }
+            if root.lyrics-yours: DialogGroup {
+                MenuLine {
+                    icon: Icons.refresh;
+                    text: "Reset";
+                    divider: false;
+                    clicked => { root.lyrics-nudge(0); }
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                Capsule {
+                    text: "Done";
+                    clicked => { root.lyrics-sheet-open = false; }
                 }
             }
         }
 
-        if root.details-open: Rectangle {
-            background: Theme.ground.with-alpha(0.6);
-            TouchArea {
-                clicked => { root.details-open = false; }
+        if root.details-open: Dialog {
+            title: "Details";
+            sheet-width: 440px;
+            dismissed => { root.details-open = false; }
+            Flickable {
+                content-width: self.width;
+                vertical-stretch: 1;
+                min-height: min(lines.preferred-height, 120px);
+                preferred-height: lines.preferred-height;
+                content-height: lines.preferred-height;
+                lines := DialogGroup {
+                    width: parent.width;
+                    for d[i] in root.details: InfoLine {
+                        label: d.label;
+                        value: d.value;
+                        link: d.link != "";
+                        divider: i < root.details.length - 1;
+                        clicked => { root.setting-action("plugin-open:" + d.link); }
+                    }
+                }
             }
-            MenuSheet {
-                x: (parent.width - self.width) / 2;
-                y: 60px;
-                width: 440px;
-                height: min(details-sheet.preferred-height, parent.height - 120px);
-                TouchArea {}
-                details-sheet := VerticalLayout {
-                    padding: 16px;
-                    spacing: 12px;
-                    Text {
-                        text: "Details";
-                        color: Theme.text;
-                        font-size: 17px;
-                        font-weight: 700;
-                    }
-                    Flickable {
-                        content-width: self.width;
-                        vertical-stretch: 1;
-                        min-height: min(lines.preferred-height, 120px);
-                        preferred-height: lines.preferred-height;
-                        content-height: lines.preferred-height;
-                        lines := VerticalLayout {
-                            spacing: 8px;
-                            for d in root.details: VerticalLayout {
-                                Text {
-                                    text: d.label;
-                                    color: Theme.dim;
-                                    font-size: 11px;
-                                }
-                                Text {
-                                    text: d.value;
-                                    color: d.link != "" ? Theme.accent : Theme.text;
-                                    font-size: 13px;
-                                    wrap: word-wrap;
-                                    if d.link != "": TouchArea {
-                                        mouse-cursor: pointer;
-                                        clicked => { root.setting-action("plugin-open:" + d.link); }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    HorizontalLayout {
-                        alignment: end;
-                        Capsule {
-                            text: "Close";
-                            clicked => { root.details-open = false; }
-                        }
-                    }
+            HorizontalLayout {
+                alignment: end;
+                Capsule {
+                    text: "Done";
+                    clicked => { root.details-open = false; }
                 }
             }
         }
 
-        // Add to playlist: New playlist first, which takes its name in its place, then the playlists the song
-        // can go into; picking one adds it.
-        if root.picker-open: Rectangle {
-            background: Theme.ground.with-alpha(0.6);
-            TouchArea {
-                clicked => { root.picker-open = false; }
-            }
-            MenuSheet {
-                x: (parent.width - self.width) / 2;
-                y: 60px;
-                width: 380px;
-                height: min(picker-sheet.preferred-height, parent.height - 120px);
-                TouchArea {}
-                picker-sheet := VerticalLayout {
-                    padding: 16px;
-                    spacing: 12px;
-                    Text {
-                        text: "Add to playlist";
-                        color: Theme.text;
-                        font-size: 17px;
-                        font-weight: 700;
-                    }
-                    if !root.picker-naming: MenuRow {
+        // Add to playlist: New playlist first, which takes its name in its place, then the playlists, each
+        // saying what it has of the song; picking one adds it.
+        if root.picker-open: Dialog {
+            title: "Add to playlist";
+            dismissed => { root.picker-open = false; }
+            DialogGroup {
+                if !root.picker-naming: MenuLine {
+                    icon: Icons.plus;
+                    text: "New playlist";
+                    divider: false;
+                    clicked => { root.picker-naming = true; }
+                }
+                if root.picker-naming: HorizontalLayout {
+                    spacing: 8px;
+                    Field {
+                        height: 32px;
+                        border-radius: MenuShape.inner;
+                        clip: true;
                         icon: Icons.plus;
-                        text: "New playlist";
-                        clicked => { root.picker-naming = true; }
-                    }
-                    if root.picker-naming: HorizontalLayout {
-                        spacing: 8px;
-                        Field {
-                            height: 34px;
-                            border-radius: 8px;
-                            clip: true;
-                            icon: Icons.plus;
-                            placeholder: "Name";
-                            text <=> root.picker-name;
-                            init => { self.take-focus(); }
-                            accepted => {
-                                if root.picker-name != "" {
-                                    root.add-to-new-playlist(root.picker-name);
-                                }
-                            }
-                        }
-                        Capsule {
-                            y: (parent.height - self.height) / 2;
-                            text: "Create";
-                            clicked => {
-                                if root.picker-name != "" {
-                                    root.add-to-new-playlist(root.picker-name);
-                                }
-                            }
-                        }
-                    }
-                    Flickable {
-                        content-width: self.width;
-                        vertical-stretch: 1;
-                        min-height: min(choices.preferred-height, 120px);
-                        preferred-height: choices.preferred-height;
-                        content-height: choices.preferred-height;
-                        choices := VerticalLayout {
-                            for c in root.picker-playlists: MenuRow {
-                                icon: Icons.playlist;
-                                text: c.title;
-                                detail: c.sub;
-                                clicked => { root.add-to-playlist(c.id); }
-                            }
-                        }
-                    }
-                    HorizontalLayout {
-                        alignment: end;
-                        SmallButton {
-                            text: "Cancel";
-                            clicked => { root.picker-open = false; }
-                        }
-                    }
-                }
-            }
-        }
-
-        if root.rename-open: Rectangle {
-            background: Theme.ground.with-alpha(0.6);
-            TouchArea {
-                clicked => { root.rename-open = false; }
-            }
-            MenuSheet {
-                x: (parent.width - self.width) / 2;
-                y: 80px;
-                width: 380px;
-                height: rename-sheet.preferred-height;
-                TouchArea {}
-                rename-sheet := VerticalLayout {
-                    padding: 16px;
-                    spacing: 12px;
-                    Text {
-                        text: "Rename playlist";
-                        color: Theme.text;
-                        font-size: 17px;
-                        font-weight: 700;
-                    }
-                    Field {
-                        height: 34px;
-                        border-radius: 8px;
-                        clip: true;
-                        icon: Icons.edit-pencil;
-                        placeholder: "Name";
-                        text <=> root.rename-name;
+                        placeholder: "Playlist name";
+                        text <=> root.picker-name;
                         init => { self.take-focus(); }
-                        accepted => { root.rename-playlist(root.rename-name); }
-                    }
-                    HorizontalLayout {
-                        alignment: end;
-                        spacing: 8px;
-                        SmallButton {
-                            y: (parent.height - self.height) / 2;
-                            text: "Cancel";
-                            clicked => { root.rename-open = false; }
-                        }
-                        Capsule {
-                            text: "Rename";
-                            clicked => { root.rename-playlist(root.rename-name); }
-                        }
-                    }
-                }
-            }
-        }
-
-        if root.delete-open: Rectangle {
-            background: Theme.ground.with-alpha(0.6);
-            TouchArea {
-                clicked => { root.delete-open = false; }
-            }
-            MenuSheet {
-                x: (parent.width - self.width) / 2;
-                y: 80px;
-                width: 380px;
-                height: delete-sheet.preferred-height;
-                TouchArea {}
-                delete-sheet := VerticalLayout {
-                    padding: 16px;
-                    spacing: 12px;
-                    Text {
-                        text: "Delete “" + root.page-title + "”?";
-                        color: Theme.text;
-                        font-size: 17px;
-                        font-weight: 700;
-                        wrap: word-wrap;
-                    }
-                    Text {
-                        text: "This can’t be undone.";
-                        color: Theme.dim;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                    }
-                    HorizontalLayout {
-                        alignment: end;
-                        spacing: 8px;
-                        SmallButton {
-                            y: (parent.height - self.height) / 2;
-                            text: "Cancel";
-                            clicked => { root.delete-open = false; }
-                        }
-                        Capsule {
-                            text: "Delete";
-                            icon: Icons.trash;
-                            ink: Theme.danger;
-                            label: Theme.ground;
-                            clicked => { root.delete-playlist(); }
-                        }
-                    }
-                }
-            }
-        }
-
-        if root.join-open: Rectangle {
-            background: Theme.ground.with-alpha(0.6);
-            TouchArea {
-                clicked => { root.join-open = false; }
-            }
-            MenuSheet {
-                x: (parent.width - self.width) / 2;
-                y: 80px;
-                width: 420px;
-                height: sheet.preferred-height;
-                TouchArea {}
-                sheet := VerticalLayout {
-                    padding: 16px;
-                    spacing: 12px;
-                    HorizontalLayout {
-                        alignment: center;
-                        Icon {
-                            glyph: Icons.community;
-                            colour: Theme.text;
-                            width: 30px;
-                            height: 30px;
-                        }
-                    }
-                    Text {
-                        text: "Join a jam or pair devices";
-                        color: Theme.text;
-                        font-size: 17px;
-                        font-weight: 700;
-                        horizontal-alignment: center;
-                    }
-                    Text {
-                        text: "Paste the invite link someone sent you. You can ask for songs, and see what plays and who added it.";
-                        color: Theme.dim;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                        horizontal-alignment: center;
-                    }
-                    Field {
-                        height: 34px;
-                        border-radius: 8px;
-                        clip: true;
-                        icon: Icons.community;
-                        placeholder: "https://…/nori/jam#…";
-                        text <=> root.join-link;
-                        accepted => { root.join-jam(root.join-link); }
-                    }
-                    if root.join-error != "": Text {
-                        text: root.join-error;
-                        color: Theme.danger;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                    }
-                    HorizontalLayout {
-                        alignment: end;
-                        spacing: 8px;
-                        SmallButton {
-                            text: "Cancel";
-                            clicked => { root.join-open = false; }
-                        }
-                        Capsule {
-                            text: root.join-busy ? "Joining…" : "Join";
-                            icon: Icons.community;
-                            clicked => {
-                                if !root.join-busy {
-                                    root.join-jam(root.join-link);
-                                }
+                        accepted => {
+                            if root.picker-name != "" {
+                                root.add-to-new-playlist(root.picker-name);
                             }
+                        }
+                    }
+                    Capsule {
+                        y: (parent.height - self.height) / 2;
+                        text: "Create";
+                        clicked => {
+                            if root.picker-name != "" {
+                                root.add-to-new-playlist(root.picker-name);
+                            }
+                        }
+                    }
+                }
+            }
+            if root.picker-choices.length > 0: Flickable {
+                content-width: self.width;
+                vertical-stretch: 1;
+                min-height: min(choices.preferred-height, 120px);
+                preferred-height: choices.preferred-height;
+                content-height: choices.preferred-height;
+                choices := DialogGroup {
+                    width: parent.width;
+                    for c[i] in root.picker-choices: ChoiceLine {
+                        picture: root.art(c.art, 0, root.covers-rev);
+                        title: c.title;
+                        line: c.sub;
+                        full: c.full;
+                        divider: i < root.picker-choices.length - 1;
+                        clicked => { root.add-to-playlist(i); }
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                SmallButton {
+                    text: "Cancel";
+                    clicked => { root.picker-open = false; }
+                }
+            }
+        }
+
+        if root.rename-open: Dialog {
+            title: "Rename playlist";
+            dismissed => { root.rename-open = false; }
+            Field {
+                height: 34px;
+                border-radius: 8px;
+                clip: true;
+                icon: Icons.edit-pencil;
+                placeholder: "Name";
+                text <=> root.rename-name;
+                init => { self.take-focus(); }
+                accepted => { root.rename-playlist(root.rename-name); }
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Cancel";
+                    clicked => { root.rename-open = false; }
+                }
+                Capsule {
+                    text: "Rename";
+                    clicked => { root.rename-playlist(root.rename-name); }
+                }
+            }
+        }
+
+        if root.delete-open: Dialog {
+            title: "Delete “" + root.page-title + "”?";
+            dismissed => { root.delete-open = false; }
+            Text {
+                text: "This can’t be undone.";
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Cancel";
+                    clicked => { root.delete-open = false; }
+                }
+                Capsule {
+                    text: "Delete";
+                    icon: Icons.trash;
+                    ink: Theme.danger;
+                    label: Theme.ground;
+                    clicked => { root.delete-playlist(); }
+                }
+            }
+        }
+
+        if root.join-open: Dialog {
+            sheet-width: 420px;
+            dismissed => { root.join-open = false; }
+            HorizontalLayout {
+                alignment: center;
+                Icon {
+                    glyph: Icons.community;
+                    colour: Theme.text;
+                    width: 30px;
+                    height: 30px;
+                }
+            }
+            Text {
+                text: "Join a jam or pair devices";
+                color: Theme.text;
+                font-size: 17px;
+                font-weight: 600;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: "Paste the invite link someone sent you. You can ask for songs, and see what plays and who added it.";
+                color: Theme.dim;
+                font-size: 12px;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+            Field {
+                height: 34px;
+                border-radius: 8px;
+                clip: true;
+                icon: Icons.community;
+                placeholder: "https://…/nori/jam#…";
+                text <=> root.join-link;
+                accepted => { root.join-jam(root.join-link); }
+            }
+            if root.join-error != "": Text {
+                text: root.join-error;
+                color: Theme.danger;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                SmallButton {
+                    text: "Cancel";
+                    clicked => { root.join-open = false; }
+                }
+                Capsule {
+                    text: root.join-busy ? "Joining…" : "Join";
+                    icon: Icons.community;
+                    clicked => {
+                        if !root.join-busy {
+                            root.join-jam(root.join-link);
                         }
                     }
                 }
@@ -9007,113 +9037,100 @@ export component AppWindow inherits Window {
         }
 
         // Sign in: the steps to copy a signed-in browser's cookies, and the field they are pasted in.
-        if root.signin-open: Rectangle {
-            background: Theme.ground.with-alpha(0.6);
-            TouchArea {
-                clicked => { root.signin-closed(); }
+        if root.signin-open: Dialog {
+            sheet-width: 440px;
+            dismissed => { root.signin-closed(); }
+            Text {
+                text: root.signin-user != "" ? root.signin-service : "Sign in to " + root.signin-service;
+                color: Theme.text;
+                font-size: 17px;
+                font-weight: 600;
+                horizontal-alignment: center;
             }
-            MenuSheet {
-                x: (parent.width - self.width) / 2;
-                y: max(40px, (parent.height - self.height) / 2);
-                width: 440px;
-                height: signin-sheet.preferred-height;
-                TouchArea {}
-                signin-sheet := VerticalLayout {
-                    padding: 16px;
-                    spacing: 12px;
-                    Text {
-                        text: root.signin-user != "" ? root.signin-service : "Sign in to " + root.signin-service;
-                        color: Theme.text;
-                        font-size: 17px;
-                        font-weight: 700;
-                        horizontal-alignment: center;
-                    }
-                    if root.signin-user != "": Text {
-                        text: "Signed in as " + root.signin-user;
-                        color: Theme.dim;
-                        font-size: 13px;
-                        horizontal-alignment: center;
-                    }
-                    if root.signin-user != "": HorizontalLayout {
-                        alignment: center;
-                        Capsule {
-                            text: "Sign out";
-                            icon: Icons.log-out;
-                            ink: Theme.plate;
-                            label: Theme.plate-ink;
-                            clicked => { root.sign-out(); }
-                        }
-                    }
-                    if root.signin-user == "": Text {
-                        text: root.signin-busy ? "Finish signing in in the window that opened." : root.signin-ended ? root.signin-service + " signed you out. Sign in again to see your library and likes." : "See your own Home, your library and your likes. Music plays without it too.";
-                        color: Theme.dim;
-                        font-size: 13px;
-                        wrap: word-wrap;
-                        horizontal-alignment: center;
-                    }
-                    if root.signin-user == "": HorizontalLayout {
-                        alignment: center;
-                        Capsule {
-                            text: root.signin-busy ? "Signing in…" : "Sign in";
-                            icon: Icons.user;
-                            clicked => { root.sign-in-window(); }
-                        }
-                    }
-                    if root.signin-error != "": Text {
-                        text: root.signin-error;
-                        color: Theme.danger;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                        horizontal-alignment: center;
-                    }
-                    // Pasting, the advanced way in: a quiet link until asked for.
-                    if root.signin-user == "" && !root.signin-pasting: HorizontalLayout {
-                        alignment: center;
-                        ShowAllLink {
-                            text: "Paste cookies instead";
-                            font-size: 12px;
-                            clicked => { root.signin-pasting = true; }
-                        }
-                    }
-                    if root.signin-user == "" && root.signin-pasting: Text {
-                        text: "Sign in in a private browser window, copy the Cookie header of any request the page makes from the developer tools, and paste it here.";
-                        color: Theme.dim;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                    }
-                    if root.signin-user == "" && root.signin-pasting: HorizontalLayout {
-                        spacing: 8px;
-                        Field {
-                            icon: Icons.key;
-                            secret: true;
-                            placeholder: "Cookie header";
-                            text <=> root.signin-text;
-                            accepted => { root.sign-in(root.signin-text); }
-                        }
-                        SmallButton {
-                            y: (parent.height - self.height) / 2;
-                            text: "Open the sign-in page";
-                            clicked => { root.open-sign-in-page(); }
-                        }
-                        SmallButton {
-                            y: (parent.height - self.height) / 2;
-                            text: "Sign in";
-                            enabled: root.signin-text != "";
-                            clicked => { root.sign-in(root.signin-text); }
-                        }
-                    }
-                    HorizontalLayout {
-                        alignment: end;
-                        spacing: 8px;
-                        if root.signin-ended: SmallButton {
-                            text: "Don’t show again";
-                            clicked => { root.sign-in-quiet(); }
-                        }
-                        SmallButton {
-                            text: "Close";
-                            clicked => { root.signin-closed(); }
-                        }
-                    }
+            if root.signin-user != "": Text {
+                text: "Signed in as " + root.signin-user;
+                color: Theme.dim;
+                font-size: 13px;
+                horizontal-alignment: center;
+            }
+            if root.signin-user != "": HorizontalLayout {
+                alignment: center;
+                Capsule {
+                    text: "Sign out";
+                    icon: Icons.log-out;
+                    ink: Theme.plate;
+                    label: Theme.plate-ink;
+                    clicked => { root.sign-out(); }
+                }
+            }
+            if root.signin-user == "": Text {
+                text: root.signin-busy ? "Finish signing in in the window that opened." : root.signin-ended ? root.signin-service + " signed you out. Sign in again to see your library and likes." : "See your own Home, your library and your likes. Music plays without it too.";
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+            if root.signin-user == "": HorizontalLayout {
+                alignment: center;
+                Capsule {
+                    text: root.signin-busy ? "Signing in…" : "Sign in";
+                    icon: Icons.user;
+                    clicked => { root.sign-in-window(); }
+                }
+            }
+            if root.signin-error != "": Text {
+                text: root.signin-error;
+                color: Theme.danger;
+                font-size: 12px;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+            // Pasting, the advanced way in: a quiet link until asked for.
+            if root.signin-user == "" && !root.signin-pasting: HorizontalLayout {
+                alignment: center;
+                ShowAllLink {
+                    text: "Paste cookies instead";
+                    font-size: 12px;
+                    clicked => { root.signin-pasting = true; }
+                }
+            }
+            if root.signin-user == "" && root.signin-pasting: Text {
+                text: "Sign in in a private browser window, copy the Cookie header of any request the page makes from the developer tools, and paste it here.";
+                color: Theme.dim;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            if root.signin-user == "" && root.signin-pasting: HorizontalLayout {
+                spacing: 8px;
+                Field {
+                    icon: Icons.key;
+                    secret: true;
+                    placeholder: "Cookie header";
+                    text <=> root.signin-text;
+                    accepted => { root.sign-in(root.signin-text); }
+                }
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Open the sign-in page";
+                    clicked => { root.open-sign-in-page(); }
+                }
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Sign in";
+                    enabled: root.signin-text != "";
+                    clicked => { root.sign-in(root.signin-text); }
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                if root.signin-ended: SmallButton {
+                    text: "Don’t show again";
+                    clicked => { root.sign-in-quiet(); }
+                }
+                SmallButton {
+                    text: "Close";
+                    clicked => { root.signin-closed(); }
                 }
             }
         }
@@ -9253,77 +9270,64 @@ export component AppWindow inherits Window {
         }
 
         // Pair a device: this computer's code to scan with nori, or to copy, in a sheet over the window.
-        if root.pairing-open: Rectangle {
-            background: Theme.ground.with-alpha(0.6);
-            TouchArea {
-                clicked => { root.pairing-open = false; }
+        if root.pairing-open: Dialog {
+            sheet-width: 380px;
+            dismissed => { root.pairing-open = false; }
+            Text {
+                text: "Pair a device";
+                color: Theme.text;
+                font-size: 17px;
+                font-weight: 600;
+                horizontal-alignment: center;
             }
-            MenuSheet {
-                x: (parent.width - self.width) / 2;
-                y: max(40px, (parent.height - self.height) / 2);
-                width: 380px;
-                height: pair-sheet.preferred-height;
-                TouchArea {}
-                pair-sheet := VerticalLayout {
-                    padding: 16px;
-                    spacing: 12px;
-                    Text {
-                        text: "Pair a device";
-                        color: Theme.text;
-                        font-size: 17px;
-                        font-weight: 700;
-                        horizontal-alignment: center;
+            Text {
+                text: "Scan this code on your other device, or paste the link there. Paired devices can move and control playback on this network.";
+                color: Theme.dim;
+                font-size: 12px;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 208px;
+                    height: 208px;
+                    border-radius: 16px;
+                    background: white;
+                    Image {
+                        width: 184px;
+                        height: 184px;
+                        source: root.pairing-qr;
+                        image-rendering: pixelated;
                     }
-                    Text {
-                        text: "Scan this code on your other device, or paste the link there. Paired devices can move and control playback on this network.";
-                        color: Theme.dim;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                        horizontal-alignment: center;
-                    }
-                    HorizontalLayout {
-                        alignment: center;
-                        Rectangle {
-                            width: 208px;
-                            height: 208px;
-                            border-radius: 16px;
-                            background: white;
-                            Image {
-                                width: 184px;
-                                height: 184px;
-                                source: root.pairing-qr;
-                                image-rendering: pixelated;
-                            }
-                        }
-                    }
-                    Rectangle {
-                        height: 32px;
-                        border-radius: 8px;
-                        background: Theme.fill;
-                        Text {
-                            x: 10px;
-                            width: parent.width - 20px;
-                            text: root.pairing-link;
-                            color: Theme.dim;
-                            font-size: 11px;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                    }
-                    HorizontalLayout {
-                        alignment: end;
-                        spacing: 8px;
-                        SmallButton {
-                            y: (parent.height - self.height) / 2;
-                            text: "Done";
-                            clicked => { root.pairing-open = false; }
-                        }
-                        Capsule {
-                            text: "Copy link";
-                            icon: Icons.copy;
-                            clicked => { root.copy-pairing(); }
-                        }
-                    }
+                }
+            }
+            Rectangle {
+                height: 32px;
+                border-radius: 8px;
+                background: Theme.fill;
+                Text {
+                    x: 10px;
+                    width: parent.width - 20px;
+                    text: root.pairing-link;
+                    color: Theme.dim;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Done";
+                    clicked => { root.pairing-open = false; }
+                }
+                Capsule {
+                    text: "Copy link";
+                    icon: Icons.copy;
+                    clicked => { root.copy-pairing(); }
                 }
             }
         }

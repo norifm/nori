@@ -294,12 +294,6 @@ private fun outputIcon(look: dev.nori.music.ffi.remote.OutputLook) = when (look)
 @Composable
 private fun SheetRow(name: String, icon: ImageVector, divider: Boolean, onClick: () -> Unit) = GroupRow(name, onClick, icon = icon, divider = divider)
 
-@Composable
-private fun SheetTitle(title: String) = Text(
-    title, Modifier.padding(horizontal = Space.gutter).padding(top = 4.dp, bottom = 12.dp),
-    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis,
-)
-
 /** A place the music can play: the one playing has its name and glyph in the accent, the rest are ink. */
 @Composable
 private fun DeviceRow(name: String, icon: ImageVector, subtitle: String?, active: Boolean, divider: Boolean, trailing: String? = null, onClick: () -> Unit) {

@@ -424,8 +424,9 @@ private fun Playlists(actions: ActionsViewModel, vm: PlaylistsViewModel = viewMo
     NoriDialog(creating, { creating = false }) {
         AlertCard(
             title = { Text(say.newPlaylist) },
-            text = { FormField(name, { name = it }, label = { Text(say.name) }, singleLine = true) },
+            text = { FormField(name, { name = it }, label = { Text(say.name) }, singleLine = true, autofocus = true, onDone = { if (name.isNotBlank()) { vm.create(name.trim()); creating = false } }) },
             confirmButton = { TextAction(say.create, { vm.create(name.trim()); creating = false }, enabled = name.isNotBlank()) },
+            dismissButton = { TextAction(say.cancel, { creating = false }) },
         )
     }
     val smart = LibrarySection.SMART in LocalRules.current.sections
@@ -513,8 +514,9 @@ private fun Radio(vm: RadioViewModel = viewModel()) {
     NoriDialog(adding, { adding = false }) {
         AlertCard(
             title = { Text(say.newStation) },
-            text = { Column { FormField(name, { name = it }, label = { Text(say.name) }, singleLine = true); Spacer(Modifier.height(10.dp)); FormField(url, { url = it }, label = { Text(say.streamUrl) }, singleLine = true) } },
+            text = { Column { FormField(name, { name = it }, label = { Text(say.name) }, singleLine = true, autofocus = true); Spacer(Modifier.height(10.dp)); FormField(url, { url = it }, label = { Text(say.streamUrl) }, singleLine = true, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri), onDone = { if (dev.nori.music.ffi.library.radioCanAdd(name, url)) { vm.add(name.trim(), url.trim()); adding = false } }) } },
             confirmButton = { TextAction(say.add, { vm.add(name.trim(), url.trim()); adding = false }, enabled = dev.nori.music.ffi.library.radioCanAdd(name, url)) },
+            dismissButton = { TextAction(say.cancel, { adding = false }) },
         )
     }
     LoadBox(load) { stations ->

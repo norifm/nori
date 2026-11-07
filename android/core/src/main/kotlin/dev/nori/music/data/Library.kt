@@ -319,6 +319,10 @@ class Library(
 
     suspend fun addToPlaylist(id: String, songIds: List<String>) = writePlaylist(Write.AddToPlaylist(id, songIds))
 
+    /** The playlists [songIds] can go into, each with the ones it lacks (the core's `playlist_choices`). */
+    suspend fun playlistChoices(songIds: List<String>): List<dev.nori.music.ffi.library.PlaylistChoice> =
+        withContext(Dispatchers.IO) { lifted { client.playlistChoices(songIds) } }
+
     suspend fun deletePlaylist(id: String) = writePlaylist(Write.DeletePlaylist(id))
 
     /** Not worth queueing: by the time it could be replayed it is no longer true. */

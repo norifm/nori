@@ -235,7 +235,7 @@ if want plugins; then section "plugins: a repo added, orbit installed from it, t
   tapnode content-desc Details
   check "its lines join the song's info" scrolled_to 'Search the web'
   adb exec-out screencap -p > "$shots/song-info.png"
-  tapnode text Close
+  adb shell input keyevent 4
   # Its rows join the devices sheet ("Playing on") after nori's own, remote control on or not.
   "$app" open devices >/dev/null
   check "its rows show on the devices sheet under its name" scrolled_to 'text="SHOWCASE · CONTROLS"'

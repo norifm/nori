@@ -77,6 +77,22 @@ impl Client {
         })
     }
 
+    /// The playlists the signed-in account may add `song_ids` to, each with the ones it lacks
+    /// ([`crate::menus::playlist_choices`]). Each page is the stored one while fresh, else asked, the
+    /// playlists' together.
+    pub async fn playlist_choices(&self, song_ids: Vec<String>) -> NetResult<Vec<crate::menus::PlaylistChoice>> {
+        let Some(user) = self.core.account.read().as_ref().map(|a| a.user.clone()) else { return Ok(Vec::new()) };
+        let account = self.core.rules().account;
+        let Some(Page::Playlists { v }) = self.cached_or_fetched(Read::PlaylistList).await? else { return Ok(Vec::new()) };
+        let mine: Vec<_> = v.into_iter().filter(|p| crate::menus::playlist_editable(p, &user, account)).collect();
+        let pages = futures_util::future::join_all(mine.iter().map(|p| self.cached_or_fetched(Read::PlaylistById { id: p.id.clone() }))).await;
+        let held = pages.into_iter().map(|page| match page {
+            Ok(Some(Page::PlaylistPage { v })) => Some(v.songs.into_iter().map(|s| s.id).collect()),
+            _ => None,
+        });
+        Ok(crate::menus::playlist_choices(mine.into_iter().zip(held).collect(), &song_ids))
+    }
+
     /// What playing playlist `id` plays, asked of the server now.
     pub async fn playlist_songs_of(&self, id: String) -> NetResult<Vec<Song>> {
         Ok(match self.read_now(Read::PlaylistSongs { id }).await? {
@@ -306,6 +322,32 @@ pub(crate) mod tests {
         assert!(block(c.star(Starrable::Song, "lib-refused".into(), false, seen.clone())).is_err());
         assert_eq!(*seen.0.lock(), [(Some(true), true), (Some(false), true), (Some(true), true)]);
         assert_eq!(c.core.stars.lock().songs.get("lib-refused"), Some(&true));
+    }
+
+    #[test]
+    fn playlist_choices_mark_held_songs_and_show_one_just_made() {
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        let list = |names: &str| format!(r#"{{"subsonic-response":{{"status":"ok","playlists":{{"playlist":[{names}]}}}}}}"#);
+        let road = r#"{"id":"1","name":"Road","owner":"u"}"#;
+        let theirs = r#"{"id":"2","name":"Theirs","owner":"someone"}"#;
+        let rain = r#"{"id":"3","name":"Rain","owner":"u"}"#;
+        let songs = |id: &str, ids: &[&str]| {
+            let entry: Vec<String> = ids.iter().map(|s| format!(r#"{{"id":"{s}","title":"{s}","isDir":false}}"#)).collect();
+            format!(r#"{{"subsonic-response":{{"status":"ok","playlist":{{"id":"{id}","name":"p","entry":[{}]}}}}}}"#, entry.join(","))
+        };
+        let seen = |c: &Client| -> Vec<(String, Vec<String>, u32)> {
+            block(c.playlist_choices(vec!["s1".into(), "s2".into()])).unwrap().into_iter().map(|p| (p.playlist.name, p.adds, p.holds)).collect()
+        };
+        fake.answer(&list(&format!("{road},{theirs}")));
+        fake.answer(&songs("1", &["s1"]));
+        assert_eq!(seen(&c), [("Road".to_string(), vec!["s2".to_string()], 1)], "another user's playlist is not offered");
+        fake.answer(crate::client::tests::OK);
+        block(c.write(Write::CreatePlaylist { name: "Rain".into(), song_ids: vec!["s1".into(), "s2".into()] })).unwrap();
+        fake.answer(&list(&format!("{road},{theirs},{rain}")));
+        fake.answer(&songs("3", &["s1", "s2"]));
+        let asked = fake.asked().len();
+        assert_eq!(seen(&c), [("Road".to_string(), vec!["s2".to_string()], 1), ("Rain".to_string(), vec![], 2)]);
+        assert_eq!(fake.asked().len(), asked + 2, "the list again and the new playlist; Road's songs are still fresh");
     }
 
     const GENRES: &str = r#"{"subsonic-response":{"status":"ok","genres":{"genre":[{"value":"Rock","songCount":1,"albumCount":1}]}}}"#;

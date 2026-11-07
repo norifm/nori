@@ -85,6 +85,8 @@ pub enum Msg {
     Starred,
     /// A link to a song from the server, to copy; None when it made none.
     Shared(Option<String>),
+    /// The playlists song `0` may go into, each with what it has of it; empty when they could not be read.
+    Choices(String, Vec<nori_core::menus::PlaylistChoice>),
     /// A queue another device or app left on the server, worth offering here, or none.
     Offer(Option<nori_core::library::QueueOffer>),
     /// A plugin installed (its id), or why not.

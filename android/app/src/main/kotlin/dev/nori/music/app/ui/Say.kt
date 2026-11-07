@@ -181,6 +181,15 @@ class Say(private val r: Resources) {
     val similarArtists: String = r.getString(R.string.similar_artists)
     val sleepTimer: String = r.getString(R.string.sleep_timer)
     val addToPlaylist: String = r.getString(R.string.add_to_playlist)
+    val playlistName: String = r.getString(R.string.playlist_name)
+    val lyricsOffset: String = r.getString(R.string.lyrics_offset)
+    val lyricsEarlier: String = r.getString(R.string.lyrics_earlier)
+    /** What a playlist offered for [asked] songs has of them: its size when none, else how many. */
+    fun playlistHolds(holds: Int, asked: Int, songs: Int): String = when (holds) {
+        0 -> songs(songs)
+        asked -> r.getQuantityString(R.plurals.playlist_has_all, asked, asked)
+        else -> r.getString(R.string.playlist_has_some, holds, asked)
+    }
     val details: String = r.getString(R.string.details)
     val playlist: String = r.getString(R.string.playlist)
     val clearSelection: String = r.getString(R.string.clear_selection)

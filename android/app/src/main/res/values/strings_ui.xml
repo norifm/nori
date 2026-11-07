@@ -98,6 +98,12 @@
     <string name="similar_artists">Similar artists</string>
     <string name="sleep_timer">Sleep timer</string>
     <string name="add_to_playlist">Add to playlist</string>
+    <string name="playlist_name">Playlist name</string>
+    <plurals name="playlist_has_all">
+        <item quantity="one">Has it</item>
+        <item quantity="other">Has all %d</item>
+    </plurals>
+    <string name="playlist_has_some">Has %1$d of %2$d</string>
     <string name="details">Details</string>
     <string name="playlist">Playlist</string>
     <string name="clear_selection">Clear selection</string>
@@ -355,6 +361,8 @@
     <string name="lyrics_timed_lines">timed line by line</string>
     <string name="lyrics_source">From %1$s · %2$s</string>
     <string name="lyrics_shift">%1$+.2f s</string>
+    <string name="lyrics_offset">Offset</string>
+    <string name="lyrics_earlier">Earlier</string>
     <string name="lyrics_timing_not_checked">Not checked against the singing yet</string>
     <string name="lyrics_timing_does_not_fit">Checked against the singing: does not fit</string>
     <string name="lyrics_timing_unsure">Checked against the singing: can\'t tell</string>

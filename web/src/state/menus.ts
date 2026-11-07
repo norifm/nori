@@ -1,20 +1,22 @@
 // Menus: a song's (the core's `song_menu`, worded and done here), a card's, adding to a playlist, a
 // playlist's name. What each does is the core's; this offers it.
 
-import { ask, read } from "../rpc";
+import { ask } from "../rpc";
 import { W } from "../words";
 import { library } from "./library.svelte";
 import { player } from "./player.svelte";
 import { remote } from "./remote.svelte";
 import { go, route } from "./route.svelte";
 import { ui, type Anchor, type Head, type Item } from "./ui.svelte";
-import type { MenuAction, Playlist, Song, Whole } from "./types";
+import type { MenuAction, PlaylistChoice, Song, Whole } from "./types";
 
 /** Picks a playlist for `songs`, or makes a new one with them there. */
 export async function addToPlaylist(songs: Song[]) {
-  const { playlists } = await read<{ playlists: Playlist[] }>({ kind: "playlists" });
+  const songIds = songs.map((s) => s.id);
   ui.open = null;
-  ui.picking = { songIds: songs.map((s) => s.id), playlists: (playlists ?? []).filter((p) => p.editable) };
+  const picking = (ui.picking = { songIds, choices: null });
+  const choices = await ask<string>("playlist_choices", JSON.stringify(songIds)).then((j) => JSON.parse(j) as PlaylistChoice[], () => []);
+  if (ui.picking === picking) ui.picking = { songIds, choices };
 }
 
 /** An album's, playlist's, artist's or mix's card menu, opening `at`, as the desktop's: play it, play it

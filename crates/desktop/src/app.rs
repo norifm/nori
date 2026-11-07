@@ -34,7 +34,7 @@ use crate::words;
 use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, AddPage, SignInEvent, SignInFlow, SignInShown};
 use nori_core::providers::AfterAdding;
 
-use crate::{AppWindow, ArtistLink, Card, Credits, Detail, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, Shelf, SongGo, SongPlace, SongRow, TopBar, View};
+use crate::{AppWindow, ArtistLink, Card, Credits, Detail, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, Shelf, SongGo, SongPlace, SongRow, TopBar, View};
 
 /// Cover fetch sizes, px square.
 const SMALL_PX: u32 = 256;
@@ -537,8 +537,9 @@ pub struct App {
     /// The hosted jam's invite link its QR code was drawn for, and whether a jam is hosted.
     jam_link: String,
     jam_hosting: bool,
-    /// The song whose menu opened the playlist picker.
+    /// The song whose menu opened the playlist picker, and the playlists offered for it.
     menu_song: Option<Song>,
+    picker: Vec<nori_core::menus::PlaylistChoice>,
     /// The sleep timer's choices as offered.
     sleep_choices: Vec<nori_core::menus::SleepChoice>,
     /// Whose playback the player shows and controls, as last read.
@@ -772,6 +773,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             jam_link: String::new(),
             jam_hosting: false,
             menu_song: None,
+            picker: Vec::new(),
             sleep_choices: Vec::new(),
             playback: Playback::Here,
             jam_controls: None,
@@ -967,7 +969,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_player_act, h, |a, kind, _id| a.player_act(kind));
     on!(ui.on_sleep, h, |a, i| a.sleep(i as usize));
     on!(ui.on_lyrics_nudge, h, |a, dir| a.lyrics_nudge(dir));
-    on!(ui.on_add_to_playlist, h, |a, id| a.add_to_playlist(Ok(id.into())));
+    on!(ui.on_add_to_playlist, h, |a, i| a.add_to_playlist(Ok(i as usize)));
     on!(ui.on_add_to_new_playlist, h, |a, name| a.add_to_playlist(Err(name.into())));
     on!(ui.on_rename_playlist, h, |a, name| a.rename_playlist(name.as_str()));
     on!(ui.on_delete_playlist, h, |a| a.delete_playlist());
@@ -1730,9 +1732,6 @@ impl App {
             Data::Page(PageGot::Playlists(v)) => {
                 self.lists.playlists = v;
                 self.narrowed();
-                if ui.get_picker_open() {
-                    self.picker_shown();
-                }
             }
             Data::Page(PageGot::Favorites(v)) => {
                 self.songs = v.songs;
@@ -2410,12 +2409,12 @@ impl App {
             5 | 6 => self.on_session(|s| s.enqueue(vec![one], how == 5)),
             7 => {
                 let ui = self.ui();
-                self.picker_shown();
                 ui.set_picker_name("".into());
                 ui.set_picker_naming(false);
                 ui.set_picker_open(true);
+                self.picker_shown(Vec::new());
+                self.ask_choices(one.id.clone());
                 self.menu_song = Some(one);
-                self.on_session(|s| s.load(Req::Page(PageAsk::Playlists)));
             }
             8 | 9 => self.on_session(|s| s.download_remove(&one.id)),
             10 => self.on_session(|s| s.star(nori_core::client::Starrable::Song, one.id, true)),
@@ -2521,10 +2520,26 @@ impl App {
         });
     }
 
-    /// The picker's playlists: those the song can be added to.
-    fn picker_shown(&self) {
-        let own = self.lists.playlists.iter().filter(|p| self.editable(p)).map(playlist_card);
-        self.ui().set_picker_playlists(cards(own));
+    /// Asks the core which playlists song `id` may go into and what each has of it, shown when they come.
+    fn ask_choices(&self, id: String) {
+        let Some(client) = self.session.as_ref().map(|s| s.client.clone()) else { return };
+        let tx = self.tx.clone();
+        nori_host::spawn("nori-choices", move || {
+            let choices = nori_core::transport::block_on(client.playlist_choices(vec![id.clone()])).unwrap_or_default();
+            tx.send(Msg::Choices(id, choices));
+        });
+    }
+
+    /// The picker's playlists, each saying what it has of the song.
+    fn picker_shown(&mut self, choices: Vec<nori_core::menus::PlaylistChoice>) {
+        let shown = choices.iter().map(|c| PlaylistChoice {
+            title: c.playlist.name.as_str().into(),
+            sub: words::playlist_holds(c.holds, 1, c.playlist.song_count).into(),
+            art: c.playlist.cover_art.clone().unwrap_or_default().into(),
+            full: c.adds.is_empty(),
+        });
+        self.ui().set_picker_choices(ModelRc::new(VecModel::from(shown.collect::<Vec<_>>())));
+        self.picker = choices;
     }
 
     /// Whether the profile may change `p` (the core's `playlist_editable`), signed in as its user.
@@ -2533,14 +2548,15 @@ impl App {
         nori_core::menus::playlist_editable(p, &user, self.account())
     }
 
-    /// Adds the song whose menu asked to playlist `id`, or to a new one named `name`.
-    fn add_to_playlist(&mut self, to: Result<String, String>) {
+    /// Adds the song whose menu asked to the picker's playlist `i`, or to a new one named `name`.
+    fn add_to_playlist(&mut self, to: Result<usize, String>) {
         self.ui().set_picker_open(false);
         let Some(song) = self.menu_song.take() else { return };
         match to {
-            Ok(id) => {
-                let name = self.lists.playlists.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default();
-                self.playlist_write(nori_core::client::Write::AddToPlaylist { id: id.clone(), song_ids: vec![song.id] }, words::added_to_playlist(&name), PlaylistChange::Changed(id));
+            Ok(i) => {
+                let Some(c) = self.picker.get(i) else { return };
+                let id = c.playlist.id.clone();
+                self.playlist_write(nori_core::client::Write::AddToPlaylist { id: id.clone(), song_ids: c.adds.clone() }, words::added_to_playlist(&c.playlist.name), PlaylistChange::Changed(id));
             }
             Err(name) => {
                 let name = name.trim().to_string();
@@ -3428,6 +3444,11 @@ impl App {
             Msg::Note { text, error } => self.say(&text, error),
             Msg::Playlist { text, change } => self.playlist_changed(&text, change),
             Msg::Shared(Some(link)) => self.copy(link),
+            Msg::Choices(id, choices) => {
+                if self.ui().get_picker_open() && self.menu_song.as_ref().is_some_and(|s| s.id == id) {
+                    self.picker_shown(choices);
+                }
+            }
             Msg::Offer(offer) => {
                 let (playing, here) = (self.ui().get_playing(), self.heard.clone());
                 self.offer.found(offer, here, playing);
@@ -6397,8 +6418,8 @@ mod tests {
         assert_eq!(*did.borrow(), ["rename Rain", "delete"]);
     }
 
-    /// Add to playlist: a playlist picked takes the song, and New playlist turns into its name's field in
-    /// place, made with Create.
+    /// Add to playlist: a playlist picked takes the song, one that has it already takes nothing, and New
+    /// playlist turns into its name's field in place, made with Create.
     #[test]
     fn the_playlist_picker_adds_to_one_or_names_a_new_one() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
@@ -6406,11 +6427,12 @@ mod tests {
         ))).unwrap();
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
-        ui.set_picker_playlists(cards([Card { id: "p1".into(), title: "Road trip".into(), kind: 2, ..Default::default() }].into_iter()));
+        let choice = |title: &str, full: bool| PlaylistChoice { title: title.into(), full, ..Default::default() };
+        ui.set_picker_choices(ModelRc::new(VecModel::from(vec![choice("Road trip", true), choice("Rain", false)])));
         ui.set_picker_open(true);
         let did = Rc::new(RefCell::new(Vec::new()));
         let seen = did.clone();
-        ui.on_add_to_playlist(move |id| seen.borrow_mut().push(format!("add {id}")));
+        ui.on_add_to_playlist(move |i| seen.borrow_mut().push(format!("add {i}")));
         let seen = did.clone();
         ui.on_add_to_new_playlist(move |name| seen.borrow_mut().push(format!("new {name}")));
         ui.show().unwrap();
@@ -6424,9 +6446,10 @@ mod tests {
             settle();
         };
         settle();
-        // The sheet's rows under its title: New playlist, then the playlists.
-        let (new, first) = (125.0, 169.0);
-        tap(600.0, first);
+        // The sheet's rows under its title: New playlist, then the playlists; one that has the song takes nothing.
+        let (new, full, other) = (151.0, 215.0, 263.0);
+        tap(600.0, full);
+        tap(600.0, other);
         tap(600.0, new);
         assert!(ui.get_picker_naming(), "New playlist turns into its name's field");
         for key in ["R", "a", "i", "n"] {
@@ -6434,7 +6457,7 @@ mod tests {
             ui.window().dispatch_event(slint::platform::WindowEvent::KeyReleased { text: key.into() });
         }
         settle();
-        tap(790.0, 126.0);
-        assert_eq!(*did.borrow(), ["add p1", "new Rain"]);
+        tap(780.0, new);
+        assert_eq!(*did.borrow(), ["add 1", "new Rain"]);
     }
 }
