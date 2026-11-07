@@ -1,7 +1,7 @@
 import argparse,subprocess,json,re,statistics
 from pathlib import Path
-p=argparse.ArgumentParser();p.add_argument('--package',required=True);p.add_argument('--component',required=True);p.add_argument('--output',required=True,type=Path);a=p.parse_args()
-def adb(*v): return subprocess.check_output(['adb','-s','emulator-5556','shell',*v],text=True)
+p=argparse.ArgumentParser();p.add_argument('--serial',default='emulator-5556');p.add_argument('--package',required=True);p.add_argument('--component',required=True);p.add_argument('--output',required=True,type=Path);a=p.parse_args()
+def adb(*v): return subprocess.check_output(['adb','-s',a.serial,'shell',*v],text=True)
 adb('input','keyevent','224');adb('wm','dismiss-keyguard')
 runs=[];logs=[]
 for i in range(5):

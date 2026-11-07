@@ -136,7 +136,9 @@ class Node:
 def dump():
     """Every node on screen. uiautomator sometimes answers "null root node" right after a change."""
     for _ in range(5):
-        sh("uiautomator dump /sdcard/bgtest-ui.xml >/dev/null 2>&1")
+        # Removed first: a dump that fails (another UiAutomation client holds the phone) leaves the last
+        # screen's file behind.
+        sh("rm -f /sdcard/bgtest-ui.xml; uiautomator dump /sdcard/bgtest-ui.xml >/dev/null 2>&1")
         x = sh("cat /sdcard/bgtest-ui.xml")
         if "<hierarchy" in x:
             return [Node(e) for e in ET.fromstring(x[x.index("<hierarchy"):]).iter("node")]
