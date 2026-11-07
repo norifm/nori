@@ -19,6 +19,7 @@
   import MixCard from "../ui/MixCard.svelte";
   import Page from "../ui/Page.svelte";
   import SectionTitle from "../ui/SectionTitle.svelte";
+  import { come, settle } from "../ui/motion";
 
   type Shelf = { row: string; albums: Album[]; playlists: Playlist[] };
   const page = reading("home", async () => {
@@ -60,7 +61,7 @@
     <section class="shelf" data-row="ForYou">
       <SectionTitle title={W.forYou} />
       <div class="mixes">
-        {#each mixes as m (m.id)}<MixCard mix={m} />{/each}
+        {#each mixes as m (m.id)}<div class="cell" animate:settle transition:come><MixCard mix={m} /></div>{/each}
       </div>
     </section>
   {/if}
@@ -93,6 +94,10 @@
   }
   .mixes > :global(*) {
     scroll-snap-align: start;
+  }
+  .cell {
+    display: grid;
+    min-width: 0;
   }
   @media (max-width: 719px) {
     .mixes {

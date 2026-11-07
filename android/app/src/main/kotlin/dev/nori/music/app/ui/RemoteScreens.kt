@@ -181,7 +181,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                 val offered = jams && hosted == null && start == dev.nori.music.ffi.JamStart.OFFERED
                 // The phone's own speaker, headphones or Bluetooth: Android's picker. The speaker's outline, as the
                 // player's button has it idle: a filled glyph is one lit in the accent.
-                GroupCard(Modifier.padding(top = 12.dp)) {
+                GroupCard {
                     SheetRow(words(R.string.devices_output), Iconoir.SoundHigh, divider = pairing != null || offered || (jams && hosted != null), onClick = onOutput)
                     if (pairing != null) SheetRow(words(R.string.pair_devices), Iconoir.SmartphoneDevice, divider = offered || (jams && hosted != null), onClick = { page = RoomPage.Pair })
                     if (offered) SheetRow(words(R.string.jam_start), Iconoir.Community, divider = false, onClick = vm::jamStart)
@@ -231,8 +231,8 @@ private fun PairingBody(link: String, vm: RemoteViewModel, onPaired: () -> Unit)
     val paired = words(R.string.pair_done)
     val failed = words(R.string.pair_failed)
     LinkCode(link, words(R.string.pair_hint))
-    Column(Modifier.padding(horizontal = Space.gutter), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        FormField(entered, { entered = it }, Modifier.fillMaxWidth(), label = { Text(words(R.string.pair_link)) }, singleLine = true)
+    GroupCard { GroupField(entered, { entered = it }, placeholder = words(R.string.pair_link), divider = false) }
+    Column(Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         PillButton(words(R.string.pair_action), Iconoir.SmartphoneDevice, {
             vm.pair(entered) { ok -> tell(if (ok) paired else failed); if (ok) onPaired() }
         }, enabled = dev.nori.music.ffi.pairingValid(entered))

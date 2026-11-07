@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -187,7 +189,8 @@ fun <T : Any> NoriDialog(
                 },
                 propagateMinConstraints = style == DialogStyle.Page,
             ) {
-                content(shown)
+                // A dialog put up from a sheet is not in it.
+                CompositionLocalProvider(LocalInSheet provides false) { content(shown) }
             }
         }
     }
@@ -287,7 +290,7 @@ fun <T : Any> NoriSheet(
     val scheme = LocalAppScheme.current ?: MaterialTheme.colorScheme
     val look = remember(scheme) { FixedLook(plainLook(scheme)) }
     MaterialTheme(colorScheme = scheme) {
-        CompositionLocalProvider(LocalLook provides look) {
+        CompositionLocalProvider(LocalLook provides look, LocalInSheet provides true) {
             ModalBottomSheet(
                 onDismissRequest = { if (live) dismiss() }, sheetState = state,
                 // A drag while it goes down could pull it back up with nothing to say it is still there.
@@ -298,12 +301,15 @@ fun <T : Any> NoriSheet(
             ) {
                 AppStatusBar()
                 content(shown)
+                // Every sheet ends the same room under its last line.
+                Spacer(Modifier.height(SHEET_FOOT))
             }
         }
     }
 }
 
 private val SheetShape = RoundedCornerShape(topStart = Radius.sheet, topEnd = Radius.sheet)
+private val SHEET_FOOT = 12.dp
 /** How much the scrim under a sheet darkens the page. */
 private const val SHEET_SCRIM = 0.32f
 

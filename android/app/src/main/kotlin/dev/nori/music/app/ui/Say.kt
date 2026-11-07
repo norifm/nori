@@ -210,9 +210,62 @@ class Say(private val r: Resources) {
     val removeRule: String = r.getString(R.string.remove_rule)
     val addRule: String = r.getString(R.string.add_rule)
     val sortBy: String = r.getString(R.string.sort_by)
+    val rules: String = r.getString(R.string.smart_rules)
+    val order: String = r.getString(R.string.smart_order)
     val descending: String = r.getString(R.string.descending)
     val limit: String = r.getString(R.string.limit)
     val noLimit: String = r.getString(R.string.no_limit)
+    /** A smart rule's field, or a sort, as the core names it (`smart.rs`); one it adds later shows its name. */
+    fun smartField(name: String): String = when (name) {
+        "random" -> R.string.smart_random
+        "title" -> R.string.smart_field_title
+        "album" -> R.string.smart_field_album
+        "artist" -> R.string.smart_field_artist
+        "genre" -> R.string.smart_field_genre
+        "suffix" -> R.string.smart_field_suffix
+        "year" -> R.string.smart_field_year
+        "duration" -> R.string.smart_field_duration
+        "track" -> R.string.smart_field_track
+        "discNumber" -> R.string.smart_field_disc_number
+        "bitRate" -> R.string.smart_field_bit_rate
+        "sampleRate" -> R.string.smart_field_sample_rate
+        "bitDepth" -> R.string.smart_field_bit_depth
+        "size" -> R.string.smart_field_size
+        "userRating" -> R.string.smart_field_user_rating
+        "playCount" -> R.string.smart_field_play_count
+        "skipCount" -> R.string.smart_field_skip_count
+        "serverPlayCount" -> R.string.smart_field_server_play_count
+        "lastPlayed" -> R.string.smart_field_last_played
+        "added" -> R.string.smart_field_added
+        "starred" -> R.string.smart_field_starred
+        "isDownloaded" -> R.string.smart_field_is_downloaded
+        "excludedFromMixes" -> R.string.smart_field_excluded_from_mixes
+        else -> null
+    }?.let(r::getString) ?: name
+    /** A rule's comparison; over and under read as after and before on a date. */
+    fun smartOp(op: String, date: Boolean): String = when (op) {
+        "is" -> R.string.smart_op_is
+        "isNot" -> R.string.smart_op_is_not
+        "contains" -> R.string.smart_op_contains
+        "notContains" -> R.string.smart_op_not_contains
+        "startsWith" -> R.string.smart_op_starts_with
+        "endsWith" -> R.string.smart_op_ends_with
+        "greater" -> if (date) R.string.smart_op_after else R.string.smart_op_greater
+        "less" -> if (date) R.string.smart_op_before else R.string.smart_op_less
+        "between" -> R.string.smart_op_between
+        "withinDays" -> R.string.smart_op_within_days
+        "notWithinDays" -> R.string.smart_op_not_within_days
+        "isTrue" -> R.string.smart_op_is_true
+        "isFalse" -> R.string.smart_op_is_false
+        else -> null
+    }?.let(r::getString) ?: op
+    fun smartValue(kind: dev.nori.music.ffi.library.SmartValue): String = r.getString(
+        when (kind) {
+            dev.nori.music.ffi.library.SmartValue.ONE -> R.string.smart_value_one
+            dev.nori.music.ffi.library.SmartValue.RANGE -> R.string.smart_value_range
+            dev.nori.music.ffi.library.SmartValue.DAYS -> R.string.smart_value_days
+        },
+    )
     val listeningStats: String = r.getString(R.string.listening_stats)
     val clearHistory: String = r.getString(R.string.clear_history)
     val listening: String = r.getString(R.string.listening)
@@ -299,7 +352,6 @@ class Say(private val r: Resources) {
     val searchSettings: String = r.getString(R.string.search_settings)
     val performance: String = r.getString(R.string.performance)
     val performanceDetail: String = r.getString(R.string.performance_detail)
-    val server: String = r.getString(R.string.server)
     val serverHint: String = r.getString(R.string.server_hint)
     val serverUrl: String = r.getString(R.string.server_url)
     /** A word by its resource id. */
@@ -434,7 +486,11 @@ class Say(private val r: Resources) {
         dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> r.getString(R.string.profile_wait_plugins_on)
         dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> null
     }
-    val addServer: String get() = r.getString(R.string.settings_add_server)
+    val addProfile: String get() = r.getString(R.string.settings_add_server)
+    val manageProfiles: String get() = r.getString(R.string.manage_profiles)
+    val inUse: String get() = r.getString(R.string.profile_in_use)
+    fun removeProfileTitle(name: String): String = r.getString(R.string.remove_profile_title, name)
+    val removeProfileText: String get() = r.getString(R.string.remove_profile_text)
     val providerGuest: String get() = r.getString(R.string.provider_guest)
     val providerSubsonicAbout: String get() = r.getString(R.string.provider_subsonic_about)
     val pluginsEvery: String get() = r.getString(R.string.plugins_every)
@@ -452,7 +508,6 @@ class Say(private val r: Resources) {
         is dev.nori.music.ffi.AddFailure.Refused -> f.said
     }
     val connect: String = r.getString(R.string.connect)
-    val hideAdvanced: String = r.getString(R.string.hide_advanced)
     val advanced: String = r.getString(R.string.advanced)
     val nameOptional: String = r.getString(R.string.name_optional)
     val secondAddress: String = r.getString(R.string.second_address)

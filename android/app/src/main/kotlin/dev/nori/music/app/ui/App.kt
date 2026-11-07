@@ -253,6 +253,9 @@ private val tabs = listOf(
  * a launcher shortcut: a screen, or a shuffle to start - set on launch or on a new intent, and cleared
  * here once it has been done.
  */
+/** What the app's screens are built for: a new one builds them again. */
+private data class Session(val loggedIn: Boolean, val profile: String?, val guest: Boolean, val kind: dev.nori.music.ffi.settings.ServerKind)
+
 @Composable
 fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.LaunchRoute?>? = null) {
     val settings: SettingsViewModel = viewModel()
@@ -267,12 +270,12 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
         val guest = remember(prefs.activeServerId, prefs.server?.apiKey) { prefs.server?.apiKey?.let { dev.nori.music.ffi.remote.isGuestKey(it) } == true }
         val kind = prefs.server?.kind ?: dev.nori.music.ffi.settings.ServerKind.Subsonic
         // Sign-in fades to the app: the screens are different enough that a direction would invent a
-        // relationship they do not have.
+        // relationship they do not have. Each profile starts afresh: its own screens and their view models.
         androidx.compose.animation.Crossfade(
-            targetState = Triple(prefs.loggedIn, guest, kind),
+            targetState = Session(prefs.loggedIn, prefs.activeServerId, guest, kind),
             animationSpec = AppMotion.fadeIn(),
             label = "session",
-        ) { (loggedIn, guest, kind) ->
+        ) { (loggedIn, _, guest, kind) ->
         if (!loggedIn) {
             LoginScreen(settings)
             return@Crossfade
@@ -551,7 +554,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
                       .drawsBackdrop(backdrop),
               ) {
                 PageStack(controller, pages, home) {
-                    page("home") { HomeScreen(actions) }
+                    page("home") { HomeScreen(actions, settings) }
                     page("home/{row}") { HomeRowScreen(it.arguments!!.getString("row")!!, actions) }
                     page("search") { SearchScreen(actions) }
                     page("library") { LibraryScreen(actions) }

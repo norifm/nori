@@ -263,18 +263,29 @@ pub fn smart_edit_add(mut edit: SmartEdit) -> SmartEdit {
     edit
 }
 
-/// What the value field of a rule with operator `op` says while empty; None when the operator takes no
-/// value, and there is no field.
+/// What a rule's value is, for the field's hint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum SmartValue {
+    /// One value to compare against.
+    One,
+    /// Two, the low end first.
+    Range,
+    /// A number of days.
+    Days,
+}
+
+/// What a rule with operator `op` takes; None when it takes no value, and there is no field.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn smart_value_hint(op: String) -> Option<String> {
+pub fn smart_value_kind(op: String) -> Option<SmartValue> {
     if FLAG_OPS.contains(&op.as_str()) {
         None
     } else if op == "between" {
-        Some("from to".into())
+        Some(SmartValue::Range)
     } else if op.ends_with("Days") {
-        Some("days".into())
+        Some(SmartValue::Days)
     } else {
-        Some("value".into())
+        Some(SmartValue::One)
     }
 }
 
@@ -319,10 +330,8 @@ mod tests {
         let empty = smart_edit_remove(new.clone(), 0);
         assert_eq!(empty.rules, vec![rule("genre", "contains", "")]);
         assert_eq!(smart_edit_add(new).rules.len(), 2);
-        assert_eq!(smart_value_hint("isTrue".into()), None);
-        assert_eq!(smart_value_hint("between".into()).as_deref(), Some("from to"));
-        assert_eq!(smart_value_hint("withinDays".into()).as_deref(), Some("days"));
-        assert_eq!(smart_value_hint("is".into()).as_deref(), Some("value"));
+        let kinds = ["isTrue", "between", "withinDays", "is"].map(|op| smart_value_kind(op.into()));
+        assert_eq!(kinds, [None, Some(SmartValue::Range), Some(SmartValue::Days), Some(SmartValue::One)]);
         assert_eq!((smart_limit_typed("25".into()), smart_limit_typed("x".into())), (25, 0));
         assert_eq!((smart_limit_text(0), smart_limit_text(7)), (String::new(), "7".to_string()));
     }

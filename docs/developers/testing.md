@@ -283,6 +283,9 @@ python3 tools/desktop-app.py do pause
 | `panel` | `none`, `queue`, `lyrics`, `devices` |
 | `do` | `play`, `pause`, `toggle`, `next`, `previous`, `close_fullscreen` |
 | `play_album` | an album's id |
+| `tab` | a Settings tab's index |
+| `shot` | a path the window is saved to as a PNG |
+| `profiles` | nothing; opens the profiles menu |
 
 Each instance needs its own socket and data directory; an existing socket is never replaced. The
 socket is owner-only (0600) and removed on a normal exit. The reply is the UI's actual state; playback

@@ -304,6 +304,7 @@ final class ShelfCell: UITableViewCell, UICollectionViewDataSource, UICollection
     private let layout: UICollectionViewFlowLayout
     private var stripHeight: NSLayoutConstraint!
     private var items: [Item] = []
+    private var shelf = ""
     private var side = ShelfCell.print
     private var look = Theme.page
     var picked: ((Item) -> Void)?
@@ -339,16 +340,55 @@ final class ShelfCell: UITableViewCell, UICollectionViewDataSource, UICollection
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func show(_ items: [Item], side: CGFloat = ShelfCell.print, look: PageLook) {
+    /// Shows `items` as shelf `shelf`. The same shelf's newer answer moves the covers it kept to their
+    /// places and lets the others come and go (Android's `itemMotion`); another shelf starts afresh.
+    func show(_ items: [Item], shelf: String, side: CGFloat = ShelfCell.print, look: PageLook) {
+        let old = self.items
+        let same = shelf == self.shelf && side == self.side && look == self.look
         self.items = items
+        self.shelf = shelf
         self.side = side
         self.look = look
         let height = ShelfCell.height(items, side: side)
         stripHeight.constant = height
         let mixes = items.first?.kind == "mix"
         layout.itemSize = CGSize(width: mixes ? ShelfCell.mixWidth : side, height: height)
-        strip.reloadData()
-        strip.setContentOffset(.zero, animated: false)
+        guard same, !Motion.plain, let moves = ShelfCell.moves(from: old.map(\.id), to: items.map(\.id)) else {
+            strip.reloadData()
+            if !same { strip.setContentOffset(.zero, animated: false) }
+            return
+        }
+        if old.map(\.id) == items.map(\.id) {
+            refreshVisible()
+            return
+        }
+        strip.performBatchUpdates({
+            strip.deleteItems(at: moves.gone.map { IndexPath(item: $0, section: 0) })
+            strip.insertItems(at: moves.new.map { IndexPath(item: $0, section: 0) })
+            for (from, to) in moves.kept where from != to {
+                strip.moveItem(at: IndexPath(item: from, section: 0), to: IndexPath(item: to, section: 0))
+            }
+        }, completion: { [weak self] _ in self?.refreshVisible() })
+    }
+
+    /// The cards on screen drawn again from `items`: a kept card's words may have changed.
+    private func refreshVisible() {
+        for path in strip.indexPathsForVisibleItems where path.item < items.count {
+            let item = items[path.item]
+            (strip.cellForItem(at: path) as? CardCell)?.show(item, width: item.kind == "mix" ? ShelfCell.mixWidth : side, look: look)
+        }
+    }
+
+    /// How the ids `from` become `to`: the old places gone, the new places added, and each kept id's old
+    /// and new place. Nil when either repeats an id, which a move can't follow.
+    static func moves(from: [String], to: [String]) -> (gone: [Int], new: [Int], kept: [(Int, Int)])? {
+        let was = Dictionary(from.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        let now = Dictionary(to.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        guard was.count == from.count, now.count == to.count else { return nil }
+        let gone = from.indices.filter { now[from[$0]] == nil }
+        let new = to.indices.filter { was[to[$0]] == nil }
+        let kept = from.indices.compactMap { i in now[from[i]].map { (i, $0) } }
+        return (gone, new, kept)
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { items.count }

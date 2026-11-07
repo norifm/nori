@@ -624,7 +624,7 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
 fn top(ui: &AppWindow) -> Option<TopBar> {
     let bar = TopBar::new().map_err(|e| nori_core::alog::info(&format!("no top pill: {e}"))).ok()?;
     bar.on_go(to_main_with(ui, |m, v| m.invoke_go(v)));
-    bar.on_open_menu(to_main(ui, |m| m.invoke_show_menu()));
+    bar.on_open_profiles(to_main(ui, |m| m.invoke_show_profiles()));
     bar.on_search_edited(to_main_with(ui, |m, text| m.invoke_search_edited(text)));
     bar.on_search_step(to_main_with(ui, |m, by| m.invoke_search_step(by)));
     bar.on_search_accepted(to_main(ui, |m| m.invoke_search_accepted()));
@@ -1296,10 +1296,7 @@ impl App {
             s.close();
         }
         let ui = self.ui();
-        let (who, where_) = words::profile_lines(&profile, self.kinds());
-        ui.set_account_initial(who.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default().into());
-        ui.set_account(who.into());
-        ui.set_server(where_.into());
+        self.profiles_shown();
         self.waiting = self.kinds().waits(profile.clone()).map(|_| profile.clone());
         if self.waiting.is_some() {
             // The first screen, where its plugin's row installs it or turns it on.
@@ -1694,17 +1691,18 @@ impl App {
             Data::Home(HomePart::Feed(feed)) => {
                 // Each shelf as the source lists it: its songs first (a song card plays the shelf's songs
                 // from it), then its albums, playlists and artists.
-                let shelves = feed.iter().filter(|f| !(f.songs.is_empty() && f.albums.is_empty() && f.playlists.is_empty() && f.artists.is_empty())).map(|f| {
+                let shelves = feed.iter().filter(|f| !(f.songs.is_empty() && f.albums.is_empty() && f.playlists.is_empty() && f.artists.is_empty())).enumerate().map(|(at, f)| {
                     let all = f.songs.iter().map(song_card).chain(f.albums.iter().map(album_card)).chain(f.playlists.iter().map(playlist_card)).chain(f.artists.iter().map(artist_card));
-                    Shelf { title: f.title.as_str().into(), cards: cards(all), loaded: true }
+                    let old = self.shelves.row_data(at).filter(|o| o.title == f.title.as_str());
+                    Shelf { title: f.title.as_str().into(), cards: cards(moved(old.as_ref(), all.collect()).into_iter()), loaded: true }
                 });
-                self.shelves.set_vec(shelves.collect::<Vec<_>>());
+                put_shelves(&self.shelves, shelves.collect());
                 self.feed_songs = feed.into_iter().filter(|f| !(f.songs.is_empty() && f.albums.is_empty() && f.playlists.is_empty() && f.artists.is_empty())).map(|f| f.songs).collect();
             }
             Data::Home(HomePart::Shelf { at, items }) => {
                 let ShelfItems::Albums(albums) = items else { return };
                 if let Some(mut shelf) = self.shelves.row_data(at) {
-                    shelf.cards = cards(albums.iter().map(album_card));
+                    shelf.cards = cards(moved(Some(&shelf), albums.iter().map(album_card).collect()).into_iter());
                     shelf.loaded = true;
                     self.shelves.set_row_data(at, shelf);
                 }
@@ -4054,18 +4052,40 @@ impl App {
     }
 
     /// Redraws the settings or equalizer page from the current settings.
+    /// The gear menu's profiles: the one in use at its head, then the others to switch to.
+    fn profiles_shown(&self) {
+        let ui = self.ui();
+        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let mut others = Vec::new();
+        for p in &prefs.servers {
+            let (who, where_) = words::profile_lines(p, self.kinds());
+            let title = words::profile_label(p, self.kinds());
+            let (icon, letter) = crate::settings::profile_mark(&self.plugged, p, &title);
+            if p.id == prefs.active_server_id {
+                ui.set_account(who.into());
+                ui.set_server(where_.into());
+                ui.set_account_icon(icon);
+                ui.set_account_initial(letter.into());
+            } else {
+                let detail = if who == title { where_ } else { who };
+                others.push(crate::ProfileItem { name: p.id.as_str().into(), title: title.into(), detail: detail.into(), icon, letter: letter.into() });
+            }
+        }
+        ui.set_other_profiles(ModelRc::new(VecModel::from(others)));
+        if let Some(t) = &self.top {
+            t.set_profile_icon(ui.get_account_icon());
+            t.set_profile_letter(ui.get_account_initial());
+        }
+        ui.set_profiles_editable(self.facts.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions));
+    }
+
     fn settings_shown(&mut self) {
         self.repaint();
         let ui = self.ui();
         let prefs = self.root.app.settings.current().unwrap_or_default();
         self.devices_shown();
+        self.profiles_shown();
         let today = crate::look::Today::now();
-        let seasons = crate::settings::seasons(&prefs, today);
-        ui.set_season_worn(seasons.worn);
-        ui.set_season_following(seasons.following);
-        ui.set_season_switch(seasons.switch.into());
-        ui.set_season_detail(seasons.detail.into());
-        ui.set_appearance_pick(crate::settings::appearance_pick(&prefs));
         let view = ui.get_view();
         if view == View::Settings {
             // The core's pages, then Plugins.
@@ -4079,7 +4099,7 @@ impl App {
             ui.set_settings(if tab == plugins_tab {
                 crate::settings::plugin_rows(&self.plugged, &prefs, &self.facts, today)
             } else {
-                crate::settings::rows(&self.root.app.settings.model, &prefs, &self.facts, self.kinds(), tab, today)
+                crate::settings::rows(&self.root.app.settings.model, &prefs, &self.facts, self.kinds(), &self.plugged, tab, today)
             });
         }
         if view == View::Equalizer {
@@ -4559,13 +4579,39 @@ fn position_shown(ui: &AppWindow, player: Option<&PlayerBar>, position_ms: i32) 
     if let Some(player) = player.filter(|_| !ui.get_full_player()) { player.set_position_ms(position_ms); }
 }
 
+/// `fresh` as shelf `old`'s newer answer: each card's move from its old place and whether it is new, so
+/// the cards it kept slide to their places and the others fade in. A first fill moves nothing.
+fn moved(old: Option<&Shelf>, fresh: Vec<Card>) -> Vec<Card> {
+    let Some(old) = old.filter(|o| o.loaded && o.cards.row_count() > 0) else { return fresh };
+    let was: HashMap<(i32, SharedString), usize> = old.cards.iter().enumerate().map(|(i, c)| ((c.kind, c.id), i)).collect();
+    fresh
+        .into_iter()
+        .enumerate()
+        .map(|(i, c)| match was.get(&(c.kind, c.id.clone())) {
+            Some(&from) => Card { shift: from as i32 - i as i32, new: false, ..c },
+            None => Card { shift: 0, new: true, ..c },
+        })
+        .collect()
+}
+
+/// Puts `fresh` in `model` row by row, so the shelves already drawn stay and their cards can move.
+fn put_shelves(model: &VecModel<Shelf>, fresh: Vec<Shelf>) {
+    let n = fresh.len();
+    for (i, shelf) in fresh.into_iter().enumerate() {
+        if i < model.row_count() { model.set_row_data(i, shelf) } else { model.push(shelf) }
+    }
+    while model.row_count() > n {
+        model.remove(model.row_count() - 1);
+    }
+}
+
 fn cards(it: impl Iterator<Item = Card>) -> ModelRc<Card> {
     ModelRc::new(VecModel::from(it.collect::<Vec<_>>()))
 }
 
 fn album_card(a: &nori_core::Album) -> Card {
     let sub_artist = a.artist_id.clone().unwrap_or_default().into();
-    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: nori_core::lines::album_subtitle(&a.artist, a.year).into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 0 }
+    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: nori_core::lines::album_subtitle(&a.artist, a.year).into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 0, ..Default::default() }
 }
 
 /// The songs card `id` of `Card::kind` (or 4, a mix) stands for, fetched whole; a song card's are at hand.
@@ -4583,7 +4629,7 @@ fn card_fetch(kind: i32, id: String) -> Option<Fetch> {
 /// every result as kind 5, the rest as their cards.
 fn preview_cards(lines: &[nori_core::search::PreviewLine], found: &nori_core::SearchResult) -> Vec<Card> {
     use nori_core::search::PreviewLine;
-    let words_card = |kind: i32, title: &str| Card { id: SharedString::default(), title: title.into(), sub: SharedString::default(), art: SharedString::default(), sub_artist: SharedString::default(), kind };
+    let words_card = |kind: i32, title: &str| Card { id: SharedString::default(), title: title.into(), sub: SharedString::default(), art: SharedString::default(), sub_artist: SharedString::default(), kind, ..Default::default() };
     lines
         .iter()
         .map(|l| match *l {
@@ -4609,7 +4655,7 @@ fn preview_step(lines: &[nori_core::search::PreviewLine], at: i32, by: i32) -> i
 }
 
 fn artist_card(a: &nori_core::Artist) -> Card {
-    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.album_count.filter(|&n| n > 0).map(words::albums).unwrap_or_default().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 1 }
+    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.album_count.filter(|&n| n > 0).map(words::albums).unwrap_or_default().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 1, ..Default::default() }
 }
 
 /// A playlist's card: its song count, or its own line (a provider's, who made it) when not counted.
@@ -4618,13 +4664,13 @@ fn playlist_card(p: &nori_core::Playlist) -> Card {
         Some(line) if p.song_count == 0 => line.clone(),
         _ => words::songs(p.song_count as usize),
     };
-    Card { id: p.id.as_str().into(), title: p.name.as_str().into(), sub: sub.into(), art: p.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 2 }
+    Card { id: p.id.as_str().into(), title: p.name.as_str().into(), sub: sub.into(), art: p.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 2, ..Default::default() }
 }
 
 /// A song's card on a feed's shelf: played from it, with the shelf's songs after.
 fn song_card(s: &Song) -> Card {
     let sub_artist = s.artist_id.clone().unwrap_or_default().into();
-    Card { id: s.id.as_str().into(), title: s.title.as_str().into(), sub: s.artist.as_str().into(), art: s.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 3 }
+    Card { id: s.id.as_str().into(), title: s.title.as_str().into(), sub: s.artist.as_str().into(), art: s.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 3, ..Default::default() }
 }
 
 fn row(s: &Song, index: usize, playing: bool) -> SongRow {
@@ -5518,7 +5564,7 @@ mod tests {
         let facts = crate::settings::Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() };
         let tab = crate::settings::tabs(&facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Lyrics).unwrap() as i32;
         ui.set_view(View::Settings);
-        ui.set_settings(crate::settings::rows(&Default::default(), &nori_core::settings::StoredPrefs::default(), &facts, &nori_core::providers::Kinds::builtin(), tab, crate::look::Today { month: 10, day: 19, southern: false }));
+        ui.set_settings(crate::settings::rows(&Default::default(), &nori_core::settings::StoredPrefs::default(), &facts, &nori_core::providers::Kinds::builtin(), &Default::default(), tab, crate::look::Today { month: 10, day: 19, southern: false }));
         let moved = Rc::new(RefCell::new(Vec::new()));
         let seen = moved.clone();
         ui.on_source_moved(move |id, by| seen.borrow_mut().push((id.to_string(), by)));
@@ -6151,6 +6197,46 @@ mod tests {
         slint::platform::update_timers_and_animations();
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button });
         assert_eq!(*opened.borrow(), ["0"]);
+    }
+
+    /// A shelf's newer answer slides the cards it kept from their old places to their new ones.
+    #[test]
+    fn a_shelfs_newer_answer_slides_its_cards_to_their_places() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.set_view(View::Home);
+        ui.set_picks_loaded(true);
+        let shelf = |ids: &[&str], old: Option<&Shelf>| Shelf {
+            loaded: true,
+            cards: cards(moved(old, ids.iter().map(|&id| Card { id: id.into(), ..Default::default() }).collect()).into_iter()),
+            ..Default::default()
+        };
+        let first = shelf(&["a", "b", "c"], None);
+        let shelves = Rc::new(VecModel::from(vec![first.clone()]));
+        ui.set_shelves(ModelRc::from(shelves.clone()));
+        let opened = Rc::new(RefCell::new(Vec::new()));
+        let seen = opened.clone();
+        ui.on_open_album(move |id| seen.borrow_mut().push(id.to_string()));
+        ui.show().unwrap();
+        let wait = |ms| {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(ms));
+            slint::platform::update_timers_and_animations();
+        };
+        wait(1000);
+        let click = || {
+            let at = slint::LogicalPosition::new(100.0, 250.0);
+            let button = slint::platform::PointerEventButton::Left;
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button });
+        };
+        shelves.set_row_data(0, shelf(&["x", "b", "a"], Some(&first)));
+        wait(16);
+        click();
+        wait(1000);
+        click();
+        assert_eq!(*opened.borrow(), ["a", "x"]);
     }
 
     #[test]
