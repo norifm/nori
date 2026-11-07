@@ -2,7 +2,8 @@
 
 Applies to the nori Android perf build at 0.7. The other players were mapped by hand on a Galaxy S21 FE
 (SM-G990B, Android 16) in English (`cmd locale set-app-locales <pkg> --locales en-US`): Musly and
-Navic as installed then, Symfonium 15.1.0 from repo.symfonium.app. "Default" is a fresh install
+Navic as installed then, Symfonium 15.1.0 from repo.symfonium.app; Musly 2.0.3 and Navic v1.0.0-beta01
+rechecked in November 2026. "Default" is a fresh install
 (`pm clear`). Paths start from the app's home screen.
 
 ## Settings
@@ -15,7 +16,7 @@ Navic as installed then, Symfonium 15.1.0 from repo.symfonium.app. "Default" is 
 | **Queue autofill** | Playback > Keep playing when the queue ends (default on: songs, similar music) | Playback > Auto DJ Mode: Off / Shuffle Library / Similar Songs / Same Genre / Same Artist / Smart Mix (default Off) | Playback > Auto-fill queue | Smart flow (up to 12 tracks) |
 | **Gapless** | always on; Playback > Keep albums gapless keeps crossfades and AutoMix out of albums (default on) | Playback > Gapless Playback (default on) | Playback > Audio effects > Gapless playback (default on, experimental, needs restart) | built in |
 | **Fade on play/pause** | always 150 ms, no setting | Playback > Enable Fade In/Out | none | Transitions > Fade in / Fade out (default disabled) |
-| **Equalizer** | Settings > Sound > Equalizer and crossfeed: 10-band graphic or parametric, presets (Bass boost among them), pre-amp, balance, mono, limiter, AutoEQ (default off); crossfeed is Sound > Headphone sound: Off / Natural / Wide | **none** (the player menu has only sleep timer, speed, pitch) | Playback > Audio effects > Equaliser > source: Disabled / Built-in / External (default Disabled) | Settings > Playback > Output settings > Telefon > Equalizer: parametric and graphic EQ, bass boost, volume boost, compressor, limiter, virtualizer, crossfeed, skip silence (default off) |
+| **Equalizer** | Settings > Sound > Equalizer and crossfeed: 10-band graphic or parametric, presets (Bass boost among them), pre-amp, balance, mono, limiter, AutoEQ (default off); crossfeed is Sound > Headphone sound: Off / Natural / Wide | **none** (the player menu has only sleep timer, speed, pitch) | Playback > Audio effects > Equalizer > source: Disabled / Built-in / External (default Disabled) | Settings > Playback > Output settings > Telefon > Equalizer: parametric and graphic EQ, bass boost, volume boost, compressor, limiter, virtualizer, crossfeed, skip silence (default off) |
 | **ReplayGain** | Sound > Volume leveling: Off / Per song / Per album / Automatic (default Automatic), at a Quiet / Normal / Loud level | Playback > Volume Normalization (ReplayGain) > Mode (default Off) | Audio effects > ReplayGain mode: Off / Track / Album / Dynamic (default Off) | Output settings > Telefon > Equalizer > Replay gain (default Off) |
 | **Audio offload** (the audio chip decodes, the CPU sleeps) | Sound > Save battery while playing (default on; paused while anything touches the samples: equalizer, effects, crossfade, AutoMix; never with USB audio) | none | Audio effects > Audio offload (default **off**, experimental, needs restart) | none found |
 | **Decoder** | nori's Rust engine (Symphonia); HE-AAC through Android's MediaCodec | Android MediaCodec via ExoPlayer | Android MediaCodec via ExoPlayer | its own; Output > "Prefer hardware-accelerated codecs" (default off) |
@@ -53,6 +54,9 @@ in the matrix column, plus each app's first variant (`plain` or `default`) with 
 
 - **Navic's equalizer and offload exclude each other.** With Audio offload on, its Equaliser page cannot
   be opened, so there is no "EQ + offload" variant.
+- **Navic v1.0.0-beta01's built-in equalizer does nothing on the S21 FE.** Its page shows no bands
+  ("Your device does not support this feature") and no effect is attached while it plays, so `navic:eq`
+  stops at its bands step.
 - **Navic offload needs gapless off.** The S21 FE offloads without gapless support. Then it plays
   offloaded, but after "next" it stays in BUFFERING for good, so its runs start at the first song with
   no skips.
@@ -63,7 +67,7 @@ in the matrix column, plus each app's first variant (`plain` or `default`) with 
 
 - Navic's switches don't report their state to uiautomator: the harness reads the switch color from a
   screenshot.
-- Musly's settings are one Flutter page with tabs ("Playback\nTab 1 of 6"...). Its Auto DJ and
+- Musly's settings are one Flutter page with tabs ("Playback\nTab 1 of 7"...). Its Auto DJ and
   ReplayGain choices are drop-downs opened by tapping the arrow at the row's right; crossfade is a
-  slider.
+  slider whose uiautomator node is only its thumb.
 - Symfonium's pages scroll far: go back to the top before looking for an entry.

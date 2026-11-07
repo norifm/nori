@@ -59,8 +59,10 @@ class Navic(App):
         if v.get("offload"):
             self.step("audio offload on", lambda: set_row_switch("Audio offload", True))
         if v.get("eq"):
-            self.step("equaliser", lambda: ui.tap("Equaliser"), "Equaliser source")
-            self.step("source: built-in", lambda: (ui.tap("Equaliser source"), ui.tap("Built-in"), ui.tap("OK")), "1500mB")
+            self.step("equalizer", lambda: ui.tap("Equalizer"), "Equalizer source")
+            # v1.0.0-beta01 on the S21 FE attaches no equalizer and shows no bands ("Your device does not
+            # support this feature"), so this waits in vain there.
+            self.step("source: built-in", lambda: (ui.tap("Equalizer source"), ui.tap("Built-in"), ui.tap("OK")), "1500mB")
             self.step("bass up", raise_bass)
             ui.back()
         ui.back(); ui.back(); ui.back()

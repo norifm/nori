@@ -51,13 +51,17 @@ class Musly(App):
         v = self.variants[variant]
         if not v:
             return
-        self.step("settings", lambda: ui.tap("Settings"), "Playback\nTab 1 of 6")
+        self.step("settings", lambda: ui.tap("Settings"), "Playback\nTab 1 of", exact=False)
         if v.get("crossfade_s"):
             def slide():
-                bar = next(n for n in ui.dump() if n.cls.endswith("SeekBar"))
-                a, b, c, d = bar.box
-                # The slider's 13 stops (Off, 1…12 s) span its width.
-                ui.tap_xy(a + (c - a) * v["crossfade_s"] // 12, (b + d) // 2)
+                nodes = ui.dump()
+                card = ui.find("Track Crossfade", nodes=nodes, exact=False)
+                # The SeekBar node is only its thumb, at Off on a fresh install; the 13 stops (Off, 1…12 s)
+                # run from there to the same distance from the card's other side.
+                thumb = next(n for n in nodes if n.cls.endswith("SeekBar"))
+                start, y = thumb.centre
+                end = card.box[0] + card.box[2] - start
+                ui.tap_xy(start + (end - start) * v["crossfade_s"] // 12, y)
             self.step(f"crossfade {v['crossfade_s']} s", slide, f"{v['crossfade_s']} seconds crossfade", exact=False)
         self.step("back", ui.back, "Library\nTab 2 of 3")
 
