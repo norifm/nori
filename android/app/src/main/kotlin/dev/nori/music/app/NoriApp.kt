@@ -6,6 +6,11 @@ import dev.nori.music.Nori
 class NoriApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // On, a list's animateScrollToItem skips its item animator for the whole scroll, and unless the scroll
+        // ends with a jump, the animator keeps the rows where they were before it: the next drag slid every
+        // row back across the distance scrolled (the queue following the song playing, then scrolled up).
+        @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+        androidx.compose.foundation.ComposeFoundationFlags.isSkipItemPlacementAnimationFixEnabled = false
         dev.nori.music.app.ui.Say.use(resources)
         dev.nori.music.net.Failures.use(resources)
         // The car's tree names the mixes as the app does.
