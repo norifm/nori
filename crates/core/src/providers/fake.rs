@@ -61,6 +61,7 @@ impl Provider for Fake {
             Read::Search { query, .. } => Some(Page::Found { v: SearchResult { songs: album().songs.into_iter().filter(|s| s.title.to_lowercase().contains(&query)).collect(), ..Default::default() } }),
             Read::AlbumById { id } if id == "f-al" => Some(Page::AlbumPage { v: album() }),
             Read::HomeFeed => {
+                Moment::default().await;
                 let mut n = self.feeds.lock();
                 *n += 1;
                 Some(Page::Feed { v: vec![crate::FeedShelf { title: format!("feed {n}"), ..Default::default() }] })
@@ -118,6 +119,22 @@ impl Provider for Fake {
 
     fn stop_reminding(&self, _: &Client) {
         self.ended.lock().1 = true;
+    }
+}
+
+/// Ready when polled again: a source's answer takes a moment, so reads asked together are on their way together.
+#[derive(Default)]
+struct Moment(bool);
+
+impl std::future::Future for Moment {
+    type Output = ();
+
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+        if std::mem::replace(&mut self.0, true) {
+            return std::task::Poll::Ready(());
+        }
+        cx.waker().wake_by_ref();
+        std::task::Poll::Pending
     }
 }
 
@@ -187,6 +204,20 @@ mod tests {
         assert_eq!(*fake.feeds.lock(), 1);
         c.drop_cached(crate::browse::home_refresh_drops()).unwrap();
         assert_eq!(shown(), [vec!["feed 1"], vec!["feed 1", "feed 2"]], "a refresh asks again and keeps what was shown");
+    }
+
+    /// Home and the widget's shelves asked at once ask the source once, and all show its feed.
+    #[test]
+    fn home_asked_together_is_asked_of_the_source_once() {
+        let (c, fake) = fake();
+        let mut shown = Vec::new();
+        let home = c.read_each(Read::HomeFeed, |p| if let Page::Feed { v } = p { shown.extend(v.into_iter().map(|s| s.title)) });
+        let (h, albums, playlists) = block(futures_util::future::join3(home, c.featured_albums(5), c.featured_playlists()));
+        h.unwrap();
+        albums.unwrap();
+        playlists.unwrap();
+        assert_eq!(*fake.feeds.lock(), 1);
+        assert_eq!(shown, ["feed 1"]);
     }
 
     /// A song plays from the provider's address, opened at the URL it resolves to; covers are its own.

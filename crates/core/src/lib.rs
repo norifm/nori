@@ -133,6 +133,7 @@ pub struct Core {
     cache_revision: AtomicU64,
     /// A provider's answers this session, by cache key, with when they came ([`Client::kept_stored`]).
     kept: Mutex<std::collections::HashMap<String, cache_policy::Kept>>,
+    asking: cache_policy::Asking,
     /// Home as last shown this session: a refresh drops the kept page, and the new feed is merged into
     /// this one.
     home: Mutex<Option<Vec<FeedShelf>>>,
@@ -257,6 +258,7 @@ impl Core {
             remote: Mutex::default(),
             cache_revision: AtomicU64::new(0),
             kept: Mutex::default(),
+            asking: Default::default(),
             home: Mutex::default(),
             session,
             account: RwLock::new(None), lan_jam: RwLock::new(None),

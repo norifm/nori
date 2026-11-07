@@ -163,6 +163,15 @@ impl Client {
     /// [`Client::read_fetch`] where failing to reach the server is not an error when something was cached
     /// (`stored_digest`); the server's own refusal is.
     pub(crate) async fn read_refresh(&self, read: Read, stored_digest: Option<u64>) -> NetResult<Option<Page>> {
+        // Asked while another read of the page is on its way (Home and a widget at a profile's opening), it
+        // waits for that answer: a plugin answers one call at a time, so asking again would wait twice.
+        let turn = self.turn(&read).await;
+        if turn.as_ref().is_some_and(|t| t.waited) {
+            let now = self.read_stored(read.clone())?;
+            if now.fresh {
+                return Ok(now.page.filter(|_| now.digest != stored_digest));
+            }
+        }
         match self.read_fetch(read, stored_digest).await {
             Err(e) if stored_digest.is_some() && !matches!(e, crate::transport::NetError::Api { .. }) => Ok(None),
             other => other,
