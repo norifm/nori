@@ -25,14 +25,16 @@ class Symfonium(App):
         self.step("open", self.launch, "On a network server or cloud provider")
         # A phone whose trial has run out is offered one more day when a new version is out.
         shown = self.step("network server", lambda: ui.tap("On a network server or cloud provider"),
-                          ["(Open) Subsonic", "Free trial expired"])
+                          ["(Open) Subsonic", "Free trial expired"], exact=False)
         if shown == "Free trial expired":
-            self.step("one more trial day", lambda: ui.tap("Start"), "(Open) Subsonic")
-        self.step("Subsonic", lambda: ui.tap("(Open) Subsonic"), "Server URL")
+            self.step("one more trial day", lambda: ui.tap("Start"), "(Open) Subsonic", exact=False)
+        # "(Open) Subsonic / Navidrome" since 16.
+        self.step("Subsonic", lambda: ui.tap("(Open) Subsonic", exact=False), "Server URL")
         self.step("server address", lambda: (ui.tap("Server URL"), ui.text(self.url)))
         self.step("user", lambda: (ui.tap("Login"), ui.text(self.user)))
         self.step("password", lambda: (ui.tap("Password"), ui.text(self.password)))
-        self.step("add the server", lambda: ui.tap("Add"), "Library", timeout=180)
+        # The form runs past the screen's bottom since 16.
+        self.step("add the server", lambda: (ui.scroll_to("Add"), ui.tap("Add")), "Library", timeout=180)
         ui.try_tap("Dismiss")
 
     def configure(self, variant):
