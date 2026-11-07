@@ -394,6 +394,8 @@ impl<T: Track> Sink<T> {
         self.rebuilds = 0;
         self.runner.chain = Processors::default();
         self.flush();
+        // Seconds of input, megabytes at a high rate; the next format makes its own room.
+        self.kept = Kept::default();
         self.timestamp_jumps = 0;
         self.gain_reduction_db = 0.0;
     }
@@ -1081,6 +1083,17 @@ mod tests {
         sink.flush();
         assert!(sink.handle_buffer(&ramp(0, 100), 0, 0).0);
         assert_eq!(sink.format, Some(other), "the track is open at the new rate");
+    }
+
+    /// Let go (a long pause, or the song handed to offload), the input kept to run again is given back.
+    #[test]
+    fn reset_gives_back_the_kept_input() {
+        let mut sink = Sink::new(10_000_000, ChainSettings::default(), AudioTrack::new());
+        sink.configure(F);
+        assert!(sink.handle_buffer(&ramp(0, 3000), 0, 0).0);
+        assert!(sink.kept.held() > 0);
+        sink.reset();
+        assert_eq!(sink.kept.held(), 0);
     }
 
     #[test]
