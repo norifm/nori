@@ -390,6 +390,10 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
     // Under the open player the bar is still composed, only covered: a title walking there redrew the
     // whole screen every frame for nobody.
     val covered = LocalPageCovered.current
+    // A title reads itself out once its song has played: one restored paused at launch holds still, as
+    // nothing on screen moves until the user touches it.
+    var played by remember(state.index) { mutableStateOf(state.playing) }
+    LaunchedEffect(state.index, state.playing) { if (state.playing) played = true }
     // Its outline is the chrome's (BottomChrome).
     Surface(
         color = Color.Transparent, contentColor = content,
@@ -429,7 +433,7 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
                         // showing: the neighbours wait off either edge at alpha zero, and a long title
                         // there walked after every change of song, a frame each time, on every page.
                         Text(
-                            s?.title?.let(say::title) ?: title, Modifier.readable(iterations = if (real && !covered) READ_OUT else 0),
+                            s?.title?.let(say::title) ?: title, Modifier.readable(iterations = if (real && !covered && played) READ_OUT else 0),
                             maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.bodyLarge,
                         )
