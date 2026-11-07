@@ -112,10 +112,7 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
     }
 
     /** Plays the offered queue where it was left. */
-    fun takeOffer() = closeOffer()?.let { o ->
-        nori.player.play(o.songs, o.index.toInt())
-        nori.player.seekTo(o.positionMs.toLong())
-    }
+    fun takeOffer() = closeOffer()?.let { o -> nori.player.play(o.songs, o.index.toInt(), startMs = o.positionMs.toLong()) }
 
     fun dismissOffer() { closeOffer() }
 

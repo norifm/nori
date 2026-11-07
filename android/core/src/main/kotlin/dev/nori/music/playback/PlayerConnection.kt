@@ -502,12 +502,13 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     /**
      * A new queue of [songs]. [from]: the page they are the songs of (its Play, Shuffle or a row of its
      * list), which that page then answers for; null for a queue from no page (one song, a selection, a
-     * radio or a mix drawn from a song, a queue picked up from the server).
+     * radio or a mix drawn from a song, a queue picked up from the server). [startMs]: where in the first
+     * song it starts.
      */
-    fun play(songs: List<Song>, startIndex: Int = 0, shuffle: Boolean = false, from: PageOrigin? = null) = with { c ->
+    fun play(songs: List<Song>, startIndex: Int = 0, shuffle: Boolean = false, from: PageOrigin? = null, startMs: Long = 0) = with { c ->
         if (songs.isEmpty()) return@with
         mirror?.let { m ->
-            remote(Op.Replace(songs, startIndex.coerceIn(0, songs.lastIndex).toUInt(), 0, true, null, shuffle, m.repeat, null, null, null))
+            remote(Op.Replace(songs, startIndex.coerceIn(0, songs.lastIndex).toUInt(), startMs, true, null, shuffle, m.repeat, null, null, null))
             return@with
         }
         // Shuffle lit when this start asked for shuffle; cleared on a plain Play, so the album
@@ -516,7 +517,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         // core at once, so the page does not flicker while the queue's own change is on its way.
         nori.session.playlistShowShuffle(shuffle)
         c.shuffleModeEnabled = shuffle
-        c.setMediaItems(startedFrom(items(songs), from), if (shuffle) C.INDEX_UNSET else startIndex.coerceIn(0, songs.lastIndex), 0)
+        c.setMediaItems(startedFrom(items(songs), from), if (shuffle) C.INDEX_UNSET else startIndex.coerceIn(0, songs.lastIndex), startMs)
         c.prepare()
         c.play()
     }
