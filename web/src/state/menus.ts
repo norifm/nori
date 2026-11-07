@@ -72,7 +72,7 @@ function item(a: MenuAction, s: Song): Item | null {
     case "AddToQueue":
       return { label: W.addToQueue, icon: "playlist", run: () => player.enqueue([s], false) };
     case "AddToPlaylist":
-      return { label: W.addToPlaylistMenu, icon: "plus-circle", run: () => addToPlaylist([s]) };
+      return { label: W.addToPlaylist, icon: "plus-circle", run: () => addToPlaylist([s]) };
     case "GoToAlbum":
       return { label: W.goToAlbum, icon: "compact-disc", run: () => ((ui.full = false), go("album", a.id!)) };
     case "GoToArtist":
@@ -82,7 +82,7 @@ function item(a: MenuAction, s: Song): Item | null {
     case "Radio":
       return { label: W.radio, icon: "antenna-signal", run: () => player.radio(s) };
     case "SleepTimer":
-      return { label: W.sleepTimerMenu, icon: "half-moon", run: sleepMenu };
+      return { label: W.sleepTimer, icon: "half-moon", run: sleepMenu };
     default:
       return null;
   }

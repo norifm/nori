@@ -5210,7 +5210,7 @@ mod tests {
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
         let (ui, bar) = window_and_pill();
-        ui.on_player_menu(|| ModelRc::new(VecModel::from(vec![crate::SongGo { kind: 17, title: "Sleep timer…".into(), enabled: true, ..Default::default() }])));
+        ui.on_player_menu(|| ModelRc::new(VecModel::from(vec![crate::SongGo { kind: 17, title: "Sleep timer".into(), enabled: true, ..Default::default() }])));
         let did = Rc::new(RefCell::new(Vec::new()));
         let seen = did.clone();
         ui.on_player_act(move |kind, _| seen.borrow_mut().push(kind));
