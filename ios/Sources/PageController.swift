@@ -584,7 +584,7 @@ class PageController: UITableViewController {
         switch r.layout {
         case .shelf:
             let cell = tableView.dequeueReusableCell(withIdentifier: ShelfCell.id, for: indexPath) as! ShelfCell
-            cell.show(r.section.items, side: shelfSide(r.section), look: look)
+            cell.show(r.section.items, shelf: r.section.key + "/" + r.section.title, side: shelfSide(r.section), look: look)
             cell.picked = { [weak self] in self?.open($0) }
             cell.held = { [weak self] in self?.menu(for: $0) }
             return cell

@@ -67,7 +67,7 @@ pub struct Group {
 
 /// The groups in page order: the core's pages in its order, the terminal's own after the look.
 pub const GROUPS: [Group; 10] = [
-    Group { id: Gid::Core(SettingsPage::Servers), title: "Servers", summary: "Accounts and music folder" },
+    Group { id: Gid::Core(SettingsPage::Servers), title: "Profiles", summary: "Accounts and music folder" },
     Group { id: Gid::Core(SettingsPage::Playing), title: "Playback", summary: "Crossfade, AutoMix, queue" },
     Group { id: Gid::Core(SettingsPage::Sound), title: "Sound", summary: "Equalizer, volume, output" },
     Group { id: Gid::Core(SettingsPage::Look), title: "Appearance", summary: "Theme, colors, size" },

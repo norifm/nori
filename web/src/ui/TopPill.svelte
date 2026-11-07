@@ -15,14 +15,12 @@
 <script lang="ts">
   // The top bar on a wide screen, as the desktop's top pill: one outline holding Home and the library's
   // sections in their order (the core's `library_sections`), the current one in the accent and named
-  // while there is room; then the search and the settings button. Settings opens the account, the
-  // equalizer and Settings, and the season and appearance.
+  // while there is room; then the search and the settings button, which opens Settings.
   import { ask } from "../rpc";
   import { remote } from "../state/remote.svelte";
-  import { go, route } from "../state/route.svelte";
+  import { route } from "../state/route.svelte";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
-  import Look from "./Look.svelte";
   import SearchBox from "./SearchBox.svelte";
 
   /** The page each section's tab is lit on. */
@@ -33,23 +31,10 @@
     // Favorites last, as the desktop's top pill has it.
     void ask<string>("library_sections").then((s) => (sections = (JSON.parse(s) as string[]).filter((x) => x in tops).sort((a, b) => +(a === "Favourites") - +(b === "Favourites"))));
   });
-  let pop = $state(false);
-  let bar = $state<HTMLElement>();
-  let account = $state<{ url: string; user: string } | null>(null);
   const on = (...t: string[]) => t.includes(route.top);
-  const toggle = () => {
-    pop = !pop;
-    if (pop && !account) void ask<string>("profile").then((j) => (account = JSON.parse(j)));
-  };
-  const open = (page: string) => {
-    go(page);
-    pop = false;
-  };
 </script>
 
-<svelte:window onpointerdown={(e) => pop && !bar?.contains(e.target as Node) && (pop = false)} onkeydown={(e) => e.key === "Escape" && (pop = false)} onhashchange={() => (pop = false)} />
-
-<header class="top chrome" id="nav" bind:this={bar}>
+<header class="top chrome" id="nav">
   <nav class="tabs" aria-label={W.library}>
     <a class="tab" class:on={on("home", "row")} href={href("home")} data-top="home"><Icon name="home-simple" /><span>{W.home}</span></a>
     <span class="sep"></span>
@@ -58,18 +43,7 @@
     {/each}
   </nav>
   <SearchBox />
-  <button class="glyph quiet gear" class:on={pop || on("settings", "equalizer")} aria-label={W.settings} title={W.settings} aria-expanded={pop} data-top="settings" onclick={toggle}><Icon name="settings" /></button>
-  {#if pop}
-    <div class="pop popover">
-      <div class="acct">
-        <span class="initial">{(account?.user ?? "").slice(0, 1).toUpperCase()}</span>
-        <span class="who clip">{account?.user ?? ""}<span class="sub clip">{account?.url ?? ""}</span></span>
-      </div>
-      <button class="popover-item" onclick={() => open("equalizer")}><Icon name="control-slider" /><span class="clip">{W.equalizer}</span></button>
-      <button class="popover-item" onclick={() => open("settings")}><Icon name="settings" /><span class="clip">{W.settings}</span></button>
-      <Look />
-    </div>
-  {/if}
+  <a class="glyph quiet gear" class:on={on("settings", "equalizer")} aria-label={W.settings} title={W.settings} data-top="settings" href={href("settings")}><Icon name="settings" /></a>
 </header>
 
 <style>
@@ -132,47 +106,6 @@
   .gear :global(.icon) {
     width: 20px;
     height: 20px;
-  }
-  .pop {
-    position: absolute;
-    top: 56px;
-    right: 0;
-    width: 300px;
-  }
-  .acct {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 6px 12px;
-    border-bottom: var(--hairline) solid var(--hair);
-    margin-bottom: 6px;
-  }
-  .initial {
-    display: grid;
-    place-items: center;
-    width: 34px;
-    height: 34px;
-    flex: none;
-    border-radius: 50%;
-    background: var(--accent);
-    color: var(--on-accent);
-    font-weight: 700;
-  }
-  .who {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    font-weight: 600;
-  }
-  .who .sub {
-    font-size: 12.5px;
-    font-weight: 400;
-    color: var(--ink2);
-  }
-  .pop :global(.look) {
-    margin-top: 6px;
-    padding: 6px 4px 4px;
-    border-top: var(--hairline) solid var(--hair);
   }
   /* Named only while there is room, as the desktop's; the current one always. */
   @media (max-width: 1023px) {

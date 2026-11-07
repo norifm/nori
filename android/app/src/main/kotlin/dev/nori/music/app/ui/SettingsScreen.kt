@@ -480,18 +480,23 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                 }
                 is SettingRow.CompressionMeter -> CompressionMeter(row.enabled, divider)
                 is SettingRow.Seasons -> SeasonPicker(row) { v -> vm.set(row.name, v) }
-                is SettingRow.Server -> {
-                    Row(Modifier.fillMaxWidth().clickable(enabled = !row.active) { p.servers.firstOrNull { it.id == row.id }?.let(vm::switchServer) }.padding(start = GROUP_INSET), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(row.label, color = if (row.active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-                            Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        // A jam guest switches between the profiles; changing them is not its to do.
-                        if (dev.nori.music.ffi.settings.SettingsPart.SERVER_OPTIONS in LocalRules.current.settings) {
-                            TextAction(say.edit, { editing = p.servers.firstOrNull { it.id == row.id }?.also(vm::openLogin) })
-                            TextAction(say.remove, { vm.removeServer(row.id) }, destructive = true)
-                        }
+                is SettingRow.Server -> p.servers.firstOrNull { it.id == row.id }?.let { profile ->
+                    // A jam guest switches between the profiles; changing them is not its to do.
+                    val options = dev.nori.music.ffi.settings.SettingsPart.SERVER_OPTIONS in LocalRules.current.settings
+                    var removing by remember(row.id) { mutableStateOf(false) }
+                    NoriDialog(removing, { removing = false }) {
+                        AlertCard(
+                            title = { Text(say.removeProfileTitle(row.label)) },
+                            text = { Text(say.removeProfileText) },
+                            confirmButton = { TextAction(say.remove, { removing = false; vm.removeServer(row.id) }, destructive = true) },
+                            dismissButton = { TextAction(say.cancel, { removing = false }) },
+                        )
                     }
+                    ProfileLine(
+                        vm, profile, row.active, divider = divider && row.libraries.isEmpty(), detail = row.detail,
+                        trailing = { if (options) MoreButton(listOf(say.edit to { editing = profile.also(vm::openLogin) }, say.remove to { removing = true })) },
+                        onClick = if (row.active) null else ({ vm.switchServer(profile) }),
+                    )
                     // The server's own libraries, under it: which of them the app shows.
                     if (row.libraries.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(start = GROUP_INSET, end = GROUP_INSET, bottom = 12.dp)) {
                         Text(row.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -500,9 +505,9 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) { row.libraries.forEach { l -> Chip(l.label, l.on) { vm.set(l.name, l.tapped) } } }
                     }
-                    if (divider) Hairline(startIndent = GROUP_INSET)
+                    if (divider && row.libraries.isNotEmpty()) Hairline(startIndent = GROUP_INSET)
                 }
-                is SettingRow.Button -> TextAction(row.title, { act(row.action) }, Modifier.padding(horizontal = 8.dp))
+                is SettingRow.Button -> GroupRow(row.title, { act(row.action) }, icon = Iconoir.Plus, divider = divider)
                 // Each row is drawn at its place in the order shown, gliding there, while it is laid out in the
                 // core's: the neighbours make way as the held row passes them, and when it is let go it settles
                 // into its place as the core's order catches up, with nothing jumping at either end.

@@ -12,7 +12,7 @@
     <string name="settings_hit_detail">%1$s · %2$s</string>
 
     <!-- The groups, in the order the root lists them. -->
-    <string name="settings_group_servers">Servers</string>
+    <string name="settings_group_servers">Profiles</string>
     <string name="settings_group_servers_summary">Accounts and music folder</string>
     <string name="settings_group_playing">Playback</string>
     <string name="settings_group_playing_summary">Crossfade, AutoMix, queue</string>
@@ -329,7 +329,7 @@
     <string name="settings_back_up">Back up</string>
     <string name="settings_back_up_detail">Settings, sound profiles and plugins, server passwords included, locked with a password.</string>
     <string name="settings_restore">Restore a backup</string>
-    <string name="settings_restore_detail">Its settings replace these. Your servers stay.</string>
+    <string name="settings_restore_detail">Its settings replace these. Your profiles stay.</string>
     <string name="settings_hint_backup">backup export import restore save file password move phone</string>
     <string name="settings_backup_save">Save</string>
     <string name="settings_backup_open">Open</string>
@@ -353,15 +353,17 @@
 
     <!-- Servers. -->
     <string name="settings_section_accounts">Accounts</string>
-    <string name="settings_section_this_server">This server</string>
+    <string name="settings_section_this_server">This profile</string>
     <string name="settings_server_api_key">API key</string>
     <string name="settings_server_best_effort">Best effort</string>
-    <string name="settings_server_in_use">in use</string>
-    <string name="settings_server_not_in_use">not in use</string>
     <string name="settings_server_wifi_only">Wi-Fi only</string>
     <string name="settings_server_second_address">second address</string>
     <string name="settings_server_separator">" · "</string>
-    <string name="settings_add_server">Add server</string>
+    <string name="settings_add_server">Add profile</string>
+    <string name="manage_profiles">Manage profiles</string>
+    <string name="profile_in_use">In use</string>
+    <string name="remove_profile_title">Remove %1$s?</string>
+    <string name="remove_profile_text">What nori keeps for it on this device goes with it.</string>
     <string name="settings_music_folder_detail">Libraries shown in nori. Tap one to hide it.</string>
     <string name="settings_alt_bitrate">Bitrate limit on the second address</string>
     <string name="settings_alt_bitrate_none">No limit</string>

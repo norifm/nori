@@ -57,20 +57,20 @@ pub fn appearance_theme(pick: usize) -> &'static str {
 }
 
 /// The season tiles and the "follow the seasons" switch under them.
-pub struct Seasons {
+struct Seasons {
     /// The tile worn (0 spring to 3 winter): the calendar's while following.
-    pub worn: i32,
-    pub following: bool,
+    worn: i32,
+    following: bool,
     /// The switch's row name: the setting and the value flipping it sets ([`toggled`]).
-    pub switch: String,
+    switch: String,
     /// "Autumn now · Winter from November 7" while following.
-    pub detail: String,
+    detail: String,
 }
 
 const SEASON_NAMES: [&str; 4] = ["Spring", "Summer", "Autumn", "Winter"];
 const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-pub fn seasons(p: &StoredPrefs, today: Today) -> Seasons {
+fn seasons(p: &StoredPrefs, today: Today) -> Seasons {
     let now = theme::season_now(today.month, today.day, today.southern);
     let following = p.season == ThemeSeason::Follow;
     let worn = season_of(p.season).unwrap_or(now.season) as i32;
@@ -84,7 +84,7 @@ pub fn seasons(p: &StoredPrefs, today: Today) -> Seasons {
 }
 
 /// Which appearance the settings stand for ([`appearance_theme`]'s pick).
-pub fn appearance_pick(p: &StoredPrefs) -> i32 {
+fn appearance_pick(p: &StoredPrefs) -> i32 {
     use nori_core::settings::ThemeMode;
     match p.theme {
         ThemeMode::System => 0,
@@ -271,7 +271,7 @@ pub fn tabs(parts: &[nori_core::settings_pages::SettingsPart]) -> Vec<SettingsPa
 /// A category's name, as Android's settings list them.
 pub fn tab_name(page: SettingsPage) -> &'static str {
     match page {
-        SettingsPage::Servers => "Servers",
+        SettingsPage::Servers => "Profiles",
         SettingsPage::Playing => "Playback",
         SettingsPage::Sound => "Sound",
         SettingsPage::Look => "Appearance",
@@ -291,8 +291,8 @@ fn section_title(id: SectionId) -> &'static str {
     use SectionId::*;
     match id {
         Accounts => "Accounts",
-        MusicFolders => "This server",
-        ThisServer => "This server",
+        MusicFolders => "This profile",
+        ThisServer => "This profile",
         Between => "Between songs",
         Queue => "Queue",
         Equalizer => "Equalizer",
@@ -454,7 +454,7 @@ fn flag_rows(r: &SettingsRow, s: &SettingsState) -> Option<Vec<Row>> {
 }
 
 /// The desktop's row for one of the core's, or None for one it does not draw.
-fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: &Kinds) -> Option<Row> {
+fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: &Kinds, plugged: &Plugged) -> Option<Row> {
     let enabled = r.enabled;
     Some(match r.item {
         RowItem::Setting { spec, value, .. } => {
@@ -523,7 +523,7 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
                 SettingsAction::ClearStream => action("Streamed music", format!("{}. Oldest goes first. Downloads stay.", bytes(f.stream_bytes)), "Clear", enabled, Chore::ClearStream),
                 SettingsAction::ClearCovers => action("Covers", format!("{}. Fetched again when needed.", bytes(f.cover_bytes)), "Clear", enabled, Chore::ClearCovers),
                 SettingsAction::ClearLyrics => action("Lyrics", format!("{} found online. Looked up again when needed.", bytes(f.lyrics_bytes)), "Clear", enabled, Chore::ClearLyrics),
-                SettingsAction::AddServer => Row { kind: BUTTON, name: ADD_SERVER.into(), title: "Add server".into(), enabled: true, ..Default::default() },
+                SettingsAction::AddServer => Row { kind: BUTTON, name: ADD_SERVER.into(), title: "Add profile".into(), enabled: true, ..Default::default() },
                 SettingsAction::MakeBackup => Row { kind: ACTION, name: BACKUP.into(), title: words::BACK_UP.into(), detail: words::BACK_UP_DETAIL.into(), button: "Save".into(), enabled, ..Default::default() },
                 SettingsAction::RestoreBackup => Row { kind: ACTION, name: RESTORE.into(), title: words::RESTORE.into(), detail: words::RESTORE_DETAIL.into(), button: "Open".into(), enabled, ..Default::default() },
                 SettingsAction::AnalyseDownloads | SettingsAction::JoinJam | SettingsAction::CheckUpdate => return None,
@@ -538,15 +538,15 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
             let sv = p.servers.get(index as usize)?;
             let active = sv.id == p.active_server_id;
             let words = crate::words::provider_of(kinds, &sv.kind);
-            let who = if sv.user.is_empty() { words.no_user } else { sv.user.as_str() };
-            let mut detail = format!("{who} · {}", if active { "in use" } else { "not in use" });
+            let mut detail = if sv.user.is_empty() { words.no_user.to_string() } else { sv.user.clone() };
             if !sv.alt_url.trim().is_empty() {
                 detail.push_str(" · second address");
             }
-            let title = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or(words.name);
+            let title = crate::words::profile_label(sv, kinds);
+            let (icon, letter) = profile_mark(plugged, sv, &title);
             // A jam guest switches between the profiles; changing them is not its to do.
             let edits = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
-            Row { kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, button: if edits { "Edit".into() } else { "".into() }, ..Default::default() }
+            Row { kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, button: if edits { "Edit".into() } else { "".into() }, icon, letter, ..Default::default() }
         }
         RowItem::MusicFolder { index, on, tapped } => {
             let (name, _) = f.folders.get(index as usize)?;
@@ -585,7 +585,7 @@ fn service(id: &str) -> Option<(&'static str, &'static str)> {
 
 /// The groups of settings tab `tab`: each section's title and rows. Tab 0 adds the desktop's own:
 /// the output device and the version.
-fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, kinds: &Kinds, tab: i32, today: Today) -> Vec<(String, Vec<Row>)> {
+fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, kinds: &Kinds, plugged: &Plugged, tab: i32, today: Today) -> Vec<(String, Vec<Row>)> {
     let s = settings_model::state(p, settings_model::Output::default(), model);
     let facts = PageFacts {
         parts: f.rules.settings.clone(),
@@ -604,7 +604,7 @@ fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, 
     let mut groups: Vec<(String, Vec<Row>)> = Vec::new();
     let page = tab_page(f, tab);
     for sec in settings_pages::page(page, SettingsClient::Desktop, p, &s, &facts) {
-        let rows: Vec<Row> = sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, &s).unwrap_or_else(|| row_of(r, p, &s, f, kinds).into_iter().collect())).flat_map(|r| {
+        let rows: Vec<Row> = sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, &s).unwrap_or_else(|| row_of(r, p, &s, f, kinds, plugged).into_iter().collect())).flat_map(|r| {
             if r.kind != SEASONS {
                 return vec![r];
             }
@@ -650,8 +650,8 @@ fn groups(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, 
 }
 
 /// Rows of settings tab `tab`: each group's heading, then its rows with first and last marked.
-pub fn rows(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, kinds: &Kinds, tab: i32, today: Today) -> ModelRc<SettingRow> {
-    self::model(groups(model, p, f, kinds, tab, today), p, f, today)
+pub fn rows(model: &nori_core::beat_model::ModelFile, p: &StoredPrefs, f: &Facts, kinds: &Kinds, plugged: &Plugged, tab: i32, today: Today) -> ModelRc<SettingRow> {
+    self::model(groups(model, p, f, kinds, plugged, tab, today), p, f, today)
 }
 
 /// `groups` as the page draws them: each heading, then its rows with first and last marked.
@@ -1027,6 +1027,15 @@ fn plugin_line(p: &Plugged, id: &str, name: &str, about: Option<&str>, line: Str
     Row { kind: PLUGIN, name: PluginAct::Page(id.into()).name(), title: name.into(), detail: about.unwrap_or_default().into(), line, icon, letter, enabled: true, ..Default::default() }
 }
 
+/// A profile's mark: its plugin's icon, or the first letter of who signs in (of `label` without a user).
+pub fn profile_mark(p: &Plugged, sv: &nori_core::settings::SavedServer, label: &str) -> (slint::Image, String) {
+    let first = |s: &str| s.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+    match &sv.kind {
+        ServerKind::Plugin { id } => p.tile(id, label),
+        _ => (slint::Image::default(), first(if sv.user.is_empty() { label } else { &sv.user })),
+    }
+}
+
 /// Updates waiting, and the installed plugins in their order, grey while every plugin is off.
 fn plugin_list(p: &Plugged, all_off: bool) -> Vec<(String, Vec<Row>)> {
     if p.cards.is_empty() {
@@ -1386,7 +1395,7 @@ mod tests {
         let tab = tabs(&facts.rules.settings).iter().position(|p| *p == SettingsPage::Lyrics).unwrap() as i32;
         let today = Today { month: 10, day: 19, southern: false };
         let source = |p: &StoredPrefs, id: &str| {
-            let rows = rows(&Default::default(), p, &facts, &Kinds::builtin(), tab, today);
+            let rows = rows(&Default::default(), p, &facts, &Kinds::builtin(), &Plugged::default(), tab, today);
             let r = slint::Model::iter(&rows).find(|r| r.kind == RANKED && r.name == id).unwrap();
             (r.button.to_string(), r.keyed)
         };
@@ -1411,7 +1420,7 @@ mod tests {
         };
         let p = StoredPrefs { servers: vec![SavedServer { id: "a".into(), name: "Home".into(), ..Default::default() }], active_server_id: "a".into(), ..Default::default() };
         let today = Today { month: 10, day: 19, southern: false };
-        let usage = |f: &Facts| (0..8).flat_map(|tab| groups(&Default::default(), &p, f, &Kinds::builtin(), tab, today)).flat_map(|(_, rows)| rows).find(|r| r.kind == USAGE).unwrap();
+        let usage = |f: &Facts| (0..8).flat_map(|tab| groups(&Default::default(), &p, f, &Kinds::builtin(), &Plugged::default(), tab, today)).flat_map(|(_, rows)| rows).find(|r| r.kind == USAGE).unwrap();
         let both = usage(&facts(vec![("a".into(), 2 << 20), ("gone".into(), 1 << 20)]));
         assert_eq!(both.options[1].0, "5 downloads · 3.0 MB");
         assert_eq!(both.breakdown, ["Home · 2.0 MB", "A removed profile · 1.0 MB"]);
@@ -1421,7 +1430,7 @@ mod tests {
     #[test]
     fn tabs_are_the_pages_the_profile_opens() {
         let names = |guest| tabs(&nori_core::browse::profile_rules(guest).settings).into_iter().map(tab_name).collect::<Vec<_>>();
-        assert_eq!(names(false), ["Servers", "Playback", "Sound", "Appearance", "Lyrics", "Library", "Downloads and storage"]);
+        assert_eq!(names(false), ["Profiles", "Playback", "Sound", "Appearance", "Lyrics", "Library", "Downloads and storage"]);
         assert!(!names(true).contains(&"Library"), "a jam guest has no library settings to show");
     }
 
@@ -1440,7 +1449,7 @@ mod tests {
         use slint::Model;
         let facts = Facts::default();
         let look = tabs(&facts.rules.settings).iter().position(|p| *p == SettingsPage::Look).map_or(0, |i| i as i32);
-        let rows = rows(&Default::default(), &StoredPrefs::default(), &facts, &Kinds::builtin(), look, OCTOBER);
+        let rows = rows(&Default::default(), &StoredPrefs::default(), &facts, &Kinds::builtin(), &Plugged::default(), look, OCTOBER);
         let kinds: Vec<_> = rows.iter().map(|r| r.kind).collect();
         let at = kinds.iter().position(|k| *k == SEASONS).expect("a season row");
         assert_eq!(kinds[at - 1..at + 4], [HEADING, SEASONS, TOGGLE, HEADING, APPEARANCE_ROW], "the season under its heading, then the theme's");
@@ -1468,7 +1477,7 @@ mod tests {
         let f = Facts::default();
         let specs: Vec<String> = settings_model::specs().into_iter().map(|s| s.name).collect();
         for tab in 0..7 {
-            for (_, rows) in groups(&Default::default(), &p, &f, &Kinds::builtin(), tab, OCTOBER) {
+            for (_, rows) in groups(&Default::default(), &p, &f, &Kinds::builtin(), &Plugged::default(), tab, OCTOBER) {
                 for r in rows.iter().filter(|r| matches!(r.kind, TOGGLE | CHOICE) && r.name != DEVICE) {
                     let name = toggled(&r.name, r.on).0;
                     assert!(specs.iter().any(|s| s == name), "{name} is not a core setting");
@@ -1750,6 +1759,18 @@ mod tests {
         for act in [PluginAct::Choose(ServerKind::Subsonic), PluginAct::Choose(ServerKind::Plugin { id: "a.b".into() }), PluginAct::TurnOn("a.b".into()), PluginAct::OfferPage("a.b".into()), PluginAct::Sheet, PluginAct::ChooseAgain, PluginAct::AddSigningIn, PluginAct::AddAsGuest] {
             assert_eq!(PluginAct::of(&act.name()), Some(act));
         }
+    }
+
+    /// A server profile's mark is who signs in, else its name; a plugin profile's is its plugin's tile.
+    #[test]
+    fn a_profile_mark_is_its_user_or_its_plugin() {
+        use nori_core::settings::SavedServer;
+        let mut p = Plugged::default();
+        p.icons.read.insert("a.one".into(), None);
+        let server = |user: &str| SavedServer { user: user.into(), ..Default::default() };
+        let plugin = SavedServer { user: "zoe".into(), kind: ServerKind::Plugin { id: "a.one".into() }, ..Default::default() };
+        let marks: Vec<String> = [server("admin"), server(""), plugin].iter().map(|sv| profile_mark(&p, sv, "home").1).collect();
+        assert_eq!(marks, ["A", "H", "H"]);
     }
 
     /// A tile is empty until the icon is heard of, then the icon, or the letter for a plugin with none;

@@ -591,7 +591,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         }
         is RowItem.Server -> p.servers.getOrNull(item.index.toInt())?.let { sv ->
             val active = sv.id == p.activeServerId
-            SettingRow.Server(sv.id, serverLabel(sv), serverDetail(sv, active), active, if (active) libraries else emptyList(), str(R.string.settings_music_folder_detail))
+            SettingRow.Server(sv.id, serverLabel(sv), serverDetail(sv), active, if (active) libraries else emptyList(), str(R.string.settings_music_folder_detail))
         }
         is RowItem.LyricsSource -> s.lyricsSources.getOrNull(item.index.toInt())?.let { src ->
             val (title, about) = SERVICES[src.id] ?: return null
@@ -766,10 +766,10 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
 
     private fun words(sv: SavedServer) = providerWords(res, sv.kind, (sv.kind as? dev.nori.music.ffi.settings.ServerKind.Plugin)?.let { f.pluginNames[it.id] })
 
-    /** The line under a saved server: who signs in, whether it is in use, and what is special about it. */
-    private fun serverDetail(sv: SavedServer, active: Boolean): String {
+    /** The line under a profile: who signs in, and what is special about it. */
+    private fun serverDetail(sv: SavedServer): String {
         val who = sv.user.ifEmpty { words(sv).noUser }
-        val parts = mutableListOf(who, str(if (active) R.string.settings_server_in_use else R.string.settings_server_not_in_use))
+        val parts = mutableListOf(who)
         if (sv.wifiOnly) parts += str(R.string.settings_server_wifi_only)
         if (sv.altUrl.isNotBlank()) parts += str(R.string.settings_server_second_address)
         return parts.joinToString(str(R.string.settings_server_separator))
