@@ -478,13 +478,33 @@ impl Client {
     }
 
     /// Home stays as first shown for the whole session; after a refresh dropped it, the last one shows
-    /// until the merged one comes.
+    /// until the merged one comes. A session's first shows the last session's until its own is asked.
     fn home_stored(&self) -> NetResult<Stored> {
         let kept = self.stored(Read::HomeFeed, Some(i64::MAX))?;
         if kept.page.is_some() {
             return Ok(kept);
         }
-        Ok(Stored { page: self.core.home.lock().clone().map(|v| Page::Feed { v }), digest: None, fresh: false })
+        if let Some(v) = self.core.home.lock().clone() {
+            return Ok(Stored { page: Some(Page::Feed { v }), digest: None, fresh: false });
+        }
+        let saved = self.home_saved_key().and_then(|key| {
+            let c = self.core.db.lock();
+            let mut st = c.prepare_cached("SELECT body FROM cache WHERE server=sid() AND key=?1").ok()?;
+            let body: Vec<u8> = st.query_row([key], |r| r.get(0)).optional().ok()??;
+            serde_json::from_slice::<Vec<FeedShelf>>(&body).ok()
+        });
+        Ok(match saved {
+            Some(v) => {
+                let page = Page::Feed { v };
+                Stored { digest: Some(page_digest(&page)), page: Some(self.overlaid(&Read::HomeFeed, page)), fresh: false }
+            }
+            None => Stored { page: None, digest: None, fresh: false },
+        })
+    }
+
+    /// Where the session's Home is kept on disk for the next one's first moments.
+    fn home_saved_key(&self) -> Option<String> {
+        self.kept_key(&Read::HomeFeed).map(|(key, _)| key + ":last")
     }
 
     /// A source may reshuffle Home on every request: a refresh keeps what was shown and adds what is new.
@@ -499,10 +519,14 @@ impl Client {
             *home = Some(v.clone());
             v
         };
+        let saved = serde_json::to_vec(&v);
         let page = Page::Feed { v };
         let kept = page_digest(&page);
         if let Some((key, _)) = self.kept_key(&Read::HomeFeed) {
             self.core.kept.lock().insert(key, Kept { page: page.clone(), at: crate::db::now_ms(), digest: kept });
+        }
+        if let (Some(key), Ok(body)) = (self.home_saved_key(), saved) {
+            self.core.cache_put(key, body)?;
         }
         Ok((Some(kept) != digest).then_some(page))
     }
