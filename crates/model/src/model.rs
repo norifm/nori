@@ -360,8 +360,9 @@ pub struct Genre {
 }
 
 /// One row of a source's own home feed (`ProfileRules::feed`), titled as the source titles it.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+#[serde(default)]
 pub struct FeedShelf {
     pub title: String,
     pub songs: Vec<Song>,

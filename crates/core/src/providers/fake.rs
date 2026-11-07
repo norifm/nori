@@ -155,7 +155,12 @@ mod tests {
 
     /// A client over the fake provider, its network a scripted transport no test answers.
     fn fake() -> (Arc<Client>, Arc<Fake>) {
-        let core = Core::new(String::new(), "fake".into(), Default::default()).unwrap();
+        fake_at(String::new())
+    }
+
+    /// [`fake`] over the database at `db` (empty: one in memory).
+    fn fake_at(db: String) -> (Arc<Client>, Arc<Fake>) {
+        let core = Core::new(db, "fake".into(), Default::default()).unwrap();
         let provider = Arc::new(Fake::default());
         core.install(ServerKind::default(), provider.clone());
         core.provider().configure(&core, &SavedServer::default()).unwrap();
@@ -204,6 +209,25 @@ mod tests {
         assert_eq!(*fake.feeds.lock(), 1);
         c.drop_cached(crate::browse::home_refresh_drops()).unwrap();
         assert_eq!(shown(), [vec!["feed 1"], vec!["feed 1", "feed 2"]], "a refresh asks again and keeps what was shown");
+    }
+
+    /// The last session's Home shows at once in the next, and the feed asked again replaces it.
+    #[test]
+    fn home_shows_the_last_sessions_feed_until_asked_again() {
+        let dir = nori_testdir::TempDir::new("fake-home");
+        let db = dir.join("nori.db").to_str().unwrap().to_string();
+        let titles = |c: &Client| {
+            let mut pages = Vec::new();
+            block(c.read_each(Read::HomeFeed, |p| if let Page::Feed { v } = p { pages.push(v.iter().map(|s| s.title.clone()).collect::<Vec<_>>()) })).unwrap();
+            pages
+        };
+        let (c, _) = fake_at(db.clone());
+        assert_eq!(titles(&c), [["feed 1"]]);
+        drop(c);
+        let (c, fake) = fake_at(db);
+        *fake.feeds.lock() = 5;
+        assert_eq!(titles(&c), [["feed 1"], ["feed 6"]]);
+        assert_eq!(titles(&c), [["feed 6"]], "this session's, kept");
     }
 
     /// Home and the widget's shelves asked at once ask the source once, and all show its feed.
