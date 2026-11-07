@@ -1922,7 +1922,9 @@ fn page_heads_offer_what_the_core_says() {
     let remove = hit_rect(&a, Hit::Button(Button::Page(PageAction::Download { act: DownloadAct::Remove })));
     a.cmds.clear();
     click(&mut a, remove.x, remove.y);
-    assert_eq!(a.cmds, songs.iter().map(|s| Cmd::DownloadRemove(s.id.clone())).collect::<Vec<_>>());
+    assert!(a.cmds.is_empty() && draw(&mut a, 120, 30).contains("Remove 3 downloads?"), "a removal asks first");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds, vec![Cmd::DownloadRemove(songs.iter().map(|s| s.id.clone()).collect())]);
     let add = hit_rect(&a, Hit::Button(Button::Page(PageAction::AddToQueue)));
     click(&mut a, add.x, add.y);
     assert!(matches!(a.cmds.last(), Some(Cmd::EnqueueFetch(crate::backend::Fetch::Album(id), false)) if id == "al-1"));

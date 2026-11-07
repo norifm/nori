@@ -134,6 +134,14 @@ pub const TRUST_REPO: &str = "This repo isn’t nori’s. Its plugins can do wha
 pub const REMOVE_PLUGIN_NOTE: &str = "Its settings go with it.";
 pub const INSTALLED_ON: &str = "It turns on once installed.";
 
+/// The name the ask sheet sends back when a removal of downloads is confirmed.
+pub const REMOVE_DOWNLOADS: &str = "remove-downloads";
+
+/// Asks before removing `n` downloads, and what that does.
+pub fn remove_downloads(n: usize) -> (String, &'static str) {
+    if n == 1 { ("Remove the download?".into(), "It no longer plays offline.") } else { (format!("Remove {n} downloads?"), "They no longer play offline.") }
+}
+
 /// Asks before removing `name`.
 pub fn remove_plugin(name: &str) -> String {
     format!("Remove {name}?")

@@ -774,12 +774,14 @@ CAR
   check "the car's Favorites tab loads" car_read starred
   check "the favorite crosses the native media browser" grep -Fq "in|starred|$first_id |" "$car_log"
   [ "$was_starred" = True ] || "$app" do "star song:$first_id" >/dev/null
-  # The downloaded album's page is still open: removing its tracks empties it while its ⋯ menu fades out.
+  # The downloaded album's page is still open: once none of its tracks are saved it shows the album itself.
   check "the downloaded album's page is still open" wait_for route "downloaded/{id}" 8
   app_pid=$(adb shell pidof "$pkg" | tr -d '\r')
   "$app" do "undownload album:$album_id" >/dev/null
   check "removing the saved tracks removes the album folder" wait_until 20 removed_album
   check "emptying the open downloaded album does not crash the app" test "$(adb shell pidof "$pkg" | tr -d '\r')" = "$app_pid"
+  check "the emptied album's page stays open" wait_for route "downloaded/{id}" 8
+  check "it shows the album's unsaved tracks" wait_until 20 on_screen 'text="Long Track 02"'
   rm -f "$car_log"
 fi
 

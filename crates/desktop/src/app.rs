@@ -539,6 +539,8 @@ pub struct App {
     jam_hosting: bool,
     /// The song whose menu opened the playlist picker, and the playlists offered for it.
     menu_song: Option<Song>,
+    /// The downloads asked to be removed, waiting for the ask sheet's yes.
+    removing: Vec<String>,
     picker: Vec<nori_core::menus::PlaylistChoice>,
     /// The sleep timer's choices as offered.
     sleep_choices: Vec<nori_core::menus::SleepChoice>,
@@ -773,6 +775,7 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             jam_link: String::new(),
             jam_hosting: false,
             menu_song: None,
+            removing: Vec::new(),
             picker: Vec::new(),
             sleep_choices: Vec::new(),
             playback: Playback::Here,
@@ -1173,6 +1176,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         None => a.slid(&name, v, last),
     });
     on!(ui.on_setting_typed, h, |a, name, text| match (crate::settings::PluginAct::of(&name), crate::settings::Act::of(&name)) {
+        _ if name == words::REMOVE_DOWNLOADS => a.remove_asked(),
         (Some(act), _) => a.plugin_typed(act, text.to_string()),
         (None, Some(act)) => a.backup_typed(act, text.to_string()),
         (None, None) => a.setting(&name, &text),
@@ -1853,21 +1857,26 @@ impl App {
                 let missing = self.page_songs.iter().zip(states).filter(|(_, d)| *d != nori_core::menus::SongDownload::Done).map(|(s, _)| s.clone()).collect();
                 s.download(missing);
             }
-            2 => self.on_session(|s| self.page_songs.iter().for_each(|song| s.download_remove(&song.id))),
+            2 => return self.ask_remove(self.page_songs.iter().map(|s| s.id.clone()).collect()),
             4 if matches!(fetch, Fetch::Artist(_)) => self.on_session(|s| s.enqueue_later(fetch, false)),
             4 => self.enqueue_page(),
             5 => self.redraw_mix(),
             _ => {}
         }
         if act != 5 {
-            self.page_actions(match &self.page {
-                Some(PageShown::Album) => PageKind::Album,
-                Some(PageShown::Artist) => PageKind::Artist,
-                Some(PageShown::Mix(Some(_))) => PageKind::Mix { refreshable: true },
-                Some(PageShown::Mix(None) | PageShown::Playlist(_)) | None => PageKind::Playlist,
-            });
+            self.page_head();
         }
         self.mark_playing();
+    }
+
+    /// The list head's glyphs again, after the page's downloads changed.
+    fn page_head(&mut self) {
+        self.page_actions(match &self.page {
+            Some(PageShown::Album) => PageKind::Album,
+            Some(PageShown::Artist) => PageKind::Artist,
+            Some(PageShown::Mix(Some(_))) => PageKind::Mix { refreshable: true },
+            Some(PageShown::Mix(None) | PageShown::Playlist(_)) | None => PageKind::Playlist,
+        });
     }
 
     /// Home's "For you": each mix's card on the season's paper dyed with the mix (the core's
@@ -2416,7 +2425,8 @@ impl App {
                 self.ask_choices(one.id.clone());
                 self.menu_song = Some(one);
             }
-            8 | 9 => self.on_session(|s| s.download_remove(&one.id)),
+            8 => self.ask_remove(vec![one.id]),
+            9 => self.on_session(|s| s.download_remove(&one.id)),
             10 => self.on_session(|s| s.star(nori_core::client::Starrable::Song, one.id, true)),
             12 | 19 => {
                 let done = self.session.as_ref().is_some_and(|s| s.core.mix_excluded_set(one.id, how == 12).is_ok());
@@ -3100,6 +3110,30 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Asks before downloads `ids` are removed: the sheet's button sends it back to [`App::remove_asked`].
+    fn ask_remove(&mut self, ids: Vec<String>) {
+        let ui = self.ui();
+        let (title, note) = words::remove_downloads(ids.len());
+        ui.set_ask_title(title.into());
+        ui.set_ask_note(note.into());
+        ui.set_ask_name(words::REMOVE_DOWNLOADS.into());
+        ui.set_ask_button(words::REMOVE.into());
+        ui.set_ask_field(false);
+        ui.set_ask_text("".into());
+        ui.set_ask_open(true);
+        self.removing = ids;
+    }
+
+    /// The removal [`App::ask_remove`] asked about, confirmed.
+    fn remove_asked(&mut self) {
+        let ids = std::mem::take(&mut self.removing);
+        self.on_session(|s| ids.iter().for_each(|id| s.download_remove(id)));
+        if self.page.is_some() {
+            self.page_head();
+        }
+        self.mark_playing();
     }
 
     /// Asks before `act` is done: the sheet's button sends it back to [`App::plugin_typed`].

@@ -243,6 +243,8 @@ enum Say {
     static func downloadOther(_ n: Int) -> String { "Download the other \(n)" }
     static let removeDownloads = "Remove downloads"
     static func removeDownloaded(_ n: Int) -> String { n == 1 ? "Remove the 1 downloaded" : "Remove the \(n) downloaded" }
+    static func removeDownloadsTitle(_ n: Int) -> String { n == 1 ? "Remove the download?" : "Remove \(n) downloads?" }
+    static func removeDownloadsNote(_ n: Int) -> String { n == 1 ? "It no longer plays offline." : "They no longer play offline." }
     static func downloadsRemoved(_ n: Int) -> String { n == 1 ? "Removed 1 download" : "Removed \(n) downloads" }
     static let addToFavorites = "Add to favorites"
     static let removeFromFavorites = "Remove from favorites"

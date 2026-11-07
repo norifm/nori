@@ -435,12 +435,13 @@ open class AlbumViewModel(app: Application) : DetailViewModel<AlbumDetail>(app) 
     private fun remoteSounding() = nori.player.state.map { s -> s.current?.takeIf { s.playing && it.isExternal }?.id }.distinctUntilChanged()
 }
 
+/** An album's downloaded songs; once none are left, the album's own page, so removing them leaves it open. */
 class DownloadedAlbumViewModel(app: Application) : AlbumViewModel(app) {
-    override fun load(id: String) = nori.downloads.state.map {
-        withContext(Dispatchers.IO) {
-            nori.core.downloadedAlbum(id) ?: error(getApplication<Application>().getString(dev.nori.music.app.R.string.note_no_downloads))
-        }
-    }
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override fun load(id: String) = nori.downloads.state
+        .map { withContext(Dispatchers.IO) { nori.core.downloadedAlbum(id) } }
+        .distinctUntilChanged()
+        .flatMapLatest { saved -> saved?.let { flowOf(it) } ?: super.load(id) }
 }
 
 data class ArtistUi(val detail: ArtistDetail, val info: ArtistInfo?, val top: List<Song>)

@@ -948,6 +948,8 @@ class Say(private val r: Resources) {
     val discard: String get() = r.getString(R.string.discard)
     val keepEditing: String get() = r.getString(R.string.keep_editing)
     fun stopAllText(unfinished: Int): String = r.getQuantityString(R.plurals.stop_all_text, unfinished, unfinished)
+    fun removeDownloadsTitle(n: Int): String = r.getQuantityString(R.plurals.remove_downloads_title, n, n)
+    fun removeDownloadsText(n: Int): String = r.getQuantityString(R.plurals.remove_downloads_text, n, n)
 
     fun note(n: Note): String = r.getString(n.id)
 

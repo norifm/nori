@@ -351,10 +351,16 @@ class PageController: UITableViewController {
             case 0:
                 let act = Int32(line["act"] ?? 0)
                 b = GlyphButton(Glyph.draw(act == 2 ? Iconoir.checkCircle : Iconoir.download, 24), Say.downloadEntry(Int(act), line["n"] ?? 0), quiet: true)
-                b.addAction { PageController.download(act) { nori_ios_download_act(token, $0) } }
+                b.addAction { [weak self] in
+                    guard let self else { return }
+                    PageController.download(act, n: line["n"] ?? 0, from: self) { nori_ios_download_act(token, $0) }
+                }
             case 1:
                 b = GlyphButton(Glyph.draw(Iconoir.download, 24), Say.downloadEverything, quiet: true)
-                b.addAction { PageController.download(0) { act in arg.withCString { nori_ios_collection_download_act(kind, $0, act) } } }
+                b.addAction { [weak self] in
+                    guard let self else { return }
+                    PageController.download(0, n: 0, from: self) { act in arg.withCString { nori_ios_collection_download_act(kind, $0, act) } }
+                }
             case 2:
                 b = GlyphButton(Glyph.queue, Say.addToQueue, quiet: true)
                 b.addAction {
@@ -376,8 +382,16 @@ class PageController: UITableViewController {
         }
     }
 
-    /// Runs download act `act` off the main thread; a removal says how many and has pages read again.
-    static func download(_ act: Int32, run: @escaping (Int32) -> Int32) {
+    /// Runs download act `act` off the main thread, a removal of `n` only after a yes; a removal says how
+    /// many and has pages read again.
+    static func download(_ act: Int32, n: Int, from host: UIViewController, run: @escaping (Int32) -> Int32) {
+        guard act == 2 else { return perform(act, run: run) }
+        let ask = Sheet(Say.removeDownloadsTitle(n), Say.removeDownloadsNote(n))
+        ask.add(Say.remove, glyph: Glyph.draw(Iconoir.trash, 20), destructive: true) { perform(act, run: run) }
+        ask.show(from: host)
+    }
+
+    private static func perform(_ act: Int32, run: @escaping (Int32) -> Int32) {
         DispatchQueue.global(qos: .userInitiated).async {
             let done = run(act)
             guard act == 2 else { return }
@@ -704,7 +718,7 @@ class PageController: UITableViewController {
                 sheet.add(Say.shuffle, glyph: Glyph.draw(Iconoir.shuffle, 20)) { item.id.withCString { nori_ios_play_collection(kind, $0, 1) } }
                 sheet.add(Say.playNext, glyph: Glyph.draw(Iconoir.playlistPlay, 20)) { item.id.withCString { nori_ios_enqueue_collection(kind, $0, 1) } }
                 sheet.add(Say.addToQueue, glyph: Glyph.draw(Iconoir.playlist, 20)) { item.id.withCString { nori_ios_enqueue_collection(kind, $0, 0) } }
-                PageController.add(entries, to: sheet) { act in
+                PageController.add(entries, to: sheet, from: self) { act in
                     item.id.withCString { nori_ios_collection_download_act(kind, $0, act) }
                 }
                 if kind != NORI_PAGE_PLAYLIST && !item.external && Core.shared.rules.account {
@@ -723,14 +737,14 @@ class PageController: UITableViewController {
 
     /// Download entries (`nori_ios_download_entries`) as lines of `sheet`; `run` does one off the main
     /// thread and answers the songs it touched. A removal says how many and has pages read again.
-    static func add(_ entries: [[String: Int]], to sheet: Sheet, run: @escaping (Int32) -> Int32) {
+    static func add(_ entries: [[String: Int]], to sheet: Sheet, from host: UIViewController, run: @escaping (Int32) -> Int32) {
         // Two entries: partly downloaded, so removal names how many it gives back.
         let partly = entries.count > 1
         for e in entries {
             guard let act = e["act"], let n = e["n"] else { continue }
             let words = act == 0 ? Say.download : act == 1 ? Say.downloadOther(n) : (partly ? Say.removeDownloaded(n) : Say.removeDownloads)
             sheet.add(words, glyph: Glyph.draw(act == 2 ? Iconoir.trash : Iconoir.download, 20), destructive: act == 2) {
-                download(Int32(act), run: run)
+                download(Int32(act), n: n, from: host, run: run)
             }
         }
     }

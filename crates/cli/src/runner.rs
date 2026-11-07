@@ -1030,8 +1030,8 @@ impl Runner {
                 });
             }
             Cmd::DownloadFetch(what) => s.download_later(what),
-            Cmd::DownloadRemove(id) => {
-                s.download_remove(&id);
+            Cmd::DownloadRemove(ids) => {
+                ids.iter().for_each(|id| s.download_remove(id));
                 s.load(crate::backend::Req::Downloads);
             }
             Cmd::Star(nori_core::client::Starrable::Song, id, on) => s.star_song(id, on, self.there()),

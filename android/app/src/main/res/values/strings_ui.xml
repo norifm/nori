@@ -380,6 +380,15 @@
         <item quantity="other">%d songs that have not finished downloading leave the queue. Songs already downloaded stay.</item>
     </plurals>
 
+    <plurals name="remove_downloads_title">
+        <item quantity="one">Remove the download?</item>
+        <item quantity="other">Remove %d downloads?</item>
+    </plurals>
+    <plurals name="remove_downloads_text">
+        <item quantity="one">It no longer plays offline.</item>
+        <item quantity="other">They no longer play offline.</item>
+    </plurals>
+
     <!-- The empty-list, failure and help lines. -->
     <string name="note_no_index">No songs on this device yet. Settings, then Library and lists, then Update.</string>
     <string name="note_no_playlists">No playlists yet</string>

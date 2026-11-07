@@ -565,6 +565,17 @@ fn list_prefs() -> HashMap<String, String> {
     with_session(|s| s.core.session.settings.prefs(|p| p.list_prefs.clone())).unwrap_or_default()
 }
 
+/// Album `id`'s page: the stored copy, then the server's.
+fn album(client: &nori_core::client::Client, token: u64, id: String) {
+    pages(client, token, Read::AlbumById { id }, &|p| match p {
+        Page::AlbumPage { v } => {
+            keep_list(token, v.songs.clone(), Some(Fetch::Album(v.album.id.clone()).origin()));
+            Some(album_page(&v))
+        }
+        _ => None,
+    });
+}
+
 /// Reads `read`, sending each page `make` turns into an answer; an error only when nothing came.
 fn pages(
     client: &nori_core::client::Client,
@@ -824,16 +835,11 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
                 value["head"]["k"] = json!("downloadedAlbum");
                 send(token, &value);
             }
-            Ok(None) => send(token, &json!({ "sections": [] })),
+            // None left: the album's own page, so removing them leaves it open.
+            Ok(None) => album(&client, token, arg.clone()),
             Err(e) => send_error(token, &e.into()),
         },
-        PAGE_ALBUM => pages(&client, token, Read::AlbumById { id: arg.clone() }, &|p| match p {
-            Page::AlbumPage { v } => {
-                keep_list(token, v.songs.clone(), Some(Fetch::Album(v.album.id.clone()).origin()));
-                Some(album_page(&v))
-            }
-            _ => None,
-        }),
+        PAGE_ALBUM => album(&client, token, arg.clone()),
         PAGE_ARTIST => pages(&client, token, Read::ArtistById { id: arg.clone() }, &|p| match p {
             Page::ArtistPage { v } => Some(artist_page(token, &v)),
             _ => None,

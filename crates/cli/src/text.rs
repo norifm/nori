@@ -207,6 +207,11 @@ pub fn remove_plugin(name: &str) -> String {
 }
 pub const REMOVE_PLUGIN_NOTE: &str = "Its settings go with it.";
 
+/// Asks before removing `n` downloads, and what that does.
+pub fn remove_downloads(n: usize) -> (String, &'static str) {
+    if n == 1 { ("Remove the download?".into(), "It no longer plays offline.") } else { (format!("Remove {n} downloads?"), "They no longer play offline.") }
+}
+
 /// Asks before installing `name` at `version`.
 pub fn install_version(name: &str, version: &str) -> String {
     format!("Install {name} {version}?")
