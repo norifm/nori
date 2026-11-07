@@ -21,6 +21,7 @@ import dev.nori.music.ffi.model.Album
 import dev.nori.music.ffi.model.OriginKind
 import dev.nori.music.ffi.model.PageOrigin
 import dev.nori.music.ffi.model.Playlist
+import dev.nori.music.ffi.library.PlaylistChoice
 import dev.nori.music.ffi.model.Song
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.StateFlow
@@ -28,7 +29,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import dev.nori.music.ffi.settings.SwipeAction
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -295,8 +296,12 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     fun cancelDownloads(songs: List<Song>) = nori.downloads.cancel(songs.map { it.id })
     fun cancelAllDownloads() = nori.downloads.cancelAll()
 
-    suspend fun playlists(): List<Playlist> = runCatching { nori.library.playlists().first() }.getOrDefault(emptyList())
-    fun addToPlaylist(p: Playlist, songs: List<Song>) = attempt(say.addedToPlaylist(p.name)) { nori.library.addToPlaylist(p.id, songs.map { it.id }) }
+    /** The server's answer when the stored one is stale: the first is the stored one, which a playlist just made is not in yet. */
+    suspend fun playlists(): List<Playlist> = runCatching { nori.library.playlists().last() }.getOrDefault(emptyList())
+    /** Where [songs] can be added, each playlist with what it already has of them; empty when they cannot be read. */
+    suspend fun playlistChoices(songs: List<Song>): List<PlaylistChoice> = runCatching { nori.library.playlistChoices(songs.map { it.id }) }.getOrDefault(emptyList())
+    /** Adds what [c] lacks of the songs it was offered for. */
+    fun addToPlaylist(c: PlaylistChoice) = attempt(say.addedToPlaylist(c.playlist.name)) { nori.library.addToPlaylist(c.playlist.id, c.adds) }
     /** Keeps a mix as a playlist on the account, named by the core (`saved_mix_name`) so a second save does not repeat a name. */
     /** Whether [p] is the account's own, to change or delete (the core's `playlist_editable`). */
     fun editable(p: Playlist): Boolean = dev.nori.music.ffi.library.playlistEditable(p, nori.settings.value.server?.user.orEmpty(), nori.rules.account)

@@ -575,6 +575,16 @@ pub fn added_to_playlist(name: &str) -> String {
     format!("Added to {name}")
 }
 
+/// What a playlist the picker offers has of the `asked` songs: its `count` of songs when none, else how many.
+pub fn playlist_holds(holds: u32, asked: u32, count: u32) -> String {
+    match holds {
+        0 => songs(count as usize),
+        _ if holds == asked && asked == 1 => "Has it".into(),
+        _ if holds == asked => format!("Has all {asked}"),
+        _ => format!("Has {holds} of {asked}"),
+    }
+}
+
 pub fn playlist_created(name: &str) -> String {
     format!("Made {name}")
 }

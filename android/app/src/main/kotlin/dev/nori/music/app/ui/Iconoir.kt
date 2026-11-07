@@ -99,6 +99,11 @@ object Iconoir {
         "M6 12H12M18 12H12M12 12V6M12 12V18",
     )
 
+    /** minus */
+    val Minus by glyph(false,
+        "M6 12H18",
+    )
+
     /** check */
     val Check by glyph(false,
         "M5 13L9 17L19 7",

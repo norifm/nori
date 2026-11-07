@@ -1,5 +1,7 @@
 // What the shell shows over the pages: a line of news, a menu, a question and the full player.
 
+import type { PlaylistChoice } from "./types";
+
 /** A menu's line, or a bare glyph (`lit`: in the accent, a favorite's seal). */
 export type Item = { label: string; icon?: string; run: () => unknown; disabled?: boolean; chosen?: boolean; lit?: boolean };
 /** What the full player shows beside the cover (on a phone: in its place). */
@@ -31,8 +33,8 @@ class Ui {
   confirming = $state.raw<{ title: string; line: string; action: string; done: (yes: boolean) => void } | null>(null);
   /** Joining someone's jam: the sheet asking for its link. */
   joining = $state(false);
-  /** The playlists `songIds` may be added to, with a new one named there. */
-  picking = $state.raw<{ songIds: string[]; playlists: { id: string; name: string }[] } | null>(null);
+  /** Adding `songIds` to a playlist: where they can go (the core's `playlist_choices`), null while read. */
+  picking = $state.raw<{ songIds: string[]; choices: PlaylistChoice[] | null } | null>(null);
   /** The full player, and what it shows beside the cover (on a phone: in its place). */
   full = $state(false);
   pane = $state<Pane | null>(null);

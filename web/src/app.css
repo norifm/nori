@@ -386,6 +386,43 @@ button.group-row:hover:enabled {
   height: 18px;
 }
 
+/* A dialog: a card on the surface over the scrim, a hairline edge and the sheet's corners, no shadow. Its
+   title, what it says (groups of rows too), then its buttons at the end, words in ink in line with the text. */
+dialog.card {
+  padding: 22px 24px 12px;
+  border: var(--hairline) solid var(--hair);
+  border-radius: var(--r-sheet);
+  background: var(--surface);
+  color: var(--ink);
+  width: min(400px, calc(100vw - 32px));
+  max-height: calc(100dvh - 64px);
+}
+
+dialog.card[open],
+dialog.card > form.body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+dialog.card::backdrop {
+  background: var(--scrim);
+}
+
+dialog.card h2 {
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 600;
+}
+
+dialog.card .end {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-right: -12px;
+}
+
 /* A word in ink that does something (a dialog's buttons). */
 .text-action {
   min-height: 40px;

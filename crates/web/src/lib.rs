@@ -177,6 +177,17 @@ impl Nori {
         pages::read(&client, &ask, self.user().as_deref()).await.map_err(error)
     }
 
+    /// Where songs `ids` (JSON) can be added (`Client::playlist_choices`): `[{ playlist, adds, holds }]`,
+    /// each playlist as a page reads it, `adds` the songs it lacks, `holds` how many it has.
+    pub async fn playlist_choices(&self, ids: String) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let ids: Vec<String> = serde_json::from_str(&ids).map_err(error)?;
+        let user = self.user();
+        let choices = client.playlist_choices(ids).await.map_err(error)?;
+        let v: Vec<Value> = choices.iter().map(|c| json!({ "playlist": pages::playlist(client.core(), &c.playlist, user.as_deref()), "adds": c.adds, "holds": c.holds })).collect();
+        Ok(Value::Array(v).to_string())
+    }
+
     /// The next page of album grid `list` in `sort`'s order (with `favorites`, the starred albums, whole):
     /// `{ albums, more }`, or null when none is to be read (one on its way, or the last in). `first` reads
     /// the grid from its first page again. A page that failed is read again with the next call.

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Arrangement
@@ -208,8 +209,8 @@ fun <T : Any> DeleteQuestion(named: T?, name: (T) -> String, onDelete: (T) -> Un
 
 /**
  * The card of an alert dialog, drawn in place inside a [NoriDialog] rather than in a window of its own:
- * raised on the surface with a hairline edge and the sheet's corners, no shadow. Material's measures: 280
- * to 560 dp wide, 24 dp in, the title over the text over the buttons ([TextAction]s) at the end.
+ * raised on the surface with a hairline edge and the sheet's corners, no shadow. 280 to 560 dp wide, 24 dp
+ * in, the title over the text over the buttons ([TextAction]s) at the end.
  */
 @Composable
 fun AlertCard(
@@ -225,7 +226,8 @@ fun AlertCard(
         shape = RoundedCornerShape(Radius.sheet), color = scheme.surfaceContainer, contentColor = scheme.onSurface,
         border = hairlineBorder(),
     ) {
-        Column(Modifier.padding(24.dp)) {
+        // The buttons' words line up with the text's edge; their own padding is the card's at the foot.
+        Column(Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 12.dp)) {
             title?.let {
                 ProvideTextStyle(MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, fontWeight = FontWeight.SemiBold)) {
                     Box(Modifier.padding(bottom = 16.dp)) { it() }
@@ -233,10 +235,10 @@ fun AlertCard(
             }
             text?.let {
                 CompositionLocalProvider(LocalContentColor provides scheme.onSurfaceVariant) {
-                    ProvideTextStyle(MaterialTheme.typography.bodyMedium) { Box(Modifier.weight(1f, fill = false).padding(bottom = 24.dp)) { it() } }
+                    ProvideTextStyle(MaterialTheme.typography.bodyMedium) { Box(Modifier.weight(1f, fill = false).padding(bottom = 12.dp)) { it() } }
                 }
             }
-            Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.align(Alignment.End).offset(x = 12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 dismissButton?.invoke()
                 confirmButton()
             }
@@ -338,6 +340,14 @@ private fun SheetHandle(state: androidx.compose.material3.SheetState, hair: Colo
         Box(Modifier.size(width = 36.dp, height = 4.dp).background(hair, PillShape))
     }
 }
+
+/** A sheet's name under its handle, in Inter as a dialog's is: a sheet is not a page, which Literata names. */
+@Composable
+fun SheetTitle(title: String) = androidx.compose.material3.Text(
+    title, Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 2.dp, bottom = 14.dp),
+    style = MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp),
+    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+)
 
 /** [NoriSheet] shown while [visible]. */
 @Composable

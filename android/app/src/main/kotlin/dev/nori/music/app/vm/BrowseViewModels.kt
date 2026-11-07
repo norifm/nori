@@ -274,13 +274,13 @@ class HomeRowViewModel(app: Application) : NoriViewModel(app) {
                     _entries.value = RowEntries.Songs(songs, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, row.name))
                     dev.nori.music.ffi.library.homeRowMore(shelf, got.size.toUInt())
                 }
-                // Read whole, once.
+                // Read whole: the stored list, then the server's when that one is stale (a playlist made since).
                 is HomeShelf.Playlists -> {
-                    _entries.value = RowEntries.Playlists(nori.library.playlists().first().take(shelf.take.toInt()))
+                    nori.library.playlists().collect { _entries.value = RowEntries.Playlists(it.take(shelf.take.toInt())) }
                     false
                 }
                 HomeShelf.Pinned -> {
-                    _entries.value = RowEntries.Playlists(homePinned(nori.library.playlists().first(), nori.settings.value.pinnedPlaylists))
+                    nori.library.playlists().collect { _entries.value = RowEntries.Playlists(homePinned(it, nori.settings.value.pinnedPlaylists)) }
                     false
                 }
             }

@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -308,16 +309,15 @@ private fun Quiet(text: String, modifier: Modifier = Modifier, lines: Int = Int.
     maxLines = lines, overflow = TextOverflow.Ellipsis,
 )
 
-/** A sheet's paper: a title, what it says, then its buttons at the end. */
+/** A sheet's paper: a title, what it says, then its buttons at the end, their words in line with the text. */
 @Composable
 private fun SheetPage(title: String, buttons: @Composable () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        Modifier.windowInsetsPadding(gestureBarRoom).padding(start = Space.gutter, end = Space.gutter, bottom = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(title, style = titled(MaterialTheme.typography.titleLarge))
-        content()
-        Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(8.dp, Alignment.End)) { buttons() }
+    Column(Modifier.windowInsetsPadding(gestureBarRoom).padding(bottom = 8.dp)) {
+        SheetTitle(title)
+        Column(Modifier.padding(horizontal = Space.gutter), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            content()
+            Row(Modifier.align(Alignment.End).offset(x = 12.dp), Arrangement.spacedBy(4.dp)) { buttons() }
+        }
     }
 }
 
@@ -333,7 +333,7 @@ private fun AddRepoSheet(visible: Boolean, close: () -> Unit, add: (String) -> U
             Quiet(say.pluginRepoWarning)
             FormField(
                 url, { url = it }, Modifier.fillMaxWidth().testTag("repo-url"), label = { Text(say.pluginRepoUrl) }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), autofocus = true, onDone = { if (url.isNotBlank()) add(url) },
             )
         }
     }

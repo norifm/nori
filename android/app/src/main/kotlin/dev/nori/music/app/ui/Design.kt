@@ -802,23 +802,12 @@ fun SearchField(
     testTag: String? = null, autofocus: Boolean = false, focusKey: Any = Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    // Asked for by hand: opening search focuses the field so the keyboard is already there.
-    val focus = remember(autofocus) { if (autofocus) FocusRequester() else null }
-    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-    // A focus request needs the field's node attached, which it is once the field is placed.
-    var placed by remember { mutableStateOf(false) }
     var focused by remember { mutableStateOf(false) }
     // The keyboard put away (Back) ends the typing, so the accent edge goes with it.
     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
     val typing = androidx.compose.foundation.layout.WindowInsets.isImeVisible
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     LaunchedEffect(typing) { if (!typing && focused) focusManager.clearFocus() }
-    LaunchedEffect(focus, focusKey, placed) {
-        if (focus == null || !placed) return@LaunchedEffect
-        focus.requestFocus()
-        // Focus alone does not raise the keyboard when it lands before the window is ready.
-        keyboard?.show()
-    }
     Surface(
         shape = PillShape, color = scheme.surfaceContainer, contentColor = scheme.onSurface, modifier = modifier.fillMaxWidth(),
         border = if (focused) androidx.compose.foundation.BorderStroke(HAIRLINE * 2, scheme.primary) else hairlineBorder(),
@@ -835,7 +824,8 @@ fun SearchField(
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(scheme.primary),
                     modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
                         .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
-                        .then(if (focus != null) Modifier.focusRequester(focus).onPlaced { placed = true } else Modifier),
+                        // Asked for by hand: opening search focuses the field so the keyboard is already there.
+                        .then(if (autofocus) Modifier.takesFocus(focusKey) else Modifier),
                 )
             }
             if (value.isNotEmpty()) androidx.compose.material3.IconButton({ onValue("") }, Modifier.size(28.dp)) {
@@ -919,6 +909,25 @@ fun NoriSlider(
 }
 
 /**
+ * The focus, keyboard up, once the field this is on is placed, and again when [key] changes: the one
+ * field a page or a dialog asks for.
+ */
+@Composable
+fun Modifier.takesFocus(key: Any = Unit): Modifier {
+    val focus = remember { FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    // A focus request needs the field's node attached, which it is once the field is placed.
+    var placed by remember { mutableStateOf(false) }
+    LaunchedEffect(key, placed) {
+        if (!placed) return@LaunchedEffect
+        focus.requestFocus()
+        // Focus alone does not raise the keyboard when it lands before the window is ready.
+        keyboard?.show()
+    }
+    return focusRequester(focus).onPlaced { placed = true }
+}
+
+/**
  * A form field with the app's corners and no hard outline: a soft filled capsule-ish box, the way a
  * settings form looks on iOS. It keeps Material's text field underneath, so labels, password masking
  * and keyboard options all behave exactly as before - only the frame changes.
@@ -935,13 +944,20 @@ fun FormField(
     minLines: Int = 1,
     visualTransformation: androidx.compose.ui.text.input.VisualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
     keyboardOptions: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default,
+    /** Takes the focus, keyboard up, once it is placed: the one field a dialog asks for. */
+    autofocus: Boolean = false,
+    /** What the keyboard's Done key does: the dialog's own action. */
+    onDone: (() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     val filled = LocalLook.current.color(CoverLook.FORM)
     androidx.compose.material3.OutlinedTextField(
-        value, onValueChange, modifier, label = label, placeholder = placeholder, supportingText = supportingText,
+        value, onValueChange, modifier.then(if (autofocus) Modifier.takesFocus() else Modifier),
+        label = label, placeholder = placeholder, supportingText = supportingText,
         singleLine = singleLine, minLines = minLines,
-        visualTransformation = visualTransformation, keyboardOptions = keyboardOptions,
+        visualTransformation = visualTransformation,
+        keyboardOptions = if (onDone != null) keyboardOptions.copy(imeAction = androidx.compose.ui.text.input.ImeAction.Done) else keyboardOptions,
+        keyboardActions = if (onDone != null) androidx.compose.foundation.text.KeyboardActions(onDone = { onDone() }) else androidx.compose.foundation.text.KeyboardActions.Default,
         shape = CardShape,
         colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
             focusedContainerColor = filled, unfocusedContainerColor = filled,
