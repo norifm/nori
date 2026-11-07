@@ -40,8 +40,9 @@ pub enum SongMenuPlace {
     Title,
     /// The artist or album name under the title, which opens that page.
     Names,
-    /// A bare glyph on the line under the head.
+    /// A bare glyph on the line under the head: an action done at once whose glyph says what it is.
     Glyphs,
+    /// A worded line: the actions most reached for, and (`more`) those that open more or switch a state.
     Line,
 }
 
@@ -102,10 +103,6 @@ pub fn song_menu(song: Song, starred: bool, excluded: bool, download: SongDownlo
     if !guest && account && song.is_provider() {
         add(SongAction::AddToLibrary, false, true);
     }
-    if !guest && player {
-        add(SongAction::Lyrics, false, lyrics);
-        add(SongAction::SleepTimer, false, true);
-    }
     if downloads {
         match download {
             SongDownload::Done => add(SongAction::RemoveDownload, false, true),
@@ -127,6 +124,10 @@ pub fn song_menu(song: Song, starred: bool, excluded: bool, download: SongDownlo
     if own {
         add(SongAction::ExcludeFromMixes { on: !excluded }, true, true);
     }
+    if player {
+        add(SongAction::Lyrics, true, lyrics);
+        add(SongAction::SleepTimer, true, true);
+    }
     add(SongAction::Details, true, true);
     out
 }
@@ -136,8 +137,8 @@ fn place_of(action: &SongAction) -> SongMenuPlace {
     match action {
         Favourite { .. } | Details => SongMenuPlace::Title,
         GoToAlbum { .. } | GoToArtist { .. } => SongMenuPlace::Names,
-        Lyrics | SleepTimer | RemoveDownload | StopDownload | Download | Share | Radio | ExcludeFromMixes { .. } => SongMenuPlace::Glyphs,
-        PlayNext | AddToQueue | AddToPlaylist | AddToLibrary => SongMenuPlace::Line,
+        RemoveDownload | StopDownload | Download | Share | Radio => SongMenuPlace::Glyphs,
+        PlayNext | AddToQueue | AddToPlaylist | AddToLibrary | ExcludeFromMixes { .. } | Lyrics | SleepTimer => SongMenuPlace::Line,
     }
 }
 
@@ -517,13 +518,13 @@ mod tests {
         use SongAction::*;
         assert_eq!(
             actions(&song_menu(s.clone(), false, false, SongDownload::None, true, true, false, false, false, false, false, None)),
-            [(PlayNext, false), (AddToQueue, false), (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (Lyrics, false), (SleepTimer, false), (Details, true)],
+            [(PlayNext, false), (AddToQueue, false), (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (Lyrics, true), (SleepTimer, true), (Details, true)],
             "without an account only the queue, the pages and what plays here"
         );
         let without = song_menu(s.clone(), false, false, SongDownload::None, true, false, true, true, true, true, false, None);
         assert_eq!(without.iter().find(|i| i.action == Lyrics).map(|i| i.enabled), Some(false), "no lyrics: the line is there, greyed");
         assert!(m.iter().all(|i| i.enabled), "everything else is offered");
-        assert!(!actions(&song_menu(s.clone(), false, false, SongDownload::None, false, true, true, true, true, true, false, None)).contains(&(Lyrics, false)), "only the player's menu has it");
+        assert!(!actions(&song_menu(s.clone(), false, false, SongDownload::None, false, true, true, true, true, true, false, None)).iter().any(|(a, _)| *a == Lyrics), "only the player's menu has it");
         assert_eq!(
             actions(&song_menu(s, true, false, SongDownload::None, false, false, true, false, false, false, false, None))[..3],
             [(Favourite { on: false }, false), (PlayNext, false), (AddToQueue, false)],
@@ -551,8 +552,8 @@ mod tests {
             [
                 (Favourite { on: false }, false), (PlayNext, false), (AddToQueue, false), (AddToPlaylist, false),
                 (GoToArtist { id: "a".into(), name: "A".into(), named: true }, false), (GoToArtist { id: "b".into(), name: "B".into(), named: true }, false),
-                (AddToLibrary, false), (Lyrics, false), (SleepTimer, false), (StopDownload, false),
-                (Radio, true), (Details, true),
+                (AddToLibrary, false), (StopDownload, false),
+                (Radio, true), (Lyrics, true), (SleepTimer, true), (Details, true),
             ]
         );
         let done = song_menu(Song::default(), false, false, SongDownload::Done, false, false, true, true, true, true, false, None);
@@ -569,8 +570,8 @@ mod tests {
         use SongAction::*;
         assert_eq!(of(Title), [Favourite { on: true }, Details]);
         assert_eq!(of(Names), [GoToAlbum { id: "al".into() }, GoToArtist { id: "ar".into(), name: "A".into(), named: false }]);
-        assert_eq!(of(Glyphs), [Lyrics, SleepTimer, Download, Share, Radio, ExcludeFromMixes { on: true }]);
-        assert_eq!(of(Line), [PlayNext, AddToQueue, AddToPlaylist]);
+        assert_eq!(of(Glyphs), [Download, Share, Radio]);
+        assert_eq!(of(Line), [PlayNext, AddToQueue, AddToPlaylist, ExcludeFromMixes { on: true }, Lyrics, SleepTimer]);
     }
 
     #[test]

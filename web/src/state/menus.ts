@@ -23,14 +23,13 @@ export async function addToPlaylist(songs: Song[]) {
 export function wholeMenu(kind: Whole, id: string, head: Head, at: Anchor, editable = false) {
   ui.menu(
     head,
-    [
+    [[
       { label: W.play, icon: "play", run: () => player.playWhole(kind, id, false) },
       { label: W.playNext, icon: "playlist-play", run: () => player.queueWhole(kind, id, true) },
       { label: W.addToQueue, icon: "playlist", run: () => player.queueWhole(kind, id, false) },
       ...(remote.jam?.start === "Offered" ? [{ label: W.startJam, icon: "community", run: () => jamWith(kind, id) }] : []),
       ...(editable ? [{ label: W.deletePlaylist, icon: "trash", run: () => deletePlaylist(id, head.title) }] : []),
-    ],
-    [],
+    ]],
     at,
   );
 }
@@ -59,7 +58,7 @@ export async function newPlaylist(songIds: string[] = []) {
 /** The sleep timer's choices; the timer itself is the core's. */
 async function sleepMenu() {
   const choices = JSON.parse(await ask<string>("sleep_choices")) as { minutes: number; end: boolean; songs: number }[];
-  ui.menu({ title: W.sleepTimer }, choices.map((c) => ({ label: W.sleepChoice(c.minutes, c.end, c.songs), run: () => ask("sleep_pick", c.minutes, c.end, c.songs) })));
+  ui.menu({ title: W.sleepTimer }, [choices.map((c) => ({ label: W.sleepChoice(c.minutes, c.end, c.songs), run: () => ask("sleep_pick", c.minutes, c.end, c.songs) }))]);
 }
 
 /** What a song menu's action is, or null for one a browser has nothing for (downloads, sharing,
@@ -67,7 +66,7 @@ async function sleepMenu() {
 function item(a: MenuAction, s: Song): Item | null {
   switch (a.action) {
     case "Favourite":
-      return { label: a.on ? W.addToFavorites : W.removeFromFavorites, icon: a.on ? "seal" : "sealed", run: () => library.change({ kind: "star", what: "song", id: s.id, on: !!a.on }).then(() => player.refresh()) };
+      return { label: a.on ? W.addToFavorites : W.removeFromFavorites, icon: a.on ? "seal" : "sealed", lit: !a.on, run: () => library.change({ kind: "star", what: "song", id: s.id, on: !!a.on }).then(() => player.refresh()) };
     case "PlayNext":
       return { label: W.playNext, icon: "playlist-play", run: () => player.enqueue([s], true) };
     case "AddToQueue":
@@ -79,28 +78,34 @@ function item(a: MenuAction, s: Song): Item | null {
     case "GoToArtist":
       return { label: W.goToArtist(a.name ?? "", !!a.named), icon: "user", run: () => ((ui.full = false), go("artist", a.id!)) };
     case "Lyrics":
-      return { label: W.lyrics, icon: "quote-message", run: () => (ui.lyricsInfo = true) };
+      return { label: W.lyricsTimingMenu, icon: "quote-message", run: () => (ui.lyricsInfo = true) };
     case "Radio":
       return { label: W.radio, icon: "antenna-signal", run: () => player.radio(s) };
     case "SleepTimer":
-      return { label: W.sleepTimer, run: sleepMenu };
+      return { label: W.sleepTimerMenu, icon: "half-moon", run: sleepMenu };
     default:
       return null;
   }
 }
 
-/** Song `s`'s menu, opening `at`: what one opens it for, then the rest under More. Opened on a row it
- * starts with Play (`play`, what clicking the row does); `extra` the page's own entries; `inPlayer` when
- * opened from the player. */
+/** Song `s`'s menu, opening `at`, laid out as the core places it: the seal beside the title, the bare glyphs
+ * under it, then the lines most reached for, the album and artist, and the rest. Opened on a row it starts
+ * with Play (`play`, what clicking the row does); `extra` the page's own entries; `inPlayer` when opened
+ * from the player. */
 export async function songMenu(s: Song, at: Anchor, { play, extra = [], inPlayer = false }: { play?: () => unknown; extra?: Item[]; inPlayer?: boolean } = {}) {
   const lyrics = inPlayer && !!player.shown && player.shown.song === s.id;
   const page = inPlayer ? "" : route.top;
-  const actions = JSON.parse(await ask<string>("menu", JSON.stringify(s), inPlayer, lyrics, page, route.arg)) as MenuAction[];
-  const of = (more: boolean) =>
+  const { items: actions, quality } = JSON.parse(await ask<string>("menu", JSON.stringify(s), inPlayer, lyrics, page, route.arg)) as { items: MenuAction[]; quality: string | null };
+  const of = (place: MenuAction["place"], more?: boolean) =>
     actions.flatMap((a): Item[] => {
-      const i = !!a.more === more ? item(a, s) : null;
+      const i = a.place === place && (more === undefined || !!a.more === more) ? item(a, s) : null;
       return i ? [{ ...i, disabled: !a.enabled }] : [];
     });
   const first: Item[] = play ? [{ label: W.play, icon: "play", run: play }] : [];
-  ui.menu({ title: s.title, line: s.line || s.artist, cover: s.cover ?? "" }, [...first, ...of(false), ...extra], of(true), at);
+  ui.menu(
+    { title: s.title, line: s.line || s.artist, cover: s.cover ?? "", glyphs: of("Title"), quality: quality ?? undefined },
+    [[...first, ...of("Line", false), ...extra], of("Names"), of("Line", true)],
+    at,
+    of("Glyphs"),
+  );
 }

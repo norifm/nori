@@ -1,16 +1,15 @@
 <script lang="ts">
-  // A phone's menu about one thing (a song), as Android's sheet: its head as the row it came from looked,
-  // then its actions as grouped rows, each with its glyph, and those wanted less often folded under More.
+  // A phone's menu about one thing (a song), as Android's sheet: its head as the row it came from looked with
+  // its seal beside the title, the bare glyphs on a line under it, then its actions as grouped rows, each
+  // with its glyph, every group on one plate.
   // Opaque paper on the surface with a hairline edge, no shadow, from the bottom. A click outside or Escape
   // closes it.
   import { ui, type Item } from "../state/ui.svelte";
-  import { W } from "../words";
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
 
   let dialog = $state<HTMLDialogElement>();
   const sheet = $derived(ui.open!);
-  let more = $state(false);
   $effect(() => dialog?.showModal());
   const close = () => (ui.open = null);
   /** A click on the backdrop, not on the sheet's own padding (both target the dialog). */
@@ -31,6 +30,20 @@
   >
 {/snippet}
 
+{#snippet glyph(it: Item)}
+  <button
+    class="glyph quiet"
+    class:on={it.lit}
+    aria-label={it.label}
+    title={it.label}
+    disabled={it.disabled}
+    onclick={() => {
+      close();
+      void it.run();
+    }}><Icon name={it.icon ?? "more-horiz"} /></button
+  >
+{/snippet}
+
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 <dialog class="menu sheet" bind:this={dialog} onclose={close} onclick={backdrop} aria-label={sheet.head?.title}>
   <span class="handle"></span>
@@ -40,13 +53,11 @@
       <span class="title clip">{sheet.head?.title}</span>
       {#if sheet.head?.line}<span class="sub clip">{sheet.head?.line}</span>{/if}
     </span>
+    {#each sheet.head?.glyphs ?? [] as it, i (i)}{@render glyph(it)}{/each}
   </header>
+  {#if sheet.tools.length || sheet.head?.quality}<div class="tools"><span class="quality clip">{sheet.head?.quality ?? ""}</span>{#each sheet.tools as it, i (i)}{@render glyph(it)}{/each}</div>{/if}
   <div class="group">
-    {#each sheet.items as it, i (i)}{@render row(it)}{/each}
-    {#if sheet.more.length}
-      <button class="group-row" aria-expanded={more} onclick={() => (more = !more)}><Icon name="more-horiz" /><span class="words">{W.more}</span><span class="turn" class:open={more}><Icon name="nav-arrow-down" /></span></button>
-      {#if more}{#each sheet.more as it, i (i)}{@render row(it)}{/each}{/if}
-    {/if}
+    {#each sheet.groups.flat() as it, i (i)}{@render row(it)}{/each}
   </div>
 </dialog>
 
@@ -105,16 +116,16 @@
   .group-row:disabled {
     opacity: 0.38;
   }
-  .turn {
-    display: grid;
+  .tools {
+    display: flex;
+    align-items: center;
+    min-height: 48px;
+    margin: -4px 0 8px;
+    padding-left: 4px;
+  }
+  .quality {
+    flex: 1;
+    font-size: 14px;
     color: var(--ink2);
-    transition: transform 220ms;
-  }
-  .turn.open {
-    transform: rotate(180deg);
-  }
-  .turn :global(.icon) {
-    width: 22px;
-    height: 22px;
   }
 </style>

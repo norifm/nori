@@ -1,14 +1,16 @@
 // What the shell shows over the pages: a line of news, a menu, a question and the full player.
 
-export type Item = { label: string; icon?: string; run: () => unknown; disabled?: boolean; chosen?: boolean };
+/** A menu's line, or a bare glyph (`lit`: in the accent, a favorite's seal). */
+export type Item = { label: string; icon?: string; run: () => unknown; disabled?: boolean; chosen?: boolean; lit?: boolean };
 /** What the full player shows beside the cover (on a phone: in its place). */
 export type Pane = "lyrics" | "queue" | "devices";
-/** A menu's head: what it is about (a song: its cover, title and line). */
-export type Head = { title: string; line?: string; cover?: string };
+/** A menu's head: what it is about (a song: its cover, title and line), the bare glyphs beside its title, and
+ * its format ("FLAC 16/44.1"), said on the line of glyphs under it. */
+export type Head = { title: string; line?: string; cover?: string; glyphs?: Item[]; quality?: string };
 /** Where a menu opens: beside a button's box, or at the pointer (`point`, a box of no size). */
 export type Anchor = { left: number; top: number; right: number; bottom: number; point: boolean };
-/** A menu: `head` what it is about, `more` folded under More. */
-export type Menu = { head?: Head; items: Item[]; more: Item[]; at: Anchor };
+/** A menu: `head` what it is about, `tools` bare glyphs on a line under it, then its rows in groups. */
+export type Menu = { head?: Head; tools: Item[]; groups: Item[][]; at: Anchor };
 
 /** Beside the button `e` came from. */
 export const beside = (e: MouseEvent): Anchor => {
@@ -73,16 +75,17 @@ class Ui {
     return u;
   }
 
-  /** A menu about `head` at `at`; one that follows another (Add to playlist…) opens where it was. */
-  menu(head: Head, items: Item[], more: Item[] = [], at: Anchor | undefined = this.last) {
+  /** A menu about `head` at `at`, its rows in `groups`; one that follows another (Add to playlist…) opens
+   * where it was. */
+  menu(head: Head, groups: Item[][], at: Anchor | undefined = this.last, tools: Item[] = []) {
     this.last = at;
-    this.open = { head, items, more, at: at ?? { left: innerWidth / 2, top: innerHeight / 3, right: innerWidth / 2, bottom: innerHeight / 3, point: true } };
+    this.open = { head, tools, groups: groups.filter((g) => g.length), at: at ?? { left: innerWidth / 2, top: innerHeight / 3, right: innerWidth / 2, bottom: innerHeight / 3, point: true } };
   }
 
   /** A menu of `items` dropped from the button `e` came from. */
   drop(e: MouseEvent, items: Item[]) {
     this.last = beside(e);
-    this.open = { items, more: [], at: this.last };
+    this.open = { tools: [], groups: [items], at: this.last };
   }
 
   /** Where the last menu opened. */

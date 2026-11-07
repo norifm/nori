@@ -117,6 +117,8 @@ export const W = {
   radio: "Radio",
   startJam: "Start a Jam here",
   sleepTimer: "Sleep timer",
+  sleepTimerMenu: "Sleep timer…",
+  lyricsTimingMenu: "Lyrics timing…",
   /** One of the sleep timer's choices: "30 minutes", "End of track", "After 3 songs", or "Off" (all zeros). */
   sleepChoice: (minutes: number, end: boolean, songs: number) => (end ? "End of track" : songs > 0 ? `After ${songs} songs` : minutes > 0 ? `${minutes} minutes` : "Off"),
   mixEmpty: "The server has nothing like it.",

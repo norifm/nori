@@ -568,8 +568,8 @@ impl Nori {
         Ok(Value::from(sections).to_string())
     }
 
-    /// Song `song`'s menu (JSON, as a page read it), most used first (`menus::song_menu`): `[{ action, enabled,
-    /// more, on, id, name, named }]`. `player`: opened from the player, showing `lyrics`. `page` and `id`: the
+    /// Song `song`'s menu (JSON, as a page read it), most used first (`menus::song_menu`): `{ items: [{ action,
+    /// place, enabled, more, on, id, name, named }], quality }`, `quality` the song's format ("FLAC 16/44.1"). `player`: opened from the player, showing `lyrics`. `page` and `id`: the
     /// page it is opened on (its address, `album` and its id), whose own album or artist it does not offer.
     pub fn menu(&self, song: String, player: bool, lyrics: bool, page: String, id: String) -> Result<String, JsValue> {
         use nori_core::menus::{song_menu, SongAction, SongDownload};
@@ -584,7 +584,8 @@ impl Nori {
         let items: Vec<Value> = song_menu(song.clone(), song.starred, false, SongDownload::None, player, lyrics, rules.stars, rules.account, false, rules.radio, self.guest(), on)
             .into_iter()
             .map(|m| {
-                let mut v = json!({ "more": m.more, "enabled": m.enabled });
+                let place = format!("{:?}", m.place);
+                let mut v = json!({ "place": place, "more": m.more, "enabled": m.enabled });
                 let action = match m.action {
                     SongAction::Favourite { on } => {
                         v["on"] = json!(on);
@@ -600,13 +601,14 @@ impl Nori {
                         v["named"] = json!(named);
                         "GoToArtist"
                     }
-                    a => return json!({ "action": format!("{a:?}"), "more": m.more, "enabled": m.enabled }),
+                    a => return json!({ "action": format!("{a:?}"), "place": place, "more": m.more, "enabled": m.enabled }),
                 };
                 v["action"] = json!(action);
                 v
             })
             .collect();
-        Ok(Value::from(items).to_string())
+        let quality = nori_core::numbers::quality(&song.suffix, song.bit_depth, song.sampling_rate, song.bit_rate);
+        Ok(json!({ "items": items, "quality": quality }).to_string())
     }
 }
 

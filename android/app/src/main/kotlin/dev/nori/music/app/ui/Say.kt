@@ -643,6 +643,7 @@ class Say(private val r: Resources) {
     private val menuGoToAlbum: String = r.getString(R.string.menu_go_to_album)
     private val menuGoToArtist: String = r.getString(R.string.menu_go_to_artist)
     private val menuSleepTimer: String = r.getString(R.string.menu_sleep_timer)
+    private val menuLyricsTiming: String = r.getString(R.string.menu_lyrics_timing)
     private val menuRadio: String = r.getString(R.string.menu_radio)
     private val menuExclude: String = r.getString(R.string.menu_exclude_from_mixes)
     private val menuInclude: String = r.getString(R.string.menu_include_in_mixes)
@@ -660,7 +661,7 @@ class Say(private val r: Resources) {
         is SongAction.GoToAlbum -> menuGoToAlbum
         is SongAction.GoToArtist -> if (a.named) r.getString(R.string.menu_go_to_named, a.name) else menuGoToArtist
         SongAction.AddToLibrary -> r.getString(R.string.menu_add_to_library)
-        SongAction.Lyrics -> lyrics
+        SongAction.Lyrics -> menuLyricsTiming
         SongAction.SleepTimer -> menuSleepTimer
         SongAction.Radio -> menuRadio
         is SongAction.ExcludeFromMixes -> if (a.on) menuExclude else menuInclude

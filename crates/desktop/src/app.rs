@@ -34,7 +34,7 @@ use crate::words;
 use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, AddPage, SignInEvent, SignInFlow, SignInShown};
 use nori_core::providers::AfterAdding;
 
-use crate::{AppWindow, ArtistLink, Card, Credits, Detail, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, Shelf, SongGo, SongRow, TopBar, View};
+use crate::{AppWindow, ArtistLink, Card, Credits, Detail, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, Shelf, SongGo, SongPlace, SongRow, TopBar, View};
 
 /// Cover fetch sizes, px square.
 const SMALL_PX: u32 = 256;
@@ -2301,7 +2301,7 @@ impl App {
         let mut lines = self.menu_lines(one, false, page);
         if list == 0 && self.page_playlist().is_some() {
             let at = lines.iter().position(|l| l.kind == 7).map_or(lines.len(), |p| p + 1);
-            lines.insert(at, SongGo { title: words::REMOVE_FROM_PLAYLIST.into(), kind: 18, id: SharedString::default(), more: false, enabled: true, filled: false });
+            lines.insert(at, SongGo { title: words::REMOVE_FROM_PLAYLIST.into(), kind: 18, id: SharedString::default(), place: SongPlace::Main, enabled: true, filled: false });
         }
         ModelRc::new(VecModel::from(lines))
     }
@@ -2311,15 +2311,17 @@ impl App {
         self.song.clone().map_or_else(ModelRc::default, |one| ModelRc::new(VecModel::from(self.menu_lines(one, true, None))))
     }
 
-    /// `one`'s menu as the core lists it (menus.rs's `song_menu`); `player`: opened from the player, `page`
-    /// the album or artist page it is opened on.
+    /// `one`'s menu as the core lists it (menus.rs's `song_menu`), its rows first in their groups' order and
+    /// then its glyphs (`SongPlace`); `player`: opened from the player, `page` the album or artist page it is
+    /// opened on.
     fn menu_lines(&self, one: Song, player: bool, page: Option<nori_core::PageOrigin>) -> Vec<SongGo> {
-        use nori_core::menus::{song_menu, SongAction as A, SongDownload};
+        use nori_core::menus::{song_menu, SongAction as A, SongDownload, SongMenuPlace};
         let Some(s) = self.session.as_ref() else { return Vec::new() };
         let starred = self.heart(&one);
         let download = if s.rules().downloads { s.download_state(&one.id) } else { SongDownload::None };
         let lyrics = player && self.lyrics.as_ref().is_some_and(|l| !l.is_empty());
         let excluded = s.core.mix_excluded_songs().is_ok_and(|ids| ids.contains(&one.id));
+        let quality = words::quality(&one);
         let items = song_menu(one, starred.unwrap_or_default(), excluded, download, player, lyrics, starred.is_some(), s.rules().account, s.rules().downloads, s.rules().radio, s.rules().asks, page);
         let lines = items.into_iter().map(|m| {
             let (kind, id) = match &m.action {
@@ -2341,10 +2343,20 @@ impl App {
                 A::SleepTimer => (17, String::new()),
             };
             let filled = matches!(m.action, A::Favourite { on: false });
-            SongGo { title: words::song_action(&m.action).into(), kind, id: id.into(), more: m.more, enabled: m.enabled, filled }
+            let place = match m.place {
+                SongMenuPlace::Title => SongPlace::Title,
+                SongMenuPlace::Names => SongPlace::Names,
+                SongMenuPlace::Glyphs => SongPlace::Glyphs,
+                SongMenuPlace::Line if m.more => SongPlace::Rest,
+                SongMenuPlace::Line => SongPlace::Main,
+            };
+            SongGo { title: words::song_action(&m.action).into(), kind, id: id.into(), place, enabled: m.enabled, filled }
         });
-        let plugins = self.plugin_menus[3].iter().enumerate().map(|(i, e)| SongGo { title: e.label.as_str().into(), kind: PLUGIN_MENU + i as i32, id: SharedString::default(), more: false, enabled: true, filled: false });
-        lines.chain(plugins).collect()
+        let plugins = self.plugin_menus[3].iter().enumerate().map(|(i, e)| SongGo { title: e.label.as_str().into(), kind: PLUGIN_MENU + i as i32, id: SharedString::default(), place: SongPlace::Rest, enabled: true, filled: false });
+        let note = quality.map(|q| SongGo { title: q.into(), place: SongPlace::Note, ..Default::default() });
+        let mut lines: Vec<SongGo> = lines.chain(plugins).chain(note).collect();
+        lines.sort_by_key(|l| [SongPlace::Main, SongPlace::Names, SongPlace::Rest, SongPlace::Title, SongPlace::Note, SongPlace::Glyphs].iter().position(|p| *p == l.place));
+        lines
     }
 
     /// Plays song `i` of `list` (`how` -1), or does its menu's line `how` (`SongGo::kind`).
@@ -5076,8 +5088,8 @@ mod tests {
         assert_ne!(drawn(song), drawn(SongRow::default()), "the row draws its song");
     }
 
-    /// A song's menu does what its entries say: Favorite stars the song, the album's opens it, a line
-    /// folded under More is told by its kind.
+    /// A song's menu does what its entries say: the seal beside the title stars the song, the album's line
+    /// opens it, Play plays it, and Details beside the seal is told by its kind.
     #[test]
     fn a_songs_menu_entries_act() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
@@ -5087,9 +5099,9 @@ mod tests {
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_view(View::Page);
         let menu = vec![
-            crate::SongGo { kind: 0, title: "Favorite".into(), enabled: true, ..Default::default() },
-            crate::SongGo { kind: 1, title: "Go to album".into(), id: "al".into(), enabled: true, ..Default::default() },
-            crate::SongGo { kind: 14, title: "Details".into(), more: true, enabled: true, ..Default::default() },
+            crate::SongGo { kind: 1, title: "Go to album".into(), id: "al".into(), place: SongPlace::Names, enabled: true, ..Default::default() },
+            crate::SongGo { kind: 0, title: "Favorite".into(), place: SongPlace::Title, enabled: true, ..Default::default() },
+            crate::SongGo { kind: 14, title: "Details".into(), place: SongPlace::Title, enabled: true, ..Default::default() },
         ];
         ui.on_song_menu(move |_, _| ModelRc::new(VecModel::from(menu.clone())));
         ui.set_page_songs(ModelRc::new(VecModel::from(vec![SongRow { title: "Glass Harbour".into(), ..Default::default() }])));
@@ -5113,25 +5125,23 @@ mod tests {
             settle();
         };
         use slint::platform::PointerEventButton::{Left, Right};
-        // The menu opens where the row is pressed: the song at its head, then Play, the song's own lines and
-        // More, whose lines take the card's place under Back.
+        // The menu opens where the row is pressed: the song at its head with its two glyphs at the end, then
+        // Play, and the album's line a group below.
         let row = (400.0, 470.0);
-        // Its 6 px inset, the song's head (53 px with its hairline), then 32 px rows.
-        let entry = |n: f32| row.1 + 6.0 + 53.0 + n * 32.0 + 16.0;
+        // Its 6 px inset, the song's head (46 px, the glyphs 32 px at its end), its hairline, 32 px rows, and
+        // 7 px between groups.
+        let glyph = |n: f32| (row.0 + 260.0 - 6.0 - (2.0 - n) * 32.0 + 16.0, row.1 + 6.0 + 23.0);
+        let play = row.1 + 6.0 + 53.0 + 16.0;
+        let album = play + 32.0 + 7.0;
         press(row.0, row.1, Right);
-        press(row.0 + 40.0, entry(2.0), Left);
+        press(glyph(0.0).0, glyph(0.0).1, Left);
         press(row.0, row.1, Right);
-        press(row.0 + 40.0, entry(1.0), Left);
+        press(row.0 + 40.0, album, Left);
         press(row.0, row.1, Right);
-        press(row.0 + 40.0, entry(0.0), Left);
+        press(row.0 + 40.0, play, Left);
         press(row.0, row.1, Right);
-        press(row.0 + 40.0, entry(3.0), Left);
-        press(row.0 + 40.0, entry(0.0), Left);
-        press(row.0 + 40.0, entry(2.0), Left);
-        press(row.0, row.1, Right);
-        press(row.0 + 40.0, entry(3.0), Left);
-        press(row.0 + 40.0, entry(1.0), Left);
-        assert_eq!(*did.borrow(), ["album al", "song 0 0 0", "song 0 0 -1", "album al", "song 0 0 14"]);
+        press(glyph(1.0).0, glyph(1.0).1, Left);
+        assert_eq!(*did.borrow(), ["song 0 0 0", "album al", "song 0 0 -1", "song 0 0 14"]);
     }
 
     /// The player's menu opens above the pill with the lines it is given, and a line reaches the app by

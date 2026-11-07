@@ -16,6 +16,10 @@ export enum View { home, search, albums, artists, playlists, songs, page, login,
 export enum Panel { none, queue, lyrics, devices }
 // How the page view lays out what it shows: an album's, an artist's, or a list's (a playlist or a mix).
 export enum PageLayout { album, artist, list }
+// Where a song menu's line is drawn (menus.rs's `SongMenuPlace`): the rows most reached for, the album and
+// artist, the rest; a bare glyph beside the title; the song's format at the start of the line under the head
+// (its `title`, not pressed), or a bare glyph on that line. A menu lists its lines in this order.
+export enum SongPlace { main, names, rest, title, note, glyphs }
 
 export struct Card {
     id: string,
@@ -106,14 +110,13 @@ export struct Credits {
 // A line of a song's menu beyond playing it (menus.rs's `song_menu`): 0 its seal, 1 its album, 2 one of
 // its artists (`id` the page), 3 download, 4 radio, 5 play next, 6 add to queue, 7 add to a playlist,
 // 8 remove the download, 9 stop it, 10 add to the library, 11 instant mix, 12 leave out of mixes,
-// 13 share, 14 details, 15 start a jam, 16 the lyrics sheet, 17 the sleep timer. `more`: one of the lines
-// reached for less, folded under More; `enabled`: offered now, else greyed; `filled`: its seal is the
-// filled one (the song is a favorite).
+// 13 share, 14 details, 15 start a jam, 16 the lyrics sheet, 17 the sleep timer. `place`: where it is
+// drawn; `enabled`: offered now, else greyed; `filled`: its seal is the filled one (the song is a favorite).
 export struct SongGo {
     title: string,
     kind: int,
     id: string,
-    more: bool,
+    place: SongPlace,
     enabled: bool,
     filled: bool,
 }
@@ -1106,6 +1109,8 @@ component MenuHead inherits VerticalLayout {
                 overflow: elide;
             }
         }
+        // Bare glyphs beside the words (a song's seal).
+        @children
     }
     Rectangle {
         height: 1px;
@@ -1916,9 +1921,9 @@ global SongIcons {
     }
 }
 
-// A song's menu, as Android's sheet: the song at its head, then its lines (the core's `song_menu`) grouped on
-// one card, those reached for less behind More, which shows them in the card's place under Back. The two
-// share one cell, as tall as the longer, so the menu, placed for its height as it opens, never moves.
+// A song's menu, as Android's sheet: the song at its head with its seal beside the title, the bare glyphs on
+// a line under it, then its rows (the core's `song_menu`), a hairline between rows and a full line between
+// groups. Its lines come rows first, in their groups' order, then the glyphs (`SongPlace`).
 component SongMenuBody inherits Popover {
     in property <image> picture;
     in property <string> title;
@@ -1928,61 +1933,80 @@ component SongMenuBody inherits Popover {
     in property <bool> playable;
     callback play;
     callback chosen(SongGo);
-    property <bool> more-shown;
+    property <bool> glyphs: root.lines.length > 0 && (root.lines[root.lines.length - 1].place == SongPlace.glyphs || root.lines[root.lines.length - 1].place == SongPlace.note);
+    pure function is-row(m: SongGo) -> bool {
+        return m.place == SongPlace.main || m.place == SongPlace.names || m.place == SongPlace.rest;
+    }
     VerticalLayout {
         padding: MenuShape.inset;
         MenuHead {
             picture: root.picture;
             title: root.title;
             line: root.line;
-        }
-        GridLayout {
-            MenuGroup {
-                row: 0;
-                col: 0;
-                alignment: start;
-                visible: !root.more-shown;
-                if root.playable: MenuLine {
-                    icon: Icons.play;
-                    text: "Play";
-                    divider: root.lines.length > 0;
-                    clicked => { root.play(); }
-                }
-                for m[i] in root.lines: VerticalLayout {
-                    if !m.more: MenuLine {
-                        icon: SongIcons.song-icon(m);
-                        text: m.title;
+            HorizontalLayout {
+                alignment: center;
+                for m in root.lines: HorizontalLayout {
+                    alignment: center;
+                    if m.place == SongPlace.title: IconButton {
+                        glyph: SongIcons.song-icon(m);
+                        lit: m.filled;
+                        quiet: !m.filled;
                         enabled: m.enabled;
-                        divider: i < root.lines.length - 1;
                         clicked => { root.chosen(m); }
-                    }
-                    if m.more && (i == 0 || !root.lines[i - 1].more): MenuLine {
-                        icon: Icons.more-horiz;
-                        text: "More";
-                        divider: false;
-                        opens: true;
-                        clicked => { root.more-shown = true; }
                     }
                 }
             }
-            MenuGroup {
-                row: 0;
-                col: 0;
-                alignment: start;
-                visible: root.more-shown;
-                MenuLine {
-                    icon: Icons.nav-arrow-left;
-                    text: "Back";
-                    clicked => { root.more-shown = false; }
-                }
-                for m[i] in root.lines: VerticalLayout {
-                    if m.more: MenuLine {
-                        icon: SongIcons.song-icon(m);
+        }
+        if root.glyphs: VerticalLayout {
+            HorizontalLayout {
+                padding-top: 2px;
+                padding-bottom: 2px;
+                padding-left: 8px;
+                for m in root.lines: HorizontalLayout {
+                    if m.place == SongPlace.note: Text {
                         text: m.title;
+                        color: Theme.dim;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                for m in root.lines: HorizontalLayout {
+                    if m.place == SongPlace.glyphs: IconButton {
+                        glyph: SongIcons.song-icon(m);
+                        quiet: true;
                         enabled: m.enabled;
-                        divider: i < root.lines.length - 1;
                         clicked => { root.chosen(m); }
                     }
+                }
+            }
+            Rectangle {
+                height: 1px;
+                background: Theme.hairline;
+            }
+        }
+        MenuGroup {
+            if root.playable: MenuLine {
+                icon: Icons.play;
+                text: "Play";
+                divider: root.lines.length > 0 && root.lines[0].place == SongPlace.main;
+                clicked => { root.play(); }
+            }
+            for m[i] in root.lines: VerticalLayout {
+                if root.is-row(m) && ((i == 0 && root.playable && m.place != SongPlace.main) || (i > 0 && root.lines[i - 1].place != m.place)): Rectangle {
+                    height: 7px;
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.hairline;
+                    }
+                }
+                if root.is-row(m): MenuLine {
+                    icon: SongIcons.song-icon(m);
+                    text: m.title;
+                    enabled: m.enabled;
+                    divider: i < root.lines.length - 1 && root.lines[i + 1].place == m.place;
+                    clicked => { root.chosen(m); }
                 }
             }
         }

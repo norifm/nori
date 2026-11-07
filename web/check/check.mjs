@@ -429,9 +429,9 @@ if (!only || only.includes("edit")) {
   // Playlists made, filled, renamed, reordered, emptied and deleted, and hearts, through the pages' own
   // menus; what the server then holds is read back.
   const menu = async (label) => {
-    // A song's sheet, or a menu dropped from a button.
+    // A song's sheet, or a menu dropped from a button: a line, or a bare glyph (the seal) by its label.
     await page.waitForSelector("dialog.menu .menu-item, .popover .popover-item");
-    for (const b of await page.$$("dialog.menu .menu-item, .popover .popover-item")) if ((await b.evaluate((x) => x.textContent)) === label) return b.click();
+    for (const b of await page.$$("dialog.menu .menu-item, .popover .popover-item, dialog.menu .glyph, .popover .glyph")) if ((await b.evaluate((x) => x.getAttribute("aria-label") ?? x.textContent)) === label) return b.click();
     throw new Error(`no menu item ${label}`);
   };
   const named = async (text) => {

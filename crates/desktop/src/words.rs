@@ -523,7 +523,7 @@ pub fn song_action(a: &nori_core::menus::SongAction) -> String {
         A::GoToArtist { name, named: true, .. } => format!("Go to {name}"),
         A::GoToArtist { named: false, .. } => "Go to artist".into(),
         A::AddToLibrary => "Add to library".into(),
-        A::Lyrics => "Lyrics".into(),
+        A::Lyrics => "Lyrics timing…".into(),
         A::SleepTimer => "Sleep timer…".into(),
         A::Radio => "Radio".into(),
         A::ExcludeFromMixes { on: true } => "Exclude from mixes".into(),
