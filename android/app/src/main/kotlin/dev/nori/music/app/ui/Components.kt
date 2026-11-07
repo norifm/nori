@@ -802,8 +802,13 @@ fun <T> LoadBox(load: Load<T>, modifier: Modifier = Modifier, content: @Composab
     // own background while the page is still sliding in (Pages): a black card arriving, and then
     // the album appearing on it. Quick data snaps in; only a page that was waiting gets the fade.
     val opened = remember { android.os.SystemClock.uptimeMillis() }
+    // The transition's target is the kind alone: it keys its maps by the target, and a target holding the
+    // page's data hashed all of it (every song of a playlist) on each lookup, every frame. A content is
+    // kept from when it first showed, so it reads the newest state through these.
+    val latest = androidx.compose.runtime.rememberUpdatedState(load)
+    val body = androidx.compose.runtime.rememberUpdatedState(content)
     androidx.compose.animation.AnimatedContent(
-        load, contentKey = { it::class },
+        load::class,
         transitionSpec = {
             if (android.os.SystemClock.uptimeMillis() - opened < stage.quickLoadMs) {
                 androidx.compose.animation.fadeIn(androidx.compose.animation.core.snap()) togetherWith
@@ -813,9 +818,12 @@ fun <T> LoadBox(load: Load<T>, modifier: Modifier = Modifier, content: @Composab
             }
         },
         label = "load",
-    ) { state ->
-        when (state) {
-            is Load.Ready -> content(state.data)
+    ) { kind ->
+        // One fading out keeps the last state of its kind.
+        val last = remember { mutableListOf(latest.value) }
+        latest.value.takeIf { it::class == kind }?.let { last[0] = it }
+        when (val state = last[0]) {
+            is Load.Ready -> body.value(state.data)
             is Load.Loading -> Box(modifier.fillMaxSize(), Alignment.Center) { LoadingDots() }
             is Load.Failed -> Column(modifier.fillMaxSize().padding(Space.gutter), Arrangement.Center, Alignment.CenterHorizontally) {
                 Text(noteText(Note.COULD_NOT_LOAD), style = MaterialTheme.typography.titleLarge)
