@@ -701,6 +701,18 @@ pub const FAVORITES_ONLY: &str = "Favorites only";
 pub const FOR_YOU: &str = "For you";
 pub const SAVE_AS_PLAYLIST: &str = "Save as playlist";
 pub const NEW_PLAYLIST: &str = "New playlist";
+
+/// A playlist the picker offers: its name and what it has of the `asked` songs (its song count when none).
+pub fn playlist_choice(c: &nori_core::menus::PlaylistChoice, asked: usize) -> String {
+    let asked = asked as u32;
+    let holds = match c.holds {
+        0 => count(c.playlist.song_count as u64, "song", "songs"),
+        h if h == asked && asked == 1 => "has it ✓".into(),
+        h if h == asked => format!("has all {asked} ✓"),
+        h => format!("has {h} of {asked}"),
+    };
+    format!("{} · {holds}", c.playlist.name)
+}
 pub const ADD_TO_PLAYLIST: &str = "Add to playlist";
 pub const SLEEP_TIMER: &str = "Sleep timer";
 

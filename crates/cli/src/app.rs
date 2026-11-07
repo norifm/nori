@@ -1035,8 +1035,8 @@ pub enum Target {
     Setting(String),
     Device,
     Preset,
-    /// The playlist these songs go to (empty: a new one).
-    Playlist(Vec<String>),
+    /// The playlist these songs go to: one of `choices` by index, or a new one (empty).
+    Playlist { songs: Vec<String>, choices: Vec<nori_core::menus::PlaylistChoice> },
     /// A sound level the equalizer's tools set.
     Level(EqLevel),
     /// A row of plugin `plugin`, of `kind`.
@@ -1067,7 +1067,10 @@ impl Target {
             Target::Setting(name) => Some(Cmd::Setting(name, value)),
             Target::Device => Some(Cmd::Device(value)),
             Target::Preset => value.parse().ok().map(|i| Cmd::Sound(SoundToolCmd::Preset(i))),
-            Target::Playlist(songs) => Some(Cmd::AddToPlaylist { id: value, songs }),
+            Target::Playlist { choices, .. } => {
+                let c = choices.get(value.parse::<usize>().ok()?)?;
+                Some(Cmd::AddToPlaylist { id: c.playlist.id.clone(), songs: c.adds.clone() })
+            }
             Target::Sleep(choices) => value.parse().ok().and_then(|i: usize| choices.get(i).copied()).map(Cmd::Sleep),
             Target::Level(l) => value.parse().ok().map(|v| Cmd::Level(l, v)),
             Target::Plugin { plugin, row, kind } => {
@@ -1915,6 +1918,14 @@ impl App {
                 self.onto_entries(View::Playlists);
             }
             (Req::Playlists, Err(e)) => self.library.playlists = Load::Failed(e),
+            (Req::PlaylistChoices(asked), Ok(Data::PlaylistChoices(choices))) => match &mut self.overlay {
+                Some(Overlay::Picker { options, target: Target::Playlist { songs, choices: offered }, .. }) if *songs == asked => {
+                    options.truncate(1);
+                    options.extend(choices.iter().enumerate().map(|(i, c)| (crate::text::playlist_choice(c, asked.len()), i.to_string())));
+                    *offered = choices;
+                }
+                _ => {}
+            },
             (Req::Favorites, Ok(Data::Favorites(v))) => self.library.favorites = Load::Ready(v),
             (Req::Favorites, Err(e)) => self.library.favorites = Load::Failed(e),
             (Req::Songs { ref sort, starred, .. }, _) if (sort, starred) != (&self.library.song_sort, self.library.songs_favorites) => self.dirty = false,
@@ -2377,11 +2388,13 @@ impl App {
                 KeyCode::Down | KeyCode::Char('j') => sel.by(1, options.len()),
                 KeyCode::Up | KeyCode::Char('k') => sel.by(-1, options.len()),
                 KeyCode::Enter | KeyCode::Char('l') | KeyCode::Char(' ') => {
-                    if let Some((_, value)) = options.get(sel.at) {
+                    // A playlist that has the songs already takes nothing.
+                    let full = |value: &str| matches!(&*target, Target::Playlist { choices, .. } if value.parse::<usize>().ok().and_then(|i| choices.get(i)).is_some_and(|c| c.adds.is_empty()));
+                    if let Some((_, value)) = options.get(sel.at).filter(|(_, value)| !full(value)) {
                         let (target, value) = (target.clone(), value.clone());
                         self.overlay = match target {
                             // A new playlist asks for its name.
-                            Target::Playlist(songs) if value.is_empty() => Some(Overlay::NewPlaylist { text: String::new(), songs }),
+                            Target::Playlist { songs, .. } if value.is_empty() => Some(Overlay::NewPlaylist { text: String::new(), songs }),
                             Target::PluginMenu => {
                                 let (sheet, cmd) = self.settings.plugin_menu_picked(&value);
                                 self.cmds.extend(cmd);

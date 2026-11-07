@@ -2023,8 +2023,8 @@ fn the_menu_lists_what_the_core_offers() {
     key(&mut a, KeyCode::Enter);
     assert!(a.overlay.is_none());
     assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Radio(id), false)) if id == "1"), "{:?}", a.cmds);
-    // Add to playlist: the playlists, a new one first, which asks for its name.
-    playlists(&mut a, &["Road trip"]);
+    // Add to playlist: the core's choices after a new one, which asks for its name; one that has the song
+    // takes nothing.
     key(&mut a, KeyCode::Char('m'));
     let at = match &a.overlay {
         Some(Overlay::Menu { lines, .. }) => lines.iter().position(|l| *l == MenuLine::Act(MenuAct::Song(SongAction::AddToPlaylist))).unwrap(),
@@ -2034,10 +2034,22 @@ fn the_menu_lists_what_the_core_offers() {
         sel.at = at;
     }
     key(&mut a, KeyCode::Enter);
-    assert!(matches!(&a.overlay, Some(Overlay::Picker { options, .. }) if options.iter().map(|o| o.0.as_str()).collect::<Vec<_>>() == ["New playlist", "Road trip"]));
+    let asked = Req::PlaylistChoices(vec!["1".into()]);
+    assert!(matches!(a.cmds.last(), Some(Cmd::Load(r)) if *r == asked));
+    let choice = |id: &str, name: &str, adds: &[&str], holds| nori_core::menus::PlaylistChoice {
+        playlist: nori_core::Playlist { id: id.into(), name: name.into(), song_count: 3, ..Default::default() },
+        adds: adds.iter().map(|s| s.to_string()).collect(),
+        holds,
+    };
+    a.handle(Msg::Data(asked, Ok(Data::PlaylistChoices(vec![choice("pl-0", "Road trip", &[], 1), choice("pl-1", "Rain", &["1"], 0)]))));
+    assert!(matches!(&a.overlay, Some(Overlay::Picker { options, .. }) if options.iter().map(|o| o.0.as_str()).collect::<Vec<_>>() == ["New playlist", "Road trip · has it ✓", "Rain · 3 songs"]));
+    key(&mut a, KeyCode::Down);
+    let before = a.cmds.len();
+    key(&mut a, KeyCode::Enter);
+    assert!(a.cmds.len() == before && matches!(a.overlay, Some(Overlay::Picker { .. })), "a playlist that has it takes nothing");
     key(&mut a, KeyCode::Down);
     key(&mut a, KeyCode::Enter);
-    assert_eq!(a.cmds.last(), Some(&Cmd::AddToPlaylist { id: "pl-0".into(), songs: vec!["1".into()] }));
+    assert_eq!(a.cmds.last(), Some(&Cmd::AddToPlaylist { id: "pl-1".into(), songs: vec!["1".into()] }));
     key(&mut a, KeyCode::Char('m'));
     if let Some(Overlay::Menu { sel, .. }) = &mut a.overlay {
         sel.at = at;
