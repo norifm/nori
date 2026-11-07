@@ -1055,7 +1055,8 @@ fun ActionRow(title: String, icon: ImageVector, onClick: () -> Unit, divider: Bo
 @Composable
 fun GlyphButton(
     icon: ImageVector, description: String, modifier: Modifier = Modifier,
-    enabled: Boolean = true, lit: Boolean = false, quiet: Boolean = false, iconModifier: Modifier = Modifier, onClick: () -> Unit,
+    enabled: Boolean = true, lit: Boolean = false, quiet: Boolean = false, iconModifier: Modifier = Modifier,
+    iconSize: Dp = 24.dp, onClick: () -> Unit,
 ) {
     val look = LocalLook.current
     Box(
@@ -1065,7 +1066,7 @@ fun GlyphButton(
         ),
         Alignment.Center,
     ) {
-        LookIcon(icon, description, Modifier.size(24.dp).then(iconModifier)) { look.color(if (lit) CoverLook.ACCENT else if (quiet) CoverLook.ON_VARIANT else CoverLook.ON) }
+        LookIcon(icon, description, Modifier.size(iconSize).then(iconModifier)) { look.color(if (lit) CoverLook.ACCENT else if (quiet) CoverLook.ON_VARIANT else CoverLook.ON) }
     }
 }
 

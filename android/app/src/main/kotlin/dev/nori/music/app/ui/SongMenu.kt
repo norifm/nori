@@ -145,7 +145,7 @@ fun SongMenu(
             }
             HeadLine()
             // The album page's way of saying it, in its own case: "FLAC 16/44.1", "MP3 320 kbps".
-            Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = SHEET_EDGE, end = SHEET_EDGE), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(start = SHEET_INSET, end = SHEET_GLYPH_END), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Text(
                     remember(song) { say.quality(song) }.orEmpty(), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -163,12 +163,12 @@ fun SongMenu(
     }
 }
 
-/** A glyph of the song menu, in the columns the title's and the line under it share. */
+/** A glyph of the song menu, in the columns the title's and the line under it share; drawn the size of a line's icon. */
 @Composable
 private fun SheetGlyph(
     icon: ImageVector, description: String, modifier: Modifier = Modifier,
     enabled: Boolean = true, lit: Boolean = false, quiet: Boolean = false, onClick: () -> Unit,
-) = GlyphButton(icon, description, modifier.size(SHEET_GLYPH), enabled = enabled, lit = lit, quiet = quiet, onClick = onClick)
+) = GlyphButton(icon, description, modifier.size(SHEET_GLYPH), enabled = enabled, lit = lit, quiet = quiet, iconSize = SHEET_GLYPH_ICON, onClick = onClick)
 
 /**
  * The song's artists, then its album: each name in [names] in ink, opening its page through [open]; what
@@ -275,8 +275,8 @@ private val KeepUpwardDrags = object : androidx.compose.ui.input.nestedscroll.Ne
 /** The song or record a menu is about, right under the sheet's handle: its cover, its name, a line, [more], and [trailing] at the right. */
 @Composable
 private fun SheetHead(cover: String?, title: String, line: String, round: Boolean = false, trailing: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {}, more: @Composable () -> Unit = {}) {
-    Row(Modifier.fillMaxWidth().padding(start = SHEET_EDGE, end = SHEET_EDGE, bottom = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        Cover(cover, 52.dp, radius = if (round) 26.dp else 8.dp)
+    Row(Modifier.fillMaxWidth().padding(start = SHEET_INSET, end = SHEET_GLYPH_END, bottom = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Cover(cover, 44.dp, radius = if (round) 22.dp else 6.dp)
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
@@ -371,7 +371,7 @@ fun PlaylistPicker(songs: List<Song>, actions: ActionsViewModel, onDone: () -> U
             if (naming) NameLine(name, { name = it }, create) else Item(say.newPlaylist, Iconoir.Plus, divider = false) { naming = true }
         }
         val listed = choices.orEmpty()
-        if (choices == null) LoadingDots(Modifier.fillMaxWidth().padding(vertical = 22.dp).wrapContentWidth())
+        if (choices == null) LoadingDots(Modifier.fillMaxWidth().padding(vertical = 16.dp).wrapContentWidth())
         if (listed.isNotEmpty()) SheetGroup {
             listed.forEachIndexed { n, c -> PlaylistChoiceRow(c, songs.size, actions, divider = n < listed.lastIndex) { actions.addToPlaylist(c); onDone() } }
         }
@@ -405,7 +405,7 @@ private fun PlaylistChoiceRow(c: dev.nori.music.ffi.library.PlaylistChoice, aske
     val scheme = MaterialTheme.colorScheme
     Column {
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 60.dp).then(if (full) Modifier else Modifier.clickable(onClick = onClick))
+            Modifier.fillMaxWidth().heightIn(min = 52.dp).then(if (full) Modifier else Modifier.clickable(onClick = onClick))
                 .padding(horizontal = GROUP_INSET, vertical = 8.dp),
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
         ) {
@@ -460,7 +460,7 @@ fun TrackInfo(song: Song, actions: ActionsViewModel) {
 private fun InfoLine(label: String, value: String, divider: Boolean) {
     val scheme = MaterialTheme.colorScheme
     Column {
-        Row(Modifier.fillMaxWidth().heightIn(min = SHEET_ROW).padding(horizontal = GROUP_INSET, vertical = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(horizontal = GROUP_INSET, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text(label, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, maxLines = 1)
             Text(value, Modifier.weight(1f).padding(start = 16.dp), style = MaterialTheme.typography.bodyMedium, textAlign = androidx.compose.ui.text.style.TextAlign.End)
         }
@@ -529,11 +529,16 @@ private fun SelectedCount(n: Int, modifier: Modifier) {
     }
 }
 
-/** How far a menu sheet's head and lines stand in from its sides. */
+/** How far a menu sheet's groups and the hairline under its head stand in from its sides. */
 private val SHEET_EDGE = 16.dp
+/** Where a group's icons and words start: the head's cover and the format line start there too. */
+private val SHEET_INSET = SHEET_EDGE + GROUP_INSET
 /** The room between a sheet's groups. */
-private val SHEET_GAP = 12.dp
+private val SHEET_GAP = 8.dp
 /** A menu sheet's line: Android's 48 dp touch target, so a long menu fits the screen. */
 private val SHEET_ROW = 48.dp
 /** Narrower than a page's glyphs, so six leave the line under the head room for the format. */
-private val SHEET_GLYPH = 44.dp
+private val SHEET_GLYPH = 40.dp
+private val SHEET_GLYPH_ICON = 20.dp
+/** The head's glyphs end where a group's words do, their touch room past them. */
+private val SHEET_GLYPH_END = SHEET_INSET - (SHEET_GLYPH - SHEET_GLYPH_ICON) / 2

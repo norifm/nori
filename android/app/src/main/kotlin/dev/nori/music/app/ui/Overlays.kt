@@ -227,10 +227,10 @@ fun AlertCard(
         border = hairlineBorder(),
     ) {
         // The buttons' words line up with the text's edge; their own padding is the card's at the foot.
-        Column(Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 12.dp)) {
+        Column(Modifier.padding(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 10.dp)) {
             title?.let {
                 ProvideTextStyle(MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, fontWeight = FontWeight.SemiBold)) {
-                    Box(Modifier.padding(bottom = 16.dp)) { it() }
+                    Box(Modifier.padding(bottom = 12.dp)) { it() }
                 }
             }
             text?.let {
@@ -344,7 +344,7 @@ private fun SheetHandle(state: androidx.compose.material3.SheetState, hair: Colo
 /** A sheet's name under its handle, in Inter as a dialog's is: a sheet is not a page, which Literata names. */
 @Composable
 fun SheetTitle(title: String) = androidx.compose.material3.Text(
-    title, Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 2.dp, bottom = 14.dp),
+    title, Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 2.dp, bottom = 10.dp),
     style = MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp),
     maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
 )
