@@ -99,12 +99,19 @@ impl Kept {
             self.spare.push((m.chain, m.stages));
         }
         let room = frames as usize * self.frame_bytes;
-        if self.bytes.len() < room {
-            self.bytes.resize(room, 0);
+        // Exactly the room asked for: after a song of a higher rate, one of a lower gives the rest back.
+        if self.bytes.len() != room {
+            self.bytes = vec![0; room];
         }
         let marks = (frames / MARK_FRAMES) as usize + 2;
         self.marks.reserve(marks);
         self.spare.reserve(marks);
+    }
+
+    /// Bytes held for the input, used or not.
+    #[cfg(test)]
+    pub(crate) fn held(&self) -> usize {
+        self.bytes.capacity()
     }
 
     /// The frame after the last kept.
@@ -371,6 +378,15 @@ mod tests {
             f = end;
         }
         assert_eq!(f, k.end());
+    }
+
+    /// A song of a lower rate after one of a higher: the room shrinks to what it needs.
+    #[test]
+    fn restart_keeps_only_the_room_asked_for() {
+        let mut k = Kept::default();
+        k.restart(0, 8, 96_000);
+        k.restart(0, 8, 44_100);
+        assert_eq!(k.held(), 44_100 * 8);
     }
 
     #[test]
