@@ -25,13 +25,14 @@
   const CUBIC_OUT = "cubic-bezier(0.33, 1, 0.68, 1)";
   const still = () => document.documentElement.classList.contains("still");
   /** The rows and their captions, each kept by what it is (a song by its id and which copy of it), so a
-   * song moved is the same row moved. */
+   * song moved is the same row moved. "Playing next" is kept by the song it follows: a new song brings a
+   * new caption rather than gliding one through the rows. */
   const items = $derived.by(() => {
     const copies = new Map<string, number>();
     const out: { key: string; head?: string; q?: QueueSong; at: number }[] = [];
     rows.forEach((q, at) => {
       if (at === 0 && current > 0) out.push({ key: "history", head: W.history, at });
-      if (at === current + 1) out.push({ key: "next", head: W.playingNext, at });
+      if (at === current + 1) out.push({ key: `next:${out[out.length - 1].key}`, head: W.playingNext, at });
       const id = q.id ?? q.title ?? "";
       const copy = copies.get(id) ?? 0;
       copies.set(id, copy + 1);
