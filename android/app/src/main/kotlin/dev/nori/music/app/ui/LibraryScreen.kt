@@ -320,7 +320,7 @@ private fun ArtistRows(vm: AlbumsViewModel) {
                 LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(row, key = { it.id }, contentType = { "cover" }) { a ->
                         val cardMenu = LocalCardMenu.current
-                        CoverCard(a.name, if (a.year > 0u) "${a.year}" else "", vm.cover(a.coverArt, CoverSize.CARD), ARTIST_COVER, { nav.album(a.id, a) }, remote = a.isExternal, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfAlbum(a)) })
+                        CoverCard(a.name, if (a.year > 0u) "${a.year}" else "", vm.cover(a.coverArt, CoverSize.CARD), ARTIST_COVER, { nav.album(a.id, a) }, itemMotion(), remote = a.isExternal, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfAlbum(a)) })
                     }
                 }
             }
@@ -474,7 +474,7 @@ private fun Favourites(actions: ActionsViewModel, vm: StarredViewModel = viewMod
             }
             if (s.albums.isNotEmpty()) item(key = "albums") {
                 LazyRow(Modifier.bleedsToEdges(), rememberShelfState(s.albums.firstOrNull()?.id), contentPadding = edgePadding(Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(s.albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { nav.album(a.id, a) }) }
+                    items(s.albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { nav.album(a.id, a) }, itemMotion()) }
                 }
             }
             items(s.artists, key = { "ar" + it.id }) { a ->

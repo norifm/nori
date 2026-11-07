@@ -124,19 +124,19 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
             if (r.artists.isNotEmpty()) item(key = "artists") {
                 SectionTitle(say.artists, onMore = { whole = Whole.ARTISTS }.takeIf { r.artists.size > SHELF_SEEN })
                 LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.artists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(r.artists, key = { it.id }) { a -> FoundArtist(a, vm, 96.dp) }
+                    items(r.artists, key = { it.id }) { a -> FoundArtist(a, vm, 96.dp, itemMotion()) }
                 }
             }
             if (r.albums.isNotEmpty()) item(key = "albums") {
                 SectionTitle(say.albums, onMore = { whole = Whole.ALBUMS }.takeIf { r.albums.size > SHELF_SEEN })
                 LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.albums.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(r.albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { vm.remember(); nav.album(a.id, a) }) }
+                    items(r.albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { vm.remember(); nav.album(a.id, a) }, itemMotion()) }
                 }
             }
             if (r.playlists.isNotEmpty()) item(key = "playlists") {
                 SectionTitle(say.playlists, onMore = { whole = Whole.PLAYLISTS }.takeIf { r.playlists.size > SHELF_SEEN })
                 LazyRow(Modifier.bleedsToEdges(), rememberShelfState(r.playlists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(r.playlists, key = { it.id }) { p -> FoundPlaylist(p, vm, Modifier.width(120.dp)) }
+                    items(r.playlists, key = { it.id }) { p -> FoundPlaylist(p, vm, itemMotion().width(120.dp)) }
                 }
             }
             if (r.songs.isNotEmpty()) item(key = "songs") { SectionTitle(say.songs) }
@@ -192,12 +192,12 @@ private fun WholeShelf(whole: Whole, r: dev.nori.music.ffi.model.SearchResult, v
 
 /** An artist found: how many albums, and the cloud for a provider's, so two of one name are told apart. */
 @Composable
-private fun FoundArtist(a: dev.nori.music.ffi.model.Artist, vm: SearchViewModel, size: androidx.compose.ui.unit.Dp) {
+private fun FoundArtist(a: dev.nori.music.ffi.model.Artist, vm: SearchViewModel, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
     val nav = LocalNav.current
     val cardMenu = LocalCardMenu.current
     ArtistCard(
         a.name, remember(a.albumCount) { a.albumCount?.takeIf { it > 0u }?.let { say.albums(it.toInt()) }.orEmpty() }, vm.cover(a.coverArt, CoverSize.ROW), size,
-        onClick = { vm.remember(); nav.artist(a.id, a) }, remote = a.isExternal, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) },
+        onClick = { vm.remember(); nav.artist(a.id, a) }, modifier = modifier, remote = a.isExternal, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfArtist(a)) },
     )
 }
 

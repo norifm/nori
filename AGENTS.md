@@ -171,8 +171,9 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
   moves nothing else.
 - Words are short and plain: a title names the thing, a control says what it does. Settings say only
   what is not obvious from their name (a state, a cost), never what the setting does.
-- Nothing animates unless the user touched it; nori's Motion setting (not the system's) turns flourishes
-  into direct changes.
+- Nothing animates unless the user touched it, except a page's newer answer replacing what it showed (its
+  saved copy, a refresh): its items move to their places, come and go (`itemMotion`). nori's Motion setting
+  (not the system's) turns flourishes into direct changes.
 
 ## Code
 
@@ -232,7 +233,7 @@ system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw
   server download them. Provider items are never indexed.
 - Use raw Material widgets (`Button`, `FilterChip`, `OutlinedTextField`, `Divider`) in screens; use the
   shapes in the app's `ui/Design.kt`. No liquid-glass imitation on Android; nothing animates unless the
-  user touched it; measure before adding blur or per-frame effects.
+  user touched it or a newer answer moves a page's items; measure before adding blur or per-frame effects.
 
 ## Builds and releases
 
