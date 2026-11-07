@@ -108,20 +108,21 @@ fun SongMenu(
                 is dev.nori.music.ffi.library.SongAction.Favourite -> SheetGlyph(if (a.on) Kanji.Seal else Kanji.Sealed, labels[n], lit = !a.on) { actions.star(song, a.on) }
                 else -> SheetGlyph(Iconoir.InfoCircle, labels[n]) { stage = MenuStage.DETAILS }
             }
-            @Composable fun glyph(n: Int) = when (val a = items[n].action) {
-                dev.nori.music.ffi.library.SongAction.Lyrics -> SheetGlyph(Iconoir.QuoteMessage, labels[n], Modifier.alpha(if (items[n].enabled) 1f else 0.38f), enabled = items[n].enabled, quiet = true) { stage = MenuStage.LYRICS }
-                dev.nori.music.ffi.library.SongAction.SleepTimer -> SheetGlyph(Iconoir.HalfMoon, labels[n], quiet = true) { stage = MenuStage.SLEEP }
+            @Composable fun glyph(n: Int) = when (items[n].action) {
                 dev.nori.music.ffi.library.SongAction.RemoveDownload -> SheetGlyph(Iconoir.Trash, labels[n], quiet = true) { actions.removeDownloads(listOf(song.id)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.StopDownload -> SheetGlyph(Iconoir.Xmark, labels[n], quiet = true) { actions.cancelDownloads(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.Download -> SheetGlyph(Iconoir.Download, labels[n], quiet = true) { actions.download(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.Radio -> SheetGlyph(Iconoir.AntennaSignal, labels[n], quiet = true) { actions.startRadio(song); onDismiss() }
-                is dev.nori.music.ffi.library.SongAction.ExcludeFromMixes -> SheetGlyph(Iconoir.Prohibition, labels[n], lit = !a.on, quiet = true) { actions.excludeFromMixes(song, a.on); excluded = a.on }
                 else -> SheetGlyph(Iconoir.ShareIos, labels[n], quiet = true) { actions.share(song.id); onDismiss() }
             }
-            @Composable fun line(n: Int, divider: Boolean) = when (items[n].action) {
+            @Composable fun line(n: Int, divider: Boolean) = when (val a = items[n].action) {
                 dev.nori.music.ffi.library.SongAction.PlayNext -> Item(labels[n], Iconoir.PlaylistPlay, divider = divider) { actions.playNext(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.AddToQueue -> Item(labels[n], Iconoir.Playlist, divider = divider) { actions.enqueue(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.AddToPlaylist -> Item(labels[n], Iconoir.PlusCircle, divider = divider) { stage = MenuStage.PLAYLIST }
+                // Stays open: the line turns to say the other way.
+                is dev.nori.music.ffi.library.SongAction.ExcludeFromMixes -> Item(labels[n], Iconoir.Prohibition, divider = divider) { actions.excludeFromMixes(song, a.on); excluded = a.on }
+                dev.nori.music.ffi.library.SongAction.Lyrics -> Item(labels[n], Iconoir.QuoteMessage, enabled = items[n].enabled, divider = divider) { stage = MenuStage.LYRICS }
+                dev.nori.music.ffi.library.SongAction.SleepTimer -> Item(labels[n], Iconoir.HalfMoon, divider = divider) { stage = MenuStage.SLEEP }
                 else -> Item(labels[n], Iconoir.FolderPlus, divider = divider) { actions.addToLibrary(song.id, isAlbum = false); onDismiss() }
             }
             val names = at(dev.nori.music.ffi.library.SongMenuPlace.NAMES).map { items[it].action }

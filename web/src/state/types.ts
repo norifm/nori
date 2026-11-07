@@ -104,7 +104,8 @@ export type SettingRow = {
 };
 export type SettingsSection = { id: string; rows: SettingRow[] };
 
-export type MenuAction = { action: string; more: boolean; enabled: boolean; on?: boolean; id?: string; name?: string; named?: boolean };
+/** A line of a song's menu (`menus::song_menu`); `place` where it is drawn (`SongMenuPlace`). */
+export type MenuAction = { action: string; place: "Title" | "Names" | "Glyphs" | "Line"; more: boolean; enabled: boolean; on?: boolean; id?: string; name?: string; named?: boolean };
 
 /** A band as the equalizer page draws it (crates/web/src/eq.rs): `x` across the curve (0..1), `db` its
  * point's height, the rest its editor's. */

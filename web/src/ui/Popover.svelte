@@ -1,25 +1,22 @@
 <script lang="ts">
   // Every menu on a wide window (and a phone's menus about no one thing): one surface on the paper with a
   // hairline edge and no backdrop, beside the button that opened it or at the pointer, turned or moved to
-  // stay inside the window. Its head (a song's cover, title and line), then its rows, each a hairline from
-  // the next, the rarer ones behind More, which shows them in the rows' place under Back; the chosen one
-  // ticked. Its corners are the tile's; what sits in them is round by the tile's corner less the inset
-  // (`--inner`). A click outside or Escape closes it.
+  // stay inside the window. Its head (a song's cover, title and line, its seal beside them), the bare
+  // glyphs on a line under it, then its rows, each a hairline from the next and each group a full line from
+  // the next; the chosen one ticked. Its corners are the tile's; what sits in them is round by the tile's
+  // corner less the inset (`--inner`). A click outside or Escape closes it.
   import { ui } from "../state/ui.svelte";
-  import { W } from "../words";
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
   import type { Item } from "../state/ui.svelte";
 
   const m = $derived(ui.open!);
   let menu = $state<HTMLElement>();
-  let more = $state(false);
   let place = $state("visibility:hidden");
   const EDGE = 8;
-  // Placed once drawn (and again as More or Back swaps the rows): below a button and level with its right
-  // edge, or with its top left at the pointer; turned up or left where the window ends.
+  // Placed once drawn: below a button and level with its right edge, or with its top left at the pointer;
+  // turned up or left where the window ends.
   $effect(() => {
-    void more;
     if (!menu) return;
     const { width: w, height: h } = menu.getBoundingClientRect();
     const a = m.at;
@@ -49,22 +46,33 @@
   >
 {/snippet}
 
+{#snippet glyph(it: Item)}
+  <button
+    class="glyph quiet small"
+    class:on={it.lit}
+    aria-label={it.label}
+    title={it.label}
+    disabled={it.disabled}
+    onclick={() => {
+      close();
+      void it.run();
+    }}><Icon name={it.icon ?? "more-horiz"} /></button
+  >
+{/snippet}
+
 <div class="popover drop" role="menu" aria-label={m.head?.title} bind:this={menu} style={place}>
   {#if m.head}
     <div class="head">
       {#if m.head.cover !== undefined}<span class="art"><Cover src={m.head.cover || undefined} radius="var(--inner)" /></span>{/if}
       <span class="words"><span class="title clip">{m.head.title}</span>{#if m.head.line}<span class="sub clip">{m.head.line}</span>{/if}</span>
+      {#each m.head.glyphs ?? [] as it, i (i)}{@render glyph(it)}{/each}
     </div>
   {/if}
-  {#if more}
-    <button class="popover-item" onclick={() => (more = false)}><Icon name="arrow-left" /><span class="clip">{W.back}</span></button>
-    {#each m.more as it, i (i)}{@render row(it)}{/each}
-  {:else}
-    {#each m.items as it, i (i)}{@render row(it)}{/each}
-    {#if m.more.length}
-      <button class="popover-item" onclick={() => (more = true)}><Icon name="more-horiz" /><span class="clip">{W.more}</span><span class="opens"><Icon name="nav-arrow-right" /></span></button>
-    {/if}
-  {/if}
+  {#if m.tools.length || m.head?.quality}<div class="tools"><span class="quality clip">{m.head?.quality ?? ""}</span>{#each m.tools as it, i (i)}{@render glyph(it)}{/each}</div>{/if}
+  {#each m.groups as g, n (n)}
+    {#if n}<span class="split"></span>{/if}
+    {#each g as it, i (i)}{@render row(it)}{/each}
+  {/each}
 </div>
 
 <style>
@@ -110,8 +118,46 @@
   .sub {
     font-size: 13px;
   }
-  .opens {
-    display: grid;
-    margin-left: auto;
+  /* A full line between groups and under the glyphs, edge to edge as the head's. */
+  .split,
+  .tools {
+    position: relative;
+  }
+  .split {
+    display: block;
+    height: 7px;
+  }
+  .split::after,
+  .tools::after {
+    content: "";
+    position: absolute;
+    left: -6px;
+    right: -6px;
+    top: 3px;
+    height: 1px;
+    background: var(--line);
+  }
+  .tools {
+    display: flex;
+    align-items: center;
+    min-height: 36px;
+    padding: 0 0 7px 10px;
+  }
+  .quality {
+    flex: 1;
+    font-size: 13px;
+    color: var(--ink2);
+  }
+  .tools::after {
+    top: auto;
+    bottom: 3px;
+  }
+  .glyph.small {
+    width: 36px;
+    height: 36px;
+  }
+  .glyph.small :global(.icon) {
+    width: 20px;
+    height: 20px;
   }
 </style>
