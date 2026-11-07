@@ -372,7 +372,7 @@ enum Say {
     static let licenceUnreadable = "The license text could not be read."
 
     // The song menu, from Android's strings.xml (menu_*, said_*, sleep_choice_*).
-    static let addToPlaylist = "Add to playlist…"
+    static let addToPlaylist = "Add to playlist"
     static let newPlaylist = "New playlist"
     static let create = "Create"
     static let cancel = "Cancel"
@@ -402,7 +402,7 @@ enum Say {
             guard item["named"] as? Bool == true, let name = item["name"] as? String else { return "Go to artist" }
             return "Go to \(name)"
         case 9: return "Add to library"
-        case 10: return "Sleep timer…"
+        case 10: return "Sleep timer"
         case 11: return "Radio"
         case 13: return item["on"] as? Bool ?? true ? "Exclude from mixes" : "Include in mixes"
         case 14: return "Share link"

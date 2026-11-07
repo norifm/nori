@@ -453,7 +453,7 @@ if (!only || only.includes("edit")) {
   await hash(`#/album/${blue}`, "album");
   for (let i = 0; i < 3; i++) {
     await (await page.$$(".songs li button[aria-label='More']"))[i].click();
-    await menu("Add to playlist…");
+    await menu("Add to playlist");
     // The picker: the playlist found by its name, then picked.
     await page.waitForSelector("#playlist-picker input");
     await page.type("#playlist-picker input", name);

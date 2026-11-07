@@ -75,7 +75,7 @@ class Ui {
     return u;
   }
 
-  /** A menu about `head` at `at`, its rows in `groups`; one that follows another (Add to playlist…) opens
+  /** A menu about `head` at `at`, its rows in `groups`; one that follows another (Add to playlist) opens
    * where it was. */
   menu(head: Head, groups: Item[][], at: Anchor | undefined = this.last, tools: Item[] = []) {
     this.last = at;
