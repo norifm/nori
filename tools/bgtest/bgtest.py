@@ -70,7 +70,8 @@ def mb(value, unit):
 
 def parse(stats, uid):
     r = {}
-    m = re.search(r"Time on battery: ([^(]+)\([^,]*, ([^(]+)\(", stats)
+    # The share is in the phone's locale ("100,0%" in Polish), so it is skipped up to its bracket.
+    m = re.search(r"Time on battery: ([^(]+)\([^)]*\) realtime, ([^(]+)\(", stats)
     r["seconds"] = dur_s(m.group(1)) if m else None
     # uptime below realtime: the phone slept (suspended) for the difference.
     r["asleep_s"] = round(dur_s(m.group(1)) - dur_s(m.group(2)), 1) if m else None

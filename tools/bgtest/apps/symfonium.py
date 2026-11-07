@@ -23,7 +23,11 @@ class Symfonium(App):
 
     def login(self):
         self.step("open", self.launch, "On a network server or cloud provider")
-        self.step("network server", lambda: ui.tap("On a network server or cloud provider"), "(Open) Subsonic")
+        # A phone whose trial has run out is offered one more day when a new version is out.
+        shown = self.step("network server", lambda: ui.tap("On a network server or cloud provider"),
+                          ["(Open) Subsonic", "Free trial expired"])
+        if shown == "Free trial expired":
+            self.step("one more trial day", lambda: ui.tap("Start"), "(Open) Subsonic")
         self.step("Subsonic", lambda: ui.tap("(Open) Subsonic"), "Server URL")
         self.step("server address", lambda: (ui.tap("Server URL"), ui.text(self.url)))
         self.step("user", lambda: (ui.tap("Login"), ui.text(self.user)))
