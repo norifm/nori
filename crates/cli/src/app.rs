@@ -147,7 +147,7 @@ pub enum Cmd {
     /// Plays the library shuffled: random albums whole, or every song.
     ShuffleLibrary { albums: bool },
     DownloadFetch(Fetch),
-    DownloadRemove(String),
+    DownloadRemove(Vec<String>),
     Star(Starrable, String, bool),
     Setting(String, String),
     Level(EqLevel, f32),
@@ -2705,7 +2705,8 @@ impl App {
             },
             Action::Remove if self.focus == Focus::Main && self.view == View::Downloads => {
                 if let Some(Item::Song(songs, i)) = self.selected() {
-                    self.cmds.push(Cmd::DownloadRemove(songs[i].id.clone()));
+                    let id = songs[i].id.clone();
+                    self.ask_remove(vec![id]);
                 }
             }
             Action::Remove if self.queue_in_focus() => match self.queue_rows().get(self.queue_sel.at).copied() {
@@ -3383,7 +3384,7 @@ impl App {
         };
         match a {
             PageAction::Download { act: DownloadAct::Remove } => {
-                self.cmds.extend(songs.iter().map(|s| Cmd::DownloadRemove(s.id.clone())));
+                self.ask_remove(songs.iter().map(|s| s.id.clone()).collect());
             }
             PageAction::Download { act: DownloadAct::Missing } => {
                 let missing: Vec<Song> = songs.into_iter().filter(|s| self.downloaded.get(&s.id) != Some(&SongDownload::Done)).collect();

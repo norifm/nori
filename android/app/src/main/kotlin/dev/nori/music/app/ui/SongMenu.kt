@@ -115,7 +115,7 @@ fun SongMenu(
                 else -> SheetGlyph(Iconoir.InfoCircle, labels[n]) { stage = MenuStage.DETAILS }
             }
             @Composable fun glyph(n: Int) = when (items[n].action) {
-                dev.nori.music.ffi.library.SongAction.RemoveDownload -> SheetGlyph(Iconoir.Trash, labels[n], quiet = true) { actions.removeDownloads(listOf(song.id)); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.RemoveDownload -> SheetGlyph(Iconoir.Trash, labels[n], quiet = true) { actions.undownload(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.StopDownload -> SheetGlyph(Iconoir.Xmark, labels[n], quiet = true) { actions.cancelDownloads(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.Download -> SheetGlyph(Iconoir.Download, labels[n], quiet = true) { actions.download(listOf(song)); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.Radio -> SheetGlyph(Iconoir.AntennaSignal, labels[n], quiet = true) { actions.startRadio(song); onDismiss() }

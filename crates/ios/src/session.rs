@@ -1028,6 +1028,17 @@ mod tests {
         song_of(at, "c", 1);
         expect(at, REPORT_STATE, |r| r.state == STATE_PLAYING);
         expect(at, REPORT_STATE, |r| r.state == super::STATE_ENDED);
+        // With none of it downloaded any more, the page is the album's own: here its stored copy.
+        let stored = r#"{"subsonic-response":{"status":"ok","album":{"id":"album","name":"Offline album","song":[{"id":"a","title":"a"},{"id":"b","title":"b"},{"id":"c","title":"c"}]}}}"#;
+        super::with_session(|s| {
+            s.core.cache_put("page:album/album".into(), stored.into()).unwrap();
+            songs.iter().for_each(|song| s.download_remove(&song.id));
+        });
+        let album = CString::new("album").unwrap();
+        unsafe { nori_ios_read(81, PAGE_DOWNLOADED_ALBUM, album.as_ptr()); }
+        let album = answer(81);
+        let ids: Vec<&str> = album["sections"][0]["items"].as_array().unwrap().iter().map(|row| row["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["a", "b", "c"], "{album}");
         super::close();
         let heard = std::fs::read(dir.path().join("heard.wav")).unwrap();
         assert!(heard[44..].iter().any(|&b| b != 0), "downloaded audio reached the output");

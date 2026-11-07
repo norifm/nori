@@ -422,6 +422,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<dev.nori.music.app.La
         ) {
             PairingRequest()
             MobileDownloadQuestion(actions)
+            RemoveDownloadsQuestion(actions)
             val route = controller.currentBackStackEntryAsState().value?.destination?.route
             // The tab the page on screen belongs to, which is the one that stays lit, as Apple's does: a
             // settings group, or an album opened from Home, is still inside that tab. Lit only on the tab
@@ -835,6 +836,20 @@ private fun Modifier.burnInProtection(
         translationX = d.xDp.dp.toPx()
         translationY = d.yDp.dp.toPx()
     }
+
+/** Downloads go only after a yes: they would have to be fetched again. */
+@Composable
+private fun RemoveDownloadsQuestion(actions: ActionsViewModel) {
+    val ids by actions.removal.collectAsStateWithLifecycle()
+    NoriDialog(ids, { actions.removeAsked(false) }) { asked ->
+        AlertCard(
+            title = { androidx.compose.material3.Text(say.removeDownloadsTitle(asked.size)) },
+            text = { androidx.compose.material3.Text(say.removeDownloadsText(asked.size)) },
+            confirmButton = { TextAction(say.remove, { actions.removeAsked(true) }, destructive = true) },
+            dismissButton = { TextAction(say.cancel, { actions.removeAsked(false) }) },
+        )
+    }
+}
 
 /** Songs asked for while on mobile data download only after a yes. */
 @Composable

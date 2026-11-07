@@ -253,10 +253,20 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
         for (url in nori.core.downloadCoverUrls(songs.mapNotNull { it.coverArt })) loader.warm(url)
     }
 
-    /** Gives the downloads back: the same menu entry that offered them should be able to take them away. */
-    fun undownload(songs: List<Song>) {
-        nori.downloads.remove(songs.map { it.id })
-        _messages.trySend(say.downloadsRemoved(songs.size))
+    private val _removal = MutableStateFlow<List<String>?>(null)
+    /** Downloads asked to be removed, waiting for a yes. */
+    val removal: StateFlow<List<String>?> = _removal.asStateFlow()
+
+    /** Gives the downloads back after a yes: the same menu entry that offered them should be able to take them away. */
+    fun undownload(songs: List<Song>) { _removal.value = songs.map { it.id } }
+
+    /** The answer to removing [removal]. */
+    fun removeAsked(yes: Boolean) {
+        val ids = _removal.value ?: return
+        _removal.value = null
+        if (!yes) return
+        removeDownloads(ids)
+        _messages.trySend(say.downloadsRemoved(ids.size))
     }
     fun removeDownloads(ids: List<String>) = nori.downloads.remove(ids)
 

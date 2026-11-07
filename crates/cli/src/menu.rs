@@ -168,7 +168,7 @@ impl App {
             SongAction::PlayNext => self.cmds.push(Cmd::Enqueue(vec![s], true)),
             SongAction::AddToQueue => self.cmds.push(Cmd::Enqueue(vec![s], false)),
             SongAction::AddToPlaylist => self.pick_playlist(vec![s.id]),
-            SongAction::RemoveDownload => self.cmds.push(Cmd::DownloadRemove(s.id)),
+            SongAction::RemoveDownload => self.ask_remove(vec![s.id]),
             SongAction::Download => self.cmds.push(Cmd::Download(vec![s])),
             SongAction::GoToAlbum { id } => self.open_album(id),
             SongAction::GoToArtist { id, .. } => self.open_artist(id),
@@ -186,6 +186,12 @@ impl App {
         let options = vec![(crate::text::NEW_PLAYLIST.to_string(), String::new())];
         self.cmds.push(Cmd::Load(crate::backend::Req::PlaylistChoices(songs.clone())));
         self.overlay = Some(Overlay::Picker { title: crate::text::ADD_TO_PLAYLIST.into(), options, sel: Sel::default(), target: Target::Playlist { songs, choices: Vec::new() } });
+    }
+
+    /// Asks before downloads `ids` are removed.
+    pub(crate) fn ask_remove(&mut self, ids: Vec<String>) {
+        let (title, note) = crate::text::remove_downloads(ids.len());
+        self.overlay = Some(Overlay::Confirm { title, lines: vec![note.into()], yes: crate::text::REMOVE.into(), cmd: Box::new(Cmd::DownloadRemove(ids)) });
     }
 }
 

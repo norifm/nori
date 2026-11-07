@@ -85,10 +85,14 @@ enum SongMenu {
         case 15:
             showDetails(details, from: host)
         case 4:
-            off({ nori_ios_song_act(token, i, 4, 0) }) { _ in
-                Toast.show(Say.downloadsRemoved(1))
-                NotificationCenter.default.post(name: .noriDownloads, object: nil)
+            let ask = Sheet(Say.removeDownloadsTitle(1), Say.removeDownloadsNote(1))
+            ask.add(Say.remove, glyph: Glyph.draw(Iconoir.trash, 20), destructive: true) {
+                off({ nori_ios_song_act(token, i, 4, 0) }) { _ in
+                    Toast.show(Say.downloadsRemoved(1))
+                    NotificationCenter.default.post(name: .noriDownloads, object: nil)
+                }
             }
+            ask.show(from: host)
         default:
             // Play next, add to queue and the other downloads: the library says what it did in a note.
             _ = nori_ios_song_act(token, i, Int32(a), 0)
