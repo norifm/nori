@@ -6,6 +6,7 @@
   import type { Album, Artist, Playlist } from "../state/types";
   import Card from "./Card.svelte";
   import Icon from "./Icon.svelte";
+  import { come, settle } from "./motion";
 
   let { albums = [], artists = [], playlists = [], row = false, sub }: { albums?: Album[]; artists?: Artist[]; playlists?: Playlist[]; row?: boolean; sub?: (a: Album) => string } = $props();
 </script>
@@ -16,18 +17,23 @@
   <div class={row ? "row" : "grid"}>
     {#each artists as a (a.id)}
       <!-- How many albums: two artists of one name are told apart. -->
-      <Card href={href("artist", a.id)} kind="artist" id={a.id} cover={a.cover} title={a.name} sub={a.albumCount ? W.albumCount(a.albumCount) : ""} round fallback="user" />
+      <div class="cell" animate:settle transition:come><Card href={href("artist", a.id)} kind="artist" id={a.id} cover={a.cover} title={a.name} sub={a.albumCount ? W.albumCount(a.albumCount) : ""} round fallback="user" /></div>
     {/each}
     {#each albums as a (a.id)}
-      <Card href={href("album", a.id)} kind="album" id={a.id} cover={a.cover} title={a.name} sub={sub ? sub(a) : (a.subtitle ?? a.artist)} />
+      <div class="cell" animate:settle transition:come><Card href={href("album", a.id)} kind="album" id={a.id} cover={a.cover} title={a.name} sub={sub ? sub(a) : (a.subtitle ?? a.artist)} /></div>
     {/each}
     {#each playlists as p (p.id)}
-      <Card href={href("playlist", p.id)} kind="playlist" id={p.id} cover={p.cover} title={p.name} sub={p.songCount ? W.songCount(p.songCount) : (p.comment ?? "")} fallback="playlist" editable={!!p.editable} />
+      <div class="cell" animate:settle transition:come><Card href={href("playlist", p.id)} kind="playlist" id={p.id} cover={p.cover} title={p.name} sub={p.songCount ? W.songCount(p.songCount) : (p.comment ?? "")} fallback="playlist" editable={!!p.editable} /></div>
     {/each}
   </div>
 {/if}
 
 <style>
+  .cell {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));

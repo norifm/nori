@@ -65,7 +65,7 @@ pub const SAVE: &str = "Save";
 pub const BACK_UP: &str = "Back up";
 pub const BACK_UP_DETAIL: &str = "Settings, sound profiles and plugins, server passwords included, locked with a password.";
 pub const RESTORE: &str = "Restore a backup";
-pub const RESTORE_DETAIL: &str = "Its settings replace these. Your servers stay.";
+pub const RESTORE_DETAIL: &str = "Its settings replace these. Your profiles stay.";
 pub const BACKUP_SAVED: &str = "Backup saved";
 pub const BACKUP_PASSWORD: &str = "The backup's password";
 
@@ -890,6 +890,11 @@ pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window could not open here.
 /// A song's title as shown: "Untitled" for one that has none (some uploads have a blank one).
 pub fn title(t: &str) -> &str {
     if t.trim().is_empty() { "Untitled" } else { t }
+}
+
+/// What a profile is called: its name or address, else its provider's name.
+pub fn profile_label(p: &nori_core::settings::SavedServer, kinds: &nori_core::providers::Kinds) -> String {
+    Some(nori_core::settings::label(&p.name, &p.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| provider_of(kinds, &p.kind).name)
 }
 
 /// The profile in use as the settings menu heads it: who (the account, else the profile's name, else its

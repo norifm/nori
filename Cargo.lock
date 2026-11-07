@@ -5015,6 +5015,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "openh264",
  "parking_lot",
+ "png",
  "pollster",
  "serde",
  "serde_json",

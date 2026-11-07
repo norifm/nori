@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Icon
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -103,16 +106,14 @@ fun kindTag(kind: dev.nori.music.ffi.settings.ServerKind): String = when (kind) 
     is dev.nori.music.ffi.settings.ServerKind.Plugin -> "plugin:${kind.id}"
 }
 
+/** A switch of the form, as a row of a [GroupCard]. */
 @Composable
-private fun Check(title: String, detail: String, value: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable { onChange(!value) }, verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(title)
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        NoriSwitch(value, onChange)
-    }
+private fun Check(title: String, detail: String, value: Boolean, divider: Boolean, onChange: (Boolean) -> Unit) {
+    GroupRow(title, { onChange(!value) }, subtitle = detail, divider = divider) { Spacer(Modifier.width(12.dp)); NoriSwitch(value, onChange) }
 }
+
+/** The form's switches: drawn together on a card rather than one by one among the fields. */
+private val SWITCHES = setOf(Field.LEGACY_AUTH, Field.SELF_SIGNED, Field.WIFI_ONLY)
 
 /**
  * First run, and "add / edit server" from settings ([initial] and [onClose] set). A profile being added
@@ -141,34 +142,72 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
     val ready by androidx.compose.runtime.produceState(false, p.kind, p.url, p.user, p.apiKey) { value = vm.serverReady(p) }
     val schemes = remember(p.url) { dev.nori.music.ffi.settings.serverUrlSchemes(p.url) }
 
-    /** The box for one field of the form. */
+    /** The switch for one of [SWITCHES]. */
     @Composable
-    fun Ask(what: Field) {
+    fun Switch(what: Field, divider: Boolean) {
         when (what) {
-            Field.NAME -> FormField(p.name, { p = p.copy(name = it) }, label = { Text(say.nameOptional) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Field.LEGACY_AUTH -> Check(say.legacyAuth, say.legacyAuthHint, p.legacyAuth, divider) { p = p.copy(legacyAuth = it) }
+            Field.SELF_SIGNED -> Check(say.selfSigned, say.selfSignedHint, p.allowSelfSigned, divider) { p = p.copy(allowSelfSigned = it) }
+            Field.WIFI_ONLY -> Check(say.wifiOnly, say.wifiOnlyHint, p.wifiOnly, divider) { p = p.copy(wifiOnly = it) }
+            else -> {}
+        }
+    }
+
+    /** The switches among [fields], on a card of their own. */
+    @Composable
+    fun Switches(fields: List<Field>) {
+        val switches = fields.filter { it in SWITCHES }
+        if (switches.isNotEmpty()) GroupCard(Modifier.padding(top = 12.dp)) { switches.forEachIndexed { i, f -> Switch(f, i < switches.lastIndex) } }
+    }
+
+    /** The text fields among [fields] the form asks now: user and password step aside for an API key. */
+    fun asked(fields: List<Field>) = fields.filter { it !in SWITCHES && !(p.apiKey.isNotEmpty() && (it == Field.USER || it == Field.PASSWORD)) }
+
+    /** One field of the form, a row of its card. */
+    @Composable
+    fun Ask(what: Field, divider: Boolean) {
+        when (what) {
+            Field.NAME -> GroupField(p.name, { p = p.copy(name = it) }, label = say.nameOptional, stacked = true, divider = divider)
             Field.ADDRESS -> {
-                FormField(p.url, { p = p.copy(url = it) }, label = { Text(say.serverUrl) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth().testTag("url"))
-                if (schemes.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    schemes.forEach { s -> Chip(s, false) { p = p.copy(url = s + p.url) } }
+                GroupField(
+                    p.url, { p = p.copy(url = it) }, Modifier.testTag("url"), label = say.serverUrl, stacked = true, divider = divider && schemes.isEmpty(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                )
+                if (schemes.isNotEmpty()) {
+                    Row(Modifier.padding(start = GROUP_INSET, end = GROUP_INSET, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        schemes.forEach { s -> Chip(s, false) { p = p.copy(url = s + p.url) } }
+                    }
+                    if (divider) Hairline(startIndent = GROUP_INSET)
                 }
             }
-            // An API key stands in for the user and password.
-            Field.USER -> if (p.apiKey.isEmpty()) FormField(p.user, { p = p.copy(user = it) }, label = { Text(say.user) }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("user"))
-            Field.PASSWORD -> if (p.apiKey.isEmpty()) FormField(p.password, { p = p.copy(password = it) }, label = { Text(say.password) }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth().testTag("password"))
-            Field.SECOND_ADDRESS -> FormField(p.altUrl, { p = p.copy(altUrl = it) }, label = { Text(say.secondAddress) }, supportingText = { Text(say.secondAddressHint) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Field.API_KEY -> FormField(p.apiKey, { p = p.copy(apiKey = it) }, label = { Text(say.apiKey) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Field.HEADERS -> FormField(headers, { headers = it }, label = { Text(say.extraHeaders) }, supportingText = { Text(say.extraHeadersHint) }, minLines = 2, modifier = Modifier.fillMaxWidth())
-            Field.LEGACY_AUTH -> Check(say.legacyAuth, say.legacyAuthHint, p.legacyAuth) { p = p.copy(legacyAuth = it) }
-            Field.SELF_SIGNED -> Check(say.selfSigned, say.selfSignedHint, p.allowSelfSigned) { p = p.copy(allowSelfSigned = it) }
-            Field.WIFI_ONLY -> Check(say.wifiOnly, say.wifiOnlyHint, p.wifiOnly) { p = p.copy(wifiOnly = it) }
+            Field.USER -> GroupField(p.user, { p = p.copy(user = it) }, Modifier.testTag("user"), label = say.user, stacked = true, divider = divider)
+            Field.PASSWORD -> GroupField(
+                p.password, { p = p.copy(password = it) }, Modifier.testTag("password"), label = say.password, stacked = true, divider = divider,
+                visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            )
+            Field.SECOND_ADDRESS -> GroupField(p.altUrl, { p = p.copy(altUrl = it) }, label = say.secondAddress, stacked = true, supporting = say.secondAddressHint, divider = divider)
+            Field.API_KEY -> GroupField(p.apiKey, { p = p.copy(apiKey = it) }, label = say.apiKey, stacked = true, divider = divider)
+            Field.HEADERS -> GroupField(headers, { headers = it }, label = say.extraHeaders, stacked = true, supporting = say.extraHeadersHint, minLines = 2, divider = divider)
+            Field.LEGACY_AUTH, Field.SELF_SIGNED, Field.WIFI_ONLY -> {}
             Field.CLIENT_CERT -> {
-                FormField(certPassword, { certPassword = it }, label = { Text(say.clientCertPassword) }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                GroupField(
+                    certPassword, { certPassword = it }, label = say.clientCertPassword, stacked = true, divider = false,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                Row(Modifier.padding(start = GROUP_INSET - 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextAction(if (p.clientCert.isEmpty()) say.importClientCert else say.replaceClientCert, { pickCert.launch(arrayOf("application/x-pkcs12", "application/octet-stream", "*/*")) })
                     if (p.clientCert.isNotEmpty()) TextAction(say.remove, { p = p.copy(clientCert = "", clientCertPassword = "") }, destructive = true)
                 }
+                if (divider) Hairline(startIndent = GROUP_INSET)
             }
         }
+    }
+
+    /** The text fields among [fields], on a card of their own. */
+    @Composable
+    fun Fields(fields: List<Field>) {
+        val shown = asked(fields)
+        if (shown.isNotEmpty()) GroupCard(Modifier.padding(top = 8.dp)) { shown.forEachIndexed { i, f -> Ask(f, i < shown.lastIndex) } }
     }
 
     // A new profile starts by choosing what it plays from; back from its form chooses again. One with
@@ -187,38 +226,51 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
     val asksNothing = step != dev.nori.music.ffi.FirstStep.FORM
     val signsIn = step == dev.nori.music.ffi.FirstStep.ACCOUNT
     Surface(Modifier.fillMaxSize()) {
-        Column(Modifier.systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), Arrangement.spacedBy(12.dp)) {
-            Text(
-                if (adding) words.name else say.server,
-                style = titled(MaterialTheme.typography.displaySmall), modifier = Modifier.padding(top = 16.dp, bottom = 2.dp),
+        Column(Modifier.systemBarsPadding().imePadding().verticalScroll(rememberScrollState())) {
+            LargeTitle(
+                if (adding) words.name else p.label.ifBlank { words.name }, Modifier.padding(top = 16.dp),
+                trailing = onClose?.let { close -> { GlyphButton(Iconoir.Xmark, say.cancel, Modifier.testTag("close"), onClick = close) } },
             )
-            if (adding && words.hint.isNotEmpty()) Text(words.hint, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (!asksNothing) info?.fields?.filter { !it.advanced }?.forEach { Ask(it.what) }
-            (add.send as? dev.nori.music.ffi.AddSend.Failed)?.why?.let { Text(say.addFailure(it), color = MaterialTheme.colorScheme.error) }
-            if (signsIn) {
-                PillButton(
-                    if (busy) say.connecting else words.account.pageButton, null,
-                    { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.SIGN_IN) },
-                    Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect-sign-in"), prominent = true, enabled = !busy && ready,
-                )
-                PillButton(
-                    say.providerGuest, null, { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.GUEST) },
-                    Modifier.fillMaxWidth().testTag("connect-guest"), enabled = !busy && ready,
-                )
-            } else PillButton(
-                if (busy) say.connecting else if (adding) words.add else say.save, null,
-                { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers)) },
-                Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect"), prominent = true,
-                enabled = !busy && ready,
-            )
-            // Signing in is the profile in use's: its core asks the provider.
-            if (info != null && info.signIn.isNotEmpty() && !adding && p.id == vm.prefs.value.activeServerId) AccountPart(vm, info) { name -> p = p.copy(user = name) }
-            val folded = info?.fields?.filter { it.advanced }.orEmpty()
-            Row {
-                if (folded.isNotEmpty()) TextAction(if (advanced) say.hideAdvanced else say.advanced, { advanced = !advanced })
-                onClose?.let { TextAction(say.cancel, it) }
+            if (adding && words.hint.isNotEmpty()) Text(words.hint, Modifier.padding(horizontal = Space.gutter, vertical = 4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!asksNothing) {
+                val main = info?.fields?.filter { !it.advanced }.orEmpty().map { it.what }
+                Fields(main)
+                Switches(main)
             }
-            if (advanced) folded.forEach { Ask(it.what) }
+            Column(Modifier.padding(horizontal = GROUP_MARGIN, vertical = 12.dp), Arrangement.spacedBy(12.dp)) {
+                (add.send as? dev.nori.music.ffi.AddSend.Failed)?.why?.let { Text(say.addFailure(it), color = MaterialTheme.colorScheme.error) }
+                if (signsIn) {
+                    PillButton(
+                        if (busy) say.connecting else words.account.pageButton, null,
+                        { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.SIGN_IN) },
+                        Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect-sign-in"), prominent = true, enabled = !busy && ready,
+                    )
+                    PillButton(
+                        say.providerGuest, null, { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers), dev.nori.music.ffi.AfterAdding.GUEST) },
+                        Modifier.fillMaxWidth().testTag("connect-guest"), enabled = !busy && ready,
+                    )
+                } else PillButton(
+                    if (busy) say.connecting else if (adding) words.add else say.save, null,
+                    { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers)) },
+                    Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect"), prominent = true,
+                    enabled = !busy && ready,
+                )
+                // Signing in is the profile in use's: its core asks the provider.
+                if (info != null && info.signIn.isNotEmpty() && !adding && p.id == vm.prefs.value.activeServerId) AccountPart(vm, info) { name -> p = p.copy(user = name) }
+            }
+            val folded = info?.fields?.filter { it.advanced }.orEmpty().map { it.what }
+            if (folded.isNotEmpty()) {
+                GroupCard(Modifier.padding(top = 8.dp)) {
+                    GroupRow(say.advanced, { advanced = !advanced }, Modifier.testTag("advanced"), divider = false) {
+                        Icon(if (advanced) Iconoir.NavArrowUp else Iconoir.NavArrowDown, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (advanced) {
+                    Fields(folded)
+                    Switches(folded)
+                }
+            }
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
@@ -305,29 +357,27 @@ fun WaitingProfile(vm: SettingsViewModel, wait: dev.nori.music.ffi.ProfileWait) 
     }
     NoriDialog(adding, { adding = false }, DialogStyle.Page) { LoginScreen(vm) { adding = false } }
     Surface(Modifier.fillMaxSize()) {
-        Column(Modifier.systemBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp), Arrangement.spacedBy(12.dp)) {
-            Text(profile.label.ifBlank { name }, style = titled(MaterialTheme.typography.displaySmall), modifier = Modifier.padding(top = 16.dp, bottom = 2.dp))
-            Text(say.profileWaits(name, wait), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            say.profileWaitAction(name, wait)?.let { action ->
-                PillButton(action, null, {
-                    when (wait) {
-                        dev.nori.music.ffi.ProfileWait.INSTALL -> installing = true
-                        dev.nori.music.ffi.ProfileWait.TURN_ON -> plugins.turn(id, true)
-                        dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> plugins.allOff(vm, false)
-                        dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> {}
-                    }
-                }, Modifier.fillMaxWidth().padding(top = 4.dp).testTag("profile-wait"), prominent = true)
-            }
-            val others = prefs.servers.filter { it.id != profile.id }
-            if (others.isNotEmpty()) {
-                Caption(say.profiles, Modifier.padding(top = 12.dp))
-                GroupCard {
-                    others.forEachIndexed { i, other ->
-                        GroupRow(other.label.ifBlank { providerWords(vm, other.kind).name }, { vm.switchServer(other) }, divider = i < others.lastIndex)
-                    }
+        Column(Modifier.systemBarsPadding().verticalScroll(rememberScrollState())) {
+            LargeTitle(profile.label.ifBlank { name }, Modifier.padding(top = 16.dp))
+            Column(Modifier.padding(horizontal = GROUP_MARGIN, vertical = 12.dp), Arrangement.spacedBy(12.dp)) {
+                Text(say.profileWaits(name, wait), Modifier.padding(horizontal = Space.gutter - GROUP_MARGIN), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                say.profileWaitAction(name, wait)?.let { action ->
+                    PillButton(action, null, {
+                        when (wait) {
+                            dev.nori.music.ffi.ProfileWait.INSTALL -> installing = true
+                            dev.nori.music.ffi.ProfileWait.TURN_ON -> plugins.turn(id, true)
+                            dev.nori.music.ffi.ProfileWait.PLUGINS_ON -> plugins.allOff(vm, false)
+                            dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> {}
+                        }
+                    }, Modifier.fillMaxWidth().padding(top = 4.dp).testTag("profile-wait"), prominent = true)
                 }
             }
-            TextAction(say.addServer, { adding = true })
+            val others = prefs.servers.filter { it.id != profile.id }
+            if (others.isNotEmpty()) GroupLabel(say.profiles)
+            GroupCard {
+                others.forEach { other -> ProfileLine(vm, other, active = false, divider = true) { vm.switchServer(other) } }
+                GroupRow(say.addProfile, { adding = true }, icon = Iconoir.Plus, divider = false)
+            }
         }
     }
 }

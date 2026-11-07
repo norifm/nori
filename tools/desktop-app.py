@@ -7,16 +7,16 @@ import socket
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--socket", default=os.environ.get("NORI_DESKTOP_SOCKET"))
-parser.add_argument("command", choices=["state", "open", "do", "panel", "play_album"])
+parser.add_argument("command", choices=["state", "open", "do", "panel", "play_album", "tab", "shot", "profiles"])
 parser.add_argument("arg", nargs="?")
 args = parser.parse_args()
 if not args.socket:
     parser.error("set NORI_DESKTOP_SOCKET or pass --socket")
-if (args.command == "state") != (args.arg is None):
-    parser.error("state has no argument; open, do and panel require one")
+if (args.command in ("state", "profiles")) != (args.arg is None):
+    parser.error("state and profiles have no argument; the others require one")
 request = {"command": args.command}
 if args.arg is not None:
-    request["arg"] = args.arg
+    request["arg"] = int(args.arg) if args.command == "tab" else os.path.abspath(args.arg) if args.command == "shot" else args.arg
 try:
     with socket.socket(socket.AF_UNIX) as client:
         client.settimeout(5)

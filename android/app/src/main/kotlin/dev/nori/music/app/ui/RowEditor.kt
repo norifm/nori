@@ -1,17 +1,13 @@
 package dev.nori.music.app.ui
 
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -19,12 +15,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.SettingsViewModel
@@ -64,63 +58,63 @@ private fun <T> RowEditor(
     val order by rememberUpdatedState(shown)
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
 
+    // The held row is lifted over its neighbours, so it needs the plate's own colour behind its words.
+    val plate = MaterialTheme.colorScheme.surfaceContainer
     Column(Modifier.fillMaxSize()) {
         LargeTitle(title)
-        Caption(say.holdARowToMoveIt, Modifier.padding(start = Space.gutter, bottom = 8.dp))
-        val scroll = rememberLazyListState()
-        LazyColumn(Modifier.fadesUnderTitle(scroll), scroll, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-            items(shown, key = key) { row ->
-                val dragged = held == row
-                Row(
-                    Modifier.fillMaxWidth()
-                        .zIndex(if (dragged) 1f else 0f)
-                        .graphicsLayer {
-                            if (dragged) { translationY = dragOffset; shadowElevation = 14f; scaleX = 1.02f; scaleY = 1.02f }
-                        }
-                        .onGloballyPositioned { if (rowHeight == 0f) rowHeight = it.size.height.toFloat() }
-                        // Keyed on the row, which never changes, so one press can carry it the whole way.
-                        .pointerInput(row) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = {
-                                    held = row; dragOffset = 0f
-                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = LocalChromeInset.current)) {
+            GroupLabel(say.holdARowToMoveIt)
+            GroupCard {
+                shown.forEachIndexed { i, row ->
+                    androidx.compose.runtime.key(key(row)) {
+                        val dragged = held == row
+                        GroupRow(
+                            label(row),
+                            modifier = Modifier
+                                .zIndex(if (dragged) 1f else 0f)
+                                .graphicsLayer { if (dragged) { translationY = dragOffset; scaleX = 1.02f; scaleY = 1.02f } }
+                                .background(if (dragged) plate else androidx.compose.ui.graphics.Color.Transparent)
+                                .onGloballyPositioned { if (rowHeight == 0f) rowHeight = it.size.height.toFloat() }
+                                // Keyed on the row, which never changes, so one press can carry it the whole way.
+                                .pointerInput(row) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = {
+                                            held = row; dragOffset = 0f
+                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        },
+                                        onDragEnd = { held = null; dragOffset = 0f },
+                                        onDragCancel = { held = null; dragOffset = 0f },
+                                    ) { change, drag ->
+                                        change.consume()
+                                        dragOffset += drag.y
+                                        val h = rowHeight.takeIf { it > 0f } ?: return@detectDragGesturesAfterLongPress
+                                        var at = order.indexOf(row)
+                                        while (dragOffset >= h && at < order.lastIndex) {
+                                            onMove(at, at + 1); at++; dragOffset -= h
+                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                        }
+                                        while (dragOffset <= -h && at > 0) {
+                                            onMove(at, at - 1); at--; dragOffset += h
+                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                        }
+                                    }
                                 },
-                                onDragEnd = { held = null; dragOffset = 0f },
-                                onDragCancel = { held = null; dragOffset = 0f },
-                            ) { change, drag ->
-                                change.consume()
-                                dragOffset += drag.y
-                                val h = rowHeight.takeIf { it > 0f } ?: return@detectDragGesturesAfterLongPress
-                                var at = order.indexOf(row)
-                                while (dragOffset >= h && at < order.lastIndex) {
-                                    onMove(at, at + 1); at++; dragOffset -= h
-                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                                }
-                                while (dragOffset <= -h && at > 0) {
-                                    onMove(at, at - 1); at--; dragOffset += h
-                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                                }
-                            }
+                            divider = i < shown.lastIndex,
+                        ) {
+                            // Turning a row off leaves it in the list below rather than taking it away, so it is
+                            // clear where it went and how to have it back.
+                            NoriSwitch(true, { _ -> onToggle(row, false) })
                         }
-                        .padding(horizontal = Space.gutter, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(label(row), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                    // Turning a row off leaves it in the list below rather than taking it away, so it is
-                    // clear where it went and how to have it back.
-                    NoriSwitch(true, { _ -> onToggle(row, false) })
+                    }
                 }
-                Hairline()
             }
             if (hidden.isNotEmpty()) {
-                item(key = "hidden") { SectionTitle(say.notShown) }
-                items(hidden, key = key) { row ->
-                    Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(label(row), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                GroupLabel(say.notShown)
+                GroupCard {
+                    hidden.forEachIndexed { i, row ->
                         // It comes back at the end of the list, where it can be seen, and can be carried up from there.
-                        NoriSwitch(false, { _ -> onToggle(row, true) })
+                        GroupRow(label(row), divider = i < hidden.lastIndex) { NoriSwitch(false, { _ -> onToggle(row, true) }) }
                     }
-                    Hairline()
                 }
             }
         }

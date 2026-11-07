@@ -179,16 +179,16 @@ private fun DeviceSheet(vm: SettingsViewModel, d: DeviceRow, onDone: () -> Unit)
 
     LazyColumn(Modifier.windowInsetsPadding(gestureBarRoom)) {
         item("head") {
-            Column(Modifier.padding(bottom = 4.dp)) {
-                LargeTitle(d.name)
+            Column {
+                SheetTitle(d.name)
                 Text(
                     intro,
-                    Modifier.padding(horizontal = Space.gutter), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    Modifier.padding(start = Space.gutter, end = Space.gutter, bottom = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
         item("choices") {
-            GroupCard(Modifier.padding(top = 8.dp)) {
+            GroupCard {
                 Option(say.automatic, automatic, d.choice == DeviceSound.Choice.Automatic) { pick(DeviceSound.Choice.Automatic) }
                 Option(say.flat, say.flatDetail, d.choice == DeviceSound.Choice.Flat) { pick(DeviceSound.Choice.Flat) }
                 Option(say.noProcessing, say.noProcessingDetail, d.choice == DeviceSound.Choice.Bypass) { pick(DeviceSound.Choice.Bypass) }
@@ -232,7 +232,7 @@ private fun DeviceSheet(vm: SettingsViewModel, d: DeviceRow, onDone: () -> Unit)
             }
         }
         if (sheet.canForget) item("forget") {
-            GroupCard(Modifier.padding(top = 16.dp)) {
+            GroupCard {
                 GroupRow(say.forgetDevice, { vm.forgetDevice(d.output); onDone() }, icon = Iconoir.Trash, divider = false)
             }
         }

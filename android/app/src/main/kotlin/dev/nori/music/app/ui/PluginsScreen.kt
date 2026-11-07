@@ -253,10 +253,10 @@ private fun Refused(refused: String?) {
 
 /** A plugin's mark on a tile: its icon in ink, or its first letter without one. */
 @Composable
-private fun PluginTile(vm: PluginsViewModel, id: String, offer: Offer?, name: String, side: Dp) {
+internal fun PluginTile(vm: PluginsViewModel, id: String, offer: Offer?, name: String, side: Dp, shape: androidx.compose.ui.graphics.Shape = TileShape) {
     val ink = MaterialTheme.colorScheme.onSurface
     val icon by produceState(vm.iconRead(id), id) { value = java.util.Optional.ofNullable(vm.icon(id, offer)) }
-    Box(Modifier.size(side).background(MaterialTheme.colorScheme.surfaceContainerHighest, TileShape), Alignment.Center) {
+    Box(Modifier.size(side).background(MaterialTheme.colorScheme.surfaceContainerHighest, shape), Alignment.Center) {
         Crossfade(icon, label = "plugin icon") { shown ->
             val bitmap = shown?.orElse(null)
             when {
@@ -312,7 +312,7 @@ private fun Quiet(text: String, modifier: Modifier = Modifier, lines: Int = Int.
 /** A sheet's paper: a title, what it says, then its buttons at the end, their words in line with the text. */
 @Composable
 private fun SheetPage(title: String, buttons: @Composable () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.windowInsetsPadding(gestureBarRoom).padding(bottom = 8.dp)) {
+    Column(Modifier.windowInsetsPadding(gestureBarRoom)) {
         SheetTitle(title)
         Column(Modifier.padding(horizontal = Space.gutter), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             content()
@@ -584,14 +584,18 @@ private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabl
         RowKind.TEXT, RowKind.SECRET -> {
             val stored = (r.value as? Value.Text)?.v1.orEmpty()
             var text by remember(stored) { mutableStateOf(stored) }
-            Column(dim.padding(horizontal = GROUP_INSET, vertical = 8.dp)) {
-                FormField(
-                    text, { text = it }, Modifier.fillMaxWidth(), label = { Text(r.label) }, singleLine = true, supportingText = r.hint?.let { h -> { Text(h) } },
+            val changed = text != stored
+            Column(dim) {
+                GroupField(
+                    text, { text = it }, label = r.label, supporting = r.hint, enabled = enabled, divider = divider && !changed,
                     visualTransformation = if (r.kind == RowKind.SECRET) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+                    onDone = { if (changed) vm.set(card.id, r.id, Value.Text(text)) },
                 )
-                if (text != stored) TextAction(say.save, { vm.set(card.id, r.id, Value.Text(text)) }, enabled = enabled)
+                if (changed) {
+                    TextAction(say.save, { vm.set(card.id, r.id, Value.Text(text)) }, Modifier.padding(start = GROUP_INSET - 12.dp), enabled = enabled)
+                    if (divider) Hairline(startIndent = GROUP_INSET)
+                }
             }
-            if (divider) Hairline(startIndent = GROUP_INSET)
         }
         RowKind.ACTION -> GroupRow(r.label, if (enabled) ({ vm.act(card.id, r.id) }) else null, dim, subtitle = r.hint, divider = divider)
         RowKind.STATUS -> GroupRow(r.label, modifier = dim, subtitle = r.hint, value = status, divider = divider)

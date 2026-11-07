@@ -10,11 +10,12 @@ name = "nori-desktop"
 path = "src/main.rs"
 
 [features]
-test-control = ["dep:serde", "dep:serde_json"]
+test-control = ["dep:serde", "dep:serde_json", "dep:png"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
+png = { version = "0.18", optional = true }
 # The providers this client offers: a Subsonic server's and its plugins'.
 nori-core = { path = "../core", default-features = false, features = ["plugins"] }
 nori-engine = { path = "../engine", features = ["core"] }

@@ -22,6 +22,12 @@ enum Command {
     Panel(Panel),
     /// Plays the album with this id from its first song.
     PlayAlbum(String),
+    /// Opens Settings at its tab with this index.
+    Tab(i32),
+    /// Saves the window as a PNG at this path.
+    Shot(PathBuf),
+    /// Opens the profiles menu under the top pill.
+    Profiles,
 }
 
 #[derive(Deserialize)]
@@ -78,6 +84,17 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
             ui.invoke_player_changed();
         }
         Command::PlayAlbum(id) => ui.invoke_play_album(id.into()),
+        Command::Tab(t) => {
+            ui.set_full_player(false);
+            ui.invoke_go(crate::View::Settings);
+            ui.invoke_settings_tab_chosen(t);
+        }
+        Command::Profiles => ui.invoke_show_profiles(),
+        Command::Shot(path) => {
+            if let Err(e) = shot(ui, &path) {
+                eprintln!("nori: shot {}: {e}", path.display());
+            }
+        }
         Command::Do(action) => match action {
             Action::Play if !ui.get_playing() => ui.invoke_toggle(),
             Action::Pause if ui.get_playing() => ui.invoke_toggle(),
@@ -97,6 +114,14 @@ fn dispatch(ui: &AppWindow, command: Command) -> State {
         duration_ms: ui.get_duration_ms(), title: ui.get_now_title().to_string(),
         artist: ui.get_now_artist().to_string(), note: ui.get_note().to_string(), note_error: ui.get_note_error(),
     }
+}
+
+fn shot(ui: &AppWindow, path: &std::path::Path) -> Result<(), String> {
+    let pixels = ui.window().take_snapshot().map_err(|e| e.to_string())?;
+    let file = std::io::BufWriter::new(std::fs::File::create(path).map_err(|e| e.to_string())?);
+    let mut png = png::Encoder::new(file, pixels.width(), pixels.height());
+    png.set_color(png::ColorType::Rgba);
+    png.write_header().and_then(|mut w| w.write_image_data(pixels.as_bytes())).map_err(|e| e.to_string())
 }
 
 pub struct Control {

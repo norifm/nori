@@ -52,7 +52,7 @@ import dev.nori.music.ffi.model.Album
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
+fun HomeScreen(actions: ActionsViewModel, settings: dev.nori.music.app.vm.SettingsViewModel, vm: HomeViewModel = viewModel()) {
     val load by vm.ui.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     // "For you" is the profile's where it has one (`ProfileRules.mixes`): a jam guest's Home is the host's shelves.
@@ -76,9 +76,9 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
         // The page follows the pull down, and stays down while the refresh runs, so the ring has a gap of its
         // own above the title rather than landing on whatever comes first.
         LazyColumn(Modifier.pageToEdges().underStatusBar().graphicsLayer { translationY = pullGap(pull).toPx() }, contentPadding = pagePadding(LocalChromeInset.current, top = LocalStatusRoom.current)) {
-            // Only the title, as Apple's: shuffling the library lives in Library, and which rows this page has
-            // in Settings, Appearance.
-            item(key = "title") { LargeTitle(say.listenNow) }
+            // The title and the profile in use, as Apple's has the account: shuffling the library lives in
+            // Library, and which rows this page has in Settings, Appearance.
+            item(key = "title") { LargeTitle(say.listenNow, trailing = { ProfileButton(settings) { nav.settingsGroup("servers") } }) }
             // The card stays in the list while it goes: taken or turned down, it fades and settles back as its
             // room folds away and the page below rises into it. Arriving, it is simply there. Taken, the queue
             // starts once the card has gone: starting playback holds the main thread for a few frames, which

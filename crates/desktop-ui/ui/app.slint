@@ -30,6 +30,10 @@ export struct Card {
     sub-artist: string,
     // What it is: 0 an album, 1 an artist, 2 a playlist, 3 a song.
     kind: int,
+    // On a shelf's newer answer: how many places it moved (it slides there from the old one), or that it
+    // is new (it fades in).
+    shift: int,
+    new: bool,
 }
 
 // A piece of the line being sung (sung.rs): a word, a syllable or what lies between, where it was laid
@@ -193,6 +197,15 @@ export struct SettingRow {
     letter: string,
     // The tile is nori's own provider's.
     server-tile: bool,
+}
+
+// A profile in the profiles menu, to switch to: its id, name, who signs in and its mark.
+export struct ProfileItem {
+    name: string,
+    title: string,
+    detail: string,
+    icon: image,
+    letter: string,
 }
 
 // A tool at the top right of a plugin page: 0 a plus, 1 a folder, 2 the repos.
@@ -4211,9 +4224,11 @@ component PluginTile inherits Rectangle {
     in property <string> letter;
     // nori's own provider has no plugin behind it, so the server glyph stands for one.
     in property <bool> server;
+    // A profile's mark is a circle.
+    in property <bool> round;
     width: root.side;
     height: root.side;
-    border-radius: root.side * 0.22;
+    border-radius: root.round ? root.side / 2 : root.side * 0.22;
     background: Theme.raised;
     if root.letter != "": Text {
         text: root.letter;
@@ -4232,6 +4247,57 @@ component PluginTile inherits Rectangle {
         colour: Theme.text;
         width: root.side * 0.6;
         height: root.side * 0.6;
+    }
+}
+
+// A profile in the profiles menu: its mark, its name and who signs in, a check in the accent while in use.
+component ProfileLine inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <image> icon;
+    in property <string> letter;
+    in property <bool> on;
+    callback clicked;
+    height: 48px;
+    border-radius: MenuShape.inner;
+    background: ta.has-hover && !root.on ? Theme.hover : transparent;
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 8px;
+        spacing: 10px;
+        PluginTile {
+            y: (parent.height - self.height) / 2;
+            side: 30px;
+            round: true;
+            icon: root.icon;
+            letter: root.letter;
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.title;
+                font-weight: root.on ? 600 : 400;
+                overflow: elide;
+            }
+            if root.detail != "": Text {
+                text: root.detail;
+                color: Theme.dim;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+        if root.on: Icon {
+            y: (parent.height - self.height) / 2;
+            glyph: Icons.check;
+            colour: Theme.accent;
+            width: 16px;
+            height: 16px;
+        }
+    }
+    ta := TouchArea {
+        enabled: !root.on;
+        clicked => { root.clicked(); }
     }
 }
 
@@ -4355,12 +4421,12 @@ component SettingLine inherits VerticalLayout {
                     server: root.item.server-tile;
                     opacity: root.item.enabled ? 1 : 0.45;
                 }
-                if root.item.kind == 8: Icon {
+                if root.item.kind == 8: PluginTile {
                     y: (parent.height - self.height) / 2;
-                    glyph: Icons.server;
-                    colour: root.item.on ? Theme.accent : Theme.dim;
-                    width: 18px;
-                    height: 18px;
+                    side: 36px;
+                    round: true;
+                    icon: root.item.icon;
+                    letter: root.item.letter;
                 }
                 VerticalLayout {
                     alignment: center;
@@ -4428,10 +4494,12 @@ component SettingLine inherits VerticalLayout {
                     text: root.item.button;
                     clicked => { root.action("edit:" + root.item.name); }
                 }
-                if root.item.kind == 8 && root.item.on: Text {
-                    text: "✓";
-                    color: Theme.accent;
-                    vertical-alignment: center;
+                if root.item.kind == 8 && root.item.on: Icon {
+                    y: (parent.height - self.height) / 2;
+                    glyph: Icons.check;
+                    colour: Theme.accent;
+                    width: 18px;
+                    height: 18px;
                 }
                 if root.item.kind == 11: Text {
                     text: root.item.detail;
@@ -5584,8 +5652,11 @@ component TopContent inherits Rectangle {
     // A jam guest's: the host's library, without the account's playlists and favorites.
     in property <bool> guest;
     in-out property <string> search-text;
+    // The profile in use's mark, which opens the profiles.
+    in property <image> profile-icon;
+    in property <string> profile-letter;
     callback go(View);
-    callback open-menu();
+    callback open-profiles();
     callback search-edited(string);
     // The search field took or gave up the keys.
     callback typing(bool);
@@ -5746,7 +5817,25 @@ component TopContent inherits Rectangle {
             lit: root.view == View.settings || root.view == View.equalizer;
             quiet: true;
             size: 36px;
-            clicked => { root.open-menu(); }
+            clicked => { root.go(View.settings); }
+        }
+        Rectangle {
+            y: (parent.height - self.height) / 2;
+            width: 36px;
+            height: 36px;
+            border-radius: 18px;
+            background: mark.has-hover ? Theme.hover : transparent;
+            PluginTile {
+                side: 28px;
+                round: true;
+                icon: root.profile-icon;
+                letter: root.profile-letter;
+                border-width: 1px;
+                border-color: Theme.hairline;
+            }
+            mark := TouchArea {
+                clicked => { root.open-profiles(); }
+            }
         }
     }
 }
@@ -5760,14 +5849,7 @@ export component AppWindow inherits Window {
         Chrome.window-height = self.height;
     }
     in property <bool> downloads;
-    // The season tile and the appearance chosen (the settings', for the settings menu).
-    in property <int> season-worn;
-    in property <bool> season-following;
-    // The follow switch's setting name and value ([`settings::seasons`]), and its line under it.
-    in property <string> season-switch;
-    in property <string> season-detail;
-    in property <int> appearance-pick;
-    public function show-menu() { gear.show(); }
+    public function show-profiles() { profiles-pop.show(); }
     title: "nori";
     icon: @image-url("assets/logo.png");
     preferred-width: 1280px;
@@ -5999,6 +6081,10 @@ export component AppWindow inherits Window {
     // Who is signed in (the account row), and the text the page's list is narrowed by.
     in property <string> account;
     in property <string> account-initial;
+    in property <image> account-icon;
+    // The profiles not in use, and whether this device may add one (a jam guest may not).
+    in property <[ProfileItem]> other-profiles;
+    in property <bool> profiles-editable;
     callback open-accounts();
     in-out property <string> find-text;
     // The library list shown has nothing in it.
@@ -6645,7 +6731,24 @@ export component AppWindow inherits Window {
                                     for slot in albums-shelf.slots: CardView {
                                         property <int> i: albums-shelf.first + slot;
                                         property <Card> c: shelf.cards[self.i];
-                                        x: albums-shelf.gap + self.i * albums-shelf.step;
+                                        // A newer answer in this slot (its place unchanged) plays the card's move; a scroll,
+                                        // which changes the place, does not.
+                                        property <int> seen-i: -1;
+                                        property <float> moved: 1;
+                                        property <bool> jump;
+                                        animate moved { duration: self.jump || Motion.reduced ? 0ms : 320ms; easing: cubic-bezier(0.2, 0.8, 0.3, 1); }
+                                        changed c => {
+                                            if self.i == self.seen-i && (self.c.shift != 0 || self.c.new) {
+                                                self.jump = true;
+                                                self.moved = 0;
+                                                self.jump = false;
+                                                self.moved = 1;
+                                            }
+                                            self.seen-i = self.i;
+                                        }
+                                        init => { self.seen-i = self.i; }
+                                        x: albums-shelf.gap + (self.i + self.c.shift * (1 - self.moved)) * albums-shelf.step;
+                                        opacity: self.c.new ? self.moved : 1;
                                         side: albums-shelf.side;
                                         card: self.c;
                                         round: self.c.kind == 1;
@@ -8002,8 +8105,9 @@ export component AppWindow inherits Window {
             }
         }
 
-        // The top pill's menus, which open under it: the settings', and the playlists'.
-        gear := PopupWindow {
+        // The profiles, opened from the top pill's mark: the one in use checked in the accent, the others to
+        // switch to, then adding and managing them.
+        profiles-pop := PopupWindow {
             x: Chrome.top-x + Chrome.top-w - self.width;
             y: Chrome.top-room - 12px;
             width: 300px;
@@ -8012,44 +8116,21 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     padding: MenuShape.inset;
                     spacing: 2px;
-                    Rectangle {
-                        height: 52px;
-                        border-radius: MenuShape.inner;
-                        background: ac.has-hover ? Theme.hover : transparent;
-                        HorizontalLayout {
-                            padding-left: 8px;
-                            spacing: 12px;
-                            Rectangle {
-                                y: (parent.height - self.height) / 2;
-                                width: 34px;
-                                height: 34px;
-                                border-radius: 17px;
-                                background: Theme.chosen;
-                                Text {
-                                    text: root.account-initial;
-                                    font-weight: 600;
-                                }
-                            }
-                            VerticalLayout {
-                                alignment: center;
-                                Text {
-                                    text: root.account;
-                                    font-weight: 600;
-                                    overflow: elide;
-                                }
-                                if root.server != "": Text {
-                                    text: root.server;
-                                    color: Theme.dim;
-                                    font-size: 12px;
-                                    overflow: elide;
-                                }
-                            }
-                        }
-                        ac := TouchArea {
-                            clicked => {
-                                gear.close();
-                                root.open-accounts();
-                            }
+                    ProfileLine {
+                        title: root.account;
+                        detail: root.server;
+                        icon: root.account-icon;
+                        letter: root.account-initial;
+                        on: true;
+                    }
+                    for p in root.other-profiles: ProfileLine {
+                        title: p.title;
+                        detail: p.detail;
+                        icon: p.icon;
+                        letter: p.letter;
+                        clicked => {
+                            profiles-pop.close();
+                            root.setting-action("server:" + p.name);
                         }
                     }
                     Rectangle {
@@ -8059,50 +8140,20 @@ export component AppWindow inherits Window {
                             background: Theme.hairline;
                         }
                     }
-                    MenuRow {
-                        icon: Icons.control-slider;
-                        text: "Equalizer";
+                    if root.profiles-editable: MenuRow {
+                        icon: Icons.plus;
+                        text: "Add profile";
                         clicked => {
-                            gear.close();
-                            root.go(View.equalizer);
+                            profiles-pop.close();
+                            root.setting-action("add-server");
                         }
                     }
                     MenuRow {
                         icon: Icons.settings;
-                        text: "Settings";
+                        text: "Manage profiles";
                         clicked => {
-                            gear.close();
-                            root.go(View.settings);
-                        }
-                    }
-                    Rectangle {
-                        height: 9px;
-                        Rectangle {
-                            height: 1px;
-                            background: Theme.hairline;
-                        }
-                    }
-                    SeasonTiles {
-                        options: ["Spring", "Summer", "Autumn", "Winter"];
-                        chosen: root.season-worn;
-                        tile-height: 60px;
-                        picked(i) => { root.setting-chosen("season", i); }
-                    }
-                    ToggleLine {
-                        padding-top: 6px;
-                        padding-bottom: 10px;
-                        title: "Follow the calendar";
-                        detail: root.season-detail;
-                        on: root.season-following;
-                        toggled(on) => { root.setting-toggled(root.season-switch, on); }
-                    }
-                    HorizontalLayout {
-                        alignment: center;
-                        spacing: 4px;
-                        for o[i] in ["System", "Day", "Night", "Midnight"]: Chip {
-                            text: o;
-                            lit: i == root.appearance-pick;
-                            clicked => { root.setting-chosen("appearance", i); }
+                            profiles-pop.close();
+                            root.open-accounts();
                         }
                     }
                 }
@@ -9456,8 +9507,10 @@ export component TopBar inherits Window {
     in property <bool> guest;
     in property <bool> previewing;
     in-out property <string> search-text;
+    in property <image> profile-icon;
+    in property <string> profile-letter;
     callback go(View);
-    callback open-menu();
+    callback open-profiles();
     callback search-edited(string);
     callback typing(bool);
     callback search-step(int);
@@ -9484,8 +9537,10 @@ export component TopBar inherits Window {
         guest: root.guest;
         previewing: root.previewing;
         search-text <=> root.search-text;
+        profile-icon: root.profile-icon;
+        profile-letter: root.profile-letter;
         go(v) => { root.go(v); }
-        open-menu => { root.open-menu(); }
+        open-profiles => { root.open-profiles(); }
         search-edited(t) => { root.search-edited(t); }
         typing(on) => { root.typing(on); }
         search-step(by) => { root.search-step(by); }

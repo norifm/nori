@@ -215,8 +215,6 @@ fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) 
         }
         Column(Modifier.nestedScroll(KeepUpwardDrags).verticalScroll(rememberScrollState(), overscrollEffect = null).windowInsetsPadding(gestureBarRoom)) {
             SheetHead(actions.cover(art, CoverSize.ROW), title, line, round = card is CardItem.OfArtist)
-            HeadLine()
-            Spacer(Modifier.height(SHEET_GAP))
             SheetGroup {
                 if (!LocalRules.current.asks) Item(say.play, Iconoir.Play) { actions.play(card); onDismiss() }
                 Item(say.menuPlayNext, Iconoir.PlaylistPlay) { actions.queue(card, next = true); onDismiss() }
@@ -286,17 +284,13 @@ private fun SheetHead(cover: String?, title: String, line: String, round: Boolea
     }
 }
 
-/**
- * A sheet's lines that belong together, on a card of their own as the library's groups sit on its page:
- * the card's hairline edge and corners set the group apart, [SHEET_EDGE] from the sheet's sides.
- */
+/** A sheet's lines that belong together, on a card of their own as the library's groups sit on its page. */
 @Composable
-private fun SheetGroup(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) =
-    GroupCard(Modifier.padding(bottom = SHEET_GAP), content = content)
+private fun SheetGroup(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) = GroupCard(content = content)
 
-/** The hairline under a sheet's head (the song or record), in from both of the sheet's sides. */
+/** The hairline under a sheet's head (the song or record), as wide as the cards under it. */
 @Composable
-private fun HeadLine() = Box(Modifier.padding(end = SHEET_EDGE)) { Hairline(startIndent = SHEET_EDGE) }
+private fun HeadLine() = Box(Modifier.padding(horizontal = SHEET_SIDE)) { Hairline(startIndent = 0.dp) }
 
 /** Song [id]'s lyrics as [l] has them, when it has words. */
 private fun hasWords(l: dev.nori.music.ffi.lyrics.LyricsNow, id: String): Boolean =
@@ -529,12 +523,8 @@ private fun SelectedCount(n: Int, modifier: Modifier) {
     }
 }
 
-/** How far a menu sheet's groups and the hairline under its head stand in from its sides. */
-private val SHEET_EDGE = 16.dp
 /** Where a group's icons and words start: the head's cover and the format line start there too. */
-private val SHEET_INSET = SHEET_EDGE + GROUP_INSET
-/** The room between a sheet's groups. */
-private val SHEET_GAP = 8.dp
+private val SHEET_INSET = Space.gutter
 /** A menu sheet's line: Android's 48 dp touch target, so a long menu fits the screen. */
 private val SHEET_ROW = 48.dp
 /** Narrower than a page's glyphs, so six leave the line under the head room for the format. */

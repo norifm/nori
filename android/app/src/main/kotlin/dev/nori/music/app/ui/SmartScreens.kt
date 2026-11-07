@@ -57,7 +57,11 @@ import dev.nori.music.app.vm.SmartViewModel
 @Composable
 private fun <T> Pick(value: T, options: List<T>, modifier: Modifier = Modifier, label: (T) -> String = { it.toString() }, onPick: (T) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Text(label(value), modifier.clickable { open = true }.padding(8.dp), color = MaterialTheme.colorScheme.onSurface)
+    // The quiet arrow says it opens a choice, as Settings' values do.
+    Row(modifier.clip(androidx.compose.foundation.shape.RoundedCornerShape(Radius.cover)).clickable { open = true }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label(value), color = MaterialTheme.colorScheme.onSurface)
+        Icon(Iconoir.NavArrowDown, null, Modifier.padding(start = 2.dp).size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
     NoriPopover(open, { open = false }) { options.forEach { o -> PopoverItem(label(o), chosen = o == value) { onPick(o); open = false } } }
 }
 
@@ -287,55 +291,51 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
         )
     }
     val fields = remember { dev.nori.music.ffi.library.smartEditFields() }
-    val sorts = remember { dev.nori.music.ffi.library.smartEditSchema().sorts }
+    val schema = remember { dev.nori.music.ffi.library.smartEditSchema() }
     var error by remember { mutableStateOf<String?>(null) }
+    val numbers = remember { androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number) }
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = 24.dp + LocalChromeInset.current)) {
         LargeTitle(say.smartPlaylist) {
             TextAction(say.save, { error = vm.save(draft) { nav.back() } })
         }
-        FormField(draft.name, { draft = draft.copy(name = it) }, Modifier.fillMaxWidth().padding(horizontal = Space.gutter), label = { Text(say.name) }, singleLine = true)
-        Row(Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), Arrangement.spacedBy(8.dp)) {
-            Chip(say.matchAll, draft.all) { draft = draft.copy(all = true) }
-            Chip(say.matchAny, !draft.all) { draft = draft.copy(all = false) }
+        GroupCard(Modifier.padding(top = 8.dp)) {
+            GroupField(draft.name, { draft = draft.copy(name = it) }, placeholder = say.name, divider = false)
         }
-        // One rule, one card: the field and the comparison on the first line, what to compare against on
-        // the second. In a row they fought over the width and the value box ended up a sliver.
-        draft.rules.forEachIndexed { i, r ->
-            fun set(n: SmartEditRule) { draft = draft.copy(rules = draft.rules.toMutableList().also { it[i] = n }) }
-            Surface(
-                shape = CardShape, color = LocalLook.current.color(dev.nori.music.look.CoverLook.VEIL_6),
-                contentColor = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 5.dp),
-            ) {
-                Column(Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Pick(r.field, fields) { f -> draft = dev.nori.music.ffi.library.smartEditField(draft, i.toUInt(), f) }
-                        Pick(r.op, remember(r.field) { dev.nori.music.ffi.library.smartEditOps(r.field) }) { o -> set(r.copy(op = o)) }
-                        Spacer(Modifier.weight(1f))
-                        IconButton({ draft = dev.nori.music.ffi.library.smartEditRemove(draft, i.toUInt()) }, Modifier.size(38.dp)) {
-                            Icon(Iconoir.Xmark, say.removeRule, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                    val hint = remember(r.op) { dev.nori.music.ffi.library.smartValueHint(r.op) }
-                    if (hint != null) FormField(
-                        r.value, { set(r.copy(value = it)) }, Modifier.fillMaxWidth().padding(end = 8.dp), singleLine = true,
-                        placeholder = { Text(hint) },
+        GroupLabel(say.rules)
+        GroupCard {
+            Row(Modifier.padding(horizontal = GROUP_INSET, vertical = 10.dp), Arrangement.spacedBy(8.dp)) {
+                Chip(say.matchAll, draft.all) { draft = draft.copy(all = true) }
+                Chip(say.matchAny, !draft.all) { draft = draft.copy(all = false) }
+            }
+            Hairline(GROUP_INSET)
+            // One rule a block: the field and the comparison on the first line, what to compare against on
+            // the second. In a row they fought over the width and the value box ended up a sliver.
+            draft.rules.forEachIndexed { i, r ->
+                fun set(n: SmartEditRule) { draft = draft.copy(rules = draft.rules.toMutableList().also { it[i] = n }) }
+                val date = r.field in schema.dates
+                Row(Modifier.padding(start = GROUP_INSET - 8.dp, end = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Pick(r.field, fields, label = say::smartField) { f -> draft = dev.nori.music.ffi.library.smartEditField(draft, i.toUInt(), f) }
+                    Pick(r.op, remember(r.field) { dev.nori.music.ffi.library.smartEditOps(r.field) }, label = { say.smartOp(it, date) }) { o -> set(r.copy(op = o)) }
+                    Spacer(Modifier.weight(1f))
+                    GlyphButton(Iconoir.Xmark, say.removeRule, quiet = true, iconSize = 18.dp) { draft = dev.nori.music.ffi.library.smartEditRemove(draft, i.toUInt()) }
+                }
+                when (val kind = remember(r.op) { dev.nori.music.ffi.library.smartValueKind(r.op) }) {
+                    null -> Hairline(GROUP_INSET)
+                    else -> GroupField(
+                        r.value, { set(r.copy(value = it)) }, placeholder = say.smartValue(kind),
+                        keyboardOptions = if (kind == dev.nori.music.ffi.library.SmartValue.DAYS || (kind == dev.nori.music.ffi.library.SmartValue.ONE && r.field in schema.numbers)) numbers else androidx.compose.foundation.text.KeyboardOptions.Default,
                     )
                 }
             }
+            GroupRow(say.addRule, { draft = dev.nori.music.ffi.library.smartEditAdd(draft) }, icon = Iconoir.Plus, divider = false)
         }
-        ActionRow(say.addRule, Iconoir.Plus, { draft = dev.nori.music.ffi.library.smartEditAdd(draft) }, divider = false)
-        Row(Modifier.padding(start = Space.gutter, end = Space.gutter, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(say.sortBy, style = MaterialTheme.typography.bodyLarge)
-            Pick(draft.sortField, sorts) { draft = draft.copy(sortField = it) }
-            Spacer(Modifier.weight(1f))
-            Chip(say.descending, draft.descending) { draft = draft.copy(descending = !draft.descending) }
-        }
-        Row(Modifier.padding(horizontal = Space.gutter, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(say.limit, style = MaterialTheme.typography.bodyLarge)
-            FormField(
+        GroupLabel(say.order)
+        GroupCard {
+            GroupRow(say.sortBy) { Pick(draft.sortField, schema.sorts, label = say::smartField) { draft = draft.copy(sortField = it) } }
+            GroupRow(say.descending, { draft = draft.copy(descending = !draft.descending) }) { NoriSwitch(draft.descending, { draft = draft.copy(descending = it) }) }
+            GroupField(
                 remember(draft.limit) { dev.nori.music.ffi.library.smartLimitText(draft.limit) }, { draft = draft.copy(limit = dev.nori.music.ffi.library.smartLimitTyped(it)) },
-                Modifier.padding(start = 12.dp).width(130.dp), singleLine = true, placeholder = { Text(say.noLimit) },
+                label = say.limit, placeholder = say.noLimit, keyboardOptions = numbers, divider = false,
             )
         }
         error?.let { Text(it, Modifier.padding(Space.gutter), color = MaterialTheme.colorScheme.error) }

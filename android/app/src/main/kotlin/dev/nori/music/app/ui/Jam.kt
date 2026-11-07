@@ -430,7 +430,7 @@ internal fun JamSettings(j: JamView) {
 @Composable
 private fun PeopleSheet(open: Boolean, j: JamView, onDismiss: () -> Unit) {
     NoriSheet(open, onDismiss) {
-        Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom).padding(bottom = 16.dp)) { JamControls(j) }
+        Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) { JamControls(j) }
     }
 }
 

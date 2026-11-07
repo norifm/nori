@@ -63,7 +63,7 @@ pub fn provider_sign_in(name: &str) -> String {
 }
 pub const PROVIDER_SUBSONIC_ABOUT: &str = "Navidrome and other servers";
 pub const PROVIDER_KEYS: &str = "↑ ↓ choose · enter open · p plugins · q quit";
-pub const PROVIDER_SAVED_KEYS: &str = "↑ ↓ choose · enter open · tab saved servers · p plugins · esc back · q quit";
+pub const PROVIDER_SAVED_KEYS: &str = "↑ ↓ choose · enter open · tab saved profiles · p plugins · esc back · q quit";
 pub const PLUGINS: &str = "Plugins";
 pub const FROM_A_PLUGIN: &str = "From a plugin";
 pub const PLUGIN_PATH: &str = "A .noriplugin file or a plugin folder";
@@ -152,7 +152,7 @@ pub fn plugins_updated(updated: &[(String, String)]) -> String {
 pub const BACK_UP: &str = "Back up";
 pub const BACK_UP_DETAIL: &str = "Settings, sound profiles and plugins, server passwords included, locked with a password.";
 pub const RESTORE: &str = "Restore a backup";
-pub const RESTORE_DETAIL: &str = "Its settings replace these. Your servers stay.";
+pub const RESTORE_DETAIL: &str = "Its settings replace these. Your profiles stay.";
 pub const BACKUP_SAVED: &str = "Backup saved";
 pub const BACKUP_PASSWORD: &str = "The backup's password";
 

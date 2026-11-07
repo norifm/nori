@@ -514,32 +514,41 @@ fun SectionHeader(
 fun GroupLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         remember(text) { text.uppercase() },
-        modifier.padding(start = 32.dp, end = 32.dp, top = 22.dp, bottom = 8.dp),
+        // In line with its card's words, which in a sheet start on the gutter.
+        if (LocalInSheet.current) modifier.padding(start = Space.gutter, end = Space.gutter, top = 16.dp, bottom = 6.dp)
+        else modifier.padding(start = 32.dp, end = 32.dp, top = 22.dp, bottom = 8.dp),
         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.06.em),
         color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
     )
 }
 
+/** Set inside a sheet: its groups' cards stand close to its sides. */
+val LocalInSheet = staticCompositionLocalOf { false }
+
 /**
  * Rows grouped on one raised plate: the surface, a hairline edge, the tile's corners, inset from the page's
- * sides. Rows inside are [GroupRow]s, or anything that ends in a [Hairline] starting where its text does,
- * the last without one.
+ * sides; in a sheet closer, their words on its gutter, each card [SHEET_SIDE] under what is above it. Rows
+ * inside are [GroupRow]s, or anything that ends in a [Hairline] starting where its text does, the last without one.
  */
 @Composable
 fun GroupCard(modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    val margin = if (LocalInSheet.current) Modifier.padding(start = SHEET_SIDE, end = SHEET_SIDE, top = SHEET_SIDE)
+    else Modifier.padding(horizontal = GROUP_MARGIN)
     val scheme = MaterialTheme.colorScheme
     // The content color spelled out: Material resolves it to Unspecified for a color that is not one of
     // its roles, and text inside then drew almost black.
     Surface(
-        modifier.fillMaxWidth().padding(horizontal = GROUP_MARGIN),
+        modifier.fillMaxWidth().then(margin),
         shape = TileShape, color = scheme.surfaceContainer, contentColor = scheme.onSurface, border = hairlineBorder(),
     ) { Column(content = content) }
 }
 
 /** How far a [GroupCard] stands in from the page's sides. */
-private val GROUP_MARGIN = 16.dp
+internal val GROUP_MARGIN = 16.dp
 /** How far a [GroupRow]'s content stands in from the card's sides, and the gap after its icon. */
 internal val GROUP_INSET = 14.dp
+/** How far a sheet's group cards stand in from its sides, and from each other: their words start on the gutter. */
+internal val SHEET_SIDE = Space.gutter - GROUP_INSET
 private val GROUP_ICON = 20.dp
 
 /**
@@ -586,6 +595,72 @@ fun GroupRow(
             )
         }
         if (divider) Hairline(startIndent = if (icon != null) GROUP_INSET * 2 + GROUP_ICON else GROUP_INSET)
+    }
+}
+
+/**
+ * A text field as a row of a group card: no box of its own, the card is it. With a [label], the label
+ * stands on the left and what is typed on the right, or with [stacked] (for addresses and other long
+ * values) the label is the hint while the field is empty and away, else a quiet line above what is
+ * typed; without, what is typed fills the row. The hint is quiet ink
+ * until something is typed; the caret is the accent. [modifier] is the field's own (its test tag).
+ */
+@Composable
+fun GroupField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    stacked: Boolean = false,
+    placeholder: String? = null,
+    supporting: String? = null,
+    minLines: Int = 1,
+    divider: Boolean = true,
+    enabled: Boolean = true,
+    visualTransformation: androidx.compose.ui.text.input.VisualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
+    keyboardOptions: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default,
+    autofocus: Boolean = false,
+    onDone: (() -> Unit)? = null,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val beside = label != null && !stacked
+    var focused by remember { mutableStateOf(false) }
+    val raised = stacked && label != null && (focused || value.isNotEmpty())
+    val hint = if (stacked && !raised) label else placeholder
+    val align = if (beside) androidx.compose.ui.text.style.TextAlign.End else androidx.compose.ui.text.style.TextAlign.Start
+    val style = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface, textAlign = align)
+    Column(Modifier.fillMaxWidth()) {
+        androidx.compose.foundation.text.BasicTextField(
+            value, onValueChange,
+            modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }.then(if (autofocus) Modifier.takesFocus() else Modifier),
+            enabled = enabled, singleLine = minLines == 1, minLines = minLines, textStyle = style,
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(scheme.primary),
+            visualTransformation = visualTransformation,
+            keyboardOptions = if (onDone != null) keyboardOptions.copy(imeAction = androidx.compose.ui.text.input.ImeAction.Done) else keyboardOptions,
+            keyboardActions = if (onDone != null) androidx.compose.foundation.text.KeyboardActions(onDone = { onDone() }) else androidx.compose.foundation.text.KeyboardActions.Default,
+            decorationBox = { field ->
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = GROUP_INSET, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (beside) Text(label!!, Modifier.padding(end = 16.dp), style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+                    Column(Modifier.weight(1f)) {
+                        if (raised) Text(label!!, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1)
+                        Box(Modifier.fillMaxWidth(), contentAlignment = if (beside) Alignment.CenterEnd else Alignment.CenterStart) {
+                            if (value.isEmpty() && hint != null) Text(
+                                hint, Modifier.fillMaxWidth(), style = style.copy(color = scheme.onSurfaceVariant), maxLines = 1,
+                            )
+                            field()
+                        }
+                    }
+                }
+            },
+        )
+        if (!supporting.isNullOrEmpty()) Text(
+            supporting, Modifier.padding(start = GROUP_INSET, end = GROUP_INSET, bottom = 12.dp),
+            style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
+        )
+        if (divider) Hairline(startIndent = GROUP_INSET)
     }
 }
 
