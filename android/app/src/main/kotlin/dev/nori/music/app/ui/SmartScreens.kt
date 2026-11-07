@@ -164,7 +164,7 @@ fun MixTiles(vm: MixesViewModel = viewModel()) {
     val nav = LocalNav.current
     val papers = LocalPapers.current
     LazyRow(Modifier.bleedsToEdges(), rememberShelfState(cards.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(cards, key = { it.id }) { c -> MixCardView(c, papers) { nav.mix(c.id) } }
+        items(cards, key = { it.id }) { c -> MixCardView(c, papers, itemMotion()) { nav.mix(c.id) } }
     }
 }
 

@@ -115,14 +115,17 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
                 Text(say.searchIsTheWayIn, Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             // Favourites are always here; the mixes join them when the taste model is on (MixesViewModel).
-            if (mixes) item(key = "mixes") { Column { SectionTitle(say.forYou, onMore = { nav.homeRow(MIXES_ROW) }); MixTiles() } }
+            if (mixes) item(key = "mixes") { Column(itemMotion()) { SectionTitle(say.forYou, onMore = { nav.homeRow(MIXES_ROW) }); MixTiles() } }
             // A source's own shelves (`ProfileRules.feed`), titled as it titles them; each kind drawn as the
             // library's shelves of that kind are.
+            // Kept apart by title, not place, so a newer feed moves each shelf to its own place.
+            val titled = mutableMapOf<String, Int>()
             ui.feed.forEachIndexed { i, f ->
-                val key = "feed-$i"
-                if (f.songs.isNotEmpty()) songShelf(f.title, f.songs, vm, actions, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, f.title), "$key-songs")
-                if (f.albums.isNotEmpty()) shelf(f.title, f.albums, vm, "$key-albums")
-                if (f.playlists.isNotEmpty()) playlistShelf(f.title, f.playlists, vm, "$key-playlists")
+                val route = "feed-$i"
+                val key = "feed:${f.title}#${titled.merge(f.title, 1, Int::plus)}"
+                if (f.songs.isNotEmpty()) songShelf(f.title, f.songs, vm, actions, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, f.title), "$route-songs", "$key-songs")
+                if (f.albums.isNotEmpty()) shelf(f.title, f.albums, vm, "$route-albums", "$key-albums")
+                if (f.playlists.isNotEmpty()) playlistShelf(f.title, f.playlists, vm, "$route-playlists", "$key-playlists")
             }
             ui.rows.forEach { shelf ->
                 // The favourite playlists are a selection of something the page fetches once for all of
@@ -184,13 +187,14 @@ private fun androidx.compose.foundation.lazy.LazyListScope.shelf(
     albums: List<Album>,
     vm: HomeViewModel,
     route: String,
+    key: String = route,
 ) {
-    item(key = route, contentType = "shelf") {
+    item(key = key, contentType = "shelf") {
         val nav = LocalNav.current
-        Column {
+        Column(itemMotion()) {
             SectionTitle(title, onMore = { nav.homeRow(route) })
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(albums.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(albums, key = { it.id }, contentType = { "album" }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }) }
+                items(albums, key = { it.id }, contentType = { "album" }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }, itemMotion()) }
             }
         }
     }
@@ -202,16 +206,17 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playlistShelf(
     playlists: List<dev.nori.music.ffi.model.Playlist>,
     vm: HomeViewModel,
     route: String,
+    key: String = route,
 ) {
-    item(key = route, contentType = "shelf") {
+    item(key = key, contentType = "shelf") {
         val nav = LocalNav.current
-        Column {
+        Column(itemMotion()) {
             SectionTitle(title, onMore = { nav.homeRow(route) })
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(playlists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(playlists, key = { it.id }, contentType = { "playlist" }) { p ->
                     val line = remember(p.songCount, p.comment) { playlistLine(p) }
                     val cardMenu = LocalCardMenu.current
-                    CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), PRINT, { nav.playlist(p.id, p) }, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) })
+                    CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), PRINT, { nav.playlist(p.id, p) }, itemMotion(), onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) })
                 }
             }
         }
@@ -243,16 +248,17 @@ private fun androidx.compose.foundation.lazy.LazyListScope.songShelf(
     /** The shelf: the songs played from it are its queue. */
     from: dev.nori.music.ffi.model.PageOrigin,
     route: String,
+    key: String = route,
 ) {
-    item(key = route, contentType = "shelf") {
+    item(key = key, contentType = "shelf") {
         // A long press opens the song's menu, as it does on a row of a list.
         val menu = LocalSongMenu.current
         val nav = LocalNav.current
-        Column {
+        Column(itemMotion()) {
             SectionTitle(title, onMore = { nav.homeRow(route) })
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(songs.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 itemsIndexed(songs, key = { _, s -> s.id }, contentType = { _, _ -> "song" }) { i, s ->
-                    CoverCard(s.title, s.artist, vm.cover(s.coverArt, CoverSize.CARD), PRINT, { actions.play(songs, i, from) }, onLongClick = { menu(s) })
+                    CoverCard(s.title, s.artist, vm.cover(s.coverArt, CoverSize.CARD), PRINT, { actions.play(songs, i, from) }, itemMotion(), onLongClick = { menu(s) })
                 }
             }
         }
