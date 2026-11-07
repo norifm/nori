@@ -42,6 +42,8 @@ the method and the tools.
 | The desktop client through every page, idle or playing | `tools/desktop-tour.py SOCKET [rounds] [pause] [album id]`, [Desktop profiling](desktop-performance.md) |
 | Engine CPU, per case | `tools/flame-engine.sh automix,mp3 [minutes] [out]` |
 | Engine heap, by call site | `tools/flame-engine.sh --heap automix [minutes] [out]` |
+| The perf build on a phone, CPU (it is profileable from adb) | NDK `simpleperf/app_profiler.py -p dev.nori.music.perf -r "-e cpu-clock -f 4000 --call-graph dwarf --duration 30" -lib target/aarch64-linux-android/dist` |
+| Its heap | Perfetto's heapprofd on `dev.nori.music.perf`, started before the launch: it counts only what is allocated after it attaches |
 | Engine wakes, CPU, allocations per minute | `cargo test --release -p nori-engine --test engine perf_report -- --ignored --nocapture --test-threads=1` |
 | What keeps the engine awake | the same with `NORI_WAKES=1`: sleep lengths and runs of short sleeps |
 | This checkout against a release, and whether each case sounds the same | `tools/perf-host.sh [rev]` |
