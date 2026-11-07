@@ -947,6 +947,42 @@ PY
   check "the playing row's bars move while it plays" wait_until 5 bars_moved
   "$app" do pause >/dev/null; check "paused again" wait_for playing False 5
   check "and stand still while paused" wait_until 5 bars_still
+  # A list scrolled so that "Playing next" is its first row, away from the song playing, stays where it was
+  # put when the next song starts: a caption carried down to the new song took the list along with it.
+  if [ "$NORI_E2E_SERVER" = local ]; then
+    "$app" play "search:Long Track 01" >/dev/null
+    # Twice: a list at its end follows the song playing wherever it rests.
+    for n in 02 03 04 05 06 07 08 09 10 11 12 02 03 04 05 06 07 08 09 10 11 12; do "$app" do "enqueue search:Long Track $n" >/dev/null; done
+    check "a long queue plays" wait_for playing True 10
+    "$app" open queue >/dev/null
+    check "its queue opens" wait_until 10 on_screen 'content-desc="Shuffle"'
+    # The queue's rows on screen, top first: "caption" or a song's title, and its top.
+    queue_rows() {
+      ui | python3 -c '
+import re, sys
+tree = sys.stdin.read()
+rows = [(int(t), "caption" if s.lower() == "playing next" else s) for s, t in re.findall(r"text=\"(Playing next|PLAYING NEXT|Long Track \d\d)\"[^>]*?bounds=\"\[(?:68|216),(\d+)\]", tree)]
+for t, s in sorted(rows): print(s, t)'
+    }
+    # Up a little at a time, without a fling, until the caption's words are above where the song playing's
+    # were as the list opened: by then nothing of that row is left in sight.
+    first=$(queue_rows | head -1 | awk '{print $NF}')
+    on_top() { local top; top=$(queue_rows | head -1); [ "${top%% *}" = caption ] && [ "${top##* }" -lt "$first" ]; }
+    for _ in $(seq 12); do
+      on_top && break
+      adb shell input swipe 540 1300 540 1240 1500
+    done
+    check "the caption is the list's first row" on_top
+    # The second song under it: still to come after the next song starts.
+    kept=$(queue_rows | sed -n 3p); kept_name=${kept% *}; kept_top=${kept##* }
+    stays() { local now; now=$(queue_rows | grep "^$kept_name " | head -1 | awk '{print $NF}'); [ -n "$now" ] && [ $((now - kept_top)) -le 6 ] && [ $((kept_top - now)) -le 6 ]; }
+    was=$(field title); moved_on() { [ "$(field title)" != "$was" ]; }
+    "$app" do next >/dev/null
+    check "the next song starts" wait_until 10 moved_on
+    check "the rows under the caption stay where they were" wait_until 5 stays
+  else
+    echo "  NOTE  the caption at the list's top needs the local server's long album"
+  fi
 fi
 
 remote_checks() {
