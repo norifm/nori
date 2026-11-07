@@ -257,6 +257,16 @@ fn merged(mut shown: Vec<FeedShelf>, fresh: Vec<FeedShelf>) -> Vec<FeedShelf> {
     shown
 }
 
+/// The reads on their way to the source, by kept key ([`Client::turn`]).
+#[derive(Default)]
+pub(crate) struct Asking(parking_lot::Mutex<std::collections::HashMap<String, std::sync::Weak<futures_util::lock::Mutex<()>>>>);
+
+/// A read's turn to ask the source, and whether it waited for another read of its page.
+pub(crate) struct Turn {
+    _held: futures_util::lock::OwnedMutexGuard<()>,
+    pub(crate) waited: bool,
+}
+
 /// A page kept in memory for the session, when it came and its digest.
 #[derive(Clone)]
 pub(crate) struct Kept {
@@ -387,6 +397,27 @@ impl Client {
         }
         songs.extend(starred.songs);
         Starred::new(starred.artists, starred.albums, songs)
+    }
+
+    /// `read`'s turn to ask the source, once no other read of its page is asking; None for a read never kept.
+    pub(crate) async fn turn(&self, read: &Read) -> Option<Turn> {
+        let (key, _) = self.kept_key(read)?;
+        let lock = {
+            let mut asking = self.core.asking.0.lock();
+            asking.retain(|_, w| w.strong_count() > 0);
+            match asking.get(&key).and_then(std::sync::Weak::upgrade) {
+                Some(lock) => lock,
+                None => {
+                    let lock = std::sync::Arc::new(futures_util::lock::Mutex::new(()));
+                    asking.insert(key, std::sync::Arc::downgrade(&lock));
+                    lock
+                }
+            }
+        };
+        Some(match lock.clone().try_lock_owned() {
+            Some(held) => Turn { _held: held, waited: false },
+            None => Turn { _held: lock.lock_owned().await, waited: true },
+        })
     }
 
     /// The key `read`'s page is kept under, the source's scope included, and how long it is fresh.
