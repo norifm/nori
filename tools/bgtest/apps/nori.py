@@ -23,7 +23,8 @@ class Nori(App):
     }
 
     def login(self):
-        self.step("open", self.launch, "Server URL")
+        self.step("open", self.launch, "Choose a provider")
+        self.step("OpenSubsonic", lambda: ui.tap("OpenSubsonic"), "Server URL")
         self.step("server address", lambda: (ui.tap("Server URL"), ui.text(self.url)))
         self.step("user", lambda: (ui.tap("User"), ui.text(self.user)))
         self.step("password", lambda: (ui.tap("Password"), ui.text(self.password)))
@@ -37,7 +38,8 @@ class Nori(App):
         if v.get("eq"):
             self.step("sound settings", lambda: ui.tap("Sound"), "Equalizer and crossfeed")
             self.step("equalizer", lambda: ui.tap("Equalizer and crossfeed"), "Bass boost")
-            self.step("equalizer on, bass boost", lambda: (ui.switch("Equalizer", True), ui.tap("Bass boost")), "+6.0")
+            # Bass boost's pre-amp, which the equalizer lowers to make room for it.
+            self.step("equalizer on, bass boost", lambda: (ui.switch("Equalizer", True), ui.tap("Bass boost")), "-5.8 dB")
             self.step("back to settings", lambda: (ui.back(), ui.back()), "Playback")
         if not (v.get("automix") or v.get("ml")):
             self.step("back to home", lambda: ui.tap("Home"), "Listen now")
