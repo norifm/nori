@@ -23,7 +23,9 @@ final class ShellController: UIViewController {
         chrome.tabs.picked = { [weak self] i in self?.select(i) }
         chrome.mini.opened = { [weak self] in self?.openPlayer() }
         chrome.mini.dragged = { [weak self] in self?.dragPlayer($0) }
-        chrome.mini.devicesOpened = { [weak self] in self?.present(Core.shared.now.jam ? QueueSheet() : DevicesSheet(), animated: true) }
+        chrome.mini.devicesOpened = { [weak self] in
+            if Core.shared.now.jam { self?.present(QueueSheet(), animated: true) } else { self?.present(DevicesSheet(), animated: false) }
+        }
         chrome.resized = { [weak self] in self?.view.setNeedsLayout() }
         view.addSubview(chrome)
         lay()

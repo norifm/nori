@@ -20,69 +20,20 @@ final class OutputPicker {
     }
 }
 
-/// The player's output button: this iPod and the account's other devices with nori, each with what it
-/// plays, the one playing ticked, then the iPod's own outputs (the system's picker) and joining someone's
-/// jam. A tap on a device moves the music there. Open, the other devices are followed.
-final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDelegate {
-    let transition = CardTransition()
-    private var closer: DragToClose?
-    private let table = UITableView(frame: .zero, style: .plain)
+/// The player's output button, as Android's sheet and in the song menu's look: this iPod and the account's
+/// other devices with nori, each with what it plays, the one playing ticked; then the iPod's own outputs
+/// (the system's picker), joining someone's jam and pairing. A tap on a device moves the music there. Open,
+/// the other devices are followed.
+final class DevicesSheet: Sheet {
     private let outputs = OutputPicker()
-    private var here = true
-    private var devices: [[String: Any]] = []
     private var pairing: String?
 
-    init() {
-        super.init(nibName: nil, bundle: nil)
-        modalPresentationStyle = .overFullScreen
-        modalPresentationCapturesStatusBarAppearance = true
-        transitioningDelegate = transition
-    }
-
+    init() { super.init(Say.playOn) }
     required init?(coder: NSCoder) { fatalError() }
-
-    override var preferredStatusBarStyle: UIStatusBarStyle { Theme.statusBar }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = Theme.Card.background
-        let grabber = UIButton(type: .system)
-        grabber.setImage(Glyph.close, for: .normal)
-        grabber.tintColor = Theme.Card.secondary
-        grabber.accessibilityLabel = Say.close
-        grabber.addTarget(self, action: #selector(close), for: .touchUpInside)
-        let title = UILabel()
-        title.text = Say.playOn
-        title.font = Fonts.title(22)
-        title.textColor = Theme.Card.label
-        table.backgroundColor = Theme.Card.background
-        table.separatorColor = Theme.player.hairline
-        table.rowHeight = 60
-        table.dataSource = self
-        table.delegate = self
-        table.tableFooterView = UIView()
         outputs.attach(to: view)
-        for v in [grabber, title, table] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(v)
-        }
-        NSLayoutConstraint.activate([
-            grabber.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            grabber.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabber.widthAnchor.constraint(equalToConstant: 60),
-            grabber.heightAnchor.constraint(equalToConstant: 24),
-            title.topAnchor.constraint(equalTo: grabber.bottomAnchor, constant: 4),
-            title.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Space.gutter),
-            title.heightAnchor.constraint(equalToConstant: 44),
-            table.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
-            table.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            table.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            table.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-        closer = DragToClose(self, transition) { [weak self] pan in
-            guard let self else { return false }
-            return pan.location(in: self.view).y < self.table.frame.minY
-        }
         NotificationCenter.default.addObserver(self, selector: #selector(read), name: .noriDevices, object: nil)
         read()
     }
@@ -98,84 +49,34 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
         (presentingViewController as? PlayerCard)?.changed()
     }
 
-    @objc private func close() { dismiss(animated: true) }
-
     @objc private func read() {
         let d = takenJSON(nori_ios_remote_devices()) as? [String: Any] ?? [:]
-        here = d["here"] as? Bool ?? true
-        devices = d["devices"] as? [[String: Any]] ?? []
+        let devices = d["devices"] as? [[String: Any]] ?? []
         pairing = taken(nori_ios_pairing())
-        table.reloadData()
-    }
-
-    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { devices.count + 3 + (pairing == nil ? 0 : 2) }
-
-    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "device")
-            ?? UITableViewCell(style: .subtitle, reuseIdentifier: "device")
-        cell.backgroundColor = Theme.Card.background
-        let selected = UIView()
-        selected.backgroundColor = Theme.Card.track
-        cell.selectedBackgroundView = selected
-        cell.tintColor = Theme.Card.label
-        cell.textLabel?.textColor = Theme.Card.label
-        cell.detailTextLabel?.textColor = Theme.Card.secondary
-        cell.detailTextLabel?.font = Fonts.font(13, .regular, .footnote)
-        cell.textLabel?.font = Fonts.font(16)
-        cell.imageView?.tintColor = Theme.Card.label
-        guard indexPath.row > 0 else {
-            cell.imageView?.image = Glyph.device(0, 22)
-            cell.textLabel?.text = Say.thisIPod
-            cell.detailTextLabel?.text = nil
-            cell.accessoryType = here ? .checkmark : .none
-            return cell
-        }
-        guard indexPath.row <= devices.count else {
-            if indexPath.row >= devices.count + 3 {
-                cell.imageView?.image = Glyph.draw(indexPath.row == devices.count + 3 ? Iconoir.smartphoneDevice : Iconoir.trash, 22)
-                cell.textLabel?.text = indexPath.row == devices.count + 3 ? Say.pairDevices : Say.forgetDevices
-                cell.detailTextLabel?.text = nil
-                cell.accessoryType = .disclosureIndicator
-                return cell
+        refill {
+            add(Say.thisIPod, glyph: Glyph.device(0, 20), checked: d["here"] as? Bool ?? true) { "".withCString { nori_ios_remote_pick($0) } }
+            for device in devices {
+                let song = [device["title"] as? String, device["artist"] as? String].compactMap { $0 }.filter { !$0.isEmpty }
+                let playing = device["playing"] as? Bool ?? false
+                let line = Say.refused(device["refused"] as? Int ?? 0) ?? (playing && !song.isEmpty ? song.joined(separator: " · ") : Say.deviceIdle)
+                let id = device["id"] as? String ?? ""
+                add(device["name"] as? String ?? "", subtitle: line, glyph: Glyph.device(device["kind"] as? Int ?? 0, 20),
+                    checked: device["active"] as? Bool == true) { id.withCString { nori_ios_remote_pick($0) } }
             }
-            if indexPath.row == devices.count + 1 {
-                cell.imageView?.image = Glyph.output(OutputLook.now().glyph, 22)
-                cell.textLabel?.text = Say.output
-                cell.detailTextLabel?.text = nil
-                cell.accessoryType = .none
-                return cell
+            add(Say.output, glyph: Glyph.output(OutputLook.now().glyph, 20), more: true, stays: true) { [weak self] in self?.outputs.show() }
+            add(Say.joinJam, glyph: Glyph.jam, more: true, stays: true) { [weak self] in
+                if let self { JamJoin.ask(from: self) }
             }
-            cell.imageView?.image = Glyph.jam
-            cell.textLabel?.text = Say.joinJam
-            cell.detailTextLabel?.text = nil
-            cell.accessoryType = .disclosureIndicator
-            return cell
+            if pairing != nil {
+                add(Say.pairDevices, glyph: Glyph.draw(Iconoir.smartphoneDevice, 20), more: true, stays: true) { [weak self] in self?.pair() }
+                add(Say.forgetDevices, glyph: Glyph.draw(Iconoir.trash, 20), more: true, stays: true) { [weak self] in
+                    nori_ios_forget_pairs()
+                    self?.read()
+                }
+            }
         }
-        let d = devices[indexPath.row - 1]
-        cell.imageView?.image = Glyph.device(d["kind"] as? Int ?? 0, 22)
-        cell.textLabel?.text = d["name"] as? String
-        let song = [d["title"] as? String, d["artist"] as? String].compactMap { $0 }.filter { !$0.isEmpty }
-        let playing = d["playing"] as? Bool ?? false
-        cell.detailTextLabel?.text = Say.refused(d["refused"] as? Int ?? 0)
-            ?? (playing && !song.isEmpty ? song.joined(separator: " · ") : Say.deviceIdle)
-        cell.accessoryType = d["active"] as? Bool == true ? .checkmark : .none
-        return cell
     }
 
-    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        tableView.deselectRow(at: indexPath, animated: true)
-        if indexPath.row == devices.count + 3 { return pair() }
-        if indexPath.row == devices.count + 4 {
-            nori_ios_forget_pairs()
-            read()
-            return
-        }
-        if indexPath.row == devices.count + 1 { return outputs.show() }
-        guard indexPath.row <= devices.count else { return JamJoin.ask(from: self) }
-        let id = indexPath.row == 0 ? "" : devices[indexPath.row - 1]["id"] as? String ?? ""
-        id.withCString { nori_ios_remote_pick($0) }
-        dismiss(animated: true)
-    }
     private func pair() {
         guard let code = pairing else { return }
         let ask = UIAlertController(title: Say.pairDevices, message: Say.pairHow, preferredStyle: .alert)
@@ -189,7 +90,6 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
         ask.addAction(UIAlertAction(title: Say.cancel, style: .cancel))
         present(ask, animated: true)
     }
-
 }
 
 /// Joining someone's jam with the invite link its host sent: the guest profile opens once joined
