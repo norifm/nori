@@ -245,6 +245,9 @@ int32_t nori_ios_collection_download_act(int32_t kind, const char *id, int32_t a
 /// Song 1, album 2, artist 3.
 void nori_ios_star(int32_t kind, const char *id, int32_t on);
 
+int32_t nori_ios_playlist_pinned(const char *id);
+void nori_ios_playlist_pin(const char *id, int32_t on);
+
 /// Whether a song (1), album (2) or artist (3) shows starred (1), its record saying `listed`.
 int32_t nori_ios_starred(int32_t kind, const char *id, int32_t listed);
 

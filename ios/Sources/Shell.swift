@@ -113,8 +113,35 @@ final class ShellController: UIViewController {
     }
 }
 
+extension UIViewController {
+    /// The page carries its own head (`PageTitle` or a hero) in place of the navigation bar, and is left
+    /// with the edge swipe, as on Android.
+    @objc var barless: Bool { false }
+}
+
 /// A tab's stack: the status bar is its bar's, but over a page's artwork that page's own.
-final class NavController: UINavigationController {
+final class NavController: UINavigationController, UIGestureRecognizerDelegate, UINavigationControllerDelegate {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        // UIKit's own delegate turns the edge swipe off while the bar is hidden.
+        interactivePopGestureRecognizer?.delegate = self
+        delegate = self
+        viewControllers.first.map { setNavigationBarHidden($0.barless, animated: false) }
+    }
+
+    func navigationController(_ navigationController: UINavigationController, willShow viewController: UIViewController, animated: Bool) {
+        setNavigationBarHidden(viewController.barless, animated: animated)
+        // An edge swipe let go of: the page that stays has what it had.
+        transitionCoordinator?.notifyWhenInteractionChanges { [weak self] context in
+            guard context.isCancelled, let stays = context.viewController(forKey: .from) else { return }
+            self?.setNavigationBarHidden(stays.barless, animated: true)
+        }
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        viewControllers.count > 1
+    }
+
     override var childForStatusBarStyle: UIViewController? {
         (topViewController as? PageController)?.headed == true ? topViewController : nil
     }
@@ -616,6 +643,8 @@ class CardsPage: UIViewController {
     let column = UIStackView()
     private let scroll = UIScrollView()
 
+    override var barless: Bool { true }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = Theme.background
@@ -627,19 +656,22 @@ class CardsPage: UIViewController {
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: view.topAnchor),
+            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             column.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
             column.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
-            column.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 8),
+            column.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
             column.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -Space.section),
             column.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
         ])
     }
 
-    /// The column's contents, again.
+    /// The column's contents under the page's name, again.
     func set(_ views: [UIView]) {
         column.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let name = PageTitle(title ?? "")
+        column.addArrangedSubview(name)
+        column.setCustomSpacing(8, after: name)
         views.forEach(column.addArrangedSubview)
     }
 }

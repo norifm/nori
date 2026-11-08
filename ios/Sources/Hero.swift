@@ -4,8 +4,23 @@ import UIKit
 /// to edge under the status bar and melts into the page over its bottom rows, the title rises into the
 /// melt, then Shuffle, the ink Play pill and the page's own glyph (the seal, or Save as playlist), and the
 /// list head: what the list is ("2019 · 8 songs · 36:28") and its glyphs (`nori_ios_page_actions`).
-/// Static: one gradient, no blur.
+/// Static: one gradient, no blur. The title, the buttons and the list head are `head`, which stays at the
+/// top once it reaches it while the songs go on under it.
 final class HeroHeader: UIView {
+    /// Laid in the table over this header's foot, not in the header: the table's rows pass under it.
+    let head = UIView()
+    private let backing = UIView()
+    private let edge: GradientView
+    /// Where `head` stands before it sticks.
+    private var rest: CGFloat = 0
+    private let statusRoom = UIApplication.shared.statusBarFrame.height
+    /// The page's color covers the top of the screen.
+    private(set) var stuck = false
+    /// Over how much of its way up the page's color comes in behind the head.
+    private static let fade: CGFloat = 64
+    /// The songs' fade under the head.
+    private static let edgeHeight: CGFloat = 18
+
     var play: (() -> Void)?
     var shuffle: (() -> Void)?
     /// The artist line was tapped.
@@ -24,6 +39,7 @@ final class HeroHeader: UIView {
     /// Play; `actions`: the list head's.
     init(head: [String: Any], title: String, subtitle: String?, line: String, look: PageLook, own: [UIView], actions: [UIView]) {
         self.look = look
+        edge = GradientView(colours: [look.page, look.page.withAlphaComponent(0)])
         let kind = head["k"] as? String ?? ""
         let width = UIScreen.main.bounds.width
         playButton = PillButton(Say.play, Glyph.playPill, look: look)
@@ -72,8 +88,7 @@ final class HeroHeader: UIView {
         listHead.alignment = .center
         let rule = hairlineView(look.hairline)
 
-        var top: NSLayoutYAxisAnchor = topAnchor
-        var rise: CGFloat = 0
+        rest = 72
         if let picture {
             picture.translatesAutoresizingMaskIntoConstraints = false
             addSubview(picture)
@@ -95,49 +110,68 @@ final class HeroHeader: UIView {
                 picture.topAnchor.constraint(equalTo: topAnchor),
                 picture.heightAnchor.constraint(equalToConstant: width + HeroHeader.deeper),
             ])
-            top = picture.bottomAnchor
-            rise = Space.titleRise + HeroHeader.deeper - (sub.isHidden ? HeroHeader.artistLine : 0)
+            rest = width + HeroHeader.deeper - (Space.titleRise + HeroHeader.deeper - (sub.isHidden ? HeroHeader.artistLine : 0))
         }
+        let inHead = self.head
+        backing.backgroundColor = look.page
+        backing.isUserInteractionEnabled = false
+        inHead.addSubview(backing)
+        inHead.addSubview(edge)
+        inHead.layer.zPosition = 1
         for v in [words, buttons, listHead, rule] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(v)
+            inHead.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            words.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Space.gutter),
-            words.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Space.gutter),
-            words.topAnchor.constraint(equalTo: top, constant: picture == nil ? 72 : -rise),
-            buttons.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Space.tight),
-            buttons.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Space.tight),
+            words.leadingAnchor.constraint(equalTo: inHead.leadingAnchor, constant: Space.gutter),
+            words.trailingAnchor.constraint(equalTo: inHead.trailingAnchor, constant: -Space.gutter),
+            words.topAnchor.constraint(equalTo: inHead.topAnchor),
+            buttons.leadingAnchor.constraint(equalTo: inHead.leadingAnchor, constant: Space.tight),
+            buttons.trailingAnchor.constraint(equalTo: inHead.trailingAnchor, constant: -Space.tight),
             buttons.topAnchor.constraint(equalTo: words.bottomAnchor, constant: 12),
-            listHead.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Space.gutter),
-            listHead.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Space.tight),
+            listHead.leadingAnchor.constraint(equalTo: inHead.leadingAnchor, constant: Space.gutter),
+            listHead.trailingAnchor.constraint(equalTo: inHead.trailingAnchor, constant: -Space.tight),
             listHead.topAnchor.constraint(equalTo: buttons.bottomAnchor, constant: 6),
             listHead.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
-            rule.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Space.gutter),
-            rule.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Space.gutter),
+            rule.leadingAnchor.constraint(equalTo: inHead.leadingAnchor, constant: Space.gutter),
+            rule.trailingAnchor.constraint(equalTo: inHead.trailingAnchor, constant: -Space.gutter),
             rule.topAnchor.constraint(equalTo: listHead.bottomAnchor),
-            rule.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            rule.bottomAnchor.constraint(equalTo: inHead.bottomAnchor, constant: -10),
         ])
         listHead.isHidden = line.isEmpty && actions.isEmpty
         rule.isHidden = listHead.isHidden
-        let size = systemLayoutSizeFitting(
+        let size = inHead.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel
         )
-        frame.size.height = size.height
+        inHead.frame = CGRect(x: 0, y: rest, width: width, height: size.height)
+        frame.size.height = rest + size.height
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Scrolled `by` points: the picture moves at less than the list's pace and fades a little.
-    func scrolled(_ by: CGFloat) {
-        guard let picture, by > 0 else {
-            picture?.transform = .identity
-            picture?.alpha = 1
-            return
+    /// Scrolled `by` points: the head stays at the top once it reaches it, the page's color coming in behind
+    /// it on the way, and the picture moves at less than the list's pace and fades a little. True when
+    /// `stuck` changed.
+    @discardableResult
+    func scrolled(_ by: CGFloat) -> Bool {
+        let top = by + statusRoom
+        let from = max(0, rest - top)
+        head.frame.origin.y = max(rest, top)
+        let shown = 1 - min(1, from / HeroHeader.fade)
+        backing.alpha = shown
+        edge.alpha = shown
+        let width = head.bounds.width, height = head.bounds.height
+        backing.frame = CGRect(x: 0, y: -(from + statusRoom), width: width, height: height + from + statusRoom)
+        edge.frame = CGRect(x: 0, y: height, width: width, height: HeroHeader.edgeHeight)
+        if let picture {
+            let moved = max(0, by)
+            picture.transform = CGAffineTransform(translationX: 0, y: moved * 0.4)
+            picture.alpha = 1 - min(1, moved / max(1, picture.bounds.height)) * 0.5
         }
-        picture.transform = CGAffineTransform(translationX: 0, y: by * 0.4)
-        picture.alpha = 1 - min(1, by / max(1, picture.bounds.height)) * 0.5
+        let was = stuck
+        stuck = shown > 0.5
+        return stuck != was
     }
 
     /// The buttons as the core says they stand (`nori_ios_hero`): Play is Pause while this page's queue

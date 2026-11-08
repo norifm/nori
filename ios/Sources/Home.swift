@@ -4,14 +4,45 @@ import UIKit
 /// device or app left on the server, offered to carry on here (the core's `queue_offer`).
 final class HomePage: PageController {
     private var card: ContinueCard?
+    /// The page's paper under the status bar, which the shelves scroll beneath.
+    private let statusPlate = UIView()
 
-    init() { super.init(kind: NORI_PAGE_HOME, title: Say.home) }
+    override var barless: Bool { true }
+
+    init() {
+        super.init(kind: NORI_PAGE_HOME, title: Say.home)
+        top = { PageTitle(Say.home) }
+    }
     required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        statusPlate.backgroundColor = Theme.background
+        statusPlate.layer.zPosition = 1
+        view.addSubview(statusPlate)
         NotificationCenter.default.addObserver(self, selector: #selector(lookForOffer), name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(stands), name: .noriNow, object: nil)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        placeStatusPlate()
+    }
+
+    override func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        super.scrollViewDidScroll(scrollView)
+        placeStatusPlate()
+    }
+
+    private func placeStatusPlate() {
+        statusPlate.frame = CGRect(x: 0, y: tableView.contentOffset.y, width: tableView.bounds.width, height: UIApplication.shared.statusBarFrame.height)
+    }
+
+    /// The page's name, and under it the offer while there is one.
+    private func head(_ offer: ContinueCard?) {
+        let column = UIStackView(arrangedSubviews: [PageTitle(Say.home)] + (offer.map { [$0] } ?? []))
+        column.axis = .vertical
+        tableView.tableHeaderView = sized(column)
     }
 
     /// Each time the page comes into sight; a jam guest's Home is the host's, and the core offers nothing.
@@ -34,9 +65,8 @@ final class HomePage: PageController {
     private func show(_ c: ContinueCard) {
         card = c
         c.done = { [weak self] take in self?.close(take: take) }
-        let width = UIScreen.main.bounds.width
-        c.frame = CGRect(x: 0, y: 0, width: width, height: ContinueCard.height + 16)
-        tableView.tableHeaderView = c
+        c.heightAnchor.constraint(equalToConstant: ContinueCard.height + 16).isActive = true
+        head(c)
     }
 
     /// Taken or turned down: the card goes, and its room folds away; taken, the queue starts once it has.
@@ -48,7 +78,7 @@ final class HomePage: PageController {
             c.transform = CGAffineTransform(scaleX: 0.94, y: 0.94)
         }, completion: { _ in
             self.tableView.beginUpdates()
-            self.tableView.tableHeaderView = nil
+            self.head(nil)
             self.tableView.endUpdates()
             nori_ios_queue_offer_done(take ? 1 : 0)
         })
@@ -58,27 +88,27 @@ final class HomePage: PageController {
     @objc private func stands() {
         guard card != nil, nori_ios_queue_offer_stands() == 0 else { return }
         card = nil
-        tableView.tableHeaderView = nil
+        head(nil)
     }
 }
 
 /// The offered queue as a card on the paper dyed with its song's cover: the cover running into the card,
 /// "Continue", the song and where it stands, Resume and a close button; flicked away it is turned down.
 final class ContinueCard: UIView {
-    static let height: CGFloat = 178
+    static let height: CGFloat = 132
     /// Taken (true) or turned down.
     var done: ((Bool) -> Void)?
     private let plate = UIView()
     private let fade = CAGradientLayer()
     private let words: [UILabel]
-    private let resume = PillButton(Say.resume, Glyph.playPill)
+    private let resume = PillButton(Say.resume, Glyph.playPill, height: 34)
     private let close = UIButton(type: .custom)
 
     init(_ offer: [String: Any]) {
         let song = Item(offer["song"] as? [String: Any] ?? [:])
         let kicker = label(Fonts.font(11.5, .semibold, .caption1), Theme.secondary)
         kicker.attributedText = NSAttributedString(string: Say.continueLabel.uppercased(), attributes: [.kern: 0.7])
-        let title = label(Fonts.title(21, .title2), Theme.label, lines: 2)
+        let title = label(Fonts.title(18, .title3), Theme.label)
         title.text = song.title
         let place = label(Fonts.font(13, .regular, .footnote), Theme.secondary)
         place.text = Say.offerPlace(song.subtitle, (offer["index"] as? Int ?? 0) + 1, offer["count"] as? Int ?? 0)
@@ -96,9 +126,8 @@ final class ContinueCard: UIView {
         cover.layer.addSublayer(fade)
         let text = UIStackView(arrangedSubviews: words)
         text.axis = .vertical
-        text.spacing = 4
-        text.setCustomSpacing(6, after: kicker)
-        resume.heightAnchor.constraint(equalToConstant: 38).isActive = true
+        text.spacing = 2
+        text.setCustomSpacing(4, after: kicker)
         resume.addTarget(self, action: #selector(take), for: .touchUpInside)
         close.setImage(Glyph.xmark, for: .normal)
         close.accessibilityLabel = Say.close
@@ -119,10 +148,10 @@ final class ContinueCard: UIView {
             cover.bottomAnchor.constraint(equalTo: plate.bottomAnchor),
             cover.widthAnchor.constraint(equalTo: cover.heightAnchor),
             text.leadingAnchor.constraint(equalTo: cover.trailingAnchor, constant: 6),
-            text.trailingAnchor.constraint(equalTo: plate.trailingAnchor, constant: -16),
-            text.topAnchor.constraint(equalTo: plate.topAnchor, constant: 16),
+            text.trailingAnchor.constraint(equalTo: plate.trailingAnchor, constant: -14),
+            text.topAnchor.constraint(equalTo: plate.topAnchor, constant: 12),
             resume.leadingAnchor.constraint(equalTo: text.leadingAnchor),
-            resume.bottomAnchor.constraint(equalTo: plate.bottomAnchor, constant: -14),
+            resume.bottomAnchor.constraint(equalTo: plate.bottomAnchor, constant: -12),
             close.topAnchor.constraint(equalTo: plate.topAnchor),
             close.trailingAnchor.constraint(equalTo: plate.trailingAnchor),
             close.widthAnchor.constraint(equalToConstant: 40),
