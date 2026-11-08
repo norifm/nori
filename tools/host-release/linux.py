@@ -67,9 +67,8 @@ def appimage(binaries, output, version, arch, work, icon, desktop):
     (app / "AppRun").symlink_to("usr/bin/nori-desktop")
     (app / ".DirIcon").symlink_to("nori.png")
     env = dict(os.environ, APPIMAGE_EXTRACT_AND_RUN="1", ARCH=arch)
-    tool = work / "appimagetool.AppImage"
-    run("curl", "-fL", f"https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-{arch}.AppImage", "-o", tool)
-    tool.chmod(0o755)
+    # Pinned in the build image (Dockerfile).
+    tool = Path("/usr/local/lib/appimagetool.AppImage")
     image = output / f"nori-desktop-{version}-linux-{arch}.AppImage"
     run(appimage_executable(tool, work), app, image, env=env)
     result = subprocess.run([str(appimage_executable(image, work)), "--appimage-extract-and-run", "--help"], capture_output=True, text=True)

@@ -39,6 +39,8 @@ RUN curl -sSf https://sh.rustup.rs | CARGO_HOME=/opt/cargo sh -s -- -y --no-modi
     && chmod -R a+rX /opt/rustup /opt/cargo
 RUN curl -sSfL "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-$(uname -m)-unknown-linux-musl.tar.gz" \
     | tar -xzf - -C /usr/local/bin --strip-components 1 --wildcards '*/sccache'
+RUN curl -sSfL "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-$(uname -m).AppImage" \
+    -o /usr/local/lib/appimagetool.AppImage && chmod 755 /usr/local/lib/appimagetool.AppImage
 ARG NORI_UID=1000
 ARG NORI_GID=1000
 RUN groupadd --non-unique --gid "$NORI_GID" build && useradd --uid "$NORI_UID" --gid build --create-home build
