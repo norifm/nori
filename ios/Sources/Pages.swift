@@ -281,6 +281,14 @@ final class MixCard: UIView {
         isUserInteractionEnabled = false
         isAccessibilityElement = true
         accessibilityLabel = name.text
+        // The mix's page wears its first cover's colors, so the card takes them too once they are known.
+        if Theme.coversTint, let first = item.covers.first {
+            Core.shared.coverLook(first) { [weak self, weak name] look in
+                guard let look else { return }
+                self?.backgroundColor = look.page
+                name?.textColor = look.ink
+            }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
