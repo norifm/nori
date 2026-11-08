@@ -1989,7 +1989,7 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             ];
             put(f, Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner });
         }
-        Overlay::Account { kind, user, pasting, text: typed, flow, window_failed } => {
+        Overlay::Account { kind, ways, user, pasting, text: typed, flow, window_failed } => {
             let ended = flow.shown == (nori_core::providers::flow::SignInShown::Offered { ended: true });
             let busy = flow.busy();
             let w = 76.min(area.width);
@@ -2000,6 +2000,17 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             if !user.is_empty() {
                 said.push((format!("Signed in as {user}"), Style::default().fg(t.ink)));
                 said.push((crate::text::SIGNED_IN_KEYS.into(), t.dim()));
+            } else if let nori_core::providers::flow::SignInShown::Code { code, expired } = &flow.shown {
+                match code {
+                    None => said.push((crate::text::CODE_ASKING.into(), t.dim())),
+                    Some(c) => {
+                        said.push((crate::text::code_how(&name), Style::default().fg(t.ink)));
+                        said.push((c.url.clone(), Style::default().fg(t.ink)));
+                        said.push((c.code.clone(), bold().fg(t.ink)));
+                        said.push(((if *expired { crate::text::CODE_EXPIRED } else { crate::text::CODE_WAITING }).into(), t.dim()));
+                    }
+                }
+                said.push(((if flow.checks_code() { crate::text::CODE_KEYS } else { crate::text::CODE_AGAIN_KEYS }).into(), t.dim()));
             } else if *pasting {
                 said.push((crate::text::PASTE_COOKIES.into(), t.dim()));
                 // Cookies are a secret: their length shows, not them.
@@ -2008,7 +2019,14 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             } else {
                 let why = if busy { crate::text::SIGNING_IN.into() } else if ended { crate::text::signed_out_again(&name) } else { crate::text::SIGN_IN_WHY.into() };
                 said.push((why, Style::default().fg(t.ink)));
-                said.push(((if ended { crate::text::SIGN_IN_KEYS_ENDED } else { crate::text::SIGN_IN_KEYS }).into(), t.dim()));
+                let code = ways.first() == Some(&nori_core::providers::SignIn::Code);
+                let keys = match (code, ended) {
+                    (true, true) => crate::text::SIGN_IN_CODE_KEYS_ENDED,
+                    (true, false) => crate::text::SIGN_IN_CODE_KEYS,
+                    (false, true) => crate::text::SIGN_IN_KEYS_ENDED,
+                    (false, false) => crate::text::SIGN_IN_KEYS,
+                };
+                said.push((keys.into(), t.dim()));
             }
             let error = match &flow.attempt {
                 _ if *window_failed => Some(crate::text::SIGN_IN_WINDOW_FAILED.to_string()),
