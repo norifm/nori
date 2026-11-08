@@ -10,6 +10,7 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
     UITableViewDragDelegate, UITableViewDropDelegate {
     private let table = UITableView(frame: .zero, style: .grouped)
     private let name = UILabel()
+    private let edge = UnderEdge(Theme.player.page)
     /// The song playing tapped: back to the artwork.
     private let showPlayer: () -> Void
     /// The list rests on the song playing, so the next one comes to the top too.
@@ -93,6 +94,8 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
             table.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             table.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+        edge.pin(in: view, under: table.topAnchor)
+        edge.follow(table)
         undoBar.backgroundColor = Theme.Card.track
         undoBar.layer.cornerRadius = 10
         undoBar.isHidden = true
@@ -130,6 +133,7 @@ final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UI
 
     func repaint() {
         name.textColor = Theme.Card.label
+        edge.paint(Theme.player.page)
         paintToggles()
         table.reloadData()
     }

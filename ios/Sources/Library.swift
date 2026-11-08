@@ -17,12 +17,7 @@ final class LibraryPage: UIViewController {
     private var shown: PageController?
     /// The title, the chips and the list's bar, on the page's paper; the rows pass under it.
     private var pinned: UIView?
-    /// The rows' soft end under the head, there once they have started going under it (Android's
-    /// `fadesUnderTitle`).
     private var edge: UIView?
-    private var scrolling: NSKeyValueObservation?
-    private static let edgeFade: CGFloat = 64
-    private static let edgeHeight: CGFloat = 18
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -66,15 +61,12 @@ final class LibraryPage: UIViewController {
         plate.addSubview(head)
         view.addSubview(plate)
         pinned = plate
-        let soft = GradientView(colours: [Theme.background, Theme.background.withAlphaComponent(0)])
-        soft.frame = CGRect(x: 0, y: plate.frame.maxY, width: view.bounds.width, height: LibraryPage.edgeHeight)
+        let soft = UnderEdge(Theme.background)
+        soft.frame = CGRect(x: 0, y: plate.frame.maxY, width: view.bounds.width, height: UnderEdge.height)
         soft.autoresizingMask = .flexibleWidth
-        soft.alpha = 0
         view.addSubview(soft)
+        soft.follow(page.tableView)
         edge = soft
-        scrolling = page.tableView.observe(\.contentOffset) { [weak soft] table, _ in
-            soft?.alpha = min(1, max(0, table.contentOffset.y + table.adjustedContentInset.top) / LibraryPage.edgeFade)
-        }
         shown = page
     }
 

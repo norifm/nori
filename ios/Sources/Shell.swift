@@ -7,6 +7,9 @@ final class ShellController: UIViewController {
     private(set) var tabs: [UINavigationController] = []
     private(set) var selectedIndex = 0
     let chrome = BottomChrome()
+    /// What the pages hold fading into the page behind the chrome, in the shown page's own paper.
+    private let chromeFade = GradientView(colours: [Theme.background.withAlphaComponent(0), Theme.background])
+    private static let chromeReach: CGFloat = 24
 
     /// The tab shown.
     var current: UINavigationController { tabs[selectedIndex] }
@@ -33,7 +36,9 @@ final class ShellController: UIViewController {
             self?.present(card, animated: true)
         }
         chrome.resized = { [weak self] in self?.view.setNeedsLayout() }
+        view.addSubview(chromeFade)
         view.addSubview(chrome)
+        NotificationCenter.default.addObserver(self, selector: #selector(paperChanged(_:)), name: .noriPaper, object: nil)
         lay()
         select(0)
         NotificationCenter.default.addObserver(self, selector: #selector(lay), name: .noriOpened, object: nil)
@@ -62,8 +67,9 @@ final class ShellController: UIViewController {
         addChild(nav)
         nav.view.frame = view.bounds
         nav.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        view.insertSubview(nav.view, belowSubview: chrome)
+        view.insertSubview(nav.view, belowSubview: chromeFade)
         nav.didMove(toParent: self)
+        (nav as? NavController)?.tellPaper()
         chrome.tabs.chosen = i
         setNeedsStatusBarAppearanceUpdate()
     }
@@ -75,8 +81,16 @@ final class ShellController: UIViewController {
         let height = chrome.height
         chrome.frame = CGRect(x: BottomChrome.side, y: view.bounds.height - BottomChrome.below - height,
                               width: view.bounds.width - BottomChrome.side * 2, height: height)
+        let reach = ShellController.chromeReach
+        chromeFade.frame = CGRect(x: 0, y: chrome.frame.minY - reach, width: view.bounds.width, height: view.bounds.height - chrome.frame.minY + reach)
+        (chromeFade.layer as? CAGradientLayer)?.locations = [0, NSNumber(value: Double(reach / max(1, chromeFade.frame.height)))]
         // The pages end above the chrome; what they hold scrolls under it.
         for nav in tabs { nav.additionalSafeAreaInsets.bottom = height + BottomChrome.below }
+    }
+
+    @objc private func paperChanged(_ note: Notification) {
+        guard let page = note.object as? UIColor else { return }
+        (chromeFade.layer as? CAGradientLayer)?.colors = [page.withAlphaComponent(0).cgColor, page.cgColor]
     }
 
     func openPlayer() {
@@ -120,14 +134,32 @@ final class ShellController: UIViewController {
     }
 }
 
+extension Notification.Name {
+    static let noriPaper = Notification.Name("noriPaper")
+}
+
 /// A tab's stack: the status bar is the theme's, but over a page's artwork that page's own.
-final class NavController: UINavigationController, UIGestureRecognizerDelegate {
+final class NavController: UINavigationController, UIGestureRecognizerDelegate, UINavigationControllerDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         // Every page carries its own name (`PageTitle` or a hero) and is left with the edge swipe, as on
         // Android; UIKit's own delegate turns that swipe off while the bar is hidden.
         setNavigationBarHidden(true, animated: false)
         interactivePopGestureRecognizer?.delegate = self
+        delegate = self
+    }
+
+    func navigationController(_ navigationController: UINavigationController, willShow viewController: UIViewController, animated: Bool) {
+        tell(viewController)
+    }
+
+    /// Says what paper the page on top wears, for the fade behind the chrome.
+    func tellPaper() {
+        if let top = topViewController { tell(top) }
+    }
+
+    private func tell(_ page: UIViewController) {
+        NotificationCenter.default.post(name: .noriPaper, object: (page as? PageController)?.look.page ?? Theme.background)
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle { Theme.statusBar }
@@ -626,6 +658,7 @@ func dress(_ table: UITableView) {
 /// A list with no bar: its name over the rows, as Android's, the page's paper under the status bar.
 class TablePage: UITableViewController {
     private let statusPlate = UIView()
+    private let statusEdge = UnderEdge(Theme.background)
     /// At the end of the name: what acts on the page, or a spinner while it works.
     var nameEnd: [UIView] = [] { didSet { writeHead() } }
     /// Under the name: an intro, a search field, an offer.
@@ -638,7 +671,10 @@ class TablePage: UITableViewController {
         super.viewDidLoad()
         statusPlate.backgroundColor = Theme.background
         statusPlate.layer.zPosition = 1
+        statusEdge.layer.zPosition = 1
         view.addSubview(statusPlate)
+        view.addSubview(statusEdge)
+        statusEdge.follow(tableView)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -653,6 +689,8 @@ class TablePage: UITableViewController {
     private func placeStatusPlate() {
         statusPlate.isHidden = !ownsStatusBar
         statusPlate.frame = CGRect(x: 0, y: tableView.contentOffset.y, width: tableView.bounds.width, height: UIApplication.shared.statusBarFrame.height)
+        statusEdge.isHidden = statusPlate.isHidden
+        statusEdge.frame = CGRect(x: 0, y: statusPlate.frame.maxY, width: statusPlate.frame.width, height: UnderEdge.height)
     }
 
     func writeHead() {
@@ -676,6 +714,7 @@ class TablePage: UITableViewController {
 class CardsPage: UIViewController {
     let column = UIStackView()
     private let scroll = UIScrollView()
+    private let edge = UnderEdge(Theme.background)
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -696,6 +735,8 @@ class CardsPage: UIViewController {
             column.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -Space.section),
             column.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
         ])
+        edge.pin(in: view, under: view.safeAreaLayoutGuide.topAnchor)
+        edge.follow(scroll)
     }
 
     /// The column's contents under the page's name, again.
