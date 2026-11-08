@@ -248,6 +248,7 @@ class PageController: TablePage {
         guard l != look else { return }
         look = l
         tableView.backgroundColor = l.page
+        (navigationController as? NavController)?.tellPaper()
         if let a = answer { hero(a) }
         tableView.reloadData()
     }

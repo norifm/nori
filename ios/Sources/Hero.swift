@@ -187,7 +187,7 @@ final class HeroHeader: UIView {
     @objc private func shuffleTapped() { shuffle?() }
 }
 
-final class GradientView: UIView {
+class GradientView: UIView {
     override class var layerClass: AnyClass { CAGradientLayer.self }
 
     init(colours: [UIColor], at stops: [CGFloat]? = nil) {
@@ -199,4 +199,41 @@ final class GradientView: UIView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+}
+
+/// The soft end of what scrolls under something fixed, there once it has started going under (Android's
+/// `fadesUnderTitle`): the page's color thinning out below the fixed thing.
+final class UnderEdge: GradientView {
+    static let height: CGFloat = 18
+    private static let reach: CGFloat = 64
+    private var watch: NSKeyValueObservation?
+
+    init(_ page: UIColor) {
+        super.init(colours: [page, page.withAlphaComponent(0)])
+        alpha = 0
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func paint(_ page: UIColor) {
+        (layer as? CAGradientLayer)?.colors = [page.cgColor, page.withAlphaComponent(0).cgColor]
+    }
+
+    func follow(_ scroll: UIScrollView) {
+        watch = scroll.observe(\.contentOffset, options: .initial) { [weak self] s, _ in
+            self?.alpha = min(1, max(0, s.contentOffset.y + s.adjustedContentInset.top) / UnderEdge.reach)
+        }
+    }
+
+    /// Laid across `host`, its top on `anchor`.
+    func pin(in host: UIView, under anchor: NSLayoutYAxisAnchor) {
+        translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(self)
+        NSLayoutConstraint.activate([
+            leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            topAnchor.constraint(equalTo: anchor),
+            heightAnchor.constraint(equalToConstant: UnderEdge.height),
+        ])
+    }
 }

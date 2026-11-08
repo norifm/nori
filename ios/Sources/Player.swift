@@ -133,6 +133,7 @@ final class PlayerCard: UIViewController {
 
         panelArea.isHidden = true
         panelFoot.translatesAutoresizingMaskIntoConstraints = false
+        panelArea.addSubview(panelFoot)
         for v in [cover, panelArea, column, grabber] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
@@ -169,6 +170,10 @@ final class PlayerCard: UIViewController {
             panelArea.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             panelArea.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             panelArea.bottomAnchor.constraint(equalTo: column.topAnchor, constant: -6),
+            panelFoot.leadingAnchor.constraint(equalTo: panelArea.leadingAnchor),
+            panelFoot.trailingAnchor.constraint(equalTo: panelArea.trailingAnchor),
+            panelFoot.bottomAnchor.constraint(equalTo: panelArea.bottomAnchor),
+            panelFoot.heightAnchor.constraint(equalToConstant: 32),
             column.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Space.gutter),
             column.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Space.gutter + 8),
             column.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -6),
@@ -405,51 +410,53 @@ final class PlayerCard: UIViewController {
 
     @objc private func queueTapped() { show(panel == .queue ? .art : .queue) }
 
-    /// `next` in the artwork's place; the artwork again is the panel put away.
+    /// `next` in the artwork's place; the artwork again is the panel put away. Only what changes fades, over
+    /// the page's own color, so nothing shows through on the way.
     private func show(_ next: Panel) {
-        let swap = {
-            self.shown?.willMove(toParent: nil)
-            self.shown?.view.removeFromSuperview()
-            self.shown?.removeFromParent()
-            self.shown = nil
-            self.panelFoot.removeFromSuperview()
-            let back = { [weak self] in self?.show(.art) ?? () }
-            var child: (UIViewController & PlayerPanel)?
-            switch next {
-            case .art: break
-            case .lyrics:
-                guard let song = Core.shared.now.song else { break }
-                self.lyricsSong = song.id
+        let old = shown
+        var child: (UIViewController & PlayerPanel)?
+        let back = { [weak self] in self?.show(.art) ?? () }
+        switch next {
+        case .art: break
+        case .lyrics:
+            if let song = Core.shared.now.song {
+                lyricsSong = song.id
                 child = LyricsPanel(song: song, back: back) { [weak self] in self?.moreTapped() }
-            case .queue:
-                child = QueuePanel(showPlayer: back)
             }
-            self.panel = child == nil ? .art : next
-            if let child {
-                self.addChild(child)
-                child.view.frame = self.panelArea.bounds
-                child.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-                self.panelArea.addSubview(child.view)
-                child.didMove(toParent: self)
-                self.panelArea.addSubview(self.panelFoot)
-                NSLayoutConstraint.activate([
-                    self.panelFoot.leadingAnchor.constraint(equalTo: self.panelArea.leadingAnchor),
-                    self.panelFoot.trailingAnchor.constraint(equalTo: self.panelArea.trailingAnchor),
-                    self.panelFoot.bottomAnchor.constraint(equalTo: self.panelArea.bottomAnchor),
-                    self.panelFoot.heightAnchor.constraint(equalToConstant: 32),
-                ])
-            }
-            self.shown = child
-            self.panelArea.isHidden = self.panel == .art
-            self.cover.isHidden = self.panel != .art
-            self.songRow.isHidden = self.panel == .lyrics
-            self.grabber.tintColor = self.panel == .art ? .white : Theme.player.quiet
-            self.lyrics.lit = self.panel == .lyrics
-            self.queue.lit = self.panel == .queue
-            self.setNeedsStatusBarAppearanceUpdate()
+        case .queue:
+            child = QueuePanel(showPlayer: back)
         }
-        if view.window == nil || Motion.plain { return swap() }
-        UIView.transition(with: view, duration: 0.2, options: [.transitionCrossDissolve, .allowUserInteraction], animations: swap)
+        panel = child == nil ? .art : next
+        shown = child
+        old?.willMove(toParent: nil)
+        cover.isHidden = false
+        panelArea.isHidden = false
+        if let child {
+            addChild(child)
+            child.view.frame = panelArea.bounds
+            child.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            child.view.alpha = 0
+            panelArea.insertSubview(child.view, belowSubview: panelFoot)
+            child.didMove(toParent: self)
+        }
+        let art = panel == .art
+        grabber.tintColor = art ? .white : Theme.player.quiet
+        lyrics.lit = panel == .lyrics
+        queue.lit = panel == .queue
+        setNeedsStatusBarAppearanceUpdate()
+        let time = view.window == nil || Motion.plain ? 0 : 0.22
+        UIView.animate(withDuration: time, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+            old?.view.alpha = 0
+            child?.view.alpha = 1
+            self.cover.alpha = art ? 1 : 0
+            self.songRow.isHidden = self.panel == .lyrics
+            self.view.layoutIfNeeded()
+        }, completion: { _ in
+            old?.view.removeFromSuperview()
+            old?.removeFromParent()
+            self.cover.isHidden = self.panel != .art
+            self.panelArea.isHidden = self.panel == .art
+        })
     }
 
     /// The output button: nori's devices with this iPod's outputs among them, or just the outputs with
@@ -523,6 +530,7 @@ final class LyricsPanel: UIViewController, PlayerPanel {
     private let artist = label(Fonts.font(13, .regular, .footnote), Theme.Card.secondary)
     private let seal = GlyphButton(Glyph.sealSmall, Say.favorite, side: 44)
     private let more = GlyphButton(Glyph.moreSmall, Say.more, side: 44)
+    private let edge = UnderEdge(Theme.player.page)
 
     init(song: Item, back: @escaping () -> Void, more: @escaping () -> Void) {
         self.song = song
@@ -569,6 +577,8 @@ final class LyricsPanel: UIViewController, PlayerPanel {
             lines.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         lines.didMove(toParent: self)
+        edge.pin(in: view, under: lines.view.topAnchor)
+        edge.follow(lines.tableView)
         NotificationCenter.default.addObserver(self, selector: #selector(paintSeal), name: .noriFavorites, object: nil)
         repaint()
     }
@@ -578,6 +588,7 @@ final class LyricsPanel: UIViewController, PlayerPanel {
         artist.textColor = Theme.Card.secondary
         seal.look = Theme.player
         more.look = Theme.player
+        edge.paint(Theme.player.page)
         paintSeal()
         lines.repaint()
     }
@@ -783,6 +794,9 @@ final class LyricsCard: UITableViewController {
     private var pacer = Pacer.still
     private var heights: [CGFloat] = []
     private let unsung = CGFloat(nori_ios_lyric_unsung())
+    /// The panel's soft foot, where a line is not read.
+    private static let footFade: CGFloat = 32
+    private var measuredWidth: CGFloat = 0
 
     init(song: String) {
         self.song = song
@@ -800,6 +814,8 @@ final class LyricsCard: UITableViewController {
         super.viewDidLoad()
         tableView.backgroundColor = .clear
         tableView.separatorStyle = .none
+        // Exact heights: an estimate puts a long line in the wrong place when the list scrolls to it.
+        tableView.estimatedRowHeight = 0
         tableView.contentInset = UIEdgeInsets(top: 8, left: 0, bottom: 200, right: 0)
         tableView.register(LyricCell.self, forCellReuseIdentifier: LyricCell.id)
         let center = NotificationCenter.default
@@ -855,7 +871,13 @@ final class LyricsCard: UITableViewController {
         tick(force: true)
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        if tableView.bounds.width != measuredWidth { reloadLines() }
+    }
+
     private func reloadLines() {
+        measuredWidth = tableView.bounds.width
         let width = max(1, tableView.bounds.width) - LyricCell.inset.left - LyricCell.inset.right
         heights = lines.map { LyricLineView.height($0, width: width) + LyricCell.inset.top + LyricCell.inset.bottom }
         tableView.reloadData()
@@ -917,9 +939,15 @@ final class LyricsCard: UITableViewController {
                 self.paint(cell.line, row: row)
             })
         }
-        if active >= 0, active < lines.count {
-            tableView.scrollToRow(at: IndexPath(row: active, section: 0), at: .middle, animated: glide > 0)
-        }
+        if active >= 0, active < lines.count { bring(active, animated: glide > 0) }
+    }
+
+    /// The line in the middle of what shows, or from the top when it is taller than that: never cut.
+    private func bring(_ row: Int, animated: Bool) {
+        let rect = tableView.rectForRow(at: IndexPath(row: row, section: 0))
+        let room = tableView.bounds.height - LyricsCard.footFade
+        let y = rect.minY - max(UnderEdge.height, (room - rect.height) / 2)
+        tableView.setContentOffset(CGPoint(x: 0, y: max(-tableView.adjustedContentInset.top, y)), animated: animated)
     }
 
     private func paint(_ line: LyricLineView, row: Int) {

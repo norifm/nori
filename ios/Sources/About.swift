@@ -67,6 +67,7 @@ final class CreditsPage: TablePage {
 
 /// One licence, as text.
 final class LicencePage: UIViewController {
+    private let edge = UnderEdge(Theme.background)
     private let text: String
 
     init(title: String, text: String) {
@@ -87,7 +88,8 @@ final class LicencePage: UIViewController {
         view.font = Fonts.digits(13)
         view.textContainerInset = UIEdgeInsets(top: 16, left: 12, bottom: 16, right: 12)
         view.text = text
-        let column = UIStackView(arrangedSubviews: [PageTitle(title ?? ""), view])
+        let name = PageTitle(title ?? "")
+        let column = UIStackView(arrangedSubviews: [name, view])
         column.axis = .vertical
         column.translatesAutoresizingMaskIntoConstraints = false
         self.view.addSubview(column)
@@ -97,5 +99,7 @@ final class LicencePage: UIViewController {
             column.topAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.topAnchor),
             column.bottomAnchor.constraint(equalTo: self.view.bottomAnchor),
         ])
+        edge.pin(in: self.view, under: name.bottomAnchor)
+        edge.follow(view)
     }
 }

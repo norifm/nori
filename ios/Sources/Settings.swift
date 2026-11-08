@@ -472,6 +472,9 @@ final class EqualizerPage: UIViewController {
             stack.bottomAnchor.constraint(equalTo: scroll.bottomAnchor, constant: -16),
             stack.widthAnchor.constraint(equalTo: scroll.widthAnchor, constant: -Space.gutter * 2),
         ])
+        let edge = UnderEdge(Theme.background)
+        edge.pin(in: view, under: name.bottomAnchor)
+        edge.follow(scroll)
         guard takenJSON(nori_ios_equalizer()) is [String: Any] else {
             stack.addArrangedSubview(EmptyState(title: Say.noServer, detail: Say.noServerDetail))
             toggle.isEnabled = false

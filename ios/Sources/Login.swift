@@ -28,6 +28,7 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
     private let connect = UIButton(type: .system)
     private let status = UILabel()
     private let spinner = UIActivityIndicatorView()
+    private let edge = UnderEdge(Theme.background)
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -92,6 +93,8 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         view.addSubview(name)
         view.addSubview(scroll)
         scroll.addSubview(stack)
+        edge.pin(in: view, under: name.bottomAnchor)
+        edge.follow(scroll)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboard(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
