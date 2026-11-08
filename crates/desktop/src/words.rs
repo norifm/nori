@@ -885,6 +885,32 @@ pub fn add_failure(f: &nori_core::providers::flow::AddFailure) -> &str {
     }
 }
 
+/// Why a code did not sign the account in.
+pub fn code_failed(r: &nori_core::providers::SignInResult) -> String {
+    use nori_core::providers::SignInResult as R;
+    match r {
+        R::Unreachable { reason } => format!("Couldn’t be reached ({reason})."),
+        _ => "It wasn’t allowed. Get a new code and try again.".into(),
+    }
+}
+
+/// The account sheet's code step, for the service called `service`.
+pub fn code_words(service: &str) -> crate::CodeWords {
+    crate::CodeWords {
+        with_code: "Sign in with a code".into(),
+        window_instead: "Sign in in a window instead".into(),
+        how: format!("Open the page in a browser where you’re signed in to {service}, check the code, and allow nori.").into(),
+        asking: "Getting a code…".into(),
+        open: format!("Open {service}").into(),
+        copy: "Copy code".into(),
+        waiting: "Waiting for you to allow it…".into(),
+        expired: "This code expired.".into(),
+        renew: "Get a new code".into(),
+    }
+}
+
+pub const CODE_COPIED: &str = "Code copied";
+
 pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window could not open here. Paste cookies from a browser instead.";
 
 /// A song's title as shown: "Untitled" for one that has none (some uploads have a blank one).
