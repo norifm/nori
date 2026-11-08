@@ -2,7 +2,7 @@ import UIKit
 
 /// Settings → Servers: the saved ones with their marks, the active one ticked. A tap switches to it at
 /// once; a tap on its mark chooses its icon; a swipe forgets it; the last row adds one.
-final class ServersPage: UITableViewController {
+final class ServersPage: TablePage {
     fileprivate struct Saved {
         let id: String
         let label: String
@@ -22,7 +22,6 @@ final class ServersPage: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = Say.servers
-        navigationItem.largeTitleDisplayMode = .never
         dress(tableView)
     }
 
@@ -124,14 +123,14 @@ final class ServersPage: UITableViewController {
         switching = true
         let spinner = UIActivityIndicatorView(style: Theme.dark ? .white : .gray)
         spinner.startAnimating()
-        navigationItem.rightBarButtonItem = UIBarButtonItem(customView: spinner)
+        nameEnd = [spinner]
         DispatchQueue.global(qos: .userInitiated).async {
             change()
             let left = (dataDirectory().path.withCString { takenJSON(nori_ios_servers($0)) } as? [Any])?.count ?? 0
             let failed = Core.reopen()
             DispatchQueue.main.async {
                 self.switching = false
-                self.navigationItem.rightBarButtonItem = nil
+                self.nameEnd = []
                 Core.shared.opened()
                 if let failed, left > 0 { Toast.show(failed) }
                 self.load()
@@ -185,7 +184,7 @@ enum ProfileMark {
 
 /// A profile's icon: every one its circle can show, as it would show it, the chosen one ticked. A tap
 /// keeps it and goes back.
-final class ProfileIconPage: UITableViewController {
+final class ProfileIconPage: TablePage {
     private let profile: ServersPage.Saved
     private var chosen: ProfileIcon
     private let icons = ProfileIcon.all
@@ -201,7 +200,6 @@ final class ProfileIconPage: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = Say.profileIcon
-        navigationItem.largeTitleDisplayMode = .never
         dress(tableView)
     }
 

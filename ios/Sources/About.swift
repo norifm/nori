@@ -2,7 +2,7 @@ import UIKit
 
 /// Settings → Licenses: the core's credits (`credits::core_credits`, `data_credits`), each opening its
 /// licence text from the bundle.
-final class CreditsPage: UITableViewController {
+final class CreditsPage: TablePage {
     private struct Credit {
         let name: String
         let what: String
@@ -19,7 +19,6 @@ final class CreditsPage: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = Say.licences
-        navigationItem.largeTitleDisplayMode = .never
         dress(tableView)
         tableView.estimatedRowHeight = 60
         let d = takenJSON(nori_ios_credits()) as? [String: Any] ?? [:]
@@ -80,15 +79,23 @@ final class LicencePage: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        navigationItem.largeTitleDisplayMode = .never
-        let view = UITextView(frame: self.view.bounds)
-        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        self.view.backgroundColor = Theme.background
+        let view = UITextView()
         view.isEditable = false
         view.backgroundColor = Theme.background
         view.textColor = Theme.label
         view.font = Fonts.digits(13)
         view.textContainerInset = UIEdgeInsets(top: 16, left: 12, bottom: 16, right: 12)
         view.text = text
-        self.view.addSubview(view)
+        let column = UIStackView(arrangedSubviews: [PageTitle(title ?? ""), view])
+        column.axis = .vertical
+        column.translatesAutoresizingMaskIntoConstraints = false
+        self.view.addSubview(column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: self.view.leadingAnchor),
+            column.trailingAnchor.constraint(equalTo: self.view.trailingAnchor),
+            column.topAnchor.constraint(equalTo: self.view.safeAreaLayoutGuide.topAnchor),
+            column.bottomAnchor.constraint(equalTo: self.view.bottomAnchor),
+        ])
     }
 }

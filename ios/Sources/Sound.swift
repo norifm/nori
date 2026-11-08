@@ -46,21 +46,20 @@ struct Output {
     var label: String { Say.outputLabel(port: port, name: name) }
 }
 
-/// A spinner in the bar while a request runs, `after` there once it is done; the table takes no taps
-/// meanwhile.
-private func busy(_ page: UITableViewController, _ on: Bool, after: UIBarButtonItem? = nil) {
+/// A spinner beside the page's name while a request runs; the table takes no taps meanwhile.
+private func busy(_ page: TablePage, _ on: Bool) {
     page.tableView.isUserInteractionEnabled = !on
     guard on else {
-        page.navigationItem.rightBarButtonItem = after
+        page.nameEnd = []
         return
     }
     let spinner = UIActivityIndicatorView(style: Theme.dark ? .white : .gray)
     spinner.startAnimating()
-    page.navigationItem.rightBarButtonItem = UIBarButtonItem(customView: spinner)
+    page.nameEnd = [spinner]
 }
 
 /// Settings → Sound: each output with the sound it gets, and the AutoEQ headphone presets.
-final class SoundPage: UITableViewController {
+final class SoundPage: TablePage {
     private var outputs: [Output] = []
 
     init() { super.init(style: .grouped) }
@@ -69,7 +68,6 @@ final class SoundPage: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = Say.sound
-        navigationItem.largeTitleDisplayMode = .never
         dress(tableView)
         tableView.estimatedRowHeight = 52
         // Headphones in or out while the list is open: "Playing now" moves with them.
@@ -143,7 +141,7 @@ final class SoundPage: UITableViewController {
 
 /// One output's sound: automatic, flat, no processing, left as is, a saved profile or an AutoEQ curve.
 /// A choice made goes back to the list.
-final class DevicePage: UITableViewController {
+final class DevicePage: TablePage {
     private let output: Output
     private var profiles: [String] = []
     private var curves: [Curve] = []
@@ -167,7 +165,6 @@ final class DevicePage: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = output.label
-        navigationItem.largeTitleDisplayMode = .never
         dress(tableView)
         tableView.estimatedRowHeight = 52
         let intro = UILabel()
@@ -178,10 +175,11 @@ final class DevicePage: UITableViewController {
         intro.textColor = Theme.secondary
         let width = UIScreen.main.bounds.width - 32
         let height = intro.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-        let head = UIView(frame: CGRect(x: 0, y: 0, width: width + 32, height: height + 24))
+        let head = UIView()
+        head.heightAnchor.constraint(equalToConstant: height + 24).isActive = true
         intro.frame = CGRect(x: 16, y: 16, width: width, height: height)
         head.addSubview(intro)
-        tableView.tableHeaderView = head
+        underName = head
         load()
     }
 
@@ -303,14 +301,15 @@ final class DevicePage: UITableViewController {
 
 /// The AutoEQ list: search it, and tap a curve to make it the current sound (`output` nil, as Android's
 /// browser) or the sound of `output`.
-final class AutoEqPage: UITableViewController, UISearchBarDelegate {
+final class AutoEqPage: TablePage, UISearchBarDelegate {
     private let output: Output?
     private let search = UISearchBar()
     private var count = -1
     private var short = true
     private var hits: [Curve] = []
     private var asked = ""
-    private var refresh: UIBarButtonItem?
+    private var refresh: Chip?
+    private var searchShown = false
 
     init(for output: Output?) {
         self.output = output
@@ -322,7 +321,6 @@ final class AutoEqPage: UITableViewController, UISearchBarDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = Say.headphonePresets
-        navigationItem.largeTitleDisplayMode = .never
         dress(tableView)
         tableView.estimatedRowHeight = 52
         tableView.keyboardDismissMode = .onDrag
@@ -366,10 +364,20 @@ final class AutoEqPage: UITableViewController, UISearchBarDelegate {
     private func paint() {
         let listed = count > 0
         search.placeholder = Say.autoeqSearch(count)
-        tableView.tableHeaderView = listed ? search : nil
-        if listed && output == nil && refresh == nil {
-            refresh = UIBarButtonItem(title: Say.refreshList, style: .plain, target: self, action: #selector(download))
-            navigationItem.rightBarButtonItem = refresh
+        // Only when it changes: moving the field would take the keyboard from it as results come in.
+        if listed != searchShown {
+            searchShown = listed
+            if output == nil && refresh == nil {
+                let chip = Chip(Say.refreshList)
+                chip.setContentHuggingPriority(.required, for: .horizontal)
+                chip.addTarget(self, action: #selector(download), for: .touchUpInside)
+                refresh = chip
+            }
+            let row = UIStackView(arrangedSubviews: [search] + (refresh.map { [$0] } ?? []))
+            row.alignment = .center
+            row.isLayoutMarginsRelativeArrangement = true
+            row.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: Space.tight)
+            underName = listed ? row : nil
         }
         tableView.reloadData()
     }
@@ -379,7 +387,7 @@ final class AutoEqPage: UITableViewController, UISearchBarDelegate {
         DispatchQueue.global(qos: .userInitiated).async {
             let n = nori_ios_autoeq_update()
             DispatchQueue.main.async {
-                busy(self, false, after: self.refresh)
+                busy(self, false)
                 if n < 0 { Toast.show(Say.failed) }
                 self.query(self.asked)
             }
@@ -431,7 +439,7 @@ final class AutoEqPage: UITableViewController, UISearchBarDelegate {
                 return key.withCString { nori_ios_device_adopt($0, f[0], f[1], f[2], f[3], f[4]) }
             }
             DispatchQueue.main.async {
-                busy(self, false, after: self.refresh)
+                busy(self, false)
                 switch kept {
                 case 1 where key == nil:
                     Toast.show(Say.autoeqApplied(c.name))

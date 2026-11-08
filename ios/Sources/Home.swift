@@ -4,45 +4,14 @@ import UIKit
 /// device or app left on the server, offered to carry on here (the core's `queue_offer`).
 final class HomePage: PageController {
     private var card: ContinueCard?
-    /// The page's paper under the status bar, which the shelves scroll beneath.
-    private let statusPlate = UIView()
 
-    override var barless: Bool { true }
-
-    init() {
-        super.init(kind: NORI_PAGE_HOME, title: Say.home)
-        top = { PageTitle(Say.home) }
-    }
+    init() { super.init(kind: NORI_PAGE_HOME, title: Say.home) }
     required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        statusPlate.backgroundColor = Theme.background
-        statusPlate.layer.zPosition = 1
-        view.addSubview(statusPlate)
         NotificationCenter.default.addObserver(self, selector: #selector(lookForOffer), name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(stands), name: .noriNow, object: nil)
-    }
-
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        placeStatusPlate()
-    }
-
-    override func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        super.scrollViewDidScroll(scrollView)
-        placeStatusPlate()
-    }
-
-    private func placeStatusPlate() {
-        statusPlate.frame = CGRect(x: 0, y: tableView.contentOffset.y, width: tableView.bounds.width, height: UIApplication.shared.statusBarFrame.height)
-    }
-
-    /// The page's name, and under it the offer while there is one.
-    private func head(_ offer: ContinueCard?) {
-        let column = UIStackView(arrangedSubviews: [PageTitle(Say.home)] + (offer.map { [$0] } ?? []))
-        column.axis = .vertical
-        tableView.tableHeaderView = sized(column)
     }
 
     /// Each time the page comes into sight; a jam guest's Home is the host's, and the core offers nothing.
@@ -66,7 +35,7 @@ final class HomePage: PageController {
         card = c
         c.done = { [weak self] take in self?.close(take: take) }
         c.heightAnchor.constraint(equalToConstant: ContinueCard.height + 16).isActive = true
-        head(c)
+        underName = c
     }
 
     /// Taken or turned down: the card goes, and its room folds away; taken, the queue starts once it has.
@@ -78,7 +47,7 @@ final class HomePage: PageController {
             c.transform = CGAffineTransform(scaleX: 0.94, y: 0.94)
         }, completion: { _ in
             self.tableView.beginUpdates()
-            self.head(nil)
+            self.underName = nil
             self.tableView.endUpdates()
             nori_ios_queue_offer_done(take ? 1 : 0)
         })
@@ -88,7 +57,7 @@ final class HomePage: PageController {
     @objc private func stands() {
         guard card != nil, nori_ios_queue_offer_stands() == 0 else { return }
         card = nil
-        head(nil)
+        underName = nil
     }
 }
 

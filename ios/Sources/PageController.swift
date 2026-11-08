@@ -2,7 +2,7 @@ import UIKit
 
 /// Any page the library reads: a list, shelves, a grid, or a collection under its hero; or, made with
 /// `given`, sections already in hand (a shelf opened in full).
-class PageController: UITableViewController {
+class PageController: TablePage {
     let kind: Int32
     /// What `kind` reads (`nori_ios_read`); the album grid changes it to filter its albums.
     var arg: String
@@ -66,16 +66,9 @@ class PageController: UITableViewController {
         tableView.estimatedSectionFooterHeight = 0
         tableView.tableHeaderView = PageController.noHeader
         tableView.tableFooterView = UIView()
-        if navigationController?.viewControllers.first !== self {
-            navigationItem.largeTitleDisplayMode = .never
-        }
-        // A page under its hero carries its name there; the bar above is empty and see-through.
-        if headed {
-            navigationItem.title = ""
-            tableView.contentInsetAdjustmentBehavior = .never
-            extendedLayoutIncludesOpaqueBars = true
-        }
-        if let top { tableView.tableHeaderView = sized(top()) }
+        // A page under its hero runs up under the status bar.
+        if headed { tableView.contentInsetAdjustmentBehavior = .never }
+        if let top { tableView.tableHeaderView = sized(top()) } else { writeHead() }
         let refresh = UIRefreshControl()
         refresh.tintColor = Theme.secondary
         refresh.addTarget(self, action: #selector(reload), for: .valueChanged)
@@ -104,16 +97,12 @@ class PageController: UITableViewController {
     /// The table header of a page without one: a grouped table with none leaves a gap at its top.
     static var noHeader: UIView { UIView(frame: CGRect(x: 0, y: 0, width: 0, height: CGFloat.leastNormalMagnitude)) }
 
-    /// `v` sized to the table's width, for a table header.
-    func sized(_ v: UIView) -> UIView {
-        let width = UIScreen.main.bounds.width
-        let size = v.systemLayoutSizeFitting(CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
-                                             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
-        v.frame = CGRect(x: 0, y: 0, width: width, height: size.height)
-        return v
+    /// A hero carries the page's name, and `top` a page's own head.
+    override func writeHead() {
+        if !headed && top == nil { super.writeHead() }
     }
 
-    override var barless: Bool { headed }
+    override var ownsStatusBar: Bool { !headed && super.ownsStatusBar }
 
     private var hero: HeroHeader? { tableView.tableHeaderView as? HeroHeader }
 
@@ -131,6 +120,7 @@ class PageController: UITableViewController {
     }
 
     override func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        super.scrollViewDidScroll(scrollView)
         if let hero { place(hero) }
     }
 

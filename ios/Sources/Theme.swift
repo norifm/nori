@@ -96,20 +96,6 @@ enum Theme {
         static var dim: UIColor { player.veil(0.36) }
         static var track: UIColor { player.veil(0.2) }
     }
-
-    static func apply(nav: UINavigationBar) {
-        nav.barStyle = bar
-        nav.barTintColor = background
-        nav.isTranslucent = false
-        nav.tintColor = label
-        nav.shadowImage = UIImage()
-        nav.setBackgroundImage(UIImage.line(background), for: .default)
-        nav.titleTextAttributes = [.foregroundColor: label, .font: Fonts.font(17, .semibold)]
-        nav.largeTitleTextAttributes = [.foregroundColor: label, .font: Fonts.title(31)]
-        nav.prefersLargeTitles = true
-        nav.backIndicatorImage = Glyph.back
-        nav.backIndicatorTransitionMaskImage = Glyph.back
-    }
 }
 
 /// The colors one page wears: the theme's, or the season's paper dyed with a cover's (`nori_ios_cover_look`).
@@ -181,16 +167,5 @@ extension UIColor {
         getRed(&a.0, green: &a.1, blue: &a.2, alpha: &a.3)
         other.getRed(&b.0, green: &b.1, blue: &b.2, alpha: &b.3)
         return UIColor(red: a.0 + (b.0 - a.0) * share, green: a.1 + (b.1 - a.1) * share, blue: a.2 + (b.2 - a.2) * share, alpha: 1)
-    }
-}
-
-extension UIImage {
-    /// A one-point picture of `color`, for a bar's background and edge.
-    static func line(_ color: UIColor) -> UIImage {
-        UIGraphicsBeginImageContextWithOptions(CGSize(width: 1, height: 1), false, 0)
-        defer { UIGraphicsEndImageContext() }
-        color.setFill()
-        UIRectFill(CGRect(x: 0, y: 0, width: 1, height: 1))
-        return UIGraphicsGetImageFromCurrentImageContext() ?? UIImage()
     }
 }

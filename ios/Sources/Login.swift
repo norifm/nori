@@ -33,7 +33,6 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         super.viewDidLoad()
         view.backgroundColor = Theme.background
         title = Say.addServer
-        navigationItem.largeTitleDisplayMode = .never
 
         field(address, Say.serverUrl, .URL, false)
         field(user, Say.user, .default, false)
@@ -88,13 +87,19 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         scroll.keyboardDismissMode = .onDrag
         scroll.alwaysBounceVertical = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
+        let name = PageTitle(title ?? "")
+        name.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(name)
         view.addSubview(scroll)
         scroll.addSubview(stack)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboard(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            name.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            name.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            name.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scroll.topAnchor.constraint(equalTo: name.bottomAnchor),
             scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: -20),
