@@ -829,7 +829,6 @@ private fun playerTitleMeta(song: dev.nori.music.ffi.model.Song?, radio: String?
 internal fun OutputButton(
     otherDevice: dev.nori.music.ffi.remote.DeviceKind?, otherName: String?, size: androidx.compose.ui.unit.Dp,
     idle: androidx.compose.ui.graphics.ColorProducer, lit: androidx.compose.ui.graphics.ColorProducer,
-    named: Boolean = false,
 ) {
     val settings: SettingsViewModel = viewModel()
     val output by settings.currentOutput.collectAsStateWithLifecycle()
@@ -854,7 +853,7 @@ internal fun OutputButton(
     val open = { if (devices) openDevices() else openOutputPicker(context, output, tell) }
     val color = if (otherDevice != null) lit else idle
     // The device's name beside the glyph, both one target.
-    if (named) Row(
+    Row(
         Modifier.clip(RoundedCornerShape(Radius.pill)).clickable(onClick = open).heightIn(min = 48.dp).padding(horizontal = 14.dp),
         Arrangement.spacedBy(10.dp), Alignment.CenterVertically,
     ) {
@@ -864,8 +863,6 @@ internal fun OutputButton(
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
-    } else IconButton(open) {
-        LookIcon(icon, description, Modifier.size(size), color)
     }
 }
 
@@ -2356,7 +2353,6 @@ private fun OutputRow(vm: PlayerViewModel) {
         else if (!state.jamGuest) OutputButton(
             state.playingOnKind, state.playingOn, 22.dp,
             idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ON) },
-            named = true,
         )
     }
     PluginStatus(vm, state.current?.id)
