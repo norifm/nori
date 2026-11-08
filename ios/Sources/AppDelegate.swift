@@ -17,7 +17,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         let window = UIWindow(frame: UIScreen.main.bounds)
-        window.rootViewController = ShellController()
+        // UIKit asks the shell for its status bar before it would load the view that fills the tabs.
+        let shell = ShellController()
+        shell.loadViewIfNeeded()
+        window.rootViewController = shell
         window.backgroundColor = Theme.background
         window.tintColor = Theme.accent
         window.makeKeyAndVisible()
@@ -45,13 +48,15 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         if Theme.keep(mode: Theme.mode, season: Theme.season) { restyle() }
     }
 
-    /// Builds the interface again in the colours `Theme` now has, on the tab it was on.
-    func restyle() {
+    /// Builds the interface again in the colours `Theme` now has, on the tab it was on, with `page` over
+    /// that tab's first page.
+    func restyle(showing page: UIViewController? = nil) {
         guard let window else { return }
         let tab = (window.rootViewController as? ShellController)?.selectedIndex ?? 0
         let shell = ShellController()
         shell.loadViewIfNeeded()
         shell.select(tab)
+        if let page { shell.current.pushViewController(page, animated: false) }
         window.backgroundColor = Theme.background
         window.tintColor = Theme.accent
         UIView.transition(with: window, duration: Motion.plain ? 0 : 0.25, options: .transitionCrossDissolve, animations: {

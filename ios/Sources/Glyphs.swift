@@ -43,11 +43,7 @@ enum Glyph {
     static let downloadedRow = draw(Iconoir.checkCircle, 15)
     static let downloadingRow = draw(Iconoir.download, 15)
     static let more = draw(Iconoir.moreHoriz, 28)
-    static let moreSmall = draw(Iconoir.moreHoriz, 22)
     static let close = draw(Iconoir.navArrowDown, 28)
-    /// A fold's chevron, shut and open.
-    static let down = draw(Iconoir.navArrowDown, 22)
-    static let up = UIImage(cgImage: down.cgImage!, scale: down.scale, orientation: .down).withRenderingMode(.alwaysTemplate)
     /// The navigation bar's way back.
     static let back = draw(Iconoir.arrowLeft, 22)
     /// A pill's glyph.

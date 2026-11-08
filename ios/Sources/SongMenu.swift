@@ -3,10 +3,11 @@ import UIKit
 /// The song menu the core lays out (`nori_ios_song_menu`) and what each line does. Lines that reach the
 /// server run off the main thread and say how it went.
 enum SongMenu {
-    /// Shows song `index` of list `token`'s menu over `host`. `player`: opened from the player card;
-    /// `message` under the title; `go` opens a page (album, artist).
+    /// Shows song `index` of list `token`'s menu over `host`, laid out as Android's: the song with its seal
+    /// and details, its names opening their pages, its format with the bare glyphs, then the lines in two
+    /// groups. `player`: opened from the player card; `go` opens a page (album, artist).
     static func show(_ song: Item, token: UInt64, index: Int, from host: UIViewController, player: Bool = false,
-                     message: String? = nil, go: @escaping (UIViewController) -> Void) {
+                     go: @escaping (UIViewController) -> Void) {
         let starred: Int32 = Core.shared.isFavorite(song) ? 1 : 0
         DispatchQueue.global(qos: .userInitiated).async {
             let d = takenJSON(nori_ios_song_menu(token, Int32(index), starred, player ? 1 : 0)) as? [String: Any]
@@ -14,11 +15,17 @@ enum SongMenu {
                 guard let d else { return }
                 let items = d["items"] as? [[String: Any]] ?? []
                 let details = d["details"] as? [String: Any] ?? [:]
-                // The song leads the sheet as its row looked: its cover, its artist and album, its format.
-                let line = [[song.subtitle, song.album].filter { !$0.isEmpty }.joined(separator: " · "), message ?? ""]
-                    .filter { !$0.isEmpty }.joined(separator: "\n")
-                let sheet = Sheet(song.title, line, cover: song.cover)
-                for item in items {
+                let sheet = Sheet(song.title, cover: song.cover)
+                let run = { (a: Int, item: [String: Any]) in
+                    sheet.close { act(a, item, song: song, token: token, index: index, details: details, host: host, go: go) }
+                }
+                let at = { (place: Int) in items.filter { $0["place"] as? Int == place } }
+                sheet.titleGlyphs = at(0).map { item in
+                    item["a"] as? Int == 0 ? seal(song, item) : bare(item, quiet: false, run)
+                }
+                sheet.names = names(song, at(1), run)
+                sheet.under = (quality(details), at(2).map { bare($0, quiet: true, run) })
+                for item in at(3) {
                     guard let a = item["a"] as? Int else { continue }
                     sheet.add(Say.songAction(a, item), glyph: glyph(a, item), enabled: item["enabled"] as? Bool ?? true,
                               more: item["more"] as? Bool ?? false) {
@@ -28,6 +35,68 @@ enum SongMenu {
                 sheet.show(from: host)
             }
         }
+    }
+
+    /// A bare glyph of the head that closes the menu and does its line.
+    private static func bare(_ item: [String: Any], quiet: Bool, _ run: @escaping (Int, [String: Any]) -> Void) -> UIView {
+        let a = item["a"] as? Int ?? -1
+        let b = GlyphButton(glyph(a, item), Say.songAction(a, item), quiet: quiet, side: 40)
+        b.isEnabled = item["enabled"] as? Bool ?? true
+        b.addAction { run(a, item) }
+        return b
+    }
+
+    /// The seal beside the title: stays open, turning as the song is marked.
+    private static func seal(_ song: Item, _ item: [String: Any]) -> UIView {
+        var on = item["on"] as? Bool ?? true
+        let b = GlyphButton(glyph(0, ["on": on]), Say.songAction(0, ["on": on]), side: 40)
+        b.lit = !on
+        b.addAction { [weak b] in
+            Core.shared.favorite(song, on)
+            on.toggle()
+            b?.setImage(glyph(0, ["on": on]), for: .normal)
+            b?.lit = !on
+        }
+        return b
+    }
+
+    /// The song's artists, then its album: a name that opens its page in ink, one of the page the menu is
+    /// on quiet.
+    private static func names(_ song: Item, _ items: [[String: Any]], _ run: @escaping (Int, [String: Any]) -> Void) -> [UIView] {
+        let artists = items.filter { $0["a"] as? Int == 8 }
+        let line: UIView
+        if artists.count > 1 {
+            let links = artists.enumerated().map { i, item -> UIView in
+                let name = (item["name"] as? String ?? "") + (i < artists.count - 1 ? "," : "")
+                return link(name, .medium) { run(8, item) }
+            }
+            let row = UIStackView(arrangedSubviews: links + [UIView()])
+            row.spacing = 4
+            line = row
+        } else {
+            line = link(song.subtitle, .medium, artists.first.map { item in { run(8, item) } })
+        }
+        let album = items.first { $0["a"] as? Int == 7 }
+        return [line, link(song.album, .regular, album.map { item in { run(7, item) } })].filter {
+            ($0 as? UIButton)?.title(for: .normal)?.isEmpty != true
+        }
+    }
+
+    /// A name under the title: `open` makes it a link, in ink.
+    private static func link(_ words: String, _ weight: UIFont.Weight, _ open: (() -> Void)? = nil) -> UIView {
+        let b = UIButton(type: .custom)
+        b.setTitle(words, for: .normal)
+        b.setTitleColor(open == nil ? Theme.secondary : Theme.label, for: .normal)
+        b.titleLabel?.font = Fonts.font(13, open == nil ? .regular : weight, .footnote)
+        b.titleLabel?.lineBreakMode = .byTruncatingTail
+        b.contentHorizontalAlignment = .left
+        b.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        if let open { b.addAction(open) } else { b.isUserInteractionEnabled = false }
+        return b
+    }
+
+    private static func quality(_ d: [String: Any]) -> String {
+        Fmt.quality(suffix: d["suffix"] as? String ?? "", kbps: d["kbps"] as? Int ?? 0, hz: d["hz"] as? Int ?? 0, bits: d["bits"] as? Int ?? 0)
     }
 
     /// Each line's glyph, as Android's song menu draws it.

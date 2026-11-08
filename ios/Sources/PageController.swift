@@ -37,7 +37,7 @@ class PageController: UITableViewController {
         self.kind = kind
         self.arg = arg
         given = nil
-        super.init(style: .plain)
+        super.init(style: .grouped)
         self.title = title
     }
 
@@ -46,7 +46,7 @@ class PageController: UITableViewController {
         kind = 0
         arg = ""
         given = sections
-        super.init(style: .plain)
+        super.init(style: .grouped)
         self.title = title
     }
 
@@ -63,6 +63,8 @@ class PageController: UITableViewController {
         tableView.rowHeight = UITableView.automaticDimension
         tableView.sectionHeaderHeight = UITableView.automaticDimension
         tableView.estimatedSectionHeaderHeight = 60
+        tableView.estimatedSectionFooterHeight = 0
+        tableView.tableHeaderView = PageController.noHeader
         tableView.tableFooterView = UIView()
         if navigationController?.viewControllers.first !== self {
             navigationItem.largeTitleDisplayMode = .never
@@ -99,8 +101,11 @@ class PageController: UITableViewController {
         reload()
     }
 
+    /// The table header of a page without one: a grouped table with none leaves a gap at its top.
+    static var noHeader: UIView { UIView(frame: CGRect(x: 0, y: 0, width: 0, height: CGFloat.leastNormalMagnitude)) }
+
     /// `v` sized to the table's width, for a table header.
-    private func sized(_ v: UIView) -> UIView {
+    func sized(_ v: UIView) -> UIView {
         let width = UIScreen.main.bounds.width
         let size = v.systemLayoutSizeFitting(CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
                                              withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
@@ -108,25 +113,13 @@ class PageController: UITableViewController {
         return v
     }
 
-    // A hero's bar is see-through, its ink white over the artwork's shade.
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        guard headed, let bar = navigationController?.navigationBar else { return }
-        bar.setBackgroundImage(UIImage(), for: .default)
-        bar.isTranslucent = true
-        bar.tintColor = hasPicture ? .white : look.ink
-    }
+    override var barless: Bool { headed }
 
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        guard headed, let bar = navigationController?.navigationBar else { return }
-        // The next page puts the plain bar back unless it is a hero too.
-        if let next = navigationController?.topViewController as? PageController, next !== self, next.headed { return }
-        Theme.apply(nav: bar)
-    }
+    private var hero: HeroHeader? { tableView.tableHeaderView as? HeroHeader }
 
     override var preferredStatusBarStyle: UIStatusBarStyle {
-        headed && hasPicture ? .lightContent : Theme.statusBar
+        guard let hero, hero.picture != nil, !hero.stuck else { return Theme.statusBar }
+        return .lightContent
     }
 
     /// Under its hero the list keeps its own insets: room at its foot for the chrome over it.
@@ -137,10 +130,14 @@ class PageController: UITableViewController {
         tableView.scrollIndicatorInsets.bottom = view.safeAreaInsets.bottom
     }
 
-    private var hasPicture: Bool { (tableView.tableHeaderView as? HeroHeader)?.picture != nil }
-
     override func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        (tableView.tableHeaderView as? HeroHeader)?.scrolled(scrollView.contentOffset.y)
+        if let hero { place(hero) }
+    }
+
+    /// The head where the scroll puts it, over the rows the table has just added.
+    private func place(_ hero: HeroHeader) {
+        if hero.scrolled(tableView.contentOffset.y) { navigationController?.setNeedsStatusBarAppearanceUpdate() }
+        tableView.bringSubviewToFront(hero.head)
     }
 
     /// A long press on a list row: the song menu, or the album's, artist's or playlist's.
@@ -261,10 +258,11 @@ class PageController: UITableViewController {
                 self?.navigationController?.pushViewController(PageController(kind: NORI_PAGE_ARTIST, arg: artist, title: head["s"] as? String ?? ""), animated: true)
             }
         }
+        self.hero?.head.removeFromSuperview()
         tableView.tableHeaderView = header
+        tableView.addSubview(header.head)
         header.paint(hero: heroBits())
-        header.scrolled(tableView.contentOffset.y)
-        navigationController?.navigationBar.tintColor = header.picture != nil ? .white : look.ink
+        place(header)
         navigationController?.setNeedsStatusBarAppearanceUpdate()
     }
 
@@ -319,6 +317,20 @@ class PageController: UITableViewController {
             seal.lit = on
             seal.addAction { [weak self] in
                 Core.shared.favorite(item, !Core.shared.isFavorite(item))
+                if let a = self?.answer { self?.hero(a) }
+            }
+            return [seal]
+        }
+        if kind == "playlist" {
+            // Pinned on this iPod: the server cannot star a playlist.
+            let id = item.id
+            let on = id.withCString { nori_ios_playlist_pinned($0) } != 0
+            let seal = GlyphButton(on ? Glyph.sealedPage : Glyph.sealPage, Say.favorite)
+            seal.look = look
+            seal.lit = on
+            seal.addAction { [weak self] in
+                id.withCString { nori_ios_playlist_pin($0, on ? 0 : 1) }
+                NotificationCenter.default.post(name: .noriFavorites, object: nil)
                 if let a = self?.answer { self?.hero(a) }
             }
             return [seal]
@@ -560,7 +572,11 @@ class PageController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
-        heading(section) == nil ? 0 : UITableView.automaticDimension
+        heading(section) == nil ? .leastNormalMagnitude : UITableView.automaticDimension
+    }
+
+    override func tableView(_ tableView: UITableView, heightForFooterInSection section: Int) -> CGFloat {
+        .leastNormalMagnitude
     }
 
     override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
@@ -769,7 +785,7 @@ extension UIControl {
     func addAction(_ run: @escaping () -> Void) {
         let target = Action(run)
         objc_setAssociatedObject(self, &Action.key, target, .OBJC_ASSOCIATION_RETAIN)
-        addTarget(target, action: #selector(Action.fire), for: .touchUpInside)
+        addTarget(target, action: #selector(Action.fire), for: self is UISwitch ? .valueChanged : .touchUpInside)
     }
 }
 

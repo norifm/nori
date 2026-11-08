@@ -360,14 +360,12 @@ final class PlayerCard: UIViewController {
         go(PageController(kind: NORI_PAGE_ALBUM, arg: song.albumId, title: song.album))
     }
 
-    /// The song's menu, the core's; its format is the line under the title, as on Android.
+    /// The song's menu, the core's.
     @objc private func moreTapped() {
-        let now = Core.shared.now
-        guard let song = now.song else { return }
+        guard let song = Core.shared.now.song else { return }
         let token = Core.shared.token()
         guard nori_ios_keep_now(token) == 1 else { return }
-        let format = Fmt.quality(suffix: now.suffix, kbps: now.kbps, hz: now.hz, bits: now.bits)
-        SongMenu.show(song, token: token, index: 0, from: self, player: true, message: format.isEmpty ? nil : format) { [weak self] page in
+        SongMenu.show(song, token: token, index: 0, from: self, player: true) { [weak self] page in
             self?.go(page)
         }
     }

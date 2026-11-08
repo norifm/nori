@@ -89,11 +89,6 @@ final class SettingsGroupPage: CardsPage {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        navigationItem.largeTitleDisplayMode = .never
-    }
-
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         load()
@@ -206,12 +201,11 @@ final class AppearancePage: CardsPage {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = Say.appearance
-        navigationItem.largeTitleDisplayMode = .never
         lay()
     }
 
     private func lay() {
-        let modes = ChipStrip()
+        let modes = ChipStrip(spacing: 2, fit: true)
         modes.set(Theme.modes.map(Say.mode), chosen: Theme.modes.firstIndex(of: Theme.mode) ?? 0)
         modes.picked = { [weak self] i in self?.change(mode: Theme.modes[i], season: Theme.season) }
         let following = Theme.season == "FOLLOW"
@@ -243,8 +237,8 @@ final class AppearancePage: CardsPage {
         chips.translatesAutoresizingMaskIntoConstraints = false
         holder.addSubview(chips)
         NSLayoutConstraint.activate([
-            chips.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: -Space.gutter + Space.groupInset),
-            chips.trailingAnchor.constraint(equalTo: holder.trailingAnchor),
+            chips.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 8),
+            chips.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -8),
             chips.topAnchor.constraint(equalTo: holder.topAnchor, constant: 12),
             chips.bottomAnchor.constraint(equalTo: holder.bottomAnchor, constant: -12),
         ])
@@ -255,7 +249,7 @@ final class AppearancePage: CardsPage {
         _ = "theme".withCString { n in mode.withCString { v in nori_ios_set(n, v) } }
         _ = "season".withCString { n in season.withCString { v in nori_ios_set(n, v) } }
         guard Theme.keep(mode: mode, season: season) else { return lay() }
-        (UIApplication.shared.delegate as? AppDelegate)?.restyle()
+        (UIApplication.shared.delegate as? AppDelegate)?.restyle(showing: AppearancePage())
     }
 }
 

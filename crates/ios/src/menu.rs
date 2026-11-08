@@ -36,7 +36,14 @@ fn action_code(a: &SongAction) -> i32 {
 }
 
 fn item_json(m: &SongMenuItem) -> Value {
-    let mut v = json!({ "a": action_code(&m.action), "more": m.more, "enabled": m.enabled });
+    use nori_core::menus::SongMenuPlace as Place;
+    let place = match m.place {
+        Place::Title => 0,
+        Place::Names => 1,
+        Place::Glyphs => 2,
+        Place::Line => 3,
+    };
+    let mut v = json!({ "a": action_code(&m.action), "place": place, "more": m.more, "enabled": m.enabled });
     match &m.action {
         SongAction::Favourite { on } | SongAction::ExcludeFromMixes { on } => v["on"] = json!(on),
         SongAction::GoToAlbum { id } => v["id"] = json!(id),
@@ -115,7 +122,7 @@ pub extern "C" fn nori_ios_keep_now(token: u64) -> i32 {
     .unwrap_or(0)
 }
 
-/// Song `index` of list `token`'s menu as JSON to free: `{items: [{a, more, on?, id?, name?, named?}],
+/// Song `index` of list `token`'s menu as JSON to free: `{items: [{a, place, more, on?, id?, name?, named?}],
 /// details}`. `starred` as shown; `player`: opened from the player (adds the sleep timer).
 #[no_mangle]
 pub extern "C" fn nori_ios_song_menu(token: u64, index: i32, starred: i32, player: i32) -> *mut c_char {

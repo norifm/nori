@@ -1284,7 +1284,10 @@ fn starrable(kind: i32) -> Option<Starrable> {
 pub unsafe extern "C" fn nori_ios_star(kind: i32, id: *const c_char, on: i32) {
     let Some(kind) = starrable(kind) else { return };
     let id = c_text(id);
-    with_session(|s| s.star(kind, id, on != 0));
+    with_session(|s| match kind {
+        Starrable::Song => s.star_song(id, on != 0, s.elsewhere().as_ref()),
+        _ => s.star(kind, id, on != 0),
+    });
 }
 
 /// Whether a song (1), album (2) or artist (3) shows starred (1), its record saying `listed`: a song as
@@ -1528,6 +1531,26 @@ pub unsafe extern "C" fn nori_ios_sort(kind: i32, name: *const c_char) {
             settings.put(prefs);
         }
     });
+}
+
+/// Whether playlist `id` is pinned (1) on this iPod.
+///
+/// # Safety
+/// `id` is NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_playlist_pinned(id: *const c_char) -> i32 {
+    let id = c_text(id);
+    with_session(|s| i32::from(nori_core::browse::playlist_pinned(&s.core.session.settings, &id))).unwrap_or(0)
+}
+
+/// Pins playlist `id` (`on` 1) or lets it go; the home page's shelf of pinned playlists follows.
+///
+/// # Safety
+/// `id` is NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_playlist_pin(id: *const c_char, on: i32) {
+    let id = c_text(id);
+    with_session(|s| nori_core::browse::pin_playlist(&s.core.session.settings, id, on != 0));
 }
 
 /// The credits page's lists as JSON to free: `{core, data}`, each `[{name, what, copyright, licence,

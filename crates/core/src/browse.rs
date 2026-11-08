@@ -284,11 +284,35 @@ fn decades_sql() -> String {
     format!("SELECT (year / 10) * 10 AS d, count(*) FROM items WHERE server=sid() AND kind={} AND year > 0 GROUP BY d ORDER BY d DESC", db::ItemKind::Song as i64)
 }
 
+/// Whether playlist `id` is pinned on this device: the server cannot star a playlist.
+pub fn playlist_pinned(settings: &crate::settings_store::Settings, id: &str) -> bool {
+    settings.prefs(|p| p.pinned_playlists.iter().any(|pin| pin == id))
+}
+
+/// Pins playlist `id` on this device, or lets it go; Home's shelf of pinned playlists follows.
+pub fn pin_playlist(settings: &crate::settings_store::Settings, id: String, on: bool) {
+    if let Some(mut prefs) = settings.current() {
+        prefs.pinned_playlists = pins_toggled(prefs.pinned_playlists, id, on);
+        settings.put(prefs);
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::history::tests::song;
     use crate::Song;
+
+    #[test]
+    fn a_pin_lasts_until_let_go() {
+        let settings = crate::settings_store::Settings::new();
+        settings.open("").unwrap();
+        pin_playlist(&settings, "p".into(), true);
+        pin_playlist(&settings, "q".into(), true);
+        pin_playlist(&settings, "p".into(), false);
+        assert!(!playlist_pinned(&settings, "p"));
+        assert!(playlist_pinned(&settings, "q"));
+    }
 
     #[test]
     fn shelf_reads() {

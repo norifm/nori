@@ -107,12 +107,34 @@ final class GroupLabel: UIView {
     }
 }
 
+/// The name of a whole screen, as Android's LargeTitle: big, on the gutter, what acts on the page at its end.
+final class PageTitle: UIView {
+    init(_ words: String, trailing: [UIView] = []) {
+        super.init(frame: .zero)
+        let name = label(Fonts.title(31), Theme.label)
+        name.text = words
+        name.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let row = UIStackView(arrangedSubviews: [name] + trailing)
+        row.alignment = .center
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Space.gutter),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Space.tight),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 /// Rows grouped on one raised plate: the surface, a hairline edge, the tile's corners, inset from the
 /// page's sides. Its rows are `GroupRow`s, the last without a divider.
 final class GroupCard: UIView {
     let rows = UIStackView()
 
-    init(_ rows: [UIView] = []) {
+    init(_ rows: [UIView] = [], margin: CGFloat = Space.groupMargin) {
         super.init(frame: .zero)
         let plate = UIView()
         plate.backgroundColor = Theme.row
@@ -127,8 +149,8 @@ final class GroupCard: UIView {
         addSubview(plate)
         plate.addSubview(self.rows)
         NSLayoutConstraint.activate([
-            plate.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Space.groupMargin),
-            plate.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Space.groupMargin),
+            plate.leadingAnchor.constraint(equalTo: leadingAnchor, constant: margin),
+            plate.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -margin),
             plate.topAnchor.constraint(equalTo: topAnchor),
             plate.bottomAnchor.constraint(equalTo: bottomAnchor),
             self.rows.leadingAnchor.constraint(equalTo: plate.leadingAnchor),
@@ -163,7 +185,8 @@ final class GroupRow: UIControl {
     var tapped: (() -> Void)?
 
     init(_ text: String, subtitle line: String? = nil, value v: String? = nil, icon glyph: UIImage? = nil,
-         chevron: Bool = false, trailing: UIView? = nil, tapped: (() -> Void)? = nil) {
+         chevron: Bool = false, trailing: UIView? = nil, minHeight: CGFloat = 52, tapped: (() -> Void)? = nil) {
+        let tapped = tapped ?? (trailing as? UISwitch).map(GroupRow.flip)
         self.tapped = tapped
         super.init(frame: .zero)
         title.text = text
@@ -171,7 +194,11 @@ final class GroupRow: UIControl {
         subtitle.isHidden = (line ?? "").isEmpty
         value.text = v
         value.isHidden = (v ?? "").isEmpty
-        value.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Only the words take the row's spare width.
+        for v in ([value, self.chevron, trailing] as [UIView?]).compactMap({ $0 }) {
+            v.setContentHuggingPriority(.required, for: .horizontal)
+            v.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
         icon.image = glyph
         icon.tintColor = Theme.label
         icon.isHidden = glyph == nil
@@ -194,7 +221,7 @@ final class GroupRow: UIControl {
             strip.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Space.groupInset),
             strip.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             strip.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: minHeight),
             divider.leadingAnchor.constraint(equalTo: words.leadingAnchor),
             divider.trailingAnchor.constraint(equalTo: trailingAnchor),
             divider.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -207,10 +234,24 @@ final class GroupRow: UIControl {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// A tap anywhere on the row is the row's, but for a control at its end (a switch).
+    /// A switch's row turns it, as the switch itself does.
+    private static func flip(_ toggle: UISwitch) -> () -> Void {
+        {
+            toggle.setOn(!toggle.isOn, animated: true)
+            toggle.sendActions(for: .valueChanged)
+        }
+    }
+
+    /// A tap anywhere on the row is the row's, but for a control at its end (a switch, whose touches land
+    /// on its own subviews).
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard let hit = super.hitTest(point, with: event) else { return nil }
-        return hit is UIControl ? hit : self
+        var view: UIView? = hit
+        while let v = view, v !== self {
+            if v is UIControl { return hit }
+            view = v.superview
+        }
+        return self
     }
 
     override var isHighlighted: Bool {
@@ -266,11 +307,13 @@ final class SectionTitle: UIControl {
 final class Chip: UIButton {
     var chosen = false { didSet { paint() } }
 
-    init(_ words: String, chosen on: Bool = false) {
+    init(_ words: String, chosen on: Bool = false, inset: CGFloat = 14) {
         super.init(frame: .zero)
         setTitle(words, for: .normal)
         titleLabel?.font = Fonts.font(14, .medium, .subheadline)
-        contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
+        titleLabel?.adjustsFontSizeToFitWidth = true
+        titleLabel?.minimumScaleFactor = 0.8
+        contentEdgeInsets = UIEdgeInsets(top: 0, left: inset, bottom: 0, right: inset)
         layer.cornerRadius = 17
         translatesAutoresizingMaskIntoConstraints = false
         heightAnchor.constraint(equalToConstant: 34).isActive = true
@@ -289,21 +332,30 @@ final class Chip: UIButton {
     }
 }
 
-/// Chips in a row that scrolls sideways, from the gutter; one is chosen, a tap chooses another.
+/// Chips in a row that scrolls sideways, from the gutter, or with `fit` shares its own width equally; one is
+/// chosen, a tap chooses another.
 final class ChipStrip: UIScrollView {
     private let row = UIStackView()
+    private let fit: Bool
     private(set) var chips: [Chip] = []
     var picked: ((Int) -> Void)?
 
-    init(spacing: CGFloat = 8) {
+    init(spacing: CGFloat = 8, fit: Bool = false) {
+        self.fit = fit
         super.init(frame: .zero)
         showsHorizontalScrollIndicator = false
         row.spacing = spacing
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
+        let side = fit ? 0 : Space.gutter
+        if fit {
+            isScrollEnabled = false
+            row.distribution = .fillEqually
+            row.widthAnchor.constraint(equalTo: frameLayoutGuide.widthAnchor).isActive = true
+        }
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: contentLayoutGuide.leadingAnchor, constant: Space.gutter),
-            row.trailingAnchor.constraint(equalTo: contentLayoutGuide.trailingAnchor, constant: -Space.gutter),
+            row.leadingAnchor.constraint(equalTo: contentLayoutGuide.leadingAnchor, constant: side),
+            row.trailingAnchor.constraint(equalTo: contentLayoutGuide.trailingAnchor, constant: -side),
             row.topAnchor.constraint(equalTo: contentLayoutGuide.topAnchor),
             row.bottomAnchor.constraint(equalTo: contentLayoutGuide.bottomAnchor),
             row.heightAnchor.constraint(equalTo: frameLayoutGuide.heightAnchor),
@@ -316,7 +368,7 @@ final class ChipStrip: UIScrollView {
     func set(_ words: [String], chosen: Int) {
         chips.forEach { $0.removeFromSuperview() }
         chips = words.enumerated().map { i, w in
-            let c = Chip(w, chosen: i == chosen)
+            let c = fit ? Chip(w, chosen: i == chosen, inset: 2) : Chip(w, chosen: i == chosen)
             c.tag = i
             c.addTarget(self, action: #selector(tap(_:)), for: .touchUpInside)
             row.addArrangedSubview(c)
@@ -333,13 +385,13 @@ final class ChipStrip: UIScrollView {
 
 /// The button a page is built around: an ink pill on the page's paper (Play), or the surface's (the others).
 final class PillButton: UIButton {
-    init(_ words: String, _ glyph: UIImage?, prominent: Bool = true, look: PageLook = Theme.page) {
+    init(_ words: String, _ glyph: UIImage?, prominent: Bool = true, look: PageLook = Theme.page, height: CGFloat = 46) {
         super.init(frame: .zero)
         titleLabel?.font = Fonts.font(15, .semibold, .headline)
         set(words, glyph)
         paint(look, prominent: prominent)
         translatesAutoresizingMaskIntoConstraints = false
-        heightAnchor.constraint(greaterThanOrEqualToConstant: 46).isActive = true
+        heightAnchor.constraint(greaterThanOrEqualToConstant: height).isActive = true
         contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
         imageEdgeInsets = UIEdgeInsets(top: 0, left: -4, bottom: 0, right: 4)
         titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: -4)
@@ -401,7 +453,7 @@ final class GlyphButton: UIButton {
 }
 
 /// A menu over the page: opaque paper with a hairline edge rising from the bottom, what it is for at its
-/// head, and its lines grouped on a card; lines one reaches for rarely fold under More. Every menu and
+/// head, and its lines grouped on a card; lines one reaches for rarely on a card of their own.Every menu and
 /// choice of the app is one.
 final class Sheet: UIViewController {
     private struct Line {
@@ -420,8 +472,16 @@ final class Sheet: UIViewController {
     private var lines: [Line] = []
     private let dim = UIView()
     private let paper = UIView()
-    private let card = GroupCard()
-    private var folded = true
+    /// A sheet's cards sit nearer its sides than a page's, their words on the head's line.
+    private static let side = Space.gutter - Space.groupInset
+    private let card = GroupCard(margin: Sheet.side)
+    private let rest = GroupCard(margin: Sheet.side)
+    /// Bare glyphs beside the title.
+    var titleGlyphs: [UIView] = []
+    /// Under the title: what opens the song's artist and album.
+    var names: [UIView] = []
+    /// The line under the head: quiet words, and bare glyphs at its end.
+    var under: (words: String, glyphs: [UIView])?
 
     /// `cover`: the cover the menu's song or record leads the sheet with.
     init(_ heading: String?, _ message: String? = nil, cover: String? = nil) {
@@ -461,30 +521,52 @@ final class Sheet: UIViewController {
         head.axis = .vertical
         head.spacing = 2
         if let heading, !heading.isEmpty {
-            head.addArrangedSubview(label(Fonts.font(16, .semibold, .headline), Theme.label, lines: 2).then { $0.text = heading })
+            head.addArrangedSubview(label(Fonts.font(16, .semibold, .headline), Theme.label, lines: cover == nil ? 2 : 1).then { $0.text = heading })
         }
         if let message, !message.isEmpty {
             head.addArrangedSubview(label(Fonts.font(13, .regular, .footnote), Theme.secondary, lines: 3).then { $0.text = message })
         }
-        let top = UIStackView(arrangedSubviews: [head])
+        names.forEach(head.addArrangedSubview)
+        let top = UIStackView(arrangedSubviews: [head] + titleGlyphs)
         top.spacing = 12
+        titleGlyphs.forEach { top.setCustomSpacing(0, after: $0) }
         top.alignment = .center
         if let cover, !cover.isEmpty {
             let art = CoverView()
-            art.layer.cornerRadius = Radius.cover
+            art.layer.cornerRadius = 6
             art.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([art.widthAnchor.constraint(equalToConstant: 52), art.heightAnchor.constraint(equalToConstant: 52)])
-            art.show(cover, points: 52)
+            NSLayoutConstraint.activate([art.widthAnchor.constraint(equalToConstant: 44), art.heightAnchor.constraint(equalToConstant: 44)])
+            art.show(cover, points: 44)
             top.insertArrangedSubview(art, at: 0)
         }
+        // The head's glyphs end where a group's words do, their touch room past them.
+        let glyphEnd = Space.gutter - 10
+        top.isLayoutMarginsRelativeArrangement = true
+        top.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Space.gutter, bottom: 0, trailing: titleGlyphs.isEmpty ? Space.gutter : glyphEnd)
+        var parts: [UIView] = head.arrangedSubviews.isEmpty ? [] : [top]
+        var stands: [(UIView, CGFloat)] = parts.isEmpty ? [] : [(top, under == nil ? 14 : 8)]
+        if let under {
+            let rule = UIStackView(arrangedSubviews: [hairlineView()])
+            rule.isLayoutMarginsRelativeArrangement = true
+            rule.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Sheet.side, bottom: 0, trailing: Sheet.side)
+            let words = label(Fonts.font(13, .regular, .footnote), Theme.secondary).then { $0.text = under.words }
+            words.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let line = UIStackView(arrangedSubviews: [words] + under.glyphs)
+            line.alignment = .center
+            line.isLayoutMarginsRelativeArrangement = true
+            line.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Space.gutter, bottom: 0, trailing: glyphEnd)
+            line.heightAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
+            parts += [rule, line]
+            stands += [(rule, 0), (line, 2)]
+        }
+        parts += [card, rest]
         let scroll = UIScrollView()
-        let column = UIStackView(arrangedSubviews: head.arrangedSubviews.isEmpty ? [card] : [top, card])
+        let column = UIStackView(arrangedSubviews: parts)
         column.axis = .vertical
-        column.spacing = 14
+        column.spacing = 8
+        stands.forEach { column.setCustomSpacing($0.1, after: $0.0) }
         column.isLayoutMarginsRelativeArrangement = true
         column.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 22, leading: 0, bottom: 16, trailing: 0)
-        top.isLayoutMarginsRelativeArrangement = true
-        top.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Space.gutter, bottom: 0, trailing: Space.gutter)
         for v in [dim, paper, scroll, column] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
@@ -519,26 +601,17 @@ final class Sheet: UIViewController {
         lay()
     }
 
-    /// The lines on the card: the main ones, then More and, unfolded, the rest.
+    /// The lines on their cards: what is done with the song, then what opens more or switches a state.
     private func lay() {
-        let main = lines.filter { !$0.more }
-        let rest = lines.filter { $0.more }
-        var rows = main.map(row)
-        if !rest.isEmpty {
-            rows.append(GroupRow(Say.more, icon: Glyph.moreSmall, trailing: UIImageView(image: folded ? Glyph.down : Glyph.up).then {
-                $0.tintColor = Theme.secondary
-            }) { [weak self] in
-                self?.folded.toggle()
-                self?.lay()
-            })
-            if !folded { rows += rest.map(row) }
-        }
-        card.set(rows)
+        card.set(lines.filter { !$0.more }.map(row))
+        let others = lines.filter { $0.more }
+        rest.set(others.map(row))
+        rest.isHidden = others.isEmpty
     }
 
     private func row(_ l: Line) -> GroupRow {
         let check = l.checked ? UIImageView(image: Glyph.check).then { $0.tintColor = Theme.secondary } : nil
-        let r = GroupRow(l.words, icon: l.glyph, trailing: check) { [weak self] in self?.close(then: l.run) }
+        let r = GroupRow(l.words, icon: l.glyph, trailing: check, minHeight: 48) { [weak self] in self?.close(then: l.run) }
         if l.destructive { r.title.textColor = UIColor(argb: 0xFFC6_3A3A) }
         r.isEnabled = l.enabled
         return r
@@ -560,7 +633,7 @@ final class Sheet: UIViewController {
 
     @objc private func closeTapped() { close(then: nil) }
 
-    private func close(then run: (() -> Void)?) {
+    func close(then run: (() -> Void)?) {
         UIView.animate(withDuration: Motion.plain ? 0 : 0.2, delay: 0, options: .curveEaseIn, animations: {
             self.dim.alpha = 0
             self.paper.transform = CGAffineTransform(translationX: 0, y: self.paper.bounds.height)

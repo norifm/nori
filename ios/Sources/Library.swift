@@ -16,6 +16,8 @@ final class LibraryPage: UIViewController {
     private static let kept = "nori.library.section"
     private var shown: PageController?
 
+    override var barless: Bool { true }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = Theme.background
@@ -26,7 +28,6 @@ final class LibraryPage: UIViewController {
     @objc private func lay() {
         let sections = Core.shared.rules.sections
         chips = LibraryPage.all.filter { sections.contains($0.1) }
-        navigationItem.rightBarButtonItems = places().reversed()
         let picked = UserDefaults.standard.integer(forKey: LibraryPage.kept)
         show(chips.firstIndex { $0.2 == Int32(picked) } ?? 0)
     }
@@ -42,7 +43,8 @@ final class LibraryPage: UIViewController {
         let page = PageController(kind: kind, title: name)
         page.top = { [unowned self, unowned page] in self.head(chosen: i, page: page) }
         addChild(page)
-        page.view.frame = view.bounds
+        // Below the status bar, which has no bar of its own to stand on.
+        page.view.frame = view.bounds.inset(by: UIEdgeInsets(top: UIApplication.shared.statusBarFrame.height, left: 0, bottom: 0, right: 0))
         page.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(page.view)
         page.didMove(toParent: self)
@@ -56,7 +58,7 @@ final class LibraryPage: UIViewController {
         let strip = ChipStrip(spacing: 6)
         strip.set(chips.map { $0.0 }, chosen: chosen)
         strip.picked = { [weak self] i in self?.show(i) }
-        var parts: [UIView] = [strip]
+        var parts: [UIView] = [PageTitle(Say.library, trailing: places()), strip]
         // The smart playlists are under Playlists.
         if kind == NORI_PAGE_PLAYLISTS && Core.shared.rules.sections.contains(5) {
             parts.append(GroupCard([GroupRow(Say.smartPlaylists, icon: Glyph.draw(Iconoir.magicWand, 20), chevron: true) { [weak self] in
@@ -81,40 +83,27 @@ final class LibraryPage: UIViewController {
         column.axis = .vertical
         column.spacing = 10
         column.isLayoutMarginsRelativeArrangement = true
-        column.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 4, leading: 0, bottom: 10, trailing: 0)
+        column.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 10, trailing: 0)
         return column
     }
 
     /// The places the library keeps, not kinds of music: a glyph each beside its title, each opening its page.
-    private func places() -> [UIBarButtonItem] {
+    private func places() -> [UIView] {
         let rules = Core.shared.rules
-        var items: [UIBarButtonItem] = []
+        var places: [UIView] = []
+        let place = { [weak self] (glyph: [GlyphPart], name: String, page: @escaping () -> UIViewController) in
+            let b = GlyphButton(Glyph.draw(glyph, 22), name, side: 40)
+            b.addAction { self?.navigationController?.pushViewController(page(), animated: true) }
+            places.append(b)
+        }
         if rules.sections.contains(1) {
-            items.append(BarGlyph(Glyph.draw(Iconoir.sealOutline, 22), Say.favorites) { [weak self] in
-                self?.navigationController?.pushViewController(PageController(kind: NORI_PAGE_STARRED, title: Say.favorites), animated: true)
-            })
+            place(Iconoir.sealOutline, Say.favorites) { PageController(kind: NORI_PAGE_STARRED, title: Say.favorites) }
         }
         if rules.sections.contains(11) {
-            items.append(BarGlyph(Glyph.draw(Iconoir.download, 22), Say.downloads) { [weak self] in
-                self?.navigationController?.pushViewController(DownloadsPage(), animated: true)
-            })
+            place(Iconoir.download, Say.downloads) { DownloadsPage() }
         }
-        return items
+        return places
     }
-}
-
-/// A bar button that is a glyph and runs `tapped`.
-final class BarGlyph: UIBarButtonItem {
-    private var tapped: () -> Void = {}
-
-    convenience init(_ glyph: UIImage, _ name: String, tapped: @escaping () -> Void) {
-        self.init(image: glyph, style: .plain, target: nil, action: #selector(fire))
-        target = self
-        self.tapped = tapped
-        accessibilityLabel = name
-    }
-
-    @objc private func fire() { tapped() }
 }
 
 /// A long list's bar, as Android's: the order it is in and which way that runs (`nori_ios_sorts`: the core's,
