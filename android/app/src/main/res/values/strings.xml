@@ -278,7 +278,7 @@
     <string name="settings_quality_wifi">Quality on Wi-Fi</string>
     <string name="settings_quality_mobile">Quality on mobile data</string>
     <string name="settings_ahead_wifi">Prepare songs ahead on Wi-Fi</string>
-    <string name="settings_ahead_mobile">On mobile data</string>
+    <string name="settings_ahead_mobile">Prepare ahead on mobile</string>
     <string name="settings_ahead_next">Next song</string>
     <plurals name="settings_ahead_songs">
         <item quantity="one">%1$d song</item>
