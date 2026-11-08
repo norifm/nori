@@ -413,7 +413,8 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     TintedTheme(palette) {
       androidx.compose.runtime.CompositionLocalProvider(LocalLook provides live) {
         val scheme = MaterialTheme.colorScheme
-        if (LocalPlayerShown.current) SystemBarIcons(live)
+        val sleeveOnTop = !LocalWide.current
+        if (LocalPlayerShown.current) SystemBarIcons(live) { sleeveOnTop }
         Box(
             // Pull down from anywhere on the artwork page and the whole player follows the finger down;
             // the lyrics and queue need a vertical drag to scroll, so there only the handle does. On its side

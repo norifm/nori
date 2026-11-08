@@ -151,9 +151,10 @@ fun HeroPage(
 
     TintedTheme(palette) {
         val scheme = MaterialTheme.colorScheme
-        if (LocalPageFront.current) SystemBarIcons(LocalLook.current)
-        PageTint(palette, waiting = palette == null && tinted && lead != null)
         val list = rememberLazyListState()
+        val coverOnTop = !LocalWide.current && picture != null
+        if (LocalPageFront.current) SystemBarIcons(LocalLook.current) { coverOnTop && list.firstVisibleItemIndex == 0 }
+        PageTint(palette, waiting = palette == null && tinted && lead != null)
         // How far the hero has scrolled off, for its parallax: the list's own scroll upright; on its side the
         // hero stands still in its half and does not move with the songs (see below).
         val wide = LocalWide.current

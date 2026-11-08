@@ -193,7 +193,7 @@ impl Theme {
 
     /// The season's paper dyed with a cover whose sleeve ends in `edge` (`theme::Dye`), as the phone's
     /// player and pages wear it: between the season's light and dark palettes for these settings on `day`,
-    /// the dark one for a dark cover or a `dark` interface.
+    /// the dark one for a `dark` interface.
     pub fn dyed(edge: u32, p: &nori_core::settings::StoredPrefs, day: Day, dark: bool, painted: bool, colors: Colors) -> Theme {
         let paper = |dark| nori_core::settings::season_palette(p.season, p.theme, dark, day.month, day.day, day.southern);
         Theme::of(nori_look::theme::Dye::new(edge, paper(false), paper(true), dark).palette(), painted, colors)
@@ -298,12 +298,12 @@ mod tests {
         }
         let image = Image { width: 32, height: 32, pixels: px.into_boxed_slice() };
         let c = nori_host::derive(&image);
-        // The season's paper dyed the record's red, its dark one for a dark sleeve in the day.
+        // The season's light paper dyed the record's red in the day, however dark the sleeve.
         let prefs = nori_core::settings::StoredPrefs { season: nori_core::settings::ThemeSeason::Autumn, theme: nori_core::settings::ThemeMode::Light, ..Default::default() };
         let day = Day { month: 10, day: 19, southern: false };
         let t = Theme::dyed(c.edge, &prefs, day, false, true, Colors::True);
         let Color::Rgb(r, g, b) = t.page else { panic!("a page color") };
-        assert!(r > g && r > b && r < 128, "the page is the dark paper dyed red: {r} {g} {b}");
+        assert!(r > g && r > b && r > 128, "the page is the light paper dyed red: {r} {g} {b}");
         // The palette every other client's cover page wears.
         let paper = |dark| nori_core::settings::season_palette(prefs.season, prefs.theme, dark, 10, 19, false);
         let dyed = nori_look::theme::Dye::new(c.edge, paper(false), paper(true), false).palette();

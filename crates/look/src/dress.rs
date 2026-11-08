@@ -389,10 +389,10 @@ mod tests {
     }
 
     #[test]
-    fn a_dyed_page_takes_its_depth_and_hue_from_the_cover() {
+    fn a_dyed_page_keeps_the_themes_depth_and_takes_the_covers_hue() {
         let (night, cream, red, grey) = (0xFF3A_1210u32, 0xFFF0_E8D8u32, 0xFFE8_5060u32, 0xFFC8_C8C8u32);
         for season in SEASONS {
-            for (edge, dark, want_dark) in [(night, false, true), (cream, true, true), (cream, false, false), (red, false, false), (red, true, true)] {
+            for (edge, dark, want_dark) in [(night, false, false), (night, true, true), (cream, true, true), (cream, false, false), (red, false, false), (red, true, true)] {
                 let (t, _) = dyed_page(edge, season, dark, false);
                 assert_eq!(luminance(t[BACKGROUND]) < 0.5, want_dark, "{season:?} dark {dark}, edge {edge:08x}: page {:08x}", t[BACKGROUND]);
                 assert_eq!(luminance(t[ON]) > 0.5, want_dark, "{season:?}: the text follows the page");
