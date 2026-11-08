@@ -10,6 +10,7 @@ mod plugin;
 mod plugged;
 pub(crate) mod hosted;
 pub mod flow;
+pub mod code;
 #[cfg(test)]
 mod fake;
 #[cfg(test)]
@@ -107,6 +108,16 @@ pub trait Provider: Send + Sync {
         SignInResult::Refused
     }
 
+    /// A code to sign in with elsewhere ([`SignIn::Code`]).
+    async fn start_code(&self, _client: &Client) -> NetResult<code::StartedCode> {
+        Err(nowhere("sign-in code"))
+    }
+
+    /// How `code` stands; allowed, the account is signed in with it as [`Provider::sign_in`] would.
+    async fn check_code(&self, _client: &Client, _code: &code::StartedCode) -> code::CodeCheck {
+        code::CodeCheck::Expired
+    }
+
     /// Signs the account out here.
     fn sign_out(&self, _client: &Client) {}
 
@@ -188,15 +199,32 @@ impl ProviderInfo {
         self.fields.iter().any(|f| f.what == what)
     }
 
-    /// The account signs in on a page, the first way offered.
-    fn signs_in_on_a_page(&self) -> bool {
-        matches!(self.sign_in.first(), Some(SignIn::WebPage { .. }))
+    /// The account signs in elsewhere (a page, or a code allowed in a browser), the first way offered.
+    fn signs_in_elsewhere(&self) -> bool {
+        matches!(self.sign_in.first(), Some(SignIn::WebPage { .. } | SignIn::Code))
+    }
+
+    /// Where its sign-in page starts, when it offers one.
+    pub fn page(&self) -> Option<&str> {
+        self.sign_in.iter().find_map(|s| match s {
+            SignIn::WebPage { start_url } => Some(start_url.as_str()),
+            SignIn::Paste | SignIn::Code => None,
+        })
+    }
+
+    /// What opens the first way offered, when it is a page or a code.
+    pub(crate) fn opens(&self) -> Option<flow::SignInEvent> {
+        match self.sign_in.first()? {
+            SignIn::WebPage { .. } => Some(flow::SignInEvent::Open { start: None }),
+            SignIn::Code => Some(flow::SignInEvent::Code),
+            SignIn::Paste => None,
+        }
     }
 
     /// What choosing this kind on the first screen leads to. A name alone is nothing to ask.
     pub fn first_step(&self) -> FirstStep {
         let asks = self.fields.iter().any(|f| !f.advanced && f.what != FormField::Name);
-        match (asks, self.signs_in_on_a_page()) {
+        match (asks, self.signs_in_elsewhere()) {
             (true, _) => FirstStep::Form,
             (false, true) => FirstStep::Account,
             (false, false) => FirstStep::AddNow,
@@ -205,7 +233,7 @@ impl ProviderInfo {
 
     /// What a profile of this kind just added goes on to about its account.
     pub(crate) fn after_adding(&self, after: AfterAdding) -> Option<SignInStep> {
-        if !self.signs_in_on_a_page() {
+        if !self.signs_in_elsewhere() {
             return None;
         }
         Some(match after {
@@ -222,7 +250,7 @@ impl ProviderInfo {
 pub enum FirstStep {
     /// Its form, which has fields to fill.
     Form,
-    /// No fields but a sign-in page: its page, to sign in or go on as a guest.
+    /// No fields but a sign-in page or code: its page, to sign in or go on as a guest.
     Account,
     /// Nothing to ask: added at once; its page shows only if that fails.
     AddNow,
@@ -246,7 +274,7 @@ pub enum AfterAdding {
 pub(crate) enum SignInStep {
     /// Offers signing in, which can be skipped.
     Offer,
-    /// Opens the sign-in page.
+    /// Opens the first way to sign in ([`ProviderInfo::opens`]).
     Open,
     /// `Client::stop_reminding`.
     StopReminding,
@@ -289,6 +317,9 @@ pub enum SignIn {
     WebPage { start_url: String },
     /// Text the user copies from elsewhere (a browser session's cookies), for [`Client::sign_in`].
     Paste,
+    /// A code the user allows in a browser of their own, where they are signed in already
+    /// ([`code::CodeSignIn`]).
+    Code,
 }
 
 /// Where a profile's account stands.
@@ -734,6 +765,7 @@ mod tests {
             (vec![field(name, false)], Vec::new(), FirstStep::AddNow, "a name alone, and no account"),
             (Vec::new(), vec![SignIn::Paste], FirstStep::AddNow, "no page to go to"),
             (Vec::new(), vec![SignIn::Paste, web()], FirstStep::AddNow, "the page isn't offered first"),
+            (vec![field(name, false)], vec![SignIn::Code, web()], FirstStep::Account, "a code is signed in with elsewhere too"),
             (vec![field(address, true)], Vec::new(), FirstStep::AddNow, "only advanced fields"),
         ] {
             assert_eq!(info(fields, sign_in).first_step(), step, "{why}");
@@ -741,12 +773,27 @@ mod tests {
     }
 
     #[test]
-    fn only_a_sign_in_page_goes_on_after_adding() {
-        let page = info(Vec::new(), vec![web()]);
-        for (after, step) in [(AfterAdding::Remind, SignInStep::Offer), (AfterAdding::SignIn, SignInStep::Open), (AfterAdding::Guest, SignInStep::StopReminding)] {
-            assert_eq!(page.after_adding(after), Some(step));
-            assert_eq!(info(Vec::new(), vec![SignIn::Paste]).after_adding(after), None);
-            assert_eq!(info(Vec::new(), Vec::new()).after_adding(after), None);
+    fn only_a_sign_in_elsewhere_goes_on_after_adding() {
+        for way in [web(), SignIn::Code] {
+            let elsewhere = info(Vec::new(), vec![way, SignIn::Paste]);
+            for (after, step) in [(AfterAdding::Remind, SignInStep::Offer), (AfterAdding::SignIn, SignInStep::Open), (AfterAdding::Guest, SignInStep::StopReminding)] {
+                assert_eq!(elsewhere.after_adding(after), Some(step));
+                assert_eq!(info(Vec::new(), vec![SignIn::Paste]).after_adding(after), None);
+                assert_eq!(info(Vec::new(), Vec::new()).after_adding(after), None);
+            }
+        }
+    }
+
+    #[test]
+    fn the_first_way_offered_is_the_one_opened() {
+        use flow::SignInEvent;
+        for (ways, opens) in [
+            (vec![SignIn::Code, web(), SignIn::Paste], Some(SignInEvent::Code)),
+            (vec![web(), SignIn::Code], Some(SignInEvent::Open { start: None })),
+            (vec![SignIn::Paste, SignIn::Code], None),
+            (Vec::new(), None),
+        ] {
+            assert_eq!(info(Vec::new(), ways.clone()).opens(), opens, "{ways:?}");
         }
     }
 

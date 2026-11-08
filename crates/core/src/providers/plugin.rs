@@ -11,6 +11,7 @@ use nori_plugins::wit::types as t;
 use nori_plugins::{CallResult, Plugins, Store, Worker};
 use parking_lot::RwLock;
 
+use super::code::{CodeCheck, SignInCode, StartedCode};
 use super::{resolved_song, resolved_stream, sized, AccountState, Answer, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
 use crate::browse::{AlbumSort, LibrarySection, ProfileRules, SettingsPart};
 use crate::cache_policy::{Page, Read};
@@ -309,15 +310,24 @@ impl Provider for PluginProvider {
     async fn sign_in(&self, client: &Client, answer: String) -> SignInResult {
         self.plugins.set_transport(Some(client.transport.clone()));
         let said = self.worker.call(move |s, x| x.nori_plugin_provider().call_sign_in(s, &answer)).await.flatten();
-        let result = match said {
-            Some(w::SignInResult::SignedIn(name)) => SignInResult::SignedIn { name },
-            Some(w::SignInResult::NoSession) => SignInResult::NoSession,
-            Some(w::SignInResult::Unreachable(reason)) => SignInResult::Unreachable { reason },
-            Some(w::SignInResult::Refused) | None => SignInResult::Refused,
-        };
-        let profile = self.open.read().clone();
-        client.core.set_rules(self.ask_rules(&profile, false));
-        result
+        self.signed_in(client, said)
+    }
+
+    async fn start_code(&self, client: &Client) -> NetResult<StartedCode> {
+        self.plugins.set_transport(Some(client.transport.clone()));
+        let c = self.worker.call(|s, x| x.nori_plugin_provider().call_start_code(s)).await.ok_or_else(stopped)?.map_err(net_error)?;
+        let seconds = |n: u32| std::time::Duration::from_secs(n.into());
+        Ok(StartedCode { shown: SignInCode { code: c.code, url: c.url }, every: seconds(c.every), lasts: c.lasts.map(seconds), state: c.state })
+    }
+
+    async fn check_code(&self, client: &Client, code: &StartedCode) -> CodeCheck {
+        let c = w::SignInCode { code: code.shown.code.clone(), url: code.shown.url.clone(), every: code.every.as_secs() as u32, lasts: code.lasts.map(|l| l.as_secs() as u32), state: code.state.clone() };
+        match self.worker.call(move |s, x| x.nori_plugin_provider().call_check_code(s, &c)).await.flatten() {
+            Some(w::CodeCheck::Waiting) => CodeCheck::Waiting,
+            Some(w::CodeCheck::Expired) => CodeCheck::Expired,
+            Some(w::CodeCheck::Done(said)) => CodeCheck::Done(self.signed_in(client, Some(said))),
+            None => CodeCheck::Done(SignInResult::Refused),
+        }
     }
 
     fn sign_out(&self, client: &Client) {
@@ -351,6 +361,19 @@ impl PluginProvider {
         })
     }
 
+    /// How a sign-in went, from what the plugin said; its rules asked anew, since its account may have changed.
+    fn signed_in(&self, client: &Client, said: Option<w::SignInResult>) -> SignInResult {
+        let result = match said {
+            Some(w::SignInResult::SignedIn(name)) => SignInResult::SignedIn { name },
+            Some(w::SignInResult::NoSession) => SignInResult::NoSession,
+            Some(w::SignInResult::Unreachable(reason)) => SignInResult::Unreachable { reason },
+            Some(w::SignInResult::Refused) | None => SignInResult::Refused,
+        };
+        let profile = self.open.read().clone();
+        client.core.set_rules(self.ask_rules(&profile, false));
+        result
+    }
+
     fn ask_info(&self) -> ProviderInfo {
         let said = self.now(|s, x| x.nori_plugin_provider().call_info(s)).flatten();
         let said = said.unwrap_or(w::ProviderInfo { fields: Vec::new(), sign_in: Vec::new() });
@@ -369,6 +392,7 @@ impl PluginProvider {
             sign_in: said.sign_in.into_iter().map(|s| match s {
                 w::SignInWay::WebPage(start_url) => SignIn::WebPage { start_url },
                 w::SignInWay::Paste => SignIn::Paste,
+                w::SignInWay::Code => SignIn::Code,
             }).collect(),
         }
     }

@@ -62,6 +62,8 @@ pub enum Msg {
     SignedIn(nori_core::providers::SignInResult),
     /// The sign-in window (its process id) came back on a signed-in page, and the core's answer.
     SignInWindowDone(u32, nori_core::providers::SignInResult),
+    /// The `code`th code sign-in's code came, or expired.
+    CodeStep { code: u32, event: nori_core::providers::flow::SignInEvent },
     /// A provider's plugin asks for its sign-in page at `url`.
     PluginSignIn { plugin: String, url: String },
     /// A headphone's AutoEQ curve as preset text (None: AutoEQ has none for it), by the headphone's name.

@@ -131,7 +131,7 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 settings.update.value.let { u ->
                     """"update":"${u::class.simpleName}","updateLine":"${dev.nori.music.app.vm.updateWords(context.resources, u, BuildConfig.VERSION_NAME, settings.installsUpdates).replace("\"", "'")}","""
                 } +
-                """"loggedIn":${p.loggedIn},"server":"${p.server?.url.orEmpty()}","kind":"${p.server?.kind?.let { dev.nori.music.app.ui.kindTag(it) }.orEmpty()}","signInOffer":${settings.account.value.flow.shown is dev.nori.music.ffi.SignInShown.Offered},"signInPage":${settings.account.value.flow.shown is dev.nori.music.ffi.SignInShown.Page},"loginError":"${(settings.add.value.send as? dev.nori.music.ffi.AddSend.Failed)?.why?.let(dev.nori.music.app.ui.say::addFailure).orEmpty().replace("\"", "'")}"}"""
+                """"loggedIn":${p.loggedIn},"server":"${p.server?.url.orEmpty()}","kind":"${p.server?.kind?.let { dev.nori.music.app.ui.kindTag(it) }.orEmpty()}","signInOffer":${settings.account.value.flow.shown is dev.nori.music.ffi.SignInShown.Offered},"signInPage":${settings.account.value.flow.shown is dev.nori.music.ffi.SignInShown.Page},"signInCode":"${(settings.account.value.flow.shown as? dev.nori.music.ffi.SignInShown.Code)?.code?.code.orEmpty()}","loginError":"${(settings.add.value.send as? dev.nori.music.ffi.AddSend.Failed)?.why?.let(dev.nori.music.app.ui.say::addFailure).orEmpty().replace("\"", "'")}"}"""
         }
         // An app crossfading out (a jam joined or left) goes after the one coming in took the hooks over.
         onDispose {
