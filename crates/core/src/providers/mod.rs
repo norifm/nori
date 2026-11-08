@@ -508,7 +508,7 @@ impl Kinds {
 }
 
 /// The profile a login saves. A new profile for one already saved takes over that profile's id (and its
-/// library and downloads), music folder, bitrate cap and, if the form's is empty, name; what the form
+/// library and downloads), music folder, bitrate cap, icon and, if the form's is empty, name; what the form
 /// does not ask (a signed-in account's name) stays the saved one's. A profile is the saved one of its
 /// kind with the same address and user; without an address in the form, the kind's saved one. A
 /// profile already saved is returned as it is.
@@ -527,6 +527,7 @@ fn server_for_login(info: &ProviderInfo, list: ServerList, profile: SavedServer)
             user: if info.asks(FormField::User) { profile.user } else { saved.user.clone() },
             music_folder_ids: saved.music_folder_ids.clone(),
             alt_max_bit_rate: saved.alt_max_bit_rate,
+            icon: saved.icon,
             ..profile
         },
         None => profile,
@@ -767,12 +768,13 @@ mod tests {
     /// saved profile edited stays as it is.
     #[test]
     fn a_login_finds_the_saved_server() {
-        let kept = SavedServer { name: "Home".into(), music_folder_ids: vec!["3".into()], alt_max_bit_rate: 96, ..saved("a1", ServerKind::Subsonic, "https://music.example.com", "ann") };
+        let icon = crate::settings::ProfileIcon::Think;
+        let kept = SavedServer { name: "Home".into(), music_folder_ids: vec!["3".into()], alt_max_bit_rate: 96, icon, ..saved("a1", ServerKind::Subsonic, "https://music.example.com", "ann") };
         let list = ServerList { servers: vec![kept.clone()], active_server_id: "a1".into() };
         let form = saved("new", ServerKind::Subsonic, "HTTPS://music.example.com/ ", "Ann");
         let k = Kinds::builtin();
         let login = k.login_profile(list.clone(), form.clone());
-        assert_eq!((login.id.as_str(), login.name.as_str(), login.music_folder_ids.as_slice(), login.alt_max_bit_rate, login.user.as_str()), ("a1", "Home", &["3".to_string()][..], 96, "Ann"));
+        assert_eq!((login.id.as_str(), login.name.as_str(), login.music_folder_ids.as_slice(), login.alt_max_bit_rate, login.user.as_str(), login.icon), ("a1", "Home", &["3".to_string()][..], 96, "Ann", icon));
         let stranger = saved("s", ServerKind::Subsonic, "https://music.example.com", "bob");
         assert_eq!(k.login_profile(list.clone(), stranger.clone()), stranger);
         let elsewhere = saved("e", ServerKind::Subsonic, "https://other.example.com", "ann");

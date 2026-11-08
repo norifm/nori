@@ -1027,12 +1027,12 @@ fn plugin_line(p: &Plugged, id: &str, name: &str, about: Option<&str>, line: Str
     Row { kind: PLUGIN, name: PluginAct::Page(id.into()).name(), title: name.into(), detail: about.unwrap_or_default().into(), line, icon, letter, enabled: true, ..Default::default() }
 }
 
-/// A profile's mark: its plugin's icon, or the first letter of who signs in (of `label` without a user).
+/// A profile's mark: its plugin's tile when its icon is its provider's, else the letter of who signs in
+/// (of `label` without a user).
 pub fn profile_mark(p: &Plugged, sv: &nori_core::settings::SavedServer, label: &str) -> (slint::Image, String) {
-    let first = |s: &str| s.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
-    match &sv.kind {
-        ServerKind::Plugin { id } => p.tile(id, label),
-        _ => (slint::Image::default(), first(if sv.user.is_empty() { label } else { &sv.user })),
+    match (&sv.kind, sv.icon) {
+        (ServerKind::Plugin { id }, nori_core::settings::ProfileIcon::Provider) => p.tile(id, label),
+        _ => (slint::Image::default(), nori_core::settings::profile_letter(sv.clone(), label.to_string())),
     }
 }
 
@@ -1761,16 +1761,16 @@ mod tests {
         }
     }
 
-    /// A server profile's mark is who signs in, else its name; a plugin profile's is its plugin's tile.
+    /// A profile's mark is who signs in, else its name; a plugin's tile when its icon is its provider's.
     #[test]
     fn a_profile_mark_is_its_user_or_its_plugin() {
-        use nori_core::settings::SavedServer;
+        use nori_core::settings::{ProfileIcon, SavedServer};
         let mut p = Plugged::default();
         p.icons.read.insert("a.one".into(), None);
         let server = |user: &str| SavedServer { user: user.into(), ..Default::default() };
-        let plugin = SavedServer { user: "zoe".into(), kind: ServerKind::Plugin { id: "a.one".into() }, ..Default::default() };
-        let marks: Vec<String> = [server("admin"), server(""), plugin].iter().map(|sv| profile_mark(&p, sv, "home").1).collect();
-        assert_eq!(marks, ["A", "H", "H"]);
+        let plugin = |icon| SavedServer { user: "zoe".into(), kind: ServerKind::Plugin { id: "a.one".into() }, icon, ..Default::default() };
+        let marks: Vec<String> = [server("admin"), server(""), plugin(ProfileIcon::Letter), plugin(ProfileIcon::Provider)].iter().map(|sv| profile_mark(&p, sv, "home").1).collect();
+        assert_eq!(marks, ["A", "H", "Z", "H"], "the plugin's tile has its own letter without an icon");
     }
 
     /// A tile is empty until the icon is heard of, then the icon, or the letter for a plugin with none;

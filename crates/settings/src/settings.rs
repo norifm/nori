@@ -431,6 +431,56 @@ impl ServerKind {
     }
 }
 
+/// What a profile's circle shows: a letter of its name, its provider's mark, or one of a few faces.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum ProfileIcon {
+    #[default]
+    Letter,
+    Provider,
+    Sing,
+    Surprise,
+    Talking,
+    LookUp,
+    Satisfied,
+    Think,
+}
+
+impl ProfileIcon {
+    /// The icons offered, in the order a picker shows them.
+    pub const ALL: [ProfileIcon; 8] = [Self::Letter, Self::Provider, Self::Sing, Self::Surprise, Self::Talking, Self::LookUp, Self::Satisfied, Self::Think];
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::Letter => "letter",
+            Self::Provider => "provider",
+            Self::Sing => "sing",
+            Self::Surprise => "surprise",
+            Self::Talking => "talking",
+            Self::LookUp => "look-up",
+            Self::Satisfied => "satisfied",
+            Self::Think => "think",
+        }
+    }
+
+    fn from_id(id: &str) -> Option<ProfileIcon> {
+        Self::ALL.into_iter().find(|i| i.id() == id)
+    }
+}
+
+/// The icons a profile's circle can show, in the order a picker shows them.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn profile_icons() -> Vec<ProfileIcon> {
+    ProfileIcon::ALL.to_vec()
+}
+
+/// The letter a profile's circle shows: the first of who signs in, else of what it is called (`label`).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn profile_letter(profile: SavedServer, label: String) -> String {
+    let from = if profile.user.trim().is_empty() { &label } else { &profile.user };
+    from.trim().chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default()
+}
+
 /// One saved server profile. Each has its own rows in the index database.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -452,6 +502,7 @@ pub struct SavedServer {
     /// The music folders the library shows; empty for all of them.
     pub music_folder_ids: Vec<String>,
     pub alt_max_bit_rate: i32,
+    pub icon: ProfileIcon,
 }
 
 /// One stream quality: `bit_rate` 0 and an empty `format` mean the original file.
@@ -1174,6 +1225,7 @@ fn server_from(v: &Value) -> Option<SavedServer> {
         wifi_only: opt_bool(o, "wifiOnly"),
         music_folder_ids: folder_ids(o),
         alt_max_bit_rate: opt_i32(o, "altMaxBitRate"),
+        icon: o.get("icon").and_then(Value::as_str).and_then(ProfileIcon::from_id).unwrap_or_default(),
     })
 }
 
@@ -1190,7 +1242,7 @@ fn server_json(s: &SavedServer) -> Value {
         "id": s.id, "kind": s.kind.id(), "name": s.name, "url": s.url, "altUrl": s.alt_url, "user": s.user, "password": s.password,
         "apiKey": s.api_key, "legacyAuth": s.legacy_auth, "headers": s.headers, "allowSelfSigned": s.allow_self_signed,
         "clientCert": s.client_cert, "clientCertPassword": s.client_cert_password, "wifiOnly": s.wifi_only,
-        "musicFolderIds": s.music_folder_ids, "altMaxBitRate": s.alt_max_bit_rate,
+        "musicFolderIds": s.music_folder_ids, "altMaxBitRate": s.alt_max_bit_rate, "icon": s.icon.id(),
     })
 }
 
@@ -2437,6 +2489,16 @@ mod tests {
         assert_eq!(folders(serde_json::json!({"id": "a", "musicFolderId": "3"})), ["3"]);
         assert_eq!(folders(serde_json::json!({"id": "a", "musicFolderId": ""})), Vec::<String>::new());
         assert_eq!(folders(serde_json::json!({"id": "a", "musicFolderIds": ["3", "5"], "musicFolderId": "3"})), ["3", "5"]);
+
+        // A profile's icon is kept; one stored before icons, or unknown here, is its letter.
+        let icon = |json: Value| server_from(&json).unwrap().icon;
+        assert_eq!(icon(serde_json::json!({"id": "a"})), ProfileIcon::Letter);
+        assert_eq!(icon(serde_json::json!({"id": "a", "icon": "a-face-from-later"})), ProfileIcon::Letter);
+        for kept in ProfileIcon::ALL {
+            assert_eq!(server_from(&server_json(&SavedServer { id: "a".into(), icon: kept, ..SavedServer::default() })).unwrap().icon, kept);
+        }
+        let letter = |user: &str, label: &str| profile_letter(SavedServer { user: user.into(), ..SavedServer::default() }, label.into());
+        assert_eq!((letter("zoe", "Home"), letter(" ", "home"), letter("", " ")), ("Z".into(), "H".into(), String::new()));
 
         // A saved profile activated again is moved, not copied.
         let saved = SavedServer { id: "a1".into(), password: "old".into(), ..SavedServer::default() };

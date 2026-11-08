@@ -30,6 +30,7 @@ GLYPHS = {
     "MoreHoriz": ("more-horiz", "regular", False),
     "Xmark": ("xmark", "regular", False),
     "Plus": ("plus", "regular", False),
+    "Minus": ("minus", "regular", False),
     "Check": ("check", "regular", False),
     "Menu": ("menu", "regular", False),
     "PlaySolid": ("play", "solid", False),
@@ -94,6 +95,12 @@ GLYPHS = {
     "SoundLow": ("sound-low", "regular", False),
     "SoundOff": ("sound-off", "regular", False),
     "NavArrowLeft": ("nav-arrow-left", "regular", True),
+    "EmojiSingRight": ("emoji-sing-right", "regular", False),
+    "EmojiSurpriseAlt": ("emoji-surprise-alt", "regular", False),
+    "EmojiTalkingHappy": ("emoji-talking-happy", "regular", False),
+    "EmojiLookUp": ("emoji-look-up", "regular", False),
+    "EmojiSatisfied": ("emoji-satisfied", "regular", False),
+    "EmojiThinkRight": ("emoji-think-right", "regular", False),
 }
 
 # XML drawable: (directory, glyph, shortcut?)

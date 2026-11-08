@@ -484,6 +484,8 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                     // A jam guest switches between the profiles; changing them is not its to do.
                     val options = dev.nori.music.ffi.settings.SettingsPart.SERVER_OPTIONS in LocalRules.current.settings
                     var removing by remember(row.id) { mutableStateOf(false) }
+                    var picking by remember(row.id) { mutableStateOf(false) }
+                    ProfileIconPicker(vm, profile.takeIf { picking }) { picking = false }
                     NoriDialog(removing, { removing = false }) {
                         AlertCard(
                             title = { Text(say.removeProfileTitle(row.label)) },
@@ -494,6 +496,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                     }
                     ProfileLine(
                         vm, profile, row.active, divider = divider && row.libraries.isEmpty(), detail = row.detail,
+                        onMark = if (options) ({ picking = true }) else null,
                         trailing = { if (options) MoreButton(listOf(say.edit to { editing = profile.also(vm::openLogin) }, say.remove to { removing = true })) },
                         onClick = if (row.active) null else ({ vm.switchServer(profile) }),
                     )

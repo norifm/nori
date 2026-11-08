@@ -559,6 +559,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     fun switchServer(profile: SavedServer) = nori.activate(profile)
     fun updateServer(profile: SavedServer) = nori.updateServer(profile)
+    fun setProfileIcon(profile: SavedServer, icon: dev.nori.music.ffi.settings.ProfileIcon) = nori.setProfileIcon(profile, icon)
     fun removeServer(id: String) = nori.removeServer(id)
 
     /** Copies a picked PKCS#12 file into the app and returns the profile that uses it. */
