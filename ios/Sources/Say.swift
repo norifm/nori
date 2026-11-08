@@ -17,7 +17,7 @@ enum Say {
         case "newest": return "Recently added"
         case "recent": return "Recently played"
         case "frequent": return "Most played albums"
-        case "pinned": return "Pinned playlists"
+        case "pinned": return "Favorite playlists"
         case "topSongs": return "Most played songs"
         case "starred": return "Favorite albums"
         case "random": return "Random"
@@ -331,6 +331,21 @@ enum Say {
     static let streamed = "Streamed music"
     static let appearance = "Appearance"
     static let season = "Season"
+    static let homeRows = "Home rows"
+    static let holdToMove = "Hold a row to move it"
+    /// A Home row by the name the core gives it.
+    static func homeRow(_ name: String) -> String {
+        switch name {
+        case "Pinned": return "Favorite playlists"
+        case "Playlists": return "Playlists"
+        case "Recent": return "Recently played"
+        case "Newest": return "Recently added"
+        case "Frequent": return "Most played albums"
+        case "TopSongs": return "Most played songs"
+        case "Random": return "Random"
+        default: return "Favorite albums"
+        }
+    }
     static let followSeasons = "Follow the calendar"
     /// A mode of the `theme` setting.
     static func mode(_ value: String) -> String {

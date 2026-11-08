@@ -245,6 +245,11 @@ int32_t nori_ios_collection_download_act(int32_t kind, const char *id, int32_t a
 /// Song 1, album 2, artist 3.
 void nori_ios_star(int32_t kind, const char *id, int32_t on);
 
+/// Home's rows as JSON to free: `{shown, hidden}`, each the rows' names, `shown` in their order.
+char *nori_ios_home_rows(void);
+void nori_ios_home_row_set(const char *name, int32_t on);
+void nori_ios_home_row_move(int32_t from, int32_t to);
+
 int32_t nori_ios_playlist_pinned(const char *id);
 void nori_ios_playlist_pin(const char *id, int32_t on);
 
