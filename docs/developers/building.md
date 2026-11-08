@@ -422,7 +422,8 @@ tools/with-resource.py build tools/host-release.sh --native --platform linux-x86
 It also takes `--workspace DIR`, `--output DIR` (default `build/host-release`), `--jobs 1..4`,
 `--no-test`, `--docker-macos` and `--allow-untested-macos`. It runs in `build/release-python`, a
 Python environment made from `tools/host-release/requirements.txt` on first use (with `uv`, or
-`python3` 3.10 or newer). Docker keeps Cargo, sccache and Flatpak caches per architecture in named
+`python3` 3.10 or newer). A `--native` Linux build needs the image's appimagetool first:
+`sudo tools/host-release/appimagetool.sh`. Docker keeps Cargo, sccache and Flatpak caches per architecture in named
 volumes.
 
 ### Workflows and handoffs
