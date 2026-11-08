@@ -2895,12 +2895,7 @@ impl App {
     /// The sign-in page of the profile in use's provider, in the browser.
     fn open_sign_in_page(&self) {
         let Some(kind) = self.root.app.settings.current().and_then(|p| p.active_server().map(|sv| sv.kind.clone())) else { return };
-        let page = self.kinds().providers().into_iter().find(|i| i.kind == kind).and_then(|i| {
-            i.sign_in.into_iter().find_map(|s| match s {
-                nori_core::providers::SignIn::WebPage { start_url } => Some(start_url),
-                nori_core::providers::SignIn::Paste => None,
-            })
-        });
+        let page = self.kinds().providers().into_iter().find(|i| i.kind == kind).and_then(|i| i.page().map(str::to_string));
         if let Some(url) = page {
             open_in_browser(&url);
         }

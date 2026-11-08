@@ -1103,10 +1103,16 @@ impl Handle {
     /// profile keeps the account's name, which a session opened on it again reads as signed in.
     pub fn sign_in(&self, answer: String) -> nori_core::providers::SignInResult {
         let r = block_on(self.client.sign_in(answer));
-        if let nori_core::providers::SignInResult::SignedIn { name } = &r {
+        self.signed_in(&r);
+        r
+    }
+
+    /// How a sign-in went, whichever way it went (a page, pasting, a code): signed in, the profile keeps
+    /// the account's name.
+    pub fn signed_in(&self, r: &nori_core::providers::SignInResult) {
+        if let nori_core::providers::SignInResult::SignedIn { name } = r {
             self.keep_account(name);
         }
-        r
     }
 
     /// What the app offers over the profile (a guest's: the host's library, read only), as the core

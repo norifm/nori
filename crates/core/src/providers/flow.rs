@@ -1,6 +1,7 @@
 //! Adding a profile and signing its account in, as every client walks them: which page shows, what is
 //! on its way, and what follows. The clients draw the pages and word them.
 
+use super::code::SignInCode;
 use super::{AccountState, AfterAdding, FirstStep, ProviderInfo, SignInResult, SignInStep};
 use crate::client::Client;
 use crate::settings::ServerKind;
@@ -228,7 +229,7 @@ pub struct SignInFlow {
     pub attempt: SignInAttempt,
 }
 
-/// What is shown for signing in: nothing, the offer, or the provider's sign-in page.
+/// What is shown for signing in: nothing, the offer, the provider's sign-in page, or a code to allow.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum SignInShown {
@@ -239,6 +240,9 @@ pub enum SignInShown {
     Offered { ended: bool },
     /// The provider's page, at `start` where its plugin asked for it there; None: the provider's own.
     Page { start: Option<String> },
+    /// A code to allow in a browser ([`super::code::CodeSignIn`]); None while it is asked for. Once it
+    /// `expired`, a new one can be asked for.
+    Code { code: Option<SignInCode>, expired: bool },
 }
 
 /// The last sign-in.
@@ -261,6 +265,13 @@ pub enum SignInEvent {
     Offer { ended: bool },
     /// The provider's page opens, at `start` where its plugin asked; its last failure is left.
     Open { start: Option<String> },
+    /// The code step opens, or a new code is asked for there; its last failure is left. The client
+    /// starts a [`super::code::CodeSignIn`] when the flow says to send.
+    Code,
+    /// The code to show came.
+    CodeShown { code: SignInCode },
+    /// The code shown expired.
+    CodeExpired,
     /// The page closed, or the offer turned down.
     Close,
     /// The page's failure left, for a fresh try.
@@ -281,17 +292,39 @@ impl SignInFlow {
         self.attempt == SignInAttempt::Busy
     }
 
+    /// A code is asked for or checked: the client's [`super::code::CodeSignIn`] runs only while this holds.
+    pub fn checks_code(&self) -> bool {
+        matches!(self.shown, SignInShown::Code { expired: false, .. }) && !matches!(self.attempt, SignInAttempt::Failed { .. })
+    }
+
     /// Takes `event`. Returns false for an answer sent while one is on its way: the client does not send it.
     pub fn on(&mut self, event: SignInEvent) -> bool {
         match event {
             SignInEvent::Offer { ended } => {
-                if !matches!(self.shown, SignInShown::Page { .. }) {
+                if !matches!(self.shown, SignInShown::Page { .. } | SignInShown::Code { .. }) {
                     self.shown = SignInShown::Offered { ended };
                 }
             }
             SignInEvent::Open { start } => {
                 self.shown = SignInShown::Page { start };
                 self.left();
+            }
+            SignInEvent::Code => {
+                if self.busy() {
+                    return false;
+                }
+                self.shown = SignInShown::Code { code: None, expired: false };
+                self.left();
+            }
+            SignInEvent::CodeShown { code } => {
+                if let SignInShown::Code { code: shown @ None, expired: false } = &mut self.shown {
+                    *shown = Some(code);
+                }
+            }
+            SignInEvent::CodeExpired => {
+                if let SignInShown::Code { expired, .. } = &mut self.shown {
+                    *expired = true;
+                }
             }
             SignInEvent::Close => {
                 self.shown = SignInShown::Closed;
@@ -329,19 +362,21 @@ impl SignInFlow {
     }
 }
 
-/// [`SignInFlow::on`], owned: the flow after `event`, and whether to send the answer it was.
+/// [`SignInFlow::on`], owned: the flow after `event`, whether to send the answer it was (or start the
+/// code it asked for), and [`SignInFlow::checks_code`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct SignInStepped {
     pub flow: SignInFlow,
     pub send: bool,
+    pub checks_code: bool,
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn sign_in_flow_on(flow: SignInFlow, event: SignInEvent) -> SignInStepped {
     let mut flow = flow;
     let send = flow.on(event);
-    SignInStepped { flow, send }
+    SignInStepped { checks_code: flow.checks_code(), flow, send }
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -357,7 +392,7 @@ impl Client {
         }?;
         match step {
             SignInStep::Offer => Some(SignInEvent::Offer { ended: added.is_none() && self.account() == AccountState::Ended }),
-            SignInStep::Open => Some(SignInEvent::Open { start: None }),
+            SignInStep::Open => self.sign_in_open(),
             SignInStep::StopReminding => {
                 self.stop_reminding();
                 None
@@ -368,6 +403,12 @@ impl Client {
     /// Signing in offered when asked: the account's row, a seal tapped while signed out.
     pub fn sign_in_offer(&self) -> SignInEvent {
         SignInEvent::Offer { ended: self.account() == AccountState::Ended }
+    }
+
+    /// What the offer's sign-in opens: the provider's first way elsewhere, its code or its page; None
+    /// when it signs in by pasting.
+    pub fn sign_in_open(&self) -> Option<SignInEvent> {
+        self.core.provider().info().opens()
     }
 }
 
@@ -499,5 +540,57 @@ mod tests {
         s.on(SignInEvent::Sent);
         s.on(SignInEvent::Answered { result: SignInResult::SignedIn { name: "me".into() } });
         assert_eq!(s.shown, SignInShown::Closed, "signed in from the offer, it closes too");
+    }
+
+    fn code() -> SignInCode {
+        SignInCode { code: "AB12".into(), url: "https://x/activate/AB12".into() }
+    }
+
+    #[test]
+    fn a_code_shows_once_it_comes_and_is_checked_until_it_expires() {
+        let mut s = SignInFlow::default();
+        assert!(s.on(SignInEvent::Code), "a code to start");
+        assert_eq!(s.shown, SignInShown::Code { code: None, expired: false });
+        assert!(s.checks_code());
+        s.on(SignInEvent::Offer { ended: true });
+        s.on(SignInEvent::CodeShown { code: code() });
+        assert_eq!(s.shown, SignInShown::Code { code: Some(code()), expired: false }, "the offer waits for the code");
+        s.on(SignInEvent::CodeShown { code: SignInCode { code: "late".into(), ..code() } });
+        assert_eq!(s.shown, SignInShown::Code { code: Some(code()), expired: false }, "only the code asked for");
+        s.on(SignInEvent::CodeExpired);
+        assert_eq!(s.shown, SignInShown::Code { code: Some(code()), expired: true });
+        assert!(!s.checks_code(), "an expired code is not checked");
+        s.on(SignInEvent::CodeShown { code: code() });
+        assert_eq!(s.shown, SignInShown::Code { code: Some(code()), expired: true }, "a code after it expired is not the one asked for");
+        assert!(s.on(SignInEvent::Code), "a new code");
+        assert_eq!(s.shown, SignInShown::Code { code: None, expired: false });
+        s.on(SignInEvent::Close);
+        assert!(!s.checks_code(), "left, nothing is checked");
+        s.on(SignInEvent::CodeExpired);
+        assert_eq!(s, SignInFlow::default(), "a code left behind changes nothing");
+    }
+
+    #[test]
+    fn a_code_signs_in_or_its_failure_stays_until_a_new_code() {
+        let mut s = SignInFlow::default();
+        s.on(SignInEvent::Code);
+        s.on(SignInEvent::CodeShown { code: code() });
+        s.on(SignInEvent::Answered { result: SignInResult::Refused });
+        assert_eq!((s.attempt.clone(), s.checks_code()), (SignInAttempt::Failed { result: SignInResult::Refused }, false));
+        s.on(SignInEvent::Code);
+        assert_eq!((s.attempt.clone(), s.checks_code()), (SignInAttempt::Idle, true), "tried again with a new code");
+        s.on(SignInEvent::CodeShown { code: code() });
+        s.on(SignInEvent::Answered { result: SignInResult::SignedIn { name: "me".into() } });
+        assert_eq!(s, SignInFlow::default(), "signed in, the code has done its work");
+        s.on(SignInEvent::Sent);
+        assert!(!s.on(SignInEvent::Code), "no code while a pasted answer is on its way");
+    }
+
+    #[test]
+    fn stepped_says_whether_a_code_is_checked() {
+        let step = sign_in_flow_on(SignInFlow::default(), SignInEvent::Code);
+        assert!(step.send && step.checks_code);
+        let step = sign_in_flow_on(step.flow, SignInEvent::Close);
+        assert!(!step.checks_code);
     }
 }

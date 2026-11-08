@@ -7,7 +7,7 @@ use std::io::BufRead;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 
-use nori_core::providers::{Kinds, SignIn};
+use nori_core::providers::Kinds;
 use nori_core::settings::ServerKind;
 
 mod window;
@@ -33,10 +33,7 @@ impl SignInWindow {
     /// [`SignInWindow::id`] and the signed-in session's cookies (a `Cookie` header's value), on a thread
     /// of its own. None where the provider has no page or no window can start.
     pub fn open(kinds: Arc<Kinds>, kind: ServerKind, title: String, done: impl FnOnce(u32, String) + Send + 'static) -> Option<SignInWindow> {
-        let start = kinds.providers().into_iter().find(|i| i.kind == kind)?.sign_in.into_iter().find_map(|s| match s {
-            SignIn::WebPage { start_url } => Some(start_url),
-            SignIn::Paste => None,
-        })?;
+        let start = kinds.providers().into_iter().find(|i| i.kind == kind)?.page()?.to_string();
         SignInWindow::open_at(kinds, kind, title, start, done)
     }
 

@@ -57,7 +57,7 @@ enum Run {
 
 /// `name` of the sound-stage export.
 fn func(store: &mut Store<()>, instance: &Instance, name: &str) -> wasmtime::Result<Func> {
-    let iface = instance.get_export_index(&mut *store, None, "nori:plugin/sound-stage@2.0.0").ok_or_else(|| wasmtime::Error::msg("no sound-stage export"))?;
+    let iface = instance.get_export_index(&mut *store, None, "nori:plugin/sound-stage@3.0.0").ok_or_else(|| wasmtime::Error::msg("no sound-stage export"))?;
     let f = instance.get_export_index(&mut *store, Some(&iface), name).ok_or_else(|| wasmtime::Error::msg(format!("no {name}")))?;
     instance.get_func(&mut *store, f).ok_or_else(|| wasmtime::Error::msg(format!("{name} is no function")))
 }

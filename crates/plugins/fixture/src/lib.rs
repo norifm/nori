@@ -178,6 +178,15 @@ impl Provider for Test {
     fn source(&mut self, id: String, _: Option<u32>, _: provider::StreamUse) -> Result<provider::StreamSource, Error> {
         Ok(provider::StreamSource { url: format!("https://allowed.example/song/{id}"), length: Some(1000), part: Some(100) })
     }
+
+    fn start_code(&mut self) -> Result<provider::SignInCode, Error> {
+        Ok(provider::SignInCode { code: "TEST-1".into(), url: "https://allowed.example/activate/TEST-1".into(), every: 2, lasts: Some(60), state: "poll".into() })
+    }
+
+    /// Allowed at once, signed in under the code and the state it was handed back.
+    fn check_code(&mut self, code: provider::SignInCode) -> Option<provider::CodeCheck> {
+        Some(provider::CodeCheck::Done(provider::SignInResult::SignedIn(format!("{} {}", code.code, code.state))))
+    }
 }
 
 impl Slots for Test {
