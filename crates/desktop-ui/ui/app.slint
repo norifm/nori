@@ -6484,6 +6484,8 @@ export component AppWindow inherits Window {
     // The album's or artist's seal: offered where the profile keeps the account's favorites, and its state.
     in property <bool> page-can-star;
     in property <bool> page-starred;
+    // A playlist's page: its seal pins it on this device.
+    in property <bool> page-pinnable;
     callback page-star();
     callback more();
     callback search-edited(string);
@@ -7554,7 +7556,7 @@ export component AppWindow inherits Window {
                                         }
                                         PageActions {
                                             alignment: start;
-                                            seal: root.page-can-star && root.page-kind == PageLayout.album;
+                                            seal: root.page-can-star && (root.page-kind == PageLayout.album || root.page-pinnable);
                                             liked: root.page-starred;
                                             shuffle-lit: root.page-shuffle-lit;
                                             pausing: root.page-pausing;

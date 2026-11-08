@@ -6,6 +6,7 @@
   import { library, reading } from "../state/library.svelte";
   import { deletePlaylist } from "../state/menus";
   import { player } from "../state/player.svelte";
+  import { remote } from "../state/remote.svelte";
   import { go } from "../state/route.svelte";
   import { ui, type Item } from "../state/ui.svelte";
   import type { Playlist, Song } from "../state/types";
@@ -13,6 +14,7 @@
   import Hero from "../ui/Hero.svelte";
   import Icon from "../ui/Icon.svelte";
   import Page from "../ui/Page.svelte";
+  import Seal from "../ui/Seal.svelte";
   import PageTools from "../ui/PageTools.svelte";
   import SongList from "../ui/SongList.svelte";
 
@@ -57,6 +59,7 @@
     <Hero cover={pl.cover} title={pl.name} fallback="playlist" label={songs.length ? W.listCaption(songs.length, page.data?.seconds ?? 0) : ""} onplay={(s) => void player.play(songs, 0, s, "Playlist", id)}>
       {#snippet by()}{#if pl.comment}<span class="comment">{pl.comment}</span>{/if}{/snippet}
       {#snippet actions()}
+        {#if !remote.jam?.guest}<Seal what="playlist" id={pl.id} on={!!pl.pinned} />{/if}
         <PageTools tools={page.data?.tools ?? []} {songs} />
         {#if pl.editable}<button class="glyph" aria-label={W.more} title={W.more} onclick={more}><Icon name="more-horiz" /></button>{/if}
       {/snippet}

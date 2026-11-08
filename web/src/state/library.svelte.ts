@@ -15,6 +15,12 @@ class Library {
     this.rev++;
   }
 
+  /** Pins a playlist in this browser, or lets it go. */
+  async pin(id: string, on: boolean) {
+    await ask("pin_playlist", id, on);
+    this.rev++;
+  }
+
   /** The profile changed under the pages (a jam joined or left). */
   changed() {
     this.rev++;

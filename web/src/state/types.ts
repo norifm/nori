@@ -33,7 +33,7 @@ export type MixTile = { id: string; name: string; favourites: boolean; covers: s
 /** A mix's page (the core's `mix_page`): the songs as they play. */
 export type MixPage = { id: string; name: string; favourites: boolean; seconds: number; covers: string[]; songs: Song[] };
 export type Artist = { id: string; name: string; cover?: string; albumCount?: number | null; starred?: boolean };
-export type Playlist = { id: string; name: string; songCount: number; duration: number; cover?: string; comment?: string; owner?: string; /** The account may change it (the core's `playlist_editable`). */ editable?: boolean };
+export type Playlist = { id: string; name: string; songCount: number; duration: number; cover?: string; comment?: string; owner?: string; /** The account may change it (the core's `playlist_editable`). */ editable?: boolean; /** Pinned in this browser. */ pinned?: boolean };
 /** A playlist songs can go into: `adds`, the ones it lacks; `holds`, how many it has already. */
 export type PlaylistChoice = { playlist: Playlist; adds: string[]; holds: number };
 /** As the server names it: the name is `value`. */

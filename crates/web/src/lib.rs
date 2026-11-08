@@ -181,6 +181,11 @@ impl Nori {
         self.leave();
     }
 
+    /// Pins playlist `id` in this browser, or lets it go; Home's shelf of pinned playlists follows.
+    pub fn pin_playlist(&self, id: String, on: bool) {
+        nori_core::browse::pin_playlist(&self.app.settings, id, on);
+    }
+
     /// Asks the server for a change to the library (`{ kind, ... }`, see `pages::Change`): playlists made,
     /// renamed, filled, reordered or deleted, and hearts. Kept for later when offline.
     pub async fn change(&self, change: String) -> Result<(), JsValue> {
@@ -428,9 +433,8 @@ impl Nori {
     }
 
     /// Home's rows that a browser draws, in the order kept (`browse::home_rows_shown`, `home_shelves`):
-    /// `[{ row, kind: "albums", sort, size } | { row, kind: "playlists", take }]`, `row` the `HomeRow`'s
-    /// name. The songs shelf reads the offline index and the pinned playlists are pinned on a phone,
-    /// neither of which a browser keeps.
+    /// `[{ row, kind: "albums", sort, size } | { row, kind: "playlists", take } | { row, kind: "pinned" }]`,
+    /// `row` the `HomeRow`'s name. The songs shelf reads the offline index, which a browser does not keep.
     pub fn home_rows(&self) -> String {
         use nori_core::browse::{home_rows_shown, home_shelves, HomeShelf};
         let prefs = self.app.settings.current().unwrap_or_default();
@@ -442,7 +446,8 @@ impl Nori {
             .filter_map(|(row, shelf)| match shelf {
                 HomeShelf::Albums { sort, size, .. } => Some(json!({ "row": format!("{row:?}"), "kind": "albums", "sort": sort.name(), "size": size })),
                 HomeShelf::Playlists { take } => Some(json!({ "row": format!("{row:?}"), "kind": "playlists", "take": take })),
-                HomeShelf::Songs { .. } | HomeShelf::Pinned => None,
+                HomeShelf::Pinned => Some(json!({ "row": format!("{row:?}"), "kind": "pinned" })),
+                HomeShelf::Songs { .. } => None,
             })
             .collect();
         Value::from(out).to_string()

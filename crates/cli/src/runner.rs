@@ -1054,6 +1054,7 @@ impl Runner {
             }
             Cmd::Star(nori_core::client::Starrable::Song, id, on) => s.star_song(id, on, self.there()),
             Cmd::Star(kind, id, on) => s.star(kind, id, on),
+            Cmd::Pin(id, on) => nori_core::browse::pin_playlist(&self.root.app.settings, id, on),
             Cmd::Pick(device) => {
                 if let Some(r) = s.remote() {
                     r.pick(device);

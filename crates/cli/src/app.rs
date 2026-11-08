@@ -149,6 +149,8 @@ pub enum Cmd {
     DownloadFetch(Fetch),
     DownloadRemove(Vec<String>),
     Star(Starrable, String, bool),
+    /// Pins a playlist on this device, or lets it go.
+    Pin(String, bool),
     Setting(String, String),
     Level(EqLevel, f32),
     Band(u32, SoundBand),
@@ -3437,11 +3439,18 @@ impl App {
         self.downloaded.extend(ids.into_iter().zip(states));
     }
 
-    /// Flips the star on the page's album or artist.
+    /// Flips the seal on the page's album or artist, or pins its playlist.
     fn star_page(&mut self) {
         let (kind, id, listed) = match self.page() {
             Some(Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. }) => (Starrable::Album, d.album.id.clone(), d.album.starred),
             Some(Page::Artist { detail: Load::Ready(d), .. }) => (Starrable::Artist, d.artist.id.clone(), d.artist.starred),
+            Some(Page::Playlist { detail: Load::Ready(d), .. }) => {
+                let id = d.playlist.id.clone();
+                let on = !self.prefs.pinned_playlists.contains(&id);
+                self.prefs.pinned_playlists = nori_core::browse::pins_toggled(std::mem::take(&mut self.prefs.pinned_playlists), id.clone(), on);
+                self.cmds.push(Cmd::Pin(id, on));
+                return;
+            }
             _ => return,
         };
         self.star(kind, id, listed);
