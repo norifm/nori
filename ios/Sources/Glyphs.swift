@@ -43,6 +43,7 @@ enum Glyph {
     static let downloadedRow = draw(Iconoir.checkCircle, 15)
     static let downloadingRow = draw(Iconoir.download, 15)
     static let more = draw(Iconoir.moreHoriz, 28)
+    static let moreSmall = draw(Iconoir.moreHoriz, 22)
     static let close = draw(Iconoir.navArrowDown, 28)
     /// A pill's glyph.
     static let playPill = draw(Iconoir.playSolid, 18)

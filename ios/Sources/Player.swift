@@ -34,6 +34,16 @@ final class PlayerCard: UIViewController {
     private let nextButton = GlyphButton(Glyph.bigNext, Say.next, side: 56)
     private let queue = GlyphButton(Glyph.queue, Say.queue, quiet: true)
     private let transport = UIStackView()
+    private let songRow = UIStackView()
+    /// What takes the artwork's place: the lyrics or the queue, the transport staying under them.
+    private enum Panel { case art, lyrics, queue }
+    private var panel = Panel.art
+    private var shown: (UIViewController & PlayerPanel)?
+    private var lyricsSong = ""
+    private let panelArea = UIView()
+    private let panelFoot = GradientView(colours: [])
+    /// Opens on the queue rather than the artwork: a jam guest's output button.
+    var opensQueue = false
     /// Where the sound goes: the device's glyph and name, one button.
     private let output = UIButton(type: .custom)
     private let outputs = OutputPicker()
@@ -73,7 +83,7 @@ final class PlayerCard: UIViewController {
         let names = UIStackView(arrangedSubviews: [songTitle, artist, album])
         names.axis = .vertical
         names.spacing = 1
-        let songRow = UIStackView(arrangedSubviews: [names, seal, more])
+        [names, seal, more].forEach(songRow.addArrangedSubview)
         songRow.spacing = 0
         songRow.alignment = .center
         songRow.setCustomSpacing(4, after: names)
@@ -121,7 +131,9 @@ final class PlayerCard: UIViewController {
         column.setCustomSpacing(8, after: times)
         column.setCustomSpacing(6, after: transport)
 
-        for v in [cover, column, grabber] as [UIView] {
+        panelArea.isHidden = true
+        panelFoot.translatesAutoresizingMaskIntoConstraints = false
+        for v in [cover, panelArea, column, grabber] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -153,13 +165,20 @@ final class PlayerCard: UIViewController {
             grabber.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             grabber.widthAnchor.constraint(equalToConstant: 60),
             grabber.heightAnchor.constraint(equalToConstant: 32),
+            panelArea.topAnchor.constraint(equalTo: grabber.bottomAnchor),
+            panelArea.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            panelArea.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            panelArea.bottomAnchor.constraint(equalTo: column.topAnchor, constant: -6),
             column.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Space.gutter),
             column.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Space.gutter + 8),
             column.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -6),
             seek.trailingAnchor.constraint(equalTo: column.trailingAnchor, constant: -8),
             times.trailingAnchor.constraint(equalTo: column.trailingAnchor, constant: -8),
         ])
-        closer = DragToClose(self, transition)
+        closer = DragToClose(self, transition) { [weak self] pan in
+            guard let self else { return false }
+            return self.panel == .art || !self.panelArea.frame.contains(pan.location(in: self.view))
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(changed), name: .noriNow, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(paintSeal), name: .noriFavorites, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(changed), name: .noriJam, object: nil)
@@ -168,9 +187,10 @@ final class PlayerCard: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(stopTicking), name: UIApplication.didEnterBackgroundNotification, object: nil)
         wear(Theme.player)
         changed()
+        if opensQueue { show(.queue) }
     }
 
-    override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
+    override var preferredStatusBarStyle: UIStatusBarStyle { panel == .art ? .lightContent : Theme.statusBar }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
@@ -203,6 +223,8 @@ final class PlayerCard: UIViewController {
         seek.setThumbImage(PlayerCard.dot(8, look.accent), for: .normal)
         seek.setThumbImage(PlayerCard.dot(16, look.accent), for: .highlighted)
         for b in [seal, more, lyrics, previous, play, nextButton, queue] { b.look = look }
+        (panelFoot.layer as? CAGradientLayer)?.colors = [look.page.withAlphaComponent(0).cgColor, look.page.cgColor]
+        shown?.repaint()
         paintSeal()
         paintOutput()
     }
@@ -236,6 +258,7 @@ final class PlayerCard: UIViewController {
         album.text = song.album
         album.isHidden = song.album.isEmpty
         paintSeal()
+        if panel == .lyrics && lyricsSong != song.id { show(.lyrics) }
         if paintedCover != song.cover {
             paintedCover = song.cover
             cover.show(song.cover, points: PlayerCard.coverPoints)
@@ -378,18 +401,55 @@ final class PlayerCard: UIViewController {
         }
     }
 
-    @objc private func lyricsTapped() {
-        guard let song = Core.shared.now.song else { return }
-        cover(with: LyricsSheet(song: song.id))
-    }
+    @objc private func lyricsTapped() { show(panel == .lyrics ? .art : .lyrics) }
 
-    @objc private func queueTapped() {
-        cover(with: QueueSheet())
-    }
+    @objc private func queueTapped() { show(panel == .queue ? .art : .queue) }
 
-    private func cover(with sheet: UIViewController) {
-        stopTicking()
-        present(sheet, animated: !(sheet is Sheet))
+    /// `next` in the artwork's place; the artwork again is the panel put away.
+    private func show(_ next: Panel) {
+        let swap = {
+            self.shown?.willMove(toParent: nil)
+            self.shown?.view.removeFromSuperview()
+            self.shown?.removeFromParent()
+            self.shown = nil
+            self.panelFoot.removeFromSuperview()
+            let back = { [weak self] in self?.show(.art) ?? () }
+            var child: (UIViewController & PlayerPanel)?
+            switch next {
+            case .art: break
+            case .lyrics:
+                guard let song = Core.shared.now.song else { break }
+                self.lyricsSong = song.id
+                child = LyricsPanel(song: song, back: back) { [weak self] in self?.moreTapped() }
+            case .queue:
+                child = QueuePanel(showPlayer: back)
+            }
+            self.panel = child == nil ? .art : next
+            if let child {
+                self.addChild(child)
+                child.view.frame = self.panelArea.bounds
+                child.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                self.panelArea.addSubview(child.view)
+                child.didMove(toParent: self)
+                self.panelArea.addSubview(self.panelFoot)
+                NSLayoutConstraint.activate([
+                    self.panelFoot.leadingAnchor.constraint(equalTo: self.panelArea.leadingAnchor),
+                    self.panelFoot.trailingAnchor.constraint(equalTo: self.panelArea.trailingAnchor),
+                    self.panelFoot.bottomAnchor.constraint(equalTo: self.panelArea.bottomAnchor),
+                    self.panelFoot.heightAnchor.constraint(equalToConstant: 32),
+                ])
+            }
+            self.shown = child
+            self.panelArea.isHidden = self.panel == .art
+            self.cover.isHidden = self.panel != .art
+            self.songRow.isHidden = self.panel == .lyrics
+            self.grabber.tintColor = self.panel == .art ? .white : Theme.player.quiet
+            self.lyrics.lit = self.panel == .lyrics
+            self.queue.lit = self.panel == .queue
+            self.setNeedsStatusBarAppearanceUpdate()
+        }
+        if view.window == nil || Motion.plain { return swap() }
+        UIView.transition(with: view, duration: 0.2, options: [.transitionCrossDissolve, .allowUserInteraction], animations: swap)
     }
 
     /// The output button: nori's devices with this iPod's outputs among them, or just the outputs with
@@ -398,7 +458,8 @@ final class PlayerCard: UIViewController {
         if Core.shared.now.jam {
             queueTapped()
         } else if Core.shared.now.remote {
-            cover(with: DevicesSheet())
+            stopTicking()
+            present(DevicesSheet(), animated: false)
         } else {
             outputs.show()
         }
@@ -445,68 +506,102 @@ final class CardTransition: NSObject, UIViewControllerTransitioningDelegate, UIV
     }
 }
 
-/// The lyrics over the card: the chevron pinned above the lines, and that strip dragged down closes it
-/// under the finger wherever the lines are scrolled; pulling past the first line closes it too.
-final class LyricsSheet: UIViewController {
-    let transition = CardTransition()
-    private let lines: LyricsCard
-    private var closer: DragToClose?
+/// What stands in the artwork's place on the player.
+protocol PlayerPanel: AnyObject {
+    /// The player's colors moved.
+    func repaint()
+}
 
-    init(song: String) {
-        lines = LyricsCard(song: song)
+/// The lyrics in the artwork's place, as Android's: the song at the head, its cover and names going back
+/// to the artwork, its seal and menu beside them, then the lines.
+final class LyricsPanel: UIViewController, PlayerPanel {
+    private let song: Item
+    private let lines: LyricsCard
+    private let back: () -> Void
+    private let menu: () -> Void
+    private let name = label(Fonts.font(16, .semibold, .headline), Theme.Card.label)
+    private let artist = label(Fonts.font(13, .regular, .footnote), Theme.Card.secondary)
+    private let seal = GlyphButton(Glyph.sealSmall, Say.favorite, side: 44)
+    private let more = GlyphButton(Glyph.moreSmall, Say.more, side: 44)
+
+    init(song: Item, back: @escaping () -> Void, more: @escaping () -> Void) {
+        self.song = song
+        self.back = back
+        menu = more
+        lines = LyricsCard(song: song.id)
         super.init(nibName: nil, bundle: nil)
-        modalPresentationStyle = .overFullScreen
-        modalPresentationCapturesStatusBarAppearance = true
-        transitioningDelegate = transition
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var preferredStatusBarStyle: UIStatusBarStyle { Theme.statusBar }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        (presentingViewController as? PlayerCard)?.changed()
-    }
-
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = Theme.Card.background
-        let grabber = UIButton(type: .system)
-        grabber.setImage(Glyph.close, for: .normal)
-        grabber.tintColor = Theme.Card.secondary
-        grabber.accessibilityLabel = Say.close
-        grabber.addTarget(self, action: #selector(close), for: .touchUpInside)
+        let art = CoverView()
+        art.layer.cornerRadius = 9
+        art.show(song.cover, points: 64)
+        art.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([art.widthAnchor.constraint(equalToConstant: 64), art.heightAnchor.constraint(equalToConstant: 64)])
+        name.text = song.title
+        artist.text = song.subtitle
+        let words = UIStackView(arrangedSubviews: [name, artist])
+        words.axis = .vertical
+        words.spacing = 2
+        let thing = UIStackView(arrangedSubviews: [art, words])
+        thing.spacing = 12
+        thing.alignment = .center
+        thing.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(backTapped)))
+        seal.addTarget(self, action: #selector(sealTapped), for: .touchUpInside)
+        more.addTarget(self, action: #selector(moreTapped), for: .touchUpInside)
+        let head = UIStackView(arrangedSubviews: [thing, seal, more])
+        head.alignment = .center
         addChild(lines)
-        for v in [grabber, lines.view!] {
+        for v in [head, lines.view!] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            grabber.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            grabber.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabber.widthAnchor.constraint(equalToConstant: 120),
-            grabber.heightAnchor.constraint(equalToConstant: 36),
-            lines.view.topAnchor.constraint(equalTo: grabber.bottomAnchor),
+            head.topAnchor.constraint(equalTo: view.topAnchor, constant: 4),
+            head.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Space.gutter),
+            head.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Space.tight),
+            lines.view.topAnchor.constraint(equalTo: head.bottomAnchor, constant: 8),
             lines.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             lines.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             lines.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         lines.didMove(toParent: self)
-        closer = DragToClose(self, transition) { [weak self] pan in
-            guard let self else { return false }
-            return pan.location(in: self.view).y < self.lines.view.frame.minY
-        }
+        NotificationCenter.default.addObserver(self, selector: #selector(paintSeal), name: .noriFavorites, object: nil)
+        repaint()
     }
 
-    @objc private func close() { dismiss(animated: true) }
+    func repaint() {
+        name.textColor = Theme.Card.label
+        artist.textColor = Theme.Card.secondary
+        seal.look = Theme.player
+        more.look = Theme.player
+        paintSeal()
+        lines.repaint()
+    }
+
+    @objc private func paintSeal() {
+        let on = Core.shared.isFavorite(song)
+        seal.setImage(on ? Glyph.sealedSmall : Glyph.sealSmall, for: .normal)
+        seal.lit = on
+        seal.isHidden = song.external || !Core.shared.rules.stars
+    }
+
+    @objc private func sealTapped() {
+        Core.shared.favorite(song, !Core.shared.isFavorite(song))
+        paintSeal()
+    }
+
+    @objc private func backTapped() { back() }
+    @objc private func moreTapped() { menu() }
 }
 
 /// A drag down that closes a sheet under the finger through its `CardTransition`; let go early or
 /// slowly and it comes back. `starts` says where on the sheet such a drag may begin.
 final class DragToClose: NSObject, UIGestureRecognizerDelegate {
-    /// How far past a list's top a pull closes its sheet; and how far a drag must go to close.
-    static let pull: CGFloat = 70
+    /// How far a drag must go to close.
     private static let far: CGFloat = 120
     private weak var sheet: UIViewController?
     private let transition: CardTransition
@@ -651,7 +746,7 @@ final class LyricCell: UITableViewCell {
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
-        backgroundColor = Theme.Card.background
+        backgroundColor = .clear
         selectionStyle = .none
         line.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(line)
@@ -703,7 +798,7 @@ final class LyricsCard: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        tableView.backgroundColor = Theme.Card.background
+        tableView.backgroundColor = .clear
         tableView.separatorStyle = .none
         tableView.contentInset = UIEdgeInsets(top: 8, left: 0, bottom: 200, right: 0)
         tableView.register(LyricCell.self, forCellReuseIdentifier: LyricCell.id)
@@ -726,12 +821,9 @@ final class LyricsCard: UITableViewController {
         stop()
     }
 
-    /// Pulled down past the first line and let go: the lyrics close.
-    override func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint,
-                                            targetContentOffset: UnsafeMutablePointer<CGPoint>) {
-        if scrollView.contentOffset.y + scrollView.adjustedContentInset.top < -DragToClose.pull {
-            parent?.dismiss(animated: true)
-        }
+    /// The player's colors moved: the lines are drawn again in them.
+    func repaint() {
+        for case let cell as LyricCell in tableView.visibleCells { cell.line.setNeedsDisplay() }
     }
 
     @objc private func arrived(_ n: Notification) {

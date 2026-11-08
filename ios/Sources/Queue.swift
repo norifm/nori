@@ -1,16 +1,20 @@
 import UIKit
 
-/// The queue, from the player: the song playing at the top as it opens, what has played above it under
+/// The queue in the artwork's place on the player, as Android's: the song playing at the top as it opens, what has played above it under
 /// "History", what plays next under "Playing next". Shuffle and repeat stay pinned beside the title.
 /// Hold a row and drag to move it (when the play order is the list's), swipe to remove, tap to play.
 /// The rows, their order and what may move or go are the core's (`queue_rows`). A jam guest's is the
 /// host's queue, read only, under the jam: its host and listeners, Listen Here, Leave, and the songs it
 /// asked for.
-final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDelegate,
+final class QueuePanel: UIViewController, PlayerPanel, UITableViewDataSource, UITableViewDelegate,
     UITableViewDragDelegate, UITableViewDropDelegate {
-    let transition = CardTransition()
-    private var closer: DragToClose?
-    private let table = UITableView(frame: .zero, style: .plain)
+    private let table = UITableView(frame: .zero, style: .grouped)
+    private let name = UILabel()
+    /// The song playing tapped: back to the artwork.
+    private let showPlayer: () -> Void
+    /// The list rests on the song playing, so the next one comes to the top too.
+    private var following = true
+    private var followed: String?
     private let shuffle = UIButton(type: .system)
     private let repeatButton = UIButton(type: .system)
     /// After a swipe: the song's name and Undo, for a few seconds.
@@ -37,44 +41,34 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
     /// The jam part's rows.
     private enum JamRow: Int, CaseIterable { case people, listen, leave }
 
-    init() {
+    init(showPlayer: @escaping () -> Void) {
+        self.showPlayer = showPlayer
         super.init(nibName: nil, bundle: nil)
-        modalPresentationStyle = .overFullScreen
-        modalPresentationCapturesStatusBarAppearance = true
-        transitioningDelegate = transition
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     deinit { if token != 0 { Core.shared.forget(token) } }
 
-    override var preferredStatusBarStyle: UIStatusBarStyle { Theme.statusBar }
-
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = Theme.Card.background
-
-        let grabber = UIButton(type: .system)
-        grabber.setImage(Glyph.close, for: .normal)
-        grabber.tintColor = Theme.Card.secondary
-        grabber.addTarget(self, action: #selector(close), for: .touchUpInside)
-        grabber.accessibilityLabel = Say.close
-        let title = UILabel()
-        title.text = Say.queue
-        title.font = Fonts.title(22)
-        title.textColor = Theme.Card.label
+        name.text = Say.queue
+        name.font = Fonts.font(16, .semibold, .headline)
         shuffle.setImage(Glyph.shuffle, for: .normal)
         shuffle.accessibilityLabel = Say.shuffle
         repeatButton.accessibilityLabel = Say.repeatMode
         shuffle.addTarget(self, action: #selector(shuffleTapped), for: .touchUpInside)
         repeatButton.addTarget(self, action: #selector(repeatTapped), for: .touchUpInside)
-        let bar = UIStackView(arrangedSubviews: [title, UIView(), shuffle, repeatButton])
+        let bar = UIStackView(arrangedSubviews: [name, UIView(), shuffle, repeatButton])
         bar.spacing = 4
         bar.alignment = .center
 
-        table.backgroundColor = Theme.Card.background
+        table.backgroundColor = .clear
         table.separatorStyle = .none
-        table.rowHeight = 60
+        table.rowHeight = 56
+        table.estimatedSectionHeaderHeight = 0
+        table.estimatedSectionFooterHeight = 0
+        table.tableHeaderView = PageController.noHeader
         table.dataSource = self
         table.delegate = self
         table.dragDelegate = self
@@ -83,17 +77,13 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
         table.register(QueueCell.self, forCellReuseIdentifier: QueueCell.id)
         table.contentInset.bottom = 24
 
-        for v in [grabber, bar, table] {
+        for v in [bar, table] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            grabber.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            grabber.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabber.widthAnchor.constraint(equalToConstant: 60),
-            grabber.heightAnchor.constraint(equalToConstant: 24),
-            bar.topAnchor.constraint(equalTo: grabber.bottomAnchor, constant: 4),
-            bar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            bar.topAnchor.constraint(equalTo: view.topAnchor),
+            bar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Space.gutter),
             bar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
             bar.heightAnchor.constraint(equalToConstant: 44),
             shuffle.widthAnchor.constraint(equalToConstant: 44),
@@ -128,19 +118,20 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
             undoRow.bottomAnchor.constraint(equalTo: undoBar.bottomAnchor, constant: -4),
             undoBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
             undoBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            undoBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            undoBar.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
             undoBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
 
-        // A drag down above the list closes the sheet under the finger, as the card does.
-        closer = DragToClose(self, transition) { [weak self] pan in
-            guard let self else { return false }
-            return pan.location(in: self.view).y < self.table.frame.minY
-        }
         NotificationCenter.default.addObserver(self, selector: #selector(changed), name: .noriNow, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(jamChanged), name: .noriJam, object: nil)
-        paintToggles()
+        repaint()
         read()
+    }
+
+    func repaint() {
+        name.textColor = Theme.Card.label
+        paintToggles()
+        table.reloadData()
     }
 
     /// The jam changed, and with what its host took, its queue.
@@ -148,19 +139,17 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
         read()
     }
 
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        (presentingViewController as? PlayerCard)?.changed()
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) { following = false }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        if !decelerate { noteRest() }
     }
 
-    @objc private func close() { dismiss(animated: true) }
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { noteRest() }
 
-    /// Pulled down past the first row and let go: the queue closes.
-    func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint,
-                                   targetContentOffset: UnsafeMutablePointer<CGPoint>) {
-        if scrollView.contentOffset.y + scrollView.adjustedContentInset.top < -DragToClose.pull {
-            dismiss(animated: true)
-        }
+    /// A scroll that ended on the song playing goes on following it.
+    private func noteRest() {
+        following = table.indexPathsForVisibleRows?.first?.section == Part.now.rawValue
     }
 
     @objc private func changed() {
@@ -204,10 +193,14 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
         jam = a.head["jam"] as? Bool == true ? Core.shared.jam : nil
         table.reloadData()
         // Opens on the song playing, what has played above it out of sight.
+        let playing = IndexPath(row: 0, section: Part.now.rawValue)
         if !opened, !now.isEmpty {
             opened = true
-            table.scrollToRow(at: IndexPath(row: 0, section: Part.now.rawValue), at: .top, animated: false)
+            table.scrollToRow(at: playing, at: .top, animated: false)
+        } else if !now.isEmpty, following, now.first?.id != followed, !table.hasActiveDrag {
+            table.scrollToRow(at: playing, at: .top, animated: !Motion.plain)
         }
+        followed = now.first?.id
     }
 
     private func items(_ section: Int) -> [Item] {
@@ -245,37 +238,39 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
 
     func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
         switch Part(rawValue: section) {
-        case .asked: return items(section).isEmpty ? 0 : 44
-        case .history: return history.isEmpty ? 0 : 36
-        case .next: return upcoming.isEmpty ? 0 : 44
-        default: return 0
+        case .asked where !items(section).isEmpty, .next where !upcoming.isEmpty: return 34
+        case .history where !history.isEmpty: return 28
+        default: return .leastNormalMagnitude
         }
     }
+
+    func tableView(_ tableView: UITableView, heightForFooterInSection section: Int) -> CGFloat { .leastNormalMagnitude }
 
     func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
         let part = Part(rawValue: section)
         guard part != .now, part != .jam, !items(section).isEmpty else { return nil }
         let header = UIView()
-        header.backgroundColor = Theme.Card.background
         let label = UILabel()
-        label.text = part == .asked ? Say.youAskedFor : part == .history ? Say.history : Say.upNext
-        label.font = Fonts.font(17, .semibold)
-        label.textColor = Theme.Card.label
+        let words = part == .asked ? Say.youAskedFor : part == .history ? Say.history : Say.upNext
+        label.attributedText = NSAttributedString(string: words.uppercased(), attributes: [.kern: 0.7])
+        label.font = Fonts.font(11.5, .semibold, .caption1)
+        label.textColor = Theme.Card.secondary
         label.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(label)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 16),
+            label.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: Space.gutter),
             label.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -6),
         ])
         if part == .next && !mirrored {
             let clear = UIButton(type: .system)
             clear.setTitle(Say.clear, for: .normal)
             clear.tintColor = Theme.Card.secondary
+            clear.titleLabel?.font = Fonts.font(13, .medium, .footnote)
             clear.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
             clear.translatesAutoresizingMaskIntoConstraints = false
             header.addSubview(clear)
             NSLayoutConstraint.activate([
-                clear.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -16),
+                clear.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -Space.gutter),
                 clear.centerYAnchor.constraint(equalTo: label.centerYAnchor),
             ])
         }
@@ -300,7 +295,7 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
     /// The jam's rows: its host and who listens, Listen Here (and why it does not play), Leave.
     private func jamCell(_ tableView: UITableView, _ row: JamRow, _ jam: Jam) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "jam") ?? UITableViewCell(style: .subtitle, reuseIdentifier: "jam")
-        cell.backgroundColor = Theme.Card.background
+        cell.backgroundColor = .clear
         cell.selectionStyle = .none
         cell.accessoryView = nil
         cell.textLabel?.textColor = Theme.Card.label
@@ -338,10 +333,13 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
         tableView.deselectRow(at: indexPath, animated: true)
         if Part(rawValue: indexPath.section) == .jam, JamRow(rawValue: indexPath.row) == .leave {
             nori_ios_jam_leave()
-            return dismiss(animated: true)
+            parent?.dismiss(animated: true)
+            return
         }
         // The jam's rows, its requests and its host's queue: nothing a guest plays.
         guard jam == nil else { return }
+        if Part(rawValue: indexPath.section) == .now { return showPlayer() }
+        following = true
         _ = nori_ios_play_at(Int32(items(indexPath.section)[indexPath.row].index), 0)
     }
 
@@ -417,7 +415,7 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
     }
 }
 
-/// A queue row: cover, title, artist; quieter once played, lit while playing, a handle when it can move.
+/// A queue row: cover, title, artist; quieter once played, in the accent while playing, a handle when it can move.
 final class QueueCell: UITableViewCell {
     static let id = "queue"
     private let cover = CoverView()
@@ -427,15 +425,12 @@ final class QueueCell: UITableViewCell {
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
-        backgroundColor = Theme.Card.background
-        let selected = UIView()
-        selected.backgroundColor = Theme.Card.track
-        selectedBackgroundView = selected
+        backgroundColor = .clear
+        selectedBackgroundView = UIView()
         title.font = Fonts.font(16)
         title.adjustsFontForContentSizeCategory = true
         detail.font = Fonts.font(13, .regular, .footnote)
         detail.adjustsFontForContentSizeCategory = true
-        grip.tintColor = Theme.Card.dim
         grip.setContentHuggingPriority(.required, for: .horizontal)
         let text = UIStackView(arrangedSubviews: [title, detail])
         text.axis = .vertical
@@ -445,14 +440,14 @@ final class QueueCell: UITableViewCell {
             contentView.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            cover.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            cover.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: Space.gutter),
             cover.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             cover.widthAnchor.constraint(equalToConstant: 44),
             cover.heightAnchor.constraint(equalToConstant: 44),
             text.leadingAnchor.constraint(equalTo: cover.trailingAnchor, constant: 12),
             text.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             text.trailingAnchor.constraint(equalTo: grip.leadingAnchor, constant: -8),
-            grip.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            grip.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -Space.gutter),
             grip.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
         ])
     }
@@ -464,8 +459,10 @@ final class QueueCell: UITableViewCell {
         cover.show(item.cover, points: 44)
         title.text = item.title.isEmpty ? item.id : item.title
         detail.text = note ?? ([item.subtitle, item.by].filter { !$0.isEmpty }.joined(separator: " · "))
-        title.font = Fonts.font(17, playing ? .semibold : .regular)
-        title.textColor = Theme.Card.label.withAlphaComponent(played ? 0.45 : 1)
+        title.font = Fonts.font(16, playing ? .semibold : .regular)
+        title.textColor = playing ? Theme.Card.accent : Theme.Card.label.withAlphaComponent(played ? 0.45 : 1)
+        selectedBackgroundView?.backgroundColor = Theme.Card.track
+        grip.tintColor = Theme.Card.dim
         detail.textColor = Theme.Card.secondary.withAlphaComponent(played ? 0.6 : 1)
         cover.alpha = played ? 0.5 : 1
         grip.isHidden = !movable
