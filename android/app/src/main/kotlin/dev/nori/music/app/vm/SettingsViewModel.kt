@@ -415,9 +415,13 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         viewModelScope.launch { nori.plugins.refresh() }
     }
 
-    /** What the profile in use waits for before it opens: its plugin (the core's `Kinds::waits`); null when it opens. */
+    /**
+     * What the profile in use waits for before it opens: its plugin (the core's `Kinds::waits`); null when it
+     * opens. Asked again when a plugin is installed, turned on, or starts running (the providers offered:
+     * a safe start ending runs plugins whose switches were on all along).
+     */
     val profileWait: StateFlow<dev.nori.music.ffi.ProfileWait?> =
-        combine(prefs.map { it.server to it.pluginsOff }.distinctUntilChanged(), nori.plugins.cards) { (server, _), _ -> server }
+        combine(prefs.map { it.server to it.pluginsOff }.distinctUntilChanged(), nori.plugins.cards, nori.plugins.providers) { (server, _), _, _ -> server }
             .map { server -> server?.let { withContext(Dispatchers.IO) { nori.plugins.kinds.waits(it) } } }
             .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
