@@ -364,44 +364,6 @@ fn found(token: u64, r: &SearchResult, server: bool) -> Value {
     })
 }
 
-/// The first letter a long list is indexed by: A to Z, `#` for the rest.
-fn letter(s: &str) -> char {
-    match s.chars().next().map(|c| c.to_ascii_uppercase()) {
-        Some(c) if c.is_ascii_uppercase() => c,
-        _ => '#',
-    }
-}
-
-/// `items`, each with the letter of the field the list is in the order of (`by`), when it is one.
-fn lettered(mut items: Vec<Value>, by: Option<&str>) -> Vec<Value> {
-    if let Some(by) = by {
-        for v in &mut items {
-            let l = letter(v[by].as_str().unwrap_or_default());
-            v["l"] = json!(l.to_string());
-        }
-    }
-    items
-}
-
-/// Which field of a row an album order runs by, for the A–Z index.
-fn album_letters(sort: AlbumSort) -> Option<&'static str> {
-    match sort {
-        AlbumSort::ByName => Some("t"),
-        AlbumSort::ByArtist => Some("s"),
-        _ => None,
-    }
-}
-
-/// Which field of a row a [`song_sorts`] order runs by, for the A–Z index.
-fn song_letters(sort: &str) -> Option<&'static str> {
-    match sort {
-        "TITLE" => Some("t"),
-        "ARTIST" => Some("s"),
-        "ALBUM" => Some("a"),
-        _ => None,
-    }
-}
-
 /// A page of an album grid from `offset`, or with `favorites` the starred albums whole in `sort`'s order:
 /// more follow while pages come full (`browse::next_album_page`).
 fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, favorites: bool, genre: Option<String>, offset: i32) {
@@ -422,12 +384,11 @@ fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, f
         let sections = if sort == AlbumSort::ArtistRows {
             artist_shelves(&v)
         } else {
-            vec![section("albums", true, lettered(v.iter().map(album_json).collect(), album_letters(sort)))]
+            vec![section("albums", true, v.iter().map(album_json).collect())]
         };
         Some(json!({
             "more": paging::answered(token, offset as u32, next_album_page(sort, favorites, offset as u32, ALBUM_PAGE as u32, v.len() as u32)),
             "from": offset,
-            "letters": album_letters(sort).is_some(),
             "sections": sections,
         }))
     });
@@ -777,14 +738,10 @@ pub(crate) fn read(token: u64, kind: i32, arg: String) {
                 Ok(p) => {
                     let kept = if offset == 0 { None } else { extend_list(token, &p.songs) };
                     let from = kept.unwrap_or(0);
-                    let mut rows = songs_section("songs", &p.songs, from);
-                    rows["items"] = json!(lettered(
-                        rows["items"].as_array().cloned().unwrap_or_default(),
-                        song_letters(&sort),
-                    ));
+                    let rows = songs_section("songs", &p.songs, from);
                     let more = paging::answered(token, offset, (!p.exhausted).then_some(offset + p.songs.len() as u32));
                     let v = json!({
-                        "more": more, "from": from, "letters": song_letters(&sort).is_some(), "sections": [rows],
+                        "more": more, "from": from, "sections": [rows],
                     });
                     if kept.is_none() {
                         keep_list(token, p.songs, None);
@@ -1934,18 +1891,6 @@ mod tests {
         assert_eq!(v["c"], "a");
         let bare = mix_json(&MixTile { covers: vec![], ..t });
         assert_eq!(bare["c"], "");
-    }
-
-    #[test]
-    fn rows_carry_the_letter_of_the_field_their_order_runs_by() {
-        let rows = || vec![json!({ "t": "blue", "s": "Joni" }), json!({ "t": "4 Way", "s": "Émile" })];
-        let by_name = lettered(rows(), album_letters(AlbumSort::ByName));
-        assert_eq!((by_name[0]["l"].as_str(), by_name[1]["l"].as_str()), (Some("B"), Some("#")));
-        let by_artist = lettered(rows(), album_letters(AlbumSort::ByArtist));
-        assert_eq!((by_artist[0]["l"].as_str(), by_artist[1]["l"].as_str()), (Some("J"), Some("#")));
-        assert!(lettered(rows(), album_letters(AlbumSort::Newest))[0].get("l").is_none());
-        assert_eq!(lettered(rows(), song_letters("ARTIST"))[0]["l"], "J");
-        assert!(lettered(rows(), song_letters("ADDED"))[0].get("l").is_none());
     }
 
     #[test]

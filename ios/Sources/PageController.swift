@@ -13,11 +13,6 @@ class PageController: TablePage {
     private var rows: [(section: Section, layout: Layout)] = []
     /// More pages may follow the list (the core's paging, `nori_ios_read_more`).
     private var more = false
-    /// The list runs in the order of a name: the table shows the A–Z index.
-    private var letters = false
-    /// An index letter not loaded yet: pages load until it is.
-    private var wantedLetter: String?
-    private static let index = ["#"] + "ABCDEFGHIJKLMNOPQRSTUVWXYZ".map(String.init)
     private let empty = EmptyState(title: "", detail: "")
     /// The colors the page wears: the theme's, or under a hero the season's paper dyed with its cover.
     private(set) var look = Theme.page
@@ -88,8 +83,6 @@ class PageController: TablePage {
         NotificationCenter.default.addObserver(self, selector: #selector(favoritesChanged), name: .noriFavorites, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(paintVisibleRows), name: .noriJam, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: .noriDownloads, object: nil)
-        tableView.sectionIndexColor = Theme.secondary
-        tableView.sectionIndexBackgroundColor = .clear
         tableView.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(held(_:))))
         reload()
     }
@@ -175,7 +168,6 @@ class PageController: TablePage {
             return
         }
         if token != 0 { Core.shared.forget(token) }
-        wantedLetter = nil
         token = Core.shared.read(kind, arg) { [weak self] a in self?.took(a, appending: false) }
     }
 
@@ -193,7 +185,6 @@ class PageController: TablePage {
             return
         }
         more = a.raw["more"] as? Bool ?? false
-        letters = a.raw["letters"] as? Bool ?? false
         if appending, var extra = Optional(a.sections.filter { !$0.items.isEmpty }), !extra.isEmpty, let last = rows.indices.last {
             // A page can answer twice (cached, then the server's): it replaces what it sent before. Its first
             // section goes on with the last one shown when it is the same (an artist's shelf over a page's edge).
@@ -216,10 +207,6 @@ class PageController: TablePage {
         }
         paintedCurrent = Core.shared.now.song?.id
         tableView.reloadData()
-        if let wanted = wantedLetter {
-            wantedLetter = nil
-            jump(to: wanted)
-        }
     }
 
     // MARK: the hero
@@ -405,38 +392,6 @@ class PageController: TablePage {
     }
 
     // MARK: the list
-
-    override func sectionIndexTitles(for tableView: UITableView) -> [String]? {
-        letters && rows.count == 1 ? PageController.index : nil
-    }
-
-    override func tableView(_ tableView: UITableView, sectionForSectionIndexTitle title: String, at index: Int) -> Int {
-        // The table first scrolls to the section's top; the row is found after it.
-        DispatchQueue.main.async { self.jump(to: title) }
-        return 0
-    }
-
-    /// Scrolls to the first row at or past `letter`, loading pages while it is not there yet.
-    private func jump(to letter: String) {
-        guard let r = rows.first else { return }
-        let rank = { (l: String) in PageController.index.firstIndex(of: l) ?? 0 }
-        let target = rank(letter)
-        guard let at = r.section.items.firstIndex(where: { rank($0.letter) >= target }) else {
-            if more {
-                wantedLetter = letter
-                loadMore()
-            } else if let last = r.section.items.indices.last {
-                scroll(toItem: last)
-            }
-            return
-        }
-        scroll(toItem: at)
-    }
-
-    private func scroll(toItem i: Int) {
-        let row = rows[0].layout == .grid ? i / 2 : i
-        tableView.scrollToRow(at: IndexPath(row: row, section: 0), at: .top, animated: false)
-    }
 
     private func loadMore() {
         guard more else { return }
