@@ -901,7 +901,7 @@ final class NowPlaying: NSObject {
 
     @objc private func changed() {
         let now = Core.shared.now
-        guard let song = now.song else {
+        guard now.system, let song = now.song else {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             return
         }

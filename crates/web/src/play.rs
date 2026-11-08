@@ -323,6 +323,16 @@ impl Nori {
         self.with(|h| h.toggle());
     }
 
+    /// Plays, as the browser's media session asks (a headset's play).
+    pub fn play_on(&self) {
+        self.with(|h| h.resume());
+    }
+
+    /// Pauses, as the browser's media session asks (a headset's pause).
+    pub fn pause(&self) {
+        self.with(|h| h.halt());
+    }
+
     /// The sleep timer's choices (JSON): `[{minutes, end, songs}]`, all zeros for "Off" (first, while one
     /// runs).
     pub fn sleep_choices(&self) -> String {
@@ -512,10 +522,11 @@ impl Nori {
     /// What the player shows playing (`nori_host::player`): this browser's playback, the account's
     /// device playing while it is another one, or a jam guest's host: `{ state, playing, index, id,
     /// positionMs, pace, mixing, buffering, song, queue, current, reorderable, shuffle, repeat, device,
-    /// deviceKind, jam, asks, underruns, transition }` (`asks`: a jam guest's picks are asked of the host,
+    /// deviceKind, jam, system, asks, underruns, transition }` (`asks`: a jam guest's picks are asked of the host,
     /// and its lyric taps reach nothing). `queue` is in play order, each song with its list `index`;
     /// `current` the place in it of the song heard; `device` the name of the device playing elsewhere
-    /// and `deviceKind` its kind (`Phone`, `Desktop`, ...);
+    /// and `deviceKind` its kind (`Phone`, `Desktop`, ...); `system` whether the browser's media session
+    /// shows it (`Playback::shown_to_system`);
     /// `transition` the plan out of the song here, `{ kind, into, reason }`.
     pub fn now(&self) -> String {
         self.with(|h| {
@@ -559,6 +570,7 @@ impl Nori {
                 "device": n.device,
                 "deviceKind": h.elsewhere().map(|e| format!("{:?}", e.mirror.kind)),
                 "jam": n.jam,
+                "system": h.playback().shown_to_system(),
                 "asks": h.rules().asks,
                 "underruns": status.as_ref().map_or(0, |s| s.underruns),
                 "transition": status.as_ref().and_then(|s| s.id.as_deref()).and_then(|id| h.core.session.planner.transition_note(id)).map(|t| json!({ "kind": format!("{:?}", t.kind), "into": t.incoming_id, "reason": t.reason })),

@@ -148,7 +148,7 @@ class Player {
   async control(call: string, ...args: unknown[]) {
     if (!rpc.player) return;
     // Playing here needs the sound card; a press is the click that lets it start.
-    if (call === "toggle" && !this.elsewhere) await this.soundCard();
+    if ((call === "toggle" || call === "play_on") && !this.elsewhere) await this.soundCard();
     await ask(call, ...args);
     await this.refresh();
   }
@@ -188,18 +188,18 @@ class Player {
     const key = JSON.stringify(n && { ...n, positionMs: 0 });
     if (key === this.key) return;
     this.key = key;
-    const before = this.now?.id;
+    const [before, shown] = [this.now?.id, this.now?.system];
     this.now = n;
     this.heldNow();
-    if (n?.id !== before) this.songChanged();
+    if (n?.id !== before || n?.system !== shown) this.songChanged();
     // Music handed over from another device plays here: the sound card is made for it.
     if (n?.state === "Playing" && !n.device && !n.jam && !this.sound) void this.soundCard().catch(() => {});
   }
 
   private songChanged() {
-    const s = this.song;
-    if (s && "mediaSession" in navigator) {
-      navigator.mediaSession.metadata = new MediaMetadata({ title: s.title, artist: s.artist, album: s.album, artwork: s.cover ? [{ src: s.cover, sizes: "300x300" }] : [] });
+    const s = this.now?.system ? this.song : null;
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.metadata = s && new MediaMetadata({ title: s.title, artist: s.artist, album: s.album, artwork: s.cover ? [{ src: s.cover, sizes: "300x300" }] : [] });
     }
   }
 
@@ -283,8 +283,8 @@ class Player {
     };
     if ("mediaSession" in navigator) {
       const m = navigator.mediaSession;
-      m.setActionHandler("play", () => void this.control("toggle"));
-      m.setActionHandler("pause", () => void this.control("toggle"));
+      m.setActionHandler("play", () => void this.control("play_on"));
+      m.setActionHandler("pause", () => void this.control("pause"));
       m.setActionHandler("nexttrack", () => void this.control("next"));
       m.setActionHandler("previoustrack", () => void this.control("previous"));
       m.setActionHandler("seekto", (d) => d.seekTime !== undefined && void this.seek(d.seekTime * 1000));
@@ -314,8 +314,8 @@ $effect.root(() => {
     const a = player.anchor;
     const n = player.now;
     if (!("mediaSession" in navigator)) return;
-    navigator.mediaSession.playbackState = n ? (n.playing ? "playing" : "paused") : "none";
-    if (a.length > 0) {
+    navigator.mediaSession.playbackState = n?.system ? (n.playing ? "playing" : "paused") : "none";
+    if (n?.system && a.length > 0) {
       try {
         navigator.mediaSession.setPositionState({ duration: a.length / 1000, position: Math.min(player.position(), a.length) / 1000, playbackRate: a.pace || 1 });
       } catch {

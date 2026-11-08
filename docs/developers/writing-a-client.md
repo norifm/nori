@@ -150,7 +150,9 @@ eviction order) and downloads. A browser keeps none (`keeps_music: false`).
 
 - Media controls and now playing: `nori-mpris` on Linux and macOS, the media session on Android,
   `MPRemoteCommandCenter` and `MPNowPlayingInfoCenter` on the iPod. Update them on events, never on a
-  timer.
+  timer. They show nothing while another device plays (`Playback::shown_to_system`): the system takes
+  them for sound coming out here and says so to Bluetooth headsets, and a headset joined to both devices
+  then pauses and resumes this one, presses that would reach the other device.
 - Audio focus and interruptions: forward each change to `Engine::focus` (`nori_player::focus`). The engine
   keeps the focus state beside its play state (held by a call, lost for good, ducked), asks a plugin
   (`audio-focus`), pauses and resumes, and says `Event::Focus` with where the focus holds the music. A

@@ -936,7 +936,8 @@ fn queue_sections(songs: &[Song], rows: &QueueRows, repeat: u8, shuffle: bool, s
 
 /// What plays now (`Handle::now`), for the mini player, the card and the lock screen: this iPod's, the
 /// device's it mirrors (`device` its name), or for a jam guest the jam's (`jam`). `remote`: the
-/// controls reach another device, or remote control is on here.
+/// controls reach another device, or remote control is on here. `system`: the lock screen shows it
+/// (`Playback::shown_to_system`).
 fn now_json(s: &nori_host::session::Session) -> Value {
     let n = s.now();
     let state = match n.state {
@@ -951,6 +952,7 @@ fn now_json(s: &nori_host::session::Session) -> Value {
         "pace": n.pace, "repeat": n.repeat, "shuffle": n.shuffle, "len": n.len, "mixing": n.mixing,
         "eq": here && s.core.session.settings.prefs(|p| p.eq_enabled), "remote": !n.jam && (!here || s.remote().is_some()),
         "buffering": n.buffering, "volume": n.volume.map(|v| (v * 100.0).round() as i64), "jam": n.jam,
+        "system": s.playback().shown_to_system(),
     });
     if let Some(device) = &n.device {
         v["device"] = json!(device);
