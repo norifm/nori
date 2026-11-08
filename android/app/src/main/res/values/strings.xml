@@ -361,6 +361,14 @@
     <string name="settings_server_separator">" · "</string>
     <string name="settings_add_server">Add profile</string>
     <string name="manage_profiles">Manage profiles</string>
+    <string name="profile_icon">Icon</string>
+    <string name="profile_icon_letter">Letter</string>
+    <string name="profile_icon_sing">Singing</string>
+    <string name="profile_icon_surprise">Surprised</string>
+    <string name="profile_icon_talking">Talking</string>
+    <string name="profile_icon_look_up">Looking up</string>
+    <string name="profile_icon_satisfied">Smiling</string>
+    <string name="profile_icon_think">Thinking</string>
     <string name="profile_in_use">In use</string>
     <string name="remove_profile_title">Remove %1$s?</string>
     <string name="remove_profile_text">What nori keeps for it on this device goes with it.</string>

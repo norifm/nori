@@ -31,6 +31,7 @@ fn sample() -> StoredPrefs {
             wifi_only: true,
             music_folder_ids: vec!["3".into(), "5".into()],
             alt_max_bit_rate: 192,
+            icon: nori_settings::settings::ProfileIcon::Satisfied,
         }],
         active_server_id: "a1".into(),
         wifi: SavedQuality { bit_rate: 320, format: "mp3".into() },

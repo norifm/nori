@@ -488,6 +488,18 @@ class Say(private val r: Resources) {
         dev.nori.music.ffi.ProfileWait.NO_PLUGINS -> null
     }
     val addProfile: String get() = r.getString(R.string.settings_add_server)
+    val profileIcon: String get() = r.getString(R.string.profile_icon)
+    /** What [icon] is called on the picker: the letter, the provider's ([provider]), or the face. */
+    fun profileIconName(icon: dev.nori.music.ffi.settings.ProfileIcon, provider: String): String = when (icon) {
+        dev.nori.music.ffi.settings.ProfileIcon.LETTER -> r.getString(R.string.profile_icon_letter)
+        dev.nori.music.ffi.settings.ProfileIcon.PROVIDER -> provider
+        dev.nori.music.ffi.settings.ProfileIcon.SING -> r.getString(R.string.profile_icon_sing)
+        dev.nori.music.ffi.settings.ProfileIcon.SURPRISE -> r.getString(R.string.profile_icon_surprise)
+        dev.nori.music.ffi.settings.ProfileIcon.TALKING -> r.getString(R.string.profile_icon_talking)
+        dev.nori.music.ffi.settings.ProfileIcon.LOOK_UP -> r.getString(R.string.profile_icon_look_up)
+        dev.nori.music.ffi.settings.ProfileIcon.SATISFIED -> r.getString(R.string.profile_icon_satisfied)
+        dev.nori.music.ffi.settings.ProfileIcon.THINK -> r.getString(R.string.profile_icon_think)
+    }
     val manageProfiles: String get() = r.getString(R.string.manage_profiles)
     val inUse: String get() = r.getString(R.string.profile_in_use)
     fun removeProfileTitle(name: String): String = r.getString(R.string.remove_profile_title, name)

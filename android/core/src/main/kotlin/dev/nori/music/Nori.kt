@@ -276,6 +276,11 @@ class Nori private constructor(private val context: Context) {
         }
     }
 
+    /** A profile's [icon] chosen: only what its circle shows changes. */
+    fun setProfileIcon(profile: SavedServer, icon: dev.nori.music.ffi.settings.ProfileIcon) {
+        settings.update { p -> p.withServers(dev.nori.music.ffi.settings.serversUpdated(p.serverList(), profile.copy(icon = icon))) }
+    }
+
     fun removeServer(id: String) {
         val wasActive = settings.value.activeServerId == id
         if (wasActive) { player.clear(); synchronized(lock) { opened = null } }

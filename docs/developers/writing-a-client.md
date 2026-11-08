@@ -275,6 +275,8 @@ of this; Android's `PlaybackService` calls the same functions.
   one, `SignInFlow` the sign-in shown, one dialog at a time; `Client::sign_in_due` says what follows a
   profile opening or its account changing, the offer again after the provider ended the session included
   ([Providers](providers.md)).
+- **A profile's mark**: `SavedServer::icon` (`settings::ProfileIcon`, the picker's order `profile_icons`): its
+  letter (`profile_letter`, the default), its provider's mark, or one of Iconoir's faces.
 - **A favorite**: `Client::star` marks it at once and puts the old mark back if the server refuses.
 - **Fetching ahead**: `Client::precache_targets` names the songs after the next (the `songs_ahead_wifi`
   and `songs_ahead_mobile` settings; never a provider's song). The engine fetches them whole, one after

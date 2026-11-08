@@ -39,6 +39,12 @@ import dev.nori.music.app.vm.PluginsViewModel
 import dev.nori.music.app.vm.SettingsViewModel
 import dev.nori.music.ffi.settings.SavedServer
 import dev.nori.music.ffi.settings.ServerKind
+import dev.nori.music.ffi.settings.ProfileIcon
+import dev.nori.music.ffi.settings.profileIcons
+import dev.nori.music.ffi.settings.profileLetter
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.semantics.selected
 import dev.nori.music.settings.label
 
 /** What a profile is called: its name, else its provider's. */
@@ -48,28 +54,66 @@ fun profileLabel(vm: SettingsViewModel, profile: SavedServer): String {
     return profile.label.ifBlank { words.name }
 }
 
-/**
- * A profile's mark on a circle: its plugin's icon, or for a server the first letter of who signs in
- * (of its name without a user).
- */
+/** A profile's mark on a circle, as its icon says: a letter, its provider's mark, or a face. */
 @Composable
-fun ProfileMark(profile: SavedServer, label: String, side: Dp, modifier: Modifier = Modifier) {
-    when (val kind = profile.kind) {
-        is ServerKind.Plugin -> {
-            val plugins: PluginsViewModel = viewModel()
-            Box(modifier) { PluginTile(plugins, kind.id, null, label, side, CircleShape) }
-        }
-        ServerKind.Subsonic -> Box(
-            modifier.size(side).background(MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape),
-            Alignment.Center,
-        ) {
-            Text(
-                remember(profile.user, label) { profile.user.ifBlank { label }.take(1).uppercase() },
+fun ProfileMark(profile: SavedServer, label: String, side: Dp, modifier: Modifier = Modifier, icon: ProfileIcon = profile.icon) {
+    val kind = profile.kind
+    if (icon == ProfileIcon.PROVIDER && kind is ServerKind.Plugin) {
+        val plugins: PluginsViewModel = viewModel()
+        Box(modifier) { PluginTile(plugins, kind.id, null, label, side, CircleShape) }
+        return
+    }
+    Box(modifier.size(side).background(MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape), Alignment.Center) {
+        when (icon) {
+            ProfileIcon.LETTER -> Text(
+                remember(profile, label) { profileLetter(profile, label) },
                 style = MaterialTheme.typography.titleMedium.copy(fontSize = (side.value * 0.42f).sp, fontWeight = FontWeight.SemiBold),
             )
+            else -> Icon(faceGlyph(icon), null, Modifier.size(side * 0.6f))
         }
     }
 }
+
+/** The glyph of [icon] drawn as a glyph: a face, or the server's for nori's own provider. */
+private fun faceGlyph(icon: ProfileIcon) = when (icon) {
+    ProfileIcon.SING -> Iconoir.EmojiSingRight
+    ProfileIcon.SURPRISE -> Iconoir.EmojiSurpriseAlt
+    ProfileIcon.TALKING -> Iconoir.EmojiTalkingHappy
+    ProfileIcon.LOOK_UP -> Iconoir.EmojiLookUp
+    ProfileIcon.SATISFIED -> Iconoir.EmojiSatisfied
+    ProfileIcon.THINK -> Iconoir.EmojiThinkRight
+    ProfileIcon.PROVIDER, ProfileIcon.LETTER -> Iconoir.Server
+}
+
+/** The icons [profile]'s circle can show, in a sheet: the one shown ringed in the accent. */
+@Composable
+fun ProfileIconPicker(vm: SettingsViewModel, profile: SavedServer?, onDismiss: () -> Unit) {
+    NoriSheet(profile != null, onDismiss) {
+        val shown = profile ?: return@NoriSheet
+        val label = profileLabel(vm, shown)
+        val provider = providerWords(vm, shown.kind).name
+        Column(Modifier.windowInsetsPadding(gestureBarRoom)) {
+            SheetTitle(say.profileIcon)
+            androidx.compose.foundation.layout.FlowRow(
+                Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween, verticalArrangement = Arrangement.spacedBy(14.dp), maxItemsInEachRow = 4,
+            ) {
+                remember { profileIcons() }.forEach { icon ->
+                    val chosen = icon == shown.icon
+                    val ring = if (chosen) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else hairlineBorder()
+                    Box(
+                        Modifier.size(PICKED).clip(CircleShape).border(ring, CircleShape)
+                            .clickable { vm.setProfileIcon(shown, icon); onDismiss() }.testTag("profile-icon-${icon.name.lowercase()}")
+                            .clearAndSetSemantics { contentDescription = say.profileIconName(icon, provider); selected = chosen; role = androidx.compose.ui.semantics.Role.RadioButton },
+                        Alignment.Center,
+                    ) { ProfileMark(shown, label, PICKED - 10.dp, icon = icon) }
+                }
+            }
+        }
+    }
+}
+
+private val PICKED = 56.dp
 
 /** Home's corner: the profile in use's mark, opening the switcher. */
 @Composable
@@ -119,7 +163,7 @@ private fun ProfileSwitcher(vm: SettingsViewModel, open: Boolean, onDismiss: () 
 @Composable
 fun ProfileLine(
     vm: SettingsViewModel, profile: SavedServer, active: Boolean, divider: Boolean, modifier: Modifier = Modifier,
-    detail: String? = null, trailing: @Composable () -> Unit = {}, onClick: (() -> Unit)?,
+    detail: String? = null, onMark: (() -> Unit)? = null, trailing: @Composable () -> Unit = {}, onClick: (() -> Unit)?,
 ) {
     val label = profileLabel(vm, profile)
     val who = detail ?: profile.user.ifBlank { providerWords(vm, profile.kind).noUser }
@@ -129,7 +173,8 @@ fun ProfileLine(
                 .padding(start = GROUP_INSET, end = 4.dp, top = 10.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ProfileMark(profile, label, PROFILE_MARK)
+            val mark = if (onMark != null) Modifier.clip(CircleShape).clickable(onClickLabel = say.profileIcon, onClick = onMark).testTag("profile-mark") else Modifier
+            ProfileMark(profile, label, PROFILE_MARK, mark)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
