@@ -35,24 +35,34 @@ enum CoverCache {
     }
 }
 
-/// A square cover on a plate, the disc mark until the picture comes. A picture of it already decoded at
-/// another size stands in at once and the sharp one replaces it; with none, a sheen crosses the plate
-/// and the picture fades in over 260 ms. Both are layer animations the render server runs, and a picture
-/// cached at its own size shows at once with neither.
+/// A square cover on a soft two-tone plate. A picture of it already decoded at another size stands in at
+/// once and the sharp one replaces it; with none, a sheen crosses the plate and the picture fades in over
+/// 260 ms, the sheen going away underneath it. One that never comes settles into the disc mark. Both are
+/// layer animations the render server runs, and a picture cached at its own size shows at once with
+/// neither. Without `plate` it draws nothing of its own: the picture fades in over what is behind it.
 final class CoverView: UIView {
     private let picture = UIImageView()
     private let mark = UIImageView(image: Glyph.disc)
     private let sheen = CAGradientLayer()
+    private let plateLayer = CAGradientLayer()
+    private let plated: Bool
     private var token: UInt64?
     private var shown: String?
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        backgroundColor = Theme.track
+    init(plate: Bool = true) {
+        plated = plate
+        super.init(frame: .zero)
+        if plate {
+            plateLayer.colors = [Theme.page.veil(0.13).cgColor, Theme.page.veil(0.06).cgColor]
+            plateLayer.startPoint = .zero
+            plateLayer.endPoint = CGPoint(x: 1, y: 1)
+            layer.addSublayer(plateLayer)
+        }
         layer.cornerRadius = 6
         clipsToBounds = true
         mark.tintColor = Theme.secondary
         mark.contentMode = .center
+        mark.isHidden = true
         picture.contentMode = .scaleAspectFill
         sheen.startPoint = CGPoint(x: 0, y: 0.5)
         sheen.endPoint = CGPoint(x: 1, y: 0.5)
@@ -83,6 +93,7 @@ final class CoverView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         sheen.frame = bounds
+        plateLayer.frame = bounds
     }
 
     private func waiting(_ on: Bool) {
@@ -106,32 +117,44 @@ final class CoverView: UIView {
         cancel()
         shown = key
         picture.image = nil
-        mark.isHidden = false
+        mark.alpha = 1
+        mark.isHidden = !(id.isEmpty && plated)
         waiting(false)
         guard !id.isEmpty else { return }
         if let cached = CoverCache.images.object(forKey: key as NSString) {
             picture.image = cached
-            mark.isHidden = true
             return
         }
         let standIn = CoverCache.any(id)
         if let standIn {
             picture.image = standIn
-            mark.isHidden = true
         } else {
-            waiting(true)
+            waiting(plated)
         }
         token = Core.shared.cover(id, px: px) { [weak self] image in
             if let image { CoverCache.put(image, id, px) }
             guard let self, self.shown == key else { return }
             self.token = nil
-            self.waiting(false)
-            guard let image else { self.shown = nil; return }
-            self.mark.isHidden = true
+            guard let image else {
+                self.waiting(false)
+                self.shown = nil
+                self.settleOnMark()
+                return
+            }
             // Sharpening a stand-in is a short cross-fade; a first picture fades in.
             let fade = UIAccessibility.isReduceMotionEnabled ? 0 : standIn == nil ? 0.26 : 0.15
-            UIView.transition(with: self.picture, duration: fade, options: .transitionCrossDissolve, animations: { self.picture.image = image })
+            UIView.transition(with: self.picture, duration: fade, options: .transitionCrossDissolve, animations: { self.picture.image = image }, completion: { [weak self] _ in
+                if self?.shown == key { self?.waiting(false) }
+            })
         }
+    }
+
+    /// No picture came: the disc mark, faded in.
+    private func settleOnMark() {
+        guard plated else { return }
+        mark.alpha = 0
+        mark.isHidden = false
+        UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.26) { self.mark.alpha = 1 }
     }
 
     func cancel() {
