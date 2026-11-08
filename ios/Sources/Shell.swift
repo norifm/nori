@@ -24,7 +24,13 @@ final class ShellController: UIViewController {
         chrome.mini.opened = { [weak self] in self?.openPlayer() }
         chrome.mini.dragged = { [weak self] in self?.dragPlayer($0) }
         chrome.mini.devicesOpened = { [weak self] in
-            if Core.shared.now.jam { self?.present(QueueSheet(), animated: true) } else { self?.present(DevicesSheet(), animated: false) }
+            guard Core.shared.now.jam else {
+                self?.present(DevicesSheet(), animated: false)
+                return
+            }
+            let card = PlayerCard()
+            card.opensQueue = true
+            self?.present(card, animated: true)
         }
         chrome.resized = { [weak self] in self?.view.setNeedsLayout() }
         view.addSubview(chrome)
