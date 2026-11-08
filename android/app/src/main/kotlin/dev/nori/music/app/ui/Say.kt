@@ -447,6 +447,7 @@ class Say(private val r: Resources) {
     fun pluginRepoCount(n: Int): String = r.getQuantityString(R.plurals.plugins_repo_count, n, n)
     val pluginsAsking: String get() = r.getString(R.string.plugins_asking)
     fun pluginOfferLine(version: String, repo: String): String = r.getString(R.string.plugins_offer_line, version, repo)
+    val pluginInstalling: String get() = r.getString(R.string.plugins_installing)
     val pluginInstall: String get() = r.getString(R.string.plugins_install)
     val pluginUpdate: String get() = r.getString(R.string.plugins_update)
     val pluginUpToDate: String get() = r.getString(R.string.plugins_up_to_date)

@@ -287,14 +287,23 @@ private fun ProviderChoice(vm: SettingsViewModel, onClose: (() -> Unit)?, choose
     val offers by plugins.providerOffers.collectAsStateWithLifecycle()
     val cards by plugins.cards.collectAsStateWithLifecycle()
     var more by remember { mutableStateOf(false) }
-    // The page of a plugin a repo offers, open to install it (the core's `AddPage::Offered`).
-    val offered = (vm.add.collectAsStateWithLifecycle().value.page as? dev.nori.music.ffi.AddPage.Offered)?.plugin
+    // The page of a plugin a repo offers, open to install it, then that plugin installing on this screen
+    // (the core's `AddPage::Offered`, `AddPage::Installing`).
+    val page = vm.add.collectAsStateWithLifecycle().value.page
+    val offered = (page as? dev.nori.music.ffi.AddPage.Offered)?.plugin
+    val awaited = (page as? dev.nori.music.ffi.AddPage.Installing)?.plugin
+    val installing by plugins.installing.collectAsStateWithLifecycle()
+    val refused by plugins.refused.collectAsStateWithLifecycle()
     val allOff = vm.prefs.collectAsStateWithLifecycle().value.pluginsOff
     LaunchedEffect(Unit) { plugins.loadOffers() }
-    // Installed from its page, it goes on and its form opens.
-    LaunchedEffect(cards, offered) {
-        val id = offered ?: return@LaunchedEffect
-        if (cards.any { it.id == id }) { plugins.turn(id, true); choose(ServerKind.Plugin(id)) }
+    LaunchedEffect(installing, offered) { if (installing != null && installing == offered) vm.addOn(dev.nori.music.ffi.AddEvent.InstallBegan) }
+    // Installed, it goes on and its form opens; refused, its page says why.
+    LaunchedEffect(cards, awaited, installing, refused) {
+        val id = awaited ?: return@LaunchedEffect
+        when {
+            cards.any { it.id == id } -> { plugins.turn(id, true); choose(ServerKind.Plugin(id)) }
+            installing != id && refused != null -> vm.addOn(dev.nori.music.ffi.AddEvent.InstallRefused)
+        }
     }
     NoriDialog(more, { more = false }, DialogStyle.Page) {
         Surface(Modifier.fillMaxSize()) { Column(Modifier.systemBarsPadding()) { PluginsPages(plugins, vm) } }

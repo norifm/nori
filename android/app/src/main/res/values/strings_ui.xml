@@ -808,6 +808,7 @@
     </plurals>
     <string name="plugins_offer_line">%1$s · %2$s</string>
     <string name="plugins_install">Install</string>
+    <string name="plugins_installing">Installing…</string>
     <string name="plugins_update">Update</string>
     <string name="plugins_up_to_date">Installed</string>
     <string name="plugins_repos">Repos</string>

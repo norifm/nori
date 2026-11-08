@@ -270,7 +270,10 @@ internal fun PluginTile(vm: PluginsViewModel, id: String, offer: Offer?, name: S
 /** A plugin as a provider to choose: its tile, name and about. */
 @Composable
 fun ProviderLine(vm: PluginsViewModel, id: String, offer: Offer?, name: String, about: String?, divider: Boolean, modifier: Modifier, open: () -> Unit) {
-    TiledLine({ PluginTile(vm, id, offer, name, 44.dp) }, name, about, null, divider, modifier, open, GROUP_INSET) {}
+    val installing = vm.installing.collectAsStateWithLifecycle().value == id
+    TiledLine({ PluginTile(vm, id, offer, name, 44.dp) }, name, about, say.pluginInstalling.takeIf { installing }, divider, modifier, open, GROUP_INSET) {
+        if (installing) LoadingDots(dot = 5.dp)
+    }
 }
 
 /** The provider nori has without a plugin: as [ProviderLine], with [glyph] on its tile. */
@@ -427,7 +430,11 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
             notice?.takeIf { it.plugin == id }?.let { n ->
                 Text(n.line, style = MaterialTheme.typography.bodySmall, color = if (n.problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (card == null && newest != null) PillButton(say.pluginInstall, null, { vm.previewVersion(newest) }, Modifier.fillMaxWidth().testTag("plugin-install"), prominent = true)
+            val installing = vm.installing.collectAsStateWithLifecycle().value == id
+            if (card == null && newest != null) PillButton(
+                if (installing) say.pluginInstalling else say.pluginInstall, null, { vm.previewVersion(newest) },
+                Modifier.fillMaxWidth().testTag("plugin-install"), prominent = true, enabled = !installing,
+            )
             if (offer?.state == OfferState.UPDATE && newest != null) PillButton(say.pluginUpdateTo(newest.version), null, { vm.previewVersion(newest) }, Modifier.fillMaxWidth().testTag("plugin-update"), prominent = true)
             refused?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("plugin-refused")) }
         }
