@@ -40,6 +40,8 @@ final class PlayerCard: UIViewController {
     private var panel = Panel.art
     private var shown: (UIViewController & PlayerPanel)?
     private var lyricsSong = ""
+    /// The picture of the player fading away over a change of panel.
+    private var crossfade: UIView?
     private let panelArea = UIView()
     private let panelFoot = GradientView(colours: [])
     /// Opens on the queue rather than the artwork: a jam guest's output button.
@@ -133,7 +135,6 @@ final class PlayerCard: UIViewController {
 
         panelArea.isHidden = true
         panelFoot.translatesAutoresizingMaskIntoConstraints = false
-        panelFoot.alpha = 0
         panelArea.addSubview(panelFoot)
         for v in [cover, panelArea, column, grabber] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -411,9 +412,11 @@ final class PlayerCard: UIViewController {
 
     @objc private func queueTapped() { show(panel == .queue ? .art : .queue) }
 
-    /// `next` in the artwork's place; the artwork again is the panel put away. Only what changes fades, over
-    /// the page's own color, so nothing shows through on the way.
+    /// `next` in the artwork's place; the artwork again is the panel put away. The new state is laid out at
+    /// once under a picture of the old one, and that picture alone fades: one thing moving, at one speed.
     private func show(_ next: Panel) {
+        let before = view.window == nil || Motion.plain ? nil : view.snapshotView(afterScreenUpdates: false)
+        crossfade?.removeFromSuperview()
         let old = shown
         var child: (UIViewController & PlayerPanel)?
         let back = { [weak self] in self?.show(.art) ?? () }
@@ -430,34 +433,30 @@ final class PlayerCard: UIViewController {
         panel = child == nil ? .art : next
         shown = child
         old?.willMove(toParent: nil)
-        cover.isHidden = false
-        panelArea.isHidden = false
+        old?.view.removeFromSuperview()
+        old?.removeFromParent()
         if let child {
             addChild(child)
             child.view.frame = panelArea.bounds
             child.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            child.view.alpha = 0
             panelArea.insertSubview(child.view, belowSubview: panelFoot)
             child.didMove(toParent: self)
         }
         let art = panel == .art
+        panelArea.isHidden = art
+        cover.isHidden = !art
+        songRow.isHidden = panel == .lyrics
         grabber.tintColor = art ? .white : Theme.player.quiet
         lyrics.lit = panel == .lyrics
         queue.lit = panel == .queue
         setNeedsStatusBarAppearanceUpdate()
-        let time = view.window == nil || Motion.plain ? 0 : 0.22
-        UIView.animate(withDuration: time, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
-            old?.view.alpha = 0
-            child?.view.alpha = 1
-            self.cover.alpha = art ? 1 : 0
-            self.panelFoot.alpha = art ? 0 : 1
-            self.songRow.isHidden = self.panel == .lyrics
-            self.view.layoutIfNeeded()
-        }, completion: { _ in
-            old?.view.removeFromSuperview()
-            old?.removeFromParent()
-            self.cover.isHidden = self.panel != .art
-            self.panelArea.isHidden = self.panel == .art
+        view.layoutIfNeeded()
+        guard let before else { return }
+        before.isUserInteractionEnabled = false
+        view.addSubview(before)
+        crossfade = before
+        UIView.animate(withDuration: 0.22, delay: 0, options: .allowUserInteraction, animations: { before.alpha = 0 }, completion: { _ in
+            before.removeFromSuperview()
         })
     }
 
@@ -799,6 +798,7 @@ final class LyricsCard: UITableViewController {
     /// The panel's soft foot, where a line is not read.
     private static let footFade: CGFloat = 32
     private var measuredWidth: CGFloat = 0
+    private var placed = false
 
     init(song: String) {
         self.song = song
@@ -869,6 +869,7 @@ final class LyricsCard: UITableViewController {
         clock = song.withCString { nori_ios_lyric_clock($0, Int64(Core.shared.now.position)) }
         sweeps = clock.map { nori_ios_lyric_sweeps($0) == 1 } ?? false
         active = -1
+        placed = false
         reloadLines()
         tick(force: true)
     }
@@ -941,7 +942,11 @@ final class LyricsCard: UITableViewController {
                 self.paint(cell.line, row: row)
             })
         }
-        if active >= 0, active < lines.count { bring(active, animated: glide > 0) }
+        // The first place is taken at once: the lines do not fly in as the panel opens.
+        if active >= 0, active < lines.count {
+            bring(active, animated: placed && glide > 0)
+            placed = true
+        }
     }
 
     /// The line in the middle of what shows, or from the top when it is taller than that: never cut.
