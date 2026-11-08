@@ -128,10 +128,10 @@ fn toggled<T: PartialEq>(mut rows: Vec<T>, row: T, on: bool) -> Vec<T> {
     rows
 }
 
-/// The rows that are not shown, in the order a new install shows them.
+/// The rows offered that are not shown, in the order a new install shows them.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn home_rows_hidden(shown: Vec<HomeRow>) -> Vec<HomeRow> {
-    HomeRow::every().iter().copied().filter(|r| !shown.contains(r)).collect()
+    HomeRow::FRESH.iter().copied().filter(|r| !shown.contains(r)).collect()
 }
 
 /// The Library page's sections: every one it lists, in its order, that the profile `offered`.
@@ -791,6 +791,7 @@ mod tests {
         assert_eq!(home_rows_toggled(rows.clone(), A, true), [B, C, A], "never twice");
         let shown = [HomeRow::Pinned, HomeRow::Playlists, HomeRow::Recent, HomeRow::Frequent, HomeRow::TopSongs, HomeRow::Random];
         assert_eq!(home_rows_hidden(shown.to_vec()), [HomeRow::Newest, HomeRow::Starred]);
+        assert!(!home_rows_hidden(vec![]).contains(&HomeRow::Pinned), "never offered");
         assert_eq!(pins_toggled(vec!["p".into()], "q".into(), true), ["p", "q"]);
         assert_eq!(pins_toggled(vec!["p".into(), "q".into()], "p".into(), false), ["q"]);
         assert_eq!(home_rows_moved(rows.clone(), 0, 2), [B, C, A]);
