@@ -19,6 +19,23 @@ pub enum Destination {
     Guest,
 }
 
+impl Destination {
+    /// Whether the system's media controls (Android's media session, MPRIS, Now Playing, the lock screen)
+    /// show it: never another device's playback. The system takes what they show for sound coming out of
+    /// this device and tells a Bluetooth headset joined to it so: one joined to the other device as well
+    /// takes this one for a second source playing, and its pause and play for this one would reach the
+    /// other device.
+    pub fn shown_to_system(&self) -> bool {
+        !matches!(self, Destination::Mirroring { .. })
+    }
+}
+
+/// [`Destination::shown_to_system`].
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn destination_shown_to_system(destination: Destination) -> bool {
+    destination.shown_to_system()
+}
+
 /// A plugin's cast from here, as [`destination`] needs it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -49,5 +66,29 @@ pub fn destination_of(guest: bool, mirrored: Option<String>, cast: Option<Castin
         (false, Some(device), _) => Destination::Mirroring { device },
         (false, None, Some(Casting { device, sink })) => Destination::Cast { device, sink },
         (false, None, None) => Destination::Here { hosting },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The system's media controls show this device's playback, a cast from here and a jam guest's jam;
+    /// never another device's, even one mirrored while a cast from here runs.
+    #[test]
+    fn the_system_is_shown_no_other_devices_playback() {
+        let speaker = || Some(Casting { device: "Speaker".into(), sink: true });
+        let desk = || Some("Desk".to_string());
+        for (guest, mirrored, cast, hosting, shown) in [
+            (false, None, None, false, true),
+            (false, None, None, true, true),
+            (false, None, speaker(), false, true),
+            (true, desk(), None, false, true),
+            (false, desk(), None, false, false),
+            (false, desk(), speaker(), true, false),
+        ] {
+            let d = destination_of(guest, mirrored, cast, hosting);
+            assert_eq!(d.shown_to_system(), shown, "{d:?}");
+        }
     }
 }

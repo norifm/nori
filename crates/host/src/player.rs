@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use nori_core::destination::Destination;
 use nori_core::playlist::PlaylistView;
 use nori_core::stage::QueueRows;
 use nori_core::Song;
@@ -34,12 +35,13 @@ impl Playback {
         }
     }
 
-    /// Whether the system's media controls (MPRIS, Now Playing, the lock screen) show it: never another
-    /// device's playback. The system takes what they show for sound coming out of this device and tells a
-    /// Bluetooth headset joined to it so: one joined to the other device as well takes this one for a
-    /// second source playing, and its pause and play for this one would reach the other device.
+    /// Whether the system's media controls (MPRIS, Now Playing, the lock screen) show it, by the core's
+    /// [`Destination::shown_to_system`]: another device's playback is [`Destination::Mirroring`].
     pub fn shown_to_system(&self) -> bool {
-        !matches!(self, Playback::There(_))
+        match self {
+            Playback::There(e) => Destination::Mirroring { device: e.mirror.name.clone() }.shown_to_system(),
+            Playback::Here | Playback::Jam(_) => true,
+        }
     }
 }
 

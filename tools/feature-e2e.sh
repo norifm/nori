@@ -990,8 +990,9 @@ fi
 remote_checks() {
   section "playing on another device: the terminal client on this computer"
   # Who plays, the queue, the place, the volume and a transfer's order are the core's (crates/core
-  # tests/remote.rs). Here: the media session handed to the other device (a remote volume the keys move),
-  # this phone's own output let go while it plays there, and the music coming back.
+  # tests/remote.rs), and that the system's media controls never show another device's playback
+  # (destination.rs). Here: the media session showing nothing while the other device plays, this phone's
+  # own output let go while it plays there, and the music coming back.
   if [ "$NORI_E2E_SERVER" != local ]; then
     echo "  NOTE  needs the local server: the terminal client signs in to it as the other device"
   else
@@ -1008,7 +1009,6 @@ with sqlite3.connect(sys.argv[1]) as db:
     ])
 PY
     tmux new-session -d -s "$peer" -x 160 -y 45 "$cli --data $data --url http://localhost:4533 --user $USER --password $PASS --no-images --no-mpris"
-    screen() { tmux capture-pane -p -t "$peer"; }
     keys() { tmux send-keys -t "$peer" -- "$@"; }
     check "the CLI peer starts" wait_until 15 bash -c "tmux capture-pane -p -t $peer | grep -q 'localhost:4533'" || return 1
     for _ in $(seq 16); do keys -; done   # quiet on the peer's speakers
@@ -1027,9 +1027,11 @@ PY
     "$app" remote watch off >/dev/null
     "$app" remote pick "$peer_id" >/dev/null
     check "the player shows the peer playing" wait_for playingOn "$name" 15 || return 1
-    remote_session() { adb shell dumpsys media_session | grep -q "volumeType=REMOTE"; }
-    check "the media session is the peer's (a remote volume)" wait_until 10 remote_session
+    # This app's media session: its state line and its volume, which a session showing another device would make remote.
+    session_line() { adb shell dumpsys media_session | awk -v p="package=$pkg" '$1 == p { on = 1 } on && /^ *state=/ { s = $0 } on && /volumeType=/ { print s " " $1; exit }'; }
+    session_quiet() { local l; l=$(session_line); [[ "$l" == *"volumeType=LOCAL"* && "$l" != *"PLAYING("* && "$l" != *"BUFFERING("* ]]; }
     check "this phone's output is let go" silent 10
+    check "the media session shows nothing of the peer" session_quiet
     check "the peer's engine is playing before the phone closes" wait_until 10 bash -c "'$app' remote devices | grep -Fq '$name (nearby): playing'" || return 1
     adb shell am force-stop "$pkg"
     "$app" launch >/dev/null
@@ -1041,16 +1043,8 @@ PY
     check "the foreground starts its remote controller" wait_until 10 remote_started || return 1
     "$app" remote found "$door" >/dev/null
     check "reopening follows the peer without the device picker" wait_for playingOn "$name" 15 || return 1
-    check "the remote media session returns after reopening" wait_until 10 remote_session
     check "reopening does not play the saved queue on this phone" silent 10
-    # The cells lit in the terminal's volume bar, after its word.
-    peer_volume() { screen | perl -CS -Mutf8 -ne 'if (/Volume (━*)/) { $n = length $1 } END { print $n // "" }'; }
-    before=$(peer_volume)
-    check "the peer shows its volume" test -n "$before"
-    adb shell dumpsys media_router > "$here/../build/e2e/$ANDROID_SERIAL/native-routes.txt"
-    adb shell input keyevent KEYCODE_VOLUME_UP; adb shell input keyevent KEYCODE_VOLUME_UP
-    louder() { [ "$(peer_volume)" -gt "$before" ]; }
-    check "the volume keys turn the peer up (from $before)" wait_until 10 louder
+    check "nor does its media session show the peer" session_quiet
     for track in 02 03 04; do
       "$app" do next >/dev/null
       check "the remote queue reaches song $track" wait_for title "Long Track $track" 10
@@ -1066,22 +1060,10 @@ PY
     "$app" play "search:Long Track 04" >/dev/null
     check "a new remote play clears the mix indicator" wait_for displayMixing False 10
     check "the peer returns to the selected song" wait_for title "Long Track 04" 10
-    # The notification's seal stands for the peer's song: its star is the one the peer's queue holds.
-    was=$(field starred); flip=$([ "$was" = True ] && echo False || echo True)
-    "$app" do "notification favourite" >/dev/null
-    check "the notification's seal stars the peer's song ($was -> $flip)" wait_for starred "$flip" 10
-    peer_seal() { local b; b=$(field notification); [[ "$flip" == True && "$b" == *sealed* ]] || [[ "$flip" == False && "$b" != *sealed* ]]; }
-    check "the notification's seal redraws for the peer's song" wait_until 10 peer_seal
-    "$app" do "notification favourite" >/dev/null; wait_for starred "$was" 10 >/dev/null   # put it back
-    adb shell am broadcast -a com.android.systemui.action.LAUNCH_MEDIA_OUTPUT_DIALOG -p com.android.systemui --es package_name "$pkg" >/dev/null
-    check "the native output picker opens" wait_until 10 on_screen 'package="com.android.systemui"'
-    check "the native picker offers this phone" wait_until 10 on_screen 'text="This phone"'
-    check "the native picker can return playback here" tapnode text "This phone"
-    check "native transfer returns the session to the phone" wait_for playingOn "" 15
-    check "the transfer keeps the peer's latest song" wait_for title "Long Track 04" 10
-    if on_screen 'text="Done"'; then tapnode text Done; fi
+    check "the media session still shows nothing of the peer" session_quiet
     "$app" remote pick here >/dev/null
     check "\"This phone\" brings it back" wait_for playingOn "" 15
+    check "with the peer's latest song" wait_for title "Long Track 04" 10
     check "and it sounds here" sounds 15
     check "the peer paused" wait_until 10 bash -c "tmux capture-pane -p -t $peer | grep -q '▶'"
     "$app" remote pick "$peer_id" >/dev/null
