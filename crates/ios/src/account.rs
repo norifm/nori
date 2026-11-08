@@ -4,7 +4,7 @@ use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
 
 use nori_core::providers::{log_in, profile_activated, FormField, Kinds};
-use nori_core::settings::{servers_removed, SavedServer, ServerKind, ServerList, StoredPrefs};
+use nori_core::settings::{profile_icons, profile_letter, servers_removed, servers_updated, ProfileIcon, SavedServer, ServerKind, ServerList, StoredPrefs};
 use nori_core::settings_store::Settings;
 use nori_core::transport::{block_on, FailureKind, NetError};
 use nori_http::Http;
@@ -83,7 +83,23 @@ fn list_of(prefs: &mut StoredPrefs) -> ServerList {
     }
 }
 
-/// The saved servers as `{id, label, url, active, kind}`, in the order they were saved.
+/// The saved list changed by `change`: through the open session's settings when one is open, as the
+/// session writes the list back from its own copy (an account's name).
+fn edit_servers(dir: &Path, change: impl FnOnce(ServerList) -> ServerList) -> Result<(), String> {
+    let live = crate::session::with_session(|s| s.core.session.settings.clone()).and_then(|settings| Some((settings.current()?, settings)));
+    let (mut prefs, settings) = match live {
+        Some(found) => found,
+        None => opened(dir).map(|(settings, prefs)| (prefs, settings))?,
+    };
+    let list = change(list_of(&mut prefs));
+    (prefs.servers, prefs.active_server_id) = (list.servers, list.active_server_id);
+    settings.put(prefs);
+    settings.writer.flush();
+    Ok(())
+}
+
+/// The saved servers as `{id, label, url, active, kind, waits, icon, letter}`, in the order they were
+/// saved; `icon` as the settings store it, `letter` what its circle shows for the letter.
 pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
     let (_, prefs) = opened(dir)?;
     Ok(prefs
@@ -93,9 +109,19 @@ pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
             let active = s.id == prefs.active_server_id;
             // A plugin's profile never opens here: the iPod runs none.
             let waits = Kinds::builtin().waits(s.clone()).is_some();
-            serde_json::json!({ "id": s.id, "label": label(s), "url": s.url, "active": active, "kind": s.kind.id(), "waits": waits })
+            let letter = profile_letter(s.clone(), nori_core::settings::label(&s.name, &s.url));
+            serde_json::json!({ "id": s.id, "label": label(s), "url": s.url, "active": active, "kind": s.kind.id(), "waits": waits,
+                "icon": s.icon.id(), "letter": letter })
         })
         .collect())
+}
+
+/// Saved server `id`'s circle shows `icon`; an unknown id changes nothing.
+pub(crate) fn set_icon(dir: &Path, id: &str, icon: ProfileIcon) -> Result<(), String> {
+    edit_servers(dir, |list| {
+        let Some(profile) = list.servers.iter().find(|s| s.id == id).cloned() else { return list };
+        servers_updated(list, SavedServer { icon, ..profile })
+    })
 }
 
 /// Makes saved server `id` the active one. False when no server has that id.
@@ -111,13 +137,7 @@ pub(crate) fn pick(dir: &Path, id: &str) -> Result<bool, String> {
 
 /// Forgets saved server `id`; the first one left becomes active if it was.
 pub(crate) fn remove(dir: &Path, id: &str) -> Result<(), String> {
-    let (settings, mut prefs) = opened(dir)?;
-    let list = servers_removed(list_of(&mut prefs), id.to_string());
-    prefs.servers = list.servers;
-    prefs.active_server_id = list.active_server_id;
-    settings.put(prefs);
-    settings.writer.flush();
-    Ok(())
+    edit_servers(dir, |list| servers_removed(list, id.to_string()))
 }
 
 /// A failure as a login code, with the detail a code words itself.
@@ -291,7 +311,8 @@ pub unsafe extern "C" fn nori_ios_login(
     code
 }
 
-/// The saved servers as JSON to free: `[{id, label, url, active, kind}]`. NULL for an unreadable path.
+/// The saved servers as JSON to free: `[{id, label, url, active, kind, waits, icon, letter}]`. NULL for an
+/// unreadable path.
 ///
 /// # Safety
 /// `data_dir` is NUL-terminated UTF-8, or NULL.
@@ -312,6 +333,25 @@ pub unsafe extern "C" fn nori_ios_servers(data_dir: *const c_char) -> *mut c_cha
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_pick_server(data_dir: *const c_char, id: *const c_char) -> i32 {
     i32::from(pick(Path::new(&text(data_dir)), &text(id)).unwrap_or(false))
+}
+
+/// Saved server `id`'s circle shows `icon`, one of `nori_ios_profile_icons`' ids; an unknown icon changes
+/// nothing.
+///
+/// # Safety
+/// The strings are NUL-terminated UTF-8, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_set_server_icon(data_dir: *const c_char, id: *const c_char, icon: *const c_char) {
+    if let Some(icon) = ProfileIcon::from_id(&text(icon)) {
+        let _ = set_icon(Path::new(&text(data_dir)), &text(id), icon);
+    }
+}
+
+/// The icons a profile's circle can show, in the picker's order, as JSON to free: `["letter", ...]`.
+#[no_mangle]
+pub extern "C" fn nori_ios_profile_icons() -> *mut c_char {
+    let ids: Vec<&str> = profile_icons().into_iter().map(ProfileIcon::id).collect();
+    owned(&serde_json::Value::from(ids).to_string()).into_raw()
 }
 
 /// Forgets saved server `id`. Its downloads and index stay in the database.
@@ -367,6 +407,20 @@ mod tests {
         keep(dir.path(), SavedServer { kind: ServerKind::Plugin { id: "fm.nori.youtube-music".into() }, ..profile("two", "") }).unwrap();
         let waits: Vec<_> = servers(dir.path()).unwrap().iter().map(|s| (s["id"].clone(), s["waits"].clone())).collect();
         assert_eq!(waits, [(serde_json::json!("one"), serde_json::json!(false)), (serde_json::json!("two"), serde_json::json!(true))]);
+    }
+
+    /// A chosen icon is listed with its profile, the others' stay; the letter is who signs in, else the
+    /// name, else the address's host.
+    #[test]
+    fn a_chosen_icon_is_listed_with_its_letter() {
+        let dir = nori_testdir::TempDir::new("ios-icon");
+        keep(dir.path(), profile("one", "ada")).unwrap();
+        keep(dir.path(), SavedServer { url: "https://music.example.com/x".into(), ..profile("two", "") }).unwrap();
+        set_icon(dir.path(), "two", ProfileIcon::LookUp).unwrap();
+        set_icon(dir.path(), "nope", ProfileIcon::Think).unwrap();
+        let rows: Vec<_> = servers(dir.path()).unwrap().iter().map(|s| (s["id"].clone(), s["icon"].clone(), s["letter"].clone())).collect();
+        let row = |id: &str, icon: &str, letter: &str| (serde_json::json!(id), serde_json::json!(icon), serde_json::json!(letter));
+        assert_eq!(rows, [row("one", "letter", "A"), row("two", "look-up", "M")]);
     }
 
     #[test]

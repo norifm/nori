@@ -133,3 +133,9 @@ export type Equalizer = {
   ranges: { gain: [number, number]; preamp: [number, number]; balance: [number, number]; limiter: [number, number]; q: [number, number] };
   bypass: string | null;
 };
+
+/** What a profile's circle shows (the core's `ProfileIcon`): its letter, its provider's mark, or a face. */
+export type ProfileIcon = "Letter" | "Provider" | "Sing" | "Surprise" | "Talking" | "LookUp" | "Satisfied" | "Think";
+/** The profile signed in (the worker's `profile`): `letter` the one `Letter` shows, `icons` the picker's in
+ * its order, `picks` whether its icon may be changed here. */
+export type Profile = { url: string; user: string; icon: ProfileIcon; letter: string; icons: ProfileIcon[]; picks: boolean };

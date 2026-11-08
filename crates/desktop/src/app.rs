@@ -956,6 +956,14 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_queue_card, h, |a, kind, id, next| a.queue_card(kind, id.into(), next));
     let plugin_menus = ui.global::<crate::PluginMenus>();
     on!(plugin_menus.on_run, h, |a, kind, i, id, title| a.plugin_card_menu(kind, i as usize, id.into(), title.into()));
+    let icons = ui.global::<crate::ProfileIcons>();
+    let picker = h.clone();
+    icons.on_picker(move |id| {
+        let mut shown = crate::IconPicker::default();
+        picker.with(|a| shown = a.icon_picker(&id));
+        shown
+    });
+    on!(icons.on_picked, h, |a, id, at| a.profile_icon_picked(&id, at.max(0) as usize));
     on!(ui.on_song, h, |a, list, i, how| a.song(list, i as usize, how));
     let menu = h.clone();
     ui.on_song_menu(move |list, i| {
@@ -4060,21 +4068,19 @@ impl App {
         for p in &prefs.servers {
             let (who, where_) = words::profile_lines(p, self.kinds());
             let title = words::profile_label(p, self.kinds());
-            let (icon, letter) = crate::settings::profile_mark(&self.plugged, p, &title);
+            let mark = crate::settings::profile_mark(&self.plugged, p, &title);
             if p.id == prefs.active_server_id {
                 ui.set_account(who.into());
                 ui.set_server(where_.into());
-                ui.set_account_icon(icon);
-                ui.set_account_initial(letter.into());
+                ui.set_account_mark(mark);
             } else {
                 let detail = if who == title { where_ } else { who };
-                others.push(crate::ProfileItem { name: p.id.as_str().into(), title: title.into(), detail: detail.into(), icon, letter: letter.into() });
+                others.push(crate::ProfileItem { name: p.id.as_str().into(), title: title.into(), detail: detail.into(), mark });
             }
         }
         ui.set_other_profiles(ModelRc::new(VecModel::from(others)));
         if let Some(t) = &self.top {
-            t.set_profile_icon(ui.get_account_icon());
-            t.set_profile_letter(ui.get_account_initial());
+            t.set_profile_mark(ui.get_account_mark());
         }
         ui.set_profiles_editable(self.facts.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions));
     }
@@ -4397,6 +4403,24 @@ impl App {
         if to != at {
             self.setting("lyricsPlace", &format!("{id}:{to}"));
         }
+    }
+
+    /// The icon picker of profile `id`'s circle.
+    fn icon_picker(&self, id: &str) -> crate::IconPicker {
+        let prefs = self.root.app.settings.current().unwrap_or_default();
+        let Some(p) = prefs.servers.iter().find(|s| s.id == id) else { return crate::IconPicker::default() };
+        crate::settings::icon_picker(&self.plugged, p, &words::profile_label(p, self.kinds()), &words::provider_of(self.kinds(), &p.kind).name)
+    }
+
+    /// Profile `id`'s circle shows the icon at `at` among those offered.
+    fn profile_icon_picked(&mut self, id: &str, at: usize) {
+        let mut prefs = self.root.app.settings.current().unwrap_or_default();
+        let (Some(p), Some(&icon)) = (prefs.servers.iter().find(|s| s.id == id), nori_core::settings::ProfileIcon::ALL.get(at)) else { return };
+        let profile = nori_core::settings::SavedServer { icon, ..p.clone() };
+        let list = nori_core::settings::ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: prefs.active_server_id.clone() };
+        prefs.servers = nori_core::settings::servers_updated(list, profile).servers;
+        self.root.app.settings.put(prefs);
+        self.settings_shown();
     }
 
     fn setting_action(&mut self, name: &str) {
@@ -5273,6 +5297,60 @@ mod tests {
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button: Right });
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button: Right });
         assert_eq!(asked.get(), 1);
+    }
+
+    /// A profile row's circle opens its icon picker where the profile may be changed, and the icon picked
+    /// reaches the app by its place; a profile without Edit opens none.
+    #[test]
+    fn a_profiles_circle_picks_its_icon() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_view(View::Settings);
+        let profile = |button: &str| crate::SettingRow { kind: 8, name: "a".into(), title: "Home".into(), button: button.into(), letter: "Z".into(), enabled: true, first: true, last: true, ..Default::default() };
+        let sv = nori_core::settings::SavedServer { user: "zoe".into(), ..Default::default() };
+        let picker = crate::settings::icon_picker(&crate::settings::Plugged::default(), &sv, "Home", "OpenSubsonic");
+        let did = Rc::new(RefCell::new(Vec::new()));
+        let icons = ui.global::<crate::ProfileIcons>();
+        let seen = did.clone();
+        icons.on_picker(move |id| {
+            seen.borrow_mut().push(format!("picker {id}"));
+            picker.clone()
+        });
+        let seen = did.clone();
+        icons.on_picked(move |id, at| seen.borrow_mut().push(format!("picked {id} {at}")));
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        let click = |at: slint::LogicalPosition| {
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button: slint::platform::PointerEventButton::Left });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button: slint::platform::PointerEventButton::Left });
+            settle();
+        };
+        let middle = |e: &i_slint_backend_testing::ElementHandle| {
+            let (at, size) = (e.absolute_position(), e.size());
+            slint::LogicalPosition::new(at.x + size.width / 2.0, at.y + size.height / 2.0)
+        };
+        let circle = || i_slint_backend_testing::ElementHandle::find_by_element_type_name(&ui, "ProfileCircle").next().expect("the profile's circle");
+        for (button, want) in [("", Vec::<String>::new()), ("Edit", vec!["picker a".into(), "picked a 2".into()])] {
+            did.borrow_mut().clear();
+            ui.set_settings(ModelRc::new(VecModel::from(vec![profile(button)])));
+            settle();
+            click(middle(&circle()));
+            // A popup's elements give where they are in it, not in the window: the choice is picked as a
+            // screen reader would.
+            if let Some(singing) = i_slint_backend_testing::ElementHandle::find_by_accessible_label(&ui, "Singing").next() {
+                singing.invoke_accessible_default_action();
+                settle();
+            }
+            assert_eq!(*did.borrow(), want, "with {button:?}");
+        }
     }
 
     /// The main window and its player pill as the app joins them, the pill at x 140 and 1000 wide.

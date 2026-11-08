@@ -20,6 +20,34 @@ export enum PageLayout { album, artist, list }
 // artist, the rest; a bare glyph beside the title; the song's format at the start of the line under the head
 // (its `title`, not pressed), or a bare glyph on that line. A menu lists its lines in this order.
 export enum SongPlace { main, names, rest, title, note, glyphs }
+// The glyph a tile draws in place of an icon or letter: nori's own provider's server, or a profile's face.
+export enum MarkGlyph { none, server, sing, surprise, talking, look-up, satisfied, think }
+
+// A profile's circle: its plugin's icon in ink, else a letter, else a glyph.
+export struct Mark {
+    icon: image,
+    letter: string,
+    glyph: MarkGlyph,
+}
+
+// An icon a profile's circle can show, on its picker: what it is called and the circle showing it.
+export struct IconChoice {
+    name: string,
+    mark: Mark,
+}
+
+// The icons a profile's circle can show, and the one it shows now.
+export struct IconPicker {
+    choices: [IconChoice],
+    chosen: int,
+}
+
+// A profile's icon picker (app.rs answers): the icons profile `id`'s circle can show, and the one picked, by
+// its place among them.
+export global ProfileIcons {
+    callback picker(string) -> IconPicker;
+    callback picked(string, int);
+}
 
 export struct Card {
     id: string,
@@ -190,13 +218,12 @@ export struct SettingRow {
     shares: [float],
     // A usage row's downloads, a line per profile, drawn under its downloads part.
     breakdown: [string],
-    // A plugin row's third line, what its switch or button sends, and its tile.
+    // A plugin row's third line, what its switch or button sends, and its tile (or a profile row's circle).
     line: string,
     control: string,
     icon: image,
     letter: string,
-    // The tile is nori's own provider's.
-    server-tile: bool,
+    glyph: MarkGlyph,
 }
 
 // A profile in the profiles menu, to switch to: its id, name, who signs in and its mark.
@@ -204,8 +231,7 @@ export struct ProfileItem {
     name: string,
     title: string,
     detail: string,
-    icon: image,
-    letter: string,
+    mark: Mark,
 }
 
 // A tool at the top right of a plugin page: 0 a plus, 1 a folder, 2 the repos.
@@ -4217,13 +4243,13 @@ component SourceLine inherits Rectangle {
     }
 }
 
-// A plugin's mark on a tile: its icon in ink, or its first letter without one.
+// A plugin's mark on a tile: its icon in ink, or its first letter without one, or a glyph.
 component PluginTile inherits Rectangle {
     in property <length> side: 44px;
     in property <image> icon;
     in property <string> letter;
-    // nori's own provider has no plugin behind it, so the server glyph stands for one.
-    in property <bool> server;
+    // nori's own provider has no plugin behind it, so the server glyph stands for one; a profile may show a face.
+    in property <MarkGlyph> glyph;
     // A profile's mark is a circle.
     in property <bool> round;
     width: root.side;
@@ -4242,11 +4268,116 @@ component PluginTile inherits Rectangle {
         source: root.icon;
         colorize: Theme.text;
     }
-    if root.server: Icon {
-        glyph: Icons.server;
+    if root.glyph != MarkGlyph.none: Icon {
+        glyph: root.glyph == MarkGlyph.sing ? Icons.emoji-sing-right : root.glyph == MarkGlyph.surprise ? Icons.emoji-surprise-alt : root.glyph == MarkGlyph.talking ? Icons.emoji-talking-happy : root.glyph == MarkGlyph.look-up ? Icons.emoji-look-up : root.glyph == MarkGlyph.satisfied ? Icons.emoji-satisfied : root.glyph == MarkGlyph.think ? Icons.emoji-think-right : Icons.server;
         colour: Theme.text;
         width: root.side * 0.6;
         height: root.side * 0.6;
+    }
+}
+
+// A profile row's circle. Where `pickable`, a click opens a popover of the icons it can show, each as the
+// circle would show it, the one shown ringed in the accent, and picking one keeps it.
+component ProfileCircle inherits Rectangle {
+    in property <string> profile;
+    in property <Mark> mark;
+    in property <bool> pickable;
+    property <IconPicker> picker;
+    // The choice under the pointer, whose name the popover's head shows instead of the one shown's; -1 for none.
+    property <int> hovered: -1;
+    property <length> cell: 44px;
+    property <length> gap: 8px;
+    property <int> columns: 4;
+    function pick(at: int) {
+        pop.close();
+        ProfileIcons.picked(root.profile, at);
+    }
+    width: 36px;
+    height: 36px;
+    PluginTile {
+        side: root.width;
+        round: true;
+        icon: root.mark.icon;
+        letter: root.mark.letter;
+        glyph: root.mark.glyph;
+    }
+    Rectangle {
+        border-radius: root.width / 2;
+        background: ta.has-hover ? Theme.hover : transparent;
+    }
+    ta := TouchArea {
+        enabled: root.pickable;
+        mouse-cursor: pointer;
+        clicked => {
+            root.picker = ProfileIcons.picker(root.profile);
+            root.hovered = -1;
+            pop.show();
+        }
+    }
+    pop := PopupWindow {
+        x: 0;
+        y: root.height + 6px;
+        width: root.columns * root.cell + (root.columns - 1) * root.gap + 2 * MenuShape.radius;
+        close-policy: close-on-click-outside;
+        Popover {
+            VerticalLayout {
+                padding: MenuShape.radius;
+                padding-top: 10px;
+                spacing: 10px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "Icon";
+                        color: Theme.text;
+                        font-weight: 600;
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        property <int> named: root.hovered >= 0 ? root.hovered : root.picker.chosen;
+                        text: self.named >= 0 && self.named < root.picker.choices.length ? root.picker.choices[self.named].name : "";
+                        color: Theme.dim;
+                        font-size: 12px;
+                        horizontal-alignment: right;
+                        overflow: elide;
+                    }
+                }
+                Rectangle {
+                    height: ceil(root.picker.choices.length / root.columns) * (root.cell + root.gap) - root.gap;
+                    for c[i] in root.picker.choices: Rectangle {
+                        x: mod(i, root.columns) * (root.cell + root.gap);
+                        y: floor(i / root.columns) * (root.cell + root.gap);
+                        width: root.cell;
+                        height: root.cell;
+                        border-radius: root.cell / 2;
+                        border-width: i == root.picker.chosen ? 2px : 1px;
+                        border-color: i == root.picker.chosen ? Theme.accent : Theme.hairline;
+                        background: ca.has-hover ? Theme.hover : transparent;
+                        accessible-role: button;
+                        accessible-label: c.name;
+                        accessible-checked: i == root.picker.chosen;
+                        accessible-action-default => { root.pick(i); }
+                        PluginTile {
+                            side: root.cell - 10px;
+                            round: true;
+                            icon: c.mark.icon;
+                            letter: c.mark.letter;
+                            glyph: c.mark.glyph;
+                        }
+                        ca := TouchArea {
+                            mouse-cursor: pointer;
+                            changed has-hover => {
+                                if self.has-hover {
+                                    root.hovered = i;
+                                } else if root.hovered == i {
+                                    root.hovered = -1;
+                                }
+                            }
+                            clicked => { root.pick(i); }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -4254,8 +4385,7 @@ component PluginTile inherits Rectangle {
 component ProfileLine inherits Rectangle {
     in property <string> title;
     in property <string> detail;
-    in property <image> icon;
-    in property <string> letter;
+    in property <Mark> mark;
     in property <bool> on;
     callback clicked;
     height: 48px;
@@ -4269,8 +4399,9 @@ component ProfileLine inherits Rectangle {
             y: (parent.height - self.height) / 2;
             side: 30px;
             round: true;
-            icon: root.icon;
-            letter: root.letter;
+            icon: root.mark.icon;
+            letter: root.mark.letter;
+            glyph: root.mark.glyph;
         }
         VerticalLayout {
             alignment: center;
@@ -4418,15 +4549,15 @@ component SettingLine inherits VerticalLayout {
                     side: 44px;
                     icon: root.item.icon;
                     letter: root.item.letter;
-                    server: root.item.server-tile;
+                    glyph: root.item.glyph;
                     opacity: root.item.enabled ? 1 : 0.45;
                 }
-                if root.item.kind == 8: PluginTile {
+                if root.item.kind == 8: ProfileCircle {
                     y: (parent.height - self.height) / 2;
-                    side: 36px;
-                    round: true;
-                    icon: root.item.icon;
-                    letter: root.item.letter;
+                    profile: root.item.name;
+                    mark: { icon: root.item.icon, letter: root.item.letter, glyph: root.item.glyph };
+                    // Its icon is the profile's to change where its Edit shows.
+                    pickable: root.item.button != "";
                 }
                 VerticalLayout {
                     alignment: center;
@@ -5653,8 +5784,7 @@ component TopContent inherits Rectangle {
     in property <bool> guest;
     in-out property <string> search-text;
     // The profile in use's mark, which opens the profiles.
-    in property <image> profile-icon;
-    in property <string> profile-letter;
+    in property <Mark> profile-mark;
     callback go(View);
     callback open-profiles();
     callback search-edited(string);
@@ -5828,8 +5958,9 @@ component TopContent inherits Rectangle {
             PluginTile {
                 side: 28px;
                 round: true;
-                icon: root.profile-icon;
-                letter: root.profile-letter;
+                icon: root.profile-mark.icon;
+                letter: root.profile-mark.letter;
+                glyph: root.profile-mark.glyph;
                 border-width: 1px;
                 border-color: Theme.hairline;
             }
@@ -6080,8 +6211,7 @@ export component AppWindow inherits Window {
     in property <[SettingRow]> settings;
     // Who is signed in (the account row), and the text the page's list is narrowed by.
     in property <string> account;
-    in property <string> account-initial;
-    in property <image> account-icon;
+    in property <Mark> account-mark;
     // The profiles not in use, and whether this device may add one (a jam guest may not).
     in property <[ProfileItem]> other-profiles;
     in property <bool> profiles-editable;
@@ -8119,15 +8249,13 @@ export component AppWindow inherits Window {
                     ProfileLine {
                         title: root.account;
                         detail: root.server;
-                        icon: root.account-icon;
-                        letter: root.account-initial;
+                        mark: root.account-mark;
                         on: true;
                     }
                     for p in root.other-profiles: ProfileLine {
                         title: p.title;
                         detail: p.detail;
-                        icon: p.icon;
-                        letter: p.letter;
+                        mark: p.mark;
                         clicked => {
                             profiles-pop.close();
                             root.setting-action("server:" + p.name);
@@ -9507,8 +9635,7 @@ export component TopBar inherits Window {
     in property <bool> guest;
     in property <bool> previewing;
     in-out property <string> search-text;
-    in property <image> profile-icon;
-    in property <string> profile-letter;
+    in property <Mark> profile-mark;
     callback go(View);
     callback open-profiles();
     callback search-edited(string);
@@ -9537,8 +9664,7 @@ export component TopBar inherits Window {
         guest: root.guest;
         previewing: root.previewing;
         search-text <=> root.search-text;
-        profile-icon: root.profile-icon;
-        profile-letter: root.profile-letter;
+        profile-mark: root.profile-mark;
         go(v) => { root.go(v); }
         open-profiles => { root.open-profiles(); }
         search-edited(t) => { root.search-edited(t); }

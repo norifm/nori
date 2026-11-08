@@ -450,7 +450,8 @@ impl ProfileIcon {
     /// The icons offered, in the order a picker shows them.
     pub const ALL: [ProfileIcon; 8] = [Self::Letter, Self::Provider, Self::Sing, Self::Surprise, Self::Talking, Self::LookUp, Self::Satisfied, Self::Think];
 
-    fn id(self) -> &'static str {
+    /// How the settings store it.
+    pub fn id(self) -> &'static str {
         match self {
             Self::Letter => "letter",
             Self::Provider => "provider",
@@ -463,7 +464,7 @@ impl ProfileIcon {
         }
     }
 
-    fn from_id(id: &str) -> Option<ProfileIcon> {
+    pub fn from_id(id: &str) -> Option<ProfileIcon> {
         Self::ALL.into_iter().find(|i| i.id() == id)
     }
 }

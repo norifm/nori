@@ -253,6 +253,20 @@ enum Say {
     static let servers = "Profiles"
     static let none = "None"
     static let addServer = "Add profile"
+    static let profileIcon = "Icon"
+    /// What `icon` is called on the picker: the letter, the provider's (`provider`), or the face.
+    static func profileIconName(_ icon: ProfileIcon, provider: String) -> String {
+        switch icon {
+        case .letter: return "Letter"
+        case .provider: return provider
+        case .sing: return "Singing"
+        case .surprise: return "Surprised"
+        case .talking: return "Talking"
+        case .lookUp: return "Looking up"
+        case .satisfied: return "Smiling"
+        case .think: return "Thinking"
+        }
+    }
     static let profileWaitsNoPlugins = "Plays from a plugin, which can’t run here"
     static func forgetServer(_ name: String) -> String { "Forget \(name)?" }
     static let forgetServerNote = "Its downloads stay on this iPod until you add it again."

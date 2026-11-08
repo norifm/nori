@@ -69,7 +69,7 @@ mode or sheet presentation controller.
 | `sound.rs` | Each output's sound and the AutoEQ browser, through the core's `device_*` calls |
 | `lyrics.rs` | The core's `LyricClock` behind a handle the lyrics page holds |
 | `theme.rs` | The `theme` and `season` settings worn on the device's date and zone, and pages dyed with a cover |
-| `account.rs` | The login form (`providers`, `log_in`) and saved servers |
+| `account.rs` | The login form (`providers`, `log_in`) and saved servers, with their icons (`ProfileIcon`) |
 | `offer.rs` | The queue another device left on the server, offered on Home (`offer::Offered`) |
 | `remote.rs` | Remote control: Bonjour through the app, the devices the music can move to |
 | `jam.rs` | A jam this iPod is a guest in |
@@ -216,7 +216,8 @@ Nori Seasons, with Android as the reference; the layouts are the iPod's own.
 - **Settings**: grouped as Android's (Playback, Sound, Appearance, Lyrics, Library, About) over the core's
   settings model (`nori_ios_settings`, `nori_ios_set`). Phone-only settings (metered network, offload,
   bit-perfect, USB) are left out. Also the equalizer, per-output sound and AutoEQ, servers and the login
-  form, credits and licenses.
+  form, credits and licenses. A profile's row shows its mark (its letter, the server's glyph or a face);
+  a tap on the mark opens Icon, the icons in the core's order (`nori_ios_profile_icons`).
 - **Covers**: asked at the view's pixel size and handed to Swift as RGBA that becomes a `CGImage`
   without a copy (`nori_ios_cover_release` lets go). The server is asked for the two renditions only
   (320 and 800 px). `CoverCache` (16 MB) shows the sharpest picture already decoded while a size comes,

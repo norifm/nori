@@ -11,11 +11,11 @@ use slint::{ModelRc, SharedString, VecModel};
 use nori_look::theme;
 
 use nori_core::providers::Kinds;
-use nori_core::settings::ServerKind;
+use nori_core::settings::{ProfileIcon, SavedServer, ServerKind};
 use nori_plugins::{AssetLine, AssetState, ControlledDevice, Offer, OfferState, Offers, PluginCard, PluginRow, ReadmeBlock, Repo, RowKind, Value};
 
 use crate::look::Today;
-use crate::{words, PluginTool, PluginTop, SettingRow};
+use crate::{words, IconChoice, IconPicker, Mark, MarkGlyph, PluginTool, PluginTop, SettingRow};
 
 // Row kinds, as app.slint numbers them.
 const HEADING: i32 = 0;
@@ -234,11 +234,11 @@ struct Row {
     /// A plugin row's third line, and what its switch or button sends.
     line: String,
     control: String,
-    /// A plugin row's icon and the letter drawn without one.
+    /// A plugin row's icon and the letter drawn without one, or a profile row's circle.
     icon: slint::Image,
     letter: String,
-    /// The tile holds the server glyph: nori's own provider.
-    server_tile: bool,
+    /// The glyph the tile holds instead: nori's own provider's server, or a profile's face.
+    glyph: MarkGlyph,
 }
 
 /// The profile whose rows are kept under `profile` (`server_db`), as the server list names it.
@@ -543,10 +543,13 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts, kinds: 
                 detail.push_str(" · second address");
             }
             let title = crate::words::profile_label(sv, kinds);
-            let (icon, letter) = profile_mark(plugged, sv, &title);
+            let mark = profile_mark(plugged, sv, &title);
             // A jam guest switches between the profiles; changing them is not its to do.
             let edits = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
-            Row { kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, button: if edits { "Edit".into() } else { "".into() }, icon, letter, ..Default::default() }
+            Row {
+                kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, button: if edits { "Edit".into() } else { "".into() },
+                icon: mark.icon, letter: mark.letter.into(), glyph: mark.glyph, ..Default::default()
+            }
         }
         RowItem::MusicFolder { index, on, tapped } => {
             let (name, _) = f.folders.get(index as usize)?;
@@ -697,7 +700,7 @@ fn model(groups: Vec<(String, Vec<Row>)>, p: &StoredPrefs, f: &Facts, today: Tod
                 line: r.line.into(),
                 control: r.control.into(),
                 icon: r.icon,
-                server_tile: r.server_tile,
+                glyph: r.glyph,
                 letter: r.letter.into(),
                 first: i == 0 || !plated[i - 1],
                 last: i + 1 == n || !plated[i + 1],
@@ -1009,7 +1012,7 @@ fn provider_choices(p: &Plugged, kinds: &Kinds) -> Vec<Row> {
         let name = crate::words::provider_of(kinds, &i.kind).name;
         let act = PluginAct::Choose(i.kind.clone()).name();
         match &i.kind {
-            ServerKind::Subsonic => Row { kind: PLUGIN, name: act, title: name, detail: words::PROVIDER_SUBSONIC_ABOUT.into(), server_tile: true, enabled: true, ..Default::default() },
+            ServerKind::Subsonic => Row { kind: PLUGIN, name: act, title: name, detail: words::PROVIDER_SUBSONIC_ABOUT.into(), glyph: MarkGlyph::Server, enabled: true, ..Default::default() },
             ServerKind::Plugin { id } => Row { name: act, ..plugin_line(p, id, &name, None, String::new()) },
         }
     });
@@ -1027,13 +1030,33 @@ fn plugin_line(p: &Plugged, id: &str, name: &str, about: Option<&str>, line: Str
     Row { kind: PLUGIN, name: PluginAct::Page(id.into()).name(), title: name.into(), detail: about.unwrap_or_default().into(), line, icon, letter, enabled: true, ..Default::default() }
 }
 
-/// A profile's mark: its plugin's tile when its icon is its provider's, else the letter of who signs in
-/// (of `label` without a user).
-pub fn profile_mark(p: &Plugged, sv: &nori_core::settings::SavedServer, label: &str) -> (slint::Image, String) {
-    match (&sv.kind, sv.icon) {
-        (ServerKind::Plugin { id }, nori_core::settings::ProfileIcon::Provider) => p.tile(id, label),
-        _ => (slint::Image::default(), nori_core::settings::profile_letter(sv.clone(), label.to_string())),
-    }
+/// A profile's mark, as its icon says: the letter of who signs in (of `label` without a user), its plugin's
+/// tile (the server glyph for nori's own provider), or a face.
+pub fn profile_mark(p: &Plugged, sv: &SavedServer, label: &str) -> Mark {
+    let glyph = match sv.icon {
+        ProfileIcon::Letter => return Mark { letter: nori_core::settings::profile_letter(sv.clone(), label.into()).into(), ..Default::default() },
+        ProfileIcon::Provider => match &sv.kind {
+            ServerKind::Plugin { id } => {
+                let (icon, letter) = p.tile(id, label);
+                return Mark { icon, letter: letter.into(), ..Default::default() };
+            }
+            ServerKind::Subsonic => MarkGlyph::Server,
+        },
+        ProfileIcon::Sing => MarkGlyph::Sing,
+        ProfileIcon::Surprise => MarkGlyph::Surprise,
+        ProfileIcon::Talking => MarkGlyph::Talking,
+        ProfileIcon::LookUp => MarkGlyph::LookUp,
+        ProfileIcon::Satisfied => MarkGlyph::Satisfied,
+        ProfileIcon::Think => MarkGlyph::Think,
+    };
+    Mark { glyph, ..Default::default() }
+}
+
+/// The icons `sv`'s circle can show, each as it would show it, named (`provider` names its provider's mark).
+pub fn icon_picker(p: &Plugged, sv: &SavedServer, label: &str, provider: &str) -> IconPicker {
+    let choices: Vec<IconChoice> = ProfileIcon::ALL.iter().map(|&icon| IconChoice { name: words::profile_icon_name(icon, provider).into(), mark: profile_mark(p, &SavedServer { icon, ..sv.clone() }, label) }).collect();
+    let chosen = ProfileIcon::ALL.iter().position(|&i| i == sv.icon).expect("ALL holds every icon");
+    IconPicker { choices: ModelRc::new(VecModel::from(choices)), chosen: chosen as i32 }
 }
 
 /// Updates waiting, and the installed plugins in their order, grey while every plugin is off.
@@ -1717,8 +1740,8 @@ mod tests {
         let acts: Vec<Option<PluginAct>> = off[1..].iter().map(|r| PluginAct::of(&r.name)).collect();
         assert_eq!(acts, [Some(PluginAct::Sheet), Some(PluginAct::Sheet), Some(PluginAct::Sheet)], "with every plugin off, all three quiet, leading to the switch");
         assert!(off[1..].iter().all(|r| !r.enabled));
-        let got: Vec<(&str, bool, bool)> = rows.iter().map(|r| (r.title.as_str(), r.enabled, r.server_tile)).collect();
-        assert_eq!(got, [("OpenSubsonic", true, true), ("a.new", false, false), ("b.off", false, false)], "only providers not on");
+        let got: Vec<(&str, bool, MarkGlyph)> = rows.iter().map(|r| (r.title.as_str(), r.enabled, r.glyph)).collect();
+        assert_eq!(got, [("OpenSubsonic", true, MarkGlyph::Server), ("a.new", false, MarkGlyph::None), ("b.off", false, MarkGlyph::None)], "only providers not on");
         let acts: Vec<_> = rows.iter().map(|r| PluginAct::of(&r.name)).collect();
         assert_eq!(acts, [Some(PluginAct::Choose(ServerKind::Subsonic)), Some(PluginAct::OfferPage("a.new".into())), Some(PluginAct::TurnOn("b.off".into()))]);
     }
@@ -1731,7 +1754,7 @@ mod tests {
         let id = host.install_from(nori_plugins::testing::fixture("").to_string_lossy().into_owned()).unwrap();
         host.turn(id.clone(), true);
         let rows = provider_choices(&Plugged::default(), &Kinds::with_plugins(host));
-        assert_eq!((rows.len(), rows[1].enabled, rows[1].server_tile), (2, true, false));
+        assert_eq!((rows.len(), rows[1].enabled, rows[1].glyph), (2, true, MarkGlyph::None));
         assert_eq!(PluginAct::of(&rows[1].name), Some(PluginAct::Choose(ServerKind::Plugin { id })));
     }
 
@@ -1761,16 +1784,41 @@ mod tests {
         }
     }
 
-    /// A profile's mark is who signs in, else its name; a plugin's tile when its icon is its provider's.
+    /// A profile's mark is who signs in, else its name; a plugin's tile, or the server glyph for nori's own
+    /// provider, when its icon is its provider's; else its face.
     #[test]
-    fn a_profile_mark_is_its_user_or_its_plugin() {
-        use nori_core::settings::{ProfileIcon, SavedServer};
+    fn a_profile_mark_is_its_user_its_plugin_or_its_face() {
         let mut p = Plugged::default();
         p.icons.read.insert("a.one".into(), None);
-        let server = |user: &str| SavedServer { user: user.into(), ..Default::default() };
+        let server = |user: &str, icon| SavedServer { user: user.into(), icon, ..Default::default() };
         let plugin = |icon| SavedServer { user: "zoe".into(), kind: ServerKind::Plugin { id: "a.one".into() }, icon, ..Default::default() };
-        let marks: Vec<String> = [server("admin"), server(""), plugin(ProfileIcon::Letter), plugin(ProfileIcon::Provider)].iter().map(|sv| profile_mark(&p, sv, "home").1).collect();
-        assert_eq!(marks, ["A", "H", "Z", "H"], "the plugin's tile has its own letter without an icon");
+        let profiles = [
+            server("admin", ProfileIcon::Letter),
+            server("", ProfileIcon::Letter),
+            server("admin", ProfileIcon::Provider),
+            server("admin", ProfileIcon::Sing),
+            plugin(ProfileIcon::Letter),
+            plugin(ProfileIcon::Provider),
+            plugin(ProfileIcon::Think),
+        ];
+        let marks: Vec<(String, MarkGlyph)> = profiles.iter().map(|sv| profile_mark(&p, sv, "home")).map(|m| (m.letter.into(), m.glyph)).collect();
+        let want = [("A", MarkGlyph::None), ("H", MarkGlyph::None), ("", MarkGlyph::Server), ("", MarkGlyph::Sing), ("Z", MarkGlyph::None), ("H", MarkGlyph::None), ("", MarkGlyph::Think)];
+        assert_eq!(marks, want.map(|(l, g)| (l.to_string(), g)), "the plugin's tile has its own letter without an icon");
+    }
+
+    /// The picker offers every icon in its order, each as the circle would show it, the provider's named for it,
+    /// and points at the one shown.
+    #[test]
+    fn the_icon_picker_shows_each_icon_and_the_one_shown() {
+        let sv = SavedServer { user: "zoe".into(), icon: ProfileIcon::Satisfied, ..Default::default() };
+        let picker = icon_picker(&Plugged::default(), &sv, "home", "OpenSubsonic");
+        let choices: Vec<IconChoice> = slint::Model::iter(&picker.choices).collect();
+        let names: Vec<&str> = choices.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["Letter", "OpenSubsonic", "Singing", "Surprised", "Talking", "Looking up", "Smiling", "Thinking"]);
+        let glyphs: Vec<MarkGlyph> = choices.iter().map(|c| c.mark.glyph).collect();
+        let faces = [MarkGlyph::Sing, MarkGlyph::Surprise, MarkGlyph::Talking, MarkGlyph::LookUp, MarkGlyph::Satisfied, MarkGlyph::Think];
+        assert_eq!(glyphs, [[MarkGlyph::None, MarkGlyph::Server].as_slice(), &faces].concat());
+        assert_eq!((choices[0].mark.letter.as_str(), picker.chosen), ("Z", 6));
     }
 
     /// A tile is empty until the icon is heard of, then the icon, or the letter for a plugin with none;
