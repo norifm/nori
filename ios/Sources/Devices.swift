@@ -202,11 +202,13 @@ final class Bonjour: NSObject, NetServiceDelegate, NetServiceBrowserDelegate {
     }
 }
 
-/// The system volume slider, kept in the window so it stays connected to the output route.
+/// The system volume slider, kept in the window so it stays connected to the output route. Hidden, as one
+/// that counts as shown would take the place of the system's volume popup.
 final class SystemVolume {
     private let view = MPVolumeView(frame: CGRect(x: -200, y: -200, width: 100, height: 40))
 
     init(in window: UIWindow) {
+        view.isHidden = true
         view.isUserInteractionEnabled = false
         window.addSubview(view)
         view.layoutIfNeeded()
