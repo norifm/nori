@@ -752,7 +752,7 @@ pub fn device_row(d: Option<&nori_core::remote::RemoteDevice>, active: bool) -> 
     let Some(d) = d else {
         return crate::DeviceRow { name: THIS_COMPUTER.into(), active, ..Default::default() };
     };
-    let line = d.now.as_ref().map_or_else(|| "Not playing".to_string(), |e| format!("{} · {}", e.title, e.artist));
+    let line = d.now.as_ref().map_or_else(|| "Idle".to_string(), |e| format!("{} · {}", e.title, e.artist));
     let note = match d.refused {
         Some(Refusal::Stale) => "The queue changed there. Try again.",
         Some(Refusal::NotAllowed) => "That device said no.",

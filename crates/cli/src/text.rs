@@ -1025,7 +1025,7 @@ pub fn device_line(d: &RemoteDevice) -> String {
     match &d.now {
         Some(e) if d.state.as_ref().is_some_and(|s| s.playing) => format!("{} · {}", e.title, e.artist),
         Some(e) => format!("Paused · {}", e.title),
-        None => "Not playing".into(),
+        None => "Idle".into(),
     }
 }
 
@@ -1185,7 +1185,7 @@ mod tests {
         d.state = Some(state(false));
         assert_eq!(device_line(&d), "Paused · Wish", "the active device, paused");
         d.now = None;
-        assert_eq!(device_line(&d), "Not playing", "a device another took over from");
+        assert_eq!(device_line(&d), "Idle", "a device another took over from");
         d.now = wish;
         d.refused = Some(Refusal::Stale);
         assert_eq!(device_line(&d), "The queue changed there. Try again.", "a refusal over what it plays");

@@ -474,7 +474,7 @@ enum Say {
     static let playOn = "Play on"
     static let thisIPod = "This iPod"
     static let volume = "Volume"
-    static let deviceIdle = "Not playing"
+    static let deviceIdle = "Idle"
     static func playingOn(_ device: String) -> String { "Playing on \(device)" }
 
     // Jams, from the desktop's words.rs (jam_*).
