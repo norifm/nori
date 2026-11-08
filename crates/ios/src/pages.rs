@@ -1490,6 +1490,46 @@ pub unsafe extern "C" fn nori_ios_sort(kind: i32, name: *const c_char) {
     });
 }
 
+/// Home's rows as JSON to free: `{shown, hidden}`, each the rows' names, `shown` in their order.
+#[no_mangle]
+pub extern "C" fn nori_ios_home_rows() -> *mut c_char {
+    with_session(|s| {
+        let rows = s.core.session.settings.prefs(|p| p.home_rows.clone());
+        let names = |rows: &[HomeRow]| rows.iter().map(|r| format!("{r:?}")).collect::<Vec<_>>();
+        owned(&json!({ "shown": names(&rows), "hidden": names(&nori_core::browse::home_rows_hidden(rows.clone())) }))
+    })
+    .unwrap_or(std::ptr::null_mut())
+}
+
+/// The kept Home rows changed by `change`.
+fn change_home_rows(change: impl FnOnce(Vec<HomeRow>) -> Vec<HomeRow>) {
+    with_session(|s| {
+        let settings = &s.core.session.settings;
+        if let Some(mut prefs) = settings.current() {
+            prefs.home_rows = change(prefs.home_rows);
+            settings.put(prefs);
+        }
+    });
+}
+
+/// Shows Home row `name` (`on` 1) or leaves it out.
+///
+/// # Safety
+/// `name` is NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_home_row_set(name: *const c_char, on: i32) {
+    let name = c_text(name);
+    let Some(row) = HomeRow::every().iter().copied().find(|r| format!("{r:?}") == name) else { return };
+    change_home_rows(|rows| nori_core::browse::home_rows_toggled(rows, row, on != 0));
+}
+
+/// Moves the Home row shown at `from` to `to`.
+#[no_mangle]
+pub extern "C" fn nori_ios_home_row_move(from: i32, to: i32) {
+    let (Ok(from), Ok(to)) = (u32::try_from(from), u32::try_from(to)) else { return };
+    change_home_rows(|rows| nori_core::browse::home_rows_moved(rows, from, to));
+}
+
 /// Whether playlist `id` is pinned (1) on this iPod.
 ///
 /// # Safety

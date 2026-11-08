@@ -715,6 +715,11 @@ class CardsPage: UIViewController {
     let column = UIStackView()
     private let scroll = UIScrollView()
     private let edge = UnderEdge(Theme.background)
+    /// Off while something on the page is being dragged.
+    var scrolls: Bool {
+        get { scroll.isScrollEnabled }
+        set { scroll.isScrollEnabled = newValue }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()

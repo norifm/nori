@@ -228,7 +228,12 @@ final class AppearancePage: CardsPage {
         let followCard = GroupCard([GroupRow(Say.followSeasons, subtitle: Say.seasonNow(now), trailing: follow)])
         let gap = UIView()
         gap.heightAnchor.constraint(equalToConstant: 10).isActive = true
-        set([GroupLabel(Say.appearance), modeRow(modes), GroupLabel(Say.season), tiles, gap, followCard])
+        let rows = GroupCard([GroupRow(Say.homeRows, chevron: true) { [weak self] in
+            self?.navigationController?.pushViewController(HomeRowsPage(), animated: true)
+        }])
+        let between = UIView()
+        between.heightAnchor.constraint(equalToConstant: 10).isActive = true
+        set([GroupLabel(Say.appearance), modeRow(modes), GroupLabel(Say.season), tiles, gap, followCard, between, rows])
     }
 
     /// The modes' chips on a card, the same room above and below them.
@@ -250,6 +255,85 @@ final class AppearancePage: CardsPage {
         _ = "season".withCString { n in season.withCString { v in nori_ios_set(n, v) } }
         guard Theme.keep(mode: mode, season: season) else { return lay() }
         (UIApplication.shared.delegate as? AppDelegate)?.restyle(showing: AppearancePage())
+    }
+}
+
+/// Which rows Home shows and in what order, as Android's: each shown row with its switch, held anywhere and
+/// dragged to move, then the ones left out. Which rows are left out and where one goes are the core's.
+final class HomeRowsPage: CardsPage {
+    private let card = GroupCard()
+    private var names: [String] = []
+    private var from = 0
+    private var to = 0
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = Say.homeRows
+        let hold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
+        card.addGestureRecognizer(hold)
+        lay()
+    }
+
+    private func lay() {
+        let d = takenJSON(nori_ios_home_rows()) as? [String: [String]] ?? [:]
+        names = d["shown"] ?? []
+        let row = { (name: String, on: Bool) -> GroupRow in
+            let toggle = UISwitch()
+            toggle.isOn = on
+            toggle.onTintColor = Theme.switchOn
+            toggle.addAction { [weak self] in
+                name.withCString { nori_ios_home_row_set($0, toggle.isOn ? 1 : 0) }
+                self?.changed()
+            }
+            return GroupRow(Say.homeRow(name), trailing: toggle)
+        }
+        card.set(names.map { row($0, true) } + (d["hidden"] ?? []).map { row($0, false) })
+        set([GroupLabel(Say.holdToMove), card])
+    }
+
+    private func changed() {
+        lay()
+        NotificationCenter.default.post(name: .noriFavorites, object: nil)
+    }
+
+    /// The row under the finger follows it; those it passes step out of its way; let go, the core moves it.
+    @objc private func held(_ g: UILongPressGestureRecognizer) {
+        let rows = card.rows.arrangedSubviews
+        let y = g.location(in: card.rows).y
+        switch g.state {
+        case .began:
+            guard let i = rows.firstIndex(where: { $0.frame.contains(CGPoint(x: 1, y: y)) }), i < names.count else {
+                g.state = .failed
+                return
+            }
+            from = i
+            to = i
+            scrolls = false
+            card.rows.bringSubviewToFront(rows[i])
+            rows[i].backgroundColor = Theme.row
+            rows[i].transform = CGAffineTransform(scaleX: 1.02, y: 1.02)
+        case .changed:
+            guard from < rows.count else { return }
+            let held = rows[from], side = held.bounds.height
+            held.transform = CGAffineTransform(translationX: 0, y: y - (CGFloat(from) + 0.5) * side).scaledBy(x: 1.02, y: 1.02)
+            to = max(0, min(names.count - 1, Int(y / side)))
+            UIView.animate(withDuration: Motion.plain ? 0 : 0.18) {
+                for (i, r) in rows.enumerated() where i != self.from && i < self.names.count {
+                    let shift = i > self.from && i <= self.to ? -side : i < self.from && i >= self.to ? side : 0
+                    r.transform = CGAffineTransform(translationX: 0, y: shift)
+                }
+            }
+        case .ended, .cancelled, .failed:
+            scrolls = true
+            if g.state == .ended, from != to {
+                nori_ios_home_row_move(Int32(from), Int32(to))
+                changed()
+            } else {
+                lay()
+            }
+        default:
+            break
+        }
     }
 }
 
