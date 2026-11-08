@@ -308,9 +308,9 @@ mod tests {
         let repo = Repo { url: "https://example.com/nori/index.json".into(), official: false };
         let text = br#"{"plugins": [
             {"id": "a.b", "name": "A", "source": "https://git.example/a", "versions": [
-                {"version": "0.9.0", "api": 2, "url": "a-0.9.0.noriplugin", "sha256": "AB"},
-                {"version": "0.10.0", "api": 2, "url": "https://cdn.example/a-0.10.0.noriplugin", "sha256": "cd", "released": "2026-11-02"},
-                {"version": "2.0.0", "api": 1, "url": "a-2.0.0.noriplugin", "sha256": "ef"}
+                {"version": "0.9.0", "api": 3, "url": "a-0.9.0.noriplugin", "sha256": "AB"},
+                {"version": "0.10.0", "api": 3, "url": "https://cdn.example/a-0.10.0.noriplugin", "sha256": "cd", "released": "2026-11-02"},
+                {"version": "2.0.0", "api": 2, "url": "a-2.0.0.noriplugin", "sha256": "ef"}
             ]},
             {"id": "c.d", "name": "C", "versions": [{"version": "1.0.0", "api": 9, "url": "c.noriplugin", "sha256": "00"}]}
         ]}"#;

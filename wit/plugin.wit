@@ -1,4 +1,4 @@
-package nori:plugin@2.0.0;
+package nori:plugin@3.0.0;
 
 /// The plugin's page. Its rows are declared in its manifest, so nori draws them while it is not
 /// running; values are kept by nori in the plugin's store.
@@ -105,6 +105,8 @@ interface provider {
         web-page(string),
         /// Text the user pastes.
         paste,
+        /// A code the user allows in any browser where they are signed in (`start-code`, `check-code`).
+        code,
     }
 
     record provider-info {
@@ -234,6 +236,30 @@ interface provider {
         unreachable(string),
     }
 
+    /// A code to sign in with, made by `start-code`.
+    record sign-in-code {
+        /// What the user sees on the page they allow it on.
+        code: string,
+        /// Where they allow it: the client opens it in the system's browser.
+        url: string,
+        /// Seconds between checks.
+        every: u32,
+        /// Seconds it lasts; none when the provider doesn't say (it says `expired` instead).
+        lasts: option<u32>,
+        /// The plugin's own (a poll token), handed back with every check.
+        state: string,
+    }
+
+    /// How a code stands.
+    variant code-check {
+        /// Not allowed yet.
+        waiting,
+        /// A new code is needed.
+        expired,
+        /// Allowed: the account signed in with it, as `sign-in` would.
+        done(sign-in-result),
+    }
+
     enum account-state {
         signed-out,
         signed-in,
@@ -255,6 +281,10 @@ interface provider {
     refused: func(id: string);
     sign-in-done: func(address: string, cookies: string) -> bool;
     sign-in: func(answer: string) -> option<sign-in-result>;
+    /// A code for the `code` sign-in way, asked for each time the client shows it.
+    start-code: func() -> result<sign-in-code, error>;
+    /// How `code` stands, checked every `every` seconds while the client shows it.
+    check-code: func(code: sign-in-code) -> option<code-check>;
     sign-out: func();
     account: func() -> option<account-state>;
     /// Whether the client reminds the user to sign in again at start (the session ended).

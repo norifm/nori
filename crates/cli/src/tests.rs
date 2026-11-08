@@ -937,7 +937,7 @@ fn a_signed_out_like_says_where_to_sign_in() {
 fn account(user: &str, ended: bool) -> Overlay {
     let mut flow = nori_core::providers::flow::SignInFlow::default();
     flow.on(nori_core::providers::flow::SignInEvent::Offer { ended });
-    Overlay::Account { kind: nori_core::settings::ServerKind::Plugin { id: "dev.example.music".into() }, user: user.into(), pasting: false, text: String::new(), flow, window_failed: false }
+    Overlay::Account { kind: nori_core::settings::ServerKind::Plugin { id: "dev.example.music".into() }, ways: Vec::new(), user: user.into(), pasting: false, text: String::new(), flow, window_failed: false }
 }
 
 /// The account sheet signs in with the provider's page, or with cookies pasted; an ended session's can
@@ -974,6 +974,35 @@ fn the_account_sheet_signs_in_and_out() {
     assert!(a.overlay.is_some(), "only an ended session's sheet can be quieted");
     key(&mut a, KeyCode::Enter);
     assert!(matches!(a.cmds.last(), Some(Cmd::SignOut)) && a.overlay.is_none());
+}
+
+/// A provider offering a code first: enter asks for one, the sheet shows it with its page while it is
+/// checked, and once it expired enter asks for a new one; signed in, the sheet closes.
+#[test]
+fn the_account_sheet_signs_in_with_a_code() {
+    use nori_core::providers::code::SignInCode;
+    use nori_core::providers::flow::SignInEvent;
+    use nori_core::providers::SignIn;
+    let mut a = app();
+    let Overlay::Account { kind, user, pasting, text, flow, window_failed, .. } = account("", false) else { unreachable!() };
+    a.overlay = Some(Overlay::Account { kind, ways: vec![SignIn::Code, SignIn::WebPage { start_url: "https://a.example".into() }, SignIn::Paste], user, pasting, text, flow, window_failed });
+    assert!(draw(&mut a, 100, 30).contains("enter get a code · w sign-in window"));
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.cmds.last(), Some(Cmd::SignInCode)) && a.checks_code());
+    assert!(draw(&mut a, 100, 30).contains("Getting a code"));
+    let code = SignInCode { code: "AB12".into(), url: "https://a.example/activate/AB12".into() };
+    a.handle(Msg::CodeStep { code: 1, event: SignInEvent::CodeShown { code } });
+    let s = draw(&mut a, 100, 30);
+    assert!(s.contains("https://a.example/activate/AB12") && s.contains("AB12") && s.contains("Waiting for you to allow it"), "{s}");
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert!(a.cmds.is_empty(), "no new code while this one is checked");
+    a.handle(Msg::CodeStep { code: 1, event: SignInEvent::CodeExpired });
+    assert!(!a.checks_code() && draw(&mut a, 100, 30).contains("This code expired"));
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.cmds.last(), Some(Cmd::SignInCode)) && a.checks_code(), "a new code");
+    a.handle(Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { name: "Ann".into() }));
+    assert!(a.overlay.is_none() && !a.checks_code());
 }
 
 #[test]

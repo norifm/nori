@@ -275,7 +275,9 @@ of this; Android's `PlaybackService` calls the same functions.
 - **Adding a profile and signing its account in**: `providers::flow`: `AddFlow` is the pages of adding
   one, `SignInFlow` the sign-in shown, one dialog at a time; `Client::sign_in_due` says what follows a
   profile opening or its account changing, the offer again after the provider ended the session included
-  ([Providers](providers.md)).
+  ([Providers](providers.md)). A code sign-in is `Client::sign_in_with_code`: the client holds the
+  `CodeSignIn` while `SignInFlow::checks_code` says so and hands its events to the flow; a signed-in answer
+  is finished as any sign-in (the host's `Handle::signed_in`, Android's `Nori.signedIn`).
 - **A profile's mark**: `SavedServer::icon` (`settings::ProfileIcon`, the picker's order `profile_icons`): its
   letter (`profile_letter`, the default), its provider's mark, or one of Iconoir's faces.
 - **A favorite**: `Client::star` marks it at once and puts the old mark back if the server refuses.

@@ -9,7 +9,7 @@ use nori_core::browse::{AlbumSort, HistoryAfter, LibrarySection, ProfileRules};
 use nori_core::paged::Paged;
 use nori_core::library::QueueOffer;
 use nori_core::offer::Offered;
-use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, SignInEvent, SignInFlow};
+use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, SignInEvent, SignInFlow, SignInShown};
 use nori_core::providers::{AfterAdding, FirstStep};
 use nori_core::menus::{DownloadAct, PageAction, PageKind, SongDownload};
 use nori_core::mixes::board::{MixSheet, MixTile};
@@ -188,6 +188,8 @@ pub enum Cmd {
     /// The provider's sign-in page in a window, or the pasted cookies.
     SignInWindow,
     SignIn(String),
+    /// A code to allow in a browser, asked for and checked ([`nori_core::providers::code::CodeSignIn`]).
+    SignInCode,
     SignOut,
     /// No reminder at start until the account is signed in, and its session ends, again.
     StopReminding,
@@ -1025,8 +1027,9 @@ pub enum Overlay {
     Join { text: String, error: Option<String>, busy: bool },
     /// The profile's account with a provider: who is signed in (empty: no one), whether the provider
     /// ended the session, cookies being pasted, why signing in failed, and a sign-in under way.
-    /// `flow` is the core's; `window_failed`, that the sign-in window would not open.
-    Account { kind: nori_core::settings::ServerKind, user: String, pasting: bool, text: String, flow: SignInFlow, window_failed: bool },
+    /// `ways` are its provider's, in order; `flow` is the core's; `window_failed`, that the sign-in
+    /// window would not open.
+    Account { kind: nori_core::settings::ServerKind, ways: Vec<nori_core::providers::SignIn>, user: String, pasting: bool, text: String, flow: SignInFlow, window_failed: bool },
 }
 
 /// What a picker sets.
@@ -1753,6 +1756,12 @@ impl App {
                 }
                 _ => self.say(e.clone(), true),
             },
+            Msg::CodeStep { event, .. } => match &mut self.overlay {
+                Some(Overlay::Account { flow, .. }) => {
+                    flow.on(event);
+                }
+                _ => self.dirty = false,
+            },
             // The runner opens these, and the profiles a jam is joined and left with.
             Msg::SignedIn(r) => match &mut self.overlay {
                 Some(Overlay::Account { flow, .. }) => {
@@ -2425,6 +2434,11 @@ impl App {
             },
             Overlay::Join { busy: true, .. } if k.code != KeyCode::Esc => self.dirty = false,
             Overlay::Account { flow, .. } if flow.busy() && k.code != KeyCode::Esc => self.dirty = false,
+            Overlay::Account { flow, .. } if matches!(flow.shown, SignInShown::Code { .. }) => match k.code {
+                KeyCode::Enter if !flow.checks_code() => self.sign_in_with_code(),
+                KeyCode::Esc | KeyCode::Char('q') => self.overlay = None,
+                _ => {}
+            },
             Overlay::Account { pasting: true, text, flow, window_failed, .. } => match k.code {
                 KeyCode::Enter if !text.trim().is_empty() => {
                     *window_failed = false;
@@ -2444,12 +2458,20 @@ impl App {
                 KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
                 _ => {}
             },
-            Overlay::Account { user, pasting, flow, window_failed, .. } => match k.code {
+            Overlay::Account { user, ways, pasting, flow, window_failed, .. } => match k.code {
                 KeyCode::Enter if !user.is_empty() => {
                     self.cmds.push(Cmd::SignOut);
                     self.overlay = None;
                 }
+                KeyCode::Enter if ways.first() == Some(&nori_core::providers::SignIn::Code) => self.sign_in_with_code(),
                 KeyCode::Enter => {
+                    *window_failed = false;
+                    flow.on(SignInEvent::Retry);
+                    if flow.on(SignInEvent::Sent) {
+                        self.cmds.push(Cmd::SignInWindow);
+                    }
+                }
+                KeyCode::Char('w') if user.is_empty() && ways.first() == Some(&nori_core::providers::SignIn::Code) && ways.iter().any(|w| matches!(w, nori_core::providers::SignIn::WebPage { .. })) => {
                     *window_failed = false;
                     flow.on(SignInEvent::Retry);
                     if flow.on(SignInEvent::Sent) {
@@ -3565,6 +3587,21 @@ impl App {
             }
             Some(DeviceRow::Controlled(_) | DeviceRow::PluginName(_) | DeviceRow::PluginHint(..)) | None => self.dirty = false,
         }
+    }
+
+    /// The account sheet's code step: a new code asked for, to be shown and checked.
+    pub fn sign_in_with_code(&mut self) {
+        if let Some(Overlay::Account { flow, window_failed, .. }) = &mut self.overlay {
+            *window_failed = false;
+            if flow.on(SignInEvent::Code) {
+                self.cmds.push(Cmd::SignInCode);
+            }
+        }
+    }
+
+    /// A code is asked for or checked on the account sheet: the runner's code sign-in runs only while so.
+    pub fn checks_code(&self) -> bool {
+        matches!(&self.overlay, Some(Overlay::Account { flow, .. }) if flow.checks_code())
     }
 
     /// Shows the hosted jam's invite.

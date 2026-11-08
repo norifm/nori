@@ -451,11 +451,46 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     fun rules() = nori.rules
 
-    /** Takes [event] on the account's sign-in; false for an answer not to send (one is on its way). */
+    /**
+     * Takes [event] on the account's sign-in; false for an answer not to send (one is on its way). A code
+     * asked for starts a code sign-in, which runs only while the flow checks its code.
+     */
     private fun signInOn(event: dev.nori.music.ffi.SignInEvent): Boolean {
         val step = dev.nori.music.ffi.signInFlowOn(_account.value.flow, event)
         _account.update { it.copy(flow = step.flow) }
+        if (!step.checksCode) stopCode()
+        if (event is dev.nori.music.ffi.SignInEvent.Code && step.send) startCode()
         return step.send
+    }
+
+    /** The code sign-in running while the code step shows. */
+    private var code: dev.nori.music.ffi.CodeSignIn? = null
+
+    private fun startCode() {
+        stopCode()
+        var mine: dev.nori.music.ffi.CodeSignIn? = null
+        mine = nori.signInWithCode { event ->
+            viewModelScope.launch {
+                if (code !== mine) return@launch
+                if (event is dev.nori.music.ffi.SignInEvent.Answered) {
+                    nori.signedIn(event.result)
+                    val account = nori.account()
+                    _account.update { it.copy(account = account) }
+                }
+                signInOn(event)
+            }
+        }
+        code = mine
+    }
+
+    private fun stopCode() {
+        code?.let { it.stop(); it.close() }
+        code = null
+    }
+
+    override fun onCleared() {
+        stopCode()
+        super.onCleared()
     }
 
     // A provider's plugin asks for its sign-in page (its `sign-in.open`): the page opens at that address.
@@ -500,8 +535,14 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         _account.value = AccountUi(account = dev.nori.music.ffi.AccountState.SIGNED_OUT)
     }
 
-    /** Opens the provider's sign-in page, from the account's row or a just-added profile's offer. */
+    /** Opens the provider's sign-in page, from the account's row. */
     fun openSignInPage() { signInOn(dev.nori.music.ffi.SignInEvent.Open(null)) }
+
+    /** Opens the provider's first way to sign in elsewhere (its code or its page), from the offer. */
+    fun openSignIn() = viewModelScope.launch { nori.signInOpen()?.let(::signInOn) }
+
+    /** The code step, or a new code there. */
+    fun signInWithCode() { signInOn(dev.nori.music.ffi.SignInEvent.Code) }
 
     fun closeSignInPage() { signInOn(dev.nori.music.ffi.SignInEvent.Close) }
 

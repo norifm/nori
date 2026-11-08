@@ -69,6 +69,8 @@ pub enum Msg {
     Left(String),
     /// How signing the account in went.
     SignedIn(nori_core::providers::SignInResult),
+    /// The code to show came, or expired: the runner's `code`th code sign-in ([`nori_core::providers::code::CodeSignIn`]).
+    CodeStep { code: u32, event: nori_core::providers::flow::SignInEvent },
     /// A plugin installed (its id), or why not.
     Installed(Result<String, nori_plugins::Refusal>),
     /// A plugin to install, as its sheet shows it, or why it can't be.
@@ -121,6 +123,7 @@ impl Msg {
             Msg::Joined(r) => format!("jam joined: {}", r.is_ok()),
             Msg::Left(said) => format!("jam left: {said}"),
             Msg::SignedIn(r) => format!("signed in: {}", matches!(r, nori_core::providers::SignInResult::SignedIn { .. })),
+            Msg::CodeStep { code, event } => format!("code sign-in {code}: {}", if matches!(event, nori_core::providers::flow::SignInEvent::CodeExpired) { "expired" } else { "shown" }),
             Msg::Installed(r) => format!("plugin installed: {r:?}"),
             Msg::Preview(r) => format!("plugin preview: {:?}", r.as_ref().map(|p| &p.card.id)),
             Msg::Slots { song, info, status } => format!("plugins on {song}: {} info groups, {} status lines", info.len(), status.len()),

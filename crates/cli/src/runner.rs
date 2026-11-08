@@ -150,6 +150,10 @@ struct Runner {
     /// The provider's sign-in page, while it is open.
     #[cfg(feature = "sign-in-window")]
     sign_in_window: Option<nori_sign_in_window::SignInWindow>,
+    /// The code sign-in running while the account sheet shows its code, with its number; and how many
+    /// have run.
+    code: Option<(u32, Arc<nori_core::providers::code::CodeSignIn>)>,
+    codes: u32,
 }
 
 pub fn run(o: Options) -> Result<(), String> {
@@ -219,7 +223,7 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
     app.shared = root.app.clone();
     app.settings.own.shared = root.app.clone();
-    let mut r = Runner { root: root.clone(), http: Http::new(), tx, session: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
+    let mut r = Runner { root: root.clone(), http: Http::new(), tx, session: None, waiting: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, code: None, codes: 0, o };
     // Plugins reach the web before any profile opens; a session's own transport takes over.
     app.settings.own.kinds.set_transport(r.http.clone());
     let notices = r.tx.clone();
@@ -303,6 +307,10 @@ impl Runner {
                 app.output = self.o.device.clone().or_else(|| own::text(&self.root.app.settings, own::DEVICE)).unwrap_or_default();
                 match self.session.as_ref().and_then(|s| s.client.sign_in_due(added)) {
                     Some(offer @ SignInEvent::Offer { .. }) => self.offer_sign_in(app, offer),
+                    Some(SignInEvent::Code) => {
+                        self.offer_sign_in(app, SignInEvent::Offer { ended: false });
+                        app.sign_in_with_code();
+                    }
                     Some(_) => {
                         self.offer_sign_in(app, SignInEvent::Offer { ended: false });
                         self.carry(app, Cmd::SignInWindow);
@@ -324,6 +332,9 @@ impl Runner {
     fn run(&mut self, app: &mut App, terminal: &mut crate::term::Term, rx: Receiver<Msg>) -> Result<(), String> {
         loop {
             self.carry_out(app);
+            if !app.checks_code() {
+                self.code = None;
+            }
             if app.quit {
                 return Ok(());
             }
@@ -383,14 +394,12 @@ impl Runner {
     /// The account sheet over the profile in use, as its provider has the account, opened by `offer`.
     fn offer_sign_in(&self, app: &mut App, offer: SignInEvent) {
         let Some(profile) = self.root.app.settings.current().and_then(|p| p.active_server().cloned()) else { return };
-        if !app.settings.own.kinds.providers().iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
-            return;
-        }
+        let Some(ways) = app.settings.own.kinds.providers().into_iter().find(|i| i.kind == profile.kind).map(|i| i.sign_in).filter(|w| !w.is_empty()) else { return };
         let mut flow = nori_core::providers::flow::SignInFlow::default();
         flow.on(offer);
         let ended = flow.shown == (nori_core::providers::flow::SignInShown::Offered { ended: true });
         let user = if ended { String::new() } else { profile.user };
-        app.overlay = Some(crate::app::Overlay::Account { kind: profile.kind, user, pasting: false, text: String::new(), flow, window_failed: false });
+        app.overlay = Some(crate::app::Overlay::Account { kind: profile.kind, ways, user, pasting: false, text: String::new(), flow, window_failed: false });
         app.dirty = true;
     }
 
@@ -547,6 +556,7 @@ impl Runner {
         crate::term::debug!("took {}", m.brief());
         let Some(m) = current(self.session.as_ref().map(|s| s.id), m) else { return };
         match &m {
+            Msg::CodeStep { code, .. } if self.code.as_ref().map(|c| c.0) != Some(*code) => return,
             Msg::Cover { art, image, .. } => {
                 if let Some(a) = &mut self.art {
                     a.put(art.clone(), image);
@@ -861,6 +871,13 @@ impl Runner {
                 *window_failed = true;
                 return;
             }
+            Cmd::SignInCode => {
+                let Some(s) = &self.session else { return };
+                self.codes += 1;
+                let heard = Heard { session: (**s).clone(), tx: self.tx.clone(), code: self.codes };
+                self.code = Some((self.codes, s.client.clone().sign_in_with_code(Arc::new(heard))));
+                return;
+            }
             Cmd::SignIn(cookies) => {
                 let (Some(s), tx) = (&self.session, self.tx.clone()) else { return };
                 let h = (**s).clone();
@@ -1111,7 +1128,7 @@ impl Runner {
                     }
                 }
             }
-            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
+            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignInCode | Cmd::SignOut | Cmd::StopReminding | Cmd::Plugin(_) | Cmd::Backup { .. } => {}
         }
     }
 
@@ -1162,6 +1179,26 @@ fn current(open: Option<u64>, m: Msg) -> Option<Msg> {
         Msg::From(id, m) if Some(id) == open => Some(*m),
         Msg::From(..) => None,
         m => Some(m),
+    }
+}
+
+/// What the runner's `code`th code sign-in says, as its messages; signed in, the session finishes it as
+/// any sign-in.
+struct Heard {
+    session: nori_host::session::Handle,
+    tx: Sender<Msg>,
+    code: u32,
+}
+
+impl nori_core::providers::code::CodeHeard for Heard {
+    fn heard(&self, event: SignInEvent) {
+        let _ = self.tx.send(match event {
+            SignInEvent::Answered { result } => {
+                self.session.signed_in(&result);
+                Msg::SignedIn(result)
+            }
+            event => Msg::CodeStep { code: self.code, event },
+        });
     }
 }
 

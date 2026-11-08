@@ -128,7 +128,7 @@ const WEB_POINTS: [&str; 4] = ["lifecycle", "hooks", "sound-stage", "slots"];
 /// The host calls the web's host answers, and those only a client's own stack can.
 const WEB_IMPORTS: [&str; 8] = ["log", "store", "cache", "http", "notices", "rows", "settings", "timers"];
 
-/// The name of the host interface in a component's import (`nori:plugin/sockets@2.0.0`).
+/// The name of the host interface in a component's import (`nori:plugin/sockets@3.0.0`).
 fn interface(import: &str) -> Option<&str> {
     let name = import.strip_prefix("nori:plugin/")?;
     Some(name.split('@').next().unwrap_or(name))

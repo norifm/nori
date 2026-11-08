@@ -43,7 +43,13 @@ class ProviderWords(val name: String, val hint: String, val add: String, val noU
 class AccountWords(
     val signInHint: String, val pageButton: String, val pageTitle: String, val pageRefused: String, val pasteInstead: String, val pasteHint: String,
     val pasteLabel: String, val risk: String, val offerTitle: String, val offerText: String, val signedOutAgain: String, val noSession: String,
-    val refused: String, val unreachable: String,
+    val refused: String, val unreachable: String, val code: CodeWords,
+)
+
+/** The words of signing in with a code allowed in a browser (`SignIn::Code`). */
+class CodeWords(
+    val button: String, val how: String, val asking: String, val open: String, val copy: String, val copied: String, val waiting: String,
+    val expired: String, val renew: String, val refused: String,
 )
 
 /** [kind]'s words; a plugin kind is named by [pluginName] (its id until the plugin's words are read), [pluginAbout] its hint. */
@@ -58,6 +64,12 @@ fun providerWords(r: Resources, kind: ServerKind, pluginName: String? = null, pl
         r.getString(R.string.provider_account_risk, name), r.getString(R.string.provider_offer_title, name), r.getString(R.string.provider_offer_text),
         r.getString(R.string.provider_signed_out_again, name), r.getString(R.string.provider_no_session), r.getString(R.string.provider_refused, name),
         r.getString(R.string.provider_unreachable, name),
+        CodeWords(
+            r.getString(R.string.provider_code_button), r.getString(R.string.provider_code_how, name), r.getString(R.string.provider_code_asking),
+            r.getString(R.string.provider_code_open, name), r.getString(R.string.provider_code_copy), r.getString(R.string.provider_code_copied),
+            r.getString(R.string.provider_code_waiting), r.getString(R.string.provider_code_expired), r.getString(R.string.provider_code_renew),
+            r.getString(R.string.provider_code_refused),
+        ),
     )
     return when (kind) {
         ServerKind.Subsonic -> ProviderWords(name, r.getString(R.string.server_hint), r.getString(R.string.connect), r.getString(R.string.settings_server_api_key), account)
@@ -368,6 +380,9 @@ class Say(private val r: Resources) {
     /** Why a sign-in page's session did not sign in: it always holds a session, so only the provider's refusal or the network is left. */
     fun signInPage(w: AccountWords, result: dev.nori.music.ffi.SignInResult): String =
         if (result is dev.nori.music.ffi.SignInResult.Unreachable) w.unreachable else w.pageRefused
+    /** Why a code did not sign in: it was not allowed, or the provider couldn't be reached. */
+    fun signInCode(w: AccountWords, result: dev.nori.music.ffi.SignInResult): String =
+        if (result is dev.nori.music.ffi.SignInResult.Unreachable) w.unreachable else w.code.refused
     /** How a sign-in went. */
     fun signIn(w: AccountWords, result: dev.nori.music.ffi.SignInResult): String = when (result) {
         is dev.nori.music.ffi.SignInResult.SignedIn -> signedInAs(result.name)

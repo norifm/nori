@@ -492,7 +492,7 @@ A repo is a static `index.json` (`crates/plugins/src/repo.rs`):
 ```json
 {"plugins": [{"id": "fm.nori.orbit", "name": "Orbit", "about": "…", "source": "https://github.com/…",
   "readme": "orbit/README.md", "icon": "orbit/icon.png", "points": ["sound-stage"],
-  "versions": [{"version": "1.2.0", "api": 2, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
+  "versions": [{"version": "1.2.0", "api": 3, "released": "2026-11-02", "url": "orbit-1.2.0.noriplugin",
     "sha256": "<hex>", "key": "<hex, 32 bytes>", "signature": "<hex, 64 bytes>"}]}]}
 ```
 
@@ -556,6 +556,12 @@ A plugin with a `provider` export adds a kind of profile: `ServerKind::Plugin { 
 A client asks a `Kinds` (`Kinds::with_plugins`, or `Kinds::builtin` without plugins) for the kinds it
 offers, their forms and sign-in, and hands it to each `Core` it opens (`Core::use_kinds`) and its
 transport (`Kinds::set_transport`). See [Providers](providers.md).
+
+A provider whose sign-in ways include `code` answers `start-code` with a code, the page the user allows it
+on in any browser where they are signed in, the seconds between checks and, if it knows, how long it lasts,
+and its own `state` (a poll token). nori calls `check-code` with that record every `every` seconds (at
+least one) while the client shows the code, and stops when the user leaves it; `done` signs the account in
+as `sign-in` would. The web client and the iPod build no plugin provider, so they have no code step.
 
 ## Lyrics
 

@@ -273,6 +273,19 @@ export struct EqLine {
 }
 
 // The kind of profile the sign-in form adds (the core's providers): its words, and the fields it asks.
+// The account sheet's code step, in the client's words (words.rs).
+export struct CodeWords {
+    with-code: string,
+    window-instead: string,
+    how: string,
+    asking: string,
+    open: string,
+    copy: string,
+    waiting: string,
+    expired: string,
+    renew: string,
+}
+
 export struct LoginKind {
     name: string,
     note: string,
@@ -6405,6 +6418,17 @@ export component AppWindow inherits Window {
     callback sign-in-quiet();
     // The sheet closed with its scrim or Close.
     callback signin-closed();
+    // Signing in with a code allowed in a browser: the provider offers it first (and a window too), the
+    // sheet shows the code step, its code once it came (empty while asked for), and whether it expired.
+    in property <bool> signin-code-first;
+    in property <bool> signin-window-too;
+    in property <bool> signin-code-step;
+    in property <string> signin-code;
+    in property <bool> signin-code-expired;
+    in property <CodeWords> signin-code-words;
+    callback sign-in-code();
+    callback open-code-page();
+    callback copy-code();
     in-out property <string> join-link;
     in property <string> join-error;
     in property <bool> join-busy;
@@ -9242,18 +9266,78 @@ export component AppWindow inherits Window {
                     clicked => { root.sign-out(); }
                 }
             }
-            if root.signin-user == "": Text {
+            // The code step: the code large, its page opened in the browser, and its state.
+            if root.signin-code-step: Text {
+                text: root.signin-code-words.how;
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+            if root.signin-code-step: Text {
+                text: root.signin-code != "" ? root.signin-code : root.signin-code-words.asking;
+                color: root.signin-code != "" && !root.signin-code-expired ? Theme.text : Theme.dim;
+                font-size: root.signin-code != "" ? 34px : 13px;
+                font-weight: 600;
+                letter-spacing: root.signin-code != "" ? 4px : 0px;
+                horizontal-alignment: center;
+            }
+            if root.signin-code-step && root.signin-code != "" && !root.signin-code-expired && root.signin-error == "": HorizontalLayout {
+                alignment: center;
+                spacing: 8px;
+                Capsule {
+                    text: root.signin-code-words.open;
+                    icon: Icons.share-ios;
+                    clicked => { root.open-code-page(); }
+                }
+                Capsule {
+                    text: root.signin-code-words.copy;
+                    icon: Icons.copy;
+                    ink: Theme.plate;
+                    label: Theme.plate-ink;
+                    clicked => { root.copy-code(); }
+                }
+            }
+            if root.signin-code-step && root.signin-code != "" && root.signin-error == "": Text {
+                text: root.signin-code-expired ? root.signin-code-words.expired : root.signin-code-words.waiting;
+                color: Theme.dim;
+                font-size: 12px;
+                horizontal-alignment: center;
+            }
+            if root.signin-code-step && (root.signin-code-expired || root.signin-error != ""): HorizontalLayout {
+                alignment: center;
+                Capsule {
+                    text: root.signin-code-words.renew;
+                    icon: Icons.refresh;
+                    clicked => { root.sign-in-code(); }
+                }
+            }
+            if root.signin-user == "" && !root.signin-code-step: Text {
                 text: root.signin-busy ? "Finish signing in in the window that opened." : root.signin-ended ? root.signin-service + " signed you out. Sign in again to see your library and likes." : "See your own Home, your library and your likes. Music plays without it too.";
                 color: Theme.dim;
                 font-size: 13px;
                 wrap: word-wrap;
                 horizontal-alignment: center;
             }
-            if root.signin-user == "": HorizontalLayout {
+            if root.signin-user == "" && !root.signin-code-step: HorizontalLayout {
                 alignment: center;
                 Capsule {
-                    text: root.signin-busy ? "Signing in…" : "Sign in";
+                    text: root.signin-busy ? "Signing in…" : root.signin-code-first ? root.signin-code-words.with-code : "Sign in";
                     icon: Icons.user;
+                    clicked => {
+                        if root.signin-code-first {
+                            root.sign-in-code();
+                        } else {
+                            root.sign-in-window();
+                        }
+                    }
+                }
+            }
+            if root.signin-user == "" && !root.signin-code-step && root.signin-code-first && root.signin-window-too: HorizontalLayout {
+                alignment: center;
+                ShowAllLink {
+                    text: root.signin-code-words.window-instead;
+                    font-size: 12px;
                     clicked => { root.sign-in-window(); }
                 }
             }
@@ -9265,7 +9349,7 @@ export component AppWindow inherits Window {
                 horizontal-alignment: center;
             }
             // Pasting, the advanced way in: a quiet link until asked for.
-            if root.signin-user == "" && !root.signin-pasting: HorizontalLayout {
+            if root.signin-user == "" && !root.signin-pasting && !root.signin-code-step: HorizontalLayout {
                 alignment: center;
                 ShowAllLink {
                     text: "Paste cookies instead";
@@ -9273,13 +9357,13 @@ export component AppWindow inherits Window {
                     clicked => { root.signin-pasting = true; }
                 }
             }
-            if root.signin-user == "" && root.signin-pasting: Text {
+            if root.signin-user == "" && root.signin-pasting && !root.signin-code-step: Text {
                 text: "Sign in in a private browser window, copy the Cookie header of any request the page makes from the developer tools, and paste it here.";
                 color: Theme.dim;
                 font-size: 12px;
                 wrap: word-wrap;
             }
-            if root.signin-user == "" && root.signin-pasting: HorizontalLayout {
+            if root.signin-user == "" && root.signin-pasting && !root.signin-code-step: HorizontalLayout {
                 spacing: 8px;
                 Field {
                     icon: Icons.key;

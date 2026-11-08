@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.SettingsViewModel
@@ -45,19 +46,22 @@ import kotlinx.coroutines.launch
 import dev.nori.music.ffi.settings.ServerKind
 
 /**
- * Signing the account of a [kind] profile in on its provider's own page (the core's `SignIn::WebPage`):
- * the offer a just-added profile makes, and the page. Shown over everything while the view model says
- * so; nothing for a kind without such a page.
+ * Signing the account of a [kind] profile in elsewhere: on its provider's own page (the core's
+ * `SignIn::WebPage`) or with a code allowed in a browser (`SignIn::Code`). The offer a just-added profile
+ * makes, the page and the code, shown over everything while the view model says so; nothing for a kind
+ * signing in neither way.
  */
 @Composable
 fun SignInFlow(vm: SettingsViewModel, kind: ServerKind) {
     val ui by vm.account.collectAsStateWithLifecycle()
     val providers by vm.providers.collectAsStateWithLifecycle()
     val words = providerWords(vm, kind).account
-    val start = providers.firstOrNull { it.kind == kind }?.signIn?.firstNotNullOfOrNull { (it as? SignIn.WebPage)?.startUrl } ?: return
+    val ways = providers.firstOrNull { it.kind == kind }?.signIn.orEmpty()
+    val start = ways.firstNotNullOfOrNull { (it as? SignIn.WebPage)?.startUrl }
+    if (start == null && SignIn.Code !in ways) return
     NoriDialog(ui.flow.shown as? dev.nori.music.ffi.SignInShown.Offered, vm::skipSignIn) { offered ->
         AlertCard(
-            confirmButton = { TextAction(words.pageButton, vm::openSignInPage, Modifier.testTag("offer-sign-in")) },
+            confirmButton = { TextAction(words.pageButton, { vm.openSignIn() }, Modifier.testTag("offer-sign-in")) },
             dismissButton = {
                 Row {
                     if (offered.ended) TextAction(say.word(R.string.dont_show_again), vm::stopReminding, Modifier.testTag("offer-quiet"))
@@ -73,7 +77,61 @@ fun SignInFlow(vm: SettingsViewModel, kind: ServerKind) {
             },
         )
     }
-    NoriDialog(ui.flow.shown as? dev.nori.music.ffi.SignInShown.Page, vm::closeSignInPage, DialogStyle.Page) { page -> SignInSheet(vm, kind, page.start ?: start, words) }
+    NoriDialog(ui.flow.shown as? dev.nori.music.ffi.SignInShown.Page, vm::closeSignInPage, DialogStyle.Page) { page ->
+        (page.start ?: start)?.let { SignInSheet(vm, kind, it, words) }
+    }
+    NoriDialog(ui.flow.shown as? dev.nori.music.ffi.SignInShown.Code, vm::closeSignInPage) { shown -> CodeCard(vm, shown, ui.failed, words) }
+}
+
+/**
+ * The code step: the code large, a button opening its page in the system's browser and one copying it,
+ * and whether it waits, expired or failed (a new code then).
+ */
+@Composable
+private fun CodeCard(vm: SettingsViewModel, shown: dev.nori.music.ffi.SignInShown.Code, failed: dev.nori.music.ffi.SignInResult?, words: AccountWords) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val code = shown.code
+    val renew = shown.expired || failed != null
+    AlertCard(
+        confirmButton = { TextAction(say.cancel, vm::closeSignInPage, Modifier.testTag("code-cancel")) },
+        title = { Text(words.pageButton) },
+        text = {
+            Column(Modifier.fillMaxWidth(), Arrangement.spacedBy(16.dp), Alignment.CenterHorizontally) {
+                Text(words.code.how, textAlign = TextAlign.Center)
+                if (code == null) {
+                    LoadingDots(Modifier.testTag("code-asking"))
+                    Text(words.code.asking, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    return@Column
+                }
+                Text(
+                    code.code, Modifier.testTag("sign-in-code"),
+                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 4.sp),
+                    color = if (renew) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                )
+                when {
+                    failed != null -> Text(say.signInCode(words, failed), color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center, modifier = Modifier.testTag("code-failed"))
+                    shown.expired -> Text(words.code.expired, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("code-expired"))
+                }
+                if (renew) {
+                    PillButton(words.code.renew, Iconoir.Refresh, vm::signInWithCode, Modifier.fillMaxWidth().testTag("code-renew"), prominent = true)
+                    return@Column
+                }
+                PillButton(words.code.open, Iconoir.ShareIos, {
+                    runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(code.url))) }
+                }, Modifier.fillMaxWidth().testTag("code-open"), prominent = true)
+                PillButton(words.code.copy, Iconoir.Copy, {
+                    val clip = context.getSystemService(android.content.ClipboardManager::class.java)
+                    clip?.setPrimaryClip(android.content.ClipData.newPlainText(code.code, code.code))
+                    // Android 13 and later show the copy themselves.
+                    if (android.os.Build.VERSION.SDK_INT < 33) android.widget.Toast.makeText(context, words.code.copied, android.widget.Toast.LENGTH_SHORT).show()
+                }, Modifier.fillMaxWidth().testTag("code-copy"))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LoadingDots(dot = 5.dp)
+                    Text(words.code.waiting, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("code-waiting"))
+                }
+            }
+        },
+    )
 }
 
 /** The sign-in page as a sheet: Cancel and the title over the provider's page, then the core's answer. */

@@ -920,6 +920,17 @@ pub const SIGN_IN_WHY: &str = "See your own Home, your library and your likes. M
 pub const SIGN_IN_KEYS: &str = "enter sign in · p paste cookies · esc close";
 pub const SIGN_IN_KEYS_ENDED: &str = "enter sign in · p paste cookies · d don't show again · esc close";
 pub const SIGNED_IN_KEYS: &str = "enter sign out · esc close";
+pub const SIGN_IN_CODE_KEYS: &str = "enter get a code · w sign-in window · p paste cookies · esc close";
+pub const SIGN_IN_CODE_KEYS_ENDED: &str = "enter get a code · w sign-in window · p paste cookies · d don't show again · esc close";
+pub const CODE_ASKING: &str = "Getting a code…";
+/// Where a code is allowed, at the source called `name`.
+pub fn code_how(name: &str) -> String {
+    format!("Open this page in a browser where you're signed in to {name}, and allow nori:")
+}
+pub const CODE_WAITING: &str = "Waiting for you to allow it…";
+pub const CODE_EXPIRED: &str = "This code expired.";
+pub const CODE_KEYS: &str = "esc close";
+pub const CODE_AGAIN_KEYS: &str = "enter get a new code · esc close";
 pub const SIGNING_IN: &str = "Finish signing in in the window that opened.";
 pub const PASTE_COOKIES: &str = "Sign in in a private browser window, copy the Cookie header of any request the page makes from the developer tools, and paste it here. enter signs in · esc back";
 pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window couldn't open here. Paste cookies from a browser instead.";

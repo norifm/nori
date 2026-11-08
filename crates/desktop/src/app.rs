@@ -457,6 +457,10 @@ pub struct App {
     profiles: Vec<nori_core::SoundProfile>,
     /// The sign-in window's process while it is open (nori-sign-in).
     sign_in_window: Option<nori_sign_in_window::SignInWindow>,
+    /// The code sign-in running while the account sheet shows its code, with its number; and how many
+    /// have run.
+    code: Option<(u32, Arc<nori_core::providers::code::CodeSignIn>)>,
+    codes: u32,
     /// The reads the view shown waits for: their answers end its loading and show their failure.
     want: Vec<Req>,
     shelves: Rc<VecModel<Shelf>>,
@@ -727,6 +731,8 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
             feed_songs: Vec::new(),
             profiles: Vec::new(),
             sign_in_window: None,
+            code: None,
+            codes: 0,
             want: Vec::new(),
             shelves,
             home_rows: Vec::new(),
@@ -1080,7 +1086,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         }
     });
     on!(jam.on_copy_link, h, |a| a.jam_copy_link());
-    on!(ui.on_copy_pairing, h, |a| a.copy(a.ui().get_pairing_link().into()));
+    on!(ui.on_copy_pairing, h, |a| a.copy(a.ui().get_pairing_link().into(), words::LINK_COPIED));
     on!(jam.on_leave, h, |a| a.leave_jam());
     on!(ui.on_forget_devices, h, |a| {
         if let Some(remote) = a.session.as_ref().and_then(|s| s.remote()) { remote.reset_pairing(); }
@@ -1096,6 +1102,9 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.sign_in_on(SignInEvent::Close);
     });
     on!(ui.on_open_sign_in_page, h, |a| a.open_sign_in_page());
+    on!(ui.on_sign_in_code, h, |a| a.sign_in_code());
+    on!(ui.on_open_code_page, h, |a| a.open_code_page());
+    on!(ui.on_copy_code, h, |a| a.copy_code());
     on!(jam.on_listen, h, |a, on| {
         if let Some(r) = a.session.as_ref().and_then(|s| s.remote()) {
             r.listen(on);
@@ -1335,6 +1344,10 @@ impl App {
                 self.go(View::Home);
                 match self.session.as_ref().and_then(|s| s.client.sign_in_due(added)) {
                     Some(offer @ SignInEvent::Offer { .. }) => self.offer_sign_in(offer),
+                    Some(SignInEvent::Code) => {
+                        self.offer_sign_in(SignInEvent::Offer { ended: false });
+                        self.sign_in_code();
+                    }
                     Some(_) => {
                         self.offer_sign_in(SignInEvent::Offer { ended: false });
                         self.sign_in_window();
@@ -1382,16 +1395,52 @@ impl App {
     /// Takes `event` on the account sheet and shows where that leaves it; false for an answer not to send.
     fn sign_in_on(&mut self, event: SignInEvent) -> bool {
         let send = self.sign_in.on(event);
+        if !self.sign_in.checks_code() {
+            self.code = None;
+        }
         let ui = self.ui();
         ui.set_signin_open(self.sign_in.shown != SignInShown::Closed);
         ui.set_signin_busy(self.sign_in.busy());
         ui.set_signin_ended(self.sign_in.shown == SignInShown::Offered { ended: true });
+        let (step, code, expired) = match &self.sign_in.shown {
+            SignInShown::Code { code, expired } => (true, code.as_ref().map_or("", |c| c.code.as_str()), *expired),
+            _ => (false, "", false),
+        };
+        ui.set_signin_code_step(step);
+        ui.set_signin_code(code.into());
+        ui.set_signin_code_expired(expired);
         let error = match &self.sign_in.attempt {
+            nori_core::providers::flow::SignInAttempt::Failed { result } if step => words::code_failed(result),
             nori_core::providers::flow::SignInAttempt::Failed { result } => words::sign_in_failed(result),
             _ => String::new(),
         };
         ui.set_signin_error(error.into());
         send
+    }
+
+    /// The account sheet's code step: a new code asked for, shown and checked while the step shows.
+    fn sign_in_code(&mut self) {
+        let Some(s) = &self.session else { return };
+        let (client, h) = (s.client.clone(), (***s).clone());
+        if !self.sign_in_on(SignInEvent::Code) {
+            return;
+        }
+        self.codes += 1;
+        let heard = CodeHeard { session: h, tx: self.tx.clone(), code: self.codes };
+        self.code = Some((self.codes, client.sign_in_with_code(Arc::new(heard))));
+    }
+
+    /// The code's page, in the browser.
+    fn open_code_page(&self) {
+        if let SignInShown::Code { code: Some(c), .. } = &self.sign_in.shown {
+            open_in_browser(&c.url);
+        }
+    }
+
+    fn copy_code(&self) {
+        if let SignInShown::Code { code: Some(c), .. } = &self.sign_in.shown {
+            self.copy(c.code.clone(), words::CODE_COPIED);
+        }
     }
 
     fn go(&mut self, view: View) {
@@ -2895,12 +2944,7 @@ impl App {
     /// The sign-in page of the profile in use's provider, in the browser.
     fn open_sign_in_page(&self) {
         let Some(kind) = self.root.app.settings.current().and_then(|p| p.active_server().map(|sv| sv.kind.clone())) else { return };
-        let page = self.kinds().providers().into_iter().find(|i| i.kind == kind).and_then(|i| {
-            i.sign_in.into_iter().find_map(|s| match s {
-                nori_core::providers::SignIn::WebPage { start_url } => Some(start_url),
-                nori_core::providers::SignIn::Paste => None,
-            })
-        });
+        let page = self.kinds().providers().into_iter().find(|i| i.kind == kind).and_then(|i| i.page().map(str::to_string));
         if let Some(url) = page {
             open_in_browser(&url);
         }
@@ -3333,9 +3377,14 @@ impl App {
         self.sign_in_on(offer);
         let ended = self.sign_in.shown == SignInShown::Offered { ended: true };
         let user = if ended { String::new() } else { profile.user.clone() };
+        let info = self.kinds().providers().into_iter().find(|i| i.kind == profile.kind);
+        let service = words::provider_of(self.kinds(), &profile.kind).name;
         let ui = self.ui();
         ui.set_signin_user(user.into());
-        ui.set_signin_service(words::provider_of(self.kinds(), &profile.kind).name.into());
+        ui.set_signin_code_first(info.as_ref().is_some_and(|i| i.sign_in.first() == Some(&nori_core::providers::SignIn::Code)));
+        ui.set_signin_window_too(info.as_ref().is_some_and(|i| i.page().is_some()));
+        ui.set_signin_code_words(words::code_words(&service));
+        ui.set_signin_service(service.into());
         ui.set_signin_pasting(false);
     }
 
@@ -3483,7 +3532,7 @@ impl App {
             }
             Msg::Note { text, error } => self.say(&text, error),
             Msg::Playlist { text, change } => self.playlist_changed(&text, change),
-            Msg::Shared(Some(link)) => self.copy(link),
+            Msg::Shared(Some(link)) => self.copy(link, words::LINK_COPIED),
             Msg::Choices(id, choices) => {
                 if self.ui().get_picker_open() && self.menu_song.as_ref().is_some_and(|s| s.id == id) {
                     self.picker_shown(choices);
@@ -3685,6 +3734,11 @@ impl App {
                 self.plugins_read();
             }
             Msg::PluginSignIn { plugin, url } => self.sign_in_page(nori_core::settings::ServerKind::Plugin { id: plugin }, Some(url)),
+            Msg::CodeStep { code, event } => {
+                if self.code.as_ref().is_some_and(|c| c.0 == code) {
+                    self.sign_in_on(event);
+                }
+            }
             Msg::SignInWindowDone(pid, r) => {
                 self.sign_in_window.take_if(|w| w.id() == pid);
                 let signed_in = matches!(r, nori_core::providers::SignInResult::SignedIn { .. });
@@ -4198,13 +4252,13 @@ impl App {
     }
 
     fn jam_copy_link(&self) {
-        self.copy(self.jam_link.clone());
+        self.copy(self.jam_link.clone(), words::LINK_COPIED);
     }
 
-    fn copy(&self, text: String) {
+    fn copy(&self, text: String, said: &str) {
         let copied = arboard::Clipboard::new().and_then(|mut c| c.set_text(text));
         match copied {
-            Ok(()) => self.say(words::LINK_COPIED, false),
+            Ok(()) => self.say(said, false),
             Err(e) => self.say(&e.to_string(), true),
         }
     }
@@ -4797,6 +4851,26 @@ fn devices_set(ui: &AppWindow, rows: Vec<crate::DeviceRow>) {
     match model.as_any().downcast_ref::<VecModel<crate::DeviceRow>>() {
         Some(model) => renew(model, rows),
         None => ui.set_devices(ModelRc::new(VecModel::from(rows))),
+    }
+}
+
+/// What the `code`th code sign-in says, as the app's messages; signed in, the session finishes it as any
+/// sign-in.
+struct CodeHeard {
+    session: nori_host::session::Handle,
+    tx: Tx,
+    code: u32,
+}
+
+impl nori_core::providers::code::CodeHeard for CodeHeard {
+    fn heard(&self, event: SignInEvent) {
+        self.tx.send(match event {
+            SignInEvent::Answered { result } => {
+                self.session.signed_in(&result);
+                Msg::SignedIn(result)
+            }
+            event => Msg::CodeStep { code: self.code, event },
+        });
     }
 }
 
@@ -6066,6 +6140,60 @@ mod tests {
         ui.set_login_adding(false);
         click(32.0, 60.0);
         assert!(did.borrow().is_empty(), "editing a profile, nothing to choose again");
+    }
+
+    /// The account sheet of a provider offering a code first: its button asks for the code, which shows
+    /// with Open and Copy while it is checked; expired, only a new code is offered.
+    #[test]
+    fn the_account_sheet_shows_a_code_to_allow() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.set_signin_open(true);
+        ui.set_signin_service("SoundCloud".into());
+        ui.set_signin_code_first(true);
+        ui.set_signin_window_too(true);
+        ui.set_signin_code_words(words::code_words("SoundCloud"));
+        let did = Rc::new(RefCell::new(Vec::new()));
+        for (name, seen) in ["code", "open", "copy", "window"].map(|n| (n, did.clone())) {
+            let heard = move || seen.borrow_mut().push(name);
+            match name {
+                "code" => ui.on_sign_in_code(heard),
+                "open" => ui.on_open_code_page(heard),
+                "copy" => ui.on_copy_code(heard),
+                _ => ui.on_sign_in_window(heard),
+            }
+        }
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        let pressed = || {
+            did.borrow_mut().clear();
+            settle();
+            for y in (200..620).step_by(6) {
+                for x in (440..840).step_by(12) {
+                    let position = slint::LogicalPosition::new(x as f32, y as f32);
+                    ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position, button: slint::platform::PointerEventButton::Left });
+                    ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position, button: slint::platform::PointerEventButton::Left });
+                }
+            }
+            let mut got = did.borrow().clone();
+            got.sort();
+            got.dedup();
+            got
+        };
+        assert_eq!(pressed(), ["code", "window"], "a code first, a window instead");
+        ui.set_signin_code_step(true);
+        assert!(pressed().is_empty(), "nothing to press while the code is asked for");
+        ui.set_signin_code("UJ6MYK".into());
+        assert_eq!(pressed(), ["copy", "open"]);
+        ui.set_signin_code_expired(true);
+        assert_eq!(pressed(), ["code"], "a new code");
     }
 
     /// A provider with an account and nothing to fill gets two ways on; any other gets its one button.
