@@ -455,7 +455,7 @@ final class GlyphButton: UIButton {
 /// A menu over the page: opaque paper with a hairline edge rising from the bottom, what it is for at its
 /// head, and its lines grouped on a card; lines one reaches for rarely on a card of their own.Every menu and
 /// choice of the app is one.
-final class Sheet: UIViewController {
+class Sheet: UIViewController {
     private struct Line {
         let words: String
         let glyph: UIImage?
@@ -463,6 +463,9 @@ final class Sheet: UIViewController {
         let destructive: Bool
         let enabled: Bool
         let more: Bool
+        let subtitle: String?
+        /// The line does its work with the sheet still up (it puts something over it).
+        let stays: Bool
         let run: () -> Void
     }
 
@@ -497,9 +500,16 @@ final class Sheet: UIViewController {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func add(_ words: String, glyph: UIImage? = nil, checked: Bool = false, destructive: Bool = false, enabled: Bool = true,
-             more: Bool = false, run: @escaping () -> Void) {
-        lines.append(Line(words: words, glyph: glyph, checked: checked, destructive: destructive, enabled: enabled, more: more, run: run))
+    func add(_ words: String, subtitle: String? = nil, glyph: UIImage? = nil, checked: Bool = false, destructive: Bool = false, enabled: Bool = true,
+             more: Bool = false, stays: Bool = false, run: @escaping () -> Void) {
+        lines.append(Line(words: words, glyph: glyph, checked: checked, destructive: destructive, enabled: enabled, more: more, subtitle: subtitle, stays: stays, run: run))
+    }
+
+    /// The lines `fill` adds in place of the ones shown: a list that changes while it is open.
+    func refill(_ fill: () -> Void) {
+        lines = []
+        fill()
+        lay()
     }
 
     func show(from host: UIViewController) {
@@ -613,7 +623,9 @@ final class Sheet: UIViewController {
 
     private func row(_ l: Line) -> GroupRow {
         let check = l.checked ? UIImageView(image: Glyph.check).then { $0.tintColor = Theme.secondary } : nil
-        let r = GroupRow(l.words, icon: l.glyph, trailing: check, minHeight: 48) { [weak self] in self?.close(then: l.run) }
+        let r = GroupRow(l.words, subtitle: l.subtitle, icon: l.glyph, trailing: check, minHeight: 48) { [weak self] in
+            if l.stays { l.run() } else { self?.close(then: l.run) }
+        }
         if l.destructive { r.title.textColor = UIColor(argb: 0xFFC6_3A3A) }
         r.isEnabled = l.enabled
         return r

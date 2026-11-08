@@ -389,7 +389,7 @@ final class PlayerCard: UIViewController {
 
     private func cover(with sheet: UIViewController) {
         stopTicking()
-        present(sheet, animated: true)
+        present(sheet, animated: !(sheet is Sheet))
     }
 
     /// The output button: nori's devices with this iPod's outputs among them, or just the outputs with
