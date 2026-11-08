@@ -361,7 +361,19 @@ pub enum HomeRow {
 }
 
 impl HomeRow {
-    /// Every row, in the order a new install shows them.
+    /// What a new install shows, in order. `Pinned` is not offered any more: it stays only where an
+    /// install already shows it.
+    pub const FRESH: &'static [HomeRow] = &[
+        HomeRow::Random,
+        HomeRow::Recent,
+        HomeRow::Newest,
+        HomeRow::Playlists,
+        HomeRow::Starred,
+        HomeRow::Frequent,
+        HomeRow::TopSongs,
+    ];
+
+    /// Every row a stored list may name.
     pub fn every() -> &'static [HomeRow] {
         <HomeRow as Choice>::ALL
     }
@@ -697,7 +709,7 @@ pub struct StoredPrefs {
     #[setting("pluginsOff", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO | APPLY_GAIN | REPLAN | SOUND | PLAYER | CACHE_LIMIT)]
     pub plugins_off: bool,
     /// The home page's rows, in order; unlisted rows are hidden.
-    #[setting("homeRows", Picks, default = HomeRow::ALL.to_vec(), hidden)]
+    #[setting("homeRows", Picks, default = HomeRow::FRESH.to_vec(), hidden)]
     pub home_rows: Vec<HomeRow>,
     #[setting("pinnedPlaylists", LINES, default = Vec::new(), hidden)]
     pub pinned_playlists: Vec<String>,
@@ -1266,6 +1278,10 @@ pub fn load(raw: &HashMap<String, PrefValue>) -> StoredPrefs {
     }
     migrate_picks(raw, &mut p);
     migrate_pure_black(raw, &mut p);
+    // Settings stored before Home's rows were: the rows as that install has always shown them.
+    if !raw.is_empty() && !raw.contains_key("homeRows") {
+        p.home_rows = HomeRow::every().to_vec();
+    }
     // Old builds saved the automatic screen defaults without recording a listener's choice.
     if !raw.contains_key("dimIdle") {
         if let Some(PrefValue::Number { v }) = raw.get("dimWhenIdle") {
@@ -2187,6 +2203,8 @@ mod tests {
         assert_eq!(p.pinned_playlists, ["a", "b"]);
         assert_eq!(p.list_prefs.get("y").map(String::as_str), Some("2"));
         assert!(load(&raw(&[("homeRows", t(""))])).home_rows.is_empty(), "every row hidden");
+        assert_eq!(load(&raw(&[("crossfadeSec", PrefValue::Number { v: 0 })])).home_rows, HomeRow::every(), "an older install's rows stay");
+        assert_eq!(load(&raw(&[])).home_rows, HomeRow::FRESH, "a new install's");
         assert!(load(&raw(&[("listPrefs", t("{"))])).list_prefs.is_empty());
     }
 
