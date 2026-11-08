@@ -15,8 +15,14 @@ final class LibraryPage: UIViewController {
     private var chips: [(String, Int, Int32)] = []
     private static let kept = "nori.library.section"
     private var shown: PageController?
-    /// The title, the chips and the list's bar, on a plate the rows pass under.
+    /// The title, the chips and the list's bar, on the page's paper; the rows pass under it.
     private var pinned: UIView?
+    /// The rows' soft end under the head, there once they have started going under it (Android's
+    /// `fadesUnderTitle`).
+    private var edge: UIView?
+    private var scrolling: NSKeyValueObservation?
+    private static let edgeFade: CGFloat = 64
+    private static let edgeHeight: CGFloat = 18
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -38,6 +44,7 @@ final class LibraryPage: UIViewController {
         shown?.view.removeFromSuperview()
         shown?.removeFromParent()
         pinned?.removeFromSuperview()
+        edge?.removeFromSuperview()
         guard chips.indices.contains(i) else { return }
         let (name, _, kind) = chips[i]
         UserDefaults.standard.set(Int(kind), forKey: LibraryPage.kept)
@@ -53,12 +60,21 @@ final class LibraryPage: UIViewController {
         page.tableView.tableHeaderView = kind == NORI_PAGE_PLAYLISTS && Core.shared.rules.sections.contains(5) ? page.sized(smartPlaylists()) : PageController.noHeader
         let status = UIApplication.shared.statusBarFrame.height
         let plate = UIView(frame: CGRect(x: 0, y: 0, width: view.bounds.width, height: status + head.frame.height))
-        plate.backgroundColor = Theme.background.withAlphaComponent(0.94)
+        plate.backgroundColor = Theme.background
         plate.autoresizingMask = .flexibleWidth
         head.frame.origin.y = status
         plate.addSubview(head)
         view.addSubview(plate)
         pinned = plate
+        let soft = GradientView(colours: [Theme.background, Theme.background.withAlphaComponent(0)])
+        soft.frame = CGRect(x: 0, y: plate.frame.maxY, width: view.bounds.width, height: LibraryPage.edgeHeight)
+        soft.autoresizingMask = .flexibleWidth
+        soft.alpha = 0
+        view.addSubview(soft)
+        edge = soft
+        scrolling = page.tableView.observe(\.contentOffset) { [weak soft] table, _ in
+            soft?.alpha = min(1, max(0, table.contentOffset.y + table.adjustedContentInset.top) / LibraryPage.edgeFade)
+        }
         shown = page
     }
 
