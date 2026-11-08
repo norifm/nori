@@ -135,11 +135,9 @@ class PlaybackService : MediaLibraryService() {
     private lateinit var session: MediaLibrarySession
     /** The player as the session sees it; every change to the queue goes through here, to the core first. */
     private lateinit var controls: Controls
-    /** The session's player while another device plays (Remotes.mirror): this phone controls that one. */
-    private lateinit var elsewhere: dev.nori.music.remote.RemoteDevicePlayer
     /** The session's player while a plugin casts (PluginHost.cast): the cast's device controlled through [controls]. Made at the first cast; between casts it follows nothing. */
     private var casting: CastPlayer? = null
-    /** What the session shows: [controls], [elsewhere] while another device plays, or [casting] while a plugin casts. */
+    /** What the session shows: [controls], or [casting] while a plugin casts. */
     private val shown: Player get() = session.player
     private lateinit var scrobbler: Scrobbler
     @Suppress("DEPRECATION")
@@ -270,8 +268,7 @@ class PlaybackService : MediaLibraryService() {
         // A jam guest's controls by its role: what the session, the notification and a car offer.
         scope.launch { nori.remotes.jamControls.collect { player.offer(it) } }
         scope.launch { nori.settings.prefs.map { it.remoteControl }.distinctUntilChanged().collect { nori.remotes.serve(true) } }
-        elsewhere = dev.nori.music.remote.RemoteDevicePlayer(this, nori)
-        scope.launch { nori.remotes.mirror.collect(::mirrored) }
+        scope.launch { nori.remotes.mirror.collect { pickPlayer() } }
         scope.launch { nori.plugins.cast.collect(::casted) }
         restoreQueue()
         // The player is up, with the plugins' layer: a crash from here on is no startup crash for safe mode.
@@ -284,26 +281,6 @@ class PlaybackService : MediaLibraryService() {
         if (!shown.playWhenReady || shown.mediaItemCount == 0) stopSelf()
     }
 
-    /**
-     * Another device plays (or this phone again, null). While it does, the session shows and controls it
-     * and this phone's own player is stopped, its output let go: nothing plays or holds the audio here. The
-     * service stays in the foreground while that device plays, as for music here.
-     */
-    private fun mirrored(m: dev.nori.music.ffi.Mirror?) {
-        if (m != null) {
-            elsewhere.show()
-            if (session.player !== elsewhere) {
-                dev.nori.music.NoriLog.i("playing on ${m.name}: this phone's player stops")
-                player.letGo()
-            }
-        } else if (session.player === elsewhere) {
-            dev.nori.music.NoriLog.i("playing on this phone again")
-        }
-        pickPlayer()
-        showRoute()
-        refreshButtons()
-    }
-
     /** A plugin's cast started, its device's state changed, or it ended (null): the session shows its device while it runs. */
     private fun casted(c: dev.nori.music.ffi.plugins.Cast?) {
         if (c != null) (casting ?: CastPlayer(controls, nori.plugins).also { casting = it }).show(c)
@@ -313,45 +290,42 @@ class PlaybackService : MediaLibraryService() {
         refreshButtons()
     }
 
-    /** The session's player, by where the music plays (the core's `destination`): another device's, the cast's, or this phone's. */
-    private fun pickPlayer() {
-        val want = when (nori.remotes.destination(nori.plugins.cast.value)) {
-            is dev.nori.music.ffi.Destination.Mirroring -> elsewhere
-            is dev.nori.music.ffi.Destination.Cast -> casting ?: controls
-            else -> controls
-        }
-        if (session.player !== want) session.player = want
-    }
-
-    /** Whether media3 keeps the service in the foreground: playing, or paused for less than its idle timeout. */
-    private var engaged = false
+    /** Whether the system's media controls show where the music plays (the core's `Destination::shown_to_system`), as last picked. */
+    private var shownToSystem = true
 
     /**
-     * The mirrored device named in the system's output switcher (RemoteRoute) while the session is engaged:
-     * after media3's idle timeout nothing is bound to hold the process up for it.
+     * The session's player, by where the music plays (the core's `destination`): the cast's, or this
+     * phone's. While the system is shown nothing (another device plays), this phone's player is stopped,
+     * its output let go and the player idle: nothing plays or holds the audio here, and the notification,
+     * lock screen, headset, car and volume keys show and reach nothing of that device. The app's player
+     * shows and controls it (PlayerConnection).
      */
-    private fun showRoute() {
-        val mirror = nori.remotes.mirror.value?.takeIf { engaged }
-        if (mirror == null) dev.nori.music.remote.RemoteRoute.show(this, null)
-        else nori.remotes.ask({ it.devices() }) { devices ->
-            dev.nori.music.remote.RemoteRoute.show(this, nori.remotes.mirror.value?.takeIf { engaged }, devices)
+    private fun pickPlayer() {
+        val destination = nori.remotes.destination(nori.plugins.cast.value)
+        val shown = dev.nori.music.ffi.destinationShownToSystem(destination)
+        if (shown != shownToSystem) {
+            shownToSystem = shown
+            if (shown) dev.nori.music.NoriLog.i("playing on this phone again")
+            else {
+                dev.nori.music.NoriLog.i("playing on another device: this phone's player stops")
+                player.letGo()
+            }
         }
+        val want = if (destination is dev.nori.music.ffi.Destination.Cast) casting ?: controls else controls
+        if (session.player !== want) session.player = want
     }
 
     override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
         // Listening along while the jam's host is paused: still in the foreground, so its play is heard here
         // with the screen off (a service in the background could not start again).
         super.onUpdateNotification(session, startInForegroundRequired || player.hostPaused)
-        engaged = startInForegroundRequired
-        nori.remotes.notified(engaged)
-        showRoute()
+        nori.remotes.notified(startInForegroundRequired)
     }
 
     override fun onDestroy() {
         nori.remotes.serve(false)
         nori.remotes.notified(false)
         nori.remotes.service = null
-        dev.nori.music.remote.RemoteRoute.show(this, null)
         nori.remotes.engine = null
         nori.remotes.onGuestQueue = null
         nori.widgets.onPlaced = null
@@ -493,9 +467,9 @@ class PlaybackService : MediaLibraryService() {
     private var buttonsShown: dev.nori.music.ffi.SessionButtons? = null
     private var repeatShown = -1
 
-    /** As the app's heart has it: this session's mark, else the song as the queue playing it holds it - another device's while it plays. */
+    /** As the app's heart has it: this session's mark, else the song as the queue playing it holds it. */
     private fun currentStarred(item: MediaItem): Boolean =
-        nori.library.isStarred(StarKind.SONG, item.mediaId, if (shown === elsewhere) elsewhere.currentStarred else nori.session.queueStarred(item.mediaId))
+        nori.library.isStarred(StarKind.SONG, item.mediaId, nori.session.queueStarred(item.mediaId))
 
     /**
      * Heart and shuffle beside previous / play / next, in the secondary slots the way other players put
