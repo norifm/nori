@@ -62,10 +62,12 @@ static void fill_grant(NoriGrant *out) {
         return;
     }
     memset(out, 0, sizeof(*out));
-    AVAudioSessionPortDescription *p = session.currentRoute.outputs.firstObject;
-    out->rate = (uint32_t)llround(session.sampleRate);
-    out->io_ms = (uint32_t)llround(session.IOBufferDuration * 1000.0);
-    out->latency_us = (uint64_t)llround(session.outputLatency * 1e6);
+    // The shared session, not `session`: the route is asked for before the first song opens the unit.
+    AVAudioSession *shared = [AVAudioSession sharedInstance];
+    AVAudioSessionPortDescription *p = shared.currentRoute.outputs.firstObject;
+    out->rate = (uint32_t)llround(shared.sampleRate);
+    out->io_ms = (uint32_t)llround(shared.IOBufferDuration * 1000.0);
+    out->latency_us = (uint64_t)llround(shared.outputLatency * 1e6);
     out->port = p ? port_code(p.portType) : 0;
     NSString *name = p.portName ?: @"";
     [name getCString:out->name maxLength:sizeof(out->name) encoding:NSUTF8StringEncoding];
