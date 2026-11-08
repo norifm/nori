@@ -12,7 +12,7 @@ use std::io::Write;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::WindowBuilder;
-use wry::{PageLoadEvent, WebViewBuilder};
+use wry::{NewWindowResponse, PageLoadEvent, WebViewBuilder};
 
 /// Runs the window for `title`, starting at `start`, until it is closed or the app ends it.
 pub(crate) fn run(title: String, start: String) -> ! {
@@ -35,6 +35,9 @@ pub(crate) fn run(title: String, start: String) -> ! {
             }
             https
         })
+        // Signing in with another account (Apple, Google) opens it in a window of its own, which hands
+        // the page its answer through `window.opener`.
+        .with_new_window_req_handler(|address, _| if address.starts_with("https://") { NewWindowResponse::Allow } else { NewWindowResponse::Deny })
         .with_on_page_load_handler(move |event, address| {
             if matches!(event, PageLoadEvent::Finished) {
                 let _ = loaded.send_event(address);

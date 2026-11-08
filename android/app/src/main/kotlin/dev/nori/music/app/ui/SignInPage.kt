@@ -2,6 +2,9 @@ package dev.nori.music.app.ui
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.os.Message
+import android.webkit.WebChromeClient
+import android.widget.FrameLayout
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebStorage
@@ -121,7 +124,6 @@ private fun ColumnScope.Centered(content: @Composable ColumnScope.() -> Unit) {
  * leaves (Cancel included): a WebView keeping the session could rotate it behind nori's back and end
  * nori's copy.
  */
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun WebSignIn(done: suspend (String, String) -> Boolean, start: String, loading: (Boolean) -> Unit, signedIn: (String) -> Unit, modifier: Modifier) {
     val onLoading by rememberUpdatedState(loading)
@@ -129,60 +131,101 @@ private fun WebSignIn(done: suspend (String, String) -> Boolean, start: String, 
     val isDone by rememberUpdatedState(done)
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     DisposableEffect(Unit) { onDispose { forgetWebSession() } }
+    // Windows the page opened, the newest last: Back goes back in the newest, then closes it.
+    val popups = remember { androidx.compose.runtime.mutableStateListOf<WebView>() }
+    fun close(window: WebView) {
+        popups.remove(window)
+        (window.parent as? FrameLayout)?.removeView(window)
+        window.destroy()
+    }
+    androidx.activity.compose.BackHandler(popups.isNotEmpty()) {
+        val top = popups.last()
+        if (top.canGoBack()) top.goBack() else close(top)
+    }
     AndroidView(
         factory = { context ->
-            WebView(context).apply {
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.allowFileAccess = false
-                settings.allowContentAccess = false
-                settings.setSupportMultipleWindows(false)
-                CookieManager.getInstance().setAcceptCookie(true)
-                webViewClient = object : WebViewClient() {
-                    var taken = false
+            CookieManager.getInstance().setAcceptCookie(true)
+            val page = WebView(context)
+            val client = object : WebViewClient() {
+                var taken = false
 
-                    // Web pages only: an intent:// or app link opens nothing. Its address is still looked at, as a
-                    // sign-in may end there (an OAuth redirect to an app's own address carries its code).
-                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                        if (request.url.scheme == "https") return false
-                        look(view, request.url.toString())
+                // Web pages only: an intent:// or app link opens nothing. Its address is still looked at, as a
+                // sign-in may end there (an OAuth redirect to an app's own address carries its code).
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    if (request.url.scheme == "https") return false
+                    look(view, request.url.toString())
+                    return true
+                }
+
+                override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) = onLoading(true)
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    onLoading(false)
+                    look(view, url)
+                }
+
+                override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) = look(view, url)
+
+                // The provider answers off the main thread; the page goes on meanwhile.
+                fun look(view: WebView, url: String) {
+                    if (taken) return
+                    val cookies = CookieManager.getInstance().getCookie(url).orEmpty()
+                    scope.launch {
+                        if (taken || !isDone(url, cookies)) return@launch
+                        taken = true
+                        view.stopLoading()
+                        forgetWebSession()
+                        onSignedIn(cookies)
+                    }
+                }
+            }
+            FrameLayout(context).apply {
+                // Signing in with another account (Apple, Google) opens it in a window of its own, which
+                // hands the page its answer through `window.opener`: drawn over the page until it closes.
+                val windows = object : WebChromeClient() {
+                    override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
+                        val popup = WebView(context).also { signInSettings(it, client, this) }
+                        addView(popup, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+                        popups.add(popup)
+                        (resultMsg.obj as WebView.WebViewTransport).webView = popup
+                        resultMsg.sendToTarget()
                         return true
                     }
 
-                    override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) = onLoading(true)
-
-                    override fun onPageFinished(view: WebView, url: String) {
-                        onLoading(false)
-                        look(view, url)
-                    }
-
-                    override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) = look(view, url)
-
-                    // The provider answers off the main thread; the page goes on meanwhile.
-                    fun look(view: WebView, url: String) {
-                        if (taken) return
-                        val cookies = CookieManager.getInstance().getCookie(url).orEmpty()
-                        scope.launch {
-                            if (taken || !isDone(url, cookies)) return@launch
-                            taken = true
-                            view.stopLoading()
-                            forgetWebSession()
-                            onSignedIn(cookies)
-                        }
-                    }
+                    override fun onCloseWindow(window: WebView) = close(window)
                 }
-                forgetWebSession { loadUrl(start) }
+                signInSettings(page, client, windows)
+                addView(page, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+                forgetWebSession { page.loadUrl(start) }
             }
         },
         modifier = modifier,
-        onRelease = { view ->
-            view.stopLoading()
-            view.clearHistory()
-            view.clearCache(true)
-            view.clearFormData()
-            view.destroy()
+        onRelease = { frame ->
+            popups.clear()
+            for (i in frame.childCount - 1 downTo 0) {
+                val view = frame.getChildAt(i) as WebView
+                view.stopLoading()
+                view.clearHistory()
+                view.clearCache(true)
+                view.clearFormData()
+                view.destroy()
+            }
+            frame.removeAllViews()
         },
     )
+}
+
+/** A sign-in WebView's settings: JavaScript and storage on, files and content off, windows through [windows]. */
+@SuppressLint("SetJavaScriptEnabled")
+private fun signInSettings(view: WebView, client: WebViewClient, windows: WebChromeClient) {
+    view.settings.javaScriptEnabled = true
+    view.settings.domStorageEnabled = true
+    view.settings.allowFileAccess = false
+    view.settings.allowContentAccess = false
+    view.settings.setSupportMultipleWindows(true)
+    view.settings.javaScriptCanOpenWindowsAutomatically = true
+    view.webViewClient = client
+    view.webChromeClient = windows
 }
 
 /** Clears the sign-in WebView's cookies and storage, then [then]. */
