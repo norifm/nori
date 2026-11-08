@@ -836,13 +836,15 @@ private fun androidx.compose.material3.ColorScheme.dressedIn(l: Look): androidx.
 @androidx.compose.runtime.Stable
 class StatusBarLooks {
     var app: Look? by mutableStateOf(null)
-    val over = androidx.compose.runtime.mutableStateListOf<androidx.compose.runtime.State<Look>>()
-    val top: Look? get() = over.lastOrNull()?.value ?: app
+    val over = androidx.compose.runtime.mutableStateListOf<androidx.compose.runtime.State<() -> Boolean>>()
+    val darkIcons: Boolean? get() = over.lastOrNull()?.value?.invoke() ?: app?.wantsDarkIcons
 }
 
 val LocalStatusBarLooks = androidx.compose.runtime.staticCompositionLocalOf { StatusBarLooks() }
 
-/** Keeps the window's status bar icons on [looks]' top one (a light page gets dark icons), as it changes colour too. */
+private val Look.wantsDarkIcons: Boolean get() = argb(CoverLook.STATUS_LIGHT) != 0
+
+/** Keeps the window's status bar icons on what [looks]' top one asks for (a light page gets dark icons), as it changes colour too. */
 @Composable
 fun StatusBarIconsFollow(looks: StatusBarLooks) {
     val view = androidx.compose.ui.platform.LocalView.current
@@ -851,16 +853,16 @@ fun StatusBarIconsFollow(looks: StatusBarLooks) {
     }
     LaunchedEffect(controller, looks) {
         if (controller == null) return@LaunchedEffect
-        androidx.compose.runtime.snapshotFlow { looks.top?.let { it.argb(CoverLook.STATUS_LIGHT) != 0 } }
-            .collect { light -> if (light != null) controller.isAppearanceLightStatusBars = light }
+        androidx.compose.runtime.snapshotFlow { looks.darkIcons }
+            .collect { dark -> if (dark != null) controller.isAppearanceLightStatusBars = dark }
     }
 }
 
-/** Status bar icons follow [look] for as long as this is composed. */
+/** Status bar icons follow [look] for as long as this is composed, white while [overCover]: a cover is under them, shaded for white. */
 @Composable
-fun SystemBarIcons(look: Look) {
+fun SystemBarIcons(look: Look, overCover: () -> Boolean = { false }) {
     val looks = LocalStatusBarLooks.current
-    val mine = androidx.compose.runtime.rememberUpdatedState(look)
+    val mine = androidx.compose.runtime.rememberUpdatedState({ !overCover() && look.wantsDarkIcons })
     androidx.compose.runtime.DisposableEffect(looks) {
         looks.over += mine
         onDispose { looks.over -= mine }

@@ -232,8 +232,6 @@ pub fn accent_on(page: u32, ink: u32, light: u32, dark: u32) -> u32 {
 
 /// How much of a cover's toned color the paper of its page takes.
 const DYE: f32 = 0.6;
-/// A cover darker than this (luminance) dyes the dark paper, in the light theme too.
-const DEEP: f32 = 0.18;
 /// Below this contrast on a dyed page (or its quiet share below 4.5) the season's ink gives way to
 /// [`NEAR_WHITE`] or [`NEAR_BLACK`].
 const INK_CONTRAST: f64 = 9.0;
@@ -241,11 +239,11 @@ const NEAR_WHITE: u32 = 0xFFF5_F3F0;
 const NEAR_BLACK: u32 = 0xFF14_1210;
 
 /// The season's paper dyed with a cover's color: the page of a cover (an album, an artist, a playlist,
-/// the player) or of a mix's card. The paper takes its depth from the cover, so a dark sleeve gets the
-/// dark paper even in the light theme; ink and accent stay the season's.
+/// the player) or of a mix's card. The paper keeps the theme's depth and takes the cover's hue; ink and
+/// accent stay the season's.
 pub struct Dye {
     palette: Palette,
-    /// The paper dyed: the theme's page, or the dark one for a dark cover.
+    /// The theme's page, which is dyed.
     paper: u32,
     dark: bool,
     quiet: u32,
@@ -258,10 +256,9 @@ impl Dye {
     /// The page's surface is halfway to the season's, its ink the season's where it reads at
     /// [`INK_CONTRAST`] and as [`QUIET`] text, and its accent moved until it reads ([`accent_on`]).
     pub fn new(end: u32, light: Palette, dark: Palette, dark_theme: bool) -> Dye {
-        let deep = dark_theme || luminance(end) < DEEP;
-        let season = if deep { dark } else { light };
+        let season = if dark_theme { dark } else { light };
         let ok = Oklab::new();
-        let page = dyed(end, season.page, deep, &ok);
+        let page = dyed(end, season.page, dark_theme, &ok);
         let reads = |ink: u32| calculate_contrast(ink, page) >= INK_CONTRAST && calculate_contrast(veil(ink, QUIET, page), page) >= 4.5;
         let ink = if reads(season.ink) {
             season.ink
@@ -272,7 +269,7 @@ impl Dye {
         };
         let accent = accent_on(page, ink, light.accent, dark.accent);
         let palette = Palette { page, surface: blend(page, season.surface, 0.5), ink, accent, on: season.on };
-        Dye { palette, paper: season.page, dark: deep, quiet: veil(ink, QUIET, page), ok }
+        Dye { palette, paper: season.page, dark: dark_theme, quiet: veil(ink, QUIET, page), ok }
     }
 
     /// The page's palette.

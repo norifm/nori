@@ -237,14 +237,14 @@ mod tests {
     }
 
     #[test]
-    fn a_dark_cover_dyes_the_day_paper_dark() {
+    fn a_dark_cover_keeps_the_day_paper_light() {
         let (light, dark) = (Season::Spring.palette(false), Season::Spring.palette(true));
         let navy = [0x10, 0x18, 0x40, 0xFF].repeat(16 * 16);
         let pale = [0xF0, 0xE8, 0xD0, 0xFF].repeat(16 * 16);
         let lum = |c: u32| nori_look::color::luminance(c);
         let on_navy = cover_page(&navy, 16, 16, light, dark, false);
         let on_pale = cover_page(&pale, 16, 16, light, dark, false);
-        assert!(lum(on_navy[dress::BACKGROUND]) < 0.2 && lum(on_navy[dress::ON]) > 0.5, "{on_navy:x?}");
+        assert!(lum(on_navy[dress::BACKGROUND]) > 0.5 && lum(on_navy[dress::ON]) < 0.2, "{on_navy:x?}");
         assert!(lum(on_pale[dress::BACKGROUND]) > 0.5 && lum(on_pale[dress::ON]) < 0.2, "{on_pale:x?}");
     }
 
