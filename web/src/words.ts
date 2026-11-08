@@ -442,6 +442,7 @@ export const W = {
   playingOn: (device: string) => `Playing on ${device}`,
   thisBrowser: "This browser",
   devicePlaying: "Playing",
+  deviceIdle: "Idle",
   /** A device's answer to the last thing asked of it, by `Refusal`. */
   refused: {
     stale: "The queue changed there. Try again.",

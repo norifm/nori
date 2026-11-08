@@ -1399,7 +1399,7 @@ fn devices_panel() {
     assert!(row("This computer").contains("✓ This computer"), "this computer first, ticked while it plays:\n{s}");
     let under = |name: &str| s.lines().skip_while(|l| !l.contains(name)).nth(1).unwrap_or_default().to_string();
     assert!(row("Desk").contains("computer") && under("Desk").contains("  Wish · Artist"), "what each plays, under it:\n{s}");
-    assert!(row("Pixel").contains("phone") && under("Pixel").contains("  Not playing"), "{s}");
+    assert!(row("Pixel").contains("phone") && under("Pixel").contains("  Idle"), "{s}");
     assert!(s.contains("Start a jam") && s.lines().next().unwrap().contains("Devices"), "{s}");
 
     // Enter moves the music there; the keys step device by device.
