@@ -133,6 +133,7 @@ final class PlayerCard: UIViewController {
 
         panelArea.isHidden = true
         panelFoot.translatesAutoresizingMaskIntoConstraints = false
+        panelFoot.alpha = 0
         panelArea.addSubview(panelFoot)
         for v in [cover, panelArea, column, grabber] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -449,6 +450,7 @@ final class PlayerCard: UIViewController {
             old?.view.alpha = 0
             child?.view.alpha = 1
             self.cover.alpha = art ? 1 : 0
+            self.panelFoot.alpha = art ? 0 : 1
             self.songRow.isHidden = self.panel == .lyrics
             self.view.layoutIfNeeded()
         }, completion: { _ in
