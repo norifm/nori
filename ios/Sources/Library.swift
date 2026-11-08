@@ -15,6 +15,8 @@ final class LibraryPage: UIViewController {
     private var chips: [(String, Int, Int32)] = []
     private static let kept = "nori.library.section"
     private var shown: PageController?
+    /// The title, the chips and the list's bar, on a plate the rows pass under.
+    private var pinned: UIView?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -35,21 +37,32 @@ final class LibraryPage: UIViewController {
         shown?.willMove(toParent: nil)
         shown?.view.removeFromSuperview()
         shown?.removeFromParent()
+        pinned?.removeFromSuperview()
         guard chips.indices.contains(i) else { return }
         let (name, _, kind) = chips[i]
         UserDefaults.standard.set(Int(kind), forKey: LibraryPage.kept)
         let page = PageController(kind: kind, title: name)
-        page.top = { [unowned self, unowned page] in self.head(chosen: i, page: page) }
+        page.top = { PageController.noHeader }
+        let head = page.sized(self.head(chosen: i, page: page))
+        page.additionalSafeAreaInsets.top = head.frame.height
         addChild(page)
-        // Below the status bar, which has no bar of its own to stand on.
-        page.view.frame = view.bounds.inset(by: UIEdgeInsets(top: UIApplication.shared.statusBarFrame.height, left: 0, bottom: 0, right: 0))
+        page.view.frame = view.bounds
         page.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(page.view)
         page.didMove(toParent: self)
+        page.tableView.tableHeaderView = kind == NORI_PAGE_PLAYLISTS && Core.shared.rules.sections.contains(5) ? page.sized(smartPlaylists()) : PageController.noHeader
+        let status = UIApplication.shared.statusBarFrame.height
+        let plate = UIView(frame: CGRect(x: 0, y: 0, width: view.bounds.width, height: status + head.frame.height))
+        plate.backgroundColor = Theme.background.withAlphaComponent(0.94)
+        plate.autoresizingMask = .flexibleWidth
+        head.frame.origin.y = status
+        plate.addSubview(head)
+        view.addSubview(plate)
+        pinned = plate
         shown = page
     }
 
-    /// The strip of chips, Smart playlists over the playlists and, for a list with orders, its [SortBar]: the
+    /// The title with its places, the strip of chips and, for a list with orders, its [SortBar]: the
     /// albums' with Favorites where the profile has favorites, Shuffle where the account's own library is.
     private func head(chosen: Int, page: PageController) -> UIView {
         let kind = page.kind
@@ -57,12 +70,6 @@ final class LibraryPage: UIViewController {
         strip.set(chips.map { $0.0 }, chosen: chosen)
         strip.picked = { [weak self] i in self?.show(i) }
         var parts: [UIView] = [PageTitle(Say.library, trailing: places()), strip]
-        // The smart playlists are under Playlists.
-        if kind == NORI_PAGE_PLAYLISTS && Core.shared.rules.sections.contains(5) {
-            parts.append(GroupCard([GroupRow(Say.smartPlaylists, icon: Glyph.draw(Iconoir.magicWand, 20), chevron: true) { [weak self] in
-                self?.navigationController?.pushViewController(PageController(kind: NORI_PAGE_SMARTS, title: Say.smartPlaylists), animated: true)
-            }]))
-        }
         let favorites = kind == NORI_PAGE_ALBUMS && Core.shared.rules.stars ? page.arg == NORI_ALBUMS_FAVORITES : nil
         let filtered = { [weak page] (on: Bool) in
             page?.arg = on ? NORI_ALBUMS_FAVORITES : ""
@@ -83,6 +90,13 @@ final class LibraryPage: UIViewController {
         column.isLayoutMarginsRelativeArrangement = true
         column.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 10, trailing: 0)
         return column
+    }
+
+    /// The smart playlists, the first thing in the list under Playlists.
+    private func smartPlaylists() -> UIView {
+        GroupCard([GroupRow(Say.smartPlaylists, icon: Glyph.draw(Iconoir.magicWand, 20), chevron: true) { [weak self] in
+            self?.navigationController?.pushViewController(PageController(kind: NORI_PAGE_SMARTS, title: Say.smartPlaylists), animated: true)
+        }])
     }
 
     /// The places the library keeps, not kinds of music: a glyph each beside its title, each opening its page.
