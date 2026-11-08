@@ -102,11 +102,17 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
     fun installPreview() {
         val p = _preview.value ?: return
         _preview.value = null
+        _installing.value = p.card.id
         viewModelScope.launch {
             if (refusing { host.installPreview(p) } != null && needsBluetooth(p.card) && !bluetoothAllowed()) _askBluetooth.value = true
+            _installing.value = null
             loadOffers()
         }
     }
+
+    private val _installing = MutableStateFlow<String?>(null)
+    /** The plugin whose install is on its way. */
+    val installing: StateFlow<String?> = _installing
 
     /** The connected devices plugins control. */
     val controlled = host.controlled

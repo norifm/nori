@@ -23,6 +23,8 @@ pub enum AddPage {
     /// Plugin `plugin`, which a repo offers, its page opened from the first screen: once installed and
     /// on, its kind is chosen (`Chose`).
     Offered { plugin: String },
+    /// That plugin being installed from its page: the first screen shows it on its way.
+    Installing { plugin: String },
     /// `kind` asks nothing and is being added at once: the first screen stays unless that fails.
     Adding { kind: ServerKind },
     /// `kind`'s page, as its first step says (its form, or its sign-in and guest buttons); after adding
@@ -63,6 +65,10 @@ pub enum AddEvent {
     Edit { kind: ServerKind },
     /// The page of `plugin`, offered by a repo, opened from the first screen to install it.
     OfferOpened { plugin: String },
+    /// The offered plugin's install began: its page gives way to the first screen.
+    InstallBegan,
+    /// Its install was refused: its page shows again, saying why.
+    InstallRefused,
     /// Back: a kind's page, or an offered plugin's, goes back to the first screen.
     Back,
     /// The form sent (`ready`: its provider takes it), for a new profile asked for as `added`.
@@ -71,7 +77,8 @@ pub enum AddEvent {
     Refused { said: String },
     /// A profile saved or added would not open, in the client's words: the first screen, with why.
     Unopened { said: String },
-    /// The profile sent was checked and saved; the pages start afresh.
+    /// The profile sent was checked and saved. Its page stays while the pages close: they start afresh
+    /// when they open again (`Start`, `Edit`).
     Accepted,
 }
 
@@ -99,13 +106,14 @@ impl AddFlow {
     pub fn kind(&self) -> Option<&ServerKind> {
         match &self.page {
             AddPage::Adding { kind } | AddPage::Provider { kind, .. } => Some(kind),
-            AddPage::Choosing | AddPage::Offered { .. } => None,
+            AddPage::Choosing | AddPage::Offered { .. } | AddPage::Installing { .. } => None,
         }
     }
 
-    /// Whether the first screen shows (also while a kind that asks nothing is being added).
+    /// Whether the first screen shows (also while a plugin offered installs, or a kind that asks nothing is
+    /// being added).
     pub fn choosing(&self) -> bool {
-        matches!(self.page, AddPage::Choosing | AddPage::Adding { .. })
+        matches!(self.page, AddPage::Choosing | AddPage::Installing { .. } | AddPage::Adding { .. })
     }
 
     /// The step of the kind's page, once one shows.
@@ -138,6 +146,16 @@ impl AddFlow {
                     *self = AddFlow { page: AddPage::Offered { plugin }, send: AddSend::Idle };
                 }
             }
+            AddEvent::InstallBegan => {
+                if let AddPage::Offered { plugin } = &self.page {
+                    self.page = AddPage::Installing { plugin: plugin.clone() };
+                }
+            }
+            AddEvent::InstallRefused => {
+                if let AddPage::Installing { plugin } = &self.page {
+                    self.page = AddPage::Offered { plugin: plugin.clone() };
+                }
+            }
             AddEvent::Back => {
                 if matches!(self.page, AddPage::Provider { .. } | AddPage::Offered { .. }) {
                     *self = AddFlow::default();
@@ -159,7 +177,7 @@ impl AddFlow {
             AddEvent::Unopened { said } => *self = AddFlow { page: AddPage::Choosing, send: AddSend::Failed { why: AddFailure::Refused { said } } },
             AddEvent::Accepted => {
                 if let AddSend::Sending { added } = self.send {
-                    *self = AddFlow::default();
+                    self.send = AddSend::Idle;
                     return AddDo::Open { added };
                 }
             }
@@ -405,7 +423,23 @@ mod tests {
         f.on(AddEvent::Refused { said: "down".into() });
         assert_eq!(f.on(AddEvent::Send { ready: true, added: None }), AddDo::Send { added: None }, "tried again");
         assert_eq!(f.on(AddEvent::Accepted), AddDo::Open { added: None }, "the failed send's way of asking is gone");
-        assert_eq!(f, AddFlow::default());
+        assert_eq!(f, AddFlow { page: AddPage::Provider { kind: kind("a"), step: FirstStep::Account }, send: AddSend::Idle }, "its page stays while the pages close");
+    }
+
+    #[test]
+    fn an_offered_plugin_installs_on_the_first_screen_and_a_refusal_shows_its_page_again() {
+        let mut f = AddFlow { page: AddPage::Offered { plugin: "p".into() }, send: AddSend::Idle };
+        f.on(AddEvent::InstallBegan);
+        assert_eq!(f.page, AddPage::Installing { plugin: "p".into() });
+        assert!(f.choosing());
+        f.on(AddEvent::InstallRefused);
+        assert_eq!(f.page, AddPage::Offered { plugin: "p".into() });
+        f.on(AddEvent::InstallBegan);
+        f.on(AddEvent::Chose { info: info("p", &[FormField::Address], false) });
+        assert_eq!(f.page, AddPage::Provider { kind: kind("p"), step: FirstStep::Form }, "installed, it is chosen");
+        f.on(AddEvent::Back);
+        f.on(AddEvent::InstallBegan);
+        assert_eq!(f, AddFlow::default(), "only an offered plugin's page begins one");
     }
 
     #[test]
