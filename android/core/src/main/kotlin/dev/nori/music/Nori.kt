@@ -300,9 +300,27 @@ class Nori private constructor(private val context: Context) {
      */
     suspend fun signIn(answer: String): dev.nori.music.ffi.SignInResult {
         val r = withContext(Dispatchers.IO) { client.signIn(answer) }
-        if (r is dev.nori.music.ffi.SignInResult.SignedIn) settings.value.server?.let { updateServer(it.copy(user = r.name)) }
+        signedIn(r)
         return r
     }
+
+    /** How a sign-in went, whichever way it went (a page, pasting, a code). Main thread. */
+    fun signedIn(r: dev.nori.music.ffi.SignInResult) {
+        if (r is dev.nori.music.ffi.SignInResult.SignedIn) settings.value.server?.let { updateServer(it.copy(user = r.name)) }
+    }
+
+    /**
+     * Signs the profile in use's account in with a code allowed in a browser (the core's
+     * `Client::sign_in_with_code`), on a thread of its own: [heard] is told the code, then how it went
+     * (finished with [signedIn]). It checks until it comes to something or is stopped.
+     */
+    fun signInWithCode(heard: (dev.nori.music.ffi.SignInEvent) -> Unit): dev.nori.music.ffi.CodeSignIn =
+        client.signInWithCode(object : dev.nori.music.ffi.CodeHeard {
+            override fun heard(event: dev.nori.music.ffi.SignInEvent) = heard(event)
+        })
+
+    /** What the offer's sign-in opens: the provider's code or its page (the core's `sign_in_open`). */
+    suspend fun signInOpen(): dev.nori.music.ffi.SignInEvent? = withContext(Dispatchers.IO) { client.signInOpen() }
 
     /** Signs the profile in use's account out here. Main thread. */
     fun signOut() {

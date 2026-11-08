@@ -58,9 +58,9 @@ fun providerWords(vm: SettingsViewModel, kind: dev.nori.music.ffi.settings.Serve
 /**
  * The account of a profile whose provider signs it in apart from the form (the core's
  * `ProviderInfo.sign_in`), as Spotify's and Apple Music's account rows read: who is signed in, or a
- * button to the provider's sign-in page (SignInPage.kt), with pasting folded under it. The sign-in
- * itself, and what each answer means, are the core's (`Client::sign_in`); [signed] hands the account's
- * name to the form being edited.
+ * button for each way the provider signs in elsewhere, its page or a code (SignInPage.kt), with pasting
+ * folded under them. The sign-in itself, and what each answer means, are the core's (`Client::sign_in`);
+ * [signed] hands the account's name to the form being edited.
  */
 @Composable
 private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, signed: (String) -> Unit) {
@@ -69,8 +69,9 @@ private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, signed: (Stri
     val name = vm.prefs.collectAsStateWithLifecycle().value.server?.user.orEmpty()
     var answer by remember { mutableStateOf("") }
     val page = info.signIn.any { it is SignIn.WebPage }
+    val code = SignIn.Code in info.signIn
     val pastes = info.signIn.any { it is SignIn.Paste }
-    var pasting by remember { mutableStateOf(!page) }
+    var pasting by remember { mutableStateOf(!page && !code) }
     LaunchedEffect(Unit) { vm.lookAtAccount() }
     LaunchedEffect(name) { signed(name) }
     Caption(say.account)
@@ -84,14 +85,19 @@ private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, signed: (Stri
         else -> {}
     }
     Text(words.signInHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    if (page) PillButton(words.pageButton, null, vm::openSignInPage, Modifier.fillMaxWidth().testTag("sign-in-page"), prominent = true, enabled = !ui.busy)
+    // The ways in the provider's order, the first prominent.
+    for (way in info.signIn) when (way) {
+        SignIn.Code -> PillButton(words.code.button, null, vm::signInWithCode, Modifier.fillMaxWidth().testTag("sign-in-code"), prominent = way == info.signIn.first(), enabled = !ui.busy)
+        is SignIn.WebPage -> PillButton(words.pageButton, null, vm::openSignInPage, Modifier.fillMaxWidth().testTag("sign-in-page"), prominent = way == info.signIn.first(), enabled = !ui.busy)
+        SignIn.Paste -> {}
+    }
     if (pastes && !pasting) {
         TextAction(words.pasteInstead, { pasting = true }, Modifier.testTag("paste-instead"))
     } else if (pastes) {
         Text(words.pasteHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FormField(answer, { answer = it }, label = { Text(words.pasteLabel) }, minLines = 3, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth().testTag("pasted"))
         // The sign-in page shows its own failures.
-        ui.failed?.takeIf { ui.flow.shown !is dev.nori.music.ffi.SignInShown.Page }?.let { Text(say.signIn(words, it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("sign-in-failed")) }
+        ui.failed?.takeIf { ui.flow.shown !is dev.nori.music.ffi.SignInShown.Page && ui.flow.shown !is dev.nori.music.ffi.SignInShown.Code }?.let { Text(say.signIn(words, it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("sign-in-failed")) }
         PillButton(
             if (ui.busy) say.connecting else say.signInAction, null, { vm.signIn(answer) },
             Modifier.fillMaxWidth().testTag("sign-in"), enabled = !ui.busy && answer.isNotBlank(),

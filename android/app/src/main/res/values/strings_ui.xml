@@ -273,6 +273,16 @@
     <string name="provider_sign_in_hint">Sign in to see your own Home, your library and your likes.</string>
     <string name="provider_sign_in_page">Sign in to %1$s</string>
     <string name="provider_paste_instead">Paste cookies instead</string>
+    <string name="provider_code_button">Sign In with a Code</string>
+    <string name="provider_code_how">Open the page in a browser where you’re signed in to %1$s, check the code, and allow nori.</string>
+    <string name="provider_code_asking">Getting a code…</string>
+    <string name="provider_code_open">Open %1$s</string>
+    <string name="provider_code_copy">Copy Code</string>
+    <string name="provider_code_copied">Code copied</string>
+    <string name="provider_code_waiting">Waiting for you to allow it…</string>
+    <string name="provider_code_expired">This code expired.</string>
+    <string name="provider_code_renew">Get a New Code</string>
+    <string name="provider_code_refused">It wasn’t allowed. Get a new code and try again.</string>
     <string name="provider_paste_hint">In a private browser window, sign in to %1$s, copy the Cookie header of any request it makes (in the developer tools), paste it here, then close the window. nori keeps the session fresh from then on.</string>
     <string name="signing_in">Signing in…</string>
     <string name="provider_page_refused">%1$s didn’t accept this sign-in.</string>

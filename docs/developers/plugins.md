@@ -557,6 +557,12 @@ A client asks a `Kinds` (`Kinds::with_plugins`, or `Kinds::builtin` without plug
 offers, their forms and sign-in, and hands it to each `Core` it opens (`Core::use_kinds`) and its
 transport (`Kinds::set_transport`). See [Providers](providers.md).
 
+A provider whose sign-in ways include `code` answers `start-code` with a code, the page the user allows it
+on in any browser where they are signed in, the seconds between checks and, if it knows, how long it lasts,
+and its own `state` (a poll token). nori calls `check-code` with that record every `every` seconds (at
+least one) while the client shows the code, and stops when the user leaves it; `done` signs the account in
+as `sign-in` would. The web client and the iPod build no plugin provider, so they have no code step.
+
 ## Lyrics
 
 A plugin with a `lyrics` export is a lyrics service in nori's race (`nori_lyrics::race`), ranked after
