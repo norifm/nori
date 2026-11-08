@@ -114,8 +114,14 @@ void nori_ios_memory_warning(void);
 /// Closes the open session and opens the active saved server: NULL, or an error to free.
 char *nori_ios_reopen(const char *data_dir);
 
-/// The saved servers as JSON to free: [{id, label, url, active, kind}]; an empty label: call it by its kind.
+/// The saved servers as JSON to free: [{id, label, url, active, kind, waits, icon, letter}]; an empty
+/// label: call it by its kind. `icon` one of nori_ios_profile_icons' ids, `letter` the letter its circle
+/// shows (empty for none).
 char *nori_ios_servers(const char *data_dir);
+/// The icons a profile's circle can show, in the picker's order, as JSON to free: ["letter", ...].
+char *nori_ios_profile_icons(void);
+/// Server `id`'s circle shows `icon`, one of nori_ios_profile_icons' ids.
+void nori_ios_set_server_icon(const char *data_dir, const char *id, const char *icon);
 /// Makes server `id` the active one: 1, or 0 for an unknown id. Takes effect at nori_ios_reopen.
 int32_t nori_ios_pick_server(const char *data_dir, const char *id);
 void nori_ios_remove_server(const char *data_dir, const char *id);

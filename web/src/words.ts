@@ -175,6 +175,9 @@ export const W = {
   time: clock,
   servers: "Servers",
   accounts: "Accounts",
+  profileIcon: "Icon",
+  /** What an icon is called on the picker; a server's own mark is named after its kind of server. */
+  profileIcons: { Letter: "Letter", Provider: "OpenSubsonic", Sing: "Singing", Surprise: "Surprised", Talking: "Talking", LookUp: "Looking up", Satisfied: "Smiling", Think: "Thinking" } as Record<string, string>,
   plugins: "Plugins",
   pluginsGet: "Get plugins",
   pluginsEmpty: "Plugins add music sources, sounds and more.",

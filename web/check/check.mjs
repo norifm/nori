@@ -1,6 +1,6 @@
 // The web client in headless Chrome against the local Navidrome (tools/dev-server.sh) through
-// web/serve.py: sign-in, browsing, search, a song streamed and played, next and previous, a song taken out
-// of the queue, synced lyrics,
+// web/serve.py: sign-in, browsing, search, a profile's icon picked, a song streamed and played, next and
+// previous, a song taken out of the queue, synced lyrics,
 // a crossfade and an AutoMix transition heard as continuous samples, the seek bar
 // running and holding, a click on a lyric line, how soon a pause is heard, a page reopened where it
 // left. Exits non-zero when something is off, and prints what it saw.
@@ -84,6 +84,31 @@ if (!only || only.includes("browse")) {
   await page.waitForFunction(() => window.nori.searched?.query === "light", { timeout: 30000 });
   report.browse = { counts, search: (await facts()).searched };
   expect(report.browse.search.songs > 0, "a search finds songs");
+}
+
+if (!only || only.includes("profile")) {
+  // The profile's icon picked from its mark: the picker draws every icon, the one shown checked; a pick
+  // is kept and the row's mark follows it. The icon it had is put back the same way.
+  const profile = async () => JSON.parse(await ask("profile"));
+  const pick = async (icon) => {
+    await page.click("#profile-mark");
+    await page.waitForSelector("#profile-icons button[data-icon]");
+    const drawn = await page.$$eval("#profile-icons button[data-icon]", (b) => b.map((x) => ({ icon: x.dataset.icon, on: x.getAttribute("aria-checked") === "true", glyph: !!x.querySelector("use") && !!document.querySelector(x.querySelector("use").getAttribute("href")) })));
+    await page.click(`#profile-icons button[data-icon=${icon}]`);
+    await page.waitForFunction((i) => !document.querySelector("#profile-icons") && document.querySelector(`#profile-mark [data-icon=${i}]`), { timeout: 10000 }, icon);
+    return drawn;
+  };
+  await hash("#/settings/Servers", "settings");
+  const had = await profile();
+  const other = had.icons.findLast((i) => i !== had.icon);
+  const drawn = await pick(other);
+  const kept = await profile();
+  await pick(had.icon);
+  report.profile = { had: had.icon, icons: drawn.length, picked: kept.icon, back: (await profile()).icon };
+  expect(drawn.length === 8 && drawn.map((d) => d.icon).join() === had.icons.join(), "the icon picker draws every icon in the core's order");
+  expect(drawn.filter((d) => d.on).map((d) => d.icon).join() === had.icon, "the icon picker checks the icon shown");
+  expect(drawn.every((d) => d.icon === "Letter" || d.glyph), "every face and the server's mark has its glyph in the sprite");
+  expect(kept.icon === other && report.profile.back === had.icon, "a picked icon is kept, and the one before comes back");
 }
 
 /** Plays album `id` from song `at` with a click, as a person would. */

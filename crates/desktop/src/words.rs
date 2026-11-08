@@ -897,6 +897,22 @@ pub fn profile_label(p: &nori_core::settings::SavedServer, kinds: &nori_core::pr
     Some(nori_core::settings::label(&p.name, &p.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| provider_of(kinds, &p.kind).name)
 }
 
+/// What a profile's icon is called on its picker: its provider's mark by the provider's name (`provider`).
+pub fn profile_icon_name(icon: nori_core::settings::ProfileIcon, provider: &str) -> String {
+    use nori_core::settings::ProfileIcon;
+    match icon {
+        ProfileIcon::Letter => "Letter",
+        ProfileIcon::Provider => provider,
+        ProfileIcon::Sing => "Singing",
+        ProfileIcon::Surprise => "Surprised",
+        ProfileIcon::Talking => "Talking",
+        ProfileIcon::LookUp => "Looking up",
+        ProfileIcon::Satisfied => "Smiling",
+        ProfileIcon::Think => "Thinking",
+    }
+    .into()
+}
+
 /// The profile in use as the settings menu heads it: who (the account, else the profile's name, else its
 /// service), then where in grey (the server's address, or the service, or that no one is signed in).
 pub fn profile_lines(p: &nori_core::settings::SavedServer, kinds: &nori_core::providers::Kinds) -> (String, String) {

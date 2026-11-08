@@ -10,12 +10,14 @@
   import { route, href } from "../state/route.svelte";
   import { refreshTheme } from "../state/theme.svelte";
   import { ui } from "../state/ui.svelte";
-  import type { SettingRow, SettingsSection } from "../state/types";
+  import type { Profile, ProfileIcon, SettingRow, SettingsSection } from "../state/types";
   import { W } from "../words";
   import Icon from "../ui/Icon.svelte";
   import Look from "../ui/Look.svelte";
   import Page from "../ui/Page.svelte";
   import Plugins from "../ui/Plugins.svelte";
+  import ProfileIconPicker from "../ui/ProfileIconPicker.svelte";
+  import ProfileMark from "../ui/ProfileMark.svelte";
 
   const glyphs: Record<string, string> = { Playing: "play", Sound: "control-slider", Look: "palette", Lyrics: "quote-message", Library: "album-list", Servers: "server", Plugins: "view-grid", About: "info-circle" };
   let rev = $state(0);
@@ -24,7 +26,7 @@
     const names = JSON.parse(await ask<string>("settings_pages")) as string[];
     const name = route.arg;
     const sections = names.includes(name) ? (JSON.parse(await ask<string>("settings_page", name)) as SettingsSection[]) : [];
-    const profile = JSON.parse(await ask<string>("profile")) as { url: string; user: string } | null;
+    const profile = JSON.parse(await ask<string>("profile")) as Profile | null;
     return { names, sections, profile };
   });
   /** The page open: on a wide screen the first while none is asked for. */
@@ -36,6 +38,14 @@
   async function set(setting: string, value: string) {
     await ask("setting", setting, value);
     if (setting === "season" || setting === "theme" || setting === "motion") await refreshTheme();
+    rev++;
+  }
+
+  const profile = $derived(page.data?.profile ?? null);
+  /** The profile's icon picker is open. */
+  let picking = $state(false);
+  async function pickIcon(icon: ProfileIcon) {
+    await ask("profile_icon", icon);
     rev++;
   }
 
@@ -63,7 +73,7 @@
 {:else if !name}
   <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
     <div class="group root">
-      <a class="group-row" href={href("settings", "Servers")}><Icon name="server" /><span class="words"><span>{W.servers}</span><span class="sub">{page.data?.profile?.user ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
+      <a class="group-row" href={href("settings", "Servers")}><Icon name="server" /><span class="words"><span>{W.servers}</span><span class="sub">{profile?.user ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
       {#each page.data?.names ?? [] as n (n)}
         <a class="group-row" href={href("settings", n)} data-page={n}><Icon name={glyphs[n] ?? "settings"} /><span class="words"><span>{W.settingsPages[n]?.[0] ?? n}</span><span class="sub">{W.settingsPages[n]?.[1] ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
       {/each}
@@ -79,9 +89,17 @@
 {#snippet serversPage()}
   <div class="group-label">{W.accounts}</div>
   <div class="group">
-    <div class="group-row"><Icon name="server" /><span class="words"><span>{page.data?.profile?.user ?? ""}</span><span class="sub">{page.data?.profile?.url ?? ""}</span></span></div>
+    <div class="group-row profile">
+      {#if profile?.picks}
+        <button class="mark" id="profile-mark" aria-label={W.profileIcon} title={W.profileIcon} onclick={() => (picking = true)}><ProfileMark icon={profile.icon} letter={profile.letter} /></button>
+      {:else if profile}
+        <ProfileMark icon={profile.icon} letter={profile.letter} />
+      {/if}
+      <span class="words"><span>{profile?.user ?? ""}</span><span class="sub">{profile?.url ?? ""}</span></span>
+    </div>
     <button class="group-row" onclick={() => void signOut()}><Icon name="log-out" /><span class="words">{W.signOut}</span></button>
   </div>
+  {#if picking && profile}<ProfileIconPicker {profile} pick={(icon) => void pickIcon(icon)} close={() => (picking = false)} />{/if}
 {/snippet}
 
 {#snippet settingsPage()}
@@ -185,6 +203,18 @@
   }
   .under {
     padding-left: 34px;
+  }
+  /* The profile's row: its mark, and the hairline from where its words start. */
+  .profile {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  .profile::after {
+    left: 68px;
+  }
+  .mark {
+    display: grid;
+    border-radius: 50%;
   }
   .off {
     opacity: 0.5;

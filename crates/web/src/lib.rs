@@ -112,16 +112,40 @@ impl Nori {
         self.stored
     }
 
-    /// The profile signed in, as `{ url, user }`; null for none.
+    /// The profile signed in, as `{ url, user, icon, letter, icons, picks }`; null for none. `icon` is what
+    /// its circle shows (a `ProfileIcon` by name), `letter` the one `Letter` shows (`profile_letter`),
+    /// `icons` the picker's in its order (`profile_icons`), and `picks` whether its icon may be changed
+    /// (`changes_profile`).
     pub fn profile(&self) -> String {
-        match self.active() {
-            Some(p) => json!({ "url": p.url, "user": p.user }).to_string(),
-            None => "null".into(),
+        use nori_core::settings::{label, profile_icons, profile_letter};
+        let Some(p) = self.active() else { return "null".into() };
+        let icons: Vec<String> = profile_icons().iter().map(|i| format!("{i:?}")).collect();
+        let letter = profile_letter(p.clone(), label(&p.name, &p.url));
+        json!({ "url": p.url, "user": p.user, "icon": format!("{:?}", p.icon), "letter": letter, "icons": icons, "picks": self.changes_profile() }).to_string()
+    }
+
+    /// The profile signed in shows `icon` (a `ProfileIcon` by name, as `profile` lists them) on its circle.
+    pub fn profile_icon(&self, icon: String) -> Result<(), JsValue> {
+        use nori_core::settings::{servers_updated, ProfileIcon, ServerList};
+        let icon = ProfileIcon::ALL.into_iter().find(|i| format!("{i:?}") == icon).ok_or_else(|| error(format!("no profile icon {icon}")))?;
+        if !self.changes_profile() {
+            return Err(error("a jam's guest changes no profile"));
         }
+        let mut prefs = self.app.settings.current().unwrap_or_default();
+        let profile = prefs.active_server().cloned().ok_or_else(|| error("not signed in"))?;
+        let list = ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: prefs.active_server_id.clone() };
+        prefs.servers = servers_updated(list, SavedServer { icon, ..profile }).servers;
+        self.app.settings.put(prefs);
+        Ok(())
     }
 
     fn active(&self) -> Option<SavedServer> {
         self.app.settings.prefs(|p| p.active_server().cloned())
+    }
+
+    /// Whether the profile open may be changed here: a jam guest's is its host's.
+    fn changes_profile(&self) -> bool {
+        self.rules().settings.contains(&settings_pages::SettingsPart::ServerOptions)
     }
 
     /// The account signed in, whose own playlists it may change; None for a profile without one.
