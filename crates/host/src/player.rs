@@ -1,5 +1,6 @@
 //! What the player shows: this device's playback, the account's active device while it is another one,
-//! or the jam a guest is in; the same for every client and for the system's media controls.
+//! or the jam a guest is in; the same for every client. The system's media controls show it too, but for
+//! another device's playback ([`Playback::shown_to_system`]).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,6 +32,14 @@ impl Playback {
             Playback::There(e) | Playback::Jam(Some(e)) => Some(e),
             Playback::Here | Playback::Jam(None) => None,
         }
+    }
+
+    /// Whether the system's media controls (MPRIS, Now Playing, the lock screen) show it: never another
+    /// device's playback. The system takes what they show for sound coming out of this device and tells a
+    /// Bluetooth headset joined to it so: one joined to the other device as well takes this one for a
+    /// second source playing, and its pause and play for this one would reach the other device.
+    pub fn shown_to_system(&self) -> bool {
+        !matches!(self, Playback::There(_))
     }
 }
 
@@ -169,11 +178,16 @@ impl Handle {
 
     /// What the player shows playing.
     pub fn now(&self) -> Now {
-        match self.playback() {
-            Playback::There(e) => Now::mirrored(&e, false, e.mirror.playing),
+        self.now_of(&self.playback())
+    }
+
+    /// What the player shows playing of `playback`.
+    fn now_of(&self, playback: &Playback) -> Now {
+        match playback {
+            Playback::There(e) => Now::mirrored(e, false, e.mirror.playing),
             Playback::Jam(Some(e)) => {
                 let controls = self.remote().and_then(|r| r.jam_controls());
-                Now::mirrored(&e, true, controls.map_or(e.mirror.playing, |c| c.playing))
+                Now::mirrored(e, true, controls.map_or(e.mirror.playing, |c| c.playing))
             }
             Playback::Jam(None) => Now::jam_waiting(),
             Playback::Here => self.now_here(),
@@ -306,8 +320,11 @@ impl nori_mpris::Controls for Handle {
         self.star_song(song.id, on, there);
     }
     fn now(&self) -> nori_mpris::Now {
-        let now = Handle::now(self);
         let playback = self.playback();
+        if !playback.shown_to_system() {
+            return nori_mpris::Now::default();
+        }
+        let now = self.now_of(&playback);
         let song = now.song.clone().unwrap_or_default();
         let lines = now.song.as_ref().and_then(|s| self.core.session.now_playing(s.id.clone())).unwrap_or_else(|| nori_core::deciders::Shown::of(&song));
         let mut shown = nori_mpris::Now {

@@ -134,6 +134,8 @@ struct Now {
     var volume: Int?
     /// The jam's music, this iPod a guest in it: the host's, which nothing here controls.
     var jam = false
+    /// The lock screen shows it: not while another device plays (`Playback::shown_to_system`).
+    var system = false
 
     var playing: Bool { state == .playing }
 
@@ -396,6 +398,7 @@ final class Core {
         n.remote = d["remote"] as? Bool ?? false
         n.volume = d["volume"] as? Int
         n.jam = d["jam"] as? Bool ?? false
+        n.system = d["system"] as? Bool ?? false
         n.buffering = d["buffering"] as? Bool ?? false
         n.stamp = Date()
         now = n

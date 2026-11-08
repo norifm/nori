@@ -690,7 +690,8 @@ impl Runner {
             self.heard = None;
             app.heard(None);
         }
-        if moved || e.is_some() {
+        // The system's media controls follow a jam's playback; another device's they do not show.
+        if moved || (e.is_some() && playback.shown_to_system()) {
             s.mpris_changed();
         }
         self.playback = playback;

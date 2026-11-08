@@ -657,7 +657,7 @@ impl Handle {
     }
 
     /// Plays; a queue restored but never started starts where it was.
-    pub(crate) fn resume(&self) {
+    pub fn resume(&self) {
         if self.there(Press::Play) {
             return;
         }
@@ -668,7 +668,7 @@ impl Handle {
     }
 
     /// Pauses, on the device playing.
-    pub(crate) fn halt(&self) {
+    pub fn halt(&self) {
         if !self.there(Press::Pause) {
             self.engine.pause();
         }
@@ -1652,6 +1652,10 @@ mod refill_tests;
 
 #[path = "carry_on.rs"]
 mod carry_on;
+
+#[cfg(all(test, feature = "desktop"))]
+#[path = "elsewhere_tests.rs"]
+mod elsewhere_tests;
 
 /// A session's opening for a test: online, playing into `output`, reporting nowhere.
 #[cfg(test)]

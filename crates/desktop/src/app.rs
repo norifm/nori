@@ -4046,7 +4046,7 @@ impl App {
             let song = s.now().song;
             self.song_shown(song);
         }
-        if moved || self.there().is_some() {
+        if moved {
             self.on_session(|s| s.mpris_changed());
         }
     }

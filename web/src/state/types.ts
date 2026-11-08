@@ -66,6 +66,8 @@ export type Now = {
   /** That device's kind (`Phone`, `Desktop`, `Terminal`, `Guest`). */
   deviceKind: string | null;
   jam: boolean;
+  /** The browser's media session shows it: not while another device plays. */
+  system: boolean;
   /** A jam guest's picks are asked of the host; its lyric taps reach nothing. */
   asks: boolean;
   underruns: number;
