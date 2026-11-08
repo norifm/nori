@@ -154,6 +154,7 @@ final class CardCell: UICollectionViewCell {
     private let title = label(Fonts.font(14, .medium, .subheadline), Theme.label)
     private let detail = label(Fonts.font(12.5, .regular, .caption1), Theme.secondary)
     private var mix: MixCard?
+    private var mixKey = ""
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -179,8 +180,13 @@ final class CardCell: UICollectionViewCell {
     required init?(coder: NSCoder) { fatalError() }
 
     func show(_ item: Item, width: CGFloat, look: PageLook) {
+        // A page answers twice as it opens (stored, then the server's): the same card stays, its covers
+        // going on loading.
+        let key = "\(item.id) \(item.count) \(item.covers) \(width)"
+        if item.kind == "mix", mix != nil, mixKey == key { return }
         mix?.removeFromSuperview()
         mix = nil
+        mixKey = key
         if item.kind == "mix" {
             let card = MixCard(item, width: width)
             card.frame = CGRect(x: 0, y: 0, width: width, height: width * MixCard.tall)
@@ -225,7 +231,8 @@ final class Collage: UIView {
         let covers = Array(all.prefix(all.count >= 4 ? 4 : 1))
         let half = covers.count == 4
         for (i, id) in covers.enumerated() {
-            let v = CoverView()
+            // No plates of their own: each picture fades in over what is behind the collage, with no seams between.
+            let v = CoverView(plate: false)
             v.layer.cornerRadius = 0
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
@@ -285,8 +292,9 @@ final class MixCard: UIView {
         if Theme.coversTint, let first = item.covers.first {
             Core.shared.coverLook(first) { [weak self, weak name] look in
                 guard let look else { return }
-                self?.backgroundColor = look.page
-                name?.textColor = look.ink
+                let fade = Motion.plain ? 0 : 0.26
+                UIView.animate(withDuration: fade) { self?.backgroundColor = look.page }
+                if let name { UIView.transition(with: name, duration: fade, options: .transitionCrossDissolve, animations: { name.textColor = look.ink }) }
             }
         }
     }
