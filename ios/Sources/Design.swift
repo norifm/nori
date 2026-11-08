@@ -13,14 +13,14 @@ enum Radius {
 
 enum Space {
     /// The side margin every screen shares.
-    static let gutter: CGFloat = 20
+    static let gutter: CGFloat = 16
     static let tight: CGFloat = 8
     static let row: CGFloat = 12
     static let section: CGFloat = 26
     /// How far a page's title rises into the artwork's melt.
     static let titleRise: CGFloat = 34
     /// A grouped card's margin from the page's sides, and its rows' inset.
-    static let groupMargin: CGFloat = 16
+    static let groupMargin: CGFloat = 12
     static let groupInset: CGFloat = 14
 }
 
@@ -93,8 +93,8 @@ final class GroupLabel: UIView {
         text.translatesAutoresizingMaskIntoConstraints = false
         addSubview(text)
         NSLayoutConstraint.activate([
-            text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 32),
-            text.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -32),
+            text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Space.groupMargin + Space.groupInset + 2),
+            text.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -Space.groupMargin - Space.groupInset - 2),
             text.topAnchor.constraint(equalTo: topAnchor, constant: 22),
             text.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
         ])
@@ -473,7 +473,9 @@ final class Sheet: UIViewController {
     private let dim = UIView()
     private let paper = UIView()
     /// A sheet's cards sit nearer its sides than a page's, their words on the head's line.
-    private static let side = Space.gutter - Space.groupInset
+    private static let side: CGFloat = 6
+    /// Where a sheet's head and its cards' words start.
+    private static let words = side + Space.groupInset
     private let card = GroupCard(margin: Sheet.side)
     private let rest = GroupCard(margin: Sheet.side)
     /// Bare glyphs beside the title.
@@ -540,9 +542,9 @@ final class Sheet: UIViewController {
             top.insertArrangedSubview(art, at: 0)
         }
         // The head's glyphs end where a group's words do, their touch room past them.
-        let glyphEnd = Space.gutter - 10
+        let glyphEnd = Sheet.words - 10
         top.isLayoutMarginsRelativeArrangement = true
-        top.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Space.gutter, bottom: 0, trailing: titleGlyphs.isEmpty ? Space.gutter : glyphEnd)
+        top.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Sheet.words, bottom: 0, trailing: titleGlyphs.isEmpty ? Sheet.words : glyphEnd)
         var parts: [UIView] = head.arrangedSubviews.isEmpty ? [] : [top]
         var stands: [(UIView, CGFloat)] = parts.isEmpty ? [] : [(top, under == nil ? 14 : 8)]
         if let under {
@@ -554,7 +556,7 @@ final class Sheet: UIViewController {
             let line = UIStackView(arrangedSubviews: [words] + under.glyphs)
             line.alignment = .center
             line.isLayoutMarginsRelativeArrangement = true
-            line.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Space.gutter, bottom: 0, trailing: glyphEnd)
+            line.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: Sheet.words, bottom: 0, trailing: glyphEnd)
             line.heightAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
             parts += [rule, line]
             stands += [(rule, 0), (line, 2)]
