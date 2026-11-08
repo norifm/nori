@@ -299,6 +299,7 @@ pub(crate) fn playlist(core: &Core, p: &nori_core::Playlist, user: Option<&str>)
             m.insert("cover".into(), Value::String(cover(core, art, 300)));
         }
         m.insert("editable".into(), Value::Bool(user.is_some_and(|u| nori_core::menus::playlist_editable(p, u, true))));
+        m.insert("pinned".into(), Value::Bool(nori_core::browse::playlist_pinned(&core.session.settings, &p.id)));
     }
     v
 }
@@ -325,7 +326,14 @@ fn page(core: &Core, p: Page, user: Option<&str>) -> Value {
             "groups": v.groups.iter().map(|g| json!({ "kind": format!("{:?}", g.kind), "tag": g.tag, "albums": g.albums })).collect::<Value>(),
         }),
         Page::Songs { v } => json!({ "songs": songs(core, &v) }),
-        Page::Playlists { v } => json!({ "playlists": v.iter().map(|p| playlist(core, p, user)).collect::<Value>() }),
+        Page::Playlists { v } => {
+            let pins = core.session.settings.prefs(|p| p.pinned_playlists.clone());
+            let pinned = nori_core::browse::home_pinned(v.clone(), pins);
+            json!({
+                "playlists": v.iter().map(|p| playlist(core, p, user)).collect::<Value>(),
+                "pinned": pinned.iter().map(|p| playlist(core, p, user)).collect::<Value>(),
+            })
+        }
         Page::PlaylistPage { v } => json!({ "playlist": playlist(core, &v.playlist, user), "songs": songs(core, &v.songs), "seconds": v.seconds }),
         Page::StarredPage { v } => json!({ "artists": artists(core, &v.artists), "albums": albums(core, &v.albums), "songs": songs(core, &v.songs) }),
         Page::Genres { v } => json!({ "genres": v }),

@@ -1026,6 +1026,20 @@ fn star_marks_from_the_core_redraw_the_seals() {
 }
 
 #[test]
+fn a_playlists_seal_pins_it() {
+    let mut a = app();
+    a.open_playlist("pl-1".into());
+    let pl = nori_core::PlaylistDetail::new(nori_core::Playlist { id: "pl-1".into(), ..Default::default() }, vec![song("1", "One", 200)]);
+    a.handle(Msg::Data(Req::Playlist("pl-1".into()), Ok(Data::Playlist(Box::new(pl)))));
+    draw(&mut a, 170, 40);
+    let star = hit_rect(&a, Hit::Button(crate::app::Button::Star));
+    click(&mut a, star.x + 1, star.y);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Pin("pl-1".into(), true)));
+    draw(&mut a, 170, 40);
+    assert!(seal_filled(&a, crate::app::Button::Star), "shown at once");
+}
+
+#[test]
 fn buttons() {
     let mut a = app();
     a.go(View::Albums);

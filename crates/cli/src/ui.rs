@@ -778,7 +778,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let stars = app.rules.stars;
     let actions = app.page_actions();
     let missing = app.page_missing();
-    let App { pages, hits, marks, rules, devices, .. } = app;
+    let App { pages, hits, marks, rules, devices, prefs, .. } = app;
     let seals = &*marks;
     let marks = Marks::of(marks, rules, devices);
     let Some(p) = pages.last_mut() else { return };
@@ -786,7 +786,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let (title, by, caption, star): (String, String, String, Option<bool>) = match p {
         Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. } => (d.album.name.clone(), d.album.artist.clone(), crate::text::album_caption(d), Some(marks.stars.starred(Starrable::Album, &d.album.id, d.album.starred))),
         Page::Artist { detail: Load::Ready(d), .. } => (d.artist.name.clone(), String::new(), crate::text::artist_caption(d), Some(marks.stars.starred(Starrable::Artist, &d.artist.id, d.artist.starred))),
-        Page::Playlist { detail: Load::Ready(d), .. } => (d.playlist.name.clone(), d.playlist.owner.clone().unwrap_or_default(), crate::text::playlist_caption(d), None),
+        Page::Playlist { detail: Load::Ready(d), .. } => (d.playlist.name.clone(), d.playlist.owner.clone().unwrap_or_default(), crate::text::playlist_caption(d), Some(prefs.pinned_playlists.contains(&d.playlist.id))),
         Page::Row { title, items, .. } => (title.clone(), String::new(), crate::text::count(items.len() as u64, "entry", "entries"), None),
         Page::Mix { detail: Load::Ready(m), .. } => (crate::text::mix_name(m.name).to_string(), String::new(), crate::text::songs_caption(m.songs.len() as u32, m.seconds), None),
         Page::Mix { detail: Load::Failed(e), .. } => return failed(f, area, t, e),

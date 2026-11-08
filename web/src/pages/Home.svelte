@@ -1,6 +1,6 @@
 <script lang="ts" module>
   /** One of Home's rows as the core lays it out (`home_rows`): its albums, or its playlists. */
-  export type HomeRow = { row: string; kind: "albums"; sort: string; size: number } | { row: string; kind: "playlists"; take: number };
+  export type HomeRow = { row: string; kind: "albums"; sort: string; size: number } | { row: string; kind: "playlists"; take: number } | { row: string; kind: "pinned" };
 </script>
 
 <script lang="ts">
@@ -26,6 +26,10 @@
     const rows = JSON.parse(await ask<string>("home_rows")) as HomeRow[];
     const shelves = await Promise.all(
       rows.map(async (r): Promise<Shelf> => {
+        if (r.kind === "pinned") {
+          const p = await read<{ pinned?: Playlist[] }>({ kind: "playlists" }).catch(() => ({ pinned: [] }));
+          return { row: r.row, albums: [], playlists: p.pinned ?? [] };
+        }
         if (r.kind === "playlists") {
           const p = await read<{ playlists?: Playlist[] }>({ kind: "playlists" }).catch(() => ({ playlists: [] }));
           return { row: r.row, albums: [], playlists: (p.playlists ?? []).slice(0, r.take) };

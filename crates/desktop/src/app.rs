@@ -1581,6 +1581,7 @@ impl App {
             _ => PageLayout::List,
         });
         ui.set_page_mix(matches!(ask, PageAsk::Mix(_)));
+        ui.set_page_pinnable(matches!(ask, PageAsk::Playlist(_)));
         ui.set_page_title("".into());
         ui.set_page_sub("".into());
         ui.set_page_sub_artist("".into());
@@ -1841,6 +1842,7 @@ impl App {
                 self.show_page_songs();
             }
             Data::Page(PageGot::Playlist(d)) if shown => {
+                ui.set_page_starred(nori_core::browse::playlist_pinned(&self.root.app.settings, &d.playlist.id));
                 ui.set_page_title(d.playlist.name.as_str().into());
                 let notes = self.root.app.settings.prefs(|p| p.playlist_notes);
                 ui.set_page_sub(nori_core::pages::playlist_description(d.playlist.comment.clone(), notes).unwrap_or_default().into());
@@ -2738,13 +2740,20 @@ impl App {
         self.session.as_ref().is_some_and(|x| x.starred(s, self.there()))
     }
 
-    /// Flips the album's or artist's seal on the page shown.
+    /// Flips the album's or artist's seal on the page shown, or pins its playlist.
     fn star_page(&self) {
         let ui = self.ui();
         let kind = match ui.get_page_kind() {
             PageLayout::Album => nori_core::client::Starrable::Album,
             PageLayout::Artist => nori_core::client::Starrable::Artist,
-            PageLayout::List => return,
+            PageLayout::List => {
+                if ui.get_page_pinnable() {
+                    let on = !ui.get_page_starred();
+                    ui.set_page_starred(on);
+                    nori_core::browse::pin_playlist(&self.root.app.settings, ui.get_page_id().to_string(), on);
+                }
+                return;
+            }
         };
         let on = !ui.get_page_starred();
         ui.set_page_starred(on);
