@@ -107,36 +107,22 @@ final class ShellController: UIViewController {
     private func tab(_ title: String, _ root: UIViewController) -> UINavigationController {
         root.title = title
         let nav = NavController(rootViewController: root)
-        Theme.apply(nav: nav.navigationBar)
         nav.view.backgroundColor = Theme.background
         return nav
     }
 }
 
-extension UIViewController {
-    /// The page carries its own head (`PageTitle` or a hero) in place of the navigation bar, and is left
-    /// with the edge swipe, as on Android.
-    @objc var barless: Bool { false }
-}
-
-/// A tab's stack: the status bar is its bar's, but over a page's artwork that page's own.
-final class NavController: UINavigationController, UIGestureRecognizerDelegate, UINavigationControllerDelegate {
+/// A tab's stack: the status bar is the theme's, but over a page's artwork that page's own.
+final class NavController: UINavigationController, UIGestureRecognizerDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
-        // UIKit's own delegate turns the edge swipe off while the bar is hidden.
+        // Every page carries its own name (`PageTitle` or a hero) and is left with the edge swipe, as on
+        // Android; UIKit's own delegate turns that swipe off while the bar is hidden.
+        setNavigationBarHidden(true, animated: false)
         interactivePopGestureRecognizer?.delegate = self
-        delegate = self
-        viewControllers.first.map { setNavigationBarHidden($0.barless, animated: false) }
     }
 
-    func navigationController(_ navigationController: UINavigationController, willShow viewController: UIViewController, animated: Bool) {
-        setNavigationBarHidden(viewController.barless, animated: animated)
-        // An edge swipe let go of: the page that stays has what it had.
-        transitionCoordinator?.notifyWhenInteractionChanges { [weak self] context in
-            guard context.isCancelled, let stays = context.viewController(forKey: .from) else { return }
-            self?.setNavigationBarHidden(stays.barless, animated: true)
-        }
-    }
+    override var preferredStatusBarStyle: UIStatusBarStyle { Theme.statusBar }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         viewControllers.count > 1
@@ -511,8 +497,8 @@ final class DownloadsPage: PageController {
 }
 
 /// The index at every key, the server after a typing pause.
-final class SearchPage: PageController, UISearchResultsUpdating, UISearchBarDelegate, UISearchControllerDelegate {
-    private let search = UISearchController(searchResultsController: nil)
+final class SearchPage: PageController, UISearchBarDelegate {
+    private let search = UISearchBar()
     private var pending: DispatchWorkItem?
     private var typed = ""
     /// The pause before the server is asked (the core's), seconds.
@@ -524,30 +510,22 @@ final class SearchPage: PageController, UISearchResultsUpdating, UISearchBarDele
     override func viewDidLoad() {
         super.viewDidLoad()
         refreshControl = nil
-        search.obscuresBackgroundDuringPresentation = false
-        search.searchBar.placeholder = Say.searchHint
-        search.searchBar.barStyle = Theme.bar
-        search.searchBar.keyboardAppearance = Theme.keyboard
-        search.searchBar.tintColor = Theme.accent
-        search.searchBar.searchBarStyle = .minimal
-        search.searchResultsUpdater = self
-        search.searchBar.delegate = self
+        tableView.keyboardDismissMode = .onDrag
+        search.placeholder = Say.searchHint
+        search.barStyle = Theme.bar
+        search.keyboardAppearance = Theme.keyboard
+        search.tintColor = Theme.accent
+        search.searchBarStyle = .minimal
         search.delegate = self
-        navigationItem.searchController = search
-        navigationItem.hidesSearchBarWhenScrolling = false
-        definesPresentationContext = true
+        search.sizeToFit()
+        underName = search
     }
 
-    /// Opened with nothing typed (the tab tapped): the field takes the keyboard at once. iOS 12 ignores
-    /// both steps until the bar is in place, so each waits a turn of the run loop.
+    /// Opened with nothing typed (the tab tapped): the field takes the keyboard at once.
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        guard (search.searchBar.text ?? "").isEmpty else { return }
-        DispatchQueue.main.async { self.search.isActive = true }
-    }
-
-    func didPresentSearchController(_ searchController: UISearchController) {
-        DispatchQueue.main.async { searchController.searchBar.becomeFirstResponder() }
+        guard (search.text ?? "").isEmpty else { return }
+        search.becomeFirstResponder()
     }
 
     override func reload() {
@@ -571,8 +549,7 @@ final class SearchPage: PageController, UISearchResultsUpdating, UISearchBarDele
         super.took(a, appending: appending)
     }
 
-    func updateSearchResults(for searchController: UISearchController) {
-        let text = searchController.searchBar.text ?? ""
+    func searchBar(_ searchBar: UISearchBar, textDidChange text: String) {
         guard text != typed else { return }
         typed = text
         pending?.cancel()
@@ -590,8 +567,8 @@ final class SearchPage: PageController, UISearchResultsUpdating, UISearchBarDele
 
     override func open(_ item: Item) {
         if item.kind == "recent" {
-            search.searchBar.text = item.id
-            search.isActive = true
+            search.text = item.id
+            searchBar(search, textDidChange: item.id)
             return
         }
         if !typed.isEmpty { typed.withCString { nori_ios_remember($0) } }
@@ -638,12 +615,59 @@ func dress(_ table: UITableView) {
     table.cellLayoutMarginsFollowReadableWidth = false
 }
 
+/// A list with no bar: its name over the rows, as Android's, the page's paper under the status bar.
+class TablePage: UITableViewController {
+    private let statusPlate = UIView()
+    /// At the end of the name: what acts on the page, or a spinner while it works.
+    var nameEnd: [UIView] = [] { didSet { writeHead() } }
+    /// Under the name: an intro, a search field, an offer.
+    var underName: UIView? { didSet { writeHead() } }
+    override var title: String? { didSet { writeHead() } }
+    /// Whether the page is what the screen's top shows.
+    var ownsStatusBar: Bool { navigationController?.topViewController === self }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        statusPlate.backgroundColor = Theme.background
+        statusPlate.layer.zPosition = 1
+        view.addSubview(statusPlate)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        placeStatusPlate()
+    }
+
+    override func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        placeStatusPlate()
+    }
+
+    private func placeStatusPlate() {
+        statusPlate.isHidden = !ownsStatusBar
+        statusPlate.frame = CGRect(x: 0, y: tableView.contentOffset.y, width: tableView.bounds.width, height: UIApplication.shared.statusBarFrame.height)
+    }
+
+    func writeHead() {
+        guard isViewLoaded else { return }
+        let column = UIStackView(arrangedSubviews: [PageTitle(title ?? "", trailing: nameEnd)] + (underName.map { [$0] } ?? []))
+        column.axis = .vertical
+        tableView.tableHeaderView = sized(column)
+    }
+
+    /// `v` sized to the table's width, for a table header.
+    func sized(_ v: UIView) -> UIView {
+        let width = UIScreen.main.bounds.width
+        let size = v.systemLayoutSizeFitting(CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                                             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        v.frame = CGRect(x: 0, y: 0, width: width, height: size.height)
+        return v
+    }
+}
+
 /// A titled list of grouped cards: the scroll of a settings page and of the library's top.
 class CardsPage: UIViewController {
     let column = UIStackView()
     private let scroll = UIScrollView()
-
-    override var barless: Bool { true }
 
     override func viewDidLoad() {
         super.viewDidLoad()

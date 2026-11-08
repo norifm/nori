@@ -44,8 +44,6 @@ enum Glyph {
     static let downloadingRow = draw(Iconoir.download, 15)
     static let more = draw(Iconoir.moreHoriz, 28)
     static let close = draw(Iconoir.navArrowDown, 28)
-    /// The navigation bar's way back.
-    static let back = draw(Iconoir.arrowLeft, 22)
     /// A pill's glyph.
     static let playPill = draw(Iconoir.playSolid, 18)
     static let pausePill = draw(Iconoir.pauseSolid, 18)

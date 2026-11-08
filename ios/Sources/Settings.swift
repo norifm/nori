@@ -444,23 +444,27 @@ final class EqualizerPage: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = Say.equalizer
-        navigationItem.largeTitleDisplayMode = .never
         view.backgroundColor = Theme.background
         toggle.onTintColor = Theme.switchOn
         toggle.addTarget(self, action: #selector(switched), for: .valueChanged)
-        navigationItem.rightBarButtonItem = UIBarButtonItem(customView: toggle)
         stack.axis = .vertical
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         let scroll = UIScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.delaysContentTouches = false
+        let name = PageTitle(title ?? "", trailing: [toggle])
+        name.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(name)
         view.addSubview(scroll)
         scroll.addSubview(stack)
         NSLayoutConstraint.activate([
+            name.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            name.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            name.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: view.topAnchor),
+            scroll.topAnchor.constraint(equalTo: name.bottomAnchor),
             scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: Space.gutter),
             stack.trailingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: -Space.gutter),

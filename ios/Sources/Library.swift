@@ -16,8 +16,6 @@ final class LibraryPage: UIViewController {
     private static let kept = "nori.library.section"
     private var shown: PageController?
 
-    override var barless: Bool { true }
-
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = Theme.background
