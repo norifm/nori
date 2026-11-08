@@ -49,7 +49,6 @@ final class PlayerCard: UIViewController {
     /// Where the sound goes: the device's glyph and name, one button.
     private let output = UIButton(type: .custom)
     private let outputs = OutputPicker()
-    private let grabber = UIButton(type: .custom)
     private var ticker: Timer?
     private var scrubbing = false
     private var paintedCover = ""
@@ -66,10 +65,6 @@ final class PlayerCard: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        grabber.setImage(Glyph.close, for: .normal)
-        grabber.tintColor = .white
-        grabber.addTarget(self, action: #selector(close), for: .touchUpInside)
-        grabber.accessibilityLabel = Say.close
         cover.layer.cornerRadius = 0
         let shade = GradientView(colours: [UIColor.black.withAlphaComponent(0.30), UIColor.black.withAlphaComponent(0)], at: [0, 0.16])
 
@@ -136,7 +131,7 @@ final class PlayerCard: UIViewController {
         panelArea.isHidden = true
         panelFoot.translatesAutoresizingMaskIntoConstraints = false
         panelArea.addSubview(panelFoot)
-        for v in [cover, panelArea, column, grabber] as [UIView] {
+        for v in [cover, panelArea, column] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -164,11 +159,7 @@ final class PlayerCard: UIViewController {
             cover.topAnchor.constraint(equalTo: view.topAnchor),
             cover.bottomAnchor.constraint(lessThanOrEqualTo: songRow.bottomAnchor),
             deep,
-            grabber.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            grabber.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            grabber.widthAnchor.constraint(equalToConstant: 60),
-            grabber.heightAnchor.constraint(equalToConstant: 32),
-            panelArea.topAnchor.constraint(equalTo: grabber.bottomAnchor),
+            panelArea.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
             panelArea.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             panelArea.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             panelArea.bottomAnchor.constraint(equalTo: column.topAnchor, constant: -6),
@@ -345,7 +336,11 @@ final class PlayerCard: UIViewController {
         return image
     }
 
-    @objc private func close() { dismiss(animated: true) }
+    /// VoiceOver's way out, the card having no button for it.
+    override func accessibilityPerformEscape() -> Bool {
+        dismiss(animated: true)
+        return true
+    }
 
     @objc private func scrubBegan() { scrubbing = true }
 
@@ -446,7 +441,6 @@ final class PlayerCard: UIViewController {
         panelArea.isHidden = art
         cover.isHidden = !art
         songRow.isHidden = panel == .lyrics
-        grabber.tintColor = art ? .white : Theme.player.quiet
         lyrics.lit = panel == .lyrics
         queue.lit = panel == .queue
         setNeedsStatusBarAppearanceUpdate()
