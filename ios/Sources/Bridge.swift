@@ -20,8 +20,6 @@ struct Item {
     let artistId: String
     /// A mix tile's covers, up to four.
     let covers: [String]
-    /// The A–Z index letter, when the list runs in the order of a name.
-    let letter: String
     /// A running download: whole percent (-1 unknown), bytes a second (0 unknown), seconds left (-1).
     let progress: (percent: Int, speed: Int, left: Int)?
     /// In a jam's queue: who asked for the song, where someone did.
@@ -33,7 +31,6 @@ struct Item {
         by = d["by"] as? String ?? ""
         download = d["dl"] as? Int ?? 0
         progress = (d["pct"] as? Int).map { ($0, d["bps"] as? Int ?? 0, d["eta"] as? Int ?? -1) }
-        letter = d["l"] as? String ?? ""
         covers = d["covers"] as? [String] ?? []
         kind = d["k"] as? String ?? ""
         id = d["id"] as? String ?? ""
