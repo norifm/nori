@@ -13,14 +13,14 @@ enum Radius {
 
 enum Space {
     /// The side margin every screen shares.
-    static let gutter: CGFloat = 16
+    static let gutter: CGFloat = 14
     static let tight: CGFloat = 8
     static let row: CGFloat = 12
     static let section: CGFloat = 26
     /// How far a page's title rises into the artwork's melt.
     static let titleRise: CGFloat = 34
     /// A grouped card's margin from the page's sides, and its rows' inset.
-    static let groupMargin: CGFloat = 12
+    static let groupMargin: CGFloat = 10
     static let groupInset: CGFloat = 14
 }
 
