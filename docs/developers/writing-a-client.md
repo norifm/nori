@@ -62,7 +62,9 @@ What the session then does for the client:
 - Says what the player shows (`player.rs`: `Now`, `QueueShown`, `Playback::{Here, There, Jam}`), the same
   for every client and for the system's media controls.
 - Runs remote control and jams while they are on (`remote.rs`: `Remotes`, `Elsewhere`), and joins and
-  leaves a jam as a guest (`jam_join`, `jam_joined`, `jam_left`). A LAN jam's guest searches and
+  leaves a jam as a guest (`jam_join`, `jam_joined`, `jam_left`). A client replacing its session calls
+  `close_for` with the profile taking over, and `profile_picked` to switch: a guest profile switched
+  away from then leaves its jam and goes. A LAN jam's guest searches and
   streams through its host ([Providers](providers.md)): any native client joins any LAN jam, plugins
   or not.
 - Reports through `Said`: engine events, lyrics, search answers, notes for a status line (`Note`),

@@ -170,8 +170,9 @@ impl Nori {
 
     /// Signs out: no profile is open, and the next start asks to sign in. The profile's data stays.
     pub fn logout(&self) {
-        self.leave();
+        self.leave_for(None);
         let mut prefs = self.app.settings.current().unwrap_or_default();
+        prefs.servers.retain(|s| !nori_core::remote::is_guest_key(&s.api_key));
         prefs.active_server_id.clear();
         self.app.settings.put(prefs);
     }
@@ -686,6 +687,11 @@ impl Nori {
         *self.client.borrow_mut() = None;
         // One profile's answers are not another's.
         self.search.typed(String::new());
+    }
+
+    /// The core module opens no guest's profile, so nothing is left behind.
+    fn leave_for(&self, _next: Option<&SavedServer>) {
+        self.leave();
     }
 
     /// An account's: the core module opens no guest's profile.

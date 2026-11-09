@@ -2363,7 +2363,9 @@ impl Remote {
     /// profile at once too. The relay is told on the way, as far as it can be before [`Remote::stop`]
     /// gives up waiting.
     pub fn jam_leave(self: Arc<Self>) {
-        self.inner.lock().guest = GuestJam::Over;
+        if matches!(std::mem::replace(&mut self.inner.lock().guest, GuestJam::Over), GuestJam::Over) {
+            return;
+        }
         self.unfollow();
         self.out(Out::Get(self.relay_url("noriRemote.leave", &[])));
     }

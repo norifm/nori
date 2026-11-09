@@ -177,8 +177,9 @@ fn run_with(o: Options, root: &Arc<Root>, db: &str) -> Result<(), String> {
             s.id
         });
         prefs.servers.iter_mut().filter(|s| s.id == id && !password.is_empty()).for_each(|s| s.password = password.clone());
-        prefs.active_server_id = id;
-        root.app.settings.put(prefs.clone());
+        root.app.settings.put(prefs);
+        nori_host::profile_picked(&root.app.settings, &id);
+        prefs = root.app.settings.current().unwrap_or_default();
     }
     if let Some(file) = &o.install_plugin {
         root.install_plugin(file)?;
@@ -270,7 +271,7 @@ impl Runner {
     /// Opens `profile`; `added` says what follows when it was just added.
     fn open(&mut self, app: &mut App, profile: SavedServer, added: Option<AfterAdding>) {
         if let Some(s) = self.session.take() {
-            s.close();
+            s.close_for(Some(&profile));
         }
         (self.playback, self.queue) = (Playback::Here, None);
         self.waiting = self.root.plugins().kinds.waits(profile.clone()).map(|_| profile.clone());
@@ -635,7 +636,7 @@ impl Runner {
                     }
                     None => {
                         if let Some(s) = self.session.take() {
-                            s.close();
+                            s.close_for(None);
                         }
                         prefs_changed(app);
                         app.session_ended();
@@ -935,11 +936,9 @@ impl Runner {
                 return prefs_changed(app);
             }
             Cmd::SwitchServer(id) => {
-                let mut prefs = self.root.app.settings.current().unwrap_or_default();
-                let Some(p) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
-                prefs.active_server_id = id;
-                self.root.app.settings.put(prefs.clone());
-                app.prefs_changed(prefs);
+                let settings = &self.root.app.settings;
+                let Some(p) = nori_host::profile_picked(settings, &id) else { return };
+                app.prefs_changed(settings.current().unwrap_or_default());
                 self.open(app, p, None);
                 app.go(View::Home);
                 return;

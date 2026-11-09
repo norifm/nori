@@ -576,8 +576,9 @@ pub async fn log_in(kinds: &Kinds, transport: Arc<dyn Transport>, settings: &cra
 }
 
 /// `prefs` with `profile` the active profile, in place of the saved one with its id or added
-/// ([`crate::settings::servers_activated`]).
+/// ([`crate::settings::servers_activated`]). A jam's guest profile lasts only while it is the one open.
 pub fn profile_activated(mut prefs: crate::settings::StoredPrefs, profile: SavedServer) -> crate::settings::StoredPrefs {
+    prefs.servers.retain(|s| s.id == profile.id || !nori_remote::is_guest_key(&s.api_key));
     let list = ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: std::mem::take(&mut prefs.active_server_id) };
     let list = crate::settings::servers_activated(list, profile);
     (prefs.servers, prefs.active_server_id) = (list.servers, list.active_server_id);
@@ -860,6 +861,18 @@ mod tests {
         assert!(k.server_ready(SavedServer { user: "u".into(), ..p.clone() }));
         assert!(k.server_ready(SavedServer { api_key: "k".into(), ..p.clone() }));
         assert!(!k.server_ready(SavedServer { url: "  ".into(), user: "u".into(), ..p }));
+    }
+
+    /// A jam's guest profile lasts only while it is the one open.
+    #[test]
+    fn activating_another_profile_drops_a_jam_guest() {
+        let own = saved("own", ServerKind::Subsonic, "http://own", "ann");
+        let guest = SavedServer { api_key: nori_remote::guest_key("k"), ..saved("g", ServerKind::Subsonic, "http://friend", "") };
+        let prefs = crate::settings::StoredPrefs { servers: vec![own.clone(), guest.clone()], active_server_id: "g".into(), ..Default::default() };
+        let ids = |p: &crate::settings::StoredPrefs| p.servers.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&profile_activated(prefs.clone(), guest)), ["own", "g"], "opened again, it stays");
+        let after = profile_activated(prefs, own);
+        assert_eq!((ids(&after), after.active_server_id.as_str()), (vec!["own".to_string()], "own"));
     }
 
     /// A plugin's kind without the plugin has no provider: it is not offered, its form is never

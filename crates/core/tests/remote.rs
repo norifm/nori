@@ -986,6 +986,23 @@ fn active_discovery_respects_local_controls_and_visibility() {
     }
 }
 
+/// A guest leaving at once and again as its session closes says so once.
+#[test]
+fn leaving_a_jam_twice_tells_the_relay_once() {
+    let relay = Relay::new();
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    desk.playing(&["s1"], 0);
+    desk.remote.clone().serve(true);
+    let pass = joined(&relay, opened(&desk), "Gus".into());
+    let gus = Device::new(&relay, ServerConfig { url: pass.url, api_key: Some(pass.api_key), ..Default::default() }, DeviceKind::Guest, "Gus");
+    gus.remote.clone().jam_leave();
+    gus.remote.clone().jam_leave();
+    eventually(&relay, "the leave heard", || relay.asked_for("noriRemote.leave") > 0);
+    relay.sim.pass(Duration::from_secs(5));
+    assert_eq!(relay.asked_for("noriRemote.leave"), 1);
+    relay.close();
+}
+
 #[test]
 fn active_discovery_uses_lan_without_a_relay() {
     let relay = Relay::absent();

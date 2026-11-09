@@ -306,6 +306,8 @@ pub struct Parts {
     device: nori_core::remote::RemoteMe,
     /// The profile is a jam guest's: songs picked are asked of the jam's host, and nothing else plays.
     pub guest: bool,
+    /// The saved profile open.
+    profile_id: String,
     /// The rules the client was last told of ([`Parts::account_changed`]).
     rules_shown: parking_lot::Mutex<ProfileRules>,
     discovery: Option<Arc<dyn nori_core::remote::Discovery>>,
@@ -424,6 +426,7 @@ impl Session {
             remotes,
             device,
             guest,
+            profile_id: o.profile.id.clone(),
             rules_shown: parking_lot::Mutex::new(rules),
             discovery: o.discovery,
             curve: Default::default(),
@@ -461,6 +464,21 @@ impl Session {
         self.remotes.set(None);
         self.keeper.stop();
         self.engine.stop();
+    }
+
+    /// Closes the session as `next` takes over (None: the sign-in). A jam guest's profile is left for
+    /// good then: the jam is told, and its rows are forgotten.
+    pub fn close_for(&self, next: Option<&SavedServer>) {
+        let left = self.guest && next.is_none_or(|p| p.id != self.profile_id);
+        if let Some(r) = self.remote().filter(|_| left) {
+            r.jam_leave();
+        }
+        self.close();
+        if left {
+            if let Err(e) = nori_core::client::db_forget_server(self.db.to_string_lossy().into_owned(), nori_core::settings::server_db_id(&self.profile_id)) {
+                nori_core::alog::info(&format!("forgetting a jam guest's rows: {e}"));
+            }
+        }
     }
 }
 
@@ -1768,6 +1786,26 @@ mod tests {
         let s = Session::open(Open { offline: true, ..test_open(queue.clone(), dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) })
         .unwrap();
         assert!(queue.playlist(|p| p.ids().is_empty()), "the host's songs are gone");
+        s.close();
+    }
+
+    /// A guest profile left takes its rows with it; one opened again keeps them.
+    #[test]
+    fn a_guest_profiles_rows_go_once_it_is_left() {
+        let dir = nori_testdir::TempDir::new("host-guest-rows");
+        let queue = Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new()));
+        let guest = SavedServer { id: "guest".into(), url: "http://friend".into(), api_key: nori_remote::guest_key("k"), ..Default::default() };
+        let own = SavedServer { id: "own".into(), url: "http://own".into(), user: "ann".into(), ..Default::default() };
+        let open = || Session::open(Open { offline: true, ..test_open(queue.clone(), dir.path(), guest.clone(), Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
+
+        let s = open();
+        s.core.search_remember("song".into()).unwrap();
+        s.close_for(Some(&guest));
+        let s = open();
+        assert_eq!(s.core.search_history().unwrap(), ["song"]);
+        s.close_for(Some(&own));
+        let s = open();
+        assert!(s.core.search_history().unwrap().is_empty());
         s.close();
     }
 
