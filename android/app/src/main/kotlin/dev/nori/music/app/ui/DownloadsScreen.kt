@@ -401,7 +401,7 @@ private fun DownloadRow(
             }
             trailing()
         }
-        if (divider) Hairline(startIndent = Space.gutter + 58.dp)
+        if (divider) Hairline(startIndent = Space.gutter + 58.dp, endIndent = Space.gutter)
     }
 }
 

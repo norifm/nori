@@ -61,7 +61,7 @@ final class ItemCell: UITableViewCell {
             mark.widthAnchor.constraint(equalToConstant: 15),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 60),
             line.leadingAnchor.constraint(equalTo: text.leadingAnchor),
-            line.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            line.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -Space.gutter),
             line.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
     }

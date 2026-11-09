@@ -475,9 +475,9 @@ private const val WASH_ROWS = CoverLook.WASH
  * right edge of the screen. Drawn, not laid out, so a long list does not pay for a divider composable.
  */
 @Composable
-fun Hairline(startIndent: Dp = Space.gutter) {
+fun Hairline(startIndent: Dp = Space.gutter, endIndent: Dp = GROUP_INSET) {
     val color = LocalContentColor.current.copy(alpha = 0.10f)
-    Box(Modifier.fillMaxWidth().padding(start = startIndent).height(1.dp).background(color))
+    Box(Modifier.fillMaxWidth().padding(start = startIndent, end = endIndent).height(1.dp).background(color))
 }
 
 /**
@@ -1108,7 +1108,7 @@ fun NavRow(
                 Modifier.padding(start = 6.dp).size(19.dp), tint = scheme.onSurfaceVariant.copy(alpha = 0.7f),
             )
         }
-        if (divider) Hairline(startIndent = Space.gutter + when { leading != null -> 60.dp; leadingText != null -> LEADING_TEXT; else -> 0.dp })
+        if (divider) Hairline(startIndent = Space.gutter + when { leading != null -> 60.dp; leadingText != null -> LEADING_TEXT; else -> 0.dp }, endIndent = Space.gutter)
     }
 }
 
@@ -1136,7 +1136,7 @@ fun ActionRow(title: String, icon: ImageVector, onClick: () -> Unit, divider: Bo
             Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
             Text(title, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
         }
-        if (divider) Hairline(startIndent = Space.gutter + 32.dp)
+        if (divider) Hairline(startIndent = Space.gutter + 32.dp, endIndent = Space.gutter)
     }
 }
 

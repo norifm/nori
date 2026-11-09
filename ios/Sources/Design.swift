@@ -223,7 +223,7 @@ final class GroupRow: UIControl {
             strip.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             heightAnchor.constraint(greaterThanOrEqualToConstant: minHeight),
             divider.leadingAnchor.constraint(equalTo: words.leadingAnchor),
-            divider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            divider.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Space.groupInset),
             divider.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         if tapped != nil { addTarget(self, action: #selector(fire), for: .touchUpInside) }

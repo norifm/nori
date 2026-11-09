@@ -412,7 +412,7 @@ internal fun ListHead(label: String, actions: (@Composable RowScope.() -> Unit)?
             )
             actions?.invoke(this)
         }
-        Box(Modifier.padding(end = hairlineEnd)) { Hairline(startIndent = edge) }
+        Box(Modifier.padding(end = hairlineEnd)) { Hairline(startIndent = edge, endIndent = 0.dp) }
     }
 }
 
