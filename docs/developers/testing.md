@@ -213,7 +213,7 @@ A new device check needs a line here saying why Rust cannot test it.
 | --- | --- | --- |
 | `lyrics` | lyrics cross the binding; the next song's lyrics are cached ahead and arrive after an offline skip | the Android binding and the network going |
 | `status-bar` | the status bar's icons stay right after a theme change under an album page (local server) | what the window was told, which only the system reports |
-| `notification` | the notification's seal and shuffle act and redraw; its cover is drawn once and then served from disk | the media session, the cover provider's readers |
+| `notification` | the session's seal and shuffle act and redraw, and the system's notification has the seal without shuffle; its cover is drawn once and then served from disk | the media session, the cover provider's readers |
 | `album-page` | the Play and Shuffle pills answer for the page's own queue; holding a song opens its menu | Compose taps and gestures |
 | `bridge` | downloads stand in while the server is out of reach, and the album comes back with the network | the network really going and coming |
 | `download-notification` | tapping the download notification opens the queue | the notification's intent |
