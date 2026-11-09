@@ -325,6 +325,26 @@ pub struct Parts {
     pub(crate) output: parking_lot::Mutex<String>,
 }
 
+/// Drops the jam guest profiles saved besides `open`, with their rows: a guest lasts only while it is open.
+fn forget_left_guests(settings: &nori_core::settings_store::Settings, open: &str, db: &str) {
+    let mut prefs = settings.current().unwrap_or_default();
+    let (left, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut prefs.servers).into_iter().partition(|s| s.id != open && nori_remote::is_guest_key(&s.api_key));
+    if left.is_empty() {
+        return;
+    }
+    prefs.servers = kept;
+    settings.put(prefs);
+    for guest in left {
+        forget_guest_rows(db.to_owned(), &guest.id);
+    }
+}
+
+fn forget_guest_rows(db: String, profile: &str) {
+    if let Err(e) = nori_core::client::db_forget_server(db, nori_core::settings::server_db_id(profile)) {
+        nori_core::alog::info(&format!("forgetting a jam guest's rows: {e}"));
+    }
+}
+
 impl Session {
     /// Opens the profile without touching the network, so an unreachable server still opens with what
     /// is stored; [`Handle::check`] reports reachability.
@@ -355,6 +375,7 @@ impl Session {
     /// `turns`: the caller drives the engine, so songs are measured on its turns, not threads.
     fn open_with(o: Open, turns: bool, start: impl FnOnce(CoreLibrary, CoreApp, CoreQueue, Box<dyn AudioOutput>, Config, Events) -> Engine) -> Result<Session, String> {
         let db = db_path(o.data);
+        forget_left_guests(&o.queue.settings, &o.profile.id, &db);
         let core = Core::new(db.clone(), nori_core::settings::server_db_id(&o.profile.id), o.queue.clone()).map_err(|e| format!("the database: {e}"))?;
         core.use_kinds(o.kinds.clone());
         let transport: Arc<dyn Transport> = if o.offline { Arc::new(Offline) } else { o.http.clone() };
@@ -475,9 +496,7 @@ impl Session {
         }
         self.close();
         if left {
-            if let Err(e) = nori_core::client::db_forget_server(self.db.to_string_lossy().into_owned(), nori_core::settings::server_db_id(&self.profile_id)) {
-                nori_core::alog::info(&format!("forgetting a jam guest's rows: {e}"));
-            }
+            forget_guest_rows(self.db.to_string_lossy().into_owned(), &self.profile_id);
         }
     }
 }
@@ -1786,6 +1805,33 @@ mod tests {
         let s = Session::open(Open { offline: true, ..test_open(queue.clone(), dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) })
         .unwrap();
         assert!(queue.playlist(|p| p.ids().is_empty()), "the host's songs are gone");
+        s.close();
+    }
+
+    /// A guest profile still saved from a run before goes with its rows once another profile opens.
+    #[test]
+    fn a_guest_profile_left_saved_goes_when_another_opens() {
+        let dir = nori_testdir::TempDir::new("host-guest-left-saved");
+        let settings = nori_core::settings_store::Settings::new();
+        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
+        let guest = SavedServer { id: "guest".into(), url: "http://friend".into(), api_key: nori_remote::guest_key("k"), ..Default::default() };
+        let own = SavedServer { id: "own".into(), url: "http://own".into(), user: "ann".into(), ..Default::default() };
+        prefs.servers = vec![own.clone(), guest.clone()];
+        prefs.active_server_id = "own".into();
+        settings.put(prefs);
+        let queue = Arc::new(nori_core::queue::Session::new(settings.clone()));
+        let open = |p: &SavedServer| Session::open(Open { offline: true, ..test_open(queue.clone(), dir.path(), p.clone(), Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
+        let saved = || settings.current().unwrap().servers.into_iter().map(|s| s.id).collect::<Vec<_>>();
+
+        let s = open(&guest);
+        s.core.search_remember("song".into()).unwrap();
+        s.close();
+        assert_eq!(saved(), ["own", "guest"], "the guest open stays");
+        let s = open(&own);
+        s.close();
+        assert_eq!(saved(), ["own"]);
+        let s = open(&guest);
+        assert!(s.core.search_history().unwrap().is_empty());
         s.close();
     }
 
