@@ -352,7 +352,7 @@ private fun Artists(vm: ArtistsViewModel = viewModel()) {
                                 a.albumCount?.let { n -> Text(remember(n) { say.albums(n.toInt()) }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             }
                         }
-                        Hairline(startIndent = Space.gutter + 60.dp)
+                        Hairline(startIndent = Space.gutter + 60.dp, endIndent = Space.gutter)
                     }
                 }
             }

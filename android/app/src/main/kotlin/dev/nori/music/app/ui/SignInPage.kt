@@ -149,7 +149,7 @@ private fun SignInSheet(vm: SettingsViewModel, kind: ServerKind, start: String, 
                 )
                 if (loading && !ui.busy && ui.failed == null) LoadingDots(Modifier.align(Alignment.CenterEnd).padding(end = Space.gutter), dot = 5.dp)
             }
-            Hairline(0.dp)
+            Hairline(0.dp, 0.dp)
             val failed = ui.failed
             when {
                 ui.busy -> Centered {

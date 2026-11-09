@@ -288,7 +288,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
                                 maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             )
                         }
-                        Hairline(startIndent = Space.gutter)
+                        Hairline(startIndent = Space.gutter, endIndent = Space.gutter)
                     }
                 }
                 if (hits.isEmpty()) item { EmptyNote(stringResource(R.string.settings_nothing_matches, query)) }

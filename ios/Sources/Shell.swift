@@ -638,6 +638,7 @@ final class EmptyState: UIView {
 func dress(_ table: UITableView) {
     table.backgroundColor = Theme.background
     table.separatorColor = Theme.hairline
+    table.separatorInset = UIEdgeInsets(top: 0, left: Space.gutter, bottom: 0, right: Space.gutter)
     table.cellLayoutMarginsFollowReadableWidth = false
 }
 

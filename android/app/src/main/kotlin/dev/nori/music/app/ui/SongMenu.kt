@@ -290,7 +290,7 @@ private fun SheetGroup(content: @Composable androidx.compose.foundation.layout.C
 
 /** The hairline under a sheet's head (the song or record), as wide as the cards under it. */
 @Composable
-private fun HeadLine() = Box(Modifier.padding(horizontal = SHEET_SIDE)) { Hairline(startIndent = 0.dp) }
+private fun HeadLine() = Box(Modifier.padding(horizontal = SHEET_SIDE)) { Hairline(startIndent = 0.dp, endIndent = 0.dp) }
 
 /** Song [id]'s lyrics as [l] has them, when it has words. */
 private fun hasWords(l: dev.nori.music.ffi.lyrics.LyricsNow, id: String): Boolean =
