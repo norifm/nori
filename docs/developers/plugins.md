@@ -432,7 +432,11 @@ lists them, and a channel opens to no other. The install sheet says it reaches B
   the plugin drops it or its instance goes.
 - **Who controls a device.** A device connecting is offered to the enabled `device-control` plugins
   reaching it, in their order (`handles`); the first that says yes controls it while it stays connected.
-  nori asks for its `state` then, after each notification and after `set-noise`, never on a timer.
+  nori asks for its `state` then, after each notification and after `set-noise`, never on a timer. A
+  device nobody took, or whose channel was lost, is offered a few more times over half a minute, and again
+  when the app comes to the front. Headphones usually take one app at a time, so a lost channel is taken
+  back at most three times in a row, and not while the app is away. A plugin whose device stopped answering
+  returns no `state`, and it is let go.
   Disconnected, the plugin hears `gone`, and an instance there only for devices goes. A row can mirror the
   device: `rows.set` stores what is true now and redraws it, without telling the plugin it changed.
   A row the user changes can change the device, so its state is asked for again after `changed`. `noise-modes`

@@ -89,7 +89,8 @@ class PluginBluetooth(private val context: Context, private val plugins: () -> P
             addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
             addAction(BluetoothDevice.ACTION_UUID)
         }
-        ContextCompat.registerReceiver(context, r, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        // Exported: these come from the Bluetooth stack's own process, and only it can send them.
+        ContextCompat.registerReceiver(context, r, filter, ContextCompat.RECEIVER_EXPORTED)
         receiver = r
         // Classic headphones are listed by the audio profiles' proxies, which come asynchronously.
         val wanted = listOf(BluetoothProfile.A2DP, BluetoothProfile.HEADSET)
@@ -97,7 +98,12 @@ class PluginBluetooth(private val context: Context, private val plugins: () -> P
         proxied = latch
         wanted.forEach { profile ->
             val asked = adapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
-                override fun onServiceConnected(p: Int, proxy: BluetoothProfile) { proxies[p] = proxy; latch.countDown() }
+                override fun onServiceConnected(p: Int, proxy: BluetoothProfile) {
+                    proxies[p] = proxy
+                    latch.countDown()
+                    // A `connected()` that stopped waiting for this proxy missed these.
+                    events.execute { runCatching { proxy.connectedDevices }.getOrDefault(emptyList()).forEach { plugins().bluetoothConnected(device(it)) } }
+                }
                 override fun onServiceDisconnected(p: Int) { proxies.remove(p) }
             }, profile)
             if (!asked) latch.countDown()

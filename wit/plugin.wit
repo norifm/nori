@@ -542,6 +542,7 @@ interface device-control {
 
     /// A device connected that the manifest's filter matched: whether the plugin controls it.
     handles: func(device: string) -> bool;
+    /// None once the device has stopped answering: nori lets it go and offers it again.
     state: func(device: string) -> option<device-state>;
     set-noise: func(device: string, noise: noise);
     gone: func(device: string);

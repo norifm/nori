@@ -89,7 +89,7 @@ impl PluginRow {
 }
 
 /// Option `at`'s bit; none past the 64 a value holds.
-fn bit(at: usize) -> u64 {
+pub(crate) fn bit(at: usize) -> u64 {
     1u64.checked_shl(at as u32).unwrap_or(0)
 }
 

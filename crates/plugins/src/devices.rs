@@ -82,7 +82,13 @@ pub(crate) struct Control {
     device: BtDevice,
     plugin: String,
     reported: Reported,
+    taken_us: i64,
 }
+
+/// How many channels lost in a row are taken back before the device is left until the app is opened.
+const LOSSES_TAKEN_BACK: u32 = 3;
+/// A channel held this long says nothing of the one before it.
+const HELD_LONG_US: i64 = 30_000_000;
 
 /// How long a device nobody took is left before it is offered again. Nothing says when one that just
 /// connected, or whose channel reset, can be talked to.
@@ -91,7 +97,7 @@ const OFFER_AGAIN: [Duration; 4] = [Duration::from_millis(1_000), Duration::from
 /// Which plugin controls which connected device, the offers under way, and how often each device was
 /// offered again.
 #[derive(Default)]
-pub(crate) struct Controls(Mutex<Vec<Control>>, Mutex<std::collections::BTreeSet<String>>, Mutex<std::collections::BTreeMap<String, usize>>);
+pub(crate) struct Controls(Mutex<Vec<Control>>, Mutex<std::collections::BTreeSet<String>>, Mutex<std::collections::BTreeMap<String, usize>>, Mutex<std::collections::BTreeMap<String, u32>>);
 
 impl Controls {
     fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Control>> {
@@ -125,6 +131,24 @@ impl Controls {
         wait
     }
 
+    /// `device` lost its channel, having held it for a good while or not; how many it has lost in a row.
+    fn lost_channel(&self, device: &str, held_long: bool) -> u32 {
+        let mut losses = self.3.lock().expect("not poisoned");
+        let n = losses.entry(device.to_string()).or_insert(0);
+        *n = if held_long { 1 } else { *n + 1 };
+        *n
+    }
+
+    /// `device` starts again with no channels lost.
+    fn forgive(&self, device: &str) {
+        self.3.lock().expect("not poisoned").remove(device);
+    }
+
+    /// When `plugin` took control of `device`, on the plugin tasks' clock.
+    fn taken_at(&self, device: &str) -> Option<i64> {
+        self.lock().iter().find(|c| c.device.id == device).map(|c| c.taken_us)
+    }
+
     /// `device` has all its tries again.
     fn fresh_tries(&self, device: &str) {
         self.2.lock().expect("not poisoned").remove(device);
@@ -140,12 +164,12 @@ impl Controls {
     }
 
     /// `plugin` controls `device`, unless another already does; whether it does now.
-    fn take(&self, device: &BtDevice, plugin: &str) -> bool {
+    fn take(&self, device: &BtDevice, plugin: &str, now_us: i64) -> bool {
         let mut c = self.lock();
         match c.iter().find(|c| c.device.id == device.id) {
             Some(c) => c.plugin == plugin,
             None => {
-                c.push(Control { device: device.clone(), plugin: plugin.into(), reported: Reported::default() });
+                c.push(Control { device: device.clone(), plugin: plugin.into(), reported: Reported::default(), taken_us: now_us });
                 true
             }
         }
@@ -211,6 +235,12 @@ impl Around {
             return Ok(());
         }
         let state = p.nori_plugin_device_control().call_state(&mut *s, device)?;
+        if state.is_none() {
+            if let Some(me) = self.me.upgrade() {
+                me.lost_device(device);
+            }
+            return Ok(());
+        }
         if self.controls.report(device, &plugin, reported(state)) {
             self.side.devices_changed();
         }
@@ -238,7 +268,8 @@ impl Around {
             if !self.me.upgrade().is_some_and(|me| me.may_control(&id, &device.id)) {
                 return p.nori_plugin_device_control().call_gone(s, &device.id);
             }
-            if self.controls.take(&device, &id) {
+            let now_us = self.me.upgrade().map_or(0, |me| me.tasks().now_us());
+            if self.controls.take(&device, &id, now_us) {
                 self.gate.active(&id, Active::Device, true);
                 self.side.devices_changed();
                 self.refresh(s, p, &device.id)?;
@@ -348,6 +379,24 @@ impl Plugins {
         self.tasks().spawn(Box::pin(task));
     }
 
+    /// The channel to `id` is gone while it may well stay connected: whoever controlled it lets go, and it
+    /// is offered again. Headphones take one app at a time, so not while nori is away, nor over and over
+    /// while another app keeps taking them.
+    pub(crate) fn lost_device(&self, id: &str) {
+        let held_long = self.controls.taken_at(id).is_some_and(|at| self.tasks().now_us() - at >= HELD_LONG_US);
+        if self.release(id).is_none() {
+            return;
+        }
+        self.controls.fresh_tries(id);
+        let losses = self.controls.lost_channel(id, held_long);
+        if losses > LOSSES_TAKEN_BACK || self.away.load(Ordering::Relaxed) {
+            return;
+        }
+        if let Some(d) = self.radio.connected().into_iter().find(|d| d.id == id) {
+            self.offer_again(d);
+        }
+    }
+
     /// Whoever controls `id` no longer does and hears `gone`; which plugin that was.
     fn release(&self, id: &str) -> Option<String> {
         let control = {
@@ -370,6 +419,7 @@ impl Plugins {
     fn arrived(&self, device: BtDevice, came: bool) {
         if self.radio.arrived(device.clone()) {
             self.controls.fresh_tries(&device.id);
+            self.controls.forgive(&device.id);
             self.tell_device(&device, true);
             if came {
                 self.output_device(&device, true);
@@ -468,6 +518,7 @@ impl Plugins {
     pub fn bluetooth_disconnected(&self, id: String) {
         self.controls.offered(&id);
         self.controls.fresh_tries(&id);
+        self.controls.forgive(&id);
         let device = self.radio.connected().into_iter().find(|d| d.id == id);
         if !self.radio.went(&id) {
             return;
@@ -508,24 +559,34 @@ impl Plugins {
         });
     }
 
-    /// Offers the connected devices nobody controls again: something else may have let go of one (another
-    /// app on its channel) with nothing to say so.
+    /// The app came to the front or left it (a client that has neither is always shown). Away, a device
+    /// that loses its channel is left to whoever took it; back, nori looks again.
+    pub fn app_shown(&self, shown: bool) {
+        self.away.store(!shown, Ordering::Relaxed);
+        if shown {
+            self.look_for_devices();
+        }
+    }
+
+    /// Asks the platform what is connected and offers what nobody controls again: a device may have
+    /// connected unheard, or something else let go of one (another app on its channel) with nothing to say so.
     pub fn look_for_devices(&self) {
-        for d in self.radio.connected() {
+        if !*self.watching.lock().expect("not poisoned") {
+            return;
+        }
+        let Some(platform) = self.radio.platform() else { return };
+        for d in platform.connected() {
             self.controls.fresh_tries(&d.id);
-            self.offer(d);
+            self.controls.forgive(&d.id);
+            self.arrived(d, false);
         }
     }
 
     /// The platform lost `link`: reads end, writes fail. A device can lose its channel and stay connected
     /// (headphones changing codec): whoever controlled it lets go and it is offered again.
     pub fn bluetooth_lost(&self, link: u64) {
-        let Some(device) = self.radio.lost(link) else { return };
-        if self.release(&device).is_some() {
-            self.controls.fresh_tries(&device);
-            if let Some(d) = self.radio.connected().into_iter().find(|d| d.id == device) {
-                self.offer_again(d);
-            }
+        if let Some(device) = self.radio.lost(link) {
+            self.lost_device(&device);
         }
     }
 
@@ -636,7 +697,7 @@ mod tests {
     fn a_device_is_the_first_handlers_and_reports_change_once() {
         let c = Controls::default();
         let d = BtDevice { id: "a".into(), name: "WH".into(), services: Vec::new(), vendor: None, product: None };
-        assert!(c.take(&d, "one") && !c.take(&d, "two") && c.take(&d, "one"));
+        assert!(c.take(&d, "one", 0) && !c.take(&d, "two", 0) && c.take(&d, "one", 0));
         assert_eq!(c.of("a").as_deref(), Some("one"));
         let r = Reported { battery: Battery { single: Some(5), ..Battery::default() }, noise: Some(Noise::Off), modes: vec![Noise::Off], cycle: vec![Noise::Off] };
         assert!(c.report("a", "one", r.clone()));

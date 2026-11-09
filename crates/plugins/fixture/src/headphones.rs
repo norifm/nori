@@ -28,6 +28,8 @@ struct Buds {
 #[derive(Default)]
 pub struct Headphones {
     buds: Vec<Buds>,
+    /// Says it has no state for its devices, as a plugin does whose device stopped answering.
+    quiet: bool,
 }
 
 fn said(words: &str, args: &[String]) {
@@ -78,6 +80,9 @@ impl DeviceControl for Headphones {
     }
 
     fn state(&mut self, device: String) -> Option<DeviceState> {
+        if self.quiet {
+            return None;
+        }
         self.buds(&device).map(|b| b.state.clone())
     }
 
@@ -93,12 +98,16 @@ impl DeviceControl for Headphones {
 
     fn gone(&mut self, device: String) {
         said("gone", &[device.clone()]);
+        self.quiet = false;
         self.buds.retain(|b| b.id != device);
     }
 }
 
 impl Lifecycle for Headphones {
     fn changed(&mut self, row: String, value: Value) {
+        if row == "quiet" {
+            self.quiet = true;
+        }
         if row == "skip_off" {
             let skip = matches!(value, Value::Switch(true));
             for b in &mut self.buds {
@@ -127,4 +136,4 @@ impl Hooks for Headphones {
     }
 }
 
-pub const MANIFEST: Manifest = Manifest { rows: &[Row::switch("canceling", false), Row::switch("skip_off", false)], devices: &[DeviceFilter::ANY.name("Test Buds*")], hooks: &[Hook::DeviceConnected], ..Manifest::new("fm.nori.test.headphones") };
+pub const MANIFEST: Manifest = Manifest { rows: &[Row::switch("canceling", false), Row::switch("skip_off", false), Row::flags("sides", &["left", "right"], 0b01), Row::switch("quiet", false)], devices: &[DeviceFilter::ANY.name("Test Buds*")], hooks: &[Hook::DeviceConnected], ..Manifest::new("fm.nori.test.headphones") };
