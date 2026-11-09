@@ -31,7 +31,7 @@ pub(crate) struct PluginProvider {
     id: String,
     plugins: Arc<Plugins>,
     worker: Worker,
-    /// Its add form and sign-in, asked once.
+    /// Its add form and sign-in, asked until it answers, then kept.
     info: std::sync::OnceLock<ProviderInfo>,
     /// Its rules as it last said, for the profile open, and how far ahead songs may be fetched.
     rules: RwLock<Option<(ProfileRules, Option<usize>)>>,
@@ -236,13 +236,23 @@ fn change(c: Write) -> Option<w::Change> {
 
 #[async_trait::async_trait]
 impl Provider for PluginProvider {
+    /// A plugin that doesn't answer (it can't start, or trapped) asks nothing for now; it is asked
+    /// again next time rather than kept as a form with no fields.
     fn info(&self) -> ProviderInfo {
-        self.info.get_or_init(|| self.ask_info()).clone()
+        if let Some(info) = self.info.get() {
+            return info.clone();
+        }
+        match self.ask_info() {
+            Some(info) => self.info.get_or_init(|| info).clone(),
+            None => ProviderInfo { kind: self.kind(), fields: Vec::new(), sign_in: Vec::new() },
+        }
     }
 
+    /// A plugin that doesn't answer is ready: its check fails then, saying why, rather than the form
+    /// asking for fields it doesn't show.
     fn ready(&self, profile: &SavedServer) -> bool {
         let p = profile_of(profile);
-        self.now(move |s, x| x.nori_plugin_provider().call_ready(s, &p)).unwrap_or(false)
+        self.now(move |s, x| x.nori_plugin_provider().call_ready(s, &p)).unwrap_or(true)
     }
 
     async fn check(&self, transport: Arc<dyn Transport>, profile: SavedServer) -> NetResult<SavedServer> {
@@ -374,8 +384,9 @@ impl PluginProvider {
         result
     }
 
-    fn ask_info(&self) -> ProviderInfo {
-        let said = self.now(|s, x| x.nori_plugin_provider().call_info(s)).flatten();
+    /// Its form and sign-in as it says; None when it didn't answer. A provider saying nothing asks nothing.
+    fn ask_info(&self) -> Option<ProviderInfo> {
+        let said = self.now(|s, x| x.nori_plugin_provider().call_info(s))?;
         let said = said.unwrap_or(w::ProviderInfo { fields: Vec::new(), sign_in: Vec::new() });
         let field = |f: w::Field| match f {
             w::Field::Name => FormField::Name,
@@ -386,7 +397,7 @@ impl PluginProvider {
             w::Field::ApiKey => FormField::ApiKey,
             w::Field::Headers => FormField::Headers,
         };
-        ProviderInfo {
+        Some(ProviderInfo {
             kind: self.kind(),
             fields: said.fields.into_iter().map(|f| FieldSpec { what: field(f.field), advanced: f.advanced }).collect(),
             sign_in: said.sign_in.into_iter().map(|s| match s {
@@ -394,7 +405,7 @@ impl PluginProvider {
                 w::SignInWay::Paste => SignIn::Paste,
                 w::SignInWay::Code => SignIn::Code,
             }).collect(),
-        }
+        })
     }
 }
 
