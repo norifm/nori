@@ -1016,10 +1016,11 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         if (Build.VERSION.SDK_INT >= 31) runCatching { track.setStartThresholdInFrames(minOf(rate / 4, track.bufferSizeInFrames)) }
         nori.dac.preferredDevice()?.let { runCatching { track.setPreferredDevice(it) } }
         nori.dac.onTrack(rate, encoding, false)
+        nori.outputs.trackOpened()
+        PlaybackService.track = OpenedTrack(track, frames * channels * width, mode)
         track.addOnRoutingChangedListener(AudioRouting.OnRoutingChangedListener { r ->
             r.routedDevice?.let { d -> nori.outputs.routedTo(d); RustPlayerJni.device(h, d.type, d.productName?.toString()) }
         }, main)
-        PlaybackService.track = OpenedTrack(track, frames * channels * width, mode)
         val given = if (track.performanceMode == AudioTrack.PERFORMANCE_MODE_POWER_SAVING) "power saving" else "normal"
         dev.nori.music.NoriLog.i("rust AudioTrack: $rate Hz x$channels enc=$encoding, ${track.bufferSizeInFrames} of $frames frames (${track.bufferSizeInFrames * 1000L / rate} ms), $given, bitPerfect=$bitPerfect")
         track
@@ -1062,11 +1063,12 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
             offloadTrack = track
             val events = offloadEvents ?: OffloadEvents { from, kind -> if (from === offloadTrack) RustPlayerJni.offloadEvent(h, kind) }.also { offloadEvents = it }
             track.registerStreamEventCallback(Runnable::run, events)
+            nori.outputs.trackOpened()
+            PlaybackService.track = OpenedTrack(track, bytes, AudioTrack.PERFORMANCE_MODE_NONE)
             track.addOnRoutingChangedListener(AudioRouting.OnRoutingChangedListener { r ->
                 r.routedDevice?.let { d -> nori.outputs.routedTo(d); RustPlayerJni.device(h, d.type, d.productName?.toString()) }
             }, main)
             nori.dac.onTrack(rate, encoding, track.isOffloadedPlayback)
-            PlaybackService.track = OpenedTrack(track, bytes, AudioTrack.PERFORMANCE_MODE_NONE)
             dev.nori.music.NoriLog.i("rust offloaded AudioTrack: $rate Hz x$channels enc=$encoding, ${track.bufferSizeInFrames} of $bytes bytes, offloaded=${track.isOffloadedPlayback}")
             track
         }.onFailure { dev.nori.music.NoriLog.w("rust offloaded AudioTrack would not open", it); PlaybackService.observer?.error("rust offloaded AudioTrack would not open: $it") }.getOrNull()
