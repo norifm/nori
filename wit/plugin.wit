@@ -7,6 +7,8 @@ interface rows {
 
     /// One of its rows' values as the user set it, else its default.
     get: func(row: string) -> option<value>;
+    /// Shows these values in its own rows, as what is true now (a device's settings); not told back as changes.
+    set: func(values: list<tuple<string, value>>);
     /// A status row's live line, from the plugin's strings ("ANC: on"); redrawn only while visible.
     set-status: func(row: string, words: string, args: list<string>);
     /// Hides or greys a row (on top of its manifest's own conditions).
@@ -534,6 +536,8 @@ interface device-control {
         noise: option<noise>,
         /// The modes the device offers.
         noise-modes: list<noise>,
+        /// Those nori's noise button moves through, in order; the rest are still there to choose.
+        noise-cycle: list<noise>,
     }
 
     /// A device connected that the manifest's filter matched: whether the plugin controls it.

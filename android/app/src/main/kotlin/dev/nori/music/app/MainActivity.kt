@@ -132,7 +132,11 @@ class MainActivity : ComponentActivity() {
     private fun pickAddress() = lifecycleScope.launch { runCatching { Nori.get(this@MainActivity).chooseAddress() } }
 
     /** The first frame is out: a crash from here on is no startup crash for safe mode. */
-    private fun startedPlugins() = lifecycleScope.launch { Nori.get(this@MainActivity).plugins.started() }
+    private fun startedPlugins() = lifecycleScope.launch {
+        val plugins = Nori.get(this@MainActivity).plugins
+        plugins.started()
+        plugins.lookForDevices()
+    }
 
     /** Plugins update from their repos when the app comes to the front, if it is time to ask: never on a timer. */
     private fun updatePlugins() = lifecycleScope.launch { runCatching { Nori.get(this@MainActivity).plugins.updateIfDue() } }

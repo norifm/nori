@@ -193,11 +193,14 @@ impl Radio {
         links.open.get_mut(&link).map(|l| l.waiting.drain(..).collect()).unwrap_or_default()
     }
 
-    pub(crate) fn lost(&self, link: u64) {
-        if let Some(l) = self.links.lock().expect("not poisoned").open.get_mut(&link) {
+    /// `link` is lost; the device it was to, while a plugin still holds it.
+    pub(crate) fn lost(&self, link: u64) -> Option<String> {
+        let device = self.links.lock().expect("not poisoned").open.get_mut(&link).map(|l| {
             l.lost = true;
-        }
+            l.device.clone()
+        });
         self.came.notify_all();
+        device
     }
 
     /// Up to `max` bytes of `link`, waiting at most `wait` for any; empty once it is lost.

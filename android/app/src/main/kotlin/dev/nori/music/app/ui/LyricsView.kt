@@ -598,6 +598,7 @@ private fun LyricsHeader(vm: PlayerViewModel, actions: ActionsViewModel, song: d
             val starred = marks.effectiveStar(dev.nori.music.data.StarKind.SONG, s.id, s.starred)
             // A jam guest's seal would be the host's.
             val tap = LocalSealTap.current
+            NoiseTitleButton(vm)
             if (LocalRules.current.seals) TitleButton(if (starred) Kanji.Sealed else Kanji.Seal, say.favourite, starred, rememberStamp()) { tap(s, !starred) }
             TitleButton(Iconoir.MoreHoriz, say.more, false) { menu(s) }
         }

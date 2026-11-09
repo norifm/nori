@@ -587,6 +587,7 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
     bar.on_art(move |id, size, _rev| art(id, size));
     bar.on_toggle(to_main(ui, |m| m.invoke_toggle()));
     bar.on_star(to_main(ui, |m| m.invoke_star()));
+    bar.on_noise_next(to_main(ui, |m| m.invoke_noise_next()));
     bar.on_next(to_main(ui, |m| m.invoke_next()));
     bar.on_previous(to_main(ui, |m| m.invoke_previous()));
     bar.on_toggle_shuffle(to_main(ui, |m| m.invoke_toggle_shuffle()));
@@ -1005,6 +1006,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_search_again, h, |a, t| a.search_again(&t));
     on!(ui.on_forget_searches, h, |a| a.forget_searches());
     on!(ui.on_toggle, h, |a| a.on_session(|s| s.toggle()));
+    on!(ui.on_noise_next, h, |a| a.noise_next());
     on!(ui.on_star, h, |a| {
         if let Some(song) = a.song.clone() {
             a.star(&song);
@@ -2985,8 +2987,8 @@ impl App {
             self.plugged.off.extend(watched.as_said(std::slice::from_mut(&mut d.card)));
         }
         let mut shown_here = host.device_cards("en".into());
-        let off = watched.as_said(&mut shown_here);
-        ui.set_device_plugin_rows(crate::settings::device_rows(&shown_here, &self.plugged.controlled, &off, &prefs, &self.facts, today));
+        self.plugged.off.extend(watched.as_said(&mut shown_here));
+        ui.set_device_plugin_rows(crate::settings::device_rows(&shown_here, &self.plugged.controlled, &self.plugged.off, self.plugged.device_page.as_deref(), &prefs, &self.facts, today));
         let menus = ui.global::<crate::PluginMenus>();
         let labels = |k: usize| ModelRc::new(VecModel::from(self.plugin_menus[k].iter().map(|e| SharedString::from(e.label.as_str())).collect::<Vec<_>>()));
         menus.set_album(labels(0));
@@ -3236,6 +3238,7 @@ impl App {
             (PluginAct::Turn(id), nori_plugins::Value::Switch(on)) => host.turn(id, on),
             (PluginAct::Hold(id), nori_plugins::Value::Switch(on)) => host.hold(id, on),
             (PluginAct::Row(id, row), v) => host.set(id, row, v),
+            (PluginAct::Flags(id, row, bits), _) => host.set(id, row, nori_plugins::Value::Flags(bits)),
             (PluginAct::Noise(device), nori_plugins::Value::Choice(i)) => {
                 let Some(&mode) = self.plugged.controlled.iter().find(|d| d.id == device).and_then(|d| d.noise_modes.get(i as usize)) else { return };
                 return host.set_noise(device, mode);
@@ -3248,6 +3251,10 @@ impl App {
     /// A button of Settings › Plugins.
     fn plugin_act(&mut self, act: crate::settings::PluginAct) {
         use crate::settings::PluginAct;
+        if matches!(act, PluginAct::DeviceOpen(_) | PluginAct::DeviceBack) {
+            self.plugged.device_page = if let PluginAct::DeviceOpen(device) = act { Some(device) } else { None };
+            return self.plugins_read();
+        }
         let host = self.plugin_host().clone();
         let ask = |title: &str, name: String, secret: bool| self.ask_field(title, &name, secret);
         match act {
@@ -3309,7 +3316,7 @@ impl App {
                 return;
             }
             PluginAct::AllowMobile(id) => host.allow_mobile_assets(id),
-            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::TrustRepo(_) | PluginAct::InstallPreview | PluginAct::Noise(_) | PluginAct::Search | PluginAct::Chip => return,
+            PluginAct::Turn(_) | PluginAct::Hold(_) | PluginAct::AllOff | PluginAct::TrustRepo(_) | PluginAct::InstallPreview | PluginAct::Noise(_) | PluginAct::Flags(..) | PluginAct::DeviceOpen(_) | PluginAct::DeviceBack | PluginAct::Search | PluginAct::Chip => return,
         }
         self.plugins_read();
     }
@@ -3827,6 +3834,9 @@ impl App {
             p.set_now_album_id(ui.get_now_album_id());
             p.set_now_credits(ui.get_now_credits());
             p.set_now_starred(ui.get_now_starred());
+            p.set_noise_on(ui.get_noise_on());
+            p.set_noise_mode(ui.get_noise_mode());
+            p.set_noise_label(ui.get_noise_label());
             p.set_now_art(ui.get_now_art());
             p.set_playing(ui.get_playing());
             p.set_buffering(ui.get_buffering());
@@ -4025,6 +4035,23 @@ impl App {
         nori_plugins::output_device(&self.plugged.controlled, (!self.output.is_empty()).then_some(self.output.as_str()))
     }
 
+    /// The headphones this computer plays on, when a plugin controls their noise and the music is this
+    /// computer's own: not another device's, a cast's or a jam's.
+    fn noise_headphones(&self) -> Option<&nori_plugins::ControlledDevice> {
+        let remote = self.session.as_ref().and_then(|s| s.remote());
+        let cast = self.cast();
+        let here = matches!(nori_core::destination::destination(remote, cast.as_ref().map(Into::into)), nori_core::destination::Destination::Here { hosting: false });
+        self.output_device().filter(|d| here && !d.noise_modes.is_empty())
+    }
+
+    /// The noise button: the headphones on to their next mode.
+    fn noise_next(&self) {
+        let Some(d) = self.noise_headphones() else { return };
+        if let Some(next) = nori_plugins::next_noise(d.noise_cycle.clone(), d.noise) {
+            self.root.plugins().host.set_noise(d.id.clone(), next);
+        }
+    }
+
     /// A plugin's cast, while one runs.
     fn cast(&self) -> Option<nori_plugins::Cast> {
         self.root.plugins().host.cast()
@@ -4065,6 +4092,29 @@ impl App {
         set(self.ui().global::<crate::Output>());
         if let Some(p) = &self.player {
             set(p.global::<crate::Output>());
+        }
+        self.noise_shown();
+    }
+
+    /// The noise button in both players. Gone, it keeps its last mode to fade out with.
+    fn noise_shown(&self) {
+        use nori_plugins::Noise;
+        let ui = self.ui();
+        let d = self.noise_headphones();
+        ui.set_noise_on(d.is_some());
+        if let Some(d) = d {
+            ui.set_noise_mode(match d.noise {
+                None | Some(Noise::Off) => 0,
+                Some(Noise::Canceling) => 1,
+                Some(Noise::Transparency) => 2,
+                Some(Noise::Adaptive) => 3,
+            });
+            ui.set_noise_label(d.noise.map_or("", words::noise).into());
+        }
+        if let Some(p) = &self.player {
+            p.set_noise_on(ui.get_noise_on());
+            p.set_noise_mode(ui.get_noise_mode());
+            p.set_noise_label(ui.get_noise_label());
         }
     }
 
@@ -4896,7 +4946,7 @@ mod tests {
         host.turn(id, true);
         let labels: Vec<Vec<String>> = MENU_KINDS.iter().map(|k| host.menu_entries(*k, "en".into()).into_iter().map(|e| e.label).collect()).collect();
         assert_eq!(labels, [vec![], vec![], vec![], vec!["Count letters".to_string()]]);
-        let rows = crate::settings::device_rows(&host.device_cards("en".into()), &[], &Default::default(), &Default::default(), &Default::default(), crate::look::Today { month: 10, day: 19, southern: false });
+        let rows = crate::settings::device_rows(&host.device_cards("en".into()), &[], &Default::default(), None, &Default::default(), &Default::default(), crate::look::Today { month: 10, day: 19, southern: false });
         let titles: Vec<String> = rows.iter().map(|r| r.title.to_string()).collect();
         assert_eq!(titles, ["TEST", "Gain: 0.5"]);
     }

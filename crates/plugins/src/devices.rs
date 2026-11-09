@@ -4,6 +4,7 @@
 //! said something or the user changed it: nothing polls. With no such plugin enabled the platform
 //! watches nothing.
 
+use nori_time::Duration;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
@@ -54,6 +55,7 @@ pub(crate) struct Reported {
     battery: Battery,
     noise: Option<Noise>,
     modes: Vec<Noise>,
+    cycle: Vec<Noise>,
 }
 
 /// A connected device a plugin controls, as every client draws it.
@@ -69,6 +71,8 @@ pub struct ControlledDevice {
     pub noise: Option<Noise>,
     /// The modes it offers, in its order.
     pub noise_modes: Vec<Noise>,
+    /// Those its noise button moves through.
+    pub noise_cycle: Vec<Noise>,
     /// The plugin controlling it: its name and its rows.
     pub card: PluginCard,
 }
@@ -80,13 +84,26 @@ pub(crate) struct Control {
     reported: Reported,
 }
 
-/// Which plugin controls which connected device.
+/// How long a device nobody took is left before it is offered again. Nothing says when one that just
+/// connected, or whose channel reset, can be talked to.
+const OFFER_AGAIN: [Duration; 4] = [Duration::from_millis(1_000), Duration::from_millis(3_000), Duration::from_millis(8_000), Duration::from_millis(20_000)];
+
+/// Which plugin controls which connected device, the offers under way, and how often each device was
+/// offered again.
 #[derive(Default)]
-pub(crate) struct Controls(Mutex<Vec<Control>>, Mutex<std::collections::BTreeSet<String>>);
+pub(crate) struct Controls(Mutex<Vec<Control>>, Mutex<std::collections::BTreeSet<String>>, Mutex<std::collections::BTreeMap<String, usize>>);
 
 impl Controls {
     fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Control>> {
         self.0.lock().expect("not poisoned")
+    }
+
+    /// `plugin` no longer controls anything; whether it did.
+    fn let_go(&self, plugin: &str) -> bool {
+        let mut c = self.lock();
+        let had = c.len();
+        c.retain(|c| c.plugin != plugin);
+        c.len() != had
     }
 
     /// `device` is being offered to the plugins from now on, unless it already is; whether it now is.
@@ -97,6 +114,25 @@ impl Controls {
     /// The offer of `device` ended.
     fn offered(&self, device: &str) {
         self.1.lock().expect("not poisoned").remove(device);
+    }
+
+    /// How long to leave `device` before offering it again; None once it has had its tries.
+    fn next_try(&self, device: &str) -> Option<Duration> {
+        let mut tries = self.2.lock().expect("not poisoned");
+        let n = tries.entry(device.to_string()).or_insert(0);
+        let wait = OFFER_AGAIN.get(*n).copied();
+        *n += 1;
+        wait
+    }
+
+    /// `device` has all its tries again.
+    fn fresh_tries(&self, device: &str) {
+        self.2.lock().expect("not poisoned").remove(device);
+    }
+
+    /// The devices `plugin` controls.
+    pub(crate) fn of_plugin(&self, plugin: &str) -> Vec<String> {
+        self.lock().iter().filter(|c| c.plugin == plugin).map(|c| c.device.id.clone()).collect()
     }
 
     fn of(&self, device: &str) -> Option<String> {
@@ -154,20 +190,22 @@ fn reported(s: Option<dc::DeviceState>) -> Reported {
         battery: Battery { left: percent(b.left), right: percent(b.right), case: percent(b.case), single: percent(b.single) },
         noise: s.noise.map(noise_in),
         modes: s.noise_modes.into_iter().map(noise_in).collect(),
+        cycle: s.noise_cycle.into_iter().map(noise_in).collect(),
     }
 }
 
 /// What a running plugin's device calls need beyond its instance.
 #[derive(Clone)]
-struct Around {
+pub(crate) struct Around {
     controls: Arc<Controls>,
     side: Arc<dyn Side>,
     gate: Arc<Gate>,
+    me: std::sync::Weak<Plugins>,
 }
 
 impl Around {
     /// Asks the controlling plugin for `device`'s state and keeps it.
-    fn refresh(&self, s: &mut Store, p: &crate::wit::Plugin, device: &str) -> wasmtime::Result<()> {
+    pub(crate) fn refresh(&self, s: &mut Store, p: &crate::wit::Plugin, device: &str) -> wasmtime::Result<()> {
         let plugin = s.data().id.clone();
         if self.controls.of(device).as_deref() != Some(&plugin) {
             return Ok(());
@@ -183,6 +221,9 @@ impl Around {
     fn ask(self, mut rest: std::vec::IntoIter<(String, Worker)>, device: BtDevice) {
         let Some((id, w)) = rest.next() else {
             self.controls.offered(&device.id);
+            if let Some(p) = self.me.upgrade() {
+                p.offer_again(device);
+            }
             return;
         };
         w.post(move |s, p| {
@@ -192,6 +233,11 @@ impl Around {
                 return handles.map(|_| ());
             }
             self.controls.offered(&device.id);
+            self.controls.fresh_tries(&device.id);
+            // It went, or its plugin was turned off, while the plugin was answering.
+            if !self.me.upgrade().is_some_and(|me| me.may_control(&id, &device.id)) {
+                return p.nori_plugin_device_control().call_gone(s, &device.id);
+            }
             if self.controls.take(&device, &id) {
                 self.gate.active(&id, Active::Device, true);
                 self.side.devices_changed();
@@ -215,20 +261,32 @@ pub fn output_device<'a>(devices: &'a [ControlledDevice], output: Option<&str>) 
     }
 }
 
-/// [`output_device`] for a client over uniffi.
+/// The mode after `now` among the `modes` a device offers, the first after the last or when it hasn't said.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn controlled_output(devices: Vec<ControlledDevice>, output: Option<String>) -> Option<ControlledDevice> {
-    output_device(&devices, output.as_deref()).cloned()
+pub fn next_noise(modes: Vec<Noise>, now: Option<Noise>) -> Option<Noise> {
+    let next = now.and_then(|n| modes.iter().position(|m| *m == n)).map_or(0, |at| at + 1);
+    modes.get(next % modes.len().max(1)).copied()
+}
+
+/// The controlled device on this phone's output `output` (its key): none while the music plays on the
+/// phone's own speaker or wired headphones, whatever else is connected.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn controlled_on_output(devices: Vec<ControlledDevice>, output: String) -> Option<ControlledDevice> {
+    let (port, name) = nori_player::outputs::parts(&output);
+    if matches!(port, nori_player::outputs::OutputPort::Speaker | nori_player::outputs::OutputPort::Wired) {
+        return None;
+    }
+    output_device(&devices, name).cloned()
 }
 
 /// Whether a plugin's instance is there only for its devices, and so goes when the last one does.
 fn only_for_devices(m: &crate::Manifest) -> bool {
-    m.points.iter().all(|p| matches!(*p, "device-control" | "hooks"))
+    m.points.iter().all(|p| matches!(*p, "device-control" | "hooks" | "lifecycle"))
 }
 
 impl Plugins {
-    fn around(&self) -> Around {
-        Around { controls: self.controls.clone(), side: self.side.clone(), gate: self.gate.clone() }
+    pub(crate) fn around(&self) -> Around {
+        Around { controls: self.controls.clone(), side: self.side.clone(), gate: self.gate.clone(), me: self.me.clone() }
     }
 
     /// The enabled plugins reaching `device` that extend `point`, in their order.
@@ -258,13 +316,60 @@ impl Plugins {
             return;
         }
         let askers: Vec<(String, Worker)> = self.reaching(&device, "device-control").into_iter().filter_map(|id| Some((id.clone(), self.worker(&id)?))).collect();
+        if askers.is_empty() {
+            self.controls.offered(&device.id);
+            return;
+        }
         self.around().ask(askers.into_iter(), device);
+    }
+
+    /// Whether plugin `id` is running and `device` still connected.
+    fn may_control(&self, id: &str, device: &str) -> bool {
+        self.running().iter().any(|i| i.manifest.id == id) && self.radio.connected().iter().any(|d| d.id == device)
+    }
+
+    /// Offers `device` again in a while, if it has tries left and is still connected by then; out of tries,
+    /// plugins there only for devices and controlling none stop running.
+    fn offer_again(&self, device: BtDevice) {
+        let Some(wait) = self.controls.next_try(&device.id) else {
+            let idle = |id: &String| self.controls.of_plugin(id).is_empty() && self.installed().iter().any(|i| i.manifest.id == *id && only_for_devices(&i.manifest));
+            let ids = self.reaching(&device, "device-control");
+            self.workers.lock().expect("not poisoned").retain(|id, _| !(ids.contains(id) && idle(id)));
+            return;
+        };
+        let (tasks, me) = (self.tasks(), self.me.clone());
+        let task = async move {
+            tasks.sleep(wait).await;
+            let Some(p) = me.upgrade() else { return };
+            if let Some(d) = p.radio.connected().into_iter().find(|d| d.id == device.id) {
+                p.offer(d);
+            }
+        };
+        self.tasks().spawn(Box::pin(task));
+    }
+
+    /// Whoever controls `id` no longer does and hears `gone`; which plugin that was.
+    fn release(&self, id: &str) -> Option<String> {
+        let control = {
+            let mut c = self.controls.lock();
+            c.iter().position(|c| c.device.id == id).map(|at| c.remove(at))
+        }?;
+        if let Some(w) = self.live_worker(&control.plugin) {
+            let device = id.to_string();
+            w.post(move |s, p| p.nori_plugin_device_control().call_gone(s, &device));
+        }
+        if !self.controls.lock().iter().any(|o| o.plugin == control.plugin) {
+            self.gate.active(&control.plugin, Active::Device, false);
+        }
+        self.side.devices_changed();
+        Some(control.plugin)
     }
 
     /// `device` is connected: the plugins reaching it hear so and it is offered to them; with `came`
     /// (not one already there when the watch began) it is also an output connecting.
     fn arrived(&self, device: BtDevice, came: bool) {
         if self.radio.arrived(device.clone()) {
+            self.controls.fresh_tries(&device.id);
             self.tell_device(&device, true);
             if came {
                 self.output_device(&device, true);
@@ -282,6 +387,16 @@ impl Plugins {
             let told = self.reaching(device, "hooks");
             let name = device.name.clone();
             self.tell_but(Hook::DeviceConnected, &told, || if connected { hooks::Event::DeviceConnected(name) } else { hooks::Event::DeviceDisconnected(name) });
+        }
+    }
+
+    /// `plugin`'s instance is a new one, which knows nothing of the devices the last controlled: they are
+    /// offered to it again.
+    pub(crate) fn reoffer(&self, plugin: &str) {
+        if self.controls.let_go(plugin) {
+            self.gate.active(plugin, Active::Device, false);
+            self.side.devices_changed();
+            self.rewatch();
         }
     }
 
@@ -352,6 +467,7 @@ impl Plugins {
 
     pub fn bluetooth_disconnected(&self, id: String) {
         self.controls.offered(&id);
+        self.controls.fresh_tries(&id);
         let device = self.radio.connected().into_iter().find(|d| d.id == id);
         if !self.radio.went(&id) {
             return;
@@ -360,24 +476,12 @@ impl Plugins {
             self.tell_device(d, false);
             self.output_device(d, false);
         }
-        let control = {
-            let mut c = self.controls.lock();
-            c.iter().position(|c| c.device.id == id).map(|at| c.remove(at))
-        };
-        if let Some(c) = control {
-            if let Some(w) = self.live_worker(&c.plugin) {
-                let device = id.clone();
-                w.post(move |s, p| p.nori_plugin_device_control().call_gone(s, &device));
-            }
-            let keeps = self.controls.lock().iter().any(|o| o.plugin == c.plugin);
-            if !keeps {
-                self.gate.active(&c.plugin, Active::Device, false);
-            }
-            let only = self.installed().iter().any(|i| i.manifest.id == c.plugin && only_for_devices(&i.manifest));
+        if let Some(plugin) = self.release(&id) {
+            let keeps = self.controls.lock().iter().any(|o| o.plugin == plugin);
+            let only = self.installed().iter().any(|i| i.manifest.id == plugin && only_for_devices(&i.manifest));
             if !keeps && only {
-                self.workers.lock().expect("not poisoned").remove(&c.plugin);
+                self.workers.lock().expect("not poisoned").remove(&plugin);
             }
-            self.side.devices_changed();
         }
     }
 
@@ -404,9 +508,25 @@ impl Plugins {
         });
     }
 
-    /// The platform lost `link`: reads end, writes fail.
+    /// Offers the connected devices nobody controls again: something else may have let go of one (another
+    /// app on its channel) with nothing to say so.
+    pub fn look_for_devices(&self) {
+        for d in self.radio.connected() {
+            self.controls.fresh_tries(&d.id);
+            self.offer(d);
+        }
+    }
+
+    /// The platform lost `link`: reads end, writes fail. A device can lose its channel and stay connected
+    /// (headphones changing codec): whoever controlled it lets go and it is offered again.
     pub fn bluetooth_lost(&self, link: u64) {
-        self.radio.lost(link);
+        let Some(device) = self.radio.lost(link) else { return };
+        if self.release(&device).is_some() {
+            self.controls.fresh_tries(&device);
+            if let Some(d) = self.radio.connected().into_iter().find(|d| d.id == device) {
+                self.offer_again(d);
+            }
+        }
     }
 
     /// The connected devices plugins control, in the order they connected, in `lang`.
@@ -420,7 +540,7 @@ impl Plugins {
             .into_iter()
             .filter_map(|(d, plugin, r)| {
                 let card = cards.iter().find(|c| c.id == plugin)?.clone();
-                Some(ControlledDevice { id: d.id, name: d.name, level: r.battery.level(), battery: r.battery, noise: r.noise, noise_modes: r.modes, card })
+                Some(ControlledDevice { id: d.id, name: d.name, level: r.battery.level(), battery: r.battery, noise: r.noise, noise_modes: r.modes, noise_cycle: r.cycle, card })
             })
             .collect()
     }
@@ -442,6 +562,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_device_is_on_the_output_only_when_the_output_is_not_the_phones_own() {
+        let device = |id: &str, name: &str| ControlledDevice {
+            id: id.into(),
+            name: name.into(),
+            battery: Battery::default(),
+            level: None,
+            noise: None,
+            noise_modes: vec![], noise_cycle: vec![],
+            card: PluginCard {
+                id: "p".into(),
+                version: "1".into(),
+                name: "p".into(),
+                about: None,
+                enabled: true,
+                repo: None,
+                held: false,
+                points: vec![],
+                overrides: vec![],
+                net: vec![],
+                bluetooth: true,
+                lan: false,
+                permissions: vec![],
+                hooks: vec![],
+                wakes: vec![],
+                commands: vec![],
+                cache_bytes: 0,
+                asset_bytes: 0,
+                rows: vec![],
+            },
+        };
+        let one = || vec![device("AA", "soundcore Liberty 4 NC")];
+        for (output, on) in [
+            ("Bluetooth: soundcore Liberty 4 NC", true),
+            ("Bluetooth: Other Buds", false),
+            ("Phone speaker", false),
+            ("Wired headphones", false),
+        ] {
+            assert_eq!(controlled_on_output(one(), output.to_string()).is_some(), on, "{output}");
+        }
+    }
+
+    #[test]
+    fn the_next_noise_mode_goes_round_those_the_device_offers() {
+        use Noise::{Adaptive, Canceling, Off, Transparency};
+        let three = || vec![Canceling, Off, Transparency];
+        for (modes, now, next) in [
+            (three(), Some(Canceling), Some(Off)),
+            (three(), Some(Transparency), Some(Canceling)),
+            (three(), None, Some(Canceling)),
+            (three(), Some(Adaptive), Some(Canceling)),
+            (vec![Off], Some(Off), Some(Off)),
+            (vec![], Some(Off), None),
+        ] {
+            assert_eq!(next_noise(modes.clone(), now), next, "{modes:?} {now:?}");
+        }
+    }
+
+    #[test]
     fn the_shown_level_is_the_single_battery_else_the_emptier_bud() {
         let b = |left, right, case, single| Battery { left, right, case, single };
         for (battery, level) in [
@@ -460,7 +638,7 @@ mod tests {
         let d = BtDevice { id: "a".into(), name: "WH".into(), services: Vec::new(), vendor: None, product: None };
         assert!(c.take(&d, "one") && !c.take(&d, "two") && c.take(&d, "one"));
         assert_eq!(c.of("a").as_deref(), Some("one"));
-        let r = Reported { battery: Battery { single: Some(5), ..Battery::default() }, noise: Some(Noise::Off), modes: vec![Noise::Off] };
+        let r = Reported { battery: Battery { single: Some(5), ..Battery::default() }, noise: Some(Noise::Off), modes: vec![Noise::Off], cycle: vec![Noise::Off] };
         assert!(c.report("a", "one", r.clone()));
         assert!(!c.report("a", "one", r.clone()), "the same report again changes nothing");
         assert!(!c.report("a", "two", r), "only its controller reports");

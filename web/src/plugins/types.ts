@@ -1,6 +1,6 @@
 // A plugin as the page holds it. `WebPlugin` is the core's `read_web_plugin`.
 
-export type RowKind = "Switch" | "Choice" | "Level" | "Secret" | "Text" | "Action" | "Status" | "Section" | "Note" | "Link";
+export type RowKind = "Switch" | "Choice" | "Level" | "Secret" | "Text" | "Action" | "Status" | "Section" | "Note" | "Link" | "Flags";
 
 export type Row = {
   id: string;

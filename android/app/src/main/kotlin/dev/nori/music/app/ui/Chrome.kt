@@ -457,12 +457,16 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
                 modifier = Modifier.weight(1f),
                 item = track,
             )
-            // The one judgement worth making without opening the player: whether this is a song to keep. Apple has
+            // The headphones' noise control where a plugin offers it, then the one judgement worth making without
+            // opening the player: whether this is a song to keep. Apple has
             // only the transport here; the owner asked for the favorite, and the bar has the room for it because
             // the title beside it is already allowed to run out of space gracefully. The skip is a swipe away. A
             // jam guest's seal would be the host's; its play is the one its role offers.
             jam?.let { Box(standing) { JamButton(it, 24.dp, idle = { look.color(CoverLook.CHROME_CONTENT_65) }, lit = { look.color(CoverLook.ACCENT) }) } }
             if (!state.jamGuest) {
+                NoiseAppearing(if (jam == null) noiseHeadphones(state.playingOn) else null) { d ->
+                    Box(standing) { NoiseButton(d, 22.dp, idle = { look.color(CoverLook.CHROME_CONTENT_65) }, lit = { content }) }
+                }
                 // Seals where songs carry favorites (a provider's only signed in): the bar's one color, the accent.
                 val tap = LocalSealTap.current
                 if (LocalRules.current.seals) song?.let { s ->

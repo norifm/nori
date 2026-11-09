@@ -32,6 +32,10 @@ struct Fake {
     closed: (Mutex<Vec<u64>>, Condvar),
     /// The device's state: left, right, noise.
     buds: Mutex<[u8; 3]>,
+    /// How many RFCOMM connections are refused before one opens.
+    refusals: Mutex<u32>,
+    /// The device disconnects as the next GATT link opens, the last step of the fixture's `handles`.
+    goes_while_opening: Mutex<bool>,
 }
 
 impl Fake {
@@ -59,6 +63,12 @@ impl Bluetooth for Fake {
         if !known(&self.devices) && !known(&self.later.lock().unwrap()) {
             return Err(BtFailure::NotFound);
         }
+        let mut refusals = self.refusals.lock().unwrap();
+        if *refusals > 0 {
+            *refusals -= 1;
+            return Err(BtFailure::Failed { detail: "not ready".into() });
+        }
+        drop(refusals);
         self.opened.lock().unwrap().push((link, device, format!("rfcomm {service}")));
         Ok(())
     }
@@ -75,6 +85,9 @@ impl Bluetooth for Fake {
         Ok(())
     }
     fn gatt(&self, link: u64, device: String) -> Result<(), BtFailure> {
+        if std::mem::take(&mut *self.goes_while_opening.lock().unwrap()) {
+            self.host().bluetooth_disconnected(device.clone());
+        }
         self.opened.lock().unwrap().push((link, device, "gatt".into()));
         Ok(())
     }
@@ -307,4 +320,87 @@ fn a_plugin_reaching_an_audio_device_it_hears_connect_is_told_once() {
     let said = session.said.lock().unwrap().clone();
     let count = |w: &str| said.iter().filter(|s| *s == w).count();
     assert_eq!((count("connected"), count("disconnected")), (2, 1), "by its id, not again as an output: {said:?}");
+}
+
+#[test]
+fn a_plugin_shows_in_its_own_row_what_the_device_says() {
+    let (_dir, session, _fake, plugins) = open("plugins-device-rows", vec![device("AA", "Test Buds Pro")]);
+    plugins.install(&fixture("headphones")).unwrap();
+    let row = || plugins.controlled("en".into()).into_iter().next()?.card.rows.into_iter().find(|r| r.id == "canceling")?.value;
+    session.until("the device's mode", || row() == Some(Value::Switch(true)));
+    plugins.set_noise("AA".into(), Noise::Off);
+    session.until("the mode it changed to", || row() == Some(Value::Switch(false)));
+
+    // What the user sets reaches the device's page at once, or a slider there would keep sending.
+    let before = *session.changes.0.lock().unwrap();
+    plugins.set(ID.into(), "canceling".into(), Value::Switch(true));
+    assert_eq!(row(), Some(Value::Switch(true)));
+    assert!(*session.changes.0.lock().unwrap() > before, "the page is told");
+}
+
+#[test]
+fn an_updated_plugin_is_handed_its_device_again() {
+    let (_dir, session, fake, plugins) = open("plugins-device-update", vec![device("AA", "Test Buds Pro")]);
+    plugins.install(&fixture("headphones")).unwrap();
+    session.until("controlled", || !plugins.controlled("en".into()).is_empty());
+    let opened = || fake.opened.lock().unwrap().iter().filter(|(_, d, what)| d == "AA" && what.starts_with("rfcomm")).count();
+    assert_eq!(opened(), 1);
+
+    plugins.install(&fixture("headphones")).unwrap();
+    session.until("controlled again", || opened() == 2 && !plugins.controlled("en".into()).is_empty());
+    plugins.set_noise("AA".into(), Noise::Off);
+    session.until("the new instance answers", || plugins.controlled("en".into()).first().and_then(|d| d.noise) == Some(Noise::Off));
+}
+
+#[test]
+fn a_row_can_change_what_the_noise_button_moves_through() {
+    let (_dir, session, _fake, plugins) = open("plugins-device-cycle", vec![device("AA", "Test Buds Pro")]);
+    plugins.install(&fixture("headphones")).unwrap();
+    let shown = || plugins.controlled("en".into()).into_iter().next();
+    session.until("controlled", || shown().is_some_and(|d| d.noise_cycle.len() == 3));
+    plugins.set(ID.into(), "skip_off".into(), nori_plugins::Value::Switch(true));
+    session.until("the plugin's new cycle", || shown().is_some_and(|d| d.noise_cycle == [Noise::Canceling, Noise::Transparency]));
+    assert_eq!(shown().unwrap().noise_modes.len(), 3, "every mode can still be chosen");
+}
+
+#[test]
+fn a_device_whose_channel_is_lost_is_let_go_and_offered_again() {
+    let (_dir, session, fake, plugins) = open("plugins-device-lost", vec![device("AA", "Test Buds Pro")]);
+    plugins.install(&fixture("headphones")).unwrap();
+    session.until("controlled", || !plugins.controlled("en".into()).is_empty());
+    let channel = fake.link(&format!("rfcomm {SPP}"));
+
+    plugins.bluetooth_lost(channel);
+    let channels = || fake.opened.lock().unwrap().iter().filter(|(_, d, what)| d == "AA" && what.starts_with("rfcomm")).count();
+    session.until("a new channel", || channels() == 2 && !plugins.controlled("en".into()).is_empty());
+    plugins.set_noise("AA".into(), Noise::Off);
+    session.until("the new channel answers", || plugins.controlled("en".into()).first().and_then(|d| d.noise) == Some(Noise::Off));
+}
+
+#[test]
+fn a_device_not_ready_when_offered_is_offered_again() {
+    let (_dir, session, fake, plugins) = open("plugins-device-not-ready", vec![device("AA", "Test Buds Pro")]);
+    *fake.refusals.lock().unwrap() = 2;
+    plugins.install(&fixture("headphones")).unwrap();
+    session.until("controlled once it answers", || !plugins.controlled("en".into()).is_empty());
+}
+
+#[test]
+fn looking_again_finds_a_device_it_gave_up_on() {
+    let (_dir, session, fake, plugins) = open("plugins-device-look", vec![device("AA", "Test Buds Pro")]);
+    *fake.refusals.lock().unwrap() = 99;
+    plugins.install(&fixture("headphones")).unwrap();
+    session.until("refused", || *fake.refusals.lock().unwrap() < 99);
+    *fake.refusals.lock().unwrap() = 0;
+    plugins.look_for_devices();
+    session.until("controlled", || !plugins.controlled("en".into()).is_empty());
+}
+
+#[test]
+fn a_device_gone_while_a_plugin_answers_is_not_controlled() {
+    let (_dir, session, fake, plugins) = open("plugins-device-race", vec![device("AA", "Test Buds Pro")]);
+    *fake.goes_while_opening.lock().unwrap() = true;
+    plugins.install(&fixture("headphones")).unwrap();
+    session.until("the plugin let it go", || session.notice("gone") == Some(vec!["AA".into()]));
+    assert!(plugins.controlled("en".into()).is_empty());
 }

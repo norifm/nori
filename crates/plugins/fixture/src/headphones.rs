@@ -7,8 +7,10 @@ use nori_plugin_sdk::bluetooth::{connected, Gatt, Rfcomm};
 use nori_plugin_sdk::device_control::{Battery, DeviceState, Noise};
 use nori_plugin_sdk::hooks::Event;
 use nori_plugin_sdk::notices::{show, Tone};
+use nori_plugin_sdk::rows;
 use nori_plugin_sdk::timers::{self, When};
-use nori_plugin_sdk::{DeviceControl, DeviceFilter, Hook, Hooks, Manifest};
+use nori_plugin_sdk::types::Value;
+use nori_plugin_sdk::{DeviceControl, DeviceFilter, Hook, Hooks, Lifecycle, Manifest, Row};
 
 const SPP: &str = "00001101-0000-1000-8000-00805f9b34fb";
 const BATTERY: &str = "0000180f-0000-1000-8000-00805f9b34fb";
@@ -41,6 +43,11 @@ fn frame(state: &mut DeviceState, f: &[u8]) {
     }
 }
 
+/// Shows what the headphones say in the plugin's row.
+fn shown(state: &DeviceState) {
+    rows::set(&[("canceling".to_string(), Value::Switch(state.noise == Some(Noise::Canceling)))]);
+}
+
 impl Headphones {
     fn buds(&mut self, id: &str) -> Option<&mut Buds> {
         self.buds.iter_mut().find(|b| b.id == id)
@@ -53,7 +60,7 @@ impl DeviceControl for Headphones {
         let elsewhere = Rfcomm::open("CAR", SPP).err().map(|e| format!("{:?}", e.kind)).unwrap_or_default();
         said("reach", &[seen.join(","), elsewhere]);
         let (Ok(channel), Ok(gatt)) = (Rfcomm::open(&device, SPP), Gatt::open(&device)) else { return false };
-        let mut state = DeviceState { battery: Battery { left: None, right: None, case: None, single: None }, noise: None, noise_modes: MODES.to_vec() };
+        let mut state = DeviceState { battery: Battery { left: None, right: None, case: None, single: None }, noise: None, noise_modes: MODES.to_vec(), noise_cycle: MODES.to_vec() };
         if channel.write(b"?").is_err() {
             return false;
         }
@@ -64,6 +71,7 @@ impl DeviceControl for Headphones {
         state.battery.case = gatt.read(BATTERY, LEVEL).ok().and_then(|b| b.first().copied());
         let _ = gatt.notify(BATTERY, LEVEL, true);
         said("gatt", &[gatt.mtu().to_string(), gatt.services().join(",")]);
+        shown(&state);
         self.buds.push(Buds { id: device, channel, _gatt: gatt, state });
         timers::start(TICK, 1000, true, When::Always);
         true
@@ -78,12 +86,25 @@ impl DeviceControl for Headphones {
         if b.channel.write(&[b'N', noise as u8]).is_ok() {
             if let Ok(f) = b.channel.read(3, 5_000) {
                 frame(&mut b.state, &f);
+                shown(&b.state);
             }
         }
     }
 
     fn gone(&mut self, device: String) {
+        said("gone", &[device.clone()]);
         self.buds.retain(|b| b.id != device);
+    }
+}
+
+impl Lifecycle for Headphones {
+    fn changed(&mut self, row: String, value: Value) {
+        if row == "skip_off" {
+            let skip = matches!(value, Value::Switch(true));
+            for b in &mut self.buds {
+                b.state.noise_cycle = MODES.into_iter().filter(|m| !(skip && *m == Noise::Off)).collect();
+            }
+        }
     }
 }
 
@@ -106,4 +127,4 @@ impl Hooks for Headphones {
     }
 }
 
-pub const MANIFEST: Manifest = Manifest { devices: &[DeviceFilter::ANY.name("Test Buds*")], hooks: &[Hook::DeviceConnected], ..Manifest::new("fm.nori.test.headphones") };
+pub const MANIFEST: Manifest = Manifest { rows: &[Row::switch("canceling", false), Row::switch("skip_off", false)], devices: &[DeviceFilter::ANY.name("Test Buds*")], hooks: &[Hook::DeviceConnected], ..Manifest::new("fm.nori.test.headphones") };

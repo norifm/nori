@@ -49,12 +49,12 @@ use std::sync::{Arc, Mutex};
 
 pub use app::{open, open_plugins, Client};
 pub use bluetooth::{Bluetooth, BtDevice, BtFailure};
-pub use devices::{controlled_output, output_device, Battery, ControlledDevice, Noise};
+pub use devices::{controlled_on_output, next_noise, output_device, Battery, ControlledDevice, Noise};
 pub use safe::SafeStart;
 pub use readme::ReadmeBlock;
 pub use repo::{offer_for, offer_of, offers_found, offers_to_update, plugin_display_name, provider_offers, updates_waiting, Offer, OfferState, Offers, Repo, RepoFailure, Updated, Version, OFFICIAL};
 pub use slots::{Artwork, InfoGroup, InfoLine, Items, MenuEntry};
-pub use view::{PluginCard, PluginPreview, PluginRow};
+pub use view::{row_on_device_page, PluginCard, PluginPreview, PluginRow};
 pub use assets::{AssetLine, AssetState};
 pub use cast::{Card, Cards, Media, Service, TxtEntry};
 pub use hooks::Press;
@@ -424,6 +424,7 @@ impl Plugins {
             self.side.laid(&manifest.id);
         }
         self.refresh();
+        self.reoffer(&manifest.id);
         if at.is_none() && standing.on {
             self.turn(manifest.id.clone(), true);
         }
@@ -608,6 +609,11 @@ impl Plugins {
     pub fn set(&self, id: String, row: String, value: Value) {
         let id = id.as_str();
         store::Store::new(self.folder(id).join("store")).set(&format!("{ROWS}{row}"), &value.encode());
+        // A controlled device's page draws its rows: it has to hear what the row is now.
+        let devices = self.controls.of_plugin(id);
+        if !devices.is_empty() {
+            self.side.devices_changed();
+        }
         let Some(i) = self.installed().into_iter().find(|i| i.enabled && i.manifest.id == id) else { return };
         if i.manifest.extends("sound-stage") {
             self.side.laid(id);
@@ -615,7 +621,12 @@ impl Plugins {
         if i.manifest.extends("lifecycle") {
             if let Some(w) = self.worker(id) {
                 let value = value.into();
-                w.post(move |store, p| p.nori_plugin_lifecycle().call_changed(store, &row, &value));
+                let around = self.around();
+                // The row can change what the device reports.
+                w.post(move |store, p| {
+                    p.nori_plugin_lifecycle().call_changed(&mut *store, &row, &value)?;
+                    devices.iter().try_for_each(|d| around.refresh(store, p, d))
+                });
             }
         }
     }

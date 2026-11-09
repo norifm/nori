@@ -739,6 +739,8 @@ pub struct Plugged {
     pub assets: HashMap<String, Vec<AssetLine>>,
     /// The connected devices plugins control.
     pub controlled: Vec<ControlledDevice>,
+    /// The device whose settings the devices panel shows.
+    pub device_page: Option<String>,
     pub repos: Vec<Repo>,
     pub shelf: Shelf,
     /// The pages open over the list.
@@ -881,6 +883,12 @@ pub enum PluginAct {
     RemoveRepo(String),
     /// A controlled device's noise control, by the device's id.
     Noise(String),
+    /// A plugin's flags row: its id, the row and the bits switching this option stores.
+    Flags(String, String, u64),
+    /// A controlled device's settings, in the devices panel.
+    DeviceOpen(String),
+    /// Back from them.
+    DeviceBack,
     /// Lets a plugin fetch its assets on mobile data.
     AllowMobile(String),
     /// The first screen's choice: this kind's form.
@@ -932,6 +940,13 @@ impl PluginAct {
             "repo-trust" => PluginAct::TrustRepo(id()),
             "repo-remove" => PluginAct::RemoveRepo(id()),
             "device-noise" => PluginAct::Noise(id()),
+            "plugin-flags" => {
+                let (row, bits) = rest.rsplit_once(':')?;
+                let (plugin, row) = row.split_once(':')?;
+                PluginAct::Flags(plugin.into(), row.into(), bits.parse().ok()?)
+            }
+            "device-open" => PluginAct::DeviceOpen(id()),
+            "device-back" => PluginAct::DeviceBack,
             "plugin-mobile" => PluginAct::AllowMobile(id()),
             "provider-own" => PluginAct::Choose(ServerKind::Subsonic),
             "provider" => PluginAct::Choose(ServerKind::Plugin { id: id() }),
@@ -969,6 +984,9 @@ impl PluginAct {
             PluginAct::TrustRepo(url) => format!("repo-trust:{url}"),
             PluginAct::RemoveRepo(url) => format!("repo-remove:{url}"),
             PluginAct::Noise(device) => format!("device-noise:{device}"),
+            PluginAct::Flags(plugin, row, bits) => format!("plugin-flags:{plugin}:{row}:{bits}"),
+            PluginAct::DeviceOpen(device) => format!("device-open:{device}"),
+            PluginAct::DeviceBack => "device-back".into(),
             PluginAct::AllowMobile(id) => format!("plugin-mobile:{id}"),
             PluginAct::Choose(ServerKind::Subsonic) => "provider-own".into(),
             PluginAct::Choose(ServerKind::Plugin { id }) => format!("provider:{id}"),
@@ -1144,10 +1162,9 @@ fn plugin_page(p: &Plugged, id: &str) -> Vec<(String, Vec<Row>)> {
         if c.repo.is_some() {
             head.push(Row { kind: TOGGLE, name: PluginAct::Hold(c.id.clone()).name(), title: words::KEEP_VERSION.into(), on: c.held, enabled: true, ..Default::default() });
         }
-        let mut page = card_groups(String::new(), c, head, &p.off);
-        let devices = p.controlled.iter().filter(|d| d.card.id == c.id);
-        page.splice(1..1, devices.map(|d| (d.name.clone(), device_controls(d))).filter(|(_, rows)| !rows.is_empty()));
-        groups.extend(page);
+        // A device's settings are on the device's own page.
+        let controls_devices = c.points.iter().any(|p| p == "device-control");
+        groups.extend(card_groups(String::new(), c, head, &p.off, |r| !controls_devices || !nori_plugins::row_on_device_page(r.kind)));
         if let Some(assets) = p.assets.get(&c.id) {
             let mut rows: Vec<Row> = assets.iter().map(|a| info(&a.name, words::asset_state(a))).collect();
             if assets.iter().any(|a| a.state == AssetState::WaitingForWifi) {
@@ -1324,6 +1341,7 @@ fn plugin_row(plugin: &str, r: &PluginRow, off: bool) -> Row {
             Row { kind: ACTION, detail: said(detail), button: words::CHANGE.into(), ..base }
         }
         RowKind::Action => Row { kind: BUTTON, ..base },
+        RowKind::Flags => Row { kind: INFO, ..base },
         RowKind::Status => Row { kind: INFO, detail: said(r.value.as_ref().map(|v| words::plugin_value(v, &r.options)).unwrap_or_default()), ..base },
         RowKind::Link => match &r.url {
             Some(url) => Row { kind: LINK, name: PluginAct::Open(url.clone()).name(), ..base },
@@ -1333,25 +1351,42 @@ fn plugin_row(plugin: &str, r: &PluginRow, off: bool) -> Row {
     }
 }
 
-/// Card `c`'s page as groups: its rows under `title` (after `head`), each section under its own; those
-/// in `off` take no input.
-fn card_groups(title: String, c: &PluginCard, head: Vec<Row>, off: &HashSet<(String, String)>) -> Vec<(String, Vec<Row>)> {
+/// `r` as rows: a flags row is its title, then a switch for each option, as the settings' own flags are.
+fn plugin_lines(plugin: &str, r: &PluginRow, off: bool) -> Vec<Row> {
+    let row = plugin_row(plugin, r, off);
+    if r.kind != RowKind::Flags {
+        return vec![row];
+    }
+    let switches = r.options.iter().enumerate().map(|(at, option)| Row {
+        kind: TOGGLE,
+        name: PluginAct::Flags(plugin.into(), r.id.clone(), r.flag_switched(at)).name(),
+        title: option.clone(),
+        on: r.flag_on(at),
+        enabled: !off,
+        ..Default::default()
+    });
+    std::iter::once(row).chain(switches).collect()
+}
+
+/// Card `c`'s `shown` rows as groups: under `title` (after `head`), each section under its own; those in
+/// `off` take no input.
+fn card_groups(title: String, c: &PluginCard, head: Vec<Row>, off: &HashSet<(String, String)>, shown: impl Fn(&PluginRow) -> bool) -> Vec<(String, Vec<Row>)> {
     let mut groups = Vec::new();
     let (mut title, mut rows) = (title, head);
-    for r in &c.rows {
+    for r in c.rows.iter().filter(|r| shown(r)) {
         match r.kind {
             RowKind::Section => groups.push((std::mem::replace(&mut title, r.label.clone()), std::mem::take(&mut rows))),
-            _ => rows.push(plugin_row(&c.id, r, off.contains(&(c.id.clone(), r.id.clone())))),
+            _ => rows.extend(plugin_lines(&c.id, r, off.contains(&(c.id.clone(), r.id.clone())))),
         }
     }
     groups.push((title, rows));
     groups
 }
 
-/// The devices panel's plugin rows: each controlled device's page (its batteries and noise control,
-/// then its plugin's rows), then the rows of the plugins `cards` show there, as on their pages.
-pub fn device_rows(cards: &[PluginCard], controlled: &[ControlledDevice], off: &HashSet<(String, String)>, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
-    model(device_groups(cards, controlled, off), prefs, f, today)
+/// The devices panel's plugin rows: each controlled device (its batteries and noise control, and a way on
+/// to its settings), then the rows of the plugins `cards` show there; with `page`, that device's settings.
+pub fn device_rows(cards: &[PluginCard], controlled: &[ControlledDevice], off: &HashSet<(String, String)>, page: Option<&str>, prefs: &StoredPrefs, f: &Facts, today: Today) -> ModelRc<SettingRow> {
+    model(device_groups(cards, controlled, off, page), prefs, f, today)
 }
 
 /// A controlled device's batteries and noise control.
@@ -1369,15 +1404,27 @@ fn device_controls(d: &ControlledDevice) -> Vec<Row> {
     rows
 }
 
-fn device_groups(cards: &[PluginCard], controlled: &[ControlledDevice], off: &HashSet<(String, String)>) -> Vec<(String, Vec<Row>)> {
+fn device_groups(cards: &[PluginCard], controlled: &[ControlledDevice], off: &HashSet<(String, String)>, page: Option<&str>) -> Vec<(String, Vec<Row>)> {
+    let on_page = |r: &PluginRow| nori_plugins::row_on_device_page(r.kind);
+    let button = |title: &str, act: PluginAct| Row { kind: BUTTON, name: act.name(), title: title.into(), enabled: true, ..Default::default() };
     let mut groups = Vec::new();
-    for d in controlled {
-        groups.push((d.name.clone(), device_controls(d)));
-        if !cards.iter().any(|c| c.id == d.card.id) {
-            groups.extend(card_groups(d.card.name.clone(), &d.card, Vec::new(), off));
-        }
+    if let Some(d) = page.and_then(|id| controlled.iter().find(|d| d.id == id)) {
+        let mut rows = vec![button(words::BACK, PluginAct::DeviceBack)];
+        rows.extend(device_controls(d));
+        groups.push((d.name.clone(), rows));
+        groups.extend(card_groups(String::new(), &d.card, Vec::new(), off, on_page));
+        groups.retain(|(_, rows)| !rows.is_empty());
+        return groups;
     }
-    groups.extend(cards.iter().flat_map(|c| card_groups(c.name.clone(), c, Vec::new(), off)));
+    for d in controlled {
+        let mut rows = device_controls(d);
+        if d.card.rows.iter().any(|r| on_page(r) && r.kind != RowKind::Section) {
+            rows.push(button(words::DEVICE_SETTINGS, PluginAct::DeviceOpen(d.id.clone())));
+        }
+        groups.push((d.name.clone(), rows));
+    }
+    let apart = cards.iter().filter(|c| !controlled.iter().any(|d| d.card.id == c.id));
+    groups.extend(apart.flat_map(|c| card_groups(c.name.clone(), c, Vec::new(), off, |_| true)));
     groups.retain(|(_, rows)| !rows.is_empty());
     groups
 }
@@ -1639,7 +1686,7 @@ mod tests {
             row("state", RowKind::Status, Some(Value::Text("Fine".into()))),
         ];
         let official = official();
-        let buds = ControlledDevice { id: "AA".into(), name: "Buds".into(), battery: nori_plugins::Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: None, noise_modes: Vec::new(), card: plugin_card("a.one", Vec::new()) };
+        let buds = ControlledDevice { id: "AA".into(), name: "Buds".into(), battery: nori_plugins::Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: None, noise_modes: Vec::new(), noise_cycle: Vec::new(), card: plugin_card("a.one", Vec::new()) };
         let mut p = Plugged {
             cards: vec![plugin_card("a.one", rows), plugin_card("a.two", Vec::new())],
             off: HashSet::from([("a.one".to_string(), "pick".to_string())]),
@@ -1653,21 +1700,20 @@ mod tests {
         };
         let groups = plugin_groups(&p, false);
         let titles: Vec<&str> = groups.iter().map(|(t, _)| t.as_str()).collect();
-        assert_eq!(titles, ["", "Buds", "more", "Files", "About", "Versions"], "nothing to say of what it may do, no group");
+        assert_eq!(titles, ["", "more", "Files", "About", "Versions"], "nothing to say of what it may do, no group");
         let one: Vec<(i32, &str)> = groups[0].1.iter().map(|r| (r.kind, r.name.as_str())).collect();
         assert_eq!(one, [(TOGGLE, "plugin-on:a.one"), (TOGGLE, "plugin-hold:a.one"), (TOGGLE, "plugin-row:a.one:on"), (CHOICE, "plugin-row:a.one:pick"), (SLIDER, "plugin-row:a.one:gain"), (ACTION, "plugin-row:a.one:key"), (BUTTON, "plugin-row:a.one:go")]);
         assert!(!groups[0].1[3].enabled, "a row its plugin turned off takes no input");
         assert_eq!(groups[0].1[3].chosen, Some(1));
         assert_eq!(groups[0].1[5].detail, "Set", "a secret stays hidden");
-        assert_eq!((groups[1].1[0].kind, groups[1].1[0].detail.as_str()), (INFO, "80%"), "the device it controls, with its battery");
-        assert_eq!((groups[2].1[0].kind, groups[2].1[0].detail.as_str()), (INFO, "Fine"));
-        let files: Vec<(i32, &str, &str)> = groups[3].1.iter().map(|r| (r.kind, r.title.as_str(), r.detail.as_str())).collect();
+        assert_eq!((groups[1].1[0].kind, groups[1].1[0].detail.as_str()), (INFO, "Fine"));
+        let files: Vec<(i32, &str, &str)> = groups[2].1.iter().map(|r| (r.kind, r.title.as_str(), r.detail.as_str())).collect();
         assert_eq!(files, [(INFO, "model", "Waiting for Wi-Fi"), (BUTTON, "Download on mobile data", "")]);
-        assert_eq!(PluginAct::of(&groups[3].1[1].name), Some(PluginAct::AllowMobile("a.one".into())));
-        assert_eq!(groups[4].1.iter().map(|r| r.kind).collect::<Vec<_>>(), [README_HEADING, README_TEXT, README_ITEM, README_CODE]);
-        let versions: Vec<(&str, &str, bool)> = groups[5].1.iter().map(|r| (r.title.as_str(), r.button.as_str(), r.enabled)).collect();
+        assert_eq!(PluginAct::of(&groups[2].1[1].name), Some(PluginAct::AllowMobile("a.one".into())));
+        assert_eq!(groups[3].1.iter().map(|r| r.kind).collect::<Vec<_>>(), [README_HEADING, README_TEXT, README_ITEM, README_CODE]);
+        let versions: Vec<(&str, &str, bool)> = groups[4].1.iter().map(|r| (r.title.as_str(), r.button.as_str(), r.enabled)).collect();
         assert_eq!(versions, [("2.0.0", "Install", true), ("1.0.0", "Installed", false), ("Source", "", true)]);
-        assert_eq!(groups[5].1[2].detail, "code.example");
+        assert_eq!(groups[4].1[2].detail, "code.example");
         for r in groups.iter().flat_map(|(_, rows)| rows).filter(|r| !r.name.is_empty()) {
             assert_eq!(PluginAct::of(&r.name).map(|a| a.name()), Some(r.name.clone()), "{} parses back", r.name);
         }
@@ -1869,18 +1915,41 @@ mod tests {
         assert_eq!((link.kind, PluginAct::of(&link.name)), (LINK, Some(PluginAct::Open("https://x.example/help".into()))));
     }
 
-    /// A controlled device's page leads the devices panel: its batteries, its noise control (named so
-    /// it parses back to the device), then its plugin's rows, shown once.
+    /// A controlled device leads the devices panel: its batteries, its noise control (named so it parses
+    /// back to the device) and a way on to its settings, which have a way back.
     #[test]
     fn a_controlled_device_leads_the_devices_panel() {
         use nori_plugins::{Battery, Noise};
         let card = |id: &str| PluginCard { id: id.into(), version: "1.0.0".into(), name: id.into(), about: None, enabled: true, repo: None, held: false, points: Vec::new(), overrides: Vec::new(), net: Vec::new(), lan: false, bluetooth: true, permissions: Vec::new(), hooks: Vec::new(), wakes: Vec::new(), commands: Vec::new(), cache_bytes: 0, asset_bytes: 0, rows: vec![PluginRow { id: "wear".into(), kind: RowKind::Switch, label: "Wear detection".into(), options: Vec::new(), min: None, max: None, step: None, value: Some(Value::Switch(true)), hint: None, unit: None, decimals: 0, url: None }] };
-        let d = ControlledDevice { id: "AA".into(), name: "WH-1000XM5".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Canceling), noise_modes: vec![Noise::Off, Noise::Canceling], card: card("dev.sony") };
-        let groups = device_groups(&[card("dev.sony")], std::slice::from_ref(&d), &HashSet::new());
-        assert_eq!(groups.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["WH-1000XM5", "dev.sony"], "its plugin's rows once");
-        let rows = &groups[0].1;
+        let d = ControlledDevice { id: "AA".into(), name: "WH-1000XM5".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Canceling), noise_modes: vec![Noise::Off, Noise::Canceling], noise_cycle: vec![Noise::Off, Noise::Canceling], card: card("dev.sony") };
+        let on = PluginRow { id: "on".into(), label: "Touch".into(), kind: RowKind::Switch, ..row_blank() };
+        let d = ControlledDevice { card: PluginCard { rows: vec![on], ..d.card.clone() }, ..d };
+        let shown = |page| device_groups(&[card(&d.card.id)], std::slice::from_ref(&d), &HashSet::new(), page);
+
+        let list = shown(None);
+        assert_eq!(list.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["WH-1000XM5"], "its plugin's rows wait on its page");
+        let rows = &list[0].1;
         assert_eq!((rows[0].kind, rows[0].detail.as_str()), (INFO, "80%"));
         assert_eq!((rows[1].kind, rows[1].chosen, PluginAct::of(&rows[1].name)), (CHOICE, Some(1), Some(PluginAct::Noise("AA".into()))));
-        assert_eq!(device_groups(&[], std::slice::from_ref(&d), &HashSet::new()).len(), 2, "its plugin's rows show though the plugin names no place");
+        assert_eq!(PluginAct::of(&rows[2].name), Some(PluginAct::DeviceOpen("AA".into())));
+
+        let page = shown(Some("AA"));
+        assert_eq!(PluginAct::of(&page[0].1[0].name), Some(PluginAct::DeviceBack));
+        assert_eq!(page[1].1[0].name, "plugin-row:dev.sony:on");
+        assert_eq!(shown(Some("gone")).len(), 1, "the device gone, the list again");
+    }
+
+    /// A flags row is its title and a switch for each option, which stores the bits with that one switched.
+    #[test]
+    fn a_plugins_flags_are_switches() {
+        let r = PluginRow { id: "cycle".into(), label: "Cycle".into(), kind: RowKind::Flags, options: vec!["A".into(), "B".into()], value: Some(Value::Flags(0b01)), ..row_blank() };
+        let lines = plugin_lines("p", &r, false);
+        assert_eq!(lines.iter().map(|l| (l.kind, l.on)).collect::<Vec<_>>(), [(INFO, false), (TOGGLE, true), (TOGGLE, false)]);
+        assert_eq!(PluginAct::of(&lines[1].name), Some(PluginAct::Flags("p".into(), "cycle".into(), 0b00)));
+        assert_eq!(PluginAct::of(&lines[2].name), Some(PluginAct::Flags("p".into(), "cycle".into(), 0b11)));
+    }
+
+    fn row_blank() -> PluginRow {
+        PluginRow { id: String::new(), label: String::new(), kind: RowKind::Note, options: Vec::new(), value: None, hint: None, min: None, max: None, step: None, decimals: 0, unit: None, url: None }
     }
 }

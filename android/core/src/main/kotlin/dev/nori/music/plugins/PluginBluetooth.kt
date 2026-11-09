@@ -121,10 +121,19 @@ class PluginBluetooth(private val context: Context, private val plugins: () -> P
 
     override fun rfcomm(link: ULong, device: String, service: String) {
         val socket = try {
-            remote(device).createRfcommSocketToServiceRecord(UUID.fromString(service)).also { it.connect() }
+            remote(device).createRfcommSocketToServiceRecord(UUID.fromString(service))
         } catch (e: IOException) {
             throw BtFailure.Failed(e.message.orEmpty())
         } catch (e: SecurityException) {
+            throw BtFailure.Refused()
+        }
+        try {
+            socket.connect()
+        } catch (e: IOException) {
+            runCatching { socket.close() }
+            throw BtFailure.Failed(e.message.orEmpty())
+        } catch (e: SecurityException) {
+            runCatching { socket.close() }
             throw BtFailure.Refused()
         }
         links[link] = Rfcomm(socket)

@@ -1232,6 +1232,7 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
             let x = &d.controlled[k];
             spread(vec![Span::raw("  "), Span::styled(crate::text::NOISE_CONTROL, Style::default().fg(t.ink))], Span::styled(x.noise.map_or("", crate::text::noise), t.dim()), w)
         }
+        DeviceRow::Settings(_) => Line::from(vec![Span::raw("  "), Span::styled(crate::text::DEVICE_SETTINGS, Style::default().fg(t.ink))]),
         DeviceRow::PluginName(c) => Line::from(Span::styled(format!("  {}", d.plugins[c].name.to_uppercase()), t.dim())),
         DeviceRow::Plugin(c, r) => d.plugin_row(c, r).map_or_else(Line::default, |row| setting_line(&SLine::Row(&row), w, t)),
         DeviceRow::PluginHint(c, r) => Line::from(Span::styled(fit(&format!("    {}", d.plugins[c].rows[r].hint.as_deref().unwrap_or_default()), w).into_owned(), t.dim().add_modifier(Modifier::ITALIC))),
@@ -1632,7 +1633,7 @@ fn output_line(f: &mut Frame, r: Rect, app: &mut App, t: &Theme) {
         Some((_, name)) => (crate::text::playing_on(name), true),
         // Headphones a plugin controls by their own name, with their battery.
         None => match app.devices.output_device(&app.output) {
-            Some(d) => (d.level.map_or_else(|| d.name.clone(), |l| crate::text::with_level(&d.name, l)), false),
+            Some(d) => (crate::text::headphones_line(d), false),
             None => (crate::text::output_name(&app.output), false),
         },
     };

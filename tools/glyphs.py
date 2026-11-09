@@ -7,6 +7,7 @@ desktop's icons.slint.
 <iconoir>/icons is the icons folder of the Iconoir package (MIT; `npm pack iconoir`), with regular/ and solid/.
 Add a glyph to GLYPHS and run this again; nothing else lists them.
 """
+import math
 import re
 import sys
 from pathlib import Path
@@ -712,11 +713,24 @@ def write_slint(shapes):
     kebab = lambda name: re.sub(r"(?<!^)(?=[A-Z])", "-", name).lower()
     lines = [f'    // {icon}{" (solid)" if style == "solid" else ""}\n    out property <Glyph> {kebab(name)}: {slint_glyph(shapes[name])};'
              for name, (icon, style, _) in GLYPHS.items()]
+    lines.extend(noise_glyphs())
     for name, file, what in (("seal", "seal", "a favorite"), ("seal-outline", "seal_outline", "not a favorite")):
         lines.append(f"    // nori's seal, {what} (android/core/src/main/res/drawable/{file}.xml, upright)\n"
                      f"    out property <Glyph> {name}: {slint_glyph(drawable_parts(CORE / f'{file}.xml'))};")
     lines.append(slint_seasons())
     SLINT.write_text(SLINT_HEAD + "\n".join(lines) + "\n}\n")
+
+
+def noise_glyphs():
+    """The headphones' noise control (android's DeviceControls.kt): a ring, dashed or with a disc or ring inside."""
+    n = lambda x: f"{x:.3f}".rstrip("0").rstrip(".")
+    at = lambda d: (n(12 + 9 * math.cos(math.radians(d))), n(12 + 9 * math.sin(math.radians(d))))
+    ring = "M3 12A9 9 0 1 1 21 12A9 9 0 1 1 3 12Z"
+    dashes = "".join("M{} {}A9 9 0 0 1 {} {}".format(*at(i * 45), *at((i + 0.5) * 45)) for i in range(8))
+    inside = "M7.4 12A4.6 4.6 0 1 1 16.6 12A4.6 4.6 0 1 1 7.4 12Z"
+    bodies = (("noise-off", f'lines: "{ring}"'), ("noise-canceling", f'lines: "{ring}", fill: "{inside}"'),
+              ("noise-transparency", f'lines: "{dashes}"'), ("noise-adaptive", f'lines: "{ring}{inside}"'))
+    return [f"    // headphones' noise control (android's DeviceControls.kt)\n    out property <Glyph> {k}: {{ {v} }};" for k, v in bodies]
 
 
 def slint_seasons():

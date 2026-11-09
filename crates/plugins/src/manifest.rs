@@ -212,6 +212,7 @@ impl RowSpec {
         Some(match self.kind {
             RowKind::Switch => crate::Value::Switch(d != 0.0),
             RowKind::Choice => crate::Value::Choice(d as u32),
+            RowKind::Flags => crate::Value::Flags(d as u64),
             _ => crate::Value::Level(d),
         })
     }
@@ -232,10 +233,12 @@ pub enum RowKind {
     Note,
     /// Opens its `url`.
     Link,
+    /// Any number of its options on, as pills; its value's bits are their places.
+    Flags,
 }
 
 impl RowKind {
-    const ALL: [RowKind; 10] = [RowKind::Switch, RowKind::Choice, RowKind::Level, RowKind::Secret, RowKind::Text, RowKind::Action, RowKind::Status, RowKind::Section, RowKind::Note, RowKind::Link];
+    const ALL: [RowKind; 11] = [RowKind::Switch, RowKind::Choice, RowKind::Level, RowKind::Secret, RowKind::Text, RowKind::Action, RowKind::Status, RowKind::Section, RowKind::Note, RowKind::Link, RowKind::Flags];
 
     /// Whether its value is a number a sound stage reads.
     pub fn numeric(self) -> bool {
