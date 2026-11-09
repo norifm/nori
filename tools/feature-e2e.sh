@@ -515,7 +515,11 @@ if want notification; then section "the notification's seal and shuffle"
     check "the notification fixture is the current song" wait_for title "Far Song Three" 10
   fi
   buttons=$(field notification); echo "     buttons: $buttons"
-  check "the notification has a seal and a shuffle button" bash -c '[[ "'"$buttons"'" == *seal* && "'"$buttons"'" == *shuffle* ]]'
+  check "the session has a seal and a shuffle button" bash -c '[[ "'"$buttons"'" == *seal* && "'"$buttons"'" == *shuffle* ]]'
+  # What the system's notification and lock screen draw: the platform session's custom actions, by name.
+  system_actions() { adb shell dumpsys media_session | grep -o "custom actions=\[.*" | grep -o "mName='[^,]*"; }
+  only_the_seal() { [ "$(system_actions)" = "mName='Add to favorites" ] || [ "$(system_actions)" = "mName='Remove from favorites" ]; }
+  check "the system's notification has only the seal ($(system_actions | tr '\n' ' '))" wait_until 10 only_the_seal
   was=$(field starred); flip=$([ "$was" = True ] && echo False || echo True)
   "$app" do "notification favourite" >/dev/null
   check "the notification's seal stars the song in the app ($was -> $flip)" wait_for starred "$flip" 10
