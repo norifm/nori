@@ -162,6 +162,8 @@ pub struct Plugins {
     /// Whether the platform's Bluetooth is how this client hears output devices connect (the desktop's
     /// BlueZ; Android has its audio device callback).
     pub(crate) bluetooth_outputs: std::sync::atomic::AtomicBool,
+    /// The app is away from the screen (Android's own report; every other client stays false).
+    pub(crate) away: std::sync::atomic::AtomicBool,
     me: std::sync::Weak<Plugins>,
     /// The open profile's queue and library, the core's.
     library: std::sync::RwLock<Option<Arc<dyn Library>>>,
@@ -251,6 +253,7 @@ impl Plugins {
             controls: Arc::default(),
             watching: Mutex::new(false),
             bluetooth_outputs: Default::default(),
+            away: Default::default(),
             me: me.clone(),
             library: Default::default(),
             live: Default::default(),
@@ -629,6 +632,16 @@ impl Plugins {
                 });
             }
         }
+    }
+
+    /// Switches option `at` of flags row `row` of plugin `id`, from what is stored now: quick taps each build
+    /// on the last. The value stored, if it is a flags row.
+    pub fn switch_flag(&self, id: String, row: String, at: u32) -> Option<Value> {
+        let initial = || self.installed().into_iter().find(|i| i.manifest.id == id)?.manifest.rows.iter().find(|r| r.id == row)?.initial();
+        let Some(Value::Flags(on)) = self.rows(&id).remove(&row).or_else(initial) else { return None };
+        let value = Value::Flags(on ^ view::bit(at as usize));
+        self.set(id, row, value.clone());
+        Some(value)
     }
 
     pub fn uninstall(&self, id: String) {

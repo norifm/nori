@@ -32,6 +32,8 @@ struct Fake {
     closed: (Mutex<Vec<u64>>, Condvar),
     /// The device's state: left, right, noise.
     buds: Mutex<[u8; 3]>,
+    /// Those in `later` are connected, though nothing said so.
+    unannounced: Mutex<bool>,
     /// How many RFCOMM connections are refused before one opens.
     refusals: Mutex<u32>,
     /// The device disconnects as the next GATT link opens, the last step of the fixture's `handles`.
@@ -56,7 +58,8 @@ impl Bluetooth for Fake {
         }
     }
     fn connected(&self) -> Vec<BtDevice> {
-        self.devices.clone()
+        let unannounced = if *self.unannounced.lock().unwrap() { self.later.lock().unwrap().clone() } else { Vec::new() };
+        [self.devices.clone(), unannounced].concat()
     }
     fn rfcomm(&self, link: u64, device: String, service: String) -> Result<(), BtFailure> {
         let known = |list: &[BtDevice]| list.iter().any(|d| d.id == device && d.services.contains(&service));
@@ -130,7 +133,10 @@ impl Session {
         while !f() {
             let (s, t) = came.wait_timeout(seen, Duration::from_secs(20)).unwrap();
             seen = s;
-            assert!(!t.timed_out() || f(), "{what}");
+            if t.timed_out() && !f() {
+                drop(seen);
+                panic!("{what}");
+            }
         }
     }
 
@@ -403,4 +409,77 @@ fn a_device_gone_while_a_plugin_answers_is_not_controlled() {
     plugins.install(&fixture("headphones")).unwrap();
     session.until("the plugin let it go", || session.notice("gone") == Some(vec!["AA".into()]));
     assert!(plugins.controlled("en".into()).is_empty());
+}
+
+#[test]
+fn looking_again_finds_a_device_nothing_said_had_connected() {
+    let (_dir, session, fake, plugins) = open("plugins-device-unannounced", Vec::new());
+    plugins.install(&fixture("headphones")).unwrap();
+    fake.later.lock().unwrap().push(device("AA", "Test Buds Pro"));
+    *fake.unannounced.lock().unwrap() = true;
+    plugins.look_for_devices();
+    session.until("controlled", || !plugins.controlled("en".into()).is_empty());
+}
+
+#[test]
+fn quick_flag_switches_each_build_on_the_last() {
+    let (_dir, _session, _fake, plugins) = open("plugins-device-flags", Vec::new());
+    plugins.install(&fixture("headphones")).unwrap();
+    assert_eq!(plugins.switch_flag(ID.into(), "sides".into(), 1), Some(Value::Flags(0b11)), "from its default");
+    assert_eq!(plugins.switch_flag(ID.into(), "sides".into(), 0), Some(Value::Flags(0b10)));
+    assert_eq!(plugins.rows(ID).get("sides"), Some(&Value::Flags(0b10)));
+    assert_eq!(plugins.switch_flag(ID.into(), "skip_off".into(), 0), None, "not a flags row");
+}
+
+fn channels(fake: &Fake) -> usize {
+    fake.opened.lock().unwrap().iter().filter(|(_, d, what)| d == "AA" && what.starts_with("rfcomm")).count()
+}
+
+fn last_channel(fake: &Fake) -> u64 {
+    fake.opened.lock().unwrap().iter().rev().find(|(_, _, what)| what.starts_with("rfcomm")).map(|o| o.0).unwrap()
+}
+
+#[test]
+fn a_device_that_keeps_losing_its_channel_is_left_alone_until_the_app_is_opened() {
+    let (_dir, session, fake, plugins) = open("plugins-device-fight", vec![device("AA", "Test Buds Pro")]);
+    plugins.install(&fixture("headphones")).unwrap();
+    session.until("controlled", || !plugins.controlled("en".into()).is_empty());
+    for taken in 2..=4 {
+        plugins.bluetooth_lost(last_channel(&fake));
+        session.until("taken back", || channels(&fake) == taken && !plugins.controlled("en".into()).is_empty());
+    }
+    plugins.bluetooth_lost(last_channel(&fake));
+    session.until("let go", || plugins.controlled("en".into()).is_empty());
+    std::thread::sleep(Duration::from_millis(1_500));
+    assert_eq!(channels(&fake), 4, "another app has it: not taken again");
+
+    plugins.app_shown(true);
+    session.until("back with the app", || channels(&fake) == 5 && !plugins.controlled("en".into()).is_empty());
+}
+
+#[test]
+fn a_channel_lost_while_the_app_is_away_waits_for_the_app() {
+    let (_dir, session, fake, plugins) = open("plugins-device-away", vec![device("AA", "Test Buds Pro")]);
+    plugins.install(&fixture("headphones")).unwrap();
+    session.until("controlled", || !plugins.controlled("en".into()).is_empty());
+
+    plugins.app_shown(false);
+    plugins.bluetooth_lost(last_channel(&fake));
+    session.until("let go", || plugins.controlled("en".into()).is_empty());
+    std::thread::sleep(Duration::from_millis(1_500));
+    assert_eq!(channels(&fake), 1, "whoever took it keeps it");
+
+    plugins.app_shown(true);
+    session.until("back with the app", || channels(&fake) == 2 && !plugins.controlled("en".into()).is_empty());
+}
+
+#[test]
+fn a_plugin_with_no_state_for_its_device_lets_it_go_and_it_is_offered_again() {
+    let (_dir, session, fake, plugins) = open("plugins-device-quiet", vec![device("AA", "Test Buds Pro")]);
+    plugins.install(&fixture("headphones")).unwrap();
+    session.until("controlled", || !plugins.controlled("en".into()).is_empty());
+
+    plugins.set(ID.into(), "quiet".into(), Value::Switch(true));
+    session.until("let go", || session.notice("gone") == Some(vec!["AA".into()]));
+    session.until("offered again", || channels(&fake) == 2 && !plugins.controlled("en".into()).is_empty());
 }

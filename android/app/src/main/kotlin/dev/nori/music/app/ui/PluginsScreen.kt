@@ -578,9 +578,7 @@ private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabl
             )
         }
         RowKind.FLAGS -> {
-            // Kept here between taps: two quick ones each build on the last, not on the value last read.
-            val stored = (r.value as? Value.Flags)?.v1 ?: 0uL
-            var on by remember(stored) { androidx.compose.runtime.mutableStateOf(stored) }
+            val on = (r.value as? Value.Flags)?.v1 ?: 0uL
             Column(dim.fillMaxWidth().padding(horizontal = GROUP_INSET, vertical = 12.dp)) {
                 Text(r.label, style = MaterialTheme.typography.bodyLarge)
                 r.hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -590,12 +588,7 @@ private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabl
                 ) {
                     r.options.forEachIndexed { i, o ->
                         val bit = 1uL shl i
-                        Chip(o, on and bit != 0uL) {
-                            if (enabled) {
-                                on = on xor bit
-                                vm.set(card.id, r.id, Value.Flags(on))
-                            }
-                        }
+                        Chip(o, on and bit != 0uL) { if (enabled) vm.switchFlag(card.id, r.id, i.toUInt()) }
                     }
                 }
             }

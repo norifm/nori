@@ -135,7 +135,7 @@ class MainActivity : ComponentActivity() {
     private fun startedPlugins() = lifecycleScope.launch {
         val plugins = Nori.get(this@MainActivity).plugins
         plugins.started()
-        plugins.lookForDevices()
+        plugins.appShown(true)
     }
 
     /** Plugins update from their repos when the app comes to the front, if it is time to ask: never on a timer. */
@@ -145,6 +145,7 @@ class MainActivity : ComponentActivity() {
         super.onStop()
         started = false
         Nori.get(this).remotes.appShown(false)
+        lifecycleScope.launch { Nori.get(this@MainActivity).plugins.appShown(false) }
         // The service keeps playing on its own; holding a controller while hidden would only keep callbacks flowing.
         Nori.get(this).player.disconnect()
         // Leaving the app is going to the home screen: its "For you" widget shows the mixes as they are now.

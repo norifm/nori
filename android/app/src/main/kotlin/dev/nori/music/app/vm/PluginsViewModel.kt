@@ -218,6 +218,8 @@ class PluginsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun set(id: String, row: String, value: Value) = viewModelScope.launch(writes) { host.set(id, row, value) }
 
+    fun switchFlag(id: String, row: String, at: UInt) = viewModelScope.launch(writes) { host.switchFlag(id, row, at) }
+
     fun act(id: String, row: String) = viewModelScope.launch { host.act(id, row) }
 
     fun allowMobileAssets(id: String) = viewModelScope.launch { host.allowMobileAssets(id) }

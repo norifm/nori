@@ -231,8 +231,8 @@ class PluginHost(
     /** What plays now, while [follows]. */
     suspend fun played(moment: Moment) = withContext(Dispatchers.IO) { plugins.played(moment) }
 
-    /** The app came to the front: a device another app was holding may be free now. */
-    suspend fun lookForDevices() = withContext(Dispatchers.IO) { plugins.lookForDevices() }
+    /** The app came to the front or left it: back, a device another app was holding may be free. */
+    suspend fun appShown(shown: Boolean) = withContext(Dispatchers.IO) { if (opened) plugins.appShown(shown) }
 
     suspend fun heardPress(press: Press) = withContext(Dispatchers.IO) { plugins.heardPress(press) }
 
@@ -302,6 +302,16 @@ class PluginHost(
     /** Sets row [row] of plugin [id]; the card takes the value without reading every card again. */
     suspend fun set(id: String, row: String, value: Value) = withContext(Dispatchers.IO) {
         plugins.set(id, row, value)
+        lay(id, row, value)
+    }
+
+    /** Switches option [at] of the flags row [row] of plugin [id]; the card takes the value the core stored. */
+    suspend fun switchFlag(id: String, row: String, at: UInt) = withContext(Dispatchers.IO) {
+        plugins.switchFlag(id, row, at)?.let { lay(id, row, it) }
+        Unit
+    }
+
+    private fun lay(id: String, row: String, value: Value) {
         val laid = { cards: List<PluginCard> -> cards.map { c -> if (c.id != id) c else c.copy(rows = c.rows.map { r -> if (r.id == row) r.copy(value = value) else r }) } }
         _cards.update(laid)
         _deviceCards.update(laid)
