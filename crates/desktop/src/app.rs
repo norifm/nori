@@ -1324,6 +1324,9 @@ impl App {
         match Session::open(&self.root, self.http.clone(), profile, self.tx.clone(), self.mpris.clone()) {
             Ok(s) => {
                 s.check();
+                if self.hidden {
+                    s.in_sight(false);
+                }
                 ui.set_volume(s.volume());
                 ui.set_downloads(s.rules().downloads);
                 // Albums and artists carry the account's seals, as on Android.

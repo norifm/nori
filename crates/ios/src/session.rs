@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
 
 use nori_core::profiles::CurveNotice;
@@ -107,6 +108,8 @@ static SESSION: Mutex<Option<Arc<Hold>>> = Mutex::new(None);
 static MAIL: OnceLock<Mail> = OnceLock::new();
 static OUT: Once = Once::new();
 static HOOK: Mutex<Option<ReportFn>> = Mutex::new(None);
+/// The app is out of sight: a C entry point has nothing to carry it to the session opened next.
+static BACKGROUND: AtomicBool = AtomicBool::new(false);
 
 fn mail() -> &'static Mail {
     MAIL.get_or_init(|| Mail {
@@ -553,7 +556,11 @@ fn open_saved(dir: &Path, server_id: &str) -> Result<(), String> {
         .open(&nori_host::db_path(dir))
         .map_err(|e| format!("the database: {e}"))?;
     let profile = saved(&prefs, server_id).ok_or_else(|| "no saved server".to_string())?;
-    start_queue(dir, queue, profile, device_output()?, false, Some(Arc::new(crate::remote::Bonjour)))
+    start_queue(dir, queue, profile, device_output()?, false, Some(Arc::new(crate::remote::Bonjour)))?;
+    if BACKGROUND.load(Ordering::Relaxed) {
+        with_session(|s| s.in_sight(false));
+    }
+    Ok(())
 }
 
 fn text(p: *const c_char) -> Option<String> {
@@ -756,6 +763,7 @@ pub extern "C" fn nori_ios_move(from: i32, to: i32) {
 /// Saves the queue now, as the app leaves the foreground. Does not push it to the server.
 #[no_mangle]
 pub extern "C" fn nori_ios_background() {
+    BACKGROUND.store(true, Ordering::Relaxed);
     with_session(|s| {
         s.keep(QueueMoment::Closing);
         s.in_sight(false);
@@ -765,6 +773,7 @@ pub extern "C" fn nori_ios_background() {
 /// Restores foreground discovery and the mirrored player clock.
 #[no_mangle]
 pub extern "C" fn nori_ios_foreground() {
+    BACKGROUND.store(false, Ordering::Relaxed);
     with_session(|s| s.in_sight(true));
 }
 

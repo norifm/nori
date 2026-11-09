@@ -2,7 +2,7 @@
 //! its engine driven by the worker (no threads), its sound pulled by the AudioWorklet through the page's
 //! messages, its reports handed to the page as JSON.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -172,13 +172,15 @@ pub struct Live {
     /// What the session said since the last turn.
     said: Arc<Mutex<Vec<Said>>>,
     open: RefCell<Option<Opened>>,
+    /// The page is out of sight.
+    hidden: Cell<bool>,
     /// The lyrics shown: the song's id, the pick and its clock.
     lyrics: RefCell<Option<(String, LyricsPick, LyricClock)>>,
 }
 
 impl Live {
     pub fn new(tell: js_sys::Function, wake: js_sys::Function) -> Live {
-        Live { tell: Js(OneThread(tell)), wake: Js(OneThread(wake)), card: Arc::new(Mutex::new(Card { rate: 48_000, ..Card::default() })), said: Arc::default(), open: RefCell::default(), lyrics: RefCell::default() }
+        Live { tell: Js(OneThread(tell)), wake: Js(OneThread(wake)), card: Arc::new(Mutex::new(Card { rate: 48_000, ..Card::default() })), said: Arc::default(), open: RefCell::default(), hidden: Cell::default(), lyrics: RefCell::default() }
     }
 }
 
@@ -219,6 +221,9 @@ impl Nori {
         let wake = live.wake.clone();
         let (host, driven) = Session::open_driven(open, move || wake.call()).map_err(error)?;
         host.check();
+        if live.hidden.get() {
+            host.in_sight(false);
+        }
         *live.open.borrow_mut() = Some(Opened { host, driven: RefCell::new(driven) });
         Ok(())
     }
@@ -353,6 +358,12 @@ impl Nori {
     /// Sets the sleep timer to one of its choices (all zeros: off).
     pub fn sleep_pick(&self, minutes: u32, end: bool, songs: u32) {
         self.with(|h| h.sleep_pick(nori_core::menus::SleepChoice { minutes, end_of_track: end, songs }));
+    }
+
+    /// The page came into sight or left it.
+    pub fn in_sight(&self, seen: bool) {
+        self.live.hidden.set(!seen);
+        self.with(|h| h.in_sight(seen));
     }
 
     /// The page went out of sight, where a browser may close it without a word: the queue is kept as

@@ -293,6 +293,9 @@ impl Runner {
         match Session::open(o) {
             Ok(s) => {
                 s.check();
+                if !app.in_sight {
+                    s.in_sight(false);
+                }
                 app.server = name;
                 app.unreachable = None;
                 self.session = Some(s);
