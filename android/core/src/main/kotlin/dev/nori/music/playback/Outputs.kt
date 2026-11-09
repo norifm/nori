@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
 import dev.nori.music.ffi.devices.outputsForget
@@ -87,11 +88,16 @@ class Outputs(
     private var override: String? = null
 
     /** The device the open track is routed to, which the system's output picker changes without anything being plugged in. */
-    private var routed: AudioDeviceInfo? = null
+    @Volatile private var routed: AudioDeviceInfo? = null
 
     fun routedTo(device: AudioDeviceInfo) {
         routed = device
         refresh()
+    }
+
+    /** A new track opened: until the system says where it goes, the last one's device says nothing of it. */
+    fun trackOpened() {
+        routed = null
     }
 
     fun stop() = audio.unregisterAudioDeviceCallback(callback)
@@ -99,6 +105,8 @@ class Outputs(
     /** Hands the core every output the audio system lists (type and product name) and keeps what it says. */
     private fun refresh() {
         val devices = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        // Only a live track is routed: Rust releases it, and the device it last had says nothing after that.
+        val routed = routed.takeIf { PlaybackService.track?.track?.state == AudioTrack.STATE_INITIALIZED }
         val seen = outputsRefresh(settings, devices.map { it.type }, devices.map { it.productName?.toString().orEmpty() }, routed?.type, routed?.productName?.toString().orEmpty(), _known.value, override)
         _current.value = seen.current
         seen.known?.let { _known.value = it }
