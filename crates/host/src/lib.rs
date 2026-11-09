@@ -98,9 +98,8 @@ pub fn jam_join(transport: Arc<dyn nori_core::transport::Transport>, settings: &
 /// profile before it. The account's profile active until now is opened again by [`jam_left`].
 pub fn jam_joined(settings: &Settings, pass: JamPass, name: &str) -> SavedServer {
     nori_core::remote::jam_joining(settings);
-    let mut prefs = settings.current().unwrap_or_default();
+    let prefs = settings.current().unwrap_or_default();
     let guest = nori_core::remote::jam_profile(pass, nori_core::settings::new_server_id(), name.into());
-    prefs.servers.retain(|s| !nori_remote::is_guest_key(&s.api_key));
     settings.put(nori_core::providers::profile_activated(prefs, guest.clone()));
     guest
 }
@@ -114,6 +113,14 @@ pub fn jam_left(settings: &Settings) -> Option<SavedServer> {
     let back = prefs.active_server().cloned();
     settings.put(prefs);
     back
+}
+
+/// Makes saved profile `id` the active one; the profile to open, if it is saved.
+pub fn profile_picked(settings: &Settings, id: &str) -> Option<SavedServer> {
+    let prefs = settings.current().unwrap_or_default();
+    let profile = prefs.servers.iter().find(|s| s.id == id).cloned()?;
+    settings.put(nori_core::providers::profile_activated(prefs, profile.clone()));
+    Some(profile)
 }
 
 /// Runs `f` on a named thread.
@@ -398,6 +405,26 @@ mod tests {
         assert_eq!(jam_left(&settings).map(|s| s.id), Some("work".into()), "the profile open before the jams");
         let p = settings.current().unwrap();
         assert_eq!((p.servers.len(), p.active_server_id.as_str()), (2, "work"));
+    }
+
+    /// Picking an account's profile drops the guest profile open until then and moves the pick last.
+    #[test]
+    fn a_picked_profile_replaces_a_jam_guest() {
+        let dir = nori_testdir::TempDir::new("host-pick");
+        let settings = Settings::new();
+        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
+        let own = |id: &str| SavedServer { id: id.into(), url: format!("http://{id}"), user: "ann".into(), ..Default::default() };
+        prefs.servers = vec![own("home"), own("work")];
+        prefs.active_server_id = "work".into();
+        settings.put(prefs);
+        jam_joined(&settings, JamPass { url: "http://friend".into(), api_key: nori_remote::guest_key("k"), kind: ServerKind::Subsonic }, "Jam");
+
+        assert_eq!(profile_picked(&settings, "nope"), None);
+        assert_eq!(settings.current().unwrap().servers.len(), 3, "nothing changes for a profile not saved");
+        assert_eq!(profile_picked(&settings, "home"), Some(own("home")));
+        let p = settings.current().unwrap();
+        let ids: Vec<&str> = p.servers.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!((ids, p.active_server_id.as_str()), (vec!["work", "home"], "home"));
     }
 
     #[test]

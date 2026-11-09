@@ -78,8 +78,8 @@ fn main() -> Result<(), String> {
             s.id
         });
         prefs.servers.iter_mut().filter(|s| s.id == id && !password.is_empty()).for_each(|s| s.password = password.clone());
-        prefs.active_server_id = id;
         root.app.settings.put(prefs);
+        nori_host::profile_picked(&root.app.settings, &id);
     }
     let compositor = compositor::install()?;
     let ui = AppWindow::new().map_err(|e| e.to_string())?;

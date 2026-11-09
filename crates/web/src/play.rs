@@ -184,7 +184,7 @@ impl Live {
 
 impl Nori {
     pub(crate) fn enter(&self, profile: SavedServer) -> Result<(), JsValue> {
-        self.leave();
+        self.leave_for(Some(&profile));
         let live = &self.live;
         let (said, wake) = (live.said.clone(), live.wake.clone());
         let out: nori_host::session::Out = Arc::new(move |s| {
@@ -249,8 +249,17 @@ impl Nori {
 
     /// Saves the queue and closes the session.
     pub(crate) fn leave(&self) {
+        self.closing(|h| h.close());
+    }
+
+    /// Closes the session as `next` takes over (None: the sign-in).
+    pub(crate) fn leave_for(&self, next: Option<&SavedServer>) {
+        self.closing(|h| h.close_for(next));
+    }
+
+    fn closing(&self, how: impl FnOnce(&Session)) {
         if let Some(o) = self.live.open.borrow_mut().take() {
-            o.host.close();
+            how(&o.host);
         }
         // One profile's answers are not another's.
         self.search.typed(String::new());
@@ -770,11 +779,9 @@ impl Nori {
     /// Leaves the jam this guest is in and opens the profile used before it: true when there is one
     /// (false: sign in).
     pub fn jam_leave(&self) -> Result<bool, JsValue> {
-        if let Some(r) = self.with(|h| h.remote()).flatten() {
-            r.jam_leave();
-        }
-        self.leave();
-        match nori_host::jam_left(&self.app.settings) {
+        let back = nori_host::jam_left(&self.app.settings);
+        self.leave_for(back.as_ref());
+        match back {
             Some(back) => self.enter(back).map(|_| true),
             None => Ok(false),
         }

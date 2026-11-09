@@ -1312,7 +1312,7 @@ impl App {
     /// Opens `profile`; `added` says what follows when it was just added.
     fn open(&mut self, profile: SavedServer, added: Option<AfterAdding>) {
         if let Some(s) = self.session.take() {
-            s.close();
+            s.close_for(Some(&profile));
         }
         let ui = self.ui();
         self.profiles_shown();
@@ -3498,7 +3498,7 @@ impl App {
             Some(p) => self.open(p, None),
             None => {
                 if let Some(s) = self.session.take() {
-                    s.close();
+                    s.close_for(None);
                 }
                 self.choose_provider();
             }
@@ -4549,10 +4549,7 @@ impl App {
                 self.choose_provider();
             }
             Some(Act::Server(id)) => {
-                let mut prefs = self.root.app.settings.current().unwrap_or_default();
-                let Some(p) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
-                prefs.active_server_id = id;
-                self.root.app.settings.put(prefs);
+                let Some(p) = nori_host::profile_picked(&self.root.app.settings, &id) else { return };
                 self.open(p, None);
             }
             Some(Act::Edit(id)) => self.edit_profile(id),

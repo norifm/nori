@@ -3,7 +3,7 @@
 use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
 
-use nori_core::providers::{log_in, profile_activated, FormField, Kinds};
+use nori_core::providers::{log_in, FormField, Kinds};
 use nori_core::settings::{profile_icons, profile_letter, servers_removed, servers_updated, ProfileIcon, SavedServer, ServerKind, ServerList, StoredPrefs};
 use nori_core::settings_store::Settings;
 use nori_core::transport::{block_on, FailureKind, NetError};
@@ -50,7 +50,7 @@ fn address(raw: &str) -> String {
     }
 }
 
-fn opened(dir: &Path) -> Result<(std::sync::Arc<Settings>, StoredPrefs), String> {
+pub(crate) fn opened(dir: &Path) -> Result<(std::sync::Arc<Settings>, StoredPrefs), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let settings = Settings::new();
     let prefs = settings
@@ -126,13 +126,10 @@ pub(crate) fn set_icon(dir: &Path, id: &str, icon: ProfileIcon) -> Result<(), St
 
 /// Makes saved server `id` the active one. False when no server has that id.
 pub(crate) fn pick(dir: &Path, id: &str) -> Result<bool, String> {
-    let (settings, prefs) = opened(dir)?;
-    let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else {
-        return Ok(false);
-    };
-    settings.put(profile_activated(prefs, profile));
+    let (settings, _) = opened(dir)?;
+    let picked = nori_host::profile_picked(&settings, id).is_some();
     settings.writer.flush();
-    Ok(true)
+    Ok(picked)
 }
 
 /// Forgets saved server `id`; the first one left becomes active if it was.
@@ -366,6 +363,7 @@ pub unsafe extern "C" fn nori_ios_remove_server(data_dir: *const c_char, id: *co
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nori_core::providers::profile_activated;
 
     /// Writes `profile` as the active server and waits until the database has it.
     fn keep(dir: &Path, profile: SavedServer) -> Result<(), String> {

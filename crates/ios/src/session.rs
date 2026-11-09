@@ -592,10 +592,16 @@ pub(crate) fn with_session<R>(f: impl FnOnce(&Session) -> R) -> Option<R> {
 }
 
 /// Saves the queue, stops playback and empties the slot.
+#[cfg(test)]
 fn close() {
+    closing(|s| s.close());
+}
+
+/// Takes the open session, if any, and ends it with `how`.
+fn closing(how: impl FnOnce(&Session)) {
     let gone = SESSION.lock().unwrap_or_else(|e| e.into_inner()).take();
     if let Some(h) = gone {
-        h.session.lock().unwrap_or_else(|p| p.into_inner()).close();
+        how(&h.session.lock().unwrap_or_else(|p| p.into_inner()));
     }
 }
 
@@ -651,7 +657,10 @@ pub unsafe extern "C" fn nori_ios_reopen(data_dir: *const c_char) -> *mut c_char
     let Some(dir) = text(data_dir).filter(|d| !d.is_empty()) else {
         return err_ptr("unreadable path");
     };
-    close();
+    // The saved list may have been changed through another handle on the database.
+    with_session(|s| s.core.session.settings.writer.flush());
+    let next = crate::account::opened(Path::new(&dir)).ok().and_then(|(_, p)| p.active_server().cloned());
+    closing(|s| s.close_for(next.as_ref()));
     crate::pages::forget_lists();
     match open_saved(Path::new(&dir), "") {
         Ok(()) => std::ptr::null_mut(),
