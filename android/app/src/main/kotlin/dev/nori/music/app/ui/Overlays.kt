@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Path
@@ -290,7 +292,8 @@ fun <T : Any> NoriSheet(
     val scheme = LocalAppScheme.current ?: MaterialTheme.colorScheme
     val look = remember(scheme) { FixedLook(plainLook(scheme)) }
     MaterialTheme(colorScheme = scheme) {
-        CompositionLocalProvider(LocalLook provides look, LocalInSheet provides true) {
+        // No stretch at a scroller's edge: pulling a sheet closed moves the sheet, not its contents as well.
+        CompositionLocalProvider(LocalLook provides look, LocalInSheet provides true, androidx.compose.foundation.LocalOverscrollFactory provides null) {
             ModalBottomSheet(
                 onDismissRequest = { if (live) dismiss() }, sheetState = state,
                 // A drag while it goes down could pull it back up with nothing to say it is still there.
@@ -300,12 +303,29 @@ fun <T : Any> NoriSheet(
                 dragHandle = { SheetHandle(state, scheme.outlineVariant) },
             ) {
                 AppStatusBar()
-                content(shown)
-                // Every sheet ends the same room under its last line.
-                Spacer(Modifier.height(SHEET_FOOT))
+                androidx.compose.foundation.layout.Column(Modifier.nestedScroll(remember(state) { StaysDown(state) })) {
+                    content(shown)
+                    // Every sheet ends the same room under its last line.
+                    Spacer(Modifier.height(SHEET_FOOT))
+                }
             }
         }
     }
+}
+
+/**
+ * Keeps what a page has left of an upward scroll from reaching its open sheet. Pushed up under the status bar, a
+ * sheet is padded down by Material, which moves where it rests, and it would never settle.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+private class StaysDown(private val state: androidx.compose.material3.SheetState) : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+    private val open get() = state.currentValue == androidx.compose.material3.SheetValue.Expanded
+
+    override fun onPostScroll(consumed: Offset, available: Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource) =
+        if (open && available.y < 0f) available else Offset.Zero
+
+    override suspend fun onPostFling(consumed: androidx.compose.ui.unit.Velocity, available: androidx.compose.ui.unit.Velocity) =
+        if (open && available.y < 0f) available else androidx.compose.ui.unit.Velocity.Zero
 }
 
 private val SheetShape = RoundedCornerShape(topStart = Radius.sheet, topEnd = Radius.sheet)
