@@ -6,6 +6,153 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-09
+
+### Added
+
+- Recent searches keep the newest six and swipe away one at a time
+- A genre's page shows the cover of its tile in search
+- A fully downloaded page marks it once at its head, not on every song
+- Desktop and iPod song rows show their download mark and seal
+- Genres and decades in search open the library page
+- A provider's stream may be an HLS playlist (#132)
+- One motion system, pages fade in and shift back (#134)
+- Plugins reach every extension point the plan lists (#133)
+- A cast from Android sends the song's cover to the speaker
+- Speakers a plugin finds are devices to pick, and a lost cast comes back here
+- Web's settings start with the servers, as the desktop's
+- Web's settings list nori's plugins and what stops each in a browser
+- Speakers another device reaches are devices to pick on every client (#135)
+- A speaker, headphones or TV a cast reaches shows its own icon
+- Web search answers from the offline index at once, as the desktop
+- Moving covers play in the desktop's sleeve (#136)
+- The web installs and runs plugins (#137)
+- Speed and pitch run in the web, plugins' overrides reach its engine
+- Album rows drop the time and every song's ⋯ ends at the margin
+- A song's download mark takes the seal's place when it has none
+- No song list shows each song's length, as album pages already
+- The pre-amp switch is called Auto pre-amp, its level beside it
+- The log says when a stream was slow to answer
+- Desktop and terminal keep their log on disk, panics included
+- A plugin turns on when it is installed
+- The web's plugin pages are the desktop's and Android's
+- A speaker is told where in the song its audio starts
+- A speaker shows the song when picked while paused, and can seek
+- The playing device gets its own card above the others
+- The song menu gets glyphs, name links and an undoable Exclude
+- Radio and instant mix become one Radio that blends both
+- Song menus list the sleep timer, lyrics timing and mix switch
+- Dialogs match the app; the playlist picker marks songs it has
+- The terminal's playlist picker marks the playlists that have it
+- A provider's Home shows its last feed at once while the new one loads
+- Shelves move their covers into place when a page updates
+- Profiles with a switcher, and older screens on Nori Seasons (#141)
+- A profile's icon can be its letter, its provider's mark or a face
+- The desktop, web and iPod pick a profile's icon too
+- Plugin providers sign in with a code allowed in any browser (#142)
+- The iPod opens again and follows Android's pages and menus
+- The desktop, terminal and web pin playlists with the seal
+- Every iPod page names itself as on Android, without a top bar
+- The iPod's lyrics and queue open inside the player, as on Android
+- The iPod's Appearance settings arrange Home's rows
+- Mobile data can prepare 10 songs ahead too, under a clearer name
+- New installs get a fresh Home order, without favorite playlists
+- The mini player no longer shows the speaker
+- Headphones' noise control is in the player and mini player
+- The iPod's mini player no longer shows the speaker
+- Row separators stop short of both edges
+- The notification and lock screen no longer show shuffle
+
+### Fixed
+
+- Midnight's soft band blurs the cover grey instead of black
+- A genre's page lists all its songs, not the first 200
+- Volume keys move a cast from its own volume on desktop and terminal
+- Recent searches start as close to their title as a shelf's cards
+- Plugins reach headphones connected before nori starts, once each, on macOS
+- Desktop and terminal offer AutoEQ for Bluetooth and USB headphones
+- The terminal's devices list follows a cast starting and ending
+- A speaker plays on through a song change and tuning sound, no dropouts
+- The player names the speaker a cast plays on, not the phone
+- Web's search field and preview are as wide as the desktop's
+- Midnight's player cover eases into black with no line where it ends
+- The web's top bar is the desktop's, no wordmark and Favorites last
+- The web takes up a new build by itself at the next load
+- Speakers show on the desktop, and picking a device ends a cast
+- The web's gear menu is the desktop's, its choices on one line
+- Web/build.sh installs packages when the lockfile changes
+- A dragged queue row's plate keeps its round corners and whole cover
+- A song row's ⋯ stands as near the seal as the seal does the download mark
+- Nori keeps playing when nothing reads its stderr, as from a launcher
+- Search's filters stand clear of the search field
+- Picking a speaker another device reaches sends the song playing here
+- Dragging a speaker's volume no longer freezes the app
+- Nori-android builds, the speaker pick is out of its exported calls
+- The desktop's moving covers play every frame of Apple's loops
+- Moving covers play in the web, for a song's real album
+- A plugin's install keeps out of Android's exported calls, tests start it off
+- Playing bars go under an album's title and fade with the queue
+- Tapping a pinned title's gaps no longer opens what's under it
+- A speaker takes a version 1 host's now playing as from the start
+- A speaker no longer blips the old song when skipping
+- Volume leveling and crossfade stay as set when a device connects
+- Sound changes made on a device are kept in its profile
+- Desktop lyrics and pages no longer scroll sideways (fixes #139)
+- A YouTube Music profile from 0.7 becomes the plugin's, not lost
+- The app can no longer crash at start while downloads load
+- A long Continue card title ends in an ellipsis on the desktop
+- The Mac desktop's window buttons take macOS 26's Liquid Glass look
+- The desktop lays out right on a screen of another scale
+- Radio on the web and the iPod carries on with the playing song
+- Status bar icons stay right after a theme change on a page
+- A one-song album says 1 song, not 1 songs
+- Status bar icons read better over pale covers
+- A one-song playlist, mix or download says 1 song on every client
+- The song menu's Details glyph is ink, like the seal beside it
+- The song menu's glyph row lines up with the glyphs by the title
+- Explicit states end dozens of player and client bugs (#140)
+- The playing bars move in the player's queue
+- The queue keeps its place when the next song starts
+- Song menus drop their trailing ellipses on every client
+- Song menus line up with their groups and sheets take less room
+- The queue no longer jumps when scrolled after the song changes
+- Resuming another device's queue starts at its place in one step
+- Removing downloads asks first, and an album's page stays open
+- Signing in with Apple or Google opens its own window and finishes
+- Adding a profile from a plugin to install no longer jumps
+- A plugin's profile opens once a safe start's plugins are on
+- Play and pause stay put while another device mirrors this one
+- Android's media controls show nothing of another device playing
+- Day stays light on dark covers, with white status icons over them
+- The iPod's For You cards wear the colors of the page they open
+- The iPod's pages use more of its narrow screen
+- The iPod's Play on panel is a sheet like the song menu
+- The iPod's song lists lose the alphabet, as on Android
+- The iPod's Library keeps its title and filters on top
+- The iPod's margins come in a little more
+- The iPod's Library head is solid, with the rows fading under it
+- A device with nothing playing says Idle on every client
+- The iPod's panels fade cleanly and lists soften where they end
+- The iPod names its output before the first song plays
+- The iPod's covers load without seams, flashes or restarts
+- The iPod player's panel edge fades in with its panel
+- The iPod player changes panels in one smooth fade
+- The iPod's player drops its down arrow
+- The iPod shows the system volume popup again
+- A sheet no longer jumps as it closes or at its bottom
+- The output shown no longer sticks to a closed track's
+- Headphones are found, and recover when another app takes them
+- A plugin's rows in the desktop's devices panel are one group
+
+### Performance
+
+- The web's first load sends a quarter of the bytes
+- A data-oriented pass over the core (#138)
+- The mini player's title holds still until its song plays
+- Pages fade in without hashing their data each frame
+- The input kept for sound changes is freed when playback lets go
+- A page several screens ask for at once is fetched once
+
 ## [0.7.1] - 2026-10-27
 
 ### Added
