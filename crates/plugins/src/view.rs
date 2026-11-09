@@ -69,6 +69,37 @@ pub struct PluginRow {
     pub url: Option<String>,
 }
 
+impl PluginRow {
+    /// A flags row's options that are on.
+    pub fn chosen(&self) -> Vec<String> {
+        let Some(Value::Flags(on)) = self.value else { return Vec::new() };
+        self.options.iter().enumerate().filter(|(i, _)| on & bit(*i) != 0).map(|(_, o)| o.clone()).collect()
+    }
+
+    /// Whether a flags row's option `at` is on.
+    pub fn flag_on(&self, at: usize) -> bool {
+        matches!(self.value, Some(Value::Flags(on)) if on & bit(at) != 0)
+    }
+
+    /// A flags row's bits with option `at` switched.
+    pub fn flag_switched(&self, at: usize) -> u64 {
+        let on = if let Some(Value::Flags(on)) = self.value { on } else { 0 };
+        on ^ bit(at)
+    }
+}
+
+/// Option `at`'s bit; none past the 64 a value holds.
+fn bit(at: usize) -> u64 {
+    1u64.checked_shl(at as u32).unwrap_or(0)
+}
+
+/// Whether a device-controlling plugin's row of `kind` is a setting of the device, rather than about the
+/// plugin.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn row_on_device_page(kind: RowKind) -> bool {
+    !matches!(kind, RowKind::Link | RowKind::Note)
+}
+
 /// A plugin not installed yet, as its install sheet shows it, and its package.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]

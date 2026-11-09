@@ -853,6 +853,8 @@ pub enum DeviceRow {
     Join,
     Pair,
     ResetPairing,
+    /// The way on to a controlled device's settings: its plugin's page.
+    Settings(usize),
     /// A device a plugin controls, with its battery: index into [`Devices::controlled`].
     Controlled(usize),
     /// Its noise control; Enter moves it to the next mode.
@@ -878,6 +880,9 @@ impl Devices {
             rows.push(DeviceRow::Controlled(i));
             if !d.noise_modes.is_empty() {
                 rows.push(DeviceRow::Noise(i));
+            }
+            if d.card.rows.iter().any(|r| nori_plugins::row_on_device_page(r.kind) && r.kind != nori_plugins::RowKind::Section) {
+                rows.push(DeviceRow::Settings(i));
             }
         }
         if self.on || self.cast.is_some() || !self.targets.is_empty() {
@@ -934,6 +939,12 @@ impl Devices {
     /// The panel shows: other devices or jams are on, a plugin has rows here, casts or controls a device.
     pub fn shown(&self) -> bool {
         self.on || !self.plugins.is_empty() || self.cast.is_some() || !self.controlled.is_empty() || self.finds
+    }
+
+    /// The headphones this computer plays on, when a plugin controls their noise and the music plays here.
+    pub fn noise_headphones(&self, output: &str, guest: bool) -> Option<&nori_plugins::ControlledDevice> {
+        let here = matches!(self.destination(guest), nori_core::destination::Destination::Here { .. });
+        self.output_device(output).filter(|d| here && !d.noise_modes.is_empty())
     }
 
     /// The controlled device this computer's `output` plays on ("" for the system's default).
@@ -1084,6 +1095,7 @@ impl Target {
                     RowKind::Switch => Value::Switch(value.parse().ok()?),
                     RowKind::Choice => Value::Choice(value.parse().ok()?),
                     RowKind::Level => Value::Level(value.parse().ok()?),
+                    RowKind::Flags => Value::Flags(value.parse().ok()?),
                     RowKind::Text | RowKind::Secret => Value::Text(value),
                     RowKind::Action | RowKind::Status | RowKind::Section | RowKind::Note | RowKind::Link => return None,
                 };
@@ -2649,6 +2661,7 @@ impl App {
                 }
             }
             Action::Panel(p) => self.set_panel(p),
+            Action::Noise => self.noise_next(),
             Action::Full => self.toggle_full(),
             Action::Sort => self.sort_next(),
             Action::Favorites => self.favorites_toggle(),
@@ -3587,10 +3600,15 @@ impl App {
                 Some(Opened::Overlay(o)) => self.overlay = Some(o),
                 _ => self.dirty = false,
             },
+            Some(DeviceRow::Settings(i)) => {
+                let Some(c) = d.controlled.get(i) else { return };
+                let id = c.card.id.clone();
+                self.go(View::Settings);
+                self.plugin_page(crate::settings_view::PluginPage::Plugin(id));
+            }
             Some(DeviceRow::Noise(i)) => {
                 let Some(c) = d.controlled.get(i) else { return };
-                let at = c.noise.and_then(|n| c.noise_modes.iter().position(|m| *m == n)).map_or(0, |k| (k + 1) % c.noise_modes.len());
-                if let Some(&next) = c.noise_modes.get(at) {
+                if let Some(next) = nori_plugins::next_noise(c.noise_cycle.clone(), c.noise) {
                     self.cmds.push(Cmd::Plugin(PluginCmd::Noise(c.id.clone(), next)));
                 }
             }
@@ -3702,6 +3720,18 @@ impl App {
     }
 
     /// Opens a plugin page, asking what it shows for the first time.
+    /// The headphones playing on to their next noise control mode.
+    fn noise_next(&mut self) {
+        let Some(d) = self.devices.noise_headphones(&self.output, self.guest()) else {
+            self.dirty = false;
+            return;
+        };
+        if let Some(next) = nori_plugins::next_noise(d.noise_cycle.clone(), d.noise) {
+            let id = d.id.clone();
+            self.cmds.push(Cmd::Plugin(PluginCmd::Noise(id, next)));
+        }
+    }
+
     fn plugin_page(&mut self, page: crate::settings_view::PluginPage) {
         self.settings.enter(page, &self.prefs);
         if matches!(self.settings.own.shelf, crate::settings_view::Shelf::Unasked) {
@@ -3715,7 +3745,7 @@ impl App {
             Switch::Mouse => self.do_action(Action::Mouse),
             Switch::Images => self.do_action(Action::Images),
             Switch::Transparent => self.cmds.push(Cmd::Paint(!self.paint)),
-            Switch::Setting(_) | Switch::Stores(..) | Switch::Plugin { .. } | Switch::Turn(_) | Switch::Hold(_) | Switch::AllOff => {}
+            Switch::Setting(_) | Switch::Stores(..) | Switch::Plugin { .. } | Switch::PluginFlags { .. } | Switch::Turn(_) | Switch::Hold(_) | Switch::AllOff => {}
         }
         self.settings.invalidate();
     }

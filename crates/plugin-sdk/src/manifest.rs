@@ -26,6 +26,8 @@ pub enum RowKind {
     Note,
     /// Opens its `url`.
     Link,
+    /// Any number of its options on, as pills; its value's bits are their places.
+    Flags,
 }
 
 /// One row of its page; `id` is its key in the plugin's strings.
@@ -65,6 +67,10 @@ impl Row {
 
     pub const fn choice(id: &'static str, options: &'static [&'static str], default: u32) -> Row {
         Row { options, default: Some(default as f64), ..Row::new(id, RowKind::Choice) }
+    }
+
+    pub const fn flags(id: &'static str, options: &'static [&'static str], default: u64) -> Row {
+        Row { options, default: Some(default as f64), ..Row::new(id, RowKind::Flags) }
     }
 
     pub const fn link(id: &'static str, url: &'static str) -> Row {

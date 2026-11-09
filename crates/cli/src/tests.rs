@@ -2220,7 +2220,7 @@ fn a_plugins_page_shows_its_devices_assets_and_rows_turned_off() {
     let mut a = plugins_app(vec![gain.clone()], vec![official()], Default::default());
     a.settings.own.off.insert(("dev.example.gain".into(), "on".into()));
     a.settings.own.assets.insert("dev.example.gain".into(), vec![AssetLine { name: "model".into(), size: 3 << 20, state: AssetState::WaitingForWifi }]);
-    a.settings.own.controlled = vec![ControlledDevice { id: "AA".into(), name: "Test Buds".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Off), noise_modes: vec![Noise::Off, Noise::Canceling], card: gain }];
+    a.settings.own.controlled = vec![ControlledDevice { id: "AA".into(), name: "Test Buds".into(), battery: Battery { single: Some(80), ..Default::default() }, level: Some(80), noise: Some(Noise::Off), noise_modes: vec![Noise::Off, Noise::Canceling], noise_cycle: vec![Noise::Off, Noise::Canceling], card: gain }];
     a.settings.invalidate();
     open_plugin(&mut a, "dev.example.gain");
     let s = draw(&mut a, 140, 300);
@@ -2675,7 +2675,7 @@ fn a_controlled_device_shows_its_battery_and_sets_its_noise_control() {
         battery: Battery { left: Some(60), right: Some(40), case: Some(90), single: None },
         level: Some(40),
         noise: Some(Noise::Canceling),
-        noise_modes: vec![Noise::Off, Noise::Canceling, Noise::Transparency],
+        noise_modes: vec![Noise::Off, Noise::Canceling, Noise::Transparency], noise_cycle: vec![Noise::Off, Noise::Canceling, Noise::Transparency],
         card: card("dev.example.sony", "Sony", Vec::new()),
     }];
     let s = draw(&mut a, 160, 30);
@@ -2686,10 +2686,44 @@ fn a_controlled_device_shows_its_battery_and_sets_its_noise_control() {
     let s = draw(&mut a, 160, 30);
     dump("devices-controlled", &s);
     assert!(s.lines().any(|l| l.contains("WH-1000XM5") && l.contains("L 60% · R 40% · Case 90%")), "{s}");
-    assert!(s.lines().any(|l| l.contains("Noise control") && l.contains("Noise canceling")), "{s}");
+    assert!(s.lines().any(|l| l.contains("Noise control") && l.contains("ANC")), "{s}");
     assert_eq!(a.devices.rows()[a.devices.sel.at], crate::app::DeviceRow::Noise(0), "the device's line is passed over");
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(crate::app::PluginCmd::Noise("AA".into(), Noise::Transparency))));
+}
+
+/// The panel leads on to a device's settings, a plugin's flags are switches storing the bits with that
+/// option switched, and `b` moves the headphones playing to the next mode of their cycle.
+#[test]
+fn a_controlled_devices_settings_and_noise_key() {
+    use nori_plugins::{Battery, ControlledDevice, Noise, RowKind, Value};
+    let flags = nori_plugins::PluginRow { options: vec!["ANC".into(), "Normal".into()], ..plugin_row("cycle", RowKind::Flags, Some(Value::Flags(0b01))) };
+    let mut a = app();
+    a.song = Some(song("1", "Blue", 200));
+    a.devices.controlled = vec![ControlledDevice {
+        id: "AA".into(),
+        name: "Buds".into(),
+        battery: Battery::default(),
+        level: None,
+        noise: Some(Noise::Canceling),
+        noise_modes: vec![Noise::Canceling, Noise::Off, Noise::Transparency],
+        noise_cycle: vec![Noise::Canceling, Noise::Transparency],
+        card: card("dev.example.buds", "Buds", vec![flags.clone()]),
+    }];
+    key(&mut a, KeyCode::Char('b'));
+    assert_eq!(a.cmds.pop(), Some(Cmd::Plugin(crate::app::PluginCmd::Noise("AA".into(), Noise::Transparency))), "Normal is not in its cycle");
+    assert!(a.devices.rows().contains(&crate::app::DeviceRow::Settings(0)));
+    key(&mut a, KeyCode::Char('C'));
+    let at = a.devices.rows().iter().position(|r| *r == crate::app::DeviceRow::Settings(0)).unwrap();
+    a.devices.sel.at = at;
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.view, View::Settings, "the settings show");
+
+    let rows = crate::settings_view::plugin_rows("dev.example.buds", &flags, false);
+    let on: Vec<bool> = rows.iter().filter_map(|r| if let crate::settings_view::Row::Toggle { on, .. } = r { Some(*on) } else { None }).collect();
+    assert_eq!(on, [true, false]);
+    let Some(crate::settings_view::Opened::Cmds(cmds)) = crate::settings_view::open_row(rows[2].clone()) else { panic!("a switch") };
+    assert_eq!(cmds, [Cmd::Plugin(crate::app::PluginCmd::Set("dev.example.buds".into(), "cycle".into(), Value::Flags(0b11)))]);
 }
 
 /// A row's hint is a quiet line under it, a level shows its unit at its digits, a link where it goes;

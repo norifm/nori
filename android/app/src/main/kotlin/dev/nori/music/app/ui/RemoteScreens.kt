@@ -2,6 +2,7 @@ package dev.nori.music.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -116,24 +117,49 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         }
         val hosted = jam?.takeIf { it.hosting }
         var page by remember(hosted?.link) { mutableStateOf<RoomPage>(RoomPage.Main) }
-        BackHandler(page != RoomPage.Main) { page = RoomPage.Main }
         val controlled by plugins.controlled.collectAsStateWithLifecycle()
         val output by sound.currentOutput.collectAsStateWithLifecycle()
         // The headphones playing now, when a plugin controls them; their page while it is open.
-        val here = remember(controlled, output) { dev.nori.music.ffi.plugins.controlledOutput(controlled, dev.nori.music.ffi.devices.outputLook(output).name) }
+        val here = remember(controlled, output) { dev.nori.music.ffi.plugins.controlledOnOutput(controlled, output) }
         val pageDevice = (page as? RoomPage.Device)?.let { p -> controlled.firstOrNull { it.id == p.id } }
-        // Its page goes with the device.
-        LaunchedEffect(pageDevice == null) { if (pageDevice == null && page is RoomPage.Device) page = RoomPage.Main }
-        Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
-            if (pageDevice != null) {
-                SheetTitle(pageDevice.name)
-                ControlledDevicePage(plugins, pageDevice)
-            } else if (page == RoomPage.Pair && pairing != null) {
+        // What is showing: a page whose reason for being is gone is the main one.
+        val showing = when {
+            pageDevice != null -> page
+            page == RoomPage.Pair && pairing != null -> page
+            hosted != null && (page == RoomPage.Invite || page == RoomPage.Settings) -> page
+            else -> RoomPage.Main
+        }
+        BackHandler(showing != RoomPage.Main) { page = RoomPage.Main }
+        // One page fades into the next, as the sheet takes the new one's height.
+        androidx.compose.animation.AnimatedContent(
+            showing,
+            transitionSpec = {
+                (AppMotion.appear() togetherWith AppMotion.vanish()).using(
+                    androidx.compose.animation.SizeTransform(clip = false) { _, _ -> AppMotion.settle() },
+                )
+            },
+            label = "devices page",
+        ) { p ->
+        // Leaving because its device went, the page keeps drawing the device while it fades.
+        val heldDevice = remember { arrayOfNulls<dev.nori.music.ffi.plugins.ControlledDevice>(1) }
+        val shownDevice = (p as? RoomPage.Device)?.let { d -> controlled.firstOrNull { it.id == d.id } ?: heldDevice[0] }
+        heldDevice[0] = shownDevice
+        // Kept below the status bar: a sheet reaching under it has its content pushed back down as it arrives.
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val window = androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height
+        val tallest = with(density) { (window - statusBarRoom.getTop(density) - gestureBarRoom.getBottom(density)).toDp() } - SHEET_ROOM
+        val scroll = rememberScrollState()
+        val paper = MaterialTheme.colorScheme.surfaceContainer
+        Column(Modifier.heightIn(max = tallest).fadesUnderTitle(scroll, paper).fadesAtFoot(scroll, paper).verticalScroll(scroll).windowInsetsPadding(gestureBarRoom)) {
+            if (shownDevice != null) {
+                SheetTitle(shownDevice.name)
+                ControlledDevicePage(plugins, shownDevice)
+            } else if (p == RoomPage.Pair && pairing != null) {
                 SheetTitle(words(R.string.pair_devices))
                 PairingBody(pairing!!, vm) { page = RoomPage.Main }
-            } else if (hosted != null && (page == RoomPage.Invite || page == RoomPage.Settings)) {
-                SheetTitle(words(if (page == RoomPage.Invite) R.string.jam_invite_title else R.string.settings))
-                if (page == RoomPage.Invite) hosted.link?.let { InviteBody(it) } else JamSettings(hosted)
+            } else if (hosted != null && (p == RoomPage.Invite || p == RoomPage.Settings)) {
+                SheetTitle(words(if (p == RoomPage.Invite) R.string.jam_invite_title else R.string.settings))
+                if (p == RoomPage.Invite) hosted.link?.let { InviteBody(it) } else JamSettings(hosted)
             } else {
                 SheetTitle(words(R.string.devices_title))
                 here?.let { d -> DeviceControls(plugins, d, Modifier.padding(bottom = 12.dp)) { page = RoomPage.Device(d.id) } }
@@ -203,8 +229,12 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                 PluginDeviceSections(viewModel(), sound)
             }
         }
+        }
     }
 }
+
+/** What a sheet's handle and foot take, kept out of how tall a page of the devices sheet may be. */
+private val SHEET_ROOM = 48.dp
 
 /** An incoming pairing code waits for an explicit choice. */
 @Composable

@@ -834,9 +834,9 @@
     <string name="plugins_may_sound">Change the sound</string>
     <string name="plugins_may_bluetooth">Reach Bluetooth devices</string>
     <string name="plugins_allow_bluetooth">Allow Bluetooth</string>
-    <string name="device_noise_off">Off</string>
-    <string name="device_noise_canceling">Noise canceling</string>
-    <string name="device_noise_transparency">Transparency</string>
+    <string name="device_noise_off">Normal</string>
+    <string name="device_noise_canceling">ANC</string>
+    <string name="device_noise_transparency">Transparent</string>
     <string name="device_noise_adaptive">Adaptive</string>
     <string name="device_battery">%1$d%%</string>
     <string name="device_battery_left">L %1$d%%</string>

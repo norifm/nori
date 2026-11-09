@@ -175,7 +175,7 @@ private fun DeviceSheet(vm: SettingsViewModel, d: DeviceRow, onDone: () -> Unit)
     // While a plugin controls these headphones, all of it under their sound.
     val plugins: dev.nori.music.app.vm.PluginsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val controlled by plugins.controlled.collectAsStateWithLifecycle()
-    val controls = remember(controlled, d.output) { if (controlled.isEmpty()) null else dev.nori.music.ffi.plugins.controlledOutput(controlled, dev.nori.music.ffi.devices.outputLook(d.output).name) }
+    val controls = remember(controlled, d.output) { if (controlled.isEmpty()) null else dev.nori.music.ffi.plugins.controlledOnOutput(controlled, d.output) }
 
     LazyColumn(Modifier.windowInsetsPadding(gestureBarRoom)) {
         item("head") {

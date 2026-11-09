@@ -26,6 +26,7 @@ pub enum Action {
     Images,
     /// Answers the AutoEQ note: apply the curve offered, or undo the one applied.
     Curve,
+    Noise,
     Shuffle,
     Repeat,
     /// Index into `app::GO`.
@@ -167,6 +168,7 @@ pub const BINDINGS: &[Binding] = &[
     b!(Global, "", Action::Panel(Panel::Lyrics), "", [(Char('L'), S), (Char('L'), N)]),
     b!(Global, "", Action::Panel(Panel::Queue), "", [(Char('Q'), S), (Char('Q'), N)]),
     b!(Global, "C", Action::Panel(Panel::Devices), "Devices: play on another one, or start a jam (remote control or jams on)", [(Char('C'), S), (Char('C'), N)]),
+    b!(Global, "b", Action::Noise, "The headphones playing: on to their next noise control mode", [(Char('b'), N)]),
     b!(Global, "o", Action::Join, "Join a jam: paste the invite link (pasting it anywhere does too)", [(Char('o'), N)]),
     b!(Global, "F / N", Action::Full, "The player over the whole window", [(Char('F'), S), (Char('F'), N), (Char('N'), S), (Char('N'), N)]),
     b!(Global, "esc / h / ⌫", Action::Back, "Back: out of the full player, out of a page", [(Esc, N), (Char('h'), N), (Backspace, N)]),

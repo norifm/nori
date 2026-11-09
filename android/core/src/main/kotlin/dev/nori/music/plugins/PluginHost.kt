@@ -103,7 +103,6 @@ class PluginHost(
     val controlled: StateFlow<List<ControlledDevice>> = _controlled
 
     private val bluetooth = PluginBluetooth(context.applicationContext) { plugins }
-
     private val _notices = MutableSharedFlow<PluginNotice>(extraBufferCapacity = 8)
     /** Each line a plugin shows, as it shows it. */
     val notices: SharedFlow<PluginNotice> = _notices
@@ -231,6 +230,9 @@ class PluginHost(
 
     /** What plays now, while [follows]. */
     suspend fun played(moment: Moment) = withContext(Dispatchers.IO) { plugins.played(moment) }
+
+    /** The app came to the front: a device another app was holding may be free now. */
+    suspend fun lookForDevices() = withContext(Dispatchers.IO) { plugins.lookForDevices() }
 
     suspend fun heardPress(press: Press) = withContext(Dispatchers.IO) { plugins.heardPress(press) }
 

@@ -936,6 +936,13 @@ pub const PASTE_COOKIES: &str = "Sign in in a private browser window, copy the C
 pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window couldn't open here. Paste cookies from a browser instead.";
 pub const THIS_COMPUTER: &str = "This computer";
 pub const NOISE_CONTROL: &str = "Noise control";
+pub const DEVICE_SETTINGS: &str = "Device settings";
+
+/// Headphones a plugin controls: their name, battery and noise control.
+pub fn headphones_line(d: &nori_plugins::ControlledDevice) -> String {
+    let named = d.level.map_or_else(|| d.name.clone(), |l| with_level(&d.name, l));
+    d.noise.map_or_else(|| named.clone(), |n| format!("{named} · {}", noise(n)))
+}
 pub const BATTERY: &str = "Battery";
 pub const FILES: &str = "Files";
 pub const ASSETS_ON_MOBILE: &str = "Download on mobile data";
@@ -956,9 +963,9 @@ pub const REACHES_BLUETOOTH: &str = "Reaches Bluetooth devices.";
 pub fn noise(n: nori_plugins::Noise) -> &'static str {
     use nori_plugins::Noise;
     match n {
-        Noise::Off => "Off",
-        Noise::Canceling => "Noise canceling",
-        Noise::Transparency => "Transparency",
+        Noise::Off => "Normal",
+        Noise::Canceling => "ANC",
+        Noise::Transparency => "Transparent",
         Noise::Adaptive => "Adaptive",
     }
 }

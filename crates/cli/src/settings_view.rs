@@ -49,6 +49,8 @@ pub enum Switch {
     Transparent,
     /// A plugin's switch row.
     Plugin { plugin: String, row: String },
+    /// An option of a plugin's flags row, and the bits switching it stores.
+    PluginFlags { plugin: String, row: String, bits: u64 },
     /// A plugin itself, on its page.
     Turn(String),
     /// Keeps a plugin at its version: no automatic updates.
@@ -847,6 +849,8 @@ pub fn open_row(row: Row) -> Option<Opened> {
             Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())])
         }
         Row::Toggle { switch: Switch::Stores(name, value), .. } => Opened::Cmds(vec![Cmd::Setting(name, value)]),
+        Row::Toggle { switch: Switch::PluginFlags { .. }, enabled: false, .. } => return None,
+        Row::Toggle { switch: Switch::PluginFlags { plugin, row, bits }, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Flags(bits)))]),
         Row::Toggle { switch: Switch::Plugin { plugin, row }, on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(!on)))]),
         Row::Toggle { switch: Switch::Turn(plugin), on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Turn(plugin, !on))]),
         Row::Toggle { switch: Switch::Hold(plugin), on, .. } => Opened::Cmds(vec![Cmd::Plugin(PluginCmd::Hold(plugin, !on))]),
@@ -910,6 +914,8 @@ pub fn step_row(row: Row, up: bool) -> Vec<Cmd> {
                 Switch::Stores(name, value) if enabled => vec![Cmd::Setting(name, value)],
                 Switch::Setting(_) | Switch::Stores(..) => Vec::new(),
                 Switch::Plugin { plugin, row } => vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Switch(up)))],
+                Switch::PluginFlags { .. } if !enabled => Vec::new(),
+                Switch::PluginFlags { plugin, row, bits } => vec![Cmd::Plugin(PluginCmd::Set(plugin, row, Value::Flags(bits)))],
                 Switch::Turn(plugin) => vec![Cmd::Plugin(PluginCmd::Turn(plugin, up))],
                 Switch::Hold(plugin) => vec![Cmd::Plugin(PluginCmd::Hold(plugin, up))],
                 Switch::AllOff => all_off(!up),
@@ -929,8 +935,18 @@ pub fn step_row(row: Row, up: bool) -> Vec<Cmd> {
 }
 
 /// One row of plugin `plugin`'s page, then its hint; `off`, it shows but takes no input.
-fn plugin_rows(plugin: &str, r: &PluginRow, off: bool) -> Vec<Row> {
+pub fn plugin_rows(plugin: &str, r: &PluginRow, off: bool) -> Vec<Row> {
     let hint = r.hint.clone().map(|text| Row::Note { text });
+    if r.kind == RowKind::Flags {
+        let switches = r.options.iter().enumerate().map(|(at, option)| Row::Toggle {
+            switch: Switch::PluginFlags { plugin: plugin.into(), row: r.id.clone(), bits: r.flag_switched(at) },
+            title: format!("  {option}"),
+            detail: String::new(),
+            on: r.flag_on(at),
+            enabled: !off,
+        });
+        return std::iter::once(Row::Info { title: r.label.clone(), detail: String::new() }).chain(switches).chain(hint).collect();
+    }
     let row = if off { Row::Info { title: r.label.clone(), detail: shown_value(r) } } else { plugin_row(plugin, r) };
     std::iter::once(row).chain(hint).collect()
 }
@@ -995,6 +1011,7 @@ pub fn plugin_row(plugin: &str, r: &PluginRow) -> Row {
         }
         RowKind::Action => Row::Button { title, action: Act::PluginAction { plugin: plugin.into(), row: r.id.clone() } },
         RowKind::Status => Row::Info { title, detail: shown_value(r) },
+        RowKind::Flags => Row::Info { title, detail: r.chosen().join(", ") },
         // A link shows where it goes: the terminal opens no pages.
         RowKind::Link => Row::Info { title, detail: r.url.clone().unwrap_or_default() },
         RowKind::Note | RowKind::Section => Row::Note { text: title },

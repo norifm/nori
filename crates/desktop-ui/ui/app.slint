@@ -921,6 +921,44 @@ component PlayPause inherits Rectangle {
     }
 }
 
+// The headphones' noise control, as Android's: one glyph, a press moves it to the next mode. It opens its width
+// and fades in, and goes the same way, holding its last mode as it leaves.
+component NoiseButton inherits Rectangle {
+    in property <bool> on;
+    in property <int> mode;
+    in property <string> label;
+    in property <length> side: 34px;
+    in property <length> size: 20px;
+    in property <brush> colour: Theme.dim;
+    callback clicked();
+    pure function drawn(m: int) -> Glyph {
+        if m == 1 { return Icons.noise-canceling; }
+        if m == 2 { return Icons.noise-transparency; }
+        if m == 3 { return Icons.noise-adaptive; }
+        return Icons.noise-off;
+    }
+    property <float> open: root.on ? 1 : 0;
+    animate open { duration: Motion.reduced ? 0ms : 160ms; enabled: !Motion.reduced; easing: ease-out; }
+    width: root.side * root.open;
+    height: root.side;
+    clip: true;
+    opacity: root.open;
+    accessible-role: button;
+    accessible-label: root.on ? root.label : "";
+    TouchArea {
+        enabled: root.on;
+        clicked => { root.clicked(); }
+    }
+    Icon {
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        glyph: root.drawn(root.mode);
+        colour: root.colour;
+        width: root.size;
+        height: root.size;
+    }
+}
+
 // A favorite is the seal. Not liked: its outline, upright, in the ink of the icons beside it. Liked: filled with the accent,
 // tilted 4 degrees, and stamped on when it is pressed to like (it lands from half as big again on a
 // firm spring); a seal that changes by itself is drawn, not stamped. Taking a like off is immediate.
@@ -2624,6 +2662,9 @@ component PlayerControls inherits Rectangle {
     in property <string> now-album-id;
     in property <Credits> now-credits;
     in property <bool> now-starred;
+    in property <bool> noise-on;
+    in property <int> noise-mode;
+    in property <string> noise-label;
     in property <string> now-art;
     in property <bool> playing;
     in property <bool> buffering;
@@ -2651,6 +2692,7 @@ component PlayerControls inherits Rectangle {
     pure callback art(string, int, int) -> image;
     // The seal pressed.
     callback star();
+    callback noise-next();
     callback toggle();
     callback next();
     callback previous();
@@ -2883,6 +2925,13 @@ component PlayerControls inherits Rectangle {
                 icon: 20px;
                 idle: root.inspector == Panel.devices ? Theme.accent : Theme.dim;
                 clicked => { root.set-inspector(root.inspector == Panel.devices ? Panel.none : Panel.devices); }
+            }
+            NoiseButton {
+                y: (parent.height - self.height) / 2;
+                on: root.noise-on && root.has-song && !root.guest;
+                mode: root.noise-mode;
+                label: root.noise-label;
+                clicked => { root.noise-next(); }
             }
             if root.has-song && !root.guest: Seal {
                 y: (parent.height - self.height) / 2;
@@ -6104,6 +6153,9 @@ export component AppWindow inherits Window {
     in property <string> now-artist-id;
     in property <Credits> now-credits;
     in property <bool> now-starred;
+    in property <bool> noise-on;
+    in property <int> noise-mode;
+    in property <string> noise-label;
     in property <string> now-album-id;
     in property <string> now-art;
     in property <bool> playing;
@@ -6514,6 +6566,7 @@ export component AppWindow inherits Window {
     callback toggle();
     // The heart of the song playing pressed.
     callback star();
+    callback noise-next();
     callback next();
     callback previous();
     callback seek(float);
@@ -8466,6 +8519,16 @@ export component AppWindow inherits Window {
                             overflow: elide;
                         }
                     }
+                    NoiseButton {
+                        y: 0px;
+                        on: root.noise-on && !Jam.guest;
+                        mode: root.noise-mode;
+                        label: root.noise-label;
+                        side: 36px;
+                        size: 26px;
+                        colour: Theme.text;
+                        clicked => { root.noise-next(); }
+                    }
                     if !Jam.guest: Seal {
                         y: 0px;
                         liked: root.now-starred;
@@ -9617,6 +9680,9 @@ export component PlayerBar inherits Window {
     in property <string> now-artist-id;
     in property <Credits> now-credits;
     in property <bool> now-starred;
+    in property <bool> noise-on;
+    in property <int> noise-mode;
+    in property <string> noise-label;
     in property <string> now-album-id;
     in property <string> now-art;
     in property <bool> playing;
@@ -9641,6 +9707,7 @@ export component PlayerBar inherits Window {
     pure callback art(string, int, int) -> image;
     callback toggle();
     callback star();
+    callback noise-next();
     callback next();
     callback previous();
     callback seek(float);
@@ -9670,6 +9737,9 @@ export component PlayerBar inherits Window {
         now-artist-id: root.now-artist-id;
         now-credits: root.now-credits;
         now-starred: root.now-starred;
+        noise-on: root.noise-on;
+        noise-mode: root.noise-mode;
+        noise-label: root.noise-label;
         now-album-id: root.now-album-id;
         now-art: root.now-art;
         playing: root.playing;
@@ -9692,6 +9762,7 @@ export component PlayerBar inherits Window {
         art(a, s, r) => { return root.art(a, s, r); }
         toggle => { root.toggle(); }
         star => { root.star(); }
+        noise-next => { root.noise-next(); }
         next => { root.next(); }
         previous => { root.previous(); }
         seek(v) => { root.seek(v); }

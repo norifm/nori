@@ -6,7 +6,7 @@
 #[cfg(feature = "headphones")]
 mod headphones;
 #[cfg(feature = "headphones")]
-nori_plugin_sdk::plugin!(headphones::Headphones, headphones::MANIFEST, device_control, hooks);
+nori_plugin_sdk::plugin!(headphones::Headphones, headphones::MANIFEST, device_control, hooks, lifecycle);
 mod automix;
 mod deciders;
 mod lan;

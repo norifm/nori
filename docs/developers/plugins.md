@@ -51,7 +51,7 @@ nori_plugin_sdk::plugin!(Orbit, MANIFEST, sound_stage);
   keys it overrides, its rows, a stage's slot, and its permissions, hooks, wakes, commands, cache quota
   and assets.
 - Words are files: `strings/<lang>.toml`, key = text, English required: `name`, `about`, each row's id
-  and each choice option's key.
+  and each choice or flags option's key.
 - A plugin depends on the SDK from this repository, `nori-plugin-sdk = { git = "https://github.com/norifm/nori" }`,
   its commit pinned by the plugin's `Cargo.lock`.
 - Build with `cargo build --release --target wasm32-wasip2`; a `.noriplugin` is a zip of `plugin.wasm`,
@@ -433,14 +433,20 @@ lists them, and a channel opens to no other. The install sheet says it reaches B
 - **Who controls a device.** A device connecting is offered to the enabled `device-control` plugins
   reaching it, in their order (`handles`); the first that says yes controls it while it stays connected.
   nori asks for its `state` then, after each notification and after `set-noise`, never on a timer.
-  Disconnected, the plugin hears `gone`, and an instance there only for devices goes.
+  Disconnected, the plugin hears `gone`, and an instance there only for devices goes. A row can mirror the
+  device: `rows.set` stores what is true now and redraws it, without telling the plugin it changed.
+  A row the user changes can change the device, so its state is asked for again after `changed`. `noise-modes`
+  are the modes a device offers; `noise-cycle`, those of them nori's noise button moves through.
 - **What clients draw** comes from `Plugins::controlled`: per device its batteries, the level the output
   row shows (`Battery::level`: a single battery, else the emptier bud, never the case), its noise
   control and modes, and the controlling plugin's card. `output_device` picks the one the music plays
   on (by name or id; the system's default output is the only one connected). Android draws it on the
   devices sheet (a card for the headphones playing, with a way on to their page), the player's output
   row (`WH-1000XM5 · 80%`), the equalizer's device page and the plugin's page; the desktop and the
-  terminal on their devices panel and output row.
+  terminal on their devices panel and output row. On Android, while the music plays on those headphones,
+  their noise control is a glyph beside the seal in the player and in the mini player, which a tap moves
+  to the next mode (`next_noise`). Their page holds the plugin's rows; the plugin's own page keeps only its
+  links and notes.
 
 ## Covers
 

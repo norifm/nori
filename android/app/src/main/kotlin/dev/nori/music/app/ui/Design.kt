@@ -680,6 +680,23 @@ fun Modifier.fadesUnderTitle(list: androidx.compose.foundation.lazy.LazyListStat
 fun Modifier.fadesUnderTitle(grid: androidx.compose.foundation.lazy.grid.LazyGridState): Modifier =
     fadesUnderTitle(MaterialTheme.colorScheme.background) { if (grid.firstVisibleItemIndex > 0) Float.MAX_VALUE else grid.firstVisibleItemScrollOffset.toFloat() }
 
+@Composable
+fun Modifier.fadesUnderTitle(scroll: androidx.compose.foundation.ScrollState, page: Color = MaterialTheme.colorScheme.background): Modifier =
+    fadesUnderTitle(page) { scroll.value.toFloat() }
+
+/** What scrolls on past the bottom of a column fades into [page] rather than being cut, while there is more below. */
+fun Modifier.fadesAtFoot(scroll: androidx.compose.foundation.ScrollState, page: Color): Modifier = drawWithCache {
+    val fade = HEAD_FADE.toPx()
+    val edge = HEAD_EDGE.toPx()
+    val top = size.height - edge
+    val over = Brush.verticalGradient(0f to Color.Transparent, 1f to page, startY = top, endY = size.height)
+    onDrawWithContent {
+        drawContent()
+        val shown = ((scroll.maxValue - scroll.value) / fade).coerceIn(0f, 1f)
+        if (shown > 0f) drawRect(over, androidx.compose.ui.geometry.Offset(0f, top), Size(size.width, edge), alpha = shown)
+    }
+}
+
 private fun Modifier.fadesUnderTitle(page: Color, scrolled: () -> Float) = drawWithCache {
     val fade = HEAD_FADE.toPx()
     val edge = HEAD_EDGE.toPx()
@@ -914,7 +931,7 @@ fun SearchField(
 
 /** A choice chip: the selected one raised on the surface with a hairline edge and in ink, the others quiet words. */
 @Composable
-fun Chip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun Chip(label: String, selected: Boolean, modifier: Modifier = Modifier, sidePadding: Dp = 14.dp, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     // The pill is 34 dp: Material's 48 dp touch floor would add 7 dp of air above and below it.
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) { Surface(
@@ -924,7 +941,7 @@ fun Chip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClic
         border = if (selected) hairlineBorder() else null,
         modifier = modifier,
     ) {
-        Box(Modifier.height(34.dp).padding(horizontal = 14.dp), Alignment.Center) {
+        Box(Modifier.height(34.dp).padding(horizontal = sidePadding), Alignment.Center) {
             Text(label, style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp, fontWeight = FontWeight.Medium), maxLines = 1)
         }
     } }

@@ -339,6 +339,20 @@ impl rows::Host for Host {
         stored.or_else(|| self.manifest.rows.iter().find(|r| r.id == row)?.initial()).map(Into::into)
     }
 
+    fn set(&mut self, values: Vec<(String, types::Value)>) {
+        let mut changed = false;
+        for (row, value) in values {
+            if self.manifest.rows.iter().any(|r| r.id == row) {
+                let key = format!("{}{row}", crate::ROWS);
+                let bytes = Value::from(value).encode();
+                changed |= self.store.get(&key).as_deref() != Some(bytes.as_slice()) && self.store.set(&key, &bytes);
+            }
+        }
+        if changed {
+            self.side.devices_changed();
+        }
+    }
+
     fn set_status(&mut self, row: String, words: String, args: Vec<String>) {
         self.side.status(&self.id, &row, &words, &args);
     }

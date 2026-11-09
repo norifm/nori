@@ -1,3 +1,5 @@
 name = "Test"
 gain = "Gain"
 count = "Count letters"
+canceling = "Noise canceling"
+gone = "{0} went"

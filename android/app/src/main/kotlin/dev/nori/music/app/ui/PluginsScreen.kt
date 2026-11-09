@@ -443,10 +443,9 @@ fun PluginPage(vm: PluginsViewModel, sound: SettingsViewModel, id: String, back:
                 Toggle(say.pluginOn, "", card.enabled, key = "plugin-on", divider = card.repo != null) { on -> vm.turn(id, on) }
                 if (card.repo != null) Toggle(say.pluginKeepVersion, "", card.held, divider = false) { held -> vm.hold(id, held) }
             }
-            val controlled by vm.controlled.collectAsStateWithLifecycle()
-            controlled.filter { it.card.id == id }.forEach { d -> DeviceControls(vm, d, Modifier.padding(top = Space.section)) }
             if (vm.needsBluetooth(card) && card.enabled) BluetoothAsk(vm, Modifier.padding(top = Space.section))
-            PluginRows(vm, card, null)
+            // A device's settings are on the device's own page.
+            PluginRows(vm, card, null) { "device-control" !in card.points || !it.onDevicePage() }
             PluginAssets(vm, id)
         }
         AnimatedVisibility(readme.isNotEmpty(), enter = fadeIn()) { Readme(readme) }
@@ -538,12 +537,15 @@ fun PluginDeviceSections(vm: PluginsViewModel, sound: SettingsViewModel) {
  * after it. With [title] (a page of nori's own showing them), every label starts with it and the rows before
  * the first section are under it alone; without, those rows are under a gap. Rows its plugin hides are left out.
  */
+/** Whether a device-controlling plugin's row is a setting of the device, rather than about the plugin. */
+internal fun PluginRow.onDevicePage() = dev.nori.music.ffi.plugins.rowOnDevicePage(kind)
+
 @Composable
-fun PluginRows(vm: PluginsViewModel, card: PluginCard, title: String?) {
+fun PluginRows(vm: PluginsViewModel, card: PluginCard, title: String?, only: (PluginRow) -> Boolean = { true }) {
     val status by vm.status.collectAsStateWithLifecycle()
     val shown by vm.shown.collectAsStateWithLifecycle()
     val groups = mutableListOf<Pair<String?, MutableList<PluginRow>>>(title to mutableListOf())
-    card.rows.filter { shown[RowRef(card.id, it.id)]?.shown != false }.forEach { r ->
+    card.rows.filter { only(it) && shown[RowRef(card.id, it.id)]?.shown != false }.forEach { r ->
         if (r.kind == RowKind.SECTION) groups += (title?.let { say.pluginSection(it, r.label) } ?: r.label) to mutableListOf() else groups.last().second += r
     }
     groups.filter { it.second.isNotEmpty() }.forEach { (label, rows) ->
@@ -557,6 +559,7 @@ fun PluginRows(vm: PluginsViewModel, card: PluginCard, title: String?) {
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabled: Boolean, divider: Boolean, vm: PluginsViewModel) {
     val dim = Modifier.alpha(if (enabled) 1f else DIMMED)
@@ -573,6 +576,30 @@ private fun PluginRowView(card: PluginCard, r: PluginRow, status: String?, enabl
                     }
                 },
             )
+        }
+        RowKind.FLAGS -> {
+            // Kept here between taps: two quick ones each build on the last, not on the value last read.
+            val stored = (r.value as? Value.Flags)?.v1 ?: 0uL
+            var on by remember(stored) { androidx.compose.runtime.mutableStateOf(stored) }
+            Column(dim.fillMaxWidth().padding(horizontal = GROUP_INSET, vertical = 12.dp)) {
+                Text(r.label, style = MaterialTheme.typography.bodyLarge)
+                r.hint?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                androidx.compose.foundation.layout.FlowRow(
+                    Modifier.padding(top = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    r.options.forEachIndexed { i, o ->
+                        val bit = 1uL shl i
+                        Chip(o, on and bit != 0uL) {
+                            if (enabled) {
+                                on = on xor bit
+                                vm.set(card.id, r.id, Value.Flags(on))
+                            }
+                        }
+                    }
+                }
+            }
+            if (divider) Hairline(startIndent = GROUP_INSET)
         }
         RowKind.LEVEL -> {
             val min = (r.min ?: 0.0).toFloat()

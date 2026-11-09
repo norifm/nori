@@ -684,6 +684,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             // everything else is "favourited" is a distinction the server makes and nobody else does.
                             // A jam guest's seals would be the host's; a provider may have them signed in.
                             val tap = LocalSealTap.current
+                            NoiseTitleButton(vm)
                             if (LocalRules.current.seals) TitleButton(
                                 if (starred) Kanji.Sealed else Kanji.Seal,
                                 say.favourite, starred, rememberStamp(),
@@ -840,8 +841,7 @@ internal fun OutputButton(
     val icon = otherDevice?.let(::kindIcon) ?: cast?.let { castIcon(it.look) } ?: outputIcon(o.glyph)
     val description = remember(o, playingOn) { playingOn?.let(say::devicePlayingOn) ?: say.outputDescription(o.port, o.name) }
     // Headphones a plugin controls: their battery beside their name, and the button opens nori's devices.
-    val controlled by viewModel<dev.nori.music.app.vm.PluginsViewModel>().controlled.collectAsStateWithLifecycle()
-    val here = remember(controlled, o) { if (controlled.isEmpty()) null else dev.nori.music.ffi.plugins.controlledOutput(controlled, o.name) }
+    val here = outputHeadphones()
     // With remote control or jams on, or a plugin's rows to show, the button opens nori's own devices
     // first (RemoteScreens); this phone's outputs are one row of it.
     val prefs by settings.prefs.collectAsStateWithLifecycle()
