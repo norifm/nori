@@ -3161,8 +3161,11 @@ component DevicesView inherits Rectangle {
                 line: root.pairing-link != "" ? "With an invite link or a pairing code" : "With the invite link someone sent you";
                 clicked => { root.join-jam(); }
             }
-            // The plugins' rows that show here too.
-            @children
+            // The plugins' rows that show here too, joined as one group.
+            VerticalLayout {
+                spacing: 0;
+                @children
+            }
         }
     }
 }
