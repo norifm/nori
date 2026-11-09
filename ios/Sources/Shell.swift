@@ -1,4 +1,3 @@
-import AVFoundation
 import UIKit
 
 /// Home, Library, Settings and Search, as on Android: each a navigation stack, with the bottom chrome (the
@@ -26,11 +25,7 @@ final class ShellController: UIViewController {
         chrome.tabs.picked = { [weak self] i in self?.select(i) }
         chrome.mini.opened = { [weak self] in self?.openPlayer() }
         chrome.mini.dragged = { [weak self] in self?.dragPlayer($0) }
-        chrome.mini.devicesOpened = { [weak self] in
-            guard Core.shared.now.jam else {
-                self?.present(DevicesSheet(), animated: false)
-                return
-            }
+        chrome.mini.jamOpened = { [weak self] in
             let card = PlayerCard()
             card.opensQueue = true
             self?.present(card, animated: true)
@@ -279,16 +274,17 @@ final class MiniPlayer: UIView {
 
     var opened: (() -> Void)?
     var dragged: ((UIPanGestureRecognizer) -> Void)?
-    /// The output was tapped with remote control on, or the jam in its place: the devices, or the queue
-    /// where the jam is.
-    var devicesOpened: (() -> Void)?
+    /// The jam's button was tapped: its queue.
+    var jamOpened: (() -> Void)?
     /// It came or went with the song.
     var shown: (() -> Void)?
     private let cover = CoverView()
     private let title = label(Fonts.font(16), Theme.label)
     private let artist = label(Fonts.font(13, .regular, .footnote), Theme.secondary)
-    private let output = UIButton(type: .custom)
-    private let outputs = OutputPicker()
+    /// While a jam is on: this bar's way to it.
+    private let jam = UIButton(type: .custom)
+    /// The jam button's width, none without a jam.
+    private lazy var jamWidth = jam.widthAnchor.constraint(equalToConstant: 0)
     private let seal = UIButton(type: .custom)
     private let play = UIButton(type: .custom)
     /// Which way the drag under way goes, decided as it starts: up for the card, sideways to skip.
@@ -304,8 +300,7 @@ final class MiniPlayer: UIView {
         cover.layer.cornerRadius = 10
         play.tintColor = Theme.label
         play.addTarget(self, action: #selector(toggle), for: .touchUpInside)
-        output.addTarget(self, action: #selector(outputTapped), for: .touchUpInside)
-        outputs.attach(to: output)
+        jam.addTarget(self, action: #selector(jamTapped), for: .touchUpInside)
         seal.accessibilityLabel = Say.favorite
         seal.addTarget(self, action: #selector(sealTapped), for: .touchUpInside)
         sliding = [cover, text]
@@ -314,7 +309,7 @@ final class MiniPlayer: UIView {
         let lane = UIView()
         lane.clipsToBounds = true
         lane.isUserInteractionEnabled = false
-        for v in [lane, output, seal, play] {
+        for v in [lane, jam, seal, play] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -324,7 +319,7 @@ final class MiniPlayer: UIView {
         }
         NSLayoutConstraint.activate([
             lane.leadingAnchor.constraint(equalTo: leadingAnchor),
-            lane.trailingAnchor.constraint(equalTo: output.leadingAnchor),
+            lane.trailingAnchor.constraint(equalTo: jam.leadingAnchor),
             lane.topAnchor.constraint(equalTo: topAnchor),
             lane.bottomAnchor.constraint(equalTo: bottomAnchor),
             cover.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
@@ -333,12 +328,15 @@ final class MiniPlayer: UIView {
             cover.heightAnchor.constraint(equalToConstant: 40),
             text.leadingAnchor.constraint(equalTo: cover.trailingAnchor, constant: 11),
             text.centerYAnchor.constraint(equalTo: centerYAnchor),
-            text.trailingAnchor.constraint(lessThanOrEqualTo: output.leadingAnchor, constant: -2),
-            output.trailingAnchor.constraint(equalTo: seal.leadingAnchor),
+            text.trailingAnchor.constraint(lessThanOrEqualTo: jam.leadingAnchor, constant: -2),
+            jam.trailingAnchor.constraint(equalTo: seal.leadingAnchor),
+            jam.centerYAnchor.constraint(equalTo: centerYAnchor),
+            jam.heightAnchor.constraint(equalToConstant: 48),
+            jamWidth,
             seal.trailingAnchor.constraint(equalTo: play.leadingAnchor),
             play.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
         ])
-        for b in [output, seal, play] {
+        for b in [seal, play] {
             NSLayoutConstraint.activate([
                 b.centerYAnchor.constraint(equalTo: centerYAnchor),
                 b.widthAnchor.constraint(equalToConstant: 40),
@@ -352,7 +350,6 @@ final class MiniPlayer: UIView {
         center.addObserver(self, selector: #selector(changed), name: .noriJam, object: nil)
         center.addObserver(self, selector: #selector(paintSeal), name: .noriFavorites, object: nil)
         center.addObserver(self, selector: #selector(changed), name: UIApplication.didBecomeActiveNotification, object: nil)
-        center.addObserver(self, selector: #selector(paintOutput), name: AVAudioSession.routeChangeNotification, object: nil)
         changed()
     }
 
@@ -373,31 +370,22 @@ final class MiniPlayer: UIView {
         // A jam guest plays as its role lets it (the core's jam controls); its skip is a swipe.
         let jam = now.jam ? Core.shared.jam : nil
         play.isHidden = now.jam && (jam?.play ?? 0) == 0
-        paintOutput()
+        paintJam()
         paintSeal()
         let playing = jam?.playing ?? now.playing
         play.setImage(playing ? Glyph.pause : Glyph.play, for: .normal)
         play.accessibilityLabel = playing ? Say.pause : Say.play
     }
 
-    /// The output button: the glyph of what plays (another device's, lit), or the jam in its place.
-    @objc private func paintOutput() {
-        let now = Core.shared.now
-        if now.jam {
-            let listened = (Core.shared.jam?.listeners.count ?? 0) > 0
-            output.setImage(Glyph.jam, for: .normal)
-            output.tintColor = listened ? Theme.accent : Theme.secondary
-            output.accessibilityLabel = Core.shared.jam?.strip ?? Say.jamGuest
-        } else if let device = now.device {
-            output.setImage(Glyph.device(now.deviceKind, 22), for: .normal)
-            output.tintColor = Theme.label
-            output.accessibilityLabel = Say.playingOn(device)
-        } else {
-            let look = OutputLook.now()
-            output.setImage(Glyph.output(look.glyph, 22), for: .normal)
-            output.tintColor = Theme.secondary
-            output.accessibilityLabel = Say.outputDescription(port: look.port, name: look.name)
-        }
+    /// The jam's button, there while one is on.
+    private func paintJam() {
+        let on = Core.shared.now.jam
+        jamWidth.constant = on ? 40 : 0
+        jam.isHidden = !on
+        guard on else { return }
+        jam.setImage(Glyph.jam, for: .normal)
+        jam.tintColor = (Core.shared.jam?.listeners.count ?? 0) > 0 ? Theme.accent : Theme.secondary
+        jam.accessibilityLabel = Core.shared.jam?.strip ?? Say.jamGuest
     }
 
     @objc private func toggle() {
@@ -423,9 +411,7 @@ final class MiniPlayer: UIView {
         paintSeal()
     }
 
-    @objc private func outputTapped() {
-        if Core.shared.now.remote || Core.shared.now.jam { devicesOpened?() } else { outputs.show() }
-    }
+    @objc private func jamTapped() { jamOpened?() }
 
     @objc private func tapped() {
         opened?()
