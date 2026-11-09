@@ -1104,6 +1104,8 @@ impl Active {
 
 #[derive(Default)]
 struct Inner {
+    /// The app asked to look for the account's playing device ([`Remote::discover_active`]).
+    looks_for_active: bool,
     /// What plugins here can cast to.
     outputs: Vec<CastOutput>,
     serving: bool,
@@ -1601,7 +1603,7 @@ impl Remote {
 
     /// [`Self::pick`]; `cast`: to carry a cast through it.
     fn pick_for(self: Arc<Self>, device: Option<String>, cast: bool) {
-        self.clone().discover_active(false);
+        self.clone().set_discovering(false);
         let cancelled = self.inner.lock().active.cancel_taking();
         let (active, idle, plays, leads) = {
             let i = self.inner.lock();
@@ -1643,10 +1645,11 @@ impl Remote {
     pub fn played_read(self: Arc<Self>, read: impl FnOnce() -> Playing) {
         // The report belongs to call entry, before waiting for the session lock.
         let now = self.now();
-        let (publish, started, shown, cancelled, playing) = {
+        let (publish, started, shown, cancelled, playing, stopped) = {
             let mut i = self.inner.lock();
             let playing = read();
             let started = playing.playing && !i.playing.playing;
+            let stopped = !playing.playing && i.playing.playing;
             // A guest listening along paused or played here: its controls say so.
             let shown = i.guest.listen().is_some() && playing.playing != i.playing.playing;
             if started {
@@ -1660,10 +1663,12 @@ impl Remote {
             let cancelled = moved_here && i.active.cancel_taking();
             i.playing = playing;
             i.playing_at = Some(now);
-            (i.serving || i.hosted().is_some(), started && i.active.mirror().is_some(), shown, cancelled, playing.playing)
+            (i.serving || i.hosted().is_some(), started && i.active.mirror().is_some(), shown, cancelled, playing.playing, stopped)
         };
         if playing {
-            self.clone().discover_active(false);
+            self.clone().set_discovering(false);
+        } else if stopped {
+            self.discover_again();
         }
         if started {
             self.set_active(None, Becomes::Followed);
@@ -1808,31 +1813,11 @@ impl Remote {
         self.keep_polling();
     }
 
-    /// Looks for the account's playing device while this app is in front.
+    /// Looks for the account's playing device while this app is in front: from now, and again each time
+    /// this device's music stops or the device mirrored goes.
     pub fn discover_active(self: Arc<Self>, on: bool) {
-        let browse = {
-            let mut i = self.inner.lock();
-            let on = on && self.me.kind != DeviceKind::Guest && !i.stopped && i.sight == Sight::Screen && matches!(i.active, Active::Here { .. }) && !i.playing.playing && !i.jams();
-            if i.active.discovering() == on {
-                return;
-            }
-            let before = i.browsing();
-            i.active = Active::Here { discovering: on };
-            if on {
-                i.end_relay_poll();
-                self.cancel.notify();
-            }
-            let browse = i.browsing();
-            if !i.watching && !i.active.discovering() {
-                i.end_peer_polls();
-            }
-            (before != browse).then_some(browse)
-        };
-        if let (Some(d), Some(on)) = (&self.discovery, browse) {
-            d.browse(on);
-        }
-        self.follow_active();
-        self.keep_polling();
+        self.inner.lock().looks_for_active = on;
+        self.set_discovering(on);
     }
 
     /// What shows the mirrored device here; [`Sight::Screen`] until said otherwise.
@@ -1847,7 +1832,7 @@ impl Remote {
             (before != i.browsing()).then_some(i.browsing())
         };
         if sight != Sight::Screen {
-            self.clone().discover_active(false);
+            self.clone().set_discovering(false);
         }
         if let (Some(d), Some(on)) = (&self.discovery, browse) {
             d.browse(on);
@@ -2159,6 +2144,7 @@ impl Remote {
             if !i.serving { i.door = None; }
         }
         if room != "lan-jam" { self.out(Out::Get(self.relay_url("noriRemote.close", &[("room", room)]))); }
+        self.discover_again();
         self.keep_polling();
         self.shown.changed();
     }
@@ -3444,6 +3430,38 @@ impl Remote {
         self.shown.changed();
     }
 
+    /// Takes up the search the app asked for, if it did.
+    fn discover_again(self: &Arc<Self>) {
+        let on = self.inner.lock().looks_for_active;
+        self.clone().set_discovering(on);
+    }
+
+    fn set_discovering(self: Arc<Self>, on: bool) {
+        let browse = {
+            let mut i = self.inner.lock();
+            let on = on && self.me.kind != DeviceKind::Guest && !i.stopped && i.sight == Sight::Screen && matches!(i.active, Active::Here { .. }) && !i.playing.playing && !i.jams();
+            if i.active.discovering() == on {
+                return;
+            }
+            let before = i.browsing();
+            i.active = Active::Here { discovering: on };
+            if on {
+                i.end_relay_poll();
+                self.cancel.notify();
+            }
+            let browse = i.browsing();
+            if !i.watching && !i.active.discovering() {
+                i.end_peer_polls();
+            }
+            (before != browse).then_some(browse)
+        };
+        if let (Some(d), Some(on)) = (&self.discovery, browse) {
+            d.browse(on);
+        }
+        self.follow_active();
+        self.keep_polling();
+    }
+
     /// Makes `to` the active device (None: this one), and follows it while it is another.
     fn set_active(self: &Arc<Self>, to: Option<String>, how: Becomes) {
         let browse = {
@@ -3633,6 +3651,7 @@ impl Remote {
                 drop(i);
                 self.retime();
                 self.keep_polling();
+                self.discover_again();
                 return;
             }
             let heard = i.state_of(&id).map(|(s, at)| (s.clone(), at.unwrap_or_else(|| self.now())));

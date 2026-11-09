@@ -291,7 +291,10 @@ class Player {
     }
     // A browser may close a page out of sight without a word: the queue is kept as it goes.
     const hide = () => rpc.player && void ask("hidden").catch(() => {});
-    document.addEventListener("visibilitychange", () => document.hidden && hide());
+    document.addEventListener("visibilitychange", () => {
+      if (rpc.player) void ask("in_sight", !document.hidden).catch(() => {});
+      if (document.hidden) hide();
+    });
     addEventListener("pagehide", hide);
     addEventListener("pointerdown", () => this.unhold(), { capture: true });
     addEventListener("keydown", (e) => {

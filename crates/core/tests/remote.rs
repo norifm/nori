@@ -986,6 +986,34 @@ fn active_discovery_respects_local_controls_and_visibility() {
     }
 }
 
+/// The search for a playing device goes on once this device's own music stops, or the device it
+/// showed is gone, while the app stays on screen.
+#[test]
+fn active_discovery_resumes_while_the_app_stays_on_screen() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    phone.remote.clone().discover_active(true);
+    phone.playing(&["own"], 0);
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    desk.playing(&["s1"], 0);
+    desk.remote.clone().serve(true);
+    phone.remote.clone().watch(true);
+    phone.until("the desk heard", |r| r.devices().into_iter().find(|d| d.name == "Desk").and_then(|d| d.state));
+    assert!(phone.remote.active().is_none(), "music playing here keeps the player on this device");
+
+    phone.remote.clone().played(Playing { playing: false, position_ms: 6_000, ..Default::default() });
+    phone.until("the desk followed after the pause", |r| r.active().filter(|m| m.name == "Desk"));
+
+    phone.remote.clone().watch(false);
+    desk.remote.clone().stop();
+    phone.until("the desk gone", |r| r.active().is_none().then_some(()));
+    let term = Device::account(&relay, DeviceKind::Terminal, "Term");
+    term.playing(&["s2"], 0);
+    term.remote.clone().serve(true);
+    phone.until("the next device playing", |r| r.active().filter(|m| m.name == "Term"));
+    relay.close();
+}
+
 /// A guest leaving at once and again as its session closes says so once.
 #[test]
 fn leaving_a_jam_twice_tells_the_relay_once() {

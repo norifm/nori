@@ -67,6 +67,9 @@ What the session then does for the client:
   away from then leaves its jam and goes. A LAN jam's guest searches and
   streams through its host ([Providers](providers.md)): any native client joins any LAN jam, plugins
   or not.
+- Looks for the account's device playing while the client says it is in sight (`in_sight`, on every
+  change and for a session opened out of sight); the search takes up again by itself when this device's
+  music stops or the device shown goes.
 - Reports through `Said`: engine events, lyrics, search answers, notes for a status line (`Note`),
   reachability, remote and jam changes, another device's volume, an AutoEQ offer (`Curve`) and changed
   favorites. The client words each one.
