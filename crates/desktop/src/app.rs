@@ -6134,6 +6134,35 @@ mod tests {
         }
     }
 
+    /// A profile picked in the top bar's profiles menu is the one switched to.
+    #[test]
+    fn the_profiles_menu_switches_to_the_profile_picked() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        let chrome = ui.global::<crate::Chrome>();
+        chrome.set_top_x(0.0);
+        chrome.set_top_w(1280.0);
+        ui.set_account("Me".into());
+        ui.set_other_profiles(ModelRc::new(VecModel::from(vec![crate::ProfileItem { name: "7".into(), title: "Other".into(), detail: "elsewhere".into(), ..Default::default() }])));
+        let did = Rc::new(RefCell::new(Vec::new()));
+        let seen = did.clone();
+        ui.on_setting_action(move |name| seen.borrow_mut().push(name.to_string()));
+        ui.show().unwrap();
+        // Down the menu's column, opened again before each click: the profile in use, then the other.
+        for y in (60..200).step_by(4) {
+            ui.invoke_show_profiles();
+            let position = slint::LogicalPosition::new(1100.0, y as f32);
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position, button: slint::platform::PointerEventButton::Left });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position, button: slint::platform::PointerEventButton::Left });
+        }
+        let switched: Vec<String> = did.borrow().iter().filter(|n| n.starts_with("server:")).cloned().collect();
+        assert!(!switched.is_empty() && switched.iter().all(|n| n == "server:7"), "{switched:?}");
+    }
+
     /// The first screen sends what its rows and plus do, a quiet row too; the form goes back from there.
     #[test]
     fn the_first_screen_sends_what_is_chosen() {

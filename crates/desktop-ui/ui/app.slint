@@ -622,8 +622,8 @@ component ArtistLine inherits HorizontalLayout {
                         }
                         ca := TouchArea {
                             clicked => {
-                                list.close();
                                 Go.artist(c.id);
+                                list.close();
                             }
                         }
                     }
@@ -4860,8 +4860,8 @@ component PluginHead inherits VerticalLayout {
                             }
                             ma := TouchArea {
                                 clicked => {
-                                    more.close();
                                     root.action(root.top.menu-names[i]);
+                                    more.close();
                                 }
                             }
                         }
@@ -8339,8 +8339,8 @@ export component AppWindow inherits Window {
                         detail: p.detail;
                         mark: p.mark;
                         clicked => {
-                            profiles-pop.close();
                             root.setting-action("server:" + p.name);
+                            profiles-pop.close();
                         }
                     }
                     Rectangle {
