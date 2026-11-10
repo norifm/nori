@@ -867,9 +867,10 @@ pub fn start(ui: &AppWindow, root: Arc<Root>, compositor: Compositor) -> Rc<RefC
 }
 
 /// Where Now Playing's synced lyrics are sharp: the band of the line they are scrolled to, the next one before the
-/// first is sung and the last once all are. None while they are not shown or scrolled by hand.
+/// first is sung and the last once all are. None while they are not shown, scrolled by hand or under a dialog (the
+/// blur is drawn over all the page holds).
 fn lyrics_focus(ui: &AppWindow) -> Option<Focus> {
-    if !ui.get_full_player() || ui.get_full_panel() != Panel::Lyrics || ui.get_lyrics_lines().row_count() == 0 || !ui.get_lyrics_synced() || ui.get_full_lyrics_browsed() {
+    if !ui.get_full_player() || ui.get_full_panel() != Panel::Lyrics || ui.get_lyrics_lines().row_count() == 0 || !ui.get_lyrics_synced() || ui.get_full_lyrics_browsed() || ui.get_dialog_open() {
         return None;
     }
     let size = ui.window().size().to_logical(ui.window().scale_factor());
@@ -5233,6 +5234,8 @@ mod tests {
         assert_eq!(intro, first, "through the intro the first line, where it will be sung, is the sharp one");
         assert_eq!(sung(2), first, "each line sung is scrolled to the same place");
         assert_eq!(band(6), Some(first), "once all are over, the last line is aimed at and the rest stay blurred");
+        ui.set_details_open(true);
+        assert_eq!(band(2), None, "a dialog over the lyrics is not blurred with them");
     }
 
     #[test]
