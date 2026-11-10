@@ -6,6 +6,15 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-10
+
+### Fixed
+
+- A jam's guest profile goes when another profile opens
+- Every client shows the device playing once its own music stops
+- A jam guest left saved goes when the app next opens
+- A plugin that can't start says why, not an empty form (fixes #143)
+
 ## [0.8.0] - 2026-11-09
 
 ### Added
