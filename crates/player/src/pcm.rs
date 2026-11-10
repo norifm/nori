@@ -127,6 +127,26 @@ impl ByteStretcher {
         self.s.configure(ratio, hold_frames, ramp_frames);
     }
 
+    /// From the plain signal, 1 for `hold_frames`, then glided to `to` over `ramp_frames`, never handed over
+    /// ([`Stretcher::glide`]). `lead_in` is the input just before, warming it.
+    pub fn glide(&mut self, to: f64, hold_frames: u64, ramp_frames: u64, lead_in: &[u8], enc: Encoding) {
+        self.s.glide(to, hold_frames, ramp_frames);
+        let w = enc.width();
+        for src in lead_in[..lead_in.len() / w / self.ch * self.ch * w].chunks(self.fin.len() * w) {
+            let n = src.len() / w;
+            match enc {
+                Encoding::Pcm16 => self.fin[..n].iter_mut().zip(i16s(src)).for_each(|(d, v)| *d = v),
+                Encoding::Float => self.fin[..n].iter_mut().zip(f32s(src)).for_each(|(d, v)| *d = v),
+            }
+            self.s.warm(&self.fin[..n]);
+        }
+    }
+
+    /// [`Stretcher::entry_frames`].
+    pub fn entry_frames(&self) -> usize {
+        self.s.entry_frames()
+    }
+
     pub fn bypassed(&self) -> bool {
         self.s.bypassed()
     }

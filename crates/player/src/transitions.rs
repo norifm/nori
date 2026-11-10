@@ -2,7 +2,7 @@
 //! planner's answer (`automix::plan`) into the engine's [`Plan`].
 
 use crate::engine::Plan;
-use crate::types::{AutoMixSettings, TransitionKind, TransitionPlan};
+use crate::types::{AutoMixSettings, MixStyle, TransitionKind, TransitionPlan};
 
 /// A song in the planner's window.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -37,6 +37,7 @@ pub struct TransitionPrefs {
     pub keep_albums: bool,
     /// ReplayGain is on, so AutoMix does not match loudness.
     pub replay_gain: bool,
+    pub style: MixStyle,
 }
 
 /// `b` plays right after `a` on their album however they were queued: same album, not shuffled, and not
@@ -126,6 +127,7 @@ pub fn pick(prefs: &TransitionPrefs, transitions_off: bool, window: &[WindowSong
         match_loudness: m && !prefs.replay_gain,
         out_tag_bpm: o.tag_bpm,
         in_tag_bpm: n.tag_bpm,
+        style: prefs.style,
     };
     Ok(Pick { out, next, settings })
 }
@@ -164,6 +166,7 @@ mod tests {
             keep_pitch: true,
             keep_albums: true,
             replay_gain: false,
+            style: MixStyle::Smooth,
         }
     }
 

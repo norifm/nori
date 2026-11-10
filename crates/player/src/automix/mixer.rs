@@ -604,6 +604,8 @@ mod tests {
             echo: None,
             out_loop_ms: None,
             vocal_duck: None,
+            in_loop: None,
+            bend: None,
             reason: String::new(),
         }
     }

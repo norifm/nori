@@ -712,6 +712,7 @@ pub fn prefs_off() -> TransitionPrefs {
         keep_pitch: true,
         keep_albums: true,
         replay_gain: false,
+        style: crate::types::MixStyle::Smooth,
     }
 }
 

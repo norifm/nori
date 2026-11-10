@@ -3,7 +3,7 @@
 use nori_player::automix::ANALYSIS_VERSION;
 use nori_player::sim::{prefs_off, Player};
 use nori_player::transitions::TransitionPrefs;
-use nori_player::types::TrackAnalysis;
+use nori_player::types::{MixStyle, TrackAnalysis};
 
 use crate::common::*;
 
@@ -94,7 +94,7 @@ fn automix_prefs() -> TransitionPrefs {
 fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
     let (a, b) = (measured("a", 120.0, lufs_a), measured("b", 123.0, lufs_b));
     let same_tempo = measured("b", 120.0, lufs_b);
-    // Far-apart keys: the pair echoes out instead of blending.
+    // Far-apart keys: the DJ style echoes the pair out instead of blending.
     let keyed = |t: &TrackAnalysis, key: i32| TrackAnalysis { key, key_confidence: 0.9, ..t.clone() };
     // Five bars of music at the end of the outgoing song after a long quiet stretch, and the incoming
     // song's intro twelve bars long: the run-up reads the outgoing song's last four bars round.
@@ -133,7 +133,7 @@ fn kinds(lufs_a: f32, lufs_b: f32) -> Vec<Kind> {
         },
         Kind {
             name: "echo-out",
-            prefs: TransitionPrefs { echo_out: true, ..automix_prefs() },
+            prefs: TransitionPrefs { echo_out: true, style: MixStyle::Dj, ..automix_prefs() },
             a: keyed(&a, 1),
             b: keyed(&same_tempo, 7),
             logged: &["EchoOut"],

@@ -39,8 +39,8 @@ use crate::types::TrackAnalysis;
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 13: vocal curve read from the strongest harmonic series.
-pub const ANALYSIS_VERSION: i32 = 13;
+/// Bump when stored rows should be measured again. 14: the last drop.
+pub const ANALYSIS_VERSION: i32 = 14;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;
@@ -149,6 +149,10 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         )
     });
 
+    // The last drop, after the first one, and the vocal share of the 8 bars after it.
+    let last_drop = if silent || !grid_ok { None } else { structure::last_drop(&t, &db, f, music, drop) };
+    let last_drop_vocal = last_drop.map_or(0.0, |d| window_mean(&f.vocal, f.fps, f.t0, d, (d + 8.0 * bar_s).min(music.1)));
+
     // Where to leave: a closing breakdown, or the gap before a hidden track.
     let exit = if silent { None } else { structure::breakdown(&t, &db, f, music, song.1, grid_ok) }.or(leave.map(|(g0, _)| g0 as f64 / 1000.0));
     let last = exit.unwrap_or(music.1);
@@ -210,6 +214,8 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         outro_beats_per_bar: 0,
         intro_grid_source: beats::GRID_CLASSICAL,
         outro_grid_source: beats::GRID_CLASSICAL,
+        last_drop_ms: last_drop.map_or(0, |d| (d * 1000.0).round() as i64),
+        last_drop_vocal,
     };
     Analysis { track, tempo: t }
 }

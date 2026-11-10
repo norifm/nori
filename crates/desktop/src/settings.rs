@@ -325,6 +325,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
     let (title, detail) = match name {
         "crossfadeSec" => ("Crossfade", ""),
         "autoMix" => ("AutoMix", ""),
+        "autoMixStyle" => ("Style", ""),
         "autoMixBetterBeats" => {
             let mb = s.beat_model_mb;
             let detail = match &s.beat_model {
@@ -382,6 +383,8 @@ fn option_words(name: &str, v: &str) -> String {
         ("autoFill", "OFF") => "Stop".into(),
         ("autoFill", "SONGS") => "Add songs".into(),
         ("autoFill", "ALBUMS") => "Add albums".into(),
+        ("autoMixStyle", "SMOOTH") => "Smooth".into(),
+        ("autoMixStyle", "DJ") => "DJ".into(),
         ("autoFillBasis", "SIMILAR") => "Similar music".into(),
         ("autoFillBasis", "ARTIST") => "The same artist".into(),
         ("autoFillBasis", "GENRE") => "The same genre".into(),

@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoFillKind, CompressorPreset, ControlsSide, DimIdle, DimLevel, EqMode, GainMode, HeadphoneSound, Level, Motion, HideBarWhen, HomeRow, AwakeWhen, MaxRate, PrefValue, SavedQuality, SavedServer, ServerKind, StoredPrefs, SwipeAction, TapAction, ThemeMode, ThemeSeason};
+use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoMixStyle, AutoFillKind, CompressorPreset, ControlsSide, DimIdle, DimLevel, EqMode, GainMode, HeadphoneSound, Level, Motion, HideBarWhen, HomeRow, AwakeWhen, MaxRate, PrefValue, SavedQuality, SavedServer, ServerKind, StoredPrefs, SwipeAction, TapAction, ThemeMode, ThemeSeason};
 use nori_settings::settings_model::{specs, value_of};
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/stored_format.txt");
@@ -70,6 +70,7 @@ fn sample() -> StoredPrefs {
         limiter_threshold_db: -2.0,
         crossfade_sec: 6,
         auto_mix: true,
+        auto_mix_style: AutoMixStyle::Dj,
         auto_mix_better_beats: true,
         crossfade_keep_albums: false,
         taste_model: false,

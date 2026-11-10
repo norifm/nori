@@ -14,7 +14,7 @@ pub struct Listen {
 }
 
 // Player types, redeclared below for uniffi.
-pub use nori_player::types::{AutoMixSettings, EqBand, EqKind, FadeCurve, NamedPreset, PresetKind, TrackAnalysis};
+pub use nori_player::types::{AutoMixSettings, EqBand, EqKind, FadeCurve, MixStyle, NamedPreset, PresetKind, TrackAnalysis};
 
 /// `starred` is a timestamp on the wire and a bool once stored.
 fn flag<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
@@ -802,6 +802,8 @@ pub struct TrackAnalysis {
     pub outro_beats_per_bar: i32,
     pub intro_grid_source: i32,
     pub outro_grid_source: i32,
+    pub last_drop_ms: i64,
+    pub last_drop_vocal: f32,
     pub analysed_ms: i64,
 }
 
@@ -819,6 +821,14 @@ pub struct AutoMixSettings {
     pub match_loudness: bool,
     pub out_tag_bpm: f32,
     pub in_tag_bpm: f32,
+    pub style: MixStyle,
+}
+
+#[cfg(feature = "ffi")]
+#[uniffi::remote(Enum)]
+pub enum MixStyle {
+    Smooth,
+    Dj,
 }
 
 #[cfg(feature = "ffi")]
@@ -908,6 +918,7 @@ pub struct TransitionPrefs {
     pub keep_pitch: bool,
     pub keep_albums: bool,
     pub replay_gain: bool,
+    pub style: MixStyle,
 }
 
 pub use nori_player::transport::{Dip, Switch};

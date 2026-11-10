@@ -51,6 +51,9 @@
     <string name="settings_held_by_dac">Off in bit-perfect mode.</string>
     <string name="settings_crossfade">Crossfade</string>
     <string name="settings_automix">AutoMix</string>
+    <string name="settings_automix_style">Style</string>
+    <string name="settings_automix_style_smooth">Smooth</string>
+    <string name="settings_automix_style_dj">DJ</string>
     <string name="settings_better_beats">Better beat detection</string>
     <string name="settings_better_beats_cost">Uses more battery while songs are measured</string>
     <string name="settings_better_beats_downloading">Downloading (about %1$d MB)…</string>
@@ -379,6 +382,7 @@
     <string name="settings_hint_crossfade">One song fades into the next</string>
     <string name="settings_hint_keep_albums">No mixing between songs of the same album</string>
     <string name="settings_hint_automix">Blends songs like a DJ, matching the beat</string>
+    <string name="settings_hint_automix_style">Smooth or DJ, short blends or long mixes with loops, tempo bends and double drops</string>
     <string name="settings_hint_better_beats">A neural beat tracker for AutoMix, downloaded once (Beat This!)</string>
     <string name="settings_hint_measured">Tempo and beats, measured on this device</string>
     <string name="settings_hint_skip_explicit">Songs your server marks explicit</string>

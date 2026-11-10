@@ -317,6 +317,23 @@ pub enum SwipeAction {
     Download,
 }
 
+/// How AutoMix mixes: short blends, or phrase-long DJ mixes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum AutoMixStyle {
+    Smooth,
+    Dj,
+}
+
+impl AutoMixStyle {
+    pub fn style(self) -> nori_player::types::MixStyle {
+        match self {
+            AutoMixStyle::Smooth => nori_player::types::MixStyle::Smooth,
+            AutoMixStyle::Dj => nori_player::types::MixStyle::Dj,
+        }
+    }
+}
+
 /// What autofill adds when the last song starts: songs, or one whole album.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -558,6 +575,9 @@ pub struct StoredPrefs {
     /// Beat-matched transitions with every part of them on ([`StoredPrefs::transition_prefs`]).
     #[setting("autoMix", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO | REPLAN)]
     pub auto_mix: bool,
+    /// How AutoMix mixes ([`nori_player::types::MixStyle`]).
+    #[setting("autoMixStyle", PICK, default = AutoMixStyle::Smooth, show = K::Choice(AutoMixStyle::NAMES), effect = REPLAN)]
+    pub auto_mix_style: AutoMixStyle,
     /// "Better beat detection": the Beat This! model on each upcoming song's ends, for AutoMix's beat
     /// grids. Needs the `neural-beats` feature and a one-time model download; downloaded
     /// songs are analyzed with it as they arrive.
@@ -886,9 +906,9 @@ impl StoredPrefs {
         TransitionPrefs {
             auto_mix: self.auto_mix,
             crossfade_s: self.crossfade_sec,
-            auto_mix_max_s: AUTO_MIX_MAX_S,
+            auto_mix_max_s: self.auto_mix_style.style().longest_s(),
             beat_match: true,
-            max_tempo_change_pct: AUTO_MIX_MAX_TEMPO_PCT,
+            max_tempo_change_pct: self.auto_mix_style.style().tempo_pct(),
             bass_swap: true,
             filter_effects: true,
             echo_out: true,
@@ -896,6 +916,7 @@ impl StoredPrefs {
             keep_albums: self.crossfade_keep_albums,
             // AutoMix skips its loudness matching under volume leveling.
             replay_gain: self.replay_gain != GainMode::Off,
+            style: self.auto_mix_style.style(),
         }
     }
 
@@ -904,11 +925,6 @@ impl StoredPrefs {
         self.servers.iter().find(|s| s.id == self.active_server_id)
     }
 }
-
-/// The longest AutoMix transition, seconds.
-const AUTO_MIX_MAX_S: i32 = 12;
-/// The most AutoMix changes a song's tempo to match the beat, percent.
-const AUTO_MIX_MAX_TEMPO_PCT: f32 = 6.0;
 
 /// A failed sound edit. Messages are for the log.
 #[derive(Debug, thiserror::Error)]

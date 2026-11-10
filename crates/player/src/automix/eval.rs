@@ -1100,6 +1100,8 @@ pub fn mix_songs() -> Vec<Song> {
         // Silence the file carries at the ends: 24 s after the music, 8 s before the next.
         Song { tail_silence: 24.0, sections: vec![(8, FULL), (32, FULL), (8, DRUMS)], ..s("tail-silence-128", Style::House, 128.0, 0, false) },
         Song { lead_silence: 8.0, sections: vec![(4, DRUMS), (32, FULL), (8, FULL)], ..s("lead-silence-128", Style::House, 128.0, 7, false) },
+        // A breakdown on pads and the last drop after it, 16 bars before the end: where a double drop lands.
+        Song { sections: vec![(8, DRUMS), (32, FULL), (8, PADS), (8, FULL), (8, DRUMS)], ..s("breakdown-124", Style::House, 124.0, 4, true) },
     ]
 }
 
@@ -1121,6 +1123,7 @@ pub fn mix_pairs() -> Vec<(&'static str, &'static str)> {
         ("techno-detuned-130", "dnb-174"),
         ("pop-swing-96", "shuffle-84"),
         ("rock-detuned-140", "halftime-140"),
+        ("breakdown-124", "long-intro-124"),
     ]
 }
 
@@ -1156,24 +1159,29 @@ fn short_term(x: &[f32], rate: f64) -> Vec<f64> {
 fn loudness_bump(p: &crate::types::TransitionPlan, xa: &[f32], xb: &[f32], rate: f64) -> f64 {
     let at = |ms: i64| (ms.max(0) as f64 * rate / 1000.0) as usize;
     let (o0, i0, n) = (at(p.out_start_ms), at(p.in_start_ms), at(p.duration_ms));
-    let ratio = if p.tempo_ratio > 0.0 { p.tempo_ratio } else { 1.0 };
-    let loop_n = p.out_loop_ms.map_or(usize::MAX, |l| at(l).max(1));
-    let seg_a: Vec<f32> = (0..n).map(|k| xa.get(o0 + k % loop_n).copied().unwrap_or(0.0)).collect();
-    let b_at = |k: f64| {
-        let t = i0 as f64 + k;
+    let loop_n = p.out_loop_ms.map(|l| at(l).max(1));
+    let sample = |x: &[f32], t: f64| {
         let j = t.floor() as usize;
         let f = (t - j as f64) as f32;
-        let (u, v) = (xb.get(j).copied().unwrap_or(0.0), xb.get(j + 1).copied().unwrap_or(0.0));
+        let (u, v) = (x.get(j).copied().unwrap_or(0.0), x.get(j + 1).copied().unwrap_or(0.0));
         u + (v - u) * f
     };
-    let seg_b: Vec<f32> = (0..n).map(|k| b_at(k as f64 * ratio)).collect();
+    // Each deck at its own song time (a bend moves both, a loop holds the incoming one back).
+    let wall_ms = |k: usize| k as f64 * 1000.0 / rate;
+    let seg_a: Vec<f32> = (0..n)
+        .map(|k| match loop_n {
+            Some(l) => xa.get(o0 + k % l).copied().unwrap_or(0.0),
+            None => sample(xa, o0 as f64 + p.out_song_ms(wall_ms(k)) * rate / 1000.0),
+        })
+        .collect();
+    let seg_b: Vec<f32> = (0..n).map(|k| sample(xb, i0 as f64 + p.in_song_ms(wall_ms(k)) * rate / 1000.0)).collect();
     let mut m = mixer::Mixer::new(rate as u32, 1);
     m.configure(p);
     let mut mixed = seg_a;
     m.process(&mut mixed, &seg_b);
     let pre = at(8_000);
     let before: Vec<f32> = xa[o0.saturating_sub(pre).min(xa.len())..o0.min(xa.len())].to_vec();
-    let b_end = i0 + (n as f64 * ratio) as usize;
+    let b_end = i0 + (p.in_song_ms(p.duration_ms as f64) * rate / 1000.0) as usize;
     let after: Vec<f32> = xb[b_end.min(xb.len())..(b_end + pre).min(xb.len())].to_vec();
     let mut heard = before.clone();
     heard.extend(&mixed);
@@ -1196,6 +1204,10 @@ fn loudness_bump(p: &crate::types::TransitionPlan, xa: &[f32], xb: &[f32], rate:
 pub struct MixScore {
     pub kind: crate::types::TransitionKind,
     pub duration_s: f64,
+    /// The incoming drop on the outgoing song's last one; the incoming opening looped; the tempo bent in the mix.
+    pub double_drop: bool,
+    pub looped: bool,
+    pub bent: bool,
     /// The incoming song has a drop.
     pub has_drop: bool,
     /// The bass swap falls on the incoming song's drop, within a beat.
@@ -1230,13 +1242,18 @@ pub fn score_mix(p: &crate::types::TransitionPlan, a: &Truth, b: &Truth, audio: 
     let dur = ms(p.duration_ms);
     let ratio = if p.tempo_ratio > 0.0 { p.tempo_ratio } else { 1.0 };
     let (out_start, in_start) = (ms(p.out_start_ms), ms(p.in_start_ms));
-    let heard_end = out_start + p.out_loop_ms.map_or(dur, ms);
+    // The outgoing and incoming songs' own time `t` s into the mix (under a bend and a loop it is not the wall's).
+    let out_at = |t: f64| out_start + p.out_loop_ms.map_or_else(|| p.out_song_ms(t * 1000.0) / 1000.0, |l| t % ms(l));
+    let in_at = |t: f64| in_start + p.in_song_ms(t * 1000.0) / 1000.0;
+    let heard_end = out_start + p.out_loop_ms.map_or_else(|| p.out_song_ms(p.duration_ms as f64) / 1000.0, ms);
     let beat_a = 60.0 / a.bpm.max(1.0);
     // The bass swap, from where the incoming lows start to come in to where they are all in: a swap that starts on
     // a line and one that finishes on it are both on it.
     let swap = p.bass_swap.map(|s| (ms(s.at_ms), ms(s.at_ms + s.len_ms.max(0))));
     // Where the incoming drop lands in wall time from the start of the mix.
-    let lands = b.drop.map(|d| (d - in_start) / ratio);
+    // A drop within the tolerance before a loop's end is the one after it: the grid against the truth, not a hit
+    // inside the loop.
+    let lands = b.drop.map(|d| if d < in_start { (d - in_start) / ratio } else { p.wall_of_in_song((d - in_start + TOL) * 1000.0) / 1000.0 - TOL / ratio });
     let has_drop = lands.is_some();
     let drop_skipped = lands.is_some_and(|l| l < -0.5 * beat_a);
     let drop_hit = matches!((lands, swap), (Some(l), Some((s0, s1))) if l >= s0 - 0.5 * beat_a && l <= s1 + 0.5 * beat_a);
@@ -1245,7 +1262,7 @@ pub fn score_mix(p: &crate::types::TransitionPlan, a: &Truth, b: &Truth, audio: 
         _ => 0.0,
     };
     // The swap in the outgoing song's own time, against its bars and section lines.
-    let at: Vec<f64> = swap.map_or(Vec::new(), |(s0, s1)| vec![out_start + s0, out_start + s1]);
+    let at: Vec<f64> = swap.map_or(Vec::new(), |(s0, s1)| vec![out_at(s0), out_at(s1)]);
     // The bar line where the music ends counts: it is where the last bar's successor would start.
     let bar_lines: Vec<f64> = a.downbeats.iter().copied().chain([a.music.1]).collect();
     let swap_on_bar = at.iter().any(|t| bar_lines.iter().any(|d| (d - t).abs() <= TOL));
@@ -1291,7 +1308,7 @@ pub fn score_mix(p: &crate::types::TransitionPlan, a: &Truth, b: &Truth, audio: 
     let dead_runup_s = (0..(run_up / 0.05) as usize)
         .filter(|k| {
             let t = *k as f64 * 0.05 + 0.025;
-            dead_at(out_start + p.out_loop_ms.map_or(t, |l| t % ms(l)))
+            dead_at(out_at(t))
         })
         .count() as f64
         * 0.05;
@@ -1302,8 +1319,7 @@ pub fn score_mix(p: &crate::types::TransitionPlan, a: &Truth, b: &Truth, audio: 
         let (mut clash_s, mut both_sung_s) = (0.0, 0.0);
         for (k, (ga, gb)) in la.iter().zip(&lb).enumerate() {
             let t = k as f64 * 0.05 + 0.025;
-            let ta = out_start + p.out_loop_ms.map_or(t, |l| t % ms(l));
-            if a.sung_at(ta) && b.sung_at(in_start + t * ratio) {
+            if a.sung_at(out_at(t)) && b.sung_at(in_at(t)) {
                 both_sung_s += 0.05;
                 let (da, db) = (20.0 * ga.max(1e-9).log10(), 20.0 * gb.max(1e-9).log10());
                 if da.min(db) > -20.0 && (da - db).abs() < 10.0 {
@@ -1323,6 +1339,9 @@ pub fn score_mix(p: &crate::types::TransitionPlan, a: &Truth, b: &Truth, audio: 
     MixScore {
         kind: p.kind,
         duration_s: dur,
+        double_drop: p.reason.contains("double drop"),
+        looped: p.in_loop.is_some(),
+        bent: p.bend.is_some(),
         has_drop,
         drop_hit,
         drop_skipped,
@@ -1345,6 +1364,10 @@ pub fn score_mix(p: &crate::types::TransitionPlan, a: &Truth, b: &Truth, audio: 
 #[derive(Debug, Default)]
 pub struct MixTotals {
     pub pairs: usize,
+    pub duration_s: f64,
+    pub double_drops: usize,
+    pub loops: usize,
+    pub bends: usize,
     pub beat_matched: usize,
     pub echo: usize,
     pub drops: usize,
@@ -1373,6 +1396,10 @@ pub fn mix_totals(scores: &[MixScore]) -> MixTotals {
     let mut t = MixTotals::default();
     for s in scores {
         t.pairs += 1;
+        t.duration_s += s.duration_s;
+        t.double_drops += s.double_drop as usize;
+        t.loops += s.looped as usize;
+        t.bends += s.bent as usize;
         t.beat_matched += (s.kind == K::BeatMatched) as usize;
         t.echo += (s.kind == K::EchoOut) as usize;
         if s.has_drop {
@@ -1389,7 +1416,8 @@ pub fn mix_totals(scores: &[MixScore]) -> MixTotals {
         }
         t.skip_out_s += s.skip_out_s;
         t.skip_in_s += s.skip_in_s;
-        t.cap_broken += (s.skip_out_s > 15.05 || s.skip_in_s > 15.05) as usize;
+        let out_cap = if s.double_drop { plan::DOUBLE_DROP_MAX_SKIP_MS } else { plan::MAX_SKIP_MS } as f64 / 1000.0;
+        t.cap_broken += (s.skip_out_s > out_cap + 0.05 || s.skip_in_s > 15.05) as usize;
         t.dead_air_s += s.dead_air_s;
         t.coda_s += s.coda_s;
         t.dead_runup_s += s.dead_runup_s;
@@ -1402,11 +1430,11 @@ pub fn mix_totals(scores: &[MixScore]) -> MixTotals {
     t
 }
 
-/// Plans every pair with the default settings and scores the plans.
-pub fn run_mixes() -> Vec<MixScore> {
+/// Plans every pair in `style`, at its length and tempo limits, and scores the plans.
+pub fn run_mixes(style: crate::types::MixStyle) -> Vec<MixScore> {
     let songs: Vec<Song> = mix_songs().into_iter().chain(corpus_all()).collect();
     let audio = |name: &str| songs.iter().find(|s| s.name == name).expect("a harness song").render().0;
-    let settings = crate::types::AutoMixSettings::default();
+    let settings = crate::types::AutoMixSettings { max_transition_s: style.longest_s() as f32, max_tempo_change_pct: style.tempo_pct(), style, ..Default::default() };
     par_map(&mix_pairs(), |(a, b)| {
         let ((ta, wa), (tb, wb)) = (analysed(a), analysed(b));
         let p = plan::plan(Some(&ta.track), Some(&tb.track), ta.track.duration_ms, tb.track.duration_ms, &settings);
@@ -1427,11 +1455,18 @@ fn analysis_holds_its_scores() {
 
 #[test]
 fn transitions_hold_their_scores() {
-    let t = mix_totals(&run_mixes());
-    assert!(t.drop_hit >= 8 && t.drop_skipped == 0, "{t:?}");
+    let t = mix_totals(&run_mixes(crate::types::MixStyle::Smooth));
+    assert!(t.drop_hit >= 7 && t.drop_skipped == 0, "{t:?}");
     assert!(t.swap_on_bar == t.swaps && t.swap_on_phrase == t.swaps && t.start_on_phrase >= 10, "swaps and starts on the bar and phrase: {t:?}");
     assert!(t.cap_broken == 0 && t.coda_s == 0.0 && t.dead_runup_s == 0.0, "{t:?}");
     assert!(t.dead_air_s <= 38.0 && t.clash_s <= 12.5 && t.bump_max_lu <= 1.0, "{t:?}");
+    // DJ: longer mixes that land more drops and skip less of the incoming intro, without more harm.
+    let dj = mix_totals(&run_mixes(crate::types::MixStyle::Dj));
+    assert!(dj.duration_s >= 1.7 * t.duration_s && dj.drop_hit >= 10 && dj.drop_skipped == 0 && dj.double_drops >= 1, "{dj:?}");
+    assert!(dj.skip_in_s <= 5.0 && dj.dip_s <= 0.6 * t.dip_s && dj.loops >= 4 && dj.bends >= 6, "{dj:?}");
+    assert!(dj.swap_on_bar == dj.swaps && dj.swap_on_phrase == dj.swaps, "{dj:?}");
+    assert!(dj.cap_broken == 0 && dj.coda_s == 0.0 && dj.dead_runup_s == 0.0, "{dj:?}");
+    assert!(dj.dead_air_s <= 38.0 && dj.clash_s <= 14.0 && dj.bump_max_lu <= 1.0, "{dj:?}");
 }
 
 /// Drops and exits within a beat are found; one where the song has none is a false alarm.
@@ -1452,4 +1487,12 @@ fn landmarks_are_found() {
     }
     let [(drops, _, drop_fa), (exits, exit_truths, exit_fa)] = tally;
     assert!(drops >= 16 && drop_fa <= 1 && exits == exit_truths && exit_fa == 0, "{tally:?}");
+    // The last drop: after the breakdown, within a beat; none where a hidden track follows a silence, or the song
+    // never comes back.
+    let (a, truth) = analysed("breakdown-124");
+    let want = truth.downbeats[48];
+    assert!((a.track.last_drop_ms as f64 / 1000.0 - want).abs() <= 60.0 / truth.bpm, "the last drop at {} ms, not {want} s", a.track.last_drop_ms);
+    for name in ["hidden-long-128", "house-outro-124", "long-intro-124"] {
+        assert_eq!(analysed(name).0.track.last_drop_ms, 0, "{name} has no last drop");
+    }
 }

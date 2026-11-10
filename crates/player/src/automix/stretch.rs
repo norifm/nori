@@ -1,5 +1,6 @@
-//! Tempo change of the incoming track during a beat-matched transition: hold `ratio`, ramp back to 1, then hand
-//! over to the plain signal. Signalsmith Stretch keeps pitch; varispeed (cubic Hermite) moves it and costs little.
+//! Tempo change during a beat-matched transition. The incoming track: hold `ratio`, ramp back to 1, then hand over
+//! to the plain signal. The outgoing one under a bend: from the plain signal, glide to a ratio and stay there.
+//! Signalsmith Stretch keeps pitch; varispeed (cubic Hermite) moves it and costs little.
 //!
 //! Output frame `j` carries the input at `∫ ratio` (start latency dropped), so a beat grid on the input holds on
 //! the output. Once `bypassed()`, call `drain` to collect what is inside, then pass the track through; the
@@ -24,6 +25,8 @@ pub(crate) const MAX_CHANNELS: usize = 8;
 enum State {
     /// Ratio 1 and no ramp: a plain copy.
     Direct,
+    /// Crossfading from the plain signal into the stretched one, frames done ([`Stretcher::glide`]).
+    Entering(usize),
     Active,
     Fading(usize),
     Bypass,
@@ -47,6 +50,8 @@ pub struct Stretcher {
     ch: usize,
     engine: Engine,
     ratio0: f64,
+    /// The ratio the schedule ends at; 1 hands over to the plain signal.
+    to: f64,
     hold: u64,
     ramp: u64,
     out_pos: u64,
@@ -154,6 +159,7 @@ impl Stretcher {
             ch,
             engine,
             ratio0: 1.0,
+            to: 1.0,
             hold: 0,
             ramp: 0,
             out_pos: 0,
@@ -180,8 +186,8 @@ impl Stretcher {
     /// Starts a schedule from the next frame: `ratio` (playback speed, >1 faster) for `hold` output frames, then a
     /// linear ramp to 1 over `ramp` output frames, then the hand-over. Resets the engine.
     pub fn configure(&mut self, ratio: f64, hold: u64, ramp: u64) {
-        let ratio = if ratio.is_finite() { ratio.clamp(MIN_RATIO, MAX_RATIO) } else { 1.0 };
-        (self.ratio0, self.hold, self.ramp, self.out_pos, self.frac) = (ratio, hold, ramp, 0, 0.0);
+        let ratio = bounded(ratio);
+        (self.ratio0, self.to, self.hold, self.ramp, self.out_pos, self.frac) = (ratio, 1.0, hold, ramp, 0, 0.0);
         (self.pend_read, self.pend_len, self.raw_pos) = (0, 0, 0);
         (self.given, self.content) = (0, 0.0);
         self.raw.fill(0.0);
@@ -206,8 +212,46 @@ impl Stretcher {
         (self.synth, self.drop_total) = (0, self.drop as u64);
     }
 
+    /// Starts a schedule from the next frame: 1 for `hold` output frames, then a linear glide to `to` over `ramp`,
+    /// `to` after, never handing over. The output crossfades into the stretched signal from the plain one, so
+    /// taking over from the input as it is makes no seam once [`Stretcher::warm`] has had the input before; the two
+    /// line up exactly when `hold` is at least [`Stretcher::entry_frames`].
+    pub fn glide(&mut self, to: f64, hold: u64, ramp: u64) {
+        self.configure(1.0, hold, ramp.max(1));
+        self.to = bounded(to);
+        if let Engine::Signalsmith(_) = self.engine {
+            self.state = State::Entering(0);
+        }
+    }
+
+    /// Feeds the input just before a [`Stretcher::glide`], oldest first, as its history; at least
+    /// [`Stretcher::latency_frames`] of it warm the engine fully.
+    pub fn warm(&mut self, input: &[f32]) {
+        let ch = self.ch;
+        match &mut self.engine {
+            Engine::Signalsmith(s) => {
+                for block in input.chunks(BLOCK * ch) {
+                    s.process(block, &mut self.pend[..block.len()]);
+                    self.raw_pos = delay(&mut self.raw, self.raw_pos, ch, block, &mut self.stage);
+                }
+            }
+            Engine::Vari(v) => {
+                if let Some(last) = input.len().checked_sub(ch).map(|i| &input[i..]) {
+                    v.buf[..ch].copy_from_slice(last);
+                    v.len = 1;
+                }
+            }
+        }
+    }
+
     pub fn latency_frames(&self) -> usize {
         self.latency
+    }
+
+    /// Frames a [`Stretcher::glide`] needs at ratio 1 to cross into the stretched signal: everything in flight
+    /// then was made at 1.
+    pub fn entry_frames(&self) -> usize {
+        self.latency + XFADE
     }
 
     pub fn bypassed(&self) -> bool {
@@ -237,9 +281,9 @@ impl Stretcher {
             self.ratio0
         } else if at < self.hold + self.ramp {
             let x = (at - self.hold) as f64 / self.ramp as f64;
-            self.ratio0 + (1.0 - self.ratio0) * x
+            self.ratio0 + (self.to - self.ratio0) * x
         } else {
-            1.0
+            self.to
         }
     }
 
@@ -267,7 +311,7 @@ impl Stretcher {
         let ch = self.ch;
         let n = input.len() / ch;
         let r = self.ratio_now();
-        if r == 1.0 && self.state == State::Active && self.out_pos >= self.hold + self.ramp + (self.latency + BLOCK) as u64 {
+        if r == 1.0 && self.to == 1.0 && self.state == State::Active && self.out_pos >= self.hold + self.ramp + (self.latency + BLOCK) as u64 {
             self.state = State::Fading(0);
             if let Engine::Vari(v) = &mut self.engine {
                 v.phase = v.pos - v.pos.round();
@@ -285,7 +329,7 @@ impl Stretcher {
                 }
                 Engine::Vari(v) => v.run(ch, input, 1.0, &mut self.pend, None),
             },
-            State::Active | State::Fading(_) => {
+            State::Entering(_) | State::Active | State::Fading(_) => {
                 let fade = if let State::Fading(done) = self.state { Some((done, XFADE)) } else { None };
                 let made = match &mut self.engine {
                     Engine::Signalsmith(s) => {
@@ -295,14 +339,28 @@ impl Stretcher {
                         s.process(input, &mut self.pend[..m * ch]);
                         // The plain signal, delayed to line up with the stretcher at ratio 1.
                         self.raw_pos = delay(&mut self.raw, self.raw_pos, ch, input, &mut self.stage);
-                        if let Some((done, total)) = fade {
-                            for f in 0..m.min(n) {
-                                let w = ((done + f) as f32 / total as f32).min(1.0);
+                        // Weight of the plain signal at frame `f`: falling as it enters, rising as it hands over.
+                        let plain = match self.state {
+                            State::Entering(done) => {
+                                // Only frames kept after the pre-roll count towards the crossfade.
+                                let kept = self.drop.min(m);
+                                Some((done, kept, true))
+                            }
+                            _ => fade.map(|(done, _)| (done, 0, false)),
+                        };
+                        if let Some((done, from, entering)) = plain {
+                            for f in from..m.min(n) {
+                                let x = ((done + f - from) as f32 / XFADE as f32).min(1.0);
+                                let w = if entering { 1.0 - x } else { x };
                                 for c in 0..ch {
                                     let i = f * ch + c;
                                     self.pend[i] = self.pend[i] * (1.0 - w) + self.stage[i] * w;
                                 }
                             }
+                        }
+                        if let State::Entering(done) = self.state {
+                            let done = done + m.saturating_sub(self.drop.min(m));
+                            self.state = if done >= XFADE { State::Active } else { State::Entering(done) };
                         }
                         m
                     }
@@ -408,6 +466,11 @@ impl Stretcher {
         (self.pend_read, self.pend_len) = (0, 0);
         made
     }
+}
+
+/// A ratio within the bounds; 1 for nonsense.
+fn bounded(ratio: f64) -> f64 {
+    if ratio.is_finite() { ratio.clamp(MIN_RATIO, MAX_RATIO) } else { 1.0 }
 }
 
 /// Pushes `input` through the delay line `raw` (read position `pos`), writing what comes out to `out`; returns the
@@ -698,6 +761,40 @@ mod tests {
                 let expect_len = x.len() as f64 / ratio;
                 assert!((y.len() as f64 - expect_len).abs() < 0.01 * expect_len, "{} vs {expect_len}", y.len());
             }
+        }
+    }
+
+    /// A glide starts as the plain input, without a seam after its lead-in, and ends playing at its ratio.
+    #[test]
+    fn glide_enters_seamlessly_and_holds_its_ratio() {
+        for keep in [true, false] {
+            let (rate, to) = (44_100usize, 1.05);
+            let x: Vec<f32> = (0..rate * 7).flat_map(|i| {
+                let v = (0.3 * (2.0 * std::f64::consts::PI * 220.0 * i as f64 / rate as f64).sin()) as f32;
+                [v, v]
+            }).collect();
+            let (lead, rest) = x.split_at(rate * 2);
+            let mut s = Stretcher::new(rate as u32, 2, keep);
+            let hold = s.entry_frames();
+            s.glide(to, hold as u64, 2 * rate as u64);
+            s.warm(lead);
+            let mut buf = vec![0f32; 2048 * 2];
+            let (mut out, mut pos, mut content) = (Vec::new(), 0, 0.0);
+            while pos < rest.len() {
+                let (u, m) = s.process(&rest[pos..(pos + 1024).min(rest.len())], &mut buf);
+                out.extend_from_slice(&buf[..m * 2]);
+                content += s.take_content();
+                pos += u * 2;
+            }
+            assert!(!s.bypassed(), "keep_pitch {keep}: a glide never hands over");
+            let entry = out[..hold * 2].iter().zip(rest).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max);
+            assert!(entry < 1e-3, "keep_pitch {keep}: {entry} off the plain input while entering");
+            let join = (out[0] - lead[lead.len() - 2]).abs();
+            assert!(join < 0.02, "keep_pitch {keep}: a step of {join} into the glide");
+            // After the hold, a 2 s ramp from 1 to 1.05 plays 2.05 s of the song, then 1.05 s each second.
+            let (made, ramp) = ((out.len() / 2 - hold) as f64, 2.0 * rate as f64);
+            let want = hold as f64 + ramp * (1.0 + to) / 2.0 + (made - ramp) * to;
+            assert!((content - want).abs() < 0.002 * want, "keep_pitch {keep}: {content:.0} frames of the song, {want:.0} expected");
         }
     }
 

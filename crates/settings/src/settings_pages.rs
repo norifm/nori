@@ -329,7 +329,11 @@ impl Page<'_> {
     fn playing(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
         let (p, s) = (self.p, self.s);
         let live = !s.untouched;
-        let mut between = vec![row(RowItem::Note { note: SettingsNote::HeldByDac }).shown(s.untouched), self.setting("autoMix").enabled(live)];
+        let mut between = vec![
+            row(RowItem::Note { note: SettingsNote::HeldByDac }).shown(s.untouched),
+            self.setting("autoMix").enabled(live),
+            self.chips("autoMixStyle").under().enabled(live && p.auto_mix),
+        ];
         if s.beat_model != BeatModel::Unavailable {
             between.push(self.setting("autoMixBetterBeats").under().enabled(live && p.auto_mix));
         }

@@ -134,8 +134,44 @@ pub struct TrackAnalysis {
     /// model was unsure) or `GRID_NEURAL`.
     pub intro_grid_source: i32,
     pub outro_grid_source: i32,
+    /// The last drop: the last four-bar line in the closing minute where the song comes back to its body
+    /// from bars that lacked it (a last chorus after a breakdown), with the voice-band share of the eight
+    /// bars after it. 0 when there is none, or the song has no grid.
+    pub last_drop_ms: i64,
+    pub last_drop_vocal: f32,
     /// Analysis time, ms since the epoch.
     pub analysed_ms: i64,
+}
+
+/// How AutoMix mixes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum MixStyle {
+    /// Short blends on the beat that keep each song nearly whole.
+    #[default]
+    Smooth,
+    /// Phrase-long mixes: longer run-ups, looped intros and outros, the tempo gliding between the songs,
+    /// and drops landing together.
+    Dj,
+}
+
+impl MixStyle {
+    /// The longest transition, seconds.
+    pub fn longest_s(self) -> i32 {
+        match self {
+            MixStyle::Smooth => 12,
+            // Sixteen bars at 96 BPM, the length the end grids are measured over.
+            MixStyle::Dj => 40,
+        }
+    }
+
+    /// The most a song's tempo is changed to match the other's, percent.
+    pub fn tempo_pct(self) -> f32 {
+        match self {
+            MixStyle::Smooth => 6.0,
+            MixStyle::Dj => 10.0,
+        }
+    }
 }
 
 /// AutoMix settings as the planner sees them.
@@ -160,6 +196,7 @@ pub struct AutoMixSettings {
     pub out_tag_bpm: f32,
     /// Server/tag BPM for the incoming track (0 unknown).
     pub in_tag_bpm: f32,
+    pub style: MixStyle,
 }
 
 impl Default for AutoMixSettings {
@@ -176,6 +213,7 @@ impl Default for AutoMixSettings {
             match_loudness: false,
             out_tag_bpm: 0.0,
             in_tag_bpm: 0.0,
+            style: MixStyle::Smooth,
         }
     }
 }
@@ -245,6 +283,25 @@ pub struct VocalDuck {
     pub hz: f32,
 }
 
+/// The incoming track's opening looped: its first `ms` (wall-clock, from `in_start_ms`) play `repeats` more times
+/// before it plays on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct InLoop {
+    pub ms: i64,
+    pub repeats: i32,
+}
+
+/// Relative. The tempo both decks play at glides from the outgoing song's to the incoming one's between
+/// `start_ms` and `end_ms`, linearly in time: the incoming track's speed from `tempo_ratio` to 1, the
+/// outgoing one's from 1 to `1 / tempo_ratio`, so their beats stay together.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Bend {
+    pub start_ms: i64,
+    pub end_ms: i64,
+}
+
 /// A transition between two tracks. "Relative" fields count from the transition's start.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -286,12 +343,18 @@ pub struct TransitionPlan {
     pub out_loop_ms: Option<i64>,
     /// Relative.
     pub vocal_duck: Option<VocalDuck>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub in_loop: Option<InLoop>,
+    /// With a bend there is no ramp after the overlap (`tempo_ramp_ms` is 0).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub bend: Option<Bend>,
     /// Why this plan, for logs.
     pub reason: String,
 }
 
 impl TransitionPlan {
-    /// The same transition over `duration_ms`: every relative time scaled to it.
+    /// The same transition over `duration_ms`: every relative time scaled to it. An incoming loop is
+    /// whole bars, so it is not kept, and a bend becomes a ramp after it.
     pub fn squeeze(&mut self, duration_ms: i64) {
         let k = duration_ms as f64 / self.duration_ms.max(1) as f64;
         let at = |ms: &mut i64| *ms = (*ms as f64 * k).round() as i64;
@@ -311,15 +374,109 @@ impl TransitionPlan {
             at(&mut d.until_ms);
             at(&mut d.release_ms);
         }
+        self.unbend();
+        self.in_loop = None;
     }
 
     /// Whether both plans mix the same audio: equal but for `kind`, `reason` and `tempo_ramp_beats`
     /// (`tempo_ramp_ms` is what runs).
     pub fn sounds_same(&self, o: &TransitionPlan) -> bool {
-        let TransitionPlan { kind: _, reason: _, tempo_ramp_beats: _, out_start_ms, in_start_ms, duration_ms, tempo_ratio, tempo_ramp_ms, keep_pitch, fade_curve, out_fade_start_ms, out_fade_end_ms, in_fade_start_ms, in_fade_end_ms, out_gain_db, in_gain_db, bass_swap, low_pass, high_pass, echo, out_loop_ms, vocal_duck } = self;
+        let TransitionPlan { kind: _, reason: _, tempo_ramp_beats: _, out_start_ms, in_start_ms, duration_ms, tempo_ratio, tempo_ramp_ms, keep_pitch, fade_curve, out_fade_start_ms, out_fade_end_ms, in_fade_start_ms, in_fade_end_ms, out_gain_db, in_gain_db, bass_swap, low_pass, high_pass, echo, out_loop_ms, vocal_duck, in_loop, bend } = self;
         (*out_start_ms, *in_start_ms, *duration_ms, *tempo_ramp_ms, *out_fade_start_ms, *out_fade_end_ms, *in_fade_start_ms, *in_fade_end_ms, *out_loop_ms)
             == (o.out_start_ms, o.in_start_ms, o.duration_ms, o.tempo_ramp_ms, o.out_fade_start_ms, o.out_fade_end_ms, o.in_fade_start_ms, o.in_fade_end_ms, o.out_loop_ms)
             && (*tempo_ratio, *keep_pitch, *fade_curve, *out_gain_db, *in_gain_db) == (o.tempo_ratio, o.keep_pitch, o.fade_curve, o.out_gain_db, o.in_gain_db)
             && (*bass_swap, *low_pass, *high_pass, *echo, *vocal_duck) == (o.bass_swap, o.low_pass, o.high_pass, o.echo, o.vocal_duck)
+            && (*in_loop, *bend) == (o.in_loop, o.bend)
+    }
+
+    /// Where the tempo changes: from `tempo_ratio` to 1 over (start, length) ms of the transition, the bend or
+    /// the ramp after the overlap.
+    fn glide(&self) -> (f64, f64) {
+        match self.bend {
+            Some(b) => (b.start_ms as f64, (b.end_ms - b.start_ms).max(0) as f64),
+            None => (self.duration_ms as f64, self.tempo_ramp_ms.max(0) as f64),
+        }
+    }
+
+    /// The incoming track's speed `t_ms` into the transition (past its end too: the bend, or the ramp after
+    /// the overlap).
+    pub fn in_ratio_at(&self, t_ms: f64) -> f64 {
+        let (r, (from, len)) = (self.tempo_ratio, self.glide());
+        if t_ms <= from {
+            r
+        } else if len <= 0.0 || t_ms >= from + len {
+            1.0
+        } else {
+            r + (1.0 - r) * (t_ms - from) / len
+        }
+    }
+
+    /// Incoming song time the deck plays in the first `t_ms` of the transition, the loop's repeats counted
+    /// as played.
+    pub fn in_played_ms(&self, t_ms: f64) -> f64 {
+        let (r, (from, len)) = (self.tempo_ratio, self.glide());
+        let t = t_ms.max(0.0);
+        if t <= from {
+            return t * r;
+        }
+        let ramp = (t - from).min(len);
+        from * r + ramp * (r + self.in_ratio_at(from + ramp)) / 2.0 + (t - from - ramp)
+    }
+
+    /// The loop's repeats, wall-clock ms.
+    pub fn repeats_ms(&self) -> i64 {
+        self.in_loop.map_or(0, |l| l.ms.max(0) * l.repeats.max(0) as i64)
+    }
+
+    /// Where the incoming song is `t_ms` into the transition, ms past `in_start_ms`: what it played, less the
+    /// loop's repeats (it stands at the loop's end while they play).
+    pub fn in_song_ms(&self, t_ms: f64) -> f64 {
+        let looped = match self.in_loop {
+            Some(l) => (t_ms - l.ms as f64).clamp(0.0, self.repeats_ms() as f64),
+            None => 0.0,
+        };
+        self.in_played_ms(t_ms) - looped * self.tempo_ratio
+    }
+
+    /// The transition time at which the incoming song's `song_ms` past `in_start_ms` is heard; a moment of the
+    /// loop, the first time ([`TransitionPlan::in_song_ms`] inverted).
+    pub fn wall_of_in_song(&self, song_ms: f64) -> f64 {
+        let looped = self.in_loop.filter(|l| song_ms >= l.ms as f64 * self.tempo_ratio).map_or(0.0, |_| self.repeats_ms() as f64 * self.tempo_ratio);
+        let played = song_ms + looped;
+        let (mut lo, mut hi) = (0.0, played.max(0.0) / self.tempo_ratio.clamp(0.01, 1.0) + 1.0);
+        for _ in 0..48 {
+            let mid = (lo + hi) / 2.0;
+            if self.in_played_ms(mid) < played {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        (lo + hi) / 2.0
+    }
+
+    /// Outgoing song time played in the first `t_ms` of the transition: under a bend its speed is the
+    /// incoming one over `tempo_ratio`.
+    pub fn out_song_ms(&self, t_ms: f64) -> f64 {
+        match self.bend {
+            Some(_) if self.tempo_ratio > 0.0 => self.in_played_ms(t_ms) / self.tempo_ratio,
+            _ => t_ms.max(0.0),
+        }
+    }
+
+    /// The outgoing speed `t_ms` into the transition.
+    pub fn out_ratio_at(&self, t_ms: f64) -> f64 {
+        match self.bend {
+            Some(_) if self.tempo_ratio > 0.0 => self.in_ratio_at(t_ms) / self.tempo_ratio,
+            _ => 1.0,
+        }
+    }
+
+    /// The bend becomes a tempo ramp after the overlap, as long, both decks at their own speed until then: for a
+    /// transition played other than whole from its start.
+    pub fn unbend(&mut self) {
+        if let Some(b) = self.bend.take() {
+            self.tempo_ramp_ms = (b.end_ms - b.start_ms).max(0);
+        }
     }
 }
