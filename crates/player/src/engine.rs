@@ -208,9 +208,21 @@ enum MixOut {
     Once { read: usize },
     /// An outro loop: at output frame `frame` of `frames`, the last `loop_frames` of the hold repeating.
     Looped { frame: usize, frames: usize, loop_frames: usize },
-    /// Under a bend: `read` bytes in, at output frame `frame` of `frames`, through the outgoing stretcher from
-    /// [`OutGlide::from`].
-    Bent { read: usize, frame: usize, frames: usize },
+    /// Under a bend: `read` bytes of the ending in (its last `loop_bytes` repeating, 0 for no loop), at output frame
+    /// `frame` of `frames`, through the outgoing stretcher from [`OutGlide::from`].
+    Bent { read: usize, frame: usize, frames: usize, loop_bytes: usize },
+}
+
+/// Where byte `v` of an ending read through is in the hold (the first `len` bytes, its last `lp` repeating; 0
+/// for no loop), and where that run of it ends.
+fn ending_run(v: usize, len: usize, lp: usize) -> (usize, usize) {
+    let prefix = len - lp.min(len);
+    if lp == 0 || v < prefix {
+        (v.min(len), if lp == 0 { len } else { prefix })
+    } else {
+        let lp = lp.min(len);
+        (prefix + (v - prefix) % lp, prefix + lp)
+    }
 }
 
 /// Fed to the outgoing stretcher past the end of what was held.
@@ -1079,19 +1091,21 @@ impl TransitionEngine {
                 // The hold goes out as the mix now; the position already reported stands.
                 let frames_of = |ms: i64| (ms.max(0) * out.rate as i64 / 1000) as usize;
                 self.flight.out_glide = None;
-                let mix_out = if p.out_loop_us() > 0 {
-                    MixOut::Looped {
-                        frame: ((late * out.rate as i64 + 500_000) / 1_000_000) as usize,
-                        frames: (p.duration_us() * out.rate as i64 / 1_000_000).max(0) as usize,
-                        loop_frames: ((p.out_loop_us() * out.rate as i64 / 1_000_000) as usize).max(1),
-                    }
-                } else if let (Some(b), Some((st, ..))) = (p.mixer.bend, self.out_stretch.as_ref()) {
+                let loop_frames = ((p.out_loop_us() * out.rate as i64 / 1_000_000) as usize).max(1);
+                let mix_out = if let (Some(b), Some((st, ..))) = (p.mixer.bend, self.out_stretch.as_ref()) {
                     // The stretcher takes over early enough to cross in at ratio 1, warmed on the bars before.
                     let start = frames_of(b.start_ms);
                     let from = start.saturating_sub(st.entry_frames()).max(st.latency_frames().min(start));
                     let ramp = frames_of(b.end_ms - b.start_ms) as u64;
                     self.flight.out_glide = Some(OutGlide { from, hold: (start - from) as u64, ramp, to: 1.0 / p.mixer.tempo_ratio, started: false });
-                    MixOut::Bent { read: 0, frame: 0, frames: frames_of(p.mixer.duration_ms) }
+                    let loop_bytes = if p.out_loop_us() > 0 { loop_frames * out.frame_bytes() } else { 0 };
+                    MixOut::Bent { read: 0, frame: 0, frames: frames_of(p.mixer.duration_ms), loop_bytes }
+                } else if p.out_loop_us() > 0 {
+                    MixOut::Looped {
+                        frame: ((late * out.rate as i64 + 500_000) / 1_000_000) as usize,
+                        frames: (p.duration_us() * out.rate as i64 / 1_000_000).max(0) as usize,
+                        loop_frames,
+                    }
                 } else {
                     MixOut::Once { read: 0 }
                 };
@@ -1286,10 +1300,10 @@ impl TransitionEngine {
                     self.flight.mixed_end_us = Some(at + span_us(frames, pace, out));
                     *frame += frames;
                 }
-                MixOut::Bent { read, frame, .. } => {
+                MixOut::Bent { read, frame, loop_bytes, .. } => {
                     let mut c = self.take_pooled(bytes);
                     c.resize(bytes, 0);
-                    self.bent_out(&mut c, read, frame, len, out);
+                    self.bent_out(&mut c, read, frame, len, *loop_bytes, out);
                     if let Some((m, ..)) = self.mixer.as_mut() {
                         m.process_bytes(&mut c, &src[..bytes], out.encoding);
                     }
@@ -1334,29 +1348,40 @@ impl TransitionEngine {
         }
     }
 
-    /// Fills `dst` with the held ending under a bend from byte `read` of the first `len`, at output frame `frame`:
-    /// as it was until the glide starts, then through the outgoing stretcher. Silence once it runs out.
-    fn bent_out(&mut self, dst: &mut [u8], read: &mut usize, frame: &mut usize, len: usize, out: Format) {
+    /// Fills `dst` with the held ending under a bend from byte `read` of it (the first `len` held, its last `lp`
+    /// repeating when looped), at output frame `frame`: as it was until the glide starts, then through the
+    /// outgoing stretcher. Silence once it runs out.
+    fn bent_out(&mut self, dst: &mut [u8], read: &mut usize, frame: &mut usize, len: usize, lp: usize, out: Format) {
         let (fb, enc) = (out.frame_bytes(), out.encoding);
         let (Some(g), Some((st, ..))) = (self.flight.out_glide, self.out_stretch.as_mut()) else { return };
         let n = dst.len() / fb;
         let (mut done, mut started) = (0, g.started);
         while done < n {
             if *frame == g.from && !started {
-                let lead = (st.latency_frames() * fb).min(*read);
-                st.glide(g.to, g.hold, g.ramp, &self.tail[*read - lead..*read], enc);
+                // The ending just before, in at most three runs (a loop's end and start).
+                let mut v = read.saturating_sub((st.latency_frames() * fb).min(*read));
+                let mut runs: [&[u8]; 3] = [&[]; 3];
+                for r in runs.iter_mut() {
+                    let (at, end) = ending_run(v, len, lp);
+                    let k = (end - at).min(*read - v);
+                    *r = &self.tail[at..at + k];
+                    v += k;
+                }
+                st.glide(g.to, g.hold, g.ramp, &runs, enc);
                 started = true;
             } else if *frame < g.from {
-                let k = (g.from - *frame).min(n - done).min((len - *read) / fb);
-                dst[done * fb..(done + k) * fb].copy_from_slice(&self.tail[*read..*read + k * fb]);
+                let (at, end) = ending_run(*read, len, lp);
+                let k = (g.from - *frame).min(n - done).min((end - at) / fb);
+                dst[done * fb..(done + k) * fb].copy_from_slice(&self.tail[at..at + k * fb]);
                 (*read, *frame, done) = (*read + k * fb, *frame + k, done + k);
                 if k == 0 {
                     break;
                 }
             } else {
                 // Past the held ending, silence pushes the stretcher's last frames out.
-                let held = *read < len;
-                let input = if held { &self.tail[*read..len] } else { &SILENCE[..] };
+                let (at, end) = ending_run(*read, len, lp);
+                let held = at < end;
+                let input = if held { &self.tail[at..end] } else { &SILENCE[..] };
                 let (used, made) = st.process(input, &mut dst[done * fb..], enc);
                 (*read, *frame, done) = (*read + if held { used } else { 0 }, *frame + made / fb, done + made / fb);
                 if made == 0 && used == 0 {
@@ -1521,9 +1546,9 @@ impl TransitionEngine {
         }
         let (from, end) = match self.flight.phase {
             Phase::Hold(h) => (0, h.len),
-            Phase::Mix { len, out: MixOut::Once { read } | MixOut::Bent { read, .. } } => (read.min(len), len),
+            Phase::Mix { len, out: MixOut::Once { read } | MixOut::Bent { read, loop_bytes: 0, .. } } => (read.min(len), len),
             // The hold is the loop, already heard: nothing of the song is left in it.
-            Phase::Mix { len, out: MixOut::Looped { .. } } => (len, len),
+            Phase::Mix { len, out: MixOut::Looped { .. } | MixOut::Bent { .. } } => (len, len),
             Phase::Pass => (0, 0),
         };
         if from < end {
@@ -2158,6 +2183,41 @@ mod tests {
                 assert!((crossings as i64 - 811).abs() <= 6, "the ending speeds up: {crossings} zero crossings");
             }
         }
+    }
+
+    /// A bent mix over a looped ending (varispeed): the half-second slice, 220 periods of 440 Hz, repeats with no
+    /// jump and speeds up over the bend; what follows it in the song (880 Hz) is never heard.
+    #[test]
+    fn a_bent_mix_over_a_looped_ending_speeds_the_loop_up() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        let mut p = fade("b", 1_000_000);
+        (p.mixer.out_loop_ms, p.mixer.tempo_ratio, p.mixer.keep_pitch) = (Some(500), 0.95, false);
+        p.mixer.bend = Some(crate::types::Bend { start_ms: 1000, end_ms: 2000 });
+        h.plans.insert("a".into(), p);
+        e.configure(&mut d, &mut h, stream("a", FMT));
+        let a: Vec<u8> = (0..3 * RATE as usize)
+            .flat_map(|i| {
+                let hz = if i < 3 * RATE as usize / 2 { 440.0 } else { 880.0 };
+                let v = ((i as f64 * hz * std::f64::consts::TAU / RATE as f64).sin() * 8000.0) as i16;
+                [v, v]
+            })
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        feed(&mut e, &mut d, &mut h, &a, 0);
+        let passed = d.samples().len() / 2;
+        e.configure(&mut d, &mut h, stream("b", FMT));
+        e.handle_discontinuity(&mut d, &mut h);
+        feed(&mut e, &mut d, &mut h, &tone(0, 3.0), 3_000_000);
+        let s: Vec<i16> = d.samples().iter().step_by(2).copied().collect();
+        let mix = &s[passed - 100..passed + 2 * RATE as usize];
+        let step = mix.windows(2).map(|w| (w[1] as i32 - w[0] as i32).abs()).max().unwrap_or(0);
+        assert!(step < 700, "no jump in the looped ending, at most {step}");
+        let crossings = |from: f64, to: f64| {
+            let w = &s[passed + (from * RATE as f64) as usize..passed + (to * RATE as f64) as usize];
+            w.windows(2).filter(|w| (w[0] < 0) != (w[1] < 0)).count() as i64
+        };
+        assert!((crossings(0.5, 1.0) - 440).abs() <= 3, "the slice again, not what follows it: {}", crossings(0.5, 1.0));
+        assert!((crossings(1.0, 1.9) - 811).abs() <= 6, "the loop speeds up: {} zero crossings", crossings(1.0, 1.9));
     }
 
     /// The next song is in a format the output cannot be converted to (six channels): the held ending

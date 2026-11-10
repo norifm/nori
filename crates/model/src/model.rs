@@ -804,6 +804,7 @@ pub struct TrackAnalysis {
     pub outro_grid_source: i32,
     pub last_drop_ms: i64,
     pub last_drop_vocal: f32,
+    pub vocal_end_ms: i64,
     pub analysed_ms: i64,
 }
 

@@ -161,12 +161,12 @@ if want automix; then section "AutoMix measures the songs coming up on the devic
   # what is measured and planned from it is tested in crates/engine/tests/core.rs and the automix tests.
   "$app" play "album:$(mix_album)" >/dev/null; sounds 20
   watch_from_now
-  "$app" set autoMix true >/dev/null
+  "$app" set autoMix smooth >/dev/null
   check "measuring starts when AutoMix is switched on" waitfor_log "measuring ahead:" 20
   # A song is measured as it is fetched ahead, or from bytes already on the device; the log says when
   # neither has happened yet.
   check "the songs coming up are measured" waitfor_log "analysed [^ ]+ (ahead|as it came): [0-9]|not on the device yet" 120
-  "$app" set autoMix false >/dev/null
+  "$app" set autoMix off >/dev/null
 fi
 
 if want restart; then section "seek after a restart"

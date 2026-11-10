@@ -128,11 +128,11 @@ impl ByteStretcher {
     }
 
     /// From the plain signal, 1 for `hold_frames`, then glided to `to` over `ramp_frames`, never handed over
-    /// ([`Stretcher::glide`]). `lead_in` is the input just before, warming it.
-    pub fn glide(&mut self, to: f64, hold_frames: u64, ramp_frames: u64, lead_in: &[u8], enc: Encoding) {
+    /// ([`Stretcher::glide`]). `lead_in` is the input just before, in order, warming it.
+    pub fn glide(&mut self, to: f64, hold_frames: u64, ramp_frames: u64, lead_in: &[&[u8]], enc: Encoding) {
         self.s.glide(to, hold_frames, ramp_frames);
-        let w = enc.width();
-        for src in lead_in[..lead_in.len() / w / self.ch * self.ch * w].chunks(self.fin.len() * w) {
+        let (w, ch, chunk) = (enc.width(), self.ch, self.fin.len() * enc.width());
+        for src in lead_in.iter().flat_map(|l| l[..l.len() / w / ch * ch * w].chunks(chunk)) {
             let n = src.len() / w;
             match enc {
                 Encoding::Pcm16 => self.fin[..n].iter_mut().zip(i16s(src)).for_each(|(d, v)| *d = v),

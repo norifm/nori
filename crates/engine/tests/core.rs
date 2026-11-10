@@ -78,7 +78,7 @@ fn beat_wav() -> Vec<u8> {
 #[test]
 fn webm_arrivals_keep_analysis_and_voice() {
     let dir = nori_testdir::TempDir::new("webm-analysis");
-    let (core, client) = common::own_core(&dir, |p| p.auto_mix = true);
+    let (core, client) = common::own_core(&dir, |p| p.auto_mix = nori_core::settings::AutoMixMode::Smooth);
     let songs: Vec<Song> = ["yt-a", "yt-b"].map(|id| Song { id: id.into(), duration: 40, ..Default::default() }).into();
     core.session.register(songs.clone());
     core.session.set(songs.iter().map(|s| s.id.clone()).collect(), Some(0), false, None);
@@ -111,7 +111,7 @@ fn webm_arrivals_keep_analysis_and_voice() {
 fn a_song_measured_as_it_arrives_is_not_measured_again_as_it_plays() {
     use nori_player::engine::Host;
     let dir = nori_testdir::TempDir::new("arrives-once");
-    let (core, client) = common::own_core(&dir, |p| p.auto_mix = true);
+    let (core, client) = common::own_core(&dir, |p| p.auto_mix = nori_core::settings::AutoMixMode::Smooth);
     let song = Song { id: "a".into(), duration: 5, ..Default::default() };
     core.session.register(vec![song.clone()]);
     core.session.set(vec![song.id.clone()], Some(0), false, None);
@@ -174,7 +174,7 @@ fn downloads_and_measuring_over_core() {
 
     // AutoMix on: upcoming songs on disk are measured.
     let mut prefs = settings.current().unwrap();
-    prefs.auto_mix = true;
+    prefs.auto_mix = nori_core::settings::AutoMixMode::Smooth;
     settings.put(prefs);
     let on_disk = Song { id: "m-1".into(), title: "Beat".into(), duration: 40, suffix: "wav".into(), ..Default::default() };
     let elsewhere = Song { id: "m-2".into(), title: "Not here".into(), duration: 40, suffix: "wav".into(), ..Default::default() };
@@ -400,7 +400,7 @@ fn downloads_take_up_rightly(core: &Arc<Core>, client: &Arc<Client>, store: &Arc
 fn downloads_read_back(core: &Arc<Core>, net: &NoApi, store: &Arc<Store>, analyses: &Arc<Analyses>) {
     use nori_core::transfers::COMPLETED;
     let download_phase = |id: String| core.transfers().with(|t| t.phase(&id));
-    assert!(!core.session.settings.prefs(|p| p.auto_mix), "AutoMix is off");
+    assert!(!core.session.settings.prefs(|p| p.auto_mix.on()), "AutoMix is off");
     let ids = ["rb-1", "ext-rb-2"];
     let songs: Vec<Song> = ids.iter().map(|id| Song { id: id.to_string(), title: id.to_string(), duration: 40, suffix: "wav".into(), ..Default::default() }).collect();
     core.download_queue(songs).unwrap();

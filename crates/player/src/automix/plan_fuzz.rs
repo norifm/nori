@@ -82,6 +82,7 @@ fn row(r: &mut Rng, dur: i64, how: Rows) -> TrackAnalysis {
         outro_grid_source: i(r),
         last_drop_ms: ms(r),
         last_drop_vocal: c(r),
+        vocal_end_ms: ms(r),
         analysed_ms: 0,
     }
 }

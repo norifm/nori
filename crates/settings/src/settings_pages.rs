@@ -331,18 +331,17 @@ impl Page<'_> {
         let live = !s.untouched;
         let mut between = vec![
             row(RowItem::Note { note: SettingsNote::HeldByDac }).shown(s.untouched),
-            self.setting("autoMix").enabled(live),
-            self.chips("autoMixStyle").under().enabled(live && p.auto_mix),
+            self.chips("autoMix").enabled(live),
         ];
         if s.beat_model != BeatModel::Unavailable {
-            between.push(self.setting("autoMixBetterBeats").under().enabled(live && p.auto_mix));
+            between.push(self.setting("autoMixBetterBeats").under().enabled(live && p.auto_mix.on()));
         }
         if !self.web() {
-            between.push(row(RowItem::Action { action: SettingsAction::MeasureAgain }).under().enabled(p.auto_mix && self.f.analysed > 0));
+            between.push(row(RowItem::Action { action: SettingsAction::MeasureAgain }).under().enabled(p.auto_mix.on() && self.f.analysed > 0));
         }
         // AutoMix plans its own transitions, so the plain crossfade gives way to it.
-        between.push(self.setting("crossfadeSec").enabled(live && !p.auto_mix));
-        between.push(self.setting("crossfadeKeepAlbums").enabled(live && (p.auto_mix || p.crossfade_sec > 0)));
+        between.push(self.setting("crossfadeSec").enabled(live && !p.auto_mix.on()));
+        between.push(self.setting("crossfadeKeepAlbums").enabled(live && (p.auto_mix.on() || p.crossfade_sec > 0)));
         let mut queue = vec![
             self.setting("skipExplicit"),
             self.chips("autoFill"),
@@ -613,8 +612,8 @@ mod tests {
     fn rows_follow_the_settings() {
         let live = |p: &StoredPrefs, name: &str| live(SettingsClient::Phone, p, name);
         let d = StoredPrefs::default();
-        assert!(live(&d, "crossfadeSec") && !live(&StoredPrefs { auto_mix: true, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
-        let mixing = [StoredPrefs { auto_mix: true, ..d.clone() }, StoredPrefs { crossfade_sec: 4, ..d.clone() }];
+        assert!(live(&d, "crossfadeSec") && !live(&StoredPrefs { auto_mix: crate::settings::AutoMixMode::Smooth, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
+        let mixing = [StoredPrefs { auto_mix: crate::settings::AutoMixMode::Smooth, ..d.clone() }, StoredPrefs { crossfade_sec: 4, ..d.clone() }];
         assert!(!live(&d, "crossfadeKeepAlbums") && mixing.iter().all(|p| live(p, "crossfadeKeepAlbums")), "only while songs mix");
         assert!(!live(&StoredPrefs { auto_fill: None, ..d.clone() }, "autoFillBasis") && live(&d, "autoFillBasis"));
         assert!(live(&d, "loudnessLevel") && !live(&StoredPrefs { replay_gain: GainMode::Off, ..d.clone() }, "loudnessLevel"));
@@ -626,7 +625,7 @@ mod tests {
     fn a_switch_grays_the_rows_under_it_and_moves_none() {
         let d = StoredPrefs::default();
         let switched = [
-            StoredPrefs { auto_mix: true, compressor: Some(crate::settings::CompressorPreset::Car), auto_fill: None, burn_in_protection: true, replay_gain: GainMode::Off, theme: crate::settings::ThemeMode::Light, lyrics_online: false, ..d.clone() },
+            StoredPrefs { auto_mix: crate::settings::AutoMixMode::Smooth, compressor: Some(crate::settings::CompressorPreset::Car), auto_fill: None, burn_in_protection: true, replay_gain: GainMode::Off, theme: crate::settings::ThemeMode::Light, lyrics_online: false, ..d.clone() },
             d.clone(),
         ];
         for client in [SettingsClient::Phone, SettingsClient::Desktop, SettingsClient::Terminal, SettingsClient::Web] {
@@ -679,7 +678,7 @@ mod tests {
         }).collect();
         assert_eq!(links, [SettingsLink::Equalizer], "the equalizer is the web's one page within Settings");
         assert!(!rows.iter().any(|r| matches!(r.item, RowItem::Action { .. } | RowItem::LyricsSource { .. })), "nothing the web has no screen or work for");
-        assert!(!live(SettingsClient::Web, &StoredPrefs { auto_mix: true, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
+        assert!(!live(SettingsClient::Web, &StoredPrefs { auto_mix: crate::settings::AutoMixMode::Smooth, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
     }
 
     #[test]

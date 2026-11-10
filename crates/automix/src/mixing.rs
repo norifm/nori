@@ -65,6 +65,7 @@ pub fn proposed_kind(kind: TransitionKind) -> Proposed {
         TransitionKind::EqualPowerFade | TransitionKind::MixRampFade => Proposed::Crossfade,
         TransitionKind::BeatMatched => Proposed::BeatMatched,
         TransitionKind::EchoOut => Proposed::EchoOut,
+        TransitionKind::Cut => Proposed::Cut,
     }
 }
 
@@ -104,6 +105,7 @@ pub fn adopt(nori: &TransitionPlan, p: Proposal, out_ms: i64, in_ms: i64, max_te
     t.kind = match p.kind {
         Proposed::BeatMatched => TransitionKind::BeatMatched,
         Proposed::EchoOut => TransitionKind::EchoOut,
+        Proposed::Cut => TransitionKind::Cut,
         _ => TransitionKind::EqualPowerFade,
     };
     // nori's relative points, stretched to the plugin's length.

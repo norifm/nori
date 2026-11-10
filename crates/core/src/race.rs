@@ -863,7 +863,7 @@ pub(crate) mod tests {
         use std::task::{Context, Waker};
         let (c, fake) = setup();
         c.core.session.settings.open("").unwrap();
-        c.core.session.settings.put(StoredPrefs { auto_mix: false, ..StoredPrefs::default() });
+        c.core.session.settings.put(StoredPrefs { auto_mix: nori_settings::settings::AutoMixMode::Off, ..StoredPrefs::default() });
         let (a, _, answer, secs) = late_lyrics();
         let s = Song { id: "sync2".into(), title: "Offset".into(), duration: secs, ..song() };
         let other = Song { id: "other".into(), ..s.clone() };

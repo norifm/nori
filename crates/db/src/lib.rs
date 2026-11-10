@@ -54,7 +54,7 @@ CREATE INDEX IF NOT EXISTS server_plays_at ON server_plays(server, at_ms);
 CREATE TABLE IF NOT EXISTS mix_excluded(server TEXT NOT NULL, song_id TEXT NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS autofill_picks(server TEXT NOT NULL, kind INTEGER NOT NULL, id TEXT NOT NULL, picked_ms INTEGER NOT NULL, PRIMARY KEY(server, kind, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS smart_playlists(server TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, json TEXT NOT NULL, updated_ms INTEGER NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS track_analysis(server TEXT NOT NULL, song_id TEXT NOT NULL, analysis_version INTEGER NOT NULL, duration_ms INTEGER NOT NULL, bpm REAL NOT NULL, bpm_confidence REAL NOT NULL, beat_offset_ms REAL NOT NULL, stability REAL NOT NULL, downbeat_phase INTEGER NOT NULL, downbeat_confidence REAL NOT NULL, lufs REAL NOT NULL, key INTEGER NOT NULL, key_confidence REAL NOT NULL, silence_start_ms INTEGER NOT NULL, silence_end_ms INTEGER NOT NULL, mixramp_start_ms INTEGER NOT NULL, mixramp_end_ms INTEGER NOT NULL, intro_end_ms INTEGER NOT NULL, outro_start_ms INTEGER NOT NULL, outro_vocal REAL NOT NULL, intro_vocal REAL NOT NULL, outro_centroid REAL NOT NULL, intro_centroid REAL NOT NULL, outro_bpm REAL NOT NULL, outro_bpm_confidence REAL NOT NULL, outro_beat_offset_ms REAL NOT NULL, outro_stability REAL NOT NULL, outro_downbeat_phase INTEGER NOT NULL, intro_bpm REAL NOT NULL, intro_bpm_confidence REAL NOT NULL, intro_beat_offset_ms REAL NOT NULL, intro_stability REAL NOT NULL, intro_downbeat_phase INTEGER NOT NULL, beats_per_bar INTEGER NOT NULL DEFAULT 0, drop_ms INTEGER NOT NULL DEFAULT 0, drop_runup_vocal REAL NOT NULL DEFAULT 0, drop_vocal REAL NOT NULL DEFAULT 0, exit_ms INTEGER NOT NULL DEFAULT 0, gap_ms INTEGER NOT NULL DEFAULT 0, gap_end_ms INTEGER NOT NULL DEFAULT 0, exit_vocal REAL NOT NULL DEFAULT 0, drop_runup_tonal_db REAL NOT NULL DEFAULT 0, intro_beats_per_bar INTEGER NOT NULL DEFAULT 0, outro_beats_per_bar INTEGER NOT NULL DEFAULT 0, intro_grid_source INTEGER NOT NULL DEFAULT 0, outro_grid_source INTEGER NOT NULL DEFAULT 0, last_drop_ms INTEGER NOT NULL DEFAULT 0, last_drop_vocal REAL NOT NULL DEFAULT 0, analysed_ms INTEGER NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS track_analysis(server TEXT NOT NULL, song_id TEXT NOT NULL, analysis_version INTEGER NOT NULL, duration_ms INTEGER NOT NULL, bpm REAL NOT NULL, bpm_confidence REAL NOT NULL, beat_offset_ms REAL NOT NULL, stability REAL NOT NULL, downbeat_phase INTEGER NOT NULL, downbeat_confidence REAL NOT NULL, lufs REAL NOT NULL, key INTEGER NOT NULL, key_confidence REAL NOT NULL, silence_start_ms INTEGER NOT NULL, silence_end_ms INTEGER NOT NULL, mixramp_start_ms INTEGER NOT NULL, mixramp_end_ms INTEGER NOT NULL, intro_end_ms INTEGER NOT NULL, outro_start_ms INTEGER NOT NULL, outro_vocal REAL NOT NULL, intro_vocal REAL NOT NULL, outro_centroid REAL NOT NULL, intro_centroid REAL NOT NULL, outro_bpm REAL NOT NULL, outro_bpm_confidence REAL NOT NULL, outro_beat_offset_ms REAL NOT NULL, outro_stability REAL NOT NULL, outro_downbeat_phase INTEGER NOT NULL, intro_bpm REAL NOT NULL, intro_bpm_confidence REAL NOT NULL, intro_beat_offset_ms REAL NOT NULL, intro_stability REAL NOT NULL, intro_downbeat_phase INTEGER NOT NULL, beats_per_bar INTEGER NOT NULL DEFAULT 0, drop_ms INTEGER NOT NULL DEFAULT 0, drop_runup_vocal REAL NOT NULL DEFAULT 0, drop_vocal REAL NOT NULL DEFAULT 0, exit_ms INTEGER NOT NULL DEFAULT 0, gap_ms INTEGER NOT NULL DEFAULT 0, gap_end_ms INTEGER NOT NULL DEFAULT 0, exit_vocal REAL NOT NULL DEFAULT 0, drop_runup_tonal_db REAL NOT NULL DEFAULT 0, intro_beats_per_bar INTEGER NOT NULL DEFAULT 0, outro_beats_per_bar INTEGER NOT NULL DEFAULT 0, intro_grid_source INTEGER NOT NULL DEFAULT 0, outro_grid_source INTEGER NOT NULL DEFAULT 0, last_drop_ms INTEGER NOT NULL DEFAULT 0, last_drop_vocal REAL NOT NULL DEFAULT 0, vocal_end_ms INTEGER NOT NULL DEFAULT 0, analysed_ms INTEGER NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS vocal_curve(server TEXT NOT NULL, song_id TEXT NOT NULL, curve BLOB NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 ";
 
@@ -211,14 +211,14 @@ fn add_pending_tries(c: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Adds the last drop to a `track_analysis` table from before it, keeping its rows (they plan as before
-/// until the song is measured again).
+/// Adds the last drop and the end of the singing to a `track_analysis` table from before them, keeping its rows
+/// (they plan as before until the song is measured again).
 fn add_last_drop(c: &Connection) -> rusqlite::Result<()> {
     let have: Vec<String> = c.prepare("PRAGMA table_info(track_analysis)")?.query_map([], |r| r.get(1))?.collect::<rusqlite::Result<_>>()?;
-    if !have.iter().any(|h| h == "last_drop_ms") {
-        c.execute_batch(
-            "ALTER TABLE track_analysis ADD COLUMN last_drop_ms INTEGER NOT NULL DEFAULT 0; ALTER TABLE track_analysis ADD COLUMN last_drop_vocal REAL NOT NULL DEFAULT 0;",
-        )?;
+    for (col, kind) in [("last_drop_ms", "INTEGER"), ("last_drop_vocal", "REAL"), ("vocal_end_ms", "INTEGER")] {
+        if !have.iter().any(|h| h == col) {
+            c.execute_batch(&format!("ALTER TABLE track_analysis ADD COLUMN {col} {kind} NOT NULL DEFAULT 0;"))?;
+        }
     }
     Ok(())
 }
@@ -441,15 +441,15 @@ mod tests {
         let rows: i64 = c.query_row("SELECT count(*) FROM track_analysis", [], |r| r.get(0)).unwrap();
         assert_eq!(rows, 0);
 
-        // An analysis table from before the last drop keeps its rows.
+        // An analysis table from before the last drop and the end of the singing keeps its rows.
         let dir = nori_testdir::TempDir::new("db-last-drop");
         let path = dir.join("drop.db").to_string_lossy().into_owned();
         {
             let c = open(&path, "s").unwrap();
-            c.execute_batch("ALTER TABLE track_analysis DROP COLUMN last_drop_ms; ALTER TABLE track_analysis DROP COLUMN last_drop_vocal; INSERT INTO track_analysis(server, song_id, analysis_version, duration_ms, bpm, bpm_confidence, beat_offset_ms, stability, downbeat_phase, downbeat_confidence, lufs, key, key_confidence, silence_start_ms, silence_end_ms, mixramp_start_ms, mixramp_end_ms, intro_end_ms, outro_start_ms, outro_vocal, intro_vocal, outro_centroid, intro_centroid, outro_bpm, outro_bpm_confidence, outro_beat_offset_ms, outro_stability, outro_downbeat_phase, intro_bpm, intro_bpm_confidence, intro_beat_offset_ms, intro_stability, intro_downbeat_phase, analysed_ms) VALUES('s','a',13,1,120,1,0,1,0,1,-9,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);").unwrap();
+            c.execute_batch("ALTER TABLE track_analysis DROP COLUMN last_drop_ms; ALTER TABLE track_analysis DROP COLUMN last_drop_vocal; ALTER TABLE track_analysis DROP COLUMN vocal_end_ms; INSERT INTO track_analysis(server, song_id, analysis_version, duration_ms, bpm, bpm_confidence, beat_offset_ms, stability, downbeat_phase, downbeat_confidence, lufs, key, key_confidence, silence_start_ms, silence_end_ms, mixramp_start_ms, mixramp_end_ms, intro_end_ms, outro_start_ms, outro_vocal, intro_vocal, outro_centroid, intro_centroid, outro_bpm, outro_bpm_confidence, outro_beat_offset_ms, outro_stability, outro_downbeat_phase, intro_bpm, intro_bpm_confidence, intro_beat_offset_ms, intro_stability, intro_downbeat_phase, analysed_ms) VALUES('s','a',13,1,120,1,0,1,0,1,-9,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);").unwrap();
         }
         let c = open(&path, "s").unwrap();
-        let (rows, last): (i64, i64) = c.query_row("SELECT count(*), sum(last_drop_ms) FROM track_analysis", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        let (rows, last): (i64, i64) = c.query_row("SELECT count(*), sum(last_drop_ms) + sum(vocal_end_ms) FROM track_analysis", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!((rows, last), (1, 0));
 
         // Queued writes from before the replay bookkeeping count as queued now, untried.

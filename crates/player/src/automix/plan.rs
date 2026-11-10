@@ -437,8 +437,12 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
         } else if let Some(v) = verdict {
             // Far keys echo out of an instrumental ending: first in the DJ style, else when no mix fits.
             let echo = s.echo_out && v.cause == KEYS_FAR && a.outro_vocal.max(a.exit_vocal) < ECHO_SUNG;
-            let first = profile(s.style).echo_first;
-            if let Some(p) = echo.then(|| echo_out(a, b, room, s, v.cause)).flatten().filter(|_| first) {
+            let prof = profile(s.style);
+            if let Some(p) = echo.then(|| echo_out(a, b, room, s, v.cause)).flatten().filter(|_| prof.echo_first) {
+                return p;
+            }
+            // Keys far apart over a sung ending, in the DJ style: a cut rather than four bars of clash.
+            if let Some(p) = (prof.drop_cut && v.cause == KEYS_FAR).then(|| drop_cut(a, b, room, s, v.cause)).flatten() {
                 return p;
             }
             match beat_matched(a, b, room, s, short_cause) {
@@ -448,10 +452,16 @@ pub fn plan(out: Option<&TrackAnalysis>, inc: Option<&TrackAnalysis>, out_durati
             if let Some(p) = echo.then(|| echo_out(a, b, room, s, v.cause)).flatten() {
                 return p;
             }
+            if let Some(p) = prof.drop_cut.then(|| drop_cut(a, b, room, s, &why_not)).flatten() {
+                return p;
+            }
         } else {
             match beat_matched(a, b, room, s, "") {
                 Ok(p) => return p,
                 Err(e) => why_not = e,
+            }
+            if let Some(p) = profile(s.style).drop_cut.then(|| drop_cut(a, b, room, s, &why_not)).flatten() {
+                return p;
             }
         }
     }
@@ -518,6 +528,15 @@ struct Profile {
     double_drop: bool,
     /// Far keys over an instrumental ending echo out before a quick mix is tried.
     echo_first: bool,
+    /// The outgoing song thins out (a rising high-pass) over the bars before the incoming drop.
+    riser: bool,
+    /// A pair that cannot blend cuts on a downbeat into the incoming drop ([`drop_cut`]) before a plainer fade.
+    drop_cut: bool,
+    /// Per bar of looped outgoing slice heard again.
+    loop_cost: f64,
+    /// Per second of outgoing singing under the run-up: a mix waits for the voice to end, or loops the bars
+    /// after it.
+    sung_under_cost: f64,
 }
 
 const SMOOTH: Profile = Profile {
@@ -529,6 +548,10 @@ const SMOOTH: Profile = Profile {
     bend: false,
     double_drop: false,
     echo_first: false,
+    riser: false,
+    drop_cut: false,
+    loop_cost: 0.1,
+    sung_under_cost: 0.0,
 };
 
 const DJ: Profile = Profile {
@@ -540,6 +563,10 @@ const DJ: Profile = Profile {
     bend: true,
     double_drop: true,
     echo_first: true,
+    riser: true,
+    drop_cut: true,
+    loop_cost: 0.04,
+    sung_under_cost: 0.1,
 };
 
 fn profile(style: MixStyle) -> &'static Profile {
@@ -596,6 +623,8 @@ struct Window {
     runup_bars: i64,
     landing: Landing,
     on_phrase: bool,
+    /// The swap is on the bar where the outgoing singing ends.
+    after_line: bool,
     /// Length of the looped outgoing slice, ms; 0 for no loop.
     out_loop: f64,
     /// The incoming opening looped: bars, and the times it plays again.
@@ -620,10 +649,11 @@ const LENGTH_WORTH: f64 = 0.02;
 const PHRASE_WORTH: f64 = 0.5;
 /// Per second of sung run-up under a sung ending.
 const SUNG_RUNUP_COST: f64 = 0.1;
+/// Per second of outgoing singing faded under the incoming song after the swap.
+const SUNG_FADE_COST: f64 = 0.1;
 /// Skipping the incoming drop.
 const DROP_SKIP_COST: f64 = 2.0;
-/// Per bar of looped outgoing slice heard again, and of looped incoming opening.
-const LOOP_COST: f64 = 0.1;
+/// Per bar of looped incoming opening heard again (the outgoing slice's is the profile's).
 const IN_LOOP_COST: f64 = 0.05;
 /// Most bars of incoming opening played again.
 const MAX_IN_LOOPED_BARS: i64 = 8;
@@ -706,7 +736,10 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
     }
     landings.push((first, Landing::Start, b.intro_vocal, after));
     let sung_end = a.outro_vocal.max(a.exit_vocal) >= VOCAL_MIN;
-    let skip_cost_out = if sung_end { SKIP_SUNG_COST } else { SKIP_COST };
+    // Where the outgoing singing ends, when known; before it a skip costs the sung rate, after it the plain one.
+    let vocal_end = (a.vocal_end_ms > 0).then_some(a.vocal_end_ms as f64);
+    let skip_cost_out = if sung_end && vocal_end.is_none() { SKIP_SUNG_COST } else { SKIP_COST };
+    let unsung_from = |t: f64| vocal_end.map_or(!sung_end, |v| t >= v - 0.5 * beat);
     let skip_cost_in = if b.intro_vocal >= VOCAL_MIN { SKIP_SUNG_COST } else { SKIP_COST };
 
     let mut best: Option<Window> = None;
@@ -716,6 +749,7 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                 continue;
             }
             let on_phrase = a.outro_start_ms > 0 && at >= a.outro_start_ms as f64 - 0.5 * beat && on_line(at, a.outro_start_ms as f64);
+            let after_line = vocal_end.is_some_and(|v| (downbeat_at(v) - at).abs() <= 0.5 * beat);
             for &runup in prof.runups {
                 if landing == Landing::Start && runup > 0 {
                     continue;
@@ -741,87 +775,98 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
                 if skip_in > MAX_SKIP_MS as f64 {
                     continue;
                 }
-                // The outgoing song under the run-up: its own bars, or when too few and not sung, its last four
-                // or eight bars looped (a looped sung line sounds like a broken record).
-                let (start, out_loop) = if at - runup as f64 * bar >= a.silence_start_ms as f64 {
-                    (at - runup as f64 * bar, 0.0)
-                } else if back == 0 && !sung_end {
-                    match [8i64, 4].into_iter().find(|&lb| lb < runup && at - lb as f64 * bar >= a.silence_start_ms as f64) {
-                        Some(lb) => (at - lb as f64 * bar, lb as f64 * bar),
-                        None => continue,
-                    }
-                } else {
-                    continue;
-                };
+                // The outgoing song under the run-up: its own bars, or the four or eight before its end or exit
+                // looped when they are not sung (a looped sung line sounds like a broken record): when its own bars are too
+                // few, or would lay the run-up over its singing.
+                let plain = at - runup as f64 * bar;
+                let at_end = back == 0 || (exit < ending.music_end && (at - exit).abs() <= 0.5 * beat);
+                let fits = plain >= a.silence_start_ms as f64;
+                let looped = [8i64, 4]
+                    .into_iter()
+                    .map(|lb| at - lb as f64 * bar)
+                    .find(|&from| at_end && from > plain && from >= a.silence_start_ms as f64 && unsung_from(from))
+                    .map(|from| (from, at - from));
+                let over_singing = vocal_end.is_some_and(|v| plain < v) && prof.sung_under_cost > 0.0;
+                let outs = [fits.then_some((plain, 0.0)), looped.filter(|_| !fits || over_singing)];
+                for (start, out_loop) in outs.into_iter().flatten() {
                 // A run-up without chords cannot clash: the pair's length cap then applies only after the swap.
                 let neutral = landing == Landing::Drop && b.drop_runup_tonal_db <= -CHORDLESS_DB && runup_vocal < VOCAL_MIN;
-                for tail in [beat, bar, 2.0 * bar, 4.0 * bar] {
-                    let dur = runup as f64 * bar + tail;
-                    let bars = dur / bar;
-                    let capped = if neutral { tail / bar } else { bars };
-                    if bars < 2.0 - 1e-6 || capped > k.max_bars as f64 + 0.3 || bars > prof.most_bars[0] as f64 + 0.3 || dur > max_len as f64 {
-                        continue;
-                    }
-                    let heard_end = if out_loop > 0.0 { at } else { at + tail };
-                    let skip_out = ending.skipped(heard_end);
-                    let cap = if double { DOUBLE_DROP_MAX_SKIP_MS } else { MAX_SKIP_MS };
-                    if heard_end > out_dur as f64 || skip_out > cap as f64 {
-                        continue;
-                    }
-                    if (in_dur as f64 - in_start) < 2.0 * dur * ratio {
-                        continue;
-                    }
-                    let mut score = landing.worth() - (skip_cost_out * skip_out + skip_cost_in * skip_in) / 1000.0;
-                    if let Some(arr) = arrival {
-                        let lands = heard_at(arr);
-                        if lands > dur {
-                            score -= DIP_COST * (lands - dur) / 1000.0;
-                        } else if lands < -0.5 * beat {
-                            score -= DROP_SKIP_COST;
+                    for tail in [beat, bar, 2.0 * bar, 4.0 * bar] {
+                        let dur = runup as f64 * bar + tail;
+                        let bars = dur / bar;
+                        let capped = if neutral { tail / bar } else { bars };
+                        if bars < 2.0 - 1e-6 || capped > k.max_bars as f64 + 0.3 || bars > prof.most_bars[0] as f64 + 0.3 || dur > max_len as f64 {
+                            continue;
                         }
-                    }
-                    score += RUNUP_WORTH * runup.min(prof.runup_worth_bars) as f64 + LENGTH_WORTH * bars;
-                    if runup > 0 && runup % prof.phrase == 0 {
-                        score += PHRASE_START_WORTH;
-                    }
-                    if let Some((l, n)) = in_loop {
-                        score -= IN_LOOP_COST * (l * n) as f64;
-                    }
-                    if double {
-                        score += DOUBLE_DROP_WORTH;
-                    }
-                    if on_phrase {
-                        score += PHRASE_WORTH;
-                    }
-                    // A sung run-up under a sung ending; the vocal duck halves the cost.
-                    if sung_end && runup_vocal >= VOCAL_MIN {
-                        score -= if k.separate { 0.5 } else { 1.0 } * SUNG_RUNUP_COST * runup as f64 * bar / 1000.0;
-                    }
-                    if out_loop > 0.0 {
-                        score -= LOOP_COST * (dur - out_loop) / bar;
-                    }
-                    // Outgoing silence and closing breakdown under the run-up or before the mix.
-                    let dead = ending.silence(start, at) + ending.silence(0.0, start).min(ending.gap.map_or(0.0, |(g0, g1)| g1 - g0));
-                    score -= DEAD_AIR_COST * dead / 1000.0 + DIP_COST * (ending.coda(start, at) + ending.coda(0.0, start)) / 1000.0;
-                    if exit < ending.music_end && (at - exit).abs() <= 0.5 * beat {
-                        score += EXIT_WORTH;
-                    }
-                    if best.is_none_or(|w| score > w.score + 1e-9) {
-                        best = Some(Window {
-                            start,
-                            dur,
-                            swap: runup as f64 * bar,
-                            in_start,
-                            runup_bars: runup,
-                            landing,
-                            on_phrase,
-                            out_loop,
-                            in_loop,
-                            double,
-                            runup_vocal,
-                            after_vocal,
-                            score,
-                        });
+                        let heard_end = if out_loop > 0.0 { at } else { at + tail };
+                        let skip_out = ending.skipped(heard_end);
+                        let cap = if double { DOUBLE_DROP_MAX_SKIP_MS } else { MAX_SKIP_MS };
+                        if heard_end > out_dur as f64 || skip_out > cap as f64 {
+                            continue;
+                        }
+                        if (in_dur as f64 - in_start) < 2.0 * dur * ratio {
+                            continue;
+                        }
+                        let mut score = landing.worth() - (skip_cost_out * skip_out + skip_cost_in * skip_in) / 1000.0;
+                        if let Some(arr) = arrival {
+                            let lands = heard_at(arr);
+                            if lands > dur {
+                                score -= DIP_COST * (lands - dur) / 1000.0;
+                            } else if lands < -0.5 * beat {
+                                score -= DROP_SKIP_COST;
+                            }
+                        }
+                        score += RUNUP_WORTH * runup.min(prof.runup_worth_bars) as f64 + LENGTH_WORTH * bars;
+                        if runup > 0 && runup % prof.phrase == 0 {
+                            score += PHRASE_START_WORTH;
+                        }
+                        if let Some((l, n)) = in_loop {
+                            score -= IN_LOOP_COST * (l * n) as f64;
+                        }
+                        if double {
+                            score += DOUBLE_DROP_WORTH;
+                        }
+                        if on_phrase || after_line {
+                            score += PHRASE_WORTH;
+                        }
+                        // A sung run-up under a sung ending; the vocal duck halves the cost.
+                        if sung_end && runup_vocal >= VOCAL_MIN {
+                            score -= if k.separate { 0.5 } else { 1.0 } * SUNG_RUNUP_COST * runup as f64 * bar / 1000.0;
+                        }
+                        if out_loop > 0.0 {
+                            score -= prof.loop_cost * (dur - out_loop) / bar;
+                        }
+                        // The outgoing singing: under the run-up, faded after the swap, and skipped (over the plain rate).
+                        if let Some(v) = vocal_end.filter(|_| out_loop == 0.0) {
+                            let swap_at = start + runup as f64 * bar;
+                            score -= prof.sung_under_cost * (v.min(swap_at) - start).max(0.0) / 1000.0;
+                            score -= SUNG_FADE_COST * (v.min(heard_end) - swap_at).max(0.0) / 1000.0;
+                            score -= (SKIP_SUNG_COST - SKIP_COST) * (v - heard_end).max(0.0) / 1000.0;
+                        }
+                        // Outgoing silence and closing breakdown under the run-up or before the mix.
+                        let dead = ending.silence(start, at) + ending.silence(0.0, start).min(ending.gap.map_or(0.0, |(g0, g1)| g1 - g0));
+                        score -= DEAD_AIR_COST * dead / 1000.0 + DIP_COST * (ending.coda(start, at) + ending.coda(0.0, start)) / 1000.0;
+                        if exit < ending.music_end && (at - exit).abs() <= 0.5 * beat {
+                            score += EXIT_WORTH;
+                        }
+                        if best.is_none_or(|w| score > w.score + 1e-9) {
+                            best = Some(Window {
+                                start,
+                                dur,
+                                swap: runup as f64 * bar,
+                                in_start,
+                                runup_bars: runup,
+                                landing,
+                                on_phrase,
+                                after_line,
+                                out_loop,
+                                in_loop,
+                                double,
+                                runup_vocal,
+                                after_vocal,
+                                score,
+                            });
+                        }
                     }
                 }
             }
@@ -881,7 +926,7 @@ fn beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSet
     let bits = [
         w.landing.words(),
         if w.double { "a double drop" } else { "" },
-        if w.on_phrase { "on the outro phrase" } else { "" },
+        if w.on_phrase { "on the outro phrase" } else if w.after_line { "after its last line" } else { "" },
         leaving,
         if w.out_loop > 0.0 { "intro/outro remix" } else { "" },
         if neutral { "run-up without chords" } else { "" },
@@ -942,6 +987,12 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
             apart = true;
         }
     }
+    // The build into the drop: the outgoing song thins out over the bars before it.
+    let riser = s.filter_effects && k.profile.riser && p.high_pass.is_none() && matches!(w.landing, Landing::Drop | Landing::IntroEnd) && w.runup_bars >= 2 * RISER_BARS;
+    if riser {
+        let from = swap - (RISER_BARS as f64 * k.bar).round() as i64;
+        p.high_pass = Some(Sweep { start_ms: from.max(0), end_ms: swap, from_hz: RISER_FROM_HZ, to_hz: RISER_TO_HZ });
+    }
     p.out_loop_ms = (w.out_loop > 0.0).then(|| w.out_loop.round() as i64);
     p.in_loop = w.in_loop.map(|(l, n)| InLoop { ms: (l as f64 * k.bar).round() as i64, repeats: n as i32 });
     p.in_gain_db = loudness_trim(Some(a), Some(b), s);
@@ -952,6 +1003,9 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
     let mut bits: Vec<String> = notes.iter().filter(|n| !n.is_empty()).map(|n| n.to_string()).collect();
     if apart {
         bits.push("voices kept apart".to_string());
+    }
+    if riser {
+        bits.push("a riser into it".to_string());
     }
     if w.runup_bars > 0 && p.out_loop_ms.is_none() {
         bits.push(format!("{}-bar run-up", w.runup_bars));
@@ -987,6 +1041,76 @@ fn finish_beat_matched(a: &TrackAnalysis, b: &TrackAnalysis, s: &AutoMixSettings
     p
 }
 
+/// Bars of rising high-pass on the outgoing song before the incoming drop, and its sweep, Hz.
+const RISER_BARS: i64 = 2;
+const RISER_FROM_HZ: f32 = 40.0;
+const RISER_TO_HZ: f32 = 900.0;
+
+/// A cut on the drop: the outgoing song through the riser to a downbeat on a phrase line of its ending, the
+/// incoming one in at full on its drop (or the end of its intro, or its first downbeat) there, the last beats of
+/// the outgoing song echoing over it. No tempo change: for pairs too far apart in tempo or key to blend.
+fn drop_cut(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSettings, cause: &str) -> Option<TransitionPlan> {
+    let Room { out_dur, in_dur, max_len } = room;
+    let (beat, beat_b) = (60_000.0 / a.bpm, 60_000.0 / b.bpm);
+    if !beat.is_finite() || !beat_b.is_finite() || beat <= 0.0 || beat_b <= 0.0 {
+        return None;
+    }
+    let bpb = bar_beats(a);
+    let bar = bpb as f64 * beat;
+    let riser = RISER_BARS as f64 * bar;
+    let tail = 2.0 * beat;
+    let dur = (riser + tail).round() as i64;
+    if dur > max_len {
+        return None;
+    }
+    // The cut: the last downbeat before the song leaves, moved back to a four-bar line of the outro within four
+    // bars, or else to the bar where its singing ends, when either is after the singing.
+    let ending = Ending::of(a, out_dur);
+    let last = a.beat_offset_ms + downbeat_before(ending.leave(0.0), a.beat_offset_ms, beat, bpb, a.downbeat_phase as i64) as f64 * beat;
+    let on_line = |t: f64| a.outro_start_ms > 0 && t >= a.outro_start_ms as f64 - 0.5 * beat && {
+        let x = (t - a.outro_start_ms as f64) / (4.0 * bar);
+        (x - x.round()).abs() * 4.0 < 0.05
+    };
+    let sung_until = (a.vocal_end_ms > 0)
+        .then(|| a.beat_offset_ms + downbeat_before(a.vocal_end_ms as f64 + 0.5 * beat, a.beat_offset_ms, beat, bpb, a.downbeat_phase as i64) as f64 * beat);
+    let cut = (0..4)
+        .map(|n| last - n as f64 * bar)
+        .find(|&t| on_line(t) && sung_until.is_none_or(|v| t >= v - 0.5 * beat))
+        .or(sung_until.filter(|&v| v <= last + 0.5 * beat && v >= last - 3.5 * bar))
+        .unwrap_or(last);
+    let start = cut - riser;
+    if start < a.silence_start_ms as f64 || ending.skipped(cut) > MAX_SKIP_MS as f64 {
+        return None;
+    }
+    // Where the incoming song comes in: its drop, else the end of its intro, else its first downbeat.
+    let bpb_b = bar_beats(b);
+    let first = b.beat_offset_ms + downbeat_from(b.silence_start_ms as f64, b.beat_offset_ms, beat_b, bpb_b, b.downbeat_phase as i64) as f64 * beat_b;
+    let reach = |t: f64| t >= first + riser && t - riser - b.silence_start_ms as f64 <= MAX_SKIP_MS as f64;
+    let land = [b.drop_ms as f64, b.intro_end_ms as f64].into_iter().find(|&t| t > 0.0 && reach(t)).unwrap_or(first + riser);
+    let in_start = land - riser;
+    if in_start < 0.0 || in_dur as f64 - in_start < 2.0 * dur as f64 {
+        return None;
+    }
+    let (riser_ms, tick) = (riser.round() as i64, CUT_TICK_MS.min(dur - riser.round() as i64));
+    let mut p = blank(TransitionKind::Cut, start.round() as i64, in_start.round() as i64, dur, String::new());
+    (p.out_fade_start_ms, p.out_fade_end_ms) = (riser_ms, riser_ms + tick);
+    (p.in_fade_start_ms, p.in_fade_end_ms) = ((riser_ms - tick).max(0), riser_ms);
+    if s.filter_effects {
+        p.high_pass = Some(Sweep { start_ms: 0, end_ms: riser_ms, from_hz: RISER_FROM_HZ, to_hz: RISER_TO_HZ });
+    }
+    // A sung line echoed over the next song sounds like the last one again: only an instrumental ending echoes.
+    if a.outro_vocal.max(a.exit_vocal) < ECHO_SUNG {
+        p.echo = Some(Echo { delay_ms: beat.clamp(250.0, 1000.0).round() as i64, feedback: 0.4, wet_db: -6.0 });
+    }
+    p.in_gain_db = loudness_trim(Some(a), Some(b), s);
+    let into = if (land - b.drop_ms as f64).abs() < 1.0 { "the drop" } else if (land - b.intro_end_ms as f64).abs() < 1.0 { "the end of the intro" } else { "the first bar" };
+    p.reason = format!("a cut into {into} after a {RISER_BARS}-bar riser, {cause}");
+    Some(p)
+}
+
+/// The cut's own fade: short enough to hear as a cut, long enough not to click, ms.
+const CUT_TICK_MS: i64 = 8;
+
 /// Bars of tempo glide at the end of a DJ mix, at most and at least.
 const BEND_BARS: f64 = 8.0;
 const BEND_MIN_BARS: f64 = 2.0;
@@ -1008,7 +1132,7 @@ impl Lock {
 fn bend(p: &mut TransitionPlan, k: &Lock, from: f64) {
     let dur = p.duration_ms as f64;
     let span = (BEND_BARS * k.bar).min(dur - from);
-    if k.ratio == 1.0 || k.pct < BEND_MIN_PCT || span < BEND_MIN_BARS * k.bar - 1.0 || p.out_loop_ms.is_some() {
+    if k.ratio == 1.0 || k.pct < BEND_MIN_PCT || span < BEND_MIN_BARS * k.bar - 1.0 {
         return;
     }
     let (r, start) = (k.ratio, dur - span);
@@ -1187,6 +1311,7 @@ mod tests {
             outro_grid_source: 0,
             last_drop_ms: 0,
             last_drop_vocal: 0.0,
+            vocal_end_ms: 0,
         }
     }
 
@@ -1234,6 +1359,72 @@ mod tests {
         assert_eq!(p.in_loop, None, "{}", p.reason);
         // Smooth never loops it.
         assert_eq!(smooth.in_loop, None, "{}", smooth.reason);
+    }
+
+    /// Into a drop, DJ thins the outgoing song out with a rising high-pass over the two bars before the swap;
+    /// Smooth leaves it whole.
+    #[test]
+    fn dj_builds_a_riser_into_the_drop() {
+        let bar = 4.0 * 60_000.0 / 128.0;
+        let b = TrackAnalysis { drop_ms: (120.0 + 16.0 * bar) as i64, ..track(128.0) };
+        let a = track(128.0);
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &dj());
+        assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
+        let swap = swap_at(&p);
+        let h = p.high_pass.expect(&p.reason);
+        assert_eq!((h.end_ms, h.from_hz, h.to_hz), (swap, RISER_FROM_HZ, RISER_TO_HZ), "{}", p.reason);
+        let riser = (p.out_song_ms(swap as f64) - p.out_song_ms(h.start_ms as f64)) / bar;
+        assert!((riser - RISER_BARS as f64).abs() < 0.01, "{riser} bars of riser: {}", p.reason);
+        lands_on_swap(&p, &a, b.drop_ms);
+        let smooth = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings::default());
+        assert_eq!(smooth.high_pass, None, "{}", smooth.reason);
+        let off = plan(Some(&a), Some(&b), 240_000, 240_000, &AutoMixSettings { filter_effects: false, ..dj() });
+        assert_eq!(off.high_pass, None, "filters off: {}", off.reason);
+    }
+
+    /// A track whose singing ends `bars_left` bars before its music does, with nothing after the music.
+    fn sung_until(bars_left: f64) -> (TrackAnalysis, i64) {
+        let bar: f64 = 4.0 * 60_000.0 / 128.0;
+        let end = 120.0 + bar * ((238_500.0 - 120.0) / bar).floor();
+        let vocal_end = (end - bars_left * bar) as i64;
+        (TrackAnalysis { outro_vocal: 0.7, exit_vocal: 0.7, vocal_end_ms: vocal_end, ..track(128.0) }, vocal_end)
+    }
+
+    #[test]
+    fn mixes_wait_for_the_last_line() {
+        // Sung to the last bar: the bass swaps once the line ends, not on the outro line before it.
+        let (a, vocal_end) = sung_until(1.0);
+        let b = track(128.0);
+        let swap_in_a = |a: &TrackAnalysis, s: &AutoMixSettings| {
+            let p = plan(Some(a), Some(&b), 238_500, 240_000, s);
+            assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
+            p.out_start_ms as f64 + p.out_song_ms(p.bass_swap.expect(&p.reason).at_ms as f64)
+        };
+        let half_beat = 30_000.0 / 128.0;
+        for s in [AutoMixSettings { max_transition_s: 40.0, ..Default::default() }, dj()] {
+            assert!(swap_in_a(&a, &s) >= vocal_end as f64 - half_beat, "{:?}", s.style);
+            let unknown = TrackAnalysis { vocal_end_ms: 0, ..a.clone() };
+            assert!(swap_in_a(&unknown, &s) < vocal_end as f64 - half_beat, "{:?}: without the singing's end it swaps earlier", s.style);
+        }
+    }
+
+    #[test]
+    fn dj_loops_the_bars_after_the_singing() {
+        // Five unsung bars at the end and a 16-bar intro: DJ loops the last four under its run-up rather than
+        // laying it over the singing; Smooth plays the song's own bars.
+        let (a, vocal_end) = sung_until(5.0);
+        let bar = 4.0 * 60_000.0 / 128.0;
+        let b = TrackAnalysis { drop_ms: (120.0 + 16.0 * bar) as i64, intro_end_ms: (120.0 + 16.0 * bar) as i64, ..track(128.0) };
+        let p = plan(Some(&a), Some(&b), 238_500, 240_000, &dj());
+        assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
+        let out_loop = p.out_loop_ms.expect(&p.reason);
+        assert!(p.out_start_ms >= vocal_end && (out_loop as f64 - 4.0 * bar).abs() < 1.0, "{}", p.reason);
+        assert!(p.duration_ms > 2 * out_loop, "{}", p.reason);
+        let smooth = plan(Some(&a), Some(&b), 238_500, 240_000, &AutoMixSettings::default());
+        assert_eq!(smooth.out_loop_ms, None, "{}", smooth.reason);
+        // Without the singing's end, a sung ending never loops.
+        let unknown = plan(Some(&TrackAnalysis { vocal_end_ms: 0, ..a }), Some(&b), 238_500, 240_000, &dj());
+        assert_eq!(unknown.out_loop_ms, None, "{}", unknown.reason);
     }
 
     #[test]
@@ -1684,10 +1875,17 @@ mod tests {
         assert_eq!((p.bass_swap, p.tempo_ratio), (None, 1.0), "no bass swap or tempo change on an echo-out");
         assert!(on_downbeat(&b, (p.in_start_ms + p.duration_ms) as f64 + 0.5) || on_downbeat(&b, (p.in_start_ms + p.duration_ms) as f64), "{p:?}");
         check_skip(&p, &a, &b, 240_000);
-        // Echo off: the quick mix.
-        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Dj, false));
+        // Echo off: Smooth's quick mix, DJ's cut on a downbeat after a riser, its last beats echoing.
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Smooth, false));
         assert_eq!(p.kind, TransitionKind::BeatMatched, "{}", p.reason);
         assert!(p.duration_ms as f64 <= 4.25 * bar + 1.0, "{}", p.reason);
+        let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Dj, false));
+        assert_eq!(p.kind, TransitionKind::Cut, "{}", p.reason);
+        let riser = (RISER_BARS as f64 * bar).round() as i64;
+        assert_eq!((p.out_fade_start_ms, p.in_fade_end_ms), (riser, riser), "{p:?}");
+        assert!(on_downbeat(&a, (p.out_start_ms + riser) as f64) && on_downbeat(&b, (p.in_start_ms + riser) as f64), "on both downbeats: {p:?}");
+        assert!(p.high_pass.is_some_and(|h| h.end_ms == riser) && p.echo.is_some(), "{p:?}");
+        check_skip(&p, &a, &b, 240_000);
         // No mix fits (tempos too far apart): the echo-out in Smooth too.
         let b = TrackAnalysis { bpm: 150.0, intro_bpm: 150.0, ..b };
         let p = plan(Some(&a), Some(&b), 240_000, 240_000, &with(MixStyle::Smooth, true));
@@ -1705,7 +1903,7 @@ mod tests {
                 for filter_effects in [true, false] {
                     let s = AutoMixSettings { max_transition_s: 40.0, filter_effects, style, ..Default::default() };
                     let p = plan(Some(&out), Some(&inc), 240_000, 240_000, &s);
-                    assert_ne!(p.kind, TransitionKind::EchoOut, "{style:?}: {}", p.reason);
+                    assert!(p.kind != TransitionKind::EchoOut && p.echo.is_none(), "{style:?}: {}", p.reason);
                 }
             }
         }

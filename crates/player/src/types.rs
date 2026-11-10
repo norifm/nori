@@ -139,6 +139,8 @@ pub struct TrackAnalysis {
     /// bars after it. 0 when there is none, or the song has no grid.
     pub last_drop_ms: i64,
     pub last_drop_vocal: f32,
+    /// Where the song's last sung bar ends, before any hidden track: 0 when nothing is sung.
+    pub vocal_end_ms: i64,
     /// Analysis time, ms since the epoch.
     pub analysed_ms: i64,
 }
@@ -231,6 +233,9 @@ pub enum TransitionKind {
     BeatMatched,
     /// The outgoing track exits into a beat-synced echo while the incoming track fades in over its tail.
     EchoOut,
+    /// The outgoing track stops on a downbeat and the incoming one comes in at full there, after a riser; an
+    /// instrumental ending's last beats echo over it.
+    Cut,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

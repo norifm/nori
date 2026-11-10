@@ -620,7 +620,7 @@ pub fn perf_watch_queue(wall_ms: i64, missing: Vec<String>, total: u32) {
     if !on() {
         return;
     }
-    let auto_mix = crate::perf_log::settings_now().is_some_and(|p| p.auto_mix);
+    let auto_mix = crate::perf_log::settings_now().is_some_and(|p| p.auto_mix.on());
     RECORDER.said(wall_ms, RECORDER.with_watch(|w| w.queue(auto_mix, &missing, total)));
 }
 

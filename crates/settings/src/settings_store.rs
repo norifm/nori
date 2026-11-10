@@ -564,7 +564,7 @@ mod tests {
             (StoredPrefs { headphone: HeadphoneSound::Natural, ..a.clone() }, APPLY_AUDIO | SOUND),
             (StoredPrefs { level: Level::Loud, ..a.clone() }, APPLY_GAIN),
             (StoredPrefs { crossfade_sec: 6, ..a.clone() }, APPLY_AUDIO | REPLAN),
-            (StoredPrefs { auto_mix: true, ..a.clone() }, APPLY_AUDIO | REPLAN),
+            (StoredPrefs { auto_mix: crate::settings::AutoMixMode::Smooth, ..a.clone() }, APPLY_AUDIO | REPLAN),
             (StoredPrefs { hi_res: !a.hi_res, ..a.clone() }, PLAYER),
             (StoredPrefs { cache_mb: 4096, ..a.clone() }, CACHE_LIMIT),
         ];
@@ -679,6 +679,23 @@ mod tests {
         migrated.prefs.remote_control = false;
         write(&mut migrated.db.lock(), &migrated.prefs).unwrap();
         assert!(!SettingsStore::open(&path, Writer::default()).unwrap().prefs.remote_control);
+    }
+
+    /// AutoMix stored as a switch: on is Smooth, off is Off, and the choice is written at once.
+    #[test]
+    fn auto_mix_switch_becomes_its_mode() {
+        for (on, mode) in [(true, crate::settings::AutoMixMode::Smooth), (false, crate::settings::AutoMixMode::Off)] {
+            let dir = nori_testdir::TempDir::new(&format!("automix-switch-{on}"));
+            let path = dir.join("nori.db").display().to_string();
+            {
+                let mut c = db::open_app(&path).unwrap();
+                write(&mut c, &StoredPrefs { auto_mix: crate::settings::AutoMixMode::Dj, ..Default::default() }).unwrap();
+                c.execute("UPDATE settings SET value = ?1 WHERE key = 'autoMix'", [to_json(&PrefValue::Flag { v: on })]).unwrap();
+            }
+            let migrated = SettingsStore::open(&path, Writer::default()).unwrap();
+            assert_eq!(migrated.prefs.auto_mix, mode);
+            assert_eq!(read(&migrated.db.lock()).unwrap().get("autoMix"), Some(&PrefValue::Number { v: mode as i32 }), "written as the mode");
+        }
     }
 
     /// An install from before the graphic equalizer: the mode is chosen from its settings and sound

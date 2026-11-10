@@ -75,7 +75,7 @@ pub(crate) struct ReadBack {
 
 /// The build has the beat model and AutoMix with "Better beat detection" is on.
 fn model_on(core: &Core) -> bool {
-    nori_player::automix::beats::AVAILABLE && core.session.settings.with_prefs(|p| p.auto_mix && p.auto_mix_better_beats).unwrap_or(false)
+    nori_player::automix::beats::AVAILABLE && core.session.settings.with_prefs(|p| p.auto_mix.on() && p.auto_mix_better_beats).unwrap_or(false)
 }
 
 /// What `id` needs once saved; `measuring`: it is being measured as it arrives.

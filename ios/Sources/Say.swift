@@ -175,7 +175,6 @@ enum Say {
         ("Playback", [
             ("crossfadeSec", "Crossfade (seconds)"),
             ("autoMix", "AutoMix"),
-            ("autoMixStyle", "Style"),
             ("crossfadeKeepAlbums", "Keep albums gapless"),
         ]),
         ("Queue", [
@@ -656,7 +655,6 @@ enum Say {
     /// while it adds something.
     static let shownWhen: [String: String] = [
         "autoFillBasis": "autoFill", "autoFillRemote": "autoFill",
-        "autoMixStyle": "autoMix",
     ]
 
     /// A setting's value in words; the few whose names say too little have their own.
@@ -669,7 +667,7 @@ enum Say {
         case ("autoFillBasis", "ARTIST"): return "The same artist"
         case ("autoFillBasis", "GENRE"): return "The same genre"
         case ("autoFillBasis", "ERA"): return "The same era"
-        case ("autoMixStyle", "DJ"), ("autoMixStyle", "Dj"): return "DJ"
+        case ("autoMix", "DJ"), ("autoMix", "Dj"): return "DJ"
         case ("swipeRight", "NONE"), ("swipeLeft", "NONE"): return "Nothing"
         case ("swipeRight", "QUEUE"), ("swipeLeft", "QUEUE"): return addToQueue
         case ("swipeRight", "PLAY_NEXT"), ("swipeLeft", "PLAY_NEXT"): return playNext

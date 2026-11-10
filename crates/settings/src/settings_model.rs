@@ -189,7 +189,7 @@ pub fn state(p: &StoredPrefs, out: Output, model: &beat_model::ModelFile) -> Set
         skip_silence: false,
         offload: p.offload,
         crossfade_s: p.crossfade_sec,
-        auto_mix: p.auto_mix,
+        auto_mix: p.auto_mix.on(),
         speed: 1.0,
         pitch: 1.0,
     };

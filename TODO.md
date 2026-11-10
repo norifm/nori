@@ -63,7 +63,8 @@ Plan: `docs/research/plugins.md`. These go there instead of becoming settings:
   Offer it only once it is measured to help on real music.
 - Transition choice computed ahead when the next song is known, cached per pair.
 - Stems around the transition ("Studio"): vocals, drums, bass, the rest, for the last and first 45 s.
-  Vocal ducking and instrumental loops by stem; fall back to today's mix when not ready.
+  Vocal ducking and instrumental loops by stem; fall back to today's mix when not ready. Costs measured in
+  docs/research/stems.md.
 - An optional vocal stutter style, off by default.
 
 ## Later

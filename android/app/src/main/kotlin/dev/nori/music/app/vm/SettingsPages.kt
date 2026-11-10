@@ -225,7 +225,6 @@ private val SERVICE_HINTS: Map<String, Int> = mapOf(
 private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "crossfadeSec" to (R.string.settings_crossfade to R.string.settings_hint_crossfade),
     "autoMix" to (R.string.settings_automix to R.string.settings_hint_automix),
-    "autoMixStyle" to (R.string.settings_automix_style to R.string.settings_hint_automix_style),
     "autoMixBetterBeats" to (R.string.settings_better_beats to R.string.settings_hint_better_beats),
     "crossfadeKeepAlbums" to (R.string.settings_keep_albums to R.string.settings_hint_keep_albums),
     "skipExplicit" to (R.string.settings_skip_explicit to R.string.settings_hint_skip_explicit),
@@ -284,7 +283,7 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
 /** The words of a setting's values that are names: by setting, in the options' order. */
 private val NAMED: Map<String, IntArray> = mapOf(
     "autoFill" to intArrayOf(R.string.settings_auto_fill_stop, R.string.settings_auto_fill_songs, R.string.settings_auto_fill_albums),
-    "autoMixStyle" to intArrayOf(R.string.settings_automix_style_smooth, R.string.settings_automix_style_dj),
+    "autoMix" to intArrayOf(R.string.settings_off, R.string.settings_automix_smooth, R.string.settings_automix_dj),
     "autoFillBasis" to intArrayOf(R.string.settings_auto_fill_basis_similar, R.string.settings_auto_fill_basis_artist, R.string.settings_auto_fill_basis_genre, R.string.settings_auto_fill_basis_era),
     "headphoneSound" to intArrayOf(R.string.settings_off, R.string.settings_headphone_natural, R.string.settings_headphone_wide),
     "compressor" to intArrayOf(R.string.settings_off, R.string.settings_compressor_light, R.string.settings_compressor_car, R.string.settings_compressor_night),

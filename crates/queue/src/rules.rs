@@ -53,7 +53,7 @@ impl Session {
     /// The upcoming ids to prefetch on this network (`nori_player::queue::precache_range`).
     pub fn precache(&self, metered: bool) -> Vec<String> {
         let (count, mixing) = self.settings.prefs(|p| {
-            (q::precache_count(metered, p.songs_ahead_wifi, p.songs_ahead_mobile), q::mixing(self.planner.transitions_off(), p.crossfade_sec, p.auto_mix))
+            (q::precache_count(metered, p.songs_ahead_wifi, p.songs_ahead_mobile), q::mixing(self.planner.transitions_off(), p.crossfade_sec, p.auto_mix.on()))
         });
         self.playlist(|p| {
             let Some((first, last)) = q::precache_range(count, mixing, p.shuffling()) else { return Vec::new() };

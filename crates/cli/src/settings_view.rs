@@ -1077,7 +1077,6 @@ fn setting_words(name: &str, p: &StoredPrefs, s: &SettingsState) -> (String, Str
     let title = match name {
         "crossfadeSec" => "Crossfade",
         "autoMix" => "AutoMix",
-        "autoMixStyle" => "Style",
         "autoMixBetterBeats" => {
             let state = match &s.beat_model {
                 BeatModel::Failed { why } if p.auto_mix_better_beats => format!("The download didn't work ({}). It tries again at the next song.", text::beat_failure(*why)),
@@ -1140,8 +1139,9 @@ fn option_words(name: &str, v: &str) -> String {
         ("autoFill", "OFF") => "Stop".into(),
         ("autoFill", "SONGS") => "Add songs".into(),
         ("autoFill", "ALBUMS") => "Add albums".into(),
-        ("autoMixStyle", "SMOOTH") => "Smooth".into(),
-        ("autoMixStyle", "DJ") => "DJ".into(),
+        ("autoMix", "OFF") => "Off".into(),
+        ("autoMix", "SMOOTH") => "Smooth".into(),
+        ("autoMix", "DJ") => "DJ".into(),
         ("autoFillBasis", "SIMILAR") => "Similar music".into(),
         ("autoFillBasis", "ARTIST") => "The same artist".into(),
         ("autoFillBasis", "GENRE") => "The same genre".into(),
@@ -1777,7 +1777,7 @@ mod tests {
     fn everything_on() -> StoredPrefs {
         let server = nori_core::settings::SavedServer { id: "a".into(), url: "https://a".into(), alt_url: "https://b".into(), ..Default::default() };
         StoredPrefs {
-            auto_mix: true,
+            auto_mix: nori_core::settings::AutoMixMode::Dj,
             auto_fill: Some(nori_core::settings::AutoFillKind::Songs),
             compressor: Some(nori_core::settings::CompressorPreset::Light),
             replay_gain: nori_core::settings::GainMode::Track,

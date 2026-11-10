@@ -39,8 +39,8 @@ use crate::types::TrackAnalysis;
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 14: the last drop.
-pub const ANALYSIS_VERSION: i32 = 14;
+/// Bump when stored rows should be measured again. 15: the end of the singing.
+pub const ANALYSIS_VERSION: i32 = 15;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;
@@ -64,6 +64,35 @@ fn window_mean(curve: &[f32], fps: f64, t0: f64, from_s: f64, to_s: f64) -> f32 
         return 0.0;
     }
     curve[a..b].iter().sum::<f32>() / (b - a) as f32
+}
+
+/// A sung stretch: four bars whose voice level is this much over the song's quieter four-bar stretches.
+const SUNG_OVER: f32 = 1.3;
+/// Bars under this share of the song's median voice level are silence, left out of its quieter stretches.
+const AUDIBLE: f32 = 0.25;
+
+/// Where the last sung bar of `music` ends, from bars of `bar_s` counted back from its end, read off the voice
+/// curve ([`vocal`]). Four bars at a time, so a phrase's breath does not end it; judged against the lowest quarter
+/// of the song's own four-bar stretches, its instrumental level.
+fn vocal_end(f: &Features, bar_s: f64, music: (f64, f64)) -> Option<f64> {
+    let e = vocal::CURVE_EVERY as f64;
+    let (fps, t0) = (f.fps / e, f.t0 + (e - 1.0) / 2.0 / f.fps);
+    let n = ((music.1 - music.0) / bar_s).floor() as usize;
+    // From the end back.
+    let bars: Vec<f32> = (0..n)
+        .map(|i| window_mean(&f.voice, fps, t0, music.1 - (i + 1) as f64 * bar_s, music.1 - i as f64 * bar_s))
+        .collect();
+    let mut sorted = bars.clone();
+    sorted.sort_by(f32::total_cmp);
+    let audible = AUDIBLE * *sorted.get(n / 2)?;
+    let fours: Vec<Option<f32>> =
+        bars.windows(4).map(|w| w.iter().all(|&b| b >= audible).then(|| w.iter().sum::<f32>() / 4.0)).collect();
+    let mut quiet: Vec<f32> = fours.iter().flatten().copied().collect();
+    quiet.sort_by(f32::total_cmp);
+    let sung = SUNG_OVER * *quiet.get(quiet.len() / 4)?;
+    let w = fours.iter().position(|m| m.is_some_and(|m| m >= sung))?;
+    let last = (w..w + 4).find(|&i| bars[i] >= sung)?;
+    Some(music.1 - last as f64 * bar_s)
 }
 
 /// One stretch of music's beat grid; all zeros when it could not be measured.
@@ -153,6 +182,8 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
     let last_drop = if silent || !grid_ok { None } else { structure::last_drop(&t, &db, f, music, drop) };
     let last_drop_vocal = last_drop.map_or(0.0, |d| window_mean(&f.vocal, f.fps, f.t0, d, (d + 8.0 * bar_s).min(music.1)));
 
+    let vocal_end = if silent { None } else { vocal_end(f, if bar_s >= 1.0 { bar_s } else { 2.0 }, (music.0, song.1)) };
+
     // Where to leave: a closing breakdown, or the gap before a hidden track.
     let exit = if silent { None } else { structure::breakdown(&t, &db, f, music, song.1, grid_ok) }.or(leave.map(|(g0, _)| g0 as f64 / 1000.0));
     let last = exit.unwrap_or(music.1);
@@ -216,6 +247,7 @@ pub fn finish(song_id: &str, f: &Features) -> Analysis {
         outro_grid_source: beats::GRID_CLASSICAL,
         last_drop_ms: last_drop.map_or(0, |d| (d * 1000.0).round() as i64),
         last_drop_vocal,
+        vocal_end_ms: vocal_end.map_or(0, |t| (t * 1000.0).round() as i64),
     };
     Analysis { track, tempo: t }
 }

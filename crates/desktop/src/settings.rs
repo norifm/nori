@@ -325,7 +325,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
     let (title, detail) = match name {
         "crossfadeSec" => ("Crossfade", ""),
         "autoMix" => ("AutoMix", ""),
-        "autoMixStyle" => ("Style", ""),
         "autoMixBetterBeats" => {
             let mb = s.beat_model_mb;
             let detail = match &s.beat_model {
@@ -383,8 +382,9 @@ fn option_words(name: &str, v: &str) -> String {
         ("autoFill", "OFF") => "Stop".into(),
         ("autoFill", "SONGS") => "Add songs".into(),
         ("autoFill", "ALBUMS") => "Add albums".into(),
-        ("autoMixStyle", "SMOOTH") => "Smooth".into(),
-        ("autoMixStyle", "DJ") => "DJ".into(),
+        ("autoMix", "OFF") => "Off".into(),
+        ("autoMix", "SMOOTH") => "Smooth".into(),
+        ("autoMix", "DJ") => "DJ".into(),
         ("autoFillBasis", "SIMILAR") => "Similar music".into(),
         ("autoFillBasis", "ARTIST") => "The same artist".into(),
         ("autoFillBasis", "GENRE") => "The same genre".into(),
@@ -1560,7 +1560,7 @@ mod tests {
 
     #[test]
     fn row_names_resolve() {
-        let p = StoredPrefs { auto_mix: true, auto_fill: Some(nori_core::settings::AutoFillKind::Songs), compressor: Some(nori_core::settings::CompressorPreset::Light), scrobble: true, ..StoredPrefs::default() };
+        let p = StoredPrefs { auto_mix: nori_core::settings::AutoMixMode::Dj, auto_fill: Some(nori_core::settings::AutoFillKind::Songs), compressor: Some(nori_core::settings::CompressorPreset::Light), scrobble: true, ..StoredPrefs::default() };
         let f = Facts::default();
         let specs: Vec<String> = settings_model::specs().into_iter().map(|s| s.name).collect();
         for tab in 0..7 {
