@@ -492,6 +492,11 @@ impl Compositor {
     }
 }
 
+/// A menu is open on the page.
+fn page_menu_open(layers: &[(Rc<Layer>, Cell<Option<Role>>)]) -> bool {
+    layers.iter().any(|(layer, role)| role.get() == Some(Role::Page) && !i_slint_core::window::WindowInner::from_pub(&layer.window).active_popups().is_empty())
+}
+
 /// Closes the menus open in every layer but `kept`'s; whether there were any. A menu closes on a press
 /// outside it only within its own layer, so a press on another layer closes it here.
 fn close_menus(s: &Shared, kept: Option<Role>) -> bool {
@@ -1161,7 +1166,8 @@ impl Draw {
         let Some(page) = find(Role::Page) else { return };
         let (w, h) = (self.config.width as f32, self.config.height as f32);
         let mut enc = d.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
-        let focus = s.focus.borrow().as_ref().and_then(|f| f());
+        // The focus blur is drawn over all the page holds, so not while a menu is open on it.
+        let focus = s.focus.borrow().as_ref().and_then(|f| f()).filter(|_| !page_menu_open(&layers));
         let glass_needed = s.top_shown.get() || s.player_shown.get() || focus.is_some();
         if glass_needed {
             self.blur_page(d, &gpu.queue, &mut enc, &page);

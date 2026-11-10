@@ -6430,6 +6430,8 @@ export component AppWindow inherits Window {
     // A song's details, in a sheet.
     in-out property <bool> details-open;
     in property <[Detail]> details;
+    // A dialog is over the page (the lyrics' focus blur is not drawn over it).
+    out property <bool> dialog-open: root.ask-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.delete-open || root.join-open || root.signin-open || root.pairing-open;
     // What plugins say under the player's output, and a plugin's still drawn as Now Playing's cover.
     in property <[string]> plugin-status;
     in property <image> sleeve;
