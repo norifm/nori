@@ -5499,6 +5499,81 @@ mod tests {
         assert_eq!(*did.borrow(), ["album al", "song 0 0 14"]);
     }
 
+    /// A song menu's head keeps its glyphs a 32 px column at its end, each centered on the head, whatever the
+    /// song, its lines and where the menu opens.
+    #[test]
+    fn a_songs_menu_head_keeps_its_glyphs_at_the_end() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let seal = |filled| crate::SongGo { kind: 0, title: "Favorite".into(), place: SongPlace::Title, enabled: true, filled, ..Default::default() };
+        let details = crate::SongGo { kind: 14, title: "Details".into(), place: SongPlace::Title, enabled: true, ..Default::default() };
+        let album = crate::SongGo { kind: 1, title: "Go to album".into(), id: "al".into(), place: SongPlace::Names, enabled: true, ..Default::default() };
+        let artist = crate::SongGo { kind: 2, title: "Go to artist".into(), id: "ar".into(), place: SongPlace::Names, enabled: true, ..Default::default() };
+        let long = "Reflections Laughing (feat. Florence + The Machine, Travis Scott) and a good deal more";
+        // The song, its line under the title, the menu's lines, where the row is pressed, the window's height.
+        let cases = [
+            ("Glass Harbour", ("Mira", "Tides"), vec![album.clone(), seal(false), details.clone()], 400.0, 820),
+            ("Glass Harbour", ("", ""), vec![seal(true), details.clone()], 400.0, 820),
+            (long, ("Mira", "Tides"), vec![album.clone(), artist.clone(), seal(true), details.clone()], 400.0, 820),
+            ("Up", ("Mira", ""), vec![album.clone(), seal(false)], 400.0, 820),
+            (long, ("", ""), vec![artist.clone(), details.clone()], 400.0, 820),
+            ("Glass Harbour", ("Mira", "Tides"), vec![album.clone(), seal(false), details.clone()], 1180.0, 820),
+            (long, ("Mira", "Tides"), vec![seal(true), details.clone(), album.clone()], 1180.0, 560),
+        ];
+        let mut off = Vec::new();
+        for (case, (title, (by, on), lines, x, height)) in cases.into_iter().enumerate() {
+            let ui = window();
+            ui.window().set_size(slint::PhysicalSize::new(1280, height));
+            ui.set_view(View::Page);
+            let glyphs = lines.iter().filter(|m| m.place == SongPlace::Title).count();
+            ui.on_song_menu(move |_, _| ModelRc::new(VecModel::from(lines.clone())));
+            let row = SongRow { title: title.into(), artist: by.into(), album: on.into(), ..Default::default() };
+            ui.set_page_songs(ModelRc::new(VecModel::from(vec![row])));
+            ui.show().unwrap();
+            let settle = || {
+                i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+                slint::platform::update_timers_and_animations();
+                ui.window().take_snapshot().unwrap()
+            };
+            settle();
+            let point = |x: f32, y: f32| slint::LogicalPosition::new(x, y);
+            let button = slint::platform::PointerEventButton::Right;
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: point(x, 470.0), button });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: point(x, 470.0), button });
+            settle();
+            let (left, top) = {
+                let inner = i_slint_core::window::WindowInner::from_pub(ui.window());
+                let popups = inner.active_popups();
+                let i_slint_core::window::PopupWindowLocation::ChildWindow(at) = popups[0].location else { panic!("the menu is in the window") };
+                (at.x, at.y)
+            };
+            // The head's 40 px within its 6 px inset; the glyphs end at the inset.
+            let centre = top + 6.0 + 20.0;
+            for n in 0..glyphs {
+                let box_left = left + 260.0 - 6.0 - (glyphs - n) as f32 * 32.0;
+                let mid = (box_left + 16.0, centre);
+                ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: point(mid.0, mid.1) });
+                let shot = settle();
+                let w = shot.width() as usize;
+                let px = |x: isize, y: isize| shot.as_slice()[y as usize * w + x as usize];
+                let panel = px((left + 260.0 - 3.0) as isize, centre as isize);
+                // From the middle out, as far as the hovered glyph's plate reaches.
+                let reach = |dx: isize, dy: isize| {
+                    let (mut x, mut y) = (mid.0 as isize, mid.1 as isize);
+                    while px(x + dx, y + dy) != panel { x += dx; y += dy; }
+                    (x as f32, y as f32)
+                };
+                let plate = [reach(-1, 0).0, reach(1, 0).0, reach(0, -1).1, reach(0, 1).1];
+                let want = [box_left, box_left + 31.0, centre - 16.0, centre + 15.0];
+                if plate.iter().zip(want).any(|(a, b)| (a - b).abs() > 1.0) {
+                    off.push(format!("case {case}, glyph {n}: its plate spans {plate:?}, not {want:?}"));
+                }
+            }
+        }
+        assert!(off.is_empty(), "{off:#?}");
+    }
+
     /// The player's menu opens above the pill with the lines it is given, and a line reaches the app by
     /// its kind.
     #[test]

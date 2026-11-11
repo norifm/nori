@@ -2226,17 +2226,23 @@ component SongMenuBody inherits Popover {
             picture: root.picture;
             title: root.title;
             line: root.line;
+            // A 32 px box each, flush at the end and centered on the head: no stretch, so the head's room never
+            // spreads them, whatever the title.
             HorizontalLayout {
-                alignment: center;
+                horizontal-stretch: 0;
                 for m[i] in root.lines: HorizontalLayout {
-                    alignment: center;
+                    horizontal-stretch: 0;
                     if m.place == SongPlace.title && m.kind == 0: Seal {
+                        y: (parent.height - self.height) / 2;
+                        width: 32px;
+                        height: 32px;
                         size: 20px;
                         muted: Theme.dim;
                         liked: m.filled;
                         clicked => { root.chosen(m, i); }
                     }
                     if m.place == SongPlace.title && m.kind != 0: IconButton {
+                        y: (parent.height - self.height) / 2;
                         glyph: SongLines.song-icon(m);
                         quiet: true;
                         enabled: m.enabled;
