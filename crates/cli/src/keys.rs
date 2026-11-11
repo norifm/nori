@@ -113,7 +113,7 @@ impl Scope {
         match self {
             Scope::Global => "Everywhere",
             Scope::List => "Lists and pages",
-            Scope::Edit => "The queue (and downloads)",
+            Scope::Edit => "The queue (and downloads, paired devices)",
             Scope::Lyrics => "Lyrics",
             Scope::Eq => "Equalizer",
             Scope::Values => "Settings",
@@ -200,7 +200,7 @@ pub const BINDINGS: &[Binding] = &[
     b!(List, "*", Action::Favorites, "The albums or songs: only the favorites, or all", [(Char('*'), S), (Char('*'), N)]),
     b!(List, "[ ]", Action::GroupBack, "The library's section, or the settings' group, before or after", [(Char('['), N)]),
     b!(List, "", Action::GroupOn, "", [(Char(']'), N)]),
-    b!(Edit, "d / delete", Action::Remove, "Take it out (of the queue, or off this computer); refuse a jam request (enter accepts)", [(Char('d'), N), (Delete, N)]),
+    b!(Edit, "d / delete", Action::Remove, "Take it out (of the queue, or off this computer); forget a paired device; refuse a jam request (enter accepts)", [(Char('d'), N), (Delete, N)]),
     b!(Edit, "u", Action::Undo, "Put back what was just taken out of the queue", [(Char('u'), N)]),
     b!(Edit, "c", Action::Clear, "Clear the queue: the songs after the one playing go", [(Char('c'), N)]),
     b!(Edit, "K / J", Action::MoveUp, "Move it up or down", [(Char('K'), S), (Char('K'), N)]),

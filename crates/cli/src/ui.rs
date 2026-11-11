@@ -1222,8 +1222,12 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
         DeviceRow::Jam if d.jam.is_some() => spread(vec![Span::raw("  "), name(&crate::text::jam_strip(listeners), true)], Span::styled(crate::text::JAM_INVITE, t.dim()), w),
         DeviceRow::Jam => Line::from(vec![Span::raw("  "), Span::styled(crate::text::JAM_START, Style::default().fg(t.ink))]),
         DeviceRow::Join => Line::from(vec![Span::raw("  "), Span::styled(crate::text::JAM_JOIN, Style::default().fg(t.ink))]),
-        DeviceRow::Pair => Line::from(format!("  {}", crate::text::PAIR_DEVICES)),
-        DeviceRow::ResetPairing => Line::from(format!("  {}", crate::text::FORGET_DEVICES)),
+        DeviceRow::PairedTitle => Line::from(Span::styled(format!("  {}", crate::text::PAIRED_TITLE), t.dim())),
+        DeviceRow::Paired(k) => {
+            let x = &d.paired[k];
+            spread(vec![Span::raw("  "), name(&x.name, false)], Span::styled(crate::text::paired_line(x), t.dim()), w)
+        }
+        DeviceRow::Pair => Line::from(vec![Span::raw("  "), Span::styled(crate::text::PAIR_DEVICE, Style::default().fg(t.ink))]),
         DeviceRow::Controlled(k) => {
             let x = &d.controlled[k];
             spread(vec![Span::raw("  "), name(&x.name, false)], Span::styled(crate::text::battery(&x.battery), t.dim()), w)
@@ -1973,6 +1977,33 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             let r = centred(area, w, lines.len() as u16 + 4);
             let inner = popup(f, r, Span::styled(crate::text::INVITE_TITLE, bold().fg(t.ink)), t);
             put(f, Paragraph::new(lines).alignment(Alignment::Center), Rect { y: inner.y + 1, height: inner.height.saturating_sub(1), ..inner });
+        }
+        Overlay::Pair { text: typed, error, busy } => {
+            let code = devices.pairing.clone().and_then(nori_core::remote::qr_code);
+            let qr = code.as_ref().map(qr_lines).unwrap_or_default();
+            let qr_w = qr.first().map_or(0, |l| l.width() as u16);
+            let w = (qr_w + 6).max(72).min(area.width);
+            let fits = qr_w + 4 <= area.width && qr.len() as u16 + 10 <= area.height;
+            let iw = w.saturating_sub(4) as usize;
+            let shown: String = typed.chars().rev().take(iw.saturating_sub(1)).collect::<Vec<_>>().into_iter().rev().collect();
+            let (said, style) = match (error, *busy) {
+                (Some(e), _) => (e.clone(), Style::default().fg(Color::LightRed)),
+                (None, true) => (crate::text::PAIRING.to_string(), t.dim()),
+                (None, false) => (String::new(), t.dim()),
+            };
+            let mut lines: Vec<Line> = Vec::new();
+            if fits {
+                lines.extend(qr.into_iter().map(|l| l.alignment(Alignment::Center)));
+                lines.push(Line::from(""));
+            } else if code.is_some() {
+                lines.push(Line::from(Span::styled(crate::text::PAIR_ROOM, t.dim())));
+            }
+            lines.extend(wrap(crate::text::PAIR_SHOW, iw).into_iter().map(|l| Line::from(Span::styled(l, t.dim()))));
+            lines.push(Line::from(Span::styled(format!("{shown}▏"), Style::default().fg(t.ink))));
+            lines.extend(wrap(&said, iw).into_iter().map(|l| Line::from(Span::styled(l, style))));
+            let r = centred(area, w, lines.len() as u16 + 3);
+            let inner = popup(f, r, Span::styled(crate::text::PAIR_TITLE, bold().fg(t.ink)), t);
+            put(f, Paragraph::new(lines), Rect { x: inner.x + 1, y: inner.y + 1, width: inner.width.saturating_sub(2), height: inner.height.saturating_sub(1) });
         }
         Overlay::Join { text: typed, error, busy } => {
             let w = 72.min(area.width);

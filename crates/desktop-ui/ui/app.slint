@@ -93,6 +93,16 @@ export struct LyricPiece {
 
 // A place the music can play (remote control), as the devices panel lists it: this computer (no id) or one
 // of the account's other devices.
+// A device paired with this computer.
+export struct PairedRow {
+    id: string,
+    name: string,
+    // Whether it is nearby now, or when it last was.
+    line: string,
+    // As DeviceRow's.
+    kind: int,
+}
+
 export struct DeviceRow {
     id: string,
     name: string,
@@ -3097,11 +3107,13 @@ component PanelRule inherits Rectangle {
 
 // Where the music plays (remote control), as Music's AirPlay list and Spotify's devices: this computer
 // first, then the account's other devices with what each plays, the one playing ticked. A click moves the
-// music there; this player then shows and controls it. Under them pairing, then the jam.
+// music there; this player then shows and controls it. Under them the devices paired with this one,
+// then the jam.
 component DevicesView inherits Rectangle {
     in property <[DeviceRow]> devices;
     in property <string> pairing-link;
-    callback forget-devices();
+    in property <[PairedRow]> paired;
+    callback forget(PairedRow);
     callback pick(string);
     // The jam's row was clicked while it is on: the queue panel shows it.
     callback open-jam();
@@ -3140,19 +3152,38 @@ component DevicesView inherits Rectangle {
                     }
                 }
             }
-            // Pairing another device on this network: its code, a code from it, and forgetting them all.
+            // The devices paired with this one, each forgotten on its own, and pairing another.
             if root.pairing-link != "": PanelRule {}
-            if root.pairing-link != "": PanelRow {
-                icon: Icons.smartphone-device;
-                title: "Pair a device";
-                line: "Show a code to scan or copy";
-                clicked => { root.show-pairing(); }
+            if root.pairing-link != "": HorizontalLayout {
+                padding-left: 6px;
+                Text {
+                    height: 24px;
+                    text: "Paired devices";
+                    color: Theme.dim;
+                    font-size: 11px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+            for p in root.paired: PanelRow {
+                icon: Glyphs.device(p.kind);
+                title: p.name;
+                line: p.line;
+                clicked => { root.forget(p); }
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    glyph: Icons.xmark;
+                    size: 28px;
+                    icon: 15px;
+                    ink: Theme.dim;
+                    clicked => { root.forget(p); }
+                }
             }
             if root.pairing-link != "": PanelRow {
-                icon: Icons.trash;
-                title: "Forget paired devices";
-                line: "They pair again with a new code";
-                clicked => { root.forget-devices(); }
+                icon: Icons.plus;
+                title: "Pair a device…";
+                line: "Show this computer’s code, or enter another’s";
+                clicked => { root.show-pairing(); }
             }
             // The jam: starting one, or the one on (its row opens it in the queue panel) and ending it.
             if Jam.on || Jam.hosting || Jam.note != "": PanelRule {}
@@ -3187,7 +3218,7 @@ component DevicesView inherits Rectangle {
             if !Jam.guest: PanelRow {
                 icon: Icons.plus;
                 title: "Join a Jam…";
-                line: root.pairing-link != "" ? "With an invite link or a pairing code" : "With the invite link someone sent you";
+                line: "With the invite link someone sent you";
                 clicked => { root.join-jam(); }
             }
             // The plugins' rows that show here too, joined as one group.
@@ -6262,11 +6293,21 @@ export component AppWindow inherits Window {
     // A device row was clicked: the music moves there ("" for this computer).
     callback pick-device(string);
     in property <string> pairing-link;
-    // The pairing sheet: this computer's code as a QR and a link to copy.
+    // The devices paired with this computer.
+    in property <[PairedRow]> paired;
+    // The pairing sheet: this computer's code as a QR and a link to copy, and the other device's code
+    // pasted, with how pairing it goes.
     in property <image> pairing-qr;
     in-out property <bool> pairing-open;
+    in-out property <string> pair-link;
+    in-out property <string> pair-error;
+    in property <bool> pair-busy;
     callback copy-pairing();
-    callback forget-devices();
+    callback pair(string);
+    // The paired device asked about before it is forgotten.
+    in-out property <PairedRow> forgetting;
+    in-out property <bool> forget-open;
+    callback forget-device(string);
     // "Playing on <device>" while another device plays: the player shows and controls it.
     in property <string> playing-on;
     property <Panel> shown-panel: Panel.queue;
@@ -6500,7 +6541,7 @@ export component AppWindow inherits Window {
     in-out property <bool> details-open;
     in property <[Detail]> details;
     // A dialog is over the page (the lyrics' focus blur is not drawn over it).
-    out property <bool> dialog-open: root.ask-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.delete-open || root.join-open || root.signin-open || root.pairing-open;
+    out property <bool> dialog-open: root.ask-open || root.key-open || root.lyrics-sheet-open || root.details-open || root.picker-open || root.rename-open || root.delete-open || root.join-open || root.signin-open || root.pairing-open || root.forget-open;
     // What plugins say under the player's output, and a plugin's still drawn as Now Playing's cover.
     in property <[string]> plugin-status;
     in property <image> sleeve;
@@ -8215,11 +8256,12 @@ export component AppWindow inherits Window {
                     height: parent.height - 56px;
                     devices: root.devices;
                     pairing-link: root.pairing-link;
-                    forget-devices => { root.forget-devices(); }
+                    paired: root.paired;
+                    forget(p) => { root.forgetting = p; root.forget-open = true; }
                     pick(id) => { root.pick-device(id); }
                     open-jam => { root.inspector = Panel.queue; }
                     join-jam => { root.join-open = true; }
-                    show-pairing => { root.pairing-open = true; }
+                    show-pairing => { root.pair-error = ""; root.pairing-open = true; }
                     for r in root.device-plugin-rows: SettingLine {
                         item: r;
                         toggled(name, on) => { root.setting-toggled(name, on); }
@@ -8940,11 +8982,12 @@ export component AppWindow inherits Window {
                 height: root.height - 64px - 40px;
                 devices: root.devices;
                 pairing-link: root.pairing-link;
-                forget-devices => { root.forget-devices(); }
+                paired: root.paired;
+                forget(p) => { root.forgetting = p; root.forget-open = true; }
                 pick(id) => { root.pick-device(id); }
                 open-jam => { root.full-panel = Panel.queue; }
                 join-jam => { root.join-open = true; }
-                show-pairing => { root.pairing-open = true; }
+                show-pairing => { root.pair-error = ""; root.pairing-open = true; }
                 for r in root.device-plugin-rows: SettingLine {
                     item: r;
                     toggled(name, on) => { root.setting-toggled(name, on); }
@@ -9335,7 +9378,7 @@ export component AppWindow inherits Window {
                 }
             }
             Text {
-                text: "Join a jam or pair devices";
+                text: "Join a jam";
                 color: Theme.text;
                 font-size: 17px;
                 font-weight: 600;
@@ -9675,9 +9718,10 @@ export component AppWindow inherits Window {
             }
         }
 
-        // Pair a device: this computer's code to scan with nori, or to copy, in a sheet over the window.
+        // Pair a device: this computer's code to scan with nori or to copy, and the other device's code
+        // pasted here, in a sheet over the window.
         if root.pairing-open: Dialog {
-            sheet-width: 380px;
+            sheet-width: 400px;
             dismissed => { root.pairing-open = false; }
             Text {
                 text: "Pair a device";
@@ -9687,7 +9731,7 @@ export component AppWindow inherits Window {
                 horizontal-alignment: center;
             }
             Text {
-                text: "Scan this code on your other device, or paste the link there. Paired devices can move and control playback on this network.";
+                text: "Scan this code with nori on your phone, or paste its link on your other device. Paired devices play and control each other on this network.";
                 color: Theme.dim;
                 font-size: 12px;
                 wrap: word-wrap;
@@ -9708,19 +9752,50 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-            Rectangle {
-                height: 32px;
-                border-radius: 8px;
-                background: Theme.fill;
-                Text {
-                    x: 10px;
-                    width: parent.width - 20px;
-                    text: root.pairing-link;
-                    color: Theme.dim;
-                    font-size: 11px;
-                    vertical-alignment: center;
-                    overflow: elide;
+            HorizontalLayout {
+                spacing: 8px;
+                Rectangle {
+                    height: 32px;
+                    horizontal-stretch: 1;
+                    border-radius: 8px;
+                    background: Theme.fill;
+                    Text {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        text: root.pairing-link;
+                        color: Theme.dim;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
                 }
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Copy link";
+                    clicked => { root.copy-pairing(); }
+                }
+            }
+            PanelRule {}
+            Text {
+                text: "Or paste the other device’s pairing link";
+                color: Theme.text;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            Field {
+                height: 34px;
+                border-radius: 8px;
+                clip: true;
+                icon: Icons.smartphone-device;
+                placeholder: "nori://pair#…";
+                text <=> root.pair-link;
+                accepted => { root.pair(root.pair-link); }
+            }
+            if root.pair-error != "": Text {
+                text: root.pair-error;
+                color: Theme.danger;
+                font-size: 12px;
+                wrap: word-wrap;
             }
             HorizontalLayout {
                 alignment: end;
@@ -9731,9 +9806,44 @@ export component AppWindow inherits Window {
                     clicked => { root.pairing-open = false; }
                 }
                 Capsule {
-                    text: "Copy link";
-                    icon: Icons.copy;
-                    clicked => { root.copy-pairing(); }
+                    text: root.pair-busy ? "Pairing…" : "Pair";
+                    icon: Icons.smartphone-device;
+                    clicked => {
+                        if !root.pair-busy {
+                            root.pair(root.pair-link);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Forgetting one paired device, asked first.
+        if root.forget-open: Dialog {
+            title: "Forget " + root.forgetting.name + "?";
+            dismissed => { root.forget-open = false; }
+            Text {
+                text: "It stops controlling this computer, and this computer it. Pair again to undo.";
+                color: Theme.dim;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Cancel";
+                    clicked => { root.forget-open = false; }
+                }
+                Capsule {
+                    text: "Forget";
+                    icon: Icons.xmark;
+                    ink: Theme.danger;
+                    label: Theme.ground;
+                    clicked => {
+                        root.forget-open = false;
+                        root.forget-device(root.forgetting.id);
+                    }
                 }
             }
         }

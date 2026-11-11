@@ -438,13 +438,14 @@ class Remotes(private val context: Context, private val nori: Nori) {
         main.post { then(v) }
     }
 
-    suspend fun pair(link: String): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        current()?.pair(link) ?: false
+    /** Pairs with the device whose code [link] is (the core's `pair`); throws [dev.nori.music.ffi.remote.PairException] saying why not. */
+    suspend fun pair(link: String): dev.nori.music.ffi.PairedDevice = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val r = current() ?: throw dev.nori.music.ffi.remote.PairException.Unavailable()
+        r.pair(link)
     }
 
-    suspend fun resetPairing(): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        current()?.resetPairing() ?: false
-    }
+    /** Forgets paired device [id]: neither controls the other any more. */
+    fun forget(id: String) = ask({ it.forget(id) })
 
     /** What the screens read: the remote if there is one, without building it. */
     fun peek(): Remote? = remote

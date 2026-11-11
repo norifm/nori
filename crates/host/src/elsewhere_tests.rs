@@ -95,7 +95,9 @@ fn a_device_playing_elsewhere_is_not_shown_to_the_system_as_playing_here() {
     let open = Open { kinds: kinds(mac_dir.path(), settings), discovery: Some(Arc::new(Announced::default())), out, ..test_open(queue, mac_dir.path(), profile, Box::new(Card::new())) };
     let mac = Session::open_on(open, Virtual::default()).unwrap();
     let remote = mac.remote().expect("remote control is on");
-    assert!(remote.clone().pair(phone.pairing_link().unwrap()));
+    let mut code = nori_remote::lan::parse_pairing(&phone.pairing_link().unwrap()).unwrap();
+    code.door = format!("127.0.0.1:{}", door.port);
+    nori_core::transport::block_on(remote.clone().pair(nori_remote::lan::pairing_link(&code))).unwrap();
     mac.in_sight(true);
     remote.lan_found("phone".into(), "127.0.0.1".into(), door.port, door.txt);
     let until = Instant::now() + Duration::from_secs(5);

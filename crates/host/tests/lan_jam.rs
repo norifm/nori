@@ -66,8 +66,8 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     let (ops, received) = mpsc::channel();
     let (changes, host_changed) = mpsc::channel();
     let host = Remote::new(host_client.clone(), RemoteMe { name: "Host".into(), kind: DeviceKind::Desktop }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), None);
-    let pairing = host.pairing_link().unwrap();
     let link = block_on(host.clone().jam_open()).unwrap().unwrap();
+    let pairing = host.pairing_link().unwrap();
     assert!(!link.contains("private-account") && !link.contains("private-cookie"));
     assert!(!pairing.contains("private-account") && !pairing.contains("private-cookie"));
     host.clone().serve(true);
@@ -115,14 +115,23 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     let url = resolver.resolve(&target.url).expect("a song of the host's").unwrap();
     assert_eq!(url, "https://allowed.example/song/test-blue", "the URL the host's plugin gives");
     assert_eq!(resolver.parts(&target.url), Some(StreamParts { len: 1000, most: 100 }));
-    assert!(host.clone().reset_pairing());
-    assert_ne!(host.pairing_link(), Some(pairing));
-    assert!(host.jam_view().is_some(), "forgetting paired devices preserves a separate jam");
     host.clone().jam_close();
     wait(&guest_changed, || *guest_shown.1.lock().unwrap());
     assert!(matches!(block_on(remote::jam_join(nori_http::Http::new(), guest_settings, None, link, "Later".into())).unwrap(), JamJoin::Ended));
     guest.stop();
     host.stop();
+}
+
+/// `link` with its door on this machine's loopback, where a test's doors listen too.
+fn here(link: String) -> String {
+    let mut code = nori_remote::lan::parse_pairing(&link).unwrap();
+    code.door = format!("127.0.0.1:{}", code.door.rsplit(':').next().unwrap());
+    nori_remote::lan::pairing_link(&code)
+}
+
+/// `remote` pairs with the device whose code `link` is.
+fn pair(remote: &Arc<Remote>, link: String) -> Result<remote::PairedDevice, remote::PairError> {
+    block_on(remote.clone().pair(link))
 }
 
 #[derive(Default)]
@@ -143,29 +152,78 @@ fn paired_devices_control_each_other_and_can_be_forgotten() {
         client(path, SavedServer { id: id.into(), kind: music_plugin(), ..Default::default() }, settings)
     };
     let (a_ops, a_commands) = mpsc::channel();
-    let (a_changed, _) = mpsc::channel();
+    let (a_changes, a_changed) = mpsc::channel();
     let discovery = Arc::new(Discovery::default());
-    let a = Remote::new(make(&a_dir, "a"), RemoteMe { name: "A".into(), kind: DeviceKind::Desktop }, Arc::new(Player(a_ops)), Arc::new(Shown(a_changed, Mutex::new(false))), Some(discovery.clone()));
+    let a = Remote::new(make(&a_dir, "a"), RemoteMe { name: "A".into(), kind: DeviceKind::Desktop }, Arc::new(Player(a_ops)), Arc::new(Shown(a_changes, Mutex::new(false))), Some(discovery.clone()));
     let (b_ops, _) = mpsc::channel();
     let (b_changes, b_changed) = mpsc::channel();
     let b = Remote::new(make(&b_dir, "b"), RemoteMe { name: "B".into(), kind: DeviceKind::Terminal }, Arc::new(Player(b_ops)), Arc::new(Shown(b_changes, Mutex::new(false))), None);
-    let pairing = a.pairing_link().unwrap();
-    assert_ne!(b.pairing_link(), Some(pairing.clone()));
-    assert!(b.clone().pair(pairing.clone()));
+    assert_eq!(a.pairing_link(), None, "no code while the door is closed");
     a.clone().serve(true);
+    let pairing = here(a.pairing_link().unwrap());
+    let invite = nori_remote::lan::parse_pairing(&pairing).unwrap().invite;
+    assert_eq!(remote::pairing_name(pairing.clone()).as_deref(), Some("A"));
+    let paired = pair(&b, pairing.clone()).unwrap();
+    assert_eq!((paired.id, paired.name.as_str(), paired.kind), (a.id(), "A", DeviceKind::Desktop));
+    assert_eq!(a.paired().iter().map(|d| (d.name.as_str(), d.kind)).collect::<Vec<_>>(), [("B", DeviceKind::Terminal)], "the device showing the code lists the other too");
+    assert_eq!(pair(&b, pairing.clone()), Err(remote::PairError::Refused), "a code pairs one device");
+    assert_ne!(nori_remote::lan::parse_pairing(&a.pairing_link().unwrap()).unwrap().invite, invite, "a new code shows in its place");
     let announced = discovery.0.lock().unwrap().clone().unwrap();
-    assert!(announced.txt.iter().all(|param| !param.value.contains(&nori_remote::lan::parse_pairing(&pairing).unwrap())), "discovery does not contain the pairing credential");
+    assert!(announced.txt.iter().all(|param| !param.value.contains(&invite)), "discovery does not contain the pairing credential");
     b.clone().watch(true);
+    assert!(!b.paired()[0].nearby);
     b.clone().lan_found("host".into(), "127.0.0.1".into(), announced.port, announced.txt);
     wait(&b_changed, || b.devices().len() == 1);
+    assert!(b.paired()[0].nearby, "found on this network");
     b.clone().send(a.id(), Op::Pause);
     assert!(matches!(a_commands.recv_timeout(Duration::from_secs(5)).unwrap(), Op::Pause));
-    let secret = nori_remote::lan::parse_pairing(&pairing).unwrap();
-    assert!(a.clone().reset_pairing());
-    let url = format!("http://127.0.0.1:{}{}", announced.port, nori_remote::lan::signed(&secret, "GET", "/rest/noriRemote.poll?dev=old", b"", nori_time::unix_ms()));
-    assert_eq!(block_on(nori_core::transport::Transport::get(&*nori_http::Http::new(), url, 1_000)).unwrap().status, 401, "the old pairing is refused");
+    b.clone().forget(a.id());
+    assert!(b.paired().is_empty() && b.devices().is_empty());
+    wait(&a_changed, || a.paired().is_empty());
     b.stop();
     a.stop();
+}
+
+/// Why pairing failed, as each client says it: the code, this profile, or the other device's door.
+#[test]
+fn pairing_says_why_it_failed() {
+    let dirs = [nori_testdir::TempDir::new("lan-pair-fail-a"), nori_testdir::TempDir::new("lan-pair-fail-b")];
+    let devices: Vec<_> = [("A", DeviceKind::Desktop), ("Guest", DeviceKind::Guest)]
+        .into_iter()
+        .zip(&dirs)
+        .map(|((name, kind), dir)| {
+            let settings = Settings::new();
+            let path = nori_host::db_path(dir.path());
+            settings.open(&path).unwrap();
+            let client = client(path, SavedServer { id: name.into(), kind: music_plugin(), ..Default::default() }, settings);
+            let (ops, _) = mpsc::channel();
+            let (changes, _) = mpsc::channel();
+            Remote::new(client, RemoteMe { name: name.into(), kind }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), None)
+        })
+        .collect();
+    let (a, guest) = (&devices[0], &devices[1]);
+    a.clone().serve(true);
+    let own = here(a.pairing_link().unwrap());
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    let mut gone = nori_remote::lan::parse_pairing(&own).unwrap();
+    gone.door = closed.to_string();
+    assert_eq!(pair(a, "hello".into()), Err(remote::PairError::NotACode));
+    assert_eq!(pair(a, own.clone()), Err(remote::PairError::Own));
+    gone.id = "elsewhere".into();
+    assert_eq!(pair(guest, own), Err(remote::PairError::Unavailable), "a jam guest pairs with nothing");
+    let other_dir = nori_testdir::TempDir::new("lan-pair-fail-c");
+    let settings = Settings::new();
+    let path = nori_host::db_path(other_dir.path());
+    settings.open(&path).unwrap();
+    let (ops, _) = mpsc::channel();
+    let (changes, _) = mpsc::channel();
+    let c = Remote::new(client(path, SavedServer { id: "c".into(), kind: music_plugin(), ..Default::default() }, settings), RemoteMe { name: "C".into(), kind: DeviceKind::Phone }, Arc::new(Player(ops)), Arc::new(Shown(changes, Mutex::new(false))), None);
+    assert_eq!(pair(&c, nori_remote::lan::pairing_link(&gone)), Err(remote::PairError::Unreachable), "nothing listens where the code says");
+    assert!(c.paired().is_empty() && a.paired().is_empty());
+    c.stop();
+    for d in devices {
+        d.stop();
+    }
 }
 
 #[test]
@@ -184,8 +242,8 @@ fn a_speaker_reached_through_a_device_is_cast_to_there() {
     let (b_ops, _) = mpsc::channel();
     let (b_changes, b_changed) = mpsc::channel();
     let b = Remote::new(make(&b_dir, "b"), RemoteMe { name: "B".into(), kind: DeviceKind::Terminal }, Arc::new(Player(b_ops)), Arc::new(Shown(b_changes, Mutex::new(false))), None);
-    assert!(b.clone().pair(a.pairing_link().unwrap()));
     a.clone().serve(true);
+    pair(&b, here(a.pairing_link().unwrap())).unwrap();
     let announced = discovery.0.lock().unwrap().clone().unwrap();
     b.clone().watch(true);
     b.clone().lan_found("host".into(), "127.0.0.1".into(), announced.port, announced.txt);
@@ -281,7 +339,7 @@ fn scanning_a_code_pairs_both_devices() {
         }
         assert!(devices.iter().all(|(d, _)| d.devices().is_empty()), "not paired: neither lists the other");
         let (shower, scanning) = (devices.remove(1 - scanner), devices.remove(0));
-        assert!(scanning.0.clone().pair(shower.0.pairing_link().unwrap()));
+        pair(&scanning.0, here(shower.0.pairing_link().unwrap())).unwrap();
         for ((me, changed), other) in [(&scanning, &shower.0), (&shower, &scanning.0)] {
             wait(changed, || me.devices().iter().any(|d| d.id == other.id()));
         }

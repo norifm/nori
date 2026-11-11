@@ -1153,12 +1153,47 @@ pub fn room_settings(along: bool, remote_songs: bool) -> [String; 2] {
     ]
 }
 
-pub const PAIR_DEVICES: &str = "Pair devices (paste another device’s code with o)";
-pub const FORGET_DEVICES: &str = "Forget paired devices";
-pub const PAIRED: &str = "Devices paired";
-pub const PAIR_FAILED: &str = "Pairing failed";
-pub const FORGOTTEN: &str = "Paired devices forgotten";
-pub const PAIR_UNAVAILABLE: &str = "Pairing unavailable";
+pub const PAIRED_TITLE: &str = "PAIRED DEVICES";
+pub const PAIR_DEVICE: &str = "Pair a device";
+pub const PAIR_TITLE: &str = " Pair a device · enter pairs, esc closes ";
+pub const PAIR_SHOW: &str = "Scan this code with nori on your other device, or paste its pairing link below.";
+pub const PAIR_ROOM: &str = "Make the window bigger to show this computer's code.";
+pub const PAIRING: &str = "Pairing…";
+pub const FORGET: &str = "Forget";
+pub const FORGET_HOW: &str = "It stops controlling this computer, and this computer it. Pair again to undo.";
+
+pub fn forget_title(name: &str) -> String {
+    format!("Forget {name}?")
+}
+
+pub fn paired_with(name: &str) -> String {
+    format!("Paired with {name}")
+}
+
+/// A paired device's kind, and whether it is on this network now or when it last was.
+pub fn paired_line(d: &nori_core::remote::PairedDevice) -> String {
+    let seen = match (d.nearby, d.seen_days) {
+        (true, _) => "nearby".to_string(),
+        (false, 0) => "seen today".into(),
+        (false, 1) => "seen yesterday".into(),
+        (false, n) => format!("seen {n} days ago"),
+    };
+    format!("{} · {seen}", device_kind(d.kind))
+}
+
+/// Why pairing with the device `name` (when its code says it) failed.
+pub fn pair_failed(e: nori_core::remote::PairError, name: Option<&str>) -> String {
+    use nori_core::remote::PairError;
+    let (who, at_start) = name.map_or(("the other device", "The other device"), |n| (n, n));
+    match e {
+        PairError::NotACode => "That is not a pairing link. Copy the whole link from the other device.".into(),
+        PairError::Own => "That is this computer's own code.".into(),
+        PairError::Unavailable => "This profile doesn't pair: devices signed in to one server find each other.".into(),
+        PairError::Unreachable => format!("Can't reach {who}. Is it on this network, with remote control on?"),
+        PairError::TimedOut => format!("{at_start} didn't answer in time."),
+        PairError::Refused => format!("{at_start} turned the code down. Paste the one it shows now."),
+    }
+}
 
 #[cfg(test)]
 mod tests {

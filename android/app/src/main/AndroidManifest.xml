@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Scanning another device's pairing code, asked for only when the scanner opens; a phone without a camera
+      still installs the app. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <application
         android:name=".NoriApp"
         android:label="nori"
@@ -17,7 +21,8 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- A jam invite (nori-remote's invite link), from a QR code scanned by the camera or a shared link. -->
+            <!-- A jam invite or a device's pairing code (nori-remote's links), from a QR code scanned by the camera or
+              a shared link. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

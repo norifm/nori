@@ -874,7 +874,34 @@ pub fn cleared(songs: usize) -> String {
 
 pub const LINK_COPIED: &str = "Link copied";
 
-pub const PAIR_FAILED: &str = "Pairing failed";
+pub fn paired_with(name: &str) -> String {
+    format!("Paired with {name}")
+}
+
+/// A paired device's row: whether it is nearby now, or when it last was.
+pub fn paired_row(d: &nori_core::remote::PairedDevice) -> crate::PairedRow {
+    let line = match (d.nearby, d.seen_days) {
+        (true, _) => "Nearby".to_string(),
+        (false, 0) => "Seen today".into(),
+        (false, 1) => "Seen yesterday".into(),
+        (false, n) => format!("Seen {n} days ago"),
+    };
+    crate::PairedRow { id: d.id.clone().into(), name: d.name.clone().into(), line: line.into(), kind: device_glyph(d.kind) }
+}
+
+/// Why pairing with the device `name` (when its code says it) failed.
+pub fn pair_failed(e: nori_core::remote::PairError, name: Option<&str>) -> String {
+    use nori_core::remote::PairError;
+    let (who, at_start) = name.map_or(("the other device", "The other device"), |n| (n, n));
+    match e {
+        PairError::NotACode => "That is not a pairing link. Copy the whole link from the other device.".into(),
+        PairError::Own => "That is this computer’s own code.".into(),
+        PairError::Unavailable => "This profile doesn’t pair: devices signed in to one server find each other.".into(),
+        PairError::Unreachable => format!("Can’t reach {who}. Is it on this network, with remote control on?"),
+        PairError::TimedOut => format!("{at_start} didn’t answer in time."),
+        PairError::Refused => format!("{at_start} turned the code down. Paste the one it shows now."),
+    }
+}
 
 /// Why pasted cookies did not sign the account in.
 pub fn sign_in_failed(r: &nori_core::providers::SignInResult) -> String {
