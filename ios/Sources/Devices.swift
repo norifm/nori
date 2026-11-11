@@ -204,13 +204,16 @@ final class Bonjour: NSObject, NetServiceDelegate, NetServiceBrowserDelegate {
         service.name.withCString { nori_ios_lan_lost($0) }
     }
 
+    /// Every IPv4 address it resolved to goes to the core, which tries those on this iPod's network first.
     func netServiceDidResolveAddress(_ sender: NetService) {
-        guard let host = (sender.addresses ?? []).lazy.compactMap(Bonjour.ipv4).first else { return }
+        let hosts = (sender.addresses ?? []).compactMap(Bonjour.ipv4)
+        guard !hosts.isEmpty else { return }
+        let text = { (object: Any) in (try? JSONSerialization.data(withJSONObject: object)).flatMap { String(data: $0, encoding: .utf8) } }
         let fields = NetService.dictionary(fromTXTRecord: sender.txtRecordData() ?? Data())
             .compactMapValues { String(data: $0, encoding: .utf8) }
-        let json = (try? JSONSerialization.data(withJSONObject: fields)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        let (json, addresses) = (text(fields) ?? "{}", text(hosts) ?? "[]")
         sender.name.withCString { name in
-            host.withCString { h in json.withCString { nori_ios_lan_found(name, h, UInt16(sender.port), $0) } }
+            addresses.withCString { h in json.withCString { nori_ios_lan_found(name, h, UInt16(sender.port), $0) } }
         }
     }
 

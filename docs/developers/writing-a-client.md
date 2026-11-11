@@ -43,7 +43,7 @@ directly and is moving onto it.
 | `covers` | The cover loader's config, or none |
 | `offline` | Open on what is stored, with a transport that refuses |
 | `mpris` | The process's media controls (`desktop` feature), or none |
-| `device`, `discovery` | This device as remote control lists it, and the platform's mDNS (Bonjour on iOS) |
+| `device`, `discovery` | This device as remote control lists it, and the platform's mDNS (Bonjour on iOS), which hands `Remote::lan_found` every address a door resolved to |
 | `tasks` | Where work that waits on the network runs (`nori_host::tasks()` natively) |
 | `keeps_music` | Songs are kept as files under `data` (false in a browser) |
 | `decoders` | The platform's own decoders (`nori_player::decode::Platform`), preferred to Rust's |

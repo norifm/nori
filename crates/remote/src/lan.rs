@@ -3,6 +3,7 @@
 //! own invite credential and derives a separate credential for every guest, without sharing an account.
 
 use alloc::{format, string::{String, ToString}, vec::Vec};
+use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 use sha2::{Digest, Sha256};
 
 /// A 256-bit pairing or invite credential from the operating system.
@@ -37,25 +38,71 @@ pub struct PairCode {
     /// The device showing it.
     pub id: String,
     pub name: String,
-    /// Its door's `host:port`.
-    pub door: String,
+    /// Its door at each of its addresses ([`door_addresses`]), at least one.
+    pub doors: Vec<SocketAddr>,
 }
 
 const PAIR_LINK: &str = "nori://pair#";
 
-/// Device pairing is separate from a jam invitation.
+/// Device pairing is separate from a jam invitation. Each door is an `a`; an older nori reads the first.
 pub fn pairing_link(code: &PairCode) -> String {
-    let PairCode { invite, id, name, door } = code;
-    format!("{PAIR_LINK}k={invite}&d={}&a={}&n={}", crate::encode(id), crate::encode(door), crate::encode(name))
+    let PairCode { invite, id, name, doors } = code;
+    let doors: String = doors.iter().map(|d| format!("&a={}", crate::encode(&d.to_string()))).collect();
+    format!("{PAIR_LINK}k={invite}&d={}{doors}&n={}", crate::encode(id), crate::encode(name))
 }
 
 /// The code a pairing link carries; None for anything else, an older nori's code without its door among them.
 pub fn parse_pairing(link: &str) -> Option<PairCode> {
     let fragment = link.trim().strip_prefix(PAIR_LINK)?;
-    let get = |key: &str| fragment.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == key).and_then(|(_, v)| crate::decode(v));
+    let all = |key: &'static str| fragment.split('&').filter_map(|kv| kv.split_once('=')).filter(move |(k, _)| *k == key).filter_map(|(_, v)| crate::decode(v));
+    let get = |key| all(key).next();
     let invite = get("k").filter(|k| k.len() == 64 && k.bytes().all(|b| b.is_ascii_hexdigit()))?.to_ascii_lowercase();
-    let (id, door) = (get("d").filter(|d| !d.is_empty())?, get("a").filter(|a| !a.is_empty())?);
-    Some(PairCode { invite, id, name: get("n").unwrap_or_default(), door })
+    let id = get("d").filter(|d| !d.is_empty())?;
+    let doors: Vec<SocketAddr> = all("a").filter_map(|a| a.parse().ok()).collect();
+    (!doors.is_empty()).then(|| PairCode { invite, id, name: get("n").unwrap_or_default(), doors })
+}
+
+/// One of a device's IPv4 addresses, and the length of its network's prefix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Net {
+    pub ip: Ipv4Addr,
+    pub prefix: u8,
+}
+
+impl Net {
+    /// Whether `ip` is on this network.
+    fn holds(&self, ip: IpAddr) -> bool {
+        let IpAddr::V4(ip) = ip else { return false };
+        let host = 32u32.saturating_sub(u32::from(self.prefix));
+        host >= 32 || u32::from(self.ip) >> host == u32::from(ip) >> host
+    }
+}
+
+/// Where a device's door can be reached from another device, `first` (the address its traffic to the
+/// internet leaves from) before the others: every address of its networks `nets` but loopback. A device
+/// on two networks (Ethernet and Wi-Fi) is reached from each.
+pub fn door_addresses(nets: &[Net], first: Option<IpAddr>) -> Vec<IpAddr> {
+    let first = first.and_then(|ip| match ip { IpAddr::V4(v4) => Some(v4), IpAddr::V6(_) => None });
+    let mut out: Vec<IpAddr> = Vec::new();
+    for ip in first.into_iter().chain(nets.iter().map(|n| n.ip)) {
+        if !ip.is_loopback() && !ip.is_unspecified() && !out.contains(&IpAddr::V4(ip)) {
+            out.push(IpAddr::V4(ip));
+        }
+    }
+    out
+}
+
+/// The order a device on networks `nets` tries another's `doors` in: those on a network it is on first,
+/// then the others, each in the order given. IPv4 ones only: a door listens on IPv4.
+pub fn door_order(doors: impl IntoIterator<Item = SocketAddr>, nets: &[Net]) -> Vec<SocketAddr> {
+    let mut out: Vec<SocketAddr> = Vec::new();
+    for door in doors {
+        if door.is_ipv4() && !out.contains(&door) {
+            out.push(door);
+        }
+    }
+    out.sort_by_key(|door| !nets.iter().any(|n| n.holds(door.ip())));
+    out
 }
 
 /// The key a device paired with `invite` signs with: made on both devices from the pairing's nonce, never sent.
@@ -176,13 +223,18 @@ mod tests {
     #[test]
     fn pairing_codes_read_back() {
         let invite = "ab".repeat(32);
-        let code = PairCode { invite: invite.clone(), id: "d3sk".into(), name: "Ann's Mac & co".into(), door: "[fe80::1]:41234".into() };
+        let doors = vec!["192.168.196.241:41234".parse().unwrap(), "192.168.0.105:41234".parse().unwrap()];
+        let code = PairCode { invite: invite.clone(), id: "d3sk".into(), name: "Ann's Mac & co".into(), doors };
         assert_eq!(parse_pairing(&format!(" {} ", pairing_link(&code))), Some(code.clone()));
         let link = |fragment: &str| format!("nori://pair#{fragment}");
+        let one = |door: &str| PairCode { name: String::new(), doors: vec![door.parse().unwrap()], ..code.clone() };
         let cases = [
-            (link(&format!("k={}&d=d3sk&a=10.0.0.2%3A1", invite.to_uppercase())), Some(PairCode { name: String::new(), door: "10.0.0.2:1".into(), ..code })),
+            (link(&format!("k={}&d=d3sk&a=10.0.0.2%3A1", invite.to_uppercase())), Some(one("10.0.0.2:1"))),
+            (link(&format!("k={invite}&d=d3sk&a=%5Bfe80%3A%3A1%5D%3A41234")), Some(one("[fe80::1]:41234"))),
+            (link(&format!("k={invite}&d=d3sk&a=nori.local%3A1&a=10.0.0.2%3A1")), Some(one("10.0.0.2:1"))),
             (link(&format!("k={invite}")), None),
             (link(&format!("k={invite}&d=d3sk")), None),
+            (link(&format!("k={invite}&d=d3sk&a=")), None),
             (link(&format!("k={invite}&a=10.0.0.2%3A1")), None),
             (link(&format!("k={}&d=d3sk&a=10.0.0.2%3A1", &invite[1..])), None),
             (link(&format!("k={}&d=d3sk&a=10.0.0.2%3A1", "zz".repeat(32))), None),
@@ -194,6 +246,29 @@ mod tests {
         }
         assert_ne!(pair_key(&invite, "n1"), pair_key(&invite, "n2"));
         assert_ne!(pair_key(&invite, "n1"), pair_key(&"cd".repeat(32), "n1"));
+    }
+
+    /// A Mac on Ethernet (192.168.192.0/20, its route to the internet) and on the phone's Wi-Fi
+    /// (192.168.0.0/24): its code names both, and the phone tries the Wi-Fi one first.
+    #[test]
+    fn a_device_on_two_networks_is_reached_on_each() {
+        let net = |ip: &str, prefix| Net { ip: ip.parse().unwrap(), prefix };
+        let mac = [net("127.0.0.1", 8), net("192.168.0.105", 24), net("192.168.196.241", 20)];
+        let ethernet: IpAddr = "192.168.196.241".parse().unwrap();
+        let addresses = door_addresses(&mac, Some(ethernet));
+        assert_eq!(addresses, ["192.168.196.241", "192.168.0.105"].map(|a| a.parse::<IpAddr>().unwrap()), "the route's first, an older nori reading only it");
+        assert_eq!(door_addresses(&mac, Some("fd00::1".parse().unwrap())), ["192.168.0.105", "192.168.196.241"].map(|a| a.parse::<IpAddr>().unwrap()));
+        assert!(door_addresses(&mac[..1], None).is_empty());
+
+        let doors: Vec<SocketAddr> = addresses.iter().map(|ip| SocketAddr::new(*ip, 41234)).collect();
+        let order = |nets: &[Net], doors: Vec<SocketAddr>| door_order(doors, nets).iter().map(|d| d.to_string()).collect::<Vec<_>>();
+        let phone = [net("192.168.0.42", 24)];
+        assert_eq!(order(&phone, doors.clone()), ["192.168.0.105:41234", "192.168.196.241:41234"]);
+        assert_eq!(order(&[net("192.168.200.7", 20)], doors.clone()), ["192.168.196.241:41234", "192.168.0.105:41234"]);
+        assert_eq!(order(&[net("10.0.0.2", 8)], doors.clone()), ["192.168.196.241:41234", "192.168.0.105:41234"], "on neither: as given");
+        let v6: SocketAddr = "[fe80::1]:41234".parse().unwrap();
+        assert_eq!(order(&phone, vec![v6, doors[1], doors[1], doors[0]]), ["192.168.0.105:41234", "192.168.196.241:41234"], "IPv4 once each");
+        assert_eq!(order(&[net("0.0.0.0", 0)], vec![doors[1], doors[0]]), ["192.168.0.105:41234", "192.168.196.241:41234"], "a /0 holds both: as given");
     }
 
 }

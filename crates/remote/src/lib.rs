@@ -70,13 +70,16 @@ pub fn invite_link(server: &str, invite: &str) -> String {
     format!("{}{INVITE_PAGE}#s={}&k={}", server.trim_end_matches('/'), encode(server), encode(invite))
 }
 
-/// An app invitation for a LAN host without a web landing page.
-pub fn app_invite_link(server: &str, invite: &str) -> String {
-    format!("{APP_INVITE}?s={}&k={}", encode(server), encode(invite))
+/// An app invitation for a LAN host without a web landing page: its door at each of `servers`, an older
+/// nori reading the first.
+pub fn app_invite_link(servers: &[String], invite: &str) -> String {
+    let servers: String = servers.iter().map(|s| format!("s={}&", encode(s))).collect();
+    format!("{APP_INVITE}?{servers}k={}", encode(invite))
 }
 
-/// The relay's address and the invite key of an invite link, the page's or the app's; None for anything else.
-pub fn parse_invite(link: &str) -> Option<(String, String)> {
+/// The relay's address (a LAN host's door at each of its addresses) and the invite key of an invite link,
+/// the page's or the app's; None for anything else.
+pub fn parse_invite(link: &str) -> Option<(Vec<String>, String)> {
     let link = link.trim();
     let query = match link.strip_prefix(APP_INVITE) {
         Some(rest) => rest.strip_prefix('?')?,
@@ -86,9 +89,10 @@ pub fn parse_invite(link: &str) -> Option<(String, String)> {
             (web && page.trim_end_matches('/').ends_with(INVITE_PAGE)).then_some(fragment)?
         }
     };
-    let get = |key: &str| query.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == key).and_then(|(_, v)| decode(v));
-    let (server, invite) = (get("s")?, get("k")?);
-    (!server.is_empty() && !invite.is_empty()).then_some((server, invite))
+    let all = |key: &'static str| query.split('&').filter_map(|kv| kv.split_once('=')).filter(move |(k, _)| *k == key).map(|(_, v)| decode(v));
+    let servers = all("s").collect::<Option<Vec<String>>>()?;
+    let invite = all("k").next()??;
+    (!servers.is_empty() && servers.iter().all(|s| !s.is_empty()) && !invite.is_empty()).then_some((servers, invite))
 }
 
 /// Whether `link` is a jam invite, for the app to offer joining it.
@@ -200,7 +204,7 @@ mod tests {
         for server in ["https://music.example.com:8443/octo", "https://music.example.com/octo/", "http://10.0.2.2:5274"] {
             let link = invite_link(server, "k3y/+");
             assert!(link.starts_with(&format!("{}/nori/jam#s=", server.trim_end_matches('/'))), "{link}");
-            assert_eq!(parse_invite(&link), Some((server.into(), "k3y/+".into())), "{link}");
+            assert_eq!(parse_invite(&link), Some((vec![server.into()], "k3y/+".into())), "{link}");
         }
         assert!(is_guest_key(&guest_key("abc")) && !is_guest_key("abc"));
         assert_ne!(new_id(), new_id());
@@ -208,11 +212,13 @@ mod tests {
 
     #[test]
     fn invite_links_parse() {
-        let octo = Some(("https://music.example.com/octo".to_string(), "k3y".to_string()));
+        let octo = Some((vec!["https://music.example.com/octo".to_string()], "k3y".to_string()));
+        let lan = app_invite_link(&["http://192.168.196.241:5274".into(), "http://192.168.0.105:5274".into()], "lan-k");
         let cases = [
             ("https://music.example.com/octo/nori/jam#s=https%3A%2F%2Fmusic.example.com%2Focto&k=k3y", octo.clone()),
             (" HTTPS://music.example.com/octo/nori/jam/#k=k3y&s=https%3A%2F%2Fmusic.example.com%2Focto\n", octo.clone()),
-            ("http://192.168.1.5:5274/nori/jam#s=http%3A%2F%2F192.168.1.5%3A5274&k=abc", Some(("http://192.168.1.5:5274".into(), "abc".into()))),
+            ("http://192.168.1.5:5274/nori/jam#s=http%3A%2F%2F192.168.1.5%3A5274&k=abc", Some((vec!["http://192.168.1.5:5274".into()], "abc".into()))),
+            (lan.as_str(), Some((vec!["http://192.168.196.241:5274".into(), "http://192.168.0.105:5274".into()], "lan-k".into()))),
             ("nori://jam?s=https%3A%2F%2Fmusic.example.com%2Focto&k=k3y", octo),
             ("https://music.example.com/nori/jam#s=https%3A%2F%2Fmusic.example.com", None),
             ("https://music.example.com/nori/jam#s=https%3A%2F%2Fmusic.example.com&k=", None),
@@ -222,6 +228,7 @@ mod tests {
             ("nori://jam?s=x", None),
             ("nori://jam?s=&k=k", None),
             ("nori://jam?s=%zz&k=k", None),
+            ("nori://jam?s=x&s=&k=k", None),
             ("https://example.com", None),
             ("hello", None),
             ("", None),
@@ -272,7 +279,7 @@ mod tests {
 
     #[test]
     fn a_pairing_code_is_read_back_from_a_camera_frame() {
-        let link = lan::pairing_link(&lan::PairCode { invite: "ab".repeat(32), id: "d3sk".into(), name: "Ann's Mac".into(), door: "192.168.1.20:41234".into() });
+        let link = lan::pairing_link(&lan::PairCode { invite: "ab".repeat(32), id: "d3sk".into(), name: "Ann's Mac".into(), doors: ["192.168.196.241:41234", "192.168.0.105:41234", "192.168.64.1:41234"].map(|d| d.parse().unwrap()).into() });
         let q = qr_code(link.clone()).unwrap();
         // Drawn 4 px a module, off-centre with a quiet zone, on grey paper in a frame whose rows are padded.
         let (width, height, stride, scale, at) = (320, 240, 336, 4, (40, 20));

@@ -3,8 +3,8 @@ package dev.nori.music.net
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 
-/** A service NsdManager found and resolved: its name, address, port and TXT. */
-class Found(val name: String, val host: String, val port: Int, val txt: List<Pair<String, String>>)
+/** A service NsdManager found and resolved: its name, every address it resolved to, port and TXT. */
+class Found(val name: String, val hosts: List<String>, val port: Int, val txt: List<Pair<String, String>>)
 
 /**
  * Browsing one mDNS service [type] through Android's NsdManager until [stop]: each service found is
@@ -55,8 +55,9 @@ class NsdBrowse(private val nsd: NsdManager, private val type: String, private v
             override fun onResolveFailed(info: NsdServiceInfo, error: Int) = next()
             override fun onServiceResolved(info: NsdServiceInfo) {
                 @Suppress("DEPRECATION")
-                val host = info.host?.hostAddress
-                if (host != null && browsing()) found(Found(info.serviceName, host, info.port, info.attributes.map { (k, v) -> k to v?.toString(Charsets.UTF_8).orEmpty() }))
+                val addresses = if (android.os.Build.VERSION.SDK_INT >= 34) info.hostAddresses else listOfNotNull(info.host)
+                val hosts = addresses.mapNotNull { it.hostAddress }
+                if (hosts.isNotEmpty() && browsing()) found(Found(info.serviceName, hosts, info.port, info.attributes.map { (k, v) -> k to v?.toString(Charsets.UTF_8).orEmpty() }))
                 next()
             }
         })

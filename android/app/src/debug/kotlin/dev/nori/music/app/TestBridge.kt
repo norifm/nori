@@ -165,12 +165,12 @@ private fun remoteCheck(nori: dev.nori.music.Nori, arg: String, value: String, c
             dev.nori.music.ffi.JamJoin.Own -> "own"
             dev.nori.music.ffi.JamJoin.Ended -> "ended"
         }
-        // "found <host>|<port>|<k=v;k=v>": a door as mDNS would find it (the emulator sees no multicast
-        // from the host); the TXT as `dns-sd -L` prints it.
+        // "found <host,host…>|<port>|<k=v;k=v>": a door as mDNS would find it at each of its addresses (the
+        // emulator sees no multicast from the host); the TXT as `dns-sd -L` prints it.
         "found" -> {
-            val (host, port, txt) = value.split("|", limit = 3)
+            val (hosts, port, txt) = value.split("|", limit = 3)
             val params = txt.split(";").filter { "=" in it }.map { dev.nori.music.ffi.Param(it.substringBefore("="), it.substringAfter("=")) }
-            r()?.lanFound("test-${params.firstOrNull { it.key == "id" }?.value}", host, port.toUShort(), params); "found"
+            r()?.lanFound("test-${params.firstOrNull { it.key == "id" }?.value}", hosts.split(","), port.toUShort(), params); "found"
         }
         // "pick <device id or name>|here": the devices sheet's tap.
         "pick" -> {

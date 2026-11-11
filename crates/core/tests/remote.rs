@@ -1050,7 +1050,7 @@ fn active_discovery_uses_lan_without_a_relay() {
     let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(browsing.clone()));
     phone.remote.clone().discover_active(true);
     assert!(browsing.1.load(Ordering::Relaxed));
-    phone.remote.clone().lan_found(door.name, "127.0.0.1".into(), door.port, door.txt);
+    phone.remote.clone().lan_found(door.name, vec!["127.0.0.1".into()], door.port, door.txt);
     let mirror = phone.until("the playing LAN device", |r| r.active());
     assert_eq!((mirror.id, mirror.at), (desk.remote.id(), Some(1)));
     assert!(!browsing.1.load(Ordering::Relaxed), "after discovery only the active device is followed");
@@ -1459,7 +1459,7 @@ fn nearby_favorites_update_without_playback_commands() {
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
     desk.core.session.settings.open("").unwrap();
     desk.remote.clone().watch(true);
-    desk.remote.clone().lan_found(door.name, "127.0.0.1".into(), door.port, door.txt);
+    desk.remote.clone().lan_found(door.name, vec!["127.0.0.1".into()], door.port, door.txt);
     desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.state.is_some()));
     for kind in [Starrable::Song, Starrable::Album, Starrable::Artist] {
         for on in [true, false] {
@@ -1497,12 +1497,12 @@ fn nearby_devices_need_no_relay() {
     // Another account's device on the network does not list the door.
     let other = Device::new(&relay, ServerConfig { user: "bob".into(), ..ann("pw") }, DeviceKind::Desktop, "Bob");
     other.remote.clone().watch(true);
-    other.remote.clone().lan_found(door.name.clone(), "127.0.0.1".into(), door.port, txt());
+    other.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, txt());
     assert!(other.remote.devices().is_empty());
 
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
     desk.remote.clone().watch(true);
-    desk.remote.clone().lan_found(door.name.clone(), "127.0.0.1".into(), door.port, txt());
+    desk.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, txt());
     let seen = desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.state.is_some()));
     assert!(seen.nearby && seen.name == "Phone");
     desk.remote.clone().send(seen.id.clone(), Op::Pause);
@@ -1520,7 +1520,7 @@ fn nearby_devices_need_no_relay() {
     let first_polls = || relay.asked().iter().filter(|a| a.starts_with("lan ") && a.contains("noriRemote.poll") && !a.contains("since=")).count();
     let before = first_polls();
     for _ in 0..3 {
-        desk.remote.clone().lan_found(door.name.clone(), "127.0.0.1".into(), door.port, txt());
+        desk.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, txt());
     }
     phone.remote.clone().played(Playing { playing: true, position_ms: 1_000, index: None, volume: None, ..Default::default() });
     desk.until("the phone playing", |r| r.active().filter(|m| m.playing));
@@ -1529,7 +1529,7 @@ fn nearby_devices_need_no_relay() {
     // Seen at an address of this machine's no door answers at (another network interface): the phone is
     // still followed where it answers.
     let nowhere = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    desk.remote.clone().lan_found(door.name.clone(), "127.0.0.1".into(), nowhere, txt());
+    desk.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], nowhere, txt());
     phone.remote.clone().played(Playing { playing: false, position_ms: 3_000, index: None, volume: None, ..Default::default() });
     desk.until("the phone paused", |r| r.active().filter(|m| !m.playing));
     phone.remote.clone().played(Playing { playing: true, position_ms: 4_000, index: None, volume: None, ..Default::default() });
@@ -1550,7 +1550,7 @@ fn nearby_devices_need_no_relay() {
     // A device of the same user with an old password is not shown the door.
     let stranger = Device::new(&relay, ann("old"), DeviceKind::Desktop, "Old");
     stranger.remote.clone().watch(true);
-    stranger.remote.clone().lan_found(door.name.clone(), "127.0.0.1".into(), door.port, txt());
+    stranger.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, txt());
     assert!(stranger.remote.devices().is_empty(), "the announced account tag differs");
 }
 
@@ -1567,7 +1567,7 @@ fn a_mirrored_door_whose_announcement_went_stays_while_it_answers() {
     let phone_id = phone.remote.id();
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
     desk.remote.clone().watch(true);
-    desk.remote.clone().lan_found(door.name.clone(), "127.0.0.1".into(), door.port, door.txt.clone());
+    desk.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, door.txt.clone());
     desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.state.is_some()));
     desk.remote.clone().watch(false);
     desk.remote.clone().pick(Some(phone_id.clone()));
@@ -1594,7 +1594,7 @@ fn a_door_whose_announcement_went_leaves_the_picker_once_closed() {
     let door = announced.0.lock().clone().expect("the door announced");
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
     desk.remote.clone().watch(true);
-    desk.remote.clone().lan_found(door.name.clone(), "127.0.0.1".into(), door.port, door.txt.clone());
+    desk.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, door.txt.clone());
     desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.state.is_some()));
 
     desk.remote.clone().lan_lost(door.name.clone());
@@ -1752,7 +1752,7 @@ fn a_mirrored_device_whose_door_refuses_stops_playing() {
         let phone_id = phone.remote.id();
         let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
         desk.remote.clone().watch(true);
-        desk.remote.clone().lan_found(door.name, "127.0.0.1".into(), door.port, door.txt);
+        desk.remote.clone().lan_found(door.name, vec!["127.0.0.1".into()], door.port, door.txt);
         desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.nearby));
         desk.remote.clone().watch(false);
         desk.remote.clone().pick(Some(phone_id.clone()));
@@ -2314,7 +2314,7 @@ fn a_stopped_remote_lets_go_of_everything() {
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
     desk.remote.clone().watch(true);
     desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
-    desk.remote.clone().lan_found(door.name.clone(), "127.0.0.1".into(), door.port, door.txt.clone());
+    desk.remote.clone().lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, door.txt.clone());
     desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.nearby));
     desk.remote.clone().watch(false);
     desk.remote.clone().pick(Some(phone_id.clone()));
@@ -3423,7 +3423,7 @@ fn a_hand_over_reaches_the_device_without_waiting() {
         if nearby {
             for (d, door) in [(&desk, &phone_door), (&phone, &desk_door)] {
                 let door = door.0.lock().clone().expect("a door");
-                d.remote.clone().lan_found(door.name, "127.0.0.1".into(), door.port, door.txt);
+                d.remote.clone().lan_found(door.name, vec!["127.0.0.1".into()], door.port, door.txt);
             }
         }
         let (phone_id, desk_id) = (phone.remote.id(), desk.remote.id());

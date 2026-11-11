@@ -68,16 +68,18 @@ fn remote() -> Option<Arc<Remote>> {
     with_session(|s| s.remote()).flatten()
 }
 
-/// A door Bonjour resolved: service `service` at `host`:`port`, its TXT record as a JSON object of strings.
+/// A door Bonjour resolved: service `service` at `port` on each of `hosts` (a JSON array of addresses),
+/// its TXT record as a JSON object of strings.
 ///
 /// # Safety
 /// The strings are NUL-terminated UTF-8, or NULL.
 #[no_mangle]
-pub unsafe extern "C" fn nori_ios_lan_found(service: *const c_char, host: *const c_char, port: u16, txt: *const c_char) {
+pub unsafe extern "C" fn nori_ios_lan_found(service: *const c_char, hosts: *const c_char, port: u16, txt: *const c_char) {
     let txt: Map<String, Value> = serde_json::from_str(&c_text(txt)).unwrap_or_default();
     let txt = txt.into_iter().filter_map(|(key, v)| v.as_str().map(|v| Param { key, value: v.into() })).collect();
+    let hosts: Vec<String> = serde_json::from_str(&c_text(hosts)).unwrap_or_default();
     if let Some(r) = remote() {
-        r.lan_found(c_text(service), c_text(host), port, txt);
+        r.lan_found(c_text(service), hosts, port, txt);
     }
 }
 

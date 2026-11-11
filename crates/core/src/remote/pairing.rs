@@ -167,9 +167,13 @@ mod native {
             if !self.pairs() {
                 return None;
             }
-            let door = self.door_address()?;
+            let port = self.inner.lock().door.as_ref()?.port();
+            let doors: Vec<_> = crate::remote::door_ips().into_iter().map(|ip| std::net::SocketAddr::new(ip, port)).collect();
+            if doors.is_empty() {
+                return None;
+            }
             let invite = invite(&self.client.core.session.settings)?;
-            Some(lan::pairing_link(&lan::PairCode { invite, id: self.id.clone(), name: self.me.name.clone(), door }))
+            Some(lan::pairing_link(&lan::PairCode { invite, id: self.id.clone(), name: self.me.name.clone(), doors }))
         }
 
         /// The devices paired with this one, the nearby ones first, then by when each was last seen.
@@ -182,7 +186,8 @@ mod native {
         }
 
         /// Pairs with the device whose code `link` is: sends the code back to that device's door, which
-        /// answers with itself. Both then list the other and control each other on this network.
+        /// answers with itself, at each address the code names until one answers (those on this device's
+        /// networks first). Both then list the other and control each other on this network.
         pub async fn pair(self: Arc<Self>, link: String) -> Result<PairedDevice, PairError> {
             let code = lan::parse_pairing(&link).ok_or(PairError::NotACode)?;
             if !self.pairs() {
@@ -194,8 +199,24 @@ mod native {
             let nonce = self.nonce().ok_or(PairError::Unavailable)?;
             let me = serde_json::to_string(&Member { id: self.id.clone(), name: self.me.name.clone(), kind: self.me.kind, state: None }).unwrap_or_default();
             let target = lan::signed(&code.invite, "POST", &format!("/rest/noriRemote.pair?nonce={nonce}"), me.as_bytes(), db::now_ms());
-            let url = format!("http://{}{target}", code.door);
-            let other = answered(self.client.transport.send(Exchange { url, json: Some(me), timeout_ms: PAIR_TIMEOUT_MS, ..Default::default() }).await)?;
+            let mut failed = None;
+            let mut other = None;
+            for door in lan::door_order(code.doors, &crate::remote::own_nets()) {
+                let url = format!("http://{door}{target}");
+                match answered(self.client.transport.send(Exchange { url, json: Some(me.clone()), timeout_ms: PAIR_TIMEOUT_MS, ..Default::default() }).await) {
+                    Ok(member) => {
+                        other = Some(member);
+                        break;
+                    }
+                    // Its door answered: the code is no longer good anywhere.
+                    Err(PairError::Refused) => return Err(PairError::Refused),
+                    // Not there at this address: the reason the likeliest one gave stands.
+                    Err(e) => {
+                        failed.get_or_insert(e);
+                    }
+                }
+            }
+            let other = other.ok_or(failed.unwrap_or(PairError::Unreachable))?;
             let now = db::now_ms();
             let device = Kept { id: other.id, name: other.name, kind: other.kind, key: lan::pair_key(&code.invite, &nonce), seen_ms: now };
             self.keep_pair(device.clone());
@@ -271,15 +292,6 @@ mod native {
                 if let (Some(door), Some(access)) = (&self.inner.lock().door, door_access(&self.client)) {
                 door.set_access(access);
             }
-        }
-
-        /// Where this device's door is, as `host:port` on its network; None while it is closed.
-        fn door_address(&self) -> Option<String> {
-            let port = self.inner.lock().door.as_ref()?.port();
-            Some(match crate::remote::lan_ip()? {
-                std::net::IpAddr::V6(ip) => format!("[{ip}]:{port}"),
-                ip => format!("{ip}:{port}"),
-            })
         }
 
         fn nonce(&self) -> Option<String> {

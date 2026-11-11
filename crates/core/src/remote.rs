@@ -2006,8 +2006,9 @@ impl Remote {
         true
     }
 
-    /// A door the platform's discovery found: service `service` at `host`:`port` with TXT `txt`.
-    pub fn lan_found(self: Arc<Self>, service: String, host: String, port: u16, txt: Vec<Param>) {
+    /// A door the platform's discovery found: service `service` at `port` on each of `hosts` (every
+    /// address it resolved to) with TXT `txt`.
+    pub fn lan_found(self: Arc<Self>, service: String, hosts: Vec<String>, port: u16, txt: Vec<Param>) {
         let get = |k: &str| txt.iter().find(|p| p.key == k).map(|p| p.value.clone()).unwrap_or_default();
         let id = get("id");
         let known = match self.account_tag() {
@@ -2018,16 +2019,21 @@ impl Remote {
             return;
         }
         let kind = serde_json::from_value(serde_json::Value::String(get("kind"))).unwrap_or_default();
-        let host = if host.contains(':') && !host.starts_with('[') { format!("[{host}]") } else { host };
-        let base = format!("http://{host}:{port}");
+        let doors = hosts.iter().filter_map(|h| h.parse().ok()).map(|ip| std::net::SocketAddr::new(ip, port));
+        let bases: Vec<String> = lan::door_order(doors, &own_nets()).iter().map(|d| format!("http://{d}")).collect();
+        if bases.is_empty() {
+            return;
+        }
         {
             let mut i = self.inner.lock();
-            // Seen again, maybe at another of its addresses: its poller goes on, and tries that one too.
+            // Seen again, maybe at other addresses: its poller goes on, and tries those too.
             if let Some(p) = i.peers.iter_mut().find(|p| p.service == service && p.member.id == id) {
                 p.library_marks = get("marks") == "1";
                 p.lost = false;
-                if !p.bases.contains(&base) {
-                    p.bases.push(base);
+                for base in bases {
+                    if !p.bases.contains(&base) {
+                        p.bases.push(base);
+                    }
                 }
                 return;
             }
@@ -2036,7 +2042,7 @@ impl Remote {
                 pairing::seen(&self.client, &id);
             }
             let member = Member { id, name: get("name"), kind, state: None };
-            i.peers.push(Peer { library_marks: get("marks") == "1", service, bases: vec![base], failed: 0, member, received: self.now(), since: None, poller: None, lost: false });
+            i.peers.push(Peer { library_marks: get("marks") == "1", service, bases, failed: 0, member, received: self.now(), since: None, poller: None, lost: false });
         }
         self.keep_polling();
     }
@@ -2452,9 +2458,9 @@ pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, re
     if let Some(own) = own_invite(settings, remote, link.clone()) {
         return Ok(own);
     }
-    let (server, invite) = nori_remote::parse_invite(&link).ok_or_else(|| NetError::Parse { reason: "not a jam invite".into() })?;
+    let (servers, invite) = nori_remote::parse_invite(&link).ok_or_else(|| NetError::Parse { reason: "not a jam invite".into() })?;
     let local = invite.strip_prefix("lan-");
-    if local.is_some() && !nori_remote::is_home_only(&server) { return Err(NetError::Parse { reason: "LAN invitation requires a local address".into() }); }
+    if local.is_some() && !servers.iter().all(|s| nori_remote::is_home_only(s)) { return Err(NetError::Parse { reason: "LAN invitation requires a local address".into() }); }
     #[cfg(not(target_arch = "wasm32"))]
     let nonce = if local.is_some() { lan::new_secret().map_err(|e| NetError::Parse { reason: e.to_string() })? } else { String::new() };
     #[cfg(target_arch = "wasm32")]
@@ -2462,16 +2468,26 @@ pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, re
     if let Some(local) = local {
         // The host's kind rides after the secret ([`Remote::open_lan_jam`]); the door knows the secret alone.
         let (secret, kind) = local.split_once('~').map_or((local, None), |(s, k)| (s, crate::settings::ServerKind::from_id(k)));
-        let url = format!("{}{}", server.trim_end_matches('/'), lan::signed(secret, "GET", &lan::target("noriRemote.join", &[("name".into(), name), ("nonce".into(), nonce.clone())]), b"", db::now_ms()));
-        // A door refuses with 401 and a JSON body, which `transport::get` would take for an answer.
-        match transport.get(url, 0).await?.status {
-            401 => return Ok(JamJoin::Ended),
-            200..=299 => {}
-            status => return Err(NetError::Http { status }),
+        let target = lan::signed(secret, "GET", &lan::target("noriRemote.join", &[("name".into(), name), ("nonce".into(), nonce.clone())]), b"", db::now_ms());
+        // The host's door at each of its addresses, those on this device's networks first, until one answers.
+        let doors = lan::door_order(servers.iter().filter_map(|s| s.strip_prefix("http://")?.trim_end_matches('/').parse().ok()), &own_nets());
+        let mut failed = None;
+        for door in doors {
+            let server = format!("http://{door}");
+            // A door refuses with 401 and a JSON body, which `transport::get` would take for an answer.
+            match transport.get(format!("{server}{target}"), 0).await.map(|r| r.status) {
+                Ok(401) => return Ok(JamJoin::Ended),
+                Ok(200..=299) => {
+                    let key = format!("lan-{}", lan::member_secret(secret, &nonce));
+                    return Ok(JamJoin::Joined { pass: JamPass { url: server, api_key: nori_remote::guest_key(&key), kind: kind.unwrap_or_default() } });
+                }
+                Ok(status) => _ = failed.get_or_insert(NetError::Http { status }),
+                Err(e) => _ = failed.get_or_insert(e.into()),
+            }
         }
-        let key = format!("lan-{}", lan::member_secret(secret, &nonce));
-        return Ok(JamJoin::Joined { pass: JamPass { url: server, api_key: nori_remote::guest_key(&key), kind: kind.unwrap_or_default() } });
+        return Err(failed.unwrap_or(NetError::Parse { reason: "no door to reach".into() }));
     }
+    let server = servers.into_iter().next().unwrap_or_default();
     let url = api::Server::with(&server, api::Auth::ApiKey(&nori_remote::guest_key(&invite))).url("noriRemote.join", &[("name".into(), name)]);
     let body = match transport::get(&*transport, url, 0).await {
         Err(NetError::Http { status: 401 }) => return Ok(JamJoin::Ended),
@@ -2628,12 +2644,34 @@ impl Running {
     }
 }
 
-/// This device's address on its network: the one a packet to the internet would leave from (nothing is sent).
+/// The address a packet to the internet would leave this device from (nothing is sent).
 #[cfg(not(target_arch = "wasm32"))]
-fn lan_ip() -> Option<std::net::IpAddr> {
+fn route_ip() -> Option<std::net::IpAddr> {
     let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("192.0.2.1:9").ok()?;
     Some(socket.local_addr().ok()?.ip())
+}
+
+/// This device's IPv4 networks, from its interfaces that are up.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn own_nets() -> Vec<lan::Net> {
+    let interfaces = if_addrs::get_if_addrs().unwrap_or_default();
+    interfaces.into_iter().filter(|i| i.is_oper_up()).filter_map(|i| match i.addr {
+        if_addrs::IfAddr::V4(a) => Some(lan::Net { ip: a.ip, prefix: a.prefixlen }),
+        if_addrs::IfAddr::V6(_) => None,
+    }).collect()
+}
+
+/// A browser sees no interfaces.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn own_nets() -> Vec<lan::Net> {
+    Vec::new()
+}
+
+/// Each address another device may reach this one's door at ([`lan::door_addresses`]).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn door_ips() -> Vec<std::net::IpAddr> {
+    lan::door_addresses(&own_nets(), route_ip())
 }
 
 /// `endpoint` with `params` at the door of the LAN jam this guest profile is in, signed with its member
@@ -3042,15 +3080,17 @@ impl Remote {
     #[cfg(not(target_arch = "wasm32"))]
     fn open_lan_jam(self: &Arc<Self>) -> Result<Option<String>, NetError> {
         let secret = lan::new_secret().map_err(|e| NetError::Parse { reason: e.to_string() })?;
-        let ip = lan_ip().ok_or_else(|| NetError::Parse { reason: "no network address".into() })?;
+        let ips = door_ips();
+        if ips.is_empty() { return Err(NetError::Parse { reason: "no network address".into() }); }
         let link = {
             let mut i = self.inner.lock();
             if !matches!(i.host, HostJam::None) || self.me.kind == DeviceKind::Guest { return Ok(None); }
             if i.door.is_none() { i.door = self.open_door(); }
             let door = i.door.as_ref().ok_or_else(|| NetError::Parse { reason: "LAN listener unavailable".into() })?;
+            let servers: Vec<String> = ips.iter().map(|ip| format!("http://{}", std::net::SocketAddr::new(*ip, door.port()))).collect();
             // The host's kind rides in the invite: its guests play from the same provider.
             let invite = format!("lan-{secret}~{}", self.client.core.kind().id());
-            let link = nori_remote::app_invite_link(&format!("http://{ip}:{}", door.port()), &invite);
+            let link = nori_remote::app_invite_link(&servers, &invite);
             let weak = Arc::downgrade(self);
             let members = weak.clone();
             let asks = weak.clone();

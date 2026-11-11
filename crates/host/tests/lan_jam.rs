@@ -73,14 +73,18 @@ fn guests_request_over_lan_and_leave_without_an_account() {
     host.clone().serve(true);
     host.clone().serve(false);
     host.clone().serve(true);
-    let (server, invite) = nori_remote::parse_invite(&link).unwrap();
-    let port = server.rsplit(':').next().unwrap();
-    let link = nori_remote::invite_link(&format!("http://127.0.0.1:{port}"), &invite);
+    let (servers, invite) = nori_remote::parse_invite(&link).unwrap();
+    let port = servers[0].rsplit(':').next().unwrap();
+    // The host on two networks: the guest joins at the address that answers, and keeps it.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    let here = format!("http://127.0.0.1:{port}");
+    let link = nori_remote::app_invite_link(&[format!("http://{closed}"), here.clone()], &invite);
     let guest_settings = Settings::new();
     let guest_path = nori_host::db_path(guest_dir.path());
     guest_settings.open(&guest_path).unwrap();
     let joined = block_on(remote::jam_join(nori_http::Http::new(), guest_settings.clone(), None, link.clone(), "Guest".into())).unwrap();
     let JamJoin::Joined { pass } = joined else { panic!("guest joined: {joined:?}") };
+    assert_eq!(pass.url, here);
     let guest_profile = remote::jam_profile(pass, "guest".into(), "Jam".into());
     assert_eq!(guest_profile.kind, music_plugin(), "the songs are the host's provider's");
     assert!(guest_profile.user.is_empty() && guest_profile.password.is_empty());
@@ -125,7 +129,7 @@ fn guests_request_over_lan_and_leave_without_an_account() {
 /// `link` with its door on this machine's loopback, where a test's doors listen too.
 fn here(link: String) -> String {
     let mut code = nori_remote::lan::parse_pairing(&link).unwrap();
-    code.door = format!("127.0.0.1:{}", code.door.rsplit(':').next().unwrap());
+    code.doors = vec![std::net::SocketAddr::from(([127, 0, 0, 1], code.doors[0].port()))];
     nori_remote::lan::pairing_link(&code)
 }
 
@@ -160,8 +164,12 @@ fn paired_devices_control_each_other_and_can_be_forgotten() {
     let b = Remote::new(make(&b_dir, "b"), RemoteMe { name: "B".into(), kind: DeviceKind::Terminal }, Arc::new(Player(b_ops)), Arc::new(Shown(b_changes, Mutex::new(false))), None);
     assert_eq!(a.pairing_link(), None, "no code while the door is closed");
     a.clone().serve(true);
-    let pairing = here(a.pairing_link().unwrap());
-    let invite = nori_remote::lan::parse_pairing(&pairing).unwrap().invite;
+    let mut code = nori_remote::lan::parse_pairing(&here(a.pairing_link().unwrap())).unwrap();
+    // A on two networks, the first of its addresses not reached from B's.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    code.doors.insert(0, closed);
+    let pairing = nori_remote::lan::pairing_link(&code);
+    let invite = code.invite;
     assert_eq!(remote::pairing_name(pairing.clone()).as_deref(), Some("A"));
     let paired = pair(&b, pairing.clone()).unwrap();
     assert_eq!((paired.id, paired.name.as_str(), paired.kind), (a.id(), "A", DeviceKind::Desktop));
@@ -172,7 +180,8 @@ fn paired_devices_control_each_other_and_can_be_forgotten() {
     assert!(announced.txt.iter().all(|param| !param.value.contains(&invite)), "discovery does not contain the pairing credential");
     b.clone().watch(true);
     assert!(!b.paired()[0].nearby);
-    b.clone().lan_found("host".into(), "127.0.0.1".into(), announced.port, announced.txt);
+    // Found at each of its addresses: its link-local IPv6 one, where its door does not listen, is passed over.
+    b.clone().lan_found("host".into(), vec!["fe80::1".into(), "fe80::1%en0".into(), "127.0.0.1".into()], announced.port, announced.txt);
     wait(&b_changed, || b.devices().len() == 1);
     assert!(b.paired()[0].nearby, "found on this network");
     b.clone().send(a.id(), Op::Pause);
@@ -206,7 +215,7 @@ fn pairing_says_why_it_failed() {
     let own = here(a.pairing_link().unwrap());
     let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
     let mut gone = nori_remote::lan::parse_pairing(&own).unwrap();
-    gone.door = closed.to_string();
+    gone.doors = vec![closed];
     assert_eq!(pair(a, "hello".into()), Err(remote::PairError::NotACode));
     assert_eq!(pair(a, own.clone()), Err(remote::PairError::Own));
     gone.id = "elsewhere".into();
@@ -246,7 +255,7 @@ fn a_speaker_reached_through_a_device_is_cast_to_there() {
     pair(&b, here(a.pairing_link().unwrap())).unwrap();
     let announced = discovery.0.lock().unwrap().clone().unwrap();
     b.clone().watch(true);
-    b.clone().lan_found("host".into(), "127.0.0.1".into(), announced.port, announced.txt);
+    b.clone().lan_found("host".into(), vec!["127.0.0.1".into()], announced.port, announced.txt);
     wait(&b_changed, || b.devices().len() == 1);
     assert!(b.outputs().is_empty());
     let speaker = nori_remote::wire::CastOutput { plugin: "p".into(), id: "kitchen".into(), name: "Kitchen".into(), look: Default::default() };
@@ -291,7 +300,7 @@ impl remote::Discovery for Port {
         };
         if let Some(door) = door {
             for remote in browsing {
-                remote.lan_found(door.name.clone(), "127.0.0.1".into(), door.port, door.txt.clone());
+                remote.lan_found(door.name.clone(), vec!["127.0.0.1".into()], door.port, door.txt.clone());
             }
         }
     }
@@ -305,7 +314,7 @@ impl remote::Discovery for Port {
         };
         if let (Some(me), true) = (me, on) {
             for door in doors {
-                me.clone().lan_found(door.name, "127.0.0.1".into(), door.port, door.txt);
+                me.clone().lan_found(door.name, vec!["127.0.0.1".into()], door.port, door.txt);
             }
         }
     }
