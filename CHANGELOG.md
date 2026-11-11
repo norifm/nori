@@ -6,6 +6,37 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-11
+
+### Added
+
+- A song's details can be selected and copied on the desktop
+- The queue fades out at its top as well as at its bottom
+- Profiles keep their order and move by drag in settings
+- The queue can be cleared and undone on every client (fixes #146)
+- Paired devices are listed and forgotten one by one; devices paired before need pairing again once (#147)
+- Compressor and autofill pick Off or a kind, no separate switch
+
+### Fixed
+
+- The desktop profiles menu switches to the profile picked
+- The desktop lyrics blur no longer covers a dialog or menu over it
+- The lyrics blur stays off under a menu on Linux too
+- A song menu's seal stamps and stays open instead of closing it
+- The desktop search preview shows results as they arrive
+- Lyrics the singing can't place read as unsure, not on time
+- Home shows one shelf of each title and each item in it once
+- The full player's cover fades into its page with no line where it ends
+- A cover's blurred page no longer breaks into bands and speckles
+- Lyrics show and move the same on every device in cross-device play
+- Rap over a melodic beat has its lyrics timed by the voice's loudness
+- Lyrics on time beat lyrics the timing check has to move
+- The phone's volume keys move the other device's volume again
+
+### Performance
+
+- A search typed over stops, so the next one isn't queued behind it
+
 ## [0.8.1] - 2026-11-10
 
 ### Fixed
