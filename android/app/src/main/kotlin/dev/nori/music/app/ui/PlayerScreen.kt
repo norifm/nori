@@ -1157,14 +1157,14 @@ internal fun SoftSleeve(
     // over the whole of it on every frame. The rows it leaves out are the ones it shows nothing in.
     val cropped = !across && sleeve === SLEEVE_ALL
     val cut = remember { IntArray(1) }
-    // Midnight has no wash under the sleeve, so the sleeve fades into black itself (DarkFade); upright only.
-    val dark = !across && !LocalPapers.current.coversTint && android.os.Build.VERSION.SDK_INT >= 33
-    val fade = if (dark) remember { DarkFade() } else null
+    // Upright, the sleeve fades into its page itself (SleeveFade), into the wash or Midnight's black alike:
+    // a gradient ending at full slope shows a line where the picture stops.
+    val fade = if (!across && android.os.Build.VERSION.SDK_INT >= 33) remember { SleeveFade() } else null
     Box(
         modifier
             .graphicsLayer {
                 compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen; if (mirror) scaleX = -1f
-                renderEffect = fade?.let { f -> val (bottom, height) = edge(size); f.effect(bottom - height * stage.darkMelt, bottom) }
+                renderEffect = fade?.let { f -> val (bottom, height) = edge(size); f.effect(bottom - height * stage.fadeMelt, bottom) }
             }
             .then(if (fade != null) Modifier else Modifier.rubOutBottom(across) { val (bottom, height) = edge(size); (bottom - height * (if (across) stage.acrossMelt else MELT)) to bottom }),
     ) {
@@ -1227,14 +1227,13 @@ internal fun SoftSleeve(
 }
 
 /**
- * Midnight's fade of the sleeve into black, from y `top` to `bottom` of its layer: what is kept falls as
- * nori_look's `dark_keep`, worked out at full precision and dithered once, as it is rounded to the screen's
- * eight bits. Faded in the layer instead, every level is rounded first, and the last few near black stood
- * as bands with a line where the last one met black. Black stays black: a pixel is only lit where the
- * fade leaves something of the picture.
+ * The sleeve's fade into its page, from y `top` to `bottom` of its layer: what is kept falls as nori_look's
+ * `sleeve_keep`, worked out at full precision and dithered once, as it is rounded to the screen's eight
+ * bits. Faded in the layer instead, every level is rounded first, and the last few stood as bands with a
+ * line where the last one met the page. Nothing is lit where the fade leaves nothing of the picture.
  */
 @androidx.annotation.RequiresApi(33)
-private class DarkFade {
+private class SleeveFade {
     private val shader = android.graphics.RuntimeShader(
         """
         uniform shader content;
@@ -1251,7 +1250,7 @@ private class DarkFade {
             return c;
         }
         """,
-    ).apply { setFloatUniform("power", stage.darkFadePower) }
+    ).apply { setFloatUniform("power", stage.fadePower) }
     private var made: Triple<Float, Float, androidx.compose.ui.graphics.RenderEffect>? = null
 
     /** The effect for a band from [top] to [bottom]; made again only when the band moves. */

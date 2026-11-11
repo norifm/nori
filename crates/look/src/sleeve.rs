@@ -15,21 +15,22 @@ const fn s(at: f32, alpha: f32) -> Stop {
     Stop { at, alpha }
 }
 
-/// Fade-out of the sleeve over its bottom band (the last [`crate::cover::FADE_SHARE`]): nearly linear, so the
-/// cover still shows behind the title and is gone only at the band's end.
+/// Fade-out of the sleeve over its bottom band (the last [`crate::cover::FADE_SHARE`]) where the client cannot
+/// run [`sleeve_keep`] (Android before 13): nearly linear, so the cover still shows behind the title and
+/// is gone only at the band's end.
 pub const RUB_OUT: [Stop; 3] = [s(0.0, 0.0), s(0.5, 0.42), s(1.0, 1.0)];
 
-/// In Midnight the sleeve fades into true black, with no wash under it to fade into. Its band is this
-/// many times [`crate::cover::FADE_SHARE`], ending where the other pages' does, and what is kept of the
-/// sleeve across it is [`dark_keep`]: it arrives at black with no slope, so there is no row where the
-/// fade is seen to stop. The client dithers it as it is rounded, so the last levels thin out rather than step.
-pub const DARK_MELT_REACH: f32 = 1.3;
-/// The power of [`dark_keep`]'s ease.
-pub const DARK_FADE_POWER: f32 = 2.0;
+/// The upright sleeve fades into its page itself, on every appearance: into the wash, or Midnight's true
+/// black. Its band is this many times [`crate::cover::FADE_SHARE`], and what is kept of the sleeve across
+/// it is [`sleeve_keep`]: it arrives at the page with no slope, so there is no row where the fade is seen
+/// to stop. The client dithers it as it is rounded, so the last levels thin out rather than step.
+pub const MELT_REACH: f32 = 1.3;
+/// The power of [`sleeve_keep`]'s ease.
+pub const FADE_POWER: f32 = 2.0;
 
-/// What is kept of the sleeve `t` (0..1) down Midnight's band.
-pub fn dark_keep(t: f32) -> f32 {
-    (1.0 - t.clamp(0.0, 1.0)).powf(DARK_FADE_POWER)
+/// What is kept of the sleeve `t` (0..1) down its band.
+pub fn sleeve_keep(t: f32) -> f32 {
+    (1.0 - t.clamp(0.0, 1.0)).powf(FADE_POWER)
 }
 
 /// On its side the sleeve's right edge goes soft instead: a band this share of its width, short so the
@@ -115,18 +116,18 @@ mod tests {
     }
 
     #[test]
-    fn midnight_fade_eases_into_black() {
-        assert_eq!((dark_keep(0.0), dark_keep(1.0)), (1.0, 0.0));
+    fn sleeve_fade_eases_into_its_page() {
+        assert_eq!((sleeve_keep(0.0), sleeve_keep(1.0)), (1.0, 0.0));
         let step = 0.01;
         let mut last = 1.0;
         for i in 1..=100 {
-            let k = dark_keep(i as f32 * step);
+            let k = sleeve_keep(i as f32 * step);
             assert!(k <= last, "it never brightens again, at {i}");
             last = k;
         }
         // Its slope at the end is nought: the last hundredth of the band takes a ten-thousandth away.
-        assert!(dark_keep(1.0 - step) < 0.001);
-        assert!(dark_keep(1.0 - step) - dark_keep(1.0) < (dark_keep(0.5) - dark_keep(0.5 + step)) / 10.0);
+        assert!(sleeve_keep(1.0 - step) < 0.001);
+        assert!(sleeve_keep(1.0 - step) - sleeve_keep(1.0) < (sleeve_keep(0.5) - sleeve_keep(0.5 + step)) / 10.0);
     }
 
     #[test]
