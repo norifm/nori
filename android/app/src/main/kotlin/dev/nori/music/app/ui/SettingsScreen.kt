@@ -433,18 +433,18 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
             dismissButton = { TextAction(say.cancel, { asking = null }) },
         )
     }
-    // A ranked row held and dragged (the lyrics services, one list whether on or off): which one, in
-    // what order the rows were when it was picked up and where it would go, how far the finger has gone,
-    // and each row's height (they differ: a service's line runs to two or three), which places are
-    // measured in. The ranking is only changed when it is let go,
-    // in one step (`lyricsPlace`): moving a row's composition while a finger is on it cancels the gesture,
-    // and the rest of the drag then scrolled the page instead.
+    // A ranked row held and dragged (the profiles; the lyrics services, one list whether on or off): which
+    // one, in what order the rows were when it was picked up and where it would go, how far the finger has
+    // gone, and each row's height (they differ: a service's line runs to two or three), which places are
+    // measured in. The order is only changed when it is let go, in one step (`placeRanked`): moving a
+    // row's composition while a finger is on it cancels the gesture, and the rest of the drag then
+    // scrolled the page instead.
     var drag by remember { mutableStateOf<RankDrag?>(null) }
     var fingerY by remember { mutableFloatStateOf(0f) }
     val heights = remember { androidx.compose.runtime.mutableStateMapOf<String, Float>() }
     /** Where row [id] starts, in pixels from the first, with the rows in [list]'s order. */
     fun top(list: List<String>, id: String): Float { var y = 0f; for (o in list) { if (o == id) break; y += heights[o] ?: 0f }; return y }
-    val order = section.rows.mapNotNull { (it as? SettingRow.Ranked)?.id }
+    val order = section.rows.mapNotNull { (it as? SettingRow.Placed)?.id }
     // The order as it is now, for a gesture that outlives the composition it started in.
     val orderNow by androidx.compose.runtime.rememberUpdatedState(order)
     val shown = drag?.shown ?: order
@@ -453,11 +453,95 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     drag?.let { d -> if (!d.active && (d.shown == order || order != d.from)) androidx.compose.runtime.SideEffect { drag = null } }
     var keying by remember { mutableStateOf<SettingRow.Ranked?>(null) }
     NoriDialog(keying, { keying = null }) { row -> KeyDialog(row, { keying = null }) { v -> vm.set(row.keyName, v); keying = null } }
+    // Each row is drawn at its place in the order shown, gliding there, while it is laid out in the core's:
+    // the neighbours make way as the held row passes them, and when it is let go it settles into its place
+    // as the core's order catches up, with nothing jumping at either end. [content] puts the modifier that
+    // picks the row up where a long press should, anywhere on it like the home page's rows (a plain drag
+    // scrolls the page, and never moves a row); it picks nothing up where the row is not [movable].
+    @Composable
+    fun Placing(row: SettingRow.Placed, movable: Boolean, content: @Composable (Modifier) -> Unit) {
+        val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+        // The held row is lifted over its neighbours, so it needs the plate's own colour behind its words.
+        val plate = MaterialTheme.colorScheme.surfaceContainer
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        val mine = drag?.id == row.id
+        val following = mine && drag?.active == true
+        // Where it is drawn, from the top of the list: it glides to its place in the order shown when a
+        // drag moves it, and is simply there when anything else does (rows being measured, a page
+        // opening). Not restarted when the drag ends, so a row settling finishes its glide.
+        val shownY = top(shown, row.id)
+        val slot = remember { androidx.compose.animation.core.Animatable(shownY) }
+        // Whether a drag moved it is read here, in the composition that moved it: by the time the effect
+        // starts the core may already have taken the drop and ended the drag.
+        val glide = drag != null
+        LaunchedEffect(shownY, following) {
+            if (following) return@LaunchedEffect
+            if (!glide) slot.snapTo(shownY)
+            else slot.animateTo(shownY, AppMotion.settle())
+        }
+        // Picked up and put down over a moment, not in a frame: its lift, shadow and plate.
+        val lift = androidx.compose.animation.core.animateFloatAsState(
+            if (following) 1f else 0f, AppMotion.fadeIn(), label = "lift",
+        )
+        val above by remember { androidx.compose.runtime.derivedStateOf { lift.value > 0f } }
+        Column(
+            Modifier.fillMaxWidth()
+                .zIndex(if (mine || above) 1f else 0f)
+                .graphicsLayer {
+                    val at = if (following) top(drag?.from ?: order, row.id) + fingerY else slot.value
+                    translationY = at - top(order, row.id)
+                    val l = lift.value
+                    shadowElevation = 14f * l; scaleX = 1f + 0.02f * l; scaleY = 1f + 0.02f * l
+                }
+                .drawBehind { lift.value.takeIf { it > 0f }?.let { drawRect(plate.copy(alpha = plate.alpha * it)) } }
+                .onGloballyPositioned { val h = it.size.height.toFloat(); if (heights[row.id] != h) heights[row.id] = h },
+        ) {
+            val pickUp = if (!movable) Modifier else Modifier.pointerInput(row.id) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = {
+                        drag = RankDrag(row.id, orderNow, orderNow.indexOf(row.id), active = true); fingerY = 0f
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    },
+                    onDragEnd = {
+                        val d = drag ?: return@detectDragGesturesAfterLongPress
+                        // From where the finger left it; the core is told once, where it was dropped.
+                        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { slot.snapTo(top(d.from, row.id) + fingerY) }
+                        val placed = d.to == d.from.indexOf(row.id) || vm.placeRanked(row, d.to)
+                        drag = if (placed) d.copy(active = false) else d.copy(to = d.from.indexOf(row.id), active = false)
+                    },
+                    onDragCancel = {
+                        val d = drag ?: return@detectDragGesturesAfterLongPress
+                        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { slot.snapTo(top(d.from, row.id) + fingerY) }
+                        drag = d.copy(to = d.from.indexOf(row.id), active = false)
+                    },
+                ) { change, moved ->
+                    change.consume()
+                    fingerY += moved.y
+                    val d = drag ?: return@detectDragGesturesAfterLongPress
+                    // Its place: after every other row whose middle its own middle has passed.
+                    val middle = top(d.from, row.id) + fingerY + (heights[row.id] ?: 0f) / 2f
+                    var y = 0f
+                    var to = 0
+                    for (o in d.from) {
+                        if (o == row.id) continue
+                        val h = heights[o] ?: 0f
+                        if (middle > y + h / 2f) to++
+                        y += h
+                    }
+                    if (to != d.to) {
+                        drag = d.copy(to = to)
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                    }
+                }
+            }
+            content(pickUp)
+        }
+    }
     // Each row under a key of its own, so a ranked row moved in the core's order is the same row, its
     // glide and lift carried with it: keyed inside the `when` instead, a moved row began again from
     // nothing and was drawn at its new place in one frame.
     @Composable
-    fun RowOf(at: Int, row: SettingRow, divider: Boolean) = androidx.compose.runtime.key((row as? SettingRow.Ranked)?.id ?: "#$at") {
+    fun RowOf(at: Int, row: SettingRow, divider: Boolean) = androidx.compose.runtime.key((row as? SettingRow.Placed)?.id ?: "#$at") {
             when (row) {
                 is SettingRow.Toggle -> Toggle(row.title, row.detail, row.on, enabled = row.enabled, key = row.key) { on -> vm.set(row.name, on.toString()) }
                 is SettingRow.Choice -> Choice(row, divider) { v -> vm.set(row.name, v) }
@@ -494,121 +578,44 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                             dismissButton = { TextAction(say.cancel, { removing = false }) },
                         )
                     }
-                    ProfileLine(
-                        vm, profile, row.active, divider = divider && row.libraries.isEmpty(), detail = row.detail,
-                        onMark = if (options) ({ picking = true }) else null,
-                        trailing = { if (options) MoreButton(listOf(say.edit to { editing = profile.also(vm::openLogin) }, say.remove to { removing = true })) },
-                        onClick = if (row.active) null else ({ vm.switchServer(profile) }),
-                    )
-                    // The server's own libraries, under it: which of them the app shows.
-                    if (row.libraries.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(start = GROUP_INSET, end = GROUP_INSET, bottom = 12.dp)) {
-                        Text(row.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        androidx.compose.foundation.layout.FlowRow(
-                            Modifier.padding(top = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) { row.libraries.forEach { l -> Chip(l.label, l.on) { vm.set(l.name, l.tapped) } } }
+                    Placing(row, movable = options) { pickUp ->
+                        ProfileLine(
+                            vm, profile, row.active, divider = divider && row.libraries.isEmpty(), pickUp, detail = row.detail,
+                            onMark = if (options) ({ picking = true }) else null,
+                            trailing = { if (options) MoreButton(listOf(say.edit to { editing = profile.also(vm::openLogin) }, say.remove to { removing = true })) },
+                            onClick = if (row.active) null else ({ vm.switchServer(profile) }),
+                        )
+                        // The server's own libraries, under it: which of them the app shows.
+                        if (row.libraries.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(start = GROUP_INSET, end = GROUP_INSET, bottom = 12.dp)) {
+                            Text(row.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            androidx.compose.foundation.layout.FlowRow(
+                                Modifier.padding(top = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) { row.libraries.forEach { l -> Chip(l.label, l.on) { vm.set(l.name, l.tapped) } } }
+                        }
+                        if (divider && row.libraries.isNotEmpty()) Hairline(startIndent = GROUP_INSET)
                     }
-                    if (divider && row.libraries.isNotEmpty()) Hairline(startIndent = GROUP_INSET)
                 }
                 is SettingRow.Button -> GroupRow(row.title, { act(row.action) }, icon = Iconoir.Plus, divider = divider)
-                // Each row is drawn at its place in the order shown, gliding there, while it is laid out in the
-                // core's: the neighbours make way as the held row passes them, and when it is let go it settles
-                // into its place as the core's order catches up, with nothing jumping at either end.
-                is SettingRow.Ranked -> {
-                    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
-                    // The held row is lifted over its neighbours, so it needs the plate's own colour behind its words.
-                    val plate = MaterialTheme.colorScheme.surfaceContainer
-                    val scope = androidx.compose.runtime.rememberCoroutineScope()
-                    val mine = drag?.id == row.id
-                    val following = mine && drag?.active == true
-                    // Where it is drawn, from the top of the list: it glides to its place in the order shown when a
-                    // drag moves it, and is simply there when anything else does (rows being measured, a page
-                    // opening). Not restarted when the drag ends, so a row settling finishes its glide.
-                    val shownY = top(shown, row.id)
-                    val slot = remember { androidx.compose.animation.core.Animatable(shownY) }
-                    // Whether a drag moved it is read here, in the composition that moved it: by the time the effect
-                    // starts the core may already have taken the drop and ended the drag.
-                    val glide = drag != null
-                    LaunchedEffect(shownY, following) {
-                        if (following) return@LaunchedEffect
-                        if (!glide) slot.snapTo(shownY)
-                        else slot.animateTo(shownY, AppMotion.settle())
-                    }
-                    // Picked up and put down over a moment, not in a frame: its lift, shadow and plate.
-                    val lift = androidx.compose.animation.core.animateFloatAsState(
-                        if (following) 1f else 0f, AppMotion.fadeIn(), label = "lift",
-                    )
-                    val above by remember { androidx.compose.runtime.derivedStateOf { lift.value > 0f } }
-                    Column(
-                        Modifier.fillMaxWidth()
-                            .zIndex(if (mine || above) 1f else 0f)
-                            .graphicsLayer {
-                                val at = if (following) top(drag?.from ?: order, row.id) + fingerY else slot.value
-                                translationY = at - top(order, row.id)
-                                val l = lift.value
-                                shadowElevation = 14f * l; scaleX = 1f + 0.02f * l; scaleY = 1f + 0.02f * l
-                            }
-                            .drawBehind { lift.value.takeIf { it > 0f }?.let { drawRect(plate.copy(alpha = plate.alpha * it)) } }
-                            .onGloballyPositioned { val h = it.size.height.toFloat(); if (heights[row.id] != h) heights[row.id] = h },
+                // The switch still turns the service on or off where it stands with a tap.
+                is SettingRow.Ranked -> Placing(row, movable = true) { pickUp ->
+                    Row(
+                        Modifier.fillMaxWidth().spotlight(row.key).then(pickUp).padding(start = GROUP_INSET, top = 12.dp, bottom = 12.dp, end = GROUP_INSET),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        // Held anywhere, like the home page's rows: a long press picks it up (a plain drag
-                        // scrolls the page, and never moves a row), with a tick and the row lifting. The
-                        // switch still turns the service on or off where it stands with a tap.
-                        Row(
-                            Modifier.fillMaxWidth().spotlight(row.key).pointerInput(row.id) {
-                                detectDragGesturesAfterLongPress(
-                                    onDragStart = {
-                                        drag = RankDrag(row.id, orderNow, orderNow.indexOf(row.id), active = true); fingerY = 0f
-                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                    },
-                                    onDragEnd = {
-                                        val d = drag ?: return@detectDragGesturesAfterLongPress
-                                        // From where the finger left it; the core is told once, where it was dropped.
-                                        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { slot.snapTo(top(d.from, row.id) + fingerY) }
-                                        val placed = d.to == d.from.indexOf(row.id) || vm.placeRanked(row.id, d.to)
-                                        drag = if (placed) d.copy(active = false) else d.copy(to = d.from.indexOf(row.id), active = false)
-                                    },
-                                    onDragCancel = {
-                                        val d = drag ?: return@detectDragGesturesAfterLongPress
-                                        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { slot.snapTo(top(d.from, row.id) + fingerY) }
-                                        drag = d.copy(to = d.from.indexOf(row.id), active = false)
-                                    },
-                                ) { change, moved ->
-                                    change.consume()
-                                    fingerY += moved.y
-                                    val d = drag ?: return@detectDragGesturesAfterLongPress
-                                    // Its place: after every other row whose middle its own middle has passed.
-                                    val middle = top(d.from, row.id) + fingerY + (heights[row.id] ?: 0f) / 2f
-                                    var y = 0f
-                                    var to = 0
-                                    for (o in d.from) {
-                                        if (o == row.id) continue
-                                        val h = heights[o] ?: 0f
-                                        if (middle > y + h / 2f) to++
-                                        y += h
-                                    }
-                                    if (to != d.to) {
-                                        drag = d.copy(to = to)
-                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                                    }
-                                }
-                            }.padding(start = GROUP_INSET, top = 12.dp, bottom = 12.dp, end = GROUP_INSET),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f).padding(end = 14.dp)) {
-                                Text(row.title, style = MaterialTheme.typography.bodyLarge, color = if (row.on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                // Under the words, in line with them: a key is set where the service is.
-                                val keyLabel = when (row.keyButton) { KeyAction.CHANGE -> say.changeKey; KeyAction.ADD -> say.addKey; KeyAction.NONE -> null }
-                                if (keyLabel != null) Text(
-                                    keyLabel, Modifier.padding(top = 6.dp).clickable { keying = row },
-                                    style = MaterialTheme.typography.labelLarge,
-                                )
-                            }
-                            NoriSwitch(row.on, { on -> if (on && row.asksKey) keying = row else vm.set(row.name, on.toString()) })
+                        Column(Modifier.weight(1f).padding(end = 14.dp)) {
+                            Text(row.title, style = MaterialTheme.typography.bodyLarge, color = if (row.on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            // Under the words, in line with them: a key is set where the service is.
+                            val keyLabel = when (row.keyButton) { KeyAction.CHANGE -> say.changeKey; KeyAction.ADD -> say.addKey; KeyAction.NONE -> null }
+                            if (keyLabel != null) Text(
+                                keyLabel, Modifier.padding(top = 6.dp).clickable { keying = row },
+                                style = MaterialTheme.typography.labelLarge,
+                            )
                         }
-                        if (divider) Hairline(startIndent = GROUP_INSET)
+                        NoriSwitch(row.on, { on -> if (on && row.asksKey) keying = row else vm.set(row.name, on.toString()) })
                     }
+                    if (divider) Hairline(startIndent = GROUP_INSET)
                 }
             }
     }

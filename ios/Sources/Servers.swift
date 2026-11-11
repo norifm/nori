@@ -1,8 +1,9 @@
 import UIKit
 
-/// Settings → Servers: the saved ones with their marks, the active one ticked. A tap switches to it at
-/// once; a tap on its mark chooses its icon; a swipe forgets it; the last row adds one.
-final class ServersPage: TablePage {
+/// Settings → Servers: the saved ones in their order with their marks, the active one ticked where it
+/// stands. A tap switches to it at once; a tap on its mark chooses its icon; holding and dragging one moves
+/// it in the order (the core's `profilePlace`); a swipe forgets it; the last row adds one.
+final class ServersPage: TablePage, UITableViewDragDelegate, UITableViewDropDelegate {
     fileprivate struct Saved {
         let id: String
         let label: String
@@ -23,6 +24,9 @@ final class ServersPage: TablePage {
         super.viewDidLoad()
         title = Say.servers
         dress(tableView)
+        tableView.dragDelegate = self
+        tableView.dropDelegate = self
+        tableView.dragInteractionEnabled = true
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -116,6 +120,39 @@ final class ServersPage: TablePage {
             }
         }
         sheet.show(from: self)
+    }
+
+    // MARK: moving a server: held and dragged among the saved ones
+
+    func tableView(_ tableView: UITableView, itemsForBeginning session: UIDragSession, at indexPath: IndexPath) -> [UIDragItem] {
+        guard indexPath.section == 0, !switching else { return [] }
+        return [UIDragItem(itemProvider: NSItemProvider())]
+    }
+
+    func tableView(_ tableView: UITableView, dropSessionDidUpdate session: UIDropSession, withDestinationIndexPath destination: IndexPath?) -> UITableViewDropProposal {
+        guard session.localDragSession != nil, destination?.section == 0 else { return UITableViewDropProposal(operation: .forbidden) }
+        return UITableViewDropProposal(operation: .move, intent: .insertAtDestinationIndexPath)
+    }
+
+    func tableView(_ tableView: UITableView, performDropWith coordinator: UITableViewDropCoordinator) {}
+
+    override func tableView(_ tableView: UITableView, canMoveRowAt indexPath: IndexPath) -> Bool {
+        indexPath.section == 0
+    }
+
+    override func tableView(_ tableView: UITableView, targetIndexPathForMoveFromRowAt source: IndexPath, toProposedIndexPath proposed: IndexPath) -> IndexPath {
+        proposed.section == 0 ? proposed : IndexPath(row: servers.count - 1, section: 0)
+    }
+
+    override func tableView(_ tableView: UITableView, moveRowAt source: IndexPath, to destination: IndexPath) {
+        guard source != destination else { return }
+        let moved = servers.remove(at: source.row)
+        servers.insert(moved, at: destination.row)
+        let place = "\(moved.id):\(destination.row)"
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = "profilePlace".withCString { n in place.withCString { v in nori_ios_set(n, v) } }
+            DispatchQueue.main.async { self.load() }
+        }
     }
 
     /// Runs `change` on the saved list, then reopens on whichever server is active after it.

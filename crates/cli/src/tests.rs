@@ -3009,3 +3009,35 @@ fn a_backup_asks_for_its_file_then_its_password() {
         assert_eq!(a.cmds.last(), Some(&Cmd::Backup { restore, path: "/tmp/nori.noribackup".into(), password: "pw".into() }));
     }
 }
+
+/// The profiles are listed in their saved order; K and J move one, the order the core's to keep. A jam
+/// guest's stay put.
+#[test]
+fn a_profile_moves_with_k_and_j() {
+    let sv = |id: &str| nori_core::settings::SavedServer { id: id.into(), name: id.to_uppercase(), url: format!("http://{id}"), ..Default::default() };
+    let mut a = App::new(StoredPrefs { servers: vec![sv("a"), sv("b"), sv("c")], active_server_id: "b".into(), ..StoredPrefs::default() });
+    a.go(View::Settings);
+    a.settings.set_facts(crate::settings_view::Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() });
+    select_row(&mut a, |r| matches!(r, Row::Server { id, .. } if id == "a"));
+    a.cmds.clear();
+    let s = draw(&mut a, 140, 40);
+    let at = |name: &str| s.lines().position(|l| l.contains(&format!("{name}  "))).unwrap_or_else(|| panic!("{name} missing:\n{s}"));
+    assert!(at("A") < at("B") && at("B") < at("C"), "{s}");
+    assert!(s.contains("K J move"), "the row's keys at the foot:\n{s}");
+    key(&mut a, KeyCode::Char('K'));
+    assert!(a.cmds.is_empty(), "the first can't go higher");
+    key(&mut a, KeyCode::Char('J'));
+    assert_eq!(a.cmds.pop(), Some(Cmd::Setting("profilePlace".into(), "a:1".into())));
+    select_row(&mut a, |r| matches!(r, Row::Server { id, .. } if id == "c"));
+    key(&mut a, KeyCode::Char('J'));
+    assert!(a.cmds.is_empty(), "the last can't go lower");
+    key(&mut a, KeyCode::Char('K'));
+    assert_eq!(a.cmds.pop(), Some(Cmd::Setting("profilePlace".into(), "c:1".into())));
+
+    a.settings.set_facts(crate::settings_view::Facts { rules: nori_core::browse::profile_rules(true), ..Default::default() });
+    select_row(&mut a, |r| matches!(r, Row::Server { id, .. } if id == "b"));
+    key(&mut a, KeyCode::Char('K'));
+    key(&mut a, KeyCode::Char('J'));
+    assert!(a.cmds.is_empty(), "{:?}", a.cmds);
+    assert!(!draw(&mut a, 140, 40).contains("K J move"));
+}

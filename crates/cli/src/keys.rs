@@ -219,7 +219,7 @@ pub const BINDINGS: &[Binding] = &[
     b!(Eq, "t", Action::BandKind, "The band's next kind: peak, shelf, pass… (parametric)", [(Char('t'), N)]),
     b!(Eq, "c", Action::BandSide, "The band on both sides, the left or the right (parametric)", [(Char('c'), N)]),
     b!(Values, "e", Action::Key, "Add or change a lyrics service's key", [(Char('e'), N)]),
-    b!(Values, "K / J", Action::MoveUp, "Move a plugin up or down the order", [(Char('K'), S), (Char('K'), N)]),
+    b!(Values, "K / J", Action::MoveUp, "Move a profile or a plugin up or down the order", [(Char('K'), S), (Char('K'), N)]),
     b!(Values, "", Action::MoveDown, "", [(Char('J'), S), (Char('J'), N)]),
     b!(Values, "d / delete", Action::Remove, "Remove a plugin or a repo", [(Char('d'), N), (Delete, N)]),
     b!(Values, "m", Action::Menu, "A plugin's menu: move it, remove it", [(Char('m'), N)]),

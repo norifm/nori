@@ -54,6 +54,8 @@ data class SettingOption(val label: String, val value: String)
 data class UsagePart(val label: String, val size: String, val bytes: Long)
 
 sealed interface SettingRow {
+    /** A row of a list ranked by hand (a profile, a lyrics service), picked up and dropped at another place. */
+    sealed interface Placed : SettingRow { val id: String }
     data class Toggle(val key: String, val name: String, val title: String, val detail: String, val on: Boolean, val enabled: Boolean) : SettingRow
     /** [shown] is the chosen option's label (or the value itself when no option is it). */
     data class Choice(val key: String, val name: String, val title: String, val options: List<SettingOption>, val shown: String, val enabled: Boolean) : SettingRow
@@ -79,15 +81,15 @@ sealed interface SettingRow {
         val following: String, val now: Int, val followTitle: String, val follow: String,
     ) : SettingRow
     /** A saved server; the one in use carries its [libraries] when it has more than one, under [note]. */
-    data class Server(val id: String, val label: String, val detail: String, val active: Boolean, val libraries: List<Pick> = emptyList(), val note: String = "") : SettingRow
+    data class Server(override val id: String, val label: String, val detail: String, val active: Boolean, val libraries: List<Pick> = emptyList(), val note: String = "") : Placed
     data class Button(val title: String, val action: String) : SettingRow
     /** One of a ranked list (the lyrics services), switched where it stands and picked up to move. [keyButton]: its key
      *  button, the key typed under [keyName]; [keyed]: it is switched on only with that key; [keySet]: the key is
      *  given; [asksKey]: switching it on asks for the key. */
     data class Ranked(
-        val key: String, val name: String, val id: String, val title: String, val detail: String, val on: Boolean,
+        val key: String, val name: String, override val id: String, val title: String, val detail: String, val on: Boolean,
         val keyButton: KeyAction = KeyAction.NONE, val keyed: Boolean = false, val keySet: Boolean = false, val asksKey: Boolean = false, val keyName: String = "",
-    ) : SettingRow
+    ) : Placed
     /** The compressor's gain reduction, read from the player only while the page is on screen. */
     data class CompressionMeter(val key: String, val enabled: Boolean) : SettingRow
     /** One setting with a few values, all on view as chips, the one it has lit. */

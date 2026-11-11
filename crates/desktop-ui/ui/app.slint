@@ -226,12 +226,13 @@ export struct SettingRow {
     glyph: MarkGlyph,
 }
 
-// A profile in the profiles menu, to switch to: its id, name, who signs in and its mark.
+// A profile in the profiles menu: its id, name, who signs in, its mark, and whether it is the one in use.
 export struct ProfileItem {
     name: string,
     title: string,
     detail: string,
     mark: Mark,
+    on: bool,
 }
 
 // A tool at the top right of a plugin page: 0 a plus, 1 a folder, 2 the repos.
@@ -4205,9 +4206,11 @@ global UsageColors {
     }
 }
 
-// The lyrics service held by its handle and dragged to another rank: which (empty: none), where its
-// middle stood and how tall it is, how far it has moved, and how many places it has passed (down +).
+// The row of a hand-ranked list held by its handle and dragged to another place: its list (the rows' kind)
+// and which (empty: none), where its middle stood and how tall it is, how far it has moved, and how many
+// places it has passed (down +).
 global RankDrag {
+    in-out property <int> kind;
     in-out property <string> held;
     in-out property <int> from;
     in-out property <length> mid;
@@ -4218,18 +4221,22 @@ global RankDrag {
     in-out property <bool> landing;
 }
 
-// A lyrics service among the ranked ones: its switch, its key behind a button where it takes one, and a
-// handle that drags it to another rank. The rows it passes step out of its way, whatever their heights.
-component SourceLine inherits Rectangle {
+// A row of a list ranked by hand (the lyrics services, the profiles): what it holds, then, where it is
+// `movable`, a handle that drags it to another place (its rank in `item.chosen`). The rows it passes step
+// out of its way, whatever their heights.
+component RankPlate inherits Rectangle {
     in property <SettingRow> item;
-    callback source(string, bool);
-    callback ask-key(string, string, bool);
+    in property <bool> movable: true;
+    // A click on the row away from its controls.
+    in property <bool> clickable;
+    callback clicked;
     callback placed(string, int);
-    property <bool> held: RankDrag.held == root.item.name;
+    property <bool> dragging: RankDrag.held != "" && RankDrag.kind == root.item.kind;
+    property <bool> held: root.dragging && RankDrag.held == root.item.name;
     // Its middle where it is laid out, and whether the one held has gone past it.
     property <length> mid: self.absolute-position.y + self.height / 2;
-    property <bool> passed-down: RankDrag.held != "" && !root.held && RankDrag.from < root.item.chosen && RankDrag.mid + RankDrag.dy > root.mid;
-    property <bool> passed-up: RankDrag.held != "" && !root.held && RankDrag.from > root.item.chosen && RankDrag.mid + RankDrag.dy < root.mid;
+    property <bool> passed-down: root.dragging && !root.held && RankDrag.from < root.item.chosen && RankDrag.mid + RankDrag.dy > root.mid;
+    property <bool> passed-up: root.dragging && !root.held && RankDrag.from > root.item.chosen && RankDrag.mid + RankDrag.dy < root.mid;
     changed passed-down => { RankDrag.by += root.passed-down ? 1 : -1; }
     changed passed-up => { RankDrag.by += root.passed-up ? -1 : 1; }
     min-height: line.preferred-height;
@@ -4243,48 +4250,17 @@ component SourceLine inherits Rectangle {
         border-top-right-radius: root.item.first || root.held ? 18px : 0;
         border-bottom-left-radius: root.item.last || root.held ? 18px : 0;
         border-bottom-right-radius: root.item.last || root.held ? 18px : 0;
+        if root.clickable: TouchArea {
+            clicked => { root.clicked(); }
+        }
         line := HorizontalLayout {
             padding-left: 16px;
-            padding-right: 6px;
+            padding-right: root.movable ? 6px : 14px;
             padding-top: 12px;
             padding-bottom: 12px;
             spacing: 12px;
-            VerticalLayout {
-                alignment: center;
-                horizontal-stretch: 1;
-                Text {
-                    text: root.item.title;
-                    color: Theme.text;
-                    opacity: root.item.enabled ? 1 : 0.45;
-                    font-size: 14px;
-                    wrap: word-wrap;
-                }
-                Text {
-                    text: root.item.detail;
-                    color: Theme.dim;
-                    font-size: 12px;
-                    wrap: word-wrap;
-                }
-            }
-            if root.item.button != "": SmallButton {
-                y: (parent.height - self.height) / 2;
-                text: root.item.button;
-                // A key kept shows as Change key (settings.rs).
-                clicked => { root.ask-key(root.item.name, root.item.title, root.item.button == "Change key"); }
-            }
-            Toggle {
-                y: (parent.height - self.height) / 2;
-                on: root.item.on;
-                enabled: root.item.enabled;
-                toggled(v) => {
-                    if v && root.item.keyed {
-                        root.ask-key(root.item.name, root.item.title, false);
-                    } else {
-                        root.source(root.item.name, v);
-                    }
-                }
-            }
-            Rectangle {
+            @children
+            if root.movable: Rectangle {
                 width: 32px;
                 Icon {
                     glyph: Icons.menu;
@@ -4306,6 +4282,7 @@ component SourceLine inherits Rectangle {
                             RankDrag.from = root.item.chosen;
                             RankDrag.mid = root.mid;
                             RankDrag.tall = root.height;
+                            RankDrag.kind = root.item.kind;
                             RankDrag.held = root.item.name;
                         }
                         if e.kind == PointerEventKind.up && root.held {
@@ -4546,11 +4523,88 @@ component SettingLine inherits VerticalLayout {
     callback placed(string, int);
     callback ask-key(string, string, bool);
     callback source(string, bool);
-    if root.item.kind == 6: SourceLine {
+    // A lyrics service among the ranked ones: its switch, and its key behind a button where it takes one.
+    if root.item.kind == 6: RankPlate {
         item: root.item;
-        source(id, on) => { root.source(id, on); }
-        ask-key(id, title, set) => { root.ask-key(id, title, set); }
         placed(id, by) => { root.placed(id, by); }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.item.title;
+                color: Theme.text;
+                opacity: root.item.enabled ? 1 : 0.45;
+                font-size: 14px;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.item.detail;
+                color: Theme.dim;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+        if root.item.button != "": SmallButton {
+            y: (parent.height - self.height) / 2;
+            text: root.item.button;
+            // A key kept shows as Change key (settings.rs).
+            clicked => { root.ask-key(root.item.name, root.item.title, root.item.button == "Change key"); }
+        }
+        Toggle {
+            y: (parent.height - self.height) / 2;
+            on: root.item.on;
+            enabled: root.item.enabled;
+            toggled(v) => {
+                if v && root.item.keyed {
+                    root.ask-key(root.item.name, root.item.title, false);
+                } else {
+                    root.source(root.item.name, v);
+                }
+            }
+        }
+    }
+    // A saved profile: a click switches to it, the one in use checked in the accent where it stands. Where
+    // its Edit shows, its icon is its to change and it is dragged to another place in the list.
+    if root.item.kind == 8: RankPlate {
+        item: root.item;
+        movable: root.item.button != "";
+        clickable: !root.item.on;
+        clicked => { root.action("server:" + root.item.name); }
+        placed(id, by) => { root.placed(id, by); }
+        ProfileCircle {
+            y: (parent.height - self.height) / 2;
+            profile: root.item.name;
+            mark: { icon: root.item.icon, letter: root.item.letter, glyph: root.item.glyph };
+            pickable: root.item.button != "";
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.item.title;
+                color: Theme.text;
+                font-size: 14px;
+                wrap: word-wrap;
+            }
+            if root.item.detail != "": Text {
+                text: root.item.detail;
+                color: Theme.dim;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+        if root.item.button != "": SmallButton {
+            y: (parent.height - self.height) / 2;
+            text: root.item.button;
+            clicked => { root.action("edit:" + root.item.name); }
+        }
+        if root.item.on: Icon {
+            y: (parent.height - self.height) / 2;
+            glyph: Icons.check;
+            colour: Theme.accent;
+            width: 18px;
+            height: 18px;
+        }
     }
     // A group's heading: small capitals over its card (settings.rs gives the words in capitals).
     if root.item.kind == 0: HorizontalLayout {
@@ -4628,12 +4682,12 @@ component SettingLine inherits VerticalLayout {
             }
         }
     }
-    if root.item.kind != 0 && root.item.kind != 6 && root.item.kind != 9 && root.item.kind != 13 && root.item.kind < 18: Plate {
+    if root.item.kind != 0 && root.item.kind != 6 && root.item.kind != 8 && root.item.kind != 9 && root.item.kind != 13 && root.item.kind < 18: Plate {
         first: root.item.first;
         last: root.item.last;
         min-height: 54px;
-        if root.item.kind == 11 || root.item.kind == 12 || root.item.kind == 17 || (root.item.kind == 8 && !root.item.on): TouchArea {
-            clicked => { root.action(root.item.kind == 8 ? "server:" + root.item.name : root.item.name); }
+        if root.item.kind == 11 || root.item.kind == 12 || root.item.kind == 17: TouchArea {
+            clicked => { root.action(root.item.name); }
         }
         VerticalLayout {
             padding-left: 16px;
@@ -4650,13 +4704,6 @@ component SettingLine inherits VerticalLayout {
                     letter: root.item.letter;
                     glyph: root.item.glyph;
                     opacity: root.item.enabled ? 1 : 0.45;
-                }
-                if root.item.kind == 8: ProfileCircle {
-                    y: (parent.height - self.height) / 2;
-                    profile: root.item.name;
-                    mark: { icon: root.item.icon, letter: root.item.letter, glyph: root.item.glyph };
-                    // Its icon is the profile's to change where its Edit shows.
-                    pickable: root.item.button != "";
                 }
                 VerticalLayout {
                     alignment: center;
@@ -4718,18 +4765,6 @@ component SettingLine inherits VerticalLayout {
                     color: Theme.dim;
                     font-size: 13px;
                     vertical-alignment: center;
-                }
-                if root.item.kind == 8 && root.item.button != "": SmallButton {
-                    y: (parent.height - self.height) / 2;
-                    text: root.item.button;
-                    clicked => { root.action("edit:" + root.item.name); }
-                }
-                if root.item.kind == 8 && root.item.on: Icon {
-                    y: (parent.height - self.height) / 2;
-                    glyph: Icons.check;
-                    colour: Theme.accent;
-                    width: 18px;
-                    height: 18px;
                 }
                 if root.item.kind == 11: Text {
                     text: root.item.detail;
@@ -6093,7 +6128,6 @@ export component AppWindow inherits Window {
 
     // 0 home, 1 search, 2 albums, 3 artists, 4 playlists, 5 songs, 6 a page (album, artist, playlist), 7 login.
     in-out property <View> view: View.home;
-    in property <string> server;
     in property <string> greeting;
     in property <bool> loading;
     in property <string> failed;
@@ -6311,13 +6345,11 @@ export component AppWindow inherits Window {
     // What stands where the lyrics would: shown once there is something to say.
     property <float> lyrics-note-shown: !root.lyrics-waiting || root.lyrics-slow ? 1 : 0;
     in property <[SettingRow]> settings;
-    // Who is signed in (the account row), and the text the page's list is narrowed by.
-    in property <string> account;
-    in property <Mark> account-mark;
-    // The profiles not in use, and whether this device may add one (a jam guest may not).
-    in property <[ProfileItem]> other-profiles;
+    // The saved profiles, and whether this device may add one (a jam guest may not).
+    in property <[ProfileItem]> profiles;
     in property <bool> profiles-editable;
     callback open-accounts();
+    // The text the page's list is narrowed by.
     in-out property <string> find-text;
     // The library list shown has nothing in it.
     property <bool> list-empty: (root.view == View.albums && root.albums.length == 0) || (root.view == View.artists && root.artists.length == 0) || (root.view == View.playlists && root.playlists.length == 0) || ((root.view == View.songs || root.view == View.favorites) && root.songs.length == 0);
@@ -6363,8 +6395,9 @@ export component AppWindow inherits Window {
     callback eq-profile-save(string);
     callback setting-slid(string, float, bool);
     callback setting-typed(string, string);
-    // A lyrics service dragged some places (down +), and the sheet its key is typed in.
-    callback source-moved(string, int);
+    // A ranked row (of kind `int`: a lyrics service, a profile) dragged some places (down +), and the sheet
+    // a lyrics service's key is typed in.
+    callback row-placed(int, string, int);
     in-out property <bool> key-open;
     // A line asked for (a plugin's text, a file or a repo's address), or a warning to confirm: what is
     // typed goes to `setting-typed(ask-name, …)`.
@@ -7825,7 +7858,7 @@ export component AppWindow inherits Window {
                                         action(name) => { root.setting-action(name); }
                                         slid(name, v, last) => { root.setting-slid(name, v, last); }
                                         typed(name, text) => { root.setting-typed(name, text); }
-                                        placed(id, by) => { root.source-moved(id, by); }
+                                        placed(id, by) => { root.row-placed(r.kind, id, by); }
                                         ask-key(id, title, set) => {
                                             root.key-service = id;
                                             root.key-title = title;
@@ -8362,8 +8395,8 @@ export component AppWindow inherits Window {
             }
         }
 
-        // The profiles, opened from the top pill's mark: the one in use checked in the accent, the others to
-        // switch to, then adding and managing them.
+        // The profiles, opened from the top pill's mark, in their saved order: the one in use checked in the
+        // accent where it stands, the others to switch to, then adding and managing them.
         profiles-pop := PopupWindow {
             x: Chrome.top-x + Chrome.top-w - self.width;
             y: Chrome.top-room - 12px;
@@ -8373,16 +8406,11 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     padding: MenuShape.inset;
                     spacing: 2px;
-                    ProfileLine {
-                        title: root.account;
-                        detail: root.server;
-                        mark: root.account-mark;
-                        on: true;
-                    }
-                    for p in root.other-profiles: ProfileLine {
+                    for p in root.profiles: ProfileLine {
                         title: p.title;
                         detail: p.detail;
                         mark: p.mark;
+                        on: p.on;
                         clicked => {
                             root.setting-action("server:" + p.name);
                             profiles-pop.close();

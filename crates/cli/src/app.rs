@@ -2771,7 +2771,7 @@ impl App {
             Action::Menu => self.open_menu(),
             Action::Undo if self.queue_in_focus() => self.cmds.push(Cmd::Undo),
             Action::Undo => self.dirty = false,
-            Action::MoveUp | Action::MoveDown if self.view == View::Settings && !self.queue_in_focus() => match self.settings.plugin_move(a == Action::MoveUp) {
+            Action::MoveUp | Action::MoveDown if self.view == View::Settings && !self.queue_in_focus() => match self.settings.move_here(a == Action::MoveUp) {
                 Some(c) => self.cmds.push(c),
                 None => self.dirty = false,
             },
