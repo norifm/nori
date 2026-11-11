@@ -84,6 +84,22 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
 
     /** The device playing while it is not this phone (Remotes.mirror). */
     val mirror: StateFlow<dev.nori.music.ffi.Mirror?> = remotes.mirror
+    private val _volumeKeys = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
+    /** A volume key moved [mirror]'s volume. */
+    val volumeKeys: SharedFlow<Unit> = _volumeKeys
+
+    /**
+     * A volume key pressed while the app is in front: [mirror]'s volume takes the step the core gives
+     * (`mirror_volume_key`). False when nothing elsewhere has a volume to set, and the key is the system's.
+     */
+    fun volumeKey(up: Boolean): Boolean {
+        val m = remotes.mirror.value ?: return false
+        val level = dev.nori.music.ffi.mirrorVolumeKey(m, up) ?: return false
+        dev.nori.music.ffi.mirrorOp(m, dev.nori.music.ffi.Press.Volume(level.toFloat() / 100f))?.let(remotes::command)
+        _volumeKeys.tryEmit(Unit)
+        return true
+    }
+
     /** Where the music plays (the core's `destination`): what the devices list lights. */
     val destination: StateFlow<dev.nori.music.ffi.Destination> = combine(remotes.mirror, remotes.jam, nori.plugins.cast) { _, _, c -> remotes.destination(c) }
         .flowOn(Dispatchers.Default)

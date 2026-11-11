@@ -1014,8 +1014,9 @@ remote_checks() {
   section "playing on another device: the terminal client on this computer"
   # Who plays, the queue, the place, the volume and a transfer's order are the core's (crates/core
   # tests/remote.rs), and that the system's media controls never show another device's playback
-  # (destination.rs). Here: the media session showing nothing while the other device plays, this phone's
-  # own output let go while it plays there, and the music coming back.
+  # (destination.rs), and a volume key's step (Mirror::volume_key). Here: the media session showing nothing
+  # while the other device plays, the volume keys in front moving its volume, this phone's own output let
+  # go while it plays there, and the music coming back.
   if [ "$NORI_E2E_SERVER" != local ]; then
     echo "  NOTE  needs the local server: the terminal client signs in to it as the other device"
   else
@@ -1043,6 +1044,10 @@ PY
     echo "     the peer's door: $door"
     "$app" set remoteControl true >/dev/null
     "$app" play "album:$(mix_album)" >/dev/null; sounds 20
+    # Below the top while it plays here, so a volume key the peer misses would show on it. The shell's own
+    # volume commands do not reach the stream on recent Android; a key does.
+    phone_volume() { adb shell cmd media_session volume --stream 3 --get 2>/dev/null | grep -oE 'volume is [0-9]+' | grep -oE '[0-9]+'; }
+    if [ "$(phone_volume)" = 15 ]; then adb shell input keyevent KEYCODE_VOLUME_DOWN; fi
     check "the transfer starts with the album's first song" wait_for title "Long Track 01" 10
     "$app" open player >/dev/null; "$app" remote watch on >/dev/null
     "$app" remote found "$door" >/dev/null
@@ -1068,6 +1073,16 @@ PY
     check "reopening follows the peer without the device picker" wait_for playingOn "$name" 15 || return 1
     check "reopening does not play the saved queue on this phone" silent 10
     check "nor does its media session show the peer" session_quiet
+    # In front, the volume keys move the peer's volume, not this phone's (RemoteViewModel.volumeKey).
+    peer_volume() { tmux capture-pane -p -t "$peer" | perl -CS -Mutf8 -ne 'if (/Volume (━*)/) { $n = length $1 } END { print $n // "" }'; }
+    phone=$(phone_volume)
+    before=$(peer_volume)
+    check "the peer shows its volume" test -n "$before"
+    adb shell input keyevent KEYCODE_VOLUME_UP; adb shell input keyevent KEYCODE_VOLUME_UP
+    adb exec-out screencap -p > "$here/../build/e2e/$ANDROID_SERIAL/remote-volume.png"   # the level shown in the app
+    louder() { [ "$(peer_volume)" -gt "$before" ]; }
+    check "the volume keys turn the peer up (from $before)" wait_until 10 louder
+    check "and leave this phone's volume ($phone)" test "$(phone_volume)" = "$phone"
     for track in 02 03 04; do
       "$app" do next >/dev/null
       check "the remote queue reaches song $track" wait_for title "Long Track $track" 10

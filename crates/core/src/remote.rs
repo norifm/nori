@@ -252,6 +252,9 @@ pub struct Mirror {
     pub refused: Option<Refusal>,
 }
 
+/// The volume keys' step over a mirrored device's 0 to 100.
+const VOLUME_KEY_STEP: u8 = 5;
+
 /// [`Mirror::next`] and [`Mirror::previous`] from row `at` of `rows` known, of `len` songs: repeat-one
 /// skips like repeat-all (`Playlist::next`), and they wrap only once every row is known.
 fn skips(at: Option<u32>, rows: u32, len: u32, repeat: u8) -> (Option<u32>, Option<u32>) {
@@ -280,6 +283,14 @@ impl Mirror {
         (clock::now_us() - self.at_us) / 1000
     }
 
+    /// The volume a press of a volume key sets the device to: the next step of [`VOLUME_KEY_STEP`] up or
+    /// down, within 0 to 100. None when its volume cannot be set, and the key is this device's own.
+    pub fn volume_key(&self, up: bool) -> Option<u8> {
+        let now = self.volume?.min(100);
+        let below = now - now % VOLUME_KEY_STEP;
+        Some(if up { (below + VOLUME_KEY_STEP).min(100) } else if below == now { now.saturating_sub(VOLUME_KEY_STEP) } else { below })
+    }
+
     /// `press` as a command for the device; None when there is nothing to ask.
     pub fn op(&self, press: Press) -> Option<Op> {
         Some(match press {
@@ -303,6 +314,12 @@ impl Mirror {
             }
         })
     }
+}
+
+/// [`Mirror::volume_key`]: the volume a press of a volume key sets the mirrored device to.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn mirror_volume_key(mirror: Mirror, up: bool) -> Option<u8> {
+    mirror.volume_key(up)
 }
 
 /// [`Mirror::op`]: what a press of the player's controls asks of the mirrored device.
@@ -4335,6 +4352,18 @@ mod tests {
         assert_eq!(m.op(Press::Toggle), Some(Op::Play));
         m.volume = None;
         assert_eq!(m.op(Press::Volume { level: 0.9 }), None, "a volume the device does not offer");
+    }
+
+    #[test]
+    fn a_volume_key_steps_the_devices_volume_by_fives_within_its_range() {
+        let mut m = Mirror { id: "desk".into(), name: "Desk".into(), kind: DeviceKind::Desktop, rows: Vec::new(), at: None, len: 0, rev: 0, playing: true, buffering: false, mixing: false, position_ms: 0, rate: 1.0, at_us: 0, shuffle: false, repeat: 0, next: None, previous: None, volume: None, refused: None };
+        assert_eq!(m.volume_key(true), None, "a volume the device does not offer");
+        // volume now: up, down
+        let table = [(40, 45, 35), (42, 45, 40), (98, 100, 95), (100, 100, 95), (3, 5, 0), (0, 5, 0)];
+        for (now, up, down) in table {
+            m.volume = Some(now);
+            assert_eq!((m.volume_key(true), m.volume_key(false)), (Some(up), Some(down)), "from {now}");
+        }
     }
 
     #[test]

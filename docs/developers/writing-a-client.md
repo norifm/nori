@@ -159,6 +159,8 @@ eviction order) and downloads. A browser keeps none (`keeps_music: false`).
   `Playback::shown_to_system`): the system takes them for sound coming out here and says so to Bluetooth
   headsets, and a headset joined to both devices then pauses and resumes this one, presses that would
   reach the other device. Android's session keeps this phone's own player then, let go of and idle.
+  So the volume keys stay the system's there; a client that can take them while it is in front (Android's
+  activity) sends another device playing the level `mirror_volume_key` gives and shows it in the app.
 - Audio focus and interruptions: forward each change to `Engine::focus` (`nori_player::focus`). The engine
   keeps the focus state beside its play state (held by a call, lost for good, ducked), asks a plugin
   (`audio-focus`), pauses and resumes, and says `Event::Focus` with where the focus holds the music. A
