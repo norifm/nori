@@ -3545,11 +3545,8 @@ impl App {
                 self.account_changed();
             }
             Msg::Cover { key, image, colours } => self.cover(key, &image, colours),
-            Msg::Search(v) => {
-                if self.ui().get_view() == View::Search {
-                    self.show_search(v);
-                }
-            }
+            // The search page and the top pill's preview both show it; the core already dropped a stale one.
+            Msg::Search(v) => self.show_search(v),
             Msg::Lyrics(now) => self.lyrics_now(now),
             Msg::Facts(f) => {
                 self.facts = *f;
