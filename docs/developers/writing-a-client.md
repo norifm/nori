@@ -155,12 +155,17 @@ eviction order) and downloads. A browser keeps none (`keeps_music: false`).
 
 - Media controls and now playing: `nori-mpris` on Linux and macOS, the media session on Android,
   `MPRemoteCommandCenter` and `MPNowPlayingInfoCenter` on the iPod. Update them on events, never on a
-  timer. They show nothing while another device plays (`Destination::shown_to_system`; on the host
-  `Playback::shown_to_system`): the system takes them for sound coming out here and says so to Bluetooth
-  headsets, and a headset joined to both devices then pauses and resumes this one, presses that would
-  reach the other device. Android's session keeps this phone's own player then, let go of and idle.
-  So the volume keys stay the system's there; a client that can take them while it is in front (Android's
-  activity) sends another device playing the level `mirror_volume_key` gives and shows it in the app.
+  timer. MPRIS, Now Playing and the iPod's lock screen show nothing while another device plays
+  (`Destination::shown_to_system`; on the host `Playback::shown_to_system`): the system takes them for
+  sound coming out here and says so to Bluetooth headsets, and a headset joined to both devices then
+  pauses and resumes this one, presses that would reach the other device. Android's media session shows
+  that device as remote playback (media3 `DeviceInfo.PLAYBACK_TYPE_REMOTE`, `remote/RemoteDevicePlayer.kt`):
+  the notification and lock screen control it, the volume keys step its volume through Android's volume
+  panel (`mirror_volume_key`), and the output switcher names it (`remote/RemoteRoute.kt`, a MediaRouter2
+  routing session, which Android 13 to 15 also need before the volume keys reach a remote session). The
+  Bluetooth stack still tells a headset that session plays and sends it the headset's play and pause, as
+  the caller `Process.BLUETOOTH_UID`; what such a press does is `mirror_system_press` (play and pause from
+  Bluetooth do nothing). This phone's own player is let go of and idle meanwhile.
 - Audio focus and interruptions: forward each change to `Engine::focus` (`nori_player::focus`). The engine
   keeps the focus state beside its play state (held by a call, lost for good, ducked), asks a plugin
   (`audio-focus`), pauses and resumes, and says `Event::Focus` with where the focus holds the music. A

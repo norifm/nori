@@ -20,20 +20,16 @@ pub enum Destination {
 }
 
 impl Destination {
-    /// Whether the system's media controls (Android's media session, MPRIS, Now Playing, the lock screen)
-    /// show it: never another device's playback. The system takes what they show for sound coming out of
-    /// this device and tells a Bluetooth headset joined to it so: one joined to the other device as well
-    /// takes this one for a second source playing, and its pause and play for this one would reach the
-    /// other device.
+    /// Whether the system's media controls show it. MPRIS, macOS Now Playing and the iPod's lock screen
+    /// never show another device's playback: the system takes what they show for sound coming out of this
+    /// device and tells a Bluetooth headset joined to it so; one joined to the other device as well takes
+    /// this one for a second source playing, and its pause and play for this one would reach the other
+    /// device. Android's media session shows it too, as remote playback: the volume keys and the output
+    /// switcher reach that device, and a Bluetooth play or pause reaches nothing
+    /// ([`Mirror::system_press`](crate::remote::Mirror::system_press)). Android shows every destination.
     pub fn shown_to_system(&self) -> bool {
         !matches!(self, Destination::Mirroring { .. })
     }
-}
-
-/// [`Destination::shown_to_system`].
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn destination_shown_to_system(destination: Destination) -> bool {
-    destination.shown_to_system()
 }
 
 /// A plugin's cast from here, as [`destination`] needs it.
@@ -73,8 +69,8 @@ pub fn destination_of(guest: bool, mirrored: Option<String>, cast: Option<Castin
 mod tests {
     use super::*;
 
-    /// The system's media controls show this device's playback, a cast from here and a jam guest's jam;
-    /// never another device's, even one mirrored while a cast from here runs.
+    /// MPRIS, Now Playing and the iPod's lock screen show this device's playback, a cast from here and a
+    /// jam guest's jam; never another device's, even one mirrored while a cast from here runs.
     #[test]
     fn the_system_is_shown_no_other_devices_playback() {
         let speaker = || Some(Casting { device: "Speaker".into(), sink: true });

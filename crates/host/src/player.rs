@@ -35,8 +35,8 @@ impl Playback {
         }
     }
 
-    /// Whether the system's media controls (MPRIS, Now Playing, the lock screen) show it, by the core's
-    /// [`Destination::shown_to_system`]: another device's playback is [`Destination::Mirroring`].
+    /// Whether the system's media controls (MPRIS, Now Playing, the iPod's lock screen) show it, by the
+    /// core's [`Destination::shown_to_system`]: another device's playback is [`Destination::Mirroring`].
     pub fn shown_to_system(&self) -> bool {
         match self {
             Playback::There(e) => Destination::Mirroring { device: e.mirror.name.clone() }.shown_to_system(),

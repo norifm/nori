@@ -48,9 +48,8 @@ class Remotes(private val context: Context, private val nori: Nori) {
     private val _mirror = MutableStateFlow<Mirror?>(null)
 
     /**
-     * The account's active device while it is another one (the core's `Remote::active`): the app's player
-     * shows and controls it instead of this phone; the media session shows nothing of it (the core's
-     * `Destination::shown_to_system`). Null while this phone plays.
+     * The account's active device while it is another one (the core's `Remote::active`): the player, the
+     * session and the notification show and control it instead of this phone. Null while this phone plays.
      */
     val mirror: StateFlow<Mirror?> = _mirror.asStateFlow()
 
@@ -124,7 +123,7 @@ class Remotes(private val context: Context, private val nori: Nori) {
     /** The playback service is up; set where it is said, read by the worker as it applies it. */
     @Volatile private var serving = false
     private var watching = false
-    /** The app on screen, and the playback notification up with the screen on (the core's `Sight`). */
+    /** The app on screen, and the playback notification up with the screen on: either shows the mirrored device. */
     @Volatile private var appShown = false
     @Volatile private var notified = false
     @Volatile private var screenOn = true

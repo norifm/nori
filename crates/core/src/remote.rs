@@ -291,6 +291,16 @@ impl Mirror {
         Some(if up { (below + VOLUME_KEY_STEP).min(100) } else if below == now { now.saturating_sub(VOLUME_KEY_STEP) } else { below })
     }
 
+    /// What a press of the system's media controls showing the device asks of it. A Bluetooth play or
+    /// pause asks nothing: none of the device's sound comes through the accessory from here, and a headset
+    /// joined to that device as well plays and pauses this one by itself as it switches between the two.
+    pub fn system_press(&self, press: Press, on: PressedOn) -> Option<Op> {
+        match (on, press) {
+            (PressedOn::Bluetooth, Press::Play | Press::Pause | Press::Toggle) => None,
+            _ => self.op(press),
+        }
+    }
+
     /// `press` as a command for the device; None when there is nothing to ask.
     pub fn op(&self, press: Press) -> Option<Op> {
         Some(match press {
@@ -326,6 +336,22 @@ pub fn mirror_volume_key(mirror: Mirror, up: bool) -> Option<u8> {
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn mirror_op(mirror: Mirror, press: Press) -> Option<Op> {
     mirror.op(press)
+}
+
+/// Where a press of the system's media controls came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum PressedOn {
+    /// This device: its screen (the app, the notification, the lock screen), a car, a wired headset.
+    ThisDevice,
+    /// A Bluetooth headset, speaker or car stereo.
+    Bluetooth,
+}
+
+/// [`Mirror::system_press`].
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn mirror_system_press(mirror: Mirror, press: Press, on: PressedOn) -> Option<Op> {
+    mirror.system_press(press, on)
 }
 
 /// What a client's player asks of the music.
@@ -4352,6 +4378,23 @@ mod tests {
         assert_eq!(m.op(Press::Toggle), Some(Op::Play));
         m.volume = None;
         assert_eq!(m.op(Press::Volume { level: 0.9 }), None, "a volume the device does not offer");
+    }
+
+    #[test]
+    fn a_bluetooth_play_or_pause_leaves_the_device_playing_and_its_skips_reach_it() {
+        let m = Mirror { id: "desk".into(), name: "Desk".into(), kind: DeviceKind::Desktop, rows: Vec::new(), at: None, len: 3, rev: 7, playing: true, buffering: false, mixing: false, position_ms: 0, rate: 1.0, at_us: 0, shuffle: false, repeat: 0, next: None, previous: None, volume: Some(40), refused: None };
+        // press: from this device, from Bluetooth
+        let table = [
+            (Press::Pause, Some(Op::Pause), None),
+            (Press::Play, Some(Op::Play), None),
+            (Press::Toggle, Some(Op::Pause), None),
+            (Press::Next, Some(Op::Next), Some(Op::Next)),
+            (Press::Previous, Some(Op::Previous), Some(Op::Previous)),
+        ];
+        for (press, here, bluetooth) in table {
+            assert_eq!(m.system_press(press, PressedOn::ThisDevice), here, "{press:?} here");
+            assert_eq!(m.system_press(press, PressedOn::Bluetooth), bluetooth, "{press:?} from Bluetooth");
+        }
     }
 
     #[test]
