@@ -21,7 +21,7 @@ else
 fi
 remember_settings offload autoMix eq autoFill
 # Every section starts from the plain path, offload off, with autofill to play on after one song.
-plain() { plain_sound "offload false" "autoFill true"; }
+plain() { plain_sound "offload false" "autoFill songs"; }
 plain
 
 if want play; then section play

@@ -10,7 +10,7 @@ use crate::settings::{PrefValue, SavedQuality, Span, StoredPrefs};
 pub(crate) struct Raw<'a>(pub(crate) &'a HashMap<String, PrefValue>);
 
 impl Raw<'_> {
-    fn get<T: Scalar>(&self, k: &str) -> Option<T> {
+    pub(crate) fn get<T: Scalar>(&self, k: &str) -> Option<T> {
         self.0.get(k).and_then(T::read)
     }
 }

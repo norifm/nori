@@ -229,7 +229,6 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "crossfadeKeepAlbums" to (R.string.settings_keep_albums to R.string.settings_hint_keep_albums),
     "skipExplicit" to (R.string.settings_skip_explicit to R.string.settings_hint_skip_explicit),
     "autoFill" to (R.string.settings_auto_fill to R.string.settings_hint_auto_fill),
-    "autoFillKind" to (R.string.settings_auto_fill_kind to R.string.settings_hint_auto_fill_kind),
     "autoFillBasis" to (R.string.settings_auto_fill_basis to R.string.settings_hint_auto_fill_basis),
     "autoFillRemote" to (R.string.settings_auto_fill_remote to R.string.settings_hint_auto_fill_remote),
     "bridgeOffline" to (R.string.settings_bridge_offline to R.string.settings_hint_bridge_offline),
@@ -239,7 +238,6 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "soundBypass" to (R.string.settings_sound_bypass to R.string.settings_sound_bypass_detail),
     "headphoneSound" to (R.string.settings_headphone_sound to R.string.settings_hint_headphone_sound),
     "compressor" to (R.string.settings_compressor to R.string.settings_compressor_detail),
-    "compressorPreset" to (R.string.settings_compressor_preset to 0),
     "replayGain" to (R.string.settings_volume_leveling to R.string.settings_hint_volume_leveling),
     "loudnessLevel" to (R.string.settings_level to R.string.settings_hint_level),
     "volumeBoostDb" to (R.string.settings_volume_boost_title to R.string.settings_hint_volume_boost),
@@ -284,10 +282,10 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
 
 /** The words of a setting's values that are names: by setting, in the options' order. */
 private val NAMED: Map<String, IntArray> = mapOf(
-    "autoFillKind" to intArrayOf(R.string.settings_auto_fill_kind_songs, R.string.settings_auto_fill_kind_albums),
+    "autoFill" to intArrayOf(R.string.settings_auto_fill_stop, R.string.settings_auto_fill_songs, R.string.settings_auto_fill_albums),
     "autoFillBasis" to intArrayOf(R.string.settings_auto_fill_basis_similar, R.string.settings_auto_fill_basis_artist, R.string.settings_auto_fill_basis_genre, R.string.settings_auto_fill_basis_era),
     "headphoneSound" to intArrayOf(R.string.settings_off, R.string.settings_headphone_natural, R.string.settings_headphone_wide),
-    "compressorPreset" to intArrayOf(R.string.settings_compressor_light, R.string.settings_compressor_car, R.string.settings_compressor_night),
+    "compressor" to intArrayOf(R.string.settings_off, R.string.settings_compressor_light, R.string.settings_compressor_car, R.string.settings_compressor_night),
     "replayGain" to intArrayOf(R.string.settings_off, R.string.settings_leveling_song, R.string.settings_leveling_album, R.string.settings_leveling_auto),
     "loudnessLevel" to intArrayOf(R.string.settings_level_quiet, R.string.settings_level_normal, R.string.settings_level_loud),
     "maxRate" to intArrayOf(R.string.settings_max_rate_auto, R.string.settings_max_rate_48, R.string.settings_max_rate_96, R.string.settings_max_rate_192),
@@ -544,15 +542,14 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
     fun detail(name: String): String = when (name) {
         "autoMixBetterBeats" -> {
             val mb = s.beatModelMb.toInt()
-            if (!p.autoMixBetterBeats) str(R.string.settings_better_beats_off, mb) else when (val model = s.beatModel) {
+            if (!p.autoMixBetterBeats) str(R.string.settings_better_beats_cost) else when (val model = s.beatModel) {
                 is BeatModel.Failed -> str(R.string.settings_better_beats_failed, str(when (model.why) {
                     dev.nori.music.ffi.automix.BeatFailure.NETWORK -> R.string.settings_better_beats_network
                     dev.nori.music.ffi.automix.BeatFailure.WRONG_FILE -> R.string.settings_better_beats_wrong_file
                     dev.nori.music.ffi.automix.BeatFailure.STORAGE -> R.string.settings_better_beats_storage
                 }))
                 BeatModel.Downloading -> str(R.string.settings_better_beats_downloading, mb)
-                BeatModel.Ready -> ""
-                else -> str(R.string.settings_better_beats_off, mb)
+                else -> str(R.string.settings_better_beats_cost)
             }
         }
         "bitPerfect" -> bitPerfectWords(f.dac)

@@ -560,7 +560,7 @@ fn listens_with_a_real_model(core: &Arc<Core>, current: &Mutex<Arc<Client>>, dir
 #[test]
 fn a_guest_queues_the_host_songs_once() {
     let dir = nori_testdir::TempDir::new("guest");
-    let (core, _client) = common::own_core(&dir, |p| p.auto_fill = true);
+    let (core, _client) = common::own_core(&dir, |p| p.auto_fill = Some(nori_core::settings::AutoFillKind::Songs));
     let song = |id: &str| Song { id: id.into(), title: id.into(), ..Default::default() };
     let lead = |ids: &[&str], index: usize| nori_core::remote::Lead {
 

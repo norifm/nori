@@ -179,8 +179,7 @@ enum Say {
         ]),
         ("Queue", [
             ("skipExplicit", "Skip explicit songs"),
-            ("autoFill", "Keep playing when the queue ends"),
-            ("autoFillKind", "Carry on with"),
+            ("autoFill", "When the queue ends"),
             ("autoFillBasis", "Chosen by"),
             ("autoFillRemote", "Include remote songs"),
         ]),
@@ -652,19 +651,22 @@ enum Say {
         "What music played through \(kind.map { "this \($0) device" } ?? "this") sounds like. It switches by itself whenever the device connects."
     }
 
-    /// Rows shown only while the setting they refine is on, as on Android: what keeps playing, and how
-    /// it is chosen, only once the queue keeps playing.
+    /// Rows shown only while the setting they refine is on, as on Android: how autofill chooses, only
+    /// while it adds something.
     static let shownWhen: [String: String] = [
-        "autoFillKind": "autoFill", "autoFillBasis": "autoFill", "autoFillRemote": "autoFill",
+        "autoFillBasis": "autoFill", "autoFillRemote": "autoFill",
     ]
 
     /// A setting's value in words; the few whose names say too little have their own.
     static func choice(_ name: String, _ value: String) -> String {
         switch (name, value) {
-        case ("autoFillBasis", "Similar"): return "Similar music"
-        case ("autoFillBasis", "Artist"): return "The same artist"
-        case ("autoFillBasis", "Genre"): return "The same genre"
-        case ("autoFillBasis", "Era"): return "The same era"
+        case ("autoFill", "OFF"): return "Stop"
+        case ("autoFill", "SONGS"): return "Add songs"
+        case ("autoFill", "ALBUMS"): return "Add albums"
+        case ("autoFillBasis", "SIMILAR"): return "Similar music"
+        case ("autoFillBasis", "ARTIST"): return "The same artist"
+        case ("autoFillBasis", "GENRE"): return "The same genre"
+        case ("autoFillBasis", "ERA"): return "The same era"
         case ("swipeRight", "NONE"), ("swipeLeft", "NONE"): return "Nothing"
         case ("swipeRight", "QUEUE"), ("swipeLeft", "QUEUE"): return addToQueue
         case ("swipeRight", "PLAY_NEXT"), ("swipeLeft", "PLAY_NEXT"): return playNext

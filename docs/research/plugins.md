@@ -339,7 +339,7 @@ short and plain like nori's own, but nori can't enforce that.
 
 | kind | example | today | becomes |
 |---|---|---|---|
-| **Setting** | `crossfadeSec`, `songsAheadWifi`, `compressorPreset` | `StoredPrefs` field, on a settings page | overridable by key |
+| **Setting** | `crossfadeSec`, `songsAheadWifi`, `compressor` | `StoredPrefs` field, on a settings page | overridable by key |
 | **Tunable** | search delay 150 ms, 4 downloads at once, AutoMix max 12 s | a `const` in some crate | a `Tunables` field with default, range and effect bits, overridable |
 | **Derived rule** | AutoMix sub-switches always on; Auto leveling = album in order, track in shuffle | a function over settings | stays one function; its fixed inputs become tunables |
 

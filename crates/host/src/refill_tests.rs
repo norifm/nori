@@ -46,7 +46,7 @@ fn late_autofill_respects_playback_and_new_queues() {
         let prefs = nori_core::settings_store::Settings::new();
         let mut p = prefs.open(&dir.join("app.db").to_string_lossy()).unwrap();
         p.remote_control = false;
-        p.auto_fill = true;
+        p.auto_fill = Some(nori_core::settings::AutoFillKind::Songs);
         p.auto_mix = false;
         p.third_party_lookups = false;
         prefs.put(p);
@@ -123,7 +123,7 @@ fn session_of_songs(dir: &nori_testdir::TempDir, url: &str, card: &Card, clock: 
     let prefs = nori_core::settings_store::Settings::new();
     let mut p = prefs.open(&db_path(dir.path())).unwrap();
     p.remote_control = false;
-    p.auto_fill = false;
+    p.auto_fill = None;
     p.auto_mix = false;
     prefs.put(p);
     let queue = Arc::new(nori_core::queue::Session::new(prefs));
@@ -164,7 +164,7 @@ fn media_keys_start_a_restored_queue_and_fill_at_its_end() {
     assert!((card.last_second_hz() - 440.0).abs() <= 1.0, "from its own song: {} Hz", card.last_second_hz());
 
     // Switched on only now: the songs arriving asked for nothing, so the press is what asks.
-    s.setting("autoFill", "true").expect("a setting");
+    s.setting("autoFill", "songs").expect("a setting");
     nori_mpris::Controls::next(&*s);
     assert!(asked.recv_timeout(Duration::from_secs(60)).is_ok(), "next at the end asks for more songs");
     s.close();

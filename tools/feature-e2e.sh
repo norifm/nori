@@ -269,8 +269,8 @@ if want lyrics; then section lyrics
   # (crates/lyrics tests, over recorded answers). Here: that an answer comes back through the platform.
   if [ "$NORI_E2E_SERVER" = local ]; then
     remember_settings lyricsOnline autoFill
-    lyrics_fill=$(field autoFill | tr 'TF' 'tf')
-    "$app" set autoFill false >/dev/null
+    lyrics_fill=$(field autoFill)
+    "$app" set autoFill off >/dev/null
     "$app" set lyricsOnline false >/dev/null
     "$app" play "$LYRICS_SONG" >/dev/null; sounds 20
     check "the lyrics fixture is the current song" wait_for title "Long Track 05" 10
@@ -365,7 +365,7 @@ WIDGET
   check "and leaves the WebView no cookies" wait_until 10 no_web_cookies
   remember_settings autoMix autoFill lyricsOnline
   "$app" set autoMix true >/dev/null
-  "$app" set autoFill false >/dev/null
+  "$app" set autoFill off >/dev/null
   "$app" set lyricsOnline true >/dev/null
   watch_from_now
   "$app" play "search:daft punk one more time" >/dev/null

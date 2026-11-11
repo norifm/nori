@@ -212,7 +212,7 @@ impl Client {
     /// What to append after the queue's end, per the autofill settings. Empty on failure or an unknown seed.
     pub async fn autofill(&self) -> Refill {
         let (kind, basis, remote) =
-            self.settings().prefs(|p| (p.auto_fill_kind, p.auto_fill_basis, p.auto_fill_remote));
+            self.settings().prefs(|p| (p.auto_fill, p.auto_fill_basis, p.auto_fill_remote));
         self.autofill_as(kind, basis, remote).await
     }
 
@@ -228,7 +228,7 @@ impl Client {
 }
 
 impl Client {
-    async fn autofill_as(&self, kind: AutoFillKind, basis: AutoFillBasis, remote: bool) -> Refill {
+    async fn autofill_as(&self, kind: Option<AutoFillKind>, basis: AutoFillBasis, remote: bool) -> Refill {
         let began = nori_time::Instant::now();
         let after = self.core.session.end_entry();
         let fresh = Refill { after, ..self.autofill_from(kind, basis, remote).await };
@@ -238,7 +238,8 @@ impl Client {
     }
 
     /// `remote`: provider songs may be queued and may seed; falls back to a library seed if that finds nothing.
-    async fn autofill_from(&self, kind: AutoFillKind, basis: AutoFillBasis, remote: bool) -> Refill {
+    /// With autofill off (`kind` None) only a shuffle queue refills.
+    async fn autofill_from(&self, kind: Option<AutoFillKind>, basis: AutoFillBasis, remote: bool) -> Refill {
         let (_, ids) = self.core.session.snapshot();
         // Shuffle queues continue as they began, from the library only, whatever the setting.
         match self.core.session.origin().map(|o| o.kind) {
@@ -251,6 +252,7 @@ impl Client {
             }
             _ => {}
         }
+        let Some(kind) = kind else { return Refill::default() };
         // Seeded by the queue's last song: the fetch starts before the end is reached.
         let Some(last) = self.core.session.autofill_seed().and_then(|id| self.core.session.song(&id)) else { return Refill::default() };
         let queued: HashSet<&str> = ids.iter().map(String::as_str).collect();
@@ -396,7 +398,7 @@ pub(crate) mod tests {
         queued(&c, &["pf-seed"], 0);
         let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         c.core.session.use_deciders(Some(std::sync::Arc::new(Naming(ids(&["ext-pf", "pf-seed", "pf-lib", "pf-lib"])))));
-        let got = block(c.autofill_as(AutoFillKind::Songs, AutoFillBasis::Similar, false));
+        let got = block(c.autofill_as(Some(AutoFillKind::Songs), AutoFillBasis::Similar, false));
         assert_eq!(got.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["pf-lib"], "no provider song, nothing queued twice");
         assert_eq!(got.picked, None, "not the rotation's");
         let got = block(c.queue_ended());
@@ -405,7 +407,7 @@ pub(crate) mod tests {
         // Only provider songs: nori's own fill stands.
         fake.answer(&songs_json(&[("pf-nori", "x")]));
         c.core.session.use_deciders(Some(std::sync::Arc::new(Naming(ids(&["ext-pf"])))));
-        let got = block(c.autofill_as(AutoFillKind::Songs, AutoFillBasis::Similar, false));
+        let got = block(c.autofill_as(Some(AutoFillKind::Songs), AutoFillBasis::Similar, false));
         assert_eq!(got.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["pf-nori"]);
     }
 
@@ -417,7 +419,7 @@ pub(crate) mod tests {
         queued(&c, &["af-seed", "af-q"], 0);
         // s1 was picked by the last refill: it goes after s2.
         note(&c.core.db.lock(), Picked::Songs, &["s1".to_string()], crate::db::now_ms()).unwrap();
-        let got = block(c.autofill_as(AutoFillKind::Songs, AutoFillBasis::Similar, false));
+        let got = block(c.autofill_as(Some(AutoFillKind::Songs), AutoFillBasis::Similar, false));
         assert_eq!(got.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["s2", "s1"]);
         assert!(fake.asked.lock()[0].0.contains("getSimilarSongs2"));
         assert_eq!((got.picked, got.picks()), (Some(Picked::Songs), vec!["s2".to_string(), "s1".into()]));
@@ -429,7 +431,7 @@ pub(crate) mod tests {
         c.core.session.register(vec![song("dr-seed", "al0")]);
         fake.answer(&songs_json(&[("dr-1", "x")]));
         queued(&c, &["dr-seed"], 0);
-        let got = block(c.autofill_as(AutoFillKind::Songs, AutoFillBasis::Similar, false));
+        let got = block(c.autofill_as(Some(AutoFillKind::Songs), AutoFillBasis::Similar, false));
         assert_eq!(got.songs.len(), 1);
         // No fetch was waited for at this end: the songs are not appended.
         assert!(!c.autofill_arrived(got));
@@ -452,7 +454,7 @@ pub(crate) mod tests {
         c.core.session.register(vec![song("sh-1", "al1")]);
         shuffled(&c, &["sh-1"], crate::OriginKind::ShuffleSongs);
         fake.answer(&random_json(&["sh-1", "r1", "r2"]));
-        let got = block(c.autofill_as(AutoFillKind::Albums, AutoFillBasis::Similar, false)).songs;
+        let got = block(c.autofill_as(Some(AutoFillKind::Albums), AutoFillBasis::Similar, false)).songs;
         assert_eq!(got.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["r1", "r2"]);
         assert!(fake.asked.lock()[0].0.contains("getRandomSongs"), "{:?}", fake.asked.lock());
 
@@ -462,7 +464,7 @@ pub(crate) mod tests {
         shuffled(&c, &["sa-1"], crate::OriginKind::ShuffleAlbums);
         fake.answer(r#"{"subsonic-response":{"status":"ok","albumList2":{"album":[{"id":"al-playing","name":"P"},{"id":"al-next","name":"N"}]}}}"#);
         fake.answer(&album_json("al-next", &["n1", "n2", "n3"]));
-        let got = block(c.autofill_as(AutoFillKind::Songs, AutoFillBasis::Similar, false)).songs;
+        let got = block(c.autofill_as(Some(AutoFillKind::Songs), AutoFillBasis::Similar, false)).songs;
         assert_eq!(got.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["n1", "n2", "n3"]);
         let asked = fake.asked.lock();
         assert!(asked[0].0.contains("getAlbumList2") && asked[0].0.contains("type=random"), "{asked:?}");
@@ -476,7 +478,7 @@ pub(crate) mod tests {
         fake.answer(&songs_json(&[("x1", "first"), ("x2", "second")]));
         fake.answer(&album_json("second", &["b1", "b2", "b3"]));
         queued(&c, &["af3-seed"], 0);
-        let got = block(c.autofill_as(AutoFillKind::Albums, AutoFillBasis::Similar, false));
+        let got = block(c.autofill_as(Some(AutoFillKind::Albums), AutoFillBasis::Similar, false));
         assert_eq!(got.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["b1", "b2", "b3"]);
         assert_eq!((got.picked, got.picks()), (Some(Picked::Album), vec!["second".to_string()]));
 
@@ -489,7 +491,7 @@ pub(crate) mod tests {
         fake.answer(&album_json("single", &["t1"]));
         fake.answer(&album_json("record", &["r1", "r2", "r3"]));
         queued(&c, &["af2-seed"], 0);
-        let got = block(c.autofill_as(AutoFillKind::Albums, AutoFillBasis::Similar, false)).songs;
+        let got = block(c.autofill_as(Some(AutoFillKind::Albums), AutoFillBasis::Similar, false)).songs;
         assert_eq!(got.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["r1", "r2", "r3"]);
         assert_eq!(fake.asked.lock().len(), 3, "the seed's own album is not fetched");
 
@@ -501,7 +503,7 @@ pub(crate) mod tests {
         fake.answer(r#"{"subsonic-response":{"status":"ok","albumList2":{"album":[{"id":"af5-al","name":"A"}]}}}"#);
         fake.answer(&album_json("af5-al", &["w1", "w2", "w3"]));
         queued(&c, &["af5-seed"], 0);
-        let got = block(c.autofill_as(AutoFillKind::Albums, AutoFillBasis::Similar, false)).songs;
+        let got = block(c.autofill_as(Some(AutoFillKind::Albums), AutoFillBasis::Similar, false)).songs;
         assert_eq!(got.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["w1", "w2", "w3"]);
     }
 
@@ -520,7 +522,7 @@ pub(crate) mod tests {
                 {"id":"ext-deezer-afp-2","title":"x","isExternal":true},{"id":"afp-s1","title":"s1"},{"id":"afp-s2","title":"s2","isExternal":true}]}}}"#,
         );
         queued(&c, &["ext-deezer-afp-1"], 0);
-        let got = block(c.autofill_as(AutoFillKind::Songs, AutoFillBasis::Similar, false)).songs;
+        let got = block(c.autofill_as(Some(AutoFillKind::Songs), AutoFillBasis::Similar, false)).songs;
         assert_eq!(got.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["afp-s1"]);
         let asked = fake.asked.lock();
         assert!(asked[0].0.contains("getSimilarSongs2") && asked[0].0.contains("id=afp-lib"), "seeded by the artist's song in the library: {}", asked[0].0);
@@ -530,7 +532,7 @@ pub(crate) mod tests {
         c.core.session.register(vec![song("afq-lib", "al0"), provider("ext-deezer-afq-1", "Nobody Here")]);
         fake.answer(&songs_json(&[("afq-s1", "x")]));
         queued(&c, &["afq-lib", "ext-deezer-afq-1"], 1);
-        let got = block(c.autofill_as(AutoFillKind::Songs, AutoFillBasis::Similar, false)).songs;
+        let got = block(c.autofill_as(Some(AutoFillKind::Songs), AutoFillBasis::Similar, false)).songs;
         assert_eq!(got.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["afq-s1"]);
         assert!(fake.asked.lock()[0].0.contains("id=afq-lib"));
 
@@ -539,7 +541,7 @@ pub(crate) mod tests {
         c.core.session.register(vec![provider("ext-deezer-afr-1", "Nobody Here")]);
         fake.answer(r#"{"subsonic-response":{"status":"ok","randomSongs":{"song":[{"id":"afr-s1","title":"a"},{"id":"ext-deezer-afr-2","title":"b"}]}}}"#);
         queued(&c, &["ext-deezer-afr-1"], 0);
-        let got = block(c.autofill_as(AutoFillKind::Songs, AutoFillBasis::Similar, false)).songs;
+        let got = block(c.autofill_as(Some(AutoFillKind::Songs), AutoFillBasis::Similar, false)).songs;
         assert_eq!(got.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["afr-s1"]);
         assert!(fake.asked.lock()[0].0.contains("getRandomSongs"));
 
@@ -548,7 +550,7 @@ pub(crate) mod tests {
         fake.answer(r#"{"subsonic-response":{"status":"ok","albumList2":{"album":[{"id":"afa-al","name":"A"}]}}}"#);
         fake.answer(&album_json("afa-al", &["afa-1", "afa-2", "afa-3"]));
         queued(&c, &["ext-deezer-afa-1"], 0);
-        let got = block(c.autofill_as(AutoFillKind::Albums, AutoFillBasis::Similar, false)).songs;
+        let got = block(c.autofill_as(Some(AutoFillKind::Albums), AutoFillBasis::Similar, false)).songs;
         assert_eq!(got.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["afa-1", "afa-2", "afa-3"]);
 
         // Remote allows provider seed and songs.
@@ -556,7 +558,7 @@ pub(crate) mod tests {
         c.core.session.register(vec![provider("ext-deezer-afs-1", "The Band")]);
         fake.answer(r#"{"subsonic-response":{"status":"ok","similarSongs2":{"song":[{"id":"ext-deezer-afs-2","title":"x","isExternal":true},{"id":"afs-s1","title":"s1"}]}}}"#);
         queued(&c, &["ext-deezer-afs-1"], 0);
-        let got = block(c.autofill_as(AutoFillKind::Songs, AutoFillBasis::Similar, true)).songs;
+        let got = block(c.autofill_as(Some(AutoFillKind::Songs), AutoFillBasis::Similar, true)).songs;
         let mut ids: Vec<&str> = got.iter().map(|s| s.id.as_str()).collect();
         ids.sort();
         assert_eq!(ids, ["afs-s1", "ext-deezer-afs-2"]);
@@ -567,7 +569,7 @@ pub(crate) mod tests {
     fn unknown_seed_fetches_nothing() {
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
         queued(&c, &["af-unknown"], 0);
-        assert!(block(c.autofill_as(AutoFillKind::Songs, AutoFillBasis::Similar, false)).songs.is_empty());
+        assert!(block(c.autofill_as(Some(AutoFillKind::Songs), AutoFillBasis::Similar, false)).songs.is_empty());
         assert!(fake.asked.lock().is_empty());
     }
 }

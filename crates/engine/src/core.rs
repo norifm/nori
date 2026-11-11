@@ -1612,7 +1612,7 @@ mod tests {
         assert_eq!(g.preamp_db, -3.0, "the automatic pre-amp pays back the sliders");
         let off = settings(&StoredPrefs { eq_enabled: false, eq_mode: EqMode::Graphic, ..p.clone() }, Layer::default()).sound;
         assert!(off.graphic.is_empty() && off.bands.is_empty() && !off.on());
-        let fx = settings(&StoredPrefs { volume_boost_db: 4.0, compressor: true, ..StoredPrefs::default() }, Layer::default()).sound;
+        let fx = settings(&StoredPrefs { volume_boost_db: 4.0, compressor: Some(nori_core::settings::CompressorPreset::Light), ..StoredPrefs::default() }, Layer::default()).sound;
         assert!(fx.on() && fx.effects.boost_db == 4.0 && fx.effects.compressor.is_some() && fx.effects.guard());
         // Bypass: the identity chain.
         let none = settings(&StoredPrefs { sound_bypass: true, limiter: true, headphone: nori_core::settings::HeadphoneSound::Natural, mono: true, ..StoredPrefs { eq_mode: EqMode::Graphic, ..p } }, Layer::default());

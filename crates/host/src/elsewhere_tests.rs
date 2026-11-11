@@ -81,7 +81,7 @@ fn a_device_playing_elsewhere_is_not_shown_to_the_system_as_playing_here() {
     let (phone, door) = phone(phone_dir.path());
     let settings = Settings::new();
     let mut p = settings.open(&db_path(mac_dir.path())).unwrap();
-    (p.remote_control, p.auto_fill, p.third_party_lookups) = (true, false, false);
+    (p.remote_control, p.auto_fill, p.third_party_lookups) = (true, None, false);
     settings.put(p);
     let queue = Arc::new(nori_core::queue::Session::new(settings.clone()));
     let (said, heard) = mpsc::channel();

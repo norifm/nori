@@ -133,7 +133,7 @@ final class SettingsGroupPage: CardsPage {
             break
         }
         let shown = { (name: String) in
-            self.values[name] != nil && Say.shownWhen[name].map { self.values[$0]?["value"] as? String == "true" } ?? true
+            self.values[name] != nil && Say.shownWhen[name].map { !["false", "OFF"].contains(self.values[$0]?["value"] as? String ?? "false") } ?? true
         }
         for s in Say.settings where group.sections.contains(s.section) {
             var rows = s.rows.filter { shown($0.name) }.map { row($0.name, $0.label) }
