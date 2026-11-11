@@ -645,7 +645,7 @@ impl Draw {
             return Ok(());
         };
         let (w, h) = (self.size.width as f32, self.size.height as f32);
-        let focus = shared.focus.borrow().as_ref().and_then(|f| f());
+        let focus = shared.focus();
         if shared.top_shown.get() || shared.player_shown.get() || focus.is_some() {
             self.blur_page(page)?;
         }

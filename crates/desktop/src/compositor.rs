@@ -249,6 +249,15 @@ impl Shared {
             Role::Player => self.player_shown.get(),
         }
     }
+
+    /// The lyrics focus blur to draw this frame. It is drawn over all the page holds, so not while a menu is open on it.
+    fn focus(&self) -> Option<Focus> {
+        let menu_open = self.layers.borrow().iter().any(|(layer, role)| {
+            role.get() == Some(Role::Page) && !i_slint_core::window::WindowInner::from_pub(&layer.window).active_popups().is_empty()
+        });
+        if menu_open { return None; }
+        self.focus.borrow().as_ref().and_then(|f| f())
+    }
 }
 
 /// The app's handle to the compositor, alongside the platform Slint owns.
@@ -490,11 +499,6 @@ impl Compositor {
     pub fn close_menus(&self) {
         close_menus(&self.0, None);
     }
-}
-
-/// A menu is open on the page.
-fn page_menu_open(layers: &[(Rc<Layer>, Cell<Option<Role>>)]) -> bool {
-    layers.iter().any(|(layer, role)| role.get() == Some(Role::Page) && !i_slint_core::window::WindowInner::from_pub(&layer.window).active_popups().is_empty())
 }
 
 /// Closes the menus open in every layer but `kept`'s; whether there were any. A menu closes on a press
@@ -1166,8 +1170,7 @@ impl Draw {
         let Some(page) = find(Role::Page) else { return };
         let (w, h) = (self.config.width as f32, self.config.height as f32);
         let mut enc = d.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
-        // The focus blur is drawn over all the page holds, so not while a menu is open on it.
-        let focus = s.focus.borrow().as_ref().and_then(|f| f()).filter(|_| !page_menu_open(&layers));
+        let focus = s.focus();
         let glass_needed = s.top_shown.get() || s.player_shown.get() || focus.is_some();
         if glass_needed {
             self.blur_page(d, &gpu.queue, &mut enc, &page);
