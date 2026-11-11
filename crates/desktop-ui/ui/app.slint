@@ -1230,17 +1230,29 @@ component InfoLine inherits Rectangle {
             color: Theme.dim;
             font-size: 13px;
         }
-        Text {
+        if root.link: Text {
             horizontal-stretch: 1;
             text: root.value;
-            color: root.link ? Theme.accent : Theme.text;
+            color: Theme.accent;
             font-size: 13px;
             horizontal-alignment: right;
             wrap: word-wrap;
-            if root.link: TouchArea {
+            TouchArea {
                 mouse-cursor: pointer;
                 clicked => { root.clicked(); }
             }
+        }
+        // Selectable, to copy.
+        if !root.link: TextInput {
+            horizontal-stretch: 1;
+            text: root.value;
+            read-only: true;
+            single-line: false;
+            color: Theme.text;
+            font-size: 13px;
+            horizontal-alignment: right;
+            wrap: word-wrap;
+            selection-background-color: Theme.accent.with-alpha(0.4);
         }
     }
     if root.divider: Rectangle {
