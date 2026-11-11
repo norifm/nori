@@ -24,6 +24,15 @@ export enum SongPlace { main, names, rest, title, note, glyphs }
 export enum MarkGlyph { none, server, sing, surprise, talking, look-up, satisfied, think }
 
 // A profile's circle: its plugin's icon in ink, else a letter, else a glyph.
+// The library's tabs a profile has (its rules' sections).
+export struct LibraryTabs {
+    albums: bool,
+    artists: bool,
+    songs: bool,
+    playlists: bool,
+    favorites: bool,
+}
+
 export struct Mark {
     icon: image,
     letter: string,
@@ -5947,8 +5956,7 @@ component TitleStrip inherits TouchArea {
 component TopContent inherits Rectangle {
     in property <View> view;
     in property <PageLayout> page-kind;
-    // A jam guest's: the host's library, without the account's playlists and favorites.
-    in property <bool> guest;
+    in property <LibraryTabs> tabs;
     in-out property <string> search-text;
     // The profile in use's mark, which opens the profiles.
     in property <Mark> profile-mark;
@@ -5993,7 +6001,7 @@ component TopContent inherits Rectangle {
                 background: Theme.hairline;
             }
         }
-        TabButton {
+        if root.tabs.albums: TabButton {
             y: (parent.height - self.height) / 2;
             text: "Albums";
             icon: Icons.compact-disc;
@@ -6001,7 +6009,7 @@ component TopContent inherits Rectangle {
             current: root.view == View.albums || (root.view == View.page && root.page-kind == PageLayout.album);
             clicked => { root.go(View.albums); }
         }
-        TabButton {
+        if root.tabs.artists: TabButton {
             y: (parent.height - self.height) / 2;
             text: "Artists";
             icon: Icons.user;
@@ -6009,7 +6017,7 @@ component TopContent inherits Rectangle {
             current: root.view == View.artists || (root.view == View.page && root.page-kind == PageLayout.artist);
             clicked => { root.go(View.artists); }
         }
-        TabButton {
+        if root.tabs.songs: TabButton {
             y: (parent.height - self.height) / 2;
             text: "Songs";
             icon: Icons.music-note;
@@ -6017,7 +6025,7 @@ component TopContent inherits Rectangle {
             current: root.view == View.songs;
             clicked => { root.go(View.songs); }
         }
-        if !root.guest: TabButton {
+        if root.tabs.playlists: TabButton {
             y: (parent.height - self.height) / 2;
             text: "Playlists";
             icon: Icons.playlist;
@@ -6025,7 +6033,7 @@ component TopContent inherits Rectangle {
             current: root.view == View.playlists || (root.view == View.page && root.page-kind == PageLayout.list);
             clicked => { root.go(View.playlists); }
         }
-        if !root.guest: TabButton {
+        if root.tabs.favorites: TabButton {
             y: (parent.height - self.height) / 2;
             text: "Favorites";
             icon: Icons.seal-outline;
@@ -6201,6 +6209,8 @@ export component AppWindow inherits Window {
     callback album-sort-chosen(int);
     in property <bool> albums-favorites;
     in property <bool> favorites-offered;
+    // The top pill's library tabs: the sections the profile has.
+    in property <LibraryTabs> library-tabs;
     callback albums-favorites-toggled();
     in property <[Card]> artists;
     in property <[Card]> playlists;
@@ -9977,7 +9987,7 @@ export component TopBar inherits Window {
     in property <length> room;
     in property <View> view;
     in property <PageLayout> page-kind;
-    in property <bool> guest;
+    in property <LibraryTabs> tabs;
     in property <bool> previewing;
     in-out property <string> search-text;
     in property <Mark> profile-mark;
@@ -10006,7 +10016,7 @@ export component TopBar inherits Window {
         room: root.room;
         view: root.view;
         page-kind: root.page-kind;
-        guest: root.guest;
+        tabs: root.tabs;
         previewing: root.previewing;
         search-text <=> root.search-text;
         profile-mark: root.profile-mark;

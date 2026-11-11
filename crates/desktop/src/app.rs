@@ -34,7 +34,7 @@ use crate::words;
 use nori_core::providers::flow::{AddDo, AddEvent, AddFlow, AddPage, SignInEvent, SignInFlow, SignInShown};
 use nori_core::providers::AfterAdding;
 
-use crate::{AppWindow, ArtistLink, Card, Credits, Detail, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, Shelf, SongGo, SongPlace, SongRow, TopBar, View};
+use crate::{AppWindow, ArtistLink, Card, Credits, Detail, LibraryTabs, LoginKind, LyricPiece, Motion, PageLayout, Panel, Pick, PlayerBar, PlaylistChoice, Shelf, SongGo, SongPlace, SongRow, TopBar, View};
 
 /// Cover fetch sizes, px square.
 const SMALL_PX: u32 = 256;
@@ -638,6 +638,13 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
 }
 
 /// The top pill's window; its tabs and search field forward to the main window.
+/// The top pill's library tabs: the sections `rules` has.
+fn library_tabs(rules: &nori_core::browse::ProfileRules) -> LibraryTabs {
+    use nori_core::settings::LibrarySection::*;
+    let has = |s| rules.sections.contains(&s);
+    LibraryTabs { albums: has(Albums), artists: has(Artists), songs: has(Songs), playlists: has(Playlists), favorites: has(Favourites) }
+}
+
 fn top(ui: &AppWindow) -> Option<TopBar> {
     let bar = TopBar::new().map_err(|e| nori_core::alog::info(&format!("no top pill: {e}"))).ok()?;
     bar.on_go(to_main_with(ui, |m, v| m.invoke_go(v)));
@@ -1349,6 +1356,7 @@ impl App {
                 // Albums and artists carry the account's seals, as on Android.
                 ui.set_page_can_star(s.rules().account && s.rules().stars);
                 ui.set_favorites_offered(s.rules().stars);
+                ui.set_library_tabs(library_tabs(&s.rules()));
                 self.session = Some(s);
                 self.update_plugins();
                 // The last profile's song leaves the screen; the new one's, if it has one, comes with follow.
@@ -2894,6 +2902,8 @@ impl App {
         ui.set_downloads(rules.downloads);
         ui.set_page_can_star(rules.account && rules.stars);
         ui.set_favorites_offered(rules.stars);
+        ui.set_library_tabs(library_tabs(&rules));
+        self.mirror();
         match state {
             nori_core::providers::AccountState::Ended => {
                 if let Some(offer) = offer {
@@ -3912,7 +3922,7 @@ impl App {
         if let Some(t) = &self.top {
             t.set_view(ui.get_view());
             t.set_page_kind(ui.get_page_kind());
-            t.set_guest(ui.global::<crate::Jam>().get_guest());
+            t.set_tabs(ui.get_library_tabs());
             t.set_previewing(ui.get_search_preview_shown());
         }
     }
@@ -6250,6 +6260,25 @@ mod tests {
         settle();
         assert_eq!(*said.borrow(), ["step 1", "step -1", "enter", "escape"]);
         assert!(!typing.get(), "Escape gives the keys back to the page");
+    }
+
+    #[test]
+    fn the_top_pills_tabs_are_the_profiles_sections() {
+        use nori_core::settings::LibrarySection::*;
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let bar = TopBar::new().unwrap();
+        bar.window().set_size(slint::PhysicalSize::new(1000, 48));
+        bar.set_room(1000.0);
+        bar.show().unwrap();
+        let tabs = |bar: &TopBar| i_slint_backend_testing::ElementHandle::find_by_element_type_name(bar, "TabButton").count();
+        let server = nori_core::browse::profile_rules(false);
+        bar.set_tabs(library_tabs(&server));
+        assert_eq!(tabs(&bar), 6, "Home, Albums, Artists, Songs, Playlists and Favorites");
+        let provider = nori_core::browse::ProfileRules { sections: vec![Favourites, Playlists, History], ..server };
+        bar.set_tabs(library_tabs(&provider));
+        assert_eq!(tabs(&bar), 3, "Home, Playlists and Favorites: no empty Albums, Artists or Songs");
     }
 
     #[test]
