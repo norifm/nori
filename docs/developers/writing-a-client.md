@@ -270,7 +270,9 @@ of this; Android's `PlaybackService` calls the same functions.
   after that. A client offering the undo shows it that long; one that shows none calls `Session::undo`.
 - **Search**: `SearchSession` answers each keystroke from the offline index and the server once typing
   pauses (`typed_with_index`, `answer`); its `SearchView` says where the answer stands as one
-  `SearchShown` (blank, asking, failed, found, nothing found). On the host: `search_typed`,
+  `SearchShown` (blank, asking, failed, found, nothing found). Every view `answer` returns is the
+  field's, shown wherever the field's answer shows (the search page and a preview under the field
+  alike). On the host: `search_typed`,
   `search_server` (reported as `Said::Search`) and `search_server_now` (on the caller's thread).
 - **Home's queue offer**: `offer::Offered` keeps a look's answer (`Client::queue_offer`, which asks
   nothing for a profile without an account) while it stands against what the player shows, lets it go
